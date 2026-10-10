@@ -36,7 +36,12 @@ public static class JumpDriveRules
 
     /// <summary>Jump Fuel Conservation (21610): the fuel, as a percentage a level (attribute 1296 of the skill, -10).</summary>
     public const int FuelConservationSkill = 21610;
-    public const int FuelConservationPerLevelAttribute = 1296;
+
+    /// <summary>The fuel bonus percentage (attribute 1296): of a skill (Jump Fuel Conservation, -10 a level) and of an economizer (-4, -7 or -10).</summary>
+    public const int FuelBonusAttribute = 1296;
+
+    /// <summary>The Jump Drive Economizer group (SDE 1299): the modules whose fuel bonus the drive takes.</summary>
+    public const int EconomizerGroup = 1299;
 
     /// <summary>Jump Freighters (29029): the fuel of a jump freighter.</summary>
     public const int JumpFreighterSkill = 29029;
@@ -102,8 +107,25 @@ public static class JumpDriveRules
     /// a level as a fraction: -0.1), and less 10 % a level of jump freighters for a jump freighter (pass 0 otherwise), rounded up to whole units.
     /// shortcut: the wiki's jump drive economizer terms are not applied (no economizer is fitted by the host yet).
     /// </summary>
-    public static long FuelQuantity(double lightYears, double fuelPerLightYear, int fuelConservationLevel, double conservationPerLevel, int jumpFreighterLevel) =>
-        (long)Math.Ceiling(lightYears * fuelPerLightYear * (1 + conservationPerLevel * fuelConservationLevel) * (1 - 0.1 * jumpFreighterLevel));
+    public static long FuelQuantity(
+        double lightYears, double fuelPerLightYear, int fuelConservationLevel, double conservationPerLevel, int jumpFreighterLevel, double economizers) =>
+        (long)Math.Ceiling(lightYears * fuelPerLightYear * (1 + conservationPerLevel * fuelConservationLevel) * (1 - 0.1 * jumpFreighterLevel) * economizers);
+
+    /// <summary>
+    /// The fuel multiplier of the fitted economizers (their bonuses as fractions, -0.04 to -0.10). The wiki: stacking penalized, strongest first; the n-th modifier
+    /// (from 0) counts e^(-(n/2.67)^2), the stacking penalty (the wiki, "Stacking penalty": 100 %, 86.9 %, 57.1 %, 28.3 %).
+    /// </summary>
+    public static double EconomizerMultiplier(IEnumerable<double> bonuses)
+    {
+        var multiplier = 1.0;
+        var position = 0;
+        foreach (var bonus in bonuses.OrderByDescending(bonus => Math.Abs(bonus)))
+        {
+            multiplier *= 1 + bonus * Math.Exp(-Math.Pow(position / 2.67, 2));
+            position++;
+        }
+        return multiplier;
+    }
 
     /// <summary>
     /// The fatigue and the activation cooldown a jump leaves, in milliseconds, from the fatigue that is left before the jump. The distance is the light years

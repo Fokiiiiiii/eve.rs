@@ -19,6 +19,7 @@ public sealed class SpaceJumpDrive(
     DogmaStatic statics,
     PgDeployedStore deployed,
     PgJumpFatigueStore fatigue,
+    PgJumpSpoolStore spools,
     SolarSystemCatalog systems,
     PgSkillStore skills,
     NpgsqlDataSource source,
@@ -100,8 +101,10 @@ public sealed class SpaceJumpDrive(
             lightYears,
             fuelPerLightYear,
             await LevelAsync(JumpDriveRules.FuelConservationSkill, character, cancellationToken),
-            await PerLevelAsync(JumpDriveRules.FuelConservationSkill, JumpDriveRules.FuelConservationPerLevelAttribute, cancellationToken),
-            freighter ? await LevelAsync(JumpDriveRules.JumpFreighterSkill, character, cancellationToken) : 0);
+            await PerLevelAsync(JumpDriveRules.FuelConservationSkill, JumpDriveRules.FuelBonusAttribute, cancellationToken),
+            freighter ? await LevelAsync(JumpDriveRules.JumpFreighterSkill, character, cancellationToken) : 0,
+            JumpDriveRules.EconomizerMultiplier(
+                await ships.FittedAttributeFractionsAsync(character, shipId, JumpDriveRules.EconomizerGroup, JumpDriveRules.FuelBonusAttribute, cancellationToken)));
         var fuelId = (int)fuelType;
         if (await ships.FuelHeldAsync(character, shipId, fuelId, cancellationToken) < quantity)
         {
@@ -118,7 +121,8 @@ public sealed class SpaceJumpDrive(
 
         // the simulation is asked first: a spool it refuses takes nothing from the ship
         var reply = await space.CynoJumpAsync(session, shipId, fieldId, field.SolarSystemId, (long)spool, capacitorShare, boundObjectId, cancellationToken);
-        if (!await ships.DebitJumpAsync(fatigue, character, shipId, fuelId, quantity, next, cancellationToken))
+        var pending = new JumpSpool(character, shipId, fieldId, field.SolarSystemId, now + (long)spool, fuelId, quantity, state);
+        if (!await ships.DebitJumpAsync(fatigue, spools, pending, next, cancellationToken))
         {
             // shortcut: the fuel was checked a moment before and the ship's module cycles are the only other debit; a debit lost in that moment lets the spool stand
             log?.Invoke($"the jump fuel of character {character} was taken by another debit after the check");
@@ -142,6 +146,47 @@ public sealed class SpaceJumpDrive(
             sessionOf(member.CharacterId)?.SendNotification(
                 "OnFleetJumpBeaconModuleChange", "fleetid",
                 new PyLong(field.OwnerId), new PyInt(field.SolarSystemId), new PyLong(field.DeployableId), new PyInt(field.TypeId), lit ? PyBool.True : PyBool.False);
+        }
+    }
+
+    /// <summary>The spool is over and the ship has jumped, so there is nothing to refund.</summary>
+    public Task ArrivedAsync(long characterId, CancellationToken cancellationToken = default) => spools.ForgetAsync(characterId, cancellationToken);
+
+    /// <summary>
+    /// At the start of the host: the sessions and the spools of the simulation did not survive a restart, so every spool in progress is cancelled and refunded.
+    /// </summary>
+    public async Task CancelInterruptedAsync(CancellationToken cancellationToken = default)
+    {
+        foreach (var spool in await spools.ListAsync(cancellationToken))
+        {
+            await CancelAsync(spool, "the host restarted", cancellationToken);
+        }
+    }
+
+    /// <summary>
+    /// A spool the simulation did not complete: its time is over and the ship has not jumped <see cref="SpoolGraceMs"/> after.
+    /// shortcut: a minute is the grace after a spool ends; no source read gives a rule for a spool the simulation loses (DEVIATIONS, Track A8).
+    /// </summary>
+    public async Task SweepAsync(CancellationToken cancellationToken = default)
+    {
+        var cutoff = nowUnixMs() - SpoolGraceMs;
+        foreach (var spool in await spools.ListAsync(cancellationToken))
+        {
+            if (spool.EndsAtMs < cutoff)
+            {
+                await CancelAsync(spool, "the simulation did not complete it", cancellationToken);
+            }
+        }
+    }
+
+    /// <summary>The grace after a spool ends before the host takes it to have been lost: a minute.</summary>
+    public const long SpoolGraceMs = 60_000;
+
+    private async Task CancelAsync(JumpSpool spool, string why, CancellationToken cancellationToken)
+    {
+        if (await ships.CancelJumpAsync(fatigue, spools, spool.CharacterId, spool.EndsAtMs, cancellationToken))
+        {
+            log?.Invoke($"the jump spool of character {spool.CharacterId} to system {spool.DestinationSystem} was cancelled ({why}): its fuel is refunded");
         }
     }
 

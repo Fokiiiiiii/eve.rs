@@ -27,20 +27,42 @@ public class CynoJumpHostTests
         new SolarSystemInfo(Destination, "Test Destination", 1, 1, -0.4, 0, SolarSystemCatalog.MetersPerLightYear, 0, 0),
     ]);
 
+    /// <summary>A spool of the jump to Destination that takes the given fuel, ending as the drive would end it from now.</summary>
+    private static JumpSpool SpoolOf(Rig rig, long characterId, long ship, long quantity) =>
+        new(characterId, ship, Field, Destination, rig.Now + (long)Spool, Helium, quantity, JumpFatigueState.None);
+
     private static SpaceJumpDrive Drive(Rig rig, Func<long, ClientSession?>? sessionOf = null) => new(
-        rig.Ships, rig.Statics, rig.Deployed, new PgJumpFatigueStore(rig.Source, rig.SpaceSchema), Systems(), rig.Skills, rig.Source, rig.Space,
+        rig.Ships, rig.Statics, rig.Deployed, new PgJumpFatigueStore(rig.Source, rig.SpaceSchema), new PgJumpSpoolStore(rig.Source, rig.SpaceSchema), Systems(), rig.Skills, rig.Source, rig.Space,
         rig.FleetStore, () => rig.Now, null, sessionOf);
 
-    /// <summary>A Revelation (a jump drive hull) in space, with its fleet, its fuel in the fuel bay and the given fuel units.</summary>
-    private static async Task<(ClientSession Session, Eve.Characters.Created Character, long Ship, string Bound)> JumperAsync(Rig rig, long fuel)
+    /// <summary>The Rorqual (SDE 28352), the jump freighter's group 883 hull that the economizers fit, and the oxygen isotopes it burns (SDE 866 of the hull).</summary>
+    private const int Rorqual = 28_352, Oxygen = 17_887;
+
+    /// <summary>A jump drive hull (a Revelation by default) in space, with its fleet, its fuel in the fuel bay and the given fuel units.</summary>
+    private static async Task<(ClientSession Session, Eve.Characters.Created Character, long Ship, string Bound)> JumperAsync(
+        Rig rig, long fuel, int? economizer = null, int hull = Revelation, int fuelType = Helium)
     {
-        var character = await rig.NewCharacterAsync(shipTypeId: Revelation);
+        var character = await rig.NewCharacterAsync(shipTypeId: hull);
         var ship = character.ShipId;
-        // the fuel goes into the fuel bay while the ship is docked, as the client moves it
+        if (economizer is not null)
+        {
+            // an economizer needs Jump Fuel Conservation at level one (the SDE: its requiredSkill1 is 21610, at 277 = 1)
+            await using var connection = await rig.Source.OpenConnectionAsync();
+            await using var transaction = await connection.BeginTransactionAsync();
+            await rig.Skills.GrantAsync(connection, transaction, character.CharacterId, [new Eve.Skills.CharacterSkill(21_610, 1, 0)]);
+            await transaction.CommitAsync();
+        }
+        // the fuel goes into the fuel bay, and a module into a high slot, while the ship is docked, as the client moves them
         if (fuel > 0)
         {
-            var stack = (await rig.Ships.GrantAsync(character.CharacterId, Helium, fuel, singleton: false))!.Single().After;
+            var stack = (await rig.Ships.GrantAsync(character.CharacterId, fuelType, fuel, singleton: false))!.Single().After;
             Assert.IsType<Eve.Ships.ShipChanged>(await rig.Ships.MoveAsync(character.CharacterId, stack.Id, Rig.Station, ship, FuelBayFlag, fuel));
+        }
+        if (economizer is { } module)
+        {
+            var fitted = (await rig.Ships.GrantAsync(character.CharacterId, module, 1, singleton: true))!.Single().After;
+            var fit = await rig.Ships.MoveAsync(character.CharacterId, fitted.Id, Rig.Station, ship, Eve.Inventory.ItemFlags.LowSlot0, 1);
+            Assert.True(fit is Eve.Ships.ShipChanged, fit is Eve.Ships.ShipRefused refused ? $"the economizer is refused: {refused.Reason} {refused.Fit}" : fit.ToString());
         }
         var session = await rig.SessionAsync(character, 1);
         var oid = await rig.BindShipAsync(session);
@@ -84,6 +106,77 @@ public class CynoJumpHostTests
         Assert.Equal(47_000, await rig.Ships.FuelHeldAsync(character.CharacterId, ship, Helium));
         var state = await new PgJumpFatigueStore(rig.Source, rig.SpaceSchema).GetAsync(character.CharacterId);
         Assert.Equal((rig.Now + 20 * Minute, rig.Now + 2 * Minute), (state.FatigueUntilMs, state.CooldownUntilMs));
+    }
+
+    [PgFact]
+    public async Task A_spool_in_progress_is_kept_and_a_restart_refunds_its_fuel_and_restores_the_fatigue()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var (session, character, ship, oid) = await JumperAsync(rig, fuel: 50_000);
+        await FleetOfAsync(rig, character.CharacterId);
+        await LightAsync(rig, Field, character.CharacterId, ship);
+        var spools = new PgJumpSpoolStore(rig.Source, rig.SpaceSchema);
+        var start = rig.Now;
+        await Drive(rig).JumpToFieldAsync(session, Field, character.CharacterId, Destination, oid, CancellationToken.None);
+
+        // the spool is kept with its end, its fuel and the fatigue state it replaced
+        var pending = Assert.Single(await spools.ListAsync());
+        Assert.Equal((Field, Destination, start + (long)Spool), (pending.FieldId, pending.DestinationSystem, pending.EndsAtMs));
+        Assert.Equal(JumpFatigueState.None, pending.Prior);
+        Assert.Equal(47_000, await rig.Ships.FuelHeldAsync(character.CharacterId, ship, Helium));
+
+        // the host restarts before the ship leaves: the spool is refunded and the fatigue it replaced is back
+        await Drive(rig).CancelInterruptedAsync();
+        Assert.Equal(50_000, await rig.Ships.FuelHeldAsync(character.CharacterId, ship, Helium));
+        Assert.Equal(JumpFatigueState.None, await new PgJumpFatigueStore(rig.Source, rig.SpaceSchema).GetAsync(character.CharacterId));
+        Assert.Empty(await spools.ListAsync());
+    }
+
+    [PgFact]
+    public async Task A_completed_spool_is_forgotten_and_a_sweep_refunds_only_a_spool_the_simulation_lost()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var (session, character, ship, oid) = await JumperAsync(rig, fuel: 50_000);
+        await FleetOfAsync(rig, character.CharacterId);
+        await LightAsync(rig, Field, character.CharacterId, ship);
+        var spools = new PgJumpSpoolStore(rig.Source, rig.SpaceSchema);
+        var drive = Drive(rig);
+        var start = rig.Now;
+        await drive.JumpToFieldAsync(session, Field, character.CharacterId, Destination, oid, CancellationToken.None);
+
+        // within the grace after the spool ends the simulation may still be jumping the ship: nothing is taken back
+        rig.Now = start + (long)Spool + 30_000;
+        await drive.SweepAsync();
+        Assert.Single(await spools.ListAsync());
+
+        // the ship jumped: the spool is forgotten, and a later sweep has nothing to refund
+        await drive.ArrivedAsync(character.CharacterId);
+        rig.Now = start + (long)Spool + 120_000;
+        await drive.SweepAsync();
+        Assert.Empty(await spools.ListAsync());
+        Assert.Equal(47_000, await rig.Ships.FuelHeldAsync(character.CharacterId, ship, Helium));
+
+        // a second spool the simulation lost (the pilot left before it ended) is refunded once the grace is over
+        var second = rig.Now;
+        await drive.JumpToFieldAsync(session, Field, character.CharacterId, Destination, oid, CancellationToken.None);
+        Assert.Equal(44_000, await rig.Ships.FuelHeldAsync(character.CharacterId, ship, Helium));
+        rig.Now = second + (long)Spool + 61_000;
+        await drive.SweepAsync();
+        Assert.Empty(await spools.ListAsync());
+        Assert.Equal(47_000, await rig.Ships.FuelHeldAsync(character.CharacterId, ship, Helium));
+    }
+
+    [PgFact]
+    public async Task A_fitted_economizer_takes_its_share_of_the_fuel_before_the_rounding()
+    {
+        await using var rig = await Rig.CreateAsync();
+        // a Limited Jump Drive Economizer (SDE 34122, a bonus of 4 percent) fitted in a low slot; the economizers fit only a Rorqual or a jump freighter (SDE 1298, 1299)
+        var (session, character, ship, oid) = await JumperAsync(rig, fuel: 50_000, economizer: 34_122, hull: Rorqual, fuelType: Oxygen);
+        await FleetOfAsync(rig, character.CharacterId);
+        await LightAsync(rig, Field, character.CharacterId, ship);
+        await Drive(rig).JumpToFieldAsync(session, Field, character.CharacterId, Destination, oid, CancellationToken.None);
+        // one light year is 4 000 units of the Rorqual (SDE 868); level one of Jump Fuel Conservation takes 10 percent and the economizer 4 percent: 3 456
+        Assert.Equal(50_000 - 3_456, await rig.Ships.FuelHeldAsync(character.CharacterId, ship, Oxygen));
     }
 
     [PgFact]
@@ -146,7 +239,9 @@ public class CynoJumpHostTests
         var drive = Drive(rig);
         // a jump that has just been made: its cooldown runs two minutes
         var fatigue = new PgJumpFatigueStore(rig.Source, rig.SpaceSchema);
-        Assert.True(await rig.Ships.DebitJumpAsync(fatigue, character.CharacterId, ship, Helium, 1, new JumpFatigueState(rig.Now + 20 * Minute, rig.Now + 2 * Minute)));
+        Assert.True(await rig.Ships.DebitJumpAsync(fatigue, new PgJumpSpoolStore(rig.Source, rig.SpaceSchema), SpoolOf(rig, character.CharacterId, ship, 1), new JumpFatigueState(rig.Now + 20 * Minute, rig.Now + 2 * Minute)));
+        // the spool of that jump is over by the time the next one is asked for (the simulation would have jumped the ship)
+        await new PgJumpSpoolStore(rig.Source, rig.SpaceSchema).ForgetAsync(character.CharacterId);
         rig.Sim.Heard.Clear();
 
         await Assert.ThrowsAnyAsync<MachoWrappedException>(() => drive.JumpToFieldAsync(session, Field, character.CharacterId, Destination, oid, CancellationToken.None));
@@ -181,11 +276,11 @@ public class CynoJumpHostTests
         var fatigue = new PgJumpFatigueStore(rig.Source, rig.SpaceSchema);
         var next = new JumpFatigueState(rig.Now + 20 * Minute, rig.Now + 2 * Minute);
 
-        Assert.False(await rig.Ships.DebitJumpAsync(fatigue, character.CharacterId, ship, Helium, 3_000, next));
+        Assert.False(await rig.Ships.DebitJumpAsync(fatigue, new PgJumpSpoolStore(rig.Source, rig.SpaceSchema), SpoolOf(rig, character.CharacterId, ship, 3_000), next));
         Assert.Equal(1_000, await rig.Ships.FuelHeldAsync(character.CharacterId, ship, Helium));
         Assert.Equal(JumpFatigueState.None, await fatigue.GetAsync(character.CharacterId));
 
-        Assert.True(await rig.Ships.DebitJumpAsync(fatigue, character.CharacterId, ship, Helium, 400, next));
+        Assert.True(await rig.Ships.DebitJumpAsync(fatigue, new PgJumpSpoolStore(rig.Source, rig.SpaceSchema), SpoolOf(rig, character.CharacterId, ship, 400), next));
         Assert.Equal(600, await rig.Ships.FuelHeldAsync(character.CharacterId, ship, Helium));
         Assert.Equal(next, await fatigue.GetAsync(character.CharacterId));
     }

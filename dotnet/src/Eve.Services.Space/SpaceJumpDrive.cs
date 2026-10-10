@@ -74,7 +74,8 @@ public sealed class SpaceJumpDrive(
         await statics.EnsureTypesAsync([shipType], cancellationToken);
         if (statics.Type(shipType) is not { } hull || !hull.Attributes.TryGetValue(JumpDriveRules.RangeAttribute, out var baseRange) || baseRange <= 0
             || !hull.Attributes.TryGetValue(JumpDriveRules.SpoolAttribute, out var spool) || !hull.Attributes.TryGetValue(JumpDriveRules.FuelPerLightYearAttribute, out var fuelPerLightYear)
-            || !hull.Attributes.TryGetValue(JumpDriveRules.FuelTypeAttribute, out var fuelType))
+            || !hull.Attributes.TryGetValue(JumpDriveRules.FuelTypeAttribute, out var fuelType)
+            || !hull.Attributes.TryGetValue(JumpDriveRules.CapacitorNeedAttribute, out var hullShare))
         {
             throw Notify("Your ship has no jump drive.");
         }
@@ -89,7 +90,8 @@ public sealed class SpaceJumpDrive(
         }
         var lightYears = systems.LightYearsBetween(origin, field.SolarSystemId) ?? throw Refusal("DeniedShipChanged");
         var calibration = await LevelAsync(JumpDriveRules.CalibrationSkill, character, cancellationToken);
-        if (lightYears > JumpDriveRules.Range(baseRange, calibration))
+        var calibrationPerLevel = await PerLevelAsync(JumpDriveRules.CalibrationSkill, JumpDriveRules.CalibrationPerLevelAttribute, cancellationToken);
+        if (lightYears > JumpDriveRules.Range(baseRange, calibration, calibrationPerLevel))
         {
             throw Notify("That cynosural field is out of your jump drive's range.");
         }
@@ -98,18 +100,24 @@ public sealed class SpaceJumpDrive(
             lightYears,
             fuelPerLightYear,
             await LevelAsync(JumpDriveRules.FuelConservationSkill, character, cancellationToken),
+            await PerLevelAsync(JumpDriveRules.FuelConservationSkill, JumpDriveRules.FuelConservationPerLevelAttribute, cancellationToken),
             freighter ? await LevelAsync(JumpDriveRules.JumpFreighterSkill, character, cancellationToken) : 0);
         var fuelId = (int)fuelType;
         if (await ships.FuelHeldAsync(character, shipId, fuelId, cancellationToken) < quantity)
         {
             throw Notify("Your ship does not have enough fuel for that jump.");
         }
+        // the activation's capacitor share: the hull's (SDE 898) less the pilot's Jump Drive Operation (SDE 899 of the skill, a percentage a level)
+        var capacitorShare = JumpDriveRules.CapacitorNeed(
+            hullShare,
+            await LevelAsync(JumpDriveRules.OperationSkill, character, cancellationToken),
+            await PerLevelAsync(JumpDriveRules.OperationSkill, JumpDriveRules.CapacitorNeedPerLevelAttribute, cancellationToken));
         var multiplier = hull.Attributes.TryGetValue(JumpDriveRules.FatigueMultiplierAttribute, out var fatigueMultiplier) ? fatigueMultiplier : 1.0;
         var (fatigueMs, cooldownMs) = JumpDriveRules.AfterJump(Math.Max(0, state.FatigueUntilMs - now), lightYears * multiplier);
         var next = new JumpFatigueState(now + fatigueMs, now + cooldownMs);
 
         // the simulation is asked first: a spool it refuses takes nothing from the ship
-        var reply = await space.CynoJumpAsync(session, shipId, fieldId, field.SolarSystemId, (long)spool, boundObjectId, cancellationToken);
+        var reply = await space.CynoJumpAsync(session, shipId, fieldId, field.SolarSystemId, (long)spool, capacitorShare, boundObjectId, cancellationToken);
         if (!await ships.DebitJumpAsync(fatigue, character, shipId, fuelId, quantity, next, cancellationToken))
         {
             // shortcut: the fuel was checked a moment before and the ship's module cycles are the only other debit; a debit lost in that moment lets the spool stand
@@ -135,6 +143,15 @@ public sealed class SpaceJumpDrive(
                 "OnFleetJumpBeaconModuleChange", "fleetid",
                 new PyLong(field.OwnerId), new PyInt(field.SolarSystemId), new PyLong(field.DeployableId), new PyInt(field.TypeId), lit ? PyBool.True : PyBool.False);
         }
+    }
+
+    /// <summary>A skill's percentage a level as a fraction, from its own SDE attribute (a missing attribute is a data fault, not a zero).</summary>
+    private async Task<double> PerLevelAsync(int skillTypeId, int attribute, CancellationToken cancellationToken)
+    {
+        await statics.EnsureTypesAsync([skillTypeId], cancellationToken);
+        return statics.Type(skillTypeId) is { } skill && skill.Attributes.TryGetValue(attribute, out var percent)
+            ? percent / 100
+            : throw new InvalidOperationException($"skill {skillTypeId} has no attribute {attribute} in the SDE");
     }
 
     /// <summary>A character's skill level, 0 when the character lacks it.</summary>

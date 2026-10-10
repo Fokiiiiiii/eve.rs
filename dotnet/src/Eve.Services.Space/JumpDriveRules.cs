@@ -23,11 +23,20 @@ public static class JumpDriveRules
     /// <summary>The multiplier of the distance a hull counts for fatigue (attribute 1971: 0.25 for black ops, 0.1 for the freighters and the Rorqual).</summary>
     public const int FatigueMultiplierAttribute = 1971;
 
-    /// <summary>Jump Drive Calibration (21611): the range.</summary>
-    public const int CalibrationSkill = 21611;
+    /// <summary>The share of the full capacitor a drive activation takes (attribute 898, 0.95 on every drive of the SDE).</summary>
+    public const int CapacitorNeedAttribute = 898;
 
-    /// <summary>Jump Fuel Conservation (21610): the fuel.</summary>
+    /// <summary>Jump Drive Operation (3456): the capacitor need, as a percentage a level (attribute 899 of the skill, -5).</summary>
+    public const int OperationSkill = 3456;
+    public const int CapacitorNeedPerLevelAttribute = 899;
+
+    /// <summary>Jump Drive Calibration (21611): the range, as a percentage a level (attribute 870 of the skill, 20).</summary>
+    public const int CalibrationSkill = 21611;
+    public const int CalibrationPerLevelAttribute = 870;
+
+    /// <summary>Jump Fuel Conservation (21610): the fuel, as a percentage a level (attribute 1296 of the skill, -10).</summary>
     public const int FuelConservationSkill = 21610;
+    public const int FuelConservationPerLevelAttribute = 1296;
 
     /// <summary>Jump Freighters (29029): the fuel of a jump freighter.</summary>
     public const int JumpFreighterSkill = 29029;
@@ -77,16 +86,24 @@ public static class JumpDriveRules
         _ => true,
     };
 
-    /// <summary>The range in light years at a calibration level: 20 % a level (the wiki).</summary>
-    public static double Range(double baseRange, int calibrationLevel) => baseRange * (1 + 0.2 * calibrationLevel);
+    /// <summary>
+    /// The range in light years at a calibration level: the hull's range times (1 + the skill's percentage a level, as a fraction: 0.2 for Jump Drive Calibration).
+    /// </summary>
+    public static double Range(double baseRange, int calibrationLevel, double perLevel) => baseRange * (1 + perLevel * calibrationLevel);
 
     /// <summary>
-    /// The units of fuel a jump of <paramref name="lightYears"/> takes: light years times the fuel per light year, less 10 % a level of fuel conservation
-    /// (and of jump freighters for a jump freighter, pass 0 otherwise), rounded up to whole units.
+    /// The share of the full capacitor a drive activation takes: the hull's share (0.95) times (1 + the Jump Drive Operation percentage a level, as a fraction:
+    /// -0.05). Level five gives 0.7125, the wiki's "71.25 %".
+    /// </summary>
+    public static double CapacitorNeed(double hullShare, int operationLevel, double perLevel) => hullShare * (1 + perLevel * operationLevel);
+
+    /// <summary>
+    /// The units of fuel a jump of <paramref name="lightYears"/> takes: light years times the fuel per light year, times (1 + the Jump Fuel Conservation percentage
+    /// a level as a fraction: -0.1), and less 10 % a level of jump freighters for a jump freighter (pass 0 otherwise), rounded up to whole units.
     /// shortcut: the wiki's jump drive economizer terms are not applied (no economizer is fitted by the host yet).
     /// </summary>
-    public static long FuelQuantity(double lightYears, double fuelPerLightYear, int fuelConservationLevel, int jumpFreighterLevel) =>
-        (long)Math.Ceiling(lightYears * fuelPerLightYear * (1 - 0.1 * fuelConservationLevel) * (1 - 0.1 * jumpFreighterLevel));
+    public static long FuelQuantity(double lightYears, double fuelPerLightYear, int fuelConservationLevel, double conservationPerLevel, int jumpFreighterLevel) =>
+        (long)Math.Ceiling(lightYears * fuelPerLightYear * (1 + conservationPerLevel * fuelConservationLevel) * (1 - 0.1 * jumpFreighterLevel));
 
     /// <summary>
     /// The fatigue and the activation cooldown a jump leaves, in milliseconds, from the fatigue that is left before the jump. The distance is the light years

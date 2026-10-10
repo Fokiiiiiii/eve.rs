@@ -75,10 +75,10 @@ public class CynoJumpHostTests
 
         var answer = await drive.JumpToFieldAsync(session, Field, character.CharacterId, Destination, oid, CancellationToken.None);
 
-        // the spool is asked of the simulation: the field, its system and the drive's spool
+        // the spool is asked of the simulation: the field, its system, the drive's spool and the capacitor share (the Revelation's 95 %, no operation skill)
         var spool = Assert.Single(rig.Sim.Heard.OfType<SimCommand>(), command => command.Code == SimCommands.CynoJump);
         Assert.Equal(SimCommands.CynoJump, spool.Code);
-        Assert.Equal(new double[] { Field, Destination, Spool }, spool.Args.ToArray());
+        Assert.Equal(new double[] { Field, Destination, Spool, 0.95 }, spool.Args.ToArray());
         Assert.IsType<PyTuple>(answer);
         // one light year: 3 000 units of helium (the hull's 868), and the fatigue and the cooldown of two steps
         Assert.Equal(47_000, await rig.Ships.FuelHeldAsync(character.CharacterId, ship, Helium));

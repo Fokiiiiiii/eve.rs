@@ -135,12 +135,14 @@ pub enum Command {
         gate_id: i64,
         destination_gate: i64,
     },
-    /// Jump to a cynosural field lit in another system (code 24): the ship's drive spools for `spool_ms`, then the ship leaves for
-    /// `destination_system` and appears at the field `field_id` there ([`Scene::arrive`]).
+    /// Jump to a cynosural field lit in another system (code 26): the ship's drive spools for `spool_ms`, then the ship leaves for
+    /// `destination_system` and appears at the field `field_id` there ([`Scene::arrive`]). The activation takes `capacitor` of the ship's full
+    /// capacitor (the host's fraction: the hull's 95 % less the pilot's Jump Drive Operation), and is refused when the charge is short.
     CynoJump {
         field_id: i64,
         destination_system: i32,
         spool_ms: f64,
+        capacitor: f64,
     },
 }
 

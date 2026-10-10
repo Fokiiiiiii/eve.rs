@@ -98,6 +98,7 @@ private readonly Dictionary<long, ClientSession> _fleetSessions = new();
         ProbeScans = new Eve.Services.Space.SpaceProbeScans(Space, Sim, statics, Probes, Ships, Skills, Scheduler, Space.Probes, () => Now, sites: null, random: new Random(7));
         ProbeScans.Register();
         Space.ProbeScans = ProbeScans;
+        Space.DirectionalScans = new Eve.Services.Space.Scanning.SpaceDirectionalScans(Space, Sim, statics);
         Drones = new SpaceDrones(Sim, Ships, statics, Space, () => Now, Log.Add);
         Inventory = new InvBrokerService(Items, new ItemTypeCatalog(new SdeReader(source)), Stations, Ships, statics, () => Now, Containers, Drones);
         Ship = new ShipService(Space, () => ClockMs, Containers, Drones);

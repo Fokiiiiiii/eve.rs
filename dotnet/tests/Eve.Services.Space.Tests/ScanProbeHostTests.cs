@@ -572,4 +572,86 @@ public class ScanProbeHostTests
 
         await Assert.ThrowsAnyAsync<Exception>(() => rig.BeyonceCallWithAsync(session, "CmdWarpToStuff", oid, [new PyStr("scan"), new PyLong(ShipInSystem)]));
     }
+
+    private static SimDirectionalTarget Thing(long id, byte kind, int type, double x, double y, double z, double radius = 40, bool cloaked = false, bool warping = false) =>
+        new(id, kind, type, [x, y, z], radius, cloaked, warping);
+
+    /// <summary>What a cone of the scan finds: the ids of its rows, in the order the client is told them.</summary>
+    private static async Task<IReadOnlyList<long>> ConeAsync(Rig rig, ClientSession session, double angle, double range, double x, double y, double z)
+    {
+        var answer = await rig.Space.DirectionalScans!.ConeScanAsync(session, new PyReal(angle), new PyReal(range), new PyReal(x), new PyReal(y), new PyReal(z), CancellationToken.None);
+        return Items(answer).Select(row => Events.Number(Field(row, "id"))).ToArray();
+    }
+
+    /// <summary>The scene the directional tests scan: on the axis and off it, in range and out, and the kinds the scan does and does not show.</summary>
+    private static SimDirectionalTarget[] Scene() =>
+    [
+        Thing(1001, 1, 586, 1e9, 0, 0),
+        Thing(1002, 1, 586, -1e9, 0, 0),
+        Thing(1003, 1, 586, 5e9, 5e9, 0),
+        Thing(1004, 1, 586, 2e9, 0, 0, cloaked: true),
+        Thing(1005, 1, 586, 3e9, 0, 0, warping: true),
+        Thing(1006, 1, 11959, 4e9, 0, 0),
+        Thing(1007, 2, 586, 2e9, 0, 0),
+        Thing(1008, 1, 586, 1e13, 0, 0),
+        Thing(1009, 3, 2454, 0, 4e8, 0, 5),
+        Thing(1010, 5, 30013, 5e8, 0, 0, 1),
+        Thing(1011, 7, 11, 0, 0, 2e10, 3e6),
+        Thing(1012, 7, 12242, 1e10, 0, 0, 5e3),
+        Thing(1013, 6, 53025, 7e8, 0, 0, 20),
+    ];
+
+    [PgFact]
+    public async Task A_narrow_cone_shows_what_it_points_at_in_range_and_nothing_else_and_nearest_first()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var (session, _, _) = await LauncherInSpaceAsync(rig, probes: 0);
+        rig.Sim.DirectionalAnswer = Scene();
+
+        // thirty degrees either side of the ship's heading (+x): the probe, the wreck, the frigate and the station are on it
+        var found = await ConeAsync(rig, session, Math.PI / 6, 14.3 * 149_597_870_700.0, 1, 0, 0);
+
+        Assert.Equal(new long[] { 1010, 1013, 1001, 1012 }, found);
+    }
+
+    [PgFact]
+    public async Task A_sphere_shows_every_visible_thing_in_range_and_not_the_cloaked_warping_npc_combat_recon_or_out_of_range_ones()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var (session, _, _) = await LauncherInSpaceAsync(rig, probes: 0);
+        rig.Sim.DirectionalAnswer = Scene();
+
+        var found = await ConeAsync(rig, session, Math.PI * 2, 14.3 * 149_597_870_700.0, 1, 0, 0);
+
+        Assert.Equal(new long[] { 1001, 1002, 1003, 1009, 1010, 1011, 1012, 1013 }.OrderBy(id => id), found.OrderBy(id => id));
+    }
+
+    [PgFact]
+    public async Task The_range_of_the_scan_bounds_what_a_cone_finds_and_a_scan_with_no_direction_finds_nothing()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var (session, _, _) = await LauncherInSpaceAsync(rig, probes: 0);
+        rig.Sim.DirectionalAnswer = Scene();
+
+        // half a billion metres: the probe at 5e8 and the drone at 4e8 are in it; the frigate at 1e9 and the wreck at 7e8 are not
+        var near = await ConeAsync(rig, session, Math.PI * 2, 5e8, 1, 0, 0);
+        Assert.Equal(new long[] { 1009, 1010 }, near.OrderBy(id => id).ToArray());
+
+        Assert.Empty(await ConeAsync(rig, session, Math.PI * 2, 5e8, 0, 0, 0));
+    }
+
+    [PgFact]
+    public async Task The_rows_name_the_object_by_its_item_type_and_group_only()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var (session, _, _) = await LauncherInSpaceAsync(rig, probes: 0);
+        rig.Sim.DirectionalAnswer = [Thing(1010, 5, 30013, 5e8, 0, 0, 1)];
+
+        var answer = await rig.Space.DirectionalScans!.ConeScanAsync(session, new PyReal(Math.PI * 2), new PyReal(5e9), new PyReal(1), new PyReal(0), new PyReal(0), CancellationToken.None);
+
+        var row = Assert.Single(Items(answer));
+        Assert.Equal(new long[] { 1010 }, new[] { Events.Number(Field(row, "id")) });
+        Assert.Equal(30013, Events.Number(Field(row, "typeID")));
+        Assert.Equal(479, Events.Number(Field(row, "groupID")));
+    }
 }

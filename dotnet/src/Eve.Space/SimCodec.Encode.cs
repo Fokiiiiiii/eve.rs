@@ -680,6 +680,22 @@ private static void WriteAction(Writer w, SimAction action)
                 w.U8(m.Command);
                 WriteVector(w, m.Position);
                 break;
+            case SimDirectionalTargets m:
+                w.U8(Kind.DirectionalTargets);
+                w.U64(m.SessionId);
+                w.U8(m.Command);
+                w.U32((uint)m.Targets.Count);
+                foreach (var target in m.Targets)
+                {
+                    w.I64(target.Id);
+                    w.U8(target.Kind);
+                    w.I32(target.TypeId);
+                    WriteVector(w, target.Position);
+                    w.F64(target.Radius);
+                    w.U8(target.Cloaked ? (byte)1 : (byte)0);
+                    w.U8(target.Warping ? (byte)1 : (byte)0);
+                }
+                break;
             case SimScanTargets m:
                 w.U8(Kind.ScanTargets);
                 w.U64(m.SessionId);

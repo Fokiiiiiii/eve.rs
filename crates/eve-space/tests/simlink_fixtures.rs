@@ -5,8 +5,8 @@ use eve_space::death::Credit;
 use eve_space::drones::DroneEffect;
 use eve_space::health::{Condition, Layer, Resonances, Vitals};
 use eve_space::link::{
-    ChargeOp, ContainerPlacement, DecodeError, Enter, How, LaunchDrone, Message, ScanTarget, Spawn,
-    WreckPlacement,
+    ChargeOp, ContainerPlacement, DecodeError, DirectionalTarget, Enter, How, LaunchDrone, Message,
+    ScanTarget, Spawn, WreckPlacement,
 };
 use eve_space::missiles::{Blast, Missile};
 use eve_space::modules::{Action, Applies, Change, Effect, MiningFamily, Numbers, Reach, Remote, Rules};
@@ -1068,6 +1068,24 @@ fn message_of(case: &Value) -> Message {
                 .unwrap()
                 .iter()
                 .map(|r| (wide(r, "droneId"), text(r, "reason")))
+                .collect(),
+        },
+        "DirectionalTargets" => Message::DirectionalTargets {
+            session_id: session_id(),
+            command: number("command") as u8,
+            targets: case["targets"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|t| DirectionalTarget {
+                    id: wide(t, "id"),
+                    kind: t["kind"].as_u64().unwrap() as u8,
+                    type_id: t["typeId"].as_i64().unwrap() as i32,
+                    position: [0, 1, 2].map(|i| t["position"][i].as_f64().unwrap()),
+                    radius: t["radius"].as_f64().unwrap(),
+                    cloaked: t["cloaked"].as_bool().unwrap(),
+                    warping: t["warping"].as_bool().unwrap(),
+                })
                 .collect(),
         },
         "ScanTargets" => Message::ScanTargets {

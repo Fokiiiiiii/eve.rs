@@ -117,6 +117,9 @@ public static class SimCommands
     /// <summary>The scan targets of the scene for a probe scan (protocol 52).</summary>
     public const byte ScanTargets = 27;
 
+    /// <summary>What a directional scan can see in the scene (protocol 54).</summary>
+    public const byte DirectionalScan = 28;
+
     /// <summary>Start locking a target (the target's id).</summary>
     public const byte AddTarget = 10;
 
@@ -200,6 +203,13 @@ public sealed record SimScanTarget(long Id, byte Kind, int TypeId, IReadOnlyList
 
 /// <summary>The scan targets of the scene, the answer to command 27 (protocol 52).</summary>
 public sealed record SimScanTargets(ulong SessionId, byte Command, IReadOnlyList<SimScanTarget> Targets) : SimMessage;
+
+/// <summary>Something a directional scan can see (protocol 54): the item id, its kind (1 ship, 2 NPC, 3 drone, 4 fighter, 5 probe, 6 wreck, 7 celestial), its type,
+/// where it is, its radius, and whether it is cloaked and whether it warps.</summary>
+public sealed record SimDirectionalTarget(long Id, byte Kind, int TypeId, IReadOnlyList<double> Position, double Radius, bool Cloaked, bool Warping);
+
+/// <summary>What the scene has in a cone of space for a directional scan, the answer to command 28 (protocol 54).</summary>
+public sealed record SimDirectionalTargets(ulong SessionId, byte Command, IReadOnlyList<SimDirectionalTarget> Targets) : SimMessage;
 
 /// <summary>A <c>Dock</c> could not be done from where the ship is: it now approaches the station, <paramref name="Distance"/> metres off its surface.</summary>
 public sealed record SimApproaching(ulong SessionId, byte Command, double Distance) : SimMessage;

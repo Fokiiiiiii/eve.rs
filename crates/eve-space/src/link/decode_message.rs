@@ -267,6 +267,28 @@ impl Message {
             kind::POSITION => {
                 Message::Position { session_id: r.u64()?, command: r.u8()?, position: read_vector(&mut r)? }
             }
+            kind::DIRECTIONAL_TARGETS => {
+                let (session_id, command) = (r.u64()?, r.u8()?);
+                let count = r.u32()? as usize;
+                // each target is 47 bytes: an id, a kind, a type, a position, a radius and two flags
+                if count > r.data.len() / 47 {
+                    return Err(DecodeError::Truncated);
+                }
+                let targets = (0..count)
+                    .map(|_| {
+                        Ok(DirectionalTarget {
+                            id: r.i64()?,
+                            kind: r.u8()?,
+                            type_id: r.i32()?,
+                            position: read_vector(&mut r)?,
+                            radius: r.f64()?,
+                            cloaked: r.u8()? != 0,
+                            warping: r.u8()? != 0,
+                        })
+                    })
+                    .collect::<Result<Vec<_>, DecodeError>>()?;
+                Message::DirectionalTargets { session_id, command, targets }
+            }
             kind::SCAN_TARGETS => {
                 let (session_id, command) = (r.u64()?, r.u8()?);
                 let count = r.u32()? as usize;

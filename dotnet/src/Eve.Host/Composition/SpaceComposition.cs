@@ -244,6 +244,7 @@ internal sealed partial class CharacterServicesComposition
             var probeScans = new Eve.Services.Space.SpaceProbeScans(spaceSessions, sim, dogma, new Eve.Ships.PgProbeStore(source, spaceSchema), ships, skills, foundations.Scheduler, probes, now);
             probeScans.Register();
             spaceSessions.ProbeScans = probeScans;
+            spaceSessions.DirectionalScans = new Eve.Services.Space.Scanning.SpaceDirectionalScans(spaceSessions, sim, dogma);
             foundations.Scheduler.Register("space.probes.sweep", async (_, _) => await probes.SweepAsync());
             await foundations.Scheduler.EnsureRecurringAsync("space.probes.sweep", "sweep", TimeSpan.FromSeconds(30));
             spaceDrones = new SpaceDrones(sim, ships, dogma, spaceSessions, now, message => Console.Error.WriteLine($"eve-host: {message}"));

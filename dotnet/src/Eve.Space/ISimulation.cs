@@ -140,6 +140,10 @@ public interface ISimulation
     void RestoreDeployed(SimDeployed deployed);
     /// <summary>Takes a cynosural field out of space (its record's time is up).</summary>
     void RemoveDeployed(long deployableId);
+    /// <summary>Puts a scanner probe in space where it was launched (protocol 45).</summary>
+    void PlaceProbe(SimPlaceProbe probe);
+    /// <summary>Takes a scanner probe out of space (protocol 45).</summary>
+    void RemoveProbe(long probeId);
 
     /// <summary>Destroys a ship: the explosion, the wreck (for <paramref name="credit"/> to loot), and (for a player's ship) a <see cref="SimDestroyed"/> that comes back through <see cref="Received"/>.</summary>
     void Destroy(long shipId, SimCredit credit);

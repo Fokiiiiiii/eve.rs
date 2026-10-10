@@ -3373,6 +3373,32 @@
    "hex": "090000004003a04b3c5a190f00"
   },
   {
+   "name": "scanner probe launched from a probe launcher and put in space",
+   "kind": "PlaceProbe",
+   "probeId": "990000000000001",
+   "solarSystemId": 30100032,
+   "typeName": "Scanner Probe I",
+   "typeId": 19415,
+   "groupId": 479,
+   "position": [
+    311989835983.1308,
+    -13069154020.916222,
+    156646308895.76187
+   ],
+   "radius": 40.0,
+   "ownerId": "1790646377000015",
+   "corporationId": 98000001,
+   "allianceId": 0,
+   "shipId": "9988400001943",
+   "hex": "5e0000004101e0535666840300404acb010f005363616e6e65722050726f62652049d74b0000df0100005fc833c6022952426c5427b7db5708c285e10f7e6c3c424200000000000044404f2c3859955c0600815cd7050000000097b3089b15090000"
+  },
+  {
+   "name": "scanner probe recalled by its pilot",
+   "kind": "RemoveProbe",
+   "probeId": "990000000000001",
+   "hex": "090000004201e0535666840300"
+  },
+  {
    "name": "how far a can is",
    "kind": "Measured",
    "sessionId": "1790646377000015",
@@ -4328,6 +4354,11 @@
    "name": "module ended with an unknown reason",
    "reason": "bad-value",
    "hex": "12000000354f2c3859955c0600fdb6089b1509000009"
+  },
+  {
+   "name": "scanner probe with a radius that is negative",
+   "reason": "bad-value",
+   "hex": "5e0000004101e0535666840300404acb010f005363616e6e65722050726f62652049d74b0000df0100005fc833c6022952426c5427b7db5708c285e10f7e6c3c4242000000000000f0bf4f2c3859955c0600815cd7050000000097b3089b15090000"
   },
   {
    "name": "cynosural field with no life left",

@@ -75,6 +75,8 @@ public const byte UpdateEffect = 61;
         public const byte BuffState = 62;
         public const byte Deployed = 63;
         public const byte RemoveDeployed = 64;
+        public const byte PlaceProbe = 65;
+        public const byte RemoveProbe = 66;
 
     }
 

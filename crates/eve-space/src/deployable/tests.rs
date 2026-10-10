@@ -309,6 +309,56 @@ fn a_field_the_host_puts_back_after_a_restart_lives_what_was_left_and_is_removed
 }
 
 #[test]
+fn a_scanner_probe_is_in_space_until_the_host_takes_it_out_and_a_field_is_not_taken_that_way() {
+    let (mut scene, t) = crowd();
+    let a = scene.pilots[&A].ship.position;
+    let probe = crate::link::ProbePlacement {
+        probe_id: 990_000_000_001,
+        solar_system_id: scene.solar_system_id(),
+        name: "Scanner Probe I".to_string(),
+        type_id: 19_415,
+        group_id: 479,
+        position: [a.x + 10_000.0, a.y, a.z],
+        radius: 40.0,
+        owner_id: 4_242,
+        corporation_id: 0,
+        alliance_id: 0,
+        ship_id: scene.pilots[&A].ship.spec.ship_id,
+    };
+    let placed = scene.place_probe(probe.clone(), t);
+    assert!(placed.iter().any(|o| format!("{o:?}").contains("AddBalls2")), "the pilots are told of the probe");
+    assert!(scene.place_probe(probe.clone(), t).is_empty(), "a probe already in space is not put in twice");
+
+    // two hours on, it is still there: its end is the host's
+    scene.poll(t + 7_200 * SECOND);
+    assert!(scene.deployables.contains_key(&probe.probe_id), "a probe stays until the host takes it out");
+
+    let removed = scene.remove_probe(probe.probe_id, t + 7_201 * SECOND);
+    assert!(removed.iter().any(|o| format!("{o:?}").contains("RemoveBalls")), "those who see it are told it is gone");
+    assert!(!scene.deployables.contains_key(&probe.probe_id));
+    assert!(scene.remove_probe(probe.probe_id, t + 7_201 * SECOND).is_empty(), "a probe already gone is left alone");
+
+    // a cynosural field is not a probe: the host's probe removal leaves it in space
+    let field = crate::link::DeployedPlacement {
+        solar_system_id: scene.solar_system_id(),
+        deployable_id: DEPLOYABLE_ID_BASE + 901,
+        name: "Cynosural Field".to_string(),
+        type_id: 21_094,
+        group_id: 2_020,
+        position: [a.x, a.y, a.z],
+        radius: 250.0,
+        owner_id: 4_242,
+        corporation_id: 0,
+        alliance_id: 0,
+        ship_id: scene.pilots[&A].ship.spec.ship_id,
+        lifetime_ms: 600_000.0,
+    };
+    scene.restore_field(field.clone(), t);
+    assert!(scene.remove_probe(field.deployable_id, t + SECOND).is_empty(), "only a probe is taken this way");
+    assert!(scene.deployables.contains_key(&field.deployable_id));
+}
+
+#[test]
 fn a_stasis_burst_webs_the_ships_in_its_range_for_its_duration_and_spares_its_own_ship() {
     let (mut scene, t) = crowd();
     let base = scene.pilots[&B].ship.spec.max_velocity;

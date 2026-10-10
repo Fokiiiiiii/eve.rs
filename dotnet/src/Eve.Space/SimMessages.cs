@@ -959,6 +959,14 @@ public sealed record SimDeployed(
 /// <summary>The host takes a cynosural field out of space when its record's time is up (protocol 44); a deployable that is not one, or not in space, is left alone.</summary>
 public sealed record SimRemoveDeployed(long DeployableId) : SimMessage;
 
+/// <summary>A scanner probe the host launched, put in space where it was launched (protocol 45). It stays until <see cref="SimRemoveProbe"/>.</summary>
+public sealed record SimPlaceProbe(
+    long ProbeId, int SolarSystemId, string Name, int TypeId, int GroupId, IReadOnlyList<double> Position, double Radius, long OwnerId, int CorporationId,
+    int AllianceId, long ShipId) : SimMessage;
+
+/// <summary>The host takes a scanner probe out of space (recalled, or its time is up); a deployable that is not a probe is left alone (protocol 45).</summary>
+public sealed record SimRemoveProbe(long ProbeId) : SimMessage;
+
 /// <summary>The answer to <see cref="SimCommands.Measure"/>: metres from the centre of the ship to the surface of the wreck or can, or null when there is no such wreck.</summary>
 public sealed record SimMeasured(ulong SessionId, byte Command, double? Distance) : SimMessage;
 

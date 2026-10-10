@@ -48,6 +48,8 @@ pub enum Role {
     Bomb { kind: BombKind, blast_radius: f64, damage: Damage, ecm: [f64; 4], neutralize: f64 },
     /// A cynosural field (the field types of the generators, group 2020 or 897): it lives until its lifetime is up, and does nothing else. Lit where its ship is.
     CynoField,
+    /// A scanner probe the host launched (protocol 45): a ball in space that does nothing; the host recalls it or its time is up.
+    ScanProbe,
     /// A lance's beacon (EVE.js `spawnLanceBeacon`, protocol 39): a transient container the beam is drawn to. It does nothing but exist; it is taken out when
     /// its strike's effect ends (or stops), or when its lifetime is up.
     Beacon,
@@ -96,6 +98,7 @@ fn release_actions(stamp: u32, deployable: &Deployable) -> Result<Vec<Value>, ev
         Role::Bomb { .. } => (Kind::Missile, LegacyMode::Stop),
         Role::Beacon => (Kind::Container, LegacyMode::Stop),
         Role::CynoField => (Kind::Other, LegacyMode::Stop),
+        Role::ScanProbe => (Kind::Other, LegacyMode::Stop),
     };
     let category = match deployable.role {
         Role::Beacon => BEACON_CATEGORY,
@@ -281,6 +284,52 @@ impl Scene {
 
     /// A cynosural field the host keeps a record of is put back in space after a restart: with the id it had, and what is left of its life. It is
     /// given once (a field already in the scene is left as it is) and one with no life left is not put back.
+    /// A scanner probe the host launched is put in space where it is (protocol 45). It stays until the host takes it out: its end is the host's, not the
+    /// simulation's, so its end time is never reached. Given once: a probe already in space is left as it is.
+    pub(crate) fn place_probe(&mut self, placement: crate::link::ProbePlacement, now: i64) -> Vec<Out> {
+        if self.deployables.contains_key(&placement.probe_id) {
+            return Vec::new();
+        }
+        let [x, y, z] = placement.position;
+        let deployable = Deployable {
+            id: placement.probe_id,
+            spec: Spec {
+                charge_type_id: placement.type_id,
+                group_id: placement.group_id,
+                name: placement.name,
+                radius: placement.radius,
+            },
+            role: Role::ScanProbe,
+            position: Vec3::new(x, y, z),
+            ends_at: i64::MAX,
+            launcher: 0,
+            ship_id: placement.ship_id,
+            owner_id: placement.owner_id,
+            corporation_id: placement.corporation_id,
+            alliance_id: placement.alliance_id,
+            module_id: 0,
+            module_type: 0,
+            watchers: BTreeSet::new(),
+        };
+        self.insert_deployable(deployable, now)
+    }
+
+    /// The host takes a scanner probe out of space: it is removed and those who see it are told it is gone. Only a probe is taken this way.
+    pub(crate) fn remove_probe(&mut self, probe_id: i64, at: i64) -> Vec<Out> {
+        if !matches!(self.deployables.get(&probe_id), Some(d) if d.role == Role::ScanProbe) {
+            return Vec::new();
+        }
+        let Some(deployable) = self.deployables.remove(&probe_id) else { return Vec::new() };
+        let stamp = self.next_stamp(at);
+        let actions = vec![payload::remove_ships(stamp, [deployable.id])];
+        deployable
+            .watchers
+            .iter()
+            .filter(|watcher| self.pilots.get(watcher).is_some_and(|pilot| pilot.bound))
+            .map(|watcher| Self::update(*watcher, actions.clone()))
+            .collect()
+    }
+
     pub(crate) fn restore_field(&mut self, placement: crate::link::DeployedPlacement, now: i64) -> Vec<Out> {
         let lifetime_ms = placement.lifetime_ms;
         if !lifetime_ms.is_finite()
@@ -503,7 +552,7 @@ impl Scene {
                 Role::WarpSource { range } => {
                     deployable.ends_at > now && distance(position, deployable.position) <= range
                 }
-                Role::Bomb { .. } | Role::Beacon | Role::CynoField => false,
+                Role::Bomb { .. } | Role::Beacon | Role::CynoField | Role::ScanProbe => false,
             })
     }
 }

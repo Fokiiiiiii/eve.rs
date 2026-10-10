@@ -105,6 +105,9 @@ public sealed partial class SubscriptionMgrService(SubscriptionSettings settings
         return index == start ? null : negative ? -value : value;
     }
 
+    /// <summary>The clone grade of an account (0 Alpha, 1 Omega), as the clone-grade answers report it.</summary>
+    public long CloneGradeOf(PyValue? userId) => ResolveCloneGrade(userId);
+
     private long ResolveCloneGrade(PyValue? userId)
     {
         // This client build only cleanly recognises Alpha (0) and Omega (1).

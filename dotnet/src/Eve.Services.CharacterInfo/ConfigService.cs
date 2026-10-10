@@ -11,13 +11,17 @@ public sealed partial class ConfigService(
     PgCharacterStore characters,
     CorporationStore corporations,
     StationCatalog stations,
-    SolarSystemCatalog solarSystems)
+    SolarSystemCatalog solarSystems,
+    Func<CancellationToken, Task<IReadOnlyDictionary<long, decimal>>>? latestAverageSales = null)
 {
     private static readonly string[] OwnerColumns = ["ownerID", "ownerName", "typeID", "gender", "ownerNameID"];
     private static readonly string[] CorporationColumns =
         ["corporationID", "tickerName", "shape1", "shape2", "shape3", "color1", "color2", "color3"];
     private static readonly string[] LocationColumns =
         ["locationID", "locationName", "solarSystemID", "x", "y", "z", "locationNameID"];
+    /// <summary>The owner type of a corporation (<c>typeCorporation</c>) and of an alliance (<c>typeAlliance</c>, 16159 in the SDE).</summary>
+    private const long CorporationTypeId = 2;
+    private const long AllianceTypeId = 16159;
 
     [Method("GetStationSolarSystemsByOwner")]
     public PyValue GetStationSolarSystemsByOwner(ServiceCall call)
@@ -43,10 +47,45 @@ public sealed partial class ConfigService(
         return new PyList(rows);
     }
 
-    // shortcut: this server has no planet blocklist source; connect the global config owner if one is added.
+    /// <summary>The planets the client does not offer. The static data and the server have no such list, so none is blocked.</summary>
     [Method("GetBlackListedPlanets")]
     public PyValue GetBlackListedPlanets(ServiceCall call) => new PyList([]);
 
+    /// <summary>
+    /// The stations that were removed from the game. The static data has no such list. The client reads the answer only when it is
+    /// not empty (eveCfg.py:750-752), so the empty list is the answer for "none".
+    /// </summary>
+    [Method("GetOldStationData")]
+    public PyValue GetOldStationData(ServiceCall call) => new PyList([]);
+
+    /// <summary>
+    /// The average price of each type that has a recorded sale: the newest day's volume-weighted average (the market's fills,
+    /// <c>MarketStore.LatestAverageSalesAsync</c>). A type with no sale has no entry, so the client's GetAveragePrice returns None
+    /// (typeHelpers.py:101-109). The market has no adjusted price, so it is the average (EveJS: buildAveragePriceEntry).
+    /// </summary>
+    [Method("GetAverageMarketPrices")]
+    public async ValueTask<PyValue> GetAverageMarketPrices(ServiceCall call)
+    {
+        IReadOnlyDictionary<long, decimal> sales = latestAverageSales is null
+            ? new Dictionary<long, decimal>()
+            : await latestAverageSales(call.Cancellation);
+        var entries = sales
+            .Where(sale => sale.Value > 0)
+            .OrderBy(sale => sale.Key)
+            .Select(sale => new KeyValuePair<PyValue, PyValue>(
+                PyValue.Of(sale.Key),
+                (PyValue)Py.KeyVal(
+                    ("averagePrice", PyValue.Of((double)sale.Value)),
+                    ("adjustedPrice", PyValue.Of((double)sale.Value)))))
+            .ToArray();
+        return new PyDict(entries);
+    }
+
+    /// <summary>
+    /// The owners of the ids the client asks for: characters, corporations and alliances, from the stores. An id that is none
+    /// of these has no row. The client's Prime logs the miss, and a later Get raises RecordNotFound (cfg.py:600-602, 643-645);
+    /// no placeholder name is made up for it.
+    /// </summary>
     [Method("GetMultiOwnersEx")]
     public async ValueTask<PyValue> GetMultiOwnersEx(ServiceCall call)
     {
@@ -54,6 +93,11 @@ public sealed partial class ConfigService(
         var corporationById = ids.Length == 0
             ? new Dictionary<long, Corporation>()
             : (await corporations.GetManyAsync(ids, call.Cancellation)).ToDictionary(c => c.Id);
+        var allianceById = ids.Length == 0
+            ? new Dictionary<long, Alliance>()
+            : (await corporations.AlliancesByIdsAsync(ids, call.Cancellation))
+                .Where(alliance => !alliance.Deleted)
+                .ToDictionary(alliance => alliance.Id);
         var rows = new List<PyTuple>(ids.Length);
         foreach (var id in ids)
         {
@@ -72,16 +116,16 @@ public sealed partial class ConfigService(
                 rows.Add(Row(
                     PyValue.Of(corporation.Id),
                     PyValue.Of(corporation.Name),
-                    PyValue.Of(2L),
+                    PyValue.Of(CorporationTypeId),
                     PyValue.Of(0L),
                     PyNone.Instance));
             }
-            else
+            else if (allianceById.TryGetValue(id, out var alliance))
             {
                 rows.Add(Row(
-                    PyValue.Of(id),
-                    PyValue.Of($"Item {id}"),
-                    PyValue.Of(0L),
+                    PyValue.Of(alliance.Id),
+                    PyValue.Of(alliance.Name),
+                    PyValue.Of(AllianceTypeId),
                     PyValue.Of(0L),
                     PyNone.Instance));
             }
@@ -90,6 +134,7 @@ public sealed partial class ConfigService(
         return TupleSet(OwnerColumns, rows);
     }
 
+    /// <summary>The tickers of the corporations asked for; an unknown or closed corporation has no row.</summary>
     [Method("GetMultiCorpTickerNamesEx")]
     public async ValueTask<PyValue> GetMultiCorpTickerNamesEx(ServiceCall call)
     {
@@ -100,12 +145,13 @@ public sealed partial class ConfigService(
         var rows = new List<PyTuple>(ids.Length);
         foreach (var id in ids)
         {
-            var ticker = corporationById.TryGetValue(id, out var corporation) && !corporation.Deleted
-                ? corporation.Ticker
-                : "CORP";
+            if (!corporationById.TryGetValue(id, out var corporation) || corporation.Deleted)
+            {
+                continue;
+            }
             rows.Add(Row(
                 PyValue.Of(id),
-                PyValue.Of(ticker),
+                PyValue.Of(corporation.Ticker),
                 PyNone.Instance,
                 PyNone.Instance,
                 PyNone.Instance,
@@ -117,54 +163,45 @@ public sealed partial class ConfigService(
         return TupleSet(CorporationColumns, rows);
     }
 
+    /// <summary>The short names of the alliances asked for; an unknown or closed alliance has no row.</summary>
     [Method("GetMultiAllianceShortNamesEx")]
     public async ValueTask<PyValue> GetMultiAllianceShortNamesEx(ServiceCall call)
     {
         var ids = RequestedIds(call.Arg(0));
-        if (ids.Length == 0)
-            return new PyList([]);
-
-        var alliances = (await corporations.AlliancesByIdsAsync(ids, call.Cancellation))
-            .Where(alliance => !alliance.Deleted)
-            .ToDictionary(alliance => alliance.Id);
+        var alliances = ids.Length == 0
+            ? new Dictionary<long, Alliance>()
+            : (await corporations.AlliancesByIdsAsync(ids, call.Cancellation))
+                .Where(alliance => !alliance.Deleted)
+                .ToDictionary(alliance => alliance.Id);
         var rows = ids
             .Where(alliances.ContainsKey)
             .Select(id => Row(PyValue.Of(id), PyValue.Of(alliances[id].ShortName)))
             .ToArray();
-        return rows.Length == 0 ? new PyList([]) : TupleSet(["allianceID", "shortName"], rows);
+        return TupleSet(["allianceID", "shortName"], rows);
     }
 
+    /// <summary>
+    /// The locations asked for: the NPC stations and solar systems of the static data, with the station's position. Location 0
+    /// is the client's "none" row. A structure (its own catalogue, not built yet) or any other id has no row.
+    /// </summary>
     [Method("GetMultiLocationsEx")]
     public ValueTask<PyValue> GetMultiLocationsEx(ServiceCall call)
     {
         var ids = RequestedIds(call.Arg(0), includeZero: true);
-        var currentSystemId = call.Session.GetInt("solarsystemid2") ?? call.Session.GetInt("solarsystemid") ?? 0;
         var rows = new List<PyTuple>(ids.Length);
         foreach (var id in ids)
         {
             if (id == 0)
             {
-                rows.Add(LocationRow(0, "(none)", null, "(none)"));
+                rows.Add(LocationRow(0, "(none)", null, nameId: "(none)"));
             }
             else if (stations.Get(id) is { } station)
             {
-                rows.Add(LocationRow(id, station.Name, station.SolarSystemId));
+                rows.Add(LocationRow(station));
             }
             else if (id <= int.MaxValue && solarSystems.Get((int)id) is { } system)
             {
                 rows.Add(LocationRow(id, system.Name, system.Id));
-            }
-            else if (id is >= 60_000_000 and < 64_000_000)
-            {
-                rows.Add(LocationRow(id, $"Station {id}", currentSystemId > 0 ? (int?)currentSystemId : null));
-            }
-            else if (id is >= 30_000_000 and < 40_000_000)
-            {
-                rows.Add(LocationRow(id, $"System {id}", (int)id));
-            }
-            else
-            {
-                rows.Add(LocationRow(id, $"Location {id}", currentSystemId > 0 ? (int?)currentSystemId : null));
             }
         }
 
@@ -190,15 +227,19 @@ public sealed partial class ConfigService(
             .ToArray();
     }
 
-    private static PyTuple LocationRow(long id, string name, int? solarSystemId, string? nameId = null) =>
+    /// <summary>A location row. A system has no position in the static data, so its coordinates are 0 (EveJS: buildLocationRow).</summary>
+    private static PyTuple LocationRow(long id, string name, int? solarSystemId, double x = 0, double y = 0, double z = 0, string? nameId = null) =>
         Row(
             PyValue.Of(id),
             PyValue.Of(name),
             solarSystemId is { } system ? PyValue.Of((long)system) : PyNone.Instance,
-            PyValue.Of(0d),
-            PyValue.Of(0d),
-            PyValue.Of(0d),
+            PyValue.Of(x),
+            PyValue.Of(y),
+            PyValue.Of(z),
             PyValue.Of(nameId));
+
+    private static PyTuple LocationRow(Station station) =>
+        LocationRow(station.Id, station.Name, station.SolarSystemId, station.X, station.Y, station.Z);
 
     private static PyTuple Row(params PyValue[] values) => PyTuple.Of(values);
 

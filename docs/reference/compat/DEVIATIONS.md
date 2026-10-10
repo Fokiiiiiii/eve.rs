@@ -1039,6 +1039,76 @@ Sources, in the order of the rule. SDE (sde.types and sde."typeDogma", the build
 - Decision, a structure beacon (the Pharolux and Upwell cynosural beacons, group 2017, category 65, the structureCynoBeaconMgr remote service): the host answers a named refusal. The text names the missing piece: the structure service that keeps the beacon's state (the Upwell structure phase) is not built on this server. Test: StructureTravelTests.An_unwired_cyno_beacon_call_is_a_user_error_with_its_text. The jump bridge's structure call keeps its own generic text.
 - Shortcut, not built: a beacon as the target of a bridge or a conduit (both keep the field-only check, so a beacon is refused as not lit); the fleet notices for a beacon (no AnnounceFieldAsync call); the mobile inhibitor's effect on a beacon's activation; the wormhole and Pochven refusals (EveJS lines 287 to 291); the host jump to an anchored beacon (SpaceJumpDrive accepts it; no host test drives a jump to one); the simulation's arrival at a beacon (the arrival filter accepts an active beacon; not tested). The client was not run on this host.
 
+## Handshake, machoNet and the global config (slice A, 2026-10-10)
+
+- **Unknown service and unknown method.** The reference (EVE.js, `server/src/network/packetDispatcher.js:775-795`) answers a call to a
+  service it does not register, or to a method the service does not have, with a None result. The V24.01 server answers with a Macho
+  error: a wrapped `eveexceptions.ServiceNotFound` for an unknown service (`carbon/common/script/net/machoNetTransport.py:550-555`), and a
+  wrapped `exceptions.AttributeError` for a method the service does not export (`carbon/common/script/net/ObjectCallGPCS.py:100-105`,
+  wrapped by `ExceptionWrapperGPCS.py:35-45`). The client takes a None result as the call's answer (a colony dies on `None.level`, the
+  reason the released-bound-object path already answers with an error), and raises the wrapped exception at the call site. eve.rs
+  answers the non-strict default with the V24.01 error; `EVE_STRICT_RPC=1` keeps its named error with the log line. A call that names
+  no service is answered with the `UnMachoDestination` user error, as the released-object path does. Tests: `HostServerTests`
+  (`An_unknown_method_gets_a_wrapped_attribute_error...`, `A_ping_is_answered_and_an_unknown_service_gets_a_service_not_found_error`),
+  `StrictRpcTests` (flag off), and `DispatchGoldenTests` where five recorded None steps (`ErrorAnswers`) are replayed for the error answer
+  only; their state checks still run. Status: tolerated (A).
+- **Service table: the names left out.** The reference advertises 143 service names in `machoNet.GetServiceInfo`
+  (`server/src/services/machoNet/machoNetService.js:175-322`). eve.rs advertises the names it registers, and leaves out
+  23 that it does not implement: `objectCaching`, `FastCheckoutService`, `corpStationMgr`, `itemLocking`, `structure`,
+  `loadService`, `planetOrbitalRegistryBroker`, `tradeMgr`, `LSC`, `warRegistry`, `certificateMgr`, `tutorialSvc`,
+  `nes_intro`, `bookmarkMgr`, `accessGroupBookmarkMgr`, `ownerGroupManager`, `standing2`, `contractMgr`,
+  `blueprintManager`, `repairSvc`, `reprocessingSvc`, `LPSvc`, `publicGatewaySvc`. The V24.01 client calls a name it is
+  advertised only through `RemoteSvc`/`ProxySvc` or a route table (`carbon/common/script/net/ServiceCallGPCS.py:194-213`);
+  for the names above the client's calls are on demand (station, corporation, industry, LP store), local
+  (`sm.GetService`, `publicGatewaySvc`, `LSC`, `warRegistry`), or not found in eve-logic (`certificateMgr`, `tutorialSvc`,
+  `bookmarkMgr`, `ownerGroupManager`, `standing2`, `contractMgr`, `tradeMgr`). `structure` and
+  `planetOrbitalRegistryBroker` belong to the structures track. An advertised name with no service would be called and
+  answered with the unknown-service error, so a name is advertised only with a real service. Each is added when its
+  service is built (its own slice). Test: `ServiceAdvertisementTests`. Status: tolerated (A); the on-demand names are
+  listed as open in TODO.md.
+- **objectCaching is not a service here.** The reference registers it (`server/src/services/cache/objCacheService.js:38`)
+  and advertises it. In V24.01, the cache check that a call makes is local: `ServiceCallGPCS.py:185-193` asks the client's
+  own `objectCaching` (`sm.GetService`). The remote `objectCaching.GetCachableObject` is reached only when a server result
+  is an `objectCaching.CachedObject` reference (`carbon/common/script/net/objectCaching.py:299-332`,
+  `cachedObject.py:103`). eve.rs returns every cached result inline (`ObjectCaching.MethodResult`, a substream), so the
+  client never asks for one. The cache-version and invalidation calls the client makes are local too
+  (`objectCaching.py:222-225`). Building the remote service would answer calls nobody makes. The reference's proxy cache
+  (`proxyCache: true` in `beyonceService.js:2482`, `mapService.js:755`, `corpService.js:590`, `agentMgrService.js:901`)
+  would need it; a slice that returns such a reference must implement `GetCachableObject` first. Status: tolerated (A).
+- **Global-config keys: the store keys are not given yet.** The reference returns the 8 base keys and 7 keys from the New
+  Eden Store (`server/src/services/newEdenStore/storeState.js:503-527`). eve.rs gives the 8 base keys, each with a
+  consumer in the client (`globalConfig/getFunctions.py`, `ui/services/evePhotosvc.py`, `raffles/common/util.py`,
+  `expertSystems/feature_flag.py`). Of the 7, `fake_vgs_enabled` has a consumer (`eve/client/script/environment/vgsService.py:51,101`),
+  but the reference's value is derived from the store's state (`storeState.js:517`: enabled and has legacy offers), and
+  eve.rs has no store (S3, see "Store entries in the global config" above). Absent, the client reads its default (`False`,
+  `globalConfig/const.py:102`), which is the only value eve.rs can state. The other six have getters
+  (`globalConfig/getFunctions.py:233-258`) that no V24.01 caller uses, and their fast-checkout values come from the
+  FastCheckoutService (`fastcheckout/client/fastCheckoutClientService.py:76`), which eve.rs does not have. Status: deferred
+  to S3.
+- **`machoNet.SetGlobalConfigValue` is saved, and its write is observed.** The reference keeps a runtime override in
+  memory (`server/src/services/machoNet/globalConfig.js:99-117`, and `machoNetService.js:357-400`), so a restart drops it.
+  eve.rs saves it in PostgreSQL (schema `zsystem`, table `global_config`, as the reference's own `zsystem.GlobalConfig`)
+  and reads it back at start-up, because the brief requires a write to survive a restart and the Host keeps its state in
+  PostgreSQL. The reference also tells every connected client with `OnGlobalConfigUpdated`
+  (`carbon/common/script/net/machoNet.py:1494-1498`, handler `:3356-3367`); eve.rs does the same, sending None for a
+  removal, and sends the new cluster configuration to each connected front so the next login reads it (the handshake's
+  `config_vals`, `machoNet.py:1708-1709`). `isUpdate` (the other nodes of a cluster) has no effect on a single node.
+  Two further differences: (1) the write needs `ROLE_ADMIN` or `ROLE_SERVICE` on the account, as the reference's exported
+  calls say (`machoNet.py:295-296`), which the reference's own handler does not check (`machoNetService.js:357`); a player
+  is refused with `RuntimeError('RoleNotAssigned')`; (2) the bug-report server and the Honeycomb write key cannot be set or
+  removed (the reference's protected keys, `globalConfig.js:99-104`), and eve.rs refuses such a write with an error where
+  the reference ignores it silently. Without a store the call is refused, not answered as done. Tests: `GlobalConfigTests`
+  (store semantics, socket write path, PostgreSQL round trip), `MachoNetServiceTests`. Status: tolerated (A).
+- **`machoNet.GetGlobalConfig` and `GetGlobalConfigValue` answer any session.** The reference restricts both to
+  `ROLE_SERVICE` (or `ROLE_ADMIN` for the value) (`machoNet.py:293-298`). eve.rs answers any session. The values are read
+  only, and the same dictionary reaches every client in the handshake's `config_vals` (`handshake.rs:340`), so nothing
+  secret is exposed. Status: tolerated (A).
+- **Single sign-on login (`connection.LoginSso`).** The acknowledgement carries `access_token` and `computer_hash`, which
+  the client reads after an SSO login (`carbon/client/script/remote/connectionService.py:139-140`). The reference's
+  authentication returns both (`machoNet.py:3445`). eve.rs sends both as None (the reference's answer when the client sends
+  no computer hash, `authenticationService.js:288-292`). The SSO token itself is not read: the reference only records it
+  (`authenticationService.js:281`), and no token-to-account rule exists in either implementation. A real SSO token therefore
+  does not sign a pilot in; the login is the ordinary account check. Status: open (FUTURE, see TODO.md).
 
 ## Track A8c: the mobile beacon as a jump target (2026-10-10)
 
@@ -1068,7 +1138,151 @@ Sources. The wiki: "Jump drive" (https://wiki.eveuniversity.org/Jump_drive, fetc
 - Decision, jump drives into Pochven: refused the same way (the wiki: "only to exit"). Text: "Jump drives cannot be used to enter Pochven." (ours). Leaving Pochven or wormhole space is not refused (the wiki says "only to exit"; no wiki rule restricts a jump out).
 - Decision, a beacon in Pochven: not dropped, with EveJS's text "Mobile Cynosural Beacons cannot be deployed in Pochven." (EveJS line 290; the wiki's region-wide jammer agrees).
 - Deviation from EveJS, a beacon in wormhole space: the wiki says cynos "can be lit in wormhole space", so a beacon may be dropped and lit there; EveJS refuses it (line 287). The wiki is the logic source at the higher rank, so the wiki is followed. No jump can target a wormhole beacon (the rule above), so the difference has no jump effect.
-- NOT BUILT: the cynosural field generator's lighting in Pochven (the wiki's jammer). The simulation holds no region fact, and the scene's system is sent without one; a source would be a wire field on the scene (a protocol bump), not built here (TODO section 35).
+- Pochven lighting: built, see "Track A8c: the cynosural field in Pochven" below. This line used to say the simulation holds no region fact; it does (the scene's `SolarSystem.region_id`, read from the SDE), so no wire field was needed.
 - Test change: the beacon tests' null-security system (30000021, Kuharah) is in Pochven by the SDE, so those tests now use RU-97T (30000377, security -1.0, region 10000004). The inhibitor and mobile warp disruptor tests keep 30000021: neither is refused in Pochven by the rules built.
 - Tests: CynoJumpHostTests (A_revelation_cannot_jump_into_wormhole_space_or_into_pochven_even_with_a_field_lit_there, A_titan_bridge_is_refused_into_pochven_and_nothing_is_opened); BeaconHostTests (A_beacon_cannot_be_dropped_in_pochven_but_it_may_be_lit_in_wormhole_space_as_the_wiki_says).
 - NOT RUN: the client.
+
+## Slice B: failing handlers, boot services and static configuration (2026-10-10)
+
+### Failing handlers (B1)
+
+- **A failing handler.** The reference answers a call whose handler throws or rejects with a None result (EVE.js
+  `server/src/network/packetDispatcher.js`; recorded in `oracle/fixtures/services/dispatch.json` as `errors:plain / throws`
+  and `results:async / rejects`). The V24.01 server answers the same failure with a wrapped exception: a user error is sent
+  as it is, and any other exception as a wrapped `RuntimeError` with an error ID and the release form's debug tuple,
+  `(1, stack, [], id, key, node, 'server')` (`carbon/common/script/net/ExceptionWrapperGPCS.py:46-93`). eve.rs now does the
+  same (`dotnet/src/Eve.Services/PacketDispatcher.cs`, `MachoErrors.UnexpectedFailure`). The client re-raises the error at
+  the call site and logs the debug tuple under the ID (`ExceptionWrapperGPCS.py:101-145`). Two differences, both deliberate:
+  (1) the class is always `exceptions.RuntimeError`, because a .NET exception has no Python class to name; (2) the text is
+  `Unhandled error <id> in <service>.<method>` and the debug tuple carries the release server's one-line stack key, so no
+  message or stack trace reaches the client. The host logs the exception and its stack trace under the same ID (the
+  `OnProblem` sink: stderr and Sentry). A deliberate user error (`MachoErrors.ThrowUserError`) reaches the client as it is
+  and is not logged as a problem. Strict mode (`EVE_STRICT_RPC=1`) is unchanged: a named `CustomNotify` error, with the call
+  summary and the stack trace in the log. Tests: `HostServerTests` (`A_handler_that_throws_is_answered_with_a_wrapped_runtime_error...`,
+  `A_deliberate_user_error_reaches_the_client...`), `StrictRpcTests` (flag off and strict), `DispatchGoldenTests` (the two
+  recorded None steps are answered with the error; their state checks still run). Status: done.
+
+### Boot-time services and the 23 names (B2)
+
+- **The 23 advertised names stay unadvertised.** Slice A left them out (section "Handshake, machoNet and the global config");
+  slice B checked whether any of them must exist at start-up. The shell services the client starts at boot
+  (`gameui._initialize_services`, `carbon/client/script/...`) and the services started at login, character selection
+  and station load make no server call on any of the 23 names during start-up. Where a start-up `Run` makes a call, the
+  name is registered (for example `infoGatheringMgr`, `securityMgr`, `subscriptionMgr`, `account`). Each of the 23 is
+  either not called by the V24.01 client, local to it, or needed only by a feature that is used later (nes_intro, the
+  bookmarks, blueprintSvc for industry, the station repair and reprocess services, the LP store, the corporation office
+  and item locking, the plex fast checkout). A name is advertised only with a real service behind it, so these stay
+  out until their feature is built; `TODO.md` section 37 lists the owner of each. Status: decided (B2).
+- **Start-up failures of a service.** The client treats a `Run` that fails as a failed service: the failure is logged
+  and the service is marked failed, and only a synchronous caller of that service sees the error (`serviceManager.py`
+  `StartServiceRun`, `WaitForServiceObjectState`). The boot therefore continues when a boot-time service's server call
+  is unknown. The eve.rs answers that matter at start-up are listed in `TODO.md` section 37.
+
+### Static configuration recordsets (B3)
+
+- **No placeholder rows.** `config.GetMultiOwnersEx` and `config.GetMultiCorpTickerNamesEx` answered an unknown id with an
+  invented row (`Item <id>` as the owner name, the ticker `CORP`), and `GetMultiLocationsEx` answered `Station <id>`,
+  `System <id>` and `Location <id>`. AGENTS.md forbids invented payloads, and the client reads a miss from the rows, not from
+  a name: `cfg._Prime` logs an id the reply does not carry (`carbon/common/script/sys/cfg.py:600-602`), and a later `Get` raises
+  `KeyError('RecordNotFound')` (`cfg.py:643-645`). eve.rs now leaves such an id out. EveJS still answers `Item <id>`
+  (`configService.js:463-469`); this is a deliberate difference. Tests: `ConfigServiceTests` (owners, tickers, locations),
+  `HostServerTests.The_owner_rows_reach_the_client_through_the_host...`.
+- **An empty reply keeps its (header, rows) shape.** `GetMultiAllianceShortNamesEx` answered an empty list when no id
+  matched. `cfg._Prime` unpacks a tuple and raises `RuntimeError` for any other type (`cfg.py:584-592`), so the answer is the
+  header with no rows, as the other recordsets already answer. EveJS has the same empty-list reply (`configService.js:774-776`).
+  Test: `ConfigServiceTests.Alliance_short_names_return_a_client_rowset...`.
+- **Alliances are owners.** `GetMultiOwnersEx` answers a live alliance with its name and the alliance type (16159,
+  `typeAlliance`), which the client's `cfg.EveOwners.IsAlliance` reads (`eveCfg.py:1226-1227`). A deleted alliance has no row.
+- **Station positions come from the static data.** `GetMultiLocationsEx` answers a station's `x`, `y`, `z` from the SDE
+  (`npcStations.position`). A solar system has no position in the static data and is answered with 0, as EveJS does
+  (`configService.js:128-145`). Structures are not answered (their catalogue is the structures track: no row).
+- **`GetOldStationData`** answers the empty list. The static data has no list of removed stations, and the client reads the
+  answer only when it is not empty (`eveCfg.py:749-752`), so the empty list is the answer for "none".
+- **Not added: `GetMapObjects` and `GetMultiGraphicsEx`.** EveJS answers both (`configService.js:838-840`, `:857-860`), but no
+  V24.01 caller exists in eve-logic (a search of the whole client tree finds neither name). A method without a caller cannot be
+  checked against the client, so it is not added; a call to it gets the unknown-method error. Status: open for a client that
+  calls them.
+- **`GetBlackListedPlanets`** answers the empty list. The static data and the server have no planet block list; no planet is
+  blocked. EveJS answers the same (`configService.js:862-865`).
+- **`GetAverageMarketPrices` comes from the market's fills.** The payload is each type with a recorded sale: the newest day's
+  volume-weighted average over the regions (`MarketStore.LatestAverageSalesAsync`, from `market.fills`). The adjusted price is
+  the same figure, because the market has none. A type with no sale has no entry, so the client's `GetAveragePrice` returns
+  None (`typeHelpers.py:101-109`) and its callers use their own fallback. EveJS answers the base price of every published
+  type (`configService.js:306-329`); eve.rs does not use the base price as an average, since no market data backs it. In a
+  database with no sales the payload is empty. Tests: `TradingTests.The_latest_average_sale_price...` (a real trade),
+  `ConfigServiceTests.Average_market_prices...`.
+- **Not served yet: agent owners and the agent names.** The client reads an agent's owner row through the same recordset
+  (`eveCfg.py:548-560`); EveJS builds it (`buildAgentOwnerRow`). Owned by the agents track (TODO section 39).
+## Track A8c: the cynosural field in Pochven (2026-10-10)
+
+Sources. The wiki: "Pochven" (https://wiki.eveuniversity.org/Pochven, fetched 2026-10-10): "Region-wide cynosural field jammers stops anyone from lighting a cyno, which means capital ships cannot jump into the Pochven region. Note that similar to how it works in high security space and in incursion constellations, this does not stop capital ships already in the region to jump out of the region." "Cynosural field" (https://wiki.eveuniversity.org/Cynosural_field, fetched 2026-10-10): "Cynos cannot be lit in high-sec, and while they can be lit in wormhole space they serve no purpose as jump drives cannot jump to systems in wormhole space"; "Solar systems as a whole can be cyno jammed either through the navigation structure Tenebrex Cyno Jammer or a Sansha Incursion". "Jump drive" (fetched 2026-10-10): "Unlike a normal cyno, a Covert Cynosural Field ... can be generated even in cyno jammed systems" (the system jammer's covert exemption, which EveJS also has). "Wormhole space" (fetched 2026-10-10): no cyno text. The SDE (build 3396210, `sde."mapSolarSystems"`, `doc->>'regionID'`): Pochven is region 10000070. EveJS v0.12.9 `server/src/services/dogma/dogmaService/moduleOperation.js` line 2271: `CYNOSURAL_FIELD_JAMMED` raises "A cynosural system jammer is preventing cynosural fields from forming in this solar system."; `server/src/space/runtime/activationSpaceRestrictions.js` lines 189 to 200: the system jammer's refusal exempts the covert field. eve-logic: `dogma/moduleRestrictions.py` raises only `CantInEmpireSpace` and `CantInHighSecSpace`; it has no Pochven or jammer error name, and the Python source holds no client string for either, so the wording is EveJS's.
+
+- Decision, the fact: the simulation already holds the region. `World::load` reads `mapSolarSystems.regionID` into `SolarSystem.region_id` (`crates/eve-space/src/world.rs`), and `Universe::system` builds the scene's system from it (`crates/eve-space/src/sim/mod.rs`). An earlier note said the scene lacked the region fact and needed a wire field (a protocol bump). That premise was wrong, so the wire is unchanged: protocol 58, ADR 0013 and `oracle/fixtures/simlink/messages.json` are not touched.
+- Decision, the rule: a cynosural field of every kind (standard, covert, industrial) is refused in Pochven. The Pochven page's region-wide rule says the jammer stops "anyone", and the Jump drive page's covert exemption is for system jammers ("cyno jammed systems"). The region rule is the more specific one, so the covert exemption of EveJS's system jammer is not carried over. EveJS has no Pochven lighting rule to compare with.
+- Decision, where it is checked: at the simulation's activation of a field (`modules/activation.rs`), beside the inhibitor's refusal, with the reason `CYNOSURAL_FIELD_JAMMED`. The host maps the reason to EveJS's text (`ModuleRefusals.cs`). The host's own checks (the fleet, high security) stay first.
+- Decision, restart: nothing of the refusal is stored. The region comes from the SDE with the system when the scene is made, so a restarted simulation refuses the same way. The test makes the scene anew.
+- Decision, wormhole space: no lighting refusal (the wiki: fields can be lit there). The jump refusals of track A8c (`JumpDriveRules.EntryRefusal`) already read the same SDE region, through the host's `RegionOfSystem`. They stay host-side, the lighting refusal stays sim-side, and both use the SDE region id, so there is nothing to unify. A shared constant would have to exist in C# and Rust for no gain.
+- NOT BUILT: lighting refused by a Sansha incursion or a Tenebrex Cyno Jammer in a constellation (the wiki's other jammers). They need the incursion and sovereignty state, which eve.rs does not have (track A5, `GetCynoJammerState`). Abyssal space is not named by the wiki's cyno rules and is not handled here.
+- Known gap, not from this track: `CYNOSURAL_FIELD_INHIBITED` (track A8c, inhibitor) has no line in `ModuleRefusals.cs`, so the client sees "Failed to activate ...". EveJS has no text for that reason to copy; a wording would be ours.
+- Tests: `deployable::tests::a_cynosural_field_is_not_lit_in_pochven_of_any_kind_and_is_lit_elsewhere` (the sim: the standard, covert and industrial field refused in region 10000070, the standard one lit in region 10000001); `TargetingTests.A_cynosural_field_refused_by_a_jammer_says_the_jammer_is_preventing_it` (the text). Mutation: the region constant set to 0 fails the sim test; restored.
+- NOT RUN: a host PostgreSQL test of the Pochven lighting through `ActivateAsync`. The rig places the pilot by the ship's location (a station in Manifest, high security), and the rig has no way to put a pilot in Pochven. The path from the simulation's reason to the text is the same as for the other simulation refusals (`SpaceSessions.Modules.cs`, `DogmaIMService.Modules.cs`). NOT RUN: the client.
+
+
+## Character selection and entry (slice C, 2026-10-10)
+
+- **Population cap (`populationCap`).** The reference (`server/src/services/populationCap/populationCapService.js`) answers one
+  entry for every character and has no `MoveCharacterToNewSystem`. eve.rs answers the live population: a system's load is the
+  number of characters in the game in it (the sessions that entered, docked or in space, from the session's `solarsystemid2`, or
+  `solarsystemid`). The cap is 300 characters per system (`SystemPopulation.DefaultCapacity`, or `EVE_SYSTEM_POPULATION_CAP`).
+  The reference's cap is not published, so 300 is eve.rs's own choice. Reason: the moniker must reflect real state, and a cap
+  that nothing reads would be a constant answer. Status: decided (slice C); tests `PopulationCapTests`.
+- **Alternative systems.** When the home system is full, the answer lists the nearest systems that have room (by the distance
+  in the static data, nearest first, at most 8), never wormhole space or Pochven. Reason: eve-logic's dialog takes any system id,
+  and no stargate table is loaded in eve.rs, so adjacency is not available; the distance is the nearest real measure it has.
+- **A docked character is refused, not moved.** A character with a station on record keeps that station, so moving it would
+  leave the station in the old system. A full system refuses such a character with a `CustomInfo` error. Reason: the persisted
+  station and solar system must agree. The consequence is that, in practice, a full system refuses most characters rather than
+  moving them.
+- **A single alternative is saved at once.** The client loads a single entry without calling `MoveCharacterToNewSystem`
+  (`characterSelection.py:751-758`), so `GetCharacterLoadSlot` saves that system on the character. Reason: otherwise the pilot
+  would enter the full system.
+- **`SelectCharacterID` refuses a full system before any change.** The cap is checked again at selection, because the answer on
+  the screen can be stale. Known gap: the check and the session's entry are not one atomic step, so two selections into the
+  same system that check at the same moment can both pass.
+- **`multiLoginBlocker.Login` checks the computer.** The reference answers True unless `EVE_ENFORCE_ALPHA_MULTILOGIN` is set
+  (`multiLoginBlockerService.js:87-90`, off by default). eve.rs enforces the Alpha rule without a switch: a session is refused when
+  another account on the same computer hash is logged in and either account is Alpha. Reason: the clone grades here are real
+  (`SubscriptionMgrService.ResolveCloneGrade` reads the Omega licence), so the rule can apply, and the brief requires real behaviour
+  where the constant True was. The computer hash exists only on the SSO path (see "Single sign-on login"), so the client calls
+  `Login` only after SSO has been built. Status: decided (slice C); tests `MultiLoginBlockerTests`.
+- **`ToggleValidation` is per session and role-gated.** Same rule as the reference (`charService.js:1883-1902`): the content,
+  QA, programmer and GML roles may switch the flag; every other session stays on. The flag is not saved, and nothing reads it
+  (the reference does not read it either). Replaces a constant False, which a non-elevated client showed as "Validation Off" while
+  validation was on. The recording was made from a GM session, whose first toggle gives False; the live walk expects True for its
+  ordinary account, and `ValidationAndOmegaTests` pins both roles. Status: decided (slice C).
+- **`GetCharOmegaDowngradeStatus` answers False.** It was missing, so each character-screen open logged a traceback. Every
+  account's subscription ends at the open-ended time (`SubscriptionEndFileTime`), so no account has lapsed. Status: done.
+- **`GetCharacterLockType` answers None and `GetCohortsForUser` answers an empty list.** Kept: eve.rs has no transfer, sale,
+  lock or cohort state, and the reference answers the same constants (`charService.js:1458-1461`, `:1914-1916`). Status: kept.
+- **`charMgr.GetSettingsInfo` is the reference's blob, which the client cannot verify here.** The blob is byte-identical to the
+  reference's (`charMgrService.js:739-744`), unsigned. The V24.01 client verifies it with the native `Crypto.Verify`
+  (`carbonui/services/settingsSvc.py:148-150`), which needs CCP's key; eve.rs does not have it, so a signature the client
+  accepts cannot be made. A failed check is not fatal: `UpdateSettingsStatistics` runs in the session-change handler
+  (`settingsSvc.py:157-160`), the client logs the exception, and `LogSettings` is not sent. Status: open (needs the signing key).
+- **`OnCharacterSelected` takes zero positional arguments and is sent when the character changes.** The consumers take none
+  (`gameui.py:504`, `station/base.py:65`), and the V24.01 scatter calls the handler with the notification's arguments. The
+  reference sends the notification only when a plan flag is set, which defaults to off (`characterState.js:4193-4221`); eve.rs keeps
+  the owner-requested first-select notification (row 143). The client runs its window identification twice per select (the
+  scatter and the `charid` session change, `gameui.py:452-453`). Status: kept (owner-requested); the live walk expects zero arguments.
+- **`nes_intro` is not called on the character screen.** The controller is created when a player presses skip
+  (`storylines/client/nes_intro.py:32-45`, `jobboard/.../const.py:59`, `airnpetracker.py:26`). The name stays unadvertised (see
+  "Service table: the names left out"), so the skip button fails with the unknown-service error until the storyline slice exists.
+  Status: open (storylines).
+- **Survey checks answer None.** `survey.PerformSurveyChecks` answers None, as the reference does (`services/support/surveyService.js:55-58`):
+  no survey runs in this world. Status: same as the reference.
+- **Reward checks on the screen are answered in the client's shape.** `loginCampaignManager.get_client_campaign_state` (None or the
+  state), `seasonalLoginCampaignManager.get_active_campaign` (a 4-tuple, with None when no campaign runs) and
+  `loginRewardFacilities.get_my_clone_grade` (an int) are what `loginCampaignService.py` and `seasonalLoginCampaignService.py`
+  read. The screen's call at `characterSelection.py:155` has no try, so a wrong shape would abort the screen's open; the answers
+  are covered by `RewardsServiceTests`. Status: verified (slice C).

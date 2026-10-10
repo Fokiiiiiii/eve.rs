@@ -276,4 +276,18 @@ public class TradingTests
         Assert.Equal(corporationHangar1,returned.Flag);
         Assert.Equal(5,returned.Quantity);
     }
+
+    [PgFact]
+    public async Task The_latest_average_sale_price_is_the_fills_average_and_an_unsold_type_has_none()
+    {
+        await using var r=await TradeRig.Create();
+        var seller=await r.Actor("Seller One");
+        var buyer=await r.Actor("Buyer One");
+        var item=await r.Stock(seller,10);
+        await r.Trading.PlaceAsync(r.Sell(seller,item,10,10,90),"ask");
+        await r.Trading.PlaceAsync(r.Buy(buyer,10,4),"buy"); // 4 units at 10: gross 40
+        var sales=await r.Book.LatestAverageSalesAsync();
+        Assert.Equal(10m,sales[34]);
+        Assert.False(sales.ContainsKey(35));
+    }
 }

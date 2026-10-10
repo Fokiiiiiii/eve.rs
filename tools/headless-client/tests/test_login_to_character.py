@@ -183,6 +183,11 @@ def test_the_recorded_walk_replays():
                 continue
             if method == "GetNumCharacters" and not REFERENCE:
                 recorded_ok = min(recorded_ok, 3)  # DEVIATION (slots), see above
+            if method == "ToggleValidation":
+                # The recording was made from a GM session (role bit 54), whose first toggle turns the check off. The walk's
+                # account is not elevated, and for such a session the answer is True (charService.js:1883-1891). The elevated
+                # answer is pinned by ValidationAndOmegaTests in the dotnet suite.
+                recorded_ok = True
             problems += same_way(recorded_ok, outcome, where)
 
         # Compare the recorded session and skills packets after checking eve.rs's extra selection notification.
@@ -238,12 +243,49 @@ def test_new_account_enters_a_new_character_with_named_arguments():
         assert client.session.session_init.get("charid") == character_id
         if not REFERENCE:
             selected = next(event for event in notifications_of(client) if event["name"] == "OnCharacterSelected")
-            assert selected["args"] == {"$tuple": [0, {"$tuple": [1, {"$tuple": [[]]}]}]}
+            # Zero positional arguments: GameUI.OnCharacterSelected(self) and StationSvc.OnCharacterSelected(self)
+            # take none, so a one-element tuple would raise TypeError inside the scatter.
+            assert selected["args"] == {"$tuple": [0, {"$tuple": [1, {"$tuple": []}]}]}
         mail = m.plain(client.call("mailMgr", "SyncMail", None, None))
         expected_title = "Welcome to EveJS Elysian" if REFERENCE else "Welcome to New Eden"
         assert any(header[1]["title"] == expected_title for header in mail[1]["newMail"])
         notifications = m.plain(client.call("notificationMgr", "GetAllNotifications"))
         assert any(row[1]["typeID"] == 1004 for row in notifications)
+
+
+GROUP_CHARACTER = 1  # appLogConst.groupCharacter
+
+
+def test_the_population_cap_answers_through_its_moniker():
+    """The selection screen's populationCap moniker: bind with (charID, groupCharacter) and a nested GetCharacterLoadSlot,
+    then call the bound object. A new character's system has room, so one entry; a move to a system that was not offered is
+    refused, and so is a move with a wrong slot key."""
+    run = uuid.uuid4().hex[:10]
+    with connect(f"walk-cap-{run}") as client:
+        creation = next(
+            step
+            for step in WALK["steps"]
+            if step["call"][1] == "CreateCharacterWithDoll" and "ok" in step
+        )
+        service, method, described = creation["call"]
+        character_id = m.plain(client.call(service, method, *[revive(value, run) for value in described]))
+        assert isinstance(character_id, int)
+
+        bound, answer = client.call(
+            "populationCap",
+            "MachoBindObject",
+            (character_id, GROUP_CHARACTER),
+            ("GetCharacterLoadSlot", (character_id,), None),
+        )
+        slots = m.plain(answer)
+        assert len(slots) == 1, slots
+        ((system_id, slot_key),) = slots.items()
+        assert isinstance(system_id, int) and len(slot_key) == 36, slots
+        assert m.plain(client.call_bound(bound, "GetCharacterLoadSlot", character_id)) == slots
+
+        for system, key in ((system_id + 1, slot_key), (system_id, "not-a-slot")):
+            with pytest.raises(p.MachoError):
+                client.call_bound(bound, "MoveCharacterToNewSystem", character_id, system, key)
 
 
 def _call(step, run):

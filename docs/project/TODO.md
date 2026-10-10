@@ -1,6 +1,6 @@
 # Current TODOs
 
-**Updated:** 2026-10-09
+**Updated:** 2026-10-10
 **Baseline:** main source commit `7379a70fdeee0e93d2ac38c1b7a7bd9ecd29da60`
 
 This list distinguishes a real behavior/provider gap from an intentionally empty default and from a method whose route already exists. These items are not missing-route work.
@@ -17,7 +17,7 @@ Do not fabricate successful state or fake backends to close these items.
 
 | Status | Service/method | Missing work |
 |---|---|---|
-| OPEN | `machoNet.SetGlobalConfigValue` | Connect the runtime global-config mutation and its client notification through a real configuration owner. The Host currently constructs the service without that callback. |
+| FUTURE | machoNet single sign-on login (`connection.LoginSso`, the `user_sso_token` of `machoNet.Authenticate`) | The acknowledgement now carries `access_token` and `computer_hash` (None), so the client no longer fails on the keys. The token is not read: EveJS records it only (`authenticationService.js:281`), and no token-to-account rule exists. Needs a decision on how a CCP SSO token maps to an account. |
 | OPEN | `insurgencySolarsystem.GetAllVisibleCampaigns`; `GetLocalCampaignClientSnapshot` | Connect a campaign snapshot producer equivalent to EveJS's Insurgency runtime controller. The route and callback boundary exist, but no campaign producer was found in `dotnet/src`. |
 | OPEN | `essMgr.GetDataForClientSolarSystem`; `GetMainBankTheftsForClientSolarSystem`; `GetReserveBankTheftsForClientSolarSystem`; `RequestMainBankUnlink`; `RequestReserveBankUnlink` | Connect the real ESS state and operation backend to `ReadSystemStateAsync` and `ExecuteAsync`. Do not synthesize thefts or unlink success. |
 | OPEN | `abyssalMgr.ClientIsReady` | Connect the runtime client-ready path and automatic trace activation. No Abyssal runtime provider was found in the current C# source. |
@@ -298,6 +298,12 @@ The start scripts are `tools/windows/` (`start-server.bat`, `start-server-dev.ba
 - `structureHangarViewMgr.GetMyHangarViewState`: existing persistence callback is connected.
 - publicQaToolsServer.SlashCmd delegates to the existing slash service. CanGiveItemForMultifit returns false in EveJS and RS, so those responses are aligned.
 - SignalTracker registration: Host callback and session registration are implemented; the snapshot producer remains open.
+- `machoNet.SetGlobalConfigValue` (slice A, 2026-10-10): the write is saved in PostgreSQL (`zsystem.global_config`, `EVE_GLOBAL_CONFIG_SCHEMA`), read back at start-up, sent to connected clients as `OnGlobalConfigUpdated` (None for a removal), republished to the fronts for the next handshake, limited to ROLE_ADMIN or ROLE_SERVICE, and the bug-report server and Honeycomb key are protected. Tests: `GlobalConfigTests` (store, socket, PostgreSQL). Differences from EVE.js are in DEVIATIONS.md ("Handshake, machoNet and the global config").
+- A failing handler on a non-strict host (slice B, B1): answered with the V24.01 wrapped `RuntimeError` under an error ID, not None; the host logs the exception under that ID. Tests: `HostServerTests`, `StrictRpcTests`, `DispatchGoldenTests`.
+- Unknown service and unknown method on a non-strict host: answered with the V24.01 wrapped error (`eveexceptions.ServiceNotFound` / `exceptions.AttributeError`), not None (slice A). Tests: `HostServerTests`, `StrictRpcTests`, and the golden replays with `ErrorAnswers`. DEVIATIONS.md ("Unknown service and method").
+- The login acknowledgement carries `access_token` and `computer_hash` (slice A; None for a password login). Test: `crates/eve-net/tests/handshake.rs`.
+- The advertised service table is checked against the registry (slice A): every advertised name reaches a registered service, and the 23 names the reference advertises but eve.rs does not register are documented, not advertised. Test: `ServiceAdvertisementTests`.
+- `tools/dev/run-eve-live.sh` exits non-zero when the host socket or the front port does not come up (slice A), with a hint when the host was in its market seed.
 - `BeyonceService.CurrentFileTime`: the alleged compile failure does not reproduce on main; the FILETIME helper and Fleet tests/builds pass.
 
 ## Source files for the open provider checks
@@ -750,6 +756,29 @@ Open, each with its blocker:
 - NOT TESTED: a host jump to an anchored beacon and the simulation's arrival at it (the code path exists; no test drives it).
 - NOT RUN: the client.
 
+## 37. Services the client calls on demand, not yet advertised (slice A, 2026-10-10)
+
+The reference advertises these 23 names; eve.rs does not register them, so it does not advertise them (DEVIATIONS.md, "Handshake, machoNet and the global config"). Each is listed with the slice that builds it. Advertise a name only with a real service behind it.
+
+| Status | Name | Owner | Client call (eve-logic) |
+|---|---|---|---|
+| OPEN | `corpStationMgr`, `itemLocking`, `ownerGroupManager`, `standing2`, `contractMgr`, `certificateMgr`, `tutorialSvc`, `bookmarkMgr` | Slice D / corporations / contracts | eveMoniker.py:111; corporation/itemLocking.py:27; not called in eve-logic (certificateMgr, tutorialSvc, bookmarkMgr, ownerGroupManager, standing2, contractMgr) |
+| OPEN | `accessGroupBookmarkMgr` | bookmarks: a handle at `bookmarkSvc.Initialize`, called on use (address book, bookmark menus); not at start-up (slice B2) | bookmarks/bookmarkSvc.py:40-41 |
+| OPEN | `blueprintManager` | industry, lazy: `blueprintSvc.Run` calls `GetLimits()` and reads `maxBlueprintResults`, so a window that starts it fails at once (slice B2: not at start-up; no source for the limit yet) | industry/blueprintSvc.py:22-25 |
+| OPEN | `repairSvc`, `reprocessingSvc`, `LPSvc` | Slice D (station services), LP store later | eveMoniker.py:101, 227; station/repairshop/base_repairshop.py:58; loyaltyPointStore/lpStoreSvc.py:63 |
+| OPEN | `nes_intro` | storylines, lazy: the controller is built on the user's skip action only (slice B2) | storylines/client/nes_intro.py:45; airnpetracker.py:26 |
+| OPEN | `hackingMgr` | hacking minigame, lazy: the handle is made in `hackingUISvc.Run`, calls on use (slice B2) | eve/client/script/ui/hacking/hackingUISvc.py (Run) |
+| OPEN | `FastCheckoutService` | plex store (fast checkout) | fastcheckout/client/fastCheckoutClientService.py:26 |
+| OPEN | `loadService`, `tradeMgr`, `warRegistry`, `LSC`, `publicGatewaySvc`, `planetOrbitalRegistryBroker`, `structure` | cluster tool / local services / structures track (other Claude) | loadService.py:70-321; eveMachoNet.py:253; eveMoniker.py:197 (local); devtools only; gateway (client-local); eveplanet/orbital.py:35 |
+| OPEN | `objectCaching` (remote `GetCachableObject`) | required before any result is returned as a `CachedObject` reference (the proxy cache of EVE.js) | objectCaching.py:299-332 |
+
+Slice B (B2, 2026-10-10): no name on this list is needed during start-up (boot, login, character selection, station load). Every remote name a start-up path calls is registered, except the four lazy names above (`blueprintManager`, `accessGroupBookmarkMgr`, `hackingMgr`, `nes_intro`), and none of those is reached before a player acts. The start-up calls that are answered: `securityMgr.get_modified_systems` (an empty dictionary: no modified-security source yet), `loginCampaignManager`, `seasonalLoginCampaignManager`, `loginRewardFacilities` (character screen), `subscriptionMgr.GetCloneGrade`, `achievementTrackerMgr` (charid session change), `infoGatheringMgr.GetStateAndConfig` (gathering off), `mailMgr`, `account.GetCashBalance`.
+
+## 38. Non-strict host: a failing handler (slice A finding, closed in slice B, 2026-10-10)
+
+| Status | Item | Missing work |
+|---|---|---|
+| CLOSED (B1) | A handler that throws or rejects is answered with the V24.01 server's wrapped error under an error ID (`PacketDispatcher.cs`, `MachoErrors.UnexpectedFailure`); the host logs the exception under the same ID. A deliberate user error is answered as before. Strict mode is unchanged. DEVIATIONS.md, "Slice B: failing handlers", "A failing handler". Tests: `HostServerTests`, `StrictRpcTests`, `DispatchGoldenTests`. | None. |
 
 ## 35. Track A8c: the mobile beacon as a jump target, the fleet notices, the inhibitor, the wormhole and Pochven rules (2026-10-10)
 
@@ -771,7 +800,7 @@ Increment 4, done (tests: `CynoJumpHostTests`: A_revelation_cannot_jump_into_wor
 - The SDE puts Kuharah (30000021), the null-security system of the beacon tests, in Pochven (region 10000070): those tests now use RU-97T (30000377).
 
 Open, each with its blocker (the remaining increments):
-- NOT BUILT: a cynosural field generator's lighting in Pochven (the wiki's region-wide jammer). Blocker: the simulation holds no fact about the system's region; the scene needs it on the wire (a protocol bump), as the inhibitor's range was.
+- DONE (track A8c, decisions in DEVIATIONS "Track A8c: the cynosural field in Pochven"): a cynosural field of any kind is not lit in Pochven (the wiki's region-wide jammer): `CYNOSURAL_FIELD_JAMMED` at the simulation's activation, text from EveJS. The region is the SDE's and the simulation already holds it, so no wire change. Tests: `deployable::tests::a_cynosural_field_is_not_lit_in_pochven...`, `TargetingTests.A_cynosural_field_refused_by_a_jammer...`. NOT RUN: a PostgreSQL host test of the Pochven lighting (the rig cannot place a pilot in Pochven), the client.
 - Shortcut: a beacon that is lit before a restart is not told to its fleet again (as the field of track A6; the notice is sent when it anchors, not when a ship returns to the system).
 - Shortcut: a bridge or a conduit does not survive a restart of the host (track A9, unchanged), so a beacon jump to a bridge opened before the restart is not possible; the beacon itself comes back.
 - NOT RUN: the client and the MITM capture (`tools/mitm/README.md`): the beacon's menu entry, the fleet's notices, the bridge's notice and the jump's arrival at a beacon are not seen in the client. The host jump to an anchored beacon is tested at the host (`A_revelation_jumps_to_an_anchored_beacon...`), the simulation's arrival at a beacon is not driven by a test.
@@ -784,3 +813,41 @@ Done (tests: `ModuleBonusTests` (PgFact: each module fitted with its skills at l
 - Crimewatch timer test: the race was in the test. It waited for the attacker's session to have three packets and then read the victim's session, but the system flag reaches each in-space session in turn. The test now waits for each session's own packet and for the timers' next wait; a probe that pauses the attacker's third send fails the old test and passes the new one. Ten consecutive runs under a CPU burner are green.
 - The Blockade Runner: the wiki states no module restriction; none is built.
 - NOT RUN: the client.
+
+## 39. Static configuration recordsets (slice B3, 2026-10-10)
+
+The `config` service answers the client's owner, ticker, alliance, location and station recordsets from the stores and the
+static data; an id it does not have has no row (DEVIATIONS.md, "Static configuration recordsets (B3)").
+
+| Status | Item | Missing work |
+|---|---|---|
+| OPEN | Structure locations in `GetMultiLocationsEx` | a structure has no row until the structures track (other Claude) answers it: `EveJS configService.js:585-599` reads the structure state. |
+| OPEN | Agent owners in `GetMultiOwnersEx` | the agent's owner row (EveJS `buildAgentOwnerRow`) needs the agents track (agent names from the static data). |
+| OPEN | `GetMapObjects`, `GetMultiGraphicsEx` | EveJS answers both; no V24.01 caller in eve-logic. Add with the caller that needs them. |
+| OPEN | Station and system positions for `positions` (`GetPositionEx`, `GetPositionsEx`) | BOUNDARY: space and ballpark (other Claude). |
+
+Closed in slice B3 (2026-10-10): `GetAverageMarketPrices` answers each type with a recorded sale, from the market's fills (DEVIATIONS.md, "Static configuration recordsets (B3)"); a type with no sale is absent, so the client's `GetAveragePrice` returns None. Tests: `TradingTests`, `ConfigServiceTests`. An empty market gives an empty payload.
+
+
+## 40. Character selection and entry (slice C, 2026-10-10)
+
+Done in slice C (DEVIATIONS.md, "Character selection and entry (slice C, 2026-10-10)"):
+- `populationCap`: the live per-system load, the nearest alternatives, the saved move, the selection refusal (`PopulationCapTests`).
+- `multiLoginBlocker.Login`: the computer hash and clone grade are recorded; the Alpha rule refuses a second account on the same computer (`MultiLoginBlockerTests`).
+- `ToggleValidation` by role, `GetCharOmegaDowngradeStatus` answered (`ValidationAndOmegaTests`).
+- `OnCharacterSelected` expectation in the live walk corrected to zero arguments; new live step `test_the_population_cap_answers_through_its_moniker`.
+- Verified against the client and left as they are: `GetCharacterSelectionData` 4-tuple and row fields, `GetCharacterLockType`, `GetCohortsForUser`, the session attribute set, the reward checks, the entry hooks' order.
+
+Open after slice C:
+| Status | Item | Owner / where |
+|---|---|---|
+| OPEN | `charMgr.GetSettingsInfo`: the client's native `Crypto.Verify` needs CCP's signing key; the failure is logged and `LogSettings` is skipped | DEVIATIONS, slice C; needs a decision on signing |
+| OPEN | SSO login: the computer hash and the token are not produced, so `multiLoginBlocker.Login` is not reached | slice A gap G1 (DEVIATIONS "Single sign-on login") |
+| OPEN | `SelectCharacterID` population check and the entry are not atomic (two selections into a full system can both pass) | DEVIATIONS, slice C |
+| OPEN | `populationCap` alternatives are the nearest systems by distance; the reference's neighbours (stargates) need a stargate table in the static data | static data (Slice B follow-up) |
+| OPEN | `nes_intro` service (the skip action) | storylines, later slice |
+| OPEN | Live suite isolation: the mailboxes live in the shared `gamestore.mail` table, which the live script does not scope to its scratch schemas; character ids restart each run, so a new character can inherit unread mail left by an earlier run (slice C saw eight bloodline failures, `unreadMailCount` 2 for 1; the table was backed up and its mailbox rows cleared) | live script (`tools/dev/run-eve-live.sh`) and the game store |
+| OPEN | Entry path: the achievement answer `achievementTrackerMgr.GetCompletedAchievementsAndClientEventCount` is a hard-coded fixture payload (`LoginInitializationRpcServices.cs`, B2) and is sent at every character entry | achievements slice |
+| OPEN | Station entry: `map.GetStationInfo`, `stationSvc.GetStationItemBits`, `invbroker.GetItemDescriptor`, `station.GetGuests` (init-requirements #19-#21) | Slice D |
+| BOUNDARY | `beyonce.GetFormations` (#23) and the space ballpark load; `dogmaIM` station and ship dogma locations (#22) | the ships / space track (other Claude) |
+| BOUNDARY | Docked-ship deferred change and fitting bootstrap: implemented in the entry hooks (`SpaceSessions`, `CharacterDogmaSync`); the ship state belongs to the ships track | ships track (other Claude) |

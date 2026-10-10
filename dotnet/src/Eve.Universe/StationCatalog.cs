@@ -3,11 +3,11 @@ using Eve.Sde;
 
 namespace Eve.Universe;
 
-/// <summary>A station of the static data: what it is called and where it is.</summary>
+/// <summary>A station of the static data: what it is called and where it is (its position in the system, in metres).</summary>
 public sealed record Station(
     long Id, int TypeId, string Name, long OwnerId, string OwnerName, long? FactionId, string FactionName, int OperationId, long OrbitId,
     int SolarSystemId, string SolarSystemName, int ConstellationId, string ConstellationName, int RegionId, string RegionName,
-    double Security, double ReprocessingStationsTake, int ReprocessingHangarFlag);
+    double Security, double ReprocessingStationsTake, int ReprocessingHangarFlag, double X = 0, double Y = 0, double Z = 0);
 
 /// <summary>The stations of the game, with the names the client shows, read from the static data.</summary>
 public sealed class StationCatalog
@@ -90,10 +90,15 @@ public sealed class StationCatalog
                 owner, corporation.Name, corporation.Faction, corporation.Faction is { } faction ? factions.GetValueOrDefault(faction, "") : "", operation,
                 doc.TryGetProperty("orbitID", out var orbit) && orbit.ValueKind == JsonValueKind.Number ? orbit.GetInt64() : 0,
                 system, place.Name, place.Constellation, constellationName, place.Region, regionName, place.Security,
-                Number(doc, "reprocessingStationsTake"), (int)Number(doc, "reprocessingHangarFlag")));
+                Number(doc, "reprocessingStationsTake"), (int)Number(doc, "reprocessingHangarFlag"),
+                PositionAxis(doc, "x"), PositionAxis(doc, "y"), PositionAxis(doc, "z")));
         }
         return new StationCatalog(list);
     }
 
     private static double Number(JsonElement doc, string name) => doc.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.Number ? v.GetDouble() : 0d;
+
+    /// <summary>One coordinate of the station's <c>position</c> object in the static data (0 when the data has none).</summary>
+    private static double PositionAxis(JsonElement doc, string axis) =>
+        doc.TryGetProperty("position", out var position) && position.ValueKind == JsonValueKind.Object ? Number(position, axis) : 0d;
 }

@@ -370,6 +370,10 @@ where
             ("sessionID", Value::Long(session_id as i64)),
             ("client_hash", Value::None),
             ("user_clientid", Value::Long(client_id as i64)),
+            // The reference's authentication result: no access token (the SSO token is not exchanged here) and no computer
+            // hash (the client sends none). The client reads both keys after an SSO login (connectionService.LoginSso).
+            ("access_token", Value::None),
+            ("computer_hash", Value::None),
         ]),
     )
     .await?;

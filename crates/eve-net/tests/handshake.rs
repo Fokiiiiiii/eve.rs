@@ -107,6 +107,11 @@ async fn a_login_completes_and_the_client_sees_what_the_evecli_tests_expect() {
     assert_eq!(dict_get(&session.session_init, "role").and_then(int_of), Some(0x1_0000_0000_0000));
     assert_eq!(dict_get(&session.session_init, "address").and_then(text_of).as_deref(), Some("127.0.0.1"));
 
+    // the authentication result the client reads after its login (connectionService.LoginSso, GPS.py merge): both keys are
+    // present, None for a password login
+    assert_eq!(dict_get(&session.acknowledgement, "access_token"), Some(&Value::None));
+    assert_eq!(dict_get(&session.acknowledgement, "computer_hash"), Some(&Value::None));
+
     // the server handshake dictionary
     assert_eq!(dict_get(&session.handshake, "macho_version").and_then(int_of), Some(496));
     assert_eq!(dict_get(&session.handshake, "proxy_nodeid").and_then(int_of), Some(0xFFAA));

@@ -57,10 +57,8 @@ internal sealed partial class CharacterServicesComposition
                 async (call, ct) =>
                 {
                     if (call.Method == "UserLogOffCharacter")
-                    {
-                        call.Session.AfterResponse(call.Session.Close);
-                        return PyBool.True;
-                    }
+                        return PyValue.Of(await new CharacterLogoff(characters, online, characterEntryHooks, now)
+                            .LogOffAsync(call.Session, ct).ConfigureAwait(false));
                     if (call.Method == "CreateRedeemTokenQA")
                         return await storeRuntime.CreateRedeemTokenQAAsync(call, ct).ConfigureAwait(false);
                     return null;

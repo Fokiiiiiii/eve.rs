@@ -276,9 +276,12 @@ public sealed partial class KiringMgrService
         CompatibilityRpc.Invoke(call, RpcHandler, static () =>
             new PyStr($"evejs-kiring-{DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()}"));
 
+    /// <summary>
+    /// No redeeming-code store exists, so no code is accepted: the answer is False (DEVIATIONS, "Account and social requests").
+    /// </summary>
     [Method("ActivateRedeemingCode")]
     public ValueTask<PyValue> ActivateRedeemingCode(ServiceCall call) =>
-        CompatibilityRpc.Invoke(call, RpcHandler, static () => PyBool.True);
+        CompatibilityRpc.Invoke(call, RpcHandler, static () => PyBool.False);
 
     private PyValue Configuration()
     {

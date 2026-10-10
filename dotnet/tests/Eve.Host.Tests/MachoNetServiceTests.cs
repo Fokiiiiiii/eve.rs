@@ -120,8 +120,9 @@ public class MachoNetServiceTests
     }
 
     [Fact]
-    public async Task An_unknown_method_is_answered_with_none_as_the_reference_does()
+    public async Task An_unknown_method_is_none_from_the_service_itself_and_the_dispatcher_answers_the_error()
     {
+        // The service's own CallAsync has nothing for it; PacketDispatcher checks HasMethod first (see HostServerTests).
         Assert.Equal(PyNone.Instance, await Call("NoSuchMethod"));
     }
 
@@ -160,20 +161,56 @@ public class MachoNetServiceTests
           Assert.Equal(new PyInt(1), cinematic["air_npe_enabled"]);
     }
 
+    private static ClientSession AdminSession()
+    {
+        var session = new ClientSession();
+        session.Set("accountRole", new PyLong(1L << 56)); // ROLE_ADMIN
+        return session;
+    }
+
     [Fact]
-    public async Task SetGlobalConfigValue_is_exposed_and_returns_none_without_a_write_backend()
+    public async Task SetGlobalConfigValue_without_a_write_backend_is_refused_not_dropped()
     {
         IService service = new MachoNetService(new Info(), () => NowMs);
         Assert.True(service.HasMethod("SetGlobalConfigValue"));
 
-        var result = await service.CallAsync(new ServiceCall
+        var refused = await Assert.ThrowsAsync<MachoWrappedException>(() => service.CallAsync(new ServiceCall
         {
             Method = "SetGlobalConfigValue",
             Args = [new PyStr("new_mission_giver_enabled"), new PyStr("1")],
-            Session = new ClientSession(),
+            Session = AdminSession(),
+        }).AsTask());
+        Assert.Equal("exceptions.RuntimeError", refused.Error.ClassName);
+    }
+
+    [Fact]
+    public async Task SetGlobalConfigValue_is_for_admins_and_services_only()
+    {
+        var updates = new List<MachoNetGlobalConfigUpdate>();
+        IService service = new MachoNetService(new Info(), () => NowMs, (update, _, _) =>
+        {
+            updates.Add(update);
+            return ValueTask.CompletedTask;
         });
 
-        Assert.Same(PyNone.Instance, result);
+        var player = new ClientSession();
+        player.Set("accountRole", new PyLong(1L << 61)); // ROLE_PLAYER: an ordinary account, no admin or service bit
+        var refused = await Assert.ThrowsAsync<MachoWrappedException>(() => service.CallAsync(new ServiceCall
+        {
+            Method = "SetGlobalConfigValue",
+            Args = [new PyStr("imageserverurl"), new PyStr("http://evil/")],
+            Session = player,
+        }).AsTask());
+        Assert.Equal("exceptions.RuntimeError", refused.Error.ClassName);
+        Assert.Empty(updates);
+
+        Assert.Same(PyNone.Instance, await service.CallAsync(new ServiceCall
+        {
+            Method = "SetGlobalConfigValue",
+            Args = [new PyStr("imageserverurl"), new PyStr("http://ok/")],
+            Session = AdminSession(),
+        }));
+        Assert.Single(updates);
     }
 
     [Fact]
@@ -187,6 +224,7 @@ public class MachoNetServiceTests
             updates.Add(update);
             return ValueTask.CompletedTask;
         });
+        session.Set("accountRole", new PyLong(1L << 56)); // ROLE_ADMIN
 
         Assert.Same(PyNone.Instance, await service.CallAsync(new ServiceCall
         {

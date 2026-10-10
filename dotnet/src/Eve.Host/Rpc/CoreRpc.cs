@@ -50,6 +50,24 @@ internal sealed partial class CharacterServicesComposition
         return fighters;
     }
 
+    /// <summary>The clone grades the multi-login check reads: the same settings and the same (no-account) store as the core services.</summary>
+    private SubscriptionMgrService? _cloneGradeSource;
+
+    private SubscriptionMgrService CloneGradeSource => _cloneGradeSource ??= new SubscriptionMgrService(
+        new SubscriptionSettings(), new OmegaLicenses(new SubscriptionSettings(), new NoOmegaAccounts(), now));
+
+    /// <summary>
+    /// Who is in each solar system now. The cap is <c>EVE_SYSTEM_POPULATION_CAP</c> characters per system (a positive
+    /// whole number), or <see cref="SystemPopulation.DefaultCapacity"/>.
+    /// </summary>
+    private SystemPopulation? _systemPopulation;
+
+    private SystemPopulation SystemPopulationModel => _systemPopulation ??= new SystemPopulation(
+        characterSessions, solarSystems,
+        int.TryParse(Environment.GetEnvironmentVariable("EVE_SYSTEM_POPULATION_CAP"), out var cap) && cap > 0
+            ? cap
+            : SystemPopulation.DefaultCapacity);
+
     private IReadOnlyList<IService> CoreRpc() =>
     [
             new CharUnboundMgrService(
@@ -57,10 +75,12 @@ internal sealed partial class CharacterServicesComposition
                 newCharacterExperienceMode == "tutorial",
                 sendWelcomeMailAsync: SendNewCharacterWelcomeMailAsync,
                 unreadMailCount: ReadUnreadMailCount,
-                securityStatusOf: securityStatusOf),
-            new MultiLoginBlockerService(),
-            new PopulationCapService(characters),
-            new Eve.Services.CharacterInfo.ConfigService(characters, corporations, stations, solarSystems),
+                securityStatusOf: securityStatusOf,
+                population: SystemPopulationModel),
+            new MultiLoginBlockerService(session => CloneGradeSource.CloneGradeOf(session.Get("userid"))),
+            new PopulationCapService(characters, SystemPopulationModel),
+            new Eve.Services.CharacterInfo.ConfigService(characters, corporations, stations, solarSystems,
+                ct => market.LatestAverageSalesAsync(ct)),
             Eve.Services.Core.CoreServices.CreateLookupService(
                 new Eve.Host.PersistenceLookupDirectory(characters, corporations, sde, stations)),
             new Eve.Services.Core.SecurityMgrService(),

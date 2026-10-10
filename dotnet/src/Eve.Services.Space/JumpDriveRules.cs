@@ -92,6 +92,13 @@ public static class JumpDriveRules
     };
 
     /// <summary>
+    /// Whether a ship of a group may jump into a system of this security level. The wiki (Jump Freighters): "Jump freighters cannot use their jump drives and cynos to
+    /// jump into highsec space, but they can jump out of highsec space." Other ships are not refused here: a capital's jump out of high security is the origin's rule.
+    /// </summary>
+    public static bool MayJumpInto(int shipGroupId, Eve.Universe.SecurityClass destination) =>
+        shipGroupId != JumpFreighterGroup || !Eve.Universe.Security.IsHighSecOrHigher(destination);
+
+    /// <summary>
     /// The range in light years at a calibration level: the hull's range times (1 + the skill's percentage a level, as a fraction: 0.2 for Jump Drive Calibration).
     /// </summary>
     public static double Range(double baseRange, int calibrationLevel, double perLevel) => baseRange * (1 + perLevel * calibrationLevel);

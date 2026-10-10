@@ -556,6 +556,18 @@ private static void WriteAction(Writer w, SimAction action)
             w.F64(number);
         }
         w.F64(s.DroneDamageMultiplier);
+        // the stance (protocol 55): a flag, then when there is one its old stance, its switch time (a FILETIME) and its new stance
+        if (s.Stance is { } stance)
+        {
+            w.U8(1);
+            w.I32(stance.OldStance);
+            w.I64(stance.SwitchedAt);
+            w.I32(stance.Stance);
+        }
+        else
+        {
+            w.U8(0);
+        }
     }
 
     /// <summary>The whole frame, length prefix included.</summary>

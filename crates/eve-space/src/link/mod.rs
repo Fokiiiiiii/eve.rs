@@ -30,13 +30,13 @@ use crate::scene::{HeatModuleProfile, HeatProfile, HeatRack};
 
 use crate::strike::{Strike, StrikeShape};
 
-use crate::ship::{ModuleSpec, NpcCombat, NpcIdentity, NpcWeapon, ShipSpec};
+use crate::ship::{ModuleSpec, NpcCombat, NpcIdentity, NpcWeapon, ShipSpec, ShipStance};
 
 use crate::weapons::{Aoe, Arc, Charge, Spool, Turret};
 
 use crate::wreck::WreckKind;
 
-pub const PROTOCOL_VERSION: u16 = 55;
+pub const PROTOCOL_VERSION: u16 = 56;
 /// The message kinds.
 pub mod kind;
 

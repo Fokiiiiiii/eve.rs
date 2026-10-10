@@ -100,6 +100,16 @@ pub(super) fn put_ship(out: &mut Vec<u8>, ship: &ShipSpec) {
     ]) {
         out.extend_from_slice(&number.to_le_bytes());
     }
+    // the stance: a flag, and when there is one its old stance, its switch time (a FILETIME) and its new stance (protocol 55)
+    match ship.stance {
+        None => out.push(0),
+        Some(stance) => {
+            out.push(1);
+            out.extend_from_slice(&stance.old_stance.to_le_bytes());
+            out.extend_from_slice(&stance.switched_at.to_le_bytes());
+            out.extend_from_slice(&stance.stance.to_le_bytes());
+        }
+    }
 }
 
 pub(super) fn put_numbers(out: &mut Vec<u8>, numbers: &Numbers) {

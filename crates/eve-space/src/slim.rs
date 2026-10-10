@@ -4,7 +4,7 @@ use eve_marshal::{Descriptor, PackedColumn, PackedRow, Value, dbtype};
 
 use crate::security;
 use crate::ship::{DroneLink, NpcIdentity, Ship, ShipSpec};
-use crate::wire::{id, int, list, real, text, tuple, word};
+use crate::wire::{filetime, id, int, list, real, text, tuple, word};
 use crate::world::{Body, BodyKind, Detail, SolarSystem};
 
 type Entries = Vec<(&'static str, Value)>;
@@ -198,6 +198,19 @@ fn pilot_ship_entries(spec: &ShipSpec) -> Entries {
         ("securityStatus", number(spec.security_status)),
         ("bounty", int(0)),
     ]
+    .into_iter()
+    .chain(spec.stance.map(|stance| {
+        // the stance a ship has, as the client reads it: (old stance, when it switched as a FILETIME, new stance); a ship with none has no field
+        (
+            "shipStance",
+            tuple([
+                int(i64::from(stance.old_stance)),
+                filetime(stance.switched_at),
+                int(i64::from(stance.stance)),
+            ]),
+        )
+    }))
+    .collect()
 }
 
 /// The system's own item, a row of the client's item table (`solItem` of a `SetState`).

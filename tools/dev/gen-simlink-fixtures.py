@@ -54,6 +54,12 @@ def ship(m):
     for module in m["modules"]:
         body += i64(module["itemId"]) + struct.pack("<ii", module["typeId"], module["flag"])
     body += struct.pack("<7d", *m["sensorStrength"], m["ecmResistance"], m["energyWarfareResistance"], m.get("droneDamageMultiplier", 1.0))
+    # the stance (protocol 55): a flag, then when there is one the old stance, the switch time (a FILETIME) and the new stance
+    stance = m.get("stance")
+    if stance is None:
+        body += b"\x00"
+    else:
+        body += b"\x01" + struct.pack("<i", stance["oldStance"]) + i64(stance["switchedAt"]) + struct.pack("<i", stance["stance"])
     return body
 
 
@@ -532,6 +538,8 @@ valid = [
     {"name": "deactivate command", "kind": "Command", "sessionId": "1790646377000015", "command": 16,
      "args": [9988400001941.0]},
     {"name": "new ship numbers", "kind": "ShipSpec", "sessionId": "1790646377000015", "ship": IBIS},
+    {"name": "new ship numbers with a tactical mode switched", "kind": "ShipSpec", "sessionId": "1790646377000015",
+     "ship": dict(IBIS, stance={"oldStance": 1, "switchedAt": "134000000000000000", "stance": 3})},
 {"name": "new ship whose drones deal no damage (a P.A.N.I.C. grant)", "kind": "ShipSpec", "sessionId": "1790646377000015",
  "ship": dict(IBIS, droneDamageMultiplier=0.0)},
     {"name": "notification", "kind": "Notify", "sessionId": "1790646377000015", "notification": "OnSetTimeDilation",

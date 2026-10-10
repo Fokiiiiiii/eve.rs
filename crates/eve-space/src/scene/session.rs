@@ -190,6 +190,12 @@ impl Scene {
         let Some(pilot) = self.pilots.get_mut(&session) else { return Vec::new() };
         let armor_before = pilot.ship.health.armor_resonance();
         let old = std::mem::replace(&mut pilot.ship.spec, spec);
+        // a switch is from the stance the ship had: the host sends the new one, the simulation knows the old one
+        if pilot.ship.spec.stance != old.stance
+            && let (Some(now), Some(before)) = (pilot.ship.spec.stance.as_mut(), old.stance)
+        {
+            now.old_stance = before.stance;
+        }
         let new = &pilot.ship.spec;
         pilot.ship.health.respec(new.vitals, new.shield_recharge_ms, now);
         // a reactive armor hardener that runs is shown the armor's resonances as they now are (a pin, or a new base, moves them)
@@ -199,6 +205,8 @@ impl Scene {
             })
             .unwrap_or_default();
         let security_changed = new.security_status != old.security_status;
+        // a stance that changed is in the slim item too (`shipStance`, the reference's slim update after a switch)
+        let stance_changed = new.stance != old.stance;
         let ship_id = id(new.ship_id);
         let (owner, ship) = (new.character_id, new.ship_id);
         let mut actions = Vec::new();
@@ -217,7 +225,7 @@ impl Scene {
             told.extend(self.tell_all(session, actions));
         }
         // a security status that changed is in the slim item: the pilot and whoever sees the ship are shown it again (the reference does, when a crime costs a pilot some)
-        if security_changed {
+        if security_changed || stance_changed {
             let ship = &self.pilots[&session].ship;
             let change = payload::ship_slim_item_change(stamp, ship);
             told.extend(self.tell_all(session, vec![change]));

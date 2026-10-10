@@ -33,6 +33,32 @@ public sealed class ShipSnapshot
 
     public required Item Ship { get; init; }
 
+    /// <summary>The ship's stance, from the hidden modifier item the switch leaves (its custom info), or null for a ship with none.</summary>
+    public ShipStanceState? Stance { get; init; }
+
+    /// <summary>
+    /// The stance a ship has as its hidden modifier item tells it: <c>shipStance:{stance}</c>, or with the time of the switch as <c>shipStance:{stance}:switchedAtMs:{ms}</c>
+    /// (the reference's custom info, <c>shipStanceRuntime.js</c>). Null when no such item is in the ship.
+    /// </summary>
+    public static ShipStanceState? StanceOf(IEnumerable<Item> contents)
+    {
+        foreach (var item in contents)
+        {
+            if (item.Flag != ItemFlags.HiddenModifiers || item.CustomInfo?.Split(':') is not { } parts || parts.Length is not (2 or 4) || parts[0] != "shipStance")
+            {
+                continue;
+            }
+            if (!int.TryParse(parts[1], System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out var stance))
+            {
+                continue;
+            }
+            var switchedAt = parts.Length == 4 && parts[2] == "switchedAtMs"
+                && long.TryParse(parts[3], System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out var ms) ? ms : 0L;
+            return new ShipStanceState(stance, switchedAt);
+        }
+        return null;
+    }
+
     /// <summary>What is fitted to the ship, in the order of its slots (the charges loaded in the modules are not fitted: see <see cref="Charges"/>).</summary>
     public required IReadOnlyList<Item> Fitted { get; init; }
 
@@ -79,21 +105,21 @@ public sealed class ShipSnapshot
     /// <summary>The same ship with the other capsuleer ships of its system (see <see cref="Neighbours"/>).</summary>
     public ShipSnapshot WithNeighbours(IReadOnlyList<TransportNeighbour> neighbours) => new()
     {
-        Character = Character, Ship = Ship, Fitted = Fitted, Charges = Charges, Skills = Skills, World = World, Condition = Condition, ModuleConditions = ModuleConditions,
+        Character = Character, Ship = Ship, Fitted = Fitted, Charges = Charges, Stance = Stance, Skills = Skills, World = World, Condition = Condition, ModuleConditions = ModuleConditions,
         Neighbours = neighbours,
     };
 
     /// <summary>The same ship with what it has taken as told (a ship in space is asked of the simulation, which has it live).</summary>
     public ShipSnapshot WithCondition(ShipCondition condition) => new()
     {
-        Character = Character, Ship = Ship, Fitted = Fitted, Charges = Charges, Skills = Skills, World = World, Condition = condition, ModuleConditions = ModuleConditions, Neighbours = Neighbours,
+        Character = Character, Ship = Ship, Fitted = Fitted, Charges = Charges, Stance = Stance, Skills = Skills, World = World, Condition = condition, ModuleConditions = ModuleConditions, Neighbours = Neighbours,
     };
 
 
     /// <summary>The same ship after its dogma sources and module states have changed.</summary>
     public ShipSnapshot WithDogma(DogmaWorld world, ShipCondition condition, IReadOnlyList<CharacterSkill> skills) => new()
     {
-        Character = Character, Ship = Ship, Fitted = Fitted, Charges = Charges, Skills = skills, World = world, Condition = condition, ModuleConditions = ModuleConditions, Neighbours = Neighbours,
+        Character = Character, Ship = Ship, Fitted = Fitted, Charges = Charges, Stance = Stance, Skills = skills, World = world, Condition = condition, ModuleConditions = ModuleConditions, Neighbours = Neighbours,
     };
 
     /// <summary>What a fitted module has taken.</summary>
@@ -162,9 +188,12 @@ public sealed class ShipSnapshot
             world.SetValue(id, DogmaWorld.SkillLevel, skill.Level);
             world.SetValue(id, SkillPointsAttribute, skill.SkillPoints);
         }
-        return new ShipSnapshot { Character = character, Ship = ship, Fitted = fitted, Charges = charges, Skills = trained, World = world, Condition = condition, ModuleConditions = moduleConditions };
+        return new ShipSnapshot { Character = character, Ship = ship, Fitted = fitted, Charges = charges, Stance = StanceOf(contents), Skills = trained, World = world, Condition = condition, ModuleConditions = moduleConditions };
     }
 }
 
 /// <summary>Another capsuleer ship of the system a transport field reaches: its id, and whether it is a capital (held in place, not carried).</summary>
 public sealed record TransportNeighbour(long ShipId, bool IsCapital);
+
+/// <summary>A ship's stance and the Unix time (milliseconds) it switched to it (0 when the switch time is not known).</summary>
+public sealed record ShipStanceState(int Stance, long SwitchedAtMs);

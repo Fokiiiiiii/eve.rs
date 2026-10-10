@@ -119,7 +119,15 @@ pub(super) fn read_ship(reader: &mut Reader) -> Result<ShipSpec, DecodeError> {
     if !drone_damage_multiplier.is_finite() || drone_damage_multiplier < 0.0 {
         return Err(DecodeError::BadValue("drone damage multiplier"));
     }
+    let stance = match reader.u8()? {
+        0 => None,
+        1 => {
+            Some(ShipStance { old_stance: reader.i32()?, switched_at: reader.i64()?, stance: reader.i32()? })
+        }
+        _ => return Err(DecodeError::BadValue("ship stance flag")),
+    };
     Ok(ShipSpec {
+        stance,
         ship_id,
         character_id,
         type_id,

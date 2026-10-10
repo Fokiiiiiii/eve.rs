@@ -34,6 +34,7 @@ pub(crate) fn system() -> Arc<SolarSystem> {
 
 pub(crate) fn spec() -> ShipSpec {
     ShipSpec {
+        stance: None,
         ship_id: 9_988_400_001_939,
         character_id: 140_000_342,
         type_id: 601,
@@ -1273,6 +1274,24 @@ fn a_change_of_the_ships_numbers_tells_the_client_what_differs() {
         action_names(&scene.respec(SESSION, heavier, NOON)[0]),
         ["SetBallMass", "SetBallAgility", "SetMaxSpeed"]
     );
+}
+
+#[test]
+fn a_switched_stance_is_shown_in_the_slim_item_with_the_stance_the_ship_moved_from() {
+    let mut scene = scene();
+    let mut before = spec();
+    before.stance = Some(crate::ship::ShipStance { old_stance: 1, switched_at: NOON, stance: 1 });
+    scene.respec(SESSION, before, NOON);
+    // the host sends the new stance and its time only; the simulation keeps the stance the ship had
+    let mut switched = spec();
+    switched.stance =
+        Some(crate::ship::ShipStance { old_stance: 3, switched_at: NOON + 10_000_000, stance: 3 });
+    let out = scene.respec(SESSION, switched, NOON + 10_000_000);
+    assert_eq!(action_names(&out[0]), ["OnSlimItemChange"]);
+    let stance = scene.ship(SESSION, NOON).unwrap().spec.stance.unwrap();
+    assert_eq!((stance.old_stance, stance.stance), (1, 3));
+    let same = scene.ship(SESSION, NOON).unwrap().spec.clone();
+    assert!(scene.respec(SESSION, same, NOON).is_empty(), "nothing changed");
 }
 
 #[test]

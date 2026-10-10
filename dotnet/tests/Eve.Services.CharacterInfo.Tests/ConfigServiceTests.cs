@@ -150,6 +150,54 @@ public sealed class ConfigServiceTests
         }
     }
 
+    [ConfigServicePgFact]
+    public async Task Alliance_short_names_return_a_client_rowset_and_ignore_deleted_or_unknown_ids()
+    {
+        var url = Environment.GetEnvironmentVariable("EVE_PG_URL")!;
+        await using var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(url));
+        var schema = $"cfg_alliance_{Guid.NewGuid():N}"[..20];
+        try
+        {
+            await CorporationStore.MigrateAsync(source, schema);
+            await using (var seed = source.CreateCommand($"""
+                INSERT INTO {schema}.owner_names(owner_id,name_key,ticker_key)
+                VALUES (1400000001,'test corporation','test-corp'),
+                       (1500000001,'test alliance','test-alliance'),
+                       (1500000002,'deleted alliance','deleted-alliance');
+                INSERT INTO {schema}.corporations(
+                    id,name,ticker,ceo_id,creator_id,station_id,solar_system_id,tax_rate,lp_tax_rate,
+                    description,url,member_limit,created_ms)
+                VALUES (1400000001,'Test Corporation','TST',1,1,60000004,30000142,0,0,'','',10,0);
+                INSERT INTO {schema}.alliances(
+                    id,name,short_name,description,url,executor_corporation_id,creator_corporation_id,
+                    creator_character_id,created_ms,founding_key,deleted)
+                VALUES (1500000001,'Test Alliance','TAL','', '',1400000001,1400000001,1,0,'test-live',false),
+                       (1500000002,'Deleted Alliance','DEL','', '',1400000001,1400000001,1,0,'test-deleted',true);
+                """))
+                await seed.ExecuteNonQueryAsync();
+
+            var store = new CorporationStore(source, null!, null!, null!, null!, () => 0, schema);
+            var service = new ConfigService(null!, store, null!, null!);
+            Assert.True(((Eve.Services.IService)service).HasMethod("GetMultiAllianceShortNamesEx"));
+
+            var value = await service.GetMultiAllianceShortNamesEx(
+                Call("GetMultiAllianceShortNamesEx", [1500000001, 1500000002, 1500000003, 1500000001], new ClientSession()));
+            var rows = Rows(value, ["allianceID", "shortName"]);
+            var row = Assert.Single(rows);
+            Assert.Equal(1500000001, Integer(row[0]));
+            Assert.Equal("TAL", Text(row[1]));
+
+            var empty = await service.GetMultiAllianceShortNamesEx(
+                Call("GetMultiAllianceShortNamesEx", [1500000002, 1500000003], new ClientSession()));
+            Assert.Empty(Assert.IsType<PyList>(empty).Items);
+        }
+        finally
+        {
+            await using var cleanup = source.CreateCommand($"DROP SCHEMA IF EXISTS {schema} CASCADE");
+            await cleanup.ExecuteNonQueryAsync();
+        }
+    }
+
     private static ServiceCall Call(string method, IReadOnlyList<long> ids, ClientSession session) =>
         new()
         {

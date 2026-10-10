@@ -49,6 +49,7 @@ internal sealed partial class CharacterServicesComposition
             {
                 Speed = double.Parse(Env("EVE_SKILL_TRAINING_SPEED", "1"), System.Globalization.CultureInfo.InvariantCulture),
                 HasOmega = account => omega.Resolve(new PyInt(account)).HasLicense,
+                Attribute = skills.LearningAttribute,
             },
             now);
     }

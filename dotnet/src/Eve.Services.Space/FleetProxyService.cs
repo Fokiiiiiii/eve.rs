@@ -18,23 +18,57 @@ public sealed partial class FleetProxyService(FleetStore store, Func<string, lon
             PyWString text when long.TryParse(text.Value, out var parsed) => parsed,
             _ => 0
         };
-        var characterId = call.Session.CharacterId ?? call.Session.GetInt("charid") ?? 0;
-        if (fleetId <= 0 || characterId <= 0) return PyBool.False;
+        var characterId = CharacterId(call.Session);
+        if (fleetId <= 0 || characterId <= 0)
+            throw MachoErrors.ThrowUserError("FleetNotFound");
         var autoAccept = call.Arg(1) switch
         {
             PyBool boolean => boolean.Value,
             PyInt number => number.Value != 0,
             _ => false
         };
-        if (autoAccept && await store.JoinAsync(fleetId, characterId, call.Cancellation) is { } member)
+        var snapshot = await store.SnapshotAsync(fleetId, call.Cancellation);
+        var advert = await store.ReadJoinAdvertPolicyAsync(fleetId, call.Session, call.Cancellation);
+        if (snapshot is null || !snapshot.IsRegistered || advert is null)
+            throw MachoErrors.ThrowUserError("FleetNotFound");
+        if (!advert.Value.IsVisible)
+            throw MachoErrors.ThrowUserError("FleetNotAllowed");
+        if (advert.Value.JoinLimit is { } joinLimit && snapshot.Members.Count >= joinLimit)
+            throw MachoErrors.ThrowUserError("FleetTooManyMembers");
+        if (await store.FleetIdForCharacterAsync(characterId, call.Cancellation) is not null)
+            throw MachoErrors.ThrowUserError("FleetError");
+
+        var bossId = FleetObjectService.BossCharacterId(snapshot);
+        if (bossId is null)
+            throw MachoErrors.ThrowUserError("FleetNotFound");
+        if (advert.Value.JoinNeedsApproval)
         {
-            call.Session.Set("fleetid", new PyLong(fleetId));
-            call.Session.Set("fleetrole", new PyInt(member.Role));
-            call.Session.Set("wingid", new PyLong(member.WingId));
-            call.Session.Set("squadid", new PyLong(member.SquadId));
-            return PyBool.False;
+            var request = FleetObjectService.JoinRequestFromSession(call.Session);
+            if (!await store.RequestJoinAsync(fleetId, request, call.Cancellation))
+                return PyBool.False;
+            sessionForCharacter?.Invoke(bossId.Value)?.SendNotification(
+                "OnFleetJoinRequest", "fleetid",
+                FleetObjectService.JoinRequestValue(request, call.Session));
+            return PyBool.True;
         }
-        return await store.RequestJoinAsync(fleetId, characterId, call.Cancellation) ? PyBool.True : PyBool.False;
+
+        var (wingId, squadId) = DefaultPlacement(snapshot);
+        if (await store.InviteAsync(fleetId, bossId.Value, characterId, wingId, squadId,
+                FleetStore.Member, call.Cancellation))
+            FleetObjectService.SendInviteNotification(call.Session, fleetId, bossId.Value, autoAccept);
+        return PyBool.False;
+    }
+
+    private static (long WingId, long SquadId) DefaultPlacement(FleetSnapshot snapshot)
+    {
+        if (snapshot.AutoJoinSquadId is { } autoJoinSquadId)
+            foreach (var wing in snapshot.Wings)
+                if (wing.Squads.Any(squad => squad.SquadId == autoJoinSquadId))
+                    return (wing.WingId, autoJoinSquadId);
+        var firstWing = snapshot.Wings.FirstOrDefault();
+        if (firstWing is null || firstWing.Squads.Count == 0)
+            throw MachoErrors.ThrowUserError("FleetNoPositionFound");
+        return (firstWing.WingId, firstWing.Squads[0].SquadId);
     }
 }
 

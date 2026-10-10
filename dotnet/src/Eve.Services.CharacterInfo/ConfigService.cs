@@ -117,6 +117,23 @@ public sealed partial class ConfigService(
         return TupleSet(CorporationColumns, rows);
     }
 
+    [Method("GetMultiAllianceShortNamesEx")]
+    public async ValueTask<PyValue> GetMultiAllianceShortNamesEx(ServiceCall call)
+    {
+        var ids = RequestedIds(call.Arg(0));
+        if (ids.Length == 0)
+            return new PyList([]);
+
+        var alliances = (await corporations.AlliancesByIdsAsync(ids, call.Cancellation))
+            .Where(alliance => !alliance.Deleted)
+            .ToDictionary(alliance => alliance.Id);
+        var rows = ids
+            .Where(alliances.ContainsKey)
+            .Select(id => Row(PyValue.Of(id), PyValue.Of(alliances[id].ShortName)))
+            .ToArray();
+        return rows.Length == 0 ? new PyList([]) : TupleSet(["allianceID", "shortName"], rows);
+    }
+
     [Method("GetMultiLocationsEx")]
     public ValueTask<PyValue> GetMultiLocationsEx(ServiceCall call)
     {

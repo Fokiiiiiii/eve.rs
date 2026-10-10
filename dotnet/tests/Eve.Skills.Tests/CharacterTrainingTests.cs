@@ -22,7 +22,12 @@ internal sealed class TrainingRig : IAsyncDisposable
         _schema = schema;
         Catalog = new SkillCatalog([Turret, Command, Rank5], new Dictionary<int, IReadOnlyList<StartingSkill>>());
         Store = new PgTrainingStore(schema.Source, schema.Name);
-        Training = new CharacterTraining(schema.Source, Catalog, schema.Store, Store, settings, () => ClockMs);
+        Training = new CharacterTraining(schema.Source, Catalog, schema.Store, Store, new TrainingSettings
+        {
+            Speed = settings.Speed,
+            HasOmega = settings.HasOmega,
+            Attribute = schema.Store.LearningAttribute,
+        }, () => ClockMs);
         Training.Settled += update =>
         {
             Settlements.Add(update);
@@ -124,6 +129,28 @@ public class CharacterTrainingTests
         Assert.Equal(new CharacterSkill(3301, 1, 550), view.Skills.Single(s => s.TypeId == 3301));  // ten minutes at 30 a minute
         Assert.Equal(550 + 8000 + 1250, view.TotalPoints);
         Assert.Equal(250, (await rig.Skills.ForCharacterAsync(TrainingRig.Character)).Single(s => s.TypeId == 3301).SkillPoints); // stored until it is carried
+    }
+
+    [PgFact]
+    public async Task Neural_remap_settles_old_rate_then_rebases_the_running_queue_at_the_new_rate()
+    {
+        await using var rig = await TrainingRig.CreateAsync();
+        await rig.GiveAsync(TrainingRig.Character);
+        await rig.StartAsync(3301, 2);
+        rig.Wait(10 * Minute);
+
+        var update = await rig.Training.RespecAsync(
+            TrainingRig.Character, TrainingRig.Account,
+            new Dictionary<int, int> { [164] = 17, [165] = 17, [166] = 17, [167] = 27, [168] = 21 });
+
+        Assert.NotNull(update);
+        Assert.Equal(550, update.View.Skills.Single(skill => skill.TypeId == 3301).SkillPoints);
+        Assert.Equal(37.5, update.View.Queue[0].PointsPerMinute);
+        Assert.Equal(rig.Training.Now, update.View.Queue[0].Start);
+
+        rig.Wait(10 * Minute);
+        var later = await rig.Training.ViewAsync(TrainingRig.Character, TrainingRig.Account);
+        Assert.Equal(925, later.Skills.Single(skill => skill.TypeId == 3301).SkillPoints);
     }
 
     [PgFact]

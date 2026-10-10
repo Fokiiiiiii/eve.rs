@@ -95,6 +95,16 @@ public sealed partial class FleetStore(System.Data.Common.DbDataSource source, s
 
     public static bool IsValidName(string? name) => name is not null && name.Length <= MaxNameLength;
 
+    public static readonly Eve.Data.Migration FleetJoinRequestProfileMigration = new(
+        "007_fleet_join_request_profile",
+        """
+        ALTER TABLE fleet_join_requests
+            ADD COLUMN corporation_id bigint,
+            ADD COLUMN alliance_id bigint,
+            ADD COLUMN war_faction_id bigint,
+            ADD COLUMN security_status double precision NOT NULL DEFAULT 0;
+        """);
+
     private static long CurrentFileTime() => DateTime.UtcNow.ToFileTimeUtc();
 
     public async Task<long> CreateAsync(long leaderCharacterId, CancellationToken cancellationToken = default)
@@ -170,10 +180,15 @@ public sealed partial class FleetStore(System.Data.Common.DbDataSource source, s
 
         var requests = new List<FleetJoinRequest>();
         await using (var query = Command(connection, null,
-            $"SELECT character_id FROM {_schema}.fleet_join_requests WHERE fleet_id = $1 ORDER BY created_at, character_id", fleetId))
+            $"SELECT character_id, corporation_id, alliance_id, war_faction_id, security_status FROM {_schema}.fleet_join_requests WHERE fleet_id = $1 ORDER BY created_at, character_id", fleetId))
         await using (var reader = await query.ExecuteReaderAsync(cancellationToken))
         {
-            while (await reader.ReadAsync(cancellationToken)) requests.Add(new FleetJoinRequest(reader.GetInt64(0)));
+            while (await reader.ReadAsync(cancellationToken))
+                requests.Add(new FleetJoinRequest(reader.GetInt64(0),
+                    reader.IsDBNull(1) ? null : reader.GetInt64(1),
+                    reader.IsDBNull(2) ? null : reader.GetInt64(2),
+                    reader.IsDBNull(3) ? null : reader.GetInt64(3),
+                    reader.GetDouble(4)));
         }
 
         var wings = wingRows.Select(wing => new FleetWingSnapshot(wing.Id, wing.Name,
@@ -376,11 +391,13 @@ public sealed partial class FleetStore(System.Data.Common.DbDataSource source, s
     {
         await using var connection = await source.OpenConnectionAsync(cancellationToken);
         await using var command = Command(connection, null,
-            $"SELECT fleet_id, character_id, wing_id, squad_id, role, job FROM {_schema}.fleet_members WHERE character_id = $1",
+            $"SELECT fleet_id, character_id, wing_id, squad_id, role, job, accepts_fleet_warp, accepts_conduit_jumps, accepts_fleet_regroups, ship_type_id FROM {_schema}.fleet_members WHERE character_id = $1",
             characterId);
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         return await reader.ReadAsync(cancellationToken)
-            ? new FleetMemberSnapshot(reader.GetInt64(1), reader.GetInt64(2), reader.GetInt64(3), reader.GetInt16(4), reader.GetInt16(5))
+            ? new FleetMemberSnapshot(reader.GetInt64(1), reader.GetInt64(2), reader.GetInt64(3),
+                reader.GetInt16(4), reader.GetInt16(5), reader.GetBoolean(6), reader.GetBoolean(7),
+                reader.GetBoolean(8), reader.IsDBNull(9) ? null : reader.GetInt64(9))
             {
                 FleetId = reader.GetInt64(0),
             }
@@ -419,8 +436,14 @@ public sealed partial class FleetStore(System.Data.Common.DbDataSource source, s
         return true;
     }
 
-    public async Task<FleetMemberSnapshot?> JoinAsync(long fleetId, long characterId, CancellationToken cancellationToken = default)
+public Task<FleetMemberSnapshot?> JoinAsync(long fleetId, long characterId,
+        CancellationToken cancellationToken = default) =>
+        JoinAsync(fleetId, characterId, null, cancellationToken);
+
+    public async Task<FleetMemberSnapshot?> JoinAsync(long fleetId, long characterId, long? shipTypeId,
+        CancellationToken cancellationToken = default)
     {
+        if (shipTypeId is <= 0) shipTypeId = null;
         await using var connection = await source.OpenConnectionAsync(cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
         var memberLimit = await MemberLimitAsync(connection, transaction, fleetId, lockFleet: true, cancellationToken);
@@ -436,8 +459,24 @@ public sealed partial class FleetStore(System.Data.Common.DbDataSource source, s
             await transaction.CommitAsync(cancellationToken);
             return null;
         }
-        if (await CountAsync(connection, transaction, $"SELECT COUNT(*) FROM {_schema}.fleet_members WHERE fleet_id = $1", cancellationToken, fleetId) >= memberLimit)
+        var memberCount = await CountAsync(connection, transaction,
+            $"SELECT COUNT(*) FROM {_schema}.fleet_members WHERE fleet_id = $1", cancellationToken, fleetId);
+        var advertLimitValue = await ScalarAsync(connection, transaction,
+            $"SELECT advert_join_limit FROM {_schema}.fleets WHERE fleet_id = $1 AND advert_active",
+            cancellationToken, fleetId);
+        var effectiveLimit = memberLimit.Value;
+        if (advertLimitValue is not null and not DBNull)
+            effectiveLimit = Math.Min(effectiveLimit,
+                Math.Max(1, Convert.ToInt32(advertLimitValue, System.Globalization.CultureInfo.InvariantCulture)));
+        if (memberCount >= effectiveLimit)
+        {
+            await using var removeInvitation = Command(connection, transaction,
+                $"DELETE FROM {_schema}.fleet_invitations WHERE fleet_id = $1 AND character_id = $2",
+                fleetId, characterId);
+            await removeInvitation.ExecuteNonQueryAsync(cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
             return null;
+        }
 
         long wingId, squadId;
         int role;
@@ -455,8 +494,8 @@ public sealed partial class FleetStore(System.Data.Common.DbDataSource source, s
             !await PositionExistsAsync(connection, transaction, fleetId, wingId, squadId, cancellationToken)) return null;
 
         await using (var add = Command(connection, transaction,
-            $"INSERT INTO {_schema}.fleet_members (fleet_id, character_id, wing_id, squad_id, role, job) VALUES ($1, $2, $3, $4, $5, 0) ON CONFLICT (character_id) DO NOTHING",
-            fleetId, characterId, wingId, squadId, role))
+            $"INSERT INTO {_schema}.fleet_members (fleet_id, character_id, wing_id, squad_id, role, job, ship_type_id) VALUES ($1, $2, $3, $4, $5, 0, $6) ON CONFLICT (character_id) DO NOTHING",
+            fleetId, characterId, wingId, squadId, role, shipTypeId))
         {
             if (await add.ExecuteNonQueryAsync(cancellationToken) == 0)
             {
@@ -477,7 +516,7 @@ public sealed partial class FleetStore(System.Data.Common.DbDataSource source, s
             $"DELETE FROM {_schema}.fleet_join_requests WHERE fleet_id = $1 AND character_id = $2", fleetId, characterId))
             await removeRequest.ExecuteNonQueryAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
-        return new FleetMemberSnapshot(characterId, wingId, squadId, role, 0);
+        return new FleetMemberSnapshot(characterId, wingId, squadId, role, 0, ShipTypeId: shipTypeId);
     }
 
     public async Task<bool> RejectInviteAsync(long fleetId, long characterId, CancellationToken cancellationToken = default)
@@ -488,14 +527,30 @@ public sealed partial class FleetStore(System.Data.Common.DbDataSource source, s
         return await command.ExecuteNonQueryAsync(cancellationToken) > 0;
     }
 
-    public async Task<bool> RequestJoinAsync(long fleetId, long characterId, CancellationToken cancellationToken = default)
+    public Task<bool> RequestJoinAsync(long fleetId, long characterId, CancellationToken cancellationToken = default) =>
+        RequestJoinAsync(fleetId, new FleetJoinRequest(characterId), cancellationToken);
+
+    public async Task<bool> RequestJoinAsync(long fleetId, FleetJoinRequest request,
+        CancellationToken cancellationToken = default)
     {
-        if (characterId <= 0) return false;
+        var characterId = request.CharacterId;
+        if (characterId <= 0 || !double.IsFinite(request.SecurityStatus)) return false;
         await using var connection = await source.OpenConnectionAsync(cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
-        if (await MemberLimitAsync(connection, transaction, fleetId, lockFleet: true, cancellationToken) is null ||
+        var memberLimitValue = await MemberLimitAsync(connection, transaction, fleetId, lockFleet: true, cancellationToken);
+        if (memberLimitValue is not int memberLimit ||
             await FleetIdForCharacterAsync(connection, transaction, characterId, cancellationToken) is not null)
             return false;
+        var memberCount = await CountAsync(connection, transaction,
+            $"SELECT COUNT(*) FROM {_schema}.fleet_members WHERE fleet_id = $1", cancellationToken, fleetId);
+        var advertLimitValue = await ScalarAsync(connection, transaction,
+            $"SELECT advert_join_limit FROM {_schema}.fleets WHERE fleet_id = $1 AND advert_active",
+            cancellationToken, fleetId);
+        var effectiveLimit = memberLimit;
+        if (advertLimitValue is not null and not DBNull)
+            effectiveLimit = Math.Min(effectiveLimit,
+                Math.Max(1, Convert.ToInt32(advertLimitValue, System.Globalization.CultureInfo.InvariantCulture)));
+        if (memberCount >= effectiveLimit) return false;
 
         await using var invitation = Command(connection, transaction,
             $"SELECT 1 FROM {_schema}.fleet_invitations WHERE fleet_id = $1 AND character_id = $2 FOR UPDATE",
@@ -503,8 +558,9 @@ public sealed partial class FleetStore(System.Data.Common.DbDataSource source, s
         if (await invitation.ExecuteScalarAsync(cancellationToken) is not null and not DBNull) return false;
 
         await using var command = Command(connection, transaction,
-            $"INSERT INTO {_schema}.fleet_join_requests (fleet_id, character_id) VALUES ($1, $2) ON CONFLICT (fleet_id, character_id) DO NOTHING",
-            fleetId, characterId);
+            $"INSERT INTO {_schema}.fleet_join_requests (fleet_id, character_id, corporation_id, alliance_id, war_faction_id, security_status) VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT (fleet_id, character_id) DO UPDATE SET corporation_id = EXCLUDED.corporation_id, alliance_id = EXCLUDED.alliance_id, war_faction_id = EXCLUDED.war_faction_id, security_status = EXCLUDED.security_status, created_at = now()",
+            fleetId, characterId, request.CorporationId, request.AllianceId,
+            request.WarFactionId, request.SecurityStatus);
         await command.ExecuteNonQueryAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
         return true;

@@ -37,6 +37,7 @@ public class PlayerDeathTests
         var system = session.GetInt("solarsystemid")!.Value;
 
         rig.Sim.Say(Destroyed(session, c.ShipId, FrigateWreck));
+        await rig.Space.QuiesceAsync();
         await Rig.UntilAsync(() => rig.Sim.Heard.OfType<SimPlaceWreck>().Any());
 
         var told = Sequence.Of(session, clear: false);
@@ -85,6 +86,7 @@ public class PlayerDeathTests
         var fitted = (await rig.Items.InLocationAsync(c.ShipId, c.CharacterId)).OrderBy(i => i.Id).ToList();
 
         rig.Sim.Say(Destroyed(session, c.ShipId, FrigateWreck));
+        await rig.Space.QuiesceAsync();
         await Rig.UntilAsync(() => rig.Sim.Heard.OfType<SimPlaceWreck>().Any());
         await Rig.UntilAsync(() => Events.Of(session, clear: false).Count(e => e.Name == "OnItemsChanged") == 4);
         var wreckId = rig.Sim.Heard.OfType<SimPlaceWreck>().Single().WreckId;
@@ -121,6 +123,7 @@ public class PlayerDeathTests
         var (rig, c, session) = await InSpaceAsync();
         await using var _ = rig;
         rig.Sim.Say(Destroyed(session, c.ShipId, FrigateWreck));
+        await rig.Space.QuiesceAsync();
         await Rig.UntilAsync(() => rig.Sim.Heard.OfType<SimPlaceWreck>().Any());
         // the client is told the assembly after the wreck is placed: the test waits for that notice
         await Rig.UntilAsync(() => Events.Of(session, clear: false).Any(e => e.Name == "OnPodOrCorvetteAssembly"));
@@ -150,6 +153,7 @@ public class PlayerDeathTests
             await transaction.CommitAsync();
         }
         rig.Sim.Say(Destroyed(session, c.ShipId, FrigateWreck));
+        await rig.Space.QuiesceAsync();
         await Rig.UntilAsync(() => rig.Sim.Heard.OfType<SimPlaceWreck>().Any());
         Assert.True(rig.Sim.Heard.OfType<SimPlaceWreck>().Single().IsEmpty);
 
@@ -164,6 +168,7 @@ public class PlayerDeathTests
         }
         Assert.True(DeathOutcome.HashToDrop(seed, item, 0));
         rig2.Sim.Say(Destroyed(session2, c2.ShipId, FrigateWreck));
+        await rig2.Space.QuiesceAsync();
         await Rig.UntilAsync(() => rig2.Sim.Heard.OfType<SimPlaceWreck>().Any());
         Assert.False(rig2.Sim.Heard.OfType<SimPlaceWreck>().Single().IsEmpty);
     }
@@ -174,11 +179,13 @@ public class PlayerDeathTests
         var (rig, c, session) = await InSpaceAsync();
         await using var _ = rig;
         rig.Sim.Say(Destroyed(session, c.ShipId, FrigateWreck));
+        await rig.Space.QuiesceAsync();
         await Rig.UntilAsync(() => rig.Sim.Heard.OfType<SimPlaceWreck>().Any());
         var capsule = session.GetInt("shipid")!.Value;
 
         // the old ship's death again: the pilot is in the capsule and nothing more happens
         rig.Sim.Say(Destroyed(session, c.ShipId, FrigateWreck));
+        await rig.Space.QuiesceAsync();
         await Task.Delay(300);
         Assert.Equal(capsule, session.GetInt("shipid"));
         Assert.Single(rig.Sim.Heard.OfType<SimPlaceWreck>());
@@ -191,6 +198,7 @@ public class PlayerDeathTests
         var (rig, c, session) = await InSpaceAsync();
         await using var _ = rig;
         rig.Sim.Say(Destroyed(session, c.ShipId, null));
+        await rig.Space.QuiesceAsync();
         await Rig.UntilAsync(() => rig.Sim.Heard.OfType<SimRespawn>().Any());
         await Task.Delay(200);
         Assert.Empty(rig.Sim.Heard.OfType<SimPlaceWreck>());
@@ -204,6 +212,7 @@ public class PlayerDeathTests
         await using var _ = rig;
         rig.Sim.RespawnAnswer = "NOT_DESTROYED 1";
         rig.Sim.Say(Destroyed(session, c.ShipId, FrigateWreck));
+        await rig.Space.QuiesceAsync();
         await Rig.UntilAsync(() => session.GetInt("shipid") != c.ShipId);
         await Task.Delay(300);
         var recoveredCapsule = await rig.Items.GetAsync(session.GetInt("shipid")!.Value);
@@ -223,10 +232,11 @@ public class PlayerDeathTests
         var gate = new TaskCompletionSource();
         rig.Sim.RespawnGate = gate;
         rig.Sim.Say(Destroyed(session, c.ShipId, FrigateWreck));
+        // the death waits for the answer on the gate: it is not awaited before the gate is opened
         await Rig.UntilAsync(() => rig.Sim.Heard.OfType<SimRespawn>().Any());
         session.Close();
         gate.SetResult();
-        await Task.Delay(300);
+        await rig.Space.QuiesceAsync();
         Assert.Contains(rig.Sim.Heard.OfType<SimLeave>(), leave => leave.SessionId == (ulong)session.SessionId);
     }
 
@@ -241,6 +251,7 @@ public class PlayerDeathTests
         Assert.Equal(c.ShipId, rig.Sim.Heard.OfType<SimDestroy>().Single().ShipId);
         Assert.False(asked.IsCompleted);
         rig.Sim.Say(Destroyed(session, c.ShipId, FrigateWreck));
+        await rig.Space.QuiesceAsync();
 
         var done = (await asked)!;
         Assert.Equal(c.ShipId, done.ShipId);
@@ -266,6 +277,7 @@ public class PlayerDeathTests
     {
         var (rig, c, session) = await InSpaceAsync();
         rig.Sim.Say(Destroyed(session, c.ShipId, FrigateWreck));
+        await rig.Space.QuiesceAsync();
         await Rig.UntilAsync(() => rig.Sim.Heard.OfType<SimPlaceWreck>().Any());
         var capsule = session.GetInt("shipid")!.Value;
         rig.Sim.Heard.Clear();
@@ -283,6 +295,7 @@ public class PlayerDeathTests
 
         var logStart = rig.Log.Count;
         rig.Sim.Say(Destroyed(session, capsule, null));
+        await rig.Space.QuiesceAsync();
         var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(10);
         while (!rig.Sim.Heard.OfType<SimPlaceWreck>().Any() && rig.Log.Count == logStart && DateTime.UtcNow < deadline)
             await Task.Delay(10);
@@ -335,6 +348,7 @@ public class PlayerDeathTests
         await Rig.UntilAsync(() => rig.Sim.Heard.OfType<SimDestroy>().Any());
         Assert.Equal(capsule, rig.Sim.Heard.OfType<SimDestroy>().Single().ShipId);
         rig.Sim.Say(Destroyed(session, capsule, null));
+        await rig.Space.QuiesceAsync();
 
         var done = (await asked)!;
         var woke = (await rig.Characters.GetAsync(c.CharacterId))!;
@@ -352,6 +366,7 @@ public class PlayerDeathTests
         rig.Space.RookieShipOfRace = _ => null;
 
         rig.Sim.Say(Destroyed(session, capsule, null));
+        await rig.Space.QuiesceAsync();
         await Rig.UntilAsync(() => !rig.Space.IsInSpace(session));
         Assert.Contains(rig.Log, line => line.Contains("no rookie ship"));
         Assert.Contains(rig.Sim.Heard.OfType<SimLeave>(), leave => leave.SessionId == (ulong)session.SessionId);

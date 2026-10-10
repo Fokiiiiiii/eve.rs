@@ -199,7 +199,7 @@ private readonly TransitionRuntime _transitions;
     public void GiveBack(ClientSession session, long moduleId, long rounds)
     {
         var request = new SimAdjustCharge((ulong)Interlocked.Increment(ref _adjustRequests), (ulong)session.SessionId, moduleId, 0, new SimChargeOp.Remove(rounds));
-        _ = Task.Run(async () =>
+        Background(async () =>
         {
             try
             {
@@ -261,7 +261,7 @@ private readonly TransitionRuntime _transitions;
         {
             return;
         }
-        _ = Task.Run(async () =>
+        Background(async () =>
         {
             try
             {
@@ -298,13 +298,68 @@ private readonly TransitionRuntime _transitions;
     /// <summary>The service registry the bound objects of a session are released from when it leaves a place (set once the registry exists).</summary>
     public ServiceRegistry? Registry { get; set; }
 
+    /// <summary>
+    /// The work the space sessions run off the simulation's receive loop (a death, a dock, a jump, a command's answer): it is started as <see cref="Background"/> and kept
+    /// until it is done, so <see cref="QuiesceAsync"/> can wait for it and a shutdown does not leave it running after the teardown.
+    /// </summary>
+    private readonly ConcurrentDictionary<Task, string> _background = new();
+
+    /// <summary>Starts <paramref name="work"/> off the caller; the call site (its line) names it when a wait for it fails.</summary>
+    private void Background(Func<Task> work, [System.Runtime.CompilerServices.CallerLineNumber] int line = 0)
+    {
+        var task = Task.Run(async () =>
+        {
+            try
+            {
+                await work().ConfigureAwait(false);
+            }
+            catch (Exception error)
+            {
+                _log?.Invoke($"background work of the space sessions (line {line}) failed: {error.Message}");
+            }
+        });
+        _background[task] = $"line {line}";
+        _ = task.ContinueWith(finished => _background.TryRemove(finished, out _), TaskScheduler.Default);
+    }
+
+    /// <summary>
+    /// Waits until the background work started so far, and what it starts in turn, is done. Bounded: work still running after <paramref name="timeout"/> fails the
+    /// wait with the call sites of that work (the production path stays asynchronous; this is for the tests and the shutdown).
+    /// </summary>
+    public async Task QuiesceAsync(TimeSpan? timeout = null)
+    {
+        var deadline = DateTime.UtcNow + (timeout ?? TimeSpan.FromSeconds(30));
+        while (true)
+        {
+            var pending = _background.Where(entry => !entry.Key.IsCompleted).ToArray();
+            if (pending.Length == 0)
+            {
+                return;
+            }
+            var remaining = deadline - DateTime.UtcNow;
+            var all = Task.WhenAll(pending.Select(entry => entry.Key));
+            if (remaining <= TimeSpan.Zero || await Task.WhenAny(all, Task.Delay(remaining)) != all)
+            {
+                throw new TimeoutException($"the background work of the space sessions did not finish: {string.Join(", ", pending.Select(entry => entry.Value))}");
+            }
+        }
+    }
+
     public void Dispose()
 {
     if (_ownsTimers) _timers.Dispose();
     _sim.Received -= OnReceived;
     _sim.Lost -= OnLost;
     ForgetMutadaptiveSpools();
-    // the host stops: the rounds that were spent are written first
+    // the host stops: the work the sessions started is done first (nothing runs after the teardown), then the rounds that were spent are written
+    try
+    {
+        QuiesceAsync(TimeSpan.FromSeconds(10)).GetAwaiter().GetResult();
+    }
+    catch (TimeoutException error)
+    {
+        _log?.Invoke(error.Message);
+    }
     _charges.CloseAllAsync().GetAwaiter().GetResult();
 }
 
@@ -644,7 +699,7 @@ private readonly TransitionRuntime _transitions;
                     break;
                 case SimArrived arrived when _pilots.ContainsKey(arrived.SessionId):
                     _warping.TryRemove(arrived.SessionId, out _);
-                    _ = Task.Run(async () =>
+                    Background(async () =>
                     {
                         try
                         {
@@ -658,25 +713,25 @@ private readonly TransitionRuntime _transitions;
                     break;
                 case SimDocked docked when _pilots.TryGetValue(docked.SessionId, out var pilot):
                     _warping.TryRemove(docked.SessionId, out _);
-                    _ = Task.Run(() => FinishDockingAsync(pilot, docked.StationId, docked.Condition));
+                    Background(() => FinishDockingAsync(pilot, docked.StationId, docked.Condition));
                     break;
                 case SimJumped jumped when _pilots.TryGetValue(jumped.SessionId, out var jumper):
                     _warping.TryRemove(jumped.SessionId, out _);
-                    _ = Task.Run(() => FinishJumpAsync(jumper, jumped));
+                    Background(() => FinishJumpAsync(jumper, jumped));
                     break;
                 case SimDestroyed destroyed when _pilots.TryGetValue(destroyed.SessionId, out var victim) && victim.ShipId == destroyed.ShipId:
                     _warping.TryRemove(destroyed.SessionId, out _);
                     ForgetLockedTarget(destroyed.ShipId);
                     _lockedTargets.TryRemove(destroyed.SessionId, out _);
-                    _ = Task.Run(() => FinishDeathAsync(victim, destroyed));
+                    Background(() => FinishDeathAsync(victim, destroyed));
                     break;
                 case SimDestroyed destroyed when _ejectedShips.TryRemove(destroyed.ShipId, out var abandoned):
                     ForgetLockedTarget(destroyed.ShipId);
-                    _ = Task.Run(() => FinishAbandonedShipDeathAsync(abandoned, destroyed));
+                    Background(() => FinishAbandonedShipDeathAsync(abandoned, destroyed));
                     break;
                 case SimDestroyed destroyed when _npcShips.TryRemove(destroyed.ShipId, out var npc):
                     ForgetLockedTarget(destroyed.ShipId);
-                    _ = Task.Run(() => FinishNpcDeathAsync(npc, destroyed));
+                    Background(() => FinishNpcDeathAsync(npc, destroyed));
                     break;
                 case SimChargeSpent spent when _pilots.TryGetValue(spent.SessionId, out var shooter):
                     _charges.Enqueue(spent.SessionId, shooter.CharacterId, spent.ModuleId, spent.RoundsLeft);
@@ -688,15 +743,15 @@ private readonly TransitionRuntime _transitions;
                     break;
                 // an ECM burst reached ships: the attack is recorded on each pilot it reached, as for a module started at their ship (FP-C7)
                 case SimEcmBurst burst when _pilots.TryGetValue(burst.SessionId, out var burster) && burster.ShipId == burst.ShipId:
-                    _ = Task.Run(() => RecordEcmBurstAsync(burster, burst.Reached));
+                    Background(() => RecordEcmBurstAsync(burster, burst.Reached));
                     break;
                 // an effect the simulation ended on its own account (the cycles done, the capacitor short, the target gone): the module is taken out of the
                 // numbers the ship is sent with, and the ship is sent again so the simulation drops the module's modifiers (FP-C1)
                 case SimModuleEnded ended when _pilots.TryGetValue(ended.SessionId, out var endedPilot) && endedPilot.ActiveModules.TryRemove(ended.ModuleId, out _):
                     Eve.Services.Space.Effects.ProjectedEffect.MutadaptiveSpool.Reset(ended.ModuleId);
                     endedPilot.RunningModules.TryRemove(ended.ModuleId, out _);
-                    _ = Task.Run(() => SendShipAsync(ended.SessionId, endedPilot, null, CancellationToken.None));
-                    _ = Task.Run(() => RefreshRunningAsync(endedPilot, ended.SessionId, CancellationToken.None));
+                    Background(() => SendShipAsync(ended.SessionId, endedPilot, null, CancellationToken.None));
+                    Background(() => RefreshRunningAsync(endedPilot, ended.SessionId, CancellationToken.None));
                     break;
                 case SimRefused { Command: SimCommands.Stop, Reason: "IN_WARP" } inWarp when _pilots.TryGetValue(inWarp.SessionId, out var warping):
                     _warping[inWarp.SessionId] = 0;
@@ -787,7 +842,7 @@ private readonly TransitionRuntime _transitions;
         ForgetMutadaptiveSpools();
         foreach (var pilot in _pilots.Values.ToArray())
         {
-            _ = Task.Run(async () =>
+            Background(async () =>
             {
                 var character = pilot.Session.CharacterId is { } id ? id : pilot.CharacterId;
                 var station = pilot.Session.GetInt("stationid2") ?? _stations.All.FirstOrDefault(s => s.SolarSystemId == pilot.SolarSystemId)?.Id;

@@ -29,7 +29,8 @@ public static class CoreServices
         ReadEpicArcStatusCallback? readEpicArcStatus = null,
         SuperWeaponRpcCallbacks? superWeaponRpcCallbacks = null,
         TourneyQueryCallback? tourneyQueryCallback = null,
-        ISpaceModules? spaceModules = null)
+        ISpaceModules? spaceModules = null,
+        Func<ClientSession, bool>? isShipInSpace = null)
     {
         gameRpcCallbacks ??= new GameRpcCallbacks();
         var licenses = new OmegaLicenses(settings, accounts, nowUnixMs);
@@ -69,7 +70,7 @@ public static class CoreServices
             new SharedSettingsMgrService(gameRpcCallbacks.ReadSharedSettings, gameRpcCallbacks.WriteSharedSettingsAsync, nowUnixMs),
             new OverviewPresetMgrService(gameRpcCallbacks.ReadOverviewPresets, gameRpcCallbacks.WriteOverviewPresets),
             new ShipStanceMgrService(gameRpcCallbacks.SetShipStanceAsync,
-                spaceModules is null ? null : (session, cancellationToken) => spaceModules.RefreshShipAsync(session, cancellationToken)),
+                spaceModules is null ? null : (session, cancellationToken) => spaceModules.RefreshShipAsync(session, cancellationToken), isShipInSpace),
             new SolarSystemInterferenceMgrService(gameRpcCallbacks.ReadInterferenceTableAsync, nowUnixMs),
             new SurveyService(gameRpcCallbacks.ReadActiveSurveyIdAsync, gameRpcCallbacks.RecordSurveyEventAsync),
             new WarStatisticMgrService(gameRpcCallbacks.ReadKillmailAsync, nowUnixMs),

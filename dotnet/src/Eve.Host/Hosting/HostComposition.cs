@@ -111,7 +111,8 @@ internal static class HostComposition
             readNonDiminishingInjections: readNonDiminishingInjections,
             keeperRpcCallbacks: keeperRpcCallbacks,
             superWeaponRpcCallbacks: superWeaponCallbacks,
-            spaceModules: space))
+            spaceModules: space,
+            isShipInSpace: space is null ? null : (Func<ClientSession, bool>)space.IsInSpace))
         {
             registry.Register(service);
         }

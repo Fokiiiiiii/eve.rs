@@ -380,7 +380,8 @@ public sealed partial class SharedSettingsMgrService(
 [Service("shipStanceMgr")]
 public sealed partial class ShipStanceMgrService(
     Func<long, int, long, CancellationToken, ValueTask<ShipStanceChange?>>? setShipStanceAsync = null,
-    Func<ClientSession, CancellationToken, Task>? refreshShipInSpaceAsync = null)
+    Func<ClientSession, CancellationToken, Task>? refreshShipInSpaceAsync = null,
+    Func<ClientSession, bool>? isInSpace = null)
 {
     private static readonly IReadOnlyDictionary<int, IReadOnlyDictionary<int, int>> ModifiersByShipType =
         new Dictionary<int, IReadOnlyDictionary<int, int>>
@@ -405,6 +406,9 @@ public sealed partial class ShipStanceMgrService(
             throw Notify("SHIP_NOT_FOUND");
         if (setShipStanceAsync is null)
             throw Notify("ITEM_CREATE_FAILED");
+        // the wiki's rule: a tactical mode is switched in space (Tactical Destroyers, Mobile Depot aside); the client offers the buttons in station too
+        if (isInSpace is not null && !isInSpace(call.Session))
+            throw Notify("SHIP_STANCE_NOT_IN_SPACE");
 
         var result = await setShipStanceAsync(shipId, (int)Math.Clamp(stanceId, int.MinValue, int.MaxValue), characterId, call.Cancellation)
             .ConfigureAwait(false);
@@ -433,6 +437,7 @@ public sealed partial class ShipStanceMgrService(
             "SHIP_STANCE_INVALID" => "That tactical mode is not available for this ship.",
             "SHIP_STANCE_COOLDOWN" => "That tactical mode is still reconfiguring. Try again shortly.",
             "SHIP_STANCE_COOLDOWN_UNAVAILABLE" => "That ship's tactical mode cooldown could not be verified.",
+            "SHIP_STANCE_NOT_IN_SPACE" => "Tactical modes can only be switched in space.",
             _ => "Could not update ship stance state.",
         };
         return new MachoWrappedException(MachoErrors.Wrapped("CustomNotify", [],

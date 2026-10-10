@@ -55,6 +55,29 @@ public sealed class ShipStanceNotifyTests
         Assert.Equal(0, refreshes);
     }
 
+    [Fact]
+    public async Task A_stance_is_not_switched_in_station_and_the_pilot_is_told_why()
+    {
+        var sink = new RecordingSink();
+        var session = Session(sink);
+        var changed = 0;
+        IService service = new ShipStanceMgrService(
+            (_, _, _, _) =>
+            {
+                changed++;
+                return ValueTask.FromResult<ShipStanceChange?>(new(true, 1, Changed: true));
+            },
+            null,
+            _ => false);
+
+        var refusal = await Assert.ThrowsAsync<MachoWrappedException>(async () =>
+            await service.CallAsync(Call(session, new PyLong(ShipId), new PyInt(3))));
+
+        Assert.Equal("CustomNotify", refusal.Error.ClassName);
+        Assert.Equal(0, changed);
+        Assert.Empty(sink.Packets);
+    }
+
     private static ClientSession Session(RecordingSink sink)
     {
         var session = new ClientSession(sink) { UserId = 34, NodeId = 65450 };

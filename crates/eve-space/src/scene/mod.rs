@@ -539,6 +539,9 @@ pub(crate) struct Pilot {
     pub(crate) modules: Modules,
     /// Until when the ship cannot be locked (the undocking protection; it ends sooner when the ship is flown or locks something).
     pub(crate) protected_until: i64,
+    /// The station the ship undocked from while it is still inside its sphere: the undock point lies in it, so the station does not bump the
+    /// ship until it is out (`collision::spares`).
+    pub(crate) leaving_station: Option<i64>,
     /// Until when the ship cannot move, warp or jump: a doomsday's immobility window (`Strike::immobile_ms`).
     pub(crate) immobile_until: i64,
     /// Until when the ship is disrupted by a disruptive lance: it cannot warp, jump or dock, and takes half the remote repair (`Strike::debuff_ms`).
@@ -574,6 +577,7 @@ impl Pilot {
             targeting: Targeting::default(),
             modules,
             protected_until,
+            leaving_station: None,
             immobile_until: 0,
             disrupted_until: 0,
             no_jump_until: 0,

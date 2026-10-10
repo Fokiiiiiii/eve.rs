@@ -444,6 +444,7 @@ fn a_station_bump_deflects_heading_used_by_a_micro_jump() {
     {
         let pilot = scene.pilots.get_mut(&SESSION).unwrap();
         pilot.protected_until = 0;
+        pilot.leaving_station = None; // placed inside the station, not flying out of it: the station bumps it
         pilot.ship.position = Vec3::new(
             station.position.x + station.radius + radius - 10.0,
             station.position.y,
@@ -588,6 +589,39 @@ fn a_ship_just_outside_a_station_does_not_bump() {
     assert_eq!(ship.velocity.x, velocity.x);
     assert_eq!(ship.velocity.y, velocity.y);
     assert_eq!(ship.velocity.z, velocity.z);
+}
+
+#[test]
+fn a_ship_leaving_its_station_is_not_bumped_by_it_when_it_first_moves() {
+    // a station whose sphere holds the undock point of its type (about 5.4 km from the centre, 0.34 of a 16 km radius, as recorded)
+    let mut scene = scene_with_station_type(1531, 16_000.0);
+    let station = scene.system.body(STATION).unwrap().clone();
+    let radius = scene.pilots[&SESSION].ship.spec.radius;
+    // the surface gap to the station: negative while the ship is in its sphere
+    let gap = |scene: &Scene| {
+        let ship = &scene.pilots[&SESSION].ship;
+        let (dx, dy, dz) = (
+            ship.position.x - station.position.x,
+            ship.position.y - station.position.y,
+            ship.position.z - station.position.z,
+        );
+        dx.hypot(dy).hypot(dz) - radius - station.radius
+    };
+    assert!(gap(&scene) < 0.0, "the undock point is inside the station's sphere");
+
+    let first_move = NOON + seconds(1);
+    scene.command(SESSION, Command::SetSpeedFraction(0.5), first_move);
+    let told = scene.poll(first_move + seconds(1));
+
+    assert!(gap(&scene) < 0.0, "the ship is still leaving the station");
+    let names: Vec<&str> = told
+        .iter()
+        .filter_map(|o| match o {
+            Out::Notify { name, .. } => Some(*name),
+            _ => None,
+        })
+        .collect();
+    assert!(!names.contains(&"DoDestinyUpdate"), "{names:?}");
 }
 
 #[test]

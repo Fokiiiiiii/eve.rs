@@ -95,3 +95,12 @@ def test_a_docked_character_reads_the_market_as_the_client_does():
             client.call("marketProxy", "PlaceBuyOrder", station_id, TRITANIUM, 10.0, 5, -1, 6, 0, False, None)
         label, arguments = _label_and_arguments(refused.value)
         assert label == "MktInvalidMinVolumeCannotExceedQuantity" and arguments == {}
+
+        # a price of five significant figures is off the ticks (M2, decision Q12): the client's CustomInfo carries the sentence the
+        # server writes, and nothing is escrowed (the check runs before any funds move)
+        with pytest.raises(p.MachoError) as refused:
+            client.call("marketProxy", "PlaceBuyOrder", station_id, TRITANIUM, 12345.0, 1, -1, 1, 90, False, None)
+        label, arguments = _label_and_arguments(refused.value)
+        assert label == "CustomInfo"
+        assert arguments == {"info": "Order prices have at most four significant figures."}
+

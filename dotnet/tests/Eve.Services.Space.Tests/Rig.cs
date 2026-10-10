@@ -65,9 +65,10 @@ private readonly Dictionary<long, ClientSession> _fleetSessions = new();
     private Rig(NpgsqlDataSource source, string suffix, DogmaStatic statics, CharacterCreation creation, CreationCatalog catalog, StationCatalog stations, SolarSystemCatalog systems, PgModuleStateStore modules, TimeSpan protection, TimeSpan jumpCloak, bool npcLoot, Eve.Npc.BeltRatConfig? beltRats, Eve.Scheduler.LocalTimers? localTimers, Eve.Npc.NpcAuthority? npcAuthority)
     {
         Source = source;
-        FleetStore = new Eve.Services.Space.FleetStore(source);
+        // the fleets have a schema of their own: the shared one kept the memberships of earlier tests
+        FleetStore = new Eve.Services.Space.FleetStore(source, $"pl_{suffix}");
         _suffix = suffix;
-        _schemas = [$"pc_{suffix}", $"pi_{suffix}", $"ps_{suffix}", $"pw_{suffix}", $"pf_{suffix}", $"pn_{suffix}", $"pp_{suffix}", $"pd_{suffix}", $"pe_{suffix}"];
+        _schemas = [$"pc_{suffix}", $"pi_{suffix}", $"ps_{suffix}", $"pw_{suffix}", $"pf_{suffix}", $"pn_{suffix}", $"pp_{suffix}", $"pd_{suffix}", $"pe_{suffix}", $"pl_{suffix}"];
         Events = new Eve.Events.EventBus(source, new Eve.Scheduler.DurableScheduler(source, () => Now, null, _schemas[7]), null, _schemas[8]);
         SpaceItems = new PgSpaceItemStore(source, _schemas[6]);
         Deployed = new Eve.Ships.PgDeployedStore(source, _schemas[6]);
@@ -199,7 +200,7 @@ private readonly Dictionary<long, ClientSession> _fleetSessions = new();
         await PgSpaceItemStore.MigrateAsync(source, $"pp_{suffix}");
         await Eve.Scheduler.DurableScheduler.MigrateAsync(source, $"pd_{suffix}");
         await Eve.Events.EventBus.MigrateAsync(source, $"pe_{suffix}");
-        await Eve.Data.Migrations.ApplyAsync(source, Eve.Services.Space.FleetStore.DefaultSchema,
+        await Eve.Data.Migrations.ApplyAsync(source, $"pl_{suffix}",
         [
             new Eve.Data.Migration("001_fleet_core", """
                 CREATE TABLE fleets (

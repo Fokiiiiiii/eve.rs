@@ -166,7 +166,8 @@ public class ScanProbeHostTests
 
         // seven make eight: accepted, and one is left in the launcher
         await rig.Space.LaunchAsync(session, launcher, 7, CancellationToken.None);
-        Assert.Equal(7, Placed(rig).Count);
+        // the record saved above may also be put back in space by the arrival's restore, which runs in the background: only the launched probes are counted
+        Assert.Equal(7, Placed(rig).Count(placed => placed.ProbeId != ProbeBase + 999));
         Assert.Equal(1, await LoadedAsync(rig, character, launcher));
 
         // two are asked for and one is left: refused as not enough

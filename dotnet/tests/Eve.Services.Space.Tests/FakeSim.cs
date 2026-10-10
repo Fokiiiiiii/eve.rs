@@ -24,6 +24,9 @@ internal sealed class FakeSim : ISimulation
     /// <summary>What a jump is answered with.</summary>
     public CommandReply JumpAnswer { get; set; } = new(true, 0, null, null, 30100034, 50016839);
 
+    /// <summary>What a cynosural jump (the spool) is answered with.</summary>
+    public CommandReply CynoJumpAnswer { get; set; } = new(true, 0, null, null, 30100034, 50016839);
+
     /// <summary>What a spawn is answered with: the session of the NPC, or a reason.</summary>
     public SimSpawnReply? SpawnAnswer { get; set; }
 
@@ -273,7 +276,7 @@ internal sealed class FakeSim : ISimulation
                 Position = PositionAnswers.GetValueOrDefault(targetId, [0, 0, 0])
             });
         }
-        return Task.FromResult(code switch { SimCommands.WarpTo or SimCommands.WarpToPoint => WarpAnswer, SimCommands.Jump => JumpAnswer, _ => DockAnswer });
+        return Task.FromResult(code switch { SimCommands.WarpTo or SimCommands.WarpToPoint => WarpAnswer, SimCommands.Jump => JumpAnswer, SimCommands.CynoJump => CynoJumpAnswer, _ => DockAnswer });
     }
 
     /// <summary>How far a wreck or can is said to be (null: there is none).</summary>

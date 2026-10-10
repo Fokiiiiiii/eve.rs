@@ -675,3 +675,14 @@ Open, each with its blocker:
 - LIMITATION: AssembleShip refusals are silent, as EveJS's are. The client shows nothing for a ship that is not assembled.
 - LIMITATION: undock does not check the CPU, powergrid, turret, launcher and drone or fighter overloads of a Strategic Cruiser (EveJS `_getStrategicCruiserUseStatus`). The fit check makes those when a module is fitted.
 - NOT RUN: the graphical client. Not seen: the assembly window and its name prompt, the default skin after assembly, the stance button, the undock text, the swap of a subsystem. No MITM capture was made on this host.
+
+## 30. Track S1, part 3: fitting a saved fitting onto a docked ship (SF-3, increments 1 and 2)
+
+Done (tests: `FitFittingTests`, PostgreSQL, real SDE: each module in its slot with the one that has no hangar item reported; a fit for another hull refused by name; a ship in space refused; a charge stack split into the hold with the shortfall reported by quantity; a drone split into the drone bay; a rig not fitted displaced into the hold; decisions and sources in DEVIATIONS "Track S1: fitting a docked ship"):
+- `ship` fitting by the client's `FitFitting` on the bound ship inventory (`InvBrokerService.Fitting.cs`): modules and rigs by slot in the reference's order, then the cargo, drone, ice, implant, fighter and charge legs. The reply is the client's failed-to-load list.
+
+Open, each with its blocker:
+- NOT BUILT: the re-online pass after the modules, the space-loot and structure access checks, and the ship-service checks of the reference (DEVIATIONS "Track S1: fitting a docked ship" gives the reason for each).
+- NOT TESTED: fighters (no hull with a fighter bay in the fixtures yet); rigs fitted into their slots (the calibration path is covered by the rules tests, not by a fit).
+- NOT RUN: the graphical client (the fit button, the buy-all box for the failed list, the hangar deltas).
+

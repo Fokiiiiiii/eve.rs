@@ -14,6 +14,10 @@ public class JumpDriveRulesTests
     public void Calibration_adds_twenty_percent_of_the_base_range_a_level_so_level_five_doubles_it()
     {
         Assert.Equal(3.5, JumpDriveRules.Range(3.5, 0, 0.2));
+        // the wiki's Jump Freighters rule: no jump into high-security space, a jump out of it is allowed
+        Assert.False(JumpDriveRules.MayJumpInto(JumpDriveRules.JumpFreighterGroup, Eve.Universe.SecurityClass.HighSec));
+        Assert.True(JumpDriveRules.MayJumpInto(JumpDriveRules.JumpFreighterGroup, Eve.Universe.SecurityClass.LowSec));
+        Assert.True(JumpDriveRules.MayJumpInto(JumpDriveRules.BlackOpsGroup, Eve.Universe.SecurityClass.HighSec));
         Assert.Equal(7.0, JumpDriveRules.Range(3.5, 5, 0.2));
     }
 

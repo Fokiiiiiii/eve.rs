@@ -84,6 +84,11 @@ public sealed class SpaceJumpDrive(
         {
             throw Notify("That cynosural field does not take this ship.");
         }
+        // a jump freighter does not jump into high-security space (the wiki's Jump Freighters page); the wording is ours
+        if (systems.Get(field.SolarSystemId) is { } destination && !JumpDriveRules.MayJumpInto(hull.GroupId, Eve.Universe.Security.ClassFromLevel(destination.Security)))
+        {
+            throw Notify("Jump freighters cannot jump into high-security space.");
+        }
         var state = await fatigue.GetAsync(character, cancellationToken);
         if (state.CooldownUntilMs > now)
         {

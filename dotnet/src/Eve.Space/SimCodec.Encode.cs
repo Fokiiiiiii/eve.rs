@@ -680,6 +680,19 @@ private static void WriteAction(Writer w, SimAction action)
                 w.U8(m.Command);
                 WriteVector(w, m.Position);
                 break;
+            case SimScanTargets m:
+                w.U8(Kind.ScanTargets);
+                w.U64(m.SessionId);
+                w.U8(m.Command);
+                w.U32((uint)m.Targets.Count);
+                foreach (var target in m.Targets)
+                {
+                    w.I64(target.Id);
+                    w.U8(target.Kind);
+                    w.I32(target.TypeId);
+                    WriteVector(w, target.Position);
+                }
+                break;
             case SimApproaching m:
                 w.U8(Kind.Approaching);
                 w.U64(m.SessionId);

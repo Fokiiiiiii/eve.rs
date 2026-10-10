@@ -136,6 +136,8 @@ internal sealed partial class CharacterServicesComposition
         marketTrading = new Eve.Market.MarketTrading(source, market, characters, corporations, skills, items, economyWallets, stations, marketTopology, now);
     }
 
+    private Eve.Services.Corporations.AllianceSovereigntyTransferWorker? allianceSovereigntyTransferWorker;
+
     private async Task Alliances()
     {
         allianceAffiliationNotify = spaceSessions is null
@@ -149,6 +151,9 @@ internal sealed partial class CharacterServicesComposition
         var warInheritance = new Eve.Services.Corporations.AllianceWarInheritanceWorker(
             source, corporations, officeStore, foundations.Relations, foundations.Scheduler, now, characterSessions);
         await warInheritance.RegisterAsync();
+        allianceSovereigntyTransferWorker = new Eve.Services.Corporations.AllianceSovereigntyTransferWorker(
+            corporations, foundations.Scheduler, now);
+        await allianceSovereigntyTransferWorker.RegisterAsync();
         var maintenance = new Eve.Services.Corporations.AllianceMaintenanceBillWorker(
             corporations, officeStore, foundations.Scheduler, now);
         maintenance.NextDowntimeAtMs = at => DailyGoalRecorder.PeriodAt(at).UntilMs;
@@ -163,7 +168,8 @@ internal sealed partial class CharacterServicesComposition
             wakeAllianceApplicationScheduler: allianceDue.Wake,
             relations: foundations.Relations,
             characterSessions: characterSessions,
-            readSovSnapshot: ReadAllianceSovSnapshotAsync);
+            readSovSnapshot: ReadAllianceSovSnapshotAsync,
+            readStaticOwners: ReadAllianceStaticOwnersAsync);
     }
 
     private async Task<Eve.Services.Corporations.AllianceSovSnapshot?> ReadAllianceSovSnapshotAsync(
@@ -174,6 +180,26 @@ internal sealed partial class CharacterServicesComposition
             pair => pair.Key,pair => pair.Value.AllianceId);
         var hubs = snapshot.HubsBySolarSystemId.ToDictionary(
             pair => pair.Key,pair => (pair.Value.AllianceId,pair.Value.HubId));
+        var claimStructures = snapshot.ClaimsBySolarSystemId.ToDictionary(
+            pair => pair.Key,pair => pair.Value.ClaimStructureId);
+        var structures = snapshot.StructuresBySolarSystemId.ToDictionary(
+            pair => pair.Key,
+            pair => (IReadOnlyList<Eve.Services.Corporations.AllianceSovStructure>)[.. pair.Value.Select(structure =>
+            {
+                var claim = snapshot.ClaimsBySolarSystemId.GetValueOrDefault(pair.Key);
+                var hub = snapshot.HubsBySolarSystemId.GetValueOrDefault(pair.Key);
+                return new Eve.Services.Corporations.AllianceSovStructure(
+                    structure.ItemId,
+                    structure.SolarSystemId,
+                    structure.CorporationId ?? claim?.CorporationId ?? hub?.CorporationId,
+                    structure.AllianceId ?? claim?.AllianceId ?? hub?.AllianceId,
+                    structure.CampaignEventType,
+                    structure.CampaignStartTimeFileTime,
+                    structure.CampaignScoresByTeam,
+                    structure.VulnerableStartTimeFileTime,
+                    structure.VulnerableEndTimeFileTime,
+                    structure.DefenseMultiplier);
+            })]);
         var now = corporations.VoteNowFiletime;
         var nextVulnerability = snapshot.StructuresBySolarSystemId.Values
             .SelectMany(structures => structures)
@@ -183,7 +209,40 @@ internal sealed partial class CharacterServicesComposition
             .DefaultIfEmpty(0)
             .Min();
         return new Eve.Services.Corporations.AllianceSovSnapshot(
-            claims,hubs,nextVulnerability > 0 ? nextVulnerability : null);
+            claims,hubs,nextVulnerability > 0 ? nextVulnerability : null)
+        {
+            ClaimStructureIdsBySolarSystemId = claimStructures,
+            StructuresBySolarSystemId = structures
+        };
+    }
+
+    private async Task<IReadOnlyDictionary<long,Eve.Services.Corporations.AllianceOwnerLookupRecord>>
+        ReadAllianceStaticOwnersAsync(IReadOnlyList<long> ownerIds, CancellationToken token)
+    {
+        if (ownerIds.Count == 0)
+            return new Dictionary<long,Eve.Services.Corporations.AllianceOwnerLookupRecord>();
+        var reader = new Eve.Sde.SdeReader(source);
+        var result = new Dictionary<long,Eve.Services.Corporations.AllianceOwnerLookupRecord>();
+        foreach (var row in await reader.ReadAsync("npcCharacters", ownerIds, token))
+        {
+            var name = row.Doc.TryGetProperty("name", out var nameValue)
+                ? Eve.Sde.SdeReader.English(nameValue)
+                : "";
+            if (string.IsNullOrWhiteSpace(name)) continue;
+            var gender = row.Doc.TryGetProperty("gender", out var genderValue) &&
+                genderValue.ValueKind == System.Text.Json.JsonValueKind.True ? 1 : 0;
+            result[row.Key] = new(row.Key, name,
+                Eve.Services.Corporations.EveOwnerTypeIds.Character, gender);
+        }
+        foreach (var row in await reader.ReadAsync("factions", ownerIds, token))
+        {
+            var name = row.Doc.TryGetProperty("name", out var nameValue)
+                ? Eve.Sde.SdeReader.English(nameValue)
+                : "";
+            if (string.IsNullOrWhiteSpace(name)) continue;
+            result[row.Key] = new(row.Key, name, Eve.Services.Corporations.EveOwnerTypeIds.Faction, 0);
+        }
+        return result;
     }
 
     private async Task CorporationOffices()

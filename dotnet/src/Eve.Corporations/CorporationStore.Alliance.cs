@@ -31,6 +31,20 @@ public sealed partial class CorporationStore
         return result;
     }
 
+    public async Task<IReadOnlyList<Alliance>> AlliancesByIdsAsync(
+        IEnumerable<long> ids, CancellationToken token = default)
+    {
+        var wanted = ids.Where(id => id > 0).Distinct().ToArray();
+        if (wanted.Length == 0) return [];
+        await using var command = _source.CreateCommand(
+            $"SELECT {AllianceColumns} FROM {_schema}.alliances WHERE id=ANY($1) ORDER BY id");
+        command.Parameters.Add(new NpgsqlParameter { Value = wanted });
+        var result = new List<Alliance>();
+        await using var reader = await command.ExecuteReaderAsync(token);
+        while (await reader.ReadAsync(token)) result.Add(ReadAlliance(reader));
+        return result;
+    }
+
     private async Task<Alliance?> AllianceAsync(NpgsqlConnection connection,NpgsqlTransaction? tx,long id,bool locked,CancellationToken token)
     {
         await using var command = Command(connection,tx,$"SELECT {AllianceColumns} FROM {_schema}.alliances WHERE id=$1" + (locked ? " FOR UPDATE" : ""),id);
@@ -1518,6 +1532,9 @@ public async Task<(short CurrentHour, short NewHour, long ValidAfterFileTime)> A
             else
             {
                 await ReelectAsync(connection,tx,alliance,token);
+                if (AllianceSovereigntyTransferWriter is { } scheduleSovereigntyTransfer)
+                    await scheduleSovereigntyTransfer(connection, tx, allianceId, corporationId,
+                        member.StartedMs, leftMs, token);
             }
             var after = await AllianceAsync(connection,tx,allianceId,false,token);
             return new AllianceDepartureMutation(member,alliance,after,false);
@@ -1870,6 +1887,7 @@ public async Task<(short CurrentHour, short NewHour, long ValidAfterFileTime)> A
     public Func<long, CancellationToken, Task>? AllianceMaintenanceBillWriter { get; set; }
     public Func<System.Data.Common.DbConnection, System.Data.Common.DbTransaction, long, long, CancellationToken, Task>? AllianceEmptyClosureWriter { get; set; }
     public Func<System.Data.Common.DbConnection, System.Data.Common.DbTransaction, long, long, long, long, CancellationToken, Task>? AllianceWarInheritanceWriter { get; set; }
+    public Func<Npgsql.NpgsqlConnection, Npgsql.NpgsqlTransaction, long, long, long, long, CancellationToken, Task>? AllianceSovereigntyTransferWriter { get; set; }
     public Func<NpgsqlConnection, NpgsqlTransaction, long, long, CancellationToken, Task>? WarBillDueWriter { get; set; }
 
     public async Task<IReadOnlyList<CorporationBill>> AllianceMaintenanceBillsAsync(

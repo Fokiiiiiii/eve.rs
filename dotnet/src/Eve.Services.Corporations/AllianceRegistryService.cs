@@ -11,10 +11,38 @@ namespace Eve.Services.Corporations;
 public sealed record AllianceSovSnapshot(
     IReadOnlyDictionary<long,long?> ClaimAllianceIdsBySolarSystemId,
     IReadOnlyDictionary<long,(long? AllianceId,long? HubId)> HubsBySolarSystemId,
-    long? NextVulnerabilityWindowEndFileTime);
+    long? NextVulnerabilityWindowEndFileTime)
+{
+    public IReadOnlyDictionary<long,long?> ClaimStructureIdsBySolarSystemId { get; init; } =
+        new Dictionary<long,long?>();
+    public IReadOnlyDictionary<long,IReadOnlyList<AllianceSovStructure>> StructuresBySolarSystemId { get; init; } =
+        new Dictionary<long,IReadOnlyList<AllianceSovStructure>>();
+}
+
+public sealed record AllianceSovStructure(
+    long ItemId,
+    long SolarSystemId,
+    long? CorporationId,
+    long? AllianceId,
+    int? CampaignEventType,
+    long? CampaignStartTimeFileTime,
+    IReadOnlyDictionary<long,double>? CampaignScoresByTeam,
+    long? VulnerableStartTimeFileTime,
+    long? VulnerableEndTimeFileTime,
+    double DefenseMultiplier);
+
+public sealed record AllianceOwnerLookupRecord(long Id, string Name, int TypeId, int Gender);
+
+public static class EveOwnerTypeIds
+{
+    public const int Character = 1373;
+    public const int Corporation = 2;
+    public const int Alliance = 16159;
+    public const int Faction = 30;
+}
 
 [Service("allianceRegistry")]
-public sealed partial class AllianceRegistryService(CorporationStore store,PgCharacterStore characters,Func<long> now,AllianceApplicationScheduleCallback? scheduleAllianceApplication = null,Action? wakeAllianceApplicationScheduler = null,Eve.Relations.RelationStore? relations = null,Func<long,CancellationToken,Task<AllianceSovSnapshot?>>? readSovSnapshot = null,CharacterSessions? characterSessions = null) : IBoundObjectReleaseHandler
+public sealed partial class AllianceRegistryService(CorporationStore store,PgCharacterStore characters,Func<long> now,AllianceApplicationScheduleCallback? scheduleAllianceApplication = null,Action? wakeAllianceApplicationScheduler = null,Eve.Relations.RelationStore? relations = null,Func<long,CancellationToken,Task<AllianceSovSnapshot?>>? readSovSnapshot = null,CharacterSessions? characterSessions = null,Func<IReadOnlyList<long>,CancellationToken,Task<IReadOnlyDictionary<long,AllianceOwnerLookupRecord>>>? readStaticOwners = null) : IBoundObjectReleaseHandler
 {
 public AllianceRegistryService(CorporationStore store, PgCharacterStore characters, Func<long> now,
         Func<long, CancellationToken, Task>? legacyAffiliationChanged)
@@ -98,6 +126,119 @@ public AllianceRegistryService(CorporationStore store, PgCharacterStore characte
             ("newCapitalSystemValidAfter",new PyLong(capital.ValidAfterFileTime))
         ]);
     }
+
+    [Method("GetAllianceSovereigntyStructuresInfo")]
+    public async ValueTask<PyValue> GetAllianceSovereigntyStructuresInfo(ServiceCall call)
+    {
+        var (_, allianceId) = await RequireAllianceMember(call);
+        var snapshot = readSovSnapshot is null
+            ? null
+            : await readSovSnapshot(allianceId, call.Cancellation);
+        if (snapshot is null)
+            return Py.Tuple(Py.List([]), Py.List([]), Py.List([]));
+
+        var tcuRows = new List<PyValue>();
+        var iHubRows = new List<PyValue>();
+        var campaignScoreRows = new List<PyValue>();
+        foreach (var (solarSystemId, structures) in snapshot.StructuresBySolarSystemId
+                     .OrderBy(pair => pair.Key))
+        {
+            var hub = snapshot.HubsBySolarSystemId.GetValueOrDefault(solarSystemId);
+            if (hub.AllianceId == allianceId && hub.HubId is { } hubId)
+            {
+                var iHub = structures.FirstOrDefault(structure =>
+                    structure.ItemId == hubId && structure.AllianceId == allianceId);
+                if (iHub is not null)
+                {
+                    var row = AllianceSovStructureRow(iHub, false);
+                    iHubRows.Add(AllianceSovStructureRow(iHub, true));
+                    // V24.01 consumes a TCU-type row for an IHub that carries the system claim.
+                    if (snapshot.ClaimStructureIdsBySolarSystemId.GetValueOrDefault(solarSystemId) == hubId)
+                        tcuRows.Add(row);
+                }
+            }
+            foreach (var structure in structures.Where(structure => structure.AllianceId == allianceId))
+                foreach (var (teamId, score) in (structure.CampaignScoresByTeam ??
+                             new Dictionary<long,double>()).OrderBy(pair => pair.Key))
+                    campaignScoreRows.Add(Py.KeyVal(
+                        ("sourceItemID", CorporationWire.Id(structure.ItemId)),
+                        ("teamID", CorporationWire.Id(teamId)),
+                        ("score", Py.Number(score))));
+        }
+
+        return Py.Tuple(Py.List([.. tcuRows]), Py.List([.. iHubRows]), Py.List([.. campaignScoreRows]));
+    }
+
+    [Method("GetEveOwners")]
+    public async ValueTask<PyValue> GetEveOwners(ServiceCall call)
+    {
+        var ownerIds = OwnerIds(call.Arg(0));
+        if (ownerIds.Length == 0) return Py.List([]);
+        var charactersById = (await characters.GetManyAsync(ownerIds, call.Cancellation))
+            .ToDictionary(character => character.Id);
+        var corporationsById = (await store.GetManyAsync(ownerIds, call.Cancellation))
+            .ToDictionary(corporation => corporation.Id);
+        var alliancesById = (await store.AlliancesByIdsAsync(ownerIds, call.Cancellation))
+            .ToDictionary(alliance => alliance.Id);
+        var unknownIds = ownerIds.Where(id => !charactersById.ContainsKey(id) &&
+            !corporationsById.ContainsKey(id) && !alliancesById.ContainsKey(id))
+            .Distinct().ToArray();
+        var staticOwners = readStaticOwners is not null && unknownIds.Length > 0
+            ? await readStaticOwners(unknownIds, call.Cancellation)
+            : new Dictionary<long,AllianceOwnerLookupRecord>();
+
+        var rows = new List<PyValue>(ownerIds.Length);
+        foreach (var ownerId in ownerIds)
+        {
+            if (charactersById.TryGetValue(ownerId, out var character))
+            {
+                rows.Add(EveOwnerRow(ownerId,
+                    string.IsNullOrEmpty(character.Name) ? $"Character {ownerId}" : character.Name,
+                    character.TypeId > 0 ? character.TypeId : EveOwnerTypeIds.Character,
+                    character.Gender));
+            }
+            else if (corporationsById.TryGetValue(ownerId, out var corporation))
+            {
+                rows.Add(EveOwnerRow(ownerId,
+                    string.IsNullOrEmpty(corporation.Name) ? $"Corporation {ownerId}" : corporation.Name,
+                    EveOwnerTypeIds.Corporation, 0));
+            }
+            else if (alliancesById.TryGetValue(ownerId, out var alliance))
+            {
+                rows.Add(EveOwnerRow(ownerId,
+                    string.IsNullOrEmpty(alliance.Name) ? $"Alliance {ownerId}" : alliance.Name,
+                    EveOwnerTypeIds.Alliance, 0));
+            }
+            else if (staticOwners.TryGetValue(ownerId, out var owner))
+            {
+                rows.Add(EveOwnerRow(owner.Id, owner.Name, owner.TypeId, owner.Gender));
+            }
+        }
+        return Py.List([.. rows]);
+    }
+
+    private static PyValue AllianceSovStructureRow(
+        AllianceSovStructure structure, bool includeCorporation)
+    {
+        var fields = new List<(string Key, PyValue Value)>
+        {
+            ("structureID", CorporationWire.Id(structure.ItemId)),
+            ("solarSystemID", CorporationWire.Id(structure.SolarSystemId)),
+            ("campaignStartTime", FileTime(structure.CampaignStartTimeFileTime)),
+            ("campaignEventType", structure.CampaignEventType is { } eventType
+                ? new PyInt(eventType) : PyNone.Instance),
+            ("campaignOccupancyLevel", Py.Number(structure.DefenseMultiplier)),
+            ("vulnerableStartTime", FileTime(structure.VulnerableStartTimeFileTime)),
+            ("vulnerableEndTime", FileTime(structure.VulnerableEndTimeFileTime)),
+            ("vulnerabilityOccupancyLevel", Py.Number(structure.DefenseMultiplier))
+        };
+        if (includeCorporation)
+            fields.Add(("corporationID", CorporationWire.Id(structure.CorporationId)));
+        return Py.KeyVal([.. fields]);
+    }
+
+    private static PyValue FileTime(long? value) =>
+        value is > 0 ? Py.FileTimeLong(value.Value) : PyNone.Instance;
     [Method("GetAlliancePublicInfo")]
     public ValueTask<PyValue> GetAlliancePublicInfo(ServiceCall call) => GetAlliance(call);
 
@@ -830,6 +971,29 @@ public AllianceRegistryService(CorporationStore store, PgCharacterStore characte
         var ids = items.Select(Number).ToArray();
         if (ids.Any(id => id <= 0)) throw AllianceAccessDenied();
         return ids.Distinct().ToArray();
+    }
+
+    private static long[] OwnerIds(PyValue value)
+    {
+        var items = value switch
+        {
+            PyList list => list.Items,
+            PyTuple tuple => tuple.Items,
+            _ => Array.Empty<PyValue>()
+        };
+        return items.Select(Number).Where(id => id > 0).ToArray();
+    }
+
+    private static PyValue EveOwnerRow(long ownerId, string ownerName, int typeId, int gender)
+    {
+        var header = Py.Tuple(
+            new PyStr("ownerID"), new PyStr("ownerName"), new PyStr("typeID"),
+            new PyStr("gender"), new PyStr("ownerNameID"));
+        var line = Py.Tuple(
+            CorporationWire.Id(ownerId), new PyWString(ownerName), new PyInt(typeId),
+            new PyInt(gender), PyNone.Instance);
+        return new PyObject(new PyStr("util.Row"),
+            Py.Dict(("header", header), ("line", line)));
     }
 
     [Method("MachoResolveObject")]
@@ -2211,4 +2375,86 @@ public sealed class AllianceWarInheritanceWorker(
     int ReasonStarted, double Reward, long? CycleEndFiletime, bool CycleInferred,
     AllianceWarAlly? AllianceAlly, AllianceWarAlly[] Allies, string AttrsJson);
     private sealed record AllianceWarAlly(long AllianceId, long TimeStartedFiletime, long? TimeFinishedFiletime);
+}
+
+
+public sealed class AllianceSovereigntyTransferWorker(
+    CorporationStore store,
+    Eve.Scheduler.DurableScheduler scheduler,
+    Func<long> now)
+{
+    private const string JobKind = "alliance-sovereignty-transfer";
+
+    public Func<long, long, long, CancellationToken, Task<bool>>? TransferSovereigntyAsync { get; set; }
+
+    public Task RegisterAsync()
+    {
+        scheduler.Register(JobKind, HandleAsync);
+        store.AllianceSovereigntyTransferWriter = ScheduleAsync;
+        return Task.CompletedTask;
+    }
+
+    public async Task ScheduleAsync(
+        Npgsql.NpgsqlConnection connection, Npgsql.NpgsqlTransaction transaction,
+        long allianceId, long corporationId, long membershipStartedMs, long leftAtMs,
+        CancellationToken token)
+    {
+        if (!ReferenceEquals(transaction.Connection, connection))
+            throw new ArgumentException("alliance sovereignty transfer must share the departure transaction");
+        if (allianceId <= 0 || corporationId <= 0 || membershipStartedMs <= 0 || leftAtMs <= 0)
+            throw new ArgumentOutOfRangeException(nameof(allianceId));
+        var payload = new AllianceSovereigntyTransferDue(
+            allianceId, corporationId, membershipStartedMs, leftAtMs);
+        await scheduler.ScheduleAsync(connection, transaction, Spec(payload), token);
+    }
+
+    private async Task HandleAsync(Eve.Scheduler.JobContext job, CancellationToken token)
+    {
+        var payload = job.Payload<AllianceSovereigntyTransferDue>()
+            ?? throw new InvalidOperationException("alliance sovereignty transfer job has no payload");
+        var nowMs = now();
+        if (payload.LeftAtMs > nowMs)
+        {
+            job.RunAgainAt(payload.LeftAtMs, payload);
+            return;
+        }
+
+        var alliance = await store.AllianceAsync(payload.AllianceId, token);
+        if (alliance is not { Deleted: false })
+            return;
+        var members = await store.AllianceMembersAsync(payload.AllianceId, token);
+        if (members.Count == 0 || members.Any(member => member.CorporationId == payload.CorporationId))
+            return;
+        var corporation = await store.GetAsync(payload.CorporationId, token);
+        if (corporation?.AllianceId == payload.AllianceId)
+        {
+            job.RunAgainAt(checked(nowMs + 1000), payload);
+            return;
+        }
+
+        if (alliance.ActiveExecutorId is not { } executorId ||
+            !members.Any(member => member.CorporationId == executorId))
+        {
+            job.RunAgainAt(checked(nowMs + 60_000), payload);
+            return;
+        }
+        if (executorId == payload.CorporationId)
+            return;
+        if (TransferSovereigntyAsync is not { } transfer)
+            throw new InvalidOperationException("alliance sovereignty writer is not registered");
+        if (!await transfer(payload.AllianceId, payload.CorporationId, executorId, token))
+            throw new InvalidOperationException(
+                $"could not transfer sovereignty for alliance {payload.AllianceId}");
+    }
+
+    private static Eve.Scheduler.JobSpec Spec(AllianceSovereigntyTransferDue payload) =>
+        new(JobKind, payload.LeftAtMs)
+        {
+            Key = $"alliance-sov-transfer:{payload.AllianceId}:{payload.CorporationId}:{payload.MembershipStartedMs}",
+            Payload = payload,
+            OnDuplicate = Eve.Scheduler.OnDuplicate.Replace
+        };
+
+    private sealed record AllianceSovereigntyTransferDue(
+        long AllianceId, long CorporationId, long MembershipStartedMs, long LeftAtMs);
 }

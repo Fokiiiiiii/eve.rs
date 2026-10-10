@@ -1,5 +1,14 @@
 use super::*;
 
+/// Until when the protection spares a ship from every station, and the station it is still leaving (a ship that undocked: `leaving_station`).
+pub(super) type Spare = (i64, Option<i64>);
+
+/// Whether a station spares the ship: a protected ship is spared by every station, a ship that is leaving one by that station alone (the
+/// reference's ships fly out of their station's sphere without being bumped; the undock point lies inside it).
+pub(super) fn spares(spare: Spare, body: &crate::world::Body, now: i64) -> bool {
+    body.kind == BodyKind::Station && (spare.0 > now || spare.1 == Some(body.id))
+}
+
 impl Scene {
     /// Resolves swept contacts and remaining overlaps after ordinary movement settlement.
     pub(super) fn resolve_collisions(
@@ -8,8 +17,20 @@ impl Scene {
         only: Option<SessionId>,
         starts: Option<&BTreeMap<SessionId, (i64, Vec3, bool)>>,
     ) {
+        // a ship that is out of the sphere of the station it undocked from is no longer spared by it
+        let system = Arc::clone(&self.system);
+        for pilot in self.pilots.values_mut() {
+            if let Some(station) = pilot.leaving_station
+                && system.body(station).is_none_or(|body| {
+                    collision_contact(body.position, pilot.ship.position, body.radius, pilot.ship.spec.radius)
+                        .is_none()
+                })
+            {
+                pilot.leaving_station = None;
+            }
+        }
         // ponytail: all-pairs costs O(ships^2 + ships*bodies); use spatial buckets if populated systems make this tick expensive.
-        let mut ships: Vec<(SessionId, i64, Ship)> = self
+        let mut ships: Vec<(SessionId, Spare, Ship)> = self
             .pilots
             .iter()
             .filter(|&(session, pilot)| {
@@ -19,7 +40,9 @@ impl Scene {
                     && pilot.docking.is_none()
                     && pilot.jump.is_none()
             })
-            .map(|(session, pilot)| (*session, pilot.protected_until, pilot.ship.clone()))
+            .map(|(session, pilot)| {
+                (*session, (pilot.protected_until, pilot.leaving_station), pilot.ship.clone())
+            })
             .collect();
         let mut active: BTreeSet<SessionId> = match only {
             Some(session) => [session].into_iter().collect(),
@@ -49,14 +72,12 @@ impl Scene {
                     }
                 }
             }
-            for (session, protected_until, ship) in &mut ships {
+            for (session, spare, ship) in &mut ships {
                 if !active.contains(session) {
                     continue;
                 }
                 for body in &self.system.bodies {
-                    if body.kind == BodyKind::Belt
-                        || (body.kind == BodyKind::Station && *protected_until > now)
-                    {
+                    if body.kind == BodyKind::Belt || spares(*spare, body, now) {
                         continue;
                     }
                     if bump_ship_body(ship, body) {
@@ -433,7 +454,7 @@ pub(super) fn bump_ship_body_swept(
 
 // ponytail: one swept impact per ship per settlement; iterate events further if multi-contact ticks appear in play.
 pub(super) fn resolve_swept_collisions(
-    ships: &mut [(SessionId, i64, Ship)],
+    ships: &mut [(SessionId, Spare, Ship)],
     bodies: &[crate::world::Body],
     starts: &BTreeMap<SessionId, (i64, Vec3, bool)>,
     now: i64,
@@ -479,7 +500,7 @@ pub(super) fn resolve_swept_collisions(
             }
         }
     }
-    for (session, protected_until, ship) in ships {
+    for (session, spare, ship) in ships {
         if !active.contains(session) || swept.contains(session) {
             continue;
         }
@@ -489,7 +510,7 @@ pub(super) fn resolve_swept_collisions(
         }
         let seconds = (now - start_at) as f64 / TICKS_PER_SECOND as f64;
         for body in bodies {
-            if body.kind == BodyKind::Belt || (body.kind == BodyKind::Station && *protected_until > now) {
+            if body.kind == BodyKind::Belt || spares(*spare, body, now) {
                 continue;
             }
             if bump_ship_body_swept(ship, body, start, seconds) {

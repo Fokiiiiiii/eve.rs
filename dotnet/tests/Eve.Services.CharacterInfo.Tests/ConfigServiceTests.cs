@@ -220,9 +220,11 @@ public sealed class ConfigServiceTests
         await using var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(url));
         CharacterNames.EnsureUnicodeSupport();
         var charactersSchema = $"cc_{Guid.NewGuid():N}"[..20];
+        var corporationsSchema = $"cc_corp_{Guid.NewGuid():N}"[..20];
         try
         {
             await PgCharacterStore.MigrateAsync(source, charactersSchema);
+            await CorporationStore.MigrateAsync(source, corporationsSchema);
             var characters = new PgCharacterStore(source, charactersSchema);
             long characterId;
             await using (var connection = await source.OpenConnectionAsync())
@@ -234,10 +236,10 @@ public sealed class ConfigServiceTests
                 await transaction.CommitAsync();
             }
 
-            var corporations = new CorporationStore(
-                source, characters, null!, null!, null!, () => 0,
-                Environment.GetEnvironmentVariable("EVE_CORPORATIONS_SCHEMA") ?? CorporationStore.DefaultSchema);
+            // the NPC corporations are the SDE's npcCorporations, seeded the way the host seeds them at startup
             var sde = new SdeReader(source);
+            var corporations = new CorporationStore(source, characters, null!, null!, null!, () => 0, corporationsSchema);
+            await corporations.SeedNpcAsync(sde);
             var stations = await StationCatalog.LoadAsync(sde);
             var solarSystems = await SolarSystemCatalog.LoadAsync(sde);
             var service = new ConfigService(characters, corporations, stations, solarSystems);
@@ -285,7 +287,7 @@ public sealed class ConfigServiceTests
         }
         finally
         {
-            await using var cleanup = source.CreateCommand($"DROP SCHEMA IF EXISTS {charactersSchema} CASCADE");
+            await using var cleanup = source.CreateCommand($"DROP SCHEMA IF EXISTS {charactersSchema} CASCADE; DROP SCHEMA IF EXISTS {corporationsSchema} CASCADE");
             await cleanup.ExecuteNonQueryAsync();
         }
     }

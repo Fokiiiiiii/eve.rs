@@ -29,7 +29,9 @@ impl Scene {
         let velocity = Vec3::new(direction.x * speed, direction.y * speed, direction.z * speed);
         let ship = Ship::new(spec, position, velocity, direction, 1.0, Course::Goto, now);
         let entered = self.next_entry();
-        self.pilots.insert(session, Pilot::new(ship, modules, entered, now, now + UNDOCK_PROTECTION));
+        let mut pilot = Pilot::new(ship, modules, entered, now, now + UNDOCK_PROTECTION);
+        pilot.leaving_station = Some(station_id);
+        self.pilots.insert(session, pilot);
         Ok(self.announce_arrival(session, now))
     }
 

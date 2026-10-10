@@ -16,6 +16,8 @@ public class CynoJumpHostTests
     private const int Revelation = 19720, Helium = 16274, FuelBayFlag = CharacterShips.FuelBayFlag;
     private const long Field = 4_250_000_000_000_201, OtherField = 4_250_000_000_000_202;
     private const int Origin = 30100032, Destination = 30100099;
+    /// <summary>A wormhole system and a Pochven system, one light year from the origin each: a jump drive may not enter either (the wiki).</summary>
+    private const int Wormhole = 31_000_500, Pochven = 30_003_500;
     private const long Minute = 60_000, Spool = 300_000;
 
     /// <summary>
@@ -25,6 +27,8 @@ public class CynoJumpHostTests
     private static SolarSystemCatalog Systems() => new([
         new SolarSystemInfo(Origin, "Test Origin", 1, 1, -0.5, 0, 0, 0, 0),
         new SolarSystemInfo(Destination, "Test Destination", 1, 1, -0.4, 0, SolarSystemCatalog.MetersPerLightYear, 0, 0),
+        new SolarSystemInfo(Wormhole, "Test Wormhole", 1, 11_000_001, -0.99, 0, 0, SolarSystemCatalog.MetersPerLightYear, 0),
+        new SolarSystemInfo(Pochven, "Test Pochven", 1, 10_000_070, -0.9, 0, 0, 0, SolarSystemCatalog.MetersPerLightYear),
     ]);
 
     /// <summary>A spool of the jump to Destination that takes the given fuel, ending as the drive would end it from now.</summary>
@@ -600,5 +604,61 @@ public class CynoJumpHostTests
 
         var anchor = Assert.Single(Events.Of(session), e => e.Name == "OnGroupJumpAnchorActivated");
         Assert.Equal(new long[] { Destination, 0 }, anchor.Args.Select(Events.Number).ToArray());
+    }
+
+    /// <summary>Every text inside a wrapped error's payload, joined (the refusal's words).</summary>
+    private static string Texts(PyValue value) => value switch
+    {
+        PyStr text => text.Value,
+        PyWString text => text.Value,
+        PyBytes text => System.Text.Encoding.UTF8.GetString(text.Value.Span),
+        PyTuple tuple => string.Join("|", tuple.Items.Select(Texts)),
+        PyList list => string.Join("|", list.Items.Select(Texts)),
+        PyDict dict => string.Join("|", dict.Entries.SelectMany(entry => new[] { Texts(entry.Key), Texts(entry.Value) })),
+        PyObjectEx ex => string.Join("|", new[] { Texts(ex.Header) }.Concat(ex.List.Select(Texts)).Concat(ex.Dict.SelectMany(entry => new[] { Texts(entry.Key), Texts(entry.Value) }))),
+        PyObject obj => Texts(obj.Args),
+        _ => "",
+    };
+
+    /// <summary>A cynosural field lit by <paramref name="owner"/> in <paramref name="system"/> (the field's own system, not the destination), ten minutes of life.</summary>
+    private static async Task FieldInAsync(Rig rig, long field, int system, long owner, long ship)
+    {
+        await rig.Deployed.SaveAsync(new DeployedRecord(
+            field, "cyno_field", system, "Cynosural Field", 21_094, 2_020, [0, 0, SolarSystemCatalog.MetersPerLightYear], 250, owner, 0, 0, ship, rig.Now + 10 * Minute));
+    }
+
+    [PgFact]
+    public async Task A_revelation_cannot_jump_into_wormhole_space_or_into_pochven_even_with_a_field_lit_there()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var (session, character, ship, oid) = await JumperAsync(rig, fuel: 50_000);
+        await FleetOfAsync(rig, character.CharacterId);
+        await FieldInAsync(rig, Field, Wormhole, character.CharacterId, ship);
+        await FieldInAsync(rig, OtherField, Pochven, character.CharacterId, ship);
+        var drive = Drive(rig);
+        rig.Sim.Heard.Clear();
+
+        // the wiki: jump drives cannot jump to systems in wormhole space, and cannot be used to enter Pochven (only to exit)
+        var wormhole = await Assert.ThrowsAsync<MachoWrappedException>(() => drive.JumpToFieldAsync(session, Field, character.CharacterId, Wormhole, oid, CancellationToken.None));
+        Assert.Contains("wormhole space", Texts(wormhole.Error.Payload));
+        var pochven = await Assert.ThrowsAsync<MachoWrappedException>(() => drive.JumpToFieldAsync(session, OtherField, character.CharacterId, Pochven, oid, CancellationToken.None));
+        Assert.Contains("Pochven", Texts(pochven.Error.Payload));
+        Assert.DoesNotContain(rig.Sim.Heard.OfType<SimCommand>(), command => command.Code == SimCommands.CynoJump);
+        Assert.Equal(50_000, await rig.Ships.FuelHeldAsync(character.CharacterId, ship, Helium));
+    }
+
+    [PgFact]
+    public async Task A_titan_bridge_is_refused_into_pochven_and_nothing_is_opened()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var (session, character, ship, _) = await JumperAsync(rig, fuel: 50_000, hull: Avatar, fuelType: Helium, generator: PortalGenerator, strontium: 500);
+        await FleetOfAsync(rig, character.CharacterId);
+        await FieldInAsync(rig, OtherField, Pochven, character.CharacterId, ship);
+        rig.Sim.Heard.Clear();
+
+        var refused = await Assert.ThrowsAsync<MachoWrappedException>(() => Bridges(rig).OpenAsync(session, OtherField, Pochven, CancellationToken.None));
+
+        Assert.Contains("Pochven", Texts(refused.Error.Payload));
+        Assert.DoesNotContain(rig.Sim.Heard.OfType<SimCommand>(), command => command.Code == SimCommands.OpenBridge);
     }
 }

@@ -765,7 +765,13 @@ Increment 2, done (tests: `CynoJumpHostTests`: A_beacon_that_anchors_is_told_to_
 Increment 3, done (tests: `BeaconHostTests`: A_standard_beacon_that_anchors_inside_an_inhibitors_range_is_never_lit, A_covert_beacon_is_not_stopped_by_an_inhibitor_and_a_standard_one_outside_its_range_anchors, An_inhibitor_placed_later_does_not_unlight_a_beacon_already_lit; decisions in DEVIATIONS "Track A8c"):
 - A standard or highsec authorized beacon whose activation falls inside an anchored Mobile Cynosural Inhibitor's 100 km is not lit: its record keeps an activation time of never (`SpaceContainers.NeverLit`), the simulation is not told it is anchored, and a jump to it is refused as not lit. A covert beacon is not stopped; a lit beacon is not unlit by an inhibitor placed later (the wiki: "do not remove existing cynos").
 
+Increment 4, done (tests: `CynoJumpHostTests`: A_revelation_cannot_jump_into_wormhole_space_or_into_pochven..., A_titan_bridge_is_refused_into_pochven...; `BeaconHostTests`: A_beacon_cannot_be_dropped_in_pochven_but_it_may_be_lit_in_wormhole_space...; decisions in DEVIATIONS "Track A8c"):
+- Jump drives (the cynosural jump, a bridge's opening, a conduit) are refused into wormhole space and into Pochven (the wiki: "jump drives cannot jump to systems in wormhole space"; "cannot be used to enter Triglavian space, only to exit"). Leaving is not refused. The refusal texts are ours (no reference text for the jump).
+- A Mobile Cynosural Beacon cannot be dropped in Pochven (EveJS text: "Mobile Cynosural Beacons cannot be deployed in Pochven."). A beacon may be dropped and lit in wormhole space (the wiki); EveJS refuses it there, which is a recorded deviation.
+- The SDE puts Kuharah (30000021), the null-security system of the beacon tests, in Pochven (region 10000070): those tests now use RU-97T (30000377).
+
 Open, each with its blocker (the remaining increments):
+- NOT BUILT: a cynosural field generator's lighting in Pochven (the wiki's region-wide jammer). Blocker: the simulation holds no fact about the system's region; the scene needs it on the wire (a protocol bump), as the inhibitor's range was.
 - Shortcut: a beacon that is lit before a restart is not told to its fleet again (as the field of track A6; the notice is sent when it anchors, not when a ship returns to the system).
 - NOT BUILT: a mobile inhibitor's effect on a beacon's activation (the 100 km refusal at anchoring).
 - NOT BUILT: the wormhole and Pochven rules (jumps into wormhole space and into Pochven; lighting in Pochven).

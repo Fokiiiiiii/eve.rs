@@ -98,6 +98,10 @@ public sealed class SpaceJumpDrive(
         {
             throw Notify("Jump freighters cannot jump into high-security space.");
         }
+        if (systems.Get(field.SolarSystemId) is { } entered && JumpDriveRules.EntryRefusal(entered.RegionId) is { } entry)
+        {
+            throw Notify(entry);
+        }
         var state = await fatigue.GetAsync(character, cancellationToken);
         if (state.CooldownUntilMs > now)
         {

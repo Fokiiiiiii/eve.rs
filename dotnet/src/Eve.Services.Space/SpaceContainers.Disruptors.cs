@@ -134,6 +134,12 @@ public sealed partial class SpaceContainers
         {
             throw Refuse("Mobile Cynosural Beacons can only be deployed below 0.5 security.");
         }
+        // Pochven: a region-wide cynosural jammer stops anyone lighting a cyno there (the wiki, "Pochven"); the text is EveJS's. A beacon may be lit in wormhole
+        // space (the wiki, "Cynosural field": "they can be lit in wormhole space"); EveJS refuses it there, see DEVIATIONS, Track A8c
+        if (beacon && _space.RegionOfSystem(system) == JumpDriveRules.PochvenRegionId)
+        {
+            throw Refuse("Mobile Cynosural Beacons cannot be deployed in Pochven.");
+        }
         var radius = type.Attributes.GetValueOrDefault(RadiusAttribute);
         if (radius <= 0)
         {

@@ -90,6 +90,10 @@ public sealed class SpaceConduits(
         {
             throw Notify("That cynosural field does not take this ship.");
         }
+        if (systems.Get(destinationSystem) is { } entered && JumpDriveRules.EntryRefusal(entered.RegionId) is { } entry)
+        {
+            throw Notify(entry);
+        }
         var lightYears = systems.LightYearsBetween(origin, destinationSystem) ?? throw Refusal("DeniedShipChanged");
         var calibration = await LevelAsync(JumpDriveRules.CalibrationSkill, character, cancellationToken);
         if (lightYears > JumpDriveRules.Range(baseRange, calibration, await PerLevelAsync(JumpDriveRules.CalibrationSkill, JumpDriveRules.CalibrationPerLevelAttribute, cancellationToken)))

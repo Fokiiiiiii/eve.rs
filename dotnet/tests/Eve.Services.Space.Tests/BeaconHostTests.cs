@@ -14,8 +14,12 @@ public class BeaconHostTests
 {
     private const int Beacon = 57319, HighsecBeacon = 58906, CovertBeacon = 59630;
     private const int Anchoring = 11584, CynosuralFieldTheory = 21603, Polaris = 9955;
-    /// <summary>A null-security system (security -1.0), where a standard beacon may be dropped.</summary>
-    private const long NullSecSystem = 30000021;
+    /// <summary>A null-security system (security -1.0, RU-97T) outside Pochven, where a standard beacon may be dropped.</summary>
+    private const long NullSecSystem = 30000377;
+    /// <summary>Kuharah (SDE region 10000070, Pochven): a beacon cannot be lit there (the wiki's region-wide jammer).</summary>
+    private const long PochvenSystem = 30000021;
+    /// <summary>A wormhole system (SDE region 11000033): a beacon may be lit there (the wiki), though no jump drive may enter it.</summary>
+    private const long WormholeSystem = 31000001;
     /// <summary>Jita (security 0.9): a standard or covert beacon may not be dropped there.</summary>
     private const long HighSecSystem = 30000142;
 
@@ -246,5 +250,21 @@ public class BeaconHostTests
         Assert.Equal(lit, (await rig.Deployed.GetAsync(beacon))!.ActivateAtMs);
         Assert.DoesNotContain(rig.Sim.Heard, m => m is SimSetDisruptorActive off && off.DeployableId == beacon && !off.Active);
         Assert.DoesNotContain(rig.Sim.Heard, m => m is SimRemoveDeployed removed && removed.DeployableId == beacon);
+    }
+
+    [PgFact]
+    public async Task A_beacon_cannot_be_dropped_in_pochven_but_it_may_be_lit_in_wormhole_space_as_the_wiki_says()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var (pochven, pochvenItems) = await PilotWithBeaconsAsync(rig, Beacon, 1, PochvenSystem);
+        var refused = await Assert.ThrowsAsync<MachoWrappedException>(() => rig.Containers.LaunchFromShipAsync(pochven, pochvenItems[0], CancellationToken.None));
+        Assert.Contains("cannot be deployed in Pochven", Texts(refused.Error.Payload));
+        Assert.Equal(CharacterShips.CargoFlag, (await rig.Items.GetAsync(pochvenItems[0]))!.Flag);
+        Assert.Empty(rig.Sim.Heard.OfType<SimPlaceCynoBeacon>());
+
+        var (wormhole, wormholeItems) = await PilotWithBeaconsAsync(rig, Beacon, 1, WormholeSystem, name: "Wormhole Beacon Pilot", sessionId: 2);
+        var placed = await rig.Containers.LaunchFromShipAsync(wormhole, wormholeItems[0], CancellationToken.None);
+        Assert.Equal(wormholeItems[0], placed);
+        Assert.Equal("mobile_cyno_beacon", (await rig.Deployed.GetAsync(wormholeItems[0]))!.Kind);
     }
 }

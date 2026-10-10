@@ -105,6 +105,10 @@ public sealed class SpaceBridges(
         {
             throw Notify("That cynosural field does not take this ship.");
         }
+        if (systems.Get(destinationSystem) is { } entered && JumpDriveRules.EntryRefusal(entered.RegionId) is { } entry)
+        {
+            throw Notify(entry);
+        }
         // the capitals operate outside high security (the wiki, "Capital ships"): a Titan and a Rorqual are capitals
         if ((titan || industrial) && systems.Get(origin) is { } place && Security.IsHighSecOrHigher(Security.ClassFromLevel(place.Security)))
         {

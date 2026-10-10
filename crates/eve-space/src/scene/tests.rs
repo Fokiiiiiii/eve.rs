@@ -2210,7 +2210,7 @@ fn a_titan_bridge_opens_where_the_ship_is_and_holds_the_ship_for_its_minute() {
     let mut scene = scene_by_a_gate();
     let destination = other_scene().solar_system_id();
     let told = scene.command(SESSION, open_bridge(CYNO_FIELD, destination, 60_000.0, 60_000.0), NOON);
-    assert!(told.iter().any(|o| matches!(o, Out::Accepted { command: 28, .. })), "{told:?}");
+    assert!(told.iter().any(|o| matches!(o, Out::Accepted { command: 30, .. })), "{told:?}");
     assert!(
         scene
             .deployables

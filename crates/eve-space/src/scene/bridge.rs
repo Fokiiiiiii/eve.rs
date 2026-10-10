@@ -1,6 +1,6 @@
 //! The jump bridges (EVE University wiki, "Jump drives"): a Titan's Jump Portal Generator, or a Black Ops' Covert one, opens a bridge where the ship is,
 //! to a cynosural field lit in another system; the fleet ships within 2 500 metres of the bridge jump through it to the field. Command 28 opens a bridge
-//! and command 29 is a passenger's jump through one. The host has checked the module, the fleet, the range, the fuel and the passenger's eligibility.
+//! and command 31 is a passenger's jump through one. The host has checked the module, the fleet, the range, the fuel and the passenger's eligibility.
 use super::*;
 
 /// How far from a bridge a ship may be to pass through it: 2 500 metres (the wiki, "Jump drives": fleetmates within 2,500 metres of the bridging ship).
@@ -34,7 +34,7 @@ fn range_between(a: Vec3, b: Vec3) -> f64 {
 }
 
 impl Scene {
-    /// `CmdBridgeToFleetModuleBeacon` (command 28): the ship opens a bridge where it is, to the field `field_id` lit in `destination_system`. The bridge lives
+    /// `CmdBridgeToFleetModuleBeacon` (command 30): the ship opens a bridge where it is, to the field `field_id` lit in `destination_system`. The bridge lives
     /// for `lifetime_ms` (the module's duration) and the ship holds still for `immobile_ms` (zero when the reference does not hold it: a covert bridge).
     /// The activation takes `capacitor` GJ of the charge; a warp bubble over the ship refuses it, as it refuses a jump.
     pub(super) fn open_bridge(
@@ -85,7 +85,7 @@ impl Scene {
         ]
     }
 
-    /// `CmdJumpThroughFleet` (command 29): the ship of `session` passes through the bridge of the ship `bridge_ship_id` to the field `field_id` in
+    /// `CmdJumpThroughFleet` (command 31): the ship of `session` passes through the bridge of the ship `bridge_ship_id` to the field `field_id` in
     /// `destination_system`. It must be within 2 500 metres of the bridge, not inside a warp bubble, and the bridge must be open. The ship leaves at once
     /// and appears by the field (the same arrival as a cynosural jump).
     pub(super) fn bridge_jump(

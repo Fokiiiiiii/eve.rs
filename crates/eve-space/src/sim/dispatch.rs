@@ -32,7 +32,7 @@ pub(super) fn command_of(code: u8, args: &[f64]) -> Option<Command> {
                 capacitor: *capacitor,
             })
         }
-        (28, [field, destination, lifetime, immobile, capacitor])
+        (30, [field, destination, lifetime, immobile, capacitor])
             if is_id(*field)
                 && is_id(*destination)
                 && lifetime.is_finite()
@@ -50,7 +50,7 @@ pub(super) fn command_of(code: u8, args: &[f64]) -> Option<Command> {
                 capacitor: *capacitor,
             })
         }
-        (29, [bridge, field, destination]) if is_id(*bridge) && is_id(*field) && is_id(*destination) => {
+        (31, [bridge, field, destination]) if is_id(*bridge) && is_id(*field) && is_id(*destination) => {
             Some(Command::BridgeJump {
                 bridge_ship_id: *bridge as i64,
                 field_id: *field as i64,
@@ -71,6 +71,7 @@ pub(super) fn command_of(code: u8, args: &[f64]) -> Option<Command> {
         (23, [target]) if is_id(*target) => Some(Command::PositionOf { target_id: *target as i64 }),
         (25, [distance]) if distance.is_finite() => Some(Command::DropPoint { distance: *distance }),
         (27, []) => Some(Command::ScanTargets),
+        (28, []) => Some(Command::DirectionalScan),
         _ => None,
     }
 }
@@ -203,6 +204,9 @@ impl Sim {
             },
             Out::ScanTargets { session, command, targets } => {
                 Message::ScanTargets { session_id: session, command, targets }
+            }
+            Out::DirectionalTargets { session, command, targets } => {
+                Message::DirectionalTargets { session_id: session, command, targets }
             }
             Out::DroneResults { session, command, results } => Message::DroneResults {
                 session_id: session,

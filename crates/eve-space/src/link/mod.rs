@@ -36,7 +36,7 @@ use crate::weapons::{Aoe, Arc, Charge, Spool, Turret};
 
 use crate::wreck::WreckKind;
 
-pub const PROTOCOL_VERSION: u16 = 54;
+pub const PROTOCOL_VERSION: u16 = 55;
 /// The message kinds.
 pub mod kind;
 
@@ -168,6 +168,19 @@ pub struct ScanTarget {
 
 /// A scanner probe the host launched and keeps the record of: its id, its type and group, where it is and the radius of its ball. The simulation puts it
 /// in space as a ball (`AddBalls2`) for those who see the place; it is never ended by the simulation (the host recalls it or its time is up).
+/// Something a directional scan can see (command 28, protocol 54): its item id, its kind (see `scene::directional`), its type, where it is, its radius, and whether it is
+/// cloaked or in warp (the host decides what the scan shows from these).
+#[derive(Debug, Clone, PartialEq)]
+pub struct DirectionalTarget {
+    pub id: i64,
+    pub kind: u8,
+    pub type_id: i32,
+    pub position: [f64; 3],
+    pub radius: f64,
+    pub cloaked: bool,
+    pub warping: bool,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct ProbePlacement {
     pub probe_id: i64,
@@ -332,6 +345,12 @@ pub enum Message {
         session_id: u64,
         command: u8,
         targets: Vec<ScanTarget>,
+    },
+    /// What the scene has in a cone of space, for the host's directional scan (answers command 28, protocol 54).
+    DirectionalTargets {
+        session_id: u64,
+        command: u8,
+        targets: Vec<DirectionalTarget>,
     },
     Approaching {
         session_id: u64,
@@ -720,6 +739,7 @@ impl Message {
             Self::Accepted { .. } => kind::ACCEPTED,
             Self::Position { .. } => kind::POSITION,
             Self::ScanTargets { .. } => kind::SCAN_TARGETS,
+            Self::DirectionalTargets { .. } => kind::DIRECTIONAL_TARGETS,
             Self::Approaching { .. } => kind::APPROACHING,
             Self::Jumping { .. } => kind::JUMPING,
             Self::Jumped { .. } => kind::JUMPED,

@@ -250,9 +250,16 @@ internal sealed class FakeSim : ISimulation
     /// <summary>What a scan-target query (command 27) is answered with: the targets the scene holds.</summary>
     public IReadOnlyList<SimScanTarget> ScanTargetsAnswer { get; set; } = [];
 
+    /// <summary>What a directional scan (command 28) is answered with: what the scene has that a cone can see.</summary>
+    public IReadOnlyList<SimDirectionalTarget> DirectionalAnswer { get; set; } = [];
+
     public Task<CommandReply> CommandAsync(ulong sessionId, byte code, double[] args, CancellationToken cancellationToken = default)
     {
         Heard.Enqueue(new SimCommand(sessionId, code, args));
+        if (code == SimCommands.DirectionalScan)
+        {
+            return Task.FromResult(new CommandReply(true, 0, null) { DirectionalTargets = DirectionalAnswer });
+        }
         if (code == SimCommands.ScanTargets)
         {
             return Task.FromResult(new CommandReply(true, 0, null) { ScanTargets = ScanTargetsAnswer });

@@ -81,6 +81,7 @@ public const byte UpdateEffect = 61;
         public const byte SetDisruptorActive = 69;
         public const byte PlaceInhibitor = 70;
         public const byte ScanTargets = 71;
+        public const byte DirectionalTargets = 72;
 
 
 /// <summary>Protocol 46 (FP-C7): an ECM burst reached ships; the ship that ran it and each ship reached, with whether its roll jammed it (simulation to host).</summary>

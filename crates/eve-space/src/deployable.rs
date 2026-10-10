@@ -57,7 +57,7 @@ pub enum Role {
     /// (EVE.js `findActiveInhibitorConflict`); a covert field is not stopped. The host anchors it and takes it out when its record's time is up.
     CynoInhibitor { active: bool, range: f64 },
     /// A jump bridge a ship opened (command 28, protocol 54): it lives until its time is up, is put in no client ball, and lets the fleet ships in 2 500 metres of
-    /// the ship pass through it to the field (command 29). The field is the one the bridge targets; the destination is that field's system.
+    /// the ship pass through it to the field (command 31). The field is the one the bridge targets; the destination is that field's system.
     JumpBridge { field_id: i64, destination_system: i32 },
     /// A lance's beacon (EVE.js `spawnLanceBeacon`, protocol 39): a transient container the beam is drawn to. It does nothing but exist; it is taken out when
     /// its strike's effect ends (or stops), or when its lifetime is up.

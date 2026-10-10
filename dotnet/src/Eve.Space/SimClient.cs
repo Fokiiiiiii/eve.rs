@@ -219,6 +219,11 @@ public sealed class SimClient : ISimulation, IAsyncDisposable
                 break;
             case SimScanTargets:
                 break; // nobody is waiting for it
+            case SimDirectionalTargets directional when _answered.TryRemove((directional.SessionId, directional.Command), out var sweeping):
+                sweeping.TrySetResult(new CommandReply(true, 0, null) { DirectionalTargets = directional.Targets });
+                break;
+            case SimDirectionalTargets:
+                break; // nobody is waiting for it
             case SimRefused refused when _answered.TryRemove((refused.SessionId, refused.Command), out var refusing):
                 refusing.TrySetResult(new CommandReply(false, 0, refused.Reason));
                 break;

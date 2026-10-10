@@ -2437,6 +2437,8 @@ public class SpaceServiceTests
         sink.Sent.Clear();
 
         rig.Sim.Say(new SimDocked((ulong)session.SessionId, Rig.Station));
+        // the docking's notifications are finished by background work: they are all done before the sequence is asserted
+        await rig.Space.QuiesceAsync();
         await Rig.UntilAsync(() => session.GetInt("stationid") == Rig.Station);
 
         Assert.Equal(["OnInvulnCancelled", "OnMachoObjectDisconnect", "OnItemsChanged", "$sessionchange", "OnDockingFinished"], Sequence.Of(session, clear: false));
@@ -2471,6 +2473,8 @@ public class SpaceServiceTests
 
         rig.Sim.Say(new SimDocked((ulong)session.SessionId, Rig.Station));
         rig.Sim.Say(new SimDocked((ulong)session.SessionId, Rig.Station));
+        // the docking's notifications are finished by background work: they are all done before the sequence is asserted
+        await rig.Space.QuiesceAsync();
         await Rig.UntilAsync(() => session.GetInt("stationid") == Rig.Station);
         await Task.Delay(100);
 
@@ -2487,6 +2491,8 @@ public class SpaceServiceTests
         await using var _ = rig;
         await InSpaceAsync(rig, session);
         rig.Sim.Say(new SimDocked((ulong)session.SessionId, Rig.Station));
+        // the docking's notifications are finished by background work: they are all done before the sequence is asserted
+        await rig.Space.QuiesceAsync();
         await Rig.UntilAsync(() => session.GetInt("stationid") == Rig.Station);
 
         var (_, answer) = await UndockAsync(rig, session);

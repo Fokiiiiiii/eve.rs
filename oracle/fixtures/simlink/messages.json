@@ -3015,6 +3015,41 @@
    "hex": "30000000264f2c3859955c0600010200000084ba089b15090000000085ba089b150900000e004e4f545f434f4e54524f4c4c4544"
   },
   {
+   "name": "what a directional scan can see in the cone",
+   "kind": "DirectionalTargets",
+   "sessionId": "1790646377000015",
+   "command": 28,
+   "targets": [
+    {
+     "id": "9988400003716",
+     "kind": 1,
+     "typeId": 586,
+     "position": [
+      1200.5,
+      -300.0,
+      45000.25
+     ],
+     "radius": 38.0,
+     "cloaked": false,
+     "warping": false
+    },
+    {
+     "id": "9988400003717",
+     "kind": 7,
+     "typeId": 3802,
+     "position": [
+      -5000.0,
+      0.0,
+      9000.0
+     ],
+     "radius": 6000.0,
+     "cloaked": false,
+     "warping": true
+    }
+   ],
+   "hex": "6c000000484f2c3859955c06001c0200000084ba089b15090000014a0200000000000000c292400000000000c072c00000000008f9e5400000000000004340000085ba089b1509000007da0e0000000000000088b3c00000000000000000000000000094c140000000000070b7400001"
+  },
+  {
    "name": "what a probe scan can find in the system",
    "kind": "ScanTargets",
    "sessionId": "1790646377000015",

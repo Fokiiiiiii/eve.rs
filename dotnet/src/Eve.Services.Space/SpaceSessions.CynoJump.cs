@@ -11,7 +11,7 @@ public sealed partial class SpaceSessions
     public SpaceBridges? Bridges { get; set; }
 
     /// <summary>
-    /// The ship opens a jump bridge where it is (command 28): the simulation keeps the bridge for <paramref name="lifetimeMs"/>, holds the ship still for
+    /// The ship opens a jump bridge where it is (command 30): the simulation keeps the bridge for <paramref name="lifetimeMs"/>, holds the ship still for
     /// <paramref name="immobileMs"/> and takes <paramref name="capacitor"/> GJ. The isotopes are the bridge's own (<see cref="SpaceBridges"/>).
     /// </summary>
     public async Task OpenBridgeAsync(
@@ -47,7 +47,7 @@ public sealed partial class SpaceSessions
     }
 
     /// <summary>
-    /// The passenger's jump through the bridge of the ship <paramref name="bridgeShipId"/> (command 29): the ship leaves at once for the field in
+    /// The passenger's jump through the bridge of the ship <paramref name="bridgeShipId"/> (command 31): the ship leaves at once for the field in
     /// <paramref name="destinationSystem"/>, and the arrival is the simulation's, as a cynosural jump's.
     /// </summary>
     public async Task<PyValue> BridgeJumpAsync(

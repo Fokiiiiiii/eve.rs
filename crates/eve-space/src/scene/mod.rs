@@ -4,6 +4,7 @@
 //! from the time it was last settled to that time, so the same calls at the same times give the same bytes.
 mod bridge;
 mod collision;
+mod directional;
 mod docking;
 mod heat;
 mod jump;
@@ -135,6 +136,8 @@ pub enum Command {
     /// The scan targets of the scene for a probe scan (host query, code 27, protocol 52): the ships and companions the pilot can see, and the deployables a
     /// probe can scan. A cloaked ship is not one; the pilot's own ship is not.
     ScanTargets,
+    /// The things a directional scan can see in the scene (host query, code 28, protocol 54); the host takes the cone out of them.
+    DirectionalScan,
     /// Jump through a stargate; `destination_gate` is the gate the client says it leads to (0 when it does not say).
     Jump {
         gate_id: i64,
@@ -149,7 +152,7 @@ pub enum Command {
         spool_ms: f64,
         capacitor: f64,
     },
-    /// Opens a jump bridge where the ship is, to the field `field_id` lit in `destination_system` (code 28, protocol 54): the bridge lives `lifetime_ms`,
+    /// Opens a jump bridge where the ship is, to the field `field_id` lit in `destination_system` (code 30, protocol 55): the bridge lives `lifetime_ms`,
     /// the ship holds still for `immobile_ms` (zero when it is not held), and the activation takes `capacitor` GJ.
     OpenBridge {
         field_id: i64,
@@ -158,7 +161,7 @@ pub enum Command {
         immobile_ms: f64,
         capacitor: f64,
     },
-    /// The ship passes through the bridge of the ship `bridge_ship_id` to the field `field_id` in `destination_system` (code 29, protocol 54).
+    /// The ship passes through the bridge of the ship `bridge_ship_id` to the field `field_id` in `destination_system` (code 31, protocol 55).
     BridgeJump {
         bridge_ship_id: i64,
         field_id: i64,
@@ -180,13 +183,14 @@ impl Command {
             Self::WarpTo { .. } => 8,
             Self::Jump { .. } => 9,
             Self::CynoJump { .. } => 26,
-            Self::OpenBridge { .. } => 28,
-            Self::BridgeJump { .. } => 29,
+            Self::OpenBridge { .. } => 30,
+            Self::BridgeJump { .. } => 31,
             Self::WarpToPoint { .. } => 21,
             Self::ResolveWarpTarget { .. } => 22,
             Self::PositionOf { .. } => 23,
             Self::DropPoint { .. } => 25,
             Self::ScanTargets => 27,
+            Self::DirectionalScan => 28,
         }
     }
 }
@@ -213,6 +217,8 @@ pub enum Out {
     Position { session: SessionId, command: u8, position: Vec3 },
     /// The scan targets of the scene for the host's probe scan (command 27); it does not move anything.
     ScanTargets { session: SessionId, command: u8, targets: Vec<crate::link::ScanTarget> },
+    /// The things a directional scan can see (command 28); it does not move anything.
+    DirectionalTargets { session: SessionId, command: u8, targets: Vec<crate::link::DirectionalTarget> },
     /// A `Dock` could not be done from here: the ship now approaches the station, `distance` metres off its surface.
     Approaching { session: SessionId, command: u8, distance: f64 },
     /// A `Jump` was accepted: the ship's jump-out effect has begun and it will be in `destination_system` a few seconds on (the host is then told
@@ -366,7 +372,8 @@ impl Out {
             | Out::TargetRefused { session, .. }
             | Out::DeployedLit { session, .. }
             | Out::Position { session, .. }
-            | Out::ScanTargets { session, .. } => *session,
+            | Out::ScanTargets { session, .. }
+            | Out::DirectionalTargets { session, .. } => *session,
         }
     }
 }

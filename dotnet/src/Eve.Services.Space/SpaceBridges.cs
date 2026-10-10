@@ -13,7 +13,7 @@ namespace Eve.Services.Space;
 /// A jump bridge (the EVE University wiki, "Jump drives"): a Titan's Jump Portal Generator, or a Black Ops' Covert one, opens a bridge where the ship is to a
 /// cynosural field lit in another system, and the fleet ships within 2 500 metres of it jump through to the field. The numbers are the SDE's (the generator's
 /// attributes 6, 713, 714, 1001, 1002, 1298 and 3318, the hull's 866 to 868 and 1972, the skills' 1775 and the range attributes); the rules are the wiki's.
-/// The bridge lives in the simulation (command 28) and is kept here for its fleet and its isotopes; a restart ends it, as the simulation's does.
+/// The bridge lives in the simulation (command 30) and is kept here for its fleet and its isotopes; a restart ends it, as the simulation's does.
 /// </summary>
 public sealed class SpaceBridges(
     CharacterShips ships,

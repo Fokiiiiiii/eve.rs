@@ -333,6 +333,7 @@ pub(super) fn steer(ship: &mut Ship, target: Option<Target>, command: Command) -
         | Command::PositionOf { .. }
         | Command::DropPoint { .. }
         | Command::ScanTargets
+        | Command::DirectionalScan
         | Command::Jump { .. }
         | Command::CynoJump { .. }
         | Command::OpenBridge { .. }

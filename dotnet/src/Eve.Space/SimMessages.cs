@@ -990,6 +990,12 @@ public sealed record SimPlaceDisruptor(
 /// <summary>The host says a mobile warp disruptor is anchored (<see cref="Active"/>) or not (protocol 48); one not in space is left alone.</summary>
 public sealed record SimSetDisruptorActive(long DeployableId, bool Active) : SimMessage;
 
+/// <summary>A Mobile Cynosural Inhibitor the host keeps a record of, put in space where its pilot dropped it (protocol 50): the same placement as a disruptor's,
+/// with the inhibitor's range in metres (no cynosural field lights within it while it is anchored).</summary>
+public sealed record SimPlaceInhibitor(
+    long DeployableId, int SolarSystemId, string Name, int TypeId, int GroupId, IReadOnlyList<double> Position, double Radius, double Range, bool Active,
+    long OwnerId, int CorporationId, int AllianceId, long ShipId) : SimMessage;
+
 /// <summary>The answer to <see cref="SimCommands.Measure"/>: metres from the centre of the ship to the surface of the wreck or can, or null when there is no such wreck.</summary>
 public sealed record SimMeasured(ulong SessionId, byte Command, double? Distance) : SimMessage;
 

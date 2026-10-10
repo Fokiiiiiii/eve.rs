@@ -518,6 +518,8 @@ pub enum Message {
     },
     /// The host puts a mobile warp disruptor in space where its pilot dropped it (protocol 48).
     PlaceDisruptor(Box<DisruptorPlacement>),
+    /// The host puts a Mobile Cynosural Inhibitor in space where its pilot dropped it (protocol 50); the range is the inhibitor's.
+    PlaceInhibitor(Box<DisruptorPlacement>),
     /// The host says a mobile warp disruptor is anchored (`active`) or not (protocol 48); one not in space is left alone.
     SetDisruptorActive {
         deployable_id: i64,
@@ -750,6 +752,7 @@ impl Message {
             Self::PlaceProbe(_) => kind::PLACE_PROBE,
             Self::RemoveProbe { .. } => kind::REMOVE_PROBE,
             Self::PlaceDisruptor(_) => kind::PLACE_DISRUPTOR,
+            Self::PlaceInhibitor(_) => kind::PLACE_INHIBITOR,
             Self::SetDisruptorActive { .. } => kind::SET_DISRUPTOR_ACTIVE,
         }
     }

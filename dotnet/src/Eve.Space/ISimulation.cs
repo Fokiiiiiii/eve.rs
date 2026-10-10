@@ -148,6 +148,8 @@ public interface ISimulation
     void PlaceDisruptor(SimPlaceDisruptor disruptor);
     /// <summary>Says a mobile warp disruptor is anchored or not (protocol 48).</summary>
     void SetDisruptorActive(long deployableId, bool active);
+    /// <summary>Puts a Mobile Cynosural Inhibitor in space where its pilot dropped it, anchored or not (protocol 50).</summary>
+    void PlaceInhibitor(SimPlaceInhibitor inhibitor);
 
     /// <summary>Destroys a ship: the explosion, the wreck (for <paramref name="credit"/> to loot), and (for a player's ship) a <see cref="SimDestroyed"/> that comes back through <see cref="Received"/>.</summary>
     void Destroy(long shipId, SimCredit credit);

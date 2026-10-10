@@ -198,6 +198,8 @@ internal sealed class FakeSim : ISimulation
 
     public void SetDisruptorActive(long deployableId, bool active) => Heard.Enqueue(new SimSetDisruptorActive(deployableId, active));
 
+    public void PlaceInhibitor(SimPlaceInhibitor inhibitor) => Heard.Enqueue(inhibitor);
+
     public void Destroy(long shipId, SimCredit credit) => Heard.Enqueue(new SimDestroy(shipId, credit));
 
     public void Report(SimMessage message) => Received?.Invoke(message);

@@ -18,7 +18,7 @@ KINDS = {"Hello": 1, "HelloAck": 2, "Enter": 3, "Leave": 4, "Bind": 5, "UpdateSt
          "PlaceContainer": 28, "ContainerPlaced": 29, "ChangeWreck": 30, "RemoveWreck": 31, "Measured": 32,
          "AdjustCharge": 33, "ChargeAdjusted": 34, "Arrived": 35, "LaunchDrone": 36, "DroneCommand": 37, "DroneResults": 38,
          "DroneScooped": 39, "DroneReleased": 40, "ModuleWorkCycle": 51, "ModuleWorkResult": 52, "ModuleEnded": 53, "LaunchFighter": 54, "FighterOrder": 55, "FighterResults": 56, "FighterLanded": 57, "FighterReleased": 58, "FighterGotoPoint": 59, "FighterSize": 60, "UpdateEffect": 61, "BuffState": 62, "Deployed": 63, "RemoveDeployed": 64, "PlaceProbe": 65, "RemoveProbe": 66,
-         "EcmBurst": 67, "PlaceDisruptor": 68, "SetDisruptorActive": 69}
+         "EcmBurst": 67, "PlaceDisruptor": 68, "SetDisruptorActive": 69, "PlaceInhibitor": 70}
 
 def s(text):  # u16 length + UTF-8
     data = text.encode("utf-8")
@@ -397,7 +397,7 @@ def build(m):
                      + struct.pack("<ii", m["corporationId"], m["allianceId"]) + i64(m["shipId"]))
     if k == "RemoveProbe":
         return frame(k, i64(m["probeId"]))
-    if k == "PlaceDisruptor":
+    if k in ("PlaceDisruptor", "PlaceInhibitor"):
         return frame(k, i64(m["deployableId"]) + struct.pack("<i", m["solarSystemId"]) + s(m["typeName"]) + struct.pack("<ii", m["typeId"], m["groupId"])
                      + struct.pack("<3d", *m["position"]) + struct.pack("<dd", m["radius"], m["range"]) + bytes([1 if m["active"] else 0])
                      + i64(m["ownerId"]) + struct.pack("<ii", m["corporationId"], m["allianceId"]) + i64(m["shipId"]))
@@ -970,6 +970,10 @@ valid = [
      "position": [311989835983.1308, -13069154020.916222, 156646308895.76187], "radius": 50.0, "range": 5000.0, "active": False,
      "ownerId": "1790646377000015", "corporationId": 98000001, "allianceId": 0, "shipId": "9988400001943"},
     {"name": "mobile warp disruptor anchored", "kind": "SetDisruptorActive", "deployableId": "4250000000000009", "active": True},
+    {"name": "mobile cynosural inhibitor dropped and not yet anchored", "kind": "PlaceInhibitor", "deployableId": "4250000000000010",
+     "solarSystemId": 30100032, "typeName": "Mobile Cynosural Inhibitor", "typeId": 33476, "groupId": 1249,
+     "position": [311989835983.1308, -13069154020.916222, 156646308895.76187], "radius": 100.0, "range": 100000.0, "active": False,
+     "ownerId": "1790646377000015", "corporationId": 98000001, "allianceId": 0, "shipId": "9988400001943"},
     {"name": "how far a can is", "kind": "Measured", "sessionId": "1790646377000015", "command": 20, "distance": 261.0},
     {"name": "how far a can that is not there is", "kind": "Measured", "sessionId": "1790646377000015", "command": 20, "distance": None},
     {"name": "destroy for nobody", "kind": "Destroy", "shipId": "4200000000000001", "characterId": "0",

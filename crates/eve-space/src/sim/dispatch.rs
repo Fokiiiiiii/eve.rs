@@ -325,6 +325,7 @@ impl Sim {
             | Message::PlaceProbe(..)
             | Message::RemoveProbe { .. }
             | Message::PlaceDisruptor(..)
+            | Message::PlaceInhibitor(..)
             | Message::SetDisruptorActive { .. } => self.handle_world(message, now),
             other => Err(ProtocolError(format!(
                 "a message of kind {} is for the host, not the simulation",
@@ -890,6 +891,13 @@ impl Sim {
                 let disruptor = *disruptor;
                 match self.scenes.get_mut(&disruptor.solar_system_id) {
                     Some(scene) => scene.place_disruptor(disruptor, now),
+                    None => Vec::new(),
+                }
+            }
+            Message::PlaceInhibitor(inhibitor) => {
+                let inhibitor = *inhibitor;
+                match self.scenes.get_mut(&inhibitor.solar_system_id) {
+                    Some(scene) => scene.place_inhibitor(inhibitor, now),
                     None => Vec::new(),
                 }
             }

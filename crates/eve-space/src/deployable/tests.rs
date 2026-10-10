@@ -308,6 +308,56 @@ fn a_field_the_host_puts_back_after_a_restart_lives_what_was_left_and_is_removed
     assert!(scene.deployables.is_empty());
 }
 
+/// A Mobile Cynosural Inhibitor (protocol 50): an anchored one within 100 km stops a cynosural field from lighting there, but not a covert field, and an
+/// unanchored one stops nothing. A field activation is refused with `CYNOSURAL_FIELD_INHIBITED`.
+#[test]
+fn an_anchored_cynosural_inhibitor_stops_a_field_within_100_km_but_not_a_covert_one_or_an_unanchored_one() {
+    let inhibitor = |system: i32, a: eve_destiny::Vec3, active: bool| crate::link::DisruptorPlacement {
+        deployable_id: 990_000_000_200,
+        solar_system_id: system,
+        name: "Mobile Cynosural Inhibitor".to_string(),
+        type_id: 33_476,
+        group_id: 1_249,
+        position: [a.x + 50_000.0, a.y, a.z],
+        radius: 100.0,
+        range: 100_000.0,
+        active,
+        owner_id: 4_242,
+        corporation_id: 0,
+        alliance_id: 0,
+        ship_id: 0,
+    };
+    let field = |charge_type_id: i32| Action::CynoField {
+        ball: Spec { charge_type_id, group_id: 2_020, name: "Cynosural Field".to_string(), radius: 250.0 },
+        lifetime_ms: 600_000.0,
+    };
+
+    // an unanchored inhibitor stops nothing
+    let (mut scene, t) = crowd();
+    let (a, system) = (scene.pilots[&A].ship.position, scene.solar_system_id());
+    scene.place_inhibitor(inhibitor(system, a, false), t);
+    let lit = scene.activate(A, module(MODULE, field(21_094), 20_000.0), t);
+    assert!(accepted(&lit), "{lit:?}");
+
+    // an anchored one 50 km away refuses the field, and a covert field is still lit
+    let (mut scene, t) = crowd();
+    let (a, system) = (scene.pilots[&A].ship.position, scene.solar_system_id());
+    scene.place_inhibitor(inhibitor(system, a, true), t);
+    assert!(scene.inhibited_at(a), "the inhibitor covers the ship");
+    assert!(
+        !scene.inhibited_at(eve_destiny::Vec3::new(a.x + 200_000.0, a.y, a.z)),
+        "nothing 200 km away is covered"
+    );
+    let refused = scene.activate(A, module(MODULE, field(21_094), 20_000.0), t);
+    assert!(refused_with(&refused, "CYNOSURAL_FIELD_INHIBITED"), "{refused:?}");
+
+    let (mut scene, t) = crowd();
+    let (a, system) = (scene.pilots[&A].ship.position, scene.solar_system_id());
+    scene.place_inhibitor(inhibitor(system, a, true), t);
+    let covert = scene.activate(A, module(MODULE, field(28_650), 20_000.0), t);
+    assert!(accepted(&covert), "{covert:?}");
+}
+
 #[test]
 fn a_mobile_warp_disruptor_holds_warps_only_once_anchored_and_is_taken_out_on_request() {
     let disruptor = |active: bool, position: eve_destiny::Vec3| crate::link::DisruptorPlacement {

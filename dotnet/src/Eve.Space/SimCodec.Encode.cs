@@ -870,6 +870,22 @@ private static void WriteAction(Writer w, SimAction action)
                 w.I32(m.AllianceId);
                 w.I64(m.ShipId);
                 break;
+            case SimPlaceInhibitor m:
+                w.U8(Kind.PlaceInhibitor);
+                w.I64(m.DeployableId);
+                w.I32(m.SolarSystemId);
+                w.Text(m.Name);
+                w.I32(m.TypeId);
+                w.I32(m.GroupId);
+                WriteVector(w, m.Position);
+                w.F64(m.Radius);
+                w.F64(m.Range);
+                w.U8(m.Active ? (byte)1 : (byte)0);
+                w.I64(m.OwnerId);
+                w.I32(m.CorporationId);
+                w.I32(m.AllianceId);
+                w.I64(m.ShipId);
+                break;
             case SimSetDisruptorActive m:
                 w.U8(Kind.SetDisruptorActive);
                 w.I64(m.DeployableId);

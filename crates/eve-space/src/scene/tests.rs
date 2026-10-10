@@ -60,6 +60,7 @@ pub(crate) fn spec() -> ShipSpec {
         sensor_strength: [0.0, 0.0, 0.0, 0.0],
         ecm_resistance: 1.0,
         energy_warfare_resistance: 1.0,
+        drone_damage_multiplier: 1.0,
         // an Ibis's points, with resistances made up so that each kind of damage does something different to each layer
         vitals: crate::health::Vitals {
             shield_capacity: 220.0,

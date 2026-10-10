@@ -555,6 +555,7 @@ private static void WriteAction(Writer w, SimAction action)
         {
             w.F64(number);
         }
+        w.F64(s.DroneDamageMultiplier);
     }
 
     /// <summary>The whole frame, length prefix included.</summary>

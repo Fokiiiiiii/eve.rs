@@ -126,6 +126,7 @@ internal sealed partial class CharacterServicesComposition
             // the periodic work of the space features is jobs of the shared scheduler, not timers of their own
             spaceSessions.UseBounties(new PgBountyStore(source, new WalletTransactions(source, walletSchema), npcSchema, message => Console.Error.WriteLine($"eve-host: bounty: {message}")));
             spaceSessions.Events = foundations.Events;   // what happens in space is announced on the bus as well
+            spaceSessions.BuffStore = new Eve.Ships.PgShipBuffStore(source, spaceSchema);   // the buffs a restart keeps (track C8)
             ships.TransitionEventWriter = spaceSessions.Transitions.WriteEventAsync;
             spaceSessions.SafetyLevelOf = (character, token) => crimewatchStore.SafetyOfAsync(character, token);   // the ship safety the pilot has set
             spaceSessions.Aggression = async (request, token) => await crimewatchRuntime.RecordAggressionAsync(request, token);   // what an attack makes of the attacker

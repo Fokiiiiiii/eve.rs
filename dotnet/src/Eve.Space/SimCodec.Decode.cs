@@ -122,7 +122,12 @@ public static partial class SimCodec
             modules[i] = new SimModule(r.I64(), r.I32(), r.I32());
         }
         var sensors = new SimSensors(r.F64(), r.F64(), r.F64(), r.F64(), r.F64(), r.F64());
-        return new SimShip(shipId, characterId, typeId, groupId, categoryId, name, ownerId, corporationId, allianceId, warFactionId, security, radius, mass, maxVelocity, agility, warpSpeed, shieldRecharge, maxTargetRange, scanResolution, signatureRadius, maxLockedTargets, capacitorCapacity, capacitorRecharge, modules, vitals, condition, sensors);
+        var droneDamageMultiplier = r.F64();
+        if (!double.IsFinite(droneDamageMultiplier) || droneDamageMultiplier < 0)
+        {
+            throw new SimLinkException(SimLinkError.BadValue, "the drone damage multiplier is not a non-negative number");
+        }
+        return new SimShip(shipId, characterId, typeId, groupId, categoryId, name, ownerId, corporationId, allianceId, warFactionId, security, radius, mass, maxVelocity, agility, warpSpeed, shieldRecharge, maxTargetRange, scanResolution, signatureRadius, maxLockedTargets, capacitorCapacity, capacitorRecharge, modules, vitals, condition, sensors, droneDamageMultiplier);
     }
 
     private static SimCondition ReadCondition(ref Reader r) => new(r.F64(), r.F64(), r.F64(), r.F64());

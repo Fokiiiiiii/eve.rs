@@ -33,7 +33,7 @@ public class SimCodecTests
         (double)s["maxVelocity"]!, (double)s["agility"]!, (double)s["warpSpeedAu"]!, (double)s["shieldRechargeMs"]!,
         (double)s["maxTargetRange"]!, (double)s["scanResolution"]!, (double)s["signatureRadius"]!, (int)s["maxLockedTargets"]!, (double)s["capacitorCapacity"]!, (double)s["capacitorRechargeS"]!,
         [.. ((JsonArray)s["modules"]!).Select(m => new SimModule(Wide(m!, "itemId"), (int)m!["typeId"]!, (int)m["flag"]!))],
-        VitalsOf(s["vitals"]!), ConditionOf(s["condition"]!), SensorsOf(s));
+        VitalsOf(s["vitals"]!), ConditionOf(s["condition"]!), SensorsOf(s), s["droneDamageMultiplier"] is { } drone ? (double)drone : 1d);
 
     private static SimSensors SensorsOf(JsonNode s)
     {
@@ -704,8 +704,9 @@ public class SimCodecTests
     public void A_module_count_the_frame_cannot_hold_is_refused_without_allocating_for_it()
     {
         var good = SimCodec.Encode(MessageOf(Case("valid", "enter by undocking")));
-        // the count is the four bytes before the two 16-byte modules and the six 8-byte sensor numbers at the end of the frame (protocol 27)
-        var at = good.Length - (6 * 8) - (2 * 16) - 4;
+        // the count is the four bytes before the two 16-byte modules and the seven 8-byte numbers at the end of the frame: the six sensor numbers (protocol 27)
+        // and the drone damage multiplier (protocol 47)
+        var at = good.Length - (7 * 8) - (2 * 16) - 4;
         var forged = (byte[])good.Clone();
         BitConverter.GetBytes(uint.MaxValue).CopyTo(forged, at);
         var error = Assert.Throws<SimLinkException>(() => SimCodec.Decode(forged.AsMemory(4)));

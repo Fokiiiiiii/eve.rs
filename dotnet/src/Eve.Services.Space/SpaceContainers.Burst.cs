@@ -178,6 +178,7 @@ public sealed partial class SpaceContainers
     /// </summary>
     internal async Task ExpireBuffsAsync(long nowUnixMs)
     {
+        await _space.PruneBuffRecordAsync(nowUnixMs);
         foreach (var shipId in _space.Buffs.Prune(nowUnixMs))
         {
             if (_space.SessionOfShip(shipId) is { } pilot)
@@ -193,6 +194,7 @@ public sealed partial class SpaceContainers
     /// </summary>
     private async Task TellBuffsAsync(ClientSession pilot, long shipId, double now)
     {
+        await _space.KeepBuffsAsync(shipId, now);
         await _space.BuffedAsync(pilot, CancellationToken.None);
         var entries = _space.Buffs.StateOf(shipId, now)
             .Select(state => new SimBuffEntry(state.CollectionId, state.Value, Math.Max(0d, state.ExpiresAtMs - now)))

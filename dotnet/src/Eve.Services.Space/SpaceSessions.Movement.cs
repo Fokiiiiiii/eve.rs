@@ -339,6 +339,8 @@ public sealed partial class SpaceSessions
                 (ulong)session.SessionId);
             if (transition.Moved is null)
                 _log?.Invoke($"jump of character {pilot.CharacterId} to system {jumped.ToSystem} failed: {transition.Refusal}");
+            else
+                TellEnteredBuffs((ulong)session.SessionId, pilot.ShipId, _nowUnixMs());
         }
         catch (Exception error)
         {

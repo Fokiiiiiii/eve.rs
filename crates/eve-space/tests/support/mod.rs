@@ -229,6 +229,7 @@ pub fn recorded_ship(race: &Value, ball: &[u8], direction: Vec3) -> Ship {
         sensor_strength: [0.0, 0.0, 0.0, 0.0],
         ecm_resistance: 1.0,
         energy_warfare_resistance: 1.0,
+        drone_damage_multiplier: 1.0,
         vitals: Vitals {
             shield_capacity: 220.0,
             armor_hp: 137.5,

@@ -467,6 +467,7 @@ private readonly TransitionRuntime _transitions;
 
         var sessionId = (ulong)session.SessionId;
         var systemId = pending.State.SolarSystemId;
+        await SyncBuffsAsync(pending.Snapshot.World, pending.Snapshot.Ship.Id, cancellationToken);
         var ship = SimShips.Of(
             pending.Snapshot,
             _statics,
@@ -486,6 +487,7 @@ private readonly TransitionRuntime _transitions;
             _log?.Invoke($"space login for character {characterId} was refused: {refusal}");
             throw Notify("Space is not available right now. Try again in a moment.");
         }
+        TellEnteredBuffs(sessionId, pending.Snapshot.Ship.Id, _nowUnixMs());
 
         try
         {

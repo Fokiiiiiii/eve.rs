@@ -770,7 +770,8 @@ public class ModuleEffectsTests
             }
         }
 
-        // pending handlers (refusals) are not coverage, so their effects stay in currentSdeGaps
+        // pending handlers (refusals) are not coverage, so their effects stay in currentSdeGaps; the built ones (the command bursts, P.A.N.I.C.,
+        // hackOrbital, scanStrength) have left the manifest
         var handledNames = Eve.Services.Space.Effects.ModuleEffects.Default.ImplementedNames
             .Concat(["missileLaunching", "torpedoLaunching"])
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
@@ -788,18 +789,10 @@ public class ModuleEffectsTests
             "doomsdayAOETrack",
             "doomsdayAOEWeb",
             "entosisLink",
-            "hackOrbital",
             "industrialItemCompression",
             "microJumpPortalDrive",
             "microJumpPortalDriveCapital",
-            "moduleBonusIndustrialInvulnerability",
-            "moduleBonusWarfareLinkArmor",
-            "moduleBonusWarfareLinkInfo",
-            "moduleBonusWarfareLinkMining",
-            "moduleBonusWarfareLinkShield",
-            "moduleBonusWarfareLinkSkirmish",
             "moduleTitanEffectGenerator",
-            "scanStrengthTargetPercentBonus",
         ];
         // Reconcile the manifest against the catalog this test actually opened. A newer unhandled
         // effect adds a failure; an older catalog simply does not assign effects introduced later.

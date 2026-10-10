@@ -131,11 +131,13 @@ public class ModuleRuleTests
         Assert.Null(dddResult.Reason);
         Assert.True(dddResult.Effect!.BurnsFuel, "the cone burns its fuel");
 
-        // P.A.N.I.C. has no fuel attributes in the static data: nothing is invented for it
+        // P.A.N.I.C. has no fuel attributes in the static data: nothing is invented for it, and its start packages with no fuel
         var panic = FittedModule(statics, shipTypeId, 42522);
         Assert.Equal(0, statics.Type(42522)!.Attributes.GetValueOrDefault(ModuleAttributes.ConsumptionType));
         Assert.Equal(0, statics.Type(42522)!.Attributes.GetValueOrDefault(ModuleAttributes.ConsumptionQuantity));
-        Assert.Equal("EFFECT_NOT_IMPLEMENTED", ModulePackages.Of(panic.Snapshot, statics, panic.ModuleId, "moduleBonusIndustrialInvulnerability", 0, 1).Reason);
+        var packed = ModulePackages.Of(panic.Snapshot, statics, panic.ModuleId, "moduleBonusIndustrialInvulnerability", 0, 1);
+        Assert.Null(packed.Reason);
+        Assert.False(packed.Effect!.BurnsFuel);
     }
 
     [PgFact]

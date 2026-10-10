@@ -110,7 +110,9 @@ internal static class HostComposition
             readJumpTimers: readJumpTimers,
             readNonDiminishingInjections: readNonDiminishingInjections,
             keeperRpcCallbacks: keeperRpcCallbacks,
-            superWeaponRpcCallbacks: superWeaponCallbacks))
+            superWeaponRpcCallbacks: superWeaponCallbacks,
+            spaceModules: space,
+            isShipInSpace: space is null ? null : (Func<ClientSession, bool>)space.IsInSpace))
         {
             registry.Register(service);
         }

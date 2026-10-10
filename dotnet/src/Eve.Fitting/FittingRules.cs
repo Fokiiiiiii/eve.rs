@@ -195,6 +195,11 @@ public static class FittingRules
         {
             return FitFailure.Of(FitError.InvalidShipType);
         }
+        // a subsystem fits one hull (SDE fitsToShipType): a Legion's defensive subsystem is no Tengu's
+        if (type.Attributes.TryGetValue(StrategicCruisers.FitsToShipTypeAttribute, out var fitsToShip) && (int)fitsToShip > 0 && (int)fitsToShip != ship.TypeId)
+        {
+            return FitFailure.Of(FitError.InvalidShipType);
+        }
 
         var maxType = (int)world.Get(candidate.Id, MaxTypeFitted);
         if (maxType > 0)

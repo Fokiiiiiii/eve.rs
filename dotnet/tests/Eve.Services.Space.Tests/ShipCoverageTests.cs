@@ -6,7 +6,7 @@ namespace Eve.Services.Space.Tests;
 /// <summary>
 /// The <c>ship</c> calls the client makes for fitting and hulls (invItemFunctions.py:189-197 for AssembleShip, the fitting window and the undock and
 /// drone calls). Each must be answered by a method of the service, or be listed as open. An open call is answered with None by the generator's
-/// default, which is a silent answer (AGENT_OVERRIDE.md). AssembleShip is the T3C assembly; it is SF-4's, not this track's, and stays open here.
+/// default, which is a silent answer (AGENT_OVERRIDE.md). AssembleShip is answered by SF-4 (the Strategic Cruiser assembly), so nothing is open.
 /// </summary>
 public class ShipCoverageTests
 {
@@ -16,7 +16,7 @@ public class ShipCoverageTests
         "LaunchFromShip", "ScoopDrone", "GetDirtTimestamp",
     ];
 
-    private static readonly string[] Open = ["AssembleShip"];
+    private static readonly string[] Open = [];
 
     [Fact]
     public void Every_ship_call_is_answered_or_listed_as_open()

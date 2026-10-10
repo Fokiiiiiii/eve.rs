@@ -35,7 +35,15 @@ internal static class ModulePackages
             : scriptType.EffectIds.Select(statics.Effect).FirstOrDefault(e => e is { } found && found.Name.Equals(effectName, StringComparison.OrdinalIgnoreCase));
     }
 
-    public static Result Of(ShipSnapshot snapshot, DogmaStatic statics, long moduleId, string effectName, long targetId, int repeat, IReadOnlyList<double>? aim = null, IReadOnlyList<double>? aimEnd = null)
+    /// <summary>
+    /// A gun that reloads from its hold is told to the simulation as one that does, so the simulation parks it when its rounds run out (FP-C8). A client reloads its own guns
+    /// (<c>shipmodulebutton.py</c>, <c>AutoReload</c>), so for it the gun is told it does not: the simulation stops it with <c>NoCharges</c>, as it does without the reload.
+    /// </summary>
+    private static SimEffect WithoutReload(SimEffect effect) =>
+        effect.Turret is { Charge: { Reloads: true } charge } turret ? effect with { Turret = turret with { Charge = charge with { Reloads = false } } } : effect;
+
+    /// <param name="autoReload">The pilot's account is one the operator named for reloads from the hold (a bot with no client UI); false for a client.</param>
+    public static Result Of(ShipSnapshot snapshot, DogmaStatic statics, long moduleId, string effectName, long targetId, int repeat, IReadOnlyList<double>? aim = null, IReadOnlyList<double>? aimEnd = null, bool autoReload = false)
     {
         var module = snapshot.Fitted.FirstOrDefault(m => m.Id == moduleId);
         if (module is null || statics.Type(module.TypeId) is not { } type)
@@ -71,6 +79,7 @@ internal static class ModulePackages
         {
             return new Result(null, "UNSUPPORTED_EFFECT", module.TypeId, name);
         }
-        return new Result(handler.Build(context), null, module.TypeId, name, () => handler.Accepted(context));
+        var built = handler.Build(context);
+        return new Result(autoReload ? built : WithoutReload(built), null, module.TypeId, name, () => handler.Accepted(context));
     }
 }

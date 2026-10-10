@@ -9,6 +9,7 @@ namespace Eve.Services.Tests;
 /// server go into the C# dispatcher and the response packets must match byte for byte, and leave the
 /// same bound-object state behind.
 /// </summary>
+[Collection(TraceSettings.Name)]
 public class DispatchGoldenTests
 {
     private const long FixedNowMs = 1_700_000_000_123;

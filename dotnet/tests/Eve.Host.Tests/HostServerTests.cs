@@ -3034,6 +3034,150 @@ private sealed class InSpaceInventory : Eve.Services.Ships.ISpaceContainers
     }
 
     [Fact]
+    public async Task Leaving_corporation_sovereignty_and_core_structure_owners_move_to_the_executor()
+    {
+        const long allianceId = 99000051;
+        const long fromCorporationId = 98000051;
+        const long executorCorporationId = 98000052;
+        const long otherCorporationId = 98000053;
+        const long systemId = 30000151;
+        const long sharedSystemId = 30000152;
+        const long otherAllianceSystemId = 30000153;
+        const long claimId = 9000051;
+        const long hubId = 9000052;
+        const long otherClaimId = 9000053;
+        const long otherHubId = 9000054;
+        const long sharedClaimId = 9000055;
+        const long sharedHubId = 9000056;
+        var sovereignty = new System.Text.Json.Nodes.JsonObject
+        {
+            ["systems"] = new System.Text.Json.Nodes.JsonObject
+            {
+                [systemId.ToString(System.Globalization.CultureInfo.InvariantCulture)] =
+                    new System.Text.Json.Nodes.JsonObject
+                    {
+                        ["solarSystemID"] = systemId,
+                        ["allianceID"] = allianceId,
+                        ["corporationID"] = fromCorporationId,
+                        ["claimStructureID"] = claimId,
+                        ["infrastructureHubID"] = hubId,
+                        ["currentData"] = new System.Text.Json.Nodes.JsonArray(
+                            new System.Text.Json.Nodes.JsonObject { ["corporationID"] = fromCorporationId }),
+                        ["structures"] = new System.Text.Json.Nodes.JsonArray(
+                            new System.Text.Json.Nodes.JsonObject
+                            {
+                                ["itemID"] = claimId, ["corporationID"] = fromCorporationId,
+                                ["ownerID"] = fromCorporationId, ["allianceID"] = allianceId
+                            },
+                            new System.Text.Json.Nodes.JsonObject
+                            {
+                                ["itemID"] = hubId, ["corporationID"] = fromCorporationId,
+                                ["ownerID"] = fromCorporationId, ["allianceID"] = allianceId
+                            })
+                    },
+                [sharedSystemId.ToString(System.Globalization.CultureInfo.InvariantCulture)] =
+                    new System.Text.Json.Nodes.JsonObject
+                    {
+                        ["solarSystemID"] = sharedSystemId,
+                        ["allianceID"] = allianceId,
+                        ["corporationID"] = otherCorporationId,
+                        ["claimStructureID"] = sharedClaimId,
+                        ["infrastructureHubID"] = sharedHubId,
+                        ["structures"] = new System.Text.Json.Nodes.JsonArray(
+                            new System.Text.Json.Nodes.JsonObject
+                            {
+                                ["itemID"] = sharedClaimId, ["corporationID"] = fromCorporationId,
+                                ["ownerID"] = fromCorporationId, ["allianceID"] = allianceId
+                            },
+                            new System.Text.Json.Nodes.JsonObject
+                            {
+                                ["itemID"] = sharedHubId, ["corporationID"] = fromCorporationId,
+                                ["ownerID"] = fromCorporationId, ["allianceID"] = allianceId
+                            })
+                    },
+                [otherAllianceSystemId.ToString(System.Globalization.CultureInfo.InvariantCulture)] =
+                    new System.Text.Json.Nodes.JsonObject
+                    {
+                        ["solarSystemID"] = otherAllianceSystemId,
+                        ["allianceID"] = 99000052,
+                        ["corporationID"] = fromCorporationId,
+                        ["claimStructureID"] = otherClaimId,
+                        ["infrastructureHubID"] = otherHubId,
+                        ["structures"] = new System.Text.Json.Nodes.JsonArray(
+                            new System.Text.Json.Nodes.JsonObject
+                            {
+                                ["itemID"] = otherClaimId, ["corporationID"] = fromCorporationId,
+                                ["ownerID"] = fromCorporationId, ["allianceID"] = 99000052
+                            })
+                    }
+            },
+            ["hubs"] = new System.Text.Json.Nodes.JsonObject
+            {
+                [hubId.ToString(System.Globalization.CultureInfo.InvariantCulture)] =
+                    new System.Text.Json.Nodes.JsonObject
+                    {
+                        ["hubID"] = hubId, ["allianceID"] = allianceId,
+                        ["corporationID"] = fromCorporationId, ["ownerID"] = fromCorporationId
+                    },
+                [sharedHubId.ToString(System.Globalization.CultureInfo.InvariantCulture)] =
+                    new System.Text.Json.Nodes.JsonObject
+                    {
+                        ["hubID"] = sharedHubId, ["allianceID"] = allianceId,
+                        ["corporationID"] = fromCorporationId, ["ownerID"] = fromCorporationId
+                    },
+                [otherHubId.ToString(System.Globalization.CultureInfo.InvariantCulture)] =
+                    new System.Text.Json.Nodes.JsonObject
+                    {
+                        ["hubID"] = otherHubId, ["allianceID"] = 99000052,
+                        ["corporationID"] = fromCorporationId, ["ownerID"] = fromCorporationId
+                    }
+            }
+        };
+        var tables = new Dictionary<string, System.Text.Json.Nodes.JsonObject>
+        {
+            ["sovereignty"] = sovereignty
+        };
+        System.Text.Json.Nodes.JsonObject Read(string table) =>
+            (System.Text.Json.Nodes.JsonObject)tables[table].DeepClone();
+        Eve.GameStore.WriteResult Write(string table, string? path, System.Text.Json.Nodes.JsonNode? data)
+        {
+            if (path is not null || data is not System.Text.Json.Nodes.JsonObject root)
+                return new Eve.GameStore.WriteResult(false, "unexpected path write");
+            tables[table] = (System.Text.Json.Nodes.JsonObject)root.DeepClone();
+            return new Eve.GameStore.WriteResult(true, null);
+        }
+        var writer = new Eve.Host.PersistenceSovFwWriteOperations(
+            Read, Write, (_, _) => Task.FromResult(1),
+            (table, _) => Task.FromResult(Read(table)),
+            (_, _, _) => ValueTask.FromResult(false),
+            new SemaphoreSlim(1, 1),
+            (_, _) => ValueTask.FromResult(false),
+            (_, _) => ValueTask.FromResult(false));
+
+        Assert.True(await writer.TransferAllianceSovereigntyOwnershipAsync(
+            allianceId, fromCorporationId, executorCorporationId));
+
+        var saved = tables["sovereignty"];
+        var ownedSystem = saved["systems"]![systemId.ToString(System.Globalization.CultureInfo.InvariantCulture)]!;
+        Assert.Equal(executorCorporationId, ownedSystem["corporationID"]!.GetValue<long>());
+        Assert.Equal(executorCorporationId, ownedSystem["currentData"]![0]!["corporationID"]!.GetValue<long>());
+        Assert.All(ownedSystem["structures"]!.AsArray(),
+            structure => Assert.Equal(executorCorporationId, structure!["corporationID"]!.GetValue<long>()));
+        var sharedSystem = saved["systems"]![sharedSystemId.ToString(System.Globalization.CultureInfo.InvariantCulture)]!;
+        Assert.Equal(otherCorporationId, sharedSystem["corporationID"]!.GetValue<long>());
+        Assert.All(sharedSystem["structures"]!.AsArray(),
+            structure => Assert.Equal(executorCorporationId, structure!["corporationID"]!.GetValue<long>()));
+        Assert.Equal(executorCorporationId,
+            saved["hubs"]![hubId.ToString(System.Globalization.CultureInfo.InvariantCulture)]!["corporationID"]!.GetValue<long>());
+        Assert.Equal(executorCorporationId,
+            saved["hubs"]![sharedHubId.ToString(System.Globalization.CultureInfo.InvariantCulture)]!["corporationID"]!.GetValue<long>());
+        Assert.Equal(fromCorporationId,
+            saved["systems"]![otherAllianceSystemId.ToString(System.Globalization.CultureInfo.InvariantCulture)]!["corporationID"]!.GetValue<long>());
+        Assert.Equal(fromCorporationId,
+            saved["hubs"]![otherHubId.ToString(System.Globalization.CultureInfo.InvariantCulture)]!["corporationID"]!.GetValue<long>());
+    }
+
+    [Fact]
     public async Task Mail_host_adapter_commits_mail_and_notification_before_returning_id()
     {
         const long senderId = 90000031;

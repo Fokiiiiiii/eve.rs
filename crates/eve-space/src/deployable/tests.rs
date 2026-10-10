@@ -326,7 +326,10 @@ fn a_scanner_probe_is_in_space_until_the_host_takes_it_out_and_a_field_is_not_ta
         ship_id: scene.pilots[&A].ship.spec.ship_id,
     };
     let placed = scene.place_probe(probe.clone(), t);
-    assert!(placed.iter().any(|o| format!("{o:?}").contains("AddBalls2")), "the pilots are told of the probe");
+    assert!(
+        placed.iter().any(|o| format!("{o:?}").contains("AddBalls2")),
+        "the pilots are told of the probe"
+    );
     assert!(scene.place_probe(probe.clone(), t).is_empty(), "a probe already in space is not put in twice");
 
     // two hours on, it is still there: its end is the host's
@@ -334,9 +337,15 @@ fn a_scanner_probe_is_in_space_until_the_host_takes_it_out_and_a_field_is_not_ta
     assert!(scene.deployables.contains_key(&probe.probe_id), "a probe stays until the host takes it out");
 
     let removed = scene.remove_probe(probe.probe_id, t + 7_201 * SECOND);
-    assert!(removed.iter().any(|o| format!("{o:?}").contains("RemoveBalls")), "those who see it are told it is gone");
+    assert!(
+        removed.iter().any(|o| format!("{o:?}").contains("RemoveBalls")),
+        "those who see it are told it is gone"
+    );
     assert!(!scene.deployables.contains_key(&probe.probe_id));
-    assert!(scene.remove_probe(probe.probe_id, t + 7_201 * SECOND).is_empty(), "a probe already gone is left alone");
+    assert!(
+        scene.remove_probe(probe.probe_id, t + 7_201 * SECOND).is_empty(),
+        "a probe already gone is left alone"
+    );
 
     // a cynosural field is not a probe: the host's probe removal leaves it in space
     let field = crate::link::DeployedPlacement {

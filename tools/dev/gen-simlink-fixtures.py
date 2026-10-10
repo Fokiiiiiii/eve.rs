@@ -17,8 +17,8 @@ KINDS = {"Hello": 1, "HelloAck": 2, "Enter": 3, "Leave": 4, "Bind": 5, "UpdateSt
          "Destroyed": 21, "Spawn": 22, "SpawnReply": 23, "Destroy": 24, "Respawn": 25, "PlaceWreck": 26, "ChargeSpent": 27,
          "PlaceContainer": 28, "ContainerPlaced": 29, "ChangeWreck": 30, "RemoveWreck": 31, "Measured": 32,
          "AdjustCharge": 33, "ChargeAdjusted": 34, "Arrived": 35, "LaunchDrone": 36, "DroneCommand": 37, "DroneResults": 38,
-         "DroneScooped": 39, "DroneReleased": 40, "ModuleWorkCycle": 51, "ModuleWorkResult": 52, "ModuleEnded": 53, "LaunchFighter": 54, "FighterOrder": 55, "FighterResults": 56, "FighterLanded": 57, "FighterReleased": 58, "FighterGotoPoint": 59, "FighterSize": 60, "UpdateEffect": 61, "BuffState": 62, "Deployed": 63, "RemoveDeployed": 64, "PlaceProbe": 65, "RemoveProbe": 66}
-
+         "DroneScooped": 39, "DroneReleased": 40, "ModuleWorkCycle": 51, "ModuleWorkResult": 52, "ModuleEnded": 53, "LaunchFighter": 54, "FighterOrder": 55, "FighterResults": 56, "FighterLanded": 57, "FighterReleased": 58, "FighterGotoPoint": 59, "FighterSize": 60, "UpdateEffect": 61, "BuffState": 62, "Deployed": 63, "RemoveDeployed": 64, "PlaceProbe": 65, "RemoveProbe": 66,
+         "EcmBurst": 67}
 
 def s(text):  # u16 length + UTF-8
     data = text.encode("utf-8")
@@ -446,6 +446,10 @@ def build(m):
         return frame(k, u64(m["sessionId"]) + i64(m["fighterId"]))
     if k == "FighterReleased":
         return frame(k, u64(m["sessionId"]) + i64(m["fighterId"]) + struct.pack("<3d", *m["position"]))
+    # protocol 39 (FP-C7): an ECM burst's ship and each ship it reached, with whether its roll jammed it (a flag byte, 0 or 1)
+    if k == "EcmBurst":
+        return frame(k, u64(m["sessionId"]) + i64(m["shipId"]) + struct.pack("<I", len(m["reached"]))
+                     + b"".join(i64(r["shipId"]) + bytes([1 if r["jammed"] else 0]) for r in m["reached"]))
     if k == "Destroy":
         return frame(k, i64(m["shipId"]) + i64(m["characterId"]) + i64(m["corporationId"]) + i64(m["allianceId"]) + i64(m["warFactionId"]))
     raise ValueError(k)
@@ -469,8 +473,8 @@ BARE = dict(IBIS, name="", modules=[], allianceId=99000001, securityStatus=-2.5,
             condition={"damage": 0.0, "armorDamage": 0.0, "shieldCharge": 1.0, "charge": 1.0})
 
 valid = [
-    {"name": "hello", "kind": "Hello", "version": 43},
-    {"name": "hello ack", "kind": "HelloAck", "version": 43, "pollHz": 4},
+    {"name": "hello", "kind": "Hello", "version": 46},
+    {"name": "hello ack", "kind": "HelloAck", "version": 46, "pollHz": 4},
     {"name": "enter by undocking", "kind": "Enter", "sessionId": "1790646377000015", "solarSystemId": 30100032,
      "how": 0, "stationId": "60015249", "ship": IBIS},
     {"name": "enter already in space, no modules, non-ASCII name", "kind": "Enter", "sessionId": "1",
@@ -912,6 +916,8 @@ valid = [
      "position": [311989835983.1308, -13069154020.916222, 156646308895.76187]},
     {"name": "a fighter sent to a point", "kind": "FighterGotoPoint", "sessionId": "1790646377000015",
      "fighterIds": ["9988400004100"], "point": [311989835983.1308, -13069154020.916222, 156646308895.76187]},
+    {"name": "an ECM burst that jammed one ship it reached and not another", "kind": "EcmBurst", "sessionId": "1790646377000015",
+     "shipId": "9988400001939", "reached": [{"shipId": "9988400004100", "jammed": True}, {"shipId": "9988400004101", "jammed": False}]},
     {"name": "destroy for a pilot to loot", "kind": "Destroy", "shipId": "980050000077", "characterId": "140000001",
      "corporationId": "1000006", "allianceId": "0", "warFactionId": "500001"},
     {"name": "respawn of a capsule where the ship was", "kind": "Respawn", "sessionId": "1790646377000015",
@@ -1207,7 +1213,12 @@ invalid = [
      "hex": build(dict(named("cynosural field lit by a generator, told with its life"), lifetimeMs=-1.0)).hex()},
     {"name": "cynosural field with a radius that is not a number", "reason": "bad-value",
      "hex": build(dict(named("cynosural field lit by a generator, told with its life"), radius=float("nan"))).hex()},
-    {"name": "warp probe with no lifetime", "reason": "bad-value",
+    {"name": "ECM burst with a jam flag that is neither 0 nor 1", "reason": "bad-value",
+     "hex": frame("EcmBurst", u64(1) + i64(9) + struct.pack("<I", 1) + i64(10) + bytes([2])).hex()},
+    {"name": "ECM burst that promises two ships and carries one", "reason": "truncated",
+     "hex": frame("EcmBurst", u64(1) + i64(9) + struct.pack("<I", 2) + i64(10) + bytes([1])).hex()},
+    {"name": "ECM burst cut short before its ship", "reason": "truncated",
+     "hex": frame("EcmBurst", u64(1) + bytes([0, 0, 0])).hex()},    {"name": "warp probe with no lifetime", "reason": "bad-value",
      "hex": build(dict(named("activate an interdiction probe"), effect=dict(named("activate an interdiction probe")["effect"],
                        action=dict(named("activate an interdiction probe")["effect"]["action"], lifetimeMs=0.0)))).hex()},
     {"name": "bomb of an unknown kind", "reason": "bad-value",

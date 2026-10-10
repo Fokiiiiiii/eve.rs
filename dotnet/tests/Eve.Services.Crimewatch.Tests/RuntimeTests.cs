@@ -673,7 +673,8 @@ public class RuntimeTests : IAsyncLifetime
         Assert.Equal(TimeSpan.FromMilliseconds(300_005), expiry.After);
         _now = Start + 300_005;
         expiry.Done.SetResult();
-        await Settle(() => _persistence.Engagements.Count == 0);
+        // the end is removed first and told after, so the test waits for both notices (Told drains a sink, so only the count is read here)
+        await Settle(() => _persistence.Engagements.Count == 0 && _sinks[1].Sent.Count > 0 && _sinks[2].Sent.Count > 0);
 
         Assert.Contains(Told(1), note => note.Name == "OnCrimewatchEngagementEnded");
         Assert.Contains(Told(2), note => note.Name == "OnCrimewatchEngagementEnded");

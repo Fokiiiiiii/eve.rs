@@ -92,6 +92,14 @@ public sealed partial class SpaceSessions : IDisposable, ISpaceTargeting, ISpace
     /// <summary>The fleet a character is in (its id), or null when it is in none: a command burst reaches the ships of its source's fleet (track C6).</summary>
     public Func<long, CancellationToken, Task<long?>>? FleetIdOfAsync { get; set; }
 
+    /// <summary>
+    /// The accounts whose guns the host reloads from their holds when the rounds run out (FP-C8): a bot with no client UI, named by the operator (EVE_AUTO_RELOAD_ACCOUNTS).
+    /// Any other pilot's gun stops when its rounds are spent, and the client reloads it (<c>shipmodulebutton.py</c>), so the host does not load it twice.
+    /// </summary>
+    public IReadOnlySet<long> AutoReloadUsers { get; set; } = new HashSet<long>();
+
+    private bool AutoReloadsOf(Pilot pilot) => pilot.Session.UserId is { } user && AutoReloadUsers.Contains(user);
+
     /// <summary>The timed buffs of the ships in space (the command bursts', track C6). In memory: a restart drops them.</summary>
     public ShipBuffs Buffs { get; } = new();
     private readonly DogmaStatic _statics;
@@ -295,7 +303,7 @@ private readonly TransitionRuntime _transitions;
     if (_ownsTimers) _timers.Dispose();
     _sim.Received -= OnReceived;
     _sim.Lost -= OnLost;
-    Eve.Services.Space.Effects.ProjectedEffect.MutadaptiveSpool.ResetAll();
+    ForgetMutadaptiveSpools();
     // the host stops: the rounds that were spent are written first
     _charges.CloseAllAsync().GetAwaiter().GetResult();
 }
@@ -676,6 +684,10 @@ private readonly TransitionRuntime _transitions;
                         GunRanDry?.Invoke(new SpentGun(shooter.Session, shooter.CharacterId, shooter.ShipId, spent.ModuleId, gun.ChargeTypeId));
                     }
                     break;
+                // an ECM burst reached ships: the attack is recorded on each pilot it reached, as for a module started at their ship (FP-C7)
+                case SimEcmBurst burst when _pilots.TryGetValue(burst.SessionId, out var burster) && burster.ShipId == burst.ShipId:
+                    _ = Task.Run(() => RecordEcmBurstAsync(burster, burst.Reached));
+                    break;
                 // an effect the simulation ended on its own account (the cycles done, the capacitor short, the target gone): the module is taken out of the
                 // numbers the ship is sent with, and the ship is sent again so the simulation drops the module's modifiers (FP-C1)
                 case SimModuleEnded ended when _pilots.TryGetValue(ended.SessionId, out var endedPilot) && endedPilot.ActiveModules.TryRemove(ended.ModuleId, out _):
@@ -752,11 +764,25 @@ private readonly TransitionRuntime _transitions;
         _sim.ShipChanged((ulong)pilot.Session.SessionId, SimShips.Of(flown, _statics, await SecurityStatusAsync(characterId, cancellationToken)));
     }
 
+    /// <summary>
+    /// The spools of the modules this host runs are forgotten (the spool is process-wide, keyed by module, so another host's spools are not touched).
+    /// </summary>
+    private void ForgetMutadaptiveSpools()
+    {
+        foreach (var pilot in _pilots.Values)
+        {
+            foreach (var moduleId in pilot.RunningModules.Keys)
+            {
+                Eve.Services.Space.Effects.ProjectedEffect.MutadaptiveSpool.Reset(moduleId);
+            }
+        }
+    }
+
     /// <summary>The simulation was lost: every ship it held is gone, so each is brought home to the station its character last was at.</summary>
     private void OnLost()
     {
         _warping.Clear();
-        Eve.Services.Space.Effects.ProjectedEffect.MutadaptiveSpool.ResetAll();
+        ForgetMutadaptiveSpools();
         foreach (var pilot in _pilots.Values.ToArray())
         {
             _ = Task.Run(async () =>

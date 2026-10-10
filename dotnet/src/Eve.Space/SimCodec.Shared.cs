@@ -78,6 +78,9 @@ public const byte UpdateEffect = 61;
         public const byte PlaceProbe = 65;
         public const byte RemoveProbe = 66;
 
+
+/// <summary>Protocol 46 (FP-C7): an ECM burst reached ships; the ship that ran it and each ship reached, with whether its roll jammed it (simulation to host).</summary>
+public const byte EcmBurst = 67;
     }
 
     private ref struct Reader(ReadOnlyMemory<byte> data)

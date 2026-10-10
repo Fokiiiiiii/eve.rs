@@ -81,7 +81,7 @@ public sealed partial class SpaceSessions
         }
         foreach (var (moduleId, running) in pilot.RunningModules.ToArray())
         {
-            var made = ModulePackages.Of(snapshot, _statics, moduleId, running.EffectName, running.TargetId, running.Repeat, running.Aim, running.AimEnd);
+            var made = ModulePackages.Of(snapshot, _statics, moduleId, running.EffectName, running.TargetId, running.Repeat, running.Aim, running.AimEnd, AutoReloadsOf(pilot));
             if (made.Effect is not { } effect)
             {
                 continue;

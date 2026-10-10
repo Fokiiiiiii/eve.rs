@@ -122,6 +122,8 @@ public class PlayerDeathTests
         await using var _ = rig;
         rig.Sim.Say(Destroyed(session, c.ShipId, FrigateWreck));
         await Rig.UntilAsync(() => rig.Sim.Heard.OfType<SimPlaceWreck>().Any());
+        // the client is told the assembly after the wreck is placed: the test waits for that notice
+        await Rig.UntilAsync(() => Events.Of(session, clear: false).Any(e => e.Name == "OnPodOrCorvetteAssembly"));
         var assembly = Events.Of(session).Single(e => e.Name == "OnPodOrCorvetteAssembly");
         Assert.Equal(("charid", session.GetInt("shipid"), 670L), (assembly.IdType, Events.Number(assembly.Args[0]), Events.Number(assembly.Args[1])));
 

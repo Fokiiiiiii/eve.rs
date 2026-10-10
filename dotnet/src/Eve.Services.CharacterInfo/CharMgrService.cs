@@ -30,6 +30,8 @@ public sealed record CharMgrPersonalData(
         new Dictionary<long, string>());
 
     public long? NextOwnerNoteId { get; init; }
+    public IReadOnlyDictionary<string, PyValue> CharacterSettings { get; init; } =
+        new Dictionary<string, PyValue>(StringComparer.Ordinal);
 }
 
 
@@ -243,7 +245,54 @@ public sealed partial class CharMgrService(
     [Method("GetSettingsInfo")]
     public PyValue GetSettingsInfo(ServiceCall call) => Py.Tuple(new PyBuffer(SettingsCode), new PyInt(0));
 
-    /// <summary>The contacts and the blocked senders: none until the contacts module exists.</summary>
+    [Method("GetCharacterSettings")]
+    public async ValueTask<PyValue> GetCharacterSettings(ServiceCall call)
+    {
+        var settings = await ReadPersonalDataAsync(call);
+        return new PyDict([.. settings.CharacterSettings
+            .OrderBy(entry => entry.Key, StringComparer.Ordinal)
+            .Select(entry => new KeyValuePair<PyValue, PyValue>(new PyStr(entry.Key), entry.Value))]);
+    }
+
+    [Method("SaveCharacterSetting")]
+    public async ValueTask<PyValue> SaveCharacterSetting(ServiceCall call)
+    {
+        var key = OptionalText(call.Arg(0))?.Trim();
+        if (string.IsNullOrEmpty(key))
+            return None;
+
+        var value = call.Arg(1);
+        if (value is PyStr text && text.Value.Length > 102400 ||
+            value is PyWString wideText && wideText.Value.Length > 102400)
+            throw MachoErrors.ThrowUserError("CustomInfo", ("info", new PyStr("Character settings are limited to 100 KB.")));
+
+        await UpdatePersonalDataAsync(call, data =>
+        {
+            var settings = new Dictionary<string, PyValue>(data.CharacterSettings, StringComparer.Ordinal)
+            {
+                [key] = value,
+            };
+            return data with { CharacterSettings = settings };
+        });
+        return None;
+    }
+
+    [Method("DeleteCharacterSetting")]
+    public async ValueTask<PyValue> DeleteCharacterSetting(ServiceCall call)
+    {
+        var key = OptionalText(call.Arg(0))?.Trim();
+        if (string.IsNullOrEmpty(key))
+            return None;
+
+        await UpdatePersonalDataAsync(call, data =>
+        {
+            var settings = new Dictionary<string, PyValue>(data.CharacterSettings, StringComparer.Ordinal);
+            settings.Remove(key);
+            return data with { CharacterSettings = settings };
+        });
+        return None;
+    }
+
     private async ValueTask<CharMgrPersonalData> ReadPersonalDataAsync(ServiceCall call)
     {
         if (call.Session.CharacterId is not { } characterId || characterId <= 0 || readPersonalData is null)

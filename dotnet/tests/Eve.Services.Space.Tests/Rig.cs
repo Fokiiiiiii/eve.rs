@@ -62,6 +62,9 @@ internal sealed class Rig : IAsyncDisposable
 private readonly Dictionary<long, ClientSession> _fleetSessions = new();
     public Eve.Services.Space.FleetStore FleetStore { get; }
 
+    /// <summary>The schema of this rig's fleets (a second store on it reads what the rig's store wrote).</summary>
+    public string FleetSchema => $"pl_{_suffix}";
+
     private Rig(NpgsqlDataSource source, string suffix, DogmaStatic statics, CharacterCreation creation, CreationCatalog catalog, StationCatalog stations, SolarSystemCatalog systems, PgModuleStateStore modules, TimeSpan protection, TimeSpan jumpCloak, bool npcLoot, Eve.Npc.BeltRatConfig? beltRats, Eve.Scheduler.LocalTimers? localTimers, Eve.Npc.NpcAuthority? npcAuthority)
     {
         Source = source;

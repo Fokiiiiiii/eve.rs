@@ -597,6 +597,24 @@ public class CharMgrTests
 
         Assert.Equal(PyNone.Instance, await Rig.CallAsync(service, session, "LogSettings", settings));
         Assert.Equal(settings, loggedSettings);
+
+        Assert.Equal(new PyDict([]), await Rig.CallAsync(service, session, "GetCharacterSettings"));
+        Assert.Equal(PyNone.Instance, await Rig.CallAsync(service, session, "SaveCharacterSetting", new PyStr("window"), new PyStr("dock")));
+        Assert.Equal(PyNone.Instance, await Rig.CallAsync(service, session, "SaveCharacterSetting", new PyStr("fleetSetups"), new PyStr("[]")));
+        var savedSettings = new PyDict([
+            new KeyValuePair<PyValue, PyValue>(new PyStr("fleetSetups"), new PyStr("[]")),
+            new KeyValuePair<PyValue, PyValue>(new PyStr("window"), new PyStr("dock")),
+        ]);
+        Assert.Equal(savedSettings, await Rig.CallAsync(service, session, "GetCharacterSettings"));
+        await Assert.ThrowsAsync<Eve.Services.MachoWrappedException>(() => Rig.CallAsync(
+            service, session, "SaveCharacterSetting", new PyStr("large"), new PyStr(new string('x', 102401))));
+        Assert.Equal(savedSettings, await Rig.CallAsync(service, session, "GetCharacterSettings"));
+        Assert.Equal(PyNone.Instance, await Rig.CallAsync(service, session, "DeleteCharacterSetting", new PyStr("window")));
+        Assert.Equal(
+            new PyDict([new KeyValuePair<PyValue, PyValue>(new PyStr("fleetSetups"), new PyStr("[]"))]),
+            await Rig.CallAsync(service, session, "GetCharacterSettings"));
+        Assert.Equal(PyNone.Instance, await Rig.CallAsync(service, session, "DeleteCharacterSetting", new PyStr("fleetSetups")));
+        Assert.Equal(new PyDict([]), await Rig.CallAsync(service, session, "GetCharacterSettings"));
     }
 
 

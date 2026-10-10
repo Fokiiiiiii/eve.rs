@@ -202,18 +202,25 @@ impl Scene {
     /// The effect a drone's weapon runs at a target: the weapon the host gave it, each cycle one shot.
     pub(super) fn drone_effect(&self, session: SessionId, target: i64) -> Option<Effect> {
         let weapon = self.pilots.get(&session)?.ship.npc.as_ref()?.combat.weapons.first()?.clone();
+        // a drone's shot is its controller's damage: the controller's drone damage multiplier (its ship's, 1 for none) scales it (protocol 47)
+        let multiplier = self
+            .controller_of_drone(session)
+            .and_then(|controller| self.pilots.get(&controller))
+            .map_or(1.0, |pilot| pilot.ship.spec.drone_damage_multiplier);
+        let mut turret = weapon.turret;
+        turret.raw_damage = turret.raw_damage.map(|damage| damage * multiplier);
         Some(Effect {
             rules: Default::default(),
             burns_fuel: false,
             module_id: weapon.module_id,
-            module_type: weapon.turret.weapon_type_id,
+            module_type: turret.weapon_type_id,
             effect_id: weapon.effect_id,
-            fx: weapon.turret.fx.clone(),
+            fx: turret.fx.clone(),
             duration_ms: weapon.cycle_ms,
             capacitor_need: 0.0,
             repeat: i32::MAX,
             target_id: target,
-            turret: Some(weapon.turret),
+            turret: Some(turret),
             action: None,
             on: None,
             off: None,

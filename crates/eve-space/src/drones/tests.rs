@@ -237,6 +237,37 @@ fn a_drone_sent_at_a_rat_flies_at_it_fights_and_kills_it_and_the_pilots_log_tell
 }
 
 #[test]
+fn a_drone_whose_controller_deals_no_drone_damage_does_not_kill_the_rat_it_fights() {
+    // the same fight as the kill above, with the controller's drone damage at zero (the wiki: a protected ship cannot deal damage, so its drones do not either)
+    let (mut scene, _drone, _) = launched();
+    scene.pilots.get_mut(&PLAYER).expect("the controller is in space").ship.spec.drone_damage_multiplier =
+        0.0;
+    let mut rat = rat_spec();
+    rat.vitals = Vitals {
+        shield_capacity: 0.0,
+        armor_hp: 0.0,
+        structure_hp: 15.0,
+        resonances: Resonances { shield: [1.0; 4], armor: [1.0; 4], structure: [1.0; 4] },
+        armor_pinned: false,
+    };
+    let place = place_near(&mut scene, 1_500.0);
+    let (rat_session, _) = scene.spawn_npc(rat, rat_identity(0.0), place, LATER);
+    let _ = scene.drone_command(PLAYER, &[DRONE_SHIP], DroneCommand::Engage { target: RAT_SHIP }, LATER);
+
+    let mut everything = Vec::new();
+    let mut now = LATER + SECOND / 4;
+    while now <= LATER + 40 * SECOND {
+        everything.extend(scene.poll(now));
+        now += SECOND / 4;
+    }
+    assert!(
+        !everything.iter().any(|o| matches!(o, Out::Destroyed { ship_id, .. } if *ship_id == RAT_SHIP)),
+        "the rat survives: the drone deals no damage"
+    );
+    assert!(scene.session_of(RAT_SHIP).is_some() && scene.pilots.contains_key(&rat_session));
+}
+
+#[test]
 fn a_drone_brought_to_the_bay_is_scooped_once_it_is_near_and_the_host_is_told() {
     let (mut scene, _, _) = launched();
     let sent = scene.drone_command(PLAYER, &[DRONE_SHIP], DroneCommand::ReturnBay, LATER);

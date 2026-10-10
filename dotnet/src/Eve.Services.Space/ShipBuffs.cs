@@ -4,12 +4,13 @@ namespace Eve.Services.Space;
 
 /// <summary>
 /// The timed command bursts' buffs on the ships of space (track C6): the host's buff registry, behind a lock, because a burst's settlement and the sweep that ends
-/// its buffs run on different threads. In memory only: a restart drops every buff, as EVE.js drops its burst history.
+/// its buffs run on different threads. In memory, and kept in the host's record (<c>ship_buffs</c>) so a restart restores them.
 /// </summary>
 public sealed class ShipBuffs
 {
     private readonly object _gate = new();
-    private readonly BuffRegistry _registry = new();
+    private BuffRegistry _registry = new();
+    private HashSet<long> _restored = [];
 
     /// <summary>Applies a buff of <paramref name="collection"/> with <paramref name="value"/> to a ship, from <paramref name="nowMs"/> for <paramref name="durationMs"/>.</summary>
     public void Apply(long shipId, BuffCollection collection, double value, double nowMs, double durationMs)
@@ -17,6 +18,52 @@ public sealed class ShipBuffs
         lock (_gate)
         {
             _registry.Apply(shipId, collection, value, nowMs, durationMs);
+        }
+    }
+
+    /// <summary>The inputs the ship carries at <paramref name="nowMs"/>, as the host keeps them (<see cref="Restore"/>).</summary>
+    public IReadOnlyList<(int CollectionId, double Value, double ExpiresAtMs)> InputsOf(long shipId, double nowMs)
+    {
+        lock (_gate)
+        {
+            return _registry.InputsOf(shipId, nowMs);
+        }
+    }
+
+    /// <summary>A restart: the registry starts empty, and the buffs are what the host's record restores (tests simulate a restart with it).</summary>
+    internal void DropAll()
+    {
+        lock (_gate)
+        {
+            _registry = new BuffRegistry();
+            _restored = [];
+        }
+    }
+
+    /// <summary>Marks a ship as restored from the record. Returns false when it was marked already in this run (the record is read once per ship).</summary>
+    public bool MarkRestored(long shipId)
+    {
+        lock (_gate)
+        {
+            return _restored.Add(shipId);
+        }
+    }
+
+    /// <summary>Clears the mark of a ship whose record could not be read, so the next sync reads it again.</summary>
+    public void UnmarkRestored(long shipId)
+    {
+        lock (_gate)
+        {
+            _restored.Remove(shipId);
+        }
+    }
+
+    /// <summary>Restores a buff input the host kept for a ship (a restart drops the registry; the record brings the buffs back).</summary>
+    public void Restore(long shipId, BuffCollection collection, double value, double expiresAtMs)
+    {
+        lock (_gate)
+        {
+            _registry.Restore(shipId, collection, value, expiresAtMs);
         }
     }
 

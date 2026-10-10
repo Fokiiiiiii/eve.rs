@@ -49,6 +49,39 @@ public sealed class BuffRegistry
     public IReadOnlyList<BuffState> StateOf(long itemId, double nowMs) =>
         [.. Current(itemId, nowMs).Select(entry => new BuffState(entry.Collection.Id, entry.Value, entry.Expiry))];
 
+    /// <summary>
+    /// The inputs the item carries at <paramref name="nowMs"/>: each active input with its collection, value and expiry. The host keeps them, so a restart can
+    /// restore the buffs as they were (<see cref="Restore"/>).
+    /// </summary>
+    public IReadOnlyList<(int CollectionId, double Value, double ExpiresAtMs)> InputsOf(long itemId, double nowMs)
+    {
+        if (!_items.TryGetValue(itemId, out var series))
+        {
+            return [];
+        }
+        return [.. series.Values.SelectMany(entry => entry.Inputs
+            .Where(input => input.Expiry >= nowMs)
+            .Select(input => (entry.Collection.Id, input.Value, input.Expiry)))];
+    }
+
+    /// <summary>Restores an input the host kept (the inverse of <see cref="InputsOf"/>): a buff of the collection with the value, until its expiry.</summary>
+    public void Restore(long itemId, BuffCollection collection, double value, double expiresAtMs)
+    {
+        if (!double.IsFinite(value) || !double.IsFinite(expiresAtMs))
+        {
+            return;
+        }
+        if (!_items.TryGetValue(itemId, out var series))
+        {
+            _items[itemId] = series = [];
+        }
+        if (!series.TryGetValue(collection.Id, out var entry))
+        {
+            series[collection.Id] = entry = new Series(collection, []);
+        }
+        entry.Inputs.Add((expiresAtMs, value));
+    }
+
     /// <summary>The buff effects the item carries at <paramref name="nowMs"/>, as the dogma world takes them (<see cref="DogmaWorld.SetBuffs"/>).</summary>
     public IReadOnlyList<EffectDef> EffectsOf(long itemId, double nowMs) =>
         [.. Active(itemId, nowMs).Select(pair => pair.Collection.EffectFor(pair.Value))];

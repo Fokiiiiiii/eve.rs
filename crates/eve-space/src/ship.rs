@@ -57,6 +57,9 @@ pub struct ShipSpec {
     /// How much of an energy neutralisation the ship takes (`energyWarfareResistance`, 2045: 1 for an ordinary ship, 0 for one that cannot be neutralised).
     /// A neutraliser's amount is multiplied by it; the reference applies the same multiplier to a doomsday's neutralising wave (`doomsdayEnergyNeutResistanceID`).
     pub energy_warfare_resistance: f64,
+    /// The damage multiplier of the drones this ship launches (1 for none, 0 for a ship whose drones cannot deal damage): the drone's damage multiplier
+    /// (attribute 64) times this (protocol 47). The host sets it from industrialBonusDroneDamage (2580) and the wiki's P.A.N.I.C. penalty.
+    pub drone_damage_multiplier: f64,
 }
 
 /// What the ship is doing.

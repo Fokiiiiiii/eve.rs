@@ -544,13 +544,13 @@ DONE (each has tests; the PostgreSQL-backed ones are listed as run under the sha
 - Found on the way and fixed here: a pending start was marked active only after the simulation's answer, which a parked start gives only once it is granted, so the host's own check of a fuel ask or a grant saw the module as not running. The module is now marked while the start is pending and unmarked on refusal. The Rust decoder of module work cycles accepted only commands 7 to 9, refusing the scans (10, 11) of protocol 40; its set is now the C# codec's (7 to 13).
 
 OPEN (each with its blocker):
-- Login and re-entry: a pilot who enters space within a burst's time is not told its buff state (the client's HUD). Blocker: the enter path sends the ship but not the state. Upgrade: send `BuffState` after the ship enters (eve-logic `michelle.py` takes `bag.dbuffState` at the ball's bootstrap).
-- Drone damage (the wiki: the protected ships cannot deal damage; collection 58 writes attribute 2580 on the ship): no drone path in eve.rs reads it, and running drones are not recalled. Blocker: which attribute a drone's damage takes from its ship is not read in this track.
-- Velocity penalty (collection 3) writes attribute 3171, which the SDE marks as deprecated, so no top speed changes. Blocker: a source that links 3171 to the speed (the wiki's "cannot move" gives no number).
+- Login and re-entry (C8, DEVIATIONS "Track C8"): done. The buffs are kept in `space.ship_buffs` and restored on undock, login in space and a gate jump; the pilot is told the state on each entry. Tests: `BuffRecordHostTests`, `BuffRegistryTests`.
+- Drone damage (C8): done. Attribute 2580 is read through SDE effect 6789 (the Drones skill for a bonus; a penalty for every pilot, the wiki), sent as `SimShip.DroneDamageMultiplier` (protocol 47). Tests: `drones/tests.rs`, `IndustrialInvulnerabilityTests`.
+- Velocity (C8): done. The wiki says "unable to move"; the collection now moves the current top speed (maxVelocity 37) at -100 %, not the deprecated 3171 (DEVIATIONS "Track C8"). Test: `IndustrialInvulnerabilityTests`.
 - The jump refusal's words ("You cannot jump at this time.") are ours: the client's notice is not in the tables read.
 - Tether (57) and entosis (61) are applied; eve.rs has no tether or entosis use. The SCARAB Breacher bypass does not apply (no such pods in eve.rs).
 - No separate state for the buffs in the simulation (the request for "general status effects" in the simulation is not built): the numbers and the host's checks carry them (DEVIATIONS).
-- MITM: no client trace of a burst cycle or a grant was driven (`tools/mitm/README.md`).
+- MITM (C8): not driven. The headless recipe has no burst scenario and no recorded burst exists; DEVIATIONS "Track C8" records what could be run.
 - The burst wiki pages were not re-read in this track (the rules are those C4 and C5 recorded); the Capital Ship Modules page was re-read for P.A.N.I.C.
 ## 23. Track A5: OnDotVictimUpdated, the cynosural field record, probes, cyno jammer, jump drive and mobile objects (2026-10-09)
 

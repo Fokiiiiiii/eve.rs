@@ -106,6 +106,10 @@ pub(super) fn read_ship(reader: &mut Reader) -> Result<ShipSpec, DecodeError> {
     let sensor_strength = [reader.f64()?, reader.f64()?, reader.f64()?, reader.f64()?];
     let ecm_resistance = reader.f64()?;
     let energy_warfare_resistance = reader.f64()?;
+    let drone_damage_multiplier = reader.f64()?;
+    if !drone_damage_multiplier.is_finite() || drone_damage_multiplier < 0.0 {
+        return Err(DecodeError::BadValue("drone damage multiplier"));
+    }
     Ok(ShipSpec {
         ship_id,
         character_id,
@@ -136,6 +140,7 @@ pub(super) fn read_ship(reader: &mut Reader) -> Result<ShipSpec, DecodeError> {
         sensor_strength,
         ecm_resistance,
         energy_warfare_resistance,
+        drone_damage_multiplier,
     })
 }
 

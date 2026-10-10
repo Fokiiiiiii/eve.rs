@@ -111,7 +111,26 @@ public static SimHeatProfile HeatProfileOf(ShipSnapshot snapshot, DogmaStatic st
             Attribute(MaxTargetRange), Attribute(ScanResolution), Attribute(SignatureRadius), LockLimit(Attribute(MaxLockedTargets), snapshot.World.Get(character.Id, MaxLockedTargets)),
             Attribute(CapacitorCapacity), Attribute(RechargeRate) / 1000.0,
             [.. snapshot.Fitted.Select(module => new SimModule(module.Id, module.TypeId, module.Flag))],
-            VitalsOf(snapshot), ConditionOf(snapshot.Condition), SensorsOf(Attribute, _ => true));
+            VitalsOf(snapshot), ConditionOf(snapshot.Condition), SensorsOf(Attribute, _ => true), DroneDamageMultiplierOf(snapshot));
+    }
+
+    /// <summary>The attribute of a ship that a drone bonus or penalty writes (industrialBonusDroneDamage, SDE 2580).</summary>
+    public const int IndustrialBonusDroneDamage = 2580;
+
+    /// <summary>The Drones skill (SDE 3436), which the SDE's industrialBonusDroneDamage effect (6789) requires of a drone's owner.</summary>
+    public const int DronesSkill = 3436;
+
+    /// <summary>
+    /// The damage multiplier of the drones the ship launches (protocol 47). The SDE's effect 6789 adds the ship's industrialBonusDroneDamage (2580) to the drone's
+    /// damage multiplier (PostPercent) for an owner with the Drones skill, so a bonus needs the skill. A penalty (the wiki's P.A.N.I.C.: a protected ship cannot deal
+    /// damage) applies to every pilot. Neither moves a ship with no bonus.
+    /// </summary>
+    public static double DroneDamageMultiplierOf(ShipSnapshot snapshot)
+    {
+        var bonus = snapshot.World.Get(snapshot.Ship.Id, IndustrialBonusDroneDamage);
+        var hasSkill = snapshot.Skills.Any(skill => skill.TypeId == DronesSkill && skill.Level > 0);
+        var effective = hasSkill ? bonus : Math.Min(bonus, 0d);
+        return double.IsFinite(effective) ? Math.Max(0d, 1d + effective / 100d) : 1d;
     }
 
     /// <summary>A ship as its type has it and nobody flies it (a hull spawned for <c>/deathtest</c>): the type's own numbers, no pilot, no modules.</summary>
@@ -126,7 +145,8 @@ public static SimHeatProfile HeatProfileOf(ShipSnapshot snapshot, DogmaStatic st
             shipId, 0, type.TypeId, type.GroupId, type.CategoryId, type.Name, 0, 0, 0, 0, 0,
             Attribute(Radius), Attribute(Mass), Attribute(MaxVelocity), Attribute(Agility), WarpSpeedAu(Attribute(BaseWarpSpeed), Attribute(WarpSpeedMultiplier)), Attribute(ShieldRechargeRate),
             Attribute(MaxTargetRange), Attribute(ScanResolution), Attribute(SignatureRadius), LockLimit(Attribute(MaxLockedTargets), 0),
-            Attribute(CapacitorCapacity), Attribute(RechargeRate) / 1000.0, [], vitals, SimCondition.Full, SensorsOf(id => Attribute(id), type.Attributes.ContainsKey));
+            Attribute(CapacitorCapacity), Attribute(RechargeRate) / 1000.0, [], vitals, SimCondition.Full, SensorsOf(id => Attribute(id), type.Attributes.ContainsKey),
+            DroneDamageMultiplier: 1d);
     }
 
     /// <summary>What the ship can take and how it resists, as dogma has it (a resonance the ship has none of lets everything through).</summary>

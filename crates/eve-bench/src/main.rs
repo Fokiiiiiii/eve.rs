@@ -218,6 +218,7 @@ fn bench_ship(index: u64) -> ShipSpec {
         sensor_strength: [0.0, 0.0, 0.0, 0.0],
         ecm_resistance: 1.0,
         energy_warfare_resistance: 1.0,
+        drone_damage_multiplier: 1.0,
         vitals: eve_space::health::Vitals {
             shield_capacity: 220.0,
             armor_hp: 137.5,

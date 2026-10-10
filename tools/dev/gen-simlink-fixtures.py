@@ -53,7 +53,7 @@ def ship(m):
     body += struct.pack("<I", len(m["modules"]))
     for module in m["modules"]:
         body += i64(module["itemId"]) + struct.pack("<ii", module["typeId"], module["flag"])
-    body += struct.pack("<6d", *m["sensorStrength"], m["ecmResistance"], m["energyWarfareResistance"])
+    body += struct.pack("<7d", *m["sensorStrength"], m["ecmResistance"], m["energyWarfareResistance"], m.get("droneDamageMultiplier", 1.0))
     return body
 
 
@@ -473,8 +473,8 @@ BARE = dict(IBIS, name="", modules=[], allianceId=99000001, securityStatus=-2.5,
             condition={"damage": 0.0, "armorDamage": 0.0, "shieldCharge": 1.0, "charge": 1.0})
 
 valid = [
-    {"name": "hello", "kind": "Hello", "version": 46},
-    {"name": "hello ack", "kind": "HelloAck", "version": 46, "pollHz": 4},
+    {"name": "hello", "kind": "Hello", "version": 47},
+    {"name": "hello ack", "kind": "HelloAck", "version": 47, "pollHz": 4},
     {"name": "enter by undocking", "kind": "Enter", "sessionId": "1790646377000015", "solarSystemId": 30100032,
      "how": 0, "stationId": "60015249", "ship": IBIS},
     {"name": "enter already in space, no modules, non-ASCII name", "kind": "Enter", "sessionId": "1",
@@ -517,6 +517,8 @@ valid = [
     {"name": "deactivate command", "kind": "Command", "sessionId": "1790646377000015", "command": 16,
      "args": [9988400001941.0]},
     {"name": "new ship numbers", "kind": "ShipSpec", "sessionId": "1790646377000015", "ship": IBIS},
+{"name": "new ship whose drones deal no damage (a P.A.N.I.C. grant)", "kind": "ShipSpec", "sessionId": "1790646377000015",
+ "ship": dict(IBIS, droneDamageMultiplier=0.0)},
     {"name": "notification", "kind": "Notify", "sessionId": "1790646377000015", "notification": "OnSetTimeDilation",
      "idType": "clientID", "args": "7e0000000004010100"},
     {"name": "notification without arguments", "kind": "Notify", "sessionId": "1", "notification": "DoDestinyUpdate",
@@ -1127,6 +1129,7 @@ hardener = next(c for c in valid if c["name"] == "activate a reactive armor hard
 hardener_seed_high = dict(hardener, effect=dict(hardener["effect"], action=dict(hardener["effect"]["action"], seed=[0.85, 1.5, 0.85, 0.85])))
 hardener_shift_none = dict(hardener, effect=dict(hardener["effect"], action=dict(hardener["effect"]["action"], shift=0.0)))
 pinned_flag_two = {"kind": "ShipSpec", "sessionId": "1790646377000015", "ship": dict(IBIS, vitals=dict(IBIS["vitals"], armorPinned=2))}
+drone_negative = {"kind": "ShipSpec", "sessionId": "1790646377000015", "ship": dict(IBIS, droneDamageMultiplier=-0.5)}
 def named(name):
     return next(c for c in valid if c["name"] == name)
 
@@ -1153,6 +1156,7 @@ invalid = [
     {"name": "reactive armor hardener with a seed above one", "reason": "bad-value", "hex": build(hardener_seed_high).hex()},
     {"name": "reactive armor hardener that shifts by nothing", "reason": "bad-value", "hex": build(hardener_shift_none).hex()},
     {"name": "armor pinned flag that is not a flag", "reason": "bad-value", "hex": build(pinned_flag_two).hex()},
+{"name": "drone damage multiplier that is negative", "reason": "bad-value", "hex": build(drone_negative).hex()},
     {"name": "kamikaze with a negative range", "reason": "bad-value",
      "hex": build(dict(named("activate a kamikaze squadron (Shadow: four kinds, detonates at 500 m)"), effect=dict(named("activate a kamikaze squadron (Shadow: four kinds, detonates at 500 m)")["effect"],
                        action=dict(named("activate a kamikaze squadron (Shadow: four kinds, detonates at 500 m)")["effect"]["action"], rangeMeters=-1.0)))).hex()},

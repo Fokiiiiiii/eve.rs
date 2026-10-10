@@ -49,7 +49,7 @@ public sealed record SimShip(
     long ShipId, long CharacterId, int TypeId, int GroupId, int CategoryId, string Name, long OwnerId, int CorporationId, int AllianceId, int WarFactionId,
     double SecurityStatus, double Radius, double Mass, double MaxVelocity, double Agility, double WarpSpeedAu, double ShieldRechargeMs,
     double MaxTargetRange, double ScanResolution, double SignatureRadius, int MaxLockedTargets, double CapacitorCapacity, double CapacitorRechargeSeconds, IReadOnlyList<SimModule> Modules,
-    SimVitals? Vitals = null, SimCondition? Condition = null, SimSensors? Sensors = null);
+    SimVitals? Vitals = null, SimCondition? Condition = null, SimSensors? Sensors = null, double DroneDamageMultiplier = 1d);
 
 /// <summary>What a ship holds against a jammer and a neutraliser: the strength of its sensors (gravimetric, ladar, magnetometric, radar; the strongest counts), how much of a jam it takes (<c>ECMResistance</c>: 1 for an ordinary ship, 0 for one that cannot be jammed) and how much of an energy neutralisation it takes (<c>energyWarfareResistance</c>, 2045: 1 for an ordinary ship, 0 for one that cannot be neutralised; protocol 27).</summary>
 public sealed record SimSensors(double Gravimetric, double Ladar, double Magnetometric, double Radar, double EcmResistance, double EnergyWarfareResistance)

@@ -93,6 +93,7 @@ fn ship_of(case: &Value) -> ShipSpec {
         sensor_strength: sensors_of(&case["sensorStrength"]),
         ecm_resistance: number("ecmResistance"),
         energy_warfare_resistance: number("energyWarfareResistance"),
+        drone_damage_multiplier: case["droneDamageMultiplier"].as_f64().unwrap_or(1.0),
         vitals: vitals_of(&case["vitals"]),
         condition: condition_of(&case["condition"]),
         modules: case["modules"]

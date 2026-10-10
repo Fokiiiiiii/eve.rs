@@ -93,7 +93,11 @@ pub(super) fn put_ship(out: &mut Vec<u8>, ship: &ShipSpec) {
         out.extend_from_slice(&module.type_id.to_le_bytes());
         out.extend_from_slice(&module.flag.to_le_bytes());
     }
-    for number in ship.sensor_strength.iter().chain([&ship.ecm_resistance, &ship.energy_warfare_resistance]) {
+    for number in ship.sensor_strength.iter().chain([
+        &ship.ecm_resistance,
+        &ship.energy_warfare_resistance,
+        &ship.drone_damage_multiplier,
+    ]) {
         out.extend_from_slice(&number.to_le_bytes());
     }
 }

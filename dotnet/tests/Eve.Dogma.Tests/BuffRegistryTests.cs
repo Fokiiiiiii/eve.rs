@@ -149,4 +149,26 @@ public class BuffRegistryTests
         Assert.Empty(registry.Prune(60_002));
         Assert.Equal(new[] { Ship + 1 }, registry.Prune(120_001));
     }
+
+    [Fact]
+    public void The_inputs_a_registry_keeps_restore_into_a_new_one_with_the_same_values_and_expiries()
+    {
+        var registry = new BuffRegistry();
+        registry.Apply(Ship, Strongest, 8, nowMs: 0, durationMs: 60_000);
+        registry.Apply(Ship, Strongest, 20, nowMs: 10_000, durationMs: 60_000);
+        var kept = registry.InputsOf(Ship, 20_000);
+        Assert.Equal(2, kept.Count);
+
+        // a restart: the new registry knows only what the host kept
+        var restarted = new BuffRegistry();
+        foreach (var input in kept)
+        {
+            restarted.Restore(Ship, Strongest, input.Value, input.ExpiresAtMs);
+        }
+        Assert.Equal(registry.ValuesOf(Ship, 20_000)[Strongest.Id], restarted.ValuesOf(Ship, 20_000)[Strongest.Id]);
+        Assert.Equal(registry.StateOf(Ship, 20_000), restarted.StateOf(Ship, 20_000));
+        Assert.Equal(kept.Count, restarted.InputsOf(Ship, 20_000).Count);
+        // an input at or after its expiry is what is kept: at 80 000 ms both have run out
+        Assert.Empty(registry.InputsOf(Ship, 80_000));
+    }
 }

@@ -563,7 +563,7 @@ public sealed partial class SpaceSessions
             }
         }
         // the ship carries the buffs of the command bursts that reach it (track C6), so its numbers are the buffed ones
-        Buffs.Sync(snapshot.World, pilot.ShipId, _nowUnixMs());
+        await SyncBuffsAsync(snapshot.World, pilot.ShipId, cancellationToken);
         return snapshot;
     }
 

@@ -32,8 +32,21 @@ public sealed class HostServer(
     Func<ReadOnlyMemory<byte>> clusterConfig)
 {
     private int _connections;
+    private readonly ConcurrentDictionary<FrontConnection, byte> _fronts = new();
 
     public int ConnectedFronts => Volatile.Read(ref _connections);
+
+    /// <summary>
+    /// Sends every connected front the cluster configuration again (a front keeps the one it was sent when it connected,
+    /// and the handshake's <c>config_vals</c> comes from it). Call it after the configuration changed.
+    /// </summary>
+    public void PublishClusterConfig()
+    {
+        foreach (var front in _fronts.Keys)
+        {
+            front.PublishClusterConfig();
+        }
+    }
 
     /// <summary>Accepts fronts on <paramref name="listener"/> until cancelled.</summary>
     public async Task ServeAsync(Socket listener, CancellationToken cancellationToken)
@@ -60,6 +73,7 @@ public sealed class HostServer(
     {
         Interlocked.Increment(ref _connections);
         await using var connection = new FrontConnection(stream, options, dispatcher, accounts, clusterConfig);
+        _fronts[connection] = 0;
         try
         {
             await connection.RunAsync(cancellationToken);
@@ -73,6 +87,7 @@ public sealed class HostServer(
         }
         finally
         {
+            _fronts.TryRemove(connection, out _);
             Interlocked.Decrement(ref _connections);
         }
     }
@@ -88,6 +103,8 @@ internal sealed class FrontConnection : IAsyncDisposable
     private readonly Func<ReadOnlyMemory<byte>> _clusterConfig;
     private readonly Channel<byte[]> _outgoing = Channel.CreateUnbounded<byte[]>(new UnboundedChannelOptions { SingleReader = true });
     private readonly ConcurrentDictionary<ulong, SessionActor> _sessions = new();
+    private readonly object _handshakeGate = new();
+    private bool _handshaken;
     private readonly CancellationTokenSource _stop = new();
     private Task _writer = Task.CompletedTask;
 
@@ -115,8 +132,13 @@ internal sealed class FrontConnection : IAsyncDisposable
             {
                 throw new HostLinkException(HostLinkError.BadStatus, $"the front speaks version {hello.Version}, this host {HostCodec.ProtocolVersion}");
             }
-            Post(new HelloAck(HostCodec.ProtocolVersion));
-            Post(new ClusterConfig(_clusterConfig()));
+            // The front's first two messages are the acknowledgement and the configuration: a publish waits for them.
+            lock (_handshakeGate)
+            {
+                Post(new HelloAck(HostCodec.ProtocolVersion));
+                Post(new ClusterConfig(_clusterConfig()));
+                _handshaken = true;
+            }
 
             while (await ReadFrameAsync(ct) is { } frame)
             {
@@ -228,6 +250,18 @@ internal sealed class FrontConnection : IAsyncDisposable
 
     /// <summary>Queues a frame for the front.</summary>
     public void Post(HostMessage message) => _outgoing.Writer.TryWrite(HostCodec.Encode(message));
+
+    /// <summary>Sends the front the cluster configuration as it is now, once the front has its first two messages.</summary>
+    public void PublishClusterConfig()
+    {
+        lock (_handshakeGate)
+        {
+            if (_handshaken)
+            {
+                Post(new ClusterConfig(_clusterConfig()));
+            }
+        }
+    }
 
     private sealed class LinkSink(FrontConnection connection, ulong sessionId) : IPacketSink
     {

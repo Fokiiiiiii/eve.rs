@@ -10,6 +10,9 @@
     <TieredPGO>true</TieredPGO>
   </PropertyGroup>
   <ItemGroup>
+    <EmbeddedResource Include="Migrations/*.sql" />
+  </ItemGroup>
+  <ItemGroup>
     <ProjectReference Include="../Eve.GameStore/Eve.GameStore.csproj" />
     <ProjectReference Include="../Eve.Identity/Eve.Identity.csproj" />
     <ProjectReference Include="../Eve.Scheduler/Eve.Scheduler.csproj" />

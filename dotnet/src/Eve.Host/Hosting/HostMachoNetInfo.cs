@@ -36,12 +36,12 @@ using static Eve.Host.HostConfiguration;
 namespace Eve.Host;
 
 /// <summary>machoNet's view of this host: the registered services, with the locations the client routes by.</summary>
-sealed class HostMachoNetInfo(ServiceRegistry registry, PyDict config) : IMachoNetInfo
+sealed class HostMachoNetInfo(ServiceRegistry registry, Func<PyDict> config) : IMachoNetInfo
 {
     public IReadOnlyList<KeyValuePair<string, string?>> Services() =>
         [.. registry.ServiceNames.Select(name => new KeyValuePair<string, string?>(name, ServiceLocations.Of(name)))];
 
-    public PyDict GlobalConfig() => config;
+    public PyDict GlobalConfig() => config();
 
     public int UserCount() => 0;
 }

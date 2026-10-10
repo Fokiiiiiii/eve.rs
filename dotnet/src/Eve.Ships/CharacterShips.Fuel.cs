@@ -17,7 +17,7 @@ public sealed partial class CharacterShips
     private static readonly string[] FuelBayGroups = ["Fuel Block", "Ice Product"];
 
     /// <summary>
-    /// Takes <paramref name="quantity"/> units of <paramref name="fuelTypeId"/> for one cycle of <paramref name="moduleId"/> from the ship. Accepted when the ship holds
+    /// Takes <paramref name="quantity"/> units of <paramref name="moduleId"/>'s cycle fuel from the ship. Accepted when the ship holds
     /// them; otherwise refused with <c>NO_FUEL</c> and nothing is taken. Either way the answer is recorded for the module in the same transaction, and a cycle the
     /// module has already had settled is answered from that record without a second debit.
     /// </summary>
@@ -33,6 +33,22 @@ public sealed partial class CharacterShips
             return settled;
         }
 
+        var shortfall = await TakeFuelAsync(connection, transaction, characterId, shipId, fuelTypeId, quantity, cancellationToken);
+        var record = shortfall == 0
+            ? new WorkCycleRecord(moduleId, cycleId, true, "", 0, Math.Max(0, quantity), true)
+            : new WorkCycleRecord(moduleId, cycleId, false, "NO_FUEL", shortfall, 0, true);
+        await ledger.RecordAsync(connection, transaction, record, cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+        return record;
+    }
+
+    /// <summary>
+    /// The shared fuel debit, inside the caller's transaction: takes <paramref name="quantity"/> units of <paramref name="fuelTypeId"/> from the ship, the fuel bay
+    /// first where the type can be stored there. Returns how many units the ship lacks, and takes nothing when it lacks any (0 when the units were taken).
+    /// </summary>
+    internal async Task<long> TakeFuelAsync(
+        NpgsqlConnection connection, NpgsqlTransaction transaction, long characterId, long shipId, int fuelTypeId, long quantity, CancellationToken cancellationToken)
+    {
         await statics.EnsureTypesAsync([fuelTypeId], cancellationToken);
         var fuelGroup = statics.Type(fuelTypeId) is { } fuelType ? statics.GroupName(fuelType.GroupId) : "";
         var flags = FuelBayGroups.Contains(fuelGroup, StringComparer.OrdinalIgnoreCase) ? new[] { FuelBayFlag, CargoFlag } : new[] { CargoFlag };
@@ -43,36 +59,28 @@ public sealed partial class CharacterShips
         }
 
         var available = stacks.Sum(stack => stack.Quantity);
-        WorkCycleRecord record;
-        if (quantity <= 0 || available >= quantity)
+        if (quantity > 0 && available < quantity)
         {
-            var remaining = quantity;
-            foreach (var stack in stacks)
+            return quantity - available;
+        }
+        var remaining = quantity;
+        foreach (var stack in stacks)
+        {
+            if (remaining <= 0)
             {
-                if (remaining <= 0)
-                {
-                    break;
-                }
-                var taken = Math.Min(remaining, stack.Quantity);
-                remaining -= taken;
-                if (taken == stack.Quantity)
-                {
-                    await items.DeleteAsync(connection, transaction, stack.Id, cancellationToken);
-                }
-                else
-                {
-                    await items.SetQuantityAsync(connection, transaction, stack.Id, stack.Quantity - taken, cancellationToken);
-                }
+                break;
             }
-            record = new WorkCycleRecord(moduleId, cycleId, true, "", 0, Math.Max(0, quantity), true);
+            var taken = Math.Min(remaining, stack.Quantity);
+            remaining -= taken;
+            if (taken == stack.Quantity)
+            {
+                await items.DeleteAsync(connection, transaction, stack.Id, cancellationToken);
+            }
+            else
+            {
+                await items.SetQuantityAsync(connection, transaction, stack.Id, stack.Quantity - taken, cancellationToken);
+            }
         }
-        else
-        {
-            record = new WorkCycleRecord(moduleId, cycleId, false, "NO_FUEL", quantity - available, 0, true);
-        }
-
-        await ledger.RecordAsync(connection, transaction, record, cancellationToken);
-        await transaction.CommitAsync(cancellationToken);
-        return record;
+        return 0;
     }
 }

@@ -521,6 +521,25 @@ public Func<long, long, CancellationToken, Task<int>>? SkillLevelOfCharacter { g
             : None;
 
     /// <summary>
+    /// <c>CmdJumpToFleetModuleBeacon(charID, beaconID, solarsystemID)</c>: the jump drive to the cynosural field a fleet member lit (the beacon is the field, and
+    /// its lighter is the character). The answer is the bound object and the time the ship can be used from again.
+    /// </summary>
+    [Method("CmdJumpToFleetModuleBeacon")]
+    public async ValueTask<PyValue> CmdJumpToFleetModuleBeacon(ServiceCall call) =>
+        _binding.Owns(call) && space.JumpDrive is { } drive && Number(call.Arg(0)) is { } lighter && Number(call.Arg(1)) is { } beacon && Number(call.Arg(2)) is { } system
+            ? await drive.JumpToFieldAsync(call.Session, (long)beacon, (long)lighter, (int)system, call.BoundObjectId, call.Cancellation)
+            : None;
+
+    /// <summary>
+    /// <c>CmdJumpToFleetDeployableBeacon(deployableID, solarsystemID, beaconID)</c>: the jump drive to a cynosural field of the fleet by its deployable id.
+    /// </summary>
+    [Method("CmdJumpToFleetDeployableBeacon")]
+    public async ValueTask<PyValue> CmdJumpToFleetDeployableBeacon(ServiceCall call) =>
+        _binding.Owns(call) && space.JumpDrive is { } drive && Number(call.Arg(0)) is { } field && Number(call.Arg(1)) is { } system
+            ? await drive.JumpToFieldAsync(call.Session, (long)field, 0, (int)system, call.BoundObjectId, call.Cancellation)
+            : None;
+
+    /// <summary>
     /// <c>CmdDock(stationID, shipID)</c>: dock at a station. The answer is the time the docking was accepted; the docking itself is done a few
     /// seconds later, when the client is told the session has changed.
     /// </summary>

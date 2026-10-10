@@ -68,6 +68,16 @@ public sealed class PgDeployedStore
         return await command.ExecuteNonQueryAsync(cancellationToken) > 0;
     }
 
+    /// <summary>The record of a deployable, or null when it has none.</summary>
+    public async Task<DeployedRecord?> GetAsync(long deployableId, CancellationToken cancellationToken = default)
+    {
+        await using var connection = await _source.OpenConnectionAsync(cancellationToken);
+        await using var command = new NpgsqlCommand($"SELECT {Columns} FROM {_schema}.deployed WHERE deployable_id = $1", connection);
+        command.Parameters.Add(new NpgsqlParameter { Value = deployableId });
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        return await reader.ReadAsync(cancellationToken) ? Read(reader) : null;
+    }
+
     /// <summary>What lies in a solar system, oldest first.</summary>
     public async Task<IReadOnlyList<DeployedRecord>> InSystemAsync(int solarSystemId, CancellationToken cancellationToken = default)
     {

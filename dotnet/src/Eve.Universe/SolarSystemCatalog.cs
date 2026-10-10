@@ -7,7 +7,7 @@ namespace Eve.Universe;
 /// A solar system of the static data: where it is in the universe. <c>FactionId</c> is the faction the system belongs to (its own, else its
 /// constellation's, else its region's; 0 when none), as the simulation's world takes it.
 /// </summary>
-public sealed record SolarSystemInfo(int Id, string Name, int ConstellationId, int RegionId, double Security, int FactionId = 0);
+public sealed record SolarSystemInfo(int Id, string Name, int ConstellationId, int RegionId, double Security, int FactionId = 0, double X = 0, double Y = 0, double Z = 0);
 
 /// <summary>The solar systems of the game, read from the static data.</summary>
 public sealed class SolarSystemCatalog
@@ -19,6 +19,20 @@ public sealed class SolarSystemCatalog
     public int Count => _systems.Count;
 
     public SolarSystemInfo? Get(int id) => _systems.GetValueOrDefault(id);
+
+    /// <summary>The straight-line distance between two systems in light years (the jump drive's range and fuel are measured so), or null when one is unknown.</summary>
+    public double? LightYearsBetween(int from, int to)
+    {
+        if (Get(from) is not { } a || Get(to) is not { } b)
+        {
+            return null;
+        }
+        var (dx, dy, dz) = (a.X - b.X, a.Y - b.Y, a.Z - b.Z);
+        return Math.Sqrt(dx * dx + dy * dy + dz * dz) / MetersPerLightYear;
+    }
+
+    /// <summary>One light year in metres (the exact value of the light year the game uses).</summary>
+    public const double MetersPerLightYear = 9_460_730_472_580_800.0;
 
     public static async Task<SolarSystemCatalog> LoadAsync(SdeReader sde, CancellationToken cancellationToken = default)
     {
@@ -38,9 +52,16 @@ public sealed class SolarSystemCatalog
                 constellation,
                 region,
                 r.Doc.TryGetProperty("securityStatus", out var security) && security.ValueKind == JsonValueKind.Number ? security.GetDouble() : 0d,
-                faction);
+                faction,
+                Position(r.Doc, "x"), Position(r.Doc, "y"), Position(r.Doc, "z"));
         }));
     }
+
+    /// <summary>A coordinate of a system: the <c>position</c> object of the static data, in metres (0 when the row has none).</summary>
+    private static double Position(JsonElement doc, string axis) =>
+        doc.TryGetProperty("position", out var position) && position.TryGetProperty(axis, out var value) && value.ValueKind == JsonValueKind.Number
+            ? value.GetDouble()
+            : 0d;
 
     private static int FactionOf(JsonElement doc) =>
         doc.TryGetProperty("factionID", out var faction) && faction.ValueKind == JsonValueKind.Number ? faction.GetInt32() : 0;

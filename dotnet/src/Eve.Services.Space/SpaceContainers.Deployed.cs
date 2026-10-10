@@ -11,7 +11,7 @@ namespace Eve.Services.Space;
 public sealed partial class SpaceContainers
 {
     /// <summary>The record kind of a cynosural field (the only kind the simulation says it lit).</summary>
-    private const string CynoFieldKind = "cyno_field";
+    internal const string CynoFieldKind = "cyno_field";
 
     /// <summary>A cynosural field was lit: its record is kept until its time is up, for the life it had when it was lit.</summary>
     private async Task KeepDeployedAsync(SimDeployed lit)
@@ -26,10 +26,33 @@ public sealed partial class SpaceContainers
                 lit.DeployableId, CynoFieldKind, lit.SolarSystemId, lit.Name, lit.TypeId, lit.GroupId, [.. lit.Position], lit.Radius, lit.OwnerId, lit.CorporationId,
                 lit.AllianceId, lit.ShipId, _nowUnixMs() + (long)lit.LifetimeMs);
             await _deployed.SaveAsync(record);
+            await AnnounceFieldAsync(record, true);
         }
         catch (Exception error)
         {
             _log?.Invoke($"the cynosural field {lit.DeployableId} was not kept: {error.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Tells the fleet of a field's lighter that the field is lit (or gone): the client's jump menu lists the fields it is told of (track A6). Set by the composition;
+    /// a failure to tell is logged and does not undo the record.
+    /// </summary>
+    public Func<DeployedRecord, bool, Task>? FieldAnnounced { get; set; }
+
+    private async Task AnnounceFieldAsync(DeployedRecord field, bool lit)
+    {
+        if (FieldAnnounced is not { } announce)
+        {
+            return;
+        }
+        try
+        {
+            await announce(field, lit);
+        }
+        catch (Exception error) when (error is not OperationCanceledException)
+        {
+            _log?.Invoke($"the cynosural field {field.DeployableId} was not announced: {error.Message}");
         }
     }
 
@@ -81,9 +104,9 @@ public sealed partial class SpaceContainers
     }
 
     /// <summary>A cynosural field whose time is up is taken out of space (the simulation removes it too, at the same time, and this is then a no-op).</summary>
-    private Task ExpireCynoFieldAsync(DeployedRecord due)
+    private async Task ExpireCynoFieldAsync(DeployedRecord due)
     {
         _sim.RemoveDeployed(due.DeployableId);
-        return Task.CompletedTask;
+        await AnnounceFieldAsync(due, false);
     }
 }

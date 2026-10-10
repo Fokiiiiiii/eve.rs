@@ -182,5 +182,18 @@ internal sealed partial class CharacterServicesComposition
             Eve.Services.Space.FleetStore.FleetFinderAdvertPayloadMigration
         ], CancellationToken.None);
         fleetStore = new Eve.Services.Space.FleetStore(source, fleetSchema);
+        // the jump drive to a fleet's cynosural field reads the fleets, so it is made after them (the space simulation is set up before the fleets)
+        if (spaceSessions is not null)
+        {
+            var jumpDrive = new Eve.Services.Space.SpaceJumpDrive(
+                ships, dogma, new Eve.Ships.PgDeployedStore(source, spaceSchema), new Eve.Ships.PgJumpFatigueStore(source, spaceSchema), solarSystems, skills,
+                source, spaceSessions, fleetStore, now, message => Console.Error.WriteLine($"eve-host: jump drive: {message}"), FleetSessionForCharacter);
+            spaceSessions.JumpDrive = jumpDrive;
+            // a lit cynosural field is told to the fleet of its lighter, so the jump menu lists it (OnFleetJumpBeaconModuleChange)
+            if (spaceContainers is not null)
+            {
+                spaceContainers.FieldAnnounced = jumpDrive.AnnounceFieldAsync;
+            }
+        }
     }
 }

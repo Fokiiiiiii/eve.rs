@@ -69,12 +69,9 @@ public class PlayerDeathTests
         Assert.Equal(Array.IndexOf(heard, respawn) + 1, Array.IndexOf(heard, wreck));
         Assert.True(rig.Space.IsInSpace(session));
         // where the wreck lies is kept, for two hours, so that it can be put back when a scene is made again
-        Eve.Ships.SpaceItem? kept = null;
-        for (var i = 0; i < 100 && kept is null; i++)
-        {
-            kept = await rig.SpaceItems.GetAsync(wreck.WreckId);
-            await Task.Delay(20);
-        }
+        // the keeping of the wreck is background work of the sessions: the quiesce above has waited for it
+        var kept = await rig.SpaceItems.GetAsync(wreck.WreckId);
+        Assert.NotNull(kept);
         Assert.Equal((system, 186, Rig.ClockMs + (long)SpaceContainers.CanLifetime.TotalMilliseconds), (kept!.SolarSystemId, kept.GroupId, kept.ExpiresAtMs));
     }
 

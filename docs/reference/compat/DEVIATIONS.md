@@ -1227,3 +1227,62 @@ Sources. The wiki: "Pochven" (https://wiki.eveuniversity.org/Pochven, fetched 20
 - Known gap, not from this track: `CYNOSURAL_FIELD_INHIBITED` (track A8c, inhibitor) has no line in `ModuleRefusals.cs`, so the client sees "Failed to activate ...". EveJS has no text for that reason to copy; a wording would be ours.
 - Tests: `deployable::tests::a_cynosural_field_is_not_lit_in_pochven_of_any_kind_and_is_lit_elsewhere` (the sim: the standard, covert and industrial field refused in region 10000070, the standard one lit in region 10000001); `TargetingTests.A_cynosural_field_refused_by_a_jammer_says_the_jammer_is_preventing_it` (the text). Mutation: the region constant set to 0 fails the sim test; restored.
 - NOT RUN: a host PostgreSQL test of the Pochven lighting through `ActivateAsync`. The rig places the pilot by the ship's location (a station in Manifest, high security), and the rig has no way to put a pilot in Pochven. The path from the simulation's reason to the text is the same as for the other simulation refusals (`SpaceSessions.Modules.cs`, `DogmaIMService.Modules.cs`). NOT RUN: the client.
+
+
+## Character selection and entry (slice C, 2026-10-10)
+
+- **Population cap (`populationCap`).** The reference (`server/src/services/populationCap/populationCapService.js`) answers one
+  entry for every character and has no `MoveCharacterToNewSystem`. eve.rs answers the live population: a system's load is the
+  number of characters in the game in it (the sessions that entered, docked or in space, from the session's `solarsystemid2`, or
+  `solarsystemid`). The cap is 300 characters per system (`SystemPopulation.DefaultCapacity`, or `EVE_SYSTEM_POPULATION_CAP`).
+  The reference's cap is not published, so 300 is eve.rs's own choice. Reason: the moniker must reflect real state, and a cap
+  that nothing reads would be a constant answer. Status: decided (slice C); tests `PopulationCapTests`.
+- **Alternative systems.** When the home system is full, the answer lists the nearest systems that have room (by the distance
+  in the static data, nearest first, at most 8), never wormhole space or Pochven. Reason: eve-logic's dialog takes any system id,
+  and no stargate table is loaded in eve.rs, so adjacency is not available; the distance is the nearest real measure it has.
+- **A docked character is refused, not moved.** A character with a station on record keeps that station, so moving it would
+  leave the station in the old system. A full system refuses such a character with a `CustomInfo` error. Reason: the persisted
+  station and solar system must agree. The consequence is that, in practice, a full system refuses most characters rather than
+  moving them.
+- **A single alternative is saved at once.** The client loads a single entry without calling `MoveCharacterToNewSystem`
+  (`characterSelection.py:751-758`), so `GetCharacterLoadSlot` saves that system on the character. Reason: otherwise the pilot
+  would enter the full system.
+- **`SelectCharacterID` refuses a full system before any change.** The cap is checked again at selection, because the answer on
+  the screen can be stale. Known gap: the check and the session's entry are not one atomic step, so two selections into the
+  same system that check at the same moment can both pass.
+- **`multiLoginBlocker.Login` checks the computer.** The reference answers True unless `EVE_ENFORCE_ALPHA_MULTILOGIN` is set
+  (`multiLoginBlockerService.js:87-90`, off by default). eve.rs enforces the Alpha rule without a switch: a session is refused when
+  another account on the same computer hash is logged in and either account is Alpha. Reason: the clone grades here are real
+  (`SubscriptionMgrService.ResolveCloneGrade` reads the Omega licence), so the rule can apply, and the brief requires real behaviour
+  where the constant True was. The computer hash exists only on the SSO path (see "Single sign-on login"), so the client calls
+  `Login` only after SSO has been built. Status: decided (slice C); tests `MultiLoginBlockerTests`.
+- **`ToggleValidation` is per session and role-gated.** Same rule as the reference (`charService.js:1883-1902`): the content,
+  QA, programmer and GML roles may switch the flag; every other session stays on. The flag is not saved, and nothing reads it
+  (the reference does not read it either). Replaces a constant False, which a non-elevated client showed as "Validation Off" while
+  validation was on. The recording was made from a GM session, whose first toggle gives False; the live walk expects True for its
+  ordinary account, and `ValidationAndOmegaTests` pins both roles. Status: decided (slice C).
+- **`GetCharOmegaDowngradeStatus` answers False.** It was missing, so each character-screen open logged a traceback. Every
+  account's subscription ends at the open-ended time (`SubscriptionEndFileTime`), so no account has lapsed. Status: done.
+- **`GetCharacterLockType` answers None and `GetCohortsForUser` answers an empty list.** Kept: eve.rs has no transfer, sale,
+  lock or cohort state, and the reference answers the same constants (`charService.js:1458-1461`, `:1914-1916`). Status: kept.
+- **`charMgr.GetSettingsInfo` is the reference's blob, which the client cannot verify here.** The blob is byte-identical to the
+  reference's (`charMgrService.js:739-744`), unsigned. The V24.01 client verifies it with the native `Crypto.Verify`
+  (`carbonui/services/settingsSvc.py:148-150`), which needs CCP's key; eve.rs does not have it, so a signature the client
+  accepts cannot be made. A failed check is not fatal: `UpdateSettingsStatistics` runs in the session-change handler
+  (`settingsSvc.py:157-160`), the client logs the exception, and `LogSettings` is not sent. Status: open (needs the signing key).
+- **`OnCharacterSelected` takes zero positional arguments and is sent when the character changes.** The consumers take none
+  (`gameui.py:504`, `station/base.py:65`), and the V24.01 scatter calls the handler with the notification's arguments. The
+  reference sends the notification only when a plan flag is set, which defaults to off (`characterState.js:4193-4221`); eve.rs keeps
+  the owner-requested first-select notification (row 143). The client runs its window identification twice per select (the
+  scatter and the `charid` session change, `gameui.py:452-453`). Status: kept (owner-requested); the live walk expects zero arguments.
+- **`nes_intro` is not called on the character screen.** The controller is created when a player presses skip
+  (`storylines/client/nes_intro.py:32-45`, `jobboard/.../const.py:59`, `airnpetracker.py:26`). The name stays unadvertised (see
+  "Service table: the names left out"), so the skip button fails with the unknown-service error until the storyline slice exists.
+  Status: open (storylines).
+- **Survey checks answer None.** `survey.PerformSurveyChecks` answers None, as the reference does (`services/support/surveyService.js:55-58`):
+  no survey runs in this world. Status: same as the reference.
+- **Reward checks on the screen are answered in the client's shape.** `loginCampaignManager.get_client_campaign_state` (None or the
+  state), `seasonalLoginCampaignManager.get_active_campaign` (a 4-tuple, with None when no campaign runs) and
+  `loginRewardFacilities.get_my_clone_grade` (an int) are what `loginCampaignService.py` and `seasonalLoginCampaignService.py`
+  read. The screen's call at `characterSelection.py:155` has no try, so a wrong shape would abort the screen's open; the answers
+  are covered by `RewardsServiceTests`. Status: verified (slice C).

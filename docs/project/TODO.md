@@ -827,3 +827,27 @@ static data; an id it does not have has no row (DEVIATIONS.md, "Static configura
 | OPEN | Station and system positions for `positions` (`GetPositionEx`, `GetPositionsEx`) | BOUNDARY: space and ballpark (other Claude). |
 
 Closed in slice B3 (2026-10-10): `GetAverageMarketPrices` answers each type with a recorded sale, from the market's fills (DEVIATIONS.md, "Static configuration recordsets (B3)"); a type with no sale is absent, so the client's `GetAveragePrice` returns None. Tests: `TradingTests`, `ConfigServiceTests`. An empty market gives an empty payload.
+
+
+## 40. Character selection and entry (slice C, 2026-10-10)
+
+Done in slice C (DEVIATIONS.md, "Character selection and entry (slice C, 2026-10-10)"):
+- `populationCap`: the live per-system load, the nearest alternatives, the saved move, the selection refusal (`PopulationCapTests`).
+- `multiLoginBlocker.Login`: the computer hash and clone grade are recorded; the Alpha rule refuses a second account on the same computer (`MultiLoginBlockerTests`).
+- `ToggleValidation` by role, `GetCharOmegaDowngradeStatus` answered (`ValidationAndOmegaTests`).
+- `OnCharacterSelected` expectation in the live walk corrected to zero arguments; new live step `test_the_population_cap_answers_through_its_moniker`.
+- Verified against the client and left as they are: `GetCharacterSelectionData` 4-tuple and row fields, `GetCharacterLockType`, `GetCohortsForUser`, the session attribute set, the reward checks, the entry hooks' order.
+
+Open after slice C:
+| Status | Item | Owner / where |
+|---|---|---|
+| OPEN | `charMgr.GetSettingsInfo`: the client's native `Crypto.Verify` needs CCP's signing key; the failure is logged and `LogSettings` is skipped | DEVIATIONS, slice C; needs a decision on signing |
+| OPEN | SSO login: the computer hash and the token are not produced, so `multiLoginBlocker.Login` is not reached | slice A gap G1 (DEVIATIONS "Single sign-on login") |
+| OPEN | `SelectCharacterID` population check and the entry are not atomic (two selections into a full system can both pass) | DEVIATIONS, slice C |
+| OPEN | `populationCap` alternatives are the nearest systems by distance; the reference's neighbours (stargates) need a stargate table in the static data | static data (Slice B follow-up) |
+| OPEN | `nes_intro` service (the skip action) | storylines, later slice |
+| OPEN | Live suite isolation: the mailboxes live in the shared `gamestore.mail` table, which the live script does not scope to its scratch schemas; character ids restart each run, so a new character can inherit unread mail left by an earlier run (slice C saw eight bloodline failures, `unreadMailCount` 2 for 1; the table was backed up and its mailbox rows cleared) | live script (`tools/dev/run-eve-live.sh`) and the game store |
+| OPEN | Entry path: the achievement answer `achievementTrackerMgr.GetCompletedAchievementsAndClientEventCount` is a hard-coded fixture payload (`LoginInitializationRpcServices.cs`, B2) and is sent at every character entry | achievements slice |
+| OPEN | Station entry: `map.GetStationInfo`, `stationSvc.GetStationItemBits`, `invbroker.GetItemDescriptor`, `station.GetGuests` (init-requirements #19-#21) | Slice D |
+| BOUNDARY | `beyonce.GetFormations` (#23) and the space ballpark load; `dogmaIM` station and ship dogma locations (#22) | the ships / space track (other Claude) |
+| BOUNDARY | Docked-ship deferred change and fitting bootstrap: implemented in the entry hooks (`SpaceSessions`, `CharacterDogmaSync`); the ship state belongs to the ships track | ships track (other Claude) |

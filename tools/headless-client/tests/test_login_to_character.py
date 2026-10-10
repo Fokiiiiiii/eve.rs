@@ -253,6 +253,29 @@ def test_new_account_enters_a_new_character_with_named_arguments():
         assert any(row[1]["typeID"] == 1004 for row in notifications)
 
 
+def test_a_character_logs_off_to_the_selection_screen_and_selects_again():
+    """The client's "log off character": userSvc.UserLogOffCharacter answers True, the connection stays open, the
+    selection screen lists the character again, and selecting it enters the game again (the session's charid)."""
+    run = uuid.uuid4().hex[:10]
+    with connect(f"walk-logoff-{run}") as client:
+        creation = next(
+            step
+            for step in WALK["steps"]
+            if step["call"][1] == "CreateCharacterWithDoll" and "ok" in step
+        )
+        service, method, described = creation["call"]
+        character_id = m.plain(client.call(service, method, *[revive(value, run) for value in described]))
+        assert client.call("charUnboundMgr", "SelectCharacterID", charID=character_id, secondChoiceID=None, skipTutorial=False) is None
+        assert client.session.session_init.get("charid") == character_id
+
+        assert m.plain(client.call("userSvc", "UserLogOffCharacter")) is True
+
+        rows = m.plain(client.call("charUnboundMgr", "GetCharacterSelectionData"))[2]
+        assert [row[1]["characterID"] for row in rows] == [character_id]
+        assert m.plain(client.call("charUnboundMgr", "SelectCharacterID", charID=character_id, secondChoiceID=None, skipTutorial=False)) is None
+        assert client.session.session_init.get("charid") == character_id
+
+
 GROUP_CHARACTER = 1  # appLogConst.groupCharacter
 
 

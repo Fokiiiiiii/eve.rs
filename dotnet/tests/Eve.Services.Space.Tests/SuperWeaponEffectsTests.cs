@@ -64,8 +64,17 @@ public class SuperWeaponEffectsTests
                 Assert.True(ReasonByEffect.ContainsKey(effect.Name), $"type {type.TypeId} has the activation {effect.Name}, which no family names");
                 var fixture = FittedModule(statics, type.TypeId);
                 var result = ModulePackages.Of(fixture.Snapshot, statics, fixture.ModuleId, effect.Name, 0, 1);
-                Assert.True(result.Reason == ReasonByEffect[effect.Name], $"type {type.TypeId} {effect.Name}: refused as {result.Reason}");
-                Assert.Null(result.Effect);
+                if (effect.Name == "moduleBonusIndustrialInvulnerability")
+                {
+                    // the Nexus invulnerability core is built (track C6, IndustrialInvulnerabilityEffect): its activation packages
+                    Assert.Null(result.Reason);
+                    Assert.NotNull(result.Effect);
+                }
+                else
+                {
+                    Assert.True(result.Reason == ReasonByEffect[effect.Name], $"type {type.TypeId} {effect.Name}: refused as {result.Reason}");
+                    Assert.Null(result.Effect);
+                }
                 seen.Add($"{type.TypeId}:{effect.Name}");
             }
         }

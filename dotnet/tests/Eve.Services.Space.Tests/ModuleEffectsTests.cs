@@ -788,18 +788,10 @@ public class ModuleEffectsTests
             "doomsdayAOETrack",
             "doomsdayAOEWeb",
             "entosisLink",
-            "hackOrbital",
             "industrialItemCompression",
             "microJumpPortalDrive",
             "microJumpPortalDriveCapital",
-            "moduleBonusIndustrialInvulnerability",
-            "moduleBonusWarfareLinkArmor",
-            "moduleBonusWarfareLinkInfo",
-            "moduleBonusWarfareLinkMining",
-            "moduleBonusWarfareLinkShield",
-            "moduleBonusWarfareLinkSkirmish",
             "moduleTitanEffectGenerator",
-            "scanStrengthTargetPercentBonus",
         ];
         // Reconcile the manifest against the catalog this test actually opened. A newer unhandled
         // effect adds a failure; an older catalog simply does not assign effects introduced later.

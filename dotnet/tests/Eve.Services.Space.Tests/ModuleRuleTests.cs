@@ -100,7 +100,8 @@ public class ModuleRuleTests
         var sde = new SdeReader(source);
         var statics = await DogmaStatic.LoadAsync(sde);
         var shipTypeId = await ShipTypeIdAsync(sde, statics);
-        await statics.EnsureTypesAsync([27951, 28583, 21096, 23953, 23735, 40633, 42522]);
+        // 21094 is the field the cynosural generator makes: its lifetime (explosionDelay) is read from its static data
+        await statics.EnsureTypesAsync([27951, 28583, 21096, 21094, 23953, 23735, 40633, 42522]);
 
         // the modifier bodies that run: the triage module and the capital industrial core burn their fuel and are built
         foreach (var (moduleTypeId, effectName) in new[] { (27951, "moduleBonusTriageModule"), (28583, "industrialCoreEffect2") })
@@ -111,13 +112,21 @@ public class ModuleRuleTests
             Assert.True(result.Effect!.BurnsFuel, $"{moduleTypeId} burns its fuel");
         }
 
-        // the bodies the host does not run yet (the cyno field, the jump portal, the clone vat's acceptance) are refused by name: their modifiers alone
+        // the cynosural field generator has its body (track B7, CynoGeneratorEffect): its activation packages
+        {
+            var fixture = FittedModule(statics, shipTypeId, 21096);
+            var result = ModulePackages.Of(fixture.Snapshot, statics, fixture.ModuleId, "cynosuralGeneration", 0, 1);
+            Assert.Null(result.Reason);
+            Assert.NotNull(result.Effect);
+        }
+
+        // the bodies the host does not run yet (the jump portal, the clone vat's acceptance) are refused by name: their modifiers alone
         // would be a success the reference does not give, fuel or not
-        foreach (var (moduleTypeId, effectName) in new[] { (21096, "cynosuralGeneration"), (23953, "jumpPortalGeneration"), (23735, "cloneJumpAccepting") })
+        foreach (var (moduleTypeId, effectName) in new[] { (23953, "jumpPortalGeneration"), (23735, "cloneJumpAccepting") })
         {
             var fixture = FittedModule(statics, shipTypeId, moduleTypeId);
             var result = ModulePackages.Of(fixture.Snapshot, statics, fixture.ModuleId, effectName, 0, 1);
-            Assert.Equal("EFFECT_NOT_IMPLEMENTED", result.Reason);
+            Assert.True(result.Reason == "EFFECT_NOT_IMPLEMENTED", $"type {moduleTypeId} {effectName}: refused as {result.Reason ?? "nothing"}, packaged {result.Effect is not null}");
             Assert.Null(result.Effect);
         }
 
@@ -135,7 +144,8 @@ public class ModuleRuleTests
         var panic = FittedModule(statics, shipTypeId, 42522);
         Assert.Equal(0, statics.Type(42522)!.Attributes.GetValueOrDefault(ModuleAttributes.ConsumptionType));
         Assert.Equal(0, statics.Type(42522)!.Attributes.GetValueOrDefault(ModuleAttributes.ConsumptionQuantity));
-        Assert.Equal("EFFECT_NOT_IMPLEMENTED", ModulePackages.Of(panic.Snapshot, statics, panic.ModuleId, "moduleBonusIndustrialInvulnerability", 0, 1).Reason);
+        // the core is built (track C6): its activation packages, with no fuel taken
+        Assert.Null(ModulePackages.Of(panic.Snapshot, statics, panic.ModuleId, "moduleBonusIndustrialInvulnerability", 0, 1).Reason);
     }
 
     [PgFact]

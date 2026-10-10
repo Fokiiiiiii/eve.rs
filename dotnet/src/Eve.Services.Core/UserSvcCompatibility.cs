@@ -40,29 +40,41 @@ public sealed partial class RedeemService
         return await OverrideUserCallAsync(call, PyBool.False);
     }
 
+    /// <summary>
+    /// The re-sculpt token is not consumed and the recustomization state is not set: no token system and no paperdoll
+    /// state change exist yet (see DEVIATIONS, "Account and social requests"). The answer is False, not an accepted activation.
+    /// </summary>
     [Method("ActivateCharacterReSculpt")]
     public async ValueTask<PyValue> ActivateCharacterReSculpt(ServiceCall call) =>
-        await OverrideUserCallAsync(call, PyBool.True);
+        await OverrideUserCallAsync(call, PyBool.False);
 
+    /// <summary>The vote is not recorded: there is no feedback store yet. The client does not read the answer.</summary>
     [Method("CastUpvote")]
     public async ValueTask<PyValue> CastUpvote(ServiceCall call) =>
-        await OverrideUserCallAsync(call, PyBool.True);
+        await OverrideUserCallAsync(call, PyBool.False);
 
+    /// <summary>The vote is not recorded: there is no feedback store yet. The client does not read the answer.</summary>
     [Method("CastDownvote")]
     public async ValueTask<PyValue> CastDownvote(ServiceCall call) =>
-        await OverrideUserCallAsync(call, PyBool.True);
+        await OverrideUserCallAsync(call, PyBool.False);
 
+    /// <summary>The report is not stored: there is no report review store yet. The client does not read the answer.</summary>
     [Method("ReportBot")]
     public async ValueTask<PyValue> ReportBot(ServiceCall call) =>
-        await OverrideUserCallAsync(call, PyBool.True);
+        await OverrideUserCallAsync(call, PyBool.False);
 
+    /// <summary>The report is not stored: there is no report review store yet. The client does not read the answer.</summary>
     [Method("ReportISKSpammer")]
     public async ValueTask<PyValue> ReportISKSpammer(ServiceCall call) =>
-        await OverrideUserCallAsync(call, PyBool.True);
+        await OverrideUserCallAsync(call, PyBool.False);
 
+    /// <summary>
+    /// The character logs off in the host (<c>CharacterLogoff</c>). Without that callback no session can be logged off, so the
+    /// answer is False, not True.
+    /// </summary>
     [Method("UserLogOffCharacter")]
     public async ValueTask<PyValue> UserLogOffCharacter(ServiceCall call) =>
-        await OverrideUserCallAsync(call, PyBool.True);
+        await OverrideUserCallAsync(call, PyBool.False);
 
     [Method("GetSessionPlaytimeMinutes")]
     public async ValueTask<PyValue> GetSessionPlaytimeMinutes(ServiceCall call) =>

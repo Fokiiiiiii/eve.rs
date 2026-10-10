@@ -43,6 +43,10 @@ pub const NO_SPREAD_BELOW_SECONDS: f64 = 1.6;
 /// How long the ball of a missile that spread stays after it has landed, for the client's warhead to finish (the reference's `MISSILE_CLIENT_RELEASE_GRACE_MS`).
 pub const RELEASE_GRACE: i64 = 2 * TICKS_PER_SECOND;
 
+/// The target of a launch that locks none (an F.O.F. missile, sent from the client as an activation with no target): the launcher picks the nearest valid hostile when it
+/// fires (`Scene::nearest_hostile`). No ship has this id, so the sentinel cannot be mistaken for a locked target.
+pub const AUTO_TARGET_ID: i64 = -1;
+
 /// Who fired a missile: the pilot, the ship it flies, the launcher and what the combat log calls the weapon.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Shooter {
@@ -383,6 +387,44 @@ impl Scene {
             .collect()
     }
 
+    /// The nearest enemy that has fired on a launcher's ship and is within `range` metres of the surface of both (EVE University wiki, auto-targeting
+    /// missiles: "the nearest enemy ship or drone that has previously fired on you"; no lock is needed). An enemy is another owner's ship, not the shooter's
+    /// corporation or alliance, not in warp and not in its undock protection. The aggressions the scene has recorded name who fired on whom; a drone's shots are
+    /// aggressions of its controller's ship, so the controller's position is the drone's. Ties go to the lower ship id. Returns the ship id, the launch's target.
+    pub(crate) fn nearest_hostile(&self, session: SessionId, range: f64, now: i64) -> Option<i64> {
+        let shooter = &self.pilots.get(&session)?.ship;
+        let (own_ship, owner) = (shooter.spec.ship_id, self.combat_owner(session));
+        let (origin, radius) = (shooter.position, shooter.spec.radius);
+        let mut best: Option<(f64, i64)> = None;
+        for fired_on_me in self.aggressions.iter().filter(|a| a.target_ship == own_ship) {
+            let Some(attacker) = self.session_of(fired_on_me.attacker_ship) else { continue };
+            let Some(pilot) = self.pilots.get(&attacker) else { continue };
+            let target = &pilot.ship.spec;
+            if attacker == session
+                || self.combat_owner(attacker) == owner
+                || (shooter.spec.corporation_id != 0 && target.corporation_id == shooter.spec.corporation_id)
+                || (shooter.spec.alliance_id != 0 && target.alliance_id == shooter.spec.alliance_id)
+                || pilot.flight.as_ref().is_some_and(|flight| flight.is_warping())
+                || pilot.protected_until > now
+            {
+                continue;
+            }
+            let p = pilot.ship.position;
+            let centre =
+                ((p.x - origin.x).powi(2) + (p.y - origin.y).powi(2) + (p.z - origin.z).powi(2)).sqrt();
+            let surface = centre - radius - target.radius;
+            if surface > range {
+                continue;
+            }
+            if best.is_none_or(|(distance, id)| {
+                surface < distance || (surface == distance && target.ship_id < id)
+            }) {
+                best = Some((surface, target.ship_id));
+            }
+        }
+        best.map(|(_, id)| id)
+    }
+
     /// A launcher fires: the missile is made, put in the scene and shown to those who can see it (`AddBalls2` and `LaunchMissile` in one update). The target is aggressed by the
     /// launch. A target the missile cannot get to before its time is up is still shot at (the pilot sees the missile stall and fall away).
     pub(crate) fn launch_missile(&mut self, session: SessionId, effect: &Effect, at: i64) -> Vec<Out> {
@@ -393,7 +435,15 @@ impl Scene {
         else {
             return Vec::new();
         };
-        let Some(target_session) = self.session_of(effect.target_id) else { return Vec::new() };
+        // an F.O.F. missile goes for the nearest valid hostile in its flight range (CCP and EVE University: no lock is needed); nothing in reach, nothing fired
+        let target_id = if effect.target_id == AUTO_TARGET_ID {
+            let flight_range = spec.max_velocity * spec.flight_time_ms / 1000.0;
+            let Some(hostile) = self.nearest_hostile(session, flight_range, at) else { return Vec::new() };
+            hostile
+        } else {
+            effect.target_id
+        };
+        let Some(target_session) = self.session_of(target_id) else { return Vec::new() };
         let (Some(attacker), Some(target)) =
             (self.kinematics_of(session), self.kinematics_of(target_session))
         else {
@@ -414,19 +464,22 @@ impl Scene {
             alliance_id,
         };
         let target_type_id = self.pilots.get(&target_session).map_or(0, |pilot| pilot.ship.spec.type_id);
-        self.aggressions.push(Aggression {
-            attacker_ship: ship_id,
-            target_ship: effect.target_id,
-            module_type_id: turret.weapon_type_id,
-            source_owner_id: owner,
-            target_type_id,
-        });
+        // a launch that does no damage (the festival launcher's snowballs, whose effect is not offensive) makes no aggression
+        if turret.raw_damage.iter().any(|damage| *damage > 0.0) || spec.dot.is_some() {
+            self.aggressions.push(Aggression {
+                attacker_ship: ship_id,
+                target_ship: target_id,
+                module_type_id: turret.weapon_type_id,
+                source_owner_id: owner,
+                target_type_id,
+            });
+        }
         let missile_id = MISSILE_ID_BASE + self.missile_sequence as i64;
         self.missile_sequence += 1;
         let mut missile = MissileEntity::launch(
             missile_id,
             shooter,
-            effect.target_id,
+            target_id,
             spec,
             turret.raw_damage,
             &attacker,
@@ -506,6 +559,10 @@ impl Scene {
         };
         let applied = missile.spec.applied(missile.raw_damage, signature, length(vec(kinematics.velocity)));
         let (mut out, hit) = self.damage(missile.target, applied, at);
+        // a breacher pod's hit starts its damage over time on the ship it reached (`dot_weapons`)
+        if let Some(dot) = missile.spec.dot {
+            out.extend(self.apply_dot(missile.target, dot, missile.shooter.clone(), at));
+        }
         let taken = hit.map_or(0.0, |hit| hit.taken.shield + hit.taken.armor + hit.taken.structure);
         let destroyed = hit.is_some_and(|hit| hit.destroyed);
         let tier = if applied.iter().sum::<f64>() > 0.0 { 3 } else { 0 };

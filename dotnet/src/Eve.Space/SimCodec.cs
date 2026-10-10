@@ -27,8 +27,7 @@ public sealed class SimLinkException(SimLinkError error, string message) : Excep
 /// </summary>
 public static partial class SimCodec
 {
-    public const ushort ProtocolVersion = 37;
-
+    public const ushort ProtocolVersion = 46;
     /// <summary>The largest frame either side accepts (1 MiB).</summary>
     public const int MaxFrame = 1 << 20;
 
@@ -272,6 +271,46 @@ public static partial class SimCodec
             case Kind.FighterSize:
                 message = new SimFighterSize(r.U64(), r.I64(), r.I32());
                 break;
+            case Kind.UpdateEffect:
+            {
+                var (session, module) = (r.U64(), r.I64());
+                var (duration, capacitor) = (r.F64(), r.F64());
+                if (!double.IsFinite(duration) || duration <= 0 || !double.IsFinite(capacitor) || capacitor < 0)
+                {
+                    throw new SimLinkException(SimLinkError.BadValue, "update effect");
+                }
+                var turret = r.U8() switch
+                {
+                    0 => null,
+                    1 => ReadTurret(ref r),
+                    _ => throw new SimLinkException(SimLinkError.BadValue, "update turret"),
+                };
+                message = new SimUpdateEffect(session, module, duration, capacitor, turret, ReadChanges(ref r));
+                break;
+            }
+            case Kind.BuffState:
+                {
+                    var session = r.U64();
+                    var ship = r.I64();
+                    var count = r.U32();
+                    // an entry takes 20 bytes, so a count the frame cannot hold is refused before anything is read for it
+                    if (count > r.Remaining / 20)
+                    {
+                        throw new SimLinkException(SimLinkError.Truncated, "buff state count");
+                    }
+                    var entries = new SimBuffEntry[count];
+                    for (var i = 0; i < entries.Length; i++)
+                    {
+                        var (collection, value, remaining) = (r.I32(), r.F64(), r.F64());
+                        if (!double.IsFinite(value) || !double.IsFinite(remaining) || remaining < 0)
+                        {
+                            throw new SimLinkException(SimLinkError.BadValue, "buff state");
+                        }
+                        entries[i] = new SimBuffEntry(collection, value, remaining);
+                    }
+                    message = new SimBuffState(session, ship, entries);
+                    break;
+                }
             case Kind.FighterOrder:
                 {
                     var session = r.U64();
@@ -313,6 +352,30 @@ public static partial class SimCodec
             case Kind.FighterReleased:
                 message = new SimFighterReleased(r.U64(), r.I64(), ReadVector(ref r));
                 break;
+            case Kind.EcmBurst:
+                {
+                    var session = r.U64();
+                    var ship = r.I64();
+                    var count = r.U32();
+                    if (count > r.Remaining / 9)
+                    {
+                        throw new SimLinkException(SimLinkError.Truncated, "the frame ends before the message does");
+                    }
+                    var reached = new SimBurstReach[count];
+                    for (var i = 0; i < reached.Length; i++)
+                    {
+                        var target = r.I64();
+                        var jammed = r.U8() switch
+                        {
+                            0 => false,
+                            1 => true,
+                            _ => throw new SimLinkException(SimLinkError.BadValue, "ecm burst jam flag"),
+                        };
+                        reached[i] = new SimBurstReach(target, jammed);
+                    }
+                    message = new SimEcmBurst(session, ship, reached);
+                    break;
+                }
             case Kind.FighterGotoPoint:
                 {
                     var session = r.U64();
@@ -406,21 +469,25 @@ public static partial class SimCodec
                     var wasteRoll = r.F64();
                     var roundingRoll = r.F64();
                     var critRoll = r.F64();
+                    var recipients = ReadRecipients(ref r);
                     // probabilities are at most one, the rolls below one, the numbers finite and not negative; a mining cycle mines something
-                    if (cycleId == 0 || command is not (SimDroneCommands.MineRepeatedly or SimDroneCommands.Salvage or SimModuleWorkCommands.ConsumeFuel)
+                    if (cycleId == 0 || command is not (SimDroneCommands.MineRepeatedly or SimDroneCommands.Salvage or SimModuleWorkCommands.ConsumeFuel
+                            or SimModuleWorkCommands.ScanCargo or SimModuleWorkCommands.ScanShip or SimModuleWorkCommands.Burst or SimModuleWorkCommands.Panic)
                         || new[] { mining, wasteMultiplier, critMultiplier, accessBonus }.Any(n => !double.IsFinite(n) || n < 0)
                         || new[] { wasteProbability, critProbability }.Any(p => !double.IsFinite(p) || p < 0 || p > 1)
                         || new[] { wasteRoll, roundingRoll, critRoll }.Any(roll => !double.IsFinite(roll) || roll < 0 || roll >= 1)
                         || (command == SimDroneCommands.MineRepeatedly && mining <= 0)
-                        // a fuel cycle carries no mining numbers: it asks for fuel only
-                        || (command == SimModuleWorkCommands.ConsumeFuel
-                            && new[] { mining, wasteMultiplier, wasteProbability, critProbability, critMultiplier, accessBonus }.Any(n => n != 0)))
+                        // a fuel cycle and a scan carry no mining numbers: they ask for fuel or reveal a target only
+                        || (command is SimModuleWorkCommands.ConsumeFuel or SimModuleWorkCommands.ScanCargo or SimModuleWorkCommands.ScanShip or SimModuleWorkCommands.Burst or SimModuleWorkCommands.Panic
+                            && new[] { mining, wasteMultiplier, wasteProbability, critProbability, critMultiplier, accessBonus }.Any(n => n != 0))
+                        // only a command burst names ships: the ships in reach of its cycle
+                        || (command is not (SimModuleWorkCommands.Burst or SimModuleWorkCommands.Panic) && recipients is { Count: > 0 }))
                     {
                         throw new SimLinkException(SimLinkError.BadValue, "bad module work cycle");
                     }
                     message = new SimModuleWorkCycle(
                         session, character, ship, system, module, target, cycleId, command, mining, wasteMultiplier, wasteProbability, critProbability,
-                        critMultiplier, accessBonus, wasteRoll, roundingRoll, critRoll);
+                        critMultiplier, accessBonus, wasteRoll, roundingRoll, critRoll, recipients);
                     break;
                 }
             case Kind.ModuleWorkResult:
@@ -545,6 +612,53 @@ public static partial class SimCodec
                 }
             case Kind.RemoveWreck:
                 message = new SimRemoveWreck(r.I64(), r.I32());
+                break;
+            case Kind.Deployed:
+                {
+                    var system = r.I32();
+                    var deployable = r.I64();
+                    var name = r.Text();
+                    var type = r.I32();
+                    var group = r.I32();
+                    var position = ReadVector(ref r);
+                    var radius = r.F64();
+                    var owner = r.I64();
+                    var corporation = r.I32();
+                    var alliance = r.I32();
+                    var ship = r.I64();
+                    var lifetime = r.F64();
+                    if (!(double.IsFinite(lifetime) && lifetime >= 0 && double.IsFinite(radius) && radius >= 0))
+                    {
+                        throw new SimLinkException(SimLinkError.BadValue, "bad deployed");
+                    }
+                    message = new SimDeployed(system, deployable, name, type, group, position, radius, owner, corporation, alliance, ship, lifetime);
+                    break;
+                }
+            case Kind.RemoveDeployed:
+                message = new SimRemoveDeployed(r.I64());
+                break;
+            case Kind.PlaceProbe:
+                {
+                    var probe = r.I64();
+                    var system = r.I32();
+                    var name = r.Text();
+                    var type = r.I32();
+                    var group = r.I32();
+                    var position = ReadVector(ref r);
+                    var radius = r.F64();
+                    var owner = r.I64();
+                    var corporation = r.I32();
+                    var alliance = r.I32();
+                    var ship = r.I64();
+                    if (!(double.IsFinite(radius) && radius >= 0))
+                    {
+                        throw new SimLinkException(SimLinkError.BadValue, "bad probe");
+                    }
+                    message = new SimPlaceProbe(probe, system, name, type, group, position, radius, owner, corporation, alliance, ship);
+                    break;
+                }
+            case Kind.RemoveProbe:
+                message = new SimRemoveProbe(r.I64());
                 break;
             case Kind.Measured:
                 {

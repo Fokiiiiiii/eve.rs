@@ -54,7 +54,7 @@ public class RepairHostTests
     {
         await using var connection = await rig.Source.OpenConnectionAsync();
         await using var transaction = await connection.BeginTransactionAsync();
-        await rig.Skills.GrantAsync(connection, transaction, character, new[] { 3392, 3393, 3416, 3419, 3413, 3426, 3318, 3422, 3423, 16069, 27902, 3435, 3449, 3433, 19921, 3427, 3434, 3421 }.Select(type => new Eve.Skills.CharacterSkill(type, 5, 0)));
+        await rig.Skills.GrantAsync(connection, transaction, character, new[] { 3392, 3393, 3416, 3419, 3413, 3426, 3318, 3422, 3423, 16069, 27902, 3435, 3449, 3433, 19921, 3427, 3434, 3421, 21603 }.Select(type => new Eve.Skills.CharacterSkill(type, 5, 0)));
         await transaction.CommitAsync();
     }
 
@@ -336,6 +336,8 @@ public class ProjectedHostTests
         var (rig, session, character, module) = await ReadyAsync(BurstJammerI, MidSlot, shipTypeId: Raven);
         await using var _ = rig;
         Assert.Equal(MidSlot, (await rig.Items.GetAsync(module))!.Flag);
+        // the rig's system is high security: an ECM burst starts there only with the safety at none (EcmBurstHostTests covers the refusal)
+        rig.Space.SafetyLevelOf = (_, _) => Task.FromResult(Eve.Crimewatch.SafetyLevel.None);
         Assert.Equal(ModuleResult.Done, await rig.Space.ActivateAsync(session, module, "ecmBurstJammer", 0, 1000, CancellationToken.None));
         var effect = Assert.IsType<SimActivate>(rig.Sim.Heard.Last()).Effect;
         var burst = Assert.IsType<SimAction.EcmBurst>(effect.Action);

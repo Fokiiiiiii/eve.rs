@@ -320,13 +320,6 @@ internal sealed class MutadaptiveRepairSpool
         }
     }
 
-    public void ResetAll()
-    {
-        lock (_gate)
-        {
-            _byModule.Clear();
-        }
-    }
 
     private static long MaximumCycles(double bonusPerCycle, double maximumBonus) =>
         bonusPerCycle > 0 && maximumBonus > 0

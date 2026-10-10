@@ -340,6 +340,13 @@ public sealed class SimClient : ISimulation, IAsyncDisposable
         return Task.CompletedTask;
     }
 
+    public Task UpdateEffectAsync(SimUpdateEffect request, CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        Send(request);
+        return Task.CompletedTask;
+    }
+
     public Task SetModuleOverheatAsync(ulong sessionId, long moduleId, bool active, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
@@ -418,6 +425,8 @@ public sealed class SimClient : ISimulation, IAsyncDisposable
 
     public void ModuleWorkResult(SimModuleWorkResult result) => Send(result);
 
+    public void BuffState(ulong sessionId, long shipId, IReadOnlyList<SimBuffEntry> entries) => Send(new SimBuffState(sessionId, shipId, entries));
+
     public Task<CommandReply> PlaceContainerAsync(SimPlaceContainer can, CancellationToken cancellationToken = default) =>
         AwaitAsync(_answered, (can.SessionId, SimCommands.PlaceContainer), can, cancellationToken);
 
@@ -425,6 +434,14 @@ public sealed class SimClient : ISimulation, IAsyncDisposable
         AwaitAsync(_answered, (sessionId, SimCommands.ChangeWreck), new SimChangeWreck(sessionId, wreckId, isEmpty), cancellationToken);
 
     public void RemoveWreck(long wreckId, int effect) => Send(new SimRemoveWreck(wreckId, effect));
+
+    public void RestoreDeployed(SimDeployed deployed) => Send(deployed);
+
+    public void RemoveDeployed(long deployableId) => Send(new SimRemoveDeployed(deployableId));
+
+    public void PlaceProbe(SimPlaceProbe probe) => Send(probe);
+
+    public void RemoveProbe(long probeId) => Send(new SimRemoveProbe(probeId));
 
     public void Destroy(long shipId, SimCredit credit) => Send(new SimDestroy(shipId, credit));
 

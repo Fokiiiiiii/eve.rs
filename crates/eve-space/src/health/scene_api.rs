@@ -33,13 +33,38 @@ impl Scene {
     /// can see the ship, has it locked or flies it is told its damage state. What the hit did comes back (None when the ship is not here or has
     /// nothing to hurt).
     pub fn damage(&mut self, ship_id: i64, raw: Damage, now: i64) -> (Vec<Out>, Option<Applied>) {
+        self.damage_through(ship_id, raw, now, true)
+    }
+
+    /// `damage` for a damage-over-time tick: the layers take the damage as it is, whatever their resistances (`Health::apply_unresisted`).
+    pub(crate) fn damage_unresisted(
+        &mut self,
+        ship_id: i64,
+        raw: Damage,
+        now: i64,
+    ) -> (Vec<Out>, Option<Applied>) {
+        self.damage_through(ship_id, raw, now, false)
+    }
+
+    fn damage_through(
+        &mut self,
+        ship_id: i64,
+        raw: Damage,
+        now: i64,
+        resisted: bool,
+    ) -> (Vec<Out>, Option<Applied>) {
         let Some(session) = self.pilots.iter().find(|(_, p)| p.ship.spec.ship_id == ship_id).map(|(s, _)| *s)
         else {
             return (Vec::new(), None);
         };
         let pilot = self.pilots.get_mut(&session).expect("the pilot is in the scene");
         let owner = pilot.ship.spec.character_id;
-        let Some(applied) = pilot.ship.health.apply(now, raw) else { return (Vec::new(), None) };
+        let applied = if resisted {
+            pilot.ship.health.apply(now, raw)
+        } else {
+            pilot.ship.health.apply_unresisted(now, raw)
+        };
+        let Some(applied) = applied else { return (Vec::new(), None) };
         let mut out: Vec<Out> = Self::health_told(session, owner, ship_id, now, &applied.attribute_changes())
             .into_iter()
             .collect();

@@ -139,6 +139,7 @@ fn turret_of(w: &Value) -> Turret {
             flag: c["flag"].as_i64().unwrap() as i32,
             rounds: c["rounds"].as_i64().unwrap(),
             per_cycle: c["perCycle"].as_i64().unwrap(),
+            reloads: c.get("reloads").and_then(Value::as_bool).unwrap_or(false),
         }),
         missile: w.get("missile").filter(|m| !m.is_null()).map(|m| Missile {
             charge_type_id: m["chargeTypeId"].as_i64().unwrap() as i32,
@@ -154,6 +155,11 @@ fn turret_of(w: &Value) -> Turret {
             explosion_velocity: m["explosionVelocity"].as_f64().unwrap(),
             damage_reduction_factor: m["damageReductionFactor"].as_f64().unwrap(),
             damage_reduction_sensitivity: m["damageReductionSensitivity"].as_f64().unwrap(),
+            dot: m.get("dot").filter(|d| !d.is_null()).map(|d| eve_space::missiles::Dot {
+                duration_ms: d["durationMs"].as_f64().unwrap(),
+                max_damage_per_tick: d["maxDamagePerTick"].as_f64().unwrap(),
+                max_hp_percent_per_tick: d["maxHpPercentPerTick"].as_f64().unwrap(),
+            }),
         }),
         spool: w
             .get("spool")
@@ -200,6 +206,8 @@ fn effect_of(case: &Value) -> Effect {
         requires_industrial_core: r["requiresIndustrialCore"].as_bool().unwrap(),
         provides_industrial_core: r["providesIndustrialCore"].as_bool().unwrap(),
         reactivation_delay_ms: number(r, "reactivationDelayMs"),
+        max_velocity_limit: r.get("maxVelocityLimit").and_then(Value::as_f64).unwrap_or(0.0),
+        min_velocity_limit: r.get("minVelocityLimit").and_then(Value::as_f64).unwrap_or(0.0),
     });
     Effect {
         rules,
@@ -246,7 +254,11 @@ fn effect_of(case: &Value) -> Effect {
                 };
                 let fallback = (!a["fallback"].is_null()).then(|| Box::new(repair(&a["fallback"])));
                 return Action::Charged {
-                    action: Box::new(repair(&a["action"])),
+                    action: Box::new(if a["action"]["kind"] == "commandBurst" {
+                        Action::CommandBurst { range_meters: a["action"]["rangeMeters"].as_f64().unwrap() }
+                    } else {
+                        repair(&a["action"])
+                    }),
                     fallback,
                     charge_type_id: a["chargeTypeId"].as_i64().unwrap() as i32,
                     charge_flag: a["chargeFlag"].as_i64().unwrap() as i32,
@@ -290,6 +302,7 @@ fn effect_of(case: &Value) -> Effect {
                         explosion_velocity: number("explosionVelocity"),
                         damage_reduction_factor: number("damageReductionFactor"),
                         damage_reduction_sensitivity: number("damageReductionSensitivity"),
+                        dot: None,
                     },
                     damage: sensors_of(&a["damage"]),
                 };
@@ -305,6 +318,18 @@ fn effect_of(case: &Value) -> Effect {
                 return Action::WarpProbe {
                     ball: deployable(&a["ball"]),
                     range: a["range"].as_f64().unwrap(),
+                    lifetime_ms: a["lifetimeMs"].as_f64().unwrap(),
+                };
+            }
+            if a["kind"] == "commandBurst" {
+                return Action::CommandBurst { range_meters: a["rangeMeters"].as_f64().unwrap() };
+            }
+            if a["kind"] == "panic" {
+                return Action::Panic { range_meters: a["rangeMeters"].as_f64().unwrap() };
+            }
+            if a["kind"] == "cynoField" {
+                return Action::CynoField {
+                    ball: deployable(&a["ball"]),
                     lifetime_ms: a["lifetimeMs"].as_f64().unwrap(),
                 };
             }
@@ -342,6 +367,15 @@ fn effect_of(case: &Value) -> Effect {
                     waste_probability: a["wasteProbability"].as_f64().unwrap(),
                     crit_probability: a["critProbability"].as_f64().unwrap(),
                     crit_multiplier: a["critMultiplier"].as_f64().unwrap(),
+                };
+            }
+            if a["kind"] == "scan" {
+                return Action::Scan {
+                    cargo: a["cargo"].as_bool().unwrap(),
+                    reach: Reach {
+                        optimal: a["optimalMeters"].as_f64().unwrap(),
+                        falloff: a["falloffMeters"].as_f64().unwrap(),
+                    },
                 };
             }
             if a["kind"] == "salvage" {
@@ -430,6 +464,7 @@ fn effect_of(case: &Value) -> Effect {
                         neut_signature_radius: number(s, "neutSignatureRadius"),
                         debuff_ms: s["debuffMs"].as_f64().unwrap_or(0.0),
                         sweep_end: None,
+                        beacon: None,
                     },
                     destination: vector(&a["destination"]),
                     warp_block_ms: number(a, "warpBlockMs"),
@@ -470,6 +505,13 @@ fn effect_of(case: &Value) -> Effect {
                         debuff_ms: a["debuffMs"].as_f64().unwrap_or(0.0),
                         sweep_end: a["sweepEnd"].as_array().map(|end| {
                             [end[0].as_f64().unwrap(), end[1].as_f64().unwrap(), end[2].as_f64().unwrap()]
+                        }),
+                        beacon: a["beacon"].as_array().map(|offset| {
+                            [
+                                offset[0].as_f64().unwrap(),
+                                offset[1].as_f64().unwrap(),
+                                offset[2].as_f64().unwrap(),
+                            ]
                         }),
                     },
                 };
@@ -628,6 +670,19 @@ fn wreck_kind_of(wreck: Option<&Value>) -> Option<WreckKind> {
     })
 }
 
+/// The attributes a change tells the client (its item, its attribute and its value).
+fn changes_of(list: &Value) -> Vec<Change> {
+    list.as_array()
+        .unwrap()
+        .iter()
+        .map(|c| Change {
+            item_id: wide(c, "itemId"),
+            attribute_id: c["attributeId"].as_i64().unwrap() as i32,
+            value: c["value"].as_f64().unwrap(),
+        })
+        .collect()
+}
+
 fn message_of(case: &Value) -> Message {
     let number = |field: &str| case[field].as_u64().unwrap_or_else(|| panic!("{field} in {case}"));
     let session_id = || wide(case, "sessionId") as u64;
@@ -727,6 +782,16 @@ fn message_of(case: &Value) -> Message {
             waste_roll: case["wasteRoll"].as_f64().unwrap(),
             rounding_roll: case["roundingRoll"].as_f64().unwrap(),
             crit_roll: case["critRoll"].as_f64().unwrap(),
+            recipients: case.get("recipients").and_then(|list| list.as_array()).map_or_else(
+                Vec::new,
+                |list| {
+                    list.iter()
+                        .map(|ship| {
+                            ship.as_str().map_or_else(|| ship.as_i64().unwrap(), |text| text.parse().unwrap())
+                        })
+                        .collect()
+                },
+            ),
         },
         "ModuleWorkResult" => Message::ModuleWorkResult {
             session_id: session_id(),
@@ -767,6 +832,28 @@ fn message_of(case: &Value) -> Message {
             session_id: session_id(),
             module_id: wide(case, "moduleId"),
             rounds_left: wide(case, "roundsLeft"),
+        },
+        "BuffState" => Message::BuffState {
+            session_id: session_id(),
+            ship_id: wide(case, "shipId"),
+            entries: case["entries"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|entry| eve_space::link::BuffEntry {
+                    collection_id: entry["collectionId"].as_i64().unwrap() as i32,
+                    value: entry["value"].as_f64().unwrap(),
+                    remaining_ms: entry["remainingMs"].as_f64().unwrap(),
+                })
+                .collect(),
+        },
+        "UpdateEffect" => Message::UpdateEffect {
+            session_id: session_id(),
+            module_id: wide(case, "moduleId"),
+            duration_ms: case["durationMs"].as_f64().unwrap(),
+            capacitor_need: case["capacitorNeed"].as_f64().unwrap(),
+            turret: case.get("turret").filter(|t| !t.is_null()).map(|t| Box::new(turret_of(t))),
+            changes: changes_of(&case["changes"]),
         },
         "AdjustCharge" => Message::AdjustCharge {
             request_id: wide(case, "requestId") as u64,
@@ -853,6 +940,35 @@ fn message_of(case: &Value) -> Message {
         "RemoveWreck" => {
             Message::RemoveWreck { wreck_id: wide(case, "wreckId"), effect: number("effect") as i32 }
         }
+        "Deployed" => Message::Deployed(Box::new(eve_space::link::DeployedPlacement {
+            solar_system_id: number("solarSystemId") as i32,
+            deployable_id: wide(case, "deployableId"),
+            name: text(case, "typeName"),
+            type_id: number("typeId") as i32,
+            group_id: number("groupId") as i32,
+            position: vector_of(case, "position"),
+            radius: case["radius"].as_f64().unwrap(),
+            owner_id: wide(case, "ownerId"),
+            corporation_id: number("corporationId") as i32,
+            alliance_id: number("allianceId") as i32,
+            ship_id: wide(case, "shipId"),
+            lifetime_ms: case["lifetimeMs"].as_f64().unwrap(),
+        })),
+        "RemoveDeployed" => Message::RemoveDeployed { deployable_id: wide(case, "deployableId") },
+        "PlaceProbe" => Message::PlaceProbe(Box::new(eve_space::link::ProbePlacement {
+            probe_id: wide(case, "probeId"),
+            solar_system_id: number("solarSystemId") as i32,
+            name: text(case, "typeName"),
+            type_id: number("typeId") as i32,
+            group_id: number("groupId") as i32,
+            position: vector_of(case, "position"),
+            radius: case["radius"].as_f64().unwrap(),
+            owner_id: wide(case, "ownerId"),
+            corporation_id: number("corporationId") as i32,
+            alliance_id: number("allianceId") as i32,
+            ship_id: wide(case, "shipId"),
+        })),
+        "RemoveProbe" => Message::RemoveProbe { probe_id: wide(case, "probeId") },
         "Measured" => Message::Measured {
             session_id: session_id(),
             command: number("command") as u8,
@@ -976,6 +1092,16 @@ fn message_of(case: &Value) -> Message {
             session_id: session_id(),
             fighter_id: wide(case, "fighterId"),
             position: vector_of(case, "position"),
+        },
+        "EcmBurst" => Message::EcmBurst {
+            session_id: session_id(),
+            ship_id: wide(case, "shipId"),
+            reached: case["reached"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|r| (wide(r, "shipId"), r["jammed"].as_bool().unwrap()))
+                .collect(),
         },
         "Destroy" => Message::Destroy {
             ship_id: wide(case, "shipId"),

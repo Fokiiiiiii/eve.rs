@@ -38,6 +38,9 @@ public static partial class SimCodec
         w.F64(strike.DebuffMs);
         w.U8((byte)(strike.SweepEnd is null ? 0 : 1));
         foreach (var component in strike.SweepEnd ?? [0.0, 0.0, 0.0]) w.F64(component);
+        // protocol 37: a lance's beacon, a flag then its offset from the firing ship (zeros without a beacon)
+        w.U8((byte)(strike.Beacon is null ? 0 : 1));
+        foreach (var component in strike.Beacon ?? [0.0, 0.0, 0.0]) w.F64(component);
     }
 
     /// <summary>A list of ship ids: a u32 count, then each id as an i64 (the simulation's <c>write_ids</c>).</summary>
@@ -141,6 +144,18 @@ public static partial class SimCodec
         w.F64(missile.ExplosionVelocity);
         w.F64(missile.DamageReductionFactor);
         w.F64(missile.DamageReductionSensitivity);
+        // the damage over time of a breacher pod (protocol 42): a flag, then its duration, its cap per tick and its percentage per tick
+        if (missile.Dot is { } dot)
+        {
+            w.U8(1);
+            w.F64(dot.DurationMs);
+            w.F64(dot.MaxDamagePerTick);
+            w.F64(dot.MaxHpPercentPerTick);
+        }
+        else
+        {
+            w.U8(0);
+        }
     }
 
     private static void WriteTurret(Writer w, SimTurret t)
@@ -159,6 +174,7 @@ public static partial class SimCodec
             w.I32(charge.Flag);
             w.I64(charge.Rounds);
             w.I64(charge.PerCycle);
+            w.U8(charge.Reloads ? (byte)1 : (byte)0);
         }
         else
         {
@@ -269,6 +285,27 @@ private static void WriteAction(Writer w, SimAction action)
                 }
                 w.U8(18); w.F64(status.Delta);
                 break;
+            case SimAction.Panic panic:
+                if (!(double.IsFinite(panic.RangeMeters) && panic.RangeMeters >= 0))
+                {
+                    throw new ArgumentException("the invulnerability core has a reach of zero or more metres", nameof(action));
+                }
+                w.U8(29); w.F64(panic.RangeMeters);
+                break;
+            case SimAction.CommandBurst burst:
+                if (!(double.IsFinite(burst.RangeMeters) && burst.RangeMeters >= 0))
+                {
+                    throw new ArgumentException("a command burst has a reach of zero or more metres", nameof(action));
+                }
+                w.U8(28); w.F64(burst.RangeMeters);
+                break;
+            case SimAction.CynoField cyno:
+                if (!(double.IsFinite(cyno.LifetimeMs) && cyno.LifetimeMs > 0))
+                {
+                    throw new ArgumentException("a cynosural field has a positive lifetime", nameof(action));
+                }
+                w.U8(27); WriteDeployable(w, cyno.Ball, nameof(action)); w.F64(cyno.LifetimeMs);
+                break;
             case SimAction.WarpProbe probe:
                 if (!(double.IsFinite(probe.RangeMeters) && probe.RangeMeters > 0 && double.IsFinite(probe.LifetimeMs) && probe.LifetimeMs > 0))
                 {
@@ -296,6 +333,9 @@ private static void WriteAction(Writer w, SimAction action)
                 break;
             case SimAction.Salvage salvage:
                 w.U8(8); w.F64(salvage.AccessBonusPercent);
+                break;
+            case SimAction.Scan scan:
+                w.U8(26); w.U8(scan.Kind); w.F64(scan.OptimalMeters); w.F64(scan.FalloffMeters);
                 break;
             case SimAction.Tractor tractor:
                 w.U8(9); w.F64(tractor.VelocityMetersPerSecond); w.F64(tractor.HoldDistanceMeters); w.F64(tractor.RangeMeters);
@@ -429,12 +469,15 @@ private static void WriteAction(Writer w, SimAction action)
     /// <summary>The module rules of an effect (flag 32, after its action): the group, its limit, the rule bits (1 early deactivation, 2 needs a core, 4 is a core), and the reactivation delay.</summary>
     private static void WriteRules(Writer w, SimModuleRules rules)
     {
-        if (rules.MaxGroupActive < 0 || rules.ReactivationDelayMs < 0 || !double.IsFinite(rules.ReactivationDelayMs))
+        if (rules.MaxGroupActive < 0 || rules.ReactivationDelayMs < 0 || !double.IsFinite(rules.ReactivationDelayMs)
+            || rules.MaxVelocityLimitMs < 0 || !double.IsFinite(rules.MaxVelocityLimitMs) || rules.MinVelocityLimitMs < 0 || !double.IsFinite(rules.MinVelocityLimitMs))
             throw new ArgumentException("invalid module rules", nameof(rules));
         w.I32(rules.GroupId);
         w.I32(rules.MaxGroupActive);
         w.U8((byte)((rules.DisallowEarlyDeactivation ? 1 : 0) | (rules.RequiresIndustrialCore ? 2 : 0) | (rules.ProvidesIndustrialCore ? 4 : 0)));
         w.F64(rules.ReactivationDelayMs);
+        w.F64(rules.MaxVelocityLimitMs);
+        w.F64(rules.MinVelocityLimitMs);
     }
 
     private static void WriteHeatProfile(Writer w, SimHeatProfile p)
@@ -674,6 +717,35 @@ private static void WriteAction(Writer w, SimAction action)
                 w.I64(m.ModuleId);
                 w.I64(m.RoundsLeft);
                 break;
+            case SimBuffState m:
+                w.U8(Kind.BuffState);
+                w.U64(m.SessionId);
+                w.I64(m.ShipId);
+                w.U32((uint)m.Entries.Count);
+                foreach (var entry in m.Entries)
+                {
+                    w.I32(entry.CollectionId);
+                    w.F64(entry.Value);
+                    w.F64(entry.RemainingMs);
+                }
+                break;
+            case SimUpdateEffect m:
+                w.U8(Kind.UpdateEffect);
+                w.U64(m.SessionId);
+                w.I64(m.ModuleId);
+                w.F64(m.DurationMs);
+                w.F64(m.CapacitorNeed);
+                if (m.Turret is { } turret)
+                {
+                    w.U8(1);
+                    WriteTurret(w, turret);
+                }
+                else
+                {
+                    w.U8(0);
+                }
+                WriteChanges(w, m.Changes);
+                break;
             case SimAdjustCharge m:
                 w.U8(Kind.AdjustCharge);
                 w.U64(m.RequestId);
@@ -743,6 +815,43 @@ private static void WriteAction(Writer w, SimAction action)
                 w.U8(Kind.RemoveWreck);
                 w.I64(m.WreckId);
                 w.I32(m.Effect);
+                break;
+            case SimDeployed m:
+                w.U8(Kind.Deployed);
+                w.I32(m.SolarSystemId);
+                w.I64(m.DeployableId);
+                w.Text(m.Name);
+                w.I32(m.TypeId);
+                w.I32(m.GroupId);
+                WriteVector(w, m.Position);
+                w.F64(m.Radius);
+                w.I64(m.OwnerId);
+                w.I32(m.CorporationId);
+                w.I32(m.AllianceId);
+                w.I64(m.ShipId);
+                w.F64(m.LifetimeMs);
+                break;
+            case SimRemoveDeployed m:
+                w.U8(Kind.RemoveDeployed);
+                w.I64(m.DeployableId);
+                break;
+            case SimPlaceProbe m:
+                w.U8(Kind.PlaceProbe);
+                w.I64(m.ProbeId);
+                w.I32(m.SolarSystemId);
+                w.Text(m.Name);
+                w.I32(m.TypeId);
+                w.I32(m.GroupId);
+                WriteVector(w, m.Position);
+                w.F64(m.Radius);
+                w.I64(m.OwnerId);
+                w.I32(m.CorporationId);
+                w.I32(m.AllianceId);
+                w.I64(m.ShipId);
+                break;
+            case SimRemoveProbe m:
+                w.U8(Kind.RemoveProbe);
+                w.I64(m.ProbeId);
                 break;
             case SimPlaceAsteroid m:
                 w.U8(Kind.PlaceAsteroid);
@@ -823,6 +932,17 @@ private static void WriteAction(Writer w, SimAction action)
                 w.F64(m.WasteRoll);
                 w.F64(m.RoundingRoll);
                 w.F64(m.CritRoll);
+                // protocol 43: the ships a command burst reaches (a count, then each id); only a burst names any
+                var recipients = m.Recipients ?? [];
+                if (recipients.Count > 0 && m.Command is not (SimModuleWorkCommands.Burst or SimModuleWorkCommands.Panic))
+                {
+                    throw new ArgumentException("only a command burst's cycle names ships", nameof(message));
+                }
+                w.U32((uint)recipients.Count);
+                foreach (var ship in recipients)
+                {
+                    w.I64(ship);
+                }
                 break;
             case SimModuleWorkResult m:
                 w.U8(Kind.ModuleWorkResult);
@@ -1007,6 +1127,17 @@ private static void WriteAction(Writer w, SimAction action)
                 {
                     w.I64(result.FighterId);
                     w.Text(result.Reason);
+                }
+                break;
+            case SimEcmBurst m:
+                w.U8(Kind.EcmBurst);
+                w.U64(m.SessionId);
+                w.I64(m.ShipId);
+                w.U32((uint)m.Reached.Count);
+                foreach (var reach in m.Reached)
+                {
+                    w.I64(reach.ShipId);
+                    w.U8(reach.Jammed ? (byte)1 : (byte)0);
                 }
                 break;
             case SimFighterLanded m:

@@ -64,6 +64,9 @@ public sealed partial class SpaceSessions : IDisposable, ISpaceTargeting, ISpace
         /// </summary>
         public ConcurrentDictionary<long, ItemState> ActiveModules { get; } = new();
 
+        /// <summary>The effects the pilot's modules run, as asked and as the simulation holds them (<see cref="RunningModule"/>): a refresh rebuilds them.</summary>
+        public ConcurrentDictionary<long, RunningModule> RunningModules { get; } = new();
+
         /// <summary>The module repairs under way (nanite paste): what each began with. Ended by a stop, or by the pilot leaving the ship (<see cref="CancelRepairsAsync"/>).</summary>
         public ConcurrentDictionary<long, ModuleRepairRecord> Repairs { get; } = new();
 
@@ -85,6 +88,12 @@ public sealed partial class SpaceSessions : IDisposable, ISpaceTargeting, ISpace
     private readonly PgSpaceItemStore? _spaceItems;
     private readonly ConcurrentDictionary<long, PendingSpaceLogin> _pendingLoginRestores = new();
     public Func<long, CancellationToken, Task<bool>>? StructureExistsAsync { get; set; }
+
+    /// <summary>The fleet a character is in (its id), or null when it is in none: a command burst reaches the ships of its source's fleet (track C6).</summary>
+    public Func<long, CancellationToken, Task<long?>>? FleetIdOfAsync { get; set; }
+
+    /// <summary>The timed buffs of the ships in space (the command bursts', track C6). In memory: a restart drops them.</summary>
+    public ShipBuffs Buffs { get; } = new();
     private readonly DogmaStatic _statics;
     private readonly StationCatalog _stations;
     private readonly SolarSystemCatalog _systems;
@@ -286,7 +295,7 @@ private readonly TransitionRuntime _transitions;
     if (_ownsTimers) _timers.Dispose();
     _sim.Received -= OnReceived;
     _sim.Lost -= OnLost;
-    Eve.Services.Space.Effects.ProjectedEffect.MutadaptiveSpool.ResetAll();
+    ForgetMutadaptiveSpools();
     // the host stops: the rounds that were spent are written first
     _charges.CloseAllAsync().GetAwaiter().GetResult();
 }
@@ -312,6 +321,10 @@ private readonly TransitionRuntime _transitions;
 
     public ClientSession? ClientSessionOf(ulong sessionId) =>
         _pilots.TryGetValue(sessionId, out var pilot) ? pilot.Session : null;
+
+    /// <summary>The session of the pilot whose ship is <paramref name="shipId"/> and is in space, or null (a ship a scanner reads the capacitor of).</summary>
+    public ClientSession? SessionOfShip(long shipId) =>
+        _pilots.Values.FirstOrDefault(pilot => pilot.ShipId == shipId)?.Session;
 
     public double? SecurityOfSystem(int solarSystemId) => _systems.Get(solarSystemId)?.Security;
 
@@ -648,12 +661,23 @@ private readonly TransitionRuntime _transitions;
                     break;
                 case SimChargeSpent spent when _pilots.TryGetValue(spent.SessionId, out var shooter):
                     _charges.Enqueue(spent.SessionId, shooter.CharacterId, spent.ModuleId, spent.RoundsLeft);
+                    // a gun that reloads from its hold and has no round left for its next cycle asks for its load (FP-C8)
+                    if (shooter.RunningModules.TryGetValue(spent.ModuleId, out var gun) && gun.Reloads && spent.RoundsLeft < gun.PerCycle)
+                    {
+                        GunRanDry?.Invoke(new SpentGun(shooter.Session, shooter.CharacterId, shooter.ShipId, spent.ModuleId, gun.ChargeTypeId));
+                    }
+                    break;
+                // an ECM burst reached ships: the attack is recorded on each pilot it reached, as for a module started at their ship (FP-C7)
+                case SimEcmBurst burst when _pilots.TryGetValue(burst.SessionId, out var burster) && burster.ShipId == burst.ShipId:
+                    _ = Task.Run(() => RecordEcmBurstAsync(burster, burst.Reached));
                     break;
                 // an effect the simulation ended on its own account (the cycles done, the capacitor short, the target gone): the module is taken out of the
                 // numbers the ship is sent with, and the ship is sent again so the simulation drops the module's modifiers (FP-C1)
                 case SimModuleEnded ended when _pilots.TryGetValue(ended.SessionId, out var endedPilot) && endedPilot.ActiveModules.TryRemove(ended.ModuleId, out _):
                     Eve.Services.Space.Effects.ProjectedEffect.MutadaptiveSpool.Reset(ended.ModuleId);
+                    endedPilot.RunningModules.TryRemove(ended.ModuleId, out _);
                     _ = Task.Run(() => SendShipAsync(ended.SessionId, endedPilot, null, CancellationToken.None));
+                    _ = Task.Run(() => RefreshRunningAsync(endedPilot, ended.SessionId, CancellationToken.None));
                     break;
                 case SimRefused { Command: SimCommands.Stop, Reason: "IN_WARP" } inWarp when _pilots.TryGetValue(inWarp.SessionId, out var warping):
                     _warping[inWarp.SessionId] = 0;
@@ -723,11 +747,25 @@ private readonly TransitionRuntime _transitions;
         _sim.ShipChanged((ulong)pilot.Session.SessionId, SimShips.Of(flown, _statics, await SecurityStatusAsync(characterId, cancellationToken)));
     }
 
+    /// <summary>
+    /// The spools of the modules this host runs are forgotten (the spool is process-wide, keyed by module, so another host's spools are not touched).
+    /// </summary>
+    private void ForgetMutadaptiveSpools()
+    {
+        foreach (var pilot in _pilots.Values)
+        {
+            foreach (var moduleId in pilot.RunningModules.Keys)
+            {
+                Eve.Services.Space.Effects.ProjectedEffect.MutadaptiveSpool.Reset(moduleId);
+            }
+        }
+    }
+
     /// <summary>The simulation was lost: every ship it held is gone, so each is brought home to the station its character last was at.</summary>
     private void OnLost()
     {
         _warping.Clear();
-        Eve.Services.Space.Effects.ProjectedEffect.MutadaptiveSpool.ResetAll();
+        ForgetMutadaptiveSpools();
         foreach (var pilot in _pilots.Values.ToArray())
         {
             _ = Task.Run(async () =>

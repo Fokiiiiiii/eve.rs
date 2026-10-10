@@ -61,9 +61,10 @@ public class MissileFamilyDataTests
         world.Add(new Eve.Dogma.DogmaItem(moduleId, moduleTypeId, characterId, shipId, 11, Eve.Dogma.ItemState.Online));
         var snapshot = new Eve.Ships.ShipSnapshot { Character = null!, Ship = ship, Fitted = [module], Charges = [], Skills = [], World = world };
 
-        var fof = ModulePackages.Of(snapshot, statics, moduleId, "fofMissileLaunching", 980050000105, 1);
-        Assert.Null(fof.Effect);
-        Assert.Equal("FOF_MISSILE_NOT_IMPLEMENTED", fof.Reason);
+        // an F.O.F. missile locks no target: it is asked for with none, and runs (the empty launcher is refused for its ammunition first, the reference's order)
+        var fof = ModulePackages.Of(snapshot, statics, moduleId, "fofMissileLaunching", 0, 1);
+        Assert.Equal("NO_AMMO", fof.Reason);
+        Assert.NotEqual("FOF_MISSILE_NOT_IMPLEMENTED", fof.Reason);
         Assert.NotEqual("FOF_MISSILE_NOT_IMPLEMENTED", ModulePackages.Of(snapshot, statics, moduleId, "missileLaunching", 980050000105, 1).Reason);
     }
 }

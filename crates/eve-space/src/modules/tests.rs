@@ -1836,6 +1836,56 @@ fn an_ecm_burst_breaks_nearby_locks_at_cycle_start_but_does_not_leave_a_jam() {
     assert!(!scene.pilots[&B].incoming.jammed());
 }
 
+fn ecm_burst_of(strength: f64) -> Effect {
+    Effect {
+        burns_fuel: false,
+        fx: "effects.EcmBurstJammer".to_string(),
+        action: Some(Action::EcmBurst { range: 3_000.0, strength: [strength; 4] }),
+        ..smartbomb(0.0, [0.0; 4], true)
+    }
+}
+
+#[test]
+fn an_ecm_burst_tells_the_host_each_ship_it_reached_and_whether_its_roll_jammed_it() {
+    let (mut scene, t) = reaching(2_000.0);
+    let (burster, reached) = (scene.pilots[&A].ship.spec.ship_id, scene.pilots[&B].ship.spec.ship_id);
+    // B's sensors are under the burst: the roll is a jam every time
+    scene.pilots.get_mut(&B).unwrap().ship.spec.sensor_strength = [10.0; 4];
+    scene.pilots.get_mut(&B).unwrap().ship.spec.ecm_resistance = 1.0;
+    let out = scene.activate(A, ecm_burst_of(1_000.0), t);
+    assert!(
+        out.iter().any(|o| matches!(o, Out::EcmBurst { session: A, ship_id, reached: r } if *ship_id == burster && r == &[(reached, true)])),
+        "{:?}",
+        labels(&out)
+    );
+}
+
+#[test]
+fn an_ecm_burst_reports_a_ship_it_reached_that_resists_the_jam_as_not_jammed() {
+    let (mut scene, t) = reaching(2_000.0);
+    let (burster, reached) = (scene.pilots[&A].ship.spec.ship_id, scene.pilots[&B].ship.spec.ship_id);
+    // an ECM-immune hull is reached (it is told of the burst) but its roll cannot land
+    scene.pilots.get_mut(&B).unwrap().ship.spec.ecm_resistance = 0.0;
+    let out = scene.activate(A, ecm_burst_of(1_000.0), t);
+    assert!(
+        out.iter().any(|o| matches!(o, Out::EcmBurst { session: A, ship_id, reached: r } if *ship_id == burster && r == &[(reached, false)])),
+        "{:?}",
+        labels(&out)
+    );
+    assert!(!scene.pilots[&B].incoming.jammed());
+}
+
+#[test]
+fn a_cloaked_ship_is_not_reached_by_an_ecm_burst() {
+    let (mut scene, t) = reaching(2_000.0);
+    scene.pilots.get_mut(&B).unwrap().ship.spec.sensor_strength = [10.0; 4];
+    scene.pilots.get_mut(&B).unwrap().ship.spec.ecm_resistance = 1.0;
+    scene.pilots.get_mut(&B).unwrap().cloak = crate::visibility::CloakState::Cloaked;
+    let out = scene.activate(A, ecm_burst_of(1_000.0), t);
+    assert!(!out.iter().any(|o| matches!(o, Out::EcmBurst { .. })), "{:?}", labels(&out));
+    assert!(!scene.pilots[&B].incoming.jammed());
+}
+
 #[test]
 fn a_smartbomb_the_safety_forbids_does_not_start_with_a_pilot_in_range_and_stops_when_one_comes_in() {
     let (mut scene, t) = reaching(2_000.0);
@@ -3323,4 +3373,375 @@ fn a_module_that_its_own_effect_burns_out_does_not_start_again() {
         scene.activate(A, burning, t + 20 * SECOND),
         [Out::Refused { session: A, command: 17, reason: "MODULE_INCAPACITATED" }]
     );
+}
+
+// ---- scanners (protocol 40): a cargo or ship scan is a work cycle the host settles; the simulation keeps the lock and the reach ----
+
+/// A scanner of `cargo` or ship kind, one cycle, locked on the partner ship: its reach is `optimal` metres, then `falloff` metres of falloff.
+fn scanner(cargo: bool, optimal: f64, falloff: f64) -> Effect {
+    let mut effect = afterburner();
+    effect.target_id = partner();
+    effect.action = Some(Action::Scan { cargo, reach: Reach { optimal, falloff } });
+    effect.effect_id = if cargo { 47 } else { 46 };
+    effect.duration_ms = 2_000.0;
+    effect.capacitor_need = 0.0;
+    effect.repeat = 1;
+    effect
+}
+
+#[test]
+fn a_scanner_needs_a_target_it_holds_a_lock_on_that_is_a_ship_and_in_reach() {
+    let (mut scene, t) = crowd();
+    let mut scan = scanner(true, 50_000.0, 0.0);
+    scan.target_id = 0;
+    assert_eq!(refusal_of(&scene.activate(A, scan.clone(), t)), "TARGET_REQUIRED");
+    scan.target_id = scene.pilots[&A].ship.spec.ship_id;
+    assert_eq!(refusal_of(&scene.activate(A, scan.clone(), t)), "TARGET_SELF");
+    scan.target_id = WRECK;
+    assert_eq!(refusal_of(&scene.activate(A, scan.clone(), t)), "TARGET_NOT_FOUND");
+    // the partner is there but not locked: the scanner does not reach what the pilot does not hold
+    scan.target_id = partner();
+    assert_eq!(refusal_of(&scene.activate(A, scan.clone(), t)), "TARGET_NOT_LOCKED");
+    let (mut locked, t) = reaching(0.0);
+    assert!(matches!(
+        locked.activate(A, scanner(true, 50_000.0, 0.0), t).first(),
+        Some(Out::Accepted { command: 17, .. })
+    ));
+}
+
+#[test]
+fn a_cargo_scan_is_a_hard_cutoff_and_a_ship_scan_falls_off_past_its_optimal_range() {
+    // 10 km off: a 5 km cargo scanner is out of its reach and told how far it reaches; a 5 km ship scanner with 3 km falloff still reaches it at 7 km
+    let (mut scene, t) = reaching(10_000.0);
+    assert!(matches!(
+        scene.activate(A, scanner(true, 5_000.0, 0.0), t).first(),
+        Some(Out::TargetRefused { reason: "TARGET_OUT_OF_RANGE", desired_range, .. }) if *desired_range == 5_000.0
+    ));
+    let (mut scene, t) = reaching(7_000.0);
+    assert!(matches!(
+        scene.activate(A, scanner(false, 5_000.0, 3_000.0), t).first(),
+        Some(Out::Accepted { command: 17, .. })
+    ));
+    let (mut scene, t) = reaching(9_000.0);
+    assert!(matches!(
+        scene.activate(A, scanner(false, 5_000.0, 3_000.0), t).first(),
+        Some(Out::TargetRefused { reason: "TARGET_OUT_OF_RANGE", desired_range, .. }) if *desired_range == 8_000.0
+    ));
+}
+
+#[test]
+fn a_scan_asks_the_host_at_its_end_for_the_reveal_and_ends_when_the_host_grants_it() {
+    let (mut scene, t) = reaching(0.0);
+    assert!(matches!(
+        scene.activate(A, scanner(true, 50_000.0, 0.0), t).first(),
+        Some(Out::Accepted { command: 17, .. })
+    ));
+    let (first, at) = poll_until(&mut scene, t, 3.0);
+    let asked = work_cycles(&first);
+    assert_eq!(asked.len(), 1, "the scan's end asks the host once: {first:?}");
+    let (cycle, command, amount, _) = asked[0];
+    assert_eq!((command, amount), (10, 0.0), "a cargo scan is command 10 with no mining numbers");
+    // parked until the answer; the host reveals the hold and says the target stays (complete = false), so the effect ends as done, not as target lost
+    let out = scene.module_work_result(
+        A,
+        MODULE,
+        ModuleWorkAnswer {
+            target_id: partner(),
+            cycle_id: cycle,
+            accepted: true,
+            reason: "",
+            depleted: false,
+        },
+        at,
+    );
+    assert_eq!(ended(&out), vec![1], "the one cycle is done: {out:?}");
+    assert_eq!(scene.pilots[&A].modules.running_count(), 0);
+}
+
+#[test]
+fn a_ship_scan_asks_for_command_11_and_a_refused_answer_ends_the_scan_with_the_host_reason() {
+    let (mut scene, t) = reaching(0.0);
+    assert!(matches!(
+        scene.activate(A, scanner(false, 50_000.0, 10_000.0), t).first(),
+        Some(Out::Accepted { command: 17, .. })
+    ));
+    let (first, at) = poll_until(&mut scene, t, 3.0);
+    let asked = work_cycles(&first);
+    assert_eq!(asked.len(), 1, "{first:?}");
+    assert_eq!(asked[0].1, 11, "a ship scan is command 11");
+    let out = scene.module_work_result(
+        A,
+        MODULE,
+        ModuleWorkAnswer {
+            target_id: partner(),
+            cycle_id: asked[0].0,
+            accepted: false,
+            reason: "TARGET_RESISTS_SCAN",
+            depleted: false,
+        },
+        at,
+    );
+    assert_eq!(ended(&out), vec![5], "a refused answer stops the scan (WorkRefused): {out:?}");
+}
+
+#[test]
+fn a_scan_whose_target_leaves_its_reach_by_the_cycle_end_stops_and_asks_the_host_nothing() {
+    let (mut scene, t) = reaching(0.0);
+    assert!(matches!(
+        scene.activate(A, scanner(true, 50_000.0, 0.0), t).first(),
+        Some(Out::Accepted { command: 17, .. })
+    ));
+    let mut far = scene.pilots[&B].ship.position;
+    far.x += 500_000.0;
+    scene.pilots.get_mut(&B).unwrap().ship.position = far;
+    let (out, _) = poll_until(&mut scene, t, 3.0);
+    assert!(work_cycles(&out).is_empty(), "no reveal is asked for a target out of reach: {out:?}");
+    assert_eq!(ended(&out), vec![2], "the scan stops as its target is lost: {out:?}");
+}
+
+/// A command burst's effect (protocol 43): a Shield Command Burst I's cycle of one minute, reaching `range` metres, charged with two rounds, one a cycle.
+fn burst(range: f64) -> Effect {
+    let mut effect = repairer(Layer::Shield, 0.0, Applies::CycleEnd);
+    effect.module_type = 42529;
+    effect.effect_id = 6733;
+    effect.fx = String::new();
+    effect.duration_ms = 60_000.0;
+    effect.capacitor_need = 25.0;
+    effect.action = Some(Action::Charged {
+        action: Box::new(Action::CommandBurst { range_meters: range }),
+        fallback: None,
+        charge_type_id: 42695,
+        charge_flag: 27,
+        charge_per_cycle: 1,
+        charges: 2,
+    });
+    effect
+}
+
+/// The burst cycles asked of the host: the cycle id and the ships the simulation found in reach.
+fn burst_asks(out: &[Out]) -> Vec<(u64, Vec<i64>)> {
+    out.iter()
+        .filter_map(|item| match item {
+            Out::ModuleWorkCycle { cycle_id, command: WORK_BURST, recipients, .. } => {
+                Some((*cycle_id, recipients.clone()))
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+/// The arguments of the `OnDbuffUpdated` the pilot is told (the ship, then the list of buffs), if one is told.
+fn dbuff_arguments(out: &[Out], session: SessionId) -> Option<Vec<Value>> {
+    out.iter().find_map(|o| match o {
+        Out::Notify { session: s, name: "DoDestinyUpdate", args, .. } if *s == session => {
+            let Some(Value::List(actions)) = args.first() else { return None };
+            actions.iter().find_map(|a| {
+                let Value::Tuple(pair) = a else { return None };
+                let Value::Tuple(inner) = &pair[1] else { return None };
+                let (Value::Str(name), Value::Tuple(arguments)) = (&inner[0], &inner[1]) else { return None };
+                (name == "OnDbuffUpdated").then(|| arguments.clone())
+            })
+        }
+        _ => None,
+    })
+}
+
+#[test]
+fn a_command_burst_cycle_asks_the_host_for_the_ships_in_reach_and_is_parked_until_it_is_answered() {
+    let (mut scene, t) = crowd();
+    let (ship_a, ship_b) = (scene.pilots[&A].ship.spec.ship_id, scene.pilots[&B].ship.spec.ship_id);
+    scene.activate(A, burst(15_000.0), t);
+    let (out, at) = poll_until(&mut scene, t, 61.0);
+    let asks = burst_asks(&out);
+    assert_eq!(asks.len(), 1, "{out:?}");
+    let (cycle, recipients) = asks[0].clone();
+    let mut expected = vec![ship_a, ship_b];
+    expected.sort_unstable();
+    assert_eq!(recipients, expected);
+
+    // parked: the same cycle is asked again while the host has not answered, and no other
+    let (waiting, later) = poll_until(&mut scene, at, 10.0);
+    assert!(burst_asks(&waiting).iter().all(|(id, _)| *id == cycle), "{waiting:?}");
+
+    // granted: the effect goes on, and its next cycle asks the host again under a new cycle id
+    scene.module_work_result(
+        A,
+        MODULE,
+        ModuleWorkAnswer { target_id: 0, cycle_id: cycle, accepted: true, reason: "", depleted: false },
+        later,
+    );
+    let (next, end_at) = poll_until(&mut scene, later, 61.0);
+    let second = burst_asks(&next).into_iter().map(|(id, _)| id).find(|id| *id != cycle);
+    let second = second.unwrap_or_else(|| panic!("the second cycle is asked: {:?}", labels(&next)));
+
+    // the second cycle spent the last charge, so it runs to its end: its answer is the last grant, and the burst ends with it
+    let last = scene.module_work_result(
+        A,
+        MODULE,
+        ModuleWorkAnswer { target_id: 0, cycle_id: second, accepted: true, reason: "", depleted: false },
+        end_at,
+    );
+    assert!(
+        last.iter().any(|o| matches!(o, Out::ModuleEnded { module_id: MODULE, reason: 4, .. })),
+        "{last:?}"
+    );
+}
+
+#[test]
+fn a_command_burst_reaches_the_ships_within_its_range_and_no_others() {
+    let (mut scene, t) = crowd();
+    let ship_a = scene.pilots[&A].ship.spec.ship_id;
+    // B is moved 40 km off, beyond a 15 km reach
+    scene.pilots.get_mut(&B).unwrap().ship.position.x += 40_000.0;
+    scene.activate(A, burst(15_000.0), t);
+    let (out, _) = poll_until(&mut scene, t, 61.0);
+    assert_eq!(burst_asks(&out).first().map(|(_, ships)| ships.clone()), Some(vec![ship_a]), "{out:?}");
+}
+
+#[test]
+fn a_refused_command_burst_cycle_ends_the_burst_with_its_work_refused() {
+    let (mut scene, t) = crowd();
+    scene.activate(A, burst(15_000.0), t);
+    let (out, at) = poll_until(&mut scene, t, 61.0);
+    let (cycle, _) = burst_asks(&out)[0].clone();
+    let told = scene.module_work_result(
+        A,
+        MODULE,
+        ModuleWorkAnswer {
+            target_id: 0,
+            cycle_id: cycle,
+            accepted: false,
+            reason: "NOT_CONTROLLED",
+            depleted: false,
+        },
+        at,
+    );
+    assert!(
+        told.iter().any(|o| matches!(o, Out::ModuleEnded { module_id: MODULE, reason: 5, .. })),
+        "{told:?}"
+    );
+}
+
+#[test]
+fn a_ships_buffs_are_told_to_its_pilot_as_on_dbuff_updated_with_the_time_left() {
+    let (mut scene, t) = crowd();
+    let ship = scene.pilots[&A].ship.spec.ship_id;
+    let entries = vec![crate::link::BuffEntry { collection_id: 10, value: -10.0, remaining_ms: 60_000.0 }];
+    let told = scene.set_buffs(A, ship, entries, t);
+    let arguments = dbuff_arguments(&told, A).expect("the pilot is told its buffs");
+    assert_eq!(arguments[0], crate::wire::id(ship));
+    assert_eq!(
+        arguments[1],
+        crate::wire::list([crate::wire::tuple([
+            crate::wire::int(10),
+            crate::wire::tuple([crate::wire::real(-10.0), crate::wire::filetime(t + 600_000_000)]),
+        ])])
+    );
+    // a state for a ship that is not the session's is told to nobody
+    assert!(scene.set_buffs(A, ship + 1, Vec::new(), t).is_empty());
+}
+
+/// A P.A.N.I.C. (type 42522, protocol 43): one cycle of its duration (240 s), reaching `range` metres, with no capacitor and no charge.
+fn panic_effect(range: f64) -> Effect {
+    let mut effect = repairer(Layer::Shield, 0.0, Applies::CycleEnd);
+    effect.module_type = 42522;
+    effect.effect_id = 6719;
+    effect.fx = String::new();
+    effect.duration_ms = 240_000.0;
+    effect.capacitor_need = 0.0;
+    effect.repeat = 1;
+    effect.action = Some(Action::Panic { range_meters: range });
+    effect
+}
+
+#[test]
+fn a_panic_without_a_locked_asteroid_is_refused_and_asks_nobody() {
+    let (mut scene, t) = crowd();
+    let out = scene.activate(A, panic_effect(200_000.0), t);
+    assert!(
+        matches!(out.as_slice(), [Out::Refused { session: A, command: 17, reason: "TARGET_REQUIRED" }]),
+        "{out:?}"
+    );
+    assert!(!scene.pilots[&A].modules.running.iter().any(|run| run.effect.module_id == MODULE));
+}
+
+#[test]
+fn a_panic_asks_the_ships_in_its_reach_for_their_buffs_and_starts_when_they_are_granted() {
+    let (mut scene, t) = mining_rock(99_300_001);
+    let (ship_a, ship_b) = (scene.pilots[&A].ship.spec.ship_id, scene.pilots[&B].ship.spec.ship_id);
+    let asked = scene.activate(A, panic_effect(200_000.0), t);
+    let (cycle, recipients) = asked
+        .iter()
+        .find_map(|o| match o {
+            Out::ModuleWorkCycle { cycle_id, command: WORK_PANIC, recipients, .. } => {
+                Some((*cycle_id, recipients.clone()))
+            }
+            _ => None,
+        })
+        .expect("the P.A.N.I.C. asks the host for its fleet's buffs");
+    let mut expected = vec![ship_a, ship_b];
+    expected.sort_unstable();
+    assert_eq!(recipients, expected);
+    assert!(asked.iter().any(|o| matches!(o, Out::ModuleWorkCycle { command: WORK_PANIC, .. })), "{asked:?}");
+    assert!(
+        !scene.pilots[&A].modules.running.iter().any(|run| run.effect.module_id == MODULE),
+        "parked, not running"
+    );
+
+    scene.module_work_result(
+        A,
+        MODULE,
+        ModuleWorkAnswer { target_id: 0, cycle_id: cycle, accepted: true, reason: "", depleted: false },
+        t,
+    );
+    assert!(
+        scene.pilots[&A].modules.running.iter().any(|run| run.effect.module_id == MODULE),
+        "granted, it starts"
+    );
+}
+
+#[test]
+fn a_panic_reaches_only_the_ships_within_200_km() {
+    let (mut scene, t) = mining_rock(99_300_002);
+    let ship_a = scene.pilots[&A].ship.spec.ship_id;
+    scene.pilots.get_mut(&B).unwrap().ship.position.x += 300_000.0;
+    let asked = scene.activate(A, panic_effect(200_000.0), t);
+    let recipients = asked
+        .iter()
+        .find_map(|o| match o {
+            Out::ModuleWorkCycle { command: WORK_PANIC, recipients, .. } => Some(recipients.clone()),
+            _ => None,
+        })
+        .expect("the P.A.N.I.C. asks");
+    assert_eq!(recipients, vec![ship_a], "{asked:?}");
+}
+
+#[test]
+fn a_refused_panic_grant_ends_the_start_with_the_host_reason() {
+    let (mut scene, t) = mining_rock(99_300_003);
+    let asked = scene.activate(A, panic_effect(200_000.0), t);
+    let cycle = asked
+        .iter()
+        .find_map(|o| match o {
+            Out::ModuleWorkCycle { cycle_id, command: WORK_PANIC, .. } => Some(*cycle_id),
+            _ => None,
+        })
+        .expect("the P.A.N.I.C. asks");
+    let refused = scene.module_work_result(
+        A,
+        MODULE,
+        ModuleWorkAnswer {
+            target_id: 0,
+            cycle_id: cycle,
+            accepted: false,
+            reason: "NOT_CONTROLLED",
+            depleted: false,
+        },
+        t,
+    );
+    assert!(
+        matches!(refused.as_slice(), [Out::Refused { session: A, command: 17, reason: "NO_SHIP_IN_SPACE" }]),
+        "{refused:?}"
+    );
+    assert!(!scene.pilots[&A].modules.running.iter().any(|run| run.effect.module_id == MODULE));
 }

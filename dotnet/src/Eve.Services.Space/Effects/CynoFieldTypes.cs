@@ -16,6 +16,20 @@ internal static class CynoFieldTypes
     /// <summary>Cynosural Field (21094), Covert Cynosural Field I (28650) and Industrial Cynosural Field (52696): the fields the generators make.</summary>
     public static readonly IReadOnlyList<int> FieldTypes = [21094, 28650, 52696];
 
+    /// <summary>The group of the field generators (Cynosural Field Generator I 21096, Covert 28646, Industrial 52694).</summary>
+    public const int GeneratorGroup = 658;
+
+    /// <summary>The attribute of a field type's lifetime: explosionDelay (281), 600000 ms on all three types; the same rule the bombs use.</summary>
+    public const int Lifetime = 281;
+
+    /// <summary>The field a generator makes: the covert generator makes the covert field, the industrial one the industrial field, the others the field.</summary>
+    public static int FieldTypeOf(int generatorTypeId) => generatorTypeId switch
+    {
+        28646 => 28650,
+        52694 => 52696,
+        _ => 21094,
+    };
+
     /// <summary>A field type as the static data has it: its type, the group it is in and its radius in metres.</summary>
     public readonly record struct Field(int TypeId, int GroupId, double Radius);
 

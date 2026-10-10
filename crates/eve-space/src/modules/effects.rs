@@ -128,6 +128,15 @@ impl Scene {
                 };
                 self.release_deployable(session, effect, ball.clone(), role, *lifetime_ms, at)
             }
+            Some(Action::CynoField { ball, lifetime_ms }) if when == Applies::CycleEnd => self
+                .release_deployable(
+                    session,
+                    effect,
+                    ball.clone(),
+                    crate::deployable::Role::CynoField,
+                    *lifetime_ms,
+                    at,
+                ),
             Some(Action::Defender { missile, damage }) if when == Applies::CycleStart => {
                 self.defender_intercept(session, effect, missile, *damage, at)
             }
@@ -718,7 +727,10 @@ impl Scene {
             Some(numbers) => self.renumber(session, numbers, stamp),
             None => Vec::new(),
         };
-        actions.push(Self::fx_action(stamp, &id(ship_id), &run.effect, false));
+        // the beam stops on its beacon, if it has one, and the beacon goes after it
+        let beacon = self.beacon_of(run.effect.module_id);
+        let fx_target = if beacon > 0 { beacon } else { run.effect.target_id };
+        actions.push(Self::fx_action(stamp, &id(ship_id), &run.effect, false, fx_target));
         let update = self.tell_all(session, actions);
         if target_lost {
             out.extend(update);
@@ -729,6 +741,7 @@ impl Scene {
             out.push(off);
             out.extend(update);
         }
+        out.extend(self.take_down_beacon(run.effect.module_id, at));
         out.extend(self.jam_told(session, &run.effect, at, Jam::End));
         // a tractor beam that stops lets go of the wreck it pulled (another ship's pull on that wreck is left alone)
         if let Some(Action::Tractor { .. }) = run.effect.action {

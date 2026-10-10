@@ -27,6 +27,16 @@ public class CodecTests
     }
 
     [Fact]
+    public void A_python_set_is_a_set_object_ex1_and_round_trips()
+    {
+        var set = PyValue.PythonSet([new PyInt(3), new PyInt(7)]);
+        var bytes = MarshalCodec.Encode(set);
+
+        Assert.Equal(0x22, bytes[5]);
+        Assert.Equal(set, MarshalCodec.Decode(bytes));
+    }
+
+    [Fact]
     public void A_char_string_of_any_byte_decodes_to_that_byte()
     {
         for (var b = 0; b < 256; b++)

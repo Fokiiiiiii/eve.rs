@@ -61,9 +61,14 @@ public enum ModifierFunc
     OwnerRequiredSkill,
 }
 
-/// <summary>One change an effect makes: the attribute of a target modified by the value of an attribute of the source.</summary>
+/// <summary>
+/// One change an effect makes: the attribute of a target modified by the value of an attribute of the source. <paramref name="Literal"/> is the value the
+/// modifier applies when it carries its own (a timed buff's value, <see cref="BuffCollection"/>), used instead of <paramref name="ModifyingAttributeId"/>;
+/// null for every modifier of the static data.
+/// </summary>
 public sealed record Modifier(
-    ModifierFunc Func, string? Domain, Operation Operation, int ModifiedAttributeId, int ModifyingAttributeId, int GroupId = 0, int SkillTypeId = 0)
+    ModifierFunc Func, string? Domain, Operation Operation, int ModifiedAttributeId, int ModifyingAttributeId, int GroupId = 0, int SkillTypeId = 0,
+    double? Literal = null)
 {
     /// <summary>As the skill: the modifier reaches what needs the skill that carries the effect (one effect serves every skill with a bonus of its kind).</summary>
     public const int OwnSkill = -1;
@@ -87,6 +92,9 @@ public sealed record EffectDef(int Id, string Name, int Category, IReadOnlyList<
 
     /// <summary>The attribute that holds how long a cycle of the effect takes (0 when it has none).</summary>
     public int DurationAttributeId { get; init; }
+
+    /// <summary>The attribute that holds the falloff of the effect's range (0 when it has none: a hard cutoff at the range).</summary>
+    public int FalloffAttributeId { get; init; }
 
     /// <summary>The attribute that holds the capacitor a cycle takes (0 when it needs none).</summary>
     public int DischargeAttributeId { get; init; }

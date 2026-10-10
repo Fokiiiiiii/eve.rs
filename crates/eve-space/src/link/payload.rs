@@ -245,6 +245,7 @@ impl Message {
                 waste_roll,
                 rounding_roll,
                 crit_roll,
+                recipients,
             } => {
                 out.extend_from_slice(&session_id.to_le_bytes());
                 out.extend_from_slice(&character_id.to_le_bytes());
@@ -266,6 +267,10 @@ impl Message {
                     crit_roll,
                 ] {
                     out.extend_from_slice(&number.to_le_bytes());
+                }
+                out.extend_from_slice(&(recipients.len() as u32).to_le_bytes());
+                for ship in recipients {
+                    out.extend_from_slice(&ship.to_le_bytes());
                 }
             }
             Self::ModuleWorkResult {
@@ -318,6 +323,30 @@ impl Message {
                 out.extend_from_slice(&first.to_le_bytes());
                 out.extend_from_slice(&second.to_le_bytes());
             }
+            Self::BuffState { session_id, ship_id, entries } => {
+                out.extend_from_slice(&session_id.to_le_bytes());
+                out.extend_from_slice(&ship_id.to_le_bytes());
+                out.extend_from_slice(&(entries.len() as u32).to_le_bytes());
+                for entry in entries {
+                    out.extend_from_slice(&entry.collection_id.to_le_bytes());
+                    out.extend_from_slice(&entry.value.to_le_bytes());
+                    out.extend_from_slice(&entry.remaining_ms.to_le_bytes());
+                }
+            }
+            Self::UpdateEffect { session_id, module_id, duration_ms, capacitor_need, turret, changes } => {
+                out.extend_from_slice(&session_id.to_le_bytes());
+                out.extend_from_slice(&module_id.to_le_bytes());
+                out.extend_from_slice(&duration_ms.to_le_bytes());
+                out.extend_from_slice(&capacitor_need.to_le_bytes());
+                match turret {
+                    Some(turret) => {
+                        out.push(1);
+                        put_turret(&mut out, turret);
+                    }
+                    None => out.push(0),
+                }
+                put_changes(&mut out, changes);
+            }
             Self::ChargeAdjusted { request_id, running, before, after } => {
                 out.extend_from_slice(&request_id.to_le_bytes());
                 out.push(u8::from(*running));
@@ -342,6 +371,35 @@ impl Message {
                 put_credit(&mut out, &placement.credit);
                 out.push(u8::from(placement.is_empty));
             }
+            Self::Deployed(placement) => {
+                out.extend_from_slice(&placement.solar_system_id.to_le_bytes());
+                out.extend_from_slice(&placement.deployable_id.to_le_bytes());
+                put_text(&mut out, &placement.name);
+                out.extend_from_slice(&placement.type_id.to_le_bytes());
+                out.extend_from_slice(&placement.group_id.to_le_bytes());
+                put_vector(&mut out, &placement.position);
+                out.extend_from_slice(&placement.radius.to_le_bytes());
+                out.extend_from_slice(&placement.owner_id.to_le_bytes());
+                out.extend_from_slice(&placement.corporation_id.to_le_bytes());
+                out.extend_from_slice(&placement.alliance_id.to_le_bytes());
+                out.extend_from_slice(&placement.ship_id.to_le_bytes());
+                out.extend_from_slice(&placement.lifetime_ms.to_le_bytes());
+            }
+            Self::RemoveDeployed { deployable_id } => out.extend_from_slice(&deployable_id.to_le_bytes()),
+            Self::PlaceProbe(probe) => {
+                out.extend_from_slice(&probe.probe_id.to_le_bytes());
+                out.extend_from_slice(&probe.solar_system_id.to_le_bytes());
+                put_text(&mut out, &probe.name);
+                out.extend_from_slice(&probe.type_id.to_le_bytes());
+                out.extend_from_slice(&probe.group_id.to_le_bytes());
+                put_vector(&mut out, &probe.position);
+                out.extend_from_slice(&probe.radius.to_le_bytes());
+                out.extend_from_slice(&probe.owner_id.to_le_bytes());
+                out.extend_from_slice(&probe.corporation_id.to_le_bytes());
+                out.extend_from_slice(&probe.alliance_id.to_le_bytes());
+                out.extend_from_slice(&probe.ship_id.to_le_bytes());
+            }
+            Self::RemoveProbe { probe_id } => out.extend_from_slice(&probe_id.to_le_bytes()),
             Self::PlaceAsteroid(asteroid) => {
                 out.extend_from_slice(&asteroid.solar_system_id.to_le_bytes());
                 out.extend_from_slice(&asteroid.asteroid_id.to_le_bytes());
@@ -515,6 +573,15 @@ impl Message {
             Self::FighterLanded { session_id, fighter_id } => {
                 out.extend_from_slice(&session_id.to_le_bytes());
                 out.extend_from_slice(&fighter_id.to_le_bytes());
+            }
+            Self::EcmBurst { session_id, ship_id, reached } => {
+                out.extend_from_slice(&session_id.to_le_bytes());
+                out.extend_from_slice(&ship_id.to_le_bytes());
+                out.extend_from_slice(&(reached.len() as u32).to_le_bytes());
+                for (ship, jammed) in reached {
+                    out.extend_from_slice(&ship.to_le_bytes());
+                    out.push(u8::from(*jammed));
+                }
             }
             Self::FighterReleased { session_id, fighter_id, position } => {
                 out.extend_from_slice(&session_id.to_le_bytes());

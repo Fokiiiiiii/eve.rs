@@ -67,6 +67,20 @@ public static partial class SimCodec
         public const byte FighterReleased = 58;
         public const byte FighterGotoPoint = 59;
         public const byte FighterSize = 60;
+
+/// <summary>Protocol 38 (FP-C4b, FP-C5): a refresh of a running effect (host to simulation).</summary>
+public const byte UpdateEffect = 61;
+
+        /// <summary>The timed buffs of a ship of this session (protocol 43, track C6), host to simulation.</summary>
+        public const byte BuffState = 62;
+        public const byte Deployed = 63;
+        public const byte RemoveDeployed = 64;
+        public const byte PlaceProbe = 65;
+        public const byte RemoveProbe = 66;
+
+
+/// <summary>Protocol 46 (FP-C7): an ECM burst reached ships; the ship that ran it and each ship reached, with whether its roll jammed it (simulation to host).</summary>
+public const byte EcmBurst = 67;
     }
 
     private ref struct Reader(ReadOnlyMemory<byte> data)

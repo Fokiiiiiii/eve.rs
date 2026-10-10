@@ -337,6 +337,68 @@ impl Message {
                 Message::ChangeWreck { session_id, wreck_id, is_empty }
             }
             kind::REMOVE_WRECK => Message::RemoveWreck { wreck_id: r.i64()?, effect: r.i32()? },
+            kind::DEPLOYED => {
+                let solar_system_id = r.i32()?;
+                let deployable_id = r.i64()?;
+                let name = r.text()?;
+                let type_id = r.i32()?;
+                let group_id = r.i32()?;
+                let position = read_vector(&mut r)?;
+                let radius = r.f64()?;
+                let owner_id = r.i64()?;
+                let corporation_id = r.i32()?;
+                let alliance_id = r.i32()?;
+                let ship_id = r.i64()?;
+                let lifetime_ms = r.f64()?;
+                if !(lifetime_ms.is_finite() && lifetime_ms >= 0.0 && radius.is_finite() && radius >= 0.0) {
+                    return Err(DecodeError::BadValue("deployed"));
+                }
+                Message::Deployed(Box::new(DeployedPlacement {
+                    solar_system_id,
+                    deployable_id,
+                    name,
+                    type_id,
+                    group_id,
+                    position,
+                    radius,
+                    owner_id,
+                    corporation_id,
+                    alliance_id,
+                    ship_id,
+                    lifetime_ms,
+                }))
+            }
+            kind::REMOVE_DEPLOYED => Message::RemoveDeployed { deployable_id: r.i64()? },
+            kind::PLACE_PROBE => {
+                let probe_id = r.i64()?;
+                let solar_system_id = r.i32()?;
+                let name = r.text()?;
+                let type_id = r.i32()?;
+                let group_id = r.i32()?;
+                let position = read_vector(&mut r)?;
+                let radius = r.f64()?;
+                let owner_id = r.i64()?;
+                let corporation_id = r.i32()?;
+                let alliance_id = r.i32()?;
+                let ship_id = r.i64()?;
+                if !(radius.is_finite() && radius >= 0.0) {
+                    return Err(DecodeError::BadValue("probe"));
+                }
+                Message::PlaceProbe(Box::new(ProbePlacement {
+                    probe_id,
+                    solar_system_id,
+                    name,
+                    type_id,
+                    group_id,
+                    position,
+                    radius,
+                    owner_id,
+                    corporation_id,
+                    alliance_id,
+                    ship_id,
+                }))
+            }
+            kind::REMOVE_PROBE => Message::RemoveProbe { probe_id: r.i64()? },
             kind::DRONE_WORK_RESULT => {
                 let session_id = r.u64()?;
                 let drone_id = r.i64()?;
@@ -415,6 +477,43 @@ impl Message {
                     _ => return Err(DecodeError::BadValue("charge op")),
                 };
                 Message::AdjustCharge { request_id, session_id, module_id, charge_type, op }
+            }
+            kind::BUFF_STATE => {
+                let session_id = r.u64()?;
+                let ship_id = r.i64()?;
+                let count = r.u32()? as usize;
+                // an entry takes 20 bytes, so a count the frame cannot hold is refused before anything is allocated for it
+                if count > r.data.len() / 20 {
+                    return Err(DecodeError::Truncated);
+                }
+                let mut entries = Vec::with_capacity(count);
+                for _ in 0..count {
+                    let (collection_id, value, remaining_ms) = (r.i32()?, r.f64()?, r.f64()?);
+                    if !value.is_finite() || !remaining_ms.is_finite() || remaining_ms < 0.0 {
+                        return Err(DecodeError::BadValue("buff state"));
+                    }
+                    entries.push(BuffEntry { collection_id, value, remaining_ms });
+                }
+                Message::BuffState { session_id, ship_id, entries }
+            }
+            kind::UPDATE_EFFECT => {
+                let session_id = r.u64()?;
+                let module_id = r.i64()?;
+                let (duration_ms, capacitor_need) = (r.f64()?, r.f64()?);
+                if !duration_ms.is_finite()
+                    || duration_ms <= 0.0
+                    || !capacitor_need.is_finite()
+                    || capacitor_need < 0.0
+                {
+                    return Err(DecodeError::BadValue("update effect"));
+                }
+                let turret = match r.u8()? {
+                    0 => None,
+                    1 => Some(Box::new(read_turret(&mut r)?)),
+                    _ => return Err(DecodeError::BadValue("update turret")),
+                };
+                let changes = read_changes(&mut r)?;
+                Message::UpdateEffect { session_id, module_id, duration_ms, capacitor_need, turret, changes }
             }
             kind::CHARGE_ADJUSTED => {
                 let request_id = r.u64()?;
@@ -666,10 +765,11 @@ impl Message {
                 let waste_roll = r.f64()?;
                 let rounding_roll = r.f64()?;
                 let crit_roll = r.f64()?;
+                let recipients = read_recipients(&mut r)?;
                 let numbers = [mining_amount_m3, waste_multiplier, crit_multiplier, access_difficulty_bonus];
                 // probabilities are at most one, the rolls below one, and every number finite and not negative; a mining cycle mines something
                 if cycle_id == 0
-                    || !matches!(command, 7..=9)
+                    || !matches!(command, 7..=13)
                     || numbers
                         .iter()
                         .chain([
@@ -684,13 +784,14 @@ impl Message {
                     || crit_probability > 1.0
                     || [waste_roll, rounding_roll, crit_roll].iter().any(|roll| *roll >= 1.0)
                     || (command == 7 && mining_amount_m3 <= 0.0)
-                    || (command == 9
+                    || (matches!(command, 9..=13)
                         && (mining_amount_m3 != 0.0
                             || waste_multiplier != 0.0
                             || waste_probability != 0.0
                             || crit_probability != 0.0
                             || crit_multiplier != 0.0
                             || access_difficulty_bonus != 0.0))
+                    || (!matches!(command, 12 | 13) && !recipients.is_empty())
                 {
                     return Err(DecodeError::BadValue("module work cycle"));
                 }
@@ -712,6 +813,7 @@ impl Message {
                     waste_roll,
                     rounding_roll,
                     crit_roll,
+                    recipients,
                 }
             }
             kind::MODULE_WORK_RESULT => {
@@ -755,6 +857,24 @@ impl Message {
                     return Err(DecodeError::BadValue("module ended reason"));
                 }
                 Message::ModuleEnded { session_id, module_id, reason }
+            }
+            kind::ECM_BURST => {
+                let (session_id, ship_id) = (r.u64()?, r.i64()?);
+                let count = r.u32()? as usize;
+                if count > r.data.len() / 9 {
+                    return Err(DecodeError::Truncated);
+                }
+                let mut reached = Vec::with_capacity(count);
+                for _ in 0..count {
+                    let ship = r.i64()?;
+                    let jammed = match r.u8()? {
+                        0 => false,
+                        1 => true,
+                        _ => return Err(DecodeError::BadValue("ecm burst jam flag")),
+                    };
+                    reached.push((ship, jammed));
+                }
+                Message::EcmBurst { session_id, ship_id, reached }
             }
             kind::REMOTE_REPAIR_CYCLE => {
                 let session_id = r.u64()?;

@@ -185,6 +185,8 @@ pub enum Out {
     Arrived { session: SessionId, belt_id: i64, position: Vec3 },
     /// The answer to a question about the ship's condition.
     Condition { session: SessionId, command: u8, condition: Condition },
+    /// A cynosural field was lit by the ship of `session`: the host keeps its record (`Message::Deployed`).
+    DeployedLit { session: SessionId, placement: Box<crate::link::DeployedPlacement> },
     /// A command the scene cannot do.
     Refused { session: SessionId, command: u8, reason: &'static str },
     /// The answer to a targeting order: whether a lock is going, and the ships and bodies locked (or, to `GetTargeters`, the ships that lock this one).
@@ -222,6 +224,8 @@ pub enum Out {
     FighterResults { session: SessionId, command: u8, results: Vec<(i64, Option<&'static str>)> },
     /// A squadron out in space lost members: its size now (the squadron is never told a size of zero, its destruction is told instead).
     FighterSize { session: SessionId, fighter_id: i64, size: i32 },
+    /// An ECM burst reached the ships about it (not cloaked ones): the ship that runs it, and each ship reached with whether its roll jammed it.
+    EcmBurst { session: SessionId, ship_id: i64, reached: Vec<(i64, bool)> },
     /// The answer to an order to drones: for each drone `None` when it took the order, the reason when it did not.
     DroneResults { session: SessionId, command: u8, results: Vec<(i64, Option<&'static str>)> },
     /// A completed drone work cycle waiting for authoritative inventory/cargo settlement by the host.
@@ -273,6 +277,8 @@ pub enum Out {
         waste_roll: f64,
         rounding_roll: f64,
         crit_roll: f64,
+        /// The ships a command burst reaches (a burst only; empty for every other command), as the scene measures them.
+        recipients: Vec<i64>,
     },
     /// An effect of a module ended (once per end): the host clears it from the ship it sends (`reason` is `Ending::wire_reason`, FP-C1).
     ModuleEnded { session: SessionId, module_id: i64, reason: u8 },
@@ -316,7 +322,9 @@ impl Out {
             | Out::FighterReleased { session, .. }
             | Out::FighterResults { session, .. }
             | Out::FighterSize { session, .. }
+            | Out::EcmBurst { session, .. }
             | Out::TargetRefused { session, .. }
+            | Out::DeployedLit { session, .. }
             | Out::Position { session, .. } => *session,
         }
     }
@@ -569,6 +577,9 @@ pub struct Scene {
     pub(crate) missiles: BTreeMap<i64, crate::missile_entity::MissileEntity>,
     /// How many missiles have been fired in this scene (their ids are numbered from it).
     pub(crate) missile_sequence: u64,
+    /// The damage-over-time applications (breacher pods) on each ship, by ship id (`dot_weapons`).
+    pub(crate) dots: BTreeMap<i64, crate::dot_weapons::Target>,
+    pub(crate) dot_sequence: u64,
     /// The probes and bombs in space, by id (`crate::deployable`), and how many have been released in this scene.
     pub(crate) deployables: BTreeMap<i64, crate::deployable::Deployable>,
     pub(crate) deployable_sequence: u64,
@@ -625,6 +636,8 @@ impl Scene {
             aggressions: Vec::new(),
             missiles: BTreeMap::new(),
             missile_sequence: 0,
+            dots: BTreeMap::new(),
+            dot_sequence: 0,
             deployables: BTreeMap::new(),
             deployable_sequence: 0,
             drones: BTreeMap::new(),

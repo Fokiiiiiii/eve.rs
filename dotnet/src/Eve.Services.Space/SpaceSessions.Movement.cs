@@ -26,6 +26,11 @@ public sealed partial class SpaceSessions
         {
             return None;
         }
+        // a ship that its buffs keep from docking (disallowDocking 2354 on the ship, a fleet grant of the invulnerability core); the wording is the module's (see below)
+        if (await ShipAttributeAsync(pilot, Eve.Services.Space.Effects.ModuleAttributes.DisallowDocking, cancellationToken))
+        {
+            throw Notify("You cannot dock while a module that prevents docking is active.");
+        }
         var policy = await MovementPolicyAsync(pilot, PolicyAction.Dock, cancellationToken);
         if (!policy.Allowed)
         {
@@ -125,6 +130,11 @@ public sealed partial class SpaceSessions
         {
             return None;
         }
+        // a ship that its buffs scramble (warpScrambleStatus 104, the warp penalty of a fleet grant) cannot warp: the same refusal as a scrambler's
+        if (await ShipAttributeAsync(pilot, Eve.Services.Space.Effects.ModuleAttributes.WarpScrambleStatus, cancellationToken))
+        {
+            throw Notify("You cannot warp because you are warp scrambled.");
+        }
         var policy = await MovementPolicyAsync(pilot, PolicyAction.Warp, cancellationToken);
         if (!policy.Allowed)
         {
@@ -169,6 +179,10 @@ public sealed partial class SpaceSessions
     }
 
 
+    /// <summary>Whether the pilot's ship carries an attribute of its own above zero, as it flies (its buffs; a fleet grant sets the ship's attributes).</summary>
+    private async Task<bool> ShipAttributeAsync(Pilot pilot, int attributeId, CancellationToken cancellationToken) =>
+        await FlownShipAsync(pilot, cancellationToken) is { } flown && flown.World.Get(flown.Ship.Id, attributeId) > 0;
+
     private async Task<PolicyDecision> MovementPolicyAsync(Pilot pilot, PolicyAction action, CancellationToken cancellationToken)
     {
         var securityClass = _systems.Get(pilot.SolarSystemId) is { } system
@@ -205,6 +219,11 @@ public sealed partial class SpaceSessions
         if (shipId > 0 && shipId != pilot.ShipId)
         {
             throw JumpRefused("SHIP_ID_MISMATCH");
+        }
+        // a ship that its buffs keep from jumping (disallowDriveJumping 2453, a fleet grant of the invulnerability core); the client's wording for it is not in the tables read
+        if (await ShipAttributeAsync(pilot, Eve.Services.Space.Effects.ModuleAttributes.DisallowDriveJumping, cancellationToken))
+        {
+            throw Notify("You cannot jump at this time.");
         }
         var policy = await MovementPolicyAsync(pilot, PolicyAction.GateJump, cancellationToken);
         if (!policy.Allowed)

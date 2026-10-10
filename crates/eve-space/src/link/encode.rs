@@ -174,7 +174,7 @@ pub(super) fn put_credit(out: &mut Vec<u8>, credit: &Credit) {
 /// the tracking and the signature resolution, then the charge it fires (a flag byte, and when set the type, the flag it sits at, the rounds left and the rounds a cycle takes), then the missile it
 /// flies (a flag byte, and when set the type of the missile, its speed, its flight time in milliseconds, the explosion radius and velocity and the damage reduction factor and sensitivity).
 /// What a launcher flies: the charge's type and group and name, then the ball's radius, mass and agility, the hit points, the speed, the flight time, and the
-/// explosion's radius, velocity, damage reduction factor and sensitivity (`decode::read_missile` reads them in this order).
+/// explosion's radius, velocity, damage reduction factor and sensitivity, then the damage-over-time flag and its three numbers (`decode::read_missile` reads them in this order).
 pub(super) fn put_missile(out: &mut Vec<u8>, missile: &Missile) {
     out.extend_from_slice(&missile.charge_type_id.to_le_bytes());
     out.extend_from_slice(&missile.group_id.to_le_bytes());
@@ -192,6 +192,16 @@ pub(super) fn put_missile(out: &mut Vec<u8>, missile: &Missile) {
         missile.damage_reduction_sensitivity,
     ] {
         out.extend_from_slice(&number.to_le_bytes());
+    }
+    // the damage-over-time of a breacher pod: a flag, then its duration, its cap per tick and its percentage per tick (protocol 42)
+    match missile.dot {
+        None => out.push(0),
+        Some(dot) => {
+            out.push(1);
+            for number in [dot.duration_ms, dot.max_damage_per_tick, dot.max_hp_percent_per_tick] {
+                out.extend_from_slice(&number.to_le_bytes());
+            }
+        }
     }
 }
 
@@ -214,6 +224,7 @@ pub(super) fn put_turret(out: &mut Vec<u8>, turret: &Turret) {
             out.extend_from_slice(&charge.flag.to_le_bytes());
             out.extend_from_slice(&charge.rounds.to_le_bytes());
             out.extend_from_slice(&charge.per_cycle.to_le_bytes());
+            out.push(u8::from(charge.reloads));
         }
     }
     match &turret.missile {
@@ -295,6 +306,9 @@ pub(super) fn put_effect(out: &mut Vec<u8>, effect: &Effect) {
                 | (u8::from(rules.provides_industrial_core) << 2),
         );
         out.extend_from_slice(&rules.reactivation_delay_ms.to_le_bytes());
+        // the speed limits (protocol 38, WP19): the highest and the lowest speed a module starts at (0 for none)
+        out.extend_from_slice(&rules.max_velocity_limit.to_le_bytes());
+        out.extend_from_slice(&rules.min_velocity_limit.to_le_bytes());
     }
 }
 
@@ -329,6 +343,19 @@ pub(super) fn write_strike(out: &mut Vec<u8>, strike: &Strike) {
         Some(end) => {
             out.push(1);
             for component in end {
+                out.extend_from_slice(&component.to_le_bytes());
+            }
+        }
+        None => {
+            out.push(0);
+            out.extend_from_slice(&[0u8; 24]);
+        }
+    }
+    // the beacon: a flag, then its offset from the firing ship (zeros without a beacon)
+    match strike.beacon {
+        Some(offset) => {
+            out.push(1);
+            for component in offset {
                 out.extend_from_slice(&component.to_le_bytes());
             }
         }
@@ -442,6 +469,19 @@ pub(super) fn put_action(out: &mut Vec<u8>, action: &Action) {
                 out.extend_from_slice(&number.to_le_bytes());
             }
         }
+        Action::Panic { range_meters } => {
+            out.push(29);
+            out.extend_from_slice(&range_meters.to_le_bytes());
+        }
+        Action::CommandBurst { range_meters } => {
+            out.push(28);
+            out.extend_from_slice(&range_meters.to_le_bytes());
+        }
+        Action::CynoField { ball, lifetime_ms } => {
+            out.push(27);
+            put_deployable(out, ball);
+            out.extend_from_slice(&lifetime_ms.to_le_bytes());
+        }
         Action::MicroJumpDrive { distance_meters, cooldown_ms } => {
             out.push(6);
             out.extend_from_slice(&distance_meters.to_le_bytes());
@@ -506,6 +546,12 @@ pub(super) fn put_action(out: &mut Vec<u8>, action: &Action) {
             ] {
                 out.extend_from_slice(&number.to_le_bytes());
             }
+        }
+        Action::Scan { cargo, reach } => {
+            out.push(26);
+            out.push(u8::from(!*cargo));
+            out.extend_from_slice(&reach.optimal.to_le_bytes());
+            out.extend_from_slice(&reach.falloff.to_le_bytes());
         }
         Action::Mining {
             family,

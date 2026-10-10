@@ -72,6 +72,7 @@ impl Sim {
             Out::Docked { session, station_id, condition } => {
                 Message::Docked { session_id: session, station_id, condition }
             }
+            Out::DeployedLit { placement, .. } => Message::Deployed(placement),
             Out::Arrived { session, belt_id, position } => Message::Arrived {
                 session_id: session,
                 belt_id,
@@ -136,6 +137,9 @@ impl Sim {
                 fighter_id,
                 position: [position.x, position.y, position.z],
             },
+            Out::EcmBurst { session, ship_id, reached } => {
+                Message::EcmBurst { session_id: session, ship_id, reached }
+            }
             Out::FighterSize { session, fighter_id, size } => {
                 Message::FighterSize { session_id: session, fighter_id, size }
             }
@@ -227,6 +231,7 @@ impl Sim {
                 waste_roll,
                 rounding_roll,
                 crit_roll,
+                recipients,
             } => Message::ModuleWorkCycle {
                 session_id: session,
                 character_id,
@@ -245,6 +250,7 @@ impl Sim {
                 waste_roll,
                 rounding_roll,
                 crit_roll,
+                recipients,
             },
             Out::ModuleEnded { session, module_id, reason } => {
                 Message::ModuleEnded { session_id: session, module_id, reason }
@@ -281,6 +287,8 @@ impl Sim {
             | Message::ModuleWorkResult { .. }
             | Message::RemoteRepairCycleResult { .. }
             | Message::AdjustCharge { .. }
+            | Message::UpdateEffect { .. }
+            | Message::BuffState { .. }
             | Message::ShipSpec { .. } => self.handle_fitting(message, now),
             Message::Command { .. } => self.handle_command(message, now),
             Message::LaunchDrone(..)
@@ -293,7 +301,11 @@ impl Sim {
             | Message::PlaceWreck(..)
             | Message::PlaceContainer(..)
             | Message::ChangeWreck { .. }
-            | Message::RemoveWreck { .. } => self.handle_world(message, now),
+            | Message::RemoveWreck { .. }
+            | Message::Deployed(..)
+            | Message::RemoveDeployed { .. }
+            | Message::PlaceProbe(..)
+            | Message::RemoveProbe { .. } => self.handle_world(message, now),
             other => Err(ProtocolError(format!(
                 "a message of kind {} is for the host, not the simulation",
                 other.kind()
@@ -503,7 +515,9 @@ impl Sim {
                 .unwrap_or_default(),
             Message::AdjustCharge { request_id, session_id, module_id, charge_type, op } => {
                 match self.scene_of(session_id) {
-                    Some(scene) => scene.adjust_charge(request_id, session_id, module_id, charge_type, op),
+                    Some(scene) => {
+                        scene.adjust_charge(request_id, session_id, module_id, charge_type, op, now)
+                    }
                     // a session that is not in space has no gun that runs: the host has its rounds
                     None => vec![Out::ChargeAdjusted {
                         session: session_id,
@@ -514,6 +528,27 @@ impl Sim {
                     }],
                 }
             }
+            Message::UpdateEffect { session_id, module_id, duration_ms, capacitor_need, turret, changes } => {
+                match self.scene_of(session_id) {
+                    Some(scene) => scene.update_effect(
+                        session_id,
+                        module_id,
+                        crate::modules::PendingUpdate {
+                            duration_ms,
+                            capacitor_need,
+                            turret: turret.map(|t| *t),
+                            changes,
+                        },
+                    ),
+                    // a session that is not in space has no effect that runs to refresh
+                    None => Vec::new(),
+                }
+            }
+            Message::BuffState { session_id, ship_id, entries } => match self.scene_of(session_id) {
+                Some(scene) => scene.set_buffs(session_id, ship_id, entries, now),
+                // a session that is not in space has no ship whose buffs to tell
+                None => Vec::new(),
+            },
             Message::ShipSpec { session_id, ship } => {
                 self.scene_of(session_id).map(|s| s.respec(session_id, *ship, now)).unwrap_or_default()
             }
@@ -811,6 +846,32 @@ impl Sim {
                 }
                 None => Vec::new(),
             },
+            Message::Deployed(placement) => {
+                let placement = *placement;
+                match self.scenes.get_mut(&placement.solar_system_id) {
+                    Some(scene) => scene.restore_field(placement, now),
+                    None => Vec::new(),
+                }
+            }
+            Message::PlaceProbe(probe) => {
+                let probe = *probe;
+                match self.scenes.get_mut(&probe.solar_system_id) {
+                    Some(scene) => scene.place_probe(probe, now),
+                    None => Vec::new(),
+                }
+            }
+            Message::RemoveProbe { probe_id } => self
+                .scenes
+                .values_mut()
+                .find(|scene| scene.deployables.contains_key(&probe_id))
+                .map(|scene| scene.remove_probe(probe_id, now))
+                .unwrap_or_default(),
+            Message::RemoveDeployed { deployable_id } => self
+                .scenes
+                .values_mut()
+                .find(|scene| scene.deployables.contains_key(&deployable_id))
+                .map(|scene| scene.remove_field(deployable_id, now))
+                .unwrap_or_default(),
             Message::PlaceContainer(can) => {
                 let session_id = can.session_id;
                 match self.scene_of(session_id) {

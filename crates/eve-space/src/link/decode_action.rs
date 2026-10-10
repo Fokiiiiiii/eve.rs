@@ -186,6 +186,30 @@ pub(super) fn read_action(reader: &mut Reader) -> Result<Action, DecodeError> {
             }
             Ok(Action::Bomb { ball, kind, lifetime_ms, blast_radius, damage, ecm, neutralize })
         }
+        29 => {
+            // the Nexus invulnerability core (protocol 43): the reach of its fleet effect in metres
+            let range_meters = reader.f64()?;
+            if !range_meters.is_finite() || range_meters < 0.0 {
+                return Err(DecodeError::BadValue("panic action"));
+            }
+            Ok(Action::Panic { range_meters })
+        }
+        28 => {
+            // a command burst (protocol 43): the reach in metres; its buffs are the host's, read from the charge when it settles
+            let range_meters = reader.f64()?;
+            if !range_meters.is_finite() || range_meters < 0.0 {
+                return Err(DecodeError::BadValue("command burst action"));
+            }
+            Ok(Action::CommandBurst { range_meters })
+        }
+        27 => {
+            let ball = read_deployable(reader)?;
+            let lifetime_ms = reader.f64()?;
+            if !(lifetime_ms.is_finite() && lifetime_ms > 0.0) {
+                return Err(DecodeError::BadValue("cynosural field"));
+            }
+            Ok(Action::CynoField { ball, lifetime_ms })
+        }
         6 => {
             let distance_meters = reader.f64()?;
             let cooldown_ms = reader.i64()?;
@@ -272,6 +296,20 @@ pub(super) fn read_action(reader: &mut Reader) -> Result<Action, DecodeError> {
                 return Err(DecodeError::BadValue("missile"));
             }
             Ok(Action::Missile { damage, reach, blast })
+        }
+        26 => {
+            // a scanner (protocol 40): 0 cargo, 1 ship; the scan's optimal range and its falloff (none for a cargo scan), in metres
+            let cargo = match reader.u8()? {
+                0 => true,
+                1 => false,
+                _ => return Err(DecodeError::BadValue("scan kind")),
+            };
+            let optimal = reader.f64()?;
+            let falloff = reader.f64()?;
+            if !optimal.is_finite() || optimal <= 0.0 || !falloff.is_finite() || falloff < 0.0 {
+                return Err(DecodeError::BadValue("scan action"));
+            }
+            Ok(Action::Scan { cargo, reach: Reach { optimal, falloff } })
         }
         7 => {
             let family = match reader.u8()? {

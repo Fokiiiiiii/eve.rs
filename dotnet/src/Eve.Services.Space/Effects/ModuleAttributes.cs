@@ -12,9 +12,14 @@ internal static class ModuleAttributes
     public const int MassAddition = 796;
 
     public const int CapacitorNeed = 6;
+public const int CapacitorCapacity = 482;
     public const int Speed = 51;
     public const int MaxRange = 54;
     public const int DamageMultiplier = 64;
+
+/// <summary>reloadTime (1795): the time a gun takes to load from its hold; a gun whose module has one reloads from the hold when its rounds run out (FP-C8).</summary>
+public const int ReloadTime = 1795;
+
     public const int EmDamage = 114;
     public const int ExplosiveDamage = 116;
     public const int KineticDamage = 117;
@@ -140,6 +145,9 @@ internal static class ModuleAttributes
     public const int WarpBubbleImmune = 1538;
     public const int SiegeModeWarpStatus = 852;
     public const int DisallowDocking = 2354;
+
+    /// <summary>disallowDriveJumping (2453): a ship that carries it cannot jump through a gate (the fleet grant of the invulnerability core sets it).</summary>
+    public const int DisallowDriveJumping = 2453;
     public const int DisallowTethering = 2343;
     public const int DisallowEarlyDeactivation = 906;
     public const int DisallowActivateOnWarp = 1245;

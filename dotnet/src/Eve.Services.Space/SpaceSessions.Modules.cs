@@ -19,6 +19,12 @@ namespace Eve.Services.Space;
 public sealed partial class SpaceSessions
 {
     /// <summary>
+    /// Whether a character is in a fleet, as the host's fleet store has it (the cynosural field generator's rule). Null when the host has no fleets, which
+    /// refuses the lighting: no fleet is assumed.
+    /// </summary>
+    public Func<long, CancellationToken, Task<bool>>? IsInFleetAsync { get; set; }
+
+    /// <summary>
     /// An order about the ship's targets. The simulation keeps the locks (a lock takes time, and ends when either ship warps or goes); this asks and
     /// hears back. A lock the simulation accepts ends the undocking protection, and the client is told once more that it is over, as the reference
     /// does after every lock it accepts. One order of a pilot is asked at a time (the answers are matched by what was asked).
@@ -109,6 +115,21 @@ public sealed partial class SpaceSessions
             && ModuleRestrictions.Check(Security.ClassFromLevel(place.Security), attribute => snapshot.World.Get(moduleId, attribute)) is { } forbidden)
         {
             throw MachoErrors.ThrowUserError(forbidden);
+        }
+        // a cynosural field generator is lit by a fleet member and never in high-security space (EVE University wiki, Cynosural Field Generator: the
+        // generator does not carry attribute 1970, so the rule is the wiki's; EveJS activationSpaceRestrictions.js says the same)
+        if (snapshot.Fitted.FirstOrDefault(m => m.Id == moduleId) is { } cynoModule
+            && _statics.Type(cynoModule.TypeId)?.GroupId == Eve.Services.Space.Effects.CynoFieldTypes.GeneratorGroup)
+        {
+            // the fleet is asked first: the order of the two refusals is the host's choice (EveJS checks the security first); with the fleet first both are reachable
+            if (IsInFleetAsync is not { } inFleet || !await inFleet(pilot.CharacterId, cancellationToken).ConfigureAwait(false))
+            {
+                return ModuleResult.Refusal("CYNO_NOT_IN_FLEET", cynoModule.TypeId, _statics.Type(cynoModule.TypeId)?.Name ?? "");
+            }
+            if (_systems.Get(pilot.SolarSystemId) is { } cynoPlace && Security.IsHighSecOrHigher(Security.ClassFromLevel(cynoPlace.Security)))
+            {
+                throw MachoErrors.ThrowUserError(ModuleRestrictions.CantInHighSecSpace);
+            }
         }
         // a module that may not be used on warp (disallowActivateOnWarp) is refused while the ship aligns to warp or is in it: the host's warp state
         if (snapshot.Fitted.FirstOrDefault(m => m.Id == moduleId) is { } warpModule
@@ -262,6 +283,17 @@ public sealed partial class SpaceSessions
             }
         }
 
+        // an ECM burst jams friends too and draws CONCORD in high security space, so it is not activated there unless the pilot's safety is set to none (red)
+        // (EVE University wiki, Electronic Countermeasures; EVE.js refuses only the smartbomb here)
+        if (package.Action is SimAction.EcmBurst && securityClass is { } burstWhere && Security.IsHighSecOrHigher(burstWhere))
+        {
+            var burstSafety = SafetyLevelOf is { } askSafety ? await askSafety(characterId, cancellationToken) : SafetyLevel.Full;
+            if (burstSafety != SafetyLevel.None)
+            {
+                return ModuleResult.Refusal(WeaponSafety.Refusal, made.ModuleType, made.ModuleName);
+            }
+        }
+
         // the safety of the pilot: a weapon is not started at the ship of another pilot where that would be a crime the safety the pilot has set does not allow
         var attack = IsOffensive(package);
         var victim = attack && targetPilot is { CharacterId: > 0 } && targetPilot.CharacterId != characterId
@@ -288,16 +320,36 @@ public sealed partial class SpaceSessions
                 package = package with { Action = bomb with { HurtsPilots = false } };
             }
         }
-        var reply = await AskSimAsync(id, () => _sim.ActivateAsync(id, package, cancellationToken), session);
+        // the module is marked active while its start is pending: a start the simulation parks for the host (a fuel ask, a P.A.N.I.C.'s grant) asks the host
+        // whether the module runs, and its answer comes only when the start is accepted (track C6); a refused start is unmarked below
+        var markedHere = pilot.ActiveModules.TryAdd(moduleId, ItemState.Active);
+        CommandReply reply;
+        try
+        {
+            reply = await AskSimAsync(id, () => _sim.ActivateAsync(id, package, cancellationToken), session);
+        }
+        catch
+        {
+            if (markedHere)
+            {
+                pilot.ActiveModules.TryRemove(moduleId, out _);
+            }
+            throw;
+        }
         if (!reply.Accepted)
         {
+            if (markedHere)
+            {
+                pilot.ActiveModules.TryRemove(moduleId, out _);
+            }
             var refusal = ModuleResult.Refusal(reply.Reason == "ALREADY_ACTIVE" ? "MODULE_ALREADY_ACTIVE" : reply.Reason ?? "REFUSED", made.ModuleType, made.ModuleName);
             // a target out of reach is told with how far the module reaches and how far the target is
             return reply.Reason == "TARGET_OUT_OF_RANGE"
                 ? refusal with { TargetType = reply.TargetType, ShipType = snapshot.Ship.TypeId, DesiredRange = reply.DesiredRange, ActualDistance = reply.ActualDistance, EffectName = effectName }
                 : refusal;
         }
-        pilot.ActiveModules[moduleId] = ItemState.Active;
+        pilot.RunningModules[moduleId] = RunningModule.Of(effectName, targetId, repeat, aim, aimEnd, package);
+        await RefreshRunningAsync(pilot, id, cancellationToken).ConfigureAwait(false);
         AnnounceModeChange(pilot, snapshot, moduleId, started: true);
         await SendShipAsync(id, pilot, SimShips.VitalsOf(snapshot), cancellationToken);
         made.Accepted?.Invoke();
@@ -395,6 +447,43 @@ public sealed partial class SpaceSessions
         }
     }
 
+    /// <summary>
+    /// The attack an ECM burst makes on each pilot it reached: the same record as a module started at the ship of another pilot (EVE.js records the aggression on
+    /// every ship a burst reaches, before its roll). A reached ship that is not a pilot's (an NPC's) is not recorded.
+    /// </summary>
+    private async Task RecordEcmBurstAsync(Pilot burster, IReadOnlyList<SimBurstReach> reached)
+    {
+        if (Aggression is not { } record || _systems.Get(burster.SolarSystemId) is not { } system)
+        {
+            return;
+        }
+        var where = Security.ClassFromLevel(system.Security);
+        foreach (var reach in reached)
+        {
+            if (_pilots.Values.FirstOrDefault(other => other.ShipId == reach.ShipId) is not { CharacterId: > 0 } victim
+                || victim.CharacterId == burster.CharacterId)
+            {
+                continue;
+            }
+            try
+            {
+                var request = new AggressionRequest(
+                    burster.CharacterId,
+                    victim.CharacterId,
+                    victim.ShipId,
+                    burster.SolarSystemId,
+                    system.Security,
+                    where,
+                    await IsCapsuleAsync(victim, where, CancellationToken.None));
+                await record(request, CancellationToken.None);
+            }
+            catch (Exception error) when (error is not OperationCanceledException)
+            {
+                _log?.Invoke($"crimewatch could not record the ECM burst of {burster.CharacterId} on {victim.CharacterId}: {error.Message}");
+            }
+        }
+    }
+
     private async Task<bool> IsCapsuleAsync(Pilot pilot, SecurityClass securityClass, CancellationToken cancellationToken)
     {
         if (!Security.IsLowSec(securityClass))
@@ -425,7 +514,9 @@ public sealed partial class SpaceSessions
             // the simulation ends the effect at the end of its cycle; the host takes the module out of its numbers now, and the ship is sent again
             if (pilot.ActiveModules.TryRemove(moduleId, out _))
                 AnnounceModeChange(pilot, snapshot, moduleId, started: false);
+            pilot.RunningModules.TryRemove(moduleId, out _);
             await SendShipAsync(id, pilot, snapshot is null ? null : SimShips.VitalsOf(snapshot), cancellationToken);
+            await RefreshRunningAsync(pilot, id, cancellationToken).ConfigureAwait(false);
         }
         return reply.Accepted ? ModuleResult.Done : ModuleResult.Refusal(reply.Reason == "NOT_ACTIVE" ? "MODULE_NOT_ACTIVE" : reply.Reason ?? "REFUSED", module?.TypeId ?? 0, type?.Name ?? "");
     }
@@ -471,6 +562,8 @@ public sealed partial class SpaceSessions
                 snapshot.World.SetState(moduleId, ItemState.Overloaded);
             }
         }
+        // the ship carries the buffs of the command bursts that reach it (track C6), so its numbers are the buffed ones
+        Buffs.Sync(snapshot.World, pilot.ShipId, _nowUnixMs());
         return snapshot;
     }
 
@@ -536,7 +629,9 @@ public sealed partial class SpaceSessions
         await _sim.OfflineModuleAsync(id, moduleId, cancellationToken);
         if (pilot.ActiveModules.TryRemove(moduleId, out _))
             AnnounceModeChange(pilot, snapshot, moduleId, started: false);
+        pilot.RunningModules.TryRemove(moduleId, out _);
         Eve.Services.Space.Effects.ProjectedEffect.MutadaptiveSpool.Reset(moduleId);
+        await RefreshRunningAsync(pilot, id, cancellationToken).ConfigureAwait(false);
         return ModuleResult.Done;
     }
 
@@ -563,6 +658,7 @@ public sealed partial class SpaceSessions
         await _sim.SetHeatProfileAsync(id, SimShips.HeatProfileOf(snapshot, _statics), cancellationToken);
         await _sim.SetModuleOverheatAsync(id, moduleId, active, cancellationToken);
         MarkOverheated(overheating, [moduleId], active);
+        await RefreshRunningAsync(overheating, id, cancellationToken).ConfigureAwait(false);
         return ModuleResult.Done;
     }
 
@@ -596,6 +692,7 @@ public sealed partial class SpaceSessions
         await _sim.SetHeatProfileAsync(id, SimShips.HeatProfileOf(snapshot, _statics), cancellationToken);
         await _sim.SetRackOverheatAsync(id, rack, active, cancellationToken);
         MarkOverheated(pilot, modules, active);
+        await RefreshRunningAsync(pilot, id, cancellationToken).ConfigureAwait(false);
         return ModuleResult.Done with { ModuleIds = modules };
     }
 

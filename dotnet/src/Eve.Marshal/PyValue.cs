@@ -29,6 +29,17 @@ public abstract record PyValue
 
     /// <summary>Deep structural equality (also available as <c>==</c> / <c>Equals</c>).</summary>
     public static bool DeepEquals(PyValue? left, PyValue? right) => Equals(left, right);
+
+    /// <summary>
+    /// A Python <c>set</c>. The protocol has no set opcode: <c>set.__reduce__</c> gives
+    /// <c>(set, (list(items),))</c>, so the wire is a PyObjectEx1 whose header is the token
+    /// <c>__builtin__.set</c> and a tuple holding the list.
+    /// </summary>
+    public static PyObjectEx PythonSet(IEnumerable<PyValue> items) => new(
+        ObjectExKind.Ex1,
+        new PyTuple([new PyToken("__builtin__.set"), new PyTuple([new PyList([.. items])])]),
+        [],
+        []);
 }
 
 internal static class Seq

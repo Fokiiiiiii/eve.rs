@@ -134,6 +134,27 @@ public class SuperWeaponHostTests
     }
 
     [PgFact]
+    public async Task A_lance_carries_its_beacon_on_its_aim_clamped_to_its_range()
+    {
+        // EVE.js spawnLanceBeacon: the beacon sits at the aim point, clamped to the lance's range (the strike's length), in the aim's direction
+        await using var rig = await Rig.CreateAsync();
+        var flying = await DroneHostTests.FlyingWithADroneAsync(rig, minerTypeId: HolyDestinyLance, solarSystemId: ZeroSecSystem);
+        await PutFuelAsync(rig, flying, LanceFuel, LanceFuelPerCycle);
+        var route = new SuperWeaponService(rig.Space);
+
+        var accepted = await route.ActivatePointTargetedAsync(flying.Session, flying.Module, DoomsdayBeamEffect, Point(0.6e6, 0, 0.8e6), CancellationToken.None).AsTask();
+
+        Assert.True(accepted);
+        var strike = Assert.IsType<SimAction.Strike>(Assert.Single(rig.Sim.Heard.OfType<SimActivate>()).Effect.Action);
+        Assert.NotNull(strike.Beacon);
+        var beacon = strike.Beacon!;
+        var reach = Math.Sqrt(beacon.Sum(c => c * c));
+        Assert.Equal(strike.Length, reach, 3);
+        Assert.Equal(0.6, beacon[0] / reach, 6);
+        Assert.Equal(0.8, beacon[2] / reach, 6);
+    }
+
+    [PgFact]
     public async Task A_cone_in_zero_security_starts_through_the_host_and_its_fuel_is_taken_when_the_simulation_asks()
     {
         // the accepted path of the Bosonic cone through the host (B2's gap): the pilot is in zero security, so the rule passes, and the strike goes to the sim

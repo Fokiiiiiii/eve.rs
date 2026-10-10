@@ -1,4 +1,6 @@
 use super::*;
+use crate::missile_entity::AUTO_TARGET_ID;
+use crate::wire::{filetime, id, int, list, real, tuple};
 
 impl Scene {
     pub(crate) fn dogma_notify(session: SessionId, name: &'static str, args: Vec<Value>) -> Out {
@@ -97,7 +99,8 @@ impl Scene {
     }
 
     /// The action the client plays on the ship for the effect: `OnSpecialFX(ship, module, module type, target, charge, effect, offensive, start, active, duration, …)`.
-    pub(super) fn fx_action(stamp: u32, ship: &Value, effect: &Effect, on: bool) -> Value {
+    /// The action the client plays on the ship for the effect, on `target_id` (the module's target, or a lance's beacon; 0 for none).
+    pub(super) fn fx_action(stamp: u32, ship: &Value, effect: &Effect, on: bool, target_id: i64) -> Value {
         payload::action(
             stamp,
             "OnSpecialFX",
@@ -105,7 +108,7 @@ impl Scene {
                 ship.clone(),
                 id(effect.module_id),
                 int(i64::from(effect.module_type)),
-                if effect.target_id > 0 { id(effect.target_id) } else { Value::None },
+                if target_id > 0 { id(target_id) } else { Value::None },
                 effect
                     .turret
                     .as_ref()
@@ -206,6 +209,12 @@ impl Scene {
         {
             return vec![Out::Refused { session, command: CODE, reason: "ACTIVE_INDUSTRIAL_CORE_REQUIRED" }];
         }
+        // a module that starts only within a band of the ship's speed (WP19: maxVelocityActivationLimit 1334, minVelocityActivationLimit 2608) is refused
+        // outside it; the speed is the ship's velocity as the scene moves it (a stopped ship has none)
+        let v = pilot.ship.velocity;
+        if let Some(reason) = velocity_refusal(&effect.rules, (v.x * v.x + v.y * v.y + v.z * v.z).sqrt()) {
+            return vec![Out::Refused { session, command: CODE, reason }];
+        }
         if let Some(Action::MicroJumpDrive { distance_meters, cooldown_ms }) = effect.action.as_ref() {
             if !distance_meters.is_finite()
                 || *distance_meters <= 0.0
@@ -296,6 +305,33 @@ impl Scene {
                 }];
             }
         }
+        // a scanner reads a ship it holds the lock on, within its reach (the reference's TARGET_REQUIRED, TARGET_NOT_FOUND, TARGET_NOT_LOCKED and
+        // TARGET_OUT_OF_RANGE); the reveal itself is settled by the host when the cycle ends (`work_target_ok` keeps the same two checks)
+        if let Some(Action::Scan { reach, .. }) = effect.action.as_ref() {
+            if effect.target_id <= 0 {
+                return vec![Out::Refused { session, command: CODE, reason: "TARGET_REQUIRED" }];
+            }
+            if effect.target_id == self.pilots[&session].ship.spec.ship_id {
+                return vec![Out::Refused { session, command: CODE, reason: "TARGET_SELF" }];
+            }
+            let Some(target) = self.session_of(effect.target_id) else {
+                return vec![Out::Refused { session, command: CODE, reason: "TARGET_NOT_FOUND" }];
+            };
+            if !self.locked_by(session).contains(&effect.target_id) {
+                return vec![Out::Refused { session, command: CODE, reason: "TARGET_NOT_LOCKED" }];
+            }
+            let apart = self.apart(session, target).unwrap_or(f64::INFINITY);
+            if reach.share(apart).is_none() {
+                return vec![Out::TargetRefused {
+                    session,
+                    command: CODE,
+                    reason: "TARGET_OUT_OF_RANGE",
+                    target_type: self.pilots[&target].ship.spec.type_id,
+                    desired_range: reach.farthest(),
+                    actual_distance: apart,
+                }];
+            }
+        }
         if let Some(Action::Doomsday { delay_ms, damage, immobile_ms, no_jump_ms }) = effect.action.as_ref() {
             let numbers = [*delay_ms, *immobile_ms, *no_jump_ms];
             if !numbers.iter().all(|n| n.is_finite() && *n >= 0.0)
@@ -343,11 +379,11 @@ impl Scene {
             return vec![Out::Refused { session, command: CODE, reason: "MODULE_CLOAKED" }];
         }
         if effect.turret.is_some() {
-            if effect.target_id <= 0 {
+            if effect.target_id <= 0 && effect.target_id != AUTO_TARGET_ID {
                 return vec![Out::Refused { session, command: CODE, reason: "NO_TARGET" }];
             }
             // a target that is not in the scene is not there (the reference answers `TARGET_NOT_FOUND`), one that is must be locked
-            if self.session_of(effect.target_id).is_none() {
+            if effect.target_id != AUTO_TARGET_ID && self.session_of(effect.target_id).is_none() {
                 return vec![Out::Refused { session, command: CODE, reason: "TARGET_NOT_FOUND" }];
             }
             if !self.turret_target_ok(session, &effect) {
@@ -427,11 +463,32 @@ impl Scene {
         if capacitor.charge_at(now) < effect.capacitor_need {
             return vec![Out::Refused { session, command: CODE, reason: "NOT_ENOUGH_CAPACITOR" }];
         }
+        // a P.A.N.I.C. needs an asteroid its pilot holds the lock on, and starts when the host has granted its fleet the buffs (`WORK_PANIC`)
+        if matches!(effect.action, Some(Action::Panic { .. })) {
+            if !self.locked_by(session).iter().any(|id| self.asteroids.contains_key(id)) {
+                return vec![Out::Refused { session, command: CODE, reason: "TARGET_REQUIRED" }];
+            }
+            return self.park_panic(session, effect, now);
+        }
         // an effect that burns fuel starts when the host has taken the fuel of its first cycle (`WORK_FUEL`): it is parked until the answer
         if effect.burns_fuel {
             return self.park_start(session, effect, now);
         }
         self.start_effect(session, effect, now)
+    }
+
+    /// Parks a P.A.N.I.C. until the host grants the ships in reach their buffs (`ModuleWorkCycle`, `WORK_PANIC`) and answers: the effect starts then.
+    pub(super) fn park_panic(&mut self, session: SessionId, effect: Effect, now: i64) -> Vec<Out> {
+        let cycle_id = next_work_cycle_id();
+        let (module_id, target_id) = (effect.module_id, effect.target_id);
+        let range = match effect.action {
+            Some(Action::Panic { range_meters }) => range_meters,
+            _ => 0.0,
+        };
+        let recipients = self.burst_recipients(session, range);
+        let Some(pilot) = self.pilots.get_mut(&session) else { return Vec::new() };
+        pilot.modules.pending_starts.push(PendingStart { effect, cycle_id, sent_at: now });
+        self.panic_cycle_out(session, module_id, target_id, cycle_id, recipients).into_iter().collect()
     }
 
     /// Parks an effect that burns fuel until the host takes the fuel of its first cycle: the host is asked for it (`ModuleWorkCycle`, `WORK_FUEL`) and answers.
@@ -479,6 +536,8 @@ impl Scene {
             pending_remote_repair: None,
             pending_work: None,
             spool: SpoolState::default(),
+            pending_reload: false,
+            pending_update: None,
         };
         let (before, after) = match pilot.modules.capacitor.as_mut() {
             Some(capacitor) => capacitor.draw(now, run.effect.capacitor_need),
@@ -498,8 +557,22 @@ impl Scene {
                 out.extend(self.tell_all(session, actions));
             }
         }
+        // a lance's beacon is in space before its effect is played, which is drawn to it (EVE.js spawnLanceBeacon, the beacon first; a strike with no
+        // effect of its own, the cone, has the beacon but no beam to draw)
+        let beacon = match run.effect.action.as_ref() {
+            Some(Action::Strike { strike }) => strike.beacon.map(|offset| {
+                let lifetime = run.effect.duration_ms;
+                self.release_beacon(session, &run.effect, offset, lifetime, now)
+            }),
+            _ => None,
+        };
+        let beacon_id = beacon.as_ref().map_or(0, |(beacon_id, _)| *beacon_id);
+        if let Some((_, beacon_out)) = beacon {
+            out.extend(beacon_out);
+        }
         // a turret's special effect is played before its numbers are told (the recording of the reference's gun), a propulsion module's after
-        let fx = self.tell_all(session, vec![Self::fx_action(stamp, &ship, &run.effect, true)]);
+        let fx_target = if beacon_id > 0 { beacon_id } else { run.effect.target_id };
+        let fx = self.tell_all(session, vec![Self::fx_action(stamp, &ship, &run.effect, true, fx_target)]);
         if run.effect.turret.is_some() {
             out.extend(fx);
             out.extend(Self::changes_told(session, owner, &run.effect, &run.effect.on_changes, now));
@@ -522,6 +595,7 @@ impl Scene {
             matches!(effect.action.as_ref(), Some(Action::Charged { fallback: None, .. }));
         if !goes_on
             && (effect.turret.is_some() || stop_without_charge)
+            && !self.park_for_reload(session, effect.module_id)
             && let Some(pilot) = self.pilots.get_mut(&session)
             && let Some(at) =
                 pilot.modules.running.iter().position(|r| r.effect.module_id == effect.module_id)
@@ -543,6 +617,7 @@ impl Scene {
         module_id: i64,
         charge_type: i32,
         op: ChargeOp,
+        now: i64,
     ) -> Vec<Out> {
         let answer = |running, before, after| {
             vec![Out::ChargeAdjusted { session, request_id, running, before, after }]
@@ -565,7 +640,79 @@ impl Scene {
             ChargeOp::Remove { quantity } if quantity > 0 => (before - quantity).max(0),
             ChargeOp::Remove { .. } => 0,
         };
-        answer(true, before, *rounds)
+        let after = *rounds;
+        // a gun that waited for its load (FP-C8) starts its next cycle with the rounds it has, or stops when none came
+        let waiting = std::mem::take(&mut run.pending_reload);
+        let mut out = answer(true, before, after);
+        if waiting {
+            out.extend(if after > 0 {
+                self.finish_cycle(session, module_id, now, Vec::new(), true)
+            } else {
+                self.end_without_rounds(session, module_id, now)
+            });
+        }
+        out
+    }
+
+    /// A turret that has spent its last round and reloads from its hold waits for the host's load (`AdjustCharge`); nothing is ended. Returns whether it waits.
+    pub(super) fn park_for_reload(&mut self, session: SessionId, module_id: i64) -> bool {
+        let Some(run) = self.running_mut(session, module_id) else { return false };
+        let reloads =
+            run.effect.turret.as_ref().and_then(|turret| turret.charge).is_some_and(|charge| charge.reloads);
+        if reloads {
+            run.pending_reload = true;
+        }
+        reloads
+    }
+
+    /// The effect of a module ends for want of rounds (the host gave none to a gun that waited for them).
+    fn end_without_rounds(&mut self, session: SessionId, module_id: i64, at: i64) -> Vec<Out> {
+        let Some(pilot) = self.pilots.get_mut(&session) else { return Vec::new() };
+        let (owner, ship_id) = (pilot.ship.spec.character_id, pilot.ship.spec.ship_id);
+        let Some(index) = pilot.modules.running.iter().position(|run| run.effect.module_id == module_id)
+        else {
+            return Vec::new();
+        };
+        let run = pilot.modules.running.remove(index);
+        self.effect_ended(session, run, owner, ship_id, at, Ending::NoRounds)
+    }
+
+    /// The host refreshes the numbers of a running effect (`UpdateEffect`): they are kept and take effect at the start of its next cycle. An effect that is not
+    /// running is not changed, and nothing is answered.
+    pub(crate) fn update_effect(
+        &mut self,
+        session: SessionId,
+        module_id: i64,
+        update: PendingUpdate,
+    ) -> Vec<Out> {
+        if let Some(run) = self.running_mut(session, module_id) {
+            run.pending_update = Some(update);
+        }
+        Vec::new()
+    }
+
+    /// The host's state of a ship's buffs (`BuffState`, protocol 43): the client is told `OnDbuffUpdated` with them, as the reference tells it. The numbers
+    /// of the ship are the host's (it sends them with the buffs); nothing is answered. A state for a ship that is not this session's is not told.
+    pub(crate) fn set_buffs(
+        &mut self,
+        session: SessionId,
+        ship_id: i64,
+        entries: Vec<crate::link::BuffEntry>,
+        now: i64,
+    ) -> Vec<Out> {
+        if self.pilots.get(&session).is_none_or(|pilot| pilot.ship.spec.ship_id != ship_id) {
+            return Vec::new();
+        }
+        let stamp = self.next_stamp(now);
+        // a remaining time in milliseconds is a span of ticks (a tick is 100 ns, as the FILETIME is)
+        let entries = entries.into_iter().map(|entry| {
+            let expires_at = now + (entry.remaining_ms * (TICKS_PER_SECOND as f64 / 1000.0)).round() as i64;
+            tuple([int(i64::from(entry.collection_id)), tuple([real(entry.value), filetime(expires_at)])])
+        });
+        vec![Scene::update(
+            session,
+            vec![payload::action(stamp, "OnDbuffUpdated", [id(ship_id), list(entries)])],
+        )]
     }
 
     /// The running effect of a module of this session, if it runs.
@@ -637,18 +784,23 @@ impl Scene {
         *rounds = new;
         let line = attribute_change_of(
             owner,
-            charge_key(ship_id, &crate::weapons::Charge { type_id, flag, rounds: old, per_cycle }),
+            charge_key(
+                ship_id,
+                &crate::weapons::Charge { type_id, flag, rounds: old, per_cycle, reloads: false },
+            ),
             805,
             at,
             number(new as f64),
             number(old as f64),
         );
+        // a charged cycle that takes effect at its end (a command burst, a charged repair at the cycle's end) goes on to that end on the round it spent
+        let ends_cycle = matches!(run.effect.action.as_ref(), Some(Action::Charged { action, .. }) if action.ends_its_cycle());
         (
             vec![
                 Self::dogma_notify(session, "OnModuleAttributeChanges", vec![Value::List(vec![line])]),
                 Out::ChargeSpent { session, module_id, rounds_left: new },
             ],
-            action_charge.is_some() && new > 0 || action_charge.is_none() && new >= per_cycle,
+            action_charge.is_some() && (new > 0 || ends_cycle) || action_charge.is_none() && new >= per_cycle,
         )
     }
 
@@ -671,8 +823,9 @@ impl Scene {
         let Some(index) = pilot.modules.running.iter().position(|r| r.effect.module_id == module_id) else {
             return vec![Out::Refused { session, command: CODE, reason: "NOT_ACTIVE" }];
         };
-        if pilot.modules.running[index].pending_work.is_some() {
-            // parked on a work cycle: there is no cycle left to finish, so the effect stops now
+        if pilot.modules.running[index].pending_work.is_some() || pilot.modules.running[index].pending_reload
+        {
+            // parked on a work cycle or a reload: there is no cycle left to finish, so the effect stops now
             let (owner, ship_id) = (pilot.ship.spec.character_id, pilot.ship.spec.ship_id);
             let run = pilot.modules.running.remove(index);
             let mut out = vec![Out::Accepted { session, command: CODE, at: now }];
@@ -852,7 +1005,8 @@ impl Scene {
                 }
                 continue;
             }
-            if run.pending_remote_repair.is_some() {
+            // parked on a reload: no cycle is timed until the host's load answers it
+            if run.pending_remote_repair.is_some() || run.pending_reload {
                 continue;
             }
             if let Some(Action::Doomsday { delay_ms, .. }) = run.effect.action.as_ref()
@@ -937,5 +1091,35 @@ impl Scene {
                 (dx * dx + dy * dy + dz * dz).sqrt() - body.radius < metres
             }
         })
+    }
+}
+
+/// The refusal of a module whose rules limit the speed it starts at (WP19), for a ship going `speed` m/s: `None` when the speed is within the limits (a limit of 0 is none).
+pub(crate) fn velocity_refusal(rules: &Rules, speed: f64) -> Option<&'static str> {
+    if rules.max_velocity_limit > 0.0 && speed > rules.max_velocity_limit {
+        return Some("VELOCITY_TOO_HIGH");
+    }
+    if rules.min_velocity_limit > 0.0 && speed < rules.min_velocity_limit {
+        return Some("VELOCITY_TOO_LOW");
+    }
+    None
+}
+
+#[cfg(test)]
+mod velocity_tests {
+    use super::*;
+
+    #[test]
+    fn a_module_with_a_speed_band_starts_only_within_it() {
+        // a cynosural field generator: up to 500 m/s; a bomb launcher: at least 1 m/s; neither: any speed
+        let cyno = Rules { max_velocity_limit: 500.0, ..Default::default() };
+        let launcher = Rules { min_velocity_limit: 1.0, ..Default::default() };
+        assert_eq!(velocity_refusal(&cyno, 0.0), None);
+        assert_eq!(velocity_refusal(&cyno, 500.0), None, "the limit itself is within");
+        assert_eq!(velocity_refusal(&cyno, 500.5), Some("VELOCITY_TOO_HIGH"));
+        assert_eq!(velocity_refusal(&launcher, 0.0), Some("VELOCITY_TOO_LOW"));
+        assert_eq!(velocity_refusal(&launcher, 1.0), None);
+        assert_eq!(velocity_refusal(&launcher, 250.0), None);
+        assert_eq!(velocity_refusal(&Rules::default(), 9_999.0), None, "no limit: any speed starts it");
     }
 }

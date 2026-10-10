@@ -264,13 +264,19 @@ public enum SimBombKind : byte
 /// </summary>
 public sealed record SimMissile(
     int ChargeTypeId, int GroupId, string Name, double Radius, double Mass, double Agility, double HitPoints, double MaxVelocity, double FlightTimeMs,
-    double ExplosionRadius, double ExplosionVelocity, double DamageReductionFactor, double DamageReductionSensitivity);
+    double ExplosionRadius, double ExplosionVelocity, double DamageReductionFactor, double DamageReductionSensitivity, SimDot? Dot = null);
+
+/// <summary>
+/// The damage over time a breacher pod's hit starts on its ship (the charge's <c>dotDuration</c>, <c>dotMaxDamagePerTick</c> and <c>dotMaxHPPercentagePerTick</c>):
+/// the duration in milliseconds, the most a tick does in points, and the most a tick does as a percentage of the target's hit points (0.6 is 0.6 %).
+/// </summary>
+public sealed record SimDot(double DurationMs, double MaxDamagePerTick, double MaxHpPercentPerTick);
 
 /// <summary>
 /// The charge a turret fires: its type, the flag it sits at in the ship (the slot of the module), the rounds left and the rounds a cycle takes. The simulation
 /// spends them cycle by cycle (<see cref="SimChargeSpent"/>) and stops the weapon when they are gone.
 /// </summary>
-public sealed record SimTurretCharge(int TypeId, int Flag, long Rounds, long PerCycle);
+public sealed record SimTurretCharge(int TypeId, int Flag, long Rounds, long PerCycle, bool Reloads = false);
 
 /// <summary>What the host changes in the rounds of a gun that runs: rounds go in (up to the capacity, and no more than the hold has) or come out (all of them when the quantity is 0).</summary>
 public abstract record SimChargeOp
@@ -291,6 +297,21 @@ public abstract record SimChargeOp
 /// says what they come to; it answers with <see cref="SimChargeAdjusted"/>, after every <see cref="SimChargeSpent"/> it told before.
 /// </summary>
 public sealed record SimAdjustCharge(ulong RequestId, ulong SessionId, long ModuleId, int ChargeType, SimChargeOp Op) : SimMessage;
+
+/// <summary>One buff of a ship (<see cref="SimBuffState"/>): its buff collection, the value it gives the ship, and the time it has left, in milliseconds.</summary>
+public sealed record SimBuffEntry(int CollectionId, double Value, double RemainingMs);
+
+/// <summary>
+/// The timed buffs of a ship of this session (protocol 43, track C6): the host sends them after each change, and the simulation tells the client <c>OnDbuffUpdated</c>
+/// with them. An empty list clears the client's buffs. Nothing is answered.
+/// </summary>
+public sealed record SimBuffState(ulong SessionId, long ShipId, IReadOnlyList<SimBuffEntry> Entries) : SimMessage;
+
+/// <summary>
+/// A refresh of a running effect (protocol 38, FP-C4b and FP-C5): an overheat, or a tracking computer that starts, stops or overheats, changes the cycle, what a
+/// cycle costs the capacitor, the turret's numbers and the attributes the client is told. The simulation applies it at the start of the next cycle; nothing is answered.
+/// </summary>
+public sealed record SimUpdateEffect(ulong SessionId, long ModuleId, double DurationMs, double CapacitorNeed, SimTurret? Turret, IReadOnlyList<SimChange> Changes) : SimMessage;
 
 /// <summary>The answer to <see cref="SimAdjustCharge"/>: whether the gun runs (when it does not, the host has its rounds and nothing was changed), the rounds it had and the rounds it has.</summary>
 public sealed record SimChargeAdjusted(ulong RequestId, bool Running, long Before, long After) : SimMessage;
@@ -317,13 +338,37 @@ public sealed record SimEffect(
 /// limit), whether the module holds the ship's early deactivation (906), needs an active industrial core (3265), is one, and how long it waits after it stops (669, in ms).
 /// </summary>
 public sealed record SimModuleRules(
-    int GroupId, int MaxGroupActive, bool DisallowEarlyDeactivation, bool RequiresIndustrialCore, bool ProvidesIndustrialCore, double ReactivationDelayMs);
+    int GroupId, int MaxGroupActive, bool DisallowEarlyDeactivation, bool RequiresIndustrialCore, bool ProvidesIndustrialCore, double ReactivationDelayMs,
+    /// <summary>The highest and the lowest speed (m/s) a module starts at (maxVelocityActivationLimit 1334, minVelocityActivationLimit 2608; 0 for none). Protocol 38 (WP19).</summary>
+    double MaxVelocityLimitMs = 0, double MinVelocityLimitMs = 0);
+
+/// <summary>The kinds of scan a scanner's cycle is (<see cref="SimAction.Scan.Kind"/>).</summary>
+public static class SimScanKinds
+{
+    /// <summary>A Cargo Scanner: the target's hold, one container deep.</summary>
+    public const byte Cargo = 0;
+
+    /// <summary>A Ship Scanner: the target's fitted hardware, each item rolled against the reach's falloff.</summary>
+    public const byte Ship = 1;
+}
 
 /// <summary>The codes of the work a module asks the host for (<see cref="SimModuleWorkCycle.Command"/>). Its cycles share the drone codes of mining and salvage (7, 8).</summary>
 public static class SimModuleWorkCommands
 {
     /// <summary>The fuel of the next cycle: the host takes the module's consumption quantity of its consumption type from the ship, or refuses (<c>NO_FUEL</c>).</summary>
     public const byte ConsumeFuel = 9;
+
+    /// <summary>A Cargo Scanner's cycle ended with its target in reach: the host reveals the target's hold (protocol 40). It carries no mining numbers.</summary>
+    public const byte ScanCargo = 10;
+
+    /// <summary>A Ship Scanner's cycle ended with its target in reach: the host reveals the target's fitted hardware (protocol 40). It carries no mining numbers.</summary>
+    public const byte ScanShip = 11;
+
+    /// <summary>A command burst's cycle ended: the host applies the burst's buffs to the ships it reaches (<see cref="SimModuleWorkCycle.Recipients"/>), protocol 43.</summary>
+    public const byte Burst = 12;
+
+    /// <summary>A P.A.N.I.C.'s start: the host grants the ships it reaches (<see cref="SimModuleWorkCycle.Recipients"/>) their buffs before the effect starts (protocol 43).</summary>
+    public const byte Panic = 13;
 }
 
 /// <summary>A layer of a ship's health.</summary>
@@ -411,6 +456,24 @@ public abstract record SimAction
     /// </summary>
     public sealed record Bomb(SimDeployable Ball, SimBombKind Kind, double LifetimeMs, double BlastRadius, IReadOnlyList<double> Damage, IReadOnlyList<double> Ecm, double Neutralize) : SimAction;
 
+    /// <summary>
+    /// A cynosural field (tag 27): as the cycle ends the field is lit where the ship is, and it lives <paramref name="LifetimeMs"/> (the field type's explosionDelay).
+    /// The simulation releases it as a deployable; it is not taken down when the generator stops.
+    /// </summary>
+    public sealed record CynoField(SimDeployable Ball, double LifetimeMs) : SimAction;
+
+    /// <summary>
+    /// A command burst's cycle (tag 28, protocol 43): non-targeted. At the cycle's end the simulation sends the host the ships within <paramref name="RangeMeters"/> (plus one
+    /// metre) as a work cycle (<see cref="SimModuleWorkCommands.Burst"/>) and parks until the host answers; the host reads the buffs from the charge and the module.
+    /// </summary>
+    public sealed record CommandBurst(double RangeMeters) : SimAction;
+
+    /// <summary>
+    /// The Pulse Activated Nexus Invulnerability Core (tag 29, protocol 43): non-targeted, one cycle of its duration. It needs an asteroid the pilot holds the lock on, and
+    /// parks its start until the host grants the ships of its fleet in <paramref name="RangeMeters"/> (plus one metre) their buffs (<see cref="SimModuleWorkCommands.Panic"/>).
+    /// </summary>
+    public sealed record Panic(double RangeMeters) : SimAction;
+
     /// <summary>Spools once, then shifts the ship along its heading; cooldown begins when the spool succeeds or is interrupted.</summary>
     public sealed record MicroJumpDrive(double DistanceMeters, long CooldownMs) : SimAction;
 
@@ -429,6 +492,19 @@ public abstract record SimAction
 
     /// <summary>A salvager's cycle (tag 8): as a mining cycle, with the wreck's access chance moved by <paramref name="AccessBonusPercent"/>.</summary>
     public sealed record Salvage(double AccessBonusPercent) : SimAction;
+
+    /// <summary>
+    /// A scanner's cycle (tag 26, protocol 40): a cargo scan (<see cref="SimScanKinds.Cargo"/>) or a ship scan (<see cref="SimScanKinds.Ship"/>) of the locked ship.
+    /// The reach is <paramref name="OptimalMeters"/> whole, then <paramref name="FalloffMeters"/> of falloff (0 for a hard cutoff, as a cargo scan has). The
+    /// simulation parks the module at the cycle's end and the host settles the reveal (<see cref="SimModuleWorkCommands.ScanCargo"/> or <c>ScanShip</c>).
+    /// </summary>
+    public sealed record Scan(byte Kind, double OptimalMeters, double FalloffMeters) : SimAction
+    {
+        /// <summary>Whether the numbers are ones the simulation runs: a known kind, a positive optimal range and a falloff that is not negative.</summary>
+        public bool IsValid => Kind is SimScanKinds.Cargo or SimScanKinds.Ship
+            && double.IsFinite(OptimalMeters) && OptimalMeters > 0
+            && double.IsFinite(FalloffMeters) && FalloffMeters >= 0;
+    }
 
     /// <summary>A tractor beam (tag 9, protocol 30): it pulls the locked wreck or can at <paramref name="VelocityMetersPerSecond"/> until it is
     /// <paramref name="HoldDistanceMeters"/> off the ship, and a target beyond <paramref name="RangeMeters"/> (the module's reach) is out of range.</summary>
@@ -521,7 +597,8 @@ public abstract record SimAction
         double NeutRadius,
         double NeutSignatureRadius,
         double DebuffMs = 0,
-        IReadOnlyList<double>? SweepEnd = null) : SimAction
+        IReadOnlyList<double>? SweepEnd = null,
+        IReadOnlyList<double>? Beacon = null) : SimAction
     {
         /// <summary>Whether the numbers are ones the simulation runs (the same checks the simulation makes on decode).</summary>
         public bool IsValid =>
@@ -540,6 +617,7 @@ public abstract record SimAction
             && double.IsFinite(ImmobileMs) && ImmobileMs >= 0
             && double.IsFinite(DebuffMs) && DebuffMs >= 0
             && (SweepEnd is null || (SweepEnd.Count == 3 && SweepEnd.All(double.IsFinite) && SweepEnd.Any(c => c != 0)))
+            && (Beacon is null || (Beacon.Count == 3 && Beacon.All(double.IsFinite)))
             && double.IsFinite(NoJumpMs) && NoJumpMs >= 0
             && double.IsFinite(NeutAmount) && NeutAmount >= 0
             && double.IsFinite(NeutRadius) && NeutRadius >= 0
@@ -750,6 +828,15 @@ public sealed record SimFighterLanded(ulong SessionId, long FighterId) : SimMess
 /// <summary>A squadron was let go (abandoned, or its controller left the scene) at <paramref name="Position"/>: the host decides what becomes of its item.</summary>
 public sealed record SimFighterReleased(ulong SessionId, long FighterId, IReadOnlyList<double> Position) : SimMessage;
 
+/// <summary>One ship an ECM burst reached: its item id, and whether the roll of the burst jammed it.</summary>
+public readonly record struct SimBurstReach(long ShipId, bool Jammed);
+
+/// <summary>
+/// An ECM burst reached the ships about it on the simulation's account: the ship that runs it, and each ship reached (a cloaked ship is not reached), with whether its
+/// roll jammed it. The host records the attack on each pilot reached.
+/// </summary>
+public sealed record SimEcmBurst(ulong SessionId, long ShipId, IReadOnlyList<SimBurstReach> Reached) : SimMessage;
+
 public readonly record struct SimDroneWorkProfile(
     double MiningAmountM3,
     double CycleTimeMs,
@@ -769,7 +856,9 @@ public sealed record SimDroneWorkCycle(
 public sealed record SimModuleWorkCycle(
     ulong SessionId, long CharacterId, long ShipId, int SolarSystemId, long ModuleId, long TargetId, ulong CycleId, byte Command,
     double MiningAmountM3, double WasteVolumeMultiplier, double WasteProbability, double CritProbability, double CritQuantityMultiplier,
-    double AccessDifficultyBonus, double WasteRoll, double RoundingRoll, double CritRoll) : SimMessage;
+    double AccessDifficultyBonus, double WasteRoll, double RoundingRoll, double CritRoll,
+    /// <summary>The ships a command burst reaches (<see cref="SimModuleWorkCommands.Burst"/> only; null or empty for every other command): the ships of the scene within reach.</summary>
+    IReadOnlyList<long>? Recipients = null) : SimMessage;
 
 /// <summary>The host's decision for one module work cycle; the fields are those of <see cref="SimDroneWorkResult"/>.</summary>
 public sealed record SimModuleWorkResult(
@@ -867,6 +956,25 @@ public sealed record SimChangeWreck(ulong SessionId, long WreckId, bool IsEmpty)
 
 /// <summary>Takes a wreck or a can out of space; <see cref="Effect"/> is the destruction effect the client plays first (0: none).</summary>
 public sealed record SimRemoveWreck(long WreckId, int Effect) : SimMessage;
+
+/// <summary>
+/// A cynosural field the host keeps a record of (protocol 44). The simulation says it was lit, with its place, owner, type and whole life; the host sends the
+/// same message back to put it in space after a restart, with what is left of its life then (<see cref="LifetimeMs"/>).
+/// </summary>
+public sealed record SimDeployed(
+    int SolarSystemId, long DeployableId, string Name, int TypeId, int GroupId, IReadOnlyList<double> Position, double Radius, long OwnerId, int CorporationId,
+    int AllianceId, long ShipId, double LifetimeMs) : SimMessage;
+
+/// <summary>The host takes a cynosural field out of space when its record's time is up (protocol 44); a deployable that is not one, or not in space, is left alone.</summary>
+public sealed record SimRemoveDeployed(long DeployableId) : SimMessage;
+
+/// <summary>A scanner probe the host launched, put in space where it was launched (protocol 45). It stays until <see cref="SimRemoveProbe"/>.</summary>
+public sealed record SimPlaceProbe(
+    long ProbeId, int SolarSystemId, string Name, int TypeId, int GroupId, IReadOnlyList<double> Position, double Radius, long OwnerId, int CorporationId,
+    int AllianceId, long ShipId) : SimMessage;
+
+/// <summary>The host takes a scanner probe out of space (recalled, or its time is up); a deployable that is not a probe is left alone (protocol 45).</summary>
+public sealed record SimRemoveProbe(long ProbeId) : SimMessage;
 
 /// <summary>The answer to <see cref="SimCommands.Measure"/>: metres from the centre of the ship to the surface of the wreck or can, or null when there is no such wreck.</summary>
 public sealed record SimMeasured(ulong SessionId, byte Command, double? Distance) : SimMessage;

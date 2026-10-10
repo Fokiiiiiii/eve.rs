@@ -40,6 +40,6 @@ internal sealed class ConeEffect : ShipEffect
         SimChange[] told = [new(module.ModuleId, CapacitorNeed, capacitor), new(module.ModuleId, durationAttribute, Three(duration))];
         return new SimEffect(
             module.ModuleId, module.Module.TypeId, module.Effect.Id, module.Effect.Guid, duration, capacitor, Math.Max(1, module.Repeat), 0, null, null, told, told, null,
-            DoomsdayStrike.Of(module, module.Aim!));
+            DoomsdayStrike.Of(module, module.Aim!, beacon: true));
     }
 }

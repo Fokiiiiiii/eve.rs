@@ -109,6 +109,9 @@ public interface ISimulation
     /// </summary>
     Task<SimChargeAdjusted> AdjustChargeAsync(SimAdjustCharge request, Action<SimChargeAdjusted>? inOrder = null, CancellationToken cancellationToken = default);
 
+    /// <summary>Refreshes a running effect (protocol 38): the simulation applies it at the start of the effect's next cycle. Nothing is answered.</summary>
+    Task UpdateEffectAsync(SimUpdateEffect request, CancellationToken cancellationToken = default);
+
     /// <summary>Puts a wreck the host made in space (where the ship was destroyed), in the scene of its system if there is one.</summary>
     void PlaceWreck(SimPlaceWreck wreck);
 
@@ -122,6 +125,9 @@ public interface ISimulation
     /// <summary>The host's decision for a module work cycle (ADR 0013); the module is parked until it arrives.</summary>
     void ModuleWorkResult(SimModuleWorkResult result);
 
+    /// <summary>The timed buffs of a ship of this session (a command burst's, protocol 43): the simulation tells the client what they are.</summary>
+    void BuffState(ulong sessionId, long shipId, IReadOnlyList<SimBuffEntry> entries);
+
     /// <summary>Puts a can the host made ahead of a pilot's ship and waits for the answer: where it lies (<see cref="CommandReply.Position"/>), or why it could not be done.</summary>
     Task<CommandReply> PlaceContainerAsync(SimPlaceContainer can, CancellationToken cancellationToken = default);
 
@@ -130,6 +136,14 @@ public interface ISimulation
 
     /// <summary>Takes a wreck or a can out of space, with the destruction effect <paramref name="effect"/> played first when it is not 0.</summary>
     void RemoveWreck(long wreckId, int effect);
+    /// <summary>Puts a cynosural field back in space after a restart (what is left of its life is <see cref="SimDeployed.LifetimeMs"/>).</summary>
+    void RestoreDeployed(SimDeployed deployed);
+    /// <summary>Takes a cynosural field out of space (its record's time is up).</summary>
+    void RemoveDeployed(long deployableId);
+    /// <summary>Puts a scanner probe in space where it was launched (protocol 45).</summary>
+    void PlaceProbe(SimPlaceProbe probe);
+    /// <summary>Takes a scanner probe out of space (protocol 45).</summary>
+    void RemoveProbe(long probeId);
 
     /// <summary>Destroys a ship: the explosion, the wreck (for <paramref name="credit"/> to loot), and (for a player's ship) a <see cref="SimDestroyed"/> that comes back through <see cref="Received"/>.</summary>
     void Destroy(long shipId, SimCredit credit);

@@ -10,6 +10,7 @@ pub mod crowd;
 pub mod death;
 pub mod deployable;
 pub mod destruction;
+pub mod dot_weapons;
 pub mod drones;
 pub mod ewar;
 pub mod fighters;

@@ -37,6 +37,7 @@ public static class ModuleRefusals
             "TARGET_REQUIRED" => Notify("You need an active target to activate that module."),
             "TARGET_NOT_LOCKED" => Notify("That target is not locked."),
             "TARGET_NOT_FOUND" => MachoErrors.ThrowUserError("DeniedActivateTargetNotPresent"),
+            "TARGET_SELF" => MachoErrors.ThrowUserError("DeniedTargetSelf"),
             // a mining laser's target out of reach is TargetTooFar with the distance, the target and the module (moduleOperation.js: _buildModuleTargetTooFarUserErrorValues)
             "TARGET_OUT_OF_RANGE" when string.Equals(refusal.EffectName, "miningLaser", StringComparison.OrdinalIgnoreCase) => MachoErrors.ThrowUserError(
                 "TargetTooFar",
@@ -78,6 +79,8 @@ public static class ModuleRefusals
             "CLOAK_DISALLOWED" => MachoErrors.ThrowUserError("CantCloak"),
             "CLOAK_TARGET_LOCKED" => Notify("Your ship is already target locked and cannot activate a cloaking device."),
             "CLOAK_PROXIMITY_BLOCKED" => Notify("You are too close to another object to activate your cloaking device."),
+        // the wiki (EVE University, Cynosural Field Generator): a cynosural field is lit by a fleet member; the client's own wording is not in the tables read
+        "CYNO_NOT_IN_FLEET" => Notify($"{name} can only be lit by a member of a fleet."),
         "SMARTBOMB_NEAR_STATION" => Notify($"{name} cannot be activated this close to a station or stargate."),
             "MODULE_CLOAKED" => Notify("You cannot activate modules while cloaked."),
             // a disruptive lance needs an active siege module on the ship (EveJS ACTIVE_SIEGE_MODULE_REQUIRED, moduleActivationRequiresActiveSiegeModule)
@@ -93,7 +96,7 @@ public static class ModuleRefusals
             "STRUCTURES_PHASE_3" => Notify($"{name} acts on a structure, and structures are not on this server yet (phase 3)."),
             // a module of a group of which one runs at a time (the reactive armor hardeners) while another of its group runs
             "MAX_GROUP_ACTIVE" => Notify($"{name} cannot run while another module of its group is active."),
-            // a launcher or firing effect whose kind is not run yet names its reason (MissileEffect.RefusedLauncherGroups, RefusedFiringEffects, e.g. F.O.F.):
+            // a launcher whose kind is not run yet names its reason (MissileEffect.RefusedLauncherGroups):
             // shown as the same refusal
             _ when refusal.Reason?.EndsWith("_NOT_IMPLEMENTED", StringComparison.Ordinal) == true => Notify($"{name} cannot be activated."),
             _ => Notify($"Failed to activate {name}: {refusal.Reason ?? "unknown error"}."),

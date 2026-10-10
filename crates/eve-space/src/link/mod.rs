@@ -36,8 +36,7 @@ use crate::weapons::{Aoe, Arc, Charge, Spool, Turret};
 
 use crate::wreck::WreckKind;
 
-pub const PROTOCOL_VERSION: u16 = 37;
-
+pub const PROTOCOL_VERSION: u16 = 46;
 /// The message kinds.
 pub mod kind;
 
@@ -120,6 +119,41 @@ pub struct WreckPlacement {
     pub is_empty: bool,
 }
 
+/// A deployable the host keeps a record of (a cynosural field, protocol 44): where it lies, whose it is and how long it lives from now. The simulation
+/// says so when it is lit, and the host sends the same message back to put it in space again after a restart (with what is left of its life).
+#[derive(Debug, Clone, PartialEq)]
+pub struct DeployedPlacement {
+    pub solar_system_id: i32,
+    pub deployable_id: i64,
+    pub name: String,
+    pub type_id: i32,
+    pub group_id: i32,
+    pub position: [f64; 3],
+    pub radius: f64,
+    pub owner_id: i64,
+    pub corporation_id: i32,
+    pub alliance_id: i32,
+    pub ship_id: i64,
+    pub lifetime_ms: f64,
+}
+
+/// A scanner probe the host launched and keeps the record of: its id, its type and group, where it is and the radius of its ball. The simulation puts it
+/// in space as a ball (`AddBalls2`) for those who see the place; it is never ended by the simulation (the host recalls it or its time is up).
+#[derive(Debug, Clone, PartialEq)]
+pub struct ProbePlacement {
+    pub probe_id: i64,
+    pub solar_system_id: i32,
+    pub name: String,
+    pub type_id: i32,
+    pub group_id: i32,
+    pub position: [f64; 3],
+    pub radius: f64,
+    pub owner_id: i64,
+    pub corporation_id: i32,
+    pub alliance_id: i32,
+    pub ship_id: i64,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct AsteroidPlacement {
     pub solar_system_id: i32,
@@ -159,6 +193,14 @@ pub struct Enter {
     pub ship: ShipSpec,
     pub position: Option<[f64; 3]>,
     pub direction: Option<[f64; 3]>,
+}
+
+/// One buff of a ship (`BuffState`): its buff collection, the value the buff gives the ship, and the time left, in milliseconds.
+#[derive(Debug, Clone, PartialEq)]
+pub struct BuffEntry {
+    pub collection_id: i32,
+    pub value: f64,
+    pub remaining_ms: f64,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -443,6 +485,18 @@ pub enum Message {
         wreck_id: i64,
         effect: i32,
     },
+    /// A cynosural field the host keeps a record of: the simulation says it was lit (`DeployedLit`), and the host puts it back in space after a restart.
+    Deployed(Box<DeployedPlacement>),
+    /// The host takes a cynosural field out of space when its record's time is up; a deployable that is not one, or is not in space, is left alone.
+    RemoveDeployed {
+        deployable_id: i64,
+    },
+    /// The host puts a scanner probe in space where it was launched (protocol 45).
+    PlaceProbe(Box<ProbePlacement>),
+    /// The host takes a scanner probe out of space (protocol 45); a deployable that is not a probe, or not in space, is left alone.
+    RemoveProbe {
+        probe_id: i64,
+    },
     DroneWorkResult {
         session_id: u64,
         drone_id: i64,
@@ -498,6 +552,15 @@ pub enum Message {
         waste_roll: f64,
         rounding_roll: f64,
         crit_roll: f64,
+        /// The ships a command burst reaches (`WORK_BURST` only, empty for every other command): the ships of the scene within reach, the host decides.
+        recipients: Vec<i64>,
+    },
+    /// The timed buffs of a ship of this session (a command burst's, protocol 43): the host sends them after each change, the simulation tells the client
+    /// `OnDbuffUpdated` with them. An empty list clears the client's buffs. Nothing is answered.
+    BuffState {
+        session_id: u64,
+        ship_id: i64,
+        entries: Vec<BuffEntry>,
     },
     /// The host's decision for one module work cycle (the same fields as a drone's `DroneWorkResult`).
     ModuleWorkResult {
@@ -517,6 +580,13 @@ pub enum Message {
         module_id: i64,
         reason: u8,
     },
+    /// An ECM burst reached ships on the simulation's account: the ship that runs it, and each ship it reached (a cloaked ship is not reached) with whether its
+    /// roll jammed it. The host records the attack on each pilot reached (EVE.js `executeJammerBurstCycle`: aggression before the roll).
+    EcmBurst {
+        session_id: u64,
+        ship_id: i64,
+        reached: Vec<(i64, bool)>,
+    },
     /// The answer to `COMMAND_MEASURE`: metres from the centre of the ship to the surface of the wreck or can, or none when there is no such wreck.
     Measured {
         session_id: u64,
@@ -532,6 +602,18 @@ pub enum Message {
         /// The kind of charge the host loads (a gun that runs a charge of another kind is left as it is).
         charge_type: i32,
         op: ChargeOp,
+    },
+    /// The host refreshes the numbers of an effect that runs (FP-C4b, FP-C5): an overheat, or a tracking computer that starts, stops or overheats, changes
+    /// the cycle, what a cycle costs the capacitor, the turret's numbers and the attributes the client is told. The simulation applies them at the start of
+    /// the next cycle, as it applies an overheat (no effect on the cycle that is on). Nothing is answered.
+    UpdateEffect {
+        session_id: u64,
+        module_id: i64,
+        duration_ms: f64,
+        capacitor_need: f64,
+        turret: Option<Box<Turret>>,
+        /// The attributes the client is told at the change (its item is the module).
+        changes: Vec<Change>,
     },
     /// The answer to `AdjustCharge`: whether the gun runs (when it does not, the host has the rounds and nothing was changed here), the rounds it had and the
     /// rounds it has.
@@ -629,11 +711,18 @@ impl Message {
             Self::ModuleWorkCycle { .. } => kind::MODULE_WORK_CYCLE,
             Self::ModuleWorkResult { .. } => kind::MODULE_WORK_RESULT,
             Self::ModuleEnded { .. } => kind::MODULE_ENDED,
+            Self::EcmBurst { .. } => kind::ECM_BURST,
             Self::Measured { .. } => kind::MEASURED,
             Self::AdjustCharge { .. } => kind::ADJUST_CHARGE,
+            Self::UpdateEffect { .. } => kind::UPDATE_EFFECT,
+            Self::BuffState { .. } => kind::BUFF_STATE,
             Self::ChargeAdjusted { .. } => kind::CHARGE_ADJUSTED,
             Self::FighterGotoPoint { .. } => kind::FIGHTER_GOTO_POINT,
             Self::FighterSize { .. } => kind::FIGHTER_SIZE,
+            Self::Deployed(_) => kind::DEPLOYED,
+            Self::RemoveDeployed { .. } => kind::REMOVE_DEPLOYED,
+            Self::PlaceProbe(_) => kind::PLACE_PROBE,
+            Self::RemoveProbe { .. } => kind::REMOVE_PROBE,
         }
     }
 }

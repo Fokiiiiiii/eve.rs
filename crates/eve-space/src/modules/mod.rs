@@ -293,14 +293,18 @@ impl Action {
             | Self::WarpImmunity
             | Self::ScrambleStatus { .. }
             | Self::WarpProbe { .. }
+            | Self::CynoField { .. }
             | Self::StasisBurst { .. }
-            | Self::Defender { .. } => false,
+            | Self::Defender { .. }
+            | Self::CommandBurst { .. }
+            | Self::Panic { .. } => false,
             Self::Charged { action, fallback, .. } => {
                 action.offensive() || fallback.as_deref().is_some_and(Action::offensive)
             }
             Self::Repair { .. } => false,
             Self::Mining { .. }
             | Self::Salvage { .. }
+            | Self::Scan { .. }
             | Self::Tractor { .. }
             | Self::PassiveLock
             | Self::AutoTarget { .. } => false,
@@ -317,9 +321,31 @@ impl Action {
         }
     }
 
+    /// Whether the action takes effect at the end of its cycle (a work cycle, or a repair or remote effect that applies at the cycle's end). The charged
+    /// wrapper is looked through. A charged action that applies at the cycle's start has done its work when the cycle begins, so its last charge ends the effect then.
+    fn ends_its_cycle(&self) -> bool {
+        match self {
+            Self::Charged { action, .. } => action.ends_its_cycle(),
+            Self::Repair { when, .. } | Self::Remote { when, .. } => *when == Applies::CycleEnd,
+            _ => self.is_work(),
+        }
+    }
+
+    /// Whether the action names no target (a command burst reaches the ships in its range, not one): the charged wrapper is looked through.
+    fn targets_nothing(&self) -> bool {
+        match self {
+            Self::CommandBurst { .. } | Self::Panic { .. } => true,
+            Self::Charged { action, .. } => action.targets_nothing(),
+            _ => false,
+        }
+    }
+
     /// Whether the cycle hands its outcome to the host (a work cycle, ADR 0013).
     fn is_work(&self) -> bool {
-        matches!(self, Self::Mining { .. } | Self::Salvage { .. })
+        matches!(
+            self,
+            Self::Mining { .. } | Self::Salvage { .. } | Self::Scan { .. } | Self::CommandBurst { .. }
+        )
     }
 }
 
@@ -331,6 +357,18 @@ pub(crate) const WORK_SALVAGE: u8 = 8;
 
 /// The fuel of the next cycle of a module that burns fuel (the wire's `SimModuleWorkCommands.ConsumeFuel`): the host takes it from the ship, or refuses.
 pub(crate) const WORK_FUEL: u8 = 9;
+
+/// The work command of a Cargo Scanner's cycle (`SimModuleWorkCommands.ScanCargo`): the host reveals the target's hold.
+pub(crate) const WORK_SCAN_CARGO: u8 = 10;
+
+/// The work command of a Ship Scanner's cycle (`SimModuleWorkCommands.ScanShip`): the host reveals the target's fitted hardware.
+pub(crate) const WORK_SCAN_SHIP: u8 = 11;
+
+/// The work command of a command burst's cycle (`SimModuleWorkCommands.Burst`, protocol 43): the host applies the burst's buffs to the ships it is sent.
+pub(crate) const WORK_BURST: u8 = 12;
+
+/// The work command of a P.A.N.I.C.'s start (`SimModuleWorkCommands.Panic`, protocol 43): the host grants the fleet in reach its buffs before the effect starts.
+pub(crate) const WORK_PANIC: u8 = 13;
 
 /// How long a parked work cycle waits before the same `cycle_id` is sent again (2 s of the simulation clock; DEVIATIONS.md, ADR 0013 rule 3).
 pub(crate) const WORK_RESEND_TICKS: i64 = 2 * TICKS_PER_SECOND;
@@ -379,6 +417,16 @@ pub enum Action {
         distance_meters: f64,
         cooldown_ms: i64,
     },
+    /// A command burst's cycle (tag 28, protocol 43): non-targeted. At the cycle's end the simulation sends the host the ships within `range_meters` (plus one
+    /// metre) as a work cycle (`WORK_BURST`) and parks until it answers; the host applies the burst's buffs to the ones of its fleet.
+    CommandBurst {
+        range_meters: f64,
+    },
+    /// The Pulse Activated Nexus Invulnerability Core (tag 29, protocol 43): non-targeted, one cycle of its duration. It needs an asteroid the pilot holds the
+    /// lock on, and it parks its start until the host grants the ships of its fleet in `range_meters` (plus one metre) its buffs (`WORK_PANIC`).
+    Panic {
+        range_meters: f64,
+    },
     Charged {
         action: Box<Action>,
         fallback: Option<Box<Action>>,
@@ -409,6 +457,13 @@ pub enum Action {
     Salvage {
         access_bonus: f64,
     },
+    /// A scanner's cycle (tag 26, protocol 40): at the cycle's end the host reveals the locked ship's cargo (`cargo`, a Cargo Scanner) or its fitted hardware
+    /// (a Ship Scanner) to the pilot. `reach` is the scan's range: whole to its optimal, then the standard falloff, out of reach past it (a cargo scan has no
+    /// falloff, a hard cutoff). A work cycle (ADR 0013): the host decides the rows, the simulation the lock and the range.
+    Scan {
+        cargo: bool,
+        reach: Reach,
+    },
     /// A tractor beam (tag 9, protocol 30): it pulls the wreck or can it is locked on, at `velocity` metres a second, until it is `hold` metres off the
     /// ship's surface. `range` is the module's reach (`maxRange`): a target further off is out of reach, and the pull ends when it is out of reach
     /// at a cycle's end.
@@ -433,6 +488,12 @@ pub enum Action {
     WarpProbe {
         ball: crate::deployable::Spec,
         range: f64,
+        lifetime_ms: f64,
+    },
+    /// A cynosural field (tag 27, the cynosural field generators): as the cycle ends the field is lit where the ship is, and it lives `lifetime_ms`
+    /// (the field type's explosionDelay, 600000 for all three types). The ship is not moved; the field is not taken down when the generator stops.
+    CynoField {
+        ball: crate::deployable::Spec,
         lifetime_ms: f64,
     },
     /// A bomb (tag 20): as each cycle starts it is released at the ship; `lifetime_ms` later it detonates where it is (`crate::deployable`). The ships within
@@ -536,6 +597,10 @@ pub struct Rules {
     pub requires_industrial_core: bool,
     pub provides_industrial_core: bool,
     pub reactivation_delay_ms: f64,
+    /// The highest speed (m/s) at which the module may start (maxVelocityActivationLimit 1334, a cynosural field generator's 500), 0 for none.
+    pub max_velocity_limit: f64,
+    /// The lowest speed (m/s) at which the module may start (minVelocityActivationLimit 2608, a bomb launcher's 1), 0 for none.
+    pub min_velocity_limit: f64,
 }
 
 /// An effect the host asks the scene to run, with everything the host has worked out for it.
@@ -781,6 +846,20 @@ pub(crate) struct Running {
     pending_work: Option<PendingWorkCycle>,
     /// The damage ramp a precursor weapon has built on its target; it ends with the effect, so a new one starts from none.
     spool: SpoolState,
+    /// The turret ran out of rounds and reloads from its hold: it waits here (no cycle is timed) for the host's load, which resumes it at the start of the next
+    /// cycle, or stops it when nothing comes (FP-C8).
+    pub(crate) pending_reload: bool,
+    /// The numbers a refresh of the host (`UpdateEffect`, FP-C4b and FP-C5) brought: they take effect at the start of the next cycle.
+    pub(crate) pending_update: Option<PendingUpdate>,
+}
+
+/// The numbers a refresh of a running effect brings: the cycle, what a cycle costs the capacitor, the turret's numbers and the attributes the client is told.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct PendingUpdate {
+    pub(crate) duration_ms: f64,
+    pub(crate) capacitor_need: f64,
+    pub(crate) turret: Option<Turret>,
+    pub(crate) changes: Vec<Change>,
 }
 
 /// The modules of a ship that run, and its capacitor.

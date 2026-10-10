@@ -17,8 +17,8 @@ KINDS = {"Hello": 1, "HelloAck": 2, "Enter": 3, "Leave": 4, "Bind": 5, "UpdateSt
          "Destroyed": 21, "Spawn": 22, "SpawnReply": 23, "Destroy": 24, "Respawn": 25, "PlaceWreck": 26, "ChargeSpent": 27,
          "PlaceContainer": 28, "ContainerPlaced": 29, "ChangeWreck": 30, "RemoveWreck": 31, "Measured": 32,
          "AdjustCharge": 33, "ChargeAdjusted": 34, "Arrived": 35, "LaunchDrone": 36, "DroneCommand": 37, "DroneResults": 38,
-         "DroneScooped": 39, "DroneReleased": 40, "ModuleWorkCycle": 51, "ModuleWorkResult": 52, "ModuleEnded": 53, "LaunchFighter": 54, "FighterOrder": 55, "FighterResults": 56, "FighterLanded": 57, "FighterReleased": 58, "FighterGotoPoint": 59, "FighterSize": 60}
-
+         "DroneScooped": 39, "DroneReleased": 40, "ModuleWorkCycle": 51, "ModuleWorkResult": 52, "ModuleEnded": 53, "LaunchFighter": 54, "FighterOrder": 55, "FighterResults": 56, "FighterLanded": 57, "FighterReleased": 58, "FighterGotoPoint": 59, "FighterSize": 60, "UpdateEffect": 61, "BuffState": 62, "Deployed": 63, "RemoveDeployed": 64, "PlaceProbe": 65, "RemoveProbe": 66,
+         "EcmBurst": 67}
 
 def s(text):  # u16 length + UTF-8
     data = text.encode("utf-8")
@@ -77,15 +77,21 @@ def changes(items):
         i64(c["itemId"]) + struct.pack("<id", c["attributeId"], c["value"]) for c in items)
 
 
+def dot_bytes(d):
+    # a breacher pod's damage over time (protocol 42): a flag, then its duration, its cap per tick and its percentage per tick
+    return bytes([1]) + struct.pack("<3d", d["durationMs"], d["maxDamagePerTick"], d["maxHpPercentPerTick"]) if d else bytes([0])
+
+
 def turret(t):
     body = struct.pack("<i", t["weaponTypeId"]) + s(t["fx"])
     body += struct.pack("<8d", *t["rawDamage"], t["optimalRange"], t["falloff"], t["trackingSpeed"], t["signatureResolution"])
     c = t.get("charge")
-    body += bytes([0]) if not c else bytes([1]) + struct.pack("<iiqq", c["typeId"], c["flag"], c["rounds"], c["perCycle"])
+    # the charge's reloads byte (protocol 38, FP-C8): the gun reloads from its hold when its rounds run out
+    body += bytes([0]) if not c else bytes([1]) + struct.pack("<iiqq", c["typeId"], c["flag"], c["rounds"], c["perCycle"]) + bytes([1 if c.get("reloads") else 0])
     m = t.get("missile")
     body += bytes([0]) if not m else (bytes([1]) + struct.pack("<ii", m["chargeTypeId"], m["groupId"]) + s(m["name"])
                                       + struct.pack("<10d", m["radius"], m["mass"], m["agility"], m["hitPoints"], m["maxVelocity"], m["flightTimeMs"],
-                                                    m["explosionRadius"], m["explosionVelocity"], m["damageReductionFactor"], m["damageReductionSensitivity"]))
+                                                    m["explosionRadius"], m["explosionVelocity"], m["damageReductionFactor"], m["damageReductionSensitivity"]) + dot_bytes(m.get("dot")))
     # a precursor weapon's damage ramp: the bonus a cycle adds and the most it reaches (absent for the others)
     p = t.get("spool")
     body += bytes([1]) + struct.pack("<2d", p["perCycle"], p["max"]) if p else bytes([0])
@@ -132,11 +138,20 @@ def action(a):
         return (bytes([22]) + struct.pack("<ii", m["chargeTypeId"], m["groupId"]) + s(m["name"])
                 + struct.pack("<10d", m["radius"], m["mass"], m["agility"], m["hitPoints"], m["maxVelocity"], m["flightTimeMs"],
                               m["explosionRadius"], m["explosionVelocity"], m["damageReductionFactor"], m["damageReductionSensitivity"])
-                + struct.pack("<4d", *a["damage"]))
+                + dot_bytes(None) + struct.pack("<4d", *a["damage"]))
     if kind == "stasisBurst":
         return bytes([21]) + struct.pack("<3d", a["range"], a["durationMs"], a["speedFactor"])
     if kind == "warpProbe":
         return bytes([19]) + deployable(a["ball"]) + struct.pack("<2d", a["range"], a["lifetimeMs"])
+    # a cynosural field (tag 27): the field's ball and its lifetime (the field type's explosionDelay); it is lit at the end of the generator's cycle
+    # the SimAction tag 28 (protocol 43): a command burst's reach in metres (its buffs are the host's, read from the charge when it settles)
+    if kind == "commandBurst":
+        return bytes([28]) + struct.pack("<d", a["rangeMeters"])
+    # the SimAction tag 29 (protocol 43, track C6): the Pulse Activated Nexus Invulnerability Core's fleet reach, in metres
+    if kind == "panic":
+        return bytes([29]) + struct.pack("<d", a["rangeMeters"])
+    if kind == "cynoField":
+        return bytes([27]) + deployable(a["ball"]) + struct.pack("<d", a["lifetimeMs"])
     if kind == "bomb":
         return (bytes([20]) + deployable(a["ball"]) + bytes([a["bombKind"]]) + struct.pack("<2d", a["lifetimeMs"], a["blastRadius"])
                 + struct.pack("<4d", *a["damage"]) + struct.pack("<4d", *a["ecm"]) + struct.pack("<d", a["neutralize"]))
@@ -145,6 +160,9 @@ def action(a):
         return bytes([7, FAMILIES[a["family"]]]) + struct.pack("<5d", a["miningAmountM3"], a["wasteMultiplier"], a["wasteProbability"], a["critProbability"], a["critMultiplier"])
     if kind == "salvage":
         return bytes([8]) + struct.pack("<d", a["accessBonus"])
+    # the SimAction tag 26 (protocol 40): a scanner's cycle, a cargo (0) or ship (1) scan, and its optimal range and falloff (metres; no falloff for a cargo scan)
+    if kind == "scan":
+        return bytes([26, 0 if a["cargo"] else 1]) + struct.pack("<2d", a["optimalMeters"], a["falloffMeters"])
     # the SimAction tag 9 (protocol 30): the beam's speed, the hold distance, and the module's reach (the range a target is out of reach past)
     if kind == "tractor":
         return bytes([9]) + struct.pack("<3d", a["velocity"], a["hold"], a["range"])
@@ -159,7 +177,9 @@ def action(a):
                 + struct.pack("<6d", a["signatureRadius"], a["immobileMs"], a["noJumpMs"], a["neutAmount"], a["neutRadius"], a["neutSignatureRadius"])
                 # protocol 28: the disruption a pulse leaves (ms), then a sweep: a flag and the end of the axis (zeros without a sweep)
                 + struct.pack("<d", a.get("debuffMs", 0.0))
-                + bytes([1 if a.get("sweepEnd") else 0]) + struct.pack("<3d", *(a.get("sweepEnd") or [0.0, 0.0, 0.0])))
+                + bytes([1 if a.get("sweepEnd") else 0]) + struct.pack("<3d", *(a.get("sweepEnd") or [0.0, 0.0, 0.0]))
+                # protocol 39: a lance's beacon, a flag then its offset from the firing ship (zeros without a beacon)
+                + bytes([1 if a.get("beacon") else 0]) + struct.pack("<3d", *(a.get("beacon") or [0.0, 0.0, 0.0])))
     # the SimAction tag 14 (ADR 0013 epoch 26): a titan doomsday, one hit on the locked target after a delay, the ship held for its windows
     if kind == "doomsday":
         return bytes([14]) + struct.pack("<d", a["delayMs"]) + struct.pack("<4d", *a["damage"]) + struct.pack("<2d", a["immobileMs"], a["noJumpMs"])
@@ -238,7 +258,7 @@ def effect(e):
         # the module rules, after the action: the group and its limit (763), the rule bits (1 early deactivation 906, 2 needs an active industrial core 3265,
         # 4 is an industrial core), and the reactivation delay (669, ms)
         bits = (1 if rules["disallowEarlyDeactivation"] else 0) | (2 if rules["requiresIndustrialCore"] else 0) | (4 if rules["providesIndustrialCore"] else 0)
-        body += struct.pack("<iiBd", rules["groupId"], rules["maxGroupActive"], bits, rules["reactivationDelayMs"])
+        body += struct.pack("<iiBddd", rules["groupId"], rules["maxGroupActive"], bits, rules["reactivationDelayMs"], rules.get("maxVelocityLimit", 0.0), rules.get("minVelocityLimit", 0.0))
     return body
 
 
@@ -275,7 +295,13 @@ def build(m):
         return frame(k, u64(m["sessionId"]) + i64(m["characterId"]) + i64(m["shipId"]) + struct.pack("<i", m["solarSystemId"])
                      + i64(m["moduleId"]) + i64(m["targetId"]) + u64(m["cycleId"]) + bytes([m["command"]])
                      + struct.pack("<9d", m["miningAmountM3"], m["wasteMultiplier"], m["wasteProbability"], m["critProbability"],
-                                   m["critMultiplier"], m["accessDifficultyBonus"], m["wasteRoll"], m["roundingRoll"], m["critRoll"]))
+                                   m["critMultiplier"], m["accessDifficultyBonus"], m["wasteRoll"], m["roundingRoll"], m["critRoll"])
+                     # protocol 43: the ships a command burst reaches (a count, then each ship's id); empty for every other command
+                     + struct.pack("<I", len(m.get("recipients", []))) + b"".join(i64(ship) for ship in m.get("recipients", [])))
+    # protocol 43 (track C6): the timed buffs of a ship of this session (the command burst's), host to simulation
+    if k == "BuffState":
+        return frame(k, u64(m["sessionId"]) + i64(m["shipId"]) + struct.pack("<I", len(m["entries"]))
+                     + b"".join(struct.pack("<idd", e["collectionId"], e["value"], e["remainingMs"]) for e in m["entries"]))
     if k == "ModuleWorkResult":
         return frame(k, u64(m["sessionId"]) + i64(m["moduleId"]) + i64(m["targetId"]) + u64(m["cycleId"])
                      + bytes([1 if m["accepted"] else 0]) + s(m["reason"]) + i64(m["unitsRemaining"]) + i64(m["deliveredUnits"])
@@ -330,6 +356,11 @@ def build(m):
                      + i64(m["killerShipId"]) + wreck_kind(m.get("wreckKind")))
     if k == "ChargeSpent":
         return frame(k, u64(m["sessionId"]) + i64(m["moduleId"]) + i64(m["roundsLeft"]))
+    # protocol 38 (FP-C4b, FP-C5): a refresh of a running effect: the cycle, the capacitor a cycle costs, the turret (a flag, then the turret) and the changes
+    if k == "UpdateEffect":
+        t = m.get("turret")
+        return frame(k, u64(m["sessionId"]) + i64(m["moduleId"]) + struct.pack("<2d", m["durationMs"], m["capacitorNeed"])
+                     + (bytes([0]) if not t else bytes([1]) + turret(t)) + changes(m["changes"]))
     if k == "AdjustCharge":
         add = m["op"] == "add"
         return frame(k, u64(m["requestId"]) + u64(m["sessionId"]) + i64(m["moduleId"]) + struct.pack("<i", m["chargeType"])
@@ -354,6 +385,18 @@ def build(m):
         return frame(k, u64(m["sessionId"]) + i64(m["wreckId"]) + bytes([1 if m["isEmpty"] else 0]))
     if k == "RemoveWreck":
         return frame(k, i64(m["wreckId"]) + struct.pack("<i", m["effect"]))
+    if k == "Deployed":
+        return frame(k, struct.pack("<i", m["solarSystemId"]) + i64(m["deployableId"]) + s(m["typeName"])
+                     + struct.pack("<ii", m["typeId"], m["groupId"]) + struct.pack("<3d", *m["position"]) + struct.pack("<d", m["radius"])
+                     + i64(m["ownerId"]) + struct.pack("<ii", m["corporationId"], m["allianceId"]) + i64(m["shipId"]) + struct.pack("<d", m["lifetimeMs"]))
+    if k == "RemoveDeployed":
+        return frame(k, i64(m["deployableId"]))
+    if k == "PlaceProbe":
+        return frame(k, i64(m["probeId"]) + struct.pack("<i", m["solarSystemId"]) + s(m["typeName"]) + struct.pack("<ii", m["typeId"], m["groupId"])
+                     + struct.pack("<3d", *m["position"]) + struct.pack("<d", m["radius"]) + i64(m["ownerId"])
+                     + struct.pack("<ii", m["corporationId"], m["allianceId"]) + i64(m["shipId"]))
+    if k == "RemoveProbe":
+        return frame(k, i64(m["probeId"]))
     if k == "Measured":
         return frame(k, u64(m["sessionId"]) + bytes([m["command"]]) + (bytes([1]) + struct.pack("<d", m["distance"]) if m.get("distance") is not None else bytes([0])))
     if k == "Spawn":
@@ -403,6 +446,10 @@ def build(m):
         return frame(k, u64(m["sessionId"]) + i64(m["fighterId"]))
     if k == "FighterReleased":
         return frame(k, u64(m["sessionId"]) + i64(m["fighterId"]) + struct.pack("<3d", *m["position"]))
+    # protocol 39 (FP-C7): an ECM burst's ship and each ship it reached, with whether its roll jammed it (a flag byte, 0 or 1)
+    if k == "EcmBurst":
+        return frame(k, u64(m["sessionId"]) + i64(m["shipId"]) + struct.pack("<I", len(m["reached"]))
+                     + b"".join(i64(r["shipId"]) + bytes([1 if r["jammed"] else 0]) for r in m["reached"]))
     if k == "Destroy":
         return frame(k, i64(m["shipId"]) + i64(m["characterId"]) + i64(m["corporationId"]) + i64(m["allianceId"]) + i64(m["warFactionId"]))
     raise ValueError(k)
@@ -426,8 +473,8 @@ BARE = dict(IBIS, name="", modules=[], allianceId=99000001, securityStatus=-2.5,
             condition={"damage": 0.0, "armorDamage": 0.0, "shieldCharge": 1.0, "charge": 1.0})
 
 valid = [
-    {"name": "hello", "kind": "Hello", "version": 36},
-    {"name": "hello ack", "kind": "HelloAck", "version": 36, "pollHz": 4},
+    {"name": "hello", "kind": "Hello", "version": 46},
+    {"name": "hello ack", "kind": "HelloAck", "version": 46, "pollHz": 4},
     {"name": "enter by undocking", "kind": "Enter", "sessionId": "1790646377000015", "solarSystemId": 30100032,
      "how": 0, "stationId": "60015249", "ship": IBIS},
     {"name": "enter already in space, no modules, non-ASCII name", "kind": "Enter", "sessionId": "1",
@@ -511,6 +558,16 @@ valid = [
                 "repeat": 1, "targetId": "0", "onChanges": [], "offChanges": [],
                 "rules": {"groupId": 4174, "maxGroupActive": 0, "disallowEarlyDeactivation": True, "requiresIndustrialCore": True,
                           "providesIndustrialCore": False, "reactivationDelayMs": 180000.0}}},
+    {"name": "activate a cynosural field generator, which starts up to 500 m/s (WP19)", "kind": "Activate", "sessionId": "1790646377000015",
+     "effect": {"moduleId": "9988400001951", "moduleType": 21096, "effectId": 6731, "fx": "", "durationMs": 60000.0, "capacitorNeed": 0.0,
+                "repeat": 1, "targetId": "0", "onChanges": [], "offChanges": [],
+                "rules": {"groupId": 0, "maxGroupActive": 0, "disallowEarlyDeactivation": True, "requiresIndustrialCore": False,
+                          "providesIndustrialCore": False, "reactivationDelayMs": 0.0, "maxVelocityLimit": 500.0, "minVelocityLimit": 0.0}}},
+    {"name": "activate a bomb launcher, which starts only while moving (WP19)", "kind": "Activate", "sessionId": "1790646377000015",
+     "effect": {"moduleId": "9988400001952", "moduleType": 4256, "effectId": 6731, "fx": "", "durationMs": 10000.0, "capacitorNeed": 0.0,
+                "repeat": 1, "targetId": "0", "onChanges": [], "offChanges": [],
+                "rules": {"groupId": 0, "maxGroupActive": 0, "disallowEarlyDeactivation": False, "requiresIndustrialCore": False,
+                          "providesIndustrialCore": False, "reactivationDelayMs": 0.0, "maxVelocityLimit": 0.0, "minVelocityLimit": 1.0}}},
     {"name": "activate an effect that changes nothing of the ship", "kind": "Activate", "sessionId": "1",
      "effect": {"moduleId": "9988400001941", "moduleType": 3651, "effectId": 67, "fx": "", "durationMs": 3000.0,
                 "capacitorNeed": 0.0, "repeat": 1, "targetId": "9988400002151", "onChanges": [], "offChanges": []}},
@@ -640,6 +697,11 @@ valid = [
                 "action": {"kind": "bomb", "ball": {"chargeTypeId": 27920, "groupId": 90, "name": "Electron Bomb", "radius": 40.0}, "bombKind": 0, "lifetimeMs": 12000.0, "blastRadius": 400.0,
                            "damage": [5800.0, 0.0, 0.0, 0.0], "ecm": [0.0, 0.0, 0.0, 0.0], "neutralize": 0.0},
                 "onChanges": [], "offChanges": []}},
+    {"name": "activate a cynosural field generator (a field of 21094, lit at the end of its cycle, ten minutes)", "kind": "Activate", "sessionId": "1790646377000015",
+     "effect": {"moduleId": "9988400002813", "moduleType": 21096, "effectId": 2857, "fx": "effects.CynoGenerator",
+                "durationMs": 600000.0, "capacitorNeed": 0.0, "repeat": 1, "targetId": "0",
+                "action": {"kind": "cynoField", "ball": {"chargeTypeId": 21094, "groupId": 2020, "name": "Cynosural Field", "radius": 250.0}, "lifetimeMs": 600000.0},
+                "onChanges": [], "offChanges": []}},
     {"name": "activate an ECM burst", "kind": "Activate", "sessionId": "1790646377000015",
      "effect": {"moduleId": "9988400002813", "moduleType": 580, "effectId": 38, "fx": "effects.EcmBurstJammer",
                 "durationMs": 10000.0, "capacitorNeed": 30.0, "repeat": 1000, "targetId": "0",
@@ -652,6 +714,19 @@ valid = [
                            "chargePerCycle": 1, "charges": 2,
                            "action": {"kind": "repair", "layer": "armor", "amount": 10.0, "when": "end"},
                            "fallback": {"kind": "repair", "layer": "armor", "amount": 5.0, "when": "end"}},
+                "onChanges": [], "offChanges": []}},
+    # protocol 43 (track C6): a Shield Command Burst I (42529) with a Shield Harmonizing charge (42695): its cycle is charged, one round a cycle, and reaches 15 km
+    {"name": "activate a command burst (Shield Command Burst I, a Shield Harmonizing charge loaded)", "kind": "Activate", "sessionId": "1790646377000015",
+     "effect": {"moduleId": "9988400002813", "moduleType": 42529, "effectId": 6733, "fx": "",
+                "durationMs": 60000.0, "capacitorNeed": 25.0, "repeat": 1000, "targetId": "0",
+                "action": {"kind": "charged", "chargeTypeId": 42695, "chargeFlag": 27, "chargePerCycle": 1, "charges": 2,
+                           "action": {"kind": "commandBurst", "rangeMeters": 15000.0}},
+                "onChanges": [], "offChanges": []}},
+    # protocol 43 (track C6): the Pulse Activated Nexus Invulnerability Core (42522): one cycle of 240 s, its fleet within 200 km; no charge, no capacitor
+    {"name": "activate the invulnerability core (Pulse Activated Nexus Invulnerability Core, 200 km)", "kind": "Activate", "sessionId": "1790646377000015",
+     "effect": {"moduleId": "9988400002813", "moduleType": 42522, "effectId": 6719, "fx": "",
+                "durationMs": 240000.0, "capacitorNeed": 0.0, "repeat": 1, "targetId": "0",
+                "action": {"kind": "panic", "rangeMeters": 200000.0},
                 "onChanges": [], "offChanges": []}},
     {"name": "activate a tracking disruptor", "kind": "Activate", "sessionId": "1790646377000015",
      "effect": {"moduleId": "9988400002812", "moduleType": 2108, "effectId": 6424, "fx": "effects.TrackingDisruption",
@@ -697,6 +772,19 @@ valid = [
                                        "damageReductionSensitivity": 5.5}},
                 "onChanges": [{"itemId": "9988400003564", "attributeId": 51, "value": 4900.0}],
                 "offChanges": [{"itemId": "9988400003564", "attributeId": 51, "value": 4900.0}]}},
+    {"name": "activate a breacher pod launcher whose pod starts a damage over time", "kind": "Activate", "sessionId": "1790646377000015",
+     "effect": {"moduleId": "9988400003600", "moduleType": 85084, "effectId": 101, "fx": "effects.MissileDeployment",
+                "durationMs": 20000.0, "capacitorNeed": 0.0, "repeat": 1000, "targetId": "980050000111",
+                "turret": {"weaponTypeId": 85084, "requiresGunnery": False, "fx": "effects.MissileDeployment", "rawDamage": [0.0, 0.0, 0.0, 0.0],
+                           "optimalRange": 4000.0, "falloff": 0.0, "trackingSpeed": 0.0, "signatureResolution": 40000.0,
+                           "charge": {"typeId": 85088, "flag": 28, "rounds": 4, "perCycle": 1},
+                           "missile": {"chargeTypeId": 85088, "groupId": 4808, "name": "SCARAB Breacher Pod S", "radius": 1.0, "mass": 1.0,
+                                       "agility": 1.0, "hitPoints": 0.0, "maxVelocity": 2000.0, "flightTimeMs": 2000.0,
+                                       "explosionRadius": 35.0, "explosionVelocity": 2000.0, "damageReductionFactor": 1.0,
+                                       "damageReductionSensitivity": 5.5,
+                                       "dot": {"durationMs": 40000.0, "maxDamagePerTick": 200.0, "maxHpPercentPerTick": 0.6}}},
+                "onChanges": [{"itemId": "9988400003600", "attributeId": 51, "value": 20000.0}],
+                "offChanges": [{"itemId": "9988400003600", "attributeId": 51, "value": 20000.0}]}},
     {"name": "activate a precursor weapon that builds its damage up", "kind": "Activate", "sessionId": "1790646377000015",
      "effect": {"moduleId": "9988400002720", "moduleType": 47272, "effectId": 6995, "fx": "effects.Laser",
                 "durationMs": 3500.0, "capacitorNeed": 4.5, "repeat": 1000, "targetId": "980050000108",
@@ -732,6 +820,14 @@ valid = [
      "chargeType": 0, "op": "remove", "quantity": "75"},
     {"name": "all the rounds taken out of a gun", "kind": "AdjustCharge", "requestId": "43", "sessionId": "1790646377000015", "moduleId": "9988400002719",
      "chargeType": 0, "op": "remove", "quantity": "0"},
+    {"name": "a refresh of a running gun: its cycle, its capacitor and its numbers, with the attributes told", "kind": "UpdateEffect", "sessionId": "1790646377000015",
+     "moduleId": "9988400002719", "durationMs": 4500.0, "capacitorNeed": 2.5,
+     "turret": {"weaponTypeId": 3638, "fx": "effects.Laser", "rawDamage": [0.0, 3.0, 4.5, 0.0], "optimalRange": 5000.0, "falloff": 1200.0,
+                "trackingSpeed": 0.1, "signatureResolution": 40000.0, "requiresGunnery": True,
+                "charge": {"typeId": 222, "flag": 28, "rounds": 80, "perCycle": 1, "reloads": True}},
+     "changes": [{"itemId": "9988400002719", "attributeId": 6, "value": 2.5}, {"itemId": "9988400002719", "attributeId": 51, "value": 4500.0}]},
+    {"name": "a refresh of a running module with no gun", "kind": "UpdateEffect", "sessionId": "1790646377000015",
+     "moduleId": "9988400002721", "durationMs": 3000.0, "capacitorNeed": 0.0, "changes": []},
     {"name": "rounds of a gun that runs changed", "kind": "ChargeAdjusted", "requestId": "41", "running": True, "before": "3", "after": "80"},
     {"name": "rounds of a gun that does not run", "kind": "ChargeAdjusted", "requestId": "44", "running": False, "before": "0", "after": "0"},
     {"name": "targets with a lock going", "kind": "Targets", "sessionId": "1790646377000015", "command": 10,
@@ -820,6 +916,8 @@ valid = [
      "position": [311989835983.1308, -13069154020.916222, 156646308895.76187]},
     {"name": "a fighter sent to a point", "kind": "FighterGotoPoint", "sessionId": "1790646377000015",
      "fighterIds": ["9988400004100"], "point": [311989835983.1308, -13069154020.916222, 156646308895.76187]},
+    {"name": "an ECM burst that jammed one ship it reached and not another", "kind": "EcmBurst", "sessionId": "1790646377000015",
+     "shipId": "9988400001939", "reached": [{"shipId": "9988400004100", "jammed": True}, {"shipId": "9988400004101", "jammed": False}]},
     {"name": "destroy for a pilot to loot", "kind": "Destroy", "shipId": "980050000077", "characterId": "140000001",
      "corporationId": "1000006", "allianceId": "0", "warFactionId": "500001"},
     {"name": "respawn of a capsule where the ship was", "kind": "Respawn", "sessionId": "1790646377000015",
@@ -845,6 +943,20 @@ valid = [
     {"name": "wreck with nothing to take", "kind": "ChangeWreck", "sessionId": "1790646377000015", "wreckId": "9988400002417", "isEmpty": True},
     {"name": "can taken out of space with the destruction effect", "kind": "RemoveWreck", "wreckId": "9988400002948", "effect": 3},
     {"name": "wreck taken out of space without one", "kind": "RemoveWreck", "wreckId": "9988400002417", "effect": 0},
+    {"name": "cynosural field lit by a generator, told with its life", "kind": "Deployed", "solarSystemId": 30100032,
+     "deployableId": "4250000000000003", "typeName": "Cynosural Field", "typeId": 21094, "groupId": 2020,
+     "position": [311989835983.1308, -13069154020.916222, 156646308895.76187], "radius": 250.0, "ownerId": "1790646377000015",
+     "corporationId": 98000001, "allianceId": 0, "shipId": "9988400001943", "lifetimeMs": 600000.0},
+    {"name": "cynosural field put back after a restart, with what is left of its life", "kind": "Deployed", "solarSystemId": 30100032,
+     "deployableId": "4250000000000007", "typeName": "Cynosural Field", "typeId": 21094, "groupId": 2020,
+     "position": [311989835983.1308, -13069154020.916222, 156646308895.76187], "radius": 250.0, "ownerId": "1790646377000015",
+     "corporationId": 98000001, "allianceId": 0, "shipId": "9988400001943", "lifetimeMs": 120000.0},
+    {"name": "cynosural field taken out of space by the host", "kind": "RemoveDeployed", "deployableId": "4250000000000003"},
+    {"name": "scanner probe launched from a probe launcher and put in space", "kind": "PlaceProbe", "probeId": "990000000000001", "solarSystemId": 30100032,
+     "typeName": "Scanner Probe I", "typeId": 19415, "groupId": 479,
+     "position": [311989835983.1308, -13069154020.916222, 156646308895.76187], "radius": 40.0, "ownerId": "1790646377000015",
+     "corporationId": 98000001, "allianceId": 0, "shipId": "9988400001943"},
+    {"name": "scanner probe recalled by its pilot", "kind": "RemoveProbe", "probeId": "990000000000001"},
     {"name": "how far a can is", "kind": "Measured", "sessionId": "1790646377000015", "command": 20, "distance": 261.0},
     {"name": "how far a can that is not there is", "kind": "Measured", "sessionId": "1790646377000015", "command": 20, "distance": None},
     {"name": "destroy for nobody", "kind": "Destroy", "shipId": "4200000000000001", "characterId": "0",
@@ -864,6 +976,36 @@ valid = [
      "targetId": "0", "cycleId": "7301444403200000003", "command": 9, "miningAmountM3": 0.0,
      "wasteMultiplier": 0.0, "wasteProbability": 0.0, "critProbability": 0.0, "critMultiplier": 0.0,
      "accessDifficultyBonus": 0.0, "wasteRoll": 0.0, "roundingRoll": 0.0, "critRoll": 0.0},
+    # protocol 43 (track C6): a command burst's cycle asks the host with the ships of the scene in reach (the host decides the fleet); a cargo scan's cycle carries no numbers
+    {"name": "module work cycle of a command burst reaching two ships", "kind": "ModuleWorkCycle", "sessionId": "1790646377000015",
+     "characterId": "140000342", "shipId": "9988400001939", "solarSystemId": 30100032, "moduleId": "9988400002813",
+     "targetId": "0", "cycleId": "7301444403200000004", "command": 12, "miningAmountM3": 0.0,
+     "wasteMultiplier": 0.0, "wasteProbability": 0.0, "critProbability": 0.0, "critMultiplier": 0.0,
+     "accessDifficultyBonus": 0.0, "wasteRoll": 0.25, "roundingRoll": 0.5, "critRoll": 0.75,
+     "recipients": ["9988400001939", "9988400001940"]},
+    {"name": "module work cycle of a command burst reaching only its own ship", "kind": "ModuleWorkCycle", "sessionId": "1790646377000015",
+     "characterId": "140000342", "shipId": "9988400001939", "solarSystemId": 30100032, "moduleId": "9988400002813",
+     "targetId": "0", "cycleId": "7301444403200000005", "command": 12, "miningAmountM3": 0.0,
+     "wasteMultiplier": 0.0, "wasteProbability": 0.0, "critProbability": 0.0, "critMultiplier": 0.0,
+     "accessDifficultyBonus": 0.0, "wasteRoll": 0.0, "roundingRoll": 0.0, "critRoll": 0.0, "recipients": ["9988400001939"]},
+    {"name": "module work cycle of a cargo scan (command 10) carrying no numbers", "kind": "ModuleWorkCycle", "sessionId": "1790646377000015",
+     "characterId": "140000342", "shipId": "9988400001939", "solarSystemId": 30100032, "moduleId": "9988400002813",
+     "targetId": "1000000000003", "cycleId": "7301444403200000006", "command": 10, "miningAmountM3": 0.0,
+     "wasteMultiplier": 0.0, "wasteProbability": 0.0, "critProbability": 0.0, "critMultiplier": 0.0,
+     "accessDifficultyBonus": 0.0, "wasteRoll": 0.0, "roundingRoll": 0.0, "critRoll": 0.0},
+    # protocol 43: the timed buffs of a ship of this session, after each change (an empty list clears them)
+    # protocol 43 (track C6): the invulnerability core's grant asks the host with the ships in reach (command 13, no mining numbers)
+    {"name": "module work cycle of the invulnerability core's grant, two ships in reach", "kind": "ModuleWorkCycle", "sessionId": "1790646377000015",
+     "characterId": "140000342", "shipId": "9988400001939", "solarSystemId": 30100032, "moduleId": "9988400002813",
+     "targetId": "0", "cycleId": "7301444403200000007", "command": 13, "miningAmountM3": 0.0,
+     "wasteMultiplier": 0.0, "wasteProbability": 0.0, "critProbability": 0.0, "critMultiplier": 0.0,
+     "accessDifficultyBonus": 0.0, "wasteRoll": 0.0, "roundingRoll": 0.0, "critRoll": 0.0,
+     "recipients": ["9988400001939", "9988400001940"]},
+    {"name": "buff state of a ship: a shield resistance buff and a repair buff", "kind": "BuffState", "sessionId": "1790646377000015",
+     "shipId": "9988400001939", "entries": [{"collectionId": 10, "value": -10.0, "remainingMs": 60000.0},
+                                             {"collectionId": 11, "value": -6.0, "remainingMs": 45000.0}]},
+    {"name": "buff state cleared (no buff left on the ship)", "kind": "BuffState", "sessionId": "1790646377000015",
+     "shipId": "9988400001939", "entries": []},
     {"name": "module work result accepted", "kind": "ModuleWorkResult", "sessionId": "1790646377000015",
      "moduleId": "9988400002813", "targetId": "1000000000001", "cycleId": "7301444403200000001", "accepted": True,
      "reason": "", "unitsRemaining": "980", "deliveredUnits": "20", "complete": False},
@@ -892,6 +1034,15 @@ valid = [
      "effect": {"moduleId": "9988400002813", "moduleType": 24348, "effectId": 9, "fx": "effects.TractorBeam",
                 "durationMs": 5000.0, "capacitorNeed": 5.0, "repeat": 1000, "targetId": "1000000000002",
                 "action": {"kind": "tractor", "velocity": 500.0, "hold": 500.0, "range": 20000.0}, "onChanges": [], "offChanges": []}},
+    # the SimAction tag 26 (protocol 40): a Cargo Scanner I (50 km, a hard cutoff) and a Ship Scanner I (50 km, 30 km of falloff), each locked on a ship
+    {"name": "activate a cargo scanner (Cargo Scanner I: 50 km, no falloff)", "kind": "Activate", "sessionId": "1790646377000015",
+     "effect": {"moduleId": "9988400002813", "moduleType": 442, "effectId": 47, "fx": "effects.CargoScan",
+                "durationMs": 5000.0, "capacitorNeed": 4.0, "repeat": 1, "targetId": "1000000000002", "burnsFuel": False,
+                "action": {"kind": "scan", "cargo": True, "optimalMeters": 50000.0, "falloffMeters": 0.0}, "onChanges": [], "offChanges": []}},
+    {"name": "activate a ship scanner (Ship Scanner I: 50 km, 30 km falloff)", "kind": "Activate", "sessionId": "1790646377000015",
+     "effect": {"moduleId": "9988400002813", "moduleType": 443, "effectId": 46, "fx": "effects.ShipScan",
+                "durationMs": 2000.0, "capacitorNeed": 5.0, "repeat": 1, "targetId": "1000000000002", "burnsFuel": False,
+                "action": {"kind": "scan", "cargo": False, "optimalMeters": 50000.0, "falloffMeters": 30000.0}, "onChanges": [], "offChanges": []}},
     {"name": "activate a passive targeter", "kind": "Activate", "sessionId": "1790646377000015",
      "effect": {"moduleId": "9988400002813", "moduleType": 1100, "effectId": 10, "fx": "effects.TargetPassively",
                 "durationMs": 1000.0, "capacitorNeed": 0.0, "repeat": 1000, "targetId": "1000000000002",
@@ -936,7 +1087,7 @@ valid = [
                            "warningMs": 15000.0, "pulseMs": 1000.0, "pulses": 16, "damage": [0.0, 0.0, 0.0, 17000.0],
                            "signatureRadius": 20000.0, "immobileMs": 30000.0, "noJumpMs": 120000.0,
                            "neutAmount": 31000.0, "neutRadius": 10000.0, "neutSignatureRadius": 20000.0,
-                           "debuffMs": 60000.0},
+                           "debuffMs": 60000.0, "beacon": [4000.0, 0.0, 0.0]},
                 "onChanges": [], "offChanges": []}},
     {"name": "activate a titan doomsday (Judgment)", "kind": "Activate", "sessionId": "1790646377000015",
      "effect": {"moduleId": "9988400002815", "moduleType": 24550, "effectId": 4489, "fx": "",
@@ -980,6 +1131,13 @@ def named(name):
     return next(c for c in valid if c["name"] == name)
 
 
+burst = named("activate a command burst (Shield Command Burst I, a Shield Harmonizing charge loaded)")
+burst_cycle = named("module work cycle of a command burst reaching two ships")
+burst_negative = dict(burst, effect=dict(burst["effect"], action=dict(burst["effect"]["action"], action={"kind": "commandBurst", "rangeMeters": -1.0})))
+panic = named("activate the invulnerability core (Pulse Activated Nexus Invulnerability Core, 200 km)")
+panic_negative = dict(panic, effect=dict(panic["effect"], action={"kind": "panic", "rangeMeters": -1.0}))
+grant = named("module work cycle of the invulnerability core's grant, two ships in reach")
+buff_state = named("buff state of a ship: a shield resistance buff and a repair buff")
 invalid = [
     {"name": "unknown kind", "reason": "unknown-kind", "hex": "01000000ff"},
     {"name": "kind zero", "reason": "unknown-kind", "hex": "0100000000"},
@@ -1025,12 +1183,22 @@ invalid = [
      "hex": (struct.pack("<I", 1 + 8 + 1 + 2 + 1) + bytes([11]) + u64(1) + bytes([4]) + struct.pack("<H", 1) + b"\xff").hex()},
     {"name": "command that promises more arguments than it carries", "reason": "truncated",
      "hex": (struct.pack("<I", 1 + 8 + 2) + bytes([7]) + u64(1) + bytes([1, 2])).hex()},
+    {"name": "refresh of a running effect with no cycle", "reason": "bad-value",
+     "hex": build(dict(named("a refresh of a running gun: its cycle, its capacitor and its numbers, with the attributes told"), durationMs=0.0)).hex()},
+    {"name": "refresh of a running effect with a negative capacitor need", "reason": "bad-value",
+     "hex": build(dict(named("a refresh of a running gun: its cycle, its capacitor and its numbers, with the attributes told"), capacitorNeed=-1.0)).hex()},
     {"name": "module work cycle with no cycle", "reason": "bad-value",
      "hex": build(dict(named("module work cycle of a mining laser"), cycleId="0")).hex()},
     {"name": "module work cycle with a roll of one", "reason": "bad-value",
      "hex": build(dict(named("module work cycle of a mining laser"), wasteRoll=1.0)).hex()},
     {"name": "module work cycle of an unknown command", "reason": "bad-value",
-     "hex": build(dict(named("module work cycle of a mining laser"), command=10)).hex()},
+     "hex": build(dict(named("module work cycle of a mining laser"), command=12)).hex()},
+    {"name": "scan with no optimal range", "reason": "bad-value",
+     "hex": build(dict(named("activate a cargo scanner (Cargo Scanner I: 50 km, no falloff)"), effect=dict(named("activate a cargo scanner (Cargo Scanner I: 50 km, no falloff)")["effect"],
+                       action=dict(named("activate a cargo scanner (Cargo Scanner I: 50 km, no falloff)")["effect"]["action"], optimalMeters=0.0)))).hex()},
+    {"name": "ship scan with a negative falloff", "reason": "bad-value",
+     "hex": build(dict(named("activate a ship scanner (Ship Scanner I: 50 km, 30 km falloff)"), effect=dict(named("activate a ship scanner (Ship Scanner I: 50 km, 30 km falloff)")["effect"],
+                       action=dict(named("activate a ship scanner (Ship Scanner I: 50 km, 30 km falloff)")["effect"]["action"], falloffMeters=-1.0)))).hex()},
     {"name": "module work cycle with a probability above one", "reason": "bad-value",
      "hex": build(dict(named("module work cycle of a mining laser"), critProbability=1.5)).hex()},
     {"name": "module work cycle cut short", "reason": "truncated",
@@ -1039,7 +1207,18 @@ invalid = [
      "hex": build(dict(named("module work cycle asking the fuel of a cycle"), miningAmountM3=20.0)).hex()},
     {"name": "module ended with an unknown reason", "reason": "bad-value",
      "hex": build(dict(named("module ended when its target is lost"), reason=9)).hex()},
-    {"name": "warp probe with no lifetime", "reason": "bad-value",
+    {"name": "scanner probe with a radius that is negative", "reason": "bad-value",
+     "hex": build(dict(named("scanner probe launched from a probe launcher and put in space"), radius=-1.0)).hex()},
+    {"name": "cynosural field with no life left", "reason": "bad-value",
+     "hex": build(dict(named("cynosural field lit by a generator, told with its life"), lifetimeMs=-1.0)).hex()},
+    {"name": "cynosural field with a radius that is not a number", "reason": "bad-value",
+     "hex": build(dict(named("cynosural field lit by a generator, told with its life"), radius=float("nan"))).hex()},
+    {"name": "ECM burst with a jam flag that is neither 0 nor 1", "reason": "bad-value",
+     "hex": frame("EcmBurst", u64(1) + i64(9) + struct.pack("<I", 1) + i64(10) + bytes([2])).hex()},
+    {"name": "ECM burst that promises two ships and carries one", "reason": "truncated",
+     "hex": frame("EcmBurst", u64(1) + i64(9) + struct.pack("<I", 2) + i64(10) + bytes([1])).hex()},
+    {"name": "ECM burst cut short before its ship", "reason": "truncated",
+     "hex": frame("EcmBurst", u64(1) + bytes([0, 0, 0])).hex()},    {"name": "warp probe with no lifetime", "reason": "bad-value",
      "hex": build(dict(named("activate an interdiction probe"), effect=dict(named("activate an interdiction probe")["effect"],
                        action=dict(named("activate an interdiction probe")["effect"]["action"], lifetimeMs=0.0)))).hex()},
     {"name": "bomb of an unknown kind", "reason": "bad-value",
@@ -1050,7 +1229,20 @@ invalid = [
                        action=dict(named("activate a mining laser")["effect"]["action"], critProbability=1.5)))).hex()},
     {"name": "mining action with an unknown family", "reason": "bad-value",
      "hex": (lambda frame: frame[:len(frame) - 41] + bytes([9]) + frame[len(frame) - 40:])(build(named("activate a mining laser")))
-            .hex()},
+            .hex()},    {"name": "command burst with a negative reach", "reason": "bad-value", "hex": build(burst_negative).hex()},
+    {"name": "fuel ask carrying recipients", "reason": "bad-value",
+     "hex": build(dict(named("module work cycle asking the fuel of a cycle"), recipients=["9988400001939"])).hex()},
+    {"name": "cargo scan carrying mining numbers", "reason": "bad-value",
+     "hex": build(dict(named("module work cycle of a cargo scan (command 10) carrying no numbers"), miningAmountM3=20.0)).hex()},
+    {"name": "invulnerability core with a negative reach", "reason": "bad-value", "hex": build(panic_negative).hex()},
+    {"name": "invulnerability core's grant carrying mining numbers", "reason": "bad-value",
+     "hex": build(dict(grant, miningAmountM3=20.0)).hex()},
+    {"name": "burst recipients with a count the frame cannot hold", "reason": "truncated",
+     "hex": (lambda frame: frame[:len(frame) - 20] + struct.pack("<I", 1000) + frame[len(frame) - 16:])(build(burst_cycle)).hex()},
+    {"name": "buff state with a negative time left", "reason": "bad-value",
+     "hex": build(dict(buff_state, entries=[{"collectionId": 10, "value": -10.0, "remainingMs": -1.0}])).hex()},
+    {"name": "buff state with a value that is not a number", "reason": "bad-value",
+     "hex": build(dict(buff_state, entries=[{"collectionId": 10, "value": float("nan"), "remainingMs": 1000.0}])).hex()},
 ]
 
 os.makedirs(os.path.dirname(OUT), exist_ok=True)

@@ -130,6 +130,11 @@ internal sealed class FakeSim : ISimulation
 
     public void ModuleWorkResult(SimModuleWorkResult result) => Heard.Enqueue(result);
 
+    /// <summary>The buff states the host sent, in order (a command burst's, protocol 43).</summary>
+    public List<SimBuffState> BuffStates { get; } = [];
+
+    public void BuffState(ulong sessionId, long shipId, IReadOnlyList<SimBuffEntry> entries) => BuffStates.Add(new SimBuffState(sessionId, shipId, entries));
+
     /// <summary>What a can that is placed is answered with: where it lies (the test's own place when none is set), or why not.</summary>
     public CommandReply? PlaceContainerAnswer { get; set; }
 
@@ -144,6 +149,14 @@ internal sealed class FakeSim : ISimulation
     }
 
     /// <summary>What a change of the rounds of a gun is answered with (the default: the gun does not run, the host has its rounds).</summary>
+    public List<SimUpdateEffect> Updates { get; } = [];
+
+    public Task UpdateEffectAsync(SimUpdateEffect request, CancellationToken cancellationToken = default)
+    {
+        Updates.Add(request);
+        return Task.CompletedTask;
+    }
+
     public Func<SimAdjustCharge, SimChargeAdjusted> AdjustAnswer { get; set; } = request => new SimChargeAdjusted(request.RequestId, false, 0, 0);
 
     /// <summary>What the simulation tells right after it has answered a change of rounds (a count of the gun, as it goes on shooting).</summary>
@@ -169,6 +182,14 @@ internal sealed class FakeSim : ISimulation
     }
 
     public void RemoveWreck(long wreckId, int effect) => Heard.Enqueue(new SimRemoveWreck(wreckId, effect));
+
+    public void RestoreDeployed(SimDeployed deployed) => Heard.Enqueue(deployed);
+
+    public void RemoveDeployed(long deployableId) => Heard.Enqueue(new SimRemoveDeployed(deployableId));
+
+    public void PlaceProbe(SimPlaceProbe probe) => Heard.Enqueue(probe);
+
+    public void RemoveProbe(long probeId) => Heard.Enqueue(new SimRemoveProbe(probeId));
 
     public void Destroy(long shipId, SimCredit credit) => Heard.Enqueue(new SimDestroy(shipId, credit));
 

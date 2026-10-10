@@ -667,8 +667,8 @@ Open, each with its blocker:
 - Not in SF-0 (later packages): the probes use one module per family (the Damage Control I, Afterburner, Small Energy Neutralizer, and one rig of the hull's size); the probes do not walk every module a hull can take.
 - SF-1 (listing): `FittingCoverageTests` (Eve.Services.Core.Tests) asserts that the 21 client fitting-manager calls (charFittingMgr, allianceFittingMgr, corpFittingMgr; seven each) are answered by a method; the open list is now empty. `ShipCoverageTests` (Eve.Services.Space.Tests) lists the `ship` calls; `ship.AssembleShip` is the only one open (SF-4, not this track). `ship.GetShipFittingInfo` returns the saved fitting's name and hull (SF-2); an unknown fitting keeps the reference's default `Fitting {id}` (EveJS `Handle_GetShipFittingInfo`, shipService.js:1248), which `ShipFittingInfoRpcTests` pins. The silent `None` answers of `ship.Undock`, `Board` and `LeaveShip` when the object is not bound are unchanged (not verified against the client).
 - SF-2 (fitting persistence, done in code; PG tests and the client are the gate): table `fitting.saved_fitting` (migration 0005, `PgSavedFittingStore`, `SavedFittingRules`), the services `charFittingMgr`, `corpFittingMgr` and `allianceFittingMgr` (`FittingMgrCalls`), the Host adapter `FittingHost` (`dotnet/src/Eve.Host/Rpc/FittingRpc.cs`). Seven calls each; the owner scopes, the limits (500 character, 600 corporation and alliance), the Fitting Manager role and the alliance executor are checked as EveJS checks them; refusals are the client's UserErrors; each change notifies every session of the owner (`OnFittingAdded`, `OnFittingDeleted`, `OnManyFittingsDeleted`). Tests: `SavedFittingStoreTests` (rules without a database; store round trip, owners, limit, restart), `FittingMgrServicesTests` (service calls, refusals, roles, executor, notifications; PostgreSQL).
-- SF-2 open: corporation `GetFittings` is answered uncached (EveJS answers it as a 15-minute cached result and invalidates it remotely; see DEVIATIONS "Track S1"). The graphical client has not seen a save, load, rename or delete.
-- SF-3 (apply a saved fitting to a docked ship) and SF-12 (charges, drones and fighters on the bound dogma location): NOT STARTED in this track.
+- SF-2 open: the graphical client has not seen a save, load, rename or delete. Corporation `GetFittings` is cached for 15 minutes, and each change sends the client's cache drop before the change is announced (`FittingMgrServicesTests`, PostgreSQL).
+- SF-3 (apply a saved fitting to a docked ship) and SF-12 (charges, drones and fighters on the bound dogma location): see section 30.
 - NOT RUN: the graphical client (assemble, undock, fitting save and load) and any MITM capture.
 
 
@@ -695,8 +695,41 @@ Open, each with its blocker:
 Done (tests: `FitFittingTests`, PostgreSQL, real SDE: each module in its slot with the one that has no hangar item reported; a fit for another hull refused by name; a ship in space refused; a charge stack split into the hold with the shortfall reported by quantity; a drone split into the drone bay; a rig not fitted displaced into the hold; decisions and sources in DEVIATIONS "Track S1: fitting a docked ship"):
 - `ship` fitting by the client's `FitFitting` on the bound ship inventory (`InvBrokerService.Fitting.cs`): modules and rigs by slot in the reference's order, then the cargo, drone, ice, implant, fighter and charge legs. The reply is the client's failed-to-load list.
 
+Added (tests: `FitFittingTests`, `ReloadServiceTests`, PostgreSQL, real SDE): the re-online pass after the modules (`The_modules_of_a_fit_are_switched_on_where_the_grid_allows`); one batch at the end of the apply (`A_fit_tells_the_pilot_its_changes_in_one_batch_at_the_end`); a rig fitted into its slot when rigs are asked for (Cockroach, flag 92); fighters into the fighter bay, with a module refused there and reported (Cockroach, flag 158); a ship in space refused with the in-space fitting service's not-found notify (EveJS text, the Mobile Depot and maintenance-bay providers are not modelled).
+- SF-12: a docked gun loaded from the station hangar, with a drone and a fighter given as charges left alone, and unloaded back to the hangar (`A_docked_gun_is_loaded_from_the_hangar_and_a_drone_or_a_fighter_given_as_a_charge_is_left_alone`).
+
 Open, each with its blocker:
-- NOT BUILT: the re-online pass after the modules, the space-loot and structure access checks, and the ship-service checks of the reference (DEVIATIONS "Track S1: fitting a docked ship" gives the reason for each).
-- NOT TESTED: fighters (no hull with a fighter bay in the fixtures yet); rigs fitted into their slots (the calibration path is covered by the rules tests, not by a fit).
+- NOT BUILT: the space-loot and structure access checks, and the ship-service checks of the reference (DEVIATIONS "Track S1: fitting a docked ship" gives the reason for each). Blocker: eve.rs has no space loot, structure fitting or ship-service state.
+- NOT BUILT: in-space fitting services (Mobile Depot, maintenance-bay ship, Ship Maintenance Array). Blocker: those providers are not modelled; an in-space fit is refused until they are.
 - NOT RUN: the graphical client (the fit button, the buy-all box for the failed list, the hangar deltas).
 
+
+
+## 32. Track S2b: module rules, the stance on the wire, special hulls (2026-10-10)
+
+Done (tests: `SiegeModuleTests`, `SiegeSpeedLockTests`, `ShipStanceSlimTests`, `JumpDriveRulesTests`, `SpecialHullBonusTests`, the Rust `scene::tests` stance test and the simlink replay; decisions and sources in DEVIATIONS "Track S2b").
+- Protocol 56: the stance is in the ship spec and the slim item (`shipStance`), and a switch shows the slim item again. `messages.json` is regenerated by the generator.
+- The siege's speed lock reaches the simulation: a start sends the ship again (the maximum velocity and the mass are compared with the resonances).
+- The jump drive reads the hull's own numbers (a dogma world with the hull alone), so a hull bonus on the fuel reaches the jump while the skills and the economizers are taken once each; a Jump Freighter does not jump into high-security space (the wiki's rule).
+- Corrected from section 30: the module fuel per cycle (713, 714) is built (`WORK_FUEL`), and the warp, dock and speed locks of a siege are dogma while the module runs. Section 30's "NOT BUILT" for the fuel is withdrawn.
+
+Open, each with its blocker:
+- NOT VERIFIED AT MODULE LEVEL: the triage and bastion numbers, the command burst's bonused buff values, the cloak's delay bonus and the covert cyno's duration bonus. The data path is in the code (the dogma world, the module's own attributes); a test per module needs the module fitted with its skills.
+- NOT BUILT: the blockade runner restrictions. The wiki names none for the ship (DEVIATIONS Track S2b).
+- LIMITATION: the old stance of a switch after a restart is the current one (the custom info keeps only the current stance).
+- NOT RUN: the graphical client. The stance button in space, the speed of a siege-locked ship and the jump freighter's refusal text are not seen in the client.
+
+## 33. Track A9: the bridge range, the Black Ops conduit, the industrial bridge (protocol 57, 2026-10-10)
+
+Done (tests: CynoJumpHostTests (A_black_ops_conduit_takes..., A_rorqual_bridges_to_an_industrial_field..., An_industrial_bridge_is_refused..., A_bridge_does_not_survive_a_restart...), scene/tests.rs (a_conduit_jump_..., a_bridge_takes_only..., a_bridge_range_is_refused...); decisions in DEVIATIONS "Track A9: the bridge range, the Black Ops conduit, the industrial bridge"):
+- The bridge range is an argument of command 30 (2 500 metres, the wiki); the passage (command 31) is refused beyond it.
+- The passenger list (command 32): a Black Ops with its Covert generator makes a conduit jump; the fleet ships in its 10 km that are eligible (3322) and ready go with it at once, the group taken whole or refused whole. The fuel is the anchor's, once (3131 a light year); each ship takes the jump drive's fatigue with its own 1971.
+- The industrial bridge: a Rorqual's Industrial generator (SDE 63140) opens a bridge to an industrial field (20 seconds, 100 GJ, no Strontium, no hold), and its passengers take flag 3325.
+- Every bridge checks the bridging hull's field rule (JumpDriveRules.MayJumpTo) and the high-security refusal for the capitals (a Titan and a Rorqual).
+- A bridge and a conduit do not survive a restart (the host and the simulation both hold them in memory).
+
+Open, each with its blocker:
+- NOT BUILT: the Rorqual's conduit. Blocker: the wiki requires the Rorqual's industrial core to be inactive, and the simulation does not expose the core's active state to the host.
+- NOT BUILT: the mobile cynosural beacon (group 4093: the standard, the highsec authorized and the covert ones, SDE 57319, 58906, 59630) as a jump destination. Blocker: it is launched from the hold and anchored like the mobile inhibitor (SpaceContainers.Disruptors.cs), and its lit field has to be recorded as a cynosural field; this track did not reach it.
+- NOT BUILT: the Pharolux and Upwell cyno beacons (group 2017, category 65, the structure phase, and the structureCynoBeaconMgr remote service): named refusal only (the Upwell structures are the structure phase, not built).
+- The client was not run on this host: the passenger list, the fleet's notices and the arrival are not seen in the client.

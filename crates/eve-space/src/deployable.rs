@@ -58,7 +58,7 @@ pub enum Role {
     CynoInhibitor { active: bool, range: f64 },
     /// A jump bridge a ship opened (command 28, protocol 54): it lives until its time is up, is put in no client ball, and lets the fleet ships in 2 500 metres of
     /// the ship pass through it to the field (command 31). The field is the one the bridge targets; the destination is that field's system.
-    JumpBridge { field_id: i64, destination_system: i32 },
+    JumpBridge { field_id: i64, destination_system: i32, range_meters: f64 },
     /// A lance's beacon (EVE.js `spawnLanceBeacon`, protocol 39): a transient container the beam is drawn to. It does nothing but exist; it is taken out when
     /// its strike's effect ends (or stops), or when its lifetime is up.
     Beacon,
@@ -235,13 +235,14 @@ impl Scene {
         field_id: i64,
         destination_system: i32,
         lifetime_ms: f64,
+        range_meters: f64,
         at: i64,
     ) -> bool {
         let Some(pilot) = self.pilots.get(&session) else { return false };
         let bridge = Deployable {
             id: DEPLOYABLE_ID_BASE + self.deployable_sequence as i64,
             spec: Spec { charge_type_id: 0, group_id: 0, name: "Jump Bridge".to_string(), radius: 0.0 },
-            role: Role::JumpBridge { field_id, destination_system },
+            role: Role::JumpBridge { field_id, destination_system, range_meters },
             position: pilot.ship.position,
             ends_at: at + ticks(lifetime_ms),
             launcher: session,

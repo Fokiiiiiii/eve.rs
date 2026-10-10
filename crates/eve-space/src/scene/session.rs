@@ -149,13 +149,27 @@ impl Scene {
             Command::CynoJump { field_id, destination_system, spool_ms, capacitor } => {
                 self.cyno_jump(session, field_id, destination_system, spool_ms, capacitor, now)
             }
-            Command::OpenBridge { field_id, destination_system, lifetime_ms, immobile_ms, capacitor } => self
-                .open_bridge(
+            Command::OpenBridge {
+                field_id,
+                destination_system,
+                lifetime_ms,
+                immobile_ms,
+                range_meters,
+                capacitor,
+            } => self.open_bridge(
+                session,
+                field_id,
+                destination_system,
+                (lifetime_ms, immobile_ms, range_meters),
+                capacitor,
+                now,
+            ),
+            Command::ConduitJump { field_id, destination_system, passenger_count, passengers, .. } => self
+                .conduit_jump(
                     session,
                     field_id,
                     destination_system,
-                    (lifetime_ms, immobile_ms),
-                    capacitor,
+                    &passengers[..passenger_count as usize],
                     now,
                 ),
             Command::BridgeJump { bridge_ship_id, field_id, destination_system } => {

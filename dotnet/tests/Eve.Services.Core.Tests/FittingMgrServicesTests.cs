@@ -49,6 +49,7 @@ public sealed class FittingMgrServicesTests
         public List<byte[]> Packets { get; } = [];
         public void Send(PyValue packet) => Packets.Add(MarshalCodec.Encode(packet));
         public bool Sent(string name) => Packets.Any(bytes => System.Text.Encoding.ASCII.GetString(bytes).Contains(name, StringComparison.Ordinal));
+        public int IndexOf(string name) => Packets.FindIndex(bytes => System.Text.Encoding.ASCII.GetString(bytes).Contains(name, StringComparison.Ordinal));
     }
 
     private static async Task<(PgSavedFittingStore Store, Host Host, FittingMgrCalls Calls)> SetUpAsync()
@@ -63,7 +64,7 @@ public sealed class FittingMgrServicesTests
 
     private static ClientSession SessionOf(Sink sink, long character, long corporation = 0, long alliance = 0)
     {
-        var session = new ClientSession(sink);
+        var session = new ClientSession(sink) { ClientId = character };
         session.Set("charid", new PyInt(character));
         if (corporation > 0) session.Set("corpid", new PyInt(corporation));
         if (alliance > 0) session.Set("allianceid", new PyInt(alliance));
@@ -172,5 +173,43 @@ public sealed class FittingMgrServicesTests
         var deleted = Assert.IsType<PyList>(await service.CallAsync(Call("DeleteManyFittings", session, new PyInt(Character), new PyList([new PyLong(first), new PyLong(second), new PyLong(first)]))));
         Assert.Equal(2, deleted.Items.Count);
         Assert.True(sink.Sent("OnManyFittingsDeleted"));
+    }
+
+    [FittingPgFact]
+    public async Task A_corporation_list_is_cached_for_fifteen_minutes_and_each_change_drops_the_clients_copy_before_it_is_announced()
+    {
+        var (_, host, calls) = await SetUpAsync();
+        host.FittingManager = true;
+        var sink = new Sink();
+        var member = SessionOf(sink, Character, Corporation);
+        host.Sessions.Add(member);
+        IService corp = new CorpFittingMgrService(calls);
+
+        var listed = await corp.CallAsync(Call("GetFittings", member, new PyInt(Corporation)));
+        var listedBytes = System.Text.Encoding.ASCII.GetString(MarshalCodec.Encode(listed));
+        Assert.Contains("CachedMethodCallResult", listedBytes, StringComparison.Ordinal);
+        Assert.Contains("15 minutes", listedBytes, StringComparison.Ordinal);
+
+        sink.Packets.Clear();
+        await corp.CallAsync(Call("SaveFitting", member, new PyInt(Corporation), Fitting()));
+        var invalidated = sink.IndexOf("InvalidateCachedMethodCall");
+        var announced = sink.IndexOf("OnFittingAdded");
+        Assert.True(invalidated >= 0, "the client's cached list is dropped");
+        Assert.True(announced > invalidated, "the drop comes before the change is announced");
+        Assert.Contains("GetFittings", System.Text.Encoding.ASCII.GetString(sink.Packets[invalidated]), StringComparison.Ordinal);
+    }
+
+    [FittingPgFact]
+    public async Task A_character_list_is_not_cached_and_its_changes_send_no_cache_drop()
+    {
+        var (_, host, calls) = await SetUpAsync();
+        var sink = new Sink();
+        var session = SessionOf(sink, Character);
+        host.Sessions.Add(session);
+        IService service = new CharFittingMgrService(calls);
+        var listed = await service.CallAsync(Call("GetFittings", session, new PyInt(Character)));
+        Assert.IsType<PyDict>(listed);
+        await service.CallAsync(Call("SaveFitting", session, new PyInt(Character), Fitting()));
+        Assert.Equal(-1, sink.IndexOf("InvalidateCachedMethodCall"));
     }
 }

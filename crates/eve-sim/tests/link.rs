@@ -47,7 +47,8 @@ fn universe() -> Arc<Universe> {
 }
 
 fn ship() -> ShipSpec {
-    ShipSpec { stance: None,
+    ShipSpec {
+        stance: None,
         ship_id: 9_988_400_001_939,
         character_id: 140_000_342,
         type_id: 601,

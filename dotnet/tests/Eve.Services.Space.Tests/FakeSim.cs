@@ -300,7 +300,7 @@ internal sealed class FakeSim : ISimulation
                 Position = PositionAnswers.GetValueOrDefault(targetId, [0, 0, 0])
             });
         }
-        return Task.FromResult(code switch { SimCommands.WarpTo or SimCommands.WarpToPoint => WarpAnswer, SimCommands.Jump => JumpAnswer, SimCommands.CynoJump or SimCommands.OpenBridge or SimCommands.BridgeJump => CynoJumpAnswer, _ => DockAnswer });
+        return Task.FromResult(code switch { SimCommands.WarpTo or SimCommands.WarpToPoint => WarpAnswer, SimCommands.Jump => JumpAnswer, SimCommands.CynoJump or SimCommands.OpenBridge or SimCommands.BridgeJump or SimCommands.ConduitJump => CynoJumpAnswer, _ => DockAnswer });
     }
 
     /// <summary>How far a wreck or can is said to be (null: there is none).</summary>

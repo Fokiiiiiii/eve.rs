@@ -121,7 +121,9 @@ pub(super) fn read_ship(reader: &mut Reader) -> Result<ShipSpec, DecodeError> {
     }
     let stance = match reader.u8()? {
         0 => None,
-        1 => Some(ShipStance { old_stance: reader.i32()?, switched_at: reader.i64()?, stance: reader.i32()? }),
+        1 => {
+            Some(ShipStance { old_stance: reader.i32()?, switched_at: reader.i64()?, stance: reader.i32()? })
+        }
         _ => return Err(DecodeError::BadValue("ship stance flag")),
     };
     Ok(ShipSpec {

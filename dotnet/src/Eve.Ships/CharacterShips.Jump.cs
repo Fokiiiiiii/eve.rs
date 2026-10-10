@@ -48,6 +48,32 @@ public sealed partial class CharacterShips
     }
 
     /// <summary>
+    /// A conduit jump's isotopes and the fatigue of every ship in it, in one transaction: the anchor's fuel is taken (the fuel bay first) and each ship's new
+    /// fatigue state is written (the anchor included), or none is. False, with nothing changed, when the anchor holds too little fuel.
+    /// </summary>
+    public async Task<bool> DebitGroupJumpAsync(
+        PgJumpFatigueStore fatigue, long anchorCharacterId, long anchorShipId, int fuelTypeId, long quantity,
+        IReadOnlyDictionary<long, JumpFatigueState> states, CancellationToken cancellationToken = default)
+    {
+        await using var connection = await source.OpenConnectionAsync(cancellationToken);
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        foreach (var character in states.Keys.Append(anchorCharacterId).Distinct().OrderBy(id => id))
+        {
+            await LockAsync(connection, transaction, character, cancellationToken);
+        }
+        if (await TakeFuelAsync(connection, transaction, anchorCharacterId, anchorShipId, fuelTypeId, quantity, cancellationToken) > 0)
+        {
+            return false;
+        }
+        foreach (var (character, state) in states)
+        {
+            await fatigue.SaveAsync(connection, transaction, character, state, cancellationToken);
+        }
+        await transaction.CommitAsync(cancellationToken);
+        return true;
+    }
+
+    /// <summary>
     /// A passenger's jump through a bridge: the isotopes come from the bridging ship (the wiki: "use up isotopes from the bridger's fuel hold") and the
     /// passenger's fatigue state is written, in one transaction. False, with nothing changed, when the bridging ship holds too little.
     /// </summary>

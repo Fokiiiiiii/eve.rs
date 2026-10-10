@@ -73,10 +73,20 @@ public sealed class SpaceJumpDrive(
             throw Refusal("DeniedShipChanged");
         }
         await statics.EnsureTypesAsync([shipType], cancellationToken);
-        if (statics.Type(shipType) is not { } hull || !hull.Attributes.TryGetValue(JumpDriveRules.RangeAttribute, out var baseRange) || baseRange <= 0
-            || !hull.Attributes.TryGetValue(JumpDriveRules.SpoolAttribute, out var spool) || !hull.Attributes.TryGetValue(JumpDriveRules.FuelPerLightYearAttribute, out var fuelPerLightYear)
-            || !hull.Attributes.TryGetValue(JumpDriveRules.FuelTypeAttribute, out var fuelType)
-            || !hull.Attributes.TryGetValue(JumpDriveRules.CapacitorNeedAttribute, out var hullShare))
+        // the hull's own numbers: the hull as dogma has it with no skills and no fitting, so a role bonus on the range, the fuel or the share (SDE, a passive
+        // effect of the hull) is in them, and the skills (Fuel Conservation, Calibration) and the economizers, which also act on 868, are taken below, once each
+        if (statics.Type(shipType) is not { } hull || await ships.LoadShipAsync(character, shipId, cancellationToken) is not { } flown)
+        {
+            throw Notify("Your ship has no jump drive.");
+        }
+        var numbers = new DogmaWorld(statics, character, shipId);
+        numbers.Add(ItemDogma.Of(flown.Ship, character, flown.Ship.LocationId, flown.Ship.Flag, ItemState.Online));
+        var baseRange = numbers.Get(shipId, JumpDriveRules.RangeAttribute);
+        var spool = numbers.Get(shipId, JumpDriveRules.SpoolAttribute);
+        var fuelPerLightYear = numbers.Get(shipId, JumpDriveRules.FuelPerLightYearAttribute);
+        var fuelType = numbers.Get(shipId, JumpDriveRules.FuelTypeAttribute);
+        var hullShare = numbers.Get(shipId, JumpDriveRules.CapacitorNeedAttribute);
+        if (baseRange <= 0 || spool < 0 || fuelPerLightYear <= 0 || fuelType <= 0 || hullShare <= 0)
         {
             throw Notify("Your ship has no jump drive.");
         }
@@ -119,7 +129,8 @@ public sealed class SpaceJumpDrive(
             hullShare,
             await LevelAsync(JumpDriveRules.OperationSkill, character, cancellationToken),
             await PerLevelAsync(JumpDriveRules.OperationSkill, JumpDriveRules.CapacitorNeedPerLevelAttribute, cancellationToken));
-        var multiplier = hull.Attributes.TryGetValue(JumpDriveRules.FatigueMultiplierAttribute, out var fatigueMultiplier) ? fatigueMultiplier : 1.0;
+        var fatigueMultiplier = numbers.Get(shipId, JumpDriveRules.FatigueMultiplierAttribute);
+        var multiplier = fatigueMultiplier > 0 ? fatigueMultiplier : 1.0;
         var (fatigueMs, cooldownMs) = JumpDriveRules.AfterJump(Math.Max(0, state.FatigueUntilMs - now), lightYears * multiplier);
         var next = new JumpFatigueState(now + fatigueMs, now + cooldownMs);
 

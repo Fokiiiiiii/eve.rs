@@ -3,6 +3,9 @@
 //! The scene has no clock of its own. Every call says what time it is (a FILETIME) and a ship's motion is worked out
 //! from the time it was last settled to that time, so the same calls at the same times give the same bytes.
 mod bridge;
+
+/// The most passengers one conduit jump takes (the Black Ops limit is 30; the array leaves room for the carriers).
+pub const MAX_CONDUIT_PASSENGERS: usize = 64;
 mod collision;
 mod directional;
 mod docking;
@@ -89,6 +92,8 @@ pub const BELT_LANDING_RADIUS: f64 = 250_000.0;
 
 /// What a player can ask of their ship (the numbers of the client's `CmdXxx` calls).
 #[derive(Debug, Clone, Copy, PartialEq)]
+// the conduit's passenger array makes one variant large; boxing it would end the Copy that every command is passed by
+#[allow(clippy::large_enum_variant)]
 pub enum Command {
     SetSpeedFraction(f64),
     GotoDirection(Vec3),
@@ -159,6 +164,7 @@ pub enum Command {
         destination_system: i32,
         lifetime_ms: f64,
         immobile_ms: f64,
+        range_meters: f64,
         capacitor: f64,
     },
     /// The ship passes through the bridge of the ship `bridge_ship_id` to the field `field_id` in `destination_system` (code 31, protocol 55).
@@ -166,6 +172,15 @@ pub enum Command {
         bridge_ship_id: i64,
         field_id: i64,
         destination_system: i32,
+    },
+    /// A Black Ops conduit jump (code 32, protocol 57): the ship and the `passenger_count` ships in `passengers` (ship ids) jump to the field `field_id` at once;
+    /// the conduit reaches `range_meters`.
+    ConduitJump {
+        field_id: i64,
+        destination_system: i32,
+        range_meters: f64,
+        passenger_count: u8,
+        passengers: [i64; MAX_CONDUIT_PASSENGERS],
     },
 }
 
@@ -185,6 +200,7 @@ impl Command {
             Self::CynoJump { .. } => 26,
             Self::OpenBridge { .. } => 30,
             Self::BridgeJump { .. } => 31,
+            Self::ConduitJump { .. } => 32,
             Self::WarpToPoint { .. } => 21,
             Self::ResolveWarpTarget { .. } => 22,
             Self::PositionOf { .. } => 23,

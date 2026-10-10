@@ -1,4 +1,5 @@
 use super::*;
+use crate::scene::MAX_CONDUIT_PASSENGERS;
 
 /// The command a code and its arguments say, if they say one.
 pub(super) fn command_of(code: u8, args: &[f64]) -> Option<Command> {
@@ -32,13 +33,15 @@ pub(super) fn command_of(code: u8, args: &[f64]) -> Option<Command> {
                 capacitor: *capacitor,
             })
         }
-        (30, [field, destination, lifetime, immobile, capacitor])
+        (30, [field, destination, lifetime, immobile, range, capacitor])
             if is_id(*field)
                 && is_id(*destination)
                 && lifetime.is_finite()
                 && *lifetime > 0.0
                 && immobile.is_finite()
                 && *immobile >= 0.0
+                && range.is_finite()
+                && *range > 0.0
                 && capacitor.is_finite()
                 && *capacitor >= 0.0 =>
         {
@@ -47,7 +50,28 @@ pub(super) fn command_of(code: u8, args: &[f64]) -> Option<Command> {
                 destination_system: *destination as i32,
                 lifetime_ms: *lifetime,
                 immobile_ms: *immobile,
+                range_meters: *range,
                 capacitor: *capacitor,
+            })
+        }
+        (32, [field, destination, range, passengers @ ..])
+            if is_id(*field)
+                && is_id(*destination)
+                && range.is_finite()
+                && *range > 0.0
+                && passengers.len() <= MAX_CONDUIT_PASSENGERS
+                && passengers.iter().all(|p| is_id(*p)) =>
+        {
+            let mut ships = [0_i64; MAX_CONDUIT_PASSENGERS];
+            for (slot, ship) in ships.iter_mut().zip(passengers) {
+                *slot = *ship as i64;
+            }
+            Some(Command::ConduitJump {
+                field_id: *field as i64,
+                destination_system: *destination as i32,
+                range_meters: *range,
+                passenger_count: passengers.len() as u8,
+                passengers: ships,
             })
         }
         (31, [bridge, field, destination]) if is_id(*bridge) && is_id(*field) && is_id(*destination) => {

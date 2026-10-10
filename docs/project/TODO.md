@@ -763,13 +763,16 @@ The reference advertises these 23 names; eve.rs does not register them, so it do
 | Status | Name | Owner | Client call (eve-logic) |
 |---|---|---|---|
 | OPEN | `corpStationMgr`, `itemLocking`, `ownerGroupManager`, `standing2`, `contractMgr`, `certificateMgr`, `tutorialSvc`, `bookmarkMgr` | Slice D / corporations / contracts | eveMoniker.py:111; corporation/itemLocking.py:27; not called in eve-logic (certificateMgr, tutorialSvc, bookmarkMgr, ownerGroupManager, standing2, contractMgr) |
-| OPEN | `accessGroupBookmarkMgr` | bookmarks (check whether bookmarkSvc starts at boot) | bookmarks/bookmarkSvc.py:41 |
-| OPEN | `blueprintManager` | industry (check whether blueprintSvc starts at boot: `GetLimits` in Run) | industry/blueprintSvc.py:24-25 |
+| OPEN | `accessGroupBookmarkMgr` | bookmarks: a handle at `bookmarkSvc.Initialize`, called on use (address book, bookmark menus); not at start-up (slice B2) | bookmarks/bookmarkSvc.py:40-41 |
+| OPEN | `blueprintManager` | industry, lazy: `blueprintSvc.Run` calls `GetLimits()` and reads `maxBlueprintResults`, so a window that starts it fails at once (slice B2: not at start-up; no source for the limit yet) | industry/blueprintSvc.py:22-25 |
 | OPEN | `repairSvc`, `reprocessingSvc`, `LPSvc` | Slice D (station services), LP store later | eveMoniker.py:101, 227; station/repairshop/base_repairshop.py:58; loyaltyPointStore/lpStoreSvc.py:63 |
-| OPEN | `nes_intro` | Slice C to check when the character screen creates the controller | storylines/client/nes_intro.py:45 |
+| OPEN | `nes_intro` | storylines, lazy: the controller is built on the user's skip action only (slice B2) | storylines/client/nes_intro.py:45; airnpetracker.py:26 |
+| OPEN | `hackingMgr` | hacking minigame, lazy: the handle is made in `hackingUISvc.Run`, calls on use (slice B2) | eve/client/script/ui/hacking/hackingUISvc.py (Run) |
 | OPEN | `FastCheckoutService` | plex store (fast checkout) | fastcheckout/client/fastCheckoutClientService.py:26 |
 | OPEN | `loadService`, `tradeMgr`, `warRegistry`, `LSC`, `publicGatewaySvc`, `planetOrbitalRegistryBroker`, `structure` | cluster tool / local services / structures track (other Claude) | loadService.py:70-321; eveMachoNet.py:253; eveMoniker.py:197 (local); devtools only; gateway (client-local); eveplanet/orbital.py:35 |
 | OPEN | `objectCaching` (remote `GetCachableObject`) | required before any result is returned as a `CachedObject` reference (the proxy cache of EVE.js) | objectCaching.py:299-332 |
+
+Slice B (B2, 2026-10-10): no name on this list is needed during start-up (boot, login, character selection, station load). Every remote name a start-up path calls is registered, except the four lazy names above (`blueprintManager`, `accessGroupBookmarkMgr`, `hackingMgr`, `nes_intro`), and none of those is reached before a player acts. The start-up calls that are answered: `securityMgr.get_modified_systems` (an empty dictionary: no modified-security source yet), `loginCampaignManager`, `seasonalLoginCampaignManager`, `loginRewardFacilities` (character screen), `subscriptionMgr.GetCloneGrade`, `achievementTrackerMgr` (charid session change), `infoGatheringMgr.GetStateAndConfig` (gathering off), `mailMgr`, `account.GetCashBalance`.
 
 ## 38. Non-strict host: a failing handler (slice A finding, closed in slice B, 2026-10-10)
 

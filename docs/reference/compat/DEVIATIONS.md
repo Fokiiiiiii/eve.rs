@@ -1162,3 +1162,19 @@ Sources. The wiki: "Jump drive" (https://wiki.eveuniversity.org/Jump_drive, fetc
   summary and the stack trace in the log. Tests: `HostServerTests` (`A_handler_that_throws_is_answered_with_a_wrapped_runtime_error...`,
   `A_deliberate_user_error_reaches_the_client...`), `StrictRpcTests` (flag off and strict), `DispatchGoldenTests` (the two
   recorded None steps are answered with the error; their state checks still run). Status: done.
+
+### Boot-time services and the 23 names (B2)
+
+- **The 23 advertised names stay unadvertised.** Slice A left them out (section "Handshake, machoNet and the global config");
+  slice B checked whether any of them must exist at start-up. The shell services the client starts at boot
+  (`gameui._initialize_services`, `carbon/client/script/...`) and the services started at login, character selection
+  and station load make no server call on any of the 23 names during start-up. Where a start-up `Run` makes a call, the
+  name is registered (for example `infoGatheringMgr`, `securityMgr`, `subscriptionMgr`, `account`). Each of the 23 is
+  either not called by the V24.01 client, local to it, or needed only by a feature that is used later (nes_intro, the
+  bookmarks, blueprintSvc for industry, the station repair and reprocess services, the LP store, the corporation office
+  and item locking, the plex fast checkout). A name is advertised only with a real service behind it, so these stay
+  out until their feature is built; `TODO.md` section 37 lists the owner of each. Status: decided (B2).
+- **Start-up failures of a service.** The client treats a `Run` that fails as a failed service: the failure is logged
+  and the service is marked failed, and only a synchronous caller of that service sees the error (`serviceManager.py`
+  `StartServiceRun`, `WaitForServiceObjectState`). The boot therefore continues when a boot-time service's server call
+  is unknown. The eve.rs answers that matter at start-up are listed in `TODO.md` section 37.

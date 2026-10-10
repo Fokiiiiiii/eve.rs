@@ -77,6 +77,8 @@ public const byte UpdateEffect = 61;
         public const byte RemoveDeployed = 64;
         public const byte PlaceProbe = 65;
         public const byte RemoveProbe = 66;
+        public const byte PlaceDisruptor = 68;
+        public const byte SetDisruptorActive = 69;
 
 
 /// <summary>Protocol 46 (FP-C7): an ECM burst reached ships; the ship that ran it and each ship reached, with whether its roll jammed it (simulation to host).</summary>

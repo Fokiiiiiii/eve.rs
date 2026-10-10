@@ -309,6 +309,64 @@ fn a_field_the_host_puts_back_after_a_restart_lives_what_was_left_and_is_removed
 }
 
 #[test]
+fn a_mobile_warp_disruptor_holds_warps_only_once_anchored_and_is_taken_out_on_request() {
+    let disruptor = |active: bool, position: eve_destiny::Vec3| crate::link::DisruptorPlacement {
+        deployable_id: 990_000_000_100,
+        solar_system_id: 0,
+        name: "Mobile Small Warp Disruptor I".to_string(),
+        type_id: 12_198,
+        group_id: 361,
+        position: [position.x, position.y, position.z],
+        radius: 50.0,
+        range: 5_000.0,
+        active,
+        owner_id: 4_242,
+        corporation_id: 0,
+        alliance_id: 0,
+        ship_id: 0,
+    };
+
+    // not anchored yet: the ship it is next to warps
+    let (mut scene, t) = crowd();
+    let b = scene.pilots[&B].ship.position;
+    let placement =
+        crate::link::DisruptorPlacement { solar_system_id: scene.solar_system_id(), ..disruptor(false, b) };
+    let placed = scene.place_disruptor(placement.clone(), t);
+    assert!(
+        placed.iter().any(|o| format!("{o:?}").contains("AddBalls2")),
+        "the pilots see it when it is dropped"
+    );
+    assert!(
+        scene.place_disruptor(placement.clone(), t).is_empty(),
+        "a disruptor already in space is not put in twice"
+    );
+    assert!(accepted(&warp(&mut scene, B, t + SECOND)), "an unanchored disruptor disrupts nothing");
+
+    // anchored: the ship next to it cannot warp
+    let (mut scene, t) = crowd();
+    let b = scene.pilots[&B].ship.position;
+    let placement =
+        crate::link::DisruptorPlacement { solar_system_id: scene.solar_system_id(), ..disruptor(true, b) };
+    scene.place_disruptor(placement.clone(), t);
+    let held = warp(&mut scene, B, t + SECOND);
+    assert!(refused_with(&held, "WARP_DISRUPTED_BY_BUBBLE"), "{held:?}");
+
+    // the host unanchors it: the disruption is off; it stays in space until the host takes it out
+    scene.set_disruptor_active(placement.deployable_id, false);
+    scene.poll(t + 7_200 * SECOND);
+    assert!(
+        scene.deployables.contains_key(&placement.deployable_id),
+        "its end is the host's, not the clock's"
+    );
+    let removed = scene.remove_field(placement.deployable_id, t + 7_201 * SECOND);
+    assert!(
+        removed.iter().any(|o| format!("{o:?}").contains("RemoveBalls")),
+        "those who see it are told it is gone"
+    );
+    assert!(!scene.deployables.contains_key(&placement.deployable_id));
+}
+
+#[test]
 fn a_scanner_probe_is_in_space_until_the_host_takes_it_out_and_a_field_is_not_taken_that_way() {
     let (mut scene, t) = crowd();
     let a = scene.pilots[&A].ship.position;

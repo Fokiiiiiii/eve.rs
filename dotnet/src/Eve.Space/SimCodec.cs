@@ -27,7 +27,7 @@ public sealed class SimLinkException(SimLinkError error, string message) : Excep
 /// </summary>
 public static partial class SimCodec
 {
-    public const ushort ProtocolVersion = 47;
+    public const ushort ProtocolVersion = 48;
     /// <summary>The largest frame either side accepts (1 MiB).</summary>
     public const int MaxFrame = 1 << 20;
 
@@ -659,6 +659,31 @@ public static partial class SimCodec
                 }
             case Kind.RemoveProbe:
                 message = new SimRemoveProbe(r.I64());
+                break;
+            case Kind.PlaceDisruptor:
+                {
+                    var deployable = r.I64();
+                    var system = r.I32();
+                    var name = r.Text();
+                    var type = r.I32();
+                    var group = r.I32();
+                    var position = ReadVector(ref r);
+                    var radius = r.F64();
+                    var range = r.F64();
+                    var active = ReadFlag(ref r, "disruptor");
+                    var owner = r.I64();
+                    var corporation = r.I32();
+                    var alliance = r.I32();
+                    var ship = r.I64();
+                    if (!(double.IsFinite(radius) && radius >= 0 && double.IsFinite(range) && range >= 0))
+                    {
+                        throw new SimLinkException(SimLinkError.BadValue, "bad disruptor");
+                    }
+                    message = new SimPlaceDisruptor(deployable, system, name, type, group, position, radius, range, active, owner, corporation, alliance, ship);
+                    break;
+                }
+            case Kind.SetDisruptorActive:
+                message = new SimSetDisruptorActive(r.I64(), ReadFlag(ref r, "disruptor"));
                 break;
             case Kind.Measured:
                 {

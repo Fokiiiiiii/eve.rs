@@ -305,7 +305,9 @@ impl Sim {
             | Message::Deployed(..)
             | Message::RemoveDeployed { .. }
             | Message::PlaceProbe(..)
-            | Message::RemoveProbe { .. } => self.handle_world(message, now),
+            | Message::RemoveProbe { .. }
+            | Message::PlaceDisruptor(..)
+            | Message::SetDisruptorActive { .. } => self.handle_world(message, now),
             other => Err(ProtocolError(format!(
                 "a message of kind {} is for the host, not the simulation",
                 other.kind()
@@ -865,6 +867,19 @@ impl Sim {
                 .values_mut()
                 .find(|scene| scene.deployables.contains_key(&probe_id))
                 .map(|scene| scene.remove_probe(probe_id, now))
+                .unwrap_or_default(),
+            Message::PlaceDisruptor(disruptor) => {
+                let disruptor = *disruptor;
+                match self.scenes.get_mut(&disruptor.solar_system_id) {
+                    Some(scene) => scene.place_disruptor(disruptor, now),
+                    None => Vec::new(),
+                }
+            }
+            Message::SetDisruptorActive { deployable_id, active } => self
+                .scenes
+                .values_mut()
+                .find(|scene| scene.deployables.contains_key(&deployable_id))
+                .map(|scene| scene.set_disruptor_active(deployable_id, active))
                 .unwrap_or_default(),
             Message::RemoveDeployed { deployable_id } => self
                 .scenes

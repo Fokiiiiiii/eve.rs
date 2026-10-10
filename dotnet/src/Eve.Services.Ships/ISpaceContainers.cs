@@ -48,6 +48,12 @@ public interface ISpaceContainers
     /// client's error while the pilot waits for the next can.
     /// </summary>
     Task<IReadOnlyList<long>> JettisonAsync(ClientSession session, IReadOnlyList<long> itemIds, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// <c>ship.LaunchFromShip</c> of an item of the hold: a mobile warp disruptor goes out into space (its id is answered); anything else is no launch of this sort
+    /// (null, nothing is done). Throws the client's notice for a refusal.
+    /// </summary>
+    Task<long?> LaunchFromShipAsync(ClientSession session, long itemId, CancellationToken cancellationToken) => Task.FromResult<long?>(null);
 }
 
 

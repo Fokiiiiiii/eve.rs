@@ -144,6 +144,10 @@ public interface ISimulation
     void PlaceProbe(SimPlaceProbe probe);
     /// <summary>Takes a scanner probe out of space (protocol 45).</summary>
     void RemoveProbe(long probeId);
+    /// <summary>Puts a mobile warp disruptor in space where its pilot dropped it, anchored or not (protocol 48).</summary>
+    void PlaceDisruptor(SimPlaceDisruptor disruptor);
+    /// <summary>Says a mobile warp disruptor is anchored or not (protocol 48).</summary>
+    void SetDisruptorActive(long deployableId, bool active);
 
     /// <summary>Destroys a ship: the explosion, the wreck (for <paramref name="credit"/> to loot), and (for a player's ship) a <see cref="SimDestroyed"/> that comes back through <see cref="Received"/>.</summary>
     void Destroy(long shipId, SimCredit credit);

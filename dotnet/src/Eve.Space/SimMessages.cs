@@ -976,6 +976,15 @@ public sealed record SimPlaceProbe(
 /// <summary>The host takes a scanner probe out of space (recalled, or its time is up); a deployable that is not a probe is left alone (protocol 45).</summary>
 public sealed record SimRemoveProbe(long ProbeId) : SimMessage;
 
+/// <summary>A mobile warp disruptor the host keeps a record of, put in space where its pilot dropped it (protocol 48). Its disruption is on while <see cref="Active"/>
+/// (it is anchored); <see cref="Range"/> is the warp disruption range in metres.</summary>
+public sealed record SimPlaceDisruptor(
+    long DeployableId, int SolarSystemId, string Name, int TypeId, int GroupId, IReadOnlyList<double> Position, double Radius, double Range, bool Active,
+    long OwnerId, int CorporationId, int AllianceId, long ShipId) : SimMessage;
+
+/// <summary>The host says a mobile warp disruptor is anchored (<see cref="Active"/>) or not (protocol 48); one not in space is left alone.</summary>
+public sealed record SimSetDisruptorActive(long DeployableId, bool Active) : SimMessage;
+
 /// <summary>The answer to <see cref="SimCommands.Measure"/>: metres from the centre of the ship to the surface of the wreck or can, or null when there is no such wreck.</summary>
 public sealed record SimMeasured(ulong SessionId, byte Command, double? Distance) : SimMessage;
 

@@ -400,6 +400,25 @@ impl Message {
                 out.extend_from_slice(&probe.ship_id.to_le_bytes());
             }
             Self::RemoveProbe { probe_id } => out.extend_from_slice(&probe_id.to_le_bytes()),
+            Self::PlaceDisruptor(disruptor) => {
+                out.extend_from_slice(&disruptor.deployable_id.to_le_bytes());
+                out.extend_from_slice(&disruptor.solar_system_id.to_le_bytes());
+                put_text(&mut out, &disruptor.name);
+                out.extend_from_slice(&disruptor.type_id.to_le_bytes());
+                out.extend_from_slice(&disruptor.group_id.to_le_bytes());
+                put_vector(&mut out, &disruptor.position);
+                out.extend_from_slice(&disruptor.radius.to_le_bytes());
+                out.extend_from_slice(&disruptor.range.to_le_bytes());
+                out.push(u8::from(disruptor.active));
+                out.extend_from_slice(&disruptor.owner_id.to_le_bytes());
+                out.extend_from_slice(&disruptor.corporation_id.to_le_bytes());
+                out.extend_from_slice(&disruptor.alliance_id.to_le_bytes());
+                out.extend_from_slice(&disruptor.ship_id.to_le_bytes());
+            }
+            Self::SetDisruptorActive { deployable_id, active } => {
+                out.extend_from_slice(&deployable_id.to_le_bytes());
+                out.push(u8::from(*active));
+            }
             Self::PlaceAsteroid(asteroid) => {
                 out.extend_from_slice(&asteroid.solar_system_id.to_le_bytes());
                 out.extend_from_slice(&asteroid.asteroid_id.to_le_bytes());

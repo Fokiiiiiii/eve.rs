@@ -443,6 +443,10 @@ public sealed class SimClient : ISimulation, IAsyncDisposable
 
     public void RemoveProbe(long probeId) => Send(new SimRemoveProbe(probeId));
 
+    public void PlaceDisruptor(SimPlaceDisruptor disruptor) => Send(disruptor);
+
+    public void SetDisruptorActive(long deployableId, bool active) => Send(new SimSetDisruptorActive(deployableId, active));
+
     public void Destroy(long shipId, SimCredit credit) => Send(new SimDestroy(shipId, credit));
 
     public void Leave(ulong sessionId, LeaveWhy why) => Send(new SimLeave(sessionId, why));

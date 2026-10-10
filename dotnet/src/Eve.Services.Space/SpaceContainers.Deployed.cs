@@ -52,6 +52,14 @@ public sealed partial class SpaceContainers
                 {
                     continue;
                 }
+                if (record.Kind == DisruptorKind)
+                {
+                    // anchored when its record says so; a disruptor still waiting to anchor is anchored by its durable job, which outlives the restart
+                    _sim.PlaceDisruptor(new SimPlaceDisruptor(
+                        record.DeployableId, record.SolarSystemId, record.Name, record.TypeId, record.GroupId, record.Position, record.Radius, record.RangeMeters,
+                        record.ActivateAtMs <= now, record.OwnerId, record.CorporationId, record.AllianceId, record.ShipId));
+                    continue;
+                }
                 _sim.RestoreDeployed(new SimDeployed(
                     record.SolarSystemId, record.DeployableId, record.Name, record.TypeId, record.GroupId, record.Position, record.Radius, record.OwnerId,
                     record.CorporationId, record.AllianceId, record.ShipId, record.ExpiresAtMs - now));

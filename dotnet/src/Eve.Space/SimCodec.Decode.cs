@@ -7,6 +7,14 @@ public static partial class SimCodec
 {
     private static double[] ReadVector(ref Reader r) => [r.F64(), r.F64(), r.F64()];
 
+    /// <summary>A flag byte: 0 or 1; anything else is a bad value of <paramref name="what"/>.</summary>
+    private static bool ReadFlag(ref Reader r, string what) => r.U8() switch
+    {
+        0 => false,
+        1 => true,
+        _ => throw new SimLinkException(SimLinkError.BadValue, $"bad {what}"),
+    };
+
     private static double[]? ReadOptionalVector(ref Reader r) => r.U8() switch
     {
         0 => null,

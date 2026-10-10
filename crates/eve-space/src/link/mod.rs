@@ -36,8 +36,7 @@ use crate::weapons::{Aoe, Arc, Charge, Spool, Turret};
 
 use crate::wreck::WreckKind;
 
-pub const PROTOCOL_VERSION: u16 = 45;
-
+pub const PROTOCOL_VERSION: u16 = 46;
 /// The message kinds.
 pub mod kind;
 
@@ -581,6 +580,13 @@ pub enum Message {
         module_id: i64,
         reason: u8,
     },
+    /// An ECM burst reached ships on the simulation's account: the ship that runs it, and each ship it reached (a cloaked ship is not reached) with whether its
+    /// roll jammed it. The host records the attack on each pilot reached (EVE.js `executeJammerBurstCycle`: aggression before the roll).
+    EcmBurst {
+        session_id: u64,
+        ship_id: i64,
+        reached: Vec<(i64, bool)>,
+    },
     /// The answer to `COMMAND_MEASURE`: metres from the centre of the ship to the surface of the wreck or can, or none when there is no such wreck.
     Measured {
         session_id: u64,
@@ -705,6 +711,7 @@ impl Message {
             Self::ModuleWorkCycle { .. } => kind::MODULE_WORK_CYCLE,
             Self::ModuleWorkResult { .. } => kind::MODULE_WORK_RESULT,
             Self::ModuleEnded { .. } => kind::MODULE_ENDED,
+            Self::EcmBurst { .. } => kind::ECM_BURST,
             Self::Measured { .. } => kind::MEASURED,
             Self::AdjustCharge { .. } => kind::ADJUST_CHARGE,
             Self::UpdateEffect { .. } => kind::UPDATE_EFFECT,

@@ -858,6 +858,24 @@ impl Message {
                 }
                 Message::ModuleEnded { session_id, module_id, reason }
             }
+            kind::ECM_BURST => {
+                let (session_id, ship_id) = (r.u64()?, r.i64()?);
+                let count = r.u32()? as usize;
+                if count > r.data.len() / 9 {
+                    return Err(DecodeError::Truncated);
+                }
+                let mut reached = Vec::with_capacity(count);
+                for _ in 0..count {
+                    let ship = r.i64()?;
+                    let jammed = match r.u8()? {
+                        0 => false,
+                        1 => true,
+                        _ => return Err(DecodeError::BadValue("ecm burst jam flag")),
+                    };
+                    reached.push((ship, jammed));
+                }
+                Message::EcmBurst { session_id, ship_id, reached }
+            }
             kind::REMOTE_REPAIR_CYCLE => {
                 let session_id = r.u64()?;
                 let module_id = r.i64()?;

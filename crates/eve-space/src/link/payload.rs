@@ -574,6 +574,15 @@ impl Message {
                 out.extend_from_slice(&session_id.to_le_bytes());
                 out.extend_from_slice(&fighter_id.to_le_bytes());
             }
+            Self::EcmBurst { session_id, ship_id, reached } => {
+                out.extend_from_slice(&session_id.to_le_bytes());
+                out.extend_from_slice(&ship_id.to_le_bytes());
+                out.extend_from_slice(&(reached.len() as u32).to_le_bytes());
+                for (ship, jammed) in reached {
+                    out.extend_from_slice(&ship.to_le_bytes());
+                    out.push(u8::from(*jammed));
+                }
+            }
             Self::FighterReleased { session_id, fighter_id, position } => {
                 out.extend_from_slice(&session_id.to_le_bytes());
                 out.extend_from_slice(&fighter_id.to_le_bytes());

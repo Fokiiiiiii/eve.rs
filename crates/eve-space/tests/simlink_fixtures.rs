@@ -1093,6 +1093,16 @@ fn message_of(case: &Value) -> Message {
             fighter_id: wide(case, "fighterId"),
             position: vector_of(case, "position"),
         },
+        "EcmBurst" => Message::EcmBurst {
+            session_id: session_id(),
+            ship_id: wide(case, "shipId"),
+            reached: case["reached"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|r| (wide(r, "shipId"), r["jammed"].as_bool().unwrap()))
+                .collect(),
+        },
         "Destroy" => Message::Destroy {
             ship_id: wide(case, "shipId"),
             credit: Credit {

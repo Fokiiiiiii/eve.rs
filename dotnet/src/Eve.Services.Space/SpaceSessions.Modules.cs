@@ -283,6 +283,17 @@ public sealed partial class SpaceSessions
             }
         }
 
+        // an ECM burst jams friends too and draws CONCORD in high security space, so it is not activated there unless the pilot's safety is set to none (red)
+        // (EVE University wiki, Electronic Countermeasures; EVE.js refuses only the smartbomb here)
+        if (package.Action is SimAction.EcmBurst && securityClass is { } burstWhere && Security.IsHighSecOrHigher(burstWhere))
+        {
+            var burstSafety = SafetyLevelOf is { } askSafety ? await askSafety(characterId, cancellationToken) : SafetyLevel.Full;
+            if (burstSafety != SafetyLevel.None)
+            {
+                return ModuleResult.Refusal(WeaponSafety.Refusal, made.ModuleType, made.ModuleName);
+            }
+        }
+
         // the safety of the pilot: a weapon is not started at the ship of another pilot where that would be a crime the safety the pilot has set does not allow
         var attack = IsOffensive(package);
         var victim = attack && targetPilot is { CharacterId: > 0 } && targetPilot.CharacterId != characterId
@@ -433,6 +444,43 @@ public sealed partial class SpaceSessions
         {
             _log?.Invoke($"weapon safety facts for {attackerCharacterId} -> {targetCharacterId} failed: {error.Message}");
             return ordinaryPlayerAttack;
+        }
+    }
+
+    /// <summary>
+    /// The attack an ECM burst makes on each pilot it reached: the same record as a module started at the ship of another pilot (EVE.js records the aggression on
+    /// every ship a burst reaches, before its roll). A reached ship that is not a pilot's (an NPC's) is not recorded.
+    /// </summary>
+    private async Task RecordEcmBurstAsync(Pilot burster, IReadOnlyList<SimBurstReach> reached)
+    {
+        if (Aggression is not { } record || _systems.Get(burster.SolarSystemId) is not { } system)
+        {
+            return;
+        }
+        var where = Security.ClassFromLevel(system.Security);
+        foreach (var reach in reached)
+        {
+            if (_pilots.Values.FirstOrDefault(other => other.ShipId == reach.ShipId) is not { CharacterId: > 0 } victim
+                || victim.CharacterId == burster.CharacterId)
+            {
+                continue;
+            }
+            try
+            {
+                var request = new AggressionRequest(
+                    burster.CharacterId,
+                    victim.CharacterId,
+                    victim.ShipId,
+                    burster.SolarSystemId,
+                    system.Security,
+                    where,
+                    await IsCapsuleAsync(victim, where, CancellationToken.None));
+                await record(request, CancellationToken.None);
+            }
+            catch (Exception error) when (error is not OperationCanceledException)
+            {
+                _log?.Invoke($"crimewatch could not record the ECM burst of {burster.CharacterId} on {victim.CharacterId}: {error.Message}");
+            }
         }
     }
 

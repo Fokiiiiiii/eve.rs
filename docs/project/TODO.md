@@ -98,7 +98,7 @@ Each effect below is **OPEN — module wired, effect body pending**. Its handler
 
 Not wired here, and why:
 
-- `probeLaunching` is carried by probe charges (group 479, category 8), not by fitted modules. The client launches probes with `dogmaIM.LaunchProbes` (`eve/client/script/parklife/scanSvc.py`), and eve.rs has no `LaunchProbes` route. This is a separate OPEN item for the probe owner.
+- `probeLaunching` is carried by probe charges (group 479, category 8), not by fitted modules. The client launches probes with `dogmaIM.LaunchProbes` (`eve/client/script/parklife/scanSvc.py`), and the `LaunchProbes` route is built by track A5 (section 24); the scan itself is not.
 - `surveyScan` is carried by the mining survey chipsets (ML-3 Mining Probe, Dactyl Asteroid Analyzer) and the QA Survey Scanner. It belongs to the mining work.
 - `targetHostiles` (Automated Targeting Systems), `ECMBurstJammerQA`, `pacifierDebuffQA` and `structureScanResolutionActivePercentage` (a structure module) are outside the exploration, hacking and scanner set.
 
@@ -574,7 +574,7 @@ with the reference's checks and messages; eight active probes per pilot per syst
 charge stack spent; `OnNewProbe` told to the pilot; recall through `scanMgr.DestroyProbe` (`OnRemoveProbe`); expiry at `space.probes.sweep`.
 
 Open, each with its blocker removed by the next step:
-- Restart: the probe records survive, the balls do not. Next: put the probes back in space when a ship comes into the system (the cynosural field's path, `RestoreDeployedAsync`).
+- DONE (restart): the probe records survive a restart and their balls are put back in space when a ship comes into the system with the same ids, places and remaining life (`SpaceProbes.RestoreAsync`, `ScanProbeHostTests`). Not tested with a real restart of the process.
 - Scanning: `scanMgr` system scans and their results (signature resolution, the scan range steps and the scan bonuses), `OnSystemScanStarted`, `OnSystemScanStopped`, `OnProbesIdle`.
 - Probe warp and formations: `OnProbeWarpStart`, `OnProbeWarpEnd`, `UpdateProbePosition`, and the probe states moving, warping, scanning and returning.
 - Reconnection to lost probes (`ReconnectToLostProbes`) and moon probes (`OnNewMoonProbe`, `OnRemoveMoonProbe`, `OnMoonScanComplete`, `OnScanNoMaterials`).

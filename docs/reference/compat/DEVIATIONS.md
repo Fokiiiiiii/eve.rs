@@ -758,7 +758,7 @@ Source order: the SDE for numbers (explosionDelay 281 and radius 162; the core p
 - **Charge use: the stack is spent, not refunded.** The stack loaded in the launcher loses the probes launched; an emptied stack is removed (`SpendProbesAsync`).
 - **One probe launcher per ship.** The ship's group limit refuses a second (`MaxGroupFitted`), as the fitting rules do.
 - **NOT BUILT: scanning, probe states and warp.** The scan itself (`scanMgr` system scans and their results), probe warp, reconnection to lost probes and the lifecycle notifications `OnProbesIdle`, `OnSystemScanStarted`, `OnSystemScanStopped`, `OnProbeWarpStart` and `OnProbeWarpEnd` are not built. Probes stay in state idle.
-- **LIMITATION: a restart keeps the records but not the balls.** The records are in `space.scan_probes`, so the sweep still ends them on time; the balls are not put back in space when a ship comes into the system, as cynosural fields are. Restoring probes is the next step of this track.
+- **Restart: the balls come back with the records.** The records are in `space.scan_probes`, and each probe still in its life is put back in space when a ship comes into its system (`SpaceProbes.RestoreAsync`, on `SystemEntered`, as the cynosural fields are): the same id, the place it was launched at, the remaining life. A probe whose time is up is not put back, and the sweep removes its record. Tests: `ScanProbeHostTests`. LIMITATION: a restart of the process itself is not exercised by a test; the restore is run by a second arrival in the system.
 - **NOT RUN: the client.** No graphical client or MITM capture on this host; the probe's place in the client's probe scanner is not seen.
 
 ## Track B6a (2026-10-09): ECM burst report, safe logoff, and the baseline failures

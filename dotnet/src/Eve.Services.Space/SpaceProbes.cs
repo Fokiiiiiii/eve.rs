@@ -38,6 +38,36 @@ public sealed class SpaceProbes : ISpaceProbes
         CharacterShips ships, DogmaStatic statics, PgProbeStore store, SpaceSessions space, ISimulation sim, Func<long> nowUnixMs, Action<string>? log = null)
     {
         (_ships, _statics, _store, _space, _sim, _nowUnixMs, _log) = (ships, statics, store, space, sim, nowUnixMs, log);
+        // a ship coming into a system finds the probes of the pilots there put back in space (their balls do not outlive a restart)
+        space.SystemEntered += system => _ = RestoreAsync(system);
+    }
+
+    /// <summary>
+    /// The probes whose records are still in their life in a system are put back in space when a ship comes into it: the same id, the place they were launched
+    /// at and what is left of their life. The simulation keeps a ball that is already there as it is.
+    /// </summary>
+    public async Task RestoreAsync(int system, CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            foreach (var record in await _store.InSystemAsync(system, _nowUnixMs(), cancellationToken))
+            {
+                PlaceBall(record);
+            }
+        }
+        catch (Exception error)
+        {
+            _log?.Invoke($"the scanner probes of system {system} were not put back: {error.Message}");
+        }
+    }
+
+    /// <summary>Puts a probe's ball in space where its record says it is (the type's name and radius, the pilot's ids).</summary>
+    private void PlaceBall(ScanProbeRecord record)
+    {
+        var type = _statics.Type(record.TypeId);
+        _sim.PlaceProbe(new SimPlaceProbe(
+            record.ProbeId, record.SolarSystemId, type?.Name ?? "Scanner Probe", record.TypeId, record.GroupId, record.Position, RadiusOf(type),
+            record.CharacterId, 0, 0, record.ShipId));
     }
 
     /// <summary>The offset of the <paramref name="index"/>th probe on the ring of <paramref name="count"/> (EVE.js <c>buildLaunchOffset</c>).</summary>
@@ -80,8 +110,6 @@ public sealed class SpaceProbes : ISpaceProbes
 
         var type = _statics.Type(state.ProbeTypeId);
         var now = _nowUnixMs();
-        var corporation = (int)(session.GetInt("corpid") ?? 0);
-        var alliance = (int)(session.GetInt("allianceid") ?? 0);
         for (var index = 0; index < count; index++)
         {
             var offset = RingOffset(active + index, MaxActiveProbes, LaunchRingRadiusMeters);
@@ -90,9 +118,7 @@ public sealed class SpaceProbes : ISpaceProbes
                 await _store.NextIdAsync(cancellationToken), character, system, state.ProbeTypeId, CharacterShips.ScanProbeGroup, moduleId, shipId,
                 position, [.. position], 0, LaunchRangeStep, IdleState, now + state.LifetimeMs);
             await _store.SaveAsync(record, cancellationToken);
-            _sim.PlaceProbe(new SimPlaceProbe(
-                record.ProbeId, system, type?.Name ?? "Scanner Probe", record.TypeId, record.GroupId, position, RadiusOf(type),
-                character, corporation, alliance, shipId));
+            PlaceBall(record);
             session.SendNotification("OnNewProbe", "clientID", ProbeKeyVal(record));
         }
     }

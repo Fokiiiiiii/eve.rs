@@ -189,4 +189,45 @@ public class ScanProbeHostTests
         Assert.Equal("NoCharges", refused.Error.UserErrorMessage);
         Assert.Empty(Placed(rig));
     }
+
+    [PgFact]
+    public async Task A_probe_still_in_its_life_is_put_back_in_space_with_its_id_and_place_when_its_system_is_entered_again()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var (session, _, launcher) = await LauncherInSpaceAsync(rig, probes: 8);
+        await rig.Space.LaunchAsync(session, launcher, 2, CancellationToken.None);
+        var system = (int)session.GetInt("solarsystemid2")!.Value;
+        var launched = Placed(rig).ToDictionary(p => p.ProbeId, p => p.Position);
+        var expiry = (await rig.Probes.GetAsync(launched.Keys.First()))!.ExpiresAtMs;
+
+        // a restart: the balls are gone from the simulation, the records are still in the store
+        rig.Sim.Heard.Clear();
+        rig.Now += 1_000;
+        await rig.Space.Probes!.RestoreAsync(system, CancellationToken.None);
+
+        var again = Placed(rig);
+        Assert.Equal(launched.Keys.OrderBy(id => id), again.Select(p => p.ProbeId).OrderBy(id => id));
+        foreach (var probe in again)
+        {
+            Assert.Equal(launched[probe.ProbeId], probe.Position);
+            Assert.Equal(CoreProbe, probe.TypeId);
+            Assert.Equal(system, probe.SolarSystemId);
+        }
+        Assert.Equal(expiry, (await rig.Probes.GetAsync(launched.Keys.First()))!.ExpiresAtMs);
+    }
+
+    [PgFact]
+    public async Task A_probe_whose_time_is_up_is_not_put_back_in_space()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var (session, _, launcher) = await LauncherInSpaceAsync(rig, probes: 8);
+        await rig.Space.LaunchAsync(session, launcher, 1, CancellationToken.None);
+        var system = (int)session.GetInt("solarsystemid2")!.Value;
+
+        rig.Sim.Heard.Clear();
+        rig.Now += 4_001_000;
+        await rig.Space.Probes!.RestoreAsync(system, CancellationToken.None);
+
+        Assert.Empty(Placed(rig));
+    }
 }

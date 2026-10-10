@@ -96,6 +96,23 @@ public sealed class PgProbeStore
         return (int)(long)(await command.ExecuteScalarAsync(cancellationToken))!;
     }
 
+    /// <summary>The probes in a system that are still in their life at <paramref name="nowMs"/> (the balls to put back in space after a restart).</summary>
+    public async Task<IReadOnlyList<ScanProbeRecord>> InSystemAsync(int solarSystemId, long nowMs, CancellationToken cancellationToken = default)
+    {
+        await using var connection = await _source.OpenConnectionAsync(cancellationToken);
+        await using var command = new NpgsqlCommand(
+            $"SELECT {Columns} FROM {_schema}.scan_probes WHERE solar_system_id = $1 AND expires_at_ms > $2 ORDER BY probe_id", connection);
+        command.Parameters.Add(new NpgsqlParameter { Value = solarSystemId });
+        command.Parameters.Add(new NpgsqlParameter { Value = nowMs });
+        var list = new List<ScanProbeRecord>();
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            list.Add(Read(reader));
+        }
+        return list;
+    }
+
     /// <summary>What is due to go by <paramref name="nowMs"/>.</summary>
     public async Task<IReadOnlyList<ScanProbeRecord>> DueAsync(long nowMs, CancellationToken cancellationToken = default)
     {

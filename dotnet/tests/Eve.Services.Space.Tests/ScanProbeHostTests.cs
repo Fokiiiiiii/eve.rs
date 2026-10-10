@@ -432,4 +432,92 @@ public class ScanProbeHostTests
         await rig.ProbeScans.RequestScansAsync(session, ScanRequest((probes[0], Placed(rig).Single(p => p.ProbeId == probes[0]).Position.ToArray(), 1)), CancellationToken.None);
         Assert.Single(Events.Of(session), e => e.Name == "OnSystemScanStarted");
     }
+
+    [PgFact]
+    public async Task Recovered_probes_go_back_into_the_launcher_they_came_from_and_the_pilot_is_told_each_one_that_left()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var (session, character, launcher) = await LauncherInSpaceAsync(rig, probes: 8);
+        await rig.Space.LaunchAsync(session, launcher, 3, CancellationToken.None);
+        var two = Placed(rig).Select(p => p.ProbeId).Take(2).ToArray();
+        Assert.Equal(5, await LoadedAsync(rig, character, launcher));
+        Events.Of(session);
+
+        var left = await rig.Space.Probes!.RecoverAsync(session, two, CancellationToken.None);
+
+        Assert.Equal(two, left.ToArray());
+        Assert.Equal(7, await LoadedAsync(rig, character, launcher));
+        var told = Events.Of(session).Where(e => e.Name == "OnRemoveProbe").Select(e => Events.Number(e.Args[0])).ToArray();
+        Assert.Equal(two.Select(id => (long)id).ToArray(), told);
+        Assert.All(two, id => Assert.Null(rig.Probes.GetAsync(id).Result));
+        Assert.Equal(two.Length, rig.Sim.Heard.OfType<SimRemoveProbe>().Count());
+    }
+
+    [PgFact]
+    public async Task Probes_that_do_not_fit_in_the_launcher_go_to_the_cargo_hold_as_a_stack()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var (session, character, launcher) = await LauncherInSpaceAsync(rig, probes: 8);
+        await rig.Space.LaunchAsync(session, launcher, 3, CancellationToken.None);
+        Assert.Equal(5, await LoadedAsync(rig, character, launcher));
+        var moduleId = launcher;
+        var ship = character.ShipId;
+
+        // four come back and the launcher has room for three: the fourth goes to the hold (a stack of one, the stack of its type joins)
+        var changes = await rig.Ships.RestoreProbesAsync(character.CharacterId, ship, moduleId, CoreProbe, 4);
+        Assert.Equal(8, await LoadedAsync(rig, character, launcher));
+        var hold = (await rig.Items.InContainerAsync(ship, CancellationToken.None)).Where(i => i.Flag == Eve.Inventory.ItemFlags.Cargo).ToList();
+        var stack = Assert.Single(hold);
+        Assert.Equal((CoreProbe, 1L), (stack.TypeId, stack.Quantity));
+        Assert.Equal(2, changes.Count);
+        Assert.Equal(1, changes[1].After.Quantity);
+
+        // a second one for the hold joins the stack there
+        await rig.Ships.RestoreProbesAsync(character.CharacterId, ship, null, CoreProbe, 2);
+        var grown = Assert.Single(await rig.Items.InContainerAsync(ship, CancellationToken.None), i => i.Flag == Eve.Inventory.ItemFlags.Cargo);
+        Assert.Equal(3, grown.Quantity);
+    }
+
+    [PgFact]
+    public async Task Reconnecting_tells_the_pilot_each_probe_as_new_and_then_all_idle()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var (session, _, launcher) = await LauncherInSpaceAsync(rig, probes: 8);
+        await rig.Space.LaunchAsync(session, launcher, 2, CancellationToken.None);
+        var probes = Placed(rig).Select(p => p.ProbeId).ToArray();
+        Events.Of(session);
+
+        await rig.Space.Probes!.ReconnectAsync(session, CancellationToken.None);
+
+        var told = Events.Of(session);
+        Assert.Equal(probes, told.Where(e => e.Name == "OnNewProbe").Select(e => Events.Number(Field(e.Args[0], "probeID"))).ToArray());
+        var idle = Assert.Single(told, e => e.Name == "OnProbesIdle");
+        Assert.Equal(probes.Length, Items(idle.Args[0]).Count);
+        // the order of the notifications: each probe as new, then the idle list
+        Assert.Equal("OnProbesIdle", told[^1].Name);
+    }
+
+    [PgFact]
+    public async Task After_a_restart_the_probes_are_still_recorded_and_can_be_reconnected_and_recovered()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var (session, character, launcher) = await LauncherInSpaceAsync(rig, probes: 8);
+        await rig.Space.LaunchAsync(session, launcher, 2, CancellationToken.None);
+        var probes = Placed(rig).Select(p => p.ProbeId).ToArray();
+        Assert.Equal(6, await LoadedAsync(rig, character, launcher));
+
+        // a restart: the host's services are built again over the same records; the simulation has nothing of the balls
+        var restarted = new Eve.Services.Space.SpaceProbes(rig.Ships, rig.Statics, rig.Probes, rig.Space, rig.Sim, () => rig.Now);
+        rig.Sim.Heard.Clear();
+        await restarted.RestoreAsync((int)session.GetInt("solarsystemid2")!.Value);
+        Assert.Equal(probes, Placed(rig).Select(p => p.ProbeId).ToArray());
+
+        Events.Of(session);
+        await restarted.ReconnectAsync(session, CancellationToken.None);
+        Assert.Equal(probes.Length, Events.Of(session).Count(e => e.Name == "OnNewProbe"));
+
+        await restarted.RecoverAsync(session, probes, CancellationToken.None);
+        Assert.Equal(8, await LoadedAsync(rig, character, launcher));
+        Assert.Null(await rig.Probes.GetAsync(probes[0]));
+    }
 }

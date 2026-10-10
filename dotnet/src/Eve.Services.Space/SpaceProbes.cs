@@ -83,7 +83,7 @@ public sealed class SpaceProbes : ISpaceProbes
     private SemaphoreSlim Gate(int system) => _gates.GetOrAdd(system, _ => new SemaphoreSlim(1, 1));
 
     /// <summary>Puts a probe's ball in space where its record says it is (the type's name and radius, the pilot's ids).</summary>
-    private void PlaceBall(ScanProbeRecord record)
+    internal void PlaceBall(ScanProbeRecord record)
     {
         var type = _statics.Type(record.TypeId);
         _sim.PlaceProbe(new SimPlaceProbe(
@@ -196,6 +196,74 @@ public sealed class SpaceProbes : ISpaceProbes
         {
             _log?.Invoke($"the scanner probes whose time ran out were not removed: {error.Message}");
         }
+    }
+
+    /// <summary>
+    /// <c>RecoverProbes(probeIDs)</c> (EVE.js <c>Handle_RecoverProbes</c>): the pilot's probes in the system are recalled, and their charges go back into the launcher
+    /// they came from while it has room, the rest into the ship's cargo hold (<see cref="CharacterShips.RestoreProbesAsync"/>). The pilot is told the stacks that
+    /// changed, then each probe that left. Answers the ids that left; a probe of another pilot, or of another system, is left alone.
+    /// </summary>
+    public async Task<IReadOnlyList<long>> RecoverAsync(ClientSession session, IReadOnlyCollection<long> probeIds, CancellationToken cancellationToken)
+    {
+        if (session.CharacterId is not { } character || _space.ShipIdOf(session) is not { } shipId || _space.SolarSystemOf(session) is not { } system)
+        {
+            return [];
+        }
+        var records = new List<ScanProbeRecord>();
+        foreach (var id in probeIds.Distinct())
+        {
+            if (await _store.GetAsync(id, cancellationToken) is { } record && record.CharacterId == character && record.SolarSystemId == system)
+            {
+                records.Add(record);
+            }
+        }
+        foreach (var group in records.GroupBy(record => (record.LauncherId, record.TypeId)))
+        {
+            var changes = await _ships.RestoreProbesAsync(character, shipId, group.Key.LauncherId, group.Key.TypeId, group.Count(), cancellationToken);
+            foreach (var change in changes)
+            {
+                ShipNotifications.SendItemChange(session, change, RowOf);
+            }
+        }
+        var removed = new List<long>();
+        foreach (var record in records)
+        {
+            await Forget(record, session, cancellationToken);
+            removed.Add(record.ProbeId);
+        }
+        return removed;
+    }
+
+    /// <summary>
+    /// <c>ReconnectToLostProbes()</c> (EVE.js <c>Handle_ReconnectToLostProbes</c> and <c>scheduleProbeReplayNotifications</c>): the pilot's probes in the system that are
+    /// still in their life and not inactive are put back on the pilot's screen: each is told as new (<c>OnNewProbe</c>), then all are told idle (<c>OnProbesIdle</c>).
+    /// Their balls are put in space again where they are (the simulation keeps a ball already there as it is).
+    /// </summary>
+    public async Task ReconnectAsync(ClientSession session, CancellationToken cancellationToken)
+    {
+        if (session.CharacterId is not { } character || _space.SolarSystemOf(session) is not { } system)
+        {
+            return;
+        }
+        var probes = (await _store.InSystemAsync(system, _nowUnixMs(), cancellationToken))
+            .Where(record => record.CharacterId == character && record.State > 0)
+            .ToList();
+        if (probes.Count == 0)
+        {
+            return;
+        }
+        foreach (var record in probes)
+        {
+            PlaceBall(record);
+            session.SendNotification("OnNewProbe", "clientID", ProbeKeyVal(record));
+        }
+        session.SendNotification("OnProbesIdle", "clientID", new PyList([.. probes.Select(record => ProbeKeyVal(record))]));
+    }
+
+    private ItemRow RowOf(Eve.Inventory.Item item)
+    {
+        var type = _statics.Type(item.TypeId);
+        return new ItemRow(item.Id, item.TypeId, item.OwnerId, item.LocationId, item.Flag, item.Singleton ? -1 : item.Quantity, type?.GroupId ?? 0, type?.CategoryId ?? 0);
     }
 
     /// <summary>A probe leaves: its record goes, its ball is taken out of space and its pilot is told (<c>OnRemoveProbe</c>).</summary>

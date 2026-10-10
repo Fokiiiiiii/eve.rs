@@ -93,8 +93,21 @@ public sealed class SpaceProbeScans
     {
         "RequestScans" => RequestScansAsync(call.Session, call.Arg(0), call.Cancellation),
         "SetActivityState" => SetActivityStateAsync(call.Session, call.Arg(0), call.Arg(1), call.Cancellation),
+        "RecoverProbes" => RecoverProbesAsync(call.Session, call.Arg(0), call.Cancellation),
+        "ReconnectToLostProbes" => ReconnectAsync(call.Session, call.Cancellation),
         _ => ValueTask.FromResult<PyValue>(PyNone.Instance),
     };
+
+    /// <summary><c>RecoverProbes(probeIDs)</c>: the probes that left, as the list the client counts (see <see cref="SpaceProbes.RecoverAsync"/>).</summary>
+    private async ValueTask<PyValue> RecoverProbesAsync(ClientSession session, PyValue probes, CancellationToken cancellationToken) =>
+        new PyList([.. (await _probes.RecoverAsync(session, ProbeIds(probes), cancellationToken)).Select(id => (PyValue)new PyLong(id))]);
+
+    /// <summary><c>ReconnectToLostProbes()</c>: the pilot's probes are told again (see <see cref="SpaceProbes.ReconnectAsync"/>).</summary>
+    private async ValueTask<PyValue> ReconnectAsync(ClientSession session, CancellationToken cancellationToken)
+    {
+        await _probes.ReconnectAsync(session, cancellationToken);
+        return PyNone.Instance;
+    }
 
     /// <summary>
     /// <c>RequestScans(probes)</c>: the probes the pilot has idle in the system (the client's dict of probe id to probe) are moved to where they are and scan. Answers

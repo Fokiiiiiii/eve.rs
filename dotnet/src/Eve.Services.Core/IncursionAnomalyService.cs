@@ -75,7 +75,8 @@ public sealed class IncursionAnomalyService : IService
             (ScanManagerName, "GetSystemScanMgr") => GetSystemScanMgr(call),
             (ScanManagerName, "SignalTrackerRegister") => await SignalTrackerRegisterAsync(call),
             (ScanManagerName, "DestroyProbe") => await DestroyProbeAsync(call),
-            (ScanManagerName, "RequestScans" or "SetActivityState") => _probeScans is null ? PyNone.Instance : await _probeScans(call.Method, call),
+            (ScanManagerName, "RequestScans" or "SetActivityState" or "RecoverProbes" or "ReconnectToLostProbes") =>
+                _probeScans is null ? PyNone.Instance : await _probeScans(call.Method, call),
             _ => PyNone.Instance,
         };
     }
@@ -84,7 +85,7 @@ public sealed class IncursionAnomalyService : IService
     {
         MapName => method is "GetIncursionGlobalReport" or "GetSystemsInIncursions",
         TaleManagerName => method is "GetGlobalWorldEventTales" or "get_active_tales_by_template",
-        ScanManagerName => method is "GetFullState" or "GetSystemScanMgr" or "SignalTrackerRegister" or "DestroyProbe" or "RequestScans" or "SetActivityState",
+        ScanManagerName => method is "GetFullState" or "GetSystemScanMgr" or "SignalTrackerRegister" or "DestroyProbe" or "RequestScans" or "SetActivityState" or "RecoverProbes" or "ReconnectToLostProbes",
         _ => false,
     };
 

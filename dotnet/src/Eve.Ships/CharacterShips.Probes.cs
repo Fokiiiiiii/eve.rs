@@ -1,5 +1,7 @@
 using Eve.Dogma;
+using Eve.Fitting;
 using Eve.Inventory;
+using Npgsql;
 
 namespace Eve.Ships;
 
@@ -98,5 +100,75 @@ public sealed partial class CharacterShips
         }
         await transaction.CommitAsync(cancellationToken);
         return true;
+    }
+
+    /// <summary>
+    /// Puts recovered probes back (EVE.js <c>restoreRecoveredProbeCharges</c>): into the launcher they came from while it has room for them (its charge of the probe's
+    /// type, up to the capacity <see cref="AmmoRules.Capacity"/> gives), the rest into the ship's cargo hold, a stack joining the stack of its type there. Answers
+    /// what changed, in order.
+    /// </summary>
+    public async Task<IReadOnlyList<ItemChanged>> RestoreProbesAsync(long characterId, long shipId, long? launcherId, int probeTypeId, long count, CancellationToken cancellationToken = default)
+    {
+        var changes = new List<ItemChanged>();
+        if (count <= 0)
+        {
+            return changes;
+        }
+        await using var connection = await source.OpenConnectionAsync(cancellationToken);
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        await LockAsync(connection, transaction, characterId, cancellationToken);
+        await statics.EnsureTypesAsync([probeTypeId], cancellationToken);
+        if (statics.Type(probeTypeId) is not { } probe)
+        {
+            await transaction.RollbackAsync(cancellationToken);
+            return changes;
+        }
+        var remaining = count;
+        if (launcherId is { } launcherItem
+            && await items.LockAndGetAsync(connection, transaction, launcherItem, cancellationToken) is { } module
+            && module.OwnerId == characterId && module.LocationId == shipId)
+        {
+            await statics.EnsureTypesAsync([module.TypeId], cancellationToken);
+            var capacity = statics.Type(module.TypeId) is { } moduleType ? AmmoRules.Capacity(moduleType, probe) : 0;
+            var (_, charges) = await ShipSnapshot.SlotsOfAsync(statics, await items.InLocationAsync(shipId, characterId, cancellationToken), cancellationToken);
+            var loaded = charges.FirstOrDefault(c => c.Flag == module.Flag);
+            // a launcher that holds another charge takes no probes; one that holds probes takes up to its capacity
+            if (capacity > 0 && (loaded is null || loaded.TypeId == probeTypeId))
+            {
+                var put = Math.Min(remaining, Math.Max(0, capacity - (loaded?.Quantity ?? 0)));
+                if (put > 0)
+                {
+                    changes.Add(await AddProbeStackAsync(connection, transaction, characterId, shipId, module.Flag, probeTypeId, put, loaded, cancellationToken));
+                    remaining -= put;
+                }
+            }
+        }
+        if (remaining > 0)
+        {
+            var hold = (await items.InContainerAsync(shipId, cancellationToken))
+                .Where(i => i.Flag == ItemFlags.Cargo && i.TypeId == probeTypeId && !i.Singleton)
+                .OrderBy(i => i.Id)
+                .FirstOrDefault();
+            changes.Add(await AddProbeStackAsync(connection, transaction, characterId, shipId, ItemFlags.Cargo, probeTypeId, remaining, hold, cancellationToken));
+        }
+        await transaction.CommitAsync(cancellationToken);
+        return changes;
+    }
+
+    /// <summary>Grows the probe stack <paramref name="existing"/> (found before the lock; the lock is taken again and the stack must still be where it was), or makes one.</summary>
+    private async Task<ItemChanged> AddProbeStackAsync(
+        NpgsqlConnection connection, NpgsqlTransaction transaction, long characterId, long shipId, int flag, int typeId, long quantity, Item? existing,
+        CancellationToken cancellationToken)
+    {
+        if (existing is not null
+            && await items.LockAndGetAsync(connection, transaction, existing.Id, cancellationToken) is { } stack
+            && (stack.LocationId, stack.Flag, stack.TypeId, stack.Singleton) == (shipId, flag, typeId, false))
+        {
+            var grown = stack with { Quantity = stack.Quantity + quantity };
+            await items.SetQuantityAsync(connection, transaction, stack.Id, grown.Quantity, cancellationToken);
+            return new ItemChanged(grown, stack.LocationId, stack.Flag, stack.Quantity);
+        }
+        var id = await items.CreateAsync(connection, transaction, new NewItem(typeId, characterId, shipId, flag, quantity), cancellationToken);
+        return new ItemChanged(new Item(id, typeId, characterId, shipId, flag, quantity, false, null), 0, 0, quantity);
     }
 }

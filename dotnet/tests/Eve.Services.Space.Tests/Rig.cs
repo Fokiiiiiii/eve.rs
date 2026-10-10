@@ -88,7 +88,9 @@ private readonly Dictionary<long, ClientSession> _fleetSessions = new();
         var npcAuthorityOf = npcAuthority ?? Eve.Npc.NpcAuthority.Load();
         Space = new SpaceSessions(Sim, Ships, statics, stations, systems, () => Now, Log.Add, protection, jumpCloak, localTimers) { Registry = Registry, RookieShipOfRace = race => catalog.Race(race)?.ShipTypeId, Npcs = new Eve.Npc.NpcSelector(npcAuthorityOf), NpcWrecks = npcLoot ? new NpcWrecks(_ => LootTable, () => Task.FromResult(new Eve.Npc.NpcLoot(LootPool)), Ships, () => 0) : null, BeltRats = beltRats is null ? null : new Eve.Npc.BeltRats(npcAuthorityOf, beltRats, type => Eve.Npc.NpcHull.HasHitPoints(statics.Type(type))) };
         Space.UseBounties(Bounties);
-        Containers = new SpaceContainers(Sim, Ships, Items, SpaceItems, new Eve.Ships.PgWorkCycleLedger(source, _schemas[6]), new EventBusFacts(Events), statics, Space, () => Now, Log.Add, deployed: Deployed);
+        Scheduler = new Eve.Scheduler.DurableScheduler(source, () => Now, null, _schemas[7]);
+        Containers = new SpaceContainers(Sim, Ships, Items, SpaceItems, new Eve.Ships.PgWorkCycleLedger(source, _schemas[6]), new EventBusFacts(Events), statics, Space, () => Now, Log.Add, deployed: Deployed, scheduler: Scheduler);
+        Scheduler.Register(SpaceContainers.AnchorJob, async (context, token) => await Containers.AnchorAsync(context.Payload<SpaceContainers.DisruptorAnchorDue>()!.DeployableId, token));
         Space.Probes = new Eve.Services.Space.SpaceProbes(Ships, statics, Probes, Space, Sim, () => Now);
         Drones = new SpaceDrones(Sim, Ships, statics, Space, () => Now, Log.Add);
         Inventory = new InvBrokerService(Items, new ItemTypeCatalog(new SdeReader(source)), Stations, Ships, statics, () => Now, Containers, Drones);
@@ -155,6 +157,9 @@ private readonly Dictionary<long, ClientSession> _fleetSessions = new();
 
     /// <summary>The records of the deployables the host keeps (the cynosural fields), in the same schema as the space items.</summary>
     public Eve.Ships.PgDeployedStore Deployed { get; }
+
+    /// <summary>The durable scheduler the containers schedule an anchoring on (its jobs run when the test asks, <c>RunDueAsync</c>).</summary>
+    public Eve.Scheduler.DurableScheduler Scheduler { get; }
 
     /// <summary>The scanner probes the host keeps a record of, in the same schema.</summary>
     public Eve.Ships.PgProbeStore Probes { get; }

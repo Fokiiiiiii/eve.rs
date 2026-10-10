@@ -194,6 +194,10 @@ internal sealed class FakeSim : ISimulation
 
     public void RemoveProbe(long probeId) => Heard.Enqueue(new SimRemoveProbe(probeId));
 
+    public void PlaceDisruptor(SimPlaceDisruptor disruptor) => Heard.Enqueue(disruptor);
+
+    public void SetDisruptorActive(long deployableId, bool active) => Heard.Enqueue(new SimSetDisruptorActive(deployableId, active));
+
     public void Destroy(long shipId, SimCredit credit) => Heard.Enqueue(new SimDestroy(shipId, credit));
 
     public void Report(SimMessage message) => Received?.Invoke(message);

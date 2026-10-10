@@ -154,6 +154,8 @@ public class ScanProbeHostTests
         var (session, character, launcher) = await LauncherInSpaceAsync(rig, probes: 8);
         var system = (int)session.GetInt("solarsystemid2")!.Value;
 
+        // the restore the entry started is done before the record is seeded (the seeding is not part of what the entry restores)
+        await rig.Space.Probes!.RestoreAsync(system, CancellationToken.None);
         // one probe of the pilot is already active in this system (a record the cap counts; the sim holds no ball for it)
         await rig.Probes.SaveAsync(new ScanProbeRecord(
             ProbeBase + 999, character.CharacterId, system, CoreProbe, CharacterShips.ScanProbeGroup, launcher, character.ShipId,
@@ -230,5 +232,48 @@ public class ScanProbeHostTests
         await rig.Space.Probes!.RestoreAsync(system, CancellationToken.None);
 
         Assert.Empty(Placed(rig));
+    }
+
+    /// <summary>
+    /// A launch in a system waits for the restore that the system's entry started, while that restore has read the records but not yet placed them (the per-system gate
+    /// of SpaceProbes). The test holds the restore there; a launch that does not wait places its balls first, so the test sees them placed before the restore is let on.
+    /// </summary>
+    [PgFact]
+    public async Task A_launch_waits_while_the_restore_of_its_system_has_read_the_records_but_not_yet_placed_them()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var (session, character, launcher) = await LauncherInSpaceAsync(rig, probes: 8);
+        var system = (int)session.GetInt("solarsystemid2")!.Value;
+        await rig.Space.Probes!.RestoreAsync(system, CancellationToken.None);
+        // a record of a probe that has no ball (as after a restart)
+        await rig.Probes.SaveAsync(new ScanProbeRecord(
+            ProbeBase + 500, character.CharacterId, system, CoreProbe, CharacterShips.ScanProbeGroup, launcher, character.ShipId,
+            [0, 0, 0], [0, 0, 0], 0, 7, 1, Rig.ClockMs + 3_600_000));
+        Events.Of(session);
+        rig.Sim.Heard.Clear();
+
+        // the restore of the next entry stops after it has read the record, until the test lets it go on
+        var read = new TaskCompletionSource();
+        var release = new TaskCompletionSource();
+        rig.Space.Probes!.AfterRead = async () =>
+        {
+            read.TrySetResult();
+            await release.Task;
+        };
+        var other = await rig.NewCharacterAsync("Second Tester");
+        var otherSession = await rig.SessionAsync(other, 2);
+        var otherOid = await rig.BindShipAsync(otherSession);
+        await rig.ShipCallAsync(otherSession, "Undock", otherOid, new PyLong(otherSession.GetInt("shipid")!.Value), PyBool.False);
+        await read.Task;
+
+        var launch = rig.Space.LaunchAsync(session, launcher, 2, CancellationToken.None);
+        await Task.WhenAny(launch, Task.Delay(2_000));
+        Assert.False(launch.IsCompleted, "the launch waits for the restore of its system");
+        Assert.Empty(Placed(rig));
+
+        release.SetResult();
+        await launch;
+        // (an entry may restore a record more than once, each send is kept once by the simulation: the order of the first placements is what counts)
+        Assert.Equal(new[] { ProbeBase + 500, ProbeBase + 1, ProbeBase + 2 }, Placed(rig).Select(p => p.ProbeId).Distinct().ToArray());
     }
 }

@@ -1,5 +1,14 @@
 use super::*;
 
+/// A flag byte: 0 or 1, anything else is a bad value of `what`.
+fn read_flag(reader: &mut Reader, what: &'static str) -> Result<bool, DecodeError> {
+    match reader.u8()? {
+        0 => Ok(false),
+        1 => Ok(true),
+        _ => Err(DecodeError::BadValue(what)),
+    }
+}
+
 pub(super) fn read_heat_profile(reader: &mut Reader) -> Result<HeatProfile, DecodeError> {
     let generation_multiplier = reader.f64()?;
     let damage_multiplier = reader.f64()?;
@@ -404,6 +413,44 @@ impl Message {
                 }))
             }
             kind::REMOVE_PROBE => Message::RemoveProbe { probe_id: r.i64()? },
+            kind::PLACE_DISRUPTOR => {
+                let deployable_id = r.i64()?;
+                let solar_system_id = r.i32()?;
+                let name = r.text()?;
+                let type_id = r.i32()?;
+                let group_id = r.i32()?;
+                let position = read_vector(&mut r)?;
+                let radius = r.f64()?;
+                let range = r.f64()?;
+                let active = read_flag(&mut r, "disruptor")?;
+                let owner_id = r.i64()?;
+                let corporation_id = r.i32()?;
+                let alliance_id = r.i32()?;
+                let ship_id = r.i64()?;
+                if !(radius.is_finite() && radius >= 0.0 && range.is_finite() && range >= 0.0) {
+                    return Err(DecodeError::BadValue("disruptor"));
+                }
+                Message::PlaceDisruptor(Box::new(DisruptorPlacement {
+                    deployable_id,
+                    solar_system_id,
+                    name,
+                    type_id,
+                    group_id,
+                    position,
+                    radius,
+                    range,
+                    active,
+                    owner_id,
+                    corporation_id,
+                    alliance_id,
+                    ship_id,
+                }))
+            }
+            kind::SET_DISRUPTOR_ACTIVE => {
+                let deployable_id = r.i64()?;
+                let active = read_flag(&mut r, "disruptor")?;
+                Message::SetDisruptorActive { deployable_id, active }
+            }
             kind::DRONE_WORK_RESULT => {
                 let session_id = r.u64()?;
                 let drone_id = r.i64()?;

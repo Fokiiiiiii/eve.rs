@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using Eve.Dogma;
 using Eve.Macho;
 using Eve.Marshal;
@@ -34,6 +35,11 @@ public sealed class SpaceProbes : ISpaceProbes
     private readonly Func<long> _nowUnixMs;
     private readonly Action<string>? _log;
 
+    /// <summary>Test seam: a restore waits here after it has read the records, before it places them (null in the host).</summary>
+    internal Func<Task>? AfterRead { get; set; }
+    /// <summary>One gate per solar system (see <see cref="Gate"/>).</summary>
+    private readonly ConcurrentDictionary<int, SemaphoreSlim> _gates = new();
+
     public SpaceProbes(
         CharacterShips ships, DogmaStatic statics, PgProbeStore store, SpaceSessions space, ISimulation sim, Func<long> nowUnixMs, Action<string>? log = null)
     {
@@ -48,9 +54,17 @@ public sealed class SpaceProbes : ISpaceProbes
     /// </summary>
     public async Task RestoreAsync(int system, CancellationToken cancellationToken = default)
     {
+        // held per system with the launches (see LaunchAsync): taken at once when the system is entered, so a launch that follows the entry waits for it
+        var gate = Gate(system);
+        await gate.WaitAsync(cancellationToken);
         try
         {
-            foreach (var record in await _store.InSystemAsync(system, _nowUnixMs(), cancellationToken))
+            var records = await _store.InSystemAsync(system, _nowUnixMs(), cancellationToken);
+            if (AfterRead is { } hold)
+            {
+                await hold();
+            }
+            foreach (var record in records)
             {
                 PlaceBall(record);
             }
@@ -59,7 +73,14 @@ public sealed class SpaceProbes : ISpaceProbes
         {
             _log?.Invoke($"the scanner probes of system {system} were not put back: {error.Message}");
         }
+        finally
+        {
+            gate.Release();
+        }
     }
+
+    /// <summary>The gate of a system: a restore and a launch in it run one at a time (a launch never lands between a restore's read of the records and its balls).</summary>
+    private SemaphoreSlim Gate(int system) => _gates.GetOrAdd(system, _ => new SemaphoreSlim(1, 1));
 
     /// <summary>Puts a probe's ball in space where its record says it is (the type's name and radius, the pilot's ids).</summary>
     private void PlaceBall(ScanProbeRecord record)
@@ -78,6 +99,20 @@ public sealed class SpaceProbes : ISpaceProbes
     }
 
     public async Task LaunchAsync(ClientSession session, long moduleId, int count, CancellationToken cancellationToken)
+    {
+        var gate = Gate((int)(session.GetInt("solarsystemid2") ?? session.GetInt("solarsystemid") ?? 0));
+        await gate.WaitAsync(cancellationToken);
+        try
+        {
+            await LaunchInSystemAsync(session, moduleId, count, cancellationToken);
+        }
+        finally
+        {
+            gate.Release();
+        }
+    }
+
+    private async Task LaunchInSystemAsync(ClientSession session, long moduleId, int count, CancellationToken cancellationToken)
     {
         if (session.CharacterId is not { } character || session.GetInt("shipid") is not { } shipId || shipId <= 0)
         {

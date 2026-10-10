@@ -36,7 +36,7 @@ use crate::weapons::{Aoe, Arc, Charge, Spool, Turret};
 
 use crate::wreck::WreckKind;
 
-pub const PROTOCOL_VERSION: u16 = 47;
+pub const PROTOCOL_VERSION: u16 = 48;
 /// The message kinds.
 pub mod kind;
 
@@ -135,6 +135,25 @@ pub struct DeployedPlacement {
     pub alliance_id: i32,
     pub ship_id: i64,
     pub lifetime_ms: f64,
+}
+
+/// A mobile warp disruptor the host keeps a record of (protocol 48): its id, type and group, where it lies, the radius of its ball, the range of its warp
+/// disruption in metres, whether it is anchored (`active`), and whose it is.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DisruptorPlacement {
+    pub deployable_id: i64,
+    pub solar_system_id: i32,
+    pub name: String,
+    pub type_id: i32,
+    pub group_id: i32,
+    pub position: [f64; 3],
+    pub radius: f64,
+    pub range: f64,
+    pub active: bool,
+    pub owner_id: i64,
+    pub corporation_id: i32,
+    pub alliance_id: i32,
+    pub ship_id: i64,
 }
 
 /// A scanner probe the host launched and keeps the record of: its id, its type and group, where it is and the radius of its ball. The simulation puts it
@@ -497,6 +516,13 @@ pub enum Message {
     RemoveProbe {
         probe_id: i64,
     },
+    /// The host puts a mobile warp disruptor in space where its pilot dropped it (protocol 48).
+    PlaceDisruptor(Box<DisruptorPlacement>),
+    /// The host says a mobile warp disruptor is anchored (`active`) or not (protocol 48); one not in space is left alone.
+    SetDisruptorActive {
+        deployable_id: i64,
+        active: bool,
+    },
     DroneWorkResult {
         session_id: u64,
         drone_id: i64,
@@ -723,6 +749,8 @@ impl Message {
             Self::RemoveDeployed { .. } => kind::REMOVE_DEPLOYED,
             Self::PlaceProbe(_) => kind::PLACE_PROBE,
             Self::RemoveProbe { .. } => kind::REMOVE_PROBE,
+            Self::PlaceDisruptor(_) => kind::PLACE_DISRUPTOR,
+            Self::SetDisruptorActive { .. } => kind::SET_DISRUPTOR_ACTIVE,
         }
     }
 }

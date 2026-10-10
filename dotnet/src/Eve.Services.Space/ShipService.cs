@@ -111,6 +111,26 @@ public sealed partial class ShipService(
         return await drones.LaunchAsync(call.Session, asked, call.Cancellation);
     }
 
+    /// <summary><c>LaunchFromShip(itemIDs)</c>: the mobile warp disruptors of the hold go out into space. Answers a tuple of the ids that went out and an empty list of refusals
+    /// (a refusal is the client's notice).</summary>
+    [Method("LaunchFromShip")]
+    public async ValueTask<PyValue> LaunchFromShip(ServiceCall call)
+    {
+        if (containers is null || !_binding.Owns(call))
+        {
+            return None;
+        }
+        var launched = new List<PyValue>();
+        foreach (var id in SpaceDrones.IdsOf(call.Arg(0)))
+        {
+            if (await containers.LaunchFromShipAsync(call.Session, id, call.Cancellation) is { } disruptor)
+            {
+                launched.Add(new PyLong(disruptor));
+            }
+        }
+        return Py.Tuple(new PyList(launched), new PyList(new List<PyValue>()));
+    }
+
     /// <summary><c>ScoopDrone(droneIDs)</c>: drones that nobody commands are taken into the drone bay. Answers a dictionary of the drones that could not be.</summary>
     [Method("ScoopDrone")]
     public async ValueTask<PyValue> ScoopDrone(ServiceCall call) =>

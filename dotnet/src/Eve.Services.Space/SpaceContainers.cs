@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using Eve.Dogma;
 using Eve.Inventory;
 using Eve.Marshal;
+using Eve.Scheduler;
 using Eve.Services.Ships;
 using Eve.Ships;
 using Eve.Space;
@@ -50,6 +51,7 @@ public sealed partial class SpaceContainers : ISpaceContainers, IDisposable
     private readonly PgWorkCycleLedger _cycles;
     private readonly PgDeployedStore? _deployed;
     private readonly Dictionary<string, Func<DeployedRecord, Task>> _deployedExpiry;
+    private readonly DurableScheduler? _scheduler;
     private readonly IFactBus _events;
     private readonly DogmaStatic _statics;
     private readonly SpaceSessions _space;
@@ -69,10 +71,12 @@ public sealed partial class SpaceContainers : ISpaceContainers, IDisposable
 
     public SpaceContainers(
         ISimulation sim, CharacterShips ships, PgItemStore items, PgSpaceItemStore spaceItems, PgWorkCycleLedger cycles, IFactBus events, DogmaStatic statics,
-        SpaceSessions space, Func<long> nowUnixMs, Action<string>? log = null, TimeSpan? sweepEvery = null, PgDeployedStore? deployed = null)
+        SpaceSessions space, Func<long> nowUnixMs, Action<string>? log = null, TimeSpan? sweepEvery = null, PgDeployedStore? deployed = null,
+        DurableScheduler? scheduler = null)
     {
         (_sim, _ships, _items, _spaceItems, _cycles, _events, _statics, _space, _nowUnixMs, _log) = (sim, ships, items, spaceItems, cycles, events, statics, space, nowUnixMs, log);
-        (_deployed, _deployedExpiry) = (deployed, new() { [CynoFieldKind] = ExpireCynoFieldAsync });
+        (_deployed, _scheduler) = (deployed, scheduler);
+        _deployedExpiry = new() { [CynoFieldKind] = ExpireCynoFieldAsync, [DisruptorKind] = ExpireDisruptorAsync };
         // what the simulation held is gone with it; a scene that is made gets what lies in its system, and a wreck the host puts in space is kept
         _sim.Received += OnReceived;
         _sim.Lost += Forgotten;

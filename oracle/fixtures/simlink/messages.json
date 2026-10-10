@@ -3499,6 +3499,35 @@
    "hex": "090000004201e0535666840300"
   },
   {
+   "name": "mobile warp disruptor dropped from a ship and not yet anchored",
+   "kind": "PlaceDisruptor",
+   "deployableId": "4250000000000009",
+   "solarSystemId": 30100032,
+   "typeName": "Mobile Small Warp Disruptor I",
+   "typeId": 12198,
+   "groupId": 361,
+   "position": [
+    311989835983.1308,
+    -13069154020.916222,
+    156646308895.76187
+   ],
+   "radius": 50.0,
+   "range": 5000.0,
+   "active": false,
+   "ownerId": "1790646377000015",
+   "corporationId": 98000001,
+   "allianceId": 0,
+   "shipId": "9988400001943",
+   "hex": "750000004409a04b3c5a190f00404acb011d004d6f62696c6520536d616c6c205761727020446973727570746f722049a62f0000690100005fc833c6022952426c5427b7db5708c285e10f7e6c3c42420000000000004940000000000088b340004f2c3859955c0600815cd7050000000097b3089b15090000"
+  },
+  {
+   "name": "mobile warp disruptor anchored",
+   "kind": "SetDisruptorActive",
+   "deployableId": "4250000000000009",
+   "active": true,
+   "hex": "0a0000004509a04b3c5a190f0001"
+  },
+  {
    "name": "how far a can is",
    "kind": "Measured",
    "sessionId": "1790646377000015",

@@ -31,8 +31,9 @@ public sealed class PacketDispatcher
     /// An unknown service, an unknown method and a call with no service are answered with the Macho error the V24.01
     /// server sends for them (a wrapped <c>ServiceNotFound</c> or <c>AttributeError</c>), which the client raises at
     /// its call site; a None result would be read as the call's answer (the client dies on <c>None.level</c>).
-    /// Strict mode (EVE_STRICT_RPC=1) also names the failure in the error text and logs the call's arguments, and
-    /// answers a failing handler with a Macho error instead of a None result.
+    /// A handler that throws an exception other than a user error is answered with the V24.01 server's wrapped
+    /// <c>RuntimeError</c> carrying an error ID; the host logs the exception under that ID. Strict mode (EVE_STRICT_RPC=1)
+    /// also names the failure in the error text and logs the call's arguments and the stack trace.
     /// </summary>
     public bool StrictRpc { get; init; }
 
@@ -216,7 +217,6 @@ public sealed class PacketDispatcher
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            // The reference answers a failing handler with a None result rather than an error.
             if (trace)
             {
                 Console.Error.WriteLine(
@@ -224,13 +224,17 @@ public sealed class PacketDispatcher
                     $"method={call.Method} error={ex.GetType().Name}");
             }
             session.DropAfterResponse();
-            OnProblem?.Invoke($"{service.Name}.{call.Method}: {ex.Message}", ex);
             if (StrictRpc)
             {
+                OnProblem?.Invoke($"{service.Name}.{call.Method}: {ex.Message}", ex);
                 FailStrictly(packet, session, service.Name, call, "unhandled exception", $"{ex.GetType().Name}: {ex.Message}", ex);
                 return true;
             }
-            SendCallResponse(packet, PyNone.Instance, session, service.Name);
+            // Answered as the V24.01 server answers an unexpected exception: a wrapped error under an ID. The host logs
+            // the exception under the same ID; the client gets the ID and neither the message nor the stack.
+            var errorId = RpcDiagnostics.CorrelationId();
+            OnProblem?.Invoke($"{service.Name}.{call.Method} [{errorId}]: {ex.GetType().Name}: {ex.Message}", ex);
+            SendError(packet, MachoErrors.UnexpectedFailure(errorId, $"{service.Name}.{call.Method}"), session, service.Name);
             return true;
         }
         finally
@@ -257,7 +261,7 @@ public sealed class PacketDispatcher
         session.Send(ResponseBuilder.CallResponse(packet, result, session.Get("userid"), serviceName));
 
     private static void SendError(MachoPacket packet, MachoError error, ClientSession session, string? serviceName) =>
-        session.Send(ResponseBuilder.ErrorResponse(packet, error.ErrorCode, error.Payload, session.Get("userid"), serviceName));
+        session.Send(ResponseBuilder.ErrorResponse(packet, error.ErrorCode, error.Payload, session.Get("userid"), serviceName, error.Detail));
 
     /// <summary>
     /// A result that hands out a bound object (<c>[substruct(substream((oid, refID))), callResult]</c>, or the

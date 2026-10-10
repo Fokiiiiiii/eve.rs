@@ -3,6 +3,7 @@ using System.Buffers.Binary;
 using System.Net;
 using System.Net.Sockets;
 using System.Text;
+using System.Text.RegularExpressions;
 using Eve.Identity;
 using Eve.Macho;
 using Eve.Marshal;
@@ -37,7 +38,7 @@ public class HostServerTests : IAsyncLifetime
 
     public Task InitializeAsync() => Task.CompletedTask;
 
-    private void Start(AccountOptions? identity = null, int maxPending = 10_000, Action<ServiceRegistry>? configure = null, IAccountDirectory? accounts = null, bool strictRpc = false)
+    private void Start(AccountOptions? identity = null, int maxPending = 10_000, Action<ServiceRegistry>? configure = null, IAccountDirectory? accounts = null, bool strictRpc = false, Action<string, Exception?>? onProblem = null)
     {
         var registry = new ServiceRegistry();
         configure?.Invoke(registry);
@@ -50,7 +51,7 @@ public class HostServerTests : IAsyncLifetime
         }
         var config = GlobalConfig.Build(Options);
         registry.Register(new MachoNetService(new Info(registry, config), now));
-        var dispatcher = new PacketDispatcher(registry, now) { StrictRpc = strictRpc };
+        var dispatcher = new PacketDispatcher(registry, now) { StrictRpc = strictRpc, OnProblem = onProblem };
         var encoded = MarshalCodec.Encode(config);
         _server = new HostServer(
             new HostOptions { MaxPendingPacketsPerSession = maxPending, Log = message => { lock (_log) { _log.Add(message); } } },
@@ -1417,6 +1418,85 @@ public class HostServerTests : IAsyncLifetime
         public bool HasMethod(string method) => method is "Boom";
 
         public ValueTask<PyValue> CallAsync(ServiceCall call) => throw new InvalidOperationException("boom went the handler");
+    }
+
+    /// <summary>A service whose only method refuses on purpose, with a user error the client shows.</summary>
+    private sealed class RefusingService : IService
+    {
+        public string Name => "refusingSvc";
+
+        public bool HasMethod(string method) => method is "Refuse";
+
+        public ValueTask<PyValue> CallAsync(ServiceCall call) =>
+            throw MachoErrors.ThrowUserError("Refused for the test", ("reason", new PyStr("not today")));
+    }
+
+    [Fact]
+    public async Task A_handler_that_throws_is_answered_with_a_wrapped_runtime_error_logged_under_the_same_id_and_the_connection_stays_usable()
+    {
+        var problems = new List<(string Message, Exception? Error)>();
+        Start(
+            configure: registry => registry.Register(new BoomService()),
+            onProblem: (message, error) => { lock (problems) { problems.Add((message, error)); } });
+        var front = await Handshaken(await ConnectAsync());
+        var open = Open();
+        await front.SendAsync(open);
+        await front.ReceiveAsync(); // the initial state
+
+        await front.SendAsync(new Packet(open.SessionId, MarshalCodec.Encode(Packets.Call(open, 1, "boomSvc", "Boom"))));
+        var reply = Assert.IsType<Send>(await front.ReceiveAsync());
+        // the V24.01 server's wrapped exception: a RuntimeError that names the call, never the exception's text
+        AssertWrappedError(reply, "exceptions.RuntimeError", "boomSvc.Boom");
+        var text = Encoding.ASCII.GetString(reply.Payload.Span);
+        Assert.DoesNotContain("boom went the handler", text);
+        Assert.DoesNotContain("InvalidOperationException", text);
+        var errorId = Regex.Match(text, "Unhandled error ([0-9a-f]{8}) in ").Groups[1].Value;
+        Assert.Matches("^[0-9a-f]{8}$", errorId);
+
+        // the debug tuple after the exception object carries the same id, as the release server's does
+        var payloadItems = ((PyTuple)((PyTuple)((PyObject)MarshalCodec.Decode(reply.Payload)).Args).Items[4]).Items;
+        var debugPayload = ((PyTuple)payloadItems[2]).Items;
+        Assert.Equal(2, debugPayload.Count);
+        var debug = Assert.IsType<PyTuple>(debugPayload[1]);
+        Assert.Equal(1, ((PyInt)debug.Items[0]).Value);
+        Assert.Equal(errorId, T(debug.Items[3]));
+
+        // the host logs the exception itself, under the id the client was given
+        var logged = Assert.Single(problems);
+        Assert.Contains(errorId, logged.Message);
+        Assert.IsType<InvalidOperationException>(logged.Error);
+        Assert.Equal("boom went the handler", logged.Error!.Message);
+
+        // the connection carries on: the next call is answered normally
+        await front.SendAsync(new Packet(open.SessionId, MarshalCodec.Encode(Packets.Call(open, 2, "machoNet", "GetTime"))));
+        var time = Assert.IsType<PyLong>(Result(MarshalCodec.Decode(Assert.IsType<Send>(await front.ReceiveAsync()).Payload)));
+        Assert.Equal(Py.FileTimeFromUnixMs(FixedNowMs), time.Value);
+    }
+
+    [Fact]
+    public async Task A_deliberate_user_error_reaches_the_client_as_the_user_error_and_is_not_logged_as_a_problem()
+    {
+        var problems = new List<(string Message, Exception? Error)>();
+        Start(
+            configure: registry => registry.Register(new RefusingService()),
+            onProblem: (message, error) => { lock (problems) { problems.Add((message, error)); } });
+        var front = await Handshaken(await ConnectAsync());
+        var open = Open();
+        await front.SendAsync(open);
+        await front.ReceiveAsync();
+
+        await front.SendAsync(new Packet(open.SessionId, MarshalCodec.Encode(Packets.Call(open, 1, "refusingSvc", "Refuse"))));
+        var reply = Assert.IsType<Send>(await front.ReceiveAsync());
+        var text = Encoding.ASCII.GetString(reply.Payload.Span);
+        Assert.Equal(15, ((PyInt)((PyTuple)((PyObject)MarshalCodec.Decode(reply.Payload)).Args).Items[0]).Value); // ERRORRESPONSE
+        Assert.Contains("eveexceptions.UserError", text);
+        Assert.Contains("Refused for the test", text);
+        Assert.DoesNotContain("Unhandled error ", text);
+        Assert.Empty(problems);
+
+        await front.SendAsync(new Packet(open.SessionId, MarshalCodec.Encode(Packets.Call(open, 2, "machoNet", "GetTime"))));
+        var time = Assert.IsType<PyLong>(Result(MarshalCodec.Decode(Assert.IsType<Send>(await front.ReceiveAsync()).Payload)));
+        Assert.Equal(Py.FileTimeFromUnixMs(FixedNowMs), time.Value);
     }
 
     [Fact]

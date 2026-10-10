@@ -299,6 +299,7 @@ The start scripts are `tools/windows/` (`start-server.bat`, `start-server-dev.ba
 - publicQaToolsServer.SlashCmd delegates to the existing slash service. CanGiveItemForMultifit returns false in EveJS and RS, so those responses are aligned.
 - SignalTracker registration: Host callback and session registration are implemented; the snapshot producer remains open.
 - `machoNet.SetGlobalConfigValue` (slice A, 2026-10-10): the write is saved in PostgreSQL (`zsystem.global_config`, `EVE_GLOBAL_CONFIG_SCHEMA`), read back at start-up, sent to connected clients as `OnGlobalConfigUpdated` (None for a removal), republished to the fronts for the next handshake, limited to ROLE_ADMIN or ROLE_SERVICE, and the bug-report server and Honeycomb key are protected. Tests: `GlobalConfigTests` (store, socket, PostgreSQL). Differences from EVE.js are in DEVIATIONS.md ("Handshake, machoNet and the global config").
+- A failing handler on a non-strict host (slice B, B1): answered with the V24.01 wrapped `RuntimeError` under an error ID, not None; the host logs the exception under that ID. Tests: `HostServerTests`, `StrictRpcTests`, `DispatchGoldenTests`.
 - Unknown service and unknown method on a non-strict host: answered with the V24.01 wrapped error (`eveexceptions.ServiceNotFound` / `exceptions.AttributeError`), not None (slice A). Tests: `HostServerTests`, `StrictRpcTests`, and the golden replays with `ErrorAnswers`. DEVIATIONS.md ("Unknown service and method").
 - The login acknowledgement carries `access_token` and `computer_hash` (slice A; None for a password login). Test: `crates/eve-net/tests/handshake.rs`.
 - The advertised service table is checked against the registry (slice A): every advertised name reaches a registered service, and the 23 names the reference advertises but eve.rs does not register are documented, not advertised. Test: `ServiceAdvertisementTests`.
@@ -770,11 +771,11 @@ The reference advertises these 23 names; eve.rs does not register them, so it do
 | OPEN | `loadService`, `tradeMgr`, `warRegistry`, `LSC`, `publicGatewaySvc`, `planetOrbitalRegistryBroker`, `structure` | cluster tool / local services / structures track (other Claude) | loadService.py:70-321; eveMachoNet.py:253; eveMoniker.py:197 (local); devtools only; gateway (client-local); eveplanet/orbital.py:35 |
 | OPEN | `objectCaching` (remote `GetCachableObject`) | required before any result is returned as a `CachedObject` reference (the proxy cache of EVE.js) | objectCaching.py:299-332 |
 
-## 38. Non-strict host: a failing handler is answered None (slice A finding, 2026-10-10)
+## 38. Non-strict host: a failing handler (slice A finding, closed in slice B, 2026-10-10)
 
 | Status | Item | Missing work |
 |---|---|---|
-| OPEN | A handler that throws answers the call with None (`PacketDispatcher.cs`, the catch block). The V24.01 server answers a wrapped exception (`ExceptionWrapperGPCS.py:46-93`), which the client raises at the call site. It is the same class of fault as the unknown-service answer that was fixed. | Decide with the parent whether to change it for every call, and check the strict-mode test that pins the current behaviour (`StrictRpcTests`). |
+| CLOSED (B1) | A handler that throws or rejects is answered with the V24.01 server's wrapped error under an error ID (`PacketDispatcher.cs`, `MachoErrors.UnexpectedFailure`); the host logs the exception under the same ID. A deliberate user error is answered as before. Strict mode is unchanged. DEVIATIONS.md, "Slice B: failing handlers", "A failing handler". Tests: `HostServerTests`, `StrictRpcTests`, `DispatchGoldenTests`. | None. |
 
 ## 35. Track A8c: the mobile beacon as a jump target, the fleet notices, the inhibitor, the wormhole and Pochven rules (2026-10-10)
 

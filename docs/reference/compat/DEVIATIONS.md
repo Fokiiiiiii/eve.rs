@@ -1142,3 +1142,23 @@ Sources. The wiki: "Jump drive" (https://wiki.eveuniversity.org/Jump_drive, fetc
 - Test change: the beacon tests' null-security system (30000021, Kuharah) is in Pochven by the SDE, so those tests now use RU-97T (30000377, security -1.0, region 10000004). The inhibitor and mobile warp disruptor tests keep 30000021: neither is refused in Pochven by the rules built.
 - Tests: CynoJumpHostTests (A_revelation_cannot_jump_into_wormhole_space_or_into_pochven_even_with_a_field_lit_there, A_titan_bridge_is_refused_into_pochven_and_nothing_is_opened); BeaconHostTests (A_beacon_cannot_be_dropped_in_pochven_but_it_may_be_lit_in_wormhole_space_as_the_wiki_says).
 - NOT RUN: the client.
+
+## Slice B: failing handlers, boot services and static configuration (2026-10-10)
+
+### Failing handlers (B1)
+
+- **A failing handler.** The reference answers a call whose handler throws or rejects with a None result (EVE.js
+  `server/src/network/packetDispatcher.js`; recorded in `oracle/fixtures/services/dispatch.json` as `errors:plain / throws`
+  and `results:async / rejects`). The V24.01 server answers the same failure with a wrapped exception: a user error is sent
+  as it is, and any other exception as a wrapped `RuntimeError` with an error ID and the release form's debug tuple,
+  `(1, stack, [], id, key, node, 'server')` (`carbon/common/script/net/ExceptionWrapperGPCS.py:46-93`). eve.rs now does the
+  same (`dotnet/src/Eve.Services/PacketDispatcher.cs`, `MachoErrors.UnexpectedFailure`). The client re-raises the error at
+  the call site and logs the debug tuple under the ID (`ExceptionWrapperGPCS.py:101-145`). Two differences, both deliberate:
+  (1) the class is always `exceptions.RuntimeError`, because a .NET exception has no Python class to name; (2) the text is
+  `Unhandled error <id> in <service>.<method>` and the debug tuple carries the release server's one-line stack key, so no
+  message or stack trace reaches the client. The host logs the exception and its stack trace under the same ID (the
+  `OnProblem` sink: stderr and Sentry). A deliberate user error (`MachoErrors.ThrowUserError`) reaches the client as it is
+  and is not logged as a problem. Strict mode (`EVE_STRICT_RPC=1`) is unchanged: a named `CustomNotify` error, with the call
+  summary and the stack trace in the log. Tests: `HostServerTests` (`A_handler_that_throws_is_answered_with_a_wrapped_runtime_error...`,
+  `A_deliberate_user_error_reaches_the_client...`), `StrictRpcTests` (flag off and strict), `DispatchGoldenTests` (the two
+  recorded None steps are answered with the error; their state checks still run). Status: done.

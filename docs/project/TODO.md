@@ -642,3 +642,13 @@ Not built, each with its blocker:
 - The probe states warping and returning, and the moon survey probes (mining; section 7).
 - The client was not run: the probe scanner's windows, the result rows, the directional palette and the warp to a result are not seen in the client. No MITM capture was made: the headless client has no scenario that scans.
 - A process restart in the middle of a scan is covered by the durable jobs but not exercised by a test.
+
+## 29. Track S1: ships and fitting, part 1 (2026-10-10)
+
+Done (test: `RealSdeShipSweepTests`, PostgreSQL with the pinned SDE; decisions in DEVIATIONS "Track S1"):
+- SF-0: the real-SDE ship sweep. All 423 published ships are read from the SDE and checked against the fitting rules: the slots each family offers equal the hull's static data (attributes 12, 13, 14, 1137, and the clamp of 1367 for non-Strategic-Cruiser hulls); one module per family fits its first flag, and a flag beyond the count is refused; each Strategic Cruiser takes one subsystem per class (flags 125 to 128) and its high, medium and low slots move by the subsystems' 1374, 1375 and 1376 modifiers; the 48 published subsystems are twelve per class; the 18 mode items of group 1306 are three for each of the six hulls.
+
+Open, each with its blocker:
+- KNOWN GAP (closes with SF-4): the four Strategic Cruisers (Tengu 29984, Legion 29986, Proteus 29988, Loki 29990) offer five subsystem flags, because the SDE hull attribute 1367 is 5 and the engine clamps it to eight. The SDE has four subsystem classes. The test asserts these four hulls exactly; remove them from `OpenSubsystemHulls` when SF-4 lands.
+- Not in SF-0 (later packages): the probes use one module per family (the Damage Control I, Afterburner, Small Energy Neutralizer, and one rig of the hull's size); the probes do not walk every module a hull can take.
+- NOT RUN: the graphical client (assemble, undock, fitting save and load) and any MITM capture.

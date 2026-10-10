@@ -823,7 +823,7 @@ static data; an id it does not have has no row (DEVIATIONS.md, "Static configura
 |---|---|---|
 | OPEN | Structure locations in `GetMultiLocationsEx` | a structure has no row until the structures track (other Claude) answers it: `EveJS configService.js:585-599` reads the structure state. |
 | OPEN | Agent owners in `GetMultiOwnersEx` | the agent's owner row (EveJS `buildAgentOwnerRow`) needs the agents track (agent names from the static data). |
-| OPEN | `GetAverageMarketPrices` | the market's real average price (see the entry below); the next step of slice B3 builds it from the market's recorded fills; until then the client's `GetAveragePrice` returns None and callers use their own fallback. |
 | OPEN | `GetMapObjects`, `GetMultiGraphicsEx` | EveJS answers both; no V24.01 caller in eve-logic. Add with the caller that needs them. |
 | OPEN | Station and system positions for `positions` (`GetPositionEx`, `GetPositionsEx`) | BOUNDARY: space and ballpark (other Claude). |
 
+Closed in slice B3 (2026-10-10): `GetAverageMarketPrices` answers each type with a recorded sale, from the market's fills (DEVIATIONS.md, "Static configuration recordsets (B3)"); a type with no sale is absent, so the client's `GetAveragePrice` returns None. Tests: `TradingTests`, `ConfigServiceTests`. An empty market gives an empty payload.

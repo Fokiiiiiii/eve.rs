@@ -413,6 +413,29 @@ public sealed partial class MarketStore
         return rows.ToDictionary(entry=>entry.Key,entry=>(IReadOnlyList<MarketHistory>)entry.Value);
     }
 
+    /// <summary>
+    /// The average sale price of each type that has a sale: the newest day with sales, the volume-weighted average of its fills
+    /// over every region (<c>SUM(gross)/SUM(quantity)</c>, the figure <see cref="HistoryAsync"/> reports per region). A type with
+    /// no sale has no entry.
+    /// </summary>
+    public async Task<IReadOnlyDictionary<long,decimal>> LatestAverageSalesAsync(CancellationToken token = default)
+    {
+        await using var command=_source.CreateCommand($"""
+            WITH daily AS (
+                SELECT type_id,floor(time_ms/86400000.0)::bigint AS day,
+                       SUM(gross)/NULLIF(SUM(quantity),0) AS average,SUM(quantity) AS volume
+                FROM {_schema}.fills
+                GROUP BY type_id,day)
+            SELECT DISTINCT ON (type_id) type_id,average
+            FROM daily WHERE volume>0
+            ORDER BY type_id,day DESC
+            """);
+        var sales=new Dictionary<long,decimal>();
+        await using var r=await command.ExecuteReaderAsync(token);
+        while(await r.ReadAsync(token)) sales[r.GetInt32(0)]=r.GetDecimal(1);
+        return sales;
+    }
+
     public async Task<IReadOnlyList<MarketOwnedOrder>> OwnOrdersAsync(long actor,long walletOwner,CancellationToken token = default)
     {
         await using var command=_source.CreateCommand($"""

@@ -1205,5 +1205,12 @@ Sources. The wiki: "Jump drive" (https://wiki.eveuniversity.org/Jump_drive, fetc
   calls them.
 - **`GetBlackListedPlanets`** answers the empty list. The static data and the server have no planet block list; no planet is
   blocked. EveJS answers the same (`configService.js:862-865`).
+- **`GetAverageMarketPrices` comes from the market's fills.** The payload is each type with a recorded sale: the newest day's
+  volume-weighted average over the regions (`MarketStore.LatestAverageSalesAsync`, from `market.fills`). The adjusted price is
+  the same figure, because the market has none. A type with no sale has no entry, so the client's `GetAveragePrice` returns
+  None (`typeHelpers.py:101-109`) and its callers use their own fallback. EveJS answers the base price of every published
+  type (`configService.js:306-329`); eve.rs does not use the base price as an average, since no market data backs it. In a
+  database with no sales the payload is empty. Tests: `TradingTests.The_latest_average_sale_price...` (a real trade),
+  `ConfigServiceTests.Average_market_prices...`.
 - **Not served yet: agent owners and the agent names.** The client reads an agent's owner row through the same recordset
   (`eveCfg.py:548-560`); EveJS builds it (`buildAgentOwnerRow`). Owned by the agents track (TODO section 39).

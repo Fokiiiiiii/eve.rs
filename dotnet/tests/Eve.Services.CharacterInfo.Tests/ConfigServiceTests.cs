@@ -164,6 +164,24 @@ public sealed class ConfigServiceTests
         Assert.Empty(Assert.IsType<PyList>(service.GetOldStationData(Call("GetOldStationData", [], new ClientSession()))).Items);
     }
 
+    [Fact]
+    public async Task Average_market_prices_answer_each_sold_type_with_its_average_and_leave_unsold_types_out()
+    {
+        IReadOnlyDictionary<long, decimal> sales = new Dictionary<long, decimal> { [34] = 10m, [36] = 13.2m };
+        var service = new ConfigService(null!, null!, null!, null!, _ => Task.FromResult(sales));
+
+        var value = Assert.IsType<PyDict>(await service.GetAverageMarketPrices(new ServiceCall
+        {
+            Method = "GetAverageMarketPrices",
+            Args = [],
+            Session = new ClientSession(),
+        }));
+        Assert.Equal([34L, 36L], value.Entries.Select(entry => Integer(entry.Key)).ToArray());
+        var entry = Fields((PyObject)value.Entries[1].Value);
+        Assert.Equal(13.2d, Assert.IsType<PyReal>(entry["averagePrice"]).Value);
+        Assert.Equal(13.2d, Assert.IsType<PyReal>(entry["adjustedPrice"]).Value);
+    }
+
     /// <summary>One corporation, one live alliance and one deleted alliance, the rows the owner tests read.</summary>
     private static async Task SeedCorporationsAsync(NpgsqlDataSource source, string schema)
     {

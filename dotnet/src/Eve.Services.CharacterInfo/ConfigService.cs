@@ -11,7 +11,8 @@ public sealed partial class ConfigService(
     PgCharacterStore characters,
     CorporationStore corporations,
     StationCatalog stations,
-    SolarSystemCatalog solarSystems)
+    SolarSystemCatalog solarSystems,
+    Func<CancellationToken, Task<IReadOnlyDictionary<long, decimal>>>? latestAverageSales = null)
 {
     private static readonly string[] OwnerColumns = ["ownerID", "ownerName", "typeID", "gender", "ownerNameID"];
     private static readonly string[] CorporationColumns =
@@ -56,6 +57,29 @@ public sealed partial class ConfigService(
     /// </summary>
     [Method("GetOldStationData")]
     public PyValue GetOldStationData(ServiceCall call) => new PyList([]);
+
+    /// <summary>
+    /// The average price of each type that has a recorded sale: the newest day's volume-weighted average (the market's fills,
+    /// <c>MarketStore.LatestAverageSalesAsync</c>). A type with no sale has no entry, so the client's GetAveragePrice returns None
+    /// (typeHelpers.py:101-109). The market has no adjusted price, so it is the average (EveJS: buildAveragePriceEntry).
+    /// </summary>
+    [Method("GetAverageMarketPrices")]
+    public async ValueTask<PyValue> GetAverageMarketPrices(ServiceCall call)
+    {
+        IReadOnlyDictionary<long, decimal> sales = latestAverageSales is null
+            ? new Dictionary<long, decimal>()
+            : await latestAverageSales(call.Cancellation);
+        var entries = sales
+            .Where(sale => sale.Value > 0)
+            .OrderBy(sale => sale.Key)
+            .Select(sale => new KeyValuePair<PyValue, PyValue>(
+                PyValue.Of(sale.Key),
+                (PyValue)Py.KeyVal(
+                    ("averagePrice", PyValue.Of((double)sale.Value)),
+                    ("adjustedPrice", PyValue.Of((double)sale.Value)))))
+            .ToArray();
+        return new PyDict(entries);
+    }
 
     /// <summary>
     /// The owners of the ids the client asks for: characters, corporations and alliances, from the stores. An id that is none

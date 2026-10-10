@@ -60,7 +60,8 @@ internal sealed partial class CharacterServicesComposition
                 securityStatusOf: securityStatusOf),
             new MultiLoginBlockerService(),
             new PopulationCapService(characters),
-            new Eve.Services.CharacterInfo.ConfigService(characters, corporations, stations, solarSystems),
+            new Eve.Services.CharacterInfo.ConfigService(characters, corporations, stations, solarSystems,
+                ct => market.LatestAverageSalesAsync(ct)),
             Eve.Services.Core.CoreServices.CreateLookupService(
                 new Eve.Host.PersistenceLookupDirectory(characters, corporations, sde, stations)),
             new Eve.Services.Core.SecurityMgrService(),

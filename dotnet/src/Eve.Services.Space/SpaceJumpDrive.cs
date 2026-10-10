@@ -110,11 +110,12 @@ public sealed class SpaceJumpDrive(
             throw Notify("That cynosural field is out of your jump drive's range.");
         }
         var freighter = hull.GroupId == JumpDriveRules.JumpFreighterGroup;
+        // the flown ship's fuel per light year already carries Jump Fuel Conservation (its skill effects, SDE 3527 and 3532 on 21610): no second cut here
         var quantity = JumpDriveRules.FuelQuantity(
             lightYears,
             fuelPerLightYear,
-            await LevelAsync(JumpDriveRules.FuelConservationSkill, character, cancellationToken),
-            await PerLevelAsync(JumpDriveRules.FuelConservationSkill, JumpDriveRules.FuelBonusAttribute, cancellationToken),
+            0,
+            0,
             freighter ? await LevelAsync(JumpDriveRules.JumpFreighterSkill, character, cancellationToken) : 0,
             JumpDriveRules.EconomizerMultiplier(await EconomizerBonusesAsync(character, shipId, hull.GroupId, cancellationToken)));
         var fuelId = (int)fuelType;

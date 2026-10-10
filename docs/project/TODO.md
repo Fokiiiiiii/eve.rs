@@ -715,3 +715,18 @@ Open, each with its blocker:
 - NOT BUILT: the blockade runner restrictions. The wiki names none for the ship (DEVIATIONS Track S2b).
 - LIMITATION: the old stance of a switch after a restart is the current one (the custom info keeps only the current stance).
 - NOT RUN: the graphical client. The stance button in space, the speed of a siege-locked ship and the jump freighter's refusal text are not seen in the client.
+
+## 32. Track A9: the bridge range, the Black Ops conduit, the industrial bridge (protocol 57, 2026-10-10)
+
+Done (tests: CynoJumpHostTests (A_black_ops_conduit_takes..., A_rorqual_bridges_to_an_industrial_field..., An_industrial_bridge_is_refused..., A_bridge_does_not_survive_a_restart...), scene/tests.rs (a_conduit_jump_..., a_bridge_takes_only..., a_bridge_range_is_refused...); decisions in DEVIATIONS "Track A9: the bridge range, the Black Ops conduit, the industrial bridge"):
+- The bridge range is an argument of command 30 (2 500 metres, the wiki); the passage (command 31) is refused beyond it.
+- The passenger list (command 32): a Black Ops with its Covert generator makes a conduit jump; the fleet ships in its 10 km that are eligible (3322) and ready go with it at once, the group taken whole or refused whole. The fuel is the anchor's, once (3131 a light year); each ship takes the jump drive's fatigue with its own 1971.
+- The industrial bridge: a Rorqual's Industrial generator (SDE 63140) opens a bridge to an industrial field (20 seconds, 100 GJ, no Strontium, no hold), and its passengers take flag 3325.
+- Every bridge checks the bridging hull's field rule (JumpDriveRules.MayJumpTo) and the high-security refusal for the capitals (a Titan and a Rorqual).
+- A bridge and a conduit do not survive a restart (the host and the simulation both hold them in memory).
+
+Open, each with its blocker:
+- NOT BUILT: the Rorqual's conduit. Blocker: the wiki requires the Rorqual's industrial core to be inactive, and the simulation does not expose the core's active state to the host.
+- NOT BUILT: the mobile cynosural beacon (group 4093: the standard, the highsec authorized and the covert ones, SDE 57319, 58906, 59630) as a jump destination. Blocker: it is launched from the hold and anchored like the mobile inhibitor (SpaceContainers.Disruptors.cs), and its lit field has to be recorded as a cynosural field; this track did not reach it.
+- NOT BUILT: the Pharolux and Upwell cyno beacons (group 2017, category 65, the structure phase, and the structureCynoBeaconMgr remote service): named refusal only (the Upwell structures are the structure phase, not built).
+- The client was not run on this host: the passenger list, the fleet's notices and the arrival are not seen in the client.

@@ -82,7 +82,7 @@ public sealed class SpaceBridges(
         }
         // the generator the ship fits: a Titan's standard bridge, or a Black Ops' covert one
         var generator = (await ships.FittedModulesAsync(character, shipId, cancellationToken))
-            .FirstOrDefault(module => module.TypeId is JumpDriveRules.TitanGeneratorType or JumpDriveRules.CovertGeneratorType);
+            .FirstOrDefault(module => module.TypeId is JumpDriveRules.TitanGeneratorType or JumpDriveRules.CovertGeneratorType or JumpDriveRules.IndustrialGeneratorType);
         if (generator.Attributes is null || !generator.Attributes.TryGetValue(JumpDriveRules.PortalDurationAttribute, out var lifetime) || lifetime <= 0
             || !generator.Attributes.TryGetValue(JumpDriveRules.PortalPassengerAttribute, out var passengerAttribute)
             || !generator.Attributes.TryGetValue(1298, out var fitsGroup) || (int)fitsGroup != hull.GroupId)
@@ -90,12 +90,23 @@ public sealed class SpaceBridges(
             throw Notify("Your ship is not fitted with an online jump portal generator for that cynosural field.");
         }
         var titan = generator.TypeId == JumpDriveRules.TitanGeneratorType;
-        if (titan && JumpDriveRules.KindOf(field.TypeId) != JumpDriveRules.FieldKind.Standard)
+        var industrial = generator.TypeId == JumpDriveRules.IndustrialGeneratorType;
+        var kind = JumpDriveRules.KindOf(field.TypeId);
+        if (titan && kind != JumpDriveRules.FieldKind.Standard)
         {
             throw Notify("A titan jump bridge goes only to a standard cynosural field.");
         }
-        // the capitals operate outside high security (the wiki, "Capital ships"): a Titan is one
-        if (titan && systems.Get(origin) is { } place && Security.IsHighSecOrHigher(Security.ClassFromLevel(place.Security)))
+        if (industrial && kind != JumpDriveRules.FieldKind.Industrial)
+        {
+            throw Notify("An industrial jump bridge goes only to an industrial cynosural field.");
+        }
+        // the bridging hull must be allowed to jump to that kind of field (the SDE's cyno rules: JF, capital industrial and Black Ops to industrial)
+        if (!JumpDriveRules.MayJumpTo(kind, hull.GroupId))
+        {
+            throw Notify("That cynosural field does not take this ship.");
+        }
+        // the capitals operate outside high security (the wiki, "Capital ships"): a Titan and a Rorqual are capitals
+        if ((titan || industrial) && systems.Get(origin) is { } place && Security.IsHighSecOrHigher(Security.ClassFromLevel(place.Security)))
         {
             throw Notify("Jump drives cannot be used in high-security space.");
         }
@@ -122,7 +133,7 @@ public sealed class SpaceBridges(
         var capacitor = generator.Attributes.TryGetValue(JumpDriveRules.ModuleCapacitorAttribute, out var need) ? need : 0;
         // the Titan holds still for its bridge's minute (the wiki: it immobilises the ship holding it open); a covert bridge does not (the wiki is silent)
         var immobile = titan ? (long)lifetime : 0;
-        await space.OpenBridgeAsync(session, shipId, fieldId, destinationSystem, (long)lifetime, immobile, capacitor, cancellationToken);
+        await space.OpenBridgeAsync(session, shipId, fieldId, destinationSystem, (long)lifetime, immobile, JumpDriveRules.BridgeRangeMeters, capacitor, cancellationToken);
         if (activationFuel > 0 && !await ships.DebitFuelAsync(character, shipId, activationType, activationFuel, cancellationToken))
         {
             // shortcut: the fuel was checked a moment before and another debit may have taken it; the bridge stands (the same shortcut as the jump's)

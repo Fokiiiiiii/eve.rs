@@ -122,6 +122,8 @@ public static class SimCommands
     public const byte OpenBridge = 30;
     /// <summary>A passenger's jump through the bridge of another ship (protocol 55): the bridging ship, the field, its system.</summary>
     public const byte BridgeJump = 31;
+    /// <summary>A Black Ops conduit jump (protocol 57): the anchor and the ships of the passenger list jump to the field at once, within the conduit's range.</summary>
+    public const byte ConduitJump = 32;
 
     /// <summary>The scan targets of the scene for a probe scan (protocol 52).</summary>
     public const byte ScanTargets = 27;

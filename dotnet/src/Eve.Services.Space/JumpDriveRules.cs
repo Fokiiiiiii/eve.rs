@@ -112,7 +112,7 @@ public static class JumpDriveRules
     /// <summary>
     /// The units of fuel a jump of <paramref name="lightYears"/> takes: light years times the fuel per light year, times (1 + the Jump Fuel Conservation percentage
     /// a level as a fraction: -0.1), and less 10 % a level of jump freighters for a jump freighter (pass 0 otherwise), rounded up to whole units.
-    /// shortcut: the wiki's jump drive economizer terms are not applied (no economizer is fitted by the host yet).
+    /// The economizers are a multiplier of their own (<see cref="EconomizerMultiplier"/>); a caller that reads the fuel per light year from the flown ship passes 0 levels.
     /// </summary>
     public static long FuelQuantity(
         double lightYears, double fuelPerLightYear, int fuelConservationLevel, double conservationPerLevel, int jumpFreighterLevel, double economizers) =>
@@ -134,12 +134,21 @@ public static class JumpDriveRules
         return multiplier;
     }
 
+    /// <summary>The conduit: the isotopes a light year (attribute 3131, 1 000 for a Black Ops), the passengers it takes (3133, 30), the flag that makes a generator a conduit (3126 on the covert generator), and the passenger flag a conduit takes (3322, the Black Ops conduit passenger).</summary>
+    public const int ConduitFuelAttribute = 3131, ConduitPassengerCountAttribute = 3133, ConduitEnableAttribute = 3126, ConduitPassengerAttribute = 3322;
+
+    /// <summary>The range a bridge and a conduit reach: 2 500 metres for a bridge (the wiki, "Jump drives"), 10 km for a conduit (EveJS CONDUIT_JUMP_RANGE_METERS).</summary>
+    public const double BridgeRangeMeters = 2_500.0, ConduitRangeMeters = 10_000.0;
+
     /// <summary>The Jump Portal Generation skill (24562): its generator fits need level one; its percentage a level on the portal's Strontium is attribute 1775 (-10).</summary>
     public const int JumpPortalGenerationSkill = 24562;
     public const int JumpPortalGenerationPerLevelAttribute = 1775;
 
     /// <summary>The Jump Portal Generator I of a Titan (SDE 23953, group 590): its portal is the standard bridge.</summary>
     public const int TitanGeneratorType = 23953;
+
+    /// <summary>The Industrial Jump Portal Generator I of a Rorqual (SDE 63140, group 4184): its bridges go to industrial fields (its passengers are flag 3325).</summary>
+    public const int IndustrialGeneratorType = 63140;
 
     /// <summary>The Covert Jump Portal Generator I of a Black Ops (SDE 28652, group 4127).</summary>
     public const int CovertGeneratorType = 28652;

@@ -2191,6 +2191,7 @@ fn open_bridge(field: i64, destination: i32, lifetime_ms: f64, immobile_ms: f64)
         destination_system: destination,
         lifetime_ms,
         immobile_ms,
+        range_meters: 2_500.0,
         capacitor: 0.0,
     }
 }
@@ -2323,5 +2324,114 @@ fn a_cynosural_jump_is_refused_inside_a_warp_bubble() {
     assert_eq!(
         refused_by(&scene.command(SESSION, cyno_jump(CYNO_FIELD, destination, 300_000.0), NOON)),
         "WARP_DISRUPTED_BY_BUBBLE"
+    );
+}
+
+/// A conduit jump of the ships `passengers` (ship ids) to the field `field_id`, with the conduit's 10 km.
+fn conduit_jump(field_id: i64, destination_system: i32, passengers: &[i64]) -> Command {
+    let mut ships = [0_i64; crate::scene::MAX_CONDUIT_PASSENGERS];
+    ships[..passengers.len()].copy_from_slice(passengers);
+    Command::ConduitJump {
+        field_id,
+        destination_system,
+        range_meters: 10_000.0,
+        passenger_count: passengers.len() as u8,
+        passengers: ships,
+    }
+}
+
+#[test]
+fn a_conduit_jump_takes_the_fleet_ships_in_its_range_with_it_at_once() {
+    let mut scene = scene_by_a_gate();
+    let passenger = add_other_ship(&mut scene);
+    let passenger_ship = spec().ship_id + 1;
+    let destination = other_scene().solar_system_id();
+    let told = scene.command(SESSION, conduit_jump(CYNO_FIELD, destination, &[passenger_ship]), NOON);
+    assert!(
+        told.iter().any(|o| matches!(o, Out::Jumping { session, command: 32, .. } if *session == SESSION)),
+        "{told:?}"
+    );
+    assert!(
+        told.iter().any(|o| matches!(o, Out::Jumping { session, command: 32, .. } if *session == passenger)),
+        "{told:?}"
+    );
+    let (travellers, _) = scene.due_jumps(NOON + seconds(1));
+    let sessions: Vec<SessionId> = travellers.iter().map(|t| t.session).collect();
+    assert!(sessions.contains(&SESSION) && sessions.contains(&passenger), "both leave at once: {sessions:?}");
+    assert!(travellers.iter().all(|t| t.to_field == Some(CYNO_FIELD) && t.to_system == destination));
+}
+
+#[test]
+fn a_conduit_jump_is_refused_for_a_passenger_beyond_its_range_or_not_in_space() {
+    let mut scene = scene_by_a_gate();
+    let passenger = add_other_ship(&mut scene);
+    let destination = other_scene().solar_system_id();
+    scene.pilots.get_mut(&passenger).unwrap().ship.position = Vec3::new(20_000.0, 0.0, 0.0);
+    assert_eq!(
+        refused_by(&scene.command(
+            SESSION,
+            conduit_jump(CYNO_FIELD, destination, &[spec().ship_id + 1]),
+            NOON
+        )),
+        "OUT_OF_CONDUIT_RANGE"
+    );
+    assert_eq!(
+        refused_by(&scene.command(SESSION, conduit_jump(CYNO_FIELD, destination, &[424_242]), NOON)),
+        "PASSENGER_NOT_IN_SPACE"
+    );
+    assert!(scene.due_jumps(NOON + seconds(400)).0.is_empty(), "a refused conduit jump takes nobody");
+}
+
+#[test]
+fn a_bridge_takes_only_the_ships_within_the_range_it_was_opened_with() {
+    let mut scene = scene_by_a_gate();
+    let passenger = add_other_ship(&mut scene);
+    let destination = other_scene().solar_system_id();
+    let bridger_at = scene.pilots[&SESSION].ship.position;
+    scene.command(SESSION, open_bridge(CYNO_FIELD, destination, 60_000.0, 0.0), NOON);
+    // a bridge of 2 500 metres: a passenger 500 metres away passes
+    scene.pilots.get_mut(&passenger).unwrap().ship.position =
+        Vec3::new(bridger_at.x + 500.0, bridger_at.y, bridger_at.z);
+    let told =
+        scene.command(passenger, bridge_jump(spec().ship_id, CYNO_FIELD, destination), NOON + seconds(1));
+    assert!(told.iter().any(|o| matches!(o, Out::Jumping { .. })), "{told:?}");
+}
+
+#[test]
+fn a_bridge_range_is_refused_beyond_it_and_a_restarted_scene_has_no_bridge() {
+    let mut scene = scene_by_a_gate();
+    let passenger = add_other_ship(&mut scene);
+    let destination = other_scene().solar_system_id();
+    let bridger_at = scene.pilots[&SESSION].ship.position;
+    // a bridge of 100 metres, opened with the range as the host gives it
+    let open = Command::OpenBridge {
+        field_id: CYNO_FIELD,
+        destination_system: destination,
+        lifetime_ms: 60_000.0,
+        immobile_ms: 0.0,
+        range_meters: 100.0,
+        capacitor: 0.0,
+    };
+    scene.command(SESSION, open, NOON);
+    scene.pilots.get_mut(&passenger).unwrap().ship.position =
+        Vec3::new(bridger_at.x + 500.0, bridger_at.y, bridger_at.z);
+    assert_eq!(
+        refused_by(&scene.command(
+            passenger,
+            bridge_jump(spec().ship_id, CYNO_FIELD, destination),
+            NOON + seconds(1)
+        )),
+        "OUT_OF_BRIDGE_RANGE"
+    );
+    // a restart: the simulation starts with no bridge, so the passage is refused
+    let mut restarted = scene_by_a_gate();
+    let back = add_other_ship(&mut restarted);
+    assert_eq!(
+        refused_by(&restarted.command(
+            back,
+            bridge_jump(spec().ship_id, CYNO_FIELD, destination),
+            NOON + seconds(2)
+        )),
+        "BRIDGE_NOT_FOUND"
     );
 }

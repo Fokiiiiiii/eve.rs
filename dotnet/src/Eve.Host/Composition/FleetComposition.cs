@@ -194,6 +194,9 @@ internal sealed partial class CharacterServicesComposition
                 ships, dogma, new Eve.Ships.PgDeployedStore(source, spaceSchema), new Eve.Ships.PgJumpFatigueStore(source, spaceSchema), solarSystems, skills,
                 source, spaceSessions, fleetStore, now, message => Console.Error.WriteLine($"eve-host: jump bridge: {message}"), FleetSessionForCharacter);
             spaceSessions.Bridges = bridges;
+            spaceSessions.Conduits = new Eve.Services.Space.SpaceConduits(
+                ships, dogma, new Eve.Ships.PgDeployedStore(source, spaceSchema), new Eve.Ships.PgJumpFatigueStore(source, spaceSchema), solarSystems, skills,
+                source, spaceSessions, fleetStore, now, message => Console.Error.WriteLine($"eve-host: conduit: {message}"), FleetSessionForCharacter);
             // a bridge ends with its time: its fleet is told it is closed (the sweep runs every five seconds)
             foundations.Scheduler.Register("space.jump_bridge.sweep", async (_, _) => await bridges.SweepAsync());
             await foundations.Scheduler.EnsureRecurringAsync("space.jump_bridge.sweep", "sweep", TimeSpan.FromSeconds(5));

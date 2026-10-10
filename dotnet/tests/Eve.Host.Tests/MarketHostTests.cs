@@ -96,8 +96,30 @@ public sealed class MarketHostTests : IAsyncLifetime
     private static PyValue Line(int typeId, long quantity, double price) => Py.KeyVal(
         ("typeID", new PyInt(typeId)), ("quantity", new PyInt(quantity)), ("price", new PyReal(price)), ("minVolume", new PyInt(1)));
 
+    /// <summary>A character with 10000 ISK docked at the station, in the scratch schemas.</summary>
+    private async Task<long> CreateTraderAsync(NpgsqlDataSource source, Station station, string name)
+    {
+        long actor;
+        await using var c = await source.OpenConnectionAsync();
+        await using var tx = await c.BeginTransactionAsync();
+        actor = await new PgCharacterStore(source, Schema("EVE_CHARACTERS_SCHEMA")).InsertAsync(c, tx,
+            new NewCharacter(1, name, 0, 1, 1, 1, 11, 1376, 1000044, null,
+                station.Id, station.SolarSystemId, station.ConstellationId, station.RegionId, null, null));
+        await new PgWalletStore(source, Schema("EVE_WALLET_SCHEMA")).OpenAsync(c, tx, actor, 10000m, 0);
+        await tx.CommitAsync();
+        return actor;
+    }
+
+    /// <summary>The labelled refusal's sentence: a CustomInfo carries it in its "info" argument.</summary>
+    private static string InfoText(MachoWrappedException error)
+    {
+        var header = Assert.IsType<PyTuple>(Assert.IsType<PyObjectEx>(error.Error.Payload).Header);
+        var arguments = Assert.IsType<PyDict>(Assert.IsType<PyTuple>(header.Items[1]).Items[1]);
+        return Assert.IsType<PyStr>(arguments.Entries.Single(e => JsSemantics.PlainText(e.Key) == "info").Value).Value;
+    }
+
     [PgFact]
-    public async Task The_host_registers_the_market_service_and_keeps_its_trades_across_a_restart()
+    public async Task The_host_registers_the_marketStoreservice_and_keeps_its_trades_across_a_restart()
     {
         var url = Environment.GetEnvironmentVariable("EVE_PG_URL")!;
         await using var source = NpgsqlDataSource.Create(Eve.Data.PgConnection.ToConnectionString(url));
@@ -108,16 +130,7 @@ public sealed class MarketHostTests : IAsyncLifetime
 
         var stations = await StationCatalog.LoadAsync(new SdeReader(source));
         var station = stations.All.First();
-        long actor;
-        await using (var c = await source.OpenConnectionAsync())
-        await using (var tx = await c.BeginTransactionAsync())
-        {
-            actor = await new PgCharacterStore(source, Schema("EVE_CHARACTERS_SCHEMA")).InsertAsync(c, tx,
-                new NewCharacter(1, "Host Trader", 0, 1, 1, 1, 11, 1376, 1000044, null,
-                    station.Id, station.SolarSystemId, station.ConstellationId, station.RegionId, null, null));
-            await new PgWalletStore(source, Schema("EVE_WALLET_SCHEMA")).OpenAsync(c, tx, actor, 10000m, 0);
-            await tx.CommitAsync();
-        }
+        var actor = await CreateTraderAsync(source, station, "Host Trader");
         await new MarketStore(source, Schema("EVE_MARKET_SCHEMA")).SeedNpcAsync(
             [new("ask", Tritanium, false, 10, 100, 32767, MarketLocation.From(station), DateTimeOffset.UtcNow.ToUnixTimeMilliseconds())]);
         var session = new ClientSession(new Sink()) { SessionId = 301 };
@@ -153,5 +166,57 @@ public sealed class MarketHostTests : IAsyncLifetime
         Assert.Single(Assert.IsType<PyList>(await again.CallAsync(Call(session, "CharGetTransactions", 4, PyNone.Instance))).Items);
         Assert.Equal(9950m, (await new PgWalletStore(source, Schema("EVE_WALLET_SCHEMA")).GetAsync(actor))!.Isk);
         await restarted.ShutdownAsync();
+    }
+
+    [PgFact]
+    public async Task The_host_refuses_an_off_tick_price_a_fast_modification_a_stale_view_and_a_repeat_on_the_wire()
+    {
+        // M2 (Q12, Q3, Q15, Q14): each refusal is the labelled CustomInfo the client shows, and a refused call changes nothing.
+        var url = Environment.GetEnvironmentVariable("EVE_PG_URL")!;
+        await using var source = NpgsqlDataSource.Create(Eve.Data.PgConnection.ToConnectionString(url));
+        var host = await HostComposition.BuildAsync(Settings());
+        var market = host.Registry.Lookup("marketProxy") ?? throw new InvalidOperationException("marketProxy is not registered");
+        var station = (await StationCatalog.LoadAsync(new SdeReader(source))).All.First();
+        var actor = await CreateTraderAsync(source, station, "Tick Trader");
+        var session = new ClientSession(new Sink()) { SessionId = 302 };
+        session.Set("charid", new PyInt(actor));
+        const int Pyerite = 35; // no NPC ask is seeded for it, so the bid rests
+        var wallet = new PgWalletStore(source, Schema("EVE_WALLET_SCHEMA"));
+        var marketStore = new MarketStore(source, Schema("EVE_MARKET_SCHEMA"));
+
+        // Q12: five significant figures are refused on place, with the client's sentence, and no ISK is escrowed
+        var tick = await Assert.ThrowsAsync<MachoWrappedException>(() => market.CallAsync(Call(session, "PlaceBuyOrder", 1, new PyInt(station.Id),
+            new PyInt(Pyerite), new PyReal(12345), new PyInt(1), new PyInt(-1), new PyInt(1), new PyInt(90), PyBool.False, PyNone.Instance)).AsTask());
+        Assert.Equal("CustomInfo", tick.Error.UserErrorMessage);
+        Assert.Equal("Order prices have at most four significant figures.", InfoText(tick));
+        Assert.Equal(10000m, (await wallet.GetAsync(actor))!.Isk);
+
+        // a valid bid rests; a repeat of the same placement within five seconds is refused (Q14), and the balance shows one escrow only
+        await market.CallAsync(Call(session, "PlaceBuyOrder", 2, new PyInt(station.Id), new PyInt(Pyerite), new PyReal(1234), new PyInt(1),
+            new PyInt(-1), new PyInt(1), new PyInt(90), PyBool.False, PyNone.Instance));
+        var repeat = await Assert.ThrowsAsync<MachoWrappedException>(() => market.CallAsync(Call(session, "PlaceBuyOrder", 3, new PyInt(station.Id),
+            new PyInt(Pyerite), new PyReal(1234), new PyInt(1), new PyInt(-1), new PyInt(1), new PyInt(90), PyBool.False, PyNone.Instance)).AsTask());
+        Assert.Equal("An identical order was placed a moment ago, so it was not placed again.", InfoText(repeat));
+        var order = Assert.Single(await marketStore.OwnOrdersAsync(actor, actor, false)).Order;
+        var escrowed = (await wallet.GetAsync(actor))!.Isk;
+        Assert.True(escrowed < 10000m && escrowed > 8000m, escrowed.ToString());
+
+        // Q3: a modification inside the five-minute delay is refused with the seconds left
+        var fileTime = Py.FileTimeFromUnixMs(order.IssuedMs);
+        ServiceCall Modify(long id, double newPrice, double oldPrice, long issueFileTime) => Call(session, "ModifyCharOrder", id,
+            new PyLong(order.Id), new PyReal(newPrice), PyBool.True, new PyInt(station.Id), new PyInt(station.SolarSystemId), new PyReal(oldPrice),
+            new PyInt(-1), new PyInt(1), new PyLong(issueFileTime));
+        var early = await Assert.ThrowsAsync<MachoWrappedException>(() => market.CallAsync(Modify(4, 1235, 1234, fileTime)).AsTask());
+        Assert.StartsWith("That order was placed or modified less than five minutes ago; it can be modified in ", InfoText(early));
+
+        // Q15: a stale view (an oldPrice the order no longer has) is refused first, with the stale sentence
+        var stale = await Assert.ThrowsAsync<MachoWrappedException>(() => market.CallAsync(Modify(5, 1235, 1000, fileTime)).AsTask());
+        Assert.Equal("That order has changed since it was shown. Reload the orders and try again.", InfoText(stale));
+
+        // the refusals changed nothing: the order keeps its price and its escrow
+        var kept = Assert.Single(await marketStore.OwnOrdersAsync(actor, actor, false)).Order;
+        Assert.Equal(1234m, kept.Price);
+        Assert.Equal(escrowed, (await wallet.GetAsync(actor))!.Isk);
+        await host.ShutdownAsync();
     }
 }

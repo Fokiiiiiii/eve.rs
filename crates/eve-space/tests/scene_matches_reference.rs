@@ -274,7 +274,7 @@ fn each_command_is_answered_with_the_update_the_reference_sent() {
         };
         for (index, message) in out.iter().enumerate() {
             if index != command_index && matches!(message, Out::Notify { .. }) {
-                validate_extra_update(&out_args(message), label);
+                forbid_extra_update(&out_args(message), label);
             }
         }
         assert_eq!(
@@ -316,15 +316,10 @@ fn matches_command_actions(actual: &Value, expected: &Value) -> bool {
         })
 }
 
-fn validate_extra_update(args: &Value, label: &str) -> bool {
-    let names = action_names_of(args);
-    if names.len() == 1 && (names[0] == "GotoDirection" || names[0] == "Stop") {
-        return false;
-    }
-    assert_eq!(names.len(), 4, "{label}: unexpected extra update {args:?}");
-    assert_eq!(&names[..3], ["SetBallPosition", "SetBallVelocity", "SetSpeedFraction"]);
-    assert!(names[3] == "Stop" || names[3] == "GotoDirection", "{label}: {names:?}");
-    true
+/// The reference answers each order with one update; any other update is a regression. The station bump of 153afc6 sent
+/// `SetBallPosition, SetBallVelocity, SetSpeedFraction, GotoDirection` after the first order of a ship leaving its station (fixed in e495ec8).
+fn forbid_extra_update(args: &Value, label: &str) {
+    panic!("{label}: unexpected extra update {:?}", action_names_of(args));
 }
 
 #[test]
@@ -372,7 +367,7 @@ fn each_order_is_answered_with_the_update_the_reference_sent() {
                 };
                 for (index, message) in out.iter().enumerate() {
                     if index != command_index && matches!(message, Out::Notify { .. }) {
-                        validate_extra_update(&out_args(message), label);
+                        forbid_extra_update(&out_args(message), label);
                     }
                 }
                 let ours =
@@ -406,7 +401,7 @@ fn each_order_is_answered_with_the_update_the_reference_sent() {
                 );
                 for message in &out {
                     if matches!(message, Out::Notify { .. }) {
-                        validate_extra_update(&out_args(message), label);
+                        forbid_extra_update(&out_args(message), label);
                     }
                 }
             }
@@ -417,7 +412,7 @@ fn each_order_is_answered_with_the_update_the_reference_sent() {
                 )), "{label}: {out:?}");
                 for message in &out {
                     if matches!(message, Out::Notify { .. }) {
-                        validate_extra_update(&out_args(message), label);
+                        forbid_extra_update(&out_args(message), label);
                     }
                 }
             }

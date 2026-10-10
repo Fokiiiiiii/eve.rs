@@ -798,9 +798,8 @@ Increment 4, done (tests: `CynoJumpHostTests`: A_revelation_cannot_jump_into_wor
 Open, each with its blocker (the remaining increments):
 - NOT BUILT: a cynosural field generator's lighting in Pochven (the wiki's region-wide jammer). Blocker: the simulation holds no fact about the system's region; the scene needs it on the wire (a protocol bump), as the inhibitor's range was.
 - Shortcut: a beacon that is lit before a restart is not told to its fleet again (as the field of track A6; the notice is sent when it anchors, not when a ship returns to the system).
-- NOT BUILT: a mobile inhibitor's effect on a beacon's activation (the 100 km refusal at anchoring).
-- NOT BUILT: the wormhole and Pochven rules (jumps into wormhole space and into Pochven; lighting in Pochven).
-- NOT RUN: the client.
+- Shortcut: a bridge or a conduit does not survive a restart of the host (track A9, unchanged), so a beacon jump to a bridge opened before the restart is not possible; the beacon itself comes back.
+- NOT RUN: the client and the MITM capture (`tools/mitm/README.md`): the beacon's menu entry, the fleet's notices, the bridge's notice and the jump's arrival at a beacon are not seen in the client. The host jump to an anchored beacon is tested at the host (`A_revelation_jumps_to_an_anchored_beacon...`), the simulation's arrival at a beacon is not driven by a test.
 
 ## 36. Track S2c: module bonuses tested at module level, the Crimewatch timer race (2026-10-10)
 

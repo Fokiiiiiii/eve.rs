@@ -28,6 +28,32 @@ public class JumpDriveRulesTests
     }
 
     [Fact]
+    public void A_bridge_takes_the_mass_times_the_factor_times_the_isotopes_a_light_year_rounded_up_plus_the_additional()
+    {
+        // 1 LY x 1 000 000 kg x 1e-9 x 2 500 = 2.5, rounded up to 3; with 1 additional unit, 3.5 is 4
+        Assert.Equal(3, JumpDriveRules.BridgeFuelQuantity(1, 1_000_000, 1e-9, 2_500, 0));
+        Assert.Equal(4, JumpDriveRules.BridgeFuelQuantity(1, 1_000_000, 1e-9, 2_500, 1));
+    }
+
+    [Fact]
+    public void A_passenger_flag_is_the_declared_value_or_the_SDE_default_which_is_1_for_titan_passengers_and_0_for_the_others()
+    {
+        Assert.True(JumpDriveRules.IsPassenger(JumpDriveRules.TitanPassengerAttribute, new Dictionary<int, double>()));
+        Assert.False(JumpDriveRules.IsPassenger(JumpDriveRules.TitanPassengerAttribute, new Dictionary<int, double> { [3319] = 0 }));
+        Assert.False(JumpDriveRules.IsPassenger(JumpDriveRules.CovertPassengerAttribute, new Dictionary<int, double>()));
+        Assert.True(JumpDriveRules.IsPassenger(JumpDriveRules.CovertPassengerAttribute, new Dictionary<int, double> { [3320] = 1 }));
+    }
+
+    [Fact]
+    public void An_economizer_counts_only_for_a_hull_its_canFit_groups_name()
+    {
+        var economizer = new Dictionary<int, double> { [1298] = 902, [1299] = 883 };
+        Assert.True(JumpDriveRules.EconomizerFits(883, economizer));
+        Assert.True(JumpDriveRules.EconomizerFits(902, economizer));
+        Assert.False(JumpDriveRules.EconomizerFits(30, economizer));
+    }
+
+    [Fact]
     public void Capacitor_need_is_the_hulls_95_percent_less_five_percent_a_level_of_operation_so_level_five_is_71_25_percent()
     {
         Assert.Equal(0.95, JumpDriveRules.CapacitorNeed(0.95, 0, -0.05), 10);

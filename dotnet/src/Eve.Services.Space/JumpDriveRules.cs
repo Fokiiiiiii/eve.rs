@@ -109,7 +109,7 @@ public static class JumpDriveRules
     /// </summary>
     public static long FuelQuantity(
         double lightYears, double fuelPerLightYear, int fuelConservationLevel, double conservationPerLevel, int jumpFreighterLevel, double economizers) =>
-        (long)Math.Ceiling(lightYears * fuelPerLightYear * (1 + conservationPerLevel * fuelConservationLevel) * (1 - 0.1 * jumpFreighterLevel) * economizers);
+        (long)Math.Ceiling(Math.Round(lightYears * fuelPerLightYear * (1 + conservationPerLevel * fuelConservationLevel) * (1 - 0.1 * jumpFreighterLevel) * economizers, 6));
 
     /// <summary>
     /// The fuel multiplier of the fitted economizers (their bonuses as fractions, -0.04 to -0.10). The wiki: stacking penalized, strongest first; the n-th modifier
@@ -126,6 +126,47 @@ public static class JumpDriveRules
         }
         return multiplier;
     }
+
+    /// <summary>The Jump Portal Generation skill (24562): its generator fits need level one; its percentage a level on the portal's Strontium is attribute 1775 (-10).</summary>
+    public const int JumpPortalGenerationSkill = 24562;
+    public const int JumpPortalGenerationPerLevelAttribute = 1775;
+
+    /// <summary>The Jump Portal Generator I of a Titan (SDE 23953, group 590): its portal is the standard bridge.</summary>
+    public const int TitanGeneratorType = 23953;
+
+    /// <summary>The Covert Jump Portal Generator I of a Black Ops (SDE 28652, group 4127).</summary>
+    public const int CovertGeneratorType = 28652;
+
+    /// <summary>The portal attributes (SDE): the module's capacitor need in GJ (6), its Strontium per activation (713 the type, 714 the quantity), the portal
+    /// consumption mass factor (1001), the portal duration in ms (1002), the passenger flag it requires (3318), and the additional isotopes a portal takes (2793).</summary>
+    public const int ModuleCapacitorAttribute = 6, PortalFuelTypeAttribute = 713, PortalFuelQuantityAttribute = 714, PortalMassFactorAttribute = 1001,
+        PortalDurationAttribute = 1002, PortalPassengerAttribute = 3318, PortalAdditionalConsumptionAttribute = 2793;
+
+    /// <summary>The mass of a ship (dogma attribute 4, the SDE mass) and the jump-through fatigue multiplier of a bridging hull (1972, 1.0 by default).</summary>
+    public const int MassAttribute = 4, JumpThroughFatigueAttribute = 1972;
+
+    /// <summary>The passenger flags of a portal (SDE): Titan 3319 (default 1: every ship but the capitals), Black Ops 3320 and industrial 3325 (default 0).</summary>
+    public const int TitanPassengerAttribute = 3319, CovertPassengerAttribute = 3320, IndustrialPassengerAttribute = 3325;
+
+    /// <summary>Whether a ship may pass through a portal that requires a passenger flag: the declared value of its own attribute when it has one, else the SDE default.</summary>
+    public static bool IsPassenger(int flagAttribute, IReadOnlyDictionary<int, double> attributes) =>
+        attributes.TryGetValue(flagAttribute, out var declared) ? declared > 0 : flagAttribute == TitanPassengerAttribute;
+
+    /// <summary>
+    /// The isotopes a jump through a bridge takes from the bridging ship: light years times the passenger's mass, the portal consumption mass factor and the
+    /// hull's isotopes a light year (its jump drive's 868, less the skills), plus the portal's additional isotopes, rounded up (the wiki: "Fuelusage = Mass x
+    /// Portal Consumption Mass Factor x Base cost x Skill mod x Distance in LY"; the base cost is the hull's 868).
+    /// </summary>
+    public static long BridgeFuelQuantity(double lightYears, double passengerMass, double massFactor, double fuelPerLightYear, double additional) =>
+        (long)Math.Ceiling(Math.Round(lightYears * passengerMass * massFactor * fuelPerLightYear + additional, 6));
+
+    /// <summary>
+    /// Whether an economizer (SDE group 1299) fits a hull: its canFitShipGroup attributes (1298 and 1299, the groups it fits) name the hull's group. The
+    /// wiki: only Jump Freighters and Rorquals, which are the two groups the SDE gives.
+    /// </summary>
+    public static bool EconomizerFits(int hullGroupId, IReadOnlyDictionary<int, double> economizerAttributes) =>
+        (economizerAttributes.TryGetValue(1298, out var first) && (int)first == hullGroupId)
+        || (economizerAttributes.TryGetValue(1299, out var second) && (int)second == hullGroupId);
 
     /// <summary>
     /// The fatigue and the activation cooldown a jump leaves, in milliseconds, from the fatigue that is left before the jump. The distance is the light years

@@ -2174,3 +2174,152 @@ fn a_ship_whose_field_is_no_longer_lit_at_its_destination_comes_back_to_where_it
     );
     assert!(there.ship(SESSION, NOON + seconds(302)).is_none());
 }
+
+/// The reason of the one refusal an answer holds, whatever command it refuses.
+fn refused_by(out: &[Out]) -> &'static str {
+    match out {
+        [Out::Refused { reason, .. }] => reason,
+        other => panic!("{other:?}"),
+    }
+}
+
+fn open_bridge(field: i64, destination: i32, lifetime_ms: f64, immobile_ms: f64) -> Command {
+    Command::OpenBridge {
+        field_id: field,
+        destination_system: destination,
+        lifetime_ms,
+        immobile_ms,
+        capacitor: 0.0,
+    }
+}
+
+fn bridge_jump(bridge_ship: i64, field: i64, destination: i32) -> Command {
+    Command::BridgeJump { bridge_ship_id: bridge_ship, field_id: field, destination_system: destination }
+}
+
+/// A warp disruption source (an interdiction probe) of 16 km at `at`: the bubble a ship in it cannot jump out of.
+fn interdiction_at(scene: &mut Scene, at: Vec3, now: i64) {
+    let probe = crate::deployable::Deployable {
+        id: 9_000_001,
+        spec: crate::deployable::Spec {
+            charge_type_id: 0,
+            group_id: 0,
+            name: "Interdiction Probe".to_string(),
+            radius: 0.0,
+        },
+        role: crate::deployable::Role::WarpSource { range: 16_000.0 },
+        position: at,
+        ends_at: now + seconds(3600),
+        launcher: 0,
+        ship_id: 0,
+        owner_id: 0,
+        corporation_id: 0,
+        alliance_id: 0,
+        module_id: 0,
+        module_type: 0,
+        watchers: std::collections::BTreeSet::new(),
+    };
+    scene.deployables.insert(probe.id, probe);
+}
+
+#[test]
+fn a_titan_bridge_opens_where_the_ship_is_and_holds_the_ship_for_its_minute() {
+    let mut scene = scene_by_a_gate();
+    let destination = other_scene().solar_system_id();
+    let told = scene.command(SESSION, open_bridge(CYNO_FIELD, destination, 60_000.0, 60_000.0), NOON);
+    assert!(told.iter().any(|o| matches!(o, Out::Accepted { command: 30, .. })), "{told:?}");
+    assert!(
+        scene
+            .deployables
+            .values()
+            .any(|d| matches!(d.role, crate::deployable::Role::JumpBridge { .. })
+                && d.ship_id == spec().ship_id),
+        "the bridge is in space"
+    );
+    assert_eq!(refused_by(&scene.command(SESSION, jump(NEAR_GATE, 0), NOON + seconds(30))), "IMMOBILE");
+    scene.advance_deployables(NOON + seconds(61));
+    assert!(
+        scene.deployables.values().all(|d| !matches!(d.role, crate::deployable::Role::JumpBridge { .. })),
+        "the bridge ends with its minute"
+    );
+}
+
+#[test]
+fn a_fleet_ship_in_range_passes_through_the_bridge_and_leaves_at_once_for_the_field() {
+    let mut scene = scene_by_a_gate();
+    let passenger = add_other_ship(&mut scene);
+    let destination = other_scene().solar_system_id();
+    scene.command(SESSION, open_bridge(CYNO_FIELD, destination, 60_000.0, 60_000.0), NOON);
+    let told =
+        scene.command(passenger, bridge_jump(spec().ship_id, CYNO_FIELD, destination), NOON + seconds(1));
+    assert!(
+        told.iter().any(
+            |o| matches!(o, Out::Jumping { destination_system, .. } if *destination_system == destination)
+        ),
+        "{told:?}"
+    );
+    let (travellers, _) = scene.due_jumps(NOON + seconds(2));
+    let traveller =
+        travellers.into_iter().find(|t| t.session == passenger).expect("the passenger leaves at once");
+    assert_eq!((traveller.to_system, traveller.to_field), (destination, Some(CYNO_FIELD)));
+}
+
+#[test]
+fn a_passenger_beyond_2500_metres_or_inside_a_bubble_or_after_the_bridge_is_gone_is_refused() {
+    let mut scene = scene_by_a_gate();
+    let passenger = add_other_ship(&mut scene);
+    let destination = other_scene().solar_system_id();
+    scene.command(SESSION, open_bridge(CYNO_FIELD, destination, 60_000.0, 60_000.0), NOON);
+    scene.pilots.get_mut(&passenger).unwrap().ship.position = Vec3::new(10_000.0, 0.0, 0.0);
+    assert_eq!(
+        refused_by(&scene.command(
+            passenger,
+            bridge_jump(spec().ship_id, CYNO_FIELD, destination),
+            NOON + seconds(1)
+        )),
+        "OUT_OF_BRIDGE_RANGE"
+    );
+    scene.pilots.get_mut(&passenger).unwrap().ship.position = scene.pilots[&SESSION].ship.position;
+    let here = scene.pilots[&passenger].ship.position;
+    interdiction_at(&mut scene, here, NOON);
+    assert_eq!(
+        refused_by(&scene.command(
+            passenger,
+            bridge_jump(spec().ship_id, CYNO_FIELD, destination),
+            NOON + seconds(1)
+        )),
+        "WARP_DISRUPTED_BY_BUBBLE"
+    );
+    scene.deployables.remove(&9_000_001);
+    assert_eq!(
+        refused_by(&scene.command(
+            passenger,
+            bridge_jump(spec().ship_id, CYNO_FIELD + 1, destination),
+            NOON + seconds(1)
+        )),
+        "BRIDGE_NOT_FOUND"
+    );
+    scene.deployables.clear();
+    scene.command(SESSION, open_bridge(CYNO_FIELD, destination, 20_000.0, 0.0), NOON + seconds(2));
+    scene.advance_deployables(NOON + seconds(30));
+    assert_eq!(
+        refused_by(&scene.command(
+            passenger,
+            bridge_jump(spec().ship_id, CYNO_FIELD, destination),
+            NOON + seconds(30)
+        )),
+        "BRIDGE_NOT_FOUND"
+    );
+}
+
+#[test]
+fn a_cynosural_jump_is_refused_inside_a_warp_bubble() {
+    let mut scene = scene_by_a_gate();
+    let destination = other_scene().solar_system_id();
+    let here = scene.pilots[&SESSION].ship.position;
+    interdiction_at(&mut scene, here, NOON);
+    assert_eq!(
+        refused_by(&scene.command(SESSION, cyno_jump(CYNO_FIELD, destination, 300_000.0), NOON)),
+        "WARP_DISRUPTED_BY_BUBBLE"
+    );
+}

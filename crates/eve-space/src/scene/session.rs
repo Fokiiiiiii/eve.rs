@@ -149,6 +149,18 @@ impl Scene {
             Command::CynoJump { field_id, destination_system, spool_ms, capacitor } => {
                 self.cyno_jump(session, field_id, destination_system, spool_ms, capacitor, now)
             }
+            Command::OpenBridge { field_id, destination_system, lifetime_ms, immobile_ms, capacitor } => self
+                .open_bridge(
+                    session,
+                    field_id,
+                    destination_system,
+                    (lifetime_ms, immobile_ms),
+                    capacitor,
+                    now,
+                ),
+            Command::BridgeJump { bridge_ship_id, field_id, destination_system } => {
+                self.bridge_jump(session, bridge_ship_id, field_id, destination_system, now)
+            }
             other => self.steer_pilot(session, other, now),
         };
         // the ship was flown: the undocking protection is over (a docking does not end it)

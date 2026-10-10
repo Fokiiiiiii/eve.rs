@@ -40,9 +40,9 @@ public class CynoJumpHostTests
 
     /// <summary>A jump drive hull (a Revelation by default) in space, with its fleet, its fuel in the fuel bay and the given fuel units.</summary>
     private static async Task<(ClientSession Session, Eve.Characters.Created Character, long Ship, string Bound)> JumperAsync(
-        Rig rig, long fuel, int? economizer = null, int hull = Revelation, int fuelType = Helium)
+        Rig rig, long fuel, int? economizer = null, int hull = Revelation, int fuelType = Helium, int? generator = null, long strontium = 0, int account = 1, string name = "Space Tester", int sessionId = 1)
     {
-        var character = await rig.NewCharacterAsync(shipTypeId: hull);
+        var character = await rig.NewCharacterAsync(name: name, account: account, shipTypeId: hull);
         var ship = character.ShipId;
         if (economizer is not null)
         {
@@ -64,7 +64,25 @@ public class CynoJumpHostTests
             var fit = await rig.Ships.MoveAsync(character.CharacterId, fitted.Id, Rig.Station, ship, Eve.Inventory.ItemFlags.LowSlot0, 1);
             Assert.True(fit is Eve.Ships.ShipChanged, fit is Eve.Ships.ShipRefused refused ? $"the economizer is refused: {refused.Reason} {refused.Fit}" : fit.ToString());
         }
-        var session = await rig.SessionAsync(character, 1);
+        if (generator is { } portal)
+        {
+            // a jump portal generator needs Jump Portal Generation at level one, and it fits a high slot
+            await using (var connection = await rig.Source.OpenConnectionAsync())
+            await using (var transaction = await connection.BeginTransactionAsync())
+            {
+                await rig.Skills.GrantAsync(connection, transaction, character.CharacterId, [new Eve.Skills.CharacterSkill(24_562, 1, 0)]);
+                await transaction.CommitAsync();
+            }
+            var fitted = (await rig.Ships.GrantAsync(character.CharacterId, portal, 1, singleton: true))!.Single().After;
+            var fit = await rig.Ships.MoveAsync(character.CharacterId, fitted.Id, Rig.Station, ship, Eve.Inventory.ItemFlags.HiSlot0, 1);
+            Assert.True(fit is Eve.Ships.ShipChanged, fit is Eve.Ships.ShipRefused refused ? $"the generator is refused: {refused.Reason} {refused.Fit}" : fit.ToString());
+        }
+        if (strontium > 0)
+        {
+            var stack = (await rig.Ships.GrantAsync(character.CharacterId, 16_275, strontium, singleton: false))!.Single().After;
+            Assert.IsType<Eve.Ships.ShipChanged>(await rig.Ships.MoveAsync(character.CharacterId, stack.Id, Rig.Station, ship, FuelBayFlag, strontium));
+        }
+        var session = await rig.SessionAsync(character, sessionId);
         var oid = await rig.BindShipAsync(session);
         await rig.ShipCallAsync(session, "Undock", oid, new PyLong(session.GetInt("shipid")!.Value), PyBool.False);
         await rig.BindBeyonceAsync(session);
@@ -177,6 +195,73 @@ public class CynoJumpHostTests
         await Drive(rig).JumpToFieldAsync(session, Field, character.CharacterId, Destination, oid, CancellationToken.None);
         // one light year is 4 000 units of the Rorqual (SDE 868); level one of Jump Fuel Conservation takes 10 percent and the economizer 4 percent: 3 456
         Assert.Equal(50_000 - 3_456, await rig.Ships.FuelHeldAsync(character.CharacterId, ship, Oxygen));
+    }
+
+    /// <summary>The Avatar (SDE 11567), a Titan, and its Jump Portal Generator (SDE 23953): the bridging hull of the bridge tests.</summary>
+    private const int Avatar = 11_567, PortalGenerator = 23_953, Ibis = 601;
+
+    /// <summary>The bridges of a rig (the fleet and the simulation of the rig; no session is told of them).</summary>
+    private static SpaceBridges Bridges(Rig rig) => new(
+        rig.Ships, rig.Statics, rig.Deployed, new PgJumpFatigueStore(rig.Source, rig.SpaceSchema), Systems(), rig.Skills, rig.Source, rig.Space,
+        rig.FleetStore, () => rig.Now, null, null);
+
+    [PgFact]
+    public async Task A_titan_bridge_opens_to_the_fleets_field_and_a_fleetmate_passes_through_for_the_isotopes_and_the_fatigue()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var (session, character, ship, oid) = await JumperAsync(rig, fuel: 50_000, hull: Avatar, fuelType: Helium, generator: PortalGenerator, strontium: 500);
+        await FleetOfAsync(rig, character.CharacterId);
+        await LightAsync(rig, Field, character.CharacterId, ship);
+        var fleet = (await rig.FleetStore.FleetIdForCharacterAsync(character.CharacterId))!.Value;
+        var (passengerSession, passengerCharacter, passengerShip, passengerOid) = await JumperAsync(rig, fuel: 0, hull: Ibis, account: 2, name: "Fleetmate", sessionId: 2);
+        // a fleetmate joins by an invitation to a wing and a squad (the fleet tests' pattern)
+        var wing = await rig.FleetStore.CreateWingAsync(fleet, character.CharacterId);
+        var squad = await rig.FleetStore.CreateSquadAsync(fleet, character.CharacterId, wing);
+        Assert.True(await rig.FleetStore.InviteAsync(fleet, character.CharacterId, passengerCharacter.CharacterId, wing, squad, Eve.Services.Space.FleetStore.Member));
+        Assert.NotNull(await rig.FleetStore.JoinAsync(fleet, passengerCharacter.CharacterId));
+        Assert.Equal(fleet, await rig.FleetStore.FleetIdForCharacterAsync(passengerCharacter.CharacterId));
+        var bridges = Bridges(rig);
+        rig.Sim.Heard.Clear();
+
+        await bridges.OpenAsync(session, Field, Destination, CancellationToken.None);
+
+        // the field, its system, the bridge's minute, the Titan's hold of the same minute, and the module's 1 000 GJ of capacitor
+        var opened = Assert.Single(rig.Sim.Heard.OfType<SimCommand>(), command => command.Code == SimCommands.OpenBridge);
+        Assert.Equal(new double[] { Field, Destination, 60_000, 60_000, 1_000 }, opened.Args.ToArray());
+        // the activation takes 450 Strontium (500 less 10 percent at Jump Portal Generation level one, SDE 1775)
+        Assert.Equal(50, await rig.Ships.FuelHeldAsync(character.CharacterId, ship, 16_275));
+        Assert.Single(bridges.Open);
+
+        // the fleetmate passes through: the isotopes come from the Titan (one light year, the Ibis's mass, the portal's mass factor 1.5e-9 and the Titan's 3 000)
+        await rig.Statics.EnsureTypesAsync([Ibis], CancellationToken.None);
+        var mass = rig.Statics.Type(Ibis)!.Attributes[JumpDriveRules.MassAttribute];
+        var expectedFuel = (long)Math.Ceiling(Math.Round(1 * mass * 1.5e-9 * 3_000, 6));
+        rig.Sim.Heard.Clear();
+        var answer = await bridges.JumpThroughAsync(passengerSession, ship, Field, Destination, passengerOid, CancellationToken.None);
+        Assert.IsType<PyTuple>(answer);
+        var passage = Assert.Single(rig.Sim.Heard.OfType<SimCommand>(), command => command.Code == SimCommands.BridgeJump);
+        Assert.Equal(new double[] { ship, Field, Destination }, passage.Args.ToArray());
+        Assert.Equal(50_000 - expectedFuel, await rig.Ships.FuelHeldAsync(character.CharacterId, ship, Helium));
+        // the passenger\x27s fatigue is the wiki\x27s for one light year: twenty minutes, and a two minute cooldown
+        var state = await new PgJumpFatigueStore(rig.Source, rig.SpaceSchema).GetAsync(passengerCharacter.CharacterId);
+        Assert.Equal((rig.Now + 20 * Minute, rig.Now + 2 * Minute), (state.FatigueUntilMs, state.CooldownUntilMs));
+    }
+
+    [PgFact]
+    public async Task A_bridge_is_closed_when_its_minute_is_up_and_a_passenger_is_then_refused()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var (session, character, ship, oid) = await JumperAsync(rig, fuel: 50_000, hull: Avatar, fuelType: Helium, generator: PortalGenerator, strontium: 500);
+        await FleetOfAsync(rig, character.CharacterId);
+        await LightAsync(rig, Field, character.CharacterId, ship);
+        var bridges = Bridges(rig);
+        await bridges.OpenAsync(session, Field, Destination, CancellationToken.None);
+        Assert.Single(bridges.Open);
+
+        rig.Now += 61_000;
+        await bridges.SweepAsync();
+        Assert.Empty(bridges.Open);
+        await Assert.ThrowsAnyAsync<MachoWrappedException>(() => bridges.JumpThroughAsync(session, ship, Field, Destination, oid, CancellationToken.None));
     }
 
     [PgFact]

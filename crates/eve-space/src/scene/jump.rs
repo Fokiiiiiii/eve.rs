@@ -164,6 +164,9 @@ impl Scene {
         if destination_system == self.system.id {
             return refused("WRONG_SOLAR_SYSTEM");
         }
+        if self.warp_disrupted_at(pilot.ship.position, now) {
+            return refused("WARP_DISRUPTED_BY_BUBBLE");
+        }
         let Some(capacitor) = pilot.modules.capacitor.as_ref() else { return refused("NO_CAPACITOR") };
         let need = capacitor_fraction * capacitor.capacity();
         if capacitor.charge_at(now) < need {

@@ -13,6 +13,13 @@ public sealed partial class SpaceContainers
     /// <summary>The record kind of a cynosural field (the only kind the simulation says it lit).</summary>
     internal const string CynoFieldKind = "cyno_field";
 
+    /// <summary>
+    /// Whether a cynosural target is lit at <paramref name="now"/>: a cynosural field whose time is not up, or a Mobile Cynosural Beacon that is anchored (its
+    /// activation time is past) and whose time is not up. The jump drive, the bridges and the conduit all take the same rule.
+    /// </summary>
+    internal static bool IsLitField(DeployedRecord field, long now) =>
+        field.ExpiresAtMs > now && (field.Kind == CynoFieldKind || (field.Kind == BeaconKind && field.ActivateAtMs <= now));
+
     /// <summary>A cynosural field was lit: its record is kept until its time is up, for the life it had when it was lit.</summary>
     private async Task KeepDeployedAsync(SimDeployed lit)
     {

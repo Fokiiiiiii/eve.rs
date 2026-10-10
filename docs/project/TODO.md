@@ -749,3 +749,17 @@ Open, each with its blocker:
 - NOT BUILT: the wormhole and Pochven refusals of the beacon (EveJS lines 287 to 291).
 - NOT TESTED: a host jump to an anchored beacon and the simulation's arrival at it (the code path exists; no test drives it).
 - NOT RUN: the client.
+
+
+## 35. Track A8c: the mobile beacon as a jump target, the fleet notices, the inhibitor, the wormhole and Pochven rules (2026-10-10)
+
+Increment 1, done (tests: `CynoJumpHostTests`: A_revelation_jumps_to_an_anchored_beacon..., A_titan_bridge_opens_to_an_anchored_beacon..., A_titan_bridge_is_refused_to_a_covert_beacon..., A_black_ops_conduit_jumps_to_an_anchored_covert_beacon; decisions in DEVIATIONS "Track A8c"):
+- A mobile cynosural beacon is a jump, bridge and conduit target while it is anchored and its time is not up (`SpaceContainers.IsLitField`, one rule for the three). A beacon still anchoring is refused "not lit" and the simulation is not asked.
+- A Titan bridge goes to a standard field or a beacon; a covert beacon is a covert field for the cyno rule, so only a Black Ops takes it.
+- A covert bridge and a Black Ops conduit take a beacon of any kind.
+
+Open, each with its blocker (the remaining increments):
+- NOT BUILT: fleet notices for a beacon (`OnFleetJumpBeaconDeployableChange` when it anchors and when it is gone).
+- NOT BUILT: a mobile inhibitor's effect on a beacon's activation (the 100 km refusal at anchoring).
+- NOT BUILT: the wormhole and Pochven rules (jumps into wormhole space and into Pochven; lighting in Pochven).
+- NOT RUN: the client.

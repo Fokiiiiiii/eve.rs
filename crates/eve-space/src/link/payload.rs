@@ -386,6 +386,20 @@ impl Message {
                 out.extend_from_slice(&placement.lifetime_ms.to_le_bytes());
             }
             Self::RemoveDeployed { deployable_id } => out.extend_from_slice(&deployable_id.to_le_bytes()),
+            Self::PlaceProbe(probe) => {
+                out.extend_from_slice(&probe.probe_id.to_le_bytes());
+                out.extend_from_slice(&probe.solar_system_id.to_le_bytes());
+                put_text(&mut out, &probe.name);
+                out.extend_from_slice(&probe.type_id.to_le_bytes());
+                out.extend_from_slice(&probe.group_id.to_le_bytes());
+                put_vector(&mut out, &probe.position);
+                out.extend_from_slice(&probe.radius.to_le_bytes());
+                out.extend_from_slice(&probe.owner_id.to_le_bytes());
+                out.extend_from_slice(&probe.corporation_id.to_le_bytes());
+                out.extend_from_slice(&probe.alliance_id.to_le_bytes());
+                out.extend_from_slice(&probe.ship_id.to_le_bytes());
+            }
+            Self::RemoveProbe { probe_id } => out.extend_from_slice(&probe_id.to_le_bytes()),
             Self::PlaceAsteroid(asteroid) => {
                 out.extend_from_slice(&asteroid.solar_system_id.to_le_bytes());
                 out.extend_from_slice(&asteroid.asteroid_id.to_le_bytes());

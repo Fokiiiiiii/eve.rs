@@ -439,6 +439,10 @@ public sealed class SimClient : ISimulation, IAsyncDisposable
 
     public void RemoveDeployed(long deployableId) => Send(new SimRemoveDeployed(deployableId));
 
+    public void PlaceProbe(SimPlaceProbe probe) => Send(probe);
+
+    public void RemoveProbe(long probeId) => Send(new SimRemoveProbe(probeId));
+
     public void Destroy(long shipId, SimCredit credit) => Send(new SimDestroy(shipId, credit));
 
     public void Leave(ulong sessionId, LeaveWhy why) => Send(new SimLeave(sessionId, why));

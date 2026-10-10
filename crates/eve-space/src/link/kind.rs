@@ -63,4 +63,8 @@ pub const UPDATE_EFFECT: u8 = 61;
 pub const DEPLOYED: u8 = 63;
 /// The host takes a deployable out of space when its record's time is up (protocol 44).
 pub const REMOVE_DEPLOYED: u8 = 64;
+/// The host puts a scanner probe in space where its pilot launched it (protocol 45).
+pub const PLACE_PROBE: u8 = 65;
+/// The host takes a scanner probe out of space (recalled, or its time is up; protocol 45).
+pub const REMOVE_PROBE: u8 = 66;
 pub const BUFF_STATE: u8 = 62;

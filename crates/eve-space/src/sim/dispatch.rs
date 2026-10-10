@@ -300,7 +300,9 @@ impl Sim {
             | Message::ChangeWreck { .. }
             | Message::RemoveWreck { .. }
             | Message::Deployed(..)
-            | Message::RemoveDeployed { .. } => self.handle_world(message, now),
+            | Message::RemoveDeployed { .. }
+            | Message::PlaceProbe(..)
+            | Message::RemoveProbe { .. } => self.handle_world(message, now),
             other => Err(ProtocolError(format!(
                 "a message of kind {} is for the host, not the simulation",
                 other.kind()
@@ -848,6 +850,19 @@ impl Sim {
                     None => Vec::new(),
                 }
             }
+            Message::PlaceProbe(probe) => {
+                let probe = *probe;
+                match self.scenes.get_mut(&probe.solar_system_id) {
+                    Some(scene) => scene.place_probe(probe, now),
+                    None => Vec::new(),
+                }
+            }
+            Message::RemoveProbe { probe_id } => self
+                .scenes
+                .values_mut()
+                .find(|scene| scene.deployables.contains_key(&probe_id))
+                .map(|scene| scene.remove_probe(probe_id, now))
+                .unwrap_or_default(),
             Message::RemoveDeployed { deployable_id } => self
                 .scenes
                 .values_mut()

@@ -36,7 +36,7 @@ use crate::weapons::{Aoe, Arc, Charge, Spool, Turret};
 
 use crate::wreck::WreckKind;
 
-pub const PROTOCOL_VERSION: u16 = 44;
+pub const PROTOCOL_VERSION: u16 = 45;
 
 /// The message kinds.
 pub mod kind;
@@ -136,6 +136,23 @@ pub struct DeployedPlacement {
     pub alliance_id: i32,
     pub ship_id: i64,
     pub lifetime_ms: f64,
+}
+
+/// A scanner probe the host launched and keeps the record of: its id, its type and group, where it is and the radius of its ball. The simulation puts it
+/// in space as a ball (`AddBalls2`) for those who see the place; it is never ended by the simulation (the host recalls it or its time is up).
+#[derive(Debug, Clone, PartialEq)]
+pub struct ProbePlacement {
+    pub probe_id: i64,
+    pub solar_system_id: i32,
+    pub name: String,
+    pub type_id: i32,
+    pub group_id: i32,
+    pub position: [f64; 3],
+    pub radius: f64,
+    pub owner_id: i64,
+    pub corporation_id: i32,
+    pub alliance_id: i32,
+    pub ship_id: i64,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -475,6 +492,12 @@ pub enum Message {
     RemoveDeployed {
         deployable_id: i64,
     },
+    /// The host puts a scanner probe in space where it was launched (protocol 45).
+    PlaceProbe(Box<ProbePlacement>),
+    /// The host takes a scanner probe out of space (protocol 45); a deployable that is not a probe, or not in space, is left alone.
+    RemoveProbe {
+        probe_id: i64,
+    },
     DroneWorkResult {
         session_id: u64,
         drone_id: i64,
@@ -691,6 +714,8 @@ impl Message {
             Self::FighterSize { .. } => kind::FIGHTER_SIZE,
             Self::Deployed(_) => kind::DEPLOYED,
             Self::RemoveDeployed { .. } => kind::REMOVE_DEPLOYED,
+            Self::PlaceProbe(_) => kind::PLACE_PROBE,
+            Self::RemoveProbe { .. } => kind::REMOVE_PROBE,
         }
     }
 }

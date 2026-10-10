@@ -91,6 +91,13 @@ public sealed class SpaceProbes : ISpaceProbes
             record.CharacterId, 0, 0, record.ShipId));
     }
 
+    /// <summary>Moves a probe's ball to where its record now says it is (a probe scan moves its probes before it scans).</summary>
+    internal void MoveBall(ScanProbeRecord record)
+    {
+        _sim.RemoveProbe(record.ProbeId);
+        PlaceBall(record);
+    }
+
     /// <summary>The offset of the <paramref name="index"/>th probe on the ring of <paramref name="count"/> (EVE.js <c>buildLaunchOffset</c>).</summary>
     internal static double[] RingOffset(int index, int count, double radius)
     {

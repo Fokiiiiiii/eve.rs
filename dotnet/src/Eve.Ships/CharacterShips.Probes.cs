@@ -54,6 +54,26 @@ public sealed partial class CharacterShips
     }
 
     /// <summary>
+    /// The probe launcher of the ship that is online (EVE.js <c>resolveActiveProbeLauncherForSession</c>): its module id and type, or null when none is online.
+    /// A probe scan takes its duration and its strength bonus from this launcher.
+    /// </summary>
+    public async Task<(long ModuleId, int TypeId)?> OnlineProbeLauncherAsync(long characterId, long shipId, CancellationToken cancellationToken = default)
+    {
+        var fitted = await items.InLocationAsync(shipId, characterId, cancellationToken);
+        await statics.EnsureTypesAsync(fitted.Select(item => item.TypeId).Distinct().ToArray(), cancellationToken);
+        var launchers = fitted.Where(item => statics.Type(item.TypeId)?.GroupId == ScanProbeLauncherGroup).ToList();
+        if (launchers.Count == 0)
+        {
+            return null;
+        }
+        var states = await modules.StatesAsync(launchers.Select(item => item.Id).ToArray(), cancellationToken);
+        return launchers
+            .Where(item => states.TryGetValue(item.Id, out var state) && state >= ItemState.Online)
+            .Select(item => ((long ModuleId, int TypeId)?)(item.Id, item.TypeId))
+            .FirstOrDefault();
+    }
+
+    /// <summary>
     /// Spends <paramref name="count"/> probes from the stack loaded in a launcher: what is left stays in the stack, and a stack that is used up is gone. Returns false
     /// (and spends nothing) when the stack holds fewer now, since the decision is made on the row the lock finds.
     /// </summary>

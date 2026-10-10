@@ -95,6 +95,9 @@ private readonly Dictionary<long, ClientSession> _fleetSessions = new();
         Containers = new SpaceContainers(Sim, Ships, Items, SpaceItems, new Eve.Ships.PgWorkCycleLedger(source, _schemas[6]), new EventBusFacts(Events), statics, Space, () => Now, Log.Add, deployed: Deployed, scheduler: Scheduler);
         Scheduler.Register(SpaceContainers.AnchorJob, async (context, token) => await Containers.AnchorAsync(context.Payload<SpaceContainers.DisruptorAnchorDue>()!.DeployableId, token));
         Space.Probes = new Eve.Services.Space.SpaceProbes(Ships, statics, Probes, Space, Sim, () => Now);
+        ProbeScans = new Eve.Services.Space.SpaceProbeScans(Space, Sim, statics, Probes, Ships, Skills, Scheduler, Space.Probes, () => Now, sites: null, random: new Random(7));
+        ProbeScans.Register();
+        Space.ProbeScans = ProbeScans;
         Drones = new SpaceDrones(Sim, Ships, statics, Space, () => Now, Log.Add);
         Inventory = new InvBrokerService(Items, new ItemTypeCatalog(new SdeReader(source)), Stations, Ships, statics, () => Now, Containers, Drones);
         Ship = new ShipService(Space, () => ClockMs, Containers, Drones);
@@ -135,6 +138,9 @@ private readonly Dictionary<long, ClientSession> _fleetSessions = new();
     public PgItemStore Items { get; }
 
     public PgSkillStore Skills { get; }
+
+    /// <summary>The probe scan of the probes in space (its jobs run when the test asks, with the scheduler).</summary>
+    public Eve.Services.Space.SpaceProbeScans ProbeScans { get; }
 
     public DogmaStatic Statics { get; }
 

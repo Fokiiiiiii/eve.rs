@@ -221,14 +221,7 @@ public sealed class SpaceProbeScans
     /// <summary>The stop job: the targets are read from the simulation, the probes are worked out and set idle, and the results are told (<c>OnSystemScanStopped</c>).</summary>
     private async Task FinishAsync(ScanRequest request, CancellationToken cancellationToken)
     {
-        var session = _space.SessionOfShip(request.ShipId);
-        var targets = new List<ScanTargetSite>();
-        if (session is not null)
-        {
-            targets.AddRange(await SimulationTargetsAsync(session, cancellationToken));
-        }
-        targets.AddRange(_sites.SitesIn(request.SolarSystemId));
-
+        // the probes are idle first: when the reading below fails, the job is tried again and the probes are not left scanning for good
         var scanned = new List<ScanProbe>();
         var probeIds = new List<PyValue>();
         foreach (var probe in request.Probes)
@@ -241,6 +234,14 @@ public sealed class SpaceProbeScans
             probeIds.Add(new PyLong(probe.ProbeId));
             await _store.SaveAsync(record with { State = IdleState }, cancellationToken);
         }
+        var session = _space.SessionOfShip(request.ShipId);
+        var targets = new List<ScanTargetSite>();
+        if (session is not null)
+        {
+            targets.AddRange(await SimulationTargetsAsync(session, cancellationToken));
+        }
+        targets.AddRange(_sites.SitesIn(request.SolarSystemId));
+
         var outcome = ProbeScanEngine.Compute(scanned, targets, _random);
         if (session is null)
         {

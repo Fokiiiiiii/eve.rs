@@ -755,7 +755,7 @@ Open, each with its blocker:
 - NOT TESTED: a host jump to an anchored beacon and the simulation's arrival at it (the code path exists; no test drives it).
 - NOT RUN: the client.
 
-## 35. Services the client calls on demand, not yet advertised (slice A, 2026-10-10)
+## 37. Services the client calls on demand, not yet advertised (slice A, 2026-10-10)
 
 The reference advertises these 23 names; eve.rs does not register them, so it does not advertise them (DEVIATIONS.md, "Handshake, machoNet and the global config"). Each is listed with the slice that builds it. Advertise a name only with a real service behind it.
 
@@ -770,7 +770,7 @@ The reference advertises these 23 names; eve.rs does not register them, so it do
 | OPEN | `loadService`, `tradeMgr`, `warRegistry`, `LSC`, `publicGatewaySvc`, `planetOrbitalRegistryBroker`, `structure` | cluster tool / local services / structures track (other Claude) | loadService.py:70-321; eveMachoNet.py:253; eveMoniker.py:197 (local); devtools only; gateway (client-local); eveplanet/orbital.py:35 |
 | OPEN | `objectCaching` (remote `GetCachableObject`) | required before any result is returned as a `CachedObject` reference (the proxy cache of EVE.js) | objectCaching.py:299-332 |
 
-## 36. Non-strict host: a failing handler is answered None (slice A finding, 2026-10-10)
+## 38. Non-strict host: a failing handler is answered None (slice A finding, 2026-10-10)
 
 | Status | Item | Missing work |
 |---|---|---|

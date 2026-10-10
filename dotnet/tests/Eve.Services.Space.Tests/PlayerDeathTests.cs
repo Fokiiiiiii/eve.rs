@@ -244,6 +244,8 @@ public class PlayerDeathTests
 
         var done = (await asked)!;
         Assert.Equal(c.ShipId, done.ShipId);
+        // the answer comes before the session takes the capsule as its ship: the test waits for that, or it reads the frigate's id
+        await Rig.UntilAsync(() => session.GetInt("shipid") != c.ShipId);
         Assert.Equal(new SelfDestructPart("Capsule", "Capsule", session.GetInt("shipid")), done.Now);
         Assert.Equal(new SelfDestructPart("Wreck", "Caldari Frigate Wreck", rig.Sim.Heard.OfType<SimPlaceWreck>().Single().WreckId), done.Left);
     }

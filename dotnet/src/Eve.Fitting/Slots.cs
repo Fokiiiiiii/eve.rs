@@ -78,7 +78,7 @@ public static class Slots
         return null;
     }
 
-    /// <summary>How many slots of a kind the ship has now.</summary>
+    /// <summary>How many slots of a kind the ship has now. A ship has at most the four subsystem classes, whatever its <c>maxSubSystems</c> says.</summary>
     public static int Count(DogmaWorld world, long shipId, SlotFamily family)
     {
         var attribute = family switch
@@ -89,7 +89,8 @@ public static class Slots
             SlotFamily.Rig => RigSlots,
             _ => MaxSubsystems,
         };
-        return (int)Math.Clamp(world.Get(shipId, attribute), 0, FlagsPerFamily);
+        var limit = family == SlotFamily.Subsystem ? StrategicCruisers.Flags.Length : FlagsPerFamily;
+        return (int)Math.Clamp(world.Get(shipId, attribute), 0, limit);
     }
 
     /// <summary>The flags of the slots a ship has of a kind, in order.</summary>

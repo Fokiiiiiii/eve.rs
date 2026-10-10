@@ -145,6 +145,11 @@ public sealed class ShipSnapshot
         {
             world.Add(ItemDogma.Of(module, characterId, shipId, module.Flag, states[module.Id], provenance.GetValueOrDefault(module.Id)));
         }
+        // the hidden modifiers (flag 156: the ship stance's mode item) are not fitted, but their passive effects act on the ship
+        foreach (var hidden in contents.Where(i => i.Flag == ItemFlags.HiddenModifiers).OrderBy(i => i.Id))
+        {
+            world.Add(ItemDogma.Of(hidden, characterId, shipId, hidden.Flag, ItemState.Online, provenance.GetValueOrDefault(hidden.Id)));
+        }
         foreach (var charge in charges)
         {
             world.Add(ItemDogma.Of(charge, characterId, shipId, charge.Flag, mutation: provenance.GetValueOrDefault(charge.Id)));

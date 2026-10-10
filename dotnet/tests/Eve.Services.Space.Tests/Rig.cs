@@ -109,8 +109,7 @@ private readonly Dictionary<long, ClientSession> _fleetSessions = new();
     /// <summary>The PostgreSQL schema of the space items and the work-cycle ledger: a host restarted over it reads the same ledger.</summary>
     public string SpaceSchema => _schemas[6];
 
-    /// <summary>The fleet schema of this rig alone: a fleet store on the shared default schema keeps the memberships of earlier runs (a duplicate character id).</summary>
-    public string FleetSchema => _schemas[9];
+
 
     /// <summary>What every NPC leaves when the rig has loot (<c>npcLoot</c>): a stack of seven to nine of the first type of <see cref="LootPool"/>, or nothing when null (the dice always come out 0).</summary>
     public Eve.Npc.LootTable? LootTable { get; set; } = new("test_loot", "", 1, 1, 0, false, false, 7, 9, [], false);

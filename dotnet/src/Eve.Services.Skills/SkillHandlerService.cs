@@ -15,7 +15,6 @@ public sealed partial class SkillHandlerService(
     /// <summary>The five attributes a character trains with (charisma, intelligence, memory, perception, willpower).</summary>
     private static readonly int[] AttributeIds = [164, 165, 166, 167, 168];
 
-    private const int FreeRespecs = 3;
     private const int BoosterFlag = 88;
     private const int ImplantFlag = 89;
     private const int ImplantCategoryId = 20;
@@ -436,10 +435,13 @@ public static SkillAugmentationReader CreateAugmentationReader(
     /// reference does the same; at the game's own speed they are what they are).
     /// </summary>
     [Method("GetAttributes")]
-    public PyValue GetAttributes(ServiceCall call)
+    public async ValueTask<PyValue> GetAttributes(ServiceCall call)
     {
-        var character = CharacterOf(call) ?? 0;
-        return new PyDict([.. AttributeIds.Select(id => new KeyValuePair<PyValue, PyValue>(new PyInt(id), Py.Number(training.Settings.Attribute(character, id) * training.Settings.Speed)))]);
+        var character = CharacterOf(call);
+        if (character is { } id)
+            await store.NeuralRemapAsync(id, call.Cancellation);
+        var owner = character ?? 0;
+        return new PyDict([.. AttributeIds.Select(id => new KeyValuePair<PyValue, PyValue>(new PyInt(id), Py.Number(training.Settings.Attribute(owner, id) * training.Settings.Speed)))]);
     }
 
     [Method("GetCharacterAttributeModifiers")]
@@ -531,7 +533,64 @@ public static SkillAugmentationReader CreateAugmentationReader(
         CharacterOf(call) is { } id ? SkillNotifications.History(await training.HistoryAsync(id, call.Cancellation)) : new PyList([]);
 
     [Method("GetRespecInfo")]
-    public PyValue GetRespecInfo(ServiceCall call) => Py.KeyVal(("freeRespecs", new PyInt(FreeRespecs)), ("lastRespecDate", None), ("nextTimedRespec", None));
+    public async ValueTask<PyValue> GetRespecInfo(ServiceCall call)
+    {
+        var remap = CharacterOf(call) is { } id
+            ? await store.NeuralRemapAsync(id, call.Cancellation)
+            : CharacterNeuralRemap.Default;
+        return Py.KeyVal(
+            ("freeRespecs", new PyInt(remap.FreeRespecs)),
+            ("lastRespecDate", remap.LastRespecFileTime is { } last ? new PyLong(last) : None),
+            ("nextTimedRespec", remap.NextTimedRespecFileTime is { } next ? new PyLong(next) : None));
+    }
+
+    [Method("RespecCharacter")]
+    public async ValueTask<PyValue> RespecCharacter(ServiceCall call)
+    {
+        if (CharacterOf(call) is not { } characterId)
+            throw MachoErrors.ThrowUserError("CustomInfo", ("info", new PyStr("Select a character before remapping attributes.")));
+
+        var attributes = NeuralAttributesOf(call.Arg(0));
+        TrainingUpdate? update;
+        try
+        {
+            update = await training.RespecAsync(characterId, call.Session.UserId ?? 0, attributes, call.Cancellation);
+        }
+        catch (NeuralRemapCooldownException cooldown)
+        {
+            throw MachoErrors.ThrowUserError("RespecTooSoon", ("nextTime", new PyLong(cooldown.NextAvailableFileTime)));
+        }
+        if (update is not null)
+        {
+            await announcer.AnnounceRemappedAsync(call.Session, update);
+            SkillNotifications.RespecInfoChanged(call.Session);
+        }
+        return PyNone.Instance;
+    }
+
+    private static IReadOnlyDictionary<int, int> NeuralAttributesOf(PyValue value)
+    {
+        if (value is not PyDict fields)
+            throw MachoErrors.ThrowUserError("RespecAttributesMisallocated");
+
+        var attributes = new Dictionary<int, int>();
+        foreach (var (rawId, rawValue) in fields.Entries)
+        {
+            if (IdOf(rawId) is not { } id || id is < int.MinValue or > int.MaxValue ||
+                IdOf(rawValue) is not { } number || number is < int.MinValue or > int.MaxValue ||
+                !AttributeIds.Contains((int)id) || !attributes.TryAdd((int)id, (int)number))
+                throw MachoErrors.ThrowUserError("RespecAttributesMisallocated");
+        }
+        if (attributes.Count != AttributeIds.Length)
+            throw MachoErrors.ThrowUserError("RespecAttributesMisallocated");
+        if (attributes.Values.Any(number => number < CharacterNeuralRemap.MinimumAttributeValue))
+            throw MachoErrors.ThrowUserError("RespecAttributesTooLow");
+        if (attributes.Values.Any(number => number > CharacterNeuralRemap.MaximumAttributeValue))
+            throw MachoErrors.ThrowUserError("RespecAttributesTooHigh");
+        if (attributes.Values.Sum() != CharacterNeuralRemap.TotalRemapPoints)
+            throw MachoErrors.ThrowUserError("RespecAttributesMisallocated");
+        return attributes;
+    }
 
     [Method("GetFreeSkillPointsAppliedToQueue")]
     public async ValueTask<PyValue> GetFreeSkillPointsAppliedToQueue(ServiceCall call) =>

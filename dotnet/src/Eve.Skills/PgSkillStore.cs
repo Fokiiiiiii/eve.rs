@@ -6,6 +6,33 @@ namespace Eve.Skills;
 /// <summary>A skill a character has: its level and the points in it.</summary>
 public sealed record CharacterSkill(int TypeId, int Level, long SkillPoints);
 
+public sealed record CharacterNeuralRemap(
+    int Charisma, int Intelligence, int Memory, int Perception, int Willpower,
+    int FreeRespecs, long? LastRespecFileTime, long? NextTimedRespecFileTime)
+{
+    public const int MinimumAttributeValue = 17;
+    public const int MaximumAttributeValue = 27;
+    public const int TotalRemapPoints = 99;
+    public const long TimedRemapIntervalFileTime = 365L * 24 * 60 * 60 * 10_000_000;
+
+    public static CharacterNeuralRemap Default { get; } = new(20, 20, 20, 20, 20, 3, null, null);
+
+    public double Attribute(int id) => id switch
+    {
+        164 => Charisma,
+        165 => Intelligence,
+        166 => Memory,
+        167 => Perception,
+        168 => Willpower,
+        _ => 20,
+    };
+}
+
+public sealed class NeuralRemapCooldownException(long nextAvailableFileTime) : Exception
+{
+    public long NextAvailableFileTime { get; } = nextAvailableFileTime;
+}
+
 /// <summary>An active booster persisted with its expiry and selected side-effect IDs.</summary>
 public sealed record StoredSkillBooster(long CharacterId, long ItemId, int BoosterTypeId, long ExpiryFileTime, IReadOnlyList<int> SideEffectIds);
 
@@ -16,6 +43,8 @@ public sealed class PgSkillStore
 
     private readonly NpgsqlDataSource _source;
     private readonly string _schema;
+
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<long, CharacterNeuralRemap> _neuralRemaps = new();
 
     public PgSkillStore(NpgsqlDataSource source, string schema = DefaultSchema)
     {
@@ -65,6 +94,19 @@ public sealed class PgSkillStore
                 CREATE TABLE IF NOT EXISTS skill_isis_fetch_budget (
                     character_id bigint PRIMARY KEY CHECK (character_id > 0),
                     fetch_budget smallint NOT NULL DEFAULT 0 CHECK (fetch_budget BETWEEN 0 AND 4)
+                );
+                """),
+            new Migration("0007_character_neural_remaps", """
+                CREATE TABLE IF NOT EXISTS character_neural_remaps (
+                    character_id bigint PRIMARY KEY CHECK (character_id > 0),
+                    charisma smallint NOT NULL CHECK (charisma BETWEEN 17 AND 27),
+                    intelligence smallint NOT NULL CHECK (intelligence BETWEEN 17 AND 27),
+                    memory smallint NOT NULL CHECK (memory BETWEEN 17 AND 27),
+                    perception smallint NOT NULL CHECK (perception BETWEEN 17 AND 27),
+                    willpower smallint NOT NULL CHECK (willpower BETWEEN 17 AND 27),
+                    free_respecs integer NOT NULL DEFAULT 3 CHECK (free_respecs >= 0),
+                    last_respec_filetime bigint CHECK (last_respec_filetime > 0),
+                    next_timed_respec_filetime bigint CHECK (next_timed_respec_filetime > 0)
                 );
                 """),
         ];
@@ -637,5 +679,83 @@ public sealed class PgSkillStore
                 reader.GetFieldValue<int[]>(4)));
         }
         return boosters;
+    }
+
+    public double LearningAttribute(long characterId, int attributeId) =>
+        _neuralRemaps.TryGetValue(characterId, out var remap) ? remap.Attribute(attributeId) : 20;
+
+    internal void CacheNeuralRemap(long characterId, CharacterNeuralRemap remap) => _neuralRemaps[characterId] = remap;
+
+    public async Task<CharacterNeuralRemap> NeuralRemapAsync(long characterId, CancellationToken cancellationToken = default)
+    {
+        await using var connection = await _source.OpenConnectionAsync(cancellationToken);
+        var remap = await ReadNeuralRemapAsync(connection, null, characterId, forUpdate: false, cancellationToken);
+        CacheNeuralRemap(characterId, remap);
+        return remap;
+    }
+
+    internal async Task<CharacterNeuralRemap> ReadNeuralRemapAsync(
+        NpgsqlConnection connection, NpgsqlTransaction? transaction, long characterId,
+        bool forUpdate, CancellationToken cancellationToken = default)
+    {
+        var sql = $"SELECT charisma, intelligence, memory, perception, willpower, free_respecs, last_respec_filetime, next_timed_respec_filetime FROM {_schema}.character_neural_remaps WHERE character_id = $1" +
+            (forUpdate ? " FOR UPDATE" : "");
+        await using var command = new NpgsqlCommand(sql, connection, transaction) { Parameters = { new() { Value = characterId } } };
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        if (!await reader.ReadAsync(cancellationToken))
+            return CharacterNeuralRemap.Default;
+        return new CharacterNeuralRemap(
+            reader.GetInt16(0), reader.GetInt16(1), reader.GetInt16(2), reader.GetInt16(3), reader.GetInt16(4),
+            reader.GetInt32(5), reader.IsDBNull(6) ? null : reader.GetInt64(6),
+            reader.IsDBNull(7) ? null : reader.GetInt64(7));
+    }
+
+    internal async Task<CharacterNeuralRemap> UpdateNeuralRemapAsync(
+        NpgsqlConnection connection, NpgsqlTransaction transaction, long characterId,
+        IReadOnlyDictionary<int, int> attributes, long nowFileTime, CancellationToken cancellationToken = default)
+    {
+        var current = await ReadNeuralRemapAsync(connection, transaction, characterId, forUpdate: true, cancellationToken);
+        var freeRespecs = current.FreeRespecs;
+        var lastRespecFileTime = nowFileTime;
+        var nextTimedRespecFileTime = current.NextTimedRespecFileTime;
+        if (nextTimedRespecFileTime is null || nextTimedRespecFileTime <= nowFileTime)
+        {
+            nextTimedRespecFileTime = nowFileTime + CharacterNeuralRemap.TimedRemapIntervalFileTime;
+        }
+        else if (freeRespecs > 0)
+        {
+            freeRespecs--;
+        }
+        else
+        {
+            throw new NeuralRemapCooldownException(nextTimedRespecFileTime.Value);
+        }
+
+        var updated = current with
+        {
+            Charisma = attributes[164],
+            Intelligence = attributes[165],
+            Memory = attributes[166],
+            Perception = attributes[167],
+            Willpower = attributes[168],
+            FreeRespecs = freeRespecs,
+            LastRespecFileTime = lastRespecFileTime,
+            NextTimedRespecFileTime = nextTimedRespecFileTime,
+        };
+        await using var command = new NpgsqlCommand(
+            $"INSERT INTO {_schema}.character_neural_remaps (character_id, charisma, intelligence, memory, perception, willpower, free_respecs, last_respec_filetime, next_timed_respec_filetime) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) " +
+            "ON CONFLICT (character_id) DO UPDATE SET charisma = EXCLUDED.charisma, intelligence = EXCLUDED.intelligence, memory = EXCLUDED.memory, perception = EXCLUDED.perception, willpower = EXCLUDED.willpower, free_respecs = EXCLUDED.free_respecs, last_respec_filetime = EXCLUDED.last_respec_filetime, next_timed_respec_filetime = EXCLUDED.next_timed_respec_filetime",
+            connection, transaction)
+        {
+            Parameters =
+            {
+                new() { Value = characterId }, new() { Value = (short)updated.Charisma }, new() { Value = (short)updated.Intelligence },
+                new() { Value = (short)updated.Memory }, new() { Value = (short)updated.Perception }, new() { Value = (short)updated.Willpower },
+                new() { Value = updated.FreeRespecs }, new() { Value = updated.LastRespecFileTime is { } last ? last : DBNull.Value, NpgsqlDbType = NpgsqlTypes.NpgsqlDbType.Bigint },
+                new() { Value = updated.NextTimedRespecFileTime is { } next ? next : DBNull.Value, NpgsqlDbType = NpgsqlTypes.NpgsqlDbType.Bigint },
+            },
+        };
+        await command.ExecuteNonQueryAsync(cancellationToken);
+        return updated;
     }
 }

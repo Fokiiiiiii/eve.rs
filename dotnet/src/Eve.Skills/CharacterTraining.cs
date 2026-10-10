@@ -132,13 +132,16 @@ public sealed class CharacterTraining(
         await using var connection = await source.OpenConnectionAsync(cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
         await LockAsync(connection, transaction, characterId, cancellationToken);
+        var remap = await skills.ReadNeuralRemapAsync(connection, transaction, characterId, forUpdate: true, cancellationToken);
+        skills.CacheNeuralRemap(characterId, remap);
+        var rate = RateOf(characterId, accountId);
 
         var state = await store.LoadAsync(connection, transaction, characterId, cancellationToken);
         var beforeRows = await skills.ForCharacterAsync(connection, transaction, characterId, cancellationToken);
         var owned = beforeRows.ToDictionary(skill => skill.TypeId);
         var balance = await skills.LockFreeSkillPointsAsync(connection, transaction, characterId, cancellationToken);
         if (selectedSkills is null &&
-            Training.Validate(state.Entries, owned, catalog, RateOf(characterId, accountId), Now) is not null)
+            Training.Validate(state.Entries, owned, catalog, rate, Now) is not null)
         {
             await transaction.RollbackAsync(cancellationToken);
             return (new Dictionary<int, long>(), balance);
@@ -327,9 +330,10 @@ public sealed class CharacterTraining(
     /// </summary>
     public async Task<TrainingUpdate?> SettleAsync(long characterId, long accountId, CancellationToken cancellationToken = default)
     {
-        var rate = RateOf(characterId, accountId);
+        await skills.NeuralRemapAsync(characterId, cancellationToken);
+        var probeRate = RateOf(characterId, accountId);
         var probe = await store.LoadAsync(characterId, cancellationToken);
-        if (probe.Entries.Count == 0 || !Training.Settle(probe, await SkillsOfAsync(characterId, cancellationToken), catalog, rate, Now).QueueChanged)
+        if (probe.Entries.Count == 0 || !Training.Settle(probe, await SkillsOfAsync(characterId, cancellationToken), catalog, probeRate, Now).QueueChanged)
         {
             return null;
         }
@@ -339,9 +343,13 @@ public sealed class CharacterTraining(
         await using (var transaction = await connection.BeginTransactionAsync(cancellationToken))
         {
             await LockAsync(connection, transaction, characterId, cancellationToken);
+            var remap = await skills.ReadNeuralRemapAsync(connection, transaction, characterId, forUpdate: true, cancellationToken);
+            skills.CacheNeuralRemap(characterId, remap);
+            var rate = RateOf(characterId, accountId);
             var now = Now;
             var state = await store.LoadAsync(connection, transaction, characterId, cancellationToken);
-            var before = await SkillsOfAsync(characterId, cancellationToken);
+            var before = (await skills.ForCharacterAsync(connection, transaction, characterId, cancellationToken))
+                .ToDictionary(skill => skill.TypeId);
             var settled = Training.Settle(state, before, catalog, rate, now);
             if (!settled.QueueChanged)
             {
@@ -386,14 +394,17 @@ public sealed class CharacterTraining(
         long characterId, long accountId, IReadOnlyList<QueueEntry> entries, bool activate, IReadOnlyList<long> accountCharacters, CancellationToken cancellationToken = default)
     {
         await SettleAsync(characterId, accountId, cancellationToken);
-        var rate = RateOf(characterId, accountId);
 
         await using var connection = await source.OpenConnectionAsync(cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
         await LockAsync(connection, transaction, characterId, cancellationToken);
+        var remap = await skills.ReadNeuralRemapAsync(connection, transaction, characterId, forUpdate: true, cancellationToken);
+        skills.CacheNeuralRemap(characterId, remap);
+        var rate = RateOf(characterId, accountId);
         var now = Now;
         var previous = await store.LoadAsync(connection, transaction, characterId, cancellationToken);
-        var owned = await SkillsOfAsync(characterId, cancellationToken);
+        var owned = (await skills.ForCharacterAsync(connection, transaction, characterId, cancellationToken))
+            .ToDictionary(skill => skill.TypeId);
         var before = owned.Values.OrderBy(s => s.TypeId).ToList();
 
         var requestedActive = activate && entries.Count > 0;
@@ -436,18 +447,21 @@ public sealed class CharacterTraining(
     public async Task<TrainingUpdate?> AbortAsync(long characterId, long accountId, CancellationToken cancellationToken = default)
     {
         await SettleAsync(characterId, accountId, cancellationToken);
-        var rate = RateOf(characterId, accountId);
 
         await using var connection = await source.OpenConnectionAsync(cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
         await LockAsync(connection, transaction, characterId, cancellationToken);
+        var remap = await skills.ReadNeuralRemapAsync(connection, transaction, characterId, forUpdate: true, cancellationToken);
+        skills.CacheNeuralRemap(characterId, remap);
+        var rate = RateOf(characterId, accountId);
         var now = Now;
         var state = await store.LoadAsync(connection, transaction, characterId, cancellationToken);
         if (!state.Running)
         {
             return null;
         }
-        var owned = await SkillsOfAsync(characterId, cancellationToken);
+        var owned = (await skills.ForCharacterAsync(connection, transaction, characterId, cancellationToken))
+            .ToDictionary(skill => skill.TypeId);
         var before = owned.Values.OrderBy(s => s.TypeId).ToList();
         CharacterSkill? rebased = null;
         var changed = false;
@@ -463,6 +477,65 @@ public sealed class CharacterTraining(
         await store.SaveAsync(connection, transaction, characterId, stopped, cancellationToken);
         await transaction.CommitAsync(cancellationToken);
         return new TrainingUpdate(characterId, accountId, before, [], rebased, changed, BuildView(characterId, accountId, stopped, owned, now));
+    }
+
+    /// <summary>Applies a neural remap after settling old-rate training and rebases the active queue.</summary>
+    public async Task<TrainingUpdate?> RespecAsync(
+        long characterId, long accountId, IReadOnlyDictionary<int, int> attributes, CancellationToken cancellationToken = default)
+    {
+        await SettleAsync(characterId, accountId, cancellationToken);
+
+        await using var connection = await source.OpenConnectionAsync(cancellationToken);
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        await LockAsync(connection, transaction, characterId, cancellationToken);
+        var currentRemap = await skills.ReadNeuralRemapAsync(connection, transaction, characterId, forUpdate: true, cancellationToken);
+        skills.CacheNeuralRemap(characterId, currentRemap);
+        if (attributes.All(pair => currentRemap.Attribute(pair.Key) == pair.Value))
+        {
+            return null;
+        }
+
+        var rate = RateOf(characterId, accountId);
+        var now = Now;
+        var state = await store.LoadAsync(connection, transaction, characterId, cancellationToken);
+        var owned = (await skills.ForCharacterAsync(connection, transaction, characterId, cancellationToken))
+            .ToDictionary(skill => skill.TypeId);
+        var before = owned.Values.OrderBy(skill => skill.TypeId).ToList();
+        var settled = Training.Settle(state, owned, catalog, rate, now);
+        if (settled.QueueChanged)
+        {
+            if (settled.Finished.Count > 0)
+                await skills.GrantAsync(connection, transaction, characterId, settled.Finished, cancellationToken, trackRecentChanges: true);
+            await store.SaveAsync(connection, transaction, characterId, settled.State, cancellationToken);
+            if (settled.History.Count > 0)
+                await store.AppendHistoryAsync(connection, transaction, characterId, settled.History, cancellationToken);
+            state = settled.State;
+            owned = settled.Skills.ToDictionary(skill => skill.Key, skill => skill.Value);
+        }
+
+        CharacterSkill? rebased = null;
+        var rebaseChanged = false;
+        if (state.Running && Training.Project(state, owned, catalog, rate, now).Entries.FirstOrDefault() is { } line &&
+            owned.TryGetValue(line.TypeId, out var running))
+        {
+            rebased = Training.Rebase(line, running, catalog.Get(line.TypeId)?.Rank ?? 1, now);
+            rebaseChanged = rebased != running;
+            if (rebaseChanged)
+            {
+                owned[line.TypeId] = rebased;
+                await skills.GrantAsync(connection, transaction, characterId, [rebased], cancellationToken, trackRecentChanges: true);
+            }
+            state = state with { ActiveStart = now };
+        }
+
+        var updatedRemap = await skills.UpdateNeuralRemapAsync(connection, transaction, characterId, attributes, now, cancellationToken);
+        await store.SaveAsync(connection, transaction, characterId, state, cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+        skills.CacheNeuralRemap(characterId, updatedRemap);
+
+        return new TrainingUpdate(
+            characterId, accountId, before, settled.Finished, rebased, rebaseChanged,
+            BuildView(characterId, accountId, state, owned, now));
     }
 
     /// <summary>

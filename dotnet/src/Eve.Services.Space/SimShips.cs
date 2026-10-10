@@ -156,7 +156,8 @@ public static SimHeatProfile HeatProfileOf(ShipSnapshot snapshot, DogmaStatic st
         double[] Layer(int[] ids) => [.. ids.Select(id => Math.Max(0, attributes.GetValueOrDefault(id, 1.0)))];
         return new SimVitals(
             Math.Max(0, attributes.GetValueOrDefault(ShieldCapacity)), Math.Max(0, attributes.GetValueOrDefault(ArmorHitPoints)), Math.Max(0, attributes.GetValueOrDefault(HullPoints)),
-            new SimResonances(Layer(ShieldResonances), Layer(ArmorResonances), Layer(HullResonances)), ArmorPinned(snapshot));
+            new SimResonances(Layer(ShieldResonances), Layer(ArmorResonances), Layer(HullResonances)), ArmorPinned(snapshot),
+            attributes.GetValueOrDefault(MaxVelocity), attributes.GetValueOrDefault(Mass));
     }
 
     /// <summary>

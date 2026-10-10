@@ -64,6 +64,7 @@ internal sealed partial class CharacterServicesComposition
         skillCatalog = await SkillCatalog.LoadAsync(sde);
         wallets = new PgWalletStore(source, walletSchema);
         modules = new PgModuleStateStore(source, fittingSchema);
+        savedFittings = new PgSavedFittingStore(source, fittingSchema);
         stations = await StationCatalog.LoadAsync(sde);
         solarSystems = await SolarSystemCatalog.LoadAsync(sde);
         dogma = await DogmaStatic.LoadAsync(sde);

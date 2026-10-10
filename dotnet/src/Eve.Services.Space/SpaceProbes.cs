@@ -34,6 +34,9 @@ public sealed class SpaceProbes : ISpaceProbes
     private readonly ISimulation _sim;
     private readonly Func<long> _nowUnixMs;
     private readonly Action<string>? _log;
+
+    /// <summary>Test seam: a restore waits here after it has read the records, before it places them (null in the host).</summary>
+    internal Func<Task>? AfterRead { get; set; }
     /// <summary>One gate per solar system (see <see cref="Gate"/>).</summary>
     private readonly ConcurrentDictionary<int, SemaphoreSlim> _gates = new();
 
@@ -56,7 +59,12 @@ public sealed class SpaceProbes : ISpaceProbes
         await gate.WaitAsync(cancellationToken);
         try
         {
-            foreach (var record in await _store.InSystemAsync(system, _nowUnixMs(), cancellationToken))
+            var records = await _store.InSystemAsync(system, _nowUnixMs(), cancellationToken);
+            if (AfterRead is { } hold)
+            {
+                await hold();
+            }
+            foreach (var record in records)
             {
                 PlaceBall(record);
             }

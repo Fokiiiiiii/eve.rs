@@ -413,7 +413,8 @@ impl Message {
                 }))
             }
             kind::REMOVE_PROBE => Message::RemoveProbe { probe_id: r.i64()? },
-            kind::PLACE_DISRUPTOR => {
+            // a disruptor and an inhibitor have the same placement (the kind says which of the two it is)
+            kind::PLACE_DISRUPTOR | kind::PLACE_INHIBITOR => {
                 let deployable_id = r.i64()?;
                 let solar_system_id = r.i32()?;
                 let name = r.text()?;
@@ -430,7 +431,7 @@ impl Message {
                 if !(radius.is_finite() && radius >= 0.0 && range.is_finite() && range >= 0.0) {
                     return Err(DecodeError::BadValue("disruptor"));
                 }
-                Message::PlaceDisruptor(Box::new(DisruptorPlacement {
+                let placement = Box::new(DisruptorPlacement {
                     deployable_id,
                     solar_system_id,
                     name,
@@ -444,7 +445,12 @@ impl Message {
                     corporation_id,
                     alliance_id,
                     ship_id,
-                }))
+                });
+                if kind == kind::PLACE_INHIBITOR {
+                    Message::PlaceInhibitor(placement)
+                } else {
+                    Message::PlaceDisruptor(placement)
+                }
             }
             kind::SET_DISRUPTOR_ACTIVE => {
                 let deployable_id = r.i64()?;

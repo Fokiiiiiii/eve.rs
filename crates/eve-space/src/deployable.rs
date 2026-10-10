@@ -53,6 +53,9 @@ pub enum Role {
     /// A mobile warp disruptor the host keeps a record of (protocol 48): a warp-disruption source of `range` metres while it is anchored (`active`). The host
     /// anchors it when its anchoring delay is over and takes it out when its record's time is up.
     MobileWarpSource { range: f64, active: bool },
+    /// A Mobile Cynosural Inhibitor the host keeps a record of (protocol 50): while it is anchored (`active`), no cynosural field lights within `range` metres of it
+    /// (EVE.js `findActiveInhibitorConflict`); a covert field is not stopped. The host anchors it and takes it out when its record's time is up.
+    CynoInhibitor { active: bool, range: f64 },
     /// A lance's beacon (EVE.js `spawnLanceBeacon`, protocol 39): a transient container the beam is drawn to. It does nothing but exist; it is taken out when
     /// its strike's effect ends (or stops), or when its lifetime is up.
     Beacon,
@@ -105,11 +108,12 @@ fn release_actions(stamp: u32, deployable: &Deployable) -> Result<Vec<Value>, ev
         Role::CynoField => (Kind::Other, LegacyMode::Stop),
         Role::ScanProbe => (Kind::Other, LegacyMode::Stop),
         Role::MobileWarpSource { .. } => (Kind::WarpDisruptionProbe, LegacyMode::Stop),
+        Role::CynoInhibitor { .. } => (Kind::Other, LegacyMode::Stop),
     };
     let category = match deployable.role {
         Role::Beacon => BEACON_CATEGORY,
         Role::CynoField => CYNO_FIELD_CATEGORY,
-        Role::MobileWarpSource { .. } => DEPLOYABLE_CATEGORY,
+        Role::MobileWarpSource { .. } | Role::CynoInhibitor { .. } => DEPLOYABLE_CATEGORY,
         _ => CHARGE_CATEGORY,
     };
     let ball = BallEntity {
@@ -371,12 +375,54 @@ impl Scene {
         self.insert_deployable(deployable, now)
     }
 
+    /// A Mobile Cynosural Inhibitor the host keeps a record of is put in space where it lies, anchored or not (protocol 50). Given once; its end is the host's.
+    pub(crate) fn place_inhibitor(
+        &mut self,
+        placement: crate::link::DisruptorPlacement,
+        now: i64,
+    ) -> Vec<Out> {
+        if self.deployables.contains_key(&placement.deployable_id) {
+            return Vec::new();
+        }
+        let [x, y, z] = placement.position;
+        let deployable = Deployable {
+            id: placement.deployable_id,
+            spec: Spec {
+                charge_type_id: placement.type_id,
+                group_id: placement.group_id,
+                name: placement.name,
+                radius: placement.radius,
+            },
+            role: Role::CynoInhibitor { active: placement.active, range: placement.range },
+            position: Vec3::new(x, y, z),
+            ends_at: i64::MAX,
+            launcher: 0,
+            ship_id: placement.ship_id,
+            owner_id: placement.owner_id,
+            corporation_id: placement.corporation_id,
+            alliance_id: placement.alliance_id,
+            module_id: 0,
+            module_type: 0,
+            watchers: BTreeSet::new(),
+        };
+        self.insert_deployable(deployable, now)
+    }
+
+    /// Whether an anchored cynosural inhibitor covers `position`: one within its range of it, so a field does not light there (a covert field is not asked).
+    pub(crate) fn inhibited_at(&self, position: Vec3) -> bool {
+        self.deployables
+            .values()
+            .any(|d| matches!(d.role, Role::CynoInhibitor { active: true, range } if distance(position, d.position) <= range))
+    }
+
     /// The host says a mobile warp disruptor is anchored (its disruption on) or not. A deployable that is not a mobile warp disruptor is left alone.
     /// shortcut: the pilots are not sent a new ball for the change (the client reads the anchored state from the placement only), upgrade when the
     /// reference's presentation update is traced.
     pub(crate) fn set_disruptor_active(&mut self, deployable_id: i64, active: bool) -> Vec<Out> {
-        if let Some(Deployable { role: Role::MobileWarpSource { active: current, .. }, .. }) =
-            self.deployables.get_mut(&deployable_id)
+        if let Some(Deployable {
+            role: Role::MobileWarpSource { active: current, .. } | Role::CynoInhibitor { active: current, .. },
+            ..
+        }) = self.deployables.get_mut(&deployable_id)
         {
             *current = active;
         }
@@ -422,7 +468,7 @@ impl Scene {
     /// The host takes a cynosural field or a mobile warp disruptor out of space (its record's time is up, or it was scooped): it is removed and those who see it
     /// are told it is gone. Anything else, or a deployable not in space, is left alone.
     pub(crate) fn remove_field(&mut self, deployable_id: i64, at: i64) -> Vec<Out> {
-        if !matches!(self.deployables.get(&deployable_id), Some(d) if matches!(d.role, Role::CynoField | Role::MobileWarpSource { .. }))
+        if !matches!(self.deployables.get(&deployable_id), Some(d) if matches!(d.role, Role::CynoField | Role::MobileWarpSource { .. } | Role::CynoInhibitor { .. }))
         {
             return Vec::new();
         }
@@ -609,7 +655,11 @@ impl Scene {
                 Role::MobileWarpSource { range, active } => {
                     active && distance(position, deployable.position) <= range
                 }
-                Role::Bomb { .. } | Role::Beacon | Role::CynoField | Role::ScanProbe => false,
+                Role::Bomb { .. }
+                | Role::Beacon
+                | Role::CynoField
+                | Role::ScanProbe
+                | Role::CynoInhibitor { .. } => false,
             })
     }
 }

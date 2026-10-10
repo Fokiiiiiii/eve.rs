@@ -71,5 +71,7 @@ pub const REMOVE_PROBE: u8 = 66;
 pub const PLACE_DISRUPTOR: u8 = 68;
 /// The host says a mobile warp disruptor is anchored (its disruption on) or not (protocol 48).
 pub const SET_DISRUPTOR_ACTIVE: u8 = 69;
+/// The host puts a Mobile Cynosural Inhibitor in space, anchored or not (protocol 50): the same placement as a disruptor's.
+pub const PLACE_INHIBITOR: u8 = 70;
 pub const BUFF_STATE: u8 = 62;
 pub const ECM_BURST: u8 = 67;

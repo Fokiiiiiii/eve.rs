@@ -322,6 +322,10 @@ private readonly TransitionRuntime _transitions;
     public long? ShipIdOf(ClientSession session) =>
         _pilots.TryGetValue((ulong)session.SessionId, out var pilot) ? pilot.ShipId : null;
 
+    /// <summary>The type of the ship the session flies in space, or null when it is not in space.</summary>
+    public int? ShipTypeIdOf(ClientSession session) =>
+        _pilots.TryGetValue((ulong)session.SessionId, out var pilot) ? pilot.TypeId : null;
+
     public bool IsWarping(ClientSession session) => _warping.ContainsKey((ulong)session.SessionId);
 
 
@@ -338,6 +342,9 @@ private readonly TransitionRuntime _transitions;
 
     /// <summary>The places a pilot may warp to on a scan result (the 100 percent results of the last completed scan).</summary>
     public Scanning.ProbeScanWarpAuthority WarpAuthority { get; } = new();
+
+    /// <summary>The directional scan (set by the composition root): the scanMgr's ConeScan answers through it.</summary>
+    public Scanning.SpaceDirectionalScans? DirectionalScans { get; set; }
 
     public Task LaunchAsync(ClientSession session, long moduleId, int count, CancellationToken cancellationToken) =>
         (Probes ?? throw Notify("Scanner probes are not wired on this server.")).LaunchAsync(session, moduleId, count, cancellationToken);

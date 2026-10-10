@@ -27,7 +27,7 @@ public sealed class SimLinkException(SimLinkError error, string message) : Excep
 /// </summary>
 public static partial class SimCodec
 {
-    public const ushort ProtocolVersion = 52;
+    public const ushort ProtocolVersion = 53;
     /// <summary>The largest frame either side accepts (1 MiB).</summary>
     public const int MaxFrame = 1 << 20;
 
@@ -150,6 +150,24 @@ public static partial class SimCodec
             case Kind.Position:
                 message = new SimPosition(r.U64(), r.U8(), ReadVector(ref r));
                 break;
+            case Kind.DirectionalTargets:
+                {
+                    var session = r.U64();
+                    var command = r.U8();
+                    var count = r.U32();
+                    // each target is 47 bytes: an id, a kind, a type, a position, a radius and two flags (protocol 53)
+                    if (count > r.Remaining / 47)
+                    {
+                        throw new SimLinkException(SimLinkError.Truncated, "the frame ends before the message does");
+                    }
+                    var targets = new SimDirectionalTarget[count];
+                    for (var i = 0; i < targets.Length; i++)
+                    {
+                        targets[i] = new SimDirectionalTarget(r.I64(), r.U8(), r.I32(), ReadVector(ref r), r.F64(), r.U8() != 0, r.U8() != 0);
+                    }
+                    message = new SimDirectionalTargets(session, command, targets);
+                    break;
+                }
             case Kind.ScanTargets:
                 {
                     var session = r.U64();

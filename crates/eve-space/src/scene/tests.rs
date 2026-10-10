@@ -33,7 +33,8 @@ pub(crate) fn system() -> Arc<SolarSystem> {
 }
 
 pub(crate) fn spec() -> ShipSpec {
-    ShipSpec { stance: None,
+    ShipSpec {
+        stance: None,
         ship_id: 9_988_400_001_939,
         character_id: 140_000_342,
         type_id: 601,
@@ -1283,7 +1284,8 @@ fn a_switched_stance_is_shown_in_the_slim_item_with_the_stance_the_ship_moved_fr
     scene.respec(SESSION, before, NOON);
     // the host sends the new stance and its time only; the simulation keeps the stance the ship had
     let mut switched = spec();
-    switched.stance = Some(crate::ship::ShipStance { old_stance: 3, switched_at: NOON + 10_000_000, stance: 3 });
+    switched.stance =
+        Some(crate::ship::ShipStance { old_stance: 3, switched_at: NOON + 10_000_000, stance: 3 });
     let out = scene.respec(SESSION, switched, NOON + 10_000_000);
     assert_eq!(action_names(&out[0]), ["OnSlimItemChange"]);
     let stance = scene.ship(SESSION, NOON).unwrap().spec.stance.unwrap();

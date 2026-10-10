@@ -201,7 +201,14 @@ fn pilot_ship_entries(spec: &ShipSpec) -> Entries {
     .into_iter()
     .chain(spec.stance.map(|stance| {
         // the stance a ship has, as the client reads it: (old stance, when it switched as a FILETIME, new stance); a ship with none has no field
-        ("shipStance", tuple([int(i64::from(stance.old_stance)), filetime(stance.switched_at), int(i64::from(stance.stance))]))
+        (
+            "shipStance",
+            tuple([
+                int(i64::from(stance.old_stance)),
+                filetime(stance.switched_at),
+                int(i64::from(stance.stance)),
+            ]),
+        )
     }))
     .collect()
 }

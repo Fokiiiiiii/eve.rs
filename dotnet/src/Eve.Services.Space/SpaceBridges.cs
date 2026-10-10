@@ -158,6 +158,8 @@ public sealed class SpaceBridges(
             now + (long)lifetime);
         _bridges[shipId] = record;
         await AnnounceAsync(record, true);
+        // the opener is told the anchor is activated, with no passengers yet (EveJS notifyGroupJumpAnchor after the bridge opens)
+        session.SendNotification("OnGroupJumpAnchorActivated", "clientID", new PyInt(destinationSystem), new PyInt(0));
     }
 
     /// <summary>

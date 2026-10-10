@@ -224,10 +224,22 @@ public sealed partial class SpaceContainers
     /// </summary>
     public async Task AnchorAsync(long deployableId, CancellationToken cancellationToken = default)
     {
-        if (_deployed is not null && await _deployed.GetAsync(deployableId, cancellationToken) is { Kind: DisruptorKind or InhibitorKind or BeaconKind })
+        if (_deployed is not null && await _deployed.GetAsync(deployableId, cancellationToken) is { Kind: DisruptorKind or InhibitorKind or BeaconKind } record)
         {
             _sim.SetDisruptorActive(deployableId, true);
+            // a beacon that is lit is told to its fleet, as a field is when it is lit (the client's jump menu lists it)
+            if (record.Kind == BeaconKind)
+            {
+                await AnnounceFieldAsync(record, true);
+            }
         }
+    }
+
+    /// <summary>A beacon whose time is up is taken out of space, and its fleet is told it is gone.</summary>
+    private async Task ExpireBeaconAsync(DeployedRecord due)
+    {
+        await ExpireDisruptorAsync(due);
+        await AnnounceFieldAsync(due, false);
     }
 
     /// <summary>A mobile deployable whose time is up leaves space and its item is deleted (the sweep's entry for its kind).</summary>

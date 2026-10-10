@@ -560,4 +560,45 @@ public class CynoJumpHostTests
         Assert.Equal((double)Field, passage.Args.ToArray()[0]);
         Assert.Equal(50_000 - 1_000, await rig.Ships.FuelHeldAsync(character.CharacterId, ship, Helium));
     }
+
+    [PgFact]
+    public async Task A_beacon_that_anchors_is_told_to_its_fleet_and_its_end_is_told_too()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var (session, character, ship, _) = await JumperAsync(rig, fuel: 50_000);
+        await FleetOfAsync(rig, character.CharacterId);
+        rig.Containers.FieldAnnounced = Drive(rig, characterId => characterId == character.CharacterId ? session : null).AnnounceFieldAsync;
+        await BeaconAsync(rig, Field, character.CharacterId, ship, 57_319, anchored: false);
+        Events.Of(session);
+
+        rig.Now += 2 * Minute;
+        await rig.Containers.AnchorAsync(Field);
+
+        // the beacon is told as a deployable: its id, its system, its id as the beacon, its owner, and lit
+        var lit = Assert.Single(Events.Of(session));
+        Assert.Equal("OnFleetJumpBeaconDeployableChange", lit.Name);
+        Assert.Equal(new long[] { Field, Destination, Field, character.CharacterId }, lit.Args.Take(4).Select(Events.Number).ToArray());
+        Assert.True(lit.Args[4] is PyBool { Value: true }, "lit");
+
+        rig.Now += 60 * Minute + 1;
+        await rig.Containers.SweepAsync();
+        var gone = Assert.Single(Events.Of(session));
+        Assert.Equal("OnFleetJumpBeaconDeployableChange", gone.Name);
+        Assert.True(gone.Args[4] is PyBool { Value: false }, "gone");
+    }
+
+    [PgFact]
+    public async Task A_titan_bridge_tells_its_opener_the_anchor_is_activated_with_no_passenger_yet()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var (session, character, ship, _) = await JumperAsync(rig, fuel: 50_000, hull: Avatar, fuelType: Helium, generator: PortalGenerator, strontium: 500);
+        await FleetOfAsync(rig, character.CharacterId);
+        await LightAsync(rig, Field, character.CharacterId, ship);
+        Events.Of(session);
+
+        await Bridges(rig).OpenAsync(session, Field, Destination, CancellationToken.None);
+
+        var anchor = Assert.Single(Events.Of(session), e => e.Name == "OnGroupJumpAnchorActivated");
+        Assert.Equal(new long[] { Destination, 0 }, anchor.Args.Select(Events.Number).ToArray());
+    }
 }

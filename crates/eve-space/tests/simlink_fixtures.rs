@@ -11,7 +11,7 @@ use eve_space::link::{
 use eve_space::missiles::{Blast, Missile};
 use eve_space::modules::{Action, Applies, Change, Effect, MiningFamily, Numbers, Reach, Remote, Rules};
 use eve_space::scene::{HeatModuleProfile, HeatProfile, HeatRack};
-use eve_space::ship::{ModuleSpec, NpcCombat, NpcIdentity, NpcWeapon, ShipSpec};
+use eve_space::ship::{ModuleSpec, NpcCombat, NpcIdentity, NpcWeapon, ShipSpec, ShipStance};
 use eve_space::weapons::{Aoe, Arc, Charge, Spool, Turret};
 use eve_space::wreck::WreckKind;
 use serde_json::Value;
@@ -68,6 +68,14 @@ fn ship_of(case: &Value) -> ShipSpec {
     let number = |field: &str| case[field].as_f64().unwrap_or_else(|| panic!("{field} in {case}"));
     let int = |field: &str| case[field].as_i64().unwrap_or_else(|| panic!("{field} in {case}")) as i32;
     ShipSpec {
+        stance: match case["stance"].as_object() {
+            None => None,
+            Some(_) => Some(ShipStance {
+                old_stance: case["stance"]["oldStance"].as_i64().unwrap_or_default() as i32,
+                switched_at: wide(&case["stance"], "switchedAt"),
+                stance: case["stance"]["stance"].as_i64().unwrap_or_default() as i32,
+            }),
+        },
         ship_id: wide(case, "shipId"),
         character_id: wide(case, "characterId"),
         type_id: int("typeId"),

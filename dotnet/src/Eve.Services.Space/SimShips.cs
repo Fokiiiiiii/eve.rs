@@ -111,8 +111,16 @@ public static SimHeatProfile HeatProfileOf(ShipSnapshot snapshot, DogmaStatic st
             Attribute(MaxTargetRange), Attribute(ScanResolution), Attribute(SignatureRadius), LockLimit(Attribute(MaxLockedTargets), snapshot.World.Get(character.Id, MaxLockedTargets)),
             Attribute(CapacitorCapacity), Attribute(RechargeRate) / 1000.0,
             [.. snapshot.Fitted.Select(module => new SimModule(module.Id, module.TypeId, module.Flag))],
-            VitalsOf(snapshot), ConditionOf(snapshot.Condition), SensorsOf(Attribute, _ => true), DroneDamageMultiplierOf(snapshot));
+            VitalsOf(snapshot), ConditionOf(snapshot.Condition), SensorsOf(Attribute, _ => true), DroneDamageMultiplierOf(snapshot), StanceOf(snapshot));
     }
+
+    /// <summary>
+    /// The ship's stance for its slim item (protocol 55): the stance, and when it switched as a FILETIME. A ship that was never switched has no stance and no field.
+    /// The simulation keeps the old stance of a switch it is told (the host sends the new one only), so the old stance here is the current one.
+    /// </summary>
+    public static SimShipStance? StanceOf(ShipSnapshot snapshot) => snapshot.Stance is { } stance
+        ? new SimShipStance(stance.Stance, Eve.Services.Py.FileTimeFromUnixMs(stance.SwitchedAtMs), stance.Stance)
+        : null;
 
     /// <summary>The attribute of a ship that a drone bonus or penalty writes (industrialBonusDroneDamage, SDE 2580).</summary>
     public const int IndustrialBonusDroneDamage = 2580;

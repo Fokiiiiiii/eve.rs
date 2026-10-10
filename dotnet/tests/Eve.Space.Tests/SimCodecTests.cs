@@ -33,7 +33,8 @@ public class SimCodecTests
         (double)s["maxVelocity"]!, (double)s["agility"]!, (double)s["warpSpeedAu"]!, (double)s["shieldRechargeMs"]!,
         (double)s["maxTargetRange"]!, (double)s["scanResolution"]!, (double)s["signatureRadius"]!, (int)s["maxLockedTargets"]!, (double)s["capacitorCapacity"]!, (double)s["capacitorRechargeS"]!,
         [.. ((JsonArray)s["modules"]!).Select(m => new SimModule(Wide(m!, "itemId"), (int)m!["typeId"]!, (int)m["flag"]!))],
-        VitalsOf(s["vitals"]!), ConditionOf(s["condition"]!), SensorsOf(s), s["droneDamageMultiplier"] is { } drone ? (double)drone : 1d);
+        VitalsOf(s["vitals"]!), ConditionOf(s["condition"]!), SensorsOf(s), s["droneDamageMultiplier"] is { } drone ? (double)drone : 1d,
+            s["stance"] is { } stance ? new SimShipStance((int)stance["oldStance"]!, long.Parse((string)stance["switchedAt"]!, CultureInfo.InvariantCulture), (int)stance["stance"]!) : null);
 
     private static SimSensors SensorsOf(JsonNode s)
     {

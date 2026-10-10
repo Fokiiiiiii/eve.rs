@@ -14,6 +14,14 @@ pub struct ModuleSpec {
     pub flag: i32,
 }
 
+/// A ship's stance and when it last changed (`old` is the stance it had before, `switched_at` a FILETIME).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ShipStance {
+    pub old_stance: i32,
+    pub switched_at: i64,
+    pub stance: i32,
+}
+
 /// What motion and the slim item need to know of a ship. The host works these out (dogma, skills, fitting); the sim only uses them.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ShipSpec {
@@ -60,6 +68,9 @@ pub struct ShipSpec {
     /// The damage multiplier of the drones this ship launches (1 for none, 0 for a ship whose drones cannot deal damage): the drone's damage multiplier
     /// (attribute 64) times this (protocol 47). The host sets it from industrialBonusDroneDamage (2580) and the wiki's P.A.N.I.C. penalty.
     pub drone_damage_multiplier: f64,
+    /// The ship's stance (a Tactical Destroyer's mode, SF-6): the slim item carries it as `(old, switchedAt, new)` (`shipStance`), and the switch time is a FILETIME.
+    /// `None` for a ship that has no stance (the client reads a missing one as none).
+    pub stance: Option<ShipStance>,
 }
 
 /// What the ship is doing.

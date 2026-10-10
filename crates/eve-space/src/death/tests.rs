@@ -126,7 +126,7 @@ fn an_npc_that_does_not_say_what_it_leaves_leaves_the_wreck_the_rules_give_its_t
 }
 
 fn capsule_spec() -> ShipSpec {
-    ShipSpec { ship_id: 9_988_400_002_416, type_id: 670, group_id: 29, name: "Capsule".to_string(), ..spec() }
+    ShipSpec { stance: None, ship_id: 9_988_400_002_416, type_id: 670, group_id: 29, name: "Capsule".to_string(), ..spec() }
 }
 
 #[test]

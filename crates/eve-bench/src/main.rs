@@ -191,7 +191,7 @@ fn bench_system() -> std::sync::Arc<SolarSystem> {
 }
 
 fn bench_ship(index: u64) -> ShipSpec {
-    ShipSpec {
+    ShipSpec { stance: None,
         ship_id: 9_988_400_000_000 + index as i64,
         character_id: 140_000_000 + index as i64,
         type_id: 601,

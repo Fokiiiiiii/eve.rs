@@ -46,12 +46,15 @@ public sealed record SimCondition(double Damage, double ArmorDamage, double Shie
     public static readonly SimCondition Full = new(0, 0, 1, 1);
 }
 
+/// <summary>A ship's stance (a Tactical Destroyer's mode): the stance it had before, when it switched (a FILETIME), and the stance it has. The slim item carries it (protocol 55).</summary>
+public sealed record SimShipStance(int OldStance, long SwitchedAt, int Stance);
+
 /// <summary>What motion and the slim item need to know of a ship: the host works these out (dogma, skills, fitting), the simulation only uses them.</summary>
 public sealed record SimShip(
     long ShipId, long CharacterId, int TypeId, int GroupId, int CategoryId, string Name, long OwnerId, int CorporationId, int AllianceId, int WarFactionId,
     double SecurityStatus, double Radius, double Mass, double MaxVelocity, double Agility, double WarpSpeedAu, double ShieldRechargeMs,
     double MaxTargetRange, double ScanResolution, double SignatureRadius, int MaxLockedTargets, double CapacitorCapacity, double CapacitorRechargeSeconds, IReadOnlyList<SimModule> Modules,
-    SimVitals? Vitals = null, SimCondition? Condition = null, SimSensors? Sensors = null, double DroneDamageMultiplier = 1d);
+    SimVitals? Vitals = null, SimCondition? Condition = null, SimSensors? Sensors = null, double DroneDamageMultiplier = 1d, SimShipStance? Stance = null);
 
 /// <summary>What a ship holds against a jammer and a neutraliser: the strength of its sensors (gravimetric, ladar, magnetometric, radar; the strongest counts), how much of a jam it takes (<c>ECMResistance</c>: 1 for an ordinary ship, 0 for one that cannot be jammed) and how much of an energy neutralisation it takes (<c>energyWarfareResistance</c>, 2045: 1 for an ordinary ship, 0 for one that cannot be neutralised; protocol 27).</summary>
 public sealed record SimSensors(double Gravimetric, double Ladar, double Magnetometric, double Radar, double EcmResistance, double EnergyWarfareResistance)

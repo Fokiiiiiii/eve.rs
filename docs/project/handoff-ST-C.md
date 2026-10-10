@@ -9,8 +9,11 @@ Branch wt-stc (worktree /home/user/wt-stc). Increment 1 pushed to main with this
 - Refusal texts corrected (no structure or phase 3 wording). Gap manifest drops industrialItemCompression.
 - TODO row for inSpaceCompressionMgr.CompressItemInSpace rewritten; DEVIATIONS section In-space compression (ST-C) added.
 
-## Next (increment 2)
-- OperationalRpcServiceTests (Eve.Host.Tests, filter OperationalRpcServiceTests): NOT YET RUN. It asserts the new UnavailableNotice text. Run with flock -o and -p:UseSharedCompilation=false; push when green.
+## Increment 2 (verified on the rebased tree)
+- OperationalRpcServiceTests (Eve.Host.Tests): 12/12 passed. Also Eve.Services.Space.Tests CompressionHostTests + ModuleEffectsTests: 39/39 passed.
+
+## Open (not in ST-C scope)
+- Graphical-client run of the compress action (unverified).
 
 ## Gotchas
 - Lock: always flock -o -w 1800 /tmp/eve-heavy.lock; dotnet test with -p:UseSharedCompilation=false, then dotnet build-server shutdown (a build server holding the fd stalls every session).

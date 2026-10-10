@@ -315,6 +315,15 @@ public sealed partial class PgCharacterStore
         await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
+    /// <summary>Records when a character left the game (the selection screen sorts by it, and the corporation's last-online figure reads it).</summary>
+    public async Task SetLastLogoffAsync(long characterId, DateTimeOffset loggedOffAt, CancellationToken cancellationToken = default)
+    {
+        await using var command = _source.CreateCommand($"UPDATE {_schema}.characters SET last_logoff_at = $1 WHERE id = $2");
+        command.Parameters.Add(new() { Value = loggedOffAt });
+        command.Parameters.Add(new() { Value = characterId });
+        await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
     /// <summary>Records the solar system a character is in (with its constellation and region), inside the caller's transaction.</summary>
     public async Task SetLocationAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long characterId, int solarSystemId, int constellationId, int regionId, CancellationToken cancellationToken = default)
     {

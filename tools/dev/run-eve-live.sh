@@ -61,19 +61,33 @@ done
 EVE_DEV_AUTO_CREATE=1 EVE_HOST="$SOCK" EVE_SIM_SOCKET="$SIMSOCK" dotnet "$HERE/dotnet/src/Eve.Host/bin/Release/net10.0/eve-host.dll" >"$LOG/host.out" 2>&1 &
 host_pid=$!
 # a first start loads the static data catalogs: give a slow machine a minute
+host_ready=0
 for _ in $(seq 1 600); do
-  [ -S "$SOCK" ] && break
+  if [ -S "$SOCK" ]; then host_ready=1; break; fi
   kill -0 "$host_pid" 2>/dev/null || { echo "the host exited early:"; cat "$LOG/host.out"; exit 1; }
   sleep 0.1
 done
+if [ "$host_ready" != 1 ]; then
+  echo "eve-live: the host did not open its socket $SOCK within 60 s; see $LOG/host.out" >&2
+  host_log="$(cat "$LOG/host.out" 2>/dev/null || true)"
+  if [[ "$host_log" == *"static data build"* && "$host_log" != *"listening on"* && "$host_log" != *"EVE_MARKET_SEED=skip"* ]]; then
+    echo "eve-live: the host was still in its market seed (EVE_MARKET_SEED=auto fetches NPC orders from ESI); EVE_MARKET_SEED=skip avoids it." >&2
+  fi
+  exit 1
+fi
 
 EVE_HOST="$SOCK" EVE_NET_LISTEN="127.0.0.1:$PORT" "$TARGET/release/eve-net" >"$LOG/net.out" 2>&1 &
 net_pid=$!
+front_ready=0
 for _ in $(seq 1 100); do
-  (exec 3<>"/dev/tcp/127.0.0.1/$PORT") 2>/dev/null && break
+  if (exec 3<>"/dev/tcp/127.0.0.1/$PORT") 2>/dev/null; then front_ready=1; break; fi
   kill -0 "$net_pid" 2>/dev/null || { echo "the front exited early:"; cat "$LOG/net.out"; exit 1; }
   sleep 0.1
 done
+if [ "$front_ready" != 1 ]; then
+  echo "eve-live: the front did not listen on 127.0.0.1:$PORT within 10 s; see $LOG/net.out" >&2
+  exit 1
+fi
 
 export EVE_LIVE_HOST="${EVE_LIVE_HOST:-127.0.0.1:$PORT}"  # a preset value points the tests at a proxy (tools/mitm)
 if [ -n "${EVE_RUN:-}" ]; then

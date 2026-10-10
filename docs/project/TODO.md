@@ -643,7 +643,7 @@ Not built, each with its blocker:
 - The client was not run: the probe scanner's windows, the result rows, the directional palette and the warp to a result are not seen in the client. No MITM capture was made: the headless client has no scenario that scans.
 - A process restart in the middle of a scan is covered by the durable jobs but not exercised by a test.
 
-## 30. Track A8 continued: the jump bridges, the bubble check and the economizer fit (protocol 55, 2026-10-10)
+## 31. Track A8 continued: the jump bridges, the bubble check and the economizer fit (protocol 55, 2026-10-10)
 
 Done (tests: CynoJumpHostTests (A_titan_bridge_opens..., A_bridge_is_closed...), JumpDriveRulesTests (A_bridge_takes..., A_passenger_flag..., An_economizer_counts...), scene/tests.rs (a_titan_bridge_opens..., a_fleet_ship_in_range..., a_passenger_beyond..., a_cynosural_jump_is_refused_inside...); decisions in DEVIATIONS "Track A8: the jump bridges, the bubble check and the economizer fit"):
 - Titan Jump Portal Generator (SDE 23953) and Black Ops Covert Jump Portal Generator (SDE 28652): CmdBridgeToFleetModuleBeacon and CmdBridgeToFleetDeployableBeacon open a bridge where the ship is (command 28 in the simulation: a deployable of role JumpBridge for the module's duration, a Titan held still for its minute, the module's capacitor). The host checks the generator and its fitting, the skill, a lit field of the fleet, the Titan's standard-field and high-security rules, the jump range and the Strontium (500 less 10 percent a level, SDE 714 and 1775).

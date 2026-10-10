@@ -153,7 +153,7 @@ impl Command {
             Self::AlignTo { .. } => 7,
             Self::WarpTo { .. } => 8,
             Self::Jump { .. } => 9,
-            Self::CynoJump { .. } => 24,
+            Self::CynoJump { .. } => 25,
             Self::WarpToPoint { .. } => 21,
             Self::ResolveWarpTarget { .. } => 22,
             Self::PositionOf { .. } => 23,

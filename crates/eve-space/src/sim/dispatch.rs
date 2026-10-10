@@ -17,7 +17,7 @@ pub(super) fn command_of(code: u8, args: &[f64]) -> Option<Command> {
         (8, [target, range]) if is_id(*target) && range.is_finite() => {
             Some(Command::WarpTo { target_id: *target as i64, range: *range })
         }
-        (24, [field, destination, spool])
+        (25, [field, destination, spool])
             if is_id(*field) && is_id(*destination) && spool.is_finite() && *spool > 0.0 =>
         {
             Some(Command::CynoJump {

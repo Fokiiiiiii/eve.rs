@@ -2095,7 +2095,7 @@ fn a_cyno_jump_is_refused_while_disrupted_or_to_the_system_the_ship_is_in() {
     let here = scene.solar_system_id();
     let refused_here = scene.command(SESSION, cyno_jump(CYNO_FIELD, here, 300_000.0), NOON);
     assert!(
-        matches!(refused_here.as_slice(), [Out::Refused { command: 24, reason: "WRONG_SOLAR_SYSTEM", .. }]),
+        matches!(refused_here.as_slice(), [Out::Refused { command: 25, reason: "WRONG_SOLAR_SYSTEM", .. }]),
         "{refused_here:?}"
     );
 
@@ -2103,7 +2103,7 @@ fn a_cyno_jump_is_refused_while_disrupted_or_to_the_system_the_ship_is_in() {
     let destination = other_scene().solar_system_id();
     let disrupted = scene.command(SESSION, cyno_jump(CYNO_FIELD, destination, 300_000.0), NOON + seconds(1));
     assert!(
-        matches!(disrupted.as_slice(), [Out::Refused { command: 24, reason: "JUMP_DISRUPTED", .. }]),
+        matches!(disrupted.as_slice(), [Out::Refused { command: 25, reason: "JUMP_DISRUPTED", .. }]),
         "{disrupted:?}"
     );
     assert!(scene.due_jumps(NOON + seconds(400)).0.is_empty(), "a refused jump leaves nothing pending");

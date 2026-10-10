@@ -111,8 +111,8 @@ public static class SimCommands
     public const byte WarpTo = 8;
     public const byte Jump = 9;
 
-    /// <summary>Jump to a cynosural field lit in another system (the field's id, the destination system and the spool in milliseconds): code 24.</summary>
-    public const byte CynoJump = 24;
+    /// <summary>Jump to a cynosural field lit in another system (the field's id, the destination system and the spool in milliseconds): code 25.</summary>
+    public const byte CynoJump = 25;
 
     /// <summary>Start locking a target (the target's id).</summary>
     public const byte AddTarget = 10;

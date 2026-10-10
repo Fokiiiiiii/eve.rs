@@ -1716,7 +1716,7 @@ public class SpaceServiceTests
         await InSpaceAsync(rig, optOutSession);
         await InSpaceAsync(rig, otherWingSession);
 
-        var store = new Eve.Services.Space.FleetStore(rig.Source);
+        var store = new Eve.Services.Space.FleetStore(rig.Source, rig.FleetSchema);
         var fleetId = await store.CreateAsync(leader.CharacterId);
         try
         {
@@ -1820,7 +1820,7 @@ public class SpaceServiceTests
         await InSpaceAsync(rig, leaderSession);
         await InSpaceAsync(rig, memberSession);
 
-        var store = new Eve.Services.Space.FleetStore(rig.Source);
+        var store = new Eve.Services.Space.FleetStore(rig.Source, rig.FleetSchema);
         var fleetId = await store.CreateAsync(leader.CharacterId);
         try
         {
@@ -2647,8 +2647,8 @@ public class SpaceServiceTests
     public async Task Fleet_invite_join_and_leave_are_persisted_with_the_member_hierarchy()
     {
         await using var rig = await Rig.CreateAsync();
-        var store = new Eve.Services.Space.FleetStore(rig.Source);
-        var reloaded = new Eve.Services.Space.FleetStore(rig.Source);
+        var store = new Eve.Services.Space.FleetStore(rig.Source, rig.FleetSchema);
+        var reloaded = new Eve.Services.Space.FleetStore(rig.Source, rig.FleetSchema);
         var leaderId = Random.Shared.NextInt64(8_000_000_000_000, 8_999_999_999_999);
         var memberId = leaderId + 1;
         var fleetId = await store.CreateAsync(leaderId);
@@ -2812,7 +2812,7 @@ public class SpaceServiceTests
     public async Task Fleet_boss_leaving_transfers_the_boss_job_to_the_fleet_commander()
     {
         await using var rig = await Rig.CreateAsync();
-        var store = new Eve.Services.Space.FleetStore(rig.Source);
+        var store = new Eve.Services.Space.FleetStore(rig.Source, rig.FleetSchema);
         var bossId = Random.Shared.NextInt64(8_000_000_000_000, 8_999_999_999_999);
         var commanderId = bossId + 1;
         var fleetId = await store.CreateAsync(bossId);
@@ -2845,7 +2845,7 @@ public class SpaceServiceTests
     public async Task Fleet_boss_who_is_commander_leaves_and_promotes_a_member_in_the_top_squad()
     {
         await using var rig = await Rig.CreateAsync();
-        var store = new Eve.Services.Space.FleetStore(rig.Source);
+        var store = new Eve.Services.Space.FleetStore(rig.Source, rig.FleetSchema);
         var bossId = Random.Shared.NextInt64(8_000_000_000_000, 8_999_999_999_999);
         var memberId = bossId + 1;
         var fleetId = await store.CreateAsync(bossId);
@@ -2912,7 +2912,7 @@ public class SpaceServiceTests
         await using var rig = await Rig.CreateAsync();
         var leader = await rig.NewCharacterAsync();
         var session = await rig.SessionAsync(leader);
-        var store = new Eve.Services.Space.FleetStore(rig.Source);
+        var store = new Eve.Services.Space.FleetStore(rig.Source, rig.FleetSchema);
         var fleetId = await store.CreateAsync(leader.CharacterId);
         var memberOne = Random.Shared.NextInt64(8_000_000_000_000, 9_000_000_000_000);
         var memberTwo = memberOne + 1;
@@ -2965,7 +2965,7 @@ public class SpaceServiceTests
     public async Task Fleet_join_requests_and_invites_remain_consistent_through_acceptance_and_replay()
     {
         await using var rig = await Rig.CreateAsync();
-        var store = new Eve.Services.Space.FleetStore(rig.Source);
+        var store = new Eve.Services.Space.FleetStore(rig.Source, rig.FleetSchema);
         var leaderId = Random.Shared.NextInt64(8_000_000_000_000, 8_999_999_999_999);
         var applicantId = leaderId + 1;
         var fleetId = await store.CreateAsync(leaderId);
@@ -2994,7 +2994,7 @@ public class SpaceServiceTests
     public async Task Fleet_parallel_accepts_across_fleets_preserve_one_membership_without_throwing()
     {
         await using var rig = await Rig.CreateAsync();
-        var store = new Eve.Services.Space.FleetStore(rig.Source);
+        var store = new Eve.Services.Space.FleetStore(rig.Source, rig.FleetSchema);
         var leaderOne = Random.Shared.NextInt64(8_000_000_000_000, 8_999_999_999_999);
         var leaderTwo = leaderOne + 10;
         var memberId = leaderOne + 20;
@@ -3027,7 +3027,7 @@ public class SpaceServiceTests
     public async Task Fleet_parallel_joins_do_not_exceed_the_member_limit()
     {
         await using var rig = await Rig.CreateAsync();
-        var store = new Eve.Services.Space.FleetStore(rig.Source);
+        var store = new Eve.Services.Space.FleetStore(rig.Source, rig.FleetSchema);
         var leaderId = Random.Shared.NextInt64(8_000_000_000_000, 8_999_999_999_999);
         var memberOne = leaderId + 1;
         var memberTwo = leaderId + 2;
@@ -3057,7 +3057,7 @@ public class SpaceServiceTests
     public async Task Fleet_invite_authorization_waits_for_a_manager_revocation()
     {
         await using var rig = await Rig.CreateAsync();
-        var store = new Eve.Services.Space.FleetStore(rig.Source);
+        var store = new Eve.Services.Space.FleetStore(rig.Source, rig.FleetSchema);
         var bossId = Random.Shared.NextInt64(8_000_000_000_000, 8_999_999_999_999);
         var commanderId = bossId + 1;
         var inviteeId = bossId + 2;
@@ -3076,7 +3076,7 @@ public class SpaceServiceTests
                 await using (var revoke = connection.CreateCommand())
                 {
                     revoke.Transaction = transaction;
-                    revoke.CommandText = "UPDATE fleet.fleet_members SET job = 0 WHERE fleet_id = $1 AND character_id = $2";
+                    revoke.CommandText = $"UPDATE {rig.FleetSchema}.fleet_members SET job = 0 WHERE fleet_id = $1 AND character_id = $2";
                     var fleetParameter = revoke.CreateParameter();
                     fleetParameter.Value = fleetId;
                     revoke.Parameters.Add(fleetParameter);
@@ -3103,7 +3103,7 @@ public class SpaceServiceTests
             {
                 await using var connection = await rig.Source.OpenConnectionAsync();
                 await using var restore = connection.CreateCommand();
-                restore.CommandText = "UPDATE fleet.fleet_members SET job = $1 WHERE fleet_id = $2 AND character_id = $3";
+                restore.CommandText = $"UPDATE {rig.FleetSchema}.fleet_members SET job = $1 WHERE fleet_id = $2 AND character_id = $3";
                 var job = restore.CreateParameter();
                 job.Value = Eve.Services.Space.FleetStore.CreatorJob;
                 restore.Parameters.Add(job);
@@ -3137,7 +3137,7 @@ public class SpaceServiceTests
         leaderSession.Set("solarsystemid2", new PyLong(30000142));
         memberSession.Set("corpid", new PyLong(leaderCorporationId));
 
-        var store = new Eve.Services.Space.FleetStore(rig.Source);
+        var store = new Eve.Services.Space.FleetStore(rig.Source, rig.FleetSchema);
         var fleetId = await store.CreateAsync(leader.CharacterId);
         try
         {
@@ -3241,7 +3241,7 @@ public class SpaceServiceTests
             Assert.Equal(PyBool.False, Field(added, "updateOnBossChange"));
             Assert.Equal(new PyInt(12), Field(added, "advertJoinLimit"));
 
-            var reloadedStore = new Eve.Services.Space.FleetStore(rig.Source);
+            var reloadedStore = new Eve.Services.Space.FleetStore(rig.Source, rig.FleetSchema);
             Eve.Services.IService reloadedProxy = new Eve.Services.Space.FleetProxyService(
                 reloadedStore, reloadedStore.FleetFinderAdvertOperationAsync);
             var advert = await reloadedProxy.CallAsync(new Eve.Services.ServiceCall
@@ -3332,7 +3332,7 @@ public class SpaceServiceTests
         await using var rig = await Rig.CreateAsync();
         var leader = await rig.NewCharacterAsync();
         var session = await rig.SessionAsync(leader);
-        var store = new Eve.Services.Space.FleetStore(rig.Source);
+        var store = new Eve.Services.Space.FleetStore(rig.Source, rig.FleetSchema);
         var fleetId = await store.CreateAsync(leader.CharacterId);
         PyValue Field(PyValue value, string name)
         {
@@ -3381,7 +3381,7 @@ public class SpaceServiceTests
     {
         await using var rig = await Rig.CreateAsync();
         var leader = await rig.NewCharacterAsync("Fleet Setup Leader");
-        var store = new Eve.Services.Space.FleetStore(rig.Source);
+        var store = new Eve.Services.Space.FleetStore(rig.Source, rig.FleetSchema);
         var fleetId = await store.CreateAsync(leader.CharacterId);
         try
         {
@@ -3435,7 +3435,7 @@ public class SpaceServiceTests
         await using var rig = await Rig.CreateAsync();
         var leader = await rig.NewCharacterAsync();
         var session = await rig.SessionAsync(leader);
-        var store = new Eve.Services.Space.FleetStore(rig.Source);
+        var store = new Eve.Services.Space.FleetStore(rig.Source, rig.FleetSchema);
         var fleetId = await store.CreateAsync(leader.CharacterId);
         var setupCalls = new List<(long FleetId, long CharacterId, string Name, ClientSession Session)>();
         var createAdvertCalls = new List<(long FleetId, long CharacterId, PyValue Data, ClientSession Session)>();

@@ -808,6 +808,12 @@ Source order: the SDE for numbers, the EVE University wiki for rules (as written
 - **Not built: the destruction of a deployable.** EVE.js clears a mobile deployable when it is destroyed (`dynamicEntities` `destroyed`); the simulation does not damage deployables, so the host has no such event for them.
 - **NOT RUN: the client.** No graphical client or MITM capture on this host.
 
+## Track A5 (scoop rules and fleet test isolation, 2026-10-10)
+
+- **Scoop of a deployed mobile object: the wiki as written, which is silent for the disruptor.** The Mobile Depot page: "A Mobile Depot can only be accessed or scooped up by its owner"; it "can be scooped back to your ship's cargohold at any time"; its contents appear in space in a cargo container when it is scooped. The Mobile Cynosural Inhibitor page: "unlike the other mobile structures, this one cannot be reclaimed", so it is not scooped. The Mobile Warp Disruptor page and the mobile structures page give no retrieval rule for it, and EVE.js has none, so no scoop is built for it. The depot's rule is the depot's, not the disruptor's, and is not extended to it.
+- **Fleet test isolation (fix).** `SpaceServiceTests` built `FleetStore` on the shared default schema `fleet` (18 sites), so rows of earlier runs collided on `fleet_members_character_id_key`; two raw statements also named `fleet.fleet_members`. Each test now uses its rig's own fleet schema (`Rig.FleetSchema`). Leaked rows removed from the dev database: fleets 2349 and 2350 with their members (characters 140000001 and 140000002, job 2) and their wing, squad, invitation and join-request rows (none). These were left by fleet tests that wrote to the shared schema and did not disband.
+- **Result:** the Space suite (554 tests) passes twice in a row after the fix.
+
 ## Track A6: the capital jump drive (2026-10-10)
 
 Sources, in the order of the scanner rule: numbers from the SDE (pinned build 3396210, `sde.typeDogma` for the hulls, `sde.dogmaAttributes`, `sde.groups`, `sde.types`); mechanics from the EVE University wiki, implemented as written (Jump drive: https://wiki.eveuniversity.org/Jump_drive; Jump fatigue: https://wiki.eveuniversity.org/Jump_fatigue; Capital ships: https://wiki.eveuniversity.org/Capital_ships; fetched 2026-10-10); EveJS v0.12.9 has no capital jump (a search of `server/src` finds only the fighter's micro jump), so it contributes nothing here; the client's callsites in eve-logic decide the wire shapes.

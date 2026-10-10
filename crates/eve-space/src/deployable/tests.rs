@@ -7,6 +7,8 @@ use crate::modules::{Action, Effect};
 use crate::scene::tests::{NOON, STATION, spec, system};
 use crate::scene::{Command, Out, Scene};
 use crate::visibility::CloakState;
+use crate::world::SolarSystem;
+use std::sync::Arc;
 
 const A: SessionId = 7;
 const B: SessionId = 8;
@@ -356,6 +358,39 @@ fn an_anchored_cynosural_inhibitor_stops_a_field_within_100_km_but_not_a_covert_
     scene.place_inhibitor(inhibitor(system, a, true), t);
     let covert = scene.activate(A, module(MODULE, field(28_650), 20_000.0), t);
     assert!(accepted(&covert), "{covert:?}");
+}
+
+/// Pochven (SDE region 10000070) is a region-wide cynosural jammer: no field lights there, a covert or an industrial one neither (the wiki, "Pochven":
+/// "stops anyone from lighting a cyno"), and the same field lights in a system of another region. Each scene is made anew from its system, as a restarted
+/// simulation makes it: the region is the static data's and nothing of the refusal is kept.
+#[test]
+fn a_cynosural_field_is_not_lit_in_pochven_of_any_kind_and_is_lit_elsewhere() {
+    let lit = |region_id: i32, charge_type_id: i32| {
+        let mut scene = Scene::new(Arc::new(SolarSystem { region_id, ..(*system()).clone() }));
+        scene.undock(A, spec(), STATION, NOON).unwrap();
+        scene.bind(A, NOON);
+        scene.undock(B, other_spec(), STATION, NOON).unwrap();
+        scene.bind(B, NOON);
+        let a = scene.pilots[&A].ship.position;
+        place(&mut scene, B, eve_destiny::Vec3::new(a.x + 5_000.0, a.y, a.z));
+        let t = NOON + 40 * SECOND;
+        scene.poll(t);
+        let field = Action::CynoField {
+            ball: Spec {
+                charge_type_id,
+                group_id: 2_020,
+                name: "Cynosural Field".to_string(),
+                radius: 250.0,
+            },
+            lifetime_ms: 600_000.0,
+        };
+        scene.activate(A, module(MODULE, field, 20_000.0), t)
+    };
+    for charge_type_id in [21_094, 28_650, 52_696] {
+        let refused = lit(10_000_070, charge_type_id);
+        assert!(refused_with(&refused, "CYNOSURAL_FIELD_JAMMED"), "{charge_type_id}: {refused:?}");
+    }
+    assert!(accepted(&lit(10_000_001, 21_094)), "a field lights outside Pochven");
 }
 
 #[test]

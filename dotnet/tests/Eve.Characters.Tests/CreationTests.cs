@@ -287,4 +287,49 @@ public class OnlineCharacterTests
         online.Leave(5);
         Assert.Equal(0, online.Count);
     }
+
+    [Fact]
+    public void A_pending_entry_holds_the_previous_character_without_listing_it_twice()
+    {
+        var online = new OnlineCharacters();
+        Assert.True(online.TryEnter(100, 1));
+        Assert.True(online.TryBeginEnter(200, 1));
+        Assert.Equal(1, online.Count);
+        Assert.Equal(200, Assert.Single(online.Snapshot()));
+        Assert.True(online.IsOnline(100));
+        Assert.False(online.TryEnter(100, 2));
+        Assert.False(online.TryBeginEnter(300, 1));
+
+        online.CancelEnter(1);
+        Assert.Equal(100, Assert.Single(online.Snapshot()));
+        Assert.True(online.TryEnter(100, 1));
+        Assert.False(online.IsOnline(200));
+    }
+
+    [Fact]
+    public void Completing_entry_releases_the_previous_character()
+    {
+        var online = new OnlineCharacters();
+        Assert.True(online.TryEnter(100, 1));
+        Assert.True(online.TryBeginEnter(200, 1));
+        online.CompleteEnter(1);
+        Assert.False(online.IsOnline(100));
+        Assert.True(online.TryEnter(100, 2));
+        Assert.False(online.TryEnter(200, 2));
+    }
+
+    [Fact]
+    public void Closing_during_entry_releases_both_characters_and_rollback_cannot_resurrect_them()
+    {
+        var online = new OnlineCharacters();
+        Assert.True(online.TryEnter(100, 1));
+        Assert.True(online.TryBeginEnter(200, 1));
+        online.Leave(1);
+        Assert.False(online.CancelEnter(1));
+        Assert.False(online.CompleteEnter(1));
+        Assert.Empty(online.Snapshot());
+        Assert.Equal(0, online.Count);
+        Assert.True(online.TryEnter(100, 2));
+        Assert.True(online.TryEnter(200, 3));
+    }
 }

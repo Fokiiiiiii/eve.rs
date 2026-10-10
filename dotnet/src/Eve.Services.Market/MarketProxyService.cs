@@ -9,7 +9,7 @@ namespace Eve.Services.Market;
 
 [Service("marketProxy")]
 public sealed partial class MarketProxyService(MarketStore store,MarketTrading trading,MarketTopology topology,
-    PgCharacterStore characters,Eve.Corporations.CorporationStore corporations,WalletTransactions wallets,MarketCatalog catalog,Func<long> now,Eve.Market.MarketExpiry expiry,CharacterSessions? characterSessions=null)
+    PgCharacterStore characters,Eve.Corporations.CorporationStore corporations,WalletTransactions wallets,MarketCatalog catalog,Func<long> now,MarketExpiryWorker expiry,CharacterSessions? characterSessions=null)
 {
     private static long Integer(PyValue v,long fallback = 0) => v switch
     {

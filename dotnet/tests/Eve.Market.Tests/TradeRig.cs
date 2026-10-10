@@ -3,6 +3,7 @@ using Eve.Corporations;
 using Eve.Data;
 using Eve.Inventory;
 using Eve.Scheduler;
+using Eve.Services.Market;
 using Eve.Sde;
 using Eve.Skills;
 using Eve.Universe;
@@ -26,7 +27,7 @@ internal sealed class TradeRig : IAsyncDisposable
         Book=new(source,_schemas[0]);
         Scheduler=NewScheduler();
         Trading=Reopen();
-        Expiry=new MarketExpiry(Scheduler,Trading,() => Now,Announce);
+        Expiry=new MarketExpiryWorker(Scheduler,Trading,() => Now,Announce);
     }
     public NpgsqlDataSource Source { get; }
     public StationCatalog Stations { get; }
@@ -42,12 +43,12 @@ internal sealed class TradeRig : IAsyncDisposable
     /// <summary>The trading engine of the current "host": a restart replaces it, as a new process would.</summary>
     public MarketTrading Trading { get; private set; }
     public DurableScheduler Scheduler { get; private set; }
-    public MarketExpiry Expiry { get; private set; }
+    public MarketExpiryWorker Expiry { get; private set; }
     /// <summary>What the expiry announced, in order (the notifications the host would send to the sessions).</summary>
     public List<MarketReceipt> Announcements { get; } = [];
     public string MarketSchema => _schemas[0];
     public long Now { get; set; } = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()+10000;
-    public MarketTrading Reopen() => new(Source,Book,Characters,Corporations,Skills,Items,Wallets,Stations,Topology,() => Now,Scheduler);
+    public MarketTrading Reopen() => new(Source,Book,Characters,Corporations,Skills,Items,Wallets,Stations,Topology,() => Now,new DurableExpiryJobs(Scheduler));
     private DurableScheduler NewScheduler() => new(Source,() => Now,null,_schemas[6]);
     private Task Announce(MarketReceipt receipt,CancellationToken token)
     {
@@ -59,7 +60,7 @@ internal sealed class TradeRig : IAsyncDisposable
     {
         Scheduler=NewScheduler();
         Trading=Reopen();
-        Expiry=new MarketExpiry(Scheduler,Trading,() => Now,Announce);
+        Expiry=new MarketExpiryWorker(Scheduler,Trading,() => Now,Announce);
         await Expiry.StartAsync();
     }
     public static async Task<TradeRig> Create()

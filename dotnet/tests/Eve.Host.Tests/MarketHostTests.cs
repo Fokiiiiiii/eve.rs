@@ -5,6 +5,7 @@ using Eve.Inventory;
 using Eve.Macho;
 using Eve.Marshal;
 using Eve.Market;
+using Eve.Services.Market;
 using Eve.Services;
 using Eve.Sde;
 using Eve.Universe;
@@ -229,9 +230,9 @@ public sealed class MarketHostTests : IAsyncLifetime
         var host = await HostComposition.BuildAsync(Settings());
         var market = host.Registry.Lookup("marketProxy") ?? throw new InvalidOperationException("marketProxy is not registered");
         var scheduler = host.Scheduler ?? throw new InvalidOperationException("the host has no durable scheduler");
-        Assert.Contains(MarketExpiry.OrderKind, scheduler.Kinds);
-        Assert.Contains(MarketExpiry.SweepKind, scheduler.Kinds);
-        Assert.NotNull(await scheduler.FindAsync(MarketExpiry.SweepKind, "sweep"));
+        Assert.Contains(MarketExpiryWorker.OrderKind, scheduler.Kinds);
+        Assert.Contains(MarketExpiryWorker.SweepKind, scheduler.Kinds);
+        Assert.NotNull(await scheduler.FindAsync(MarketExpiryWorker.SweepKind, "sweep"));
         var station = (await StationCatalog.LoadAsync(new SdeReader(source))).All.First();
         var actor = await CreateTraderAsync(source, station, "Expiry Host Trader");
         var session = new ClientSession(new Sink()) { SessionId = 303 };
@@ -240,14 +241,14 @@ public sealed class MarketHostTests : IAsyncLifetime
         await market.CallAsync(Call(session, "PlaceBuyOrder", 1, new PyInt(station.Id), new PyInt(Pyerite), new PyReal(1234), new PyInt(1),
             new PyInt(-1), new PyInt(1), new PyInt(1), PyBool.False, PyNone.Instance));
         var order = Assert.Single(await new MarketStore(source, Schema("EVE_MARKET_SCHEMA")).OwnOrdersAsync(actor, actor, false)).Order;
-        var job = await scheduler.FindAsync(MarketExpiry.OrderKind, MarketExpiry.OrderKey(order.Id));
+        var job = await scheduler.FindAsync(MarketExpiryWorker.OrderKind, MarketExpiryWorker.OrderKey(order.Id));
         Assert.NotNull(job);
         Assert.Equal(order.IssuedMs + 86_400_000L + MarketExpiry.GraceMs, job!.RunAtMs);
         await host.ShutdownAsync();
 
         var restarted = await HostComposition.BuildAsync(Settings());
         var again = restarted.Scheduler ?? throw new InvalidOperationException("the host has no durable scheduler after the restart");
-        var resumed = await again.FindAsync(MarketExpiry.OrderKind, MarketExpiry.OrderKey(order.Id));
+        var resumed = await again.FindAsync(MarketExpiryWorker.OrderKind, MarketExpiryWorker.OrderKey(order.Id));
         Assert.NotNull(resumed);
         Assert.Equal(job.RunAtMs, resumed!.RunAtMs);
         await restarted.ShutdownAsync();

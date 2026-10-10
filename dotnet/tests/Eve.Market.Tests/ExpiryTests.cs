@@ -1,4 +1,5 @@
 using Eve.Corporations;
+using Eve.Services.Market;
 using Eve.Wallet;
 
 namespace Eve.Market.Tests;
@@ -61,7 +62,7 @@ public class ExpiryTests
         var placedAt = r.Now;
         await r.Trading.PlaceAsync(r.Buy(actor, 10, 5, days: 1), "lost-job");
         var orderId = (await r.Trading.OpenRestingExpiriesAsync()).Single().OrderId;
-        Assert.True(await r.Scheduler.CancelAsync(MarketExpiry.OrderKind, MarketExpiry.OrderKey(orderId)));
+        Assert.True(await r.Scheduler.CancelAsync(MarketExpiryWorker.OrderKind, MarketExpiryWorker.OrderKey(orderId)));
         var escrowed = (await r.WalletStore.GetAsync(actor))!.Isk;
         r.Now = placedAt + Day + Grace;
         Assert.Equal(orderId, Assert.Single(await r.Expiry.SweepAsync()).OrderId);
@@ -81,10 +82,10 @@ public class ExpiryTests
         var escrowed = (await r.WalletStore.GetAsync(actor))!.Isk;
         // the host goes down with the job still waiting; the restart schedules the order again
         var orderId = (await r.Trading.OpenRestingExpiriesAsync()).Single().OrderId;
-        Assert.True(await r.Scheduler.CancelAsync(MarketExpiry.OrderKind, MarketExpiry.OrderKey(orderId)));
+        Assert.True(await r.Scheduler.CancelAsync(MarketExpiryWorker.OrderKind, MarketExpiryWorker.OrderKey(orderId)));
         r.Now = placedAt + Day / 2;
         await r.Restart();
-        Assert.NotNull(await r.Scheduler.FindAsync(MarketExpiry.OrderKind, MarketExpiry.OrderKey(orderId)));
+        Assert.NotNull(await r.Scheduler.FindAsync(MarketExpiryWorker.OrderKind, MarketExpiryWorker.OrderKey(orderId)));
         await r.Scheduler.RunDueAsync();   // before the expiry nothing closes
         Assert.Equal(escrowed, (await r.WalletStore.GetAsync(actor))!.Isk);
         r.Now = placedAt + Day + Grace;
@@ -144,7 +145,7 @@ public class ExpiryTests
         var orderId = Assert.IsType<long>(placed.OrderId);
         await r.Trading.CancelAsync(actor, orderId, "cancel-now");
         var refunded = (await r.WalletStore.GetAsync(actor))!.Isk;
-        Assert.Null(await r.Scheduler.FindAsync(MarketExpiry.OrderKind, MarketExpiry.OrderKey(orderId)));
+        Assert.Null(await r.Scheduler.FindAsync(MarketExpiryWorker.OrderKind, MarketExpiryWorker.OrderKey(orderId)));
         r.Now = placedAt + Day + Grace;
         await r.Scheduler.RunDueAsync();
         Assert.Empty(await r.Expiry.SweepAsync());

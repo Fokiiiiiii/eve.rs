@@ -1471,15 +1471,17 @@ order at its expiry instant); CCP-BR (the order duration; "Modifying an order wi
 - **One job per resting order.** Kind `market.order.expire`, key `order:{id}`, due at issued + duration + 1 s. It is scheduled in the transaction that
   places the order (immediate orders rest nowhere, so they get no job), replaced in the transaction that modifies it (the duration restarts, Q4)
   and cancelled in the transaction that closes it (a fill, a cancel or an expiry). The job's handler re-reads the order: a closed order is left
-  alone; a duration that a modification has moved is waited for again. Code: `MarketExpiry.cs`, `MarketTrading.cs` (`ScheduleExpiryAsync`,
-  `CancelExpiryAsync`, `ExpireOrderAsync`).
+  alone; a duration that a modification has moved is waited for again. Code: `Eve.Market/MarketTrading.cs` (`ScheduleExpiryAsync`, `CancelExpiryAsync`, `ExpireOrderAsync`) keeps the job through the domain
+  interface `IMarketExpiryJobs` (`Eve.Market/MarketExpiry.cs` holds the grace and the tries); `Eve.Services.Market/DurableExpiryJobs.cs` is the
+  scheduler adapter and `Eve.Services.Market/MarketExpiryWorker.cs` runs the jobs. The domain module does not reference the scheduler (the
+  architecture test `ArchitectureTests` keeps domain modules on domain modules only).
 - **Safety sweep.** A recurring job `market.expiry.sweep` runs every 60 s and closes every due order. A read of the market (escrow, order history,
   placement, modification) runs the same sweep at most once a second (EVE.js 1 s throttle). The sweep applies the same grace as the job, so the two
   never disagree on when an order expires.
 - **One notice per expiry.** The job and the sweep can reach the same order at once (the scheduler runs jobs in parallel). The close is keyed
   (`expiry:{id}:{issued}`), so the second call replays the stored receipt; an expiry replay returns no receipt, so only the call that performed the
   expiry announces it. Test: `ExpiryTests.A_restart_gives_the_open_order...` and the other expiry tests, which failed before this rule (two notices).
-- **Restart.** `MarketExpiry.StartAsync` registers the two kinds and gives every open resting order its job again (an existing job is kept). An
+- **Restart.** `MarketExpiryWorker.StartAsync` registers the two kinds and gives every open resting order its job again (an existing job is kept). An
   overdue job runs at once. Test: `ExpiryTests.A_restart_gives_the_open_order_its_job_back...`, `An_overdue_order_expires_at_once_after_a_restart`.
 - **Refund and items, once.** A buy returns its escrow; a sell returns its stack to its origin; the broker fee is not returned (EVE University
   "Trading"). A refund over the wallet cap stays pending in escrow (`MoneyLimitException`): the job fails and is tried again with the scheduler's

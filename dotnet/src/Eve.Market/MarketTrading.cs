@@ -1,5 +1,4 @@
 using System.Data;
-using Eve.Scheduler;
 using System.Text.Json;
 using Eve.Characters;
 using Eve.Corporations;
@@ -31,7 +30,7 @@ public sealed record MarketReceipt(string OperationKey,long? OrderId,long Filled
 
 /// <summary>Orders, receipts, item custody and money share one transaction. No Node daemon or recovery Saga is required.</summary>
 public sealed class MarketTrading(NpgsqlDataSource source,MarketStore store,PgCharacterStore characters,CorporationStore corporations,
-    PgSkillStore skills,PgItemStore items,WalletTransactions wallets,StationCatalog stations,MarketTopology topology,Func<long> now,DurableScheduler scheduler)
+    PgSkillStore skills,PgItemStore items,WalletTransactions wallets,StationCatalog stations,MarketTopology topology,Func<long> now,IMarketExpiryJobs expiryJobs)
 {
     private string Schema => store.Schema;
     private const long EscrowBase = 9200000000;
@@ -674,16 +673,13 @@ public Task<MarketReceipt> ModifyAsync(long actorId,long orderId,decimal newPric
     private async Task ScheduleExpiryAsync(NpgsqlConnection c,NpgsqlTransaction tx,long orderId,long issuedMs,int durationDays,CancellationToken token)
     {
         if (durationDays <= 0) return;
-        await scheduler.ScheduleAsync(c,tx,new JobSpec(MarketExpiry.OrderKind,issuedMs+durationDays*86400000L+MarketExpiry.GraceMs)
-        {
-            Key=MarketExpiry.OrderKey(orderId),Payload=new MarketExpiry.OrderJob(orderId),MaxAttempts=MarketExpiry.MaxAttempts,
-        },token);
+        await expiryJobs.ScheduleAsync(c,tx,orderId,issuedMs+durationDays*86400000L+MarketExpiry.GraceMs,token);
     }
 
     /// <summary>Cancels the expiry job of an order that is closed in the same transaction.</summary>
     private async Task CancelExpiryAsync(NpgsqlConnection c,NpgsqlTransaction tx,long orderId,CancellationToken token)
     {
-        await scheduler.CancelAsync(c,tx,MarketExpiry.OrderKind,MarketExpiry.OrderKey(orderId),token);
+        await expiryJobs.CancelAsync(c,tx,orderId,token);
     }
 
     /// <summary>The issue time, expiry instant and state (0 active) of an order, or null when there is no such order.</summary>

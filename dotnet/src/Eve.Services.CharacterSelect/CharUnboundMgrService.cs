@@ -267,13 +267,12 @@ public sealed partial class CharUnboundMgrService(
             throw Info("That character is queued for deletion and cannot enter the game.");
 
         var previousCharacterId = call.Session.CharacterId;
+        var previousAttributes = call.Session.SnapshotAttributes();
         if (!online.TryBeginEnter(character.Id, call.Session.SessionId))
             throw Info($"{character.Name} is already online.");
 
         var changedPreviousHooks = new List<ICharacterEntryHook>();
         var enteredCharacterHooks = new List<ICharacterEntryHook>();
-        var previousAttributes = new Dictionary<string, PyValue>(StringComparer.Ordinal);
-        var sessionChangeStarted = false;
         try
         {
             var accountRole = call.Session.Get("accountRole") is PyLong role ? role.Value : 0;
@@ -322,8 +321,6 @@ public sealed partial class CharUnboundMgrService(
             }
             if (attributes.GetValueOrDefault("deferredDockedShipId") is PyLong deferredShipId && deferredShipId.Value > 0)
                 attributes["shipid"] = None;
-            foreach (var name in attributes.Keys)
-                previousAttributes[name] = call.Session.Get(name) ?? None;
 
             int? airNpeStateChanged = null;
             if (skipTutorial)
@@ -343,7 +340,6 @@ public sealed partial class CharUnboundMgrService(
             if (changingCharacter)
                 call.Session.SendNotification("OnCharacterSelected", "clientID");
 
-            sessionChangeStarted = true;
             var announced = call.Session.Change([.. attributes.Select(attribute => (attribute.Key, attribute.Value))]);
             if (announced.Any(change => change.Name == "charid"))
             {
@@ -373,15 +369,12 @@ public sealed partial class CharUnboundMgrService(
                 }
             }
 
-            if (sessionChangeStarted)
+            try
             {
-                try
-                {
-                    call.Session.Change([.. previousAttributes.Select(attribute => (attribute.Key, attribute.Value))]);
-                }
-                catch
-                {
-                }
+                call.Session.RestoreAttributes(previousAttributes);
+            }
+            catch
+            {
             }
 
             var restoredReservation = online.CancelEnter(call.Session.SessionId);

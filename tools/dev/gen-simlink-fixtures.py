@@ -18,7 +18,7 @@ KINDS = {"Hello": 1, "HelloAck": 2, "Enter": 3, "Leave": 4, "Bind": 5, "UpdateSt
          "PlaceContainer": 28, "ContainerPlaced": 29, "ChangeWreck": 30, "RemoveWreck": 31, "Measured": 32,
          "AdjustCharge": 33, "ChargeAdjusted": 34, "Arrived": 35, "LaunchDrone": 36, "DroneCommand": 37, "DroneResults": 38,
          "DroneScooped": 39, "DroneReleased": 40, "ModuleWorkCycle": 51, "ModuleWorkResult": 52, "ModuleEnded": 53, "LaunchFighter": 54, "FighterOrder": 55, "FighterResults": 56, "FighterLanded": 57, "FighterReleased": 58, "FighterGotoPoint": 59, "FighterSize": 60, "UpdateEffect": 61, "BuffState": 62, "Deployed": 63, "RemoveDeployed": 64, "PlaceProbe": 65, "RemoveProbe": 66,
-         "EcmBurst": 67, "PlaceDisruptor": 68, "SetDisruptorActive": 69, "PlaceInhibitor": 70}
+         "EcmBurst": 67, "PlaceDisruptor": 68, "SetDisruptorActive": 69, "PlaceInhibitor": 70, "ScanTargets": 71}
 
 def s(text):  # u16 length + UTF-8
     data = text.encode("utf-8")
@@ -429,6 +429,10 @@ def build(m):
     if k == "DroneResults":
         return frame(k, u64(m["sessionId"]) + bytes([m["command"]]) + struct.pack("<I", len(m["results"]))
                      + b"".join(i64(r["droneId"]) + s(r["reason"]) for r in m["results"]))
+    if k == "ScanTargets":  # protocol 52: the scene's scan targets, the answer to command 27
+        return frame(k, u64(m["sessionId"]) + bytes([m["command"]]) + struct.pack("<I", len(m["targets"]))
+                     + b"".join(i64(t["id"]) + bytes([t["kind"]]) + struct.pack("<i", t["typeId"]) + struct.pack("<3d", *t["position"])
+                                for t in m["targets"]))
     if k == "DroneScooped":
         return frame(k, u64(m["sessionId"]) + i64(m["droneId"]))
     if k == "DroneReleased":
@@ -907,6 +911,7 @@ valid = [
     {"name": "order to go home", "kind": "DroneCommand", "sessionId": "1790646377000015", "command": 2, "targetId": "0", "droneIds": ["9988400003716"], "controlRange": 20_000.0},
     {"name": "what the drones did with an order", "kind": "DroneResults", "sessionId": "1790646377000015", "command": 1,
      "results": [{"droneId": "9988400003716", "reason": ""}, {"droneId": "9988400003717", "reason": "NOT_CONTROLLED"}]},
+    {"name": "what a probe scan can find in the system", "kind": "ScanTargets", "sessionId": "1790646377000015", "command": 27, "targets": [{"id": "9988400003716", "kind": 1, "typeId": 586, "position": [1200.5, -300.0, 45000.25]}, {"id": "9988400003717", "kind": 4, "typeId": 12198, "position": [-5000.0, 0.0, 9000.0]}]},
     {"name": "a drone scooped into the bay", "kind": "DroneScooped", "sessionId": "1790646377000015", "droneId": "9988400003716"},
     {"name": "a drone let go", "kind": "DroneReleased", "sessionId": "1790646377000015", "droneId": "9988400003716",
      "position": [311989835983.1308, -13069154020.916222, 156646308895.76187]},

@@ -73,5 +73,7 @@ pub const PLACE_DISRUPTOR: u8 = 68;
 pub const SET_DISRUPTOR_ACTIVE: u8 = 69;
 /// The host puts a Mobile Cynosural Inhibitor in space, anchored or not (protocol 50): the same placement as a disruptor's.
 pub const PLACE_INHIBITOR: u8 = 70;
+/// The scan targets of a system, answered to the host's scan target query (command 27, protocol 52).
+pub const SCAN_TARGETS: u8 = 71;
 pub const BUFF_STATE: u8 = 62;
 pub const ECM_BURST: u8 = 67;

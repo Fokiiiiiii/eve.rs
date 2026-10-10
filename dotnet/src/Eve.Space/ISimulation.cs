@@ -30,6 +30,9 @@ public sealed record CommandReply(bool Accepted, long At, string? Reason, double
     /// <summary>What each drone did with an order to drones (<see cref="SimDroneResult.Reason"/> is empty for one that took it).</summary>
     public IReadOnlyList<SimDroneResult> Drones { get; init; } = [];
 
+    /// <summary>What the scene holds that a probe scan can find (command 27, protocol 52).</summary>
+    public IReadOnlyList<SimScanTarget> ScanTargets { get; init; } = [];
+
     /// <summary>What each fighter squadron did with an order to fighters (<see cref="SimFighterResult.Reason"/> is empty for one that took it).</summary>
     public IReadOnlyList<SimFighterResult> Fighters { get; init; } = [];
 

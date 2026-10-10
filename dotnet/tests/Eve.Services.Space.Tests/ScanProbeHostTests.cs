@@ -520,4 +520,56 @@ public class ScanProbeHostTests
         Assert.Equal(8, await LoadedAsync(rig, character, launcher));
         Assert.Null(await rig.Probes.GetAsync(probes[0]));
     }
+
+    /// <summary>Four combat probes spread apart and scanned to the end: ShipInSystem is found at 100 percent, at the origin.</summary>
+    private static async Task<(ClientSession Session, Eve.Characters.Created Character)> SpreadScanAsync(Rig rig)
+    {
+        var (session, character, launchers) = await LaunchersOfAsync(rig, 18_639, 30_028, 8);
+        await rig.Space.LaunchAsync(session, launchers[0], 4, CancellationToken.None);
+        var probes = Placed(rig).Select(p => p.ProbeId).ToArray();
+        rig.Sim.ScanTargetsAnswer = [ProbeFrigate(ShipInSystem, [0, 0, 0])];
+        double[][] spread = [[1e10, 0, 1e10], [-1e10, 0, 1e10], [-1e10, 0, -1e10], [1e10, 0, -1e10]];
+        await rig.ProbeScans.RequestScansAsync(session, ScanRequest(probes.Select((id, i) => (id, spread[i], 1)).ToArray()), CancellationToken.None);
+        rig.Now += 1_250;
+        await rig.Scheduler.RunDueAsync();
+        rig.Now += 7_500;
+        await rig.Scheduler.RunDueAsync();
+        return (session, character);
+    }
+
+    [PgFact]
+    public async Task A_warp_to_a_scan_result_goes_to_the_exact_place_the_last_completed_scan_found_at_100_percent()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var (session, _) = await SpreadScanAsync(rig);
+        var oid = await rig.BindBeyonceAsync(session);
+        var before = rig.Sim.Heard.Count;
+
+        await rig.BeyonceCallWithAsync(session, "CmdWarpToStuff", oid, [new PyStr("scan"), new PyLong(ShipInSystem)], ("minRange", new PyInt(5_000)));
+
+        var warp = Assert.Single(rig.Sim.Heard.Skip(before).OfType<SimCommand>());
+        Assert.Equal(SimCommands.WarpToPoint, warp.Code);
+        Assert.Equal(new double[] { 0, 0, 0, 5_000 }, warp.Args.ToArray());
+    }
+
+    [PgFact]
+    public async Task A_warp_to_a_scan_result_is_refused_for_a_target_no_completed_scan_found_at_100_percent()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var (session, _) = await SpreadScanAsync(rig);
+        var oid = await rig.BindBeyonceAsync(session);
+        // a target the scan did not find, and the same target after a scan that found nothing: both are refused
+        await Assert.ThrowsAnyAsync<Exception>(() => rig.BeyonceCallWithAsync(session, "CmdWarpToStuff", oid, [new PyStr("scan"), new PyLong(FarShip)]));
+
+        var probes = Placed(rig).Select(p => p.ProbeId).Take(4).ToArray();
+        var far = ScanRequest(probes.Select(id => (id, new[] { 1e13, 0, 1e13 }, 1)).ToArray());
+        await rig.ProbeScans.RequestScansAsync(session, far, CancellationToken.None);
+        rig.Now += 1_250;
+        await rig.Scheduler.RunDueAsync();
+        rig.Now += 7_500;
+        await rig.Scheduler.RunDueAsync();
+        Assert.Contains(Events.Of(session), e => e.Name == "OnSystemScanStopped");
+
+        await Assert.ThrowsAnyAsync<Exception>(() => rig.BeyonceCallWithAsync(session, "CmdWarpToStuff", oid, [new PyStr("scan"), new PyLong(ShipInSystem)]));
+    }
 }

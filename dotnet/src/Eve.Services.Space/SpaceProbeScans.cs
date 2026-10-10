@@ -260,6 +260,7 @@ public sealed class SpaceProbeScans
         {
             return;
         }
+        _space.WarpAuthority.Record(session, request.SolarSystemId, outcome.Results);
         session.SendNotification(
             "OnSystemScanStopped", "solarsystemid2",
             new PyList(probeIds),

@@ -247,7 +247,7 @@ public Func<long, long, CancellationToken, Task<int>>? SkillLevelOfCharacter { g
         }
 
         var type = JsSemantics.PlainText(call.Arg(0));
-        if (type is not ("item" or "bookmark" or "char" or "position"))
+        if (type is not ("item" or "bookmark" or "char" or "position" or "scan"))
         {
             throw WarpRefusal();
         }
@@ -331,6 +331,15 @@ public Func<long, long, CancellationToken, Task<int>>? SkillLevelOfCharacter { g
                 throw WarpRefusal();
             }
             coordinate = bookmark;
+        }
+        else if (type == "scan")
+        {
+            // a scan result is warped to only as the reference allows: the 100 percent place of the last completed scan in this system (no fleet warp)
+            if (fleetWarp || callerSystem is not { } scanSystem || space.WarpAuthority.Resolve(call.Session, scanSystem, targetId) is not { } place)
+            {
+                throw WarpRefusal();
+            }
+            coordinate = new WarpCoordinates(scanSystem, place[0], place[1], place[2]);
         }
         else if (type == "char")
         {

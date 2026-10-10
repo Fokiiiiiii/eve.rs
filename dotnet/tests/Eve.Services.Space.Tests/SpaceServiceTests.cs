@@ -1716,7 +1716,7 @@ public class SpaceServiceTests
         await InSpaceAsync(rig, optOutSession);
         await InSpaceAsync(rig, otherWingSession);
 
-        var store = new Eve.Services.Space.FleetStore(rig.Source);
+        var store = rig.FleetStore;
         var fleetId = await store.CreateAsync(leader.CharacterId);
         try
         {
@@ -1824,7 +1824,7 @@ public class SpaceServiceTests
         await InSpaceAsync(rig, leaderSession);
         await InSpaceAsync(rig, memberSession);
 
-        var store = new Eve.Services.Space.FleetStore(rig.Source);
+        var store = rig.FleetStore;
         var fleetId = await store.CreateAsync(leader.CharacterId);
         try
         {

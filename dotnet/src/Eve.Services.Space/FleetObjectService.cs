@@ -136,11 +136,74 @@ public sealed partial class FleetObjectService(FleetStore store, Func<long> nowU
     [Method("Invite")]
     public async ValueTask<PyValue> Invite(ServiceCall call)
     {
-        if (FleetId(call) is { } fleetId)
-            await store.InviteAsync(fleetId, CharacterId(call.Session), Number(call.Arg(0)) ?? 0,
-                Number(call.Arg(1)) ?? FleetStore.NoUnit, Number(call.Arg(2)) ?? FleetStore.NoUnit,
-                (int)(Number(call.Arg(3)) ?? FleetStore.Member), call.Cancellation);
-        return None;
+        if (FleetId(call) is not { } fleetId) return PyBool.False;
+        var inviterId = CharacterId(call.Session);
+        var inviteeId = Number(call.Arg(0)) ?? 0;
+        if (inviteeId <= 0 || inviteeId == inviterId) return PyBool.False;
+        if (await store.FleetIdForCharacterAsync(inviteeId, call.Cancellation) is not null)
+            throw MachoErrors.ThrowUserError("FleetError");
+
+        var before = await store.SnapshotAsync(fleetId, call.Cancellation);
+        var invited = await store.InviteAsync(fleetId, inviterId, inviteeId,
+            Number(call.Arg(1)) ?? FleetStore.NoUnit, Number(call.Arg(2)) ?? FleetStore.NoUnit,
+            (int)(Number(call.Arg(3)) ?? FleetStore.Member), call.Cancellation);
+        if (!invited) return PyBool.False;
+
+        SendInviteNotification(sessionForCharacter?.Invoke(inviteeId), fleetId, inviterId, autoAccept: false);
+        var after = await store.SnapshotAsync(fleetId, call.Cancellation);
+        if (before is not null) PublishJoinRequestChanges(before, after);
+        return PyBool.True;
+    }
+
+    [Method("MassInvite")]
+    public async ValueTask<PyValue> MassInvite(ServiceCall call)
+    {
+        if (FleetId(call) is not { } fleetId) return None;
+        var inviterId = CharacterId(call.Session);
+        var before = await store.SnapshotAsync(fleetId, call.Cancellation);
+        var wingId = Number(call.Arg(1)) ?? FleetStore.NoUnit;
+        var squadId = Number(call.Arg(2)) ?? FleetStore.NoUnit;
+        var role = (int)(Number(call.Arg(3)) ?? FleetStore.Member);
+        List<PyValue> invited = [];
+        foreach (var inviteeId in Sequence(call.Arg(0)).Select(Number).Where(id => id is > 0).Select(id => id!.Value))
+        {
+            if (inviteeId == inviterId) continue;
+            if (await store.FleetIdForCharacterAsync(inviteeId, call.Cancellation) is not null)
+                throw MachoErrors.ThrowUserError("FleetError");
+            if (!await store.InviteAsync(fleetId, inviterId, inviteeId, wingId, squadId, role, call.Cancellation))
+                continue;
+            SendInviteNotification(sessionForCharacter?.Invoke(inviteeId), fleetId, inviterId, autoAccept: false);
+            invited.Add(new PyLong(inviteeId));
+        }
+        var after = await store.SnapshotAsync(fleetId, call.Cancellation);
+        if (before is not null) PublishJoinRequestChanges(before, after);
+        return new PyList(invited);
+    }
+
+    internal static void SendInviteNotification(ClientSession? invitee, long fleetId, long inviterId, bool autoAccept)
+    {
+        invitee?.SendNotification("OnFleetInvite", "clientID",
+            new PyLong(fleetId), new PyLong(inviterId), new PyStr("AskJoinFleet"),
+            Py.KeyVal([
+                ("autoAccept", autoAccept ? PyBool.True : PyBool.False),
+                ("name", new PyTuple([new PyInt(2), new PyLong(inviterId)]))
+            ]));
+    }
+
+    [Method("Reconnect")]
+    public ValueTask<PyValue> Reconnect(ServiceCall call) => RefreshMemberSessionAsync(call);
+
+    [Method("FinishMove")]
+    public ValueTask<PyValue> FinishMove(ServiceCall call) => RefreshMemberSessionAsync(call);
+
+    private async ValueTask<PyValue> RefreshMemberSessionAsync(ServiceCall call)
+    {
+        if (FleetId(call) is not { } fleetId ||
+            await store.SnapshotAsync(fleetId, call.Cancellation) is not { } snapshot ||
+            snapshot.Members.FirstOrDefault(member => member.CharacterId == CharacterId(call.Session)) is not { } member)
+            throw MachoErrors.ThrowUserError("FleetNotFound");
+        SetSession(call.Session, fleetId, member);
+        return PyBool.True;
     }
 
     [Method("AcceptInvite")]
@@ -148,12 +211,28 @@ public sealed partial class FleetObjectService(FleetStore store, Func<long> nowU
     {
         if (FleetId(call) is not { } fleetId) return None;
         var before = await store.SnapshotAsync(fleetId, call.Cancellation);
-        var member = await store.JoinAsync(fleetId, CharacterId(call.Session), call.Cancellation);
-        if (member is null) return None;
-        SetSession(call.Session, fleetId, member);
+        var characterId = CharacterId(call.Session);
+        var member = await store.JoinAsync(fleetId, characterId, Number(call.Arg(0)), call.Cancellation);
+        if (member is null)
+        {
+            var current = await store.SnapshotAsync(fleetId, call.Cancellation);
+            var advert = await store.ReadJoinAdvertPolicyAsync(fleetId, call.Session, call.Cancellation);
+            var capacity = current?.MaxMemberCount ?? FleetStore.MaxMembers;
+            if (advert?.JoinLimit is { } joinLimit)
+                capacity = Math.Min(capacity, Math.Max(1, joinLimit));
+            if (current is not null && current.Members.Count >= capacity)
+                throw MachoErrors.ThrowUserError("FleetTooManyMembers");
+            throw MachoErrors.ThrowUserError("FleetNotFound");
+        }
+
         var after = await store.SnapshotAsync(fleetId, call.Cancellation);
+        if (before is not null) PublishJoinRequestChanges(before, after);
+        call.Session.SendNotification("OnFleetRespawnPointsUpdate", "clientID", new PyList([]));
+        SetSession(call.Session, fleetId, member);
+        call.Session.SendNotification("OnFleetStateChange", "charid",
+            Py.KeyVal([("targetTags", new PyDict([]))]));
         if (before is not null) PublishMemberChanges(call.Session, fleetId, before, after);
-        return None;
+        return PyBool.True;
     }
 
     [Method("RejectInvite")]
@@ -310,37 +389,95 @@ public sealed partial class FleetObjectService(FleetStore store, Func<long> nowU
             requester.Role != FleetStore.Leader && !FleetStore.HasBossJob(requester.Job))
             return None;
 
-        return new PyDict(state.JoinRequests.Select(request =>
-            new System.Collections.Generic.KeyValuePair<PyValue, PyValue>(new PyLong(request.CharacterId),
-                Py.KeyVal([("charID", new PyLong(request.CharacterId))]))).ToArray());
+        return JoinRequestsValue(state.JoinRequests);
     }
 
     [Method("RejectJoinRequest")]
     public async ValueTask<PyValue> RejectJoinRequest(ServiceCall call)
     {
-        if (FleetId(call) is { } id)
-            await store.RejectJoinRequestAsync(id, CharacterId(call.Session), Number(call.Arg(0)) ?? 0, call.Cancellation);
+        if (FleetId(call) is not { } fleetId) return None;
+        var before = await store.SnapshotAsync(fleetId, call.Cancellation);
+        if (before is null ||
+            !await store.RejectJoinRequestAsync(fleetId, CharacterId(call.Session),
+                Number(call.Arg(0)) ?? 0, call.Cancellation))
+            return None;
+        PublishJoinRequestChanges(before, await store.SnapshotAsync(fleetId, call.Cancellation));
         return None;
-    }
-
-    private async Task RefreshSessionAsync(ClientSession session, long fleetId, long characterId, CancellationToken cancellationToken)
-    {
-        var snapshot = await store.SnapshotAsync(fleetId, cancellationToken);
-        var member = snapshot?.Members.FirstOrDefault(item => item.CharacterId == characterId);
-        if (member is not null && characterId == CharacterId(session)) SetSession(session, fleetId, member);
     }
 
     private long? FleetId(ServiceCall call) => call.BoundObjectId is { } oid && _fleetByOid.TryGetValue(oid, out var id) ? id : null;
     private long? BoundFleetId(ServiceCall call) => FleetId(call);
 
-    private static PyValue MemberValue(FleetMemberSnapshot member) => Py.KeyVal([
-        ("charID", new PyLong(member.CharacterId)),
-        ("wingID", new PyLong(member.WingId)),
-        ("squadID", new PyLong(member.SquadId)),
-        ("role", new PyInt(member.Role)),
-        ("job", new PyInt(member.Job)),
-        ("memberOptOuts", MemberOptOutsValue(member))
-    ]);
+    private PyValue MemberValue(FleetMemberSnapshot member)
+    {
+        var session = sessionForCharacter?.Invoke(member.CharacterId);
+        var solarSystemId = session?.GetInt("solarsystemid2") ?? session?.GetInt("solarsystemid");
+        var fileTime = (nowUnixMs() + 11_644_473_600_000L) * 10_000L;
+        return Py.KeyVal([
+            ("squadID", new PyLong(member.SquadId)),
+            ("wingID", new PyLong(member.WingId)),
+            // shortcut: fleet skill levels are not stored; replace zeroes when the character-skill projection is wired.
+            ("skills", PyList.Of(new PyInt(0), new PyInt(0), new PyInt(0))),
+            ("timestamp", new PyLong(fileTime)),
+            ("stationID", NullableLong(session?.GetInt("stationid"))),
+            ("clientID", session is { ClientId: > 0 } ? new PyLong(session.ClientId) : PyNone.Instance),
+            ("job", new PyInt(member.Job)),
+            ("role", new PyInt(member.Role)),
+            ("shipTypeID", NullableLong(member.ShipTypeId)),
+            ("solarSystemID", NullableLong(solarSystemId)),
+            ("memberOptOuts", MemberOptOutsValue(member)),
+            ("charID", new PyLong(member.CharacterId))
+        ]);
+    }
+
+    internal static FleetJoinRequest JoinRequestFromSession(ClientSession session)
+    {
+        var securityStatus = session.Get("securityStatus") switch
+        {
+            PyReal real when double.IsFinite(real.Value) => real.Value,
+            PyInt number => number.Value,
+            PyLong number => number.Value,
+            _ => 0
+        };
+        return new FleetJoinRequest(CharacterId(session),
+            session.GetInt("corpid") ?? session.GetInt("corporationID"),
+            session.GetInt("allianceid") ?? session.GetInt("allianceID"),
+            session.GetInt("warfactionid") ?? session.GetInt("warFactionID"),
+            securityStatus);
+    }
+
+    internal static PyValue JoinRequestValue(FleetJoinRequest request, ClientSession? session)
+    {
+        var character = session is not null && CharacterId(session) == request.CharacterId ? session : null;
+        var corporationId = character?.GetInt("corpid") ?? character?.GetInt("corporationID") ?? request.CorporationId;
+        var allianceId = character?.GetInt("allianceid") ?? character?.GetInt("allianceID") ?? request.AllianceId;
+        var warFactionId = character?.GetInt("warfactionid") ?? character?.GetInt("warFactionID") ?? request.WarFactionId;
+        var securityStatus = request.SecurityStatus;
+        if (character?.Get("securityStatus") is { } value)
+            securityStatus = value switch
+            {
+                PyReal real when double.IsFinite(real.Value) => real.Value,
+                PyInt number => number.Value,
+                PyLong number => number.Value,
+                _ => securityStatus
+            };
+        return Py.KeyVal([
+            ("charID", new PyLong(request.CharacterId)),
+            ("corpID", NullableLong(corporationId)),
+            ("allianceID", NullableLong(allianceId)),
+            ("warFactionID", NullableLong(warFactionId)),
+            ("securityStatus", new PyReal(securityStatus))
+        ]);
+    }
+
+    internal static long? BossCharacterId(FleetSnapshot snapshot) =>
+        snapshot.Members.FirstOrDefault(member => FleetStore.HasBossJob(member.Job))?.CharacterId;
+
+    private PyValue JoinRequestsValue(IReadOnlyList<FleetJoinRequest> requests) => new PyDict(
+        requests.OrderBy(request => request.CharacterId).Select(request =>
+            new System.Collections.Generic.KeyValuePair<PyValue, PyValue>(
+                new PyLong(request.CharacterId),
+                JoinRequestValue(request, sessionForCharacter?.Invoke(request.CharacterId)))).ToArray());
 
     private static PyValue WingValue(FleetWingSnapshot wing) => Py.KeyVal([
         ("wingID", new PyLong(wing.WingId)),
@@ -353,18 +490,20 @@ public sealed partial class FleetObjectService(FleetStore store, Func<long> nowU
     private static long CharacterId(ClientSession session) => session.CharacterId ?? session.GetInt("charid") ?? 0;
     private static void SetSession(ClientSession session, long fleetId, FleetMemberSnapshot member)
     {
-        session.Set("fleetid", new PyLong(fleetId));
-        session.Set("fleetrole", new PyInt(member.Role));
-        session.Set("wingid", new PyLong(member.WingId));
-        session.Set("squadid", new PyLong(member.SquadId));
+        session.Change(
+            ("fleetid", new PyLong(fleetId)),
+            ("fleetrole", new PyInt(member.Role)),
+            ("wingid", member.WingId > 0 ? new PyLong(member.WingId) : PyNone.Instance),
+            ("squadid", member.SquadId > 0 ? new PyLong(member.SquadId) : PyNone.Instance));
     }
 
     private static void ClearSession(ClientSession session)
     {
-        session.Set("fleetid", PyNone.Instance);
-        session.Set("fleetrole", PyNone.Instance);
-        session.Set("wingid", PyNone.Instance);
-        session.Set("squadid", PyNone.Instance);
+        session.Change(
+            ("fleetid", PyNone.Instance),
+            ("fleetrole", PyNone.Instance),
+            ("wingid", PyNone.Instance),
+            ("squadid", PyNone.Instance));
     }
 
     private static long? Number(PyValue value) => value switch
@@ -679,41 +818,75 @@ private static readonly System.Collections.Generic.HashSet<string> BroadcastName
     {
         var oldMembers = before.Members.ToDictionary(member => member.CharacterId);
         var newMembers = after?.Members.ToDictionary(member => member.CharacterId) ?? [];
+        ClientSession? LiveSession(long characterId)
+        {
+            var session = characterId == CharacterId(issuer) ? issuer : sessionForCharacter?.Invoke(characterId);
+            return session is not null && CharacterId(session) == characterId ? session : null;
+        }
+
         var recipients = new System.Collections.Generic.HashSet<ClientSession> { issuer };
         foreach (var member in before.Members.Concat(after?.Members ?? []))
-            if (sessionForCharacter?.Invoke(member.CharacterId) is { } session && session.CharacterId == member.CharacterId)
+            if (LiveSession(member.CharacterId) is { } session)
                 recipients.Add(session);
 
-        foreach (var characterId in oldMembers.Keys.Union(newMembers.Keys))
+        var changes = oldMembers.Keys.Union(newMembers.Keys).Select(characterId =>
         {
             oldMembers.TryGetValue(characterId, out var oldMember);
             newMembers.TryGetValue(characterId, out var newMember);
-            if (oldMember == newMember) continue;
+            return (CharacterId: characterId, Old: oldMember, New: newMember);
+        }).Where(change => change.Old != change.New).ToArray();
+
+        foreach (var change in changes)
+        {
+            if (LiveSession(change.CharacterId) is not { } session) continue;
+            if (change.New is null) ClearSession(session);
+            else if (change.Old is null) SetSession(session, fleetId, change.New);
+        }
+
+        foreach (var change in changes)
+        {
             foreach (var recipient in recipients)
             {
-                if (recipient.CharacterId is not { } recipientId ||
-                    !oldMembers.ContainsKey(recipientId) && !newMembers.ContainsKey(recipientId)) continue;
-                recipient.SendNotification("OnFleetMemberChanged", "fleetid",
-                    new PyLong(characterId), new PyLong(fleetId),
-                    NullableLong(oldMember?.WingId), NullableLong(oldMember?.SquadId),
-                    NullableInt(oldMember?.Role), NullableInt(oldMember?.Job),
-                    oldMember is null ? PyNone.Instance : MemberOptOutsValue(oldMember),
-                    NullableLong(newMember?.WingId), NullableLong(newMember?.SquadId),
-                    NullableInt(newMember?.Role), NullableInt(newMember?.Job),
-                    newMember is null ? PyNone.Instance : MemberOptOutsValue(newMember),
-                    after?.Members.Count == 1 ? PyBool.True : PyBool.False);
+                var recipientId = CharacterId(recipient);
+                if (recipientId <= 0 || !oldMembers.ContainsKey(recipientId) && !newMembers.ContainsKey(recipientId))
+                    continue;
+
+                if (change.Old is null && change.New is { } joined)
+                    recipient.SendNotification("OnFleetJoin", "fleetid", MemberValue(joined));
+                else if (change.New is null)
+                    recipient.SendNotification("OnFleetLeave", "fleetid", new PyLong(change.CharacterId));
+                else
+                    recipient.SendNotification("OnFleetMemberChanged", "fleetid",
+                        new PyLong(change.CharacterId), new PyLong(fleetId),
+                        NullableLong(change.Old?.WingId), NullableLong(change.Old?.SquadId),
+                        NullableInt(change.Old?.Role), NullableInt(change.Old?.Job),
+                        change.Old is null ? PyNone.Instance : MemberOptOutsValue(change.Old),
+                        NullableLong(change.New.WingId), NullableLong(change.New.SquadId),
+                        NullableInt(change.New.Role), NullableInt(change.New.Job), MemberOptOutsValue(change.New),
+                        after?.Members.Count == 1 ? PyBool.True : PyBool.False);
             }
         }
 
-        foreach (var member in before.Members.Concat(after?.Members ?? []).DistinctBy(member => member.CharacterId))
+        foreach (var change in changes)
         {
-            var session = member.CharacterId == CharacterId(issuer) ? issuer : sessionForCharacter?.Invoke(member.CharacterId);
-            if (session?.CharacterId != member.CharacterId) continue;
-            if (newMembers.TryGetValue(member.CharacterId, out var current))
-                SetSession(session, fleetId, current);
-            else
-                ClearSession(session);
+            if (change.Old is null || change.New is null ||
+                change.Old.WingId == change.New.WingId &&
+                change.Old.SquadId == change.New.SquadId &&
+                change.Old.Role == change.New.Role)
+                continue;
+            LiveSession(change.CharacterId)?.SendNotification("OnFleetMove", "fleetid");
         }
+    }
+
+    private void PublishJoinRequestChanges(FleetSnapshot before, FleetSnapshot? after)
+    {
+        var requests = after?.JoinRequests ?? [];
+        if (before.JoinRequests.SequenceEqual(requests) ||
+            after is null && before.JoinRequests.Count == 0)
+            return;
+        var bossId = BossCharacterId(after ?? before);
+        if (bossId is { } id && sessionForCharacter?.Invoke(id) is { } session && CharacterId(session) == id)
+            session.SendNotification("OnJoinRequestUpdate", "fleetid", JoinRequestsValue(requests));
     }
 
     private static PyValue NullableLong(long? value) => value is { } id ? new PyLong(id) : PyNone.Instance;

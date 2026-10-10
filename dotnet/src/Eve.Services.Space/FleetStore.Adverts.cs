@@ -246,6 +246,16 @@ public sealed partial class FleetStore
         return adverts;
     }
 
+    public async Task<(bool IsVisible, bool JoinNeedsApproval, int? JoinLimit)?> ReadJoinAdvertPolicyAsync(
+        long fleetId, ClientSession session, CancellationToken cancellationToken = default)
+    {
+        var advert = (await ReadFleetAdvertsAsync(fleetId, includeInactive: false, cancellationToken))
+            .SingleOrDefault();
+        return advert is null
+            ? null
+            : (IsVisibleTo(advert.Payload, session), advert.Payload.JoinNeedsApproval, advert.Payload.AdvertJoinLimit);
+    }
+
     private async Task<FleetAdvertPayload?> ReadFleetAdvertPayloadAsync(
         System.Data.Common.DbConnection connection, System.Data.Common.DbTransaction? transaction,
         long fleetId, CancellationToken cancellationToken)

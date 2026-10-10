@@ -762,6 +762,9 @@ Increment 2, done (tests: `CynoJumpHostTests`: A_beacon_that_anchors_is_told_to_
 - A beacon that anchors is told to its lighter's fleet (`OnFleetJumpBeaconDeployableChange`, true), and told gone (false) when its time is up.
 - A bridge opener is told the anchor is activated with no passengers (`OnGroupJumpAnchorActivated`, EveJS `notifyGroupJumpAnchor`); the fleet is told the bridge is open (`OnBridgeModeChange`, as before). A bridge passage notifies no one (EveJS sends none); a conduit notifies its anchor and passengers (as before).
 
+Increment 3, done (tests: `BeaconHostTests`: A_standard_beacon_that_anchors_inside_an_inhibitors_range_is_never_lit, A_covert_beacon_is_not_stopped_by_an_inhibitor_and_a_standard_one_outside_its_range_anchors, An_inhibitor_placed_later_does_not_unlight_a_beacon_already_lit; decisions in DEVIATIONS "Track A8c"):
+- A standard or highsec authorized beacon whose activation falls inside an anchored Mobile Cynosural Inhibitor's 100 km is not lit: its record keeps an activation time of never (`SpaceContainers.NeverLit`), the simulation is not told it is anchored, and a jump to it is refused as not lit. A covert beacon is not stopped; a lit beacon is not unlit by an inhibitor placed later (the wiki: "do not remove existing cynos").
+
 Open, each with its blocker (the remaining increments):
 - Shortcut: a beacon that is lit before a restart is not told to its fleet again (as the field of track A6; the notice is sent when it anchors, not when a ship returns to the system).
 - NOT BUILT: a mobile inhibitor's effect on a beacon's activation (the 100 km refusal at anchoring).

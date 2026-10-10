@@ -27,10 +27,10 @@ public sealed class RealSdeShipSweepTests
     private static readonly (int Flag, string Name)[] SubsystemClasses = [(125, "Core"), (126, "Defensive"), (127, "Offensive"), (128, "Propulsion")];
 
     /// <summary>
-    /// The Strategic Cruisers that still offer five subsystem flags (the SDE's maxSubSystems is 5) against the four classes. Closed by SF-4; the list is
-    /// asserted exactly, so it must be emptied when SF-4 lands.
+    /// The Strategic Cruisers that offer more subsystem flags than the four classes (the SDE's maxSubSystems is 5). Empty since SF-4: a ship offers at most
+    /// the four classes (<c>Slots.Count</c>). The list is asserted exactly.
     /// </summary>
-    private static readonly int[] OpenSubsystemHulls = [29984, 29986, 29988, 29990];
+    private static readonly int[] OpenSubsystemHulls = [];
 
     /// <summary>The six hulls with a tactical mode (the client's shipmode table: T3D plus Anhinga), by their SDE names.</summary>
     private static readonly string[] ModeHulls = ["Confessor", "Svipul", "Jackdaw", "Hecate", "Skua", "Anhinga"];

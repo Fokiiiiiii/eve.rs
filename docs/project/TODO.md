@@ -593,3 +593,19 @@ Open, each with its blocker:
 - A process restart of the host is not exercised by a test (the restore is called directly).
 - The client was not run on this host.
 
+## 26. Track A6: the capital jump drive to a fleet's cynosural field (2026-10-10)
+
+Done (tests: `JumpDriveRulesTests`, `CynoJumpHostTests` (PostgreSQL), `Scene` cyno tests in `crates/eve-space/src/scene/tests.rs`; decisions in DEVIATIONS "Track A6: the capital jump drive"):
+- The simulation carries a cynosural jump (command 26, protocol 51): the drive spools for the SDE's jump duration, the ship leaves and appears on the ring round the field lit in the destination system, facing it; with no field lit there the ship goes back to where it was.
+- The host answers `CmdJumpToFleetModuleBeacon` and `CmdJumpToFleetDeployableBeacon` (BeyonceService) and refuses by name where the wiki gives the rule: the field must be lit, the pilot must be in the field's fleet, the origin must be outside high-security space, the hull must be allowed the field's kind (covert: black ops; industrial: jump freighter, capital industrial, black ops), the range must hold (SDE range, 20 % a calibration level), the drive must not be cooling down, and the isotopes must be in the fuel bay or cargo.
+- Fuel: the shared fuel debit (`CharacterShips.TakeFuelAsync`, factored out of the module cycles) takes the isotopes; the fuel and the new fatigue are written in one transaction (`DebitJumpAsync`, `space.jump_fatigue`, migration 0009). The fatigue and the activation cooldown follow the wiki (`JumpDriveRules.AfterJump`).
+- The fleet is told when a field is lit or gone (`OnFleetJumpBeaconModuleChange`, `SpaceContainers.FieldAnnounced`), so the client's jump menu lists it.
+- The jump lands through the existing session change (`FinishJumpAsync`), as a stargate jump does.
+
+Open, each with its blocker:
+- NOT BUILT: the capacitor cost of the activation (95 % of the capacitor, attribute 898, less the drive operation skill): the host does not read the capacitor. Blocker: no capacitor query from the simulation to the host.
+- NOT BUILT: jump bridges (CmdBridgeToFleetModuleBeacon, CmdBridgeToFleetDeployableBeacon, the Titan, black ops and Rorqual bridges), group jumps and conduit jumps (CmdGroupJumpTo..., CmdJumpThroughFleet), the Jump Portal Generator (Titan, portals and the portal array), covert and industrial beacons from deployables. The client calls them (eve-logic `cynoTravelSvc.py`); the host refuses none of them by name yet.
+- NOT BUILT: the jump drive economizers (the wiki's JDE terms), so the fuel is the base formula.
+- LIMITATION: the spool is held in the simulation's memory; a restart of the process ends it without a jump. The fields are put back on a restart, but the fleet is not told again.
+- LIMITATION: a fuel debit that fails after the simulation accepts the spool lets the jump stand (the check and the debit are two steps; the module cycles are the only other debit).
+- NOT RUN: the client. No graphical client or MITM capture on this host; the menu, the spool effect (`effects.JumpDriveOut`) and the arrival are not seen in the client.

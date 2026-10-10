@@ -154,6 +154,8 @@ public class ScanProbeHostTests
         var (session, character, launcher) = await LauncherInSpaceAsync(rig, probes: 8);
         var system = (int)session.GetInt("solarsystemid2")!.Value;
 
+        // the restore the entry started is done before the record is seeded (the seeding is not part of what the entry restores)
+        await rig.Space.Probes!.RestoreAsync(system, CancellationToken.None);
         // one probe of the pilot is already active in this system (a record the cap counts; the sim holds no ball for it)
         await rig.Probes.SaveAsync(new ScanProbeRecord(
             ProbeBase + 999, character.CharacterId, system, CoreProbe, CharacterShips.ScanProbeGroup, launcher, character.ShipId,
@@ -229,5 +231,34 @@ public class ScanProbeHostTests
         await rig.Space.Probes!.RestoreAsync(system, CancellationToken.None);
 
         Assert.Empty(Placed(rig));
+    }
+
+    /// <summary>
+    /// A launch that follows a system's entry waits for the restore the entry starts (the per-system gate of SpaceProbes): each probe is placed once and in the order
+    /// it was made. Without the gate the restore of the record can land after the launch's balls, or beside them.
+    /// </summary>
+    [PgFact]
+    public async Task A_launch_right_after_a_system_is_entered_waits_for_the_restore_so_each_probe_is_placed_once_and_in_order()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var (session, character, launcher) = await LauncherInSpaceAsync(rig, probes: 8);
+        var system = (int)session.GetInt("solarsystemid2")!.Value;
+        await rig.Space.Probes!.RestoreAsync(system, CancellationToken.None);
+        // a record of a probe that has no ball (as after a restart)
+        await rig.Probes.SaveAsync(new ScanProbeRecord(
+            ProbeBase + 500, character.CharacterId, system, CoreProbe, CharacterShips.ScanProbeGroup, launcher, character.ShipId,
+            [0, 0, 0], [0, 0, 0], 0, 7, 1, Rig.ClockMs + 3_600_000));
+        Events.Of(session);
+        rig.Sim.Heard.Clear();
+
+        // a second pilot enters the system (its entry restores the record), and the first pilot launches at once
+        var other = await rig.NewCharacterAsync("Second Tester");
+        var otherSession = await rig.SessionAsync(other, 2);
+        var otherOid = await rig.BindShipAsync(otherSession);
+        await rig.ShipCallAsync(otherSession, "Undock", otherOid, new PyLong(otherSession.GetInt("shipid")!.Value), PyBool.False);
+        await rig.Space.LaunchAsync(session, launcher, 2, CancellationToken.None);
+
+        // the restored probe comes first and each launched probe is placed once; the entry's restore may send the restored probe again (the simulation keeps one)
+        Assert.Equal(new[] { ProbeBase + 500, ProbeBase + 1, ProbeBase + 2 }, Placed(rig).Select(p => p.ProbeId).Distinct().ToArray());
     }
 }

@@ -566,3 +566,17 @@ Open, each with its exact blocker:
 - Capital jump drive, cyno targeting, jump range and fuel, and the jump to the cyno field: not started. The field exists (B7, persisted by this track), so the jump can target it. Blocker: the jump-drive module body and the cross-system jump still to build; the restrictions follow the drive.
 - Breacher pods (A4): the per-tick damage message (`OnDamageMessage`) has no wire shape in the sources read.
 - Known: `IndustrialInvulnerabilityTests` and `IndustrialInvulnerabilityHostTests` (`Eve.Services.Space.Tests`) expect the Nexus core's `EFFECT_NOT_IMPLEMENTED` refusal. C6 (`ee324cc`) gave it a body and left those two tests stale on origin/main; they fail there too. Not changed by track A5.
+
+## 24. Track A5: scanner probes, launch and recall (2026-10-10)
+
+Done (tests in `ScanProbeHostTests`, the simulation tests in `deployable/tests.rs`, codec fixtures; decisions in DEVIATIONS "Track A5: scanner probes"): `dogmaIM.LaunchProbes`
+with the reference's checks and messages; eight active probes per pilot per system; probes put in space on a ring of ten kilometres (`PlaceProbe`, protocol 45); the
+charge stack spent; `OnNewProbe` told to the pilot; recall through `scanMgr.DestroyProbe` (`OnRemoveProbe`); expiry at `space.probes.sweep`.
+
+Open, each with its blocker removed by the next step:
+- Restart: the probe records survive, the balls do not. Next: put the probes back in space when a ship comes into the system (the cynosural field's path, `RestoreDeployedAsync`).
+- Scanning: `scanMgr` system scans and their results (signature resolution, the scan range steps and the scan bonuses), `OnSystemScanStarted`, `OnSystemScanStopped`, `OnProbesIdle`.
+- Probe warp and formations: `OnProbeWarpStart`, `OnProbeWarpEnd`, `UpdateProbePosition`, and the probe states moving, warping, scanning and returning.
+- Reconnection to lost probes (`ReconnectToLostProbes`) and moon probes (`OnNewMoonProbe`, `OnRemoveMoonProbe`, `OnMoonScanComplete`, `OnScanNoMaterials`).
+- The client was not run on this host.
+

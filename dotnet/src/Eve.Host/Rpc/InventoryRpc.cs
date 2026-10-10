@@ -76,6 +76,7 @@ internal sealed partial class CharacterServicesComposition
                 modules: spaceSessions,
                 health: spaceSessions,
                 rounds: spaceSessions,
+                probes: spaceSessions,
                 log: message => Console.Error.WriteLine($"eve-host: ammo: {message}"),
                 localTimers: foundations.LocalTimers).ListeningForDryGuns(),
     ];

@@ -114,6 +114,9 @@ public static class SimCommands
     /// <summary>Jump to a cynosural field lit in another system (the field's id, the destination system and the spool in milliseconds): code 26.</summary>
     public const byte CynoJump = 26;
 
+    /// <summary>The scan targets of the scene for a probe scan (protocol 52).</summary>
+    public const byte ScanTargets = 27;
+
     /// <summary>Start locking a target (the target's id).</summary>
     public const byte AddTarget = 10;
 

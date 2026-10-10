@@ -36,7 +36,7 @@ use crate::weapons::{Aoe, Arc, Charge, Spool, Turret};
 
 use crate::wreck::WreckKind;
 
-pub const PROTOCOL_VERSION: u16 = 51;
+pub const PROTOCOL_VERSION: u16 = 52;
 /// The message kinds.
 pub mod kind;
 
@@ -154,6 +154,16 @@ pub struct DisruptorPlacement {
     pub corporation_id: i32,
     pub alliance_id: i32,
     pub ship_id: i64,
+}
+
+/// Something a probe scan can find, as the scene knows it (command 27, protocol 52): the ship, drone, fighter squadron or deployable's item id, its kind (1 ship,
+/// 2 drone, 3 fighter, 4 deployable), its type and where it is.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ScanTarget {
+    pub id: i64,
+    pub kind: u8,
+    pub type_id: i32,
+    pub position: [f64; 3],
 }
 
 /// A scanner probe the host launched and keeps the record of: its id, its type and group, where it is and the radius of its ball. The simulation puts it
@@ -316,6 +326,12 @@ pub enum Message {
         session_id: u64,
         command: u8,
         position: [f64; 3],
+    },
+    /// The scan targets of the scene, for the host's probe scan (answers command 27, protocol 52).
+    ScanTargets {
+        session_id: u64,
+        command: u8,
+        targets: Vec<ScanTarget>,
     },
     Approaching {
         session_id: u64,
@@ -703,6 +719,7 @@ impl Message {
             Self::Refused { .. } => kind::REFUSED,
             Self::Accepted { .. } => kind::ACCEPTED,
             Self::Position { .. } => kind::POSITION,
+            Self::ScanTargets { .. } => kind::SCAN_TARGETS,
             Self::Approaching { .. } => kind::APPROACHING,
             Self::Jumping { .. } => kind::JUMPING,
             Self::Jumped { .. } => kind::JUMPED,

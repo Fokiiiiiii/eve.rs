@@ -39,6 +39,7 @@ pub(super) fn command_of(code: u8, args: &[f64]) -> Option<Command> {
         }
         (23, [target]) if is_id(*target) => Some(Command::PositionOf { target_id: *target as i64 }),
         (25, [distance]) if distance.is_finite() => Some(Command::DropPoint { distance: *distance }),
+        (27, []) => Some(Command::ScanTargets),
         _ => None,
     }
 }
@@ -169,6 +170,9 @@ impl Sim {
                     .map(|(fighter, reason)| (fighter, reason.unwrap_or("").to_string()))
                     .collect(),
             },
+            Out::ScanTargets { session, command, targets } => {
+                Message::ScanTargets { session_id: session, command, targets }
+            }
             Out::DroneResults { session, command, results } => Message::DroneResults {
                 session_id: session,
                 command,

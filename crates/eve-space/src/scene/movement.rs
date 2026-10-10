@@ -332,6 +332,7 @@ pub(super) fn steer(ship: &mut Ship, target: Option<Target>, command: Command) -
         | Command::ResolveWarpTarget { .. }
         | Command::PositionOf { .. }
         | Command::DropPoint { .. }
+        | Command::ScanTargets
         | Command::Jump { .. }
         | Command::CynoJump { .. } => Steering::Refused("NOT_A_MOVEMENT"),
         Command::FollowBall { target_id, range } => {

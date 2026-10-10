@@ -574,9 +574,9 @@ charge stack spent; `OnNewProbe` told to the pilot; recall through `scanMgr.Dest
 
 Open, each with its blocker removed by the next step:
 - DONE (restart): the probe records survive a restart and their balls are put back in space when a ship comes into the system with the same ids, places and remaining life (`SpaceProbes.RestoreAsync`, `ScanProbeHostTests`). Not tested with a real restart of the process.
-- Scanning: `scanMgr` system scans and their results (signature resolution, the scan range steps and the scan bonuses), `OnSystemScanStarted`, `OnSystemScanStopped`, `OnProbesIdle`.
-- Probe warp and formations: `OnProbeWarpStart`, `OnProbeWarpEnd`, `UpdateProbePosition`, and the probe states moving, warping, scanning and returning.
-- Reconnection to lost probes (`ReconnectToLostProbes`) and moon probes (`OnNewMoonProbe`, `OnRemoveMoonProbe`, `OnMoonScanComplete`, `OnScanNoMaterials`).
+- Scanning: built in track A7 (section 27): `RequestScans`, `OnSystemScanStarted`, `OnSystemScanStopped`. `OnProbesIdle` is not sent by the reference's scan flow either (not built, section 27).
+- Probe warp and formations: `OnProbeWarpStart` and `OnProbeWarpEnd` are built in track A7 (section 27), for the move before a scan; `UpdateProbePosition` is client-side (the reference sends none). The states warping and returning are not built.
+- Reconnection to lost probes (`ReconnectToLostProbes`) and moon probes (`OnNewMoonProbe`, `OnRemoveMoonProbe`, `OnMoonScanComplete`, `OnScanNoMaterials`): not built (section 27).
 - The client was not run on this host.
 
 ## 25. Track A5 continued: WP-8 mobile warp disruptors, E-03 Mobile Cynosural Inhibitor, the probe gate (2026-10-10)
@@ -608,3 +608,21 @@ Open, each with its blocker:
 - LIMITATION: the spool is held in the simulation's memory; a restart of the process ends it without a jump. The fields are put back on a restart, but the fleet is not told again.
 - LIMITATION: a fuel debit that fails after the simulation accepts the spool lets the jump stand (the check and the debit are two steps; the module cycles are the only other debit).
 - NOT RUN: the client. No graphical client or MITM capture on this host; the menu, the spool effect (`effects.JumpDriveOut`) and the arrival are not seen in the client.
+
+## 27. Track A7: probe scanning of the objects in space (2026-10-10)
+
+Done (tests: `ProbeScanMathTests` (no database), `ScanProbeHostTests` (PostgreSQL: the flow, the tiers, the absent targets, a scan asked while one runs), `scene::scan_targets` tests and the golden frame of command 27 (`oracle/fixtures/simlink/messages.json`); decisions in DEVIATIONS "Track A7: probe scanning"):
+- Wire: `scanMgr.RequestScans` (the idle probes of the pilot in the system, moved to the places the client sent; `OnProbeWarpStart` and `OnProbeWarpEnd` for the move, 1.25 s, then `OnSystemScanStarted`, and `OnSystemScanStopped` with the results and the absent targets when the duration is over), `scanMgr.SetActivityState`. Both are answered through `SpaceProbeScans` (`dotnet/src/Eve.Services.Space/SpaceProbeScans.cs`), wired by `IncursionAnomalyService` ("scanMgr").
+- Timing: two durable jobs (`space.probes.scan.start`, `space.probes.scan.stop`), so a restart keeps a scan that is running. Duration: the launcher's SDE attribute 73 times each scanning skill's attribute 66.
+- Targets: the simulation answers command 27 (protocol 52, `ScanTargets`) with the ships, drones, fighter squadrons and the scannable deployables (cynosural fields, Mobile Cynosural Inhibitors, mobile warp disruptors) of the scene; a cloaked ship is not one. Core probes find no ship: a ship needs a combat probe (SDE 1413).
+- Results: `ProbeScanEngine` (certainty from the probes that reach a target, the spread of the probes, the tiers: group from 25 percent, name from 75, exact at 100). A result below 100 percent is placed off the target by at most the probes' largest deviation (the wiki's formula with the SDE numbers and the skills).
+- Cosmic signatures and anomalies: one interface, `ICosmicSiteSource` (`dotnet/src/Eve.Services.Space/Scanning/ICosmicSiteSource.cs`); the server binds `NoCosmicSites`, so no signature is found. The site generator is a separate system and is not built.
+- Shortcut: the scan's bonuses are the skills' and the launcher's (strength and deviation of attributes 846 and 1156, duration of 66). The rigs, arrays, implants, boosters, the ship's own role bonus (the Probe frigate's 7.5 percent per level) and the Mobile Scan Inhibitor are not counted.
+
+Not built, each with its blocker:
+- `scanMgr.ConeScan` (directional scan, the same bound object): needs a scene query for every ball a directional scan finds (celestials, wrecks, containers, cosmic signatures), the ship's directional range (SDE 5796, EVE.js `resolveEntityRangeCapMeters`), and the immunity and cone rules of EVE.js `Handle_ConeScan` (lines 2470 to 2590, helpers 436 to 624). The directional scan wiki page is the rule source. Not started.
+- `scanMgr.RecoverProbes` (the recover action; the reference restores the probe charges to the launcher or the hold, `restoreRecoveredProbeCharges`) and `scanMgr.ReconnectToLostProbes` (the reference replays `OnNewProbe` for the probes that remain): not built. The recall of a probe (`DestroyProbe`, track A5) is built and refunds nothing.
+- `OnProbesIdle`, the probe states warping and returning, and the moon survey probes (mining; section 7).
+- The client was not run: the probe scanner's windows, the result rows and the warp to a result (the existing warp to a point) are not seen in the client. No MITM capture was made: the headless client has no scenario that scans.
+- The completed-scan warp authority (EVE.js `probeScanWarpAuthority.js`): a warp to a probed object is not checked against the scan's 100 percent results (DEVIATIONS "Track A7").
+- A process restart in the middle of a scan is covered by the durable jobs but not exercised by a test.

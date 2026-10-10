@@ -247,9 +247,16 @@ internal sealed class FakeSim : ISimulation
     /// <summary>When set, a targeting order is not answered until the test completes it.</summary>
     public TaskCompletionSource? TargetGate { get; set; }
 
+    /// <summary>What a scan-target query (command 27) is answered with: the targets the scene holds.</summary>
+    public IReadOnlyList<SimScanTarget> ScanTargetsAnswer { get; set; } = [];
+
     public Task<CommandReply> CommandAsync(ulong sessionId, byte code, double[] args, CancellationToken cancellationToken = default)
     {
         Heard.Enqueue(new SimCommand(sessionId, code, args));
+        if (code == SimCommands.ScanTargets)
+        {
+            return Task.FromResult(new CommandReply(true, 0, null) { ScanTargets = ScanTargetsAnswer });
+        }
         if (code is >= SimCommands.AddTarget and <= SimCommands.GetTargeters)
         {
             if (TargetsUnavailable)

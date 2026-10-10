@@ -110,6 +110,17 @@ impl Message {
                 out.push(*command);
                 put_vector(&mut out, position);
             }
+            Self::ScanTargets { session_id, command, targets } => {
+                out.extend_from_slice(&session_id.to_le_bytes());
+                out.push(*command);
+                out.extend_from_slice(&(targets.len() as u32).to_le_bytes());
+                for target in targets {
+                    out.extend_from_slice(&target.id.to_le_bytes());
+                    out.push(target.kind);
+                    out.extend_from_slice(&target.type_id.to_le_bytes());
+                    put_vector(&mut out, &target.position);
+                }
+            }
             Self::Approaching { session_id, command, distance } => {
                 out.extend_from_slice(&session_id.to_le_bytes());
                 out.push(*command);

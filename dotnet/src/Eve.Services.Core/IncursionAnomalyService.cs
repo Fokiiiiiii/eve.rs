@@ -22,6 +22,9 @@ public sealed class IncursionAnomalyService : IService
     /// <summary>The recall of a probe (scanMgr <c>DestroyProbe</c>): the probe leaves space and its pilot is told.</summary>
     private readonly Func<ClientSession, long, CancellationToken, ValueTask>? _recallProbe;
 
+    /// <summary>The probe scan's answers on the scan manager (<c>RequestScans</c>, <c>SetActivityState</c>): given the method's name and the call.</summary>
+    private readonly Func<string, ServiceCall, ValueTask<PyValue>>? _probeScans;
+
     public IncursionAnomalyService(
         string serviceName,
         Func<CancellationToken, ValueTask<IReadOnlyList<JsonObject>>> readIncursions,
@@ -29,9 +32,11 @@ public sealed class IncursionAnomalyService : IService
         IService? fallback = null,
         Func<long>? nowUnixMs = null,
         Func<ServiceCall, ValueTask<PyValue>>? signalTrackerRegister = null,
-        Func<ClientSession, long, CancellationToken, ValueTask>? recallProbe = null)
+        Func<ClientSession, long, CancellationToken, ValueTask>? recallProbe = null,
+        Func<string, ServiceCall, ValueTask<PyValue>>? probeScans = null)
     {
         _recallProbe = recallProbe;
+        _probeScans = probeScans;
         if (serviceName is not (MapName or TaleManagerName or ScanManagerName))
             throw new ArgumentOutOfRangeException(nameof(serviceName), serviceName, "Unsupported incursion/anomaly service.");
         ArgumentNullException.ThrowIfNull(readIncursions);
@@ -70,6 +75,8 @@ public sealed class IncursionAnomalyService : IService
             (ScanManagerName, "GetSystemScanMgr") => GetSystemScanMgr(call),
             (ScanManagerName, "SignalTrackerRegister") => await SignalTrackerRegisterAsync(call),
             (ScanManagerName, "DestroyProbe") => await DestroyProbeAsync(call),
+            (ScanManagerName, "RequestScans" or "SetActivityState" or "RecoverProbes" or "ReconnectToLostProbes") =>
+                _probeScans is null ? PyNone.Instance : await _probeScans(call.Method, call),
             _ => PyNone.Instance,
         };
     }
@@ -78,7 +85,7 @@ public sealed class IncursionAnomalyService : IService
     {
         MapName => method is "GetIncursionGlobalReport" or "GetSystemsInIncursions",
         TaleManagerName => method is "GetGlobalWorldEventTales" or "get_active_tales_by_template",
-        ScanManagerName => method is "GetFullState" or "GetSystemScanMgr" or "SignalTrackerRegister" or "DestroyProbe",
+        ScanManagerName => method is "GetFullState" or "GetSystemScanMgr" or "SignalTrackerRegister" or "DestroyProbe" or "RequestScans" or "SetActivityState" or "RecoverProbes" or "ReconnectToLostProbes",
         _ => false,
     };
 

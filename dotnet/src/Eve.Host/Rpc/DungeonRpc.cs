@@ -59,6 +59,7 @@ internal sealed partial class CharacterServicesComposition
                 incursionAnomalyReadModel.ReadAnomaliesAsync,
                 nowUnixMs: now,
                 recallProbe: (session, probeId, token) => spaceSessions is null ? ValueTask.CompletedTask : new ValueTask(spaceSessions.RecallAsync(session, probeId, token)),
+                probeScans: (method, call) => spaceSessions?.ProbeScans is { } scans ? scans.HandleAsync(method, call) : ValueTask.FromResult<PyValue>(PyNone.Instance),
                 signalTrackerRegister: signalTrackerRegistrationProvider.RegisterAsync),
     ];
 }

@@ -331,6 +331,12 @@ private readonly TransitionRuntime _transitions;
     /// <summary>The scanner probes of the ships in space (set by the composition root). A launch or a recall is refused as not wired while there are none.</summary>
     public SpaceProbes? Probes { get; set; }
 
+    /// <summary>The probe scan of the probes in space (set by the composition root): the scanMgr requests answer through it.</summary>
+    public SpaceProbeScans? ProbeScans { get; set; }
+
+    /// <summary>The places a pilot may warp to on a scan result (the 100 percent results of the last completed scan).</summary>
+    public Scanning.ProbeScanWarpAuthority WarpAuthority { get; } = new();
+
     public Task LaunchAsync(ClientSession session, long moduleId, int count, CancellationToken cancellationToken) =>
         (Probes ?? throw Notify("Scanner probes are not wired on this server.")).LaunchAsync(session, moduleId, count, cancellationToken);
 

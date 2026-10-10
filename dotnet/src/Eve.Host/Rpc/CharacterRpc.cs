@@ -38,13 +38,19 @@ namespace Eve.Host;
 internal sealed partial class CharacterServicesComposition
 {
     /// <summary>Skills, the character manager, and the online status of characters.</summary>
-    private IReadOnlyList<IService> CharacterRpc() =>
-    [
+    private IReadOnlyList<IService> CharacterRpc()
+    {
+        var homeStations = new Eve.Services.CharacterInfo.HomeStationResolver(
+            (characterId, token) => characters.GetAsync(characterId, token),
+            stations,
+            catalog,
+            ReadHomeStationStructureAsync);
+        return [
             new SkillMgr2Service(),
             skillHandler,
             new CharMgrService(
                 characters,
-                stations,
+                homeStations,
                 charMgrReadModel.ReadRecentShipKillmailPageAsync,
                 charMgrReadModel.ReadCharacterDescriptionAsync,
                 charMgrReadModel.WriteCharacterDescriptionAsync,
@@ -77,7 +83,36 @@ internal sealed partial class CharacterServicesComposition
                             Math.Max(0, warFactionId));
                     });
                 }),
-            new Eve.Services.CharacterInfo.HomeStationService(characters, stations),
+            new Eve.Services.CharacterInfo.HomeStationService(homeStations),
             new Eve.Services.CharacterInfo.OnlineStatusService(characterSessions, ReadWatchlistAsync),
-    ];
+        ];
+    }
+
+    private async Task<Eve.Services.CharacterInfo.HomeStationStructure?> ReadHomeStationStructureAsync(
+        long structureId,
+        CancellationToken cancellationToken)
+    {
+        if (structureId <= 0)
+            return null;
+        var key = structureId.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        var structures = await ReadGameStoreTableAsync("structures", cancellationToken);
+        if (structures[key] is not JsonObject row ||
+            !PersistenceStructureDirectoryReadModel.IsPersistentlyDeployedStructure(row, structureId))
+            return null;
+
+        var rawTypeId = CharMgrJsonLong(row["typeID"]);
+        var rawSystemId = CharMgrJsonLong(row["solarSystemID"]);
+        var ownerId = CharMgrJsonLong(row["ownerID"] ?? row["ownerCorpID"] ?? row["corporationID"]);
+        if (rawTypeId is <= 0 or > int.MaxValue || rawSystemId is <= 0 or > int.MaxValue || ownerId <= 0 ||
+            solarSystems.Get((int)rawSystemId) is not { } system)
+            return null;
+
+        var name = Text(row["itemName"] ?? row["name"] ?? row["structureName"]);
+        var location = new Eve.Services.CharacterInfo.HomeStationLocation(
+            structureId, (int)rawTypeId, name, (int)rawSystemId, system.ConstellationId, system.RegionId, ownerId, false);
+        return new Eve.Services.CharacterInfo.HomeStationStructure(location, true, false);
+
+        static string? Text(JsonNode? node) =>
+            node is JsonValue value && value.TryGetValue<string>(out var text) ? text : null;
+    }
 }

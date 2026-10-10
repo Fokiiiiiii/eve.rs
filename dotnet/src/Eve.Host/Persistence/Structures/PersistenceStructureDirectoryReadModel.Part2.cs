@@ -48,7 +48,7 @@ public sealed partial class PersistenceStructureDirectoryReadModel
 
     private sealed record Bridge(long Id, long SolarSystemId, long DestinationSolarSystemId, JsonObject Value);
 
-    private static bool IsPersistentlyDeployedStructure(JsonObject structure, long structureId)
+    internal static bool IsPersistentlyDeployedStructure(JsonObject structure, long structureId)
     {
         var storedId = Positive(Integer(structure["structureID"] ?? structure["itemID"], structureId));
         return structureId > 0 && storedId == structureId &&

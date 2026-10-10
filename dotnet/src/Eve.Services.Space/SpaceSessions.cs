@@ -81,12 +81,10 @@ public sealed partial class SpaceSessions : IDisposable, ISpaceTargeting, ISpace
         }
     }
 
-    private sealed record PendingSpaceLogin(ShipSnapshot Snapshot, SpaceItem State);
 
     private readonly ISimulation _sim;
     private readonly CharacterShips _ships;
     private readonly PgSpaceItemStore? _spaceItems;
-    private readonly ConcurrentDictionary<long, PendingSpaceLogin> _pendingLoginRestores = new();
     public Func<long, CancellationToken, Task<bool>>? StructureExistsAsync { get; set; }
 
     /// <summary>The fleet a character is in (its id), or null when it is in none: a command burst reaches the ships of its source's fleet (track C6).</summary>
@@ -392,18 +390,16 @@ private readonly TransitionRuntime _transitions;
             ship.LocationId == character.SolarSystemId &&
             ship.Flag == CharacterShips.InSpaceFlag)
         {
-            var saved = _spaceItems is null
+            var live = _pilots.TryGetValue((ulong)session.SessionId, out var pilot) &&
+                pilot.CharacterId == characterId && pilot.ShipId == ship.Id &&
+                pilot.SolarSystemId == character.SolarSystemId;
+            var saved = live || _spaceItems is null
                 ? null
                 : await _spaceItems.GetAsync(ship.Id, cancellationToken);
-            if (saved is { } state &&
-                state.SolarSystemId == character.SolarSystemId &&
-                state.ExpiresAtMs > _nowUnixMs() &&
-                state.Position.Count >= 3 &&
-                state.Direction.Count >= 3)
+            if (live || saved is not null && HasValidSpaceRestore(snapshot, saved))
             {
                 if (!_sim.IsConnected)
                     throw Notify("Space is not available right now. Try again in a moment.");
-                _pendingLoginRestores[characterId] = new PendingSpaceLogin(snapshot, state);
                 attributes.AddRange([
                     ("stationid", None),
                     ("stationid2", None),
@@ -432,7 +428,6 @@ private readonly TransitionRuntime _transitions;
             attributes[1] = ("shipName", new PyStr(ship.CustomName ?? type?.Name ?? "Ship"));
         }
 
-        _pendingLoginRestores.TryRemove(characterId, out _);
         if (_stations.Get(character.StationId) is not null)
         {
             attributes.AddRange([
@@ -472,7 +467,6 @@ private readonly TransitionRuntime _transitions;
     public async ValueTask OnCharacterLeavingAsync(
         ClientSession session, long characterId, CancellationToken cancellationToken)
     {
-        _pendingLoginRestores.TryRemove(characterId, out _);
         session.Set(LoginInventoryBootstrapPending, None);
         session.Set("deferredDockedShipId", None);
         await OnSessionClosedAsync(session);
@@ -484,14 +478,31 @@ private readonly TransitionRuntime _transitions;
     public async ValueTask OnCharacterEnteredAsync(
         ClientSession session, long characterId, CancellationToken cancellationToken)
     {
-        if (!_pendingLoginRestores.TryRemove(characterId, out var pending))
+        var sessionId = (ulong)session.SessionId;
+        if (_pilots.TryGetValue(sessionId, out var current) && current.CharacterId == characterId)
+            return;
+        if (!IsSpaceSession(session))
             return;
 
-        var sessionId = (ulong)session.SessionId;
-        var systemId = pending.State.SolarSystemId;
-        await SyncBuffsAsync(pending.Snapshot.World, pending.Snapshot.Ship.Id, cancellationToken);
+        // Preflight can be abandoned or invalidated by leaving the previous character; reload the durable restore at entry.
+        var spaceItems = _spaceItems;
+        if (spaceItems is null ||
+            await _ships.LoadAsync(characterId, cancellationToken) is not { } snapshot)
+        {
+            _log?.Invoke($"space login for character {characterId} has no persisted ship restore state");
+            throw Notify("Space is not available right now. Try again in a moment.");
+        }
+        var state = await spaceItems.GetAsync(snapshot.Ship.Id, cancellationToken);
+        if (state is null || !HasValidSpaceRestore(snapshot, state))
+        {
+            _log?.Invoke($"space login for character {characterId} has no valid persisted pose");
+            throw Notify("Space is not available right now. Try again in a moment.");
+        }
+
+        var systemId = state.SolarSystemId;
+        await SyncBuffsAsync(snapshot.World, snapshot.Ship.Id, cancellationToken);
         var ship = SimShips.Of(
-            pending.Snapshot,
+            snapshot,
             _statics,
             await SecurityStatusAsync(characterId, cancellationToken));
         var refusal = await _sim.EnterAsync(
@@ -501,21 +512,21 @@ private readonly TransitionRuntime _transitions;
                 EnterHow.InSpace,
                 0,
                 ship,
-                pending.State.Position,
-                pending.State.Direction),
+                state.Position,
+                state.Direction),
             cancellationToken);
         if (refusal is not null)
         {
             _log?.Invoke($"space login for character {characterId} was refused: {refusal}");
             throw Notify("Space is not available right now. Try again in a moment.");
         }
-        TellEnteredBuffs(sessionId, pending.Snapshot.Ship.Id, _nowUnixMs());
+        TellEnteredBuffs(sessionId, snapshot.Ship.Id, _nowUnixMs());
 
         try
         {
             await _sim.SetHeatProfileAsync(
                 sessionId,
-                SimShips.HeatProfileOf(pending.Snapshot, _statics),
+                SimShips.HeatProfileOf(snapshot, _statics),
                 cancellationToken);
         }
         catch (SimUnavailableException error)
@@ -524,8 +535,8 @@ private readonly TransitionRuntime _transitions;
         }
 
         _pilots[sessionId] = new Pilot(
-            session, characterId, pending.Snapshot.Ship.Id, pending.Snapshot.Ship.TypeId,
-            systemId, FileTimeNow(), pending.Snapshot.Character.StationId);
+            session, characterId, snapshot.Ship.Id, snapshot.Ship.TypeId,
+            systemId, FileTimeNow(), snapshot.Character.StationId);
         if (PilotEntered is { } entered)
         {
             try
@@ -539,10 +550,29 @@ private readonly TransitionRuntime _transitions;
         }
         session.Set(LoginInventoryBootstrapPending, new PyInt(1));
         session.Closed += () => OnSessionClosed(session);
-        if (_spaceItems is not null)
-            await _spaceItems.RemoveAsync(pending.Snapshot.Ship.Id, cancellationToken);
+        await spaceItems.RemoveAsync(snapshot.Ship.Id, cancellationToken);
         SystemEntered?.Invoke(systemId);
     }
+
+    private bool HasValidSpaceRestore(ShipSnapshot snapshot, SpaceItem state)
+    {
+        var character = snapshot.Character;
+        var ship = snapshot.Ship;
+        return character.ShipId == ship.Id &&
+               ship.LocationId == character.SolarSystemId &&
+               ship.Flag == CharacterShips.InSpaceFlag &&
+               state.SolarSystemId == character.SolarSystemId &&
+               state.ExpiresAtMs > _nowUnixMs() &&
+               state.Position.Count >= 3 &&
+               state.Direction.Count >= 3;
+    }
+
+    private static bool IsSpaceSession(ClientSession session) =>
+        session.GetInt("stationid") is null &&
+        session.GetInt("structureid") is null &&
+        session.GetInt("worldspaceid") is null &&
+        session.GetInt("solarsystemid") is { } systemId &&
+        session.GetInt("locationid") == systemId;
 
     public async ValueTask OnInventoryRpcAsync(
         ClientSession session,

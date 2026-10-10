@@ -312,9 +312,16 @@ public class CharUnboundMgrTests
 
         Assert.Equal(PyNone.Instance, await h.CallAsync(session, "SelectCharacterID", new PyInt(previousId)));
         hook.FailureCharacterId = failingId;
+        var previousDeferredShip = new PyLong((await h.Characters.GetAsync(previousId))!.ShipId!.Value);
+        session.Set("deferredDockedShipId", previousDeferredShip);
         var competingClaimSucceeded = false;
         var restoredRegistryMatches = false;
-        hook.BeforeFailure = () => competingClaimSucceeded = h.Online.TryEnter(previousId, session.SessionId + 1);
+        hook.BeforeFailure = () =>
+        {
+            competingClaimSucceeded = h.Online.TryEnter(previousId, session.SessionId + 1);
+            session.Set("deferredDockedShipId", PyNone.Instance);
+            session.Set("failedEntryBootstrap", PyBool.True);
+        };
         hook.OnSuccessfulEntry = restoredId => restoredRegistryMatches = h.Online.Snapshot().Contains(restoredId);
 
         var failure = await Record.ExceptionAsync(async () =>
@@ -322,6 +329,8 @@ public class CharUnboundMgrTests
         Assert.NotNull(failure);
         Assert.False(competingClaimSucceeded);
         Assert.True(restoredRegistryMatches);
+        Assert.Equal(previousDeferredShip, session.Get("deferredDockedShipId"));
+        Assert.Null(session.Get("failedEntryBootstrap"));
         Assert.Equal(previousId, session.CharacterId);
         Assert.True(h.Online.TryEnter(previousId, session.SessionId));
         Assert.Contains(previousId, h.Online.Snapshot());

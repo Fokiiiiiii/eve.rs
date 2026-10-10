@@ -1349,3 +1349,58 @@ Sources. The wiki: "Pochven" (https://wiki.eveuniversity.org/Pochven, fetched 20
   market, fleet, industry and asset-safety tables, in the shared default schemas. Each run now gets its own scratch
   schema for each of them, and the script drops them at its end (`tools/dev/run-eve-live.sh`). `LiveScriptIsolationTests`
   checks that every schema variable the host reads is scratch in the script and dropped in its cleanup. Status: done.
+
+## Market slice M1: the wire, the labels and the transaction tabs (2026-10-10)
+
+Sources: the V24.01 client (eve-logic) call sites named in each item; EVE.js v0.12.9 `server/src/services/market/marketProxyService.js` for the
+observable behaviour of the five RPCs it implements (not its bugs). Design: `market-design.md` section 4.3 M1, decisions `market-decisions.md`.
+
+- **BuyMultipleItems (immediate lines).** The reference (proxy 6915) executes one immediate buy per line at the line's price, range
+  station, with the line's minimum volume, and answers the empty list, because immediate orders rest nowhere. eve.rs does the same, one
+  transaction per line (keys `buy-multi:<line>`). An unfilled line is not an error, as in the reference (the client's own pre-check
+  already drops the lines it cannot price). Client: `marketsvc.py:270-273` (BuyMulti iterates the answer), `buyMultiFromBase.py:306`.
+  Status: done (M1). Tests: `MarketRpcTests.Buy_multi_fills...`, `MarketHostTests`, live `test_market.py`.
+- **PlacePlexSellOrder.** The reference (proxy 7009) refuses a corporation sell and any type other than PLEX (44992). eve.rs does the
+  same. The two texts are ours: "PLEX sell orders are placed on the personal market only." and "PLEX sell orders must use a PLEX
+  inventory item." (the reference's own wording is not in the client snapshot; the client shows the text it receives). The answer is a
+  boolean, true when the line traded or rests, as `executeSellEntry` (proxy 7034). Client: `marketsvc.py:278-279`, `sellMulti.py:464`.
+  Status: done (M1). Test: `MarketRpcTests.Plex_sell_is_refused...`.
+- **ModifyPlexCharOrder** delegates to the ModifyCharOrder path (proxy 7274 does the same). The stale-view precondition of Q15 is M2.
+  Client: `marketsvc.py:291-295`. Status: done (M1).
+- **CharGetTransactions and CorpGetTransactions (the read path, M1 scope).** Rows are the fills (`market.fills`) where the wallet bought or
+  sold, as the reference's transaction rows (proxy 6582-6642, `buildMarketTransactionEntry` at 559-586): transactionID, transactionDate
+  (FILETIME), typeID, quantity, price (per unit: the client multiplies), stationID, locationID, buyerID, sellerID, accountID (the viewer's
+  division), buyerAccountID, sellerAccountID, journalRefID (-1: no journal reference is kept by the market), keyID. Newest first; the
+  fromDate is a FILETIME, as the reference filters `transactionDate >= fromDate`. The viewer's division (accountID) is what the client
+  reads to tell a company trade from a personal one (`marketSvc.py:41-64`). The read rule of the corporation call is the reference's
+  (`corporationAuthority.js:134-147`): an Accountant or a Junior Accountant reads every division; any other member reads the division
+  whose Account Take it holds; a null division needs the accountant role. A refusal is `CrpAccessDenied` with reason `(101,
+  'UI/Corporations/AccessRestrictions/NoAccessToWalletDivision')`, as the reference sends it (proxy 6625-6630).
+  Deviation (rule source): the Director role is not a read right here, as in the reference (`corporationAuthority.js:138-143`).
+  Deviation (scope): the composite index and the division filter tests of M6 are not added in M1; the query uses the existing
+  `fills_buyer` and `fills_seller` indexes (002). Status: done (M1); M6 completes the tests and the index check.
+- **keyID is the order's account key (G1).** Owner-order rows (GetCharOrders, GetCorporationOrders, GetMarketOrderHistory) and the
+  OnOwnOrdersChanged rows carry the order's wallet division (`accountKey`, 1000 to 1006), not 1000. The reference keeps the order's account
+  key (`marketProxyService.js:579-582`), and the client names the division from it (`quote.py:442-443`). Test:
+  `MarketRpcTests.A_corporation_order_row_carries_its_wallet_division_as_keyID`. Status: done (M1).
+- **GetStationAsks and GetSystemAsks answer KeyVal rows (Q13, G10).** The client reads `.typeID` on each ask and passes the row to Buy
+  (`quote.py:97-100`; reached through the evelink endpoint `endpoints.py:160`). A positional tuple has no `.typeID`. eve.rs answers the
+  BestByOrder rows the regional best answers (price, volRemaining, typeID, stationID). The reference answers tuples
+  (`marketProxyService.js:6241`): the same defect in the reference is not copied. Tests: `MarketRpcTests.Station_and_system_asks...`,
+  `ProtocolTests.Ask_summary_rpcs...`. Status: done (M1).
+- **Client labels for market refusals (G6).** A MarketError is sent as the client's UserError label with its arguments where the client
+  source raises that label: `MktBrokersFeeUnexpected2` with `actualBrokerFeePerc` (100 x the server's rate) and
+  `expectedBrokerFeePercentage` (the client's quote as sent: the client itself passes the raw fraction here, `sellMulti.py:456`), and
+  `MktInvalidMinVolumeCannotExceedQuantity` with no arguments (`marketsvc.py:264-265`). Every other code is a CustomInfo sentence (ours),
+  not the raw code. Texts: `MarketErrorText` in `MarketProxyService.cs`. Labels the client raises that need a value we do not hold are not
+  used (`MktCantSellItem2` needs localized jump texts; `MARKET_REMOTE_SKILL_REQUIRED` stays a sentence). Tests: `MarketRpcTests` (fee,
+  minimum volume), `MarketHostTests` (the fee label on the wire). Status: done (M1); the full label table is open where the client names
+  no label.
+- **No fabricated immediate-fill notification (G8).** A fill that completes an immediate order sends no `OnOwnOrdersChanged`: the previous
+  row (order id 0, a fabricated order) is removed. The client's cache invalidation for the change is M4 (push invalidation). Reason: the
+  client reads each row as a real order. Tests: `ProtocolTests` (counts of notifications), `MarketRpcTests.Buy_multi_fills...` (none
+  sent). Status: done (M1).
+- **Host registration.** The market service is registered through the real composition (`HostComposition.BuildAsync`, the path eve-host
+  runs) in `MarketHostTests`, on scratch schemas, with `EVE_SIM=off` and `EVE_MARKET_SEED=skip`; the test project now sets
+  `InvariantGlobalization` false, as the other projects that need ICU. The session's notifications are not asserted there (the
+  composition attaches a session at character selection); the live walk covers them. Status: done (M1).

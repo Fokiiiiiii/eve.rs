@@ -882,3 +882,26 @@ Open after slice D:
 | OPEN | `reprocessingSvc` (`GetStationEfficiencyForTypeID`, `GetCharRefiningYieldPercentageForType`, `Reprocess`) is not registered; the reprocessing window's first use fails | a reprocessing slice (inventory and SDE materials) |
 | OPEN | `structure*` and `shipCaster*`/`shipcasterTravelMgr`/`starterShipcasterTravelMgr` methods answer as stubs (no callbacks) | the other agent (structures and ships) |
 | OPEN | `paperDollServer` has a second, unregistered class (`Eve.Services.Core/CompatibilityRpcServices.cs`); the registered one is `Eve.Host/CharacterRpcServices.cs` | cleanup (no behaviour) |
+
+## 42. Market system, slices M1 to M3 (2026-10-10)
+
+Design and decisions: scratchpad `work/market-design.md` (sections 4.3 and 5) and `work/market-decisions.md`; the recorded decisions are in
+DEVIATIONS.md ("Market slice M1" and the M2/M3 sections when written).
+
+Done in M1 (DEVIATIONS.md, "Market slice M1"):
+- The five missing marketProxy RPCs: BuyMultipleItems, PlacePlexSellOrder, ModifyPlexCharOrder, CharGetTransactions, CorpGetTransactions.
+  All 27 client-called methods are registered (`MarketHostTests`).
+- The order's division in keyID (G1); the station and system ask summaries as KeyVal rows (Q13, G10).
+- Client labels for MktBrokersFeeUnexpected2 and MktInvalidMinVolumeCannotExceedQuantity; other refusals are sentences, not codes (G6).
+- The fabricated immediate-fill notification is removed (G8); the cache invalidation that replaces it is M4.
+- Tests: `MarketRpcTests` (9), `ProtocolTests` (updated), `MarketHostTests` (the real composition, restart), live `test_market.py`.
+
+Open after M1:
+| Status | Item | Owner / where |
+|---|---|---|
+| OPEN | M2: sales tax 7.5% through 'market-transaction-tax', 300 s modification delay, duration reset, price ticks, matching priority, Q15 stale-order refusal, Q14 duplicate refusal | M2 (market agent 1, next) |
+| OPEN | M3: expiry as a durable scheduled job with a 60 s safety sweep and restart rescheduling | M3 |
+| OPEN | M4: push cache invalidation for book changes and corporation notifications to every character with market rights (G9, G11) | market agent 2 |
+| OPEN | M5 to M9: price history definitions (Q16), the read path tests (M6), locking and the bounded scan (M7), money invariants (M8), live acceptance (M9) | market agents 2 and 3 |
+| OPEN | The client label table is partial: `MktCantSellItem2`, `MktCantSellItemOutsideStation` and `MktInvalidRegion` need values the server does not hold (localized jump texts) | the client's localization |
+| OPEN | The corporation read rule has a test for a character outside the corporation; a member holding Account Take and not an accountant is covered by M6 | M6 |

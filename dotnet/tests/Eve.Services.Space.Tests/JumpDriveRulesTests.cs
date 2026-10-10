@@ -13,18 +13,37 @@ public class JumpDriveRulesTests
     [Fact]
     public void Calibration_adds_twenty_percent_of_the_base_range_a_level_so_level_five_doubles_it()
     {
-        Assert.Equal(3.5, JumpDriveRules.Range(3.5, 0));
-        Assert.Equal(7.0, JumpDriveRules.Range(3.5, 5));
+        Assert.Equal(3.5, JumpDriveRules.Range(3.5, 0, 0.2));
+        Assert.Equal(7.0, JumpDriveRules.Range(3.5, 5, 0.2));
+    }
+
+    [Fact]
+    public void Economizers_stack_with_the_wiki_penalty_strongest_first_so_the_second_keeps_86_9_percent()
+    {
+        Assert.Equal(1.0, JumpDriveRules.EconomizerMultiplier([]), 10);
+        Assert.Equal(0.9, JumpDriveRules.EconomizerMultiplier([-0.10]), 10);
+        // 0.10 first (full), then 0.07 at e^(-(1/2.67)^2) = 0.869, then 0.04 at e^(-(2/2.67)^2) = 0.571
+        var three = JumpDriveRules.EconomizerMultiplier([-0.04, -0.10, -0.07]);
+        Assert.Equal(0.9 * (1 - 0.07 * 0.8694) * (1 - 0.04 * 0.5714), three, 3);
+    }
+
+    [Fact]
+    public void Capacitor_need_is_the_hulls_95_percent_less_five_percent_a_level_of_operation_so_level_five_is_71_25_percent()
+    {
+        Assert.Equal(0.95, JumpDriveRules.CapacitorNeed(0.95, 0, -0.05), 10);
+        Assert.Equal(0.7125, JumpDriveRules.CapacitorNeed(0.95, 5, -0.05), 10);
     }
 
     [Fact]
     public void Fuel_is_light_years_times_the_fuel_per_light_year_less_ten_percent_a_level_of_conservation_rounded_up()
     {
-        Assert.Equal(9_000, JumpDriveRules.FuelQuantity(3, 3_000, 0, 0));
-        Assert.Equal(4_500, JumpDriveRules.FuelQuantity(3, 3_000, 5, 0));
+        Assert.Equal(9_000, JumpDriveRules.FuelQuantity(3, 3_000, 0, -0.1, 0, 1.0));
+        Assert.Equal(4_500, JumpDriveRules.FuelQuantity(3, 3_000, 5, -0.1, 0, 1.0));
         // a jump freighter's own skill takes the same share again
-        Assert.Equal(23_500, JumpDriveRules.FuelQuantity(5, 9_400, 0, 5));
-        Assert.Equal(4, JumpDriveRules.FuelQuantity(1.0001, 3, 0, 0));
+        Assert.Equal(23_500, JumpDriveRules.FuelQuantity(5, 9_400, 0, -0.1, 5, 1.0));
+        Assert.Equal(4, JumpDriveRules.FuelQuantity(1.0001, 3, 0, -0.1, 0, 1.0));
+        // an economizer takes its multiplier before the rounding
+        Assert.Equal(8_100, JumpDriveRules.FuelQuantity(3, 3_000, 0, -0.1, 0, 0.9));
     }
 
     [Fact]

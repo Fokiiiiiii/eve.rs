@@ -609,6 +609,21 @@ Open, each with its blocker:
 - LIMITATION: a fuel debit that fails after the simulation accepts the spool lets the jump stand (the check and the debit are two steps; the module cycles are the only other debit).
 - NOT RUN: the client. No graphical client or MITM capture on this host; the menu, the spool effect (`effects.JumpDriveOut`) and the arrival are not seen in the client.
 
+## 28. Track A8: the capacitor, the spool kept across a restart, the economizers, the skill numbers from the SDE (2026-10-10)
+
+Done (tests: scene/tests.rs cyno tests (capacitor), JumpDriveRulesTests, CynoJumpHostTests (PostgreSQL); decisions in DEVIATIONS "Track A8: the capacitor, the spool, the economizers and the skill numbers"; protocol 52; migration 0010):
+- The capacitor of the capital jump: the host sends the share (SDE 898 of the hull, 0.95, less 5 percent a level of Jump Drive Operation, SDE 899 of the skill) as the fourth argument of command 26. The simulation refuses NOT_ENOUGH_CAPACITOR when the charge is short and draws the share when the spool starts. This closes the capacitor item of section 26.
+- The spool is persisted: space.jump_spool (migration 0010) is written with the fuel and the fatigue in one transaction. It is forgotten when the ship jumps. At the host start every spool still in the table is cancelled: the fuel is refunded into the fuel bay and the fatigue state the jump replaced is restored. A spool a minute past its end that the simulation did not complete is refunded by the sweep space.jump_spool.sweep (every 30 seconds). The choices are recorded in DEVIATIONS (the wiki is silent on restarts).
+- The economizers (SDE group 1299, attribute 1296: -4, -7, -10 percent) fitted in the ship reduce the fuel, with the wiki stacking penalty (100, 86.9, 57.1 percent), before the round-up.
+- The skill numbers come from the SDE attributes (Calibration 870, Fuel Conservation 1296, Jump Drive Operation 899), not from constants; the values are unchanged.
+
+Open, each with its blocker:
+- NOT BUILT: jump bridges (CmdBridgeToFleetModuleBeacon, CmdBridgeToFleetDeployableBeacon; the Titan, black ops and Rorqual bridges), the Titan Jump Portal Generator (SDE 23953, group 590; fits Titans), the Covert Jump Portal Generator (SDE 28652, group 4127; fits black ops), portals and conduits, group jumps (CmdGroupJumpTo) and CmdJumpThroughFleet. Blocker: no world object with a lifetime in the simulation for a portal or a bridge open state; the fuel per passing mass (the wiki formula, DEVIATIONS A8) has no caller yet; the client calls (eve-logic cynoTravelSvc.py) are not read in full.
+- NOT BUILT: covert and industrial beacons from deployables (CmdJumpToFleetDeployableBeacon answers for the lit field only, as in section 26).
+- NOT CHECKED: the wiki rule that a jump cannot be activated inside a warp interdiction bubble. Blocker: the host has no bubble object for a jump to test against.
+- NOT CHECKED: the SDE canFit attributes of the economizers (1298, 1299) at the jump; the fitting service refuses a fit the economizer does not allow, and a jump does not re-check it.
+- SHORTCUT: a second spool before the first is swept (a lost spool less than a minute old) fails the debit after the simulation accepted it; the spool stands. Upgrade: refund the stale row inside the debit.
+- The client was not run on this host (no graphical client, no MITM capture): the capacitor bar, the refusal text, the refund and the spool after a restart are not seen in the client.
 ## 27. Track A7: probe scanning of the objects in space (2026-10-10)
 
 Done (tests: `ProbeScanMathTests` (no database), `ScanProbeHostTests` (PostgreSQL: the flow, the tiers, the absent targets, a scan asked while one runs), `scene::scan_targets` tests and the golden frame of command 27 (`oracle/fixtures/simlink/messages.json`); decisions in DEVIATIONS "Track A7: probe scanning"):

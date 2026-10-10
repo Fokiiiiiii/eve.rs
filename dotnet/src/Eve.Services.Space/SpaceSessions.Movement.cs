@@ -290,6 +290,10 @@ public sealed partial class SpaceSessions
                 async (_, token) =>
                 {
                     await CancelRepairsAsync(pilot, token);
+                    if (JumpDrive is { } drive)
+                    {
+                        await drive.ArrivedAsync(pilot.CharacterId, token);
+                    }
                     if (!_pilots.Values.Any(other => other.SolarSystemId == jumped.ToSystem))
                         ForgetNpcsOf(jumped.ToSystem);
                     if (_systems.Get(jumped.ToSystem) is { } enteredSystem

@@ -18,7 +18,7 @@ public sealed partial class SpaceSessions
     /// the fuel and the cooldown first (<see cref="SpaceJumpDrive"/>).
     /// </summary>
     public async Task<PyValue> CynoJumpAsync(
-        ClientSession session, long shipId, long fieldId, int destinationSystem, long spoolMs, string? boundObjectId, CancellationToken cancellationToken)
+        ClientSession session, long shipId, long fieldId, int destinationSystem, long spoolMs, double capacitorShare, string? boundObjectId, CancellationToken cancellationToken)
     {
         if (!_pilots.TryGetValue((ulong)session.SessionId, out var pilot))
         {
@@ -40,7 +40,7 @@ public sealed partial class SpaceSessions
         CommandReply reply;
         try
         {
-            reply = await _sim.CommandAsync((ulong)session.SessionId, SimCommands.CynoJump, [fieldId, destinationSystem, spoolMs], cancellationToken);
+            reply = await _sim.CommandAsync((ulong)session.SessionId, SimCommands.CynoJump, [fieldId, destinationSystem, spoolMs, capacitorShare], cancellationToken);
         }
         catch (SimUnavailableException error)
         {
@@ -50,6 +50,11 @@ public sealed partial class SpaceSessions
         if (!reply.Accepted || reply.DestinationSystem is not { } destination)
         {
             _log?.Invoke($"cynosural jump of session {session.SessionId} to field {fieldId} refused: {reply.Reason}");
+            // the wording is ours: the wiki gives no refusal text (DEVIATIONS, Track A8)
+            if (reply.Reason == "NOT_ENOUGH_CAPACITOR")
+            {
+                throw Notify("Your ship does not have enough capacitor to activate its jump drive.");
+            }
             throw JumpRefused(reply.Reason);
         }
         SendJumpQueueUpdate(session, pilot.CharacterId, destination);

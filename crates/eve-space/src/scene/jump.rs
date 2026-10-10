@@ -125,18 +125,22 @@ impl Scene {
         out
     }
 
-    /// `CmdJumpToFleetModuleBeacon` and `CmdJumpToFleetDeployableBeacon` (command 24): the ship's jump drive spools for `spool_ms`, and the ship then leaves
+    /// `CmdJumpToFleetModuleBeacon` and `CmdJumpToFleetDeployableBeacon` (command 26): the ship's jump drive spools for `spool_ms`, and the ship then leaves
     /// for `destination_system` to appear at the cynosural field `field_id` lit there. The stop and the jump-out effect are the stargate jump's; the checks are
-    /// its checks, without the gate. The host has checked the field, the fleet, the range, the fuel and the drive's cooldown.
+    /// its checks, without the gate. The host has checked the field, the fleet, the range, the fuel and the drive's cooldown. The activation takes
+    /// `capacitor_fraction` of the full capacitor when the charge holds it (the wiki: 95 %, less the pilot's Jump Drive Operation).
     pub(super) fn cyno_jump(
         &mut self,
         session: SessionId,
         field_id: i64,
         destination_system: i32,
         spool_ms: f64,
+        capacitor_fraction: f64,
         now: i64,
     ) -> Vec<Out> {
-        let code = Command::CynoJump { field_id, destination_system, spool_ms }.code();
+        let code =
+            Command::CynoJump { field_id, destination_system, spool_ms, capacitor: capacitor_fraction }
+                .code();
         let refused = |reason: &'static str| vec![Out::Refused { session, command: code, reason }];
         let Some(pilot) = self.pilots.get(&session) else { return refused("NO_SHIP_IN_SPACE") };
         if pilot.immobile_until > now {
@@ -160,8 +164,18 @@ impl Scene {
         if destination_system == self.system.id {
             return refused("WRONG_SOLAR_SYSTEM");
         }
+        let Some(capacitor) = pilot.modules.capacitor.as_ref() else { return refused("NO_CAPACITOR") };
+        let need = capacitor_fraction * capacitor.capacity();
+        if capacitor.charge_at(now) < need {
+            return refused("NOT_ENOUGH_CAPACITOR");
+        }
         let stamp = self.next_stamp(now);
         let pilot = self.pilots.get_mut(&session).expect("checked above");
+        let (before, after) = match pilot.modules.capacitor.as_mut() {
+            Some(capacitor) => capacitor.draw(now, need),
+            None => (0.0, 0.0),
+        };
+        let (owner, ship_no) = (pilot.ship.spec.character_id, pilot.ship.spec.ship_id);
         let ship = &mut pilot.ship;
         if !matches!(ship.course, Course::Stop) || ship.speed_fraction > 0.0 || speed_of(ship.velocity) > 0.5
         {
@@ -201,7 +215,8 @@ impl Scene {
             ),
             payload::action(stamp, "Stop", [ship_id]),
         ];
-        let mut out = self.tell_all(session, actions.into());
+        let mut out = vec![Self::charge_told(session, owner, ship_no, now, after, before)];
+        out.extend(self.tell_all(session, actions.into()));
         out.push(Out::Jumping { session, command: code, destination_system, destination_gate: 0 });
         out
     }

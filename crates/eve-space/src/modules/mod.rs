@@ -713,6 +713,11 @@ impl Capacitor {
         }
     }
 
+    /// What it holds when full.
+    pub(crate) fn capacity(&self) -> f64 {
+        self.capacity
+    }
+
     /// How full it is at `now`, as a fraction (a ship with no capacitor is full).
     pub(crate) fn ratio_at(&self, now: i64) -> f64 {
         if self.capacity <= 0.0 { 1.0 } else { (self.charge_at(now) / self.capacity).clamp(0.0, 1.0) }
@@ -748,7 +753,7 @@ impl Capacitor {
     }
 
     /// Takes `amount` at `now` and returns the charge before and after.
-    fn draw(&mut self, now: i64, amount: f64) -> (f64, f64) {
+    pub(crate) fn draw(&mut self, now: i64, amount: f64) -> (f64, f64) {
         let before = self.charge_at(now);
         let after = (before - amount).max(0.0);
         self.charge = after;

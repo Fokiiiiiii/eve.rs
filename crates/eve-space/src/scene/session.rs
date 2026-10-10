@@ -145,8 +145,8 @@ impl Scene {
             Command::DropPoint { distance } => self.drop_point(session, distance),
             Command::ScanTargets => self.scan_targets(session, now),
             Command::Jump { gate_id, destination_gate } => self.jump(session, gate_id, destination_gate, now),
-            Command::CynoJump { field_id, destination_system, spool_ms } => {
-                self.cyno_jump(session, field_id, destination_system, spool_ms, now)
+            Command::CynoJump { field_id, destination_system, spool_ms, capacitor } => {
+                self.cyno_jump(session, field_id, destination_system, spool_ms, capacitor, now)
             }
             other => self.steer_pilot(session, other, now),
         };

@@ -1040,3 +1040,60 @@ Sources, in the order of the rule. SDE (sde.types and sde."typeDogma", the build
   (`An_unknown_method_gets_a_wrapped_attribute_error...`, `A_ping_is_answered_and_an_unknown_service_gets_a_service_not_found_error`),
   `StrictRpcTests` (flag off), and `DispatchGoldenTests` where five recorded None steps (`ErrorAnswers`) are replayed for the error answer
   only; their state checks still run. Status: tolerated (A).
+- **Service table: the names left out.** The reference advertises 143 service names in `machoNet.GetServiceInfo`
+  (`server/src/services/machoNet/machoNetService.js:175-322`). eve.rs advertises the names it registers, and leaves out
+  23 that it does not implement: `objectCaching`, `FastCheckoutService`, `corpStationMgr`, `itemLocking`, `structure`,
+  `loadService`, `planetOrbitalRegistryBroker`, `tradeMgr`, `LSC`, `warRegistry`, `certificateMgr`, `tutorialSvc`,
+  `nes_intro`, `bookmarkMgr`, `accessGroupBookmarkMgr`, `ownerGroupManager`, `standing2`, `contractMgr`,
+  `blueprintManager`, `repairSvc`, `reprocessingSvc`, `LPSvc`, `publicGatewaySvc`. The V24.01 client calls a name it is
+  advertised only through `RemoteSvc`/`ProxySvc` or a route table (`carbon/common/script/net/ServiceCallGPCS.py:194-213`);
+  for the names above the client's calls are on demand (station, corporation, industry, LP store), local
+  (`sm.GetService`, `publicGatewaySvc`, `LSC`, `warRegistry`), or not found in eve-logic (`certificateMgr`, `tutorialSvc`,
+  `bookmarkMgr`, `ownerGroupManager`, `standing2`, `contractMgr`, `tradeMgr`). `structure` and
+  `planetOrbitalRegistryBroker` belong to the structures track. An advertised name with no service would be called and
+  answered with the unknown-service error, so a name is advertised only with a real service. Each is added when its
+  service is built (its own slice). Test: `ServiceAdvertisementTests`. Status: tolerated (A); the on-demand names are
+  listed as open in TODO.md.
+- **objectCaching is not a service here.** The reference registers it (`server/src/services/cache/objCacheService.js:38`)
+  and advertises it. In V24.01, the cache check that a call makes is local: `ServiceCallGPCS.py:185-193` asks the client's
+  own `objectCaching` (`sm.GetService`). The remote `objectCaching.GetCachableObject` is reached only when a server result
+  is an `objectCaching.CachedObject` reference (`carbon/common/script/net/objectCaching.py:299-332`,
+  `cachedObject.py:103`). eve.rs returns every cached result inline (`ObjectCaching.MethodResult`, a substream), so the
+  client never asks for one. The cache-version and invalidation calls the client makes are local too
+  (`objectCaching.py:222-225`). Building the remote service would answer calls nobody makes. The reference's proxy cache
+  (`proxyCache: true` in `beyonceService.js:2482`, `mapService.js:755`, `corpService.js:590`, `agentMgrService.js:901`)
+  would need it; a slice that returns such a reference must implement `GetCachableObject` first. Status: tolerated (A).
+- **Global-config keys: the store keys are not given yet.** The reference returns the 8 base keys and 7 keys from the New
+  Eden Store (`server/src/services/newEdenStore/storeState.js:503-527`). eve.rs gives the 8 base keys, each with a
+  consumer in the client (`globalConfig/getFunctions.py`, `ui/services/evePhotosvc.py`, `raffles/common/util.py`,
+  `expertSystems/feature_flag.py`). Of the 7, `fake_vgs_enabled` has a consumer (`eve/client/script/environment/vgsService.py:51,101`),
+  but the reference's value is derived from the store's state (`storeState.js:517`: enabled and has legacy offers), and
+  eve.rs has no store (S3, see "Store entries in the global config" above). Absent, the client reads its default (`False`,
+  `globalConfig/const.py:102`), which is the only value eve.rs can state. The other six have getters
+  (`globalConfig/getFunctions.py:233-258`) that no V24.01 caller uses, and their fast-checkout values come from the
+  FastCheckoutService (`fastcheckout/client/fastCheckoutClientService.py:76`), which eve.rs does not have. Status: deferred
+  to S3.
+- **`machoNet.SetGlobalConfigValue` is saved, and its write is observed.** The reference keeps a runtime override in
+  memory (`server/src/services/machoNet/globalConfig.js:99-117`, and `machoNetService.js:357-400`), so a restart drops it.
+  eve.rs saves it in PostgreSQL (schema `zsystem`, table `global_config`, as the reference's own `zsystem.GlobalConfig`)
+  and reads it back at start-up, because the brief requires a write to survive a restart and the Host keeps its state in
+  PostgreSQL. The reference also tells every connected client with `OnGlobalConfigUpdated`
+  (`carbon/common/script/net/machoNet.py:1494-1498`, handler `:3356-3367`); eve.rs does the same, sending None for a
+  removal, and sends the new cluster configuration to each connected front so the next login reads it (the handshake's
+  `config_vals`, `machoNet.py:1708-1709`). `isUpdate` (the other nodes of a cluster) has no effect on a single node.
+  Two further differences: (1) the write needs `ROLE_ADMIN` or `ROLE_SERVICE` on the account, as the reference's exported
+  calls say (`machoNet.py:295-296`), which the reference's own handler does not check (`machoNetService.js:357`); a player
+  is refused with `RuntimeError('RoleNotAssigned')`; (2) the bug-report server and the Honeycomb write key cannot be set or
+  removed (the reference's protected keys, `globalConfig.js:99-104`), and eve.rs refuses such a write with an error where
+  the reference ignores it silently. Without a store the call is refused, not answered as done. Tests: `GlobalConfigTests`
+  (store semantics, socket write path, PostgreSQL round trip), `MachoNetServiceTests`. Status: tolerated (A).
+- **`machoNet.GetGlobalConfig` and `GetGlobalConfigValue` answer any session.** The reference restricts both to
+  `ROLE_SERVICE` (or `ROLE_ADMIN` for the value) (`machoNet.py:293-298`). eve.rs answers any session. The values are read
+  only, and the same dictionary reaches every client in the handshake's `config_vals` (`handshake.rs:340`), so nothing
+  secret is exposed. Status: tolerated (A).
+- **Single sign-on login (`connection.LoginSso`).** The acknowledgement carries `access_token` and `computer_hash`, which
+  the client reads after an SSO login (`carbon/client/script/remote/connectionService.py:139-140`). The reference's
+  authentication returns both (`machoNet.py:3445`). eve.rs sends both as None (the reference's answer when the client sends
+  no computer hash, `authenticationService.js:288-292`). The SSO token itself is not read: the reference only records it
+  (`authenticationService.js:281`), and no token-to-account rule exists in either implementation. A real SSO token therefore
+  does not sign a pilot in; the login is the ordinary account check. Status: open (FUTURE, see TODO.md).

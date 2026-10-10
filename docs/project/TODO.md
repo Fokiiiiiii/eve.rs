@@ -1,6 +1,6 @@
 # Current TODOs
 
-**Updated:** 2026-10-09
+**Updated:** 2026-10-10
 **Baseline:** main source commit `7379a70fdeee0e93d2ac38c1b7a7bd9ecd29da60`
 
 This list distinguishes a real behavior/provider gap from an intentionally empty default and from a method whose route already exists. These items are not missing-route work.
@@ -17,7 +17,7 @@ Do not fabricate successful state or fake backends to close these items.
 
 | Status | Service/method | Missing work |
 |---|---|---|
-| OPEN | `machoNet.SetGlobalConfigValue` | Connect the runtime global-config mutation and its client notification through a real configuration owner. The Host currently constructs the service without that callback. |
+| FUTURE | machoNet single sign-on login (`connection.LoginSso`, the `user_sso_token` of `machoNet.Authenticate`) | The acknowledgement now carries `access_token` and `computer_hash` (None), so the client no longer fails on the keys. The token is not read: EveJS records it only (`authenticationService.js:281`), and no token-to-account rule exists. Needs a decision on how a CCP SSO token maps to an account. |
 | OPEN | `insurgencySolarsystem.GetAllVisibleCampaigns`; `GetLocalCampaignClientSnapshot` | Connect a campaign snapshot producer equivalent to EveJS's Insurgency runtime controller. The route and callback boundary exist, but no campaign producer was found in `dotnet/src`. |
 | OPEN | `essMgr.GetDataForClientSolarSystem`; `GetMainBankTheftsForClientSolarSystem`; `GetReserveBankTheftsForClientSolarSystem`; `RequestMainBankUnlink`; `RequestReserveBankUnlink` | Connect the real ESS state and operation backend to `ReadSystemStateAsync` and `ExecuteAsync`. Do not synthesize thefts or unlink success. |
 | OPEN | `abyssalMgr.ClientIsReady` | Connect the runtime client-ready path and automatic trace activation. No Abyssal runtime provider was found in the current C# source. |
@@ -298,6 +298,11 @@ The start scripts are `tools/windows/` (`start-server.bat`, `start-server-dev.ba
 - `structureHangarViewMgr.GetMyHangarViewState`: existing persistence callback is connected.
 - publicQaToolsServer.SlashCmd delegates to the existing slash service. CanGiveItemForMultifit returns false in EveJS and RS, so those responses are aligned.
 - SignalTracker registration: Host callback and session registration are implemented; the snapshot producer remains open.
+- `machoNet.SetGlobalConfigValue` (slice A, 2026-10-10): the write is saved in PostgreSQL (`zsystem.global_config`, `EVE_GLOBAL_CONFIG_SCHEMA`), read back at start-up, sent to connected clients as `OnGlobalConfigUpdated` (None for a removal), republished to the fronts for the next handshake, limited to ROLE_ADMIN or ROLE_SERVICE, and the bug-report server and Honeycomb key are protected. Tests: `GlobalConfigTests` (store, socket, PostgreSQL). Differences from EVE.js are in DEVIATIONS.md ("Handshake, machoNet and the global config").
+- Unknown service and unknown method on a non-strict host: answered with the V24.01 wrapped error (`eveexceptions.ServiceNotFound` / `exceptions.AttributeError`), not None (slice A). Tests: `HostServerTests`, `StrictRpcTests`, and the golden replays with `ErrorAnswers`. DEVIATIONS.md ("Unknown service and method").
+- The login acknowledgement carries `access_token` and `computer_hash` (slice A; None for a password login). Test: `crates/eve-net/tests/handshake.rs`.
+- The advertised service table is checked against the registry (slice A): every advertised name reaches a registered service, and the 23 names the reference advertises but eve.rs does not register are documented, not advertised. Test: `ServiceAdvertisementTests`.
+- `tools/dev/run-eve-live.sh` exits non-zero when the host socket or the front port does not come up (slice A), with a hint when the host was in its market seed.
 - `BeyonceService.CurrentFileTime`: the alleged compile failure does not reproduce on main; the FILETIME helper and Fleet tests/builds pass.
 
 ## Source files for the open provider checks
@@ -749,3 +754,25 @@ Open, each with its blocker:
 - NOT BUILT: the wormhole and Pochven refusals of the beacon (EveJS lines 287 to 291).
 - NOT TESTED: a host jump to an anchored beacon and the simulation's arrival at it (the code path exists; no test drives it).
 - NOT RUN: the client.
+
+## 35. Services the client calls on demand, not yet advertised (slice A, 2026-10-10)
+
+The reference advertises these 23 names; eve.rs does not register them, so it does not advertise them (DEVIATIONS.md, "Handshake, machoNet and the global config"). Each is listed with the slice that builds it. Advertise a name only with a real service behind it.
+
+| Status | Name | Owner | Client call (eve-logic) |
+|---|---|---|---|
+| OPEN | `corpStationMgr`, `itemLocking`, `ownerGroupManager`, `standing2`, `contractMgr`, `certificateMgr`, `tutorialSvc`, `bookmarkMgr` | Slice D / corporations / contracts | eveMoniker.py:111; corporation/itemLocking.py:27; not called in eve-logic (certificateMgr, tutorialSvc, bookmarkMgr, ownerGroupManager, standing2, contractMgr) |
+| OPEN | `accessGroupBookmarkMgr` | bookmarks (check whether bookmarkSvc starts at boot) | bookmarks/bookmarkSvc.py:41 |
+| OPEN | `blueprintManager` | industry (check whether blueprintSvc starts at boot: `GetLimits` in Run) | industry/blueprintSvc.py:24-25 |
+| OPEN | `repairSvc`, `reprocessingSvc`, `LPSvc` | Slice D (station services), LP store later | eveMoniker.py:101, 227; station/repairshop/base_repairshop.py:58; loyaltyPointStore/lpStoreSvc.py:63 |
+| OPEN | `nes_intro` | Slice C to check when the character screen creates the controller | storylines/client/nes_intro.py:45 |
+| OPEN | `FastCheckoutService` | plex store (fast checkout) | fastcheckout/client/fastCheckoutClientService.py:26 |
+| OPEN | `loadService`, `tradeMgr`, `warRegistry`, `LSC`, `publicGatewaySvc`, `planetOrbitalRegistryBroker`, `structure` | cluster tool / local services / structures track (other Claude) | loadService.py:70-321; eveMachoNet.py:253; eveMoniker.py:197 (local); devtools only; gateway (client-local); eveplanet/orbital.py:35 |
+| OPEN | `objectCaching` (remote `GetCachableObject`) | required before any result is returned as a `CachedObject` reference (the proxy cache of EVE.js) | objectCaching.py:299-332 |
+
+## 36. Non-strict host: a failing handler is answered None (slice A finding, 2026-10-10)
+
+| Status | Item | Missing work |
+|---|---|---|
+| OPEN | A handler that throws answers the call with None (`PacketDispatcher.cs`, the catch block). The V24.01 server answers a wrapped exception (`ExceptionWrapperGPCS.py:46-93`), which the client raises at the call site. It is the same class of fault as the unknown-service answer that was fixed. | Decide with the parent whether to change it for every call, and check the strict-mode test that pins the current behaviour (`StrictRpcTests`). |
+

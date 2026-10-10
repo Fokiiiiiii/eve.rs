@@ -15,6 +15,7 @@ public class ReloadServiceTests
 {
     private const long System = 30100032;
     private const int RailgunI = 10678, Antimatter = 222, Slot = 28, Cargo = 5, NextActivationTime = 2729, QuantityCharge = 805;
+    private const int Hobgoblin = 2454, LightFighter = 23055, HangarContainer = 10004;
 
     private sealed record Flight(Rig Rig, Created Character, ClientSession Session, string Oid, long Gun, long Stack) : IAsyncDisposable
     {
@@ -204,4 +205,44 @@ public class ReloadServiceTests
         Assert.Equal([$"{NotFitted} 0 Add {{ Capacity = 0, Available = 0 }}"], f.Rig.Rounds.Asked);
         Assert.False(f.Rig.Timers.IsSet($"dogma.reload:{NotFitted}"));
     }
+
+    /// <summary>
+    /// A docked ship: the rounds come from the station hangar named, a drone and a fighter given as charges are left alone, and an unload to the hangar puts
+    /// the rounds back there. The bound object is the station's dogma binding (the one a docked ship's guns are bound to).
+    /// </summary>
+    [PgFact]
+    public async Task A_docked_gun_is_loaded_from_the_hangar_and_a_drone_or_a_fighter_given_as_a_charge_is_left_alone()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var c = await rig.NewCharacterAsync();
+        Assert.IsType<ShipChanged>(await rig.Ships.MoveAsync(c.CharacterId, c.ShipId + 3, c.ShipId, Rig.Station, ItemFlags.Hangar, null));
+        var gun = (await rig.Ships.GrantAsync(c.CharacterId, RailgunI, 1, singleton: true))!.Single().After.Id;
+        Assert.IsType<ShipChanged>(await rig.Ships.MoveAsync(c.CharacterId, gun, Rig.Station, c.ShipId, Slot, 1));
+        var stack = await PutAsync(rig, c.CharacterId, Rig.Station, ItemFlags.Hangar, Antimatter, 200);
+        var drone = await PutAsync(rig, c.CharacterId, Rig.Station, ItemFlags.Hangar, Hobgoblin, 1);
+        var fighter = await PutAsync(rig, c.CharacterId, Rig.Station, ItemFlags.Hangar, LightFighter, 1);
+        var session = Rig.Session(c.CharacterId);
+        var oid = await rig.BindAsync(session);
+        async Task<long> HangarAsync() =>
+            (await rig.Items.InLocationAsync(Rig.Station, c.CharacterId)).Where(i => i.TypeId == Antimatter && i.Flag == ItemFlags.Hangar).Sum(i => i.Quantity);
+
+        await rig.CallAsync(session, "LoadAmmo", oid, new PyLong(c.ShipId), new PyList([new PyLong(gun)]),
+            new PyList([new PyLong(drone), new PyLong(fighter)]), new PyLong(Rig.Station));
+        Assert.Equal(1, (await rig.Items.GetAsync(drone))!.Quantity);
+        Assert.Equal((Rig.Station, ItemFlags.Hangar), ((await rig.Items.GetAsync(fighter))!.LocationId, (await rig.Items.GetAsync(fighter))!.Flag));
+        Assert.Equal(0L, await InGunAsync(rig, c) ?? 0);
+
+        await rig.CallAsync(session, "LoadAmmo", oid, new PyLong(c.ShipId), new PyList([new PyLong(gun)]),
+            new PyList([new PyLong(stack)]), new PyLong(Rig.Station));
+        var loaded = await InGunAsync(rig, c);
+        Assert.True(loaded > 0, "the gun holds rounds from the hangar");
+        Assert.Equal(200L, loaded!.Value + await HangarAsync());
+
+        await rig.CallAsync(session, "UnloadAmmo", oid, new PyLong(c.ShipId), new PyList([new PyLong(gun)]), new PyLong(HangarContainer), PyNone.Instance);
+        Assert.Equal(0L, await InGunAsync(rig, c) ?? 0);
+        Assert.Equal(200L, await HangarAsync());
+    }
+
+    private static async Task<long?> InGunAsync(Rig rig, Created c) =>
+        (await rig.Items.InLocationAsync(c.ShipId, c.CharacterId)).Where(i => i.Flag == Slot && i.TypeId == Antimatter).Sum(i => (long?)i.Quantity);
 }

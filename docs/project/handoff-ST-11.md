@@ -10,7 +10,7 @@ Updated at every push. Plan: scratchpad `specs/structures_phase.md`, section ST-
    `system:{id}:slot:{n}`), `ContentCosmicSites` as the `ICosmicSiteSource` implementation (signatures with their code and level),
    the async `ICosmicSiteSource` contract and the code / dungeon fields of the scan rows. Tests: `CosmicSitesTests.cs`.
    Not bound in `dotnet/src/Eve.Host`, so the server still behaves as before (`NoCosmicSites` is not replaced yet).
-   Status: green, `CosmicSite` filter 11 passed, 0 skipped (EVE_PG_URL set); full Services.Space suite run in progress at push time.
+   Status: green. `CosmicSite` filter 11 passed; full `Eve.Services.Space.Tests` 627 passed, 0 failed, 0 skipped (EVE_PG_URL set).
 2. **Activation (next).** Host wiring: `SpaceComposition` creates and attaches the director before `foundations.StartAsync`,
    `SystemEntered` runs `EnsureAsync`, `ContentCosmicSites` is passed to `SpaceProbeScans`, the anomaly read model asks the
    director first, `BeyonceService` warps to a scan result by its code. The patch is kept at scratchpad `st11/activation.patch`
@@ -22,7 +22,9 @@ Updated at every push. Plan: scratchpad `specs/structures_phase.md`, section ST-
 ## Gotchas
 
 - `PgFact` tests need `EVE_PG_URL=postgres://postgres@127.0.0.1:5432/eve` (the socket path does not work for psql; use TCP).
-- The shared heavy lock (`/tmp/eve-heavy.lock`) queues builds behind other agents; a build can wait a long time.
+- The shared heavy lock (`/tmp/eve-heavy.lock`) queues builds behind other agents; a build can wait a long time. Use
+  `flock -o -w 1800 /tmp/eve-heavy.lock <cmd>` (`-o` keeps the lock fd out of children, a VBCSCompiler server that inherits it
+  holds the lock forever) and `-p:UseSharedCompilation=false` on `dotnet build` and `dotnet test`.
 - Serena's project paths resolve against `/home/user/eve.rs`, not this worktree: do not use Serena writes here.
 - `CosmicSiteDirector.Attach` registers the job and the content, so it must run before `ContentRuntime.AttachAsync`
   and before `foundations.StartAsync`.

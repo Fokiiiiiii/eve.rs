@@ -48,25 +48,27 @@ public sealed class OnlineCharacters
         return true;
     }
 
-    public void CompleteEnter(long sessionId)
+    public bool CompleteEnter(long sessionId)
     {
         lock (_gate)
-            CompleteEnterCore(sessionId);
+            return CompleteEnterCore(sessionId);
     }
 
-    private void CompleteEnterCore(long sessionId)
+    private bool CompleteEnterCore(long sessionId)
     {
-        if (_previousBySession.Remove(sessionId, out var previous) && previous is { } characterId &&
-            _bySession.GetValueOrDefault(sessionId) != characterId)
+        if (!_previousBySession.Remove(sessionId, out var previous))
+            return false;
+        if (previous is { } characterId && _bySession.GetValueOrDefault(sessionId) != characterId)
             _byCharacter.Remove(characterId);
+        return true;
     }
 
-    public void CancelEnter(long sessionId)
+    public bool CancelEnter(long sessionId)
     {
         lock (_gate)
         {
             if (!_previousBySession.Remove(sessionId, out var previous))
-                return;
+                return false;
             if (_bySession.Remove(sessionId, out var enteredCharacterId) && enteredCharacterId != previous)
                 _byCharacter.Remove(enteredCharacterId);
             if (previous is { } characterId)
@@ -74,6 +76,7 @@ public sealed class OnlineCharacters
                 _bySession[sessionId] = characterId;
                 _byCharacter[characterId] = sessionId;
             }
+            return true;
         }
     }
 

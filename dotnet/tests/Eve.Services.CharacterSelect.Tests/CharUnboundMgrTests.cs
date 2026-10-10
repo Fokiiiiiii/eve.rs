@@ -375,6 +375,31 @@ public class CharUnboundMgrTests
     }
 
     [PgFact]
+    public async Task Closing_during_entry_does_not_succeed_or_reenter_the_previous_runtime()
+    {
+        var hook = new FailingEntryHook();
+        await using var h = await Harness.CreateAsync(entryHooks: [hook]);
+        var (session, _) = await h.LoginAsync("entry-disconnect");
+        var previousId = await CreateAsync(h, session, "Previous Disconnect Pilot");
+        var nextId = await CreateAsync(h, session, "Next Disconnect Pilot");
+        await h.CallAsync(session, "SelectCharacterID", new PyInt(previousId));
+        var restoredPrevious = false;
+        hook.OnSuccessfulEntry = enteringId =>
+        {
+            if (enteringId == nextId)
+                session.Close();
+            else
+                restoredPrevious = true;
+        };
+
+        var failure = await Record.ExceptionAsync(async () =>
+            await h.CallAsync(session, "SelectCharacterID", new PyInt(nextId)));
+        Assert.NotNull(failure);
+        Assert.False(restoredPrevious);
+        Assert.Empty(h.Online.Snapshot());
+    }
+
+    [PgFact]
     public async Task Choosing_a_character_sets_the_session_and_sends_one_change_in_the_recorded_shape()
     {
         await using var h = await Harness.CreateAsync();

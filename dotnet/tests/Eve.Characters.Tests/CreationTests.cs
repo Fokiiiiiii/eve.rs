@@ -325,7 +325,8 @@ public class OnlineCharacterTests
         Assert.True(online.TryEnter(100, 1));
         Assert.True(online.TryBeginEnter(200, 1));
         online.Leave(1);
-        online.CancelEnter(1);
+        Assert.False(online.CancelEnter(1));
+        Assert.False(online.CompleteEnter(1));
         Assert.Empty(online.Snapshot());
         Assert.Equal(0, online.Count);
         Assert.True(online.TryEnter(100, 2));

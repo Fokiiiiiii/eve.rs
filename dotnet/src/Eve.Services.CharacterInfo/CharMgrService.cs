@@ -39,7 +39,7 @@ public sealed record CharMgrOrganizationInfo(long CorporationId, long AllianceId
 [Service("charMgr")]
 public sealed partial class CharMgrService(
     PgCharacterStore characters,
-    StationCatalog stations,
+    HomeStationResolver homeStations,
     Func<long, int, int, CancellationToken, ValueTask<IReadOnlyList<PyValue>>> readRecentShipKillmailPage,
     Func<long, CancellationToken, ValueTask<string?>> readCharacterDescription,
     Func<long, string, CancellationToken, ValueTask> writeCharacterDescription,
@@ -195,13 +195,11 @@ public sealed partial class CharMgrService(
     [Method("GetHomeStationRow")]
     public async ValueTask<PyValue> GetHomeStationRow(ServiceCall call)
     {
-        if (call.Session.CharacterId is not { } id || await characters.GetAsync(id, call.Cancellation) is not { } character
-            || stations.Get(character.HomeStationId) is not { } station)
-        {
+        var station = (await homeStations.ResolveAsync(call)).Location;
+        if (station is null)
             return None;
-        }
         PyValue Id(long value) => new PyInt(value);
-        PyValue Text(string value) => new PyStr(value);
+        PyValue Text(string? value) => value is null ? None : new PyStr(value);
         return Py.KeyVal(
             ("id", Id(station.Id)), ("station_id", Id(station.Id)), ("stationID", Id(station.Id)), ("home_station_id", Id(station.Id)),
             ("type_id", Id(station.TypeId)), ("typeID", Id(station.TypeId)), ("station_type_id", Id(station.TypeId)),
@@ -211,9 +209,13 @@ public sealed partial class CharMgrService(
             ("region_id", Id(station.RegionId)), ("regionID", Id(station.RegionId)),
             ("owner_id", Id(station.OwnerId)), ("ownerID", Id(station.OwnerId)),
             ("clone_station_id", Id(station.Id)), ("cloneStationID", Id(station.Id)),
-            ("is_fallback", PyBool.False), ("isFallback", PyBool.False),
+            ("is_fallback", station.IsFallback ? PyBool.True : PyBool.False),
+            ("isFallback", station.IsFallback ? PyBool.True : PyBool.False),
             ("stationTypeID", Id(station.TypeId)));
     }
+
+    [Method("GetHomeStation")]
+    public ValueTask<PyValue> GetHomeStation(ServiceCall call) => GetHomeStationRow(call);
 
 
     [Method("MachoResolveObject")]
@@ -875,30 +877,70 @@ public sealed partial class CharMgrService(
 }
 
 
+/// <summary>The station data shared by the homeStation and charMgr read paths.</summary>
+public sealed record HomeStationLocation(
+    long Id, int TypeId, string? Name, int SolarSystemId, int ConstellationId, int RegionId, long OwnerId, bool IsFallback);
+
+public sealed record HomeStationStructure(HomeStationLocation? Location, bool PersistentlyDeployed, bool IsLost);
+
+public sealed record HomeStationResolution(Character? Character, HomeStationLocation? Location);
+
+public sealed class HomeStationResolver(
+    Func<long, CancellationToken, Task<Character?>> readCharacter,
+    StationCatalog stations,
+    CreationCatalog creation,
+    Func<long, CancellationToken, Task<HomeStationStructure?>> readStructure)
+{
+    public async ValueTask<HomeStationResolution> ResolveAsync(ServiceCall call)
+    {
+        if (call.Session.CharacterId is not { } characterId ||
+            await readCharacter(characterId, call.Cancellation) is not { } character)
+            return new(null, null);
+
+        if (stations.Get(character.HomeStationId) is { } home)
+            return new(character, FromStation(home, false));
+
+        var structure = await readStructure(character.HomeStationId, call.Cancellation);
+        if (structure is { PersistentlyDeployed: true, Location: { } location })
+            return new(character, location with { IsFallback = false });
+
+        if (character.HomeStationId > 0 && (structure is null || structure.IsLost) &&
+            SchoolStation(character) is { } schoolStation)
+            return new(character, FromStation(schoolStation, true));
+
+        return new(character, stations.Get(character.StationId) is { } current
+            ? FromStation(current, true)
+            : null);
+    }
+
+    private Station? SchoolStation(Character character)
+    {
+        var school = CreationCatalog.ResolveSchool(character.SchoolId, character.RaceId);
+        var starter = school is null ? null : creation.StarterFor(school.CorporationId);
+        return starter is null ? null : stations.Get(starter.StationId);
+    }
+
+    private static HomeStationLocation FromStation(Station station, bool isFallback) =>
+        new(station.Id, station.TypeId, station.Name, station.SolarSystemId, station.ConstellationId,
+            station.RegionId, station.OwnerId, isFallback);
+}
+
 [Service("home_station")]
-public sealed partial class HomeStationService(PgCharacterStore characters, StationCatalog stations)
+public sealed partial class HomeStationService(HomeStationResolver homeStations)
 {
     [Method("get_home_station")]
     public async ValueTask<PyValue> GetHomeStation(ServiceCall call)
     {
-        if (call.Session.CharacterId is not { } characterId ||
-            await characters.GetAsync(characterId, call.Cancellation) is not { } character)
+        var resolution = await homeStations.ResolveAsync(call);
+        if (resolution.Character is not { } character)
             throw new InvalidOperationException("The current character has no home-station record.");
-
-        var station = stations.Get(character.HomeStationId);
-        var isFallback = false;
-        if (station is null)
-        {
-            station = stations.Get(character.StationId);
-            isFallback = station is not null;
-        }
-        if (station is null)
+        if (resolution.Location is not { } station)
             throw new InvalidOperationException($"Home station {character.HomeStationId} is unavailable.");
 
         var header = Py.Tuple(
             Py.Tuple(new PyToken("homestation.types.StationData")),
             Py.Dict(
-                ("is_fallback", isFallback ? PyBool.True : PyBool.False),
+                ("is_fallback", station.IsFallback ? PyBool.True : PyBool.False),
                 ("solar_system_id", new PyInt(station.SolarSystemId)),
                 ("id", new PyInt(station.Id)),
                 ("type_id", new PyInt(station.TypeId))));

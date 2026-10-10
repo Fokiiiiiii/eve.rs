@@ -27,7 +27,7 @@ Do not fabricate successful state or fake backends to close these items.
 | OPEN | `contractProxy.GetMyContractEscrow`; `expertSystemMgr.GetMyExpertSystems` | The startup RPCs return EveJS-compatible empty-state shapes, but contract records and expert-system ownership are not persisted. Connect the authoritative read paths when those domains are added. |
 | OPEN | `raffleProxy.AmIBanned` | The current false result matches the enabled-HyperNet default, but account bans are not persisted. Connect the moderation owner before supporting per-account bans. |
 | FUTURE | `config.GetBlackListedPlanets` | The empty list matches EveJS; there is no runtime planet blocklist source. Connect one only if the server adds that policy. |
-| LIMITATION | `home_station.get_home_station` | Reads the persisted home station and falls back to the current station. It does not resolve live structure homes or use the school's starting station when a home structure is lost, as EveJS does. Add an authoritative structure lookup and school-start resolver before claiming parity. |
+| READS VERIFIED | `home_station.get_home_station`; `charMgr.GetHomeStationRow` / `GetHomeStation` | Share persisted character, SDE station/school, and deployed-structure resolution. Lost or missing structure homes fall back to the school starter station; the existing KeyVal aliases and StationData shape are tested. CharacterInfo: 55 PostgreSQL tests; Host structure-directory dispatch regression passes. Candidate, remote-cooldown, and mutation RPCs remain outside this read slice; graphical-client acceptance is open. |
 
 ## 2. Mutation authorities and specialized service providers
 

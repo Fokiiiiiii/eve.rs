@@ -63,11 +63,27 @@ internal sealed class Rig : IAsyncDisposable
     Func<long, long, string?, CancellationToken, ValueTask>? writeActivityStatus = null,
     Func<long, PyValue, CancellationToken, ValueTask>? writeLogSettings = null,
     Func<long, CancellationToken, ValueTask<long?>>? readCorporationMemberStartedMs = null,
-    Func<IReadOnlyList<Character>, CancellationToken, ValueTask<IReadOnlyDictionary<long, CharMgrOrganizationInfo>>>? readOrganizationInfo = null) =>
-    new(Characters, Stations, ReadRecentShipKillmailPageAsync, ReadCharacterDescriptionAsync,
-        WriteCharacterDescriptionAsync, ReadSecurityStatusAsync, ReadMedal1GraphicIdAsync,
+    Func<IReadOnlyList<Character>, CancellationToken, ValueTask<IReadOnlyDictionary<long, CharMgrOrganizationInfo>>>? readOrganizationInfo = null,
+    HomeStationResolver? homeStations = null) =>
+    new(Characters, homeStations ?? CreateHomeStationResolver(Characters), ReadRecentShipKillmailPageAsync,
+        ReadCharacterDescriptionAsync, WriteCharacterDescriptionAsync, ReadSecurityStatusAsync, ReadMedal1GraphicIdAsync,
         readPersonalData, updatePersonalData, writeActivityStatus, writeLogSettings,
         readCorporationMemberStartedMs, readOrganizationInfo);
+
+public static HomeStationResolver CreateHomeStationResolver(
+    PgCharacterStore characters,
+    Func<long, CancellationToken, Task<HomeStationStructure?>>? readStructure = null)
+{
+    var starter = Stations.Get(60015249)!;
+    var catalog = new CreationCatalog([], [], [
+        new StarterLocation(1000006, null, starter.Id, starter.SolarSystemId, starter.ConstellationId, starter.RegionId),
+    ]);
+    return new HomeStationResolver(
+        (id, token) => characters.GetAsync(id, token),
+        Stations,
+        catalog,
+        readStructure ?? ((_, _) => Task.FromResult<HomeStationStructure?>(null)));
+}
 
     private ValueTask<IReadOnlyList<PyValue>> ReadRecentShipKillmailPageAsync(long characterId, int num, int startIndex, CancellationToken _)
     {
@@ -287,7 +303,7 @@ public class CharMgrTests
         await using var rig = await Rig.CreateAsync();
         var id = await rig.MakeAsync("Home Station Pilot");
         var (session, _) = Rig.Session(id);
-        var homeStation = new HomeStationService(rig.Characters, Rig.Stations);
+        var homeStation = new HomeStationService(Rig.CreateHomeStationResolver(rig.Characters));
 
         var response = Assert.IsType<PyObjectEx>(await Rig.CallAsync(homeStation, session, "get_home_station"));
         Assert.Equal(ObjectExKind.Ex2, response.Kind);
@@ -316,7 +332,85 @@ public class CharMgrTests
 
         var lost = await rig.MakeAsync("Lost Pilot", station: 60099999);
         var (session, _) = Rig.Session(lost);
-        Assert.Equal(PyNone.Instance, await Rig.CallAsync(rig.CharMgr, session, "GetHomeStationRow"));
+        var unavailable = new HomeStationResolver(
+            (id, token) => rig.Characters.GetAsync(id, token), Rig.Stations,
+            new CreationCatalog([], [], []), (_, _) => Task.FromResult<HomeStationStructure?>(null));
+        Assert.Equal(PyNone.Instance, await Rig.CallAsync(rig.CreateCharMgr(homeStations: unavailable), session, "GetHomeStationRow"));
+        await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+            await Rig.CallAsync(new HomeStationService(unavailable), session, "get_home_station"));
+    }
+
+    private static Dictionary<string, PyValue> ObjectFields(PyValue value)
+    {
+        var header = Assert.IsType<PyTuple>(Assert.IsType<PyObjectEx>(value).Header);
+        return Assert.IsType<PyDict>(header.Items[1]).Entries
+            .ToDictionary(entry => Assert.IsType<PyStr>(entry.Key).Value, entry => entry.Value);
+    }
+
+    [PgFact]
+    public async Task Active_structure_home_station_is_shared_by_homeStation_and_charMgr_reads()
+    {
+        const long structureId = 1_000_000_000_011;
+        await using var rig = await Rig.CreateAsync();
+        var npc = Rig.Stations.Get(60015249)!;
+        var id = await rig.MakeAsync("Structure Home Pilot", station: structureId);
+        var (session, _) = Rig.Session(id);
+        var structure = new HomeStationStructure(
+            new HomeStationLocation(structureId, 35841, "Pilot Citadel", npc.SolarSystemId, npc.ConstellationId, npc.RegionId, 980001, false),
+            PersistentlyDeployed: true, IsLost: false);
+        var resolver = Rig.CreateHomeStationResolver(rig.Characters,
+            (requestedId, _) => Task.FromResult<HomeStationStructure?>(requestedId == structureId ? structure : null));
+
+        var home = await Rig.CallAsync(new HomeStationService(resolver), session, "get_home_station");
+        var homeFields = ObjectFields(home);
+        Assert.Equal(new PyInt(structureId), homeFields["id"]);
+        Assert.Equal(new PyInt(35841), homeFields["type_id"]);
+        Assert.Equal(new PyInt(npc.SolarSystemId), homeFields["solar_system_id"]);
+        Assert.Equal(PyBool.False, homeFields["is_fallback"]);
+
+        var charMgr = rig.CreateCharMgr(homeStations: resolver);
+        var row = await Rig.CallAsync(charMgr, session, "GetHomeStationRow");
+        var rowFields = Fields(row);
+        Assert.Equal(new PyStr("Pilot Citadel"), rowFields["stationName"]);
+        Assert.Equal(new PyInt(structureId), rowFields["stationID"]);
+        Assert.Equal(new PyInt(npc.ConstellationId), rowFields["constellationID"]);
+        Assert.Equal(new PyInt(npc.RegionId), rowFields["regionID"]);
+        Assert.Equal(new PyInt(980001), rowFields["ownerID"]);
+        Assert.Equal(PyBool.False, rowFields["isFallback"]);
+
+        var alias = await Rig.CallAsync(charMgr, session, "GetHomeStation");
+        Assert.Equal(Order(row), Order(alias));
+        Assert.Equal(Fields(row), Fields(alias));
+    }
+
+    [PgFact]
+    public async Task Lost_structure_home_station_falls_back_to_the_school_station_on_both_read_surfaces()
+    {
+        const long structureId = 1_000_000_000_012;
+        await using var rig = await Rig.CreateAsync();
+        var starter = Rig.Stations.Get(60015249)!;
+        var id = await rig.MakeAsync("Lost Structure Pilot", station: structureId);
+        var (session, _) = Rig.Session(id);
+        foreach (var lost in new HomeStationStructure?[]
+        {
+            null,
+            new(null, PersistentlyDeployed: false, IsLost: true),
+        })
+        {
+            var resolver = Rig.CreateHomeStationResolver(rig.Characters,
+                (requestedId, _) => Task.FromResult<HomeStationStructure?>(requestedId == structureId ? lost : null));
+
+            var home = await Rig.CallAsync(new HomeStationService(resolver), session, "get_home_station");
+            var homeFields = ObjectFields(home);
+            Assert.Equal(new PyInt(starter.Id), homeFields["id"]);
+            Assert.Equal(PyBool.True, homeFields["is_fallback"]);
+
+            var row = await Rig.CallAsync(rig.CreateCharMgr(homeStations: resolver), session, "GetHomeStationRow");
+            var fields = Fields(row);
+            Assert.Equal(new PyInt(starter.Id), fields["stationID"]);
+            Assert.Equal(new PyInt(starter.SolarSystemId), fields["solarSystemID"]);
+            Assert.Equal(PyBool.True, fields["isFallback"]);
+        }
     }
 
     [PgFact]

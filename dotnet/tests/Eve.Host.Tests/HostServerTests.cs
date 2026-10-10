@@ -1344,7 +1344,7 @@ public class HostServerTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task A_ping_is_answered_and_an_unknown_service_gets_none_as_the_reference_does()
+    public async Task A_ping_is_answered_and_an_unknown_service_gets_a_service_not_found_error()
     {
         Start();
         var front = await Handshaken(await ConnectAsync());
@@ -1356,9 +1356,38 @@ public class HostServerTests : IAsyncLifetime
         var pong = Assert.IsType<Send>(await front.ReceiveAsync());
         Assert.Equal(21, ((PyInt)((PyTuple)((PyObject)MarshalCodec.Decode(pong.Payload)).Args).Items[0]).Value);
 
+        // The V24.01 server's answer to a service it does not have: a wrapped ServiceNotFound, not a None result.
         await front.SendAsync(new Packet(open.SessionId, MarshalCodec.Encode(Packets.Call(open, 2, "noSuchService", "Nothing"))));
-        var none = Assert.IsType<Send>(await front.ReceiveAsync());
-        Assert.IsType<PyNone>(Result(MarshalCodec.Decode(none.Payload)));
+        var error = Assert.IsType<Send>(await front.ReceiveAsync());
+        AssertWrappedError(error, "eveexceptions.ServiceNotFound", "noSuchService");
+    }
+
+    [Fact]
+    public async Task An_unknown_method_gets_a_wrapped_attribute_error_and_a_known_method_still_answers()
+    {
+        Start();
+        var front = await Handshaken(await ConnectAsync());
+        var open = Open();
+        await front.SendAsync(open);
+        await front.ReceiveAsync();
+
+        await front.SendAsync(new Packet(open.SessionId, MarshalCodec.Encode(Packets.Call(open, 1, "machoNet", "NoSuchMethod"))));
+        AssertWrappedError(Assert.IsType<Send>(await front.ReceiveAsync()), "exceptions.AttributeError", "NoSuchMethod");
+
+        await front.SendAsync(new Packet(open.SessionId, MarshalCodec.Encode(Packets.Call(open, 2, "machoNet", "GetTime"))));
+        var time = Assert.IsType<PyLong>(Result(MarshalCodec.Decode(Assert.IsType<Send>(await front.ReceiveAsync()).Payload)));
+        Assert.Equal(Py.FileTimeFromUnixMs(FixedNowMs), time.Value);
+    }
+
+    /// <summary>An ERRORRESPONSE (command 15) whose wrapped exception has <paramref name="className"/> and names <paramref name="mention"/>.</summary>
+    private static void AssertWrappedError(Send reply, string className, string mention)
+    {
+        var state = ((PyTuple)((PyObject)MarshalCodec.Decode(reply.Payload)).Args).Items;
+        Assert.Equal(15, ((PyInt)state[0]).Value); // ERRORRESPONSE
+        var text = Encoding.ASCII.GetString(reply.Payload.Span);
+        Assert.Contains(className, text);
+        Assert.Contains(mention, text);
+        Assert.DoesNotContain("Server error ", text); // a wrapped exception of the server, not the strict-mode notice
     }
 
     [Fact]

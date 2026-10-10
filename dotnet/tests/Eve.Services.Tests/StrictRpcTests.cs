@@ -7,7 +7,8 @@ namespace Eve.Services.Tests;
 
 /// <summary>
 /// EVE_STRICT_RPC: an unknown service, an unknown method, an unregistered bound object or a failing handler is
-/// answered with a Macho error and logged. With the flag off each one is answered None, as before.
+/// answered with a Macho error and logged. With the flag off an unknown service or method is answered with the
+/// V24.01 server's wrapped error (no log line), and a failing handler is still answered None.
 /// </summary>
 [Collection(TraceSettings.Name)]
 public class StrictRpcTests
@@ -76,23 +77,24 @@ public class StrictRpcTests
     }
 
     [Fact]
-    public async Task Flag_off_answers_an_unknown_service_with_None_and_logs_nothing_strict()
+    public async Task Flag_off_answers_an_unknown_service_with_a_wrapped_service_not_found_and_logs_nothing()
     {
         var (sink, log) = await Dispatch(strict: false, "missingSvc", "Anything", new KnownService());
 
         Assert.Single(sink.Sent);
-        Assert.Equal(CallResponse, KindOf(sink.Sent[0]));
-        Assert.IsType<PyNone>(ResultOf(sink.Sent[0]));
+        Assert.Equal(ErrorResponse, KindOf(sink.Sent[0]));
+        Assert.Contains("eveexceptions.ServiceNotFound", Ascii(sink.Sent[0]));
         Assert.DoesNotContain("[strict-rpc]", log);
     }
 
     [Fact]
-    public async Task Flag_off_answers_an_unknown_method_and_a_failing_handler_with_None()
+    public async Task Flag_off_answers_an_unknown_method_with_a_wrapped_attribute_error_and_a_failing_handler_with_None()
     {
         var (unknownMethod, _) = await Dispatch(strict: false, "knownSvc", "Missing", new KnownService());
         var (failing, log) = await Dispatch(strict: false, "boomSvc", "Boom", new ThrowingService());
 
-        Assert.Equal(CallResponse, KindOf(unknownMethod.Sent.Single()));
+        Assert.Equal(ErrorResponse, KindOf(unknownMethod.Sent.Single()));
+        Assert.Contains("exceptions.AttributeError", Ascii(unknownMethod.Sent.Single()));
         Assert.Equal(CallResponse, KindOf(failing.Sent.Single()));
         Assert.DoesNotContain("boom went the handler", Ascii(failing.Sent.Single()));
         Assert.DoesNotContain("[strict-rpc]", log);

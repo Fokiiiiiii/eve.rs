@@ -11,6 +11,8 @@ namespace Eve.Services;
 public sealed class PacketDispatcher
 {
     private const string ReleaseMethod = "ClientHasReleasedTheseObjects";
+    private const string ServiceNotFoundClass = "eveexceptions.ServiceNotFound";
+    private const string AttributeErrorClass = "exceptions.AttributeError";
     private const string ReleaseKey = "OID-";
 
     private readonly ServiceRegistry _registry;
@@ -26,8 +28,11 @@ public sealed class PacketDispatcher
     public Action<string, Exception?>? OnProblem { get; set; }
 
     /// <summary>
-    /// Strict mode (EVE_STRICT_RPC=1): an unknown service or method, a call with no service and a failing handler
-    /// are answered with a Macho error and logged with their details, instead of a None result.
+    /// An unknown service, an unknown method and a call with no service are answered with the Macho error the V24.01
+    /// server sends for them (a wrapped <c>ServiceNotFound</c> or <c>AttributeError</c>), which the client raises at
+    /// its call site; a None result would be read as the call's answer (the client dies on <c>None.level</c>).
+    /// Strict mode (EVE_STRICT_RPC=1) also names the failure in the error text and logs the call's arguments, and
+    /// answers a failing handler with a Macho error instead of a None result.
     /// </summary>
     public bool StrictRpc { get; init; }
 
@@ -93,7 +98,7 @@ public sealed class PacketDispatcher
                 FailStrictly(packet, session, null, call, "unknown service", "the call names no service");
                 return true;
             }
-            SendCallResponse(packet, PyNone.Instance, session, null);
+            SendError(packet, MachoErrors.UserError("UnMachoDestination"), session, null);
             return true;
         }
 
@@ -129,16 +134,25 @@ public sealed class PacketDispatcher
                 return true;
             }
             if (traceRpc)
-                Console.Error.WriteLine($"[rpc-trace] unhandled session={session.SessionId} service={serviceName} method={call.Method} reason=service-not-registered result=PyNone");
-            SendCallResponse(packet, PyNone.Instance, session, serviceName);
+                Console.Error.WriteLine($"[rpc-trace] unhandled session={session.SessionId} service={serviceName} method={call.Method} reason=service-not-registered");
+            // The V24.01 server's answer to an unknown service: ServiceNotFound, wrapped (machoNetTransport.SessionCall).
+            SendError(packet, MachoErrors.Wrapped(ServiceNotFoundClass, [new PyStr(serviceName)]), session, serviceName);
             return true;
         }
 
-        if (traceRpc && !service.HasMethod(call.Method))
-            Console.Error.WriteLine($"[rpc-trace] unhandled session={session.SessionId} service={service.Name} method={call.Method} reason=method-not-registered");
-        if (StrictRpc && !service.HasMethod(call.Method))
+        if (!service.HasMethod(call.Method))
         {
-            FailStrictly(packet, session, service.Name, call, "unknown method", $"{service.Name}.{call.Method}");
+            if (traceRpc)
+                Console.Error.WriteLine($"[rpc-trace] unhandled session={session.SessionId} service={service.Name} method={call.Method} reason=method-not-registered");
+            if (StrictRpc)
+            {
+                FailStrictly(packet, session, service.Name, call, "unknown method", $"{service.Name}.{call.Method}");
+                return true;
+            }
+            // The V24.01 server's answer to a method it does not export: the AttributeError of getattr, wrapped
+            // (ObjectCallGPCS.ObjectCall, then ExceptionWrapper.CallUp).
+            SendError(packet, MachoErrors.Wrapped(AttributeErrorClass,
+                [new PyStr($"'{service.Name}' object has no attribute '{call.Method}'")]), session, service.Name);
             return true;
         }
 

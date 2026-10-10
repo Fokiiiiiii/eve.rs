@@ -1026,3 +1026,17 @@ Sources, in the order of the rule. SDE (sde.types and sde."typeDogma", the build
 - Protocol 58: the placement of a beacon is command kind 73 (PlaceCynoBeacon), a disruptor's placement with a range of 0. Kinds 71 and 72 are the scan targets and the directional targets, which main already has. The host's record kind is mobile_cyno_beacon (migration 0011 widens the deployed kind check).
 - Decision, a structure beacon (the Pharolux and Upwell cynosural beacons, group 2017, category 65, the structureCynoBeaconMgr remote service): the host answers a named refusal. The text names the missing piece: the structure service that keeps the beacon's state (the Upwell structure phase) is not built on this server. Test: StructureTravelTests.An_unwired_cyno_beacon_call_is_a_user_error_with_its_text. The jump bridge's structure call keeps its own generic text.
 - Shortcut, not built: a beacon as the target of a bridge or a conduit (both keep the field-only check, so a beacon is refused as not lit); the fleet notices for a beacon (no AnnounceFieldAsync call); the mobile inhibitor's effect on a beacon's activation; the wormhole and Pochven refusals (EveJS lines 287 to 291); the host jump to an anchored beacon (SpaceJumpDrive accepts it; no host test drives a jump to one); the simulation's arrival at a beacon (the arrival filter accepts an active beacon; not tested). The client was not run on this host.
+
+## Handshake, machoNet and the global config (slice A, 2026-10-10)
+
+- **Unknown service and unknown method.** The reference (EVE.js, `server/src/network/packetDispatcher.js:775-795`) answers a call to a
+  service it does not register, or to a method the service does not have, with a None result. The V24.01 server answers with a Macho
+  error: a wrapped `eveexceptions.ServiceNotFound` for an unknown service (`carbon/common/script/net/machoNetTransport.py:550-555`), and a
+  wrapped `exceptions.AttributeError` for a method the service does not export (`carbon/common/script/net/ObjectCallGPCS.py:100-105`,
+  wrapped by `ExceptionWrapperGPCS.py:35-45`). The client takes a None result as the call's answer (a colony dies on `None.level`, the
+  reason the released-bound-object path already answers with an error), and raises the wrapped exception at the call site. eve.rs
+  answers the non-strict default with the V24.01 error; `EVE_STRICT_RPC=1` keeps its named error with the log line. A call that names
+  no service is answered with the `UnMachoDestination` user error, as the released-object path does. Tests: `HostServerTests`
+  (`An_unknown_method_gets_a_wrapped_attribute_error...`, `A_ping_is_answered_and_an_unknown_service_gets_a_service_not_found_error`),
+  `StrictRpcTests` (flag off), and `DispatchGoldenTests` where five recorded None steps (`ErrorAnswers`) are replayed for the error answer
+  only; their state checks still run. Status: tolerated (A).

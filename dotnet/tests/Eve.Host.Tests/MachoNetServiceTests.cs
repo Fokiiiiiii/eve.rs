@@ -120,8 +120,9 @@ public class MachoNetServiceTests
     }
 
     [Fact]
-    public async Task An_unknown_method_is_answered_with_none_as_the_reference_does()
+    public async Task An_unknown_method_is_none_from_the_service_itself_and_the_dispatcher_answers_the_error()
     {
+        // The service's own CallAsync has nothing for it; PacketDispatcher checks HasMethod first (see HostServerTests).
         Assert.Equal(PyNone.Instance, await Call("NoSuchMethod"));
     }
 

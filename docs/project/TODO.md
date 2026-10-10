@@ -916,3 +916,20 @@ Open after M1:
 - DONE E-02 assertion: OnTarget lost, otherlost and clear reach the pilot session in order (host test `The_target_lock_notices_and_the_damage_state_action_reach_the_pilot_as_the_simulation_sent_them`). The client reaction is MITM only.
 - DONE E-05 assertion: the OnDamageStateChange destiny action reaches the session in DoDestinyUpdate with its arguments (same test). The progression widget is MITM only.
 - E-07 stays blocked on RC-5 (weapon banks). E-15 is in ST-7. E-06 stays open for the result source (ST-11).
+## 44. Structures phase, ST-0: the structure record owner, the timeline and the timers (2026-10-10)
+
+Package ST-0 of `structures_phase.md` (the scratchpad plan); decisions in DEVIATIONS.md "Structure timeline (ST-0)".
+
+Done (verified):
+| Status | Item | Evidence |
+|---|---|---|
+| VERIFIED (tests) | The pure timeline `StructureStateMachine`: anchor, anchoring, onlining, shield, armor and hull stages, reinforcements, Low Power, abandonment, unanchoring, reinforcement time change | `dotnet/tests/Eve.Structures.Tests/StateMachineTests.cs`: 47 passed, 0 skipped |
+| WRITTEN, NOT TESTED | Schema `structures` (migration 0001), `StructureStore` (read, write, legacy view, import) and `StructureTimers` (job `structure.timer`, event `structure.state_changed`) | compiles; no Postgres test yet |
+
+Open (next steps, in order):
+| Status | Item |
+|---|---|
+| OPEN | Postgres tests for `StructureStore` and `StructureTimers` with the `Rig` scratch schema: restart fires the job once, replay is a no-op, import is idempotent, the event is published with the change |
+| OPEN | The Host rules source (`IStructureRulesSource`) over the SDE (`rigSize`, system security band) |
+| OPEN | Register the migration and the timers at start-up (`Foundations`/`Program.cs`, like `Eve.Ships`), the GameStore import (host side only, ADR 0003 rule 3), `ArchitectureTests` entry |
+| OPEN | Switch the readers of the GameStore `structures` table (`PersistenceStructureDirectoryReadModel{,.Part2}`, `PersistenceStructureAssetSafetyReadModel{,.Part2}`, `PersistenceStructureProfilesRpcBackend` reads and writes, `StructureComposition.cs` `StructureExistsAsync`, `IndustryComposition.cs:68`, `CharacterRpc.cs:98`) to the store, one file at a time, with the existing structure tests green |

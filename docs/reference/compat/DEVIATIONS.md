@@ -1470,3 +1470,27 @@ was not built, because the client reads its flags elsewhere (Q1 below).
 - **Compression is a ship module, not a structure.** The compressor is group 4174 (industrialItemCompression, category 7, ship module) in the pinned SDE (build 3396210). The EVE University wiki (Compression) describes it as a ship module that makes its ship a facility for its fleet. EveJS agrees: server/src/services/mining/miningIndustry.js:811-870 takes the facility to be a ship with compression type lists in the same fleet. The earlier refusal text (needs a compressor structure, phase 3) was wrong and is removed. Tests: CompressionHostTests, OperationalRpcServiceTests. Status: decided.
 - **Refusals are named.** EveJS server/src/services/mining/inSpaceCompressionMgrService.js:36-72 answers null on every refusal. The port answers a named CustomNotify for each refusal (not in space, no facility, not in fleet, out of range, wrong kind, not compressible), because a silent None looks like success to the client (itemcompression/client/itemCompression.py). Status: tolerated. The client-side display of the notice is unverified (no graphical run).
 - **Range is the surface distance, measured by the host.** EveJS compares entity positions in its scene. The port takes the simulation positions of both ships, subtracts both radii, and allows one metre for positions that move between the client check and the host. The reach is the compressor maxRange after dogma (SDE attribute 54), capped at the client 250 000 m facility range. Status: decided.
+## Structure timeline (ST-0)
+
+The record owner and the timeline of Upwell structures (`dotnet/src/Eve.Structures`). Stats come from the SDE, mechanics from the EVE University wiki
+("Vulnerability", "Anchoring structures"), and where the wiki is silent from EveJS v0.12.9; the client's `structures/const.py` gives the state ids.
+
+- **D-1 size class, SDE first (`rigSize`, attribute 1547).** Checked in `sde."typeDogma"` (pinned SDE build 3396210): 2 Medium (Astrahus 35832, Raitaru 35825,
+  Athanor 35835), 3 Large (Fortizar 35833, Tatara 35836), 4 X-Large (Keepstar 35834). A type with no `rigSize` is Flex (Ansiblex 35841 has none). Source:
+  `StructureRules.SizeOfRigSize`. Status: decided. The Host rules source that maps a type to this is not written yet (ST-0 next step); until it is, no
+  structure is anchored through the module.
+- **D-2 change of reinforcement time, 30 days.** The wiki says the change takes effect after 30 days; EveJS `structureVulnerabilityService.js:30`
+  (`REINFORCE_CHANGE_DELAY_MS`) and `:183-260` (`buildReinforcementPatch`) use the same 30 days and clear a pending change that is asked again for the
+  current time. Both sources agree, so the module stores `pending_*` and `pending_effective_ms` as EveJS does, with no difference. Test:
+  `StateMachineTests.A_new_reinforcement_time_is_pending_for_thirty_days_then_takes_effect`. Status: decided.
+- **Armor and hull reinforcement durations.** Wiki and EveJS `structureConstants.js` agree for Medium, Large and X-Large (`ARMOR_REINFORCE_*`). The Flex hull
+  reinforcement is 30 minutes (wiki); EveJS has 3600 s with jitter 1800 s. The wiki value is used. Status: decided (wiki over EveJS, the rule of ST-0).
+- **Repair pause threshold.** A hit of at least 10 percent of the per-second damage cap pauses the repair countdown (wiki). The SDE attributes
+  `pause{Shield,Armor,Hull}RepairDpsThreshold` (3354-3356) are 500 each, which is that 10 percent of the caps 2034-2036. The simulation computes the
+  flag (ST-1); the state machine only takes `PausesRepair`. Status: decided.
+- **Abandonment after 7 days in Low Power.** The wiki gives two versions; the "7 days Low Power" version is used (EveJS `structureConstants.js` agrees
+  on 7 days). Status: decided.
+- **Import of the legacy table.** The GameStore `structures` rows are copied once into `structures.structures`, by id, with their services and the
+  fields the timeline does not own in `doc`. A structure without a state is imported as one that already works (`ShieldVulnerable`), and a Low Power
+  structure without an abandon day starts its clock at the import. Status: decided; the import call is not wired yet.
+- **`structure.state_changed` is published in the same transaction as the change**, with the timer of the structure. Status: decided.

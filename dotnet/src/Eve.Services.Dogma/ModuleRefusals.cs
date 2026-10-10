@@ -81,6 +81,8 @@ public static class ModuleRefusals
             "CLOAK_PROXIMITY_BLOCKED" => Notify("You are too close to another object to activate your cloaking device."),
         // the wiki (EVE University, Cynosural Field Generator): a cynosural field is lit by a fleet member; the client's own wording is not in the tables read
         "CYNO_NOT_IN_FLEET" => Notify($"{name} can only be lit by a member of a fleet."),
+        // the text of EveJS's CYNOSURAL_FIELD_JAMMED (moduleOperation.js); eve-logic has no string for it. Pochven's jammer gives it too (the wiki)
+        "CYNOSURAL_FIELD_JAMMED" => Notify("A cynosural system jammer is preventing cynosural fields from forming in this solar system."),
         "SMARTBOMB_NEAR_STATION" => Notify($"{name} cannot be activated this close to a station or stargate."),
             "MODULE_CLOAKED" => Notify("You cannot activate modules while cloaked."),
             // a disruptive lance needs an active siege module on the ship (EveJS ACTIVE_SIEGE_MODULE_REQUIRED, moduleActivationRequiresActiveSiegeModule)

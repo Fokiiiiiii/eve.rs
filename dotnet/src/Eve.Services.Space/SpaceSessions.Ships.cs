@@ -18,6 +18,9 @@ namespace Eve.Services.Space;
 
 public sealed partial class SpaceSessions
 {
+    /// <summary>The SDE category of subsystems (a Strategic Cruiser's fit).</summary>
+    private const int SubsystemCategory = 32;
+
     /// <summary>
     /// Sends the session's ship out of its station. The client is told in the order the reference tells it (the ship moved, the objects
     /// bound to the station let go, the session changed, the undocking protection started) and the answer is the object it called and the time
@@ -36,6 +39,13 @@ public sealed partial class SpaceSessions
         if (await _ships.LoadAsync(characterId, cancellationToken) is not { } snapshot)
         {
             return None;
+        }
+        // a Strategic Cruiser leaves its station only with one subsystem of each class (the reference's STRATEGIC_CRUISER_FIT_INCOMPLETE)
+        if (_statics.Type(snapshot.Ship.TypeId)?.GroupId == Eve.Fitting.StrategicCruisers.GroupId
+            && Eve.Fitting.StrategicCruisers.IncompleteFit(snapshot.Fitted
+                .Where(item => _statics.Type(item.TypeId)?.CategoryId == SubsystemCategory).Select(item => item.Flag)) is { } incomplete)
+        {
+            throw Notify(incomplete);
         }
         await SyncBuffsAsync(snapshot.World, snapshot.Ship.Id, cancellationToken);
         // a ship comes out of its station with its shield and capacitor full; what it has lost of its armor and hull it keeps (the reference's)

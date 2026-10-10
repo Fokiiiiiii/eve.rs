@@ -1459,3 +1459,65 @@ was not built, because the client reads its flags elsewhere (Q1 below).
   reference constant (`MARKET_TRANSACTION_TAX_DEFAULT_PERCENT = 8.0`) with 7.5 in memory before it compiles `marketRules.js`, and records every
   other value from the reference; the fixture's `source` field says so. Before the change `RulesTests` failed on the 7.5 fixture (the 8% values),
   and it passes after the change. Status: decided.
+
+## Agents slice AG-1: LP wallet (LPSvc), the access rule and the bound agentMgr (2026-10-10)
+
+Sources. eve-logic (V24.01): `eve/client/script/ui/shared/neocom/wallet/loyaltyPointsWalletSvc.py:27-67` (the balances,
+`OnLPChange`, `OnCorpLPChange`); `eve/client/script/ui/station/loyaltyPointStore/lpStoreSvc.py:102-103` (`ExchangeConcordLP`);
+`eve/client/script/ui/shared/neocom/wallet/panels/corp/corpDonateLPPanel.py:47` and `.../personal/personalDonateLPPanel.py:46`
+(the two transfers). EveJS v0.12.9: `server/src/services/corporation/lpService.js:70-108` (service, rowset, corporation
+holder), `lpWalletState.js:348-390` (notifications), `lpWalletState.js:392-510` (the idempotency key), `lpWalletState.js:610-740`
+(the transfers). The client's agent rule: `eve/common/script/sys/eveCfg.py:112-143`, `standingUtil.py:15-43`,
+`eve/client/script/ui/services/standingsvc.py:100-104`. Skill type IDs: `inventorycommon/const.py:1441, 1456, 1474`.
+Faction lists: `eve/common/lib/appConst.py:618-632`.
+
+- **LPSvc is registered by the Host.** It was missing (eve.rs routed the name to the station node and had no class). It is
+  built on the wallet store and answers `GetAllMyCharacterWalletLPBalances` and `GetAllMyCorporationWalletLPBalances` with a
+  `Rowset` of `(issuerCorpID, loyaltyPoints)`, the shape EveJS answers (`lpService.js:32-44`). The character is the session's
+  `charid`; the corporation is `corporationID`, then `corpid` (EveJS `lpService.js:105-107`). A session with no character or
+  corporation gets an empty rowset. Status: decided (AG-1); tests `LoyaltyPointsServiceTests`.
+- **Balances persist in PostgreSQL, in the wallet schema.** Tables `lp_balances` (one row per holder and issuing corporation)
+  and `lp_journal` (one row per applied change), migration `006_loyalty_points.sql`. The reference keeps them in its JSON
+  `lpWallets` table; eve.rs does not use the JSON game store for new state, so the reference's table name is not reused. A
+  change is one balance update and one journal row in the caller's transaction, so a coupled change (a mission reward with its
+  ISK) commits as one. Status: decided (AG-1); tests `LoyaltyPointStoreTests` (PostgreSQL).
+- **A reference applies once.** The journal is unique per (reference, holder, issuer). A replay returns no change and
+  announces nothing. The reference refuses a reused idempotency key with a different amount (`lpWalletState.js:411-420`,
+  `IDEMPOTENCY_KEY_REUSED`); eve.rs answers the replay as already applied, because the caller's reference names the award
+  and a different amount is a different reference. Status: decided (AG-1).
+- **A debit below zero is refused** (`InsufficientLoyaltyPointsException`) and leaves no row changed. The reference refuses
+  it with `INSUFFICIENT_FUNDS` only when the caller asks (`requireSufficientFunds`, `lpWalletState.js:531, 592, 631, 728`);
+  eve.rs always requires the funds, because a balance cannot be negative. Status: tested.
+- **Notifications follow committed changes only.** `OnLPChange("set", issuer, before, after)` goes to the character's
+  session (`clientID`), `OnCorpLPChange(reason, issuer)` to every session of the corporation (`clientID`, each session).
+  The change type is the reference's default `"set"` (`lpWalletState.js:348`); the client ignores it
+  (`loyaltyPointsWalletSvc.py:59`, parameter `_changeType`). Status: tested (`LoyaltyPointsServiceTests`).
+- **`ExchangeConcordLP` and the two transfers are refused, not answered.** The reference's `ExchangeConcordLP` is a stub that
+  returns an empty dictionary (`lpService.js:166-168`), so an answer would be a fake success. The transfers (the donation
+  panels) follow rules eve.rs does not have yet: the destination corporation check, the Evermark exception, the director role
+  and the membership age (`lpWalletState.js:116-135`, `:136-236`, `:610-740`). Each is refused with
+  `CustomInfo` "This loyalty point operation is not available on this server yet." Status: open (TODO section 43).
+- **Not added: `GetLPsForCharacter`, `GetLPExchangeRates`, `GetLPForCharacterCorp`.** The reference answers them
+  (`lpService.js:83-91`, `:111`), but no V24.01 caller exists in eve-logic (a search of the client tree finds none). A method
+  without a caller cannot be checked against the client, so it is not added (the same rule as slice B3).
+- **No source credits loyalty points yet.** The store's `ApplyAsync` is ready for the first credit (missions, factional
+  warfare, insurgency). Until then every balance is empty; the tests credit through the store.
+- **LPStoreMgr is unchanged** (still answers no offers and refuses every take); it is slice A9.
+
+- **The access rule is a port of the client's rule** (`AgentAccessRule`): the level threshold `m = 2(level-1) - 1`, the
+  floor (the lowest of the three standings must exceed -2), the research rule (the corporation standing must reach `m - 2`),
+  the aura bypass, and the level-one rule (open to anyone except research agents). The three standings are the client's
+  `npccharstandings` values for the agent's faction, corporation and agent (`standingsvc.py:100-104`); a missing one is 0.
+  The skill bonus is 0.4 per trained level of Diplomacy (a negative standing), Criminal Connections (a positive standing toward
+  a pirate faction) or Connections (any other positive standing), none for the four factions without a bonus
+  (`standingUtil.py:26-37`). Decisions: (1) implants are not modelled, so the effective level is the trained level (the
+  client's `effectiveSkillLevel` includes implants); (2) the rule has no quality term, because the V24.01 client has none
+  (design document, section 4.1); (3) no server path calls the rule yet: the consumers are the agent dialogue (A4), offers
+  (A5) and the accept path (Mi3), so the rule is tested as a function (`AgentAccessRuleTests`). Status: built, not yet used by
+  a client-visible path.
+- **`MachoBindObject` on agentMgr.** `Moniker('agentMgr', agentID)` binds the agent (`agents.py:319-321`,
+  `eveMoniker.py:157`). The bound object is made for an agent the catalog holds; an unknown agent is refused with
+  `CustomInfo` "That agent is not known." (ours; the reference binds any id, `agentMgrService.js:777-786`). A nested call on the
+  bound object is refused as an `InvalidOperationException` (the host logs it and answers the wrapped unexpected error) while no
+  bound method exists: `DoAction` and the mission methods are slices A4 and A5. A release forgets the object. Status: tested
+  (`AgentMissionServiceTests`); the bound object answers no method yet.

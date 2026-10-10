@@ -765,7 +765,7 @@ The reference advertises these 23 names; eve.rs does not register them, so it do
 | OPEN | `corpStationMgr`, `itemLocking`, `ownerGroupManager`, `standing2`, `contractMgr`, `certificateMgr`, `tutorialSvc`, `bookmarkMgr` | Slice D / corporations / contracts | eveMoniker.py:111; corporation/itemLocking.py:27; not called in eve-logic (certificateMgr, tutorialSvc, bookmarkMgr, ownerGroupManager, standing2, contractMgr) |
 | OPEN | `accessGroupBookmarkMgr` | bookmarks: a handle at `bookmarkSvc.Initialize`, called on use (address book, bookmark menus); not at start-up (slice B2) | bookmarks/bookmarkSvc.py:40-41 |
 | OPEN | `blueprintManager` | industry, lazy: `blueprintSvc.Run` calls `GetLimits()` and reads `maxBlueprintResults`, so a window that starts it fails at once (slice B2: not at start-up; no source for the limit yet) | industry/blueprintSvc.py:22-25 |
-| OPEN | `repairSvc`, `reprocessingSvc`, `LPSvc` | Slice D (station services), LP store later | eveMoniker.py:101, 227; station/repairshop/base_repairshop.py:58; loyaltyPointStore/lpStoreSvc.py:63 |
+| OPEN | `repairSvc`, `reprocessingSvc` (`LPSvc` is registered since agents slice AG-1) | Slice D (station services) | eveMoniker.py:101, 227; station/repairshop/base_repairshop.py:58; loyaltyPointStore/lpStoreSvc.py:63 |
 | OPEN | `nes_intro` | storylines, lazy: the controller is built on the user's skip action only (slice B2) | storylines/client/nes_intro.py:45; airnpetracker.py:26 |
 | OPEN | `hackingMgr` | hacking minigame, lazy: the handle is made in `hackingUISvc.Run`, calls on use (slice B2) | eve/client/script/ui/hacking/hackingUISvc.py (Run) |
 | OPEN | `FastCheckoutService` | plex store (fast checkout) | fastcheckout/client/fastCheckoutClientService.py:26 |
@@ -908,3 +908,25 @@ Open after M1:
 | OPEN | M5 to M9: price history definitions (Q16), the read path tests (M6), locking and the bounded scan (M7), money invariants (M8), live acceptance (M9) | market agents 2 and 3 |
 | OPEN | The client label table is partial: `MktCantSellItem2`, `MktCantSellItemOutsideStation` and `MktInvalidRegion` need values the server does not hold (localized jump texts) | the client's localization |
 | OPEN | The corporation read rule has a test for a character outside the corporation; a member holding Account Take and not an accountant is covered by M6 | M6 |
+
+## Agents slice AG-1: LP wallet, access rule and bound agentMgr (2026-10-10)
+
+Done (DEVIATIONS.md, "Agents slice AG-1"): LPSvc (balances, notifications, PostgreSQL journal), the client's agent access
+rule (`AgentAccessRule`), the bound agentMgr (`MachoBindObject`, release). Design slices of `ess-insurgency-agents-missions-design.md`
+section 4.7: A8 done for balances and notifications; A2 done as a rule; A3 done as a binding; A1 partly; A4 to A7 and A9 open.
+
+| Status | Item | Where / blocker |
+|---|---|---|
+| DONE | LPSvc: `GetAllMyCharacterWalletLPBalances`, `GetAllMyCorporationWalletLPBalances`, `OnLPChange`, `OnCorpLPChange` on commit | `LoyaltyPointsService`, `LoyaltyPointStore` (migration 006), `LoyaltyPointAnnouncer` |
+| OPEN | `ExchangeConcordLP`: refused; the CONCORD exchange rate and rule are not in the sources read | design 4.6; EveJS stub `lpService.js:166-168` |
+| OPEN | Donations `TransferLPFromMyWalletToOtherCorp`, `TransferLPFromMyCorpWalletToOtherCorp`: refused; need EveJS's destination, Evermark, director and membership rules | `lpWalletState.js:610-740`; client `personalDonateLPPanel.py`, `corpDonateLPPanel.py` |
+| OPEN | No credit source: missions (Mi5), factional warfare and insurgency (I5) must call `LoyaltyPointStore.ApplyAsync` in their transaction | design 4.6, 5.5 |
+| OPEN | LP store (A9): `LPStoreMgr` still answers no offers and refuses every take | design 4.7 A9; `CoreCompatibilityServiceAdapters.cs` |
+| OPEN | Access rule (A2) has no client-visible consumer yet; implants are not modelled in the skill bonus | `AgentAccessRule`; consumers A4, A5, Mi3 |
+| OPEN | Bound agentMgr (A3): no bound method yet; a nested call is refused | `AgentMissionService.BindAsync`, `BoundMethods` (empty) |
+| OPEN | Dialogue `DoAction` (A4): greeting, view, request, accept, decline and quit; needs offers (A5) and the dialogue texts of EveJS `agentMgrService.js:906-1120` | design 4.7 A4 |
+| OPEN | Journal and offers (A5): offers from the pool, mission state writes, `OnAgentMissionChange`, `OnMissionsUpdated` | design 4.7 A5; `MissionComposition.cs` (read-only today) |
+| OPEN | Research agents (A6), locator (A7, fee unknown Q-AG-6) | design 4.7 |
+| OPEN | A1 check: the GetAgents rowset against the SDE counts (10966 agents, 360 in space, 1773 locators) is not yet a test that reads the SDE | `AgentComposition.NpcAgents`; the SDE is in PostgreSQL schema `sde` |
+| OPEN | Headless walk: the balances and the refused exchange are not yet in `tests/test_login_to_character.py` | the live run |
+| CLOSED | `LPSvc` is no longer in the list of names the core registry leaves out (the Host registers it; `ServiceAdvertisementTests`) | `ServiceAdvertisementTests.cs` |

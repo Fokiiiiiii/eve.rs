@@ -7,6 +7,9 @@ namespace Eve.Market;
 public sealed record MarketNpcSeed(string Key,int TypeId,bool Bid,decimal Price,long Volume,int Range,MarketLocation Location,long IssuedMs,int Duration = 3650,long MinimumVolume = 1,long? VolumeRemaining = null);
 public sealed record MarketBook(IReadOnlyList<MarketOrder> Asks,IReadOnlyList<MarketOrder> Bids);
 public sealed record MarketOwnedOrder(MarketOrder Order,long ActorId,long WalletOwnerId,int AccountKey,decimal Escrow,int State,long LastStateChangeMs);
+/// <summary>One fill (a trade) as the transaction history reads it. Prices are per unit.</summary>
+public sealed record MarketFill(long Id,int TypeId,long BuyerId,long SellerId,long BuyerWallet,int BuyerAccount,
+    long SellerWallet,int SellerAccount,long StationId,long Quantity,decimal Price,long TimeMs);
 public sealed record MarketHistory(long UnixDay,decimal Low,decimal High,decimal Average,long Volume,long Orders);
 
 /// <summary>Typed authoritative order facts; wallet and custody settlement joins this module's PostgreSQL transaction.</summary>
@@ -353,6 +356,28 @@ public sealed partial class MarketStore
         command.Parameters.Add(new NpgsqlParameter { Value=walletOwner });
         command.Parameters.Add(new NpgsqlParameter { Value=includeHistory });
         return await ReadOwnersAsync(command,token);
+    }
+
+    /// <summary>The fills a wallet took part in, as buyer or seller, in one division (null: every division), from a Unix millisecond on, newest first.</summary>
+    public async Task<IReadOnlyList<MarketFill>> WalletFillsAsync(long walletOwnerId,int? accountKey,long fromMs,CancellationToken token = default)
+    {
+        await using var command=_source.CreateCommand($"""
+            SELECT id,type_id,buyer_id,seller_id,buyer_wallet,buyer_account,seller_wallet,seller_account,station_id,quantity,price,time_ms
+            FROM {_schema}.fills
+            WHERE time_ms>=$2 AND (
+                (buyer_wallet=$1 AND ($3::integer IS NULL OR buyer_account=$3))
+                OR (seller_wallet=$1 AND ($3::integer IS NULL OR seller_account=$3)))
+            ORDER BY time_ms DESC,id DESC
+            """);
+        command.Parameters.Add(new NpgsqlParameter { Value=walletOwnerId });
+        command.Parameters.Add(new NpgsqlParameter { Value=fromMs });
+        command.Parameters.Add(new NpgsqlParameter { Value=accountKey is { } key ? key : DBNull.Value });
+        var rows=new List<MarketFill>();
+        await using var r=await command.ExecuteReaderAsync(token);
+        while(await r.ReadAsync(token))
+            rows.Add(new(r.GetInt64(0),r.GetInt32(1),r.GetInt64(2),r.GetInt64(3),r.GetInt64(4),r.GetInt32(5),r.GetInt64(6),r.GetInt32(7),
+                r.GetInt64(8),r.GetInt64(9),r.GetDecimal(10),r.GetInt64(11)));
+        return rows;
     }
 
     public async Task<IReadOnlyList<MarketOwnedOrder>> ChangedOrdersAsync(IEnumerable<long> ids,CancellationToken token = default)

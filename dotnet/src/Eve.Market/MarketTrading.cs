@@ -10,7 +10,12 @@ using Npgsql;
 
 namespace Eve.Market;
 
-public sealed class MarketError(string code) : Exception(code) { public string Code { get; } = code; }
+public sealed class MarketError(string code,params (string Name,object Value)[] arguments) : Exception(code)
+{
+    public string Code { get; } = code;
+    /// <summary>The named arguments of a client label (for example actualBrokerFeePerc of MktBrokersFeeUnexpected2); empty for a code without one.</summary>
+    public IReadOnlyList<(string Name,object Value)> Arguments { get; } = arguments;
+}
 public sealed record MarketRequest(long ActorId,int TypeId,bool Buying,decimal Price,long Quantity,long StationId,
     int Duration = 0,int Range = -1,long MinimumVolume = 1,long? ItemId = null,bool UseCorporation = false,double? ExpectedBrokerFee = null);
 public sealed record MarketOrderChange(MarketOwnedOrder Order,string Reason,IReadOnlyList<long> RecipientCharacterIds);
@@ -136,7 +141,7 @@ public sealed class MarketTrading(NpgsqlDataSource source,MarketStore store,PgCh
             {
                 if (request.Buying && request.Range > context.Limits.Visibility) throw new MarketError("MARKET_VISIBILITY_REQUIRED");
                 if (request.ExpectedBrokerFee is { } quoted && double.IsFinite(quoted) && Math.Abs(quoted-context.BrokerCommissionRate)>0.0001)
-                    throw new MarketError("MktBrokersFeeUnexpected2");
+                    throw new MarketError("MktBrokersFeeUnexpected2",("actualBrokerFeePerc",100*context.BrokerCommissionRate),("expectedBrokerFeePercentage",quoted));
                 await using var count = Command(c,tx,$"SELECT count(*) FROM {Schema}.orders WHERE actor_id=$1 AND state=0",actor.Id);
                 if ((long)(await count.ExecuteScalarAsync(token))! >= context.Limits.Count) throw new MarketError("MARKET_ORDER_LIMIT");
             }

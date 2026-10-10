@@ -41,6 +41,6 @@ internal sealed partial class CharacterServicesComposition
     private IReadOnlyList<IService> EconomyRpc() =>
     [
             new AccountService(wallets, corporations, economyWallets),
-            new Eve.Services.Market.MarketProxyService(market, marketTrading, marketTopology, characters, economyWallets, marketCatalog, now, characterSessions),
+            new Eve.Services.Market.MarketProxyService(market, marketTrading, marketTopology, characters, corporations, economyWallets, marketCatalog, now, characterSessions),
     ];
 }

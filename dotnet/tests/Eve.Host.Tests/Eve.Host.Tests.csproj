@@ -1,5 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
+    <!-- Unicode normalization (character names) needs ICU; the repository default is invariant globalization. -->
+    <InvariantGlobalization>false</InvariantGlobalization>
     <IsPackable>false</IsPackable>
     <IsTestProject>true</IsTestProject>
   </PropertyGroup>

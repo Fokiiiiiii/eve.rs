@@ -438,6 +438,22 @@ private readonly Func<NpgsqlConnection,NpgsqlTransaction,long,long,long,long,boo
         return new WalletAccount(corp.Id,accountKey);
     }
 
+    /// <summary>
+    /// The wallet read rule of the market transactions tab (EVE.js corporationAuthority.js, V24.01 ValidateCorpWalletDivisionReadAccess):
+    /// an Accountant or a Junior Accountant reads every division; any other member reads only the division whose Account Take role it holds,
+    /// so a null division (every division) needs the accountant role. Nothing is changed.
+    /// </summary>
+    public async Task<bool> CanReadWalletDivisionAsync(long characterId,int? accountKey,CancellationToken token = default)
+    {
+        var character = await _characters.GetAsync(characterId,token);
+        var corp = character is null ? null : await GetAsync(character.CorporationId,token);
+        var member = await MemberAsync(characterId,token);
+        if (corp is null || corp.IsNpc || corp.Deleted || member?.CorporationId != corp.Id) return false;
+        var roles = CorporationRoles.Session(corp,member,character!.StationId,await TitlesAsync(corp.Id,token)).AtAll;
+        if ((roles & (CorporationRoles.Accountant | CorporationRoles.JuniorAccountant)) != 0) return true;
+        return accountKey is { } key && key is >= 1000 and <= 1006 && (roles & CorporationRoles.WalletTakeRole(key)) != 0;
+    }
+
     /// <summary>The market's Trader authority, read under the same transaction as custody and wallet settlement.</summary>
     public async Task<(WalletAccount Wallet,SessionRoles Roles)> MarketAuthorityAsync(NpgsqlConnection connection,NpgsqlTransaction tx,
         long actor,int? accountKey,long stationId,CancellationToken token = default)

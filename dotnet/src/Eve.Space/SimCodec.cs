@@ -27,8 +27,7 @@ public sealed class SimLinkException(SimLinkError error, string message) : Excep
 /// </summary>
 public static partial class SimCodec
 {
-    public const ushort ProtocolVersion = 45;
-
+    public const ushort ProtocolVersion = 46;
     /// <summary>The largest frame either side accepts (1 MiB).</summary>
     public const int MaxFrame = 1 << 20;
 
@@ -353,6 +352,30 @@ public static partial class SimCodec
             case Kind.FighterReleased:
                 message = new SimFighterReleased(r.U64(), r.I64(), ReadVector(ref r));
                 break;
+            case Kind.EcmBurst:
+                {
+                    var session = r.U64();
+                    var ship = r.I64();
+                    var count = r.U32();
+                    if (count > r.Remaining / 9)
+                    {
+                        throw new SimLinkException(SimLinkError.Truncated, "the frame ends before the message does");
+                    }
+                    var reached = new SimBurstReach[count];
+                    for (var i = 0; i < reached.Length; i++)
+                    {
+                        var target = r.I64();
+                        var jammed = r.U8() switch
+                        {
+                            0 => false,
+                            1 => true,
+                            _ => throw new SimLinkException(SimLinkError.BadValue, "ecm burst jam flag"),
+                        };
+                        reached[i] = new SimBurstReach(target, jammed);
+                    }
+                    message = new SimEcmBurst(session, ship, reached);
+                    break;
+                }
             case Kind.FighterGotoPoint:
                 {
                     var session = r.U64();

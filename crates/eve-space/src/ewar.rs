@@ -442,6 +442,9 @@ impl Scene {
         out
     }
 
+    /// An ECM burst of a ship: each ship it reaches, but its own and a cloaked one, rolls its sensors and loses its locks when the roll lands. The host is told
+    /// the ship that ran it and each ship reached with whether its roll jammed it (`Out::EcmBurst`; EVE.js `executeJammerBurstCycle` records the aggression
+    /// on each reached ship before its roll). Nothing is rolled for a radius that is not a number above zero.
     pub(crate) fn jam_burst(
         &mut self,
         source: SessionId,
@@ -457,11 +460,37 @@ impl Scene {
         let source_position =
             [source_pilot.ship.position.x, source_pilot.ship.position.y, source_pilot.ship.position.z];
         let source_radius = source_pilot.ship.spec.radius;
-        self.jam_at(source_position, source_radius, Some(source_ship_id), strength, radius, at)
+        let reached: Vec<SessionId> = self
+            .burst_reach(source_position, source_radius, Some(source_ship_id), radius)
+            .into_iter()
+            .filter(|target| {
+                self.pilots
+                    .get(target)
+                    .is_some_and(|pilot| pilot.cloak != crate::visibility::CloakState::Cloaked)
+            })
+            .collect();
+        let mut out = Vec::new();
+        let mut told = Vec::with_capacity(reached.len());
+        for target in reached {
+            let chance = self.pilots.get(&target).map_or(0.0, |pilot| {
+                jam_chance(strength, &pilot.ship.spec.sensor_strength, pilot.ship.spec.ecm_resistance, 1.0)
+            });
+            let jammed = rolls_under(self.rng.random(), chance);
+            if jammed {
+                out.extend(self.break_locks_except(target, &[], at));
+            }
+            if let Some(pilot) = self.pilots.get(&target) {
+                told.push((pilot.ship.spec.ship_id, jammed));
+            }
+        }
+        if !told.is_empty() {
+            out.push(Out::EcmBurst { session: source, ship_id: source_ship_id, reached: told });
+        }
+        out
     }
 
-    /// A burst of ECM from a point (a ship's own burst, or a bomb that goes off): each ship within `radius` of its surface, but `exclude_ship`, rolls its
-    /// sensors against `strength` and loses its locks when the roll lands. Nothing is rolled for a radius that is not a number above zero.
+    /// A burst of ECM from a point (a bomb that goes off): each ship within `radius` of its surface, but `exclude_ship`, rolls its sensors against `strength`
+    /// and loses its locks when the roll lands. Nothing is rolled for a radius that is not a number above zero.
     pub(crate) fn jam_at(
         &mut self,
         centre: [f64; 3],
@@ -474,8 +503,28 @@ impl Scene {
         if !radius.is_finite() || radius <= 0.0 {
             return Vec::new();
         }
+        let mut out = Vec::new();
+        for target in self.burst_reach(centre, centre_radius, exclude_ship, radius) {
+            let chance = self.pilots.get(&target).map_or(0.0, |pilot| {
+                jam_chance(strength, &pilot.ship.spec.sensor_strength, pilot.ship.spec.ecm_resistance, 1.0)
+            });
+            if rolls_under(self.rng.random(), chance) {
+                out.extend(self.break_locks_except(target, &[], at));
+            }
+        }
+        out
+    }
+
+    /// The pilots within `radius` of the surface of a point (but `exclude_ship`), in the order they entered the scene: the order of the reference's dynamic
+    /// entities, so the rolls come in the same order.
+    fn burst_reach(
+        &self,
+        centre: [f64; 3],
+        centre_radius: f64,
+        exclude_ship: Option<i64>,
+        radius: f64,
+    ) -> Vec<SessionId> {
         let candidates = self.pilots.iter().map(|(target, pilot)| self.spatial_ship(*target, pilot));
-        // Keep the random rolls in arrival order, matching the order of EVE.js dynamic entities.
         let mut targets: Vec<(u64, SessionId)> = crate::geo::SpatialQuery::surface_radius(
             centre,
             centre_radius,
@@ -488,17 +537,7 @@ impl Scene {
         .filter_map(|hit| self.pilots.get(&hit.item).map(|pilot| (pilot.entered, hit.item)))
         .collect();
         targets.sort_unstable();
-
-        let mut out = Vec::new();
-        for (_, target) in targets {
-            let chance = self.pilots.get(&target).map_or(0.0, |pilot| {
-                jam_chance(strength, &pilot.ship.spec.sensor_strength, pilot.ship.spec.ecm_resistance, 1.0)
-            });
-            if rolls_under(self.rng.random(), chance) {
-                out.extend(self.break_locks_except(target, &[], at));
-            }
-        }
-        out
+        targets.into_iter().map(|(_, target)| target).collect()
     }
 
     /// The ship's numbers are what its base is with what lands on it worked in; those that changed are told to its pilot and, for the speed, to all who see it.

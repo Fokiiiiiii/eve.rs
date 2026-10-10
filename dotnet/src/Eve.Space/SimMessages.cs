@@ -828,6 +828,15 @@ public sealed record SimFighterLanded(ulong SessionId, long FighterId) : SimMess
 /// <summary>A squadron was let go (abandoned, or its controller left the scene) at <paramref name="Position"/>: the host decides what becomes of its item.</summary>
 public sealed record SimFighterReleased(ulong SessionId, long FighterId, IReadOnlyList<double> Position) : SimMessage;
 
+/// <summary>One ship an ECM burst reached: its item id, and whether the roll of the burst jammed it.</summary>
+public readonly record struct SimBurstReach(long ShipId, bool Jammed);
+
+/// <summary>
+/// An ECM burst reached the ships about it on the simulation's account: the ship that runs it, and each ship reached (a cloaked ship is not reached), with whether its
+/// roll jammed it. The host records the attack on each pilot reached.
+/// </summary>
+public sealed record SimEcmBurst(ulong SessionId, long ShipId, IReadOnlyList<SimBurstReach> Reached) : SimMessage;
+
 public readonly record struct SimDroneWorkProfile(
     double MiningAmountM3,
     double CycleTimeMs,

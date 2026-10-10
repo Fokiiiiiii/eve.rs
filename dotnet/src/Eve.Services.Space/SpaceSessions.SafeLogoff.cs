@@ -31,7 +31,7 @@ public sealed partial class SpaceSessions
             || !_pilots.TryGetValue(id, out var pilot) || !IsInSpace(session)
             || session.GetInt("shipid") != pilot.ShipId
             || _dying.ContainsKey(pilot.ShipId) || _deaths.ContainsKey(pilot.ShipId)
-            || pilot.JumpCloak || _transitions.SessionChangeActive(id) || HasTargetLocks(id, pilot.ShipId)
+            || pilot.JumpCloak || HasTargetLocks(id, pilot.ShipId)
             || await _ships.LoadAsync(pilot.CharacterId, cancellationToken) is not { } snapshot
             || snapshot.Ship.Id != pilot.ShipId
             || snapshot.Fitted.Any(module => snapshot.StateOf(module.Id) is ItemState.Active or ItemState.Overloaded))

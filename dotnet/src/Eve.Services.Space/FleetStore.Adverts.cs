@@ -122,9 +122,6 @@ public sealed partial class FleetStore
                     $"UPDATE {_schema}.fleets SET advert_active = FALSE, advert_payload = NULL WHERE fleet_id = $1",
                     mutationFleetId))
                     if (await remove.ExecuteNonQueryAsync(cancellationToken) != 1) return PyNone.Instance;
-                await using var clearLegacy = Command(writeConnection, transaction,
-                    $"DELETE FROM {_schema}.fleet_advert_allowed_entities WHERE fleet_id = $1", mutationFleetId);
-                await clearLegacy.ExecuteNonQueryAsync(cancellationToken);
                 break;
             }
 

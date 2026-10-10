@@ -21,6 +21,15 @@ pub(super) fn command_of(code: u8, args: &[f64]) -> Option<Command> {
         (9, [gate, leads_to]) if is_id(*gate) && is_id(*leads_to) => {
             Some(Command::Jump { gate_id: *gate as i64, destination_gate: *leads_to as i64 })
         }
+        // the host's queries (the warp to a point, the warp target, a position, a drop point): answered by the scene, as the host asks them
+        (21, [x, y, z, range]) if [*x, *y, *z, *range].iter().all(|v| v.is_finite()) => {
+            Some(Command::WarpToPoint { destination: Vec3::new(*x, *y, *z), range: *range })
+        }
+        (22, [target, range]) if is_id(*target) && range.is_finite() => {
+            Some(Command::ResolveWarpTarget { target_id: *target as i64, range: *range })
+        }
+        (23, [target]) if is_id(*target) => Some(Command::PositionOf { target_id: *target as i64 }),
+        (25, [distance]) if distance.is_finite() => Some(Command::DropPoint { distance: *distance }),
         _ => None,
     }
 }

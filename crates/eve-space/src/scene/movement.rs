@@ -123,6 +123,29 @@ impl Scene {
         vec![Out::Position { session, command, position }]
     }
 
+    /// The point `distance` metres ahead of a ship along its heading (EVE.js `buildDeployableSpawnState`: the ship's position plus its direction times the distance).
+    /// A ship with no heading gets +x. The ship is the pilot's, so a session with no ship in space is refused.
+    pub(super) fn drop_point(&self, session: SessionId, distance: f64) -> Vec<Out> {
+        let command = Command::DropPoint { distance }.code();
+        let refused = |reason| vec![Out::Refused { session, command, reason }];
+        if !distance.is_finite() || distance < 0.0 {
+            return refused("BAD_DISTANCE");
+        }
+        let Some(pilot) = self.pilots.get(&session) else {
+            return refused("NO_SHIP_IN_SPACE");
+        };
+        let heading = pilot.ship.direction;
+        let length = (heading.x * heading.x + heading.y * heading.y + heading.z * heading.z).sqrt();
+        let (ux, uy, uz) = if length > 0.0 {
+            (heading.x / length, heading.y / length, heading.z / length)
+        } else {
+            (1.0, 0.0, 0.0)
+        };
+        let at = pilot.ship.position;
+        let position = Vec3::new(at.x + ux * distance, at.y + uy * distance, at.z + uz * distance);
+        vec![Out::Position { session, command, position }]
+    }
+
     /// A movement command of a ship that is in the scene (settled first, at `now`).
     pub(super) fn steer_pilot(&mut self, session: SessionId, command: Command, now: i64) -> Vec<Out> {
         let code = command.code();
@@ -308,6 +331,7 @@ pub(super) fn steer(ship: &mut Ship, target: Option<Target>, command: Command) -
         | Command::WarpToPoint { .. }
         | Command::ResolveWarpTarget { .. }
         | Command::PositionOf { .. }
+        | Command::DropPoint { .. }
         | Command::Jump { .. } => Steering::Refused("NOT_A_MOVEMENT"),
         Command::FollowBall { target_id, range } => {
             if !range.is_finite() {

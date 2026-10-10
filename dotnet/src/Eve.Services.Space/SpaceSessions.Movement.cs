@@ -88,6 +88,10 @@ public sealed partial class SpaceSessions
         CancellationToken cancellationToken) =>
         QueryPositionAsync(session, SimCommands.ResolveWarpTarget, [targetId, range], cancellationToken);
 
+    /// <summary>The point <paramref name="distance"/> metres ahead of the pilot's ship along its heading, as the simulation has it (protocol 49).</summary>
+    public Task<WarpCoordinates?> DropPointAsync(ClientSession session, double distance, CancellationToken cancellationToken) =>
+        QueryPositionAsync(session, SimCommands.DropPoint, [distance], cancellationToken);
+
     public Task<WarpCoordinates?> PositionOfAsync(
         ClientSession session,
         long targetId,

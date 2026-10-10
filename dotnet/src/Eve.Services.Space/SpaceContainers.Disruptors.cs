@@ -26,12 +26,12 @@ public sealed partial class SpaceContainers
     private const int AnchoringDelayAttribute = 556;
     private const int DisallowInEmpireSpaceAttribute = 1074;
 
-    /// <summary>How far ahead of the ship a disruptor is dropped (EVE.js <c>DEPLOY_DISTANCE_METERS</c>).
-    /// shortcut: the host has no heading for a ship, so it is dropped this far along x; upgrade when the heading is kept.</summary>
+    /// <summary>How far ahead of the ship, along its heading, a disruptor is dropped (EVE.js <c>DEPLOY_DISTANCE_METERS</c>). The wiki gives no deployment distance and the
+    /// SDE none for a ship's deployable, so the reference's value stands (DEVIATIONS, WP-8).</summary>
     private const double DropDistance = 2500;
 
-    /// <summary>The ball radius of a disruptor. shortcut: the SDE radius (70 m for the small Mk I) is not carried by the host; upgrade when the type carries it.</summary>
-    private const double DisruptorRadiusFallback = 40;
+    /// <summary>The radius attribute (162): the SDE's radius of the type, which the dogma statics carry as an intrinsic attribute.</summary>
+    private const int RadiusAttribute = 162;
 
     /// <summary>The payload of the anchor job: the disruptor to anchor.</summary>
     public sealed record DisruptorAnchorDue(long DeployableId);
@@ -85,11 +85,17 @@ public sealed partial class SpaceContainers
         {
             throw Refuse("That mobile warp disruptor has no warp disruption range.");
         }
-        if (await _space.PositionOfAsync(session, shipId, cancellationToken) is not { } origin)
+        var radius = type.Attributes.GetValueOrDefault(RadiusAttribute);
+        if (radius <= 0)
+        {
+            throw Refuse("That mobile warp disruptor has no size in the static data.");
+        }
+        // the point ahead of the ship on its heading, as the simulation has the ship (a ship with no heading is not dropped on a guess)
+        if (await _space.DropPointAsync(session, DropDistance, cancellationToken) is not { } point)
         {
             throw Unavailable();
         }
-        var position = new[] { origin.X + DropDistance, origin.Y, origin.Z };
+        var position = new[] { point.X, point.Y, point.Z };
 
         var dropped = await _ships.DropDisruptorAsync(character, shipId, itemId, system, cancellationToken)
             ?? throw Refuse("That mobile warp disruptor is no longer in your ship's cargo hold.");
@@ -105,10 +111,10 @@ public sealed partial class SpaceContainers
         var corporation = (int)(session.GetInt("corpid") ?? 0);
         var alliance = (int)(session.GetInt("allianceid") ?? 0);
         await _deployed.SaveAsync(new DeployedRecord(
-            disruptor.Id, DisruptorKind, system, type.Name, item.TypeId, MobileWarpDisruptorGroup, position, DisruptorRadiusFallback, character, corporation, alliance,
+            disruptor.Id, DisruptorKind, system, type.Name, item.TypeId, MobileWarpDisruptorGroup, position, radius, character, corporation, alliance,
             shipId, now + (long)LifetimeOf(item.TypeId).TotalMilliseconds, activateAt, range), cancellationToken);
         _sim.PlaceDisruptor(new SimPlaceDisruptor(
-            disruptor.Id, system, type.Name, item.TypeId, MobileWarpDisruptorGroup, position, DisruptorRadiusFallback, range, anchoringDelayMs <= 0,
+            disruptor.Id, system, type.Name, item.TypeId, MobileWarpDisruptorGroup, position, radius, range, anchoringDelayMs <= 0,
             character, corporation, alliance, shipId));
         if (anchoringDelayMs > 0)
         {

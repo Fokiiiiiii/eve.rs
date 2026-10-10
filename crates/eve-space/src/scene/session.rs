@@ -142,6 +142,7 @@ impl Scene {
                 self.resolve_warp_target(session, target_id, range, now)
             }
             Command::PositionOf { target_id } => self.position_of(session, target_id),
+            Command::DropPoint { distance } => self.drop_point(session, distance),
             Command::Jump { gate_id, destination_gate } => self.jump(session, gate_id, destination_gate, now),
             other => self.steer_pilot(session, other, now),
         };

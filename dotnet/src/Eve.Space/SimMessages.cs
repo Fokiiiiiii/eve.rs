@@ -152,6 +152,8 @@ public static class SimCommands
 
     /// <summary>Read a body's or ship's current coordinates.</summary>
     public const byte PositionOf = 23;
+    /// <summary>The point a distance ahead of the ship along its heading (protocol 49): where a mobile warp disruptor is dropped.</summary>
+    public const byte DropPoint = 25;
 
     /// <summary>Send the visual half of an in-space login before the later full ballpark bind.</summary>
     public const byte PrimeLoginBallparkVisuals = 24;

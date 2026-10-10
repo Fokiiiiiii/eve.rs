@@ -158,8 +158,9 @@ public sealed class DogmaStatic
     }
 
     /// <summary>
-    /// Whether the SDE type list <paramref name="listId"/> names the type, by its id or its group (the <c>typeLists</c> of the SDE). An unknown list names
-    /// nothing, and so does a type that is not loaded (<see cref="EnsureTypesAsync"/> first).
+    /// Whether the SDE type list <paramref name="listId"/> names the type: included by its id, group or category, and not excluded by any of them (the
+    /// <c>typeLists</c> of the SDE; the Gas Compressor's list names the gas groups and excludes some types). An unknown list names nothing, and so does a
+    /// type that is not loaded (<see cref="EnsureTypesAsync"/> first).
     /// </summary>
     public async Task<bool> TypeListNamesAsync(int listId, int typeId, CancellationToken cancellationToken = default)
     {
@@ -172,12 +173,31 @@ public sealed class DogmaStatic
             && values.EnumerateArray().Any(value => value.TryGetInt32(out var candidate) && candidate == id);
         foreach (var list in await _sde.ReadAsync("typeLists", [(long)listId], cancellationToken))
         {
-            if (Names(list.Doc, "includedTypeIDs", typeId) || Names(list.Doc, "includedGroupIDs", type.GroupId))
+            var included = Names(list.Doc, "includedTypeIDs", typeId) || Names(list.Doc, "includedGroupIDs", type.GroupId) || Names(list.Doc, "includedCategoryIDs", type.CategoryId);
+            var excluded = Names(list.Doc, "excludedTypeIDs", typeId) || Names(list.Doc, "excludedGroupIDs", type.GroupId) || Names(list.Doc, "excludedCategoryIDs", type.CategoryId);
+            if (included && !excluded)
             {
                 return true;
             }
         }
         return false;
+    }
+
+    /// <summary>The type a source type compresses into (the SDE's <c>compressibleTypes</c>: ore, ice, gas and moon ore), or null when the type cannot be compressed.</summary>
+    public async Task<int?> CompressedTypeOfAsync(int typeId, CancellationToken cancellationToken = default)
+    {
+        if (_sde is null || typeId <= 0)
+        {
+            return null;
+        }
+        foreach (var row in await _sde.ReadAsync("compressibleTypes", [(long)typeId], cancellationToken))
+        {
+            if (row.Doc.TryGetProperty("compressedTypeID", out var compressed) && compressed.TryGetInt32(out var compressedTypeId) && compressedTypeId > 0)
+            {
+                return compressedTypeId;
+            }
+        }
+        return null;
     }
 
     /// <summary>

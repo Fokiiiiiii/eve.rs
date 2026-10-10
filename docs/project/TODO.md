@@ -903,8 +903,9 @@ Open after M1:
 | OPEN | Client preview of the sales tax: the client reads `market-transaction-tax` from LaunchDarkly (its own SDK key), so eve.rs cannot serve 7.5; the server charges 7.5, the client may preview 8.0 | the client's flag source (Q1) |
 | OPEN | Client preview of the highsec security tax (5%, `security/common/const.py:6`): the server charges none (Q11) | confirm in game (Q11) |
 | OPEN | Matching priority (price, issue time, id) and the duplicate window are to be confirmed with a live match (Q5, Q14) | the live acceptance (M9) |
-| OPEN | M3: expiry as a durable scheduled job with a 60 s safety sweep and restart rescheduling | M3 |
-| OPEN | M4: push cache invalidation for book changes and corporation notifications to every character with market rights (G9, G11) | market agent 2 |
+| DONE (M3) | Expiry as durable jobs: one job per resting order at its expiry plus 1 s (placed, moved, cancelled in the same transaction), a 60 s safety sweep, a read sweep at most once a second, the restart reschedule, notices to the owner and the corporation members with market rights (Accountant or Trader) | DEVIATIONS.md, "Market slice M3" |
+| OPEN | M3 notices are not durable: a stop between the committed close and the send loses that one notice (balances and state stay right) | a durable notice outbox (not planned in M3) |
+| OPEN | M4: push cache invalidation for book changes; the corporation notices for fills and cancels to every character with market rights (G9, G11; expiry is done in M3) | market agent 2 |
 | OPEN | M5 to M9: price history definitions (Q16), the read path tests (M6), locking and the bounded scan (M7), money invariants (M8), live acceptance (M9) | market agents 2 and 3 |
 | OPEN | The client label table is partial: `MktCantSellItem2`, `MktCantSellItemOutsideStation` and `MktInvalidRegion` need values the server does not hold (localized jump texts) | the client's localization |
 | OPEN | The corporation read rule has a test for a character outside the corporation; a member holding Account Take and not an accountant is covered by M6 | M6 |

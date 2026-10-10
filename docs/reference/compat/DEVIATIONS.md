@@ -1459,3 +1459,41 @@ was not built, because the client reads its flags elsewhere (Q1 below).
   reference constant (`MARKET_TRANSACTION_TAX_DEFAULT_PERCENT = 8.0`) with 7.5 in memory before it compiles `marketRules.js`, and records every
   other value from the reference; the fixture's `source` field says so. Before the change `RulesTests` failed on the 7.5 fixture (the 8% values),
   and it passes after the change. Status: decided.
+
+## Market slice M3: expiry as a durable job (2026-10-10)
+
+Sources: the parent's decision Q7 (expire at issued + duration plus a small grace; refund at that moment; notify with reason 'Expiry');
+EVE.js `marketProxyService.js:248-253` (a one-second grace, a one-second sweep throttle, the durable job kinds) and `2170-2350` (a job per
+order at its expiry instant); CCP-BR (the order duration; "Modifying an order will reset its duration back to the original"); EVE University
+"Trading" ("If the order is taken down or expires the fee is not paid back"); the client's `marketsvc.py:113-124` (the Expiry reason) and
+`buyMultiFromBase.py:559`. The forum statement that expiry waits for daily downtime is not official and is not adopted (Q7).
+
+- **One job per resting order.** Kind `market.order.expire`, key `order:{id}`, due at issued + duration + 1 s. It is scheduled in the transaction that
+  places the order (immediate orders rest nowhere, so they get no job), replaced in the transaction that modifies it (the duration restarts, Q4)
+  and cancelled in the transaction that closes it (a fill, a cancel or an expiry). The job's handler re-reads the order: a closed order is left
+  alone; a duration that a modification has moved is waited for again. Code: `MarketExpiry.cs`, `MarketTrading.cs` (`ScheduleExpiryAsync`,
+  `CancelExpiryAsync`, `ExpireOrderAsync`).
+- **Safety sweep.** A recurring job `market.expiry.sweep` runs every 60 s and closes every due order. A read of the market (escrow, order history,
+  placement, modification) runs the same sweep at most once a second (EVE.js 1 s throttle). The sweep applies the same grace as the job, so the two
+  never disagree on when an order expires.
+- **One notice per expiry.** The job and the sweep can reach the same order at once (the scheduler runs jobs in parallel). The close is keyed
+  (`expiry:{id}:{issued}`), so the second call replays the stored receipt; an expiry replay returns no receipt, so only the call that performed the
+  expiry announces it. Test: `ExpiryTests.A_restart_gives_the_open_order...` and the other expiry tests, which failed before this rule (two notices).
+- **Restart.** `MarketExpiry.StartAsync` registers the two kinds and gives every open resting order its job again (an existing job is kept). An
+  overdue job runs at once. Test: `ExpiryTests.A_restart_gives_the_open_order_its_job_back...`, `An_overdue_order_expires_at_once_after_a_restart`.
+- **Refund and items, once.** A buy returns its escrow; a sell returns its stack to its origin; the broker fee is not returned (EVE University
+  "Trading"). A refund over the wallet cap stays pending in escrow (`MoneyLimitException`): the job fails and is tried again with the scheduler's
+  back-off (up to 100 tries), and the sweep retries it too. Tests: `ExpiryTests` (buy, sell, lost job, cancel, modification, throttle).
+- **Notifications.** `OnOwnOrdersChanged` with reason 'Expiry' goes to the owner. For a corporation order it goes to every member who has the
+  corporation's market rights at the station: Accountant or Trader, the client's own test (`buyThisTypeWindow.py:324`,
+  `marketOrdersWnd.py:40-41`; `CorporationStore.MarketRightsHoldersAsync`). The notice is sent after the close commits, from
+  `MarketNotifier`, which is also the RPCs' notifier. Test: `ExpiryTests.A_corporate_order_that_expires...` (the founder and a second member
+  with the Trader role are notified; a member without a market role and a character outside the corporation are not).
+- **Host.** The host composition (`CorporationComposition.MarketSeed`) starts the expiry; the test `MarketHostTests.The_host_gives_each_resting...`
+  checks that the job exists with its due time and survives a host restart.
+- **Known gap (not closed in M3).** The notices are not durable: a process that stops between the committed close and the send loses that one
+  notice. The balances, the items and the order state are correct after the restart, and the client refreshes its own lists on its next read.
+  A durable notice outbox is not in M3.
+- **Test changes for the grace.** `TradingTests` (the over-cap refund that stays pending) and `ModificationRulesTests` (the restarted
+  duration) check the expiry one grace after the expiry instant; the expected values are unchanged.
+- Status: done (M3), tested with a fake clock (TradeRig.Now); the live headless walk cannot wait a day, so the expiry is not walked live.

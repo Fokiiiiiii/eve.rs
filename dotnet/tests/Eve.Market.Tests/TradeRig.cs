@@ -2,6 +2,7 @@ using Eve.Characters;
 using Eve.Corporations;
 using Eve.Data;
 using Eve.Inventory;
+using Eve.Scheduler;
 using Eve.Sde;
 using Eve.Skills;
 using Eve.Universe;
@@ -16,13 +17,16 @@ internal sealed class TradeRig : IAsyncDisposable
     private TradeRig(NpgsqlDataSource source,StationCatalog stations,MarketTopology topology)
     {
         var id = Guid.NewGuid().ToString("N")[..12];
-        _schemas=["mk_"+id,"mc_"+id,"mw_"+id,"mi_"+id,"ms_"+id,"cp_"+id];
+        _schemas=["mk_"+id,"mc_"+id,"mw_"+id,"mi_"+id,"ms_"+id,"cp_"+id,"sc_"+id];
         Source=source; Stations=stations; Topology=topology;
         Station=stations.All.First();
         Characters=new(source,_schemas[1]); WalletStore=new(source,_schemas[2]); Wallets=new(source,_schemas[2]);
         Items=new(source,_schemas[3]); Skills=new(source,_schemas[4]);
         Corporations=new(source,Characters,WalletStore,Wallets,Skills,() => Now,_schemas[5]);
-        Book=new(source,_schemas[0]); Trading=Reopen();
+        Book=new(source,_schemas[0]);
+        Scheduler=NewScheduler();
+        Trading=Reopen();
+        Expiry=new MarketExpiry(Scheduler,Trading,() => Now,Announce);
     }
     public NpgsqlDataSource Source { get; }
     public StationCatalog Stations { get; }
@@ -35,10 +39,29 @@ internal sealed class TradeRig : IAsyncDisposable
     public PgSkillStore Skills { get; }
     public CorporationStore Corporations { get; }
     public MarketStore Book { get; }
-    public MarketTrading Trading { get; }
+    /// <summary>The trading engine of the current "host": a restart replaces it, as a new process would.</summary>
+    public MarketTrading Trading { get; private set; }
+    public DurableScheduler Scheduler { get; private set; }
+    public MarketExpiry Expiry { get; private set; }
+    /// <summary>What the expiry announced, in order (the notifications the host would send to the sessions).</summary>
+    public List<MarketReceipt> Announcements { get; } = [];
     public string MarketSchema => _schemas[0];
     public long Now { get; set; } = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()+10000;
-    public MarketTrading Reopen() => new(Source,Book,Characters,Corporations,Skills,Items,Wallets,Stations,Topology,() => Now);
+    public MarketTrading Reopen() => new(Source,Book,Characters,Corporations,Skills,Items,Wallets,Stations,Topology,() => Now,Scheduler);
+    private DurableScheduler NewScheduler() => new(Source,() => Now,null,_schemas[6]);
+    private Task Announce(MarketReceipt receipt,CancellationToken token)
+    {
+        Announcements.Add(receipt);
+        return Task.CompletedTask;
+    }
+    /// <summary>A restart of the host: a new scheduler, trading engine and expiry over the same schemas, started the way the host starts them.</summary>
+    public async Task Restart()
+    {
+        Scheduler=NewScheduler();
+        Trading=Reopen();
+        Expiry=new MarketExpiry(Scheduler,Trading,() => Now,Announce);
+        await Expiry.StartAsync();
+    }
     public static async Task<TradeRig> Create()
     {
         var source=NpgsqlDataSource.Create(PgConnection.ToConnectionString(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
@@ -50,6 +73,8 @@ internal sealed class TradeRig : IAsyncDisposable
         await PgItemStore.MigrateAsync(source,rig._schemas[3]);
         await PgSkillStore.MigrateAsync(source,rig._schemas[4]);
         await CorporationStore.MigrateAsync(source,rig._schemas[5]);
+        await DurableScheduler.MigrateAsync(source,rig._schemas[6]);
+        await rig.Expiry.StartAsync();
         return rig;
     }
     public async Task<long> Actor(string name,decimal isk=10000m)

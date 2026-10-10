@@ -212,7 +212,7 @@ public class TradingTests
             await r.Wallets.AdjustAsync(c,tx,actor,200m,1,1,"Refill",r.Now,"refill");
             await tx.CommitAsync();
         }
-        r.Now+=86400000;
+        r.Now+=86400000+MarketExpiry.GraceMs;
         Assert.Empty(await r.Trading.ExpireDueAsync());
         Assert.Empty((await r.Book.BookAsync(r.Station.RegionId,34,r.Now)).Bids); // expiry hides the intact pending refund
         await using (var check=r.Source.CreateCommand($"SELECT escrow_isk FROM {r.MarketSchema}.orders WHERE id=$1"))

@@ -38,6 +38,7 @@ namespace Eve.Host;
 internal sealed partial class CharacterServicesComposition
 {
     private Eve.Services.Corporations.AllianceMaintenanceBillWorker? allianceMaintenanceBillWorker;
+    private Eve.Market.MarketExpiry marketExpiry = default!;
 
 
     private async Task CorporationMigrations()
@@ -133,7 +134,11 @@ internal sealed partial class CharacterServicesComposition
             Console.Error.WriteLine($"eve-host: native market v4 seed already loaded for SDE build {build}");
         }
         marketTopology = await Eve.Market.MarketTopology.LoadAsync(sde);
-        marketTrading = new Eve.Market.MarketTrading(source, market, characters, corporations, skills, items, economyWallets, stations, marketTopology, now);
+        marketTrading = new Eve.Market.MarketTrading(source, market, characters, corporations, skills, items, economyWallets, stations, marketTopology, now, foundations.Scheduler);
+        // M3: resting orders expire as durable jobs; the minute sweep and the restart reschedule are started with the market
+        var marketNotifier = new Eve.Services.Market.MarketNotifier(economyWallets, characterSessions);
+        marketExpiry = new Eve.Market.MarketExpiry(foundations.Scheduler, marketTrading, now, (receipt, _) => marketNotifier.PublishAsync(receipt));
+        await marketExpiry.StartAsync();
     }
 
     private Eve.Services.Corporations.AllianceSovereigntyTransferWorker? allianceSovereigntyTransferWorker;

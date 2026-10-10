@@ -7,6 +7,7 @@
     <ProjectReference Include="../Eve.Characters/Eve.Characters.csproj" />
     <ProjectReference Include="../Eve.Corporations/Eve.Corporations.csproj" />
     <ProjectReference Include="../Eve.Skills/Eve.Skills.csproj" />
+    <ProjectReference Include="../Eve.Scheduler/Eve.Scheduler.csproj" />
   </ItemGroup>
   <ItemGroup><EmbeddedResource Include="Migrations/*.sql" /></ItemGroup>
 </Project>

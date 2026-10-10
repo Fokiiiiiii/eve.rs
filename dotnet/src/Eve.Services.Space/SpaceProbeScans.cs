@@ -253,7 +253,7 @@ public sealed class SpaceProbeScans
         {
             targets.AddRange(await SimulationTargetsAsync(session, cancellationToken));
         }
-        targets.AddRange(_sites.SitesIn(request.SolarSystemId));
+        targets.AddRange(await _sites.SitesInAsync(request.SolarSystemId, cancellationToken));
 
         var outcome = ProbeScanEngine.Compute(scanned, targets, _random);
         if (session is null)
@@ -346,21 +346,24 @@ public sealed class SpaceProbeScans
         var named = certainty >= ProbeScanMath.ResultGroup;
         var typed = certainty >= ProbeScanMath.ResultName;
         return Py.KeyVal(
-            ("id", new PyLong(row.Id)),
+            ("id", row.Code is { } code ? new PyStr(code) : new PyLong(row.Id)),
             ("scanGroupID", new PyInt(row.ScanGroupId)),
             ("groupID", named ? new PyInt(row.GroupId) : PyNone.Instance),
             ("typeID", typed ? new PyInt(row.TypeId) : PyNone.Instance),
-            ("strengthAttributeID", new PyInt(row.StrengthAttributeId)),
-            ("dungeonID", PyNone.Instance),
-            ("dungeonNameID", PyNone.Instance),
-            ("archetypeID", PyNone.Instance),
-            ("factionID", PyNone.Instance),
-            ("itemID", new PyLong(row.ItemId)),
-            ("difficulty", new PyInt(1)),
+            // the kind of a cosmic site (data, relic, ...) is known with its group; its dungeon, with its name
+            ("strengthAttributeID", row.Code is not null && !named ? PyNone.Instance : new PyInt(row.StrengthAttributeId)),
+            ("dungeonID", typed ? Optional(row.DungeonId) : PyNone.Instance),
+            ("dungeonNameID", typed ? Optional(row.DungeonNameId) : PyNone.Instance),
+            ("archetypeID", named ? Optional(row.ArchetypeId) : PyNone.Instance),
+            ("factionID", typed ? Optional(row.FactionId) : PyNone.Instance),
+            ("itemID", row.Code is not null ? PyNone.Instance : new PyLong(row.ItemId)),
+            ("difficulty", new PyInt(row.Difficulty)),
             ("certainty", new PyReal(certainty)),
             ("data", row.Perfect ? Vector(row.Position) : new PyReal(row.DeviationMeters)),
             ("pos", Vector(row.Position)));
     }
+
+    private static PyValue Optional(int? value) => value is { } number ? new PyInt(number) : PyNone.Instance;
 
     /// <summary>A position as the client's vector (a tuple of three reals).</summary>
     private static PyValue Vector(double[] v) => new PyTuple([new PyReal(v[0]), new PyReal(v[1]), new PyReal(v[2])]);

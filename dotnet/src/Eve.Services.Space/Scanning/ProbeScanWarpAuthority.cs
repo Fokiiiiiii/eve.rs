@@ -10,24 +10,28 @@ namespace Eve.Services.Space.Scanning;
 /// </summary>
 public sealed class ProbeScanWarpAuthority
 {
-    private sealed record Completed(int SolarSystemId, IReadOnlyDictionary<long, double[]> Places);
+    private sealed record Completed(int SolarSystemId, IReadOnlyDictionary<string, double[]> Places);
 
     private readonly ConditionalWeakTable<ClientSession, Completed> _bySession = new();
 
     /// <summary>Records what a completed scan of the session's ship found at 100 percent (it replaces what was recorded before).</summary>
     public void Record(ClientSession session, int solarSystemId, IEnumerable<ScanResultRow> results)
     {
-        var places = new Dictionary<long, double[]>();
+        var places = new Dictionary<string, double[]>(StringComparer.OrdinalIgnoreCase);
         foreach (var result in results.Where(result => result.Perfect))
         {
-            places[result.Id] = result.Position;
+            places[result.Key] = result.Position;
         }
         _bySession.AddOrUpdate(session, new Completed(solarSystemId, places));
     }
 
     /// <summary>The exact place of a target the session's last completed scan in <paramref name="solarSystemId"/> found at 100 percent; null when there is none.</summary>
     public double[]? Resolve(ClientSession session, int solarSystemId, long targetId) =>
-        _bySession.TryGetValue(session, out var completed) && completed.SolarSystemId == solarSystemId && completed.Places.TryGetValue(targetId, out var place)
+        Resolve(session, solarSystemId, targetId.ToString(System.Globalization.CultureInfo.InvariantCulture));
+
+    /// <summary>The same for a target the client names by text, as it names a cosmic site by its code (<c>ABC-123</c>, in any case: EVE.js keeps them in upper case).</summary>
+    public double[]? Resolve(ClientSession session, int solarSystemId, string target) =>
+        _bySession.TryGetValue(session, out var completed) && completed.SolarSystemId == solarSystemId && completed.Places.TryGetValue(target.Trim(), out var place)
             ? place
             : null;
 }

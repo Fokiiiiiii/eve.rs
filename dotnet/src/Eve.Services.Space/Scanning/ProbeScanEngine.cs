@@ -5,14 +5,20 @@ namespace Eve.Services.Space.Scanning;
 public sealed record ScanProbe(long ProbeId, double[] Position, double ScanRangeMeters, double StrengthAtStep, double MaxDeviationMeters, bool CombatCapable);
 
 /// <summary>Something a probe scan can find: its id, type and scan group, where it is, the signal strength it needs, and whether it is a cosmic signature (which
-/// any probe can find; a ship, drone, fighter, structure or deployable needs a combat probe).</summary>
+/// any probe can find; a ship, drone, fighter, structure or deployable needs a combat probe). A cosmic site has a <see cref="Code"/> (the client's <c>ABC-123</c>, which is the
+/// id of its result) and the facts of its dungeon.</summary>
 public sealed record ScanTargetSite(
-    long TargetId, int TypeId, int GroupId, int ScanGroupId, double[] Position, double RequiredStrength, bool IsSignature, int StrengthAttributeId = 0);
+    long TargetId, int TypeId, int GroupId, int ScanGroupId, double[] Position, double RequiredStrength, bool IsSignature, int StrengthAttributeId = 0,
+    string? Code = null, int? DungeonId = null, int? DungeonNameId = null, int? ArchetypeId = null, int? FactionId = null, int Difficulty = 1);
 
 /// <summary>A result of a scan, as the client's rows carry it. <see cref="Perfect"/> is a result at 100%: its position is the target's own.</summary>
 public sealed record ScanResultRow(
     long Id, int ScanGroupId, int GroupId, int TypeId, int StrengthAttributeId, long ItemId, double Certainty, double[] Position, double DeviationMeters,
-    bool Perfect);
+    bool Perfect, string? Code = null, int? DungeonId = null, int? DungeonNameId = null, int? ArchetypeId = null, int? FactionId = null, int Difficulty = 1)
+{
+    /// <summary>What the client calls the result and a warp names it by: the code of a cosmic site, else the id.</summary>
+    public string Key => Code ?? Id.ToString(System.Globalization.CultureInfo.InvariantCulture);
+}
 
 /// <summary>What a scan found: the results, the targets that were looked for and not reached (the client drops them), and the results at 100%.</summary>
 public sealed record ProbeScanOutcome(IReadOnlyList<ScanResultRow> Results, IReadOnlyList<long> AbsentTargets);
@@ -64,7 +70,8 @@ public static class ProbeScanEngine
     }
 
     private static ScanResultRow Row(ScanTargetSite target, double certainty, double[] position, double deviation, bool perfect) => new(
-        target.TargetId, target.ScanGroupId, target.GroupId, target.TypeId, target.StrengthAttributeId, target.TargetId, certainty, position, deviation, perfect);
+        target.TargetId, target.ScanGroupId, target.GroupId, target.TypeId, target.StrengthAttributeId, target.TargetId, certainty, position, deviation, perfect,
+        target.Code, target.DungeonId, target.DungeonNameId, target.ArchetypeId, target.FactionId, target.Difficulty);
 
     /// <summary>A unit vector in a random direction (uniform on the sphere).</summary>
     private static double[] RandomDirection(Random random)

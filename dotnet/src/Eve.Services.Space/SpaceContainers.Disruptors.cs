@@ -134,6 +134,12 @@ public sealed partial class SpaceContainers
         {
             throw Refuse("Mobile Cynosural Beacons can only be deployed below 0.5 security.");
         }
+        // Pochven: a region-wide cynosural jammer stops anyone lighting a cyno there (the wiki, "Pochven"); the text is EveJS's. A beacon may be lit in wormhole
+        // space (the wiki, "Cynosural field": "they can be lit in wormhole space"); EveJS refuses it there, see DEVIATIONS, Track A8c
+        if (beacon && _space.RegionOfSystem(system) == JumpDriveRules.PochvenRegionId)
+        {
+            throw Refuse("Mobile Cynosural Beacons cannot be deployed in Pochven.");
+        }
         var radius = type.Attributes.GetValueOrDefault(RadiusAttribute);
         if (radius <= 0)
         {
@@ -224,10 +230,65 @@ public sealed partial class SpaceContainers
     /// </summary>
     public async Task AnchorAsync(long deployableId, CancellationToken cancellationToken = default)
     {
-        if (_deployed is not null && await _deployed.GetAsync(deployableId, cancellationToken) is { Kind: DisruptorKind or InhibitorKind or BeaconKind })
+        if (_deployed is null || await _deployed.GetAsync(deployableId, cancellationToken) is not { Kind: DisruptorKind or InhibitorKind or BeaconKind } record)
         {
-            _sim.SetDisruptorActive(deployableId, true);
+            return;
         }
+        if (record.Kind == BeaconKind && await InhibitedAsync(record, _nowUnixMs(), cancellationToken))
+        {
+            // its activation is over and refused: the record keeps it unlit to its end (it is never lit, and a jump to it is refused as not lit)
+            _log?.Invoke($"the beacon {deployableId} was not lit: an anchored Mobile Cynosural Inhibitor covers it");
+            await _deployed.SaveAsync(record with { ActivateAtMs = NeverLit }, cancellationToken);
+            return;
+        }
+        _sim.SetDisruptorActive(deployableId, true);
+        // a beacon that is lit is told to its fleet, as a field is when it is lit (the client's jump menu lists it)
+        if (record.Kind == BeaconKind)
+        {
+            await AnnounceFieldAsync(record, true);
+        }
+    }
+
+    /// <summary>
+    /// The activation time of a beacon that could not be lit: never (the wiki: an anchored Mobile Cynosural Inhibitor "prevents the activation of cynos" within its
+    /// range; the record is kept to its end, so a restart does not light it either).
+    /// </summary>
+    internal const long NeverLit = long.MaxValue;
+
+    /// <summary>
+    /// Whether an anchored Mobile Cynosural Inhibitor covers a beacon at its activation: an inhibitor in its system whose anchoring time is past, whose record's time
+    /// is not up and whose range (the record's <c>RangeMeters</c>, 100 km) reaches the beacon. A covert beacon is not stopped (the wiki: "not covert cynos"). An
+    /// existing lit beacon is not asked: an inhibitor does not remove existing cynos (the wiki, Cynosural field).
+    /// </summary>
+    private async Task<bool> InhibitedAsync(DeployedRecord beacon, long now, CancellationToken cancellationToken)
+    {
+        if (beacon.TypeId == JumpDriveRules.CovertBeaconType)
+        {
+            return false;
+        }
+        foreach (var other in await _deployed!.InSystemAsync(beacon.SolarSystemId, cancellationToken))
+        {
+            if (other.Kind == InhibitorKind && other.ActivateAtMs <= now && other.ExpiresAtMs > now && MetersBetween(other.Position, beacon.Position) <= other.RangeMeters)
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static double MetersBetween(double[] a, double[] b)
+    {
+        var dx = a[0] - b[0];
+        var dy = a[1] - b[1];
+        var dz = a[2] - b[2];
+        return Math.Sqrt(dx * dx + dy * dy + dz * dz);
+    }
+
+    /// <summary>A beacon whose time is up is taken out of space, and its fleet is told it is gone.</summary>
+    private async Task ExpireBeaconAsync(DeployedRecord due)
+    {
+        await ExpireDisruptorAsync(due);
+        await AnnounceFieldAsync(due, false);
     }
 
     /// <summary>A mobile deployable whose time is up leaves space and its item is deleted (the sweep's entry for its kind).</summary>

@@ -14,9 +14,38 @@ public sealed class PgFactAttribute : FactAttribute
 
 internal sealed class Capture : IPacketSink
 {
+    private readonly object _gate = new();
+    private readonly List<(int Count, TaskCompletionSource Done)> _arrived = [];
+
     public List<PyValue> Sent { get; } = [];
 
-    public void Send(PyValue packet) => Sent.Add(packet);
+    public void Send(PyValue packet)
+    {
+        lock (_gate)
+        {
+            Sent.Add(packet);
+            foreach (var waiter in _arrived.Where(waiter => Sent.Count >= waiter.Count).ToList())
+            {
+                _arrived.Remove(waiter);
+                waiter.Done.TrySetResult();
+            }
+        }
+    }
+
+    /// <summary>Completes when at least <paramref name="count"/> packets have been sent to the session since it was last read.</summary>
+    public Task Arrived(int count)
+    {
+        lock (_gate)
+        {
+            if (Sent.Count >= count)
+            {
+                return Task.CompletedTask;
+            }
+            var waiter = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            _arrived.Add((count, waiter));
+            return waiter.Task;
+        }
+    }
 }
 
 /// <summary>The events the server sent a session, read back: the name, how they are addressed, and what they carry.</summary>
@@ -45,17 +74,45 @@ internal static class Notes
     }
 }
 
-/// <summary>A wait the test finishes by hand.</summary>
+/// <summary>
+/// A wait the test finishes by hand. <see cref="Reached"/> completes when the number of waits made reaches a count: the timers make their next wait
+/// after they have told the clients what changed, so a test that waits for that wait knows the notifications of the step are sent.
+/// </summary>
 internal sealed class Waits
 {
+    private readonly object _gate = new();
+    private readonly List<(int Count, TaskCompletionSource Done)> _reached = [];
+
     public List<(TimeSpan After, TaskCompletionSource Done)> Made { get; } = [];
 
     public Task Delay(TimeSpan after, CancellationToken token)
     {
         var done = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         token.Register(() => done.TrySetCanceled(token));
-        Made.Add((after, done));
+        lock (_gate)
+        {
+            Made.Add((after, done));
+            foreach (var waiter in _reached.Where(waiter => Made.Count >= waiter.Count).ToList())
+            {
+                _reached.Remove(waiter);
+                waiter.Done.TrySetResult();
+            }
+        }
         return done.Task;
+    }
+
+    public Task Reached(int count)
+    {
+        lock (_gate)
+        {
+            if (Made.Count >= count)
+            {
+                return Task.CompletedTask;
+            }
+            var waiter = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            _reached.Add((count, waiter));
+            return waiter.Task;
+        }
     }
 }
 
@@ -298,19 +355,23 @@ public class RuntimeTests : IAsyncLifetime
         Told(2);
         Assert.Equal(TimeSpan.FromMilliseconds(60_005), _waits.Made[^1].After);   // the first end, a moment after
 
+        // the end is told, then the next end is waited for: the step's notifications are sent by then (the timers tell before they make their next wait)
         _now = Start + 60_005;
+        var made = _waits.Made.Count;
         _waits.Made[^1].Done.SetResult();
-        await Settle(() => _sinks[1].Sent.Count > 0);
+        await _waits.Reached(made + 1);
         var weapons = Told(1);
         Assert.Equal(["OnWeaponsTimerUpdate"], weapons.Select(n => n.Name));
         Assert.Equal([new PyInt(100), PyNone.Instance], weapons[0].Args);
         Assert.Empty(Told(2));
 
         Assert.Equal(TimeSpan.FromMilliseconds(900_000 - 60_005 + 5), _waits.Made[^1].After);   // then the end of the pvp timer and the flag
+        // the last end waits for nothing: what is told is awaited on the clients' sinks (the packets, not the timers' bookkeeping)
         _now = Start + 900_005;
         var waiting = _waits.Made.Count;
         _waits.Made[^1].Done.SetResult();
-        await Settle(() => _sinks[1].Sent.Count >= 3);
+        await _sinks[1].Arrived(3);
+        await _sinks[2].Arrived(1);
         var rest = Told(1);
         Assert.Equal(["OnPvpTimerUpdate", "OnCriminalTimerUpdate", "OnSystemCriminalFlagUpdates"], rest.Select(n => n.Name));
         Assert.Equal([new PyInt(200), PyNone.Instance], rest[0].Args);

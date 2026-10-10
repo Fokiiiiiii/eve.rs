@@ -46,8 +46,7 @@ public sealed class SpaceJumpDrive(
         }
         var now = nowUnixMs();
         if (await deployed.GetAsync(fieldId, cancellationToken) is not { } field
-            || !(field.Kind == SpaceContainers.CynoFieldKind || (field.Kind == SpaceContainers.BeaconKind && field.ActivateAtMs <= now))
-            || field.ExpiresAtMs <= now
+            || !SpaceContainers.IsLitField(field, now)
             || field.SolarSystemId != solarSystemId
             || (ownerId != 0 && field.OwnerId != ownerId))
         {
@@ -99,6 +98,10 @@ public sealed class SpaceJumpDrive(
         {
             throw Notify("Jump freighters cannot jump into high-security space.");
         }
+        if (systems.Get(field.SolarSystemId) is { } entered && JumpDriveRules.EntryRefusal(entered.RegionId) is { } entry)
+        {
+            throw Notify(entry);
+        }
         var state = await fatigue.GetAsync(character, cancellationToken);
         if (state.CooldownUntilMs > now)
         {
@@ -147,7 +150,8 @@ public sealed class SpaceJumpDrive(
 
     /// <summary>
     /// Tells every member of the fleet of a field's lighter that the field is lit or gone (<c>OnFleetJumpBeaconModuleChange</c>, which the client's fleet service keeps
-    /// the jump targets in). Nothing is sent to a lighter who is in no fleet.
+    /// the jump targets in); a mobile beacon is told as a deployable (<c>OnFleetJumpBeaconDeployableChange</c>, EveJS's name for it, with its own id as the beacon).
+    /// Nothing is sent to a lighter who is in no fleet.
     /// </summary>
     public async Task AnnounceFieldAsync(DeployedRecord field, bool lit)
     {
@@ -158,7 +162,19 @@ public sealed class SpaceJumpDrive(
         }
         foreach (var member in snapshot.Members)
         {
-            sessionOf(member.CharacterId)?.SendNotification(
+            var session = sessionOf(member.CharacterId);
+            if (session is null)
+            {
+                continue;
+            }
+            if (field.Kind == SpaceContainers.BeaconKind)
+            {
+                session.SendNotification(
+                    "OnFleetJumpBeaconDeployableChange", "fleetid",
+                    new PyLong(field.DeployableId), new PyInt(field.SolarSystemId), new PyLong(field.DeployableId), new PyLong(field.OwnerId), lit ? PyBool.True : PyBool.False);
+                continue;
+            }
+            session.SendNotification(
                 "OnFleetJumpBeaconModuleChange", "fleetid",
                 new PyLong(field.OwnerId), new PyInt(field.SolarSystemId), new PyLong(field.DeployableId), new PyInt(field.TypeId), lit ? PyBool.True : PyBool.False);
         }

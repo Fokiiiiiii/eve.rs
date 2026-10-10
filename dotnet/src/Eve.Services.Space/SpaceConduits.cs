@@ -47,8 +47,7 @@ public sealed class SpaceConduits(
         }
         var now = nowUnixMs();
         if (await deployed.GetAsync(fieldId, cancellationToken) is not { } field
-            || field.Kind != SpaceContainers.CynoFieldKind
-            || field.ExpiresAtMs <= now
+            || !SpaceContainers.IsLitField(field, now)
             || field.SolarSystemId != destinationSystem
             || field.SolarSystemId == origin)
         {
@@ -90,6 +89,10 @@ public sealed class SpaceConduits(
         if (!JumpDriveRules.MayJumpTo(JumpDriveRules.KindOf(field.TypeId), hull.GroupId))
         {
             throw Notify("That cynosural field does not take this ship.");
+        }
+        if (systems.Get(destinationSystem) is { } entered && JumpDriveRules.EntryRefusal(entered.RegionId) is { } entry)
+        {
+            throw Notify(entry);
         }
         var lightYears = systems.LightYearsBetween(origin, destinationSystem) ?? throw Refusal("DeniedShipChanged");
         var calibration = await LevelAsync(JumpDriveRules.CalibrationSkill, character, cancellationToken);

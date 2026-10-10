@@ -171,6 +171,24 @@ public class RulesTests
     }
 
     [Fact]
+    public void A_module_that_names_both_groups_and_types_of_ship_fits_a_ship_of_either()
+    {
+        // the groups and the single types a module names are alternatives: a command burst names its groups and some types
+        var restricted = new DogmaStatic(Attributes, BuiltInEffects.Merge([]),
+        [
+            new TypeDef(ShipType, ShipGroup, 6, new Dictionary<int, double> { [14] = 3 }, []),
+            new TypeDef(1373, 1, 1, new Dictionary<int, double>(), []),
+            Module(6005, 53, 7, new Dictionary<int, double> { [1298] = 999, [1302] = ShipType }, 12),   // the ship's type, not its group
+            Module(6006, 53, 7, new Dictionary<int, double> { [1298] = ShipGroup, [1302] = 12345 }, 12), // the ship's group, not its type
+            Module(6007, 53, 7, new Dictionary<int, double> { [1298] = 999, [1302] = 12345 }, 12),      // neither
+        ]);
+        var (world, statics) = Ship(statics: restricted);
+        Assert.Null(Why(world, statics, Candidate(world, 6005, 2004), Slots.HighFirst));
+        Assert.Null(Why(world, statics, Candidate(world, 6006, 2005), Slots.HighFirst));
+        Assert.Equal(FitError.InvalidShipType, Why(world, statics, Candidate(world, 6007, 2006), Slots.HighFirst));
+    }
+
+    [Fact]
     public void Only_so_many_of_a_type_or_of_a_group_may_be_fitted()
     {
         var limited = new DogmaStatic(Attributes, BuiltInEffects.Merge([]),

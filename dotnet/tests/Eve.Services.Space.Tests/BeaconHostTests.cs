@@ -14,8 +14,12 @@ public class BeaconHostTests
 {
     private const int Beacon = 57319, HighsecBeacon = 58906, CovertBeacon = 59630;
     private const int Anchoring = 11584, CynosuralFieldTheory = 21603, Polaris = 9955;
-    /// <summary>A null-security system (security -1.0), where a standard beacon may be dropped.</summary>
-    private const long NullSecSystem = 30000021;
+    /// <summary>A null-security system (security -1.0, RU-97T) outside Pochven, where a standard beacon may be dropped.</summary>
+    private const long NullSecSystem = 30000377;
+    /// <summary>Kuharah (SDE region 10000070, Pochven): a beacon cannot be lit there (the wiki's region-wide jammer).</summary>
+    private const long PochvenSystem = 30000021;
+    /// <summary>A wormhole system (SDE region 11000033): a beacon may be lit there (the wiki), though no jump drive may enter it.</summary>
+    private const long WormholeSystem = 31000001;
     /// <summary>Jita (security 0.9): a standard or covert beacon may not be dropped there.</summary>
     private const long HighSecSystem = 30000142;
 
@@ -169,5 +173,98 @@ public class BeaconHostTests
         await rig.Containers.RestoreDeployedAsync(system);
         var anchored = Assert.Single(rig.Sim.Heard.OfType<SimPlaceCynoBeacon>());
         Assert.True(anchored.Active);
+    }
+
+    /// <summary>The record of a Mobile Cynosural Inhibitor in <paramref name="system"/> at <paramref name="at"/>: anchored (its activation is past), 100 km.</summary>
+    private static async Task InhibitorOnRecordAsync(Rig rig, int system, double[] at)
+    {
+        await rig.Deployed.SaveAsync(new DeployedRecord(
+            4_250_000_000_000_501, "mobile_cyno_inhibitor", system, "Mobile Cynosural Inhibitor", 33476, 1249, at, 100, 1, 0, 0, 0,
+            rig.Now + 60L * 60 * 1000, rig.Now - 1, 100_000));
+    }
+
+    [PgFact]
+    public async Task A_standard_beacon_that_anchors_inside_an_inhibitors_range_is_never_lit()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var (session, items) = await PilotWithBeaconsAsync(rig, Beacon, 1, NullSecSystem);
+        var beacon = items[0];
+        await rig.Containers.LaunchFromShipAsync(session, beacon, CancellationToken.None);
+        var at = (await rig.Deployed.GetAsync(beacon))!.Position;
+        rig.Now += 2 * 60_000;
+        await InhibitorOnRecordAsync(rig, (int)NullSecSystem, at);
+        rig.Sim.Heard.Clear();
+
+        await rig.Containers.AnchorAsync(beacon);
+
+        // refused at its activation: the record keeps it unlit, the simulation is not told it is anchored, and it is kept to its end
+        Assert.Equal(long.MaxValue, (await rig.Deployed.GetAsync(beacon))!.ActivateAtMs);
+        Assert.DoesNotContain(rig.Sim.Heard, m => m is SimSetDisruptorActive lit && lit.DeployableId == beacon && lit.Active);
+        Assert.NotNull(await rig.Deployed.GetAsync(beacon));
+    }
+
+    [PgFact]
+    public async Task A_covert_beacon_is_not_stopped_by_an_inhibitor_and_a_standard_one_outside_its_range_anchors()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var (session, items) = await PilotWithBeaconsAsync(rig, CovertBeacon, 1, NullSecSystem);
+        var covert = items[0];
+        await rig.Containers.LaunchFromShipAsync(session, covert, CancellationToken.None);
+        var at = (await rig.Deployed.GetAsync(covert))!.Position;
+        rig.Now += 60_000;
+        await InhibitorOnRecordAsync(rig, (int)NullSecSystem, at);
+        rig.Sim.Heard.Clear();
+
+        await rig.Containers.AnchorAsync(covert);
+        Assert.Contains(rig.Sim.Heard, m => m is SimSetDisruptorActive lit && lit.DeployableId == covert && lit.Active);
+
+        // a standard beacon 150 km from the inhibitor (its range is 100 km) anchors
+        var (standardSession, standardItems) = await PilotWithBeaconsAsync(rig, Beacon, 1, NullSecSystem, name: "Standard Beacon Pilot", sessionId: 2);
+        var standard = standardItems[0];
+        await rig.Containers.LaunchFromShipAsync(standardSession, standard, CancellationToken.None);
+        rig.Now += 2 * 60_000;
+        // the standard beacon is dropped where the covert one is, so the inhibitor 150 km along x is 150 km from it
+        await InhibitorOnRecordAsync(rig, (int)NullSecSystem, [at[0] + 150_000, at[1], at[2]]);
+        rig.Sim.Heard.Clear();
+        await rig.Containers.AnchorAsync(standard);
+        Assert.Contains(rig.Sim.Heard, m => m is SimSetDisruptorActive lit && lit.DeployableId == standard && lit.Active);
+    }
+
+    [PgFact]
+    public async Task An_inhibitor_placed_later_does_not_unlight_a_beacon_already_lit()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var (session, items) = await PilotWithBeaconsAsync(rig, Beacon, 1, NullSecSystem);
+        var beacon = items[0];
+        await rig.Containers.LaunchFromShipAsync(session, beacon, CancellationToken.None);
+        var at = (await rig.Deployed.GetAsync(beacon))!.Position;
+        rig.Now += 2 * 60_000;
+        await rig.Containers.AnchorAsync(beacon);
+        var lit = (await rig.Deployed.GetAsync(beacon))!.ActivateAtMs;
+        rig.Now += 60_000;
+        await InhibitorOnRecordAsync(rig, (int)NullSecSystem, at);
+        rig.Sim.Heard.Clear();
+
+        // the wiki: an inhibitor "do not remove existing cynos": the lit beacon keeps its activation and is not sent away
+        await rig.Containers.SweepAsync();
+        Assert.Equal(lit, (await rig.Deployed.GetAsync(beacon))!.ActivateAtMs);
+        Assert.DoesNotContain(rig.Sim.Heard, m => m is SimSetDisruptorActive off && off.DeployableId == beacon && !off.Active);
+        Assert.DoesNotContain(rig.Sim.Heard, m => m is SimRemoveDeployed removed && removed.DeployableId == beacon);
+    }
+
+    [PgFact]
+    public async Task A_beacon_cannot_be_dropped_in_pochven_but_it_may_be_lit_in_wormhole_space_as_the_wiki_says()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var (pochven, pochvenItems) = await PilotWithBeaconsAsync(rig, Beacon, 1, PochvenSystem);
+        var refused = await Assert.ThrowsAsync<MachoWrappedException>(() => rig.Containers.LaunchFromShipAsync(pochven, pochvenItems[0], CancellationToken.None));
+        Assert.Contains("cannot be deployed in Pochven", Texts(refused.Error.Payload));
+        Assert.Equal(CharacterShips.CargoFlag, (await rig.Items.GetAsync(pochvenItems[0]))!.Flag);
+        Assert.Empty(rig.Sim.Heard.OfType<SimPlaceCynoBeacon>());
+
+        var (wormhole, wormholeItems) = await PilotWithBeaconsAsync(rig, Beacon, 1, WormholeSystem, name: "Wormhole Beacon Pilot", sessionId: 2);
+        var placed = await rig.Containers.LaunchFromShipAsync(wormhole, wormholeItems[0], CancellationToken.None);
+        Assert.Equal(wormholeItems[0], placed);
+        Assert.Equal("mobile_cyno_beacon", (await rig.Deployed.GetAsync(wormholeItems[0]))!.Kind);
     }
 }

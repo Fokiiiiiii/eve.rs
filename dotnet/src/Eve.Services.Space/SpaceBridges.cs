@@ -58,8 +58,7 @@ public sealed class SpaceBridges(
         }
         var now = nowUnixMs();
         if (await deployed.GetAsync(fieldId, cancellationToken) is not { } field
-            || field.Kind != SpaceContainers.CynoFieldKind
-            || field.ExpiresAtMs <= now
+            || !SpaceContainers.IsLitField(field, now)
             || field.SolarSystemId != destinationSystem)
         {
             throw Notify("That cynosural field is not lit.");
@@ -92,9 +91,10 @@ public sealed class SpaceBridges(
         var titan = generator.TypeId == JumpDriveRules.TitanGeneratorType;
         var industrial = generator.TypeId == JumpDriveRules.IndustrialGeneratorType;
         var kind = JumpDriveRules.KindOf(field.TypeId);
-        if (titan && kind != JumpDriveRules.FieldKind.Standard)
+        // a Titan bridge goes to a standard field or a beacon (the wiki: "standard Cynosural Fields, or Cynosural Beacons"); a covert beacon then fails the cyno rule below
+        if (titan && kind != JumpDriveRules.FieldKind.Standard && field.Kind != SpaceContainers.BeaconKind)
         {
-            throw Notify("A titan jump bridge goes only to a standard cynosural field.");
+            throw Notify("A titan jump bridge goes only to a standard cynosural field or a beacon.");
         }
         if (industrial && kind != JumpDriveRules.FieldKind.Industrial)
         {
@@ -104,6 +104,10 @@ public sealed class SpaceBridges(
         if (!JumpDriveRules.MayJumpTo(kind, hull.GroupId))
         {
             throw Notify("That cynosural field does not take this ship.");
+        }
+        if (systems.Get(destinationSystem) is { } entered && JumpDriveRules.EntryRefusal(entered.RegionId) is { } entry)
+        {
+            throw Notify(entry);
         }
         // the capitals operate outside high security (the wiki, "Capital ships"): a Titan and a Rorqual are capitals
         if ((titan || industrial) && systems.Get(origin) is { } place && Security.IsHighSecOrHigher(Security.ClassFromLevel(place.Security)))
@@ -158,6 +162,8 @@ public sealed class SpaceBridges(
             now + (long)lifetime);
         _bridges[shipId] = record;
         await AnnounceAsync(record, true);
+        // the opener is told the anchor is activated, with no passengers yet (EveJS notifyGroupJumpAnchor after the bridge opens)
+        session.SendNotification("OnGroupJumpAnchorActivated", "clientID", new PyInt(destinationSystem), new PyInt(0));
     }
 
     /// <summary>

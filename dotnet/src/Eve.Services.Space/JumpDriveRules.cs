@@ -93,6 +93,22 @@ public static class JumpDriveRules
         _ => true,
     };
 
+    /// <summary>Pochven (SDE region 10000070): the Triglavian space a jump drive can leave but not enter (the wiki, "Pochven": "Jump drives cannot be used to enter
+    /// Triglavian space, only to exit"; "capital ships cannot jump into the Pochven region").</summary>
+    public const int PochvenRegionId = 10_000_070;
+
+    /// <summary>Whether a region is wormhole space: the SDE's wormhole systems all lie in the regions 11000000 to 11999999.</summary>
+    public static bool IsWormholeRegion(int regionId) => regionId is >= 11_000_000 and <= 11_999_999;
+
+    /// <summary>
+    /// The refusal of a jump drive's jump into a system of this region, or null when it may enter it. The wiki ("Jump drive", "Wormhole space"): "jump drives cannot
+    /// jump to systems in wormhole space", and the Pochven rule above. Leaving a region is not refused here. The wording is ours (no reference text for the jump).
+    /// </summary>
+    public static string? EntryRefusal(int regionId) =>
+        IsWormholeRegion(regionId) ? "Jump drives cannot jump to systems in wormhole space."
+        : regionId == PochvenRegionId ? "Jump drives cannot be used to enter Pochven."
+        : null;
+
     /// <summary>
     /// Whether a ship of a group may jump into a system of this security level. The wiki (Jump Freighters): "Jump freighters cannot use their jump drives and cynos to
     /// jump into highsec space, but they can jump out of highsec space." Other ships are not refused here: a capital's jump out of high security is the origin's rule.

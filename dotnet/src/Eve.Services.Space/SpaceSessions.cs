@@ -411,6 +411,9 @@ private readonly TransitionRuntime _transitions;
 
     public double? SecurityOfSystem(int solarSystemId) => _systems.Get(solarSystemId)?.Security;
 
+    /// <summary>The region of a solar system (for the Pochven and wormhole rules), or null when the system is not known.</summary>
+    public int? RegionOfSystem(int solarSystemId) => _systems.Get(solarSystemId)?.RegionId;
+
     private static MachoWrappedException Notify(string text) => MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr(text)));
 
 

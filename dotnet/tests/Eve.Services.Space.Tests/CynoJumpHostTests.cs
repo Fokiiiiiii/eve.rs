@@ -16,6 +16,8 @@ public class CynoJumpHostTests
     private const int Revelation = 19720, Helium = 16274, FuelBayFlag = CharacterShips.FuelBayFlag;
     private const long Field = 4_250_000_000_000_201, OtherField = 4_250_000_000_000_202;
     private const int Origin = 30100032, Destination = 30100099;
+    /// <summary>A wormhole system and a Pochven system, one light year from the origin each: a jump drive may not enter either (the wiki).</summary>
+    private const int Wormhole = 31_000_500, Pochven = 30_003_500;
     private const long Minute = 60_000, Spool = 300_000;
 
     /// <summary>
@@ -25,6 +27,8 @@ public class CynoJumpHostTests
     private static SolarSystemCatalog Systems() => new([
         new SolarSystemInfo(Origin, "Test Origin", 1, 1, -0.5, 0, 0, 0, 0),
         new SolarSystemInfo(Destination, "Test Destination", 1, 1, -0.4, 0, SolarSystemCatalog.MetersPerLightYear, 0, 0),
+        new SolarSystemInfo(Wormhole, "Test Wormhole", 1, 11_000_001, -0.99, 0, 0, SolarSystemCatalog.MetersPerLightYear, 0),
+        new SolarSystemInfo(Pochven, "Test Pochven", 1, 10_000_070, -0.9, 0, 0, 0, SolarSystemCatalog.MetersPerLightYear),
     ]);
 
     /// <summary>A spool of the jump to Destination that takes the given fuel, ending as the drive would end it from now.</summary>
@@ -476,5 +480,185 @@ public class CynoJumpHostTests
         Assert.True(await rig.Ships.DebitJumpAsync(fatigue, new PgJumpSpoolStore(rig.Source, rig.SpaceSchema), SpoolOf(rig, character.CharacterId, ship, 400), next));
         Assert.Equal(600, await rig.Ships.FuelHeldAsync(character.CharacterId, ship, Helium));
         Assert.Equal(next, await fatigue.GetAsync(character.CharacterId));
+    }
+
+    /// <summary>A Mobile Cynosural Beacon of <paramref name="type"/> in the destination system, owned by <paramref name="owner"/>: anchored (its activation time is
+    /// past) or still waiting to anchor (the record the placement keeps: the activation is two minutes, a covert one a minute, after the drop).</summary>
+    private static async Task BeaconAsync(Rig rig, long beacon, long owner, long ship, int type, bool anchored)
+    {
+        await rig.Deployed.SaveAsync(new DeployedRecord(
+            beacon, "mobile_cyno_beacon", Destination, "Mobile Cynosural Beacon", type, 4_093, [SolarSystemCatalog.MetersPerLightYear, 0, 0], 100, owner, 0, 0, ship,
+            rig.Now + 60 * Minute, anchored ? rig.Now - Minute : rig.Now + 2 * Minute));
+    }
+
+    /// <summary>The conduit of the rig's Black Ops with no passenger (the passengers are the fleet tests' concern).</summary>
+    private static SpaceConduits Conduits(Rig rig) => new(
+        rig.Ships, rig.Statics, rig.Deployed, new PgJumpFatigueStore(rig.Source, rig.SpaceSchema), Systems(), rig.Skills, rig.Source, rig.Space,
+        rig.FleetStore, () => rig.Now, null, null);
+
+    [PgFact]
+    public async Task A_revelation_jumps_to_an_anchored_beacon_of_its_fleet_as_it_does_to_a_field()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var (session, character, ship, oid) = await JumperAsync(rig, fuel: 50_000);
+        await FleetOfAsync(rig, character.CharacterId);
+        await BeaconAsync(rig, Field, character.CharacterId, ship, 57_319, anchored: true);
+        rig.Sim.Heard.Clear();
+
+        await Drive(rig).JumpToFieldAsync(session, Field, character.CharacterId, Destination, oid, CancellationToken.None);
+
+        var spool = Assert.Single(rig.Sim.Heard.OfType<SimCommand>(), command => command.Code == SimCommands.CynoJump);
+        Assert.Equal(new double[] { Field, Destination, Spool, 0.95 }, spool.Args.ToArray());
+        Assert.Equal(47_000, await rig.Ships.FuelHeldAsync(character.CharacterId, ship, Helium));
+    }
+
+    [PgFact]
+    public async Task A_titan_bridge_opens_to_an_anchored_beacon_and_is_refused_while_the_beacon_is_still_anchoring()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var (session, character, ship, _) = await JumperAsync(rig, fuel: 50_000, hull: Avatar, fuelType: Helium, generator: PortalGenerator, strontium: 500);
+        await FleetOfAsync(rig, character.CharacterId);
+        await BeaconAsync(rig, Field, character.CharacterId, ship, 57_319, anchored: false);
+        var bridges = Bridges(rig);
+        rig.Sim.Heard.Clear();
+
+        // not lit yet: refused by the host, and the simulation is not asked
+        await Assert.ThrowsAnyAsync<MachoWrappedException>(() => bridges.OpenAsync(session, Field, Destination, CancellationToken.None));
+        Assert.DoesNotContain(rig.Sim.Heard.OfType<SimCommand>(), command => command.Code == SimCommands.OpenBridge);
+        Assert.Empty(bridges.Open);
+
+        await BeaconAsync(rig, Field, character.CharacterId, ship, 57_319, anchored: true);
+        await bridges.OpenAsync(session, Field, Destination, CancellationToken.None);
+
+        var opened = Assert.Single(rig.Sim.Heard.OfType<SimCommand>(), command => command.Code == SimCommands.OpenBridge);
+        Assert.Equal((double)Field, opened.Args.ToArray()[0]);
+        Assert.Single(bridges.Open);
+    }
+
+    [PgFact]
+    public async Task A_titan_bridge_is_refused_to_a_covert_beacon_which_only_a_black_ops_takes()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var (session, character, ship, _) = await JumperAsync(rig, fuel: 50_000, hull: Avatar, fuelType: Helium, generator: PortalGenerator, strontium: 500);
+        await FleetOfAsync(rig, character.CharacterId);
+        await BeaconAsync(rig, Field, character.CharacterId, ship, 59_630, anchored: true);
+        rig.Sim.Heard.Clear();
+
+        // the covert beacon is a covert field for the cyno rule (the wiki: only black ops battleships)
+        await Assert.ThrowsAnyAsync<MachoWrappedException>(() => Bridges(rig).OpenAsync(session, Field, Destination, CancellationToken.None));
+        Assert.DoesNotContain(rig.Sim.Heard.OfType<SimCommand>(), command => command.Code == SimCommands.OpenBridge);
+    }
+
+    [PgFact]
+    public async Task A_black_ops_conduit_jumps_to_an_anchored_covert_beacon()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var (session, character, ship, oid) = await JumperAsync(rig, fuel: 50_000, hull: Redeemer, fuelType: Helium, generator: CovertGenerator);
+        await FleetOfAsync(rig, character.CharacterId);
+        await BeaconAsync(rig, Field, character.CharacterId, ship, 59_630, anchored: true);
+        rig.Sim.Heard.Clear();
+
+        await Conduits(rig).GroupJumpAsync(session, Field, Destination, oid, CancellationToken.None);
+
+        var passage = Assert.Single(rig.Sim.Heard.OfType<SimCommand>(), command => command.Code == SimCommands.ConduitJump);
+        Assert.Equal((double)Field, passage.Args.ToArray()[0]);
+        Assert.Equal(50_000 - 1_000, await rig.Ships.FuelHeldAsync(character.CharacterId, ship, Helium));
+    }
+
+    [PgFact]
+    public async Task A_beacon_that_anchors_is_told_to_its_fleet_and_its_end_is_told_too()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var (session, character, ship, _) = await JumperAsync(rig, fuel: 50_000);
+        await FleetOfAsync(rig, character.CharacterId);
+        rig.Containers.FieldAnnounced = Drive(rig, characterId => characterId == character.CharacterId ? session : null).AnnounceFieldAsync;
+        await BeaconAsync(rig, Field, character.CharacterId, ship, 57_319, anchored: false);
+        Events.Of(session);
+
+        rig.Now += 2 * Minute;
+        await rig.Containers.AnchorAsync(Field);
+
+        // the beacon is told as a deployable: its id, its system, its id as the beacon, its owner, and lit
+        var lit = Assert.Single(Events.Of(session));
+        Assert.Equal("OnFleetJumpBeaconDeployableChange", lit.Name);
+        Assert.Equal(new long[] { Field, Destination, Field, character.CharacterId }, lit.Args.Take(4).Select(Events.Number).ToArray());
+        Assert.True(lit.Args[4] is PyBool { Value: true }, "lit");
+
+        rig.Now += 60 * Minute + 1;
+        await rig.Containers.SweepAsync();
+        var gone = Assert.Single(Events.Of(session));
+        Assert.Equal("OnFleetJumpBeaconDeployableChange", gone.Name);
+        Assert.True(gone.Args[4] is PyBool { Value: false }, "gone");
+    }
+
+    [PgFact]
+    public async Task A_titan_bridge_tells_its_opener_the_anchor_is_activated_with_no_passenger_yet()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var (session, character, ship, _) = await JumperAsync(rig, fuel: 50_000, hull: Avatar, fuelType: Helium, generator: PortalGenerator, strontium: 500);
+        await FleetOfAsync(rig, character.CharacterId);
+        await LightAsync(rig, Field, character.CharacterId, ship);
+        Events.Of(session);
+
+        await Bridges(rig).OpenAsync(session, Field, Destination, CancellationToken.None);
+
+        var anchor = Assert.Single(Events.Of(session), e => e.Name == "OnGroupJumpAnchorActivated");
+        Assert.Equal(new long[] { Destination, 0 }, anchor.Args.Select(Events.Number).ToArray());
+    }
+
+    /// <summary>Every text inside a wrapped error's payload, joined (the refusal's words).</summary>
+    private static string Texts(PyValue value) => value switch
+    {
+        PyStr text => text.Value,
+        PyWString text => text.Value,
+        PyBytes text => System.Text.Encoding.UTF8.GetString(text.Value.Span),
+        PyTuple tuple => string.Join("|", tuple.Items.Select(Texts)),
+        PyList list => string.Join("|", list.Items.Select(Texts)),
+        PyDict dict => string.Join("|", dict.Entries.SelectMany(entry => new[] { Texts(entry.Key), Texts(entry.Value) })),
+        PyObjectEx ex => string.Join("|", new[] { Texts(ex.Header) }.Concat(ex.List.Select(Texts)).Concat(ex.Dict.SelectMany(entry => new[] { Texts(entry.Key), Texts(entry.Value) }))),
+        PyObject obj => Texts(obj.Args),
+        _ => "",
+    };
+
+    /// <summary>A cynosural field lit by <paramref name="owner"/> in <paramref name="system"/> (the field's own system, not the destination), ten minutes of life.</summary>
+    private static async Task FieldInAsync(Rig rig, long field, int system, long owner, long ship)
+    {
+        await rig.Deployed.SaveAsync(new DeployedRecord(
+            field, "cyno_field", system, "Cynosural Field", 21_094, 2_020, [0, 0, SolarSystemCatalog.MetersPerLightYear], 250, owner, 0, 0, ship, rig.Now + 10 * Minute));
+    }
+
+    [PgFact]
+    public async Task A_revelation_cannot_jump_into_wormhole_space_or_into_pochven_even_with_a_field_lit_there()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var (session, character, ship, oid) = await JumperAsync(rig, fuel: 50_000);
+        await FleetOfAsync(rig, character.CharacterId);
+        await FieldInAsync(rig, Field, Wormhole, character.CharacterId, ship);
+        await FieldInAsync(rig, OtherField, Pochven, character.CharacterId, ship);
+        var drive = Drive(rig);
+        rig.Sim.Heard.Clear();
+
+        // the wiki: jump drives cannot jump to systems in wormhole space, and cannot be used to enter Pochven (only to exit)
+        var wormhole = await Assert.ThrowsAsync<MachoWrappedException>(() => drive.JumpToFieldAsync(session, Field, character.CharacterId, Wormhole, oid, CancellationToken.None));
+        Assert.Contains("wormhole space", Texts(wormhole.Error.Payload));
+        var pochven = await Assert.ThrowsAsync<MachoWrappedException>(() => drive.JumpToFieldAsync(session, OtherField, character.CharacterId, Pochven, oid, CancellationToken.None));
+        Assert.Contains("Pochven", Texts(pochven.Error.Payload));
+        Assert.DoesNotContain(rig.Sim.Heard.OfType<SimCommand>(), command => command.Code == SimCommands.CynoJump);
+        Assert.Equal(50_000, await rig.Ships.FuelHeldAsync(character.CharacterId, ship, Helium));
+    }
+
+    [PgFact]
+    public async Task A_titan_bridge_is_refused_into_pochven_and_nothing_is_opened()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var (session, character, ship, _) = await JumperAsync(rig, fuel: 50_000, hull: Avatar, fuelType: Helium, generator: PortalGenerator, strontium: 500);
+        await FleetOfAsync(rig, character.CharacterId);
+        await FieldInAsync(rig, OtherField, Pochven, character.CharacterId, ship);
+        rig.Sim.Heard.Clear();
+
+        var refused = await Assert.ThrowsAsync<MachoWrappedException>(() => Bridges(rig).OpenAsync(session, OtherField, Pochven, CancellationToken.None));
+
+        Assert.Contains("Pochven", Texts(refused.Error.Payload));
+        Assert.DoesNotContain(rig.Sim.Heard.OfType<SimCommand>(), command => command.Code == SimCommands.OpenBridge);
     }
 }

@@ -719,8 +719,8 @@ Done (tests: `SiegeModuleTests`, `SiegeSpeedLockTests`, `ShipStanceSlimTests`, `
 - Corrected from section 30: the module fuel per cycle (713, 714) is built (`WORK_FUEL`), and the warp, dock and speed locks of a siege are dogma while the module runs. Section 30's "NOT BUILT" for the fuel is withdrawn.
 
 Open, each with its blocker:
-- NOT VERIFIED AT MODULE LEVEL: the triage and bastion numbers, the command burst's bonused buff values, the cloak's delay bonus and the covert cyno's duration bonus. The data path is in the code (the dogma world, the module's own attributes); a test per module needs the module fitted with its skills.
-- NOT BUILT: the blockade runner restrictions. The wiki names none for the ship (DEVIATIONS Track S2b).
+- Verified at module level in section 36 (triage, bastion, core, command burst, cloak, covert cyno).
+- Blockade runner: the wiki names no restriction, so none is built (DEVIATIONS Track S2b and S2c).
 - LIMITATION: the old stance of a switch after a restart is the current one (the custom info keeps only the current stance).
 - NOT RUN: the graphical client. The stance button in space, the speed of a siege-locked ship and the jump freighter's refusal text are not seen in the client.
 
@@ -776,3 +776,37 @@ The reference advertises these 23 names; eve.rs does not register them, so it do
 |---|---|---|
 | OPEN | A handler that throws answers the call with None (`PacketDispatcher.cs`, the catch block). The V24.01 server answers a wrapped exception (`ExceptionWrapperGPCS.py:46-93`), which the client raises at the call site. It is the same class of fault as the unknown-service answer that was fixed. | Decide with the parent whether to change it for every call, and check the strict-mode test that pins the current behaviour (`StrictRpcTests`). |
 
+## 35. Track A8c: the mobile beacon as a jump target, the fleet notices, the inhibitor, the wormhole and Pochven rules (2026-10-10)
+
+Increment 1, done (tests: `CynoJumpHostTests`: A_revelation_jumps_to_an_anchored_beacon..., A_titan_bridge_opens_to_an_anchored_beacon..., A_titan_bridge_is_refused_to_a_covert_beacon..., A_black_ops_conduit_jumps_to_an_anchored_covert_beacon; decisions in DEVIATIONS "Track A8c"):
+- A mobile cynosural beacon is a jump, bridge and conduit target while it is anchored and its time is not up (`SpaceContainers.IsLitField`, one rule for the three). A beacon still anchoring is refused "not lit" and the simulation is not asked.
+- A Titan bridge goes to a standard field or a beacon; a covert beacon is a covert field for the cyno rule, so only a Black Ops takes it.
+- A covert bridge and a Black Ops conduit take a beacon of any kind.
+
+Increment 2, done (tests: `CynoJumpHostTests`: A_beacon_that_anchors_is_told_to_its_fleet..., A_titan_bridge_tells_its_opener...; decisions in DEVIATIONS "Track A8c"):
+- A beacon that anchors is told to its lighter's fleet (`OnFleetJumpBeaconDeployableChange`, true), and told gone (false) when its time is up.
+- A bridge opener is told the anchor is activated with no passengers (`OnGroupJumpAnchorActivated`, EveJS `notifyGroupJumpAnchor`); the fleet is told the bridge is open (`OnBridgeModeChange`, as before). A bridge passage notifies no one (EveJS sends none); a conduit notifies its anchor and passengers (as before).
+
+Increment 3, done (tests: `BeaconHostTests`: A_standard_beacon_that_anchors_inside_an_inhibitors_range_is_never_lit, A_covert_beacon_is_not_stopped_by_an_inhibitor_and_a_standard_one_outside_its_range_anchors, An_inhibitor_placed_later_does_not_unlight_a_beacon_already_lit; decisions in DEVIATIONS "Track A8c"):
+- A standard or highsec authorized beacon whose activation falls inside an anchored Mobile Cynosural Inhibitor's 100 km is not lit: its record keeps an activation time of never (`SpaceContainers.NeverLit`), the simulation is not told it is anchored, and a jump to it is refused as not lit. A covert beacon is not stopped; a lit beacon is not unlit by an inhibitor placed later (the wiki: "do not remove existing cynos").
+
+Increment 4, done (tests: `CynoJumpHostTests`: A_revelation_cannot_jump_into_wormhole_space_or_into_pochven..., A_titan_bridge_is_refused_into_pochven...; `BeaconHostTests`: A_beacon_cannot_be_dropped_in_pochven_but_it_may_be_lit_in_wormhole_space...; decisions in DEVIATIONS "Track A8c"):
+- Jump drives (the cynosural jump, a bridge's opening, a conduit) are refused into wormhole space and into Pochven (the wiki: "jump drives cannot jump to systems in wormhole space"; "cannot be used to enter Triglavian space, only to exit"). Leaving is not refused. The refusal texts are ours (no reference text for the jump).
+- A Mobile Cynosural Beacon cannot be dropped in Pochven (EveJS text: "Mobile Cynosural Beacons cannot be deployed in Pochven."). A beacon may be dropped and lit in wormhole space (the wiki); EveJS refuses it there, which is a recorded deviation.
+- The SDE puts Kuharah (30000021), the null-security system of the beacon tests, in Pochven (region 10000070): those tests now use RU-97T (30000377).
+
+Open, each with its blocker (the remaining increments):
+- NOT BUILT: a cynosural field generator's lighting in Pochven (the wiki's region-wide jammer). Blocker: the simulation holds no fact about the system's region; the scene needs it on the wire (a protocol bump), as the inhibitor's range was.
+- Shortcut: a beacon that is lit before a restart is not told to its fleet again (as the field of track A6; the notice is sent when it anchors, not when a ship returns to the system).
+- NOT BUILT: a mobile inhibitor's effect on a beacon's activation (the 100 km refusal at anchoring).
+- NOT BUILT: the wormhole and Pochven rules (jumps into wormhole space and into Pochven; lighting in Pochven).
+- NOT RUN: the client.
+
+## 36. Track S2c: module bonuses tested at module level, the Crimewatch timer race (2026-10-10)
+
+Done (tests: `ModuleBonusTests` (PgFact: each module fitted with its skills at level five, started, its numbers compared with the SDE), `SiegeModuleTests`, `SpecialHullBonusTests`; Crimewatch `RuntimeTests.A_timer_that_runs_out...`; fit `RulesTests`; decisions and sources in DEVIATIONS "Track S2c").
+- The engine carried every tested bonus to the dogma world without a code change: the triage, bastion and capital industrial core locks and impedances, the Shield Command burst of a Command Destroyer (2059 x skill 37615) and of a Sleipnir (1924 x level five), the Covert Ops cloak of a Black Ops hull, and the covert cyno's duration.
+- A module that names both ship groups and ship types fits a hull of either (a command burst names both); it was refused when both lists were required.
+- Crimewatch timer test: the race was in the test. It waited for the attacker's session to have three packets and then read the victim's session, but the system flag reaches each in-space session in turn. The test now waits for each session's own packet and for the timers' next wait; a probe that pauses the attacker's third send fails the old test and passes the new one. Ten consecutive runs under a CPU burner are green.
+- The Blockade Runner: the wiki states no module restriction; none is built.
+- NOT RUN: the client.

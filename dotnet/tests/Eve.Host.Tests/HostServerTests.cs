@@ -1410,6 +1410,73 @@ public class HostServerTests : IAsyncLifetime
         Assert.Contains("Server error ", text);
     }
 
+    /// <summary>
+    /// The owner rows of <c>config.GetMultiOwnersEx</c> through the host, with the client's row layout: the header the client's
+    /// <c>cfg.EveOwners</c> reads (eveCfg.py:1188-1201), one row per known owner, and no placeholder row for an unknown id.
+    /// </summary>
+    [PgFact]
+    public async Task The_owner_rows_reach_the_client_through_the_host_and_an_unknown_id_has_no_row()
+    {
+        var url = Environment.GetEnvironmentVariable("EVE_PG_URL")!;
+        await using var source = Npgsql.NpgsqlDataSource.Create(Eve.Data.PgConnection.ToConnectionString(url));
+        var schema = $"host_cfg_{Guid.NewGuid():N}"[..20];
+        var charactersSchema = $"host_chr_{Guid.NewGuid():N}"[..20];
+        try
+        {
+            await Eve.Corporations.CorporationStore.MigrateAsync(source, schema);
+            await Eve.Characters.PgCharacterStore.MigrateAsync(source, charactersSchema);
+            await using (var seed = source.CreateCommand($"""
+                INSERT INTO {schema}.owner_names(owner_id,name_key,ticker_key)
+                VALUES (1400000001,'test corporation','test-corp'),(1500000001,'test alliance','test-alliance');
+                INSERT INTO {schema}.corporations(
+                    id,name,ticker,ceo_id,creator_id,station_id,solar_system_id,tax_rate,lp_tax_rate,
+                    description,url,member_limit,created_ms)
+                VALUES (1400000001,'Test Corporation','TST',1,1,60000004,30000142,0,0,'','',10,0);
+                INSERT INTO {schema}.alliances(
+                    id,name,short_name,description,url,executor_corporation_id,creator_corporation_id,
+                    creator_character_id,created_ms,founding_key,deleted)
+                VALUES (1500000001,'Test Alliance','TAL','', '',1400000001,1400000001,1,0,'host-live',false);
+                """))
+                await seed.ExecuteNonQueryAsync();
+            var characters = new Eve.Characters.PgCharacterStore(source, charactersSchema);
+            var corporations = new Eve.Corporations.CorporationStore(source, characters, null!, null!, null!, () => 0, schema);
+            Start(configure: registry => registry.Register(new ConfigService(characters, corporations, null!, null!)));
+            var front = await Handshaken(await ConnectAsync());
+            var open = Open();
+            await front.SendAsync(open);
+            await front.ReceiveAsync(); // the initial state
+
+            var requested = new PyList([new PyInt(1400000001), new PyInt(999999999), new PyInt(1500000001)]);
+            await front.SendAsync(new Packet(open.SessionId, MarshalCodec.Encode(Packets.Call(open, 1, "config", "GetMultiOwnersEx", requested))));
+            var value = Result(MarshalCodec.Decode(Assert.IsType<Send>(await front.ReceiveAsync()).Payload));
+
+            var tupleSet = Assert.IsType<PyTuple>(value);
+            var header = Assert.IsType<PyTuple>(tupleSet.Items[0]).Items.Select(item => T(item) ?? "").ToArray();
+            Assert.Equal(["ownerID", "ownerName", "typeID", "gender", "ownerNameID"], header);
+            var rows = Assert.IsType<PyTuple>(tupleSet.Items[1]).Items.Select(item => Assert.IsType<PyTuple>(item).Items).ToArray();
+            Assert.Equal(2, rows.Length);
+            Assert.All(rows, row => Assert.Equal(header.Length, row.Count));
+            Assert.Equal(1400000001, Number(rows[0][0]));
+            Assert.Equal("Test Corporation", T(rows[0][1]));
+            Assert.Equal(2, Number(rows[0][2]));
+            Assert.Equal(1500000001, Number(rows[1][0]));
+            Assert.Equal("Test Alliance", T(rows[1][1]));
+            Assert.Equal(16159, Number(rows[1][2]));
+        }
+        finally
+        {
+            await using var cleanup = source.CreateCommand($"DROP SCHEMA IF EXISTS {schema} CASCADE; DROP SCHEMA IF EXISTS {charactersSchema} CASCADE");
+            await cleanup.ExecuteNonQueryAsync();
+        }
+    }
+
+    private static long Number(PyValue value) => value switch
+    {
+        PyInt number => number.Value,
+        PyLong number => number.Value,
+        _ => throw new InvalidOperationException($"not an integer: {value.GetType().Name}"),
+    };
+
     /// <summary>A service whose only method throws.</summary>
     private sealed class BoomService : IService
     {

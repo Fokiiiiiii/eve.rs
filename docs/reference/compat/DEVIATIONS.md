@@ -1178,3 +1178,32 @@ Sources. The wiki: "Jump drive" (https://wiki.eveuniversity.org/Jump_drive, fetc
   and the service is marked failed, and only a synchronous caller of that service sees the error (`serviceManager.py`
   `StartServiceRun`, `WaitForServiceObjectState`). The boot therefore continues when a boot-time service's server call
   is unknown. The eve.rs answers that matter at start-up are listed in `TODO.md` section 37.
+
+### Static configuration recordsets (B3)
+
+- **No placeholder rows.** `config.GetMultiOwnersEx` and `config.GetMultiCorpTickerNamesEx` answered an unknown id with an
+  invented row (`Item <id>` as the owner name, the ticker `CORP`), and `GetMultiLocationsEx` answered `Station <id>`,
+  `System <id>` and `Location <id>`. AGENTS.md forbids invented payloads, and the client reads a miss from the rows, not from
+  a name: `cfg._Prime` logs an id the reply does not carry (`carbon/common/script/sys/cfg.py:600-602`), and a later `Get` raises
+  `KeyError('RecordNotFound')` (`cfg.py:643-645`). eve.rs now leaves such an id out. EveJS still answers `Item <id>`
+  (`configService.js:463-469`); this is a deliberate difference. Tests: `ConfigServiceTests` (owners, tickers, locations),
+  `HostServerTests.The_owner_rows_reach_the_client_through_the_host...`.
+- **An empty reply keeps its (header, rows) shape.** `GetMultiAllianceShortNamesEx` answered an empty list when no id
+  matched. `cfg._Prime` unpacks a tuple and raises `RuntimeError` for any other type (`cfg.py:584-592`), so the answer is the
+  header with no rows, as the other recordsets already answer. EveJS has the same empty-list reply (`configService.js:774-776`).
+  Test: `ConfigServiceTests.Alliance_short_names_return_a_client_rowset...`.
+- **Alliances are owners.** `GetMultiOwnersEx` answers a live alliance with its name and the alliance type (16159,
+  `typeAlliance`), which the client's `cfg.EveOwners.IsAlliance` reads (`eveCfg.py:1226-1227`). A deleted alliance has no row.
+- **Station positions come from the static data.** `GetMultiLocationsEx` answers a station's `x`, `y`, `z` from the SDE
+  (`npcStations.position`). A solar system has no position in the static data and is answered with 0, as EveJS does
+  (`configService.js:128-145`). Structures are not answered (their catalogue is the structures track: no row).
+- **`GetOldStationData`** answers the empty list. The static data has no list of removed stations, and the client reads the
+  answer only when it is not empty (`eveCfg.py:749-752`), so the empty list is the answer for "none".
+- **Not added: `GetMapObjects` and `GetMultiGraphicsEx`.** EveJS answers both (`configService.js:838-840`, `:857-860`), but no
+  V24.01 caller exists in eve-logic (a search of the whole client tree finds neither name). A method without a caller cannot be
+  checked against the client, so it is not added; a call to it gets the unknown-method error. Status: open for a client that
+  calls them.
+- **`GetBlackListedPlanets`** answers the empty list. The static data and the server have no planet block list; no planet is
+  blocked. EveJS answers the same (`configService.js:862-865`).
+- **Not served yet: agent owners and the agent names.** The client reads an agent's owner row through the same recordset
+  (`eveCfg.py:548-560`); EveJS builds it (`buildAgentOwnerRow`). Owned by the agents track (TODO section 39).

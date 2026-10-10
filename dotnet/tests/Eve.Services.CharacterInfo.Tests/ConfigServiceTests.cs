@@ -63,6 +63,128 @@ public sealed class ConfigServiceTests
         })).Items);
     }
 
+    [ConfigServicePgFact]
+    public async Task Owners_answer_characters_corporations_and_alliances_and_leave_unknown_ids_out()
+    {
+        var url = Environment.GetEnvironmentVariable("EVE_PG_URL")!;
+        await using var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(url));
+        CharacterNames.EnsureUnicodeSupport();
+        var schema = $"cfg_owner_{Guid.NewGuid():N}"[..20];
+        var charactersSchema = $"cfg_chr_{Guid.NewGuid():N}"[..20];
+        try
+        {
+            await CorporationStore.MigrateAsync(source, schema);
+            await PgCharacterStore.MigrateAsync(source, charactersSchema);
+            await SeedCorporationsAsync(source, schema);
+            var characters = new PgCharacterStore(source, charactersSchema);
+            var corporations = new CorporationStore(source, characters, null!, null!, null!, () => 0, schema);
+            var service = new ConfigService(characters, corporations, null!, null!);
+
+            // a corporation, a live alliance, a deleted alliance and an id that is none of these
+            long[] requested = [1400000001, 1500000001, 1500000002, 999999999];
+            var rows = Rows(
+                await service.GetMultiOwnersEx(Call("GetMultiOwnersEx", requested, new ClientSession())),
+                ["ownerID", "ownerName", "typeID", "gender", "ownerNameID"]);
+            Assert.Equal([1400000001L, 1500000001L], rows.Select(row => Integer(row[0])).ToArray());
+            var corporation = rows[0];
+            Assert.Equal("Test Corporation", Text(corporation[1]));
+            Assert.Equal(2, Integer(corporation[2]));
+            var alliance = rows[1];
+            Assert.Equal("Test Alliance", Text(alliance[1]));
+            Assert.Equal(16159, Integer(alliance[2]));
+            Assert.DoesNotContain(rows, row => Text(row[1]).StartsWith("Item ", StringComparison.Ordinal));
+        }
+        finally
+        {
+            await using var cleanup = source.CreateCommand($"DROP SCHEMA IF EXISTS {schema} CASCADE; DROP SCHEMA IF EXISTS {charactersSchema} CASCADE");
+            await cleanup.ExecuteNonQueryAsync();
+        }
+    }
+
+    [ConfigServicePgFact]
+    public async Task Tickers_have_no_row_for_an_unknown_corporation()
+    {
+        var url = Environment.GetEnvironmentVariable("EVE_PG_URL")!;
+        await using var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(url));
+        var schema = $"cfg_ticker_{Guid.NewGuid():N}"[..20];
+        try
+        {
+            await CorporationStore.MigrateAsync(source, schema);
+            await SeedCorporationsAsync(source, schema);
+            var corporations = new CorporationStore(source, null!, null!, null!, null!, () => 0, schema);
+            var service = new ConfigService(null!, corporations, null!, null!);
+
+            var rows = Rows(
+                await service.GetMultiCorpTickerNamesEx(Call("GetMultiCorpTickerNamesEx", [1400000001, 999999999], new ClientSession())),
+                ["corporationID", "tickerName", "shape1", "shape2", "shape3", "color1", "color2", "color3"]);
+            var row = Assert.Single(rows);
+            Assert.Equal(1400000001, Integer(row[0]));
+            Assert.Equal("TST", Text(row[1]));
+        }
+        finally
+        {
+            await using var cleanup = source.CreateCommand($"DROP SCHEMA IF EXISTS {schema} CASCADE");
+            await cleanup.ExecuteNonQueryAsync();
+        }
+    }
+
+    [ConfigServicePgFact]
+    public async Task Locations_carry_the_station_position_and_leave_unknown_ids_out()
+    {
+        var url = Environment.GetEnvironmentVariable("EVE_PG_URL")!;
+        await using var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(url));
+        var sde = new SdeReader(source);
+        var stations = await StationCatalog.LoadAsync(sde);
+        var solarSystems = await SolarSystemCatalog.LoadAsync(sde);
+        var service = new ConfigService(null!, null!, stations, solarSystems);
+
+        long[] requested = [0, 60000004, 30002780, 999999999];
+        var rows = Rows(
+            await service.GetMultiLocationsEx(Call("GetMultiLocationsEx", requested, new ClientSession())),
+            ["locationID", "locationName", "solarSystemID", "x", "y", "z", "locationNameID"]);
+        Assert.Equal([0L, 60000004L, 30002780L], rows.Select(row => (long)Integer(row[0])).ToArray());
+        Assert.Equal("(none)", Text(rows[0][6]));
+        var station = stations.Get(60000004)!;
+        var stationRow = rows[1];
+        Assert.Equal(station.Name, Text(stationRow[1]));
+        Assert.Equal(station.SolarSystemId, Integer(stationRow[2]));
+        Assert.Equal(station.X, Assert.IsType<PyReal>(stationRow[3]).Value);
+        Assert.Equal(station.Y, Assert.IsType<PyReal>(stationRow[4]).Value);
+        Assert.Equal(station.Z, Assert.IsType<PyReal>(stationRow[5]).Value);
+        Assert.NotEqual(0d, station.X);
+        var systemRow = rows[2];
+        Assert.Equal(solarSystems.Get(30002780)!.Name, Text(systemRow[1]));
+        Assert.Equal(0d, Assert.IsType<PyReal>(systemRow[3]).Value);
+    }
+
+    [Fact]
+    public void Old_station_data_is_the_empty_list_the_client_skips()
+    {
+        var service = new ConfigService(null!, null!, null!, null!);
+        Assert.Empty(Assert.IsType<PyList>(service.GetOldStationData(Call("GetOldStationData", [], new ClientSession()))).Items);
+    }
+
+    /// <summary>One corporation, one live alliance and one deleted alliance, the rows the owner tests read.</summary>
+    private static async Task SeedCorporationsAsync(NpgsqlDataSource source, string schema)
+    {
+        await using var seed = source.CreateCommand($"""
+            INSERT INTO {schema}.owner_names(owner_id,name_key,ticker_key)
+            VALUES (1400000001,'test corporation','test-corp'),
+                   (1500000001,'test alliance','test-alliance'),
+                   (1500000002,'deleted alliance','deleted-alliance');
+            INSERT INTO {schema}.corporations(
+                id,name,ticker,ceo_id,creator_id,station_id,solar_system_id,tax_rate,lp_tax_rate,
+                description,url,member_limit,created_ms)
+            VALUES (1400000001,'Test Corporation','TST',1,1,60000004,30000142,0,0,'','',10,0);
+            INSERT INTO {schema}.alliances(
+                id,name,short_name,description,url,executor_corporation_id,creator_corporation_id,
+                creator_character_id,created_ms,founding_key,deleted)
+            VALUES (1500000001,'Test Alliance','TAL','', '',1400000001,1400000001,1,0,'test-live',false),
+                   (1500000002,'Deleted Alliance','DEL','', '',1400000001,1400000001,1,0,'test-deleted',true);
+            """);
+        await seed.ExecuteNonQueryAsync();
+    }
+
     private static Station Station(long id, long ownerId, int systemId) =>
         new(id, 1531, $"Station {id}", ownerId, $"Owner {ownerId}", null, "", 0, 0,
             systemId, $"System {systemId}", 1, "Constellation", 1, "Region", 0.5, 0, 0);
@@ -187,9 +309,11 @@ public sealed class ConfigServiceTests
             Assert.Equal(1500000001, Integer(row[0]));
             Assert.Equal("TAL", Text(row[1]));
 
+            // No row for the ids that are deleted or unknown: the reply is still the (header, rows) tuple the client's Prime unpacks
+            // (cfg.py:584-598), an empty list would raise in _Prime (cfg.py:591-592).
             var empty = await service.GetMultiAllianceShortNamesEx(
                 Call("GetMultiAllianceShortNamesEx", [1500000002, 1500000003], new ClientSession()));
-            Assert.Empty(Assert.IsType<PyList>(empty).Items);
+            Assert.Empty(Rows(empty, ["allianceID", "shortName"]));
         }
         finally
         {

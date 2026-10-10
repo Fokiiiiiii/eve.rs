@@ -264,14 +264,12 @@ impl Scene {
         let system = Arc::clone(&self.system);
         // a ship that jumped to a field appears by the field while it is lit here; one that came through a gate, by that gate
         let (position, direction) = if let Some(field_id) = traveller.to_field {
-            let Some(field) = self
-                .deployables
-                .get(&field_id)
-                .filter(|field| {
-                    matches!(field.role, crate::deployable::Role::CynoField | crate::deployable::Role::CynoBeacon { active: true })
-                        && field.ends_at > now
-                })
-            else {
+            let Some(field) = self.deployables.get(&field_id).filter(|field| {
+                matches!(
+                    field.role,
+                    crate::deployable::Role::CynoField | crate::deployable::Role::CynoBeacon { active: true }
+                ) && field.ends_at > now
+            }) else {
                 return Err(Box::new(traveller));
             };
             let mut random = PythonRandom::new(seed_of(traveller.pilot.ship.spec.ship_id, field_id, now));

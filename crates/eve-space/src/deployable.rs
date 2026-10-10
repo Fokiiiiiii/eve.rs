@@ -120,7 +120,9 @@ fn release_actions(stamp: u32, deployable: &Deployable) -> Result<Vec<Value>, ev
     let category = match deployable.role {
         Role::Beacon => BEACON_CATEGORY,
         Role::CynoField => CYNO_FIELD_CATEGORY,
-        Role::MobileWarpSource { .. } | Role::CynoInhibitor { .. } | Role::CynoBeacon { .. } => DEPLOYABLE_CATEGORY,
+        Role::MobileWarpSource { .. } | Role::CynoInhibitor { .. } | Role::CynoBeacon { .. } => {
+            DEPLOYABLE_CATEGORY
+        }
         _ => CHARGE_CATEGORY,
     };
     let ball = BallEntity {
@@ -492,7 +494,10 @@ impl Scene {
     /// reference's presentation update is traced.
     pub(crate) fn set_disruptor_active(&mut self, deployable_id: i64, active: bool) -> Vec<Out> {
         if let Some(Deployable {
-            role: Role::MobileWarpSource { active: current, .. } | Role::CynoInhibitor { active: current, .. } | Role::CynoBeacon { active: current },
+            role:
+                Role::MobileWarpSource { active: current, .. }
+                | Role::CynoInhibitor { active: current, .. }
+                | Role::CynoBeacon { active: current },
             ..
         }) = self.deployables.get_mut(&deployable_id)
         {

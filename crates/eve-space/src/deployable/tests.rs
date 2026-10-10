@@ -850,8 +850,14 @@ fn a_mobile_cynosural_beacon_is_a_field_only_once_anchored_and_is_taken_out_on_r
         ship_id: 0,
     };
     let placed = scene.place_cyno_beacon(beacon.clone(), t);
-    assert!(placed.iter().any(|o| format!("{o:?}").contains("AddBalls2")), "the pilots see it when it is dropped");
-    assert!(scene.place_cyno_beacon(beacon.clone(), t).is_empty(), "a beacon already in space is not put in twice");
+    assert!(
+        placed.iter().any(|o| format!("{o:?}").contains("AddBalls2")),
+        "the pilots see it when it is dropped"
+    );
+    assert!(
+        scene.place_cyno_beacon(beacon.clone(), t).is_empty(),
+        "a beacon already in space is not put in twice"
+    );
     assert_eq!(scene.deployables[&beacon.deployable_id].role, Role::CynoBeacon { active: false });
 
     // the host anchors it when its activation time is over: it is a field from then on

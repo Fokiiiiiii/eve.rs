@@ -267,6 +267,25 @@ impl Message {
             kind::POSITION => {
                 Message::Position { session_id: r.u64()?, command: r.u8()?, position: read_vector(&mut r)? }
             }
+            kind::SCAN_TARGETS => {
+                let (session_id, command) = (r.u64()?, r.u8()?);
+                let count = r.u32()? as usize;
+                // each target is 37 bytes: an id, a kind, a type and a position
+                if count > r.data.len() / 37 {
+                    return Err(DecodeError::Truncated);
+                }
+                let targets = (0..count)
+                    .map(|_| {
+                        Ok(ScanTarget {
+                            id: r.i64()?,
+                            kind: r.u8()?,
+                            type_id: r.i32()?,
+                            position: read_vector(&mut r)?,
+                        })
+                    })
+                    .collect::<Result<Vec<_>, DecodeError>>()?;
+                Message::ScanTargets { session_id, command, targets }
+            }
             kind::APPROACHING => {
                 Message::Approaching { session_id: r.u64()?, command: r.u8()?, distance: r.f64()? }
             }

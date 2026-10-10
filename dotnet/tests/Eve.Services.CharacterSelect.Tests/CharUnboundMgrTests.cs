@@ -29,6 +29,7 @@ public class CharUnboundMgrTests
         await h.CallAsync(session,"SelectCharacterID",new PyInt(id));
         Assert.Equal(3,sink.Sent.Count); // selection reset, session change, then skills
         Assert.Equal("OnCharacterSelected", NotificationName(sink.Sent[0]));
+        Assert.Empty(NotificationArgs(sink.Sent[0]).Items);
         Assert.Equal(PyNone.Instance, session.Get("warfactionid"));
         Assert.DoesNotContain(ChangesOf(sink.Sent[1]), change => change.Name == "warfactionid");
         session.Close();
@@ -301,6 +302,113 @@ public class CharUnboundMgrTests
     // ── choosing a character ────────────────────────────────────────────────
 
     [PgFact]
+    public async Task Failed_character_entry_releases_new_reservation_and_restores_previous_session()
+    {
+        var hook = new FailingEntryHook();
+        await using var h = await Harness.CreateAsync(entryHooks: [hook]);
+        var (session, _) = await h.LoginAsync("entry-rollback");
+        var previousId = await CreateAsync(h, session, "Previous Pilot");
+        var failingId = await CreateAsync(h, session, "Failing Pilot");
+
+        Assert.Equal(PyNone.Instance, await h.CallAsync(session, "SelectCharacterID", new PyInt(previousId)));
+        hook.FailureCharacterId = failingId;
+        var previousDeferredShip = new PyLong((await h.Characters.GetAsync(previousId))!.ShipId!.Value);
+        session.Set("deferredDockedShipId", previousDeferredShip);
+        var competingClaimSucceeded = false;
+        var restoredRegistryMatches = false;
+        hook.BeforeFailure = () =>
+        {
+            competingClaimSucceeded = h.Online.TryEnter(previousId, session.SessionId + 1);
+            session.Set("deferredDockedShipId", PyNone.Instance);
+            session.Set("failedEntryBootstrap", PyBool.True);
+        };
+        hook.OnSuccessfulEntry = restoredId => restoredRegistryMatches = h.Online.Snapshot().Contains(restoredId);
+
+        var failure = await Record.ExceptionAsync(async () =>
+            await h.CallAsync(session, "SelectCharacterID", new PyInt(failingId)));
+        Assert.NotNull(failure);
+        Assert.False(competingClaimSucceeded);
+        Assert.True(restoredRegistryMatches);
+        Assert.Equal(previousDeferredShip, session.Get("deferredDockedShipId"));
+        Assert.Null(session.Get("failedEntryBootstrap"));
+        Assert.Equal(previousId, session.CharacterId);
+        Assert.True(h.Online.TryEnter(previousId, session.SessionId));
+        Assert.Contains(previousId, h.Online.Snapshot());
+        Assert.DoesNotContain(failingId, h.Online.Snapshot());
+    }
+
+    [PgFact]
+    public async Task Duplicate_login_is_rejected_before_preparing_session_attributes()
+    {
+        var hook = new FailingEntryHook();
+        await using var h = await Harness.CreateAsync(entryHooks: [hook]);
+        var (session, sink) = await h.LoginAsync("entry-duplicate");
+        var id = await CreateAsync(h, session, "Occupied Pilot");
+        Assert.True(h.Online.TryEnter(id, session.SessionId + 1));
+        var packetCount = sink.Sent.Count;
+
+        var failure = await Record.ExceptionAsync(async () =>
+            await h.CallAsync(session, "SelectCharacterID", new PyInt(id)));
+        Assert.NotNull(failure);
+        Assert.Empty(hook.PreparedCharacterIds);
+        Assert.Null(session.CharacterId);
+        Assert.Equal(packetCount, sink.Sent.Count);
+        Assert.False(h.Online.TryEnter(id, session.SessionId));
+    }
+
+    [PgFact]
+    public async Task Failed_attribute_preparation_preserves_previous_runtime_and_allows_retry()
+    {
+        var hook = new FailingEntryHook();
+        await using var h = await Harness.CreateAsync(entryHooks: [hook]);
+        var (session, sink) = await h.LoginAsync("entry-preparation");
+        var previousId = await CreateAsync(h, session, "Previous Prepare Pilot");
+        var failingId = await CreateAsync(h, session, "Failing Prepare Pilot");
+        await h.CallAsync(session, "SelectCharacterID", new PyInt(previousId));
+        hook.PreparationFailureCharacterId = failingId;
+        var packetCount = sink.Sent.Count;
+
+        var failure = await Record.ExceptionAsync(async () =>
+            await h.CallAsync(session, "SelectCharacterID", new PyInt(failingId)));
+        Assert.NotNull(failure);
+        Assert.Equal(previousId, session.CharacterId);
+        Assert.Empty(hook.LeftCharacterIds);
+        Assert.Equal(packetCount, sink.Sent.Count);
+        Assert.Equal(previousId, Assert.Single(h.Online.Snapshot()));
+        Assert.False(h.Online.IsOnline(failingId));
+
+        hook.PreparationFailureCharacterId = 0;
+        await h.CallAsync(session, "SelectCharacterID", new PyInt(failingId));
+        Assert.Equal(failingId, session.CharacterId);
+        Assert.False(h.Online.IsOnline(previousId));
+    }
+
+    [PgFact]
+    public async Task Closing_during_entry_does_not_succeed_or_reenter_the_previous_runtime()
+    {
+        var hook = new FailingEntryHook();
+        await using var h = await Harness.CreateAsync(entryHooks: [hook]);
+        var (session, _) = await h.LoginAsync("entry-disconnect");
+        var previousId = await CreateAsync(h, session, "Previous Disconnect Pilot");
+        var nextId = await CreateAsync(h, session, "Next Disconnect Pilot");
+        await h.CallAsync(session, "SelectCharacterID", new PyInt(previousId));
+        var restoredPrevious = false;
+        hook.OnSuccessfulEntry = enteringId =>
+        {
+            if (enteringId == nextId)
+                session.Close();
+            else
+                restoredPrevious = true;
+        };
+
+        var failure = await Record.ExceptionAsync(async () =>
+            await h.CallAsync(session, "SelectCharacterID", new PyInt(nextId)));
+        Assert.NotNull(failure);
+        Assert.False(restoredPrevious);
+        Assert.Empty(h.Online.Snapshot());
+    }
+
+    [PgFact]
     public async Task Choosing_a_character_sets_the_session_and_sends_one_change_in_the_recorded_shape()
     {
         await using var h = await Harness.CreateAsync();
@@ -313,6 +421,7 @@ public class CharUnboundMgrTests
         // Character selection resets the client before the single session change; skills follow it.
         Assert.Equal(3, sink.Sent.Count);
         Assert.Equal("OnCharacterSelected", NotificationName(sink.Sent[0]));
+        Assert.Empty(NotificationArgs(sink.Sent[0]).Items);
         var packet = sink.Sent[1];
         Assert.Equal(new PyInt(16), ((PyTuple)((PyObject)packet).Args).Items[0]);
         Assert.Equal(new PyInt(12), ((PyTuple)((PyObject)sink.Sent[2]).Args).Items[0]);
@@ -369,7 +478,7 @@ public class CharUnboundMgrTests
         Assert.Equal(PyNone.Instance, result);
         Assert.Equal(id, session.CharacterId);
         Assert.Equal("OnCharacterSelected", NotificationName(sink.Sent[0]));
-        Assert.Equal(new PyTuple([new PyList([])]), NotificationArgs(sink.Sent[0]));
+        Assert.Empty(NotificationArgs(sink.Sent[0]).Items);
         Assert.Equal(3, sink.Sent.Count);
     }
 
@@ -655,6 +764,44 @@ public class CharUnboundMgrTests
         var header = (PyTuple)((PyObjectEx)error.Payload).Header;
         var dict = (PyDict)((PyTuple)header.Items[1]).Items[1];
         return JsSemantics.StringValue(dict.Entries.Single(e => JsSemantics.StringValue(e.Key) == "info").Value);
+    }
+
+    private sealed class FailingEntryHook : Eve.Services.ICharacterEntryHook
+    {
+        public long FailureCharacterId { get; set; }
+        public long PreparationFailureCharacterId { get; set; }
+        public List<long> PreparedCharacterIds { get; } = [];
+        public List<long> LeftCharacterIds { get; } = [];
+        public Action? BeforeFailure { get; set; }
+        public Action<long>? OnSuccessfulEntry { get; set; }
+
+        public ValueTask<IReadOnlyList<(string Name, PyValue Value)>> GetSessionAttributesAsync(
+            ClientSession session, long characterId, CancellationToken cancellationToken)
+        {
+            PreparedCharacterIds.Add(characterId);
+            if (characterId == PreparationFailureCharacterId)
+                throw new InvalidOperationException("Injected character-preparation failure.");
+            return ValueTask.FromResult<IReadOnlyList<(string Name, PyValue Value)>>([]);
+        }
+
+        public ValueTask OnCharacterLeavingAsync(
+            ClientSession session, long characterId, CancellationToken cancellationToken)
+        {
+            LeftCharacterIds.Add(characterId);
+            return ValueTask.CompletedTask;
+        }
+
+        public ValueTask OnCharacterEnteredAsync(
+            ClientSession session, long characterId, CancellationToken cancellationToken)
+        {
+            if (characterId == FailureCharacterId)
+            {
+                BeforeFailure?.Invoke();
+                throw new InvalidOperationException("Injected character-entry failure.");
+            }
+            OnSuccessfulEntry?.Invoke(characterId);
+            return ValueTask.CompletedTask;
+        }
     }
 
     private static string? NotificationName(PyValue packet)

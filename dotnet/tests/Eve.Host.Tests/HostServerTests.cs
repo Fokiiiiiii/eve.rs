@@ -2646,6 +2646,100 @@ private sealed class InSpaceInventory : Eve.Services.Ships.ISpaceContainers
             }));
     }
 
+    [Fact]
+    public async Task Home_station_host_read_routes_dispatch_through_the_persisted_structure_directory()
+    {
+        const long structureId = 88000021;
+        const long characterId = 90000021;
+        const long corporationId = 98000021;
+        const int systemId = 30000142;
+        var tables = new Dictionary<string, System.Text.Json.Nodes.JsonObject>
+        {
+            ["structures"] = new()
+            {
+                [structureId.ToString(System.Globalization.CultureInfo.InvariantCulture)] = new System.Text.Json.Nodes.JsonObject
+                {
+                    ["structureID"] = structureId,
+                    ["itemID"] = structureId,
+                    ["typeID"] = 35841,
+                    ["solarSystemID"] = systemId,
+                    ["ownerCorpID"] = corporationId,
+                    ["ownerID"] = corporationId,
+                    ["destroyedAt"] = false,
+                    ["name"] = "Host Structure Home",
+                },
+            },
+        };
+        Task<System.Text.Json.Nodes.JsonObject> ReadTable(string name, CancellationToken _) =>
+            Task.FromResult((System.Text.Json.Nodes.JsonObject)tables.GetValueOrDefault(name, new()).DeepClone());
+        Task<Eve.Relations.Affiliation> Affiliation(long id, CancellationToken token) =>
+            Task.FromResult(new Eve.Relations.Affiliation(corporationId, null, null));
+        var directory = new PersistenceStructureDirectoryReadModel(ReadTable, Affiliation, null!, null!);
+        var systems = new Eve.Universe.SolarSystemCatalog([
+            new Eve.Universe.SolarSystemInfo(systemId, "Host System", 20010001, 10001004, 0.5),
+        ]);
+        var character = new Eve.Characters.Character(
+            characterId, 1, "Home Pilot", 1, 1, 1, 10, 35, 1373,
+            corporationId, null, null, structureId, structureId,
+            systemId, 20010001, 10001004, null, DateTimeOffset.UnixEpoch, null, null);
+        var resolver = new Eve.Services.CharacterInfo.HomeStationResolver(
+            (id, _) => Task.FromResult<Eve.Characters.Character?>(id == characterId ? character : null),
+            new Eve.Universe.StationCatalog([]),
+            new Eve.Characters.CreationCatalog([], [], []),
+            async (id, cancellationToken) =>
+            {
+                if (await directory.GetStructureInfoAsync(id, cancellationToken) is not { PersistentlyDeployed: true })
+                    return null;
+                var key = id.ToString(System.Globalization.CultureInfo.InvariantCulture);
+                if (tables["structures"][key] is not System.Text.Json.Nodes.JsonObject row ||
+                    systems.Get(systemId) is not { } system)
+                    return null;
+                return new Eve.Services.CharacterInfo.HomeStationStructure(
+                    new Eve.Services.CharacterInfo.HomeStationLocation(
+                        id, 35841, row["name"]?.GetValue<string>(), system.Id, system.ConstellationId, system.RegionId,
+                        corporationId, false),
+                    PersistentlyDeployed: true, IsLost: false);
+            });
+        var session = new Eve.Services.ClientSession { CharacterId = characterId };
+        Eve.Services.IService homeStation = new Eve.Services.CharacterInfo.HomeStationService(resolver);
+        Assert.True(homeStation.HasMethod("get_home_station"));
+        var response = Assert.IsType<Eve.Marshal.PyObjectEx>(await homeStation.CallAsync(new Eve.Services.ServiceCall
+        {
+            Method = "get_home_station",
+            Args = [],
+            Session = session,
+        }));
+        var header = Assert.IsType<Eve.Marshal.PyTuple>(response.Header);
+        var values = Assert.IsType<Eve.Marshal.PyDict>(header.Items[1]).Entries
+            .ToDictionary(entry => ((Eve.Marshal.PyStr)entry.Key).Value, entry => entry.Value);
+        Assert.Equal(new Eve.Marshal.PyInt(structureId), values["id"]);
+
+        Eve.Services.IService charMgr = new Eve.Services.CharacterInfo.CharMgrService(
+            null!, resolver, null!, null!, null!, null!, null!);
+        Assert.True(charMgr.HasMethod("GetHomeStationRow"));
+        Assert.True(charMgr.HasMethod("GetHomeStation"));
+        var rowValue = await charMgr.CallAsync(new Eve.Services.ServiceCall
+        {
+            Method = "GetHomeStationRow",
+            Args = [],
+            Session = session,
+        });
+        var rowFields = ((Eve.Marshal.PyDict)((Eve.Marshal.PyObject)rowValue).Args).Entries
+            .ToDictionary(entry => ((Eve.Marshal.PyStr)entry.Key).Value, entry => entry.Value);
+        Assert.Equal(new Eve.Marshal.PyInt(structureId), rowFields["stationID"]);
+        Assert.Equal(new Eve.Marshal.PyStr("Host Structure Home"), rowFields["stationName"]);
+
+        var aliasValue = await charMgr.CallAsync(new Eve.Services.ServiceCall
+        {
+            Method = "GetHomeStation",
+            Args = [],
+            Session = session,
+        });
+        var aliasFields = ((Eve.Marshal.PyDict)((Eve.Marshal.PyObject)aliasValue).Args).Entries
+            .ToDictionary(entry => ((Eve.Marshal.PyStr)entry.Key).Value, entry => entry.Value);
+        Assert.Equal(rowFields, aliasFields);
+    }
+
 
     [Fact]
     public async Task Structure_settings_host_read_model_uses_persisted_owner_profile_and_access_group_rows()

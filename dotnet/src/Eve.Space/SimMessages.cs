@@ -114,6 +114,9 @@ public static class SimCommands
     /// <summary>Jump to a cynosural field lit in another system (the field's id, the destination system and the spool in milliseconds): code 26.</summary>
     public const byte CynoJump = 26;
 
+    /// <summary>The scan targets of the scene for a probe scan (protocol 52).</summary>
+    public const byte ScanTargets = 27;
+
     /// <summary>Start locking a target (the target's id).</summary>
     public const byte AddTarget = 10;
 
@@ -191,6 +194,12 @@ public sealed record SimAccepted(ulong SessionId, byte Command, long At) : SimMe
 
 /// A requested target coordinate was resolved by the simulation.
 public sealed record SimPosition(ulong SessionId, byte Command, IReadOnlyList<double> Position) : SimMessage;
+
+/// <summary>Something a probe scan can find (protocol 52): the item id, its kind (1 ship, 2 drone, 3 fighter, 4 deployable), its type and where it is.</summary>
+public sealed record SimScanTarget(long Id, byte Kind, int TypeId, IReadOnlyList<double> Position);
+
+/// <summary>The scan targets of the scene, the answer to command 27 (protocol 52).</summary>
+public sealed record SimScanTargets(ulong SessionId, byte Command, IReadOnlyList<SimScanTarget> Targets) : SimMessage;
 
 /// <summary>A <c>Dock</c> could not be done from where the ship is: it now approaches the station, <paramref name="Distance"/> metres off its surface.</summary>
 public sealed record SimApproaching(ulong SessionId, byte Command, double Distance) : SimMessage;

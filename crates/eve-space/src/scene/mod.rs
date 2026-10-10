@@ -7,6 +7,7 @@ mod docking;
 mod heat;
 mod jump;
 mod movement;
+mod scan_targets;
 mod session;
 mod warping;
 use self::collision::*;
@@ -130,6 +131,9 @@ pub enum Command {
     DropPoint {
         distance: f64,
     },
+    /// The scan targets of the scene for a probe scan (host query, code 27, protocol 52): the ships and companions the pilot can see, and the deployables a
+    /// probe can scan. A cloaked ship is not one; the pilot's own ship is not.
+    ScanTargets,
     /// Jump through a stargate; `destination_gate` is the gate the client says it leads to (0 when it does not say).
     Jump {
         gate_id: i64,
@@ -164,6 +168,7 @@ impl Command {
             Self::ResolveWarpTarget { .. } => 22,
             Self::PositionOf { .. } => 23,
             Self::DropPoint { .. } => 25,
+            Self::ScanTargets => 27,
         }
     }
 }
@@ -188,6 +193,8 @@ pub enum Out {
 
     /// The result of a host position query; it does not move the ship.
     Position { session: SessionId, command: u8, position: Vec3 },
+    /// The scan targets of the scene for the host's probe scan (command 27); it does not move anything.
+    ScanTargets { session: SessionId, command: u8, targets: Vec<crate::link::ScanTarget> },
     /// A `Dock` could not be done from here: the ship now approaches the station, `distance` metres off its surface.
     Approaching { session: SessionId, command: u8, distance: f64 },
     /// A `Jump` was accepted: the ship's jump-out effect has begun and it will be in `destination_system` a few seconds on (the host is then told
@@ -340,7 +347,8 @@ impl Out {
             | Out::EcmBurst { session, .. }
             | Out::TargetRefused { session, .. }
             | Out::DeployedLit { session, .. }
-            | Out::Position { session, .. } => *session,
+            | Out::Position { session, .. }
+            | Out::ScanTargets { session, .. } => *session,
         }
     }
 }

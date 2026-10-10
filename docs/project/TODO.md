@@ -27,7 +27,7 @@ Do not fabricate successful state or fake backends to close these items.
 | OPEN | `contractProxy.GetMyContractEscrow`; `expertSystemMgr.GetMyExpertSystems` | The startup RPCs return EveJS-compatible empty-state shapes, but contract records and expert-system ownership are not persisted. Connect the authoritative read paths when those domains are added. |
 | OPEN | `raffleProxy.AmIBanned` | The current false result matches the enabled-HyperNet default, but account bans are not persisted. Connect the moderation owner before supporting per-account bans. |
 | FUTURE | `config.GetBlackListedPlanets` | The empty list matches EveJS; there is no runtime planet blocklist source. Connect one only if the server adds that policy. |
-| LIMITATION | `home_station.get_home_station` | Reads the persisted home station and falls back to the current station. It does not resolve live structure homes or use the school's starting station when a home structure is lost, as EveJS does. Add an authoritative structure lookup and school-start resolver before claiming parity. |
+| READS VERIFIED | `home_station.get_home_station`; `charMgr.GetHomeStationRow` / `GetHomeStation` | Share persisted character, SDE station/school, and deployed-structure resolution. Lost or missing structure homes fall back to the school starter station; the existing KeyVal aliases and StationData shape are tested. CharacterInfo: 55 PostgreSQL tests; Host structure-directory dispatch regression passes. Candidate, remote-cooldown, and mutation RPCs remain outside this read slice; graphical-client acceptance is open. |
 
 ## 2. Mutation authorities and specialized service providers
 
@@ -291,7 +291,7 @@ The start scripts are `tools/windows/` (`start-server.bat`, `start-server-dev.ba
 - FleetProxy's seven operations plus FleetObject advert creation/setup callbacks: connected and tested; only the legacy-row limitation above remains.
 - `station.GetGuests`: alias route, wire shape, observer ledger seed, live-session `warfactionid`, and station/structure join/leave broadcasts are implemented and unit-tested.
 - `CreateCharacterWithDoll`: starter inventory, modules, skills and wallet persist; the new character's welcome mail/notification is durable before selection, and `GetCharacterSelectionData` reads the live unread-mail count.
-- `SelectCharacterID`: named arguments, `OnCharacterSelected("clientID", [])`, session state, station/structure/space selection, deferred docked ship-id and fitting bootstrap, first-space-List visual prime, ship/module Dogma hydration, and saved-pose space resume are covered by PostgreSQL and TCP headless tests.
+- `SelectCharacterID`: named arguments, zero-argument `OnCharacterSelected` before session change, session state, station/structure/space selection, deferred docked ship-id and fitting bootstrap, first-space-List visual prime, ship/module Dogma hydration, and saved-pose space resume are covered by PostgreSQL and TCP headless tests. Entry failures restore the full session attribute snapshot (including deferred ship/bootstrap flags), cancel the new online reservation, and reenter previous hooks; the previous character remains reserved until entry succeeds. Registry regressions cover concurrent claims, commit, rollback, and disconnect. Graphical-client acceptance remains open.
 - The observed post-selection bootstrap calls `config.GetBlackListedPlanets`, `ProjectDiscovery.is_enabled`, `charMgr.MachoResolveObject` for global assets container 10002, and `jumpCloneSvc.MachoResolveObject` have focused wire-shape tests. Paper-doll normalization has a regression test for missing sculpt weights and `SculptingRow` headers. Data-backed gaps remain listed above.
 - `GetCharacterSelectionData`: full rows keep a renamed ship, report live skill-training projection and relation-backed security status, and derive the latest finished-skill count from history; same-FILETIME completion batches remain indistinguishable.
 - `industryMonitor.ConnectJob`: inventory-flag filtering and blueprint-category exclusion are implemented and tested.
@@ -574,9 +574,9 @@ charge stack spent; `OnNewProbe` told to the pilot; recall through `scanMgr.Dest
 
 Open, each with its blocker removed by the next step:
 - DONE (restart): the probe records survive a restart and their balls are put back in space when a ship comes into the system with the same ids, places and remaining life (`SpaceProbes.RestoreAsync`, `ScanProbeHostTests`). Not tested with a real restart of the process.
-- Scanning: `scanMgr` system scans and their results (signature resolution, the scan range steps and the scan bonuses), `OnSystemScanStarted`, `OnSystemScanStopped`, `OnProbesIdle`.
-- Probe warp and formations: `OnProbeWarpStart`, `OnProbeWarpEnd`, `UpdateProbePosition`, and the probe states moving, warping, scanning and returning.
-- Reconnection to lost probes (`ReconnectToLostProbes`) and moon probes (`OnNewMoonProbe`, `OnRemoveMoonProbe`, `OnMoonScanComplete`, `OnScanNoMaterials`).
+- Scanning: built in track A7 (section 27): `RequestScans`, `OnSystemScanStarted`, `OnSystemScanStopped`. `OnProbesIdle` is not sent by the reference's scan flow either (not built, section 27).
+- Probe warp and formations: `OnProbeWarpStart` and `OnProbeWarpEnd` are built in track A7 (section 27), for the move before a scan; `UpdateProbePosition` is client-side (the reference sends none). The states warping and returning are not built.
+- Reconnection to lost probes (`ReconnectToLostProbes`) and moon probes (`OnNewMoonProbe`, `OnRemoveMoonProbe`, `OnMoonScanComplete`, `OnScanNoMaterials`): not built (section 27).
 - The client was not run on this host.
 
 ## 25. Track A5 continued: WP-8 mobile warp disruptors, E-03 Mobile Cynosural Inhibitor, the probe gate (2026-10-10)
@@ -609,7 +609,7 @@ Open, each with its blocker:
 - LIMITATION: a fuel debit that fails after the simulation accepts the spool lets the jump stand (the check and the debit are two steps; the module cycles are the only other debit).
 - NOT RUN: the client. No graphical client or MITM capture on this host; the menu, the spool effect (`effects.JumpDriveOut`) and the arrival are not seen in the client.
 
-## 27. Track A8: the capacitor, the spool kept across a restart, the economizers, the skill numbers from the SDE (2026-10-10)
+## 28. Track A8: the capacitor, the spool kept across a restart, the economizers, the skill numbers from the SDE (2026-10-10)
 
 Done (tests: scene/tests.rs cyno tests (capacitor), JumpDriveRulesTests, CynoJumpHostTests (PostgreSQL); decisions in DEVIATIONS "Track A8: the capacitor, the spool, the economizers and the skill numbers"; protocol 52; migration 0010):
 - The capacitor of the capital jump: the host sends the share (SDE 898 of the hull, 0.95, less 5 percent a level of Jump Drive Operation, SDE 899 of the skill) as the fourth argument of command 26. The simulation refuses NOT_ENOUGH_CAPACITOR when the charge is short and draws the share when the spool starts. This closes the capacitor item of section 26.
@@ -624,3 +624,20 @@ Open, each with its blocker:
 - NOT CHECKED: the SDE canFit attributes of the economizers (1298, 1299) at the jump; the fitting service refuses a fit the economizer does not allow, and a jump does not re-check it.
 - SHORTCUT: a second spool before the first is swept (a lost spool less than a minute old) fails the debit after the simulation accepted it; the spool stands. Upgrade: refund the stale row inside the debit.
 - The client was not run on this host (no graphical client, no MITM capture): the capacitor bar, the refusal text, the refund and the spool after a restart are not seen in the client.
+## 27. Track A7: probe scanning of the objects in space (2026-10-10)
+
+Done (tests: `ProbeScanMathTests` (no database), `ScanProbeHostTests` (PostgreSQL: the flow, the tiers, the absent targets, a scan asked while one runs), `scene::scan_targets` tests and the golden frame of command 27 (`oracle/fixtures/simlink/messages.json`); decisions in DEVIATIONS "Track A7: probe scanning"):
+- Wire: `scanMgr.RequestScans` (the idle probes of the pilot in the system, moved to the places the client sent; `OnProbeWarpStart` and `OnProbeWarpEnd` for the move, 1.25 s, then `OnSystemScanStarted`, and `OnSystemScanStopped` with the results and the absent targets when the duration is over), `scanMgr.SetActivityState`. Both are answered through `SpaceProbeScans` (`dotnet/src/Eve.Services.Space/SpaceProbeScans.cs`), wired by `IncursionAnomalyService` ("scanMgr").
+- Timing: two durable jobs (`space.probes.scan.start`, `space.probes.scan.stop`), so a restart keeps a scan that is running. Duration: the launcher's SDE attribute 73 times each scanning skill's attribute 66.
+- Targets: the simulation answers command 27 (protocol 52, `ScanTargets`) with the ships, drones, fighter squadrons and the scannable deployables (cynosural fields, Mobile Cynosural Inhibitors, mobile warp disruptors) of the scene; a cloaked ship is not one. Core probes find no ship: a ship needs a combat probe (SDE 1413).
+- Results: `ProbeScanEngine` (certainty from the probes that reach a target, the spread of the probes, the tiers: group from 25 percent, name from 75, exact at 100). A result below 100 percent is placed off the target by at most the probes' largest deviation (the wiki's formula with the SDE numbers and the skills).
+- Cosmic signatures and anomalies: one interface, `ICosmicSiteSource` (`dotnet/src/Eve.Services.Space/Scanning/ICosmicSiteSource.cs`); the server binds `NoCosmicSites`, so no signature is found. The site generator is a separate system and is not built.
+- Shortcut: the scan's bonuses are the skills' and the launcher's (strength and deviation of attributes 846 and 1156, duration of 66). The rigs, arrays, implants, boosters, the ship's own role bonus (the Probe frigate's 7.5 percent per level) and the Mobile Scan Inhibitor are not counted.
+
+Not built, each with its blocker:
+- `scanMgr.ConeScan` (directional scan, the same bound object): needs a scene query for every ball a directional scan finds (celestials, wrecks, containers, cosmic signatures), the ship's directional range (SDE 5796, EVE.js `resolveEntityRangeCapMeters`), and the immunity and cone rules of EVE.js `Handle_ConeScan` (lines 2470 to 2590, helpers 436 to 624). The directional scan wiki page is the rule source. Not started.
+- `scanMgr.RecoverProbes` (the recover action; the reference restores the probe charges to the launcher or the hold, `restoreRecoveredProbeCharges`) and `scanMgr.ReconnectToLostProbes` (the reference replays `OnNewProbe` for the probes that remain): not built. The recall of a probe (`DestroyProbe`, track A5) is built and refunds nothing.
+- `OnProbesIdle`, the probe states warping and returning, and the moon survey probes (mining; section 7).
+- The client was not run: the probe scanner's windows, the result rows and the warp to a result (the existing warp to a point) are not seen in the client. No MITM capture was made: the headless client has no scenario that scans.
+- The completed-scan warp authority (EVE.js `probeScanWarpAuthority.js`): a warp to a probed object is not checked against the scan's 100 percent results (DEVIATIONS "Track A7").
+- A process restart in the middle of a scan is covered by the durable jobs but not exercised by a test.

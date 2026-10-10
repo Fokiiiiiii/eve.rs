@@ -95,6 +95,9 @@ private readonly Dictionary<long, ClientSession> _fleetSessions = new();
         Containers = new SpaceContainers(Sim, Ships, Items, SpaceItems, new Eve.Ships.PgWorkCycleLedger(source, _schemas[6]), new EventBusFacts(Events), statics, Space, () => Now, Log.Add, deployed: Deployed, scheduler: Scheduler);
         Scheduler.Register(SpaceContainers.AnchorJob, async (context, token) => await Containers.AnchorAsync(context.Payload<SpaceContainers.DisruptorAnchorDue>()!.DeployableId, token));
         Space.Probes = new Eve.Services.Space.SpaceProbes(Ships, statics, Probes, Space, Sim, () => Now);
+        ProbeScans = new Eve.Services.Space.SpaceProbeScans(Space, Sim, statics, Probes, Ships, Skills, Scheduler, Space.Probes, () => Now, sites: null, random: new Random(7));
+        ProbeScans.Register();
+        Space.ProbeScans = ProbeScans;
         Drones = new SpaceDrones(Sim, Ships, statics, Space, () => Now, Log.Add);
         Inventory = new InvBrokerService(Items, new ItemTypeCatalog(new SdeReader(source)), Stations, Ships, statics, () => Now, Containers, Drones);
         Ship = new ShipService(Space, () => ClockMs, Containers, Drones);
@@ -108,6 +111,8 @@ private readonly Dictionary<long, ClientSession> _fleetSessions = new();
 
     /// <summary>The PostgreSQL schema of the space items and the work-cycle ledger: a host restarted over it reads the same ledger.</summary>
     public string SpaceSchema => _schemas[6];
+
+
 
     /// <summary>What every NPC leaves when the rig has loot (<c>npcLoot</c>): a stack of seven to nine of the first type of <see cref="LootPool"/>, or nothing when null (the dice always come out 0).</summary>
     public Eve.Npc.LootTable? LootTable { get; set; } = new("test_loot", "", 1, 1, 0, false, false, 7, 9, [], false);
@@ -135,6 +140,9 @@ private readonly Dictionary<long, ClientSession> _fleetSessions = new();
     public PgItemStore Items { get; }
 
     public PgSkillStore Skills { get; }
+
+    /// <summary>The probe scan of the probes in space (its jobs run when the test asks, with the scheduler).</summary>
+    public Eve.Services.Space.SpaceProbeScans ProbeScans { get; }
 
     public DogmaStatic Statics { get; }
 

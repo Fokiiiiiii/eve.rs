@@ -95,6 +95,30 @@ public sealed class ClientSession
         }
     }
 
+    public IReadOnlyDictionary<string, PyValue> SnapshotAttributes()
+    {
+        lock (_gate)
+            return new Dictionary<string, PyValue>(_attributes, StringComparer.Ordinal);
+    }
+
+    public IReadOnlyList<SessionChange> RestoreAttributes(IReadOnlyDictionary<string, PyValue> previous)
+    {
+        lock (_gate)
+        {
+            var names = _attributes.Keys.Union(previous.Keys, StringComparer.Ordinal).ToArray();
+            try
+            {
+                return Change([.. names.Select(name => (name, previous.GetValueOrDefault(name) ?? PyNone.Instance))]);
+            }
+            finally
+            {
+                foreach (var name in names)
+                    if (!previous.ContainsKey(name))
+                        _attributes.Remove(name);
+            }
+        }
+    }
+
     public long? GetInt(string name) => Get(name) switch
     {
         PyInt number => number.Value,

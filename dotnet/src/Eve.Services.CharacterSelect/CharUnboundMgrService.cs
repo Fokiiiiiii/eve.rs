@@ -256,97 +256,143 @@ public sealed partial class CharUnboundMgrService(
             : BooleanLike(call.Kwarg("skipTutorial") ?? None);
         var characterId = RequestCharacterId(call);
         if (AccountOf(call) is not { } account || characterId <= 0)
-        {
             return None;
-        }
+
         var character = await characters.GetAsync(characterId, Token(call));
         if (character is null)
-        {
             return None;
-        }
         if (character.AccountId != account)
-        {
             throw Info("That character is not available on this account.");
-        }
         if (character.IsQueuedForDeletion)
-        {
             throw Info("That character is queued for deletion and cannot enter the game.");
-        }
-        if (!online.TryEnter(character.Id, call.Session.SessionId))
-        {
+
+        var previousCharacterId = call.Session.CharacterId;
+        var previousAttributes = call.Session.SnapshotAttributes();
+        if (!online.TryBeginEnter(character.Id, call.Session.SessionId))
             throw Info($"{character.Name} is already online.");
-        }
 
-        int? airNpeStateChanged = null;
-        if (skipTutorial)
+        var changedPreviousHooks = new List<ICharacterEntryHook>();
+        var enteredCharacterHooks = new List<ICharacterEntryHook>();
+        try
         {
-            airNpeStateChanged = await characters.MarkTutorialSkippedAsync(character.Id, newCharacterExperienceEnabled, Token(call));
-        }
-        else
-        {
-            await characters.ConsumeTutorialRevealOnFirstLoginAsync(character.Id, newCharacterExperienceEnabled, Token(call));
-        }
-
-        var accountRole = call.Session.Get("accountRole") is PyLong r ? r.Value : 0;
-        (string Name,PyValue Value)[] selected = [
-            ("charid", new PyInt(character.Id)),
-            ("corpid", new PyInt(character.CorporationId)),
-            ("allianceid", None),
-            ("genderID", new PyInt(character.Gender)),
-            ("bloodlineID", new PyInt(character.BloodlineId)),
-            ("raceID", new PyInt(character.RaceId)),
-            ("schoolID", new PyInt(character.SchoolId)),
-            ("factionid", character.FactionId is { } faction ? new PyInt(faction) : None),
-            ("warfactionid", None),
-            ("stationid", new PyInt(character.StationId)),
-            ("stationid2", new PyInt(character.StationId)),
-            ("structureid", None),
-            ("solarsystemid", None),
-            ("solarsystemid2", new PyInt(character.SolarSystemId)),
-            ("constellationid", new PyInt(character.ConstellationId)),
-            ("regionid", new PyInt(character.RegionId)),
-            ("shipid", character.ShipId is { } ship ? new PyLong(ship) : None),
-            ("locationid", new PyInt(character.StationId)),
-            ("worldspaceid", None),
-            ("homeStationID", new PyInt(character.HomeStationId)),
-            ("cloneStationID", new PyInt(character.HomeStationId)),
-            ("fleetid", None),
-            ("fleetrole", None),
-            ("wingid", None),
-            ("squadid", None),
-            ("corpAccountKey", new PyInt(DefaultCorpAccountKey)),
-            ("hqID", None),
-            ("baseID", None),
-            ("role", new PyLong(accountRole | SessionBaseRole)),
-            ("corprole", new PyLong(0)),
-            ("rolesAtAll", new PyLong(0)),
-            ("rolesAtBase", new PyLong(0)),
-            ("rolesAtHQ", new PyLong(0)),
-            ("rolesAtOther", new PyLong(0))];
-        var attributes = selected.ToDictionary(a => a.Name,a => a.Value,StringComparer.Ordinal);
-        foreach (var hook in entryHooks)
-            foreach (var (name,value) in await hook.GetSessionAttributesAsync(call.Session,character.Id,Token(call)))
-                attributes[name] = value;
-        if (attributes.GetValueOrDefault("deferredDockedShipId") is PyLong deferredShipId && deferredShipId.Value > 0)
-            attributes["shipid"] = None;
-        var changingCharacter = call.Session.CharacterId != characterId;
-        if (changingCharacter && call.Session.CharacterId is { } previousCharacterId)
-            foreach (var hook in entryHooks)
-                await hook.OnCharacterLeavingAsync(call.Session, previousCharacterId, Token(call));
-        if (changingCharacter)
-            call.Session.SendNotification("OnCharacterSelected", "clientID", new PyList([]));
-        var announced = call.Session.Change([.. attributes.Select(a => (a.Key,a.Value))]);
-        // Whatever else the client needs to learn about the character: the skills module tells it to load its skills.
-        // Choosing the character the session already has is not entering it again, as on the reference.
-        if (announced.Any(change => change.Name == "charid"))
-        {
+            var accountRole = call.Session.Get("accountRole") is PyLong role ? role.Value : 0;
+            (string Name, PyValue Value)[] selected =
+            [
+                ("charid", new PyInt(character.Id)),
+                ("corpid", new PyInt(character.CorporationId)),
+                ("allianceid", None),
+                ("genderID", new PyInt(character.Gender)),
+                ("bloodlineID", new PyInt(character.BloodlineId)),
+                ("raceID", new PyInt(character.RaceId)),
+                ("schoolID", new PyInt(character.SchoolId)),
+                ("factionid", character.FactionId is { } faction ? new PyInt(faction) : None),
+                ("warfactionid", None),
+                ("stationid", new PyInt(character.StationId)),
+                ("stationid2", new PyInt(character.StationId)),
+                ("structureid", None),
+                ("solarsystemid", None),
+                ("solarsystemid2", new PyInt(character.SolarSystemId)),
+                ("constellationid", new PyInt(character.ConstellationId)),
+                ("regionid", new PyInt(character.RegionId)),
+                ("shipid", character.ShipId is { } ship ? new PyLong(ship) : None),
+                ("locationid", new PyInt(character.StationId)),
+                ("worldspaceid", None),
+                ("homeStationID", new PyInt(character.HomeStationId)),
+                ("cloneStationID", new PyInt(character.HomeStationId)),
+                ("fleetid", None),
+                ("fleetrole", None),
+                ("wingid", None),
+                ("squadid", None),
+                ("corpAccountKey", new PyInt(DefaultCorpAccountKey)),
+                ("hqID", None),
+                ("baseID", None),
+                ("role", new PyLong(accountRole | SessionBaseRole)),
+                ("corprole", new PyLong(0)),
+                ("rolesAtAll", new PyLong(0)),
+                ("rolesAtBase", new PyLong(0)),
+                ("rolesAtHQ", new PyLong(0)),
+                ("rolesAtOther", new PyLong(0)),
+            ];
+            var attributes = selected.ToDictionary(attribute => attribute.Name, attribute => attribute.Value, StringComparer.Ordinal);
             foreach (var hook in entryHooks)
             {
-                await hook.OnCharacterEnteredAsync(call.Session, character.Id, Token(call));
+                foreach (var (name, value) in await hook.GetSessionAttributesAsync(call.Session, character.Id, Token(call)))
+                    attributes[name] = value;
             }
+            if (attributes.GetValueOrDefault("deferredDockedShipId") is PyLong deferredShipId && deferredShipId.Value > 0)
+                attributes["shipid"] = None;
+
+            int? airNpeStateChanged = null;
+            if (skipTutorial)
+                airNpeStateChanged = await characters.MarkTutorialSkippedAsync(character.Id, newCharacterExperienceEnabled, Token(call));
+            else
+                await characters.ConsumeTutorialRevealOnFirstLoginAsync(character.Id, newCharacterExperienceEnabled, Token(call));
+
+            var changingCharacter = previousCharacterId != character.Id;
+            if (changingCharacter && previousCharacterId is { } oldCharacterId)
+            {
+                foreach (var hook in entryHooks)
+                {
+                    changedPreviousHooks.Add(hook);
+                    await hook.OnCharacterLeavingAsync(call.Session, oldCharacterId, Token(call));
+                }
+            }
+            if (changingCharacter)
+                call.Session.SendNotification("OnCharacterSelected", "clientID");
+
+            var announced = call.Session.Change([.. attributes.Select(attribute => (attribute.Key, attribute.Value))]);
+            if (announced.Any(change => change.Name == "charid"))
+            {
+                foreach (var hook in entryHooks)
+                {
+                    enteredCharacterHooks.Add(hook);
+                    await hook.OnCharacterEnteredAsync(call.Session, character.Id, Token(call));
+                }
+            }
+
+            AirNpeNotifications.NotifyStateChanged(call.Session, character.Id, airNpeStateChanged);
+            if (!online.CompleteEnter(call.Session.SessionId))
+                throw new OperationCanceledException("The session closed during character entry.");
+            return None;
         }
-        AirNpeNotifications.NotifyStateChanged(call.Session, character.Id, airNpeStateChanged);
-        return None;
+        catch
+        {
+            // Preserve the entry exception while each affected runtime gets a cleanup attempt.
+            for (var index = enteredCharacterHooks.Count - 1; index >= 0; index--)
+            {
+                try
+                {
+                    await enteredCharacterHooks[index].OnCharacterLeavingAsync(call.Session, character.Id, CancellationToken.None);
+                }
+                catch
+                {
+                }
+            }
+
+            try
+            {
+                call.Session.RestoreAttributes(previousAttributes);
+            }
+            catch
+            {
+            }
+
+            var restoredReservation = online.CancelEnter(call.Session.SessionId);
+            if (restoredReservation && previousCharacterId is { } restoreCharacterId)
+            {
+                for (var index = changedPreviousHooks.Count - 1; index >= 0; index--)
+                {
+                    try
+                    {
+                        await changedPreviousHooks[index].OnCharacterEnteredAsync(call.Session, restoreCharacterId, CancellationToken.None);
+                    }
+                    catch
+                    {
+                    }
+                }
+            }
+            throw;
+        }
     }
 
     [Method("CancelCharacterDeletePrepare")]

@@ -264,8 +264,13 @@ public class PlayerDeathTests
     {
         var (rig, c, session) = await InSpaceAsync();
         rig.Sim.Say(Destroyed(session, c.ShipId, FrigateWreck));
-        await Rig.UntilAsync(() => rig.Sim.Heard.OfType<SimPlaceWreck>().Any());
+        // The wreck is transferred before the capsule session and its final notification are published.
+        await Rig.UntilAsync(() =>
+            rig.Sim.Heard.OfType<SimPlaceWreck>().Any() &&
+            session.GetInt("shipid") is { } currentShip && currentShip != c.ShipId &&
+            Sequence.Of(session, clear: false).LastOrDefault() == "OnItemChange");
         var capsule = session.GetInt("shipid")!.Value;
+        Assert.NotEqual(c.ShipId, capsule);
         rig.Sim.Heard.Clear();
         Sequence.Of(session);
         return (rig, c, session, capsule);

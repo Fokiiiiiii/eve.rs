@@ -17,7 +17,11 @@ public class ScanProbeHostTests
     private const int ProbeSkill = 3412, ProbeSkillLevel = 5;
 
     /// <summary>A pilot in space with one probe launcher per entry of <paramref name="probesPerLauncher"/> fitted in free high slots (online), each loaded with that many core probes (a launcher holds eight).</summary>
-    private static async Task<(ClientSession Session, Eve.Characters.Created Character, long[] Launchers)> LaunchersInSpaceAsync(Rig rig, params long[] probesPerLauncher)
+    private static Task<(ClientSession Session, Eve.Characters.Created Character, long[] Launchers)> LaunchersInSpaceAsync(Rig rig, params long[] probesPerLauncher) =>
+        LaunchersOfAsync(rig, ProbeLauncher, CoreProbe, probesPerLauncher);
+
+    /// <summary>The same with the launcher and the probe of the types given (the expanded launcher and the combat probe find ships).</summary>
+    private static async Task<(ClientSession Session, Eve.Characters.Created Character, long[] Launchers)> LaunchersOfAsync(Rig rig, int launcherType, int probeType, params long[] probesPerLauncher)
     {
         var character = await rig.NewCharacterAsync();
         // the launcher needs its skill at level five (the SDE's requiredSkill attribute 277 on type 4258, skill 3412)
@@ -30,7 +34,7 @@ public class ScanProbeHostTests
         var launchers = new long[probesPerLauncher.Length];
         for (var index = 0; index < probesPerLauncher.Length; index++)
         {
-            var granted = (await rig.Ships.GrantAsync(character.CharacterId, ProbeLauncher, 1, singleton: true))!.Single().After;
+            var granted = (await rig.Ships.GrantAsync(character.CharacterId, launcherType, 1, singleton: true))!.Single().After;
             // the first high slot the ship has free (the starting ship has some of them fitted)
             var ship = await rig.Ships.LoadAsync(character.CharacterId) ?? throw new InvalidOperationException("no ship");
             var slot = Enumerable.Range(HighSlots, 8).First(flag => ship.Fitted.All(module => module.Flag != flag));
@@ -39,7 +43,7 @@ public class ScanProbeHostTests
             Assert.IsType<Eve.Ships.ShipChanged>(await rig.Ships.SetOnlineAsync(character.CharacterId, character.ShipId, granted.Id, true));
             if (probesPerLauncher[index] > 0)
             {
-                var stack = (await rig.Ships.GrantAsync(character.CharacterId, CoreProbe, probesPerLauncher[index], singleton: false))!.Single().After;
+                var stack = (await rig.Ships.GrantAsync(character.CharacterId, probeType, probesPerLauncher[index], singleton: false))!.Single().After;
                 Assert.IsType<Eve.Ships.AmmoChanged>(await rig.Ships.LoadAmmoAsync(character.CharacterId, character.ShipId, [granted.Id], [stack.Id], Rig.Station));
             }
             launchers[index] = granted.Id;
@@ -275,5 +279,297 @@ public class ScanProbeHostTests
         await launch;
         // (an entry may restore a record more than once, each send is kept once by the simulation: the order of the first placements is what counts)
         Assert.Equal(new[] { ProbeBase + 500, ProbeBase + 1, ProbeBase + 2 }, Placed(rig).Select(p => p.ProbeId).Distinct().ToArray());
+    }
+    /// <summary>The client's request for a scan: each probe with where it is to go and its range step (its fields as the client's probe key-values carry them).</summary>
+    private static PyValue ScanRequest(params (long Probe, double[] Destination, int RangeStep)[] probes) => new PyDict([.. probes.Select(p =>
+        new KeyValuePair<PyValue, PyValue>(new PyLong(p.Probe), Py.KeyVal(
+            ("destination", new PyList([new PyReal(p.Destination[0]), new PyReal(p.Destination[1]), new PyReal(p.Destination[2])])),
+            ("rangeStep", new PyInt(p.RangeStep)))))]);
+
+    private static double Real(PyValue value) => value switch
+    {
+        PyReal r => r.Value,
+        PyInt i => i.Value,
+        PyLong l => l.Value,
+        _ => throw new InvalidOperationException(value.ToString()),
+    };
+
+    private static IReadOnlyList<PyValue> Items(PyValue value) => value switch
+    {
+        PyList list => list.Items,
+        PyTuple tuple => tuple.Items,
+        _ => throw new InvalidOperationException(value.ToString()),
+    };
+
+    private static double[] Vector(PyValue value) => Items(value).Select(Real).ToArray();
+
+    /// <summary>The stop of a scan: the results the pilot was told (each a client key-value) and the absent targets.</summary>
+    private static (IReadOnlyList<PyValue> Results, IReadOnlyList<long> Absent) ResultsTold(IReadOnlyList<Events.Event> events)
+    {
+        var stop = Assert.Single(events, e => e.Name == "OnSystemScanStopped");
+        return (Items(stop.Args[1]), Items(stop.Args[2]).Select(id => Events.Number(id)).ToArray());
+    }
+
+    /// <summary>A ship the scene reports to a probe scan: the Probe frigate (type 586) at the position given, not cloaked.</summary>
+    private static SimScanTarget ProbeFrigate(long id, double[] position) => new(id, 1, 586, position);
+
+    private const long ShipInSystem = 980050000077, FarShip = 980050000078;
+
+    [PgFact]
+    public async Task A_scan_of_four_spread_probes_finds_a_ship_at_100_percent_and_the_pilot_is_told_once_the_probes_have_moved_and_the_scan_is_over()
+    {
+        await using var rig = await Rig.CreateAsync();
+        // the expanded launcher with combat probes: only they find a ship
+        var (session, character, launchers) = await LaunchersOfAsync(rig, 18_639, 30_028, 8);
+        var launcher = launchers[0];
+        await rig.Space.LaunchAsync(session, launcher, 4, CancellationToken.None);
+        var probes = Placed(rig).Select(p => p.ProbeId).ToArray();
+        rig.Sim.ScanTargetsAnswer = [ProbeFrigate(ShipInSystem, [0, 0, 0])];
+        // the four probes are sent apart, a tenth of an astronomical unit each way: they spread across the scan range
+        double[][] spread = [[1e10, 0, 1e10], [-1e10, 0, 1e10], [-1e10, 0, -1e10], [1e10, 0, -1e10]];
+        Events.Of(session);
+        rig.Sim.Heard.Clear();
+
+        await rig.ProbeScans.RequestScansAsync(session, ScanRequest(probes.Select((id, i) => (id, spread[i], 1)).ToArray()), CancellationToken.None);
+
+        var moving = Events.Of(session);
+        Assert.Equal(4, moving.Count(e => e.Name == "OnProbeWarpStart"));
+        Assert.DoesNotContain(moving, e => e.Name == "OnSystemScanStarted");
+        Assert.All(probes, id => Assert.Equal(4, rig.Probes.GetAsync(id).Result!.State));
+
+        rig.Now += 1_250;
+        await rig.Scheduler.RunDueAsync();
+        var started = Events.Of(session);
+        Assert.Equal(4, started.Count(e => e.Name == "OnProbeWarpEnd"));
+        var begun = Assert.Single(started, e => e.Name == "OnSystemScanStarted");
+        // the launcher's ten seconds, times each scanning skill's duration bonus (SDE attribute 66: -5 a level on Astrometrics and on Acquisition)
+        var levels = await rig.Skills.ForCharacterAsync(character.CharacterId);
+        var expected = levels.Where(skill => skill.TypeId is 3412 or 25811).Aggregate(10_000.0, (duration, skill) => duration * (1 - 0.05 * skill.Level));
+        Assert.Equal(expected, Events.Number(begun.Args[1]));
+
+        rig.Now += 7_500;
+        await rig.Scheduler.RunDueAsync();
+        var (results, absent) = ResultsTold(Events.Of(session));
+        Assert.Empty(absent);
+        var row = Assert.Single(results, r => Events.Number(Field(r, "id")) == ShipInSystem);
+        Assert.Equal(1.0, Real(Field(row, "certainty")), 6);
+        Assert.Equal(586, Events.Number(Field(row, "typeID")));
+        Assert.Equal(new double[] { 0, 0, 0 }, Vector(Field(row, "pos")));
+        Assert.Equal(new double[] { 0, 0, 0 }, Vector(Field(row, "data")));
+        Assert.All(probes, id => Assert.Equal(1, rig.Probes.GetAsync(id).Result!.State));
+    }
+
+    [PgFact]
+    public async Task Core_probes_find_no_ship_so_both_ships_are_absent_from_the_results()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var (session, _, launcher) = await LauncherInSpaceAsync(rig, probes: 8);
+        await rig.Space.LaunchAsync(session, launcher, 2, CancellationToken.None);
+        var probes = Placed(rig).Select(p => p.ProbeId).ToArray();
+        // the core probes scan cosmic signatures only (wiki: "Combat scanner probes can find structures, ships, and drones"); the ships are out of reach for them
+        rig.Sim.ScanTargetsAnswer = [ProbeFrigate(ShipInSystem, [3_000.0, 0, -4_000.0]), ProbeFrigate(FarShip, [1e13, 0, 0])];
+        Events.Of(session);
+
+        await rig.ProbeScans.RequestScansAsync(session, ScanRequest(probes.Select(id => (id, Placed(rig).Single(p => p.ProbeId == id).Position.ToArray(), 1)).ToArray()), CancellationToken.None);
+        rig.Now += 7_500;
+        await rig.Scheduler.RunDueAsync();
+        var (results, absent) = ResultsTold(Events.Of(session));
+        Assert.Empty(results);
+        Assert.Equal(new long[] { ShipInSystem, FarShip }, absent.OrderBy(id => id).ToArray());
+    }
+
+    [PgFact]
+    public async Task Combat_probes_give_a_group_result_placed_within_the_deviation_and_clear_the_ship_out_of_reach()
+    {
+        await using var rig = await Rig.CreateAsync();
+        // the expanded launcher (18639) with combat probes (30028, SDE attribute 1413: probeCanScanShips)
+        var (session, _, launchers) = await LaunchersOfAsync(rig, 18_639, 30_028, 2);
+        await rig.Space.LaunchAsync(session, launchers[0], 2, CancellationToken.None);
+        var probes = Placed(rig).Select(p => p.ProbeId).ToArray();
+        var near = new[] { 3_000.0, 0, -4_000.0 };
+        rig.Sim.ScanTargetsAnswer = [ProbeFrigate(ShipInSystem, near), ProbeFrigate(FarShip, [1e13, 0, 0])];
+        Events.Of(session);
+
+        await rig.ProbeScans.RequestScansAsync(session, ScanRequest(probes.Select(id => (id, Placed(rig).Single(p => p.ProbeId == id).Position.ToArray(), 1)).ToArray()), CancellationToken.None);
+        rig.Now += 7_500;
+        await rig.Scheduler.RunDueAsync();
+        var (results, absent) = ResultsTold(Events.Of(session));
+        Assert.Equal(new long[] { FarShip }, absent);
+        var row = Assert.Single(results, r => Events.Number(Field(r, "id")) == ShipInSystem);
+        // two probes give a circle, below half: a result below the name's tier names only the group
+        var certainty = Real(Field(row, "certainty"));
+        Assert.InRange(certainty, 0.25, 0.4991);
+        Assert.Equal(PyNone.Instance, Field(row, "typeID"));
+        Assert.Equal(25, Events.Number(Field(row, "groupID")));
+        // the largest deviation: 0.25 AU at the combat probe's base range of 0.5 AU, times Astrometrics five's 0.75
+        var deviation = Real(Field(row, "data"));
+        Assert.True(Math.Abs(deviation - 0.25 * 0.75 * 149_597_870_700.0) < 1_000, $"the deviation is {deviation} m");
+        var position = Vector(Field(row, "pos"));
+        var offset = Math.Sqrt(Math.Pow(position[0] - near[0], 2) + Math.Pow(position[1] - near[1], 2) + Math.Pow(position[2] - near[2], 2));
+        Assert.True(offset <= deviation + 1e-3, $"the result is {offset} m off, the deviation is {deviation} m");
+        Assert.True(offset > 0);
+    }
+
+    [PgFact]
+    public async Task A_second_scan_asked_while_one_runs_is_not_started_and_a_probe_that_is_not_idle_is_left_out()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var (session, _, launcher) = await LauncherInSpaceAsync(rig, probes: 8);
+        await rig.Space.LaunchAsync(session, launcher, 2, CancellationToken.None);
+        var probes = Placed(rig).Select(p => p.ProbeId).ToArray();
+        rig.Sim.ScanTargetsAnswer = [ProbeFrigate(ShipInSystem, [0, 0, 0])];
+        var request = ScanRequest(probes.Select(id => (id, Placed(rig).Single(p => p.ProbeId == id).Position.ToArray(), 1)).ToArray());
+        Events.Of(session);
+
+        await rig.ProbeScans.RequestScansAsync(session, request, CancellationToken.None);
+        await rig.ProbeScans.RequestScansAsync(session, request, CancellationToken.None);
+        Assert.Single(Events.Of(session), e => e.Name == "OnSystemScanStarted");
+
+        rig.Now += 7_500;
+        await rig.Scheduler.RunDueAsync();
+        Assert.Single(Events.Of(session), e => e.Name == "OnSystemScanStopped");
+        // the probes are idle again: a probe asked to stay where it is starts a scan at once
+        await rig.ProbeScans.RequestScansAsync(session, ScanRequest((probes[0], Placed(rig).Single(p => p.ProbeId == probes[0]).Position.ToArray(), 1)), CancellationToken.None);
+        Assert.Single(Events.Of(session), e => e.Name == "OnSystemScanStarted");
+    }
+
+    [PgFact]
+    public async Task Recovered_probes_go_back_into_the_launcher_they_came_from_and_the_pilot_is_told_each_one_that_left()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var (session, character, launcher) = await LauncherInSpaceAsync(rig, probes: 8);
+        await rig.Space.LaunchAsync(session, launcher, 3, CancellationToken.None);
+        var two = Placed(rig).Select(p => p.ProbeId).Take(2).ToArray();
+        Assert.Equal(5, await LoadedAsync(rig, character, launcher));
+        Events.Of(session);
+
+        var left = await rig.Space.Probes!.RecoverAsync(session, two, CancellationToken.None);
+
+        Assert.Equal(two, left.ToArray());
+        Assert.Equal(7, await LoadedAsync(rig, character, launcher));
+        var told = Events.Of(session).Where(e => e.Name == "OnRemoveProbe").Select(e => Events.Number(e.Args[0])).ToArray();
+        Assert.Equal(two.Select(id => (long)id).ToArray(), told);
+        Assert.All(two, id => Assert.Null(rig.Probes.GetAsync(id).Result));
+        Assert.Equal(two.Length, rig.Sim.Heard.OfType<SimRemoveProbe>().Count());
+    }
+
+    [PgFact]
+    public async Task Probes_that_do_not_fit_in_the_launcher_go_to_the_cargo_hold_as_a_stack()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var (session, character, launcher) = await LauncherInSpaceAsync(rig, probes: 8);
+        await rig.Space.LaunchAsync(session, launcher, 3, CancellationToken.None);
+        Assert.Equal(5, await LoadedAsync(rig, character, launcher));
+        var moduleId = launcher;
+        var ship = character.ShipId;
+
+        // four come back and the launcher has room for three: the fourth goes to the hold (a stack of one, the stack of its type joins)
+        var changes = await rig.Ships.RestoreProbesAsync(character.CharacterId, ship, moduleId, CoreProbe, 4);
+        Assert.Equal(8, await LoadedAsync(rig, character, launcher));
+        var hold = (await rig.Items.InContainerAsync(ship, CancellationToken.None)).Where(i => i.Flag == Eve.Inventory.ItemFlags.Cargo).ToList();
+        var stack = Assert.Single(hold);
+        Assert.Equal((CoreProbe, 1L), (stack.TypeId, stack.Quantity));
+        Assert.Equal(2, changes.Count);
+        Assert.Equal(1, changes[1].After.Quantity);
+
+        // a second one for the hold joins the stack there
+        await rig.Ships.RestoreProbesAsync(character.CharacterId, ship, null, CoreProbe, 2);
+        var grown = Assert.Single(await rig.Items.InContainerAsync(ship, CancellationToken.None), i => i.Flag == Eve.Inventory.ItemFlags.Cargo);
+        Assert.Equal(3, grown.Quantity);
+    }
+
+    [PgFact]
+    public async Task Reconnecting_tells_the_pilot_each_probe_as_new_and_then_all_idle()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var (session, _, launcher) = await LauncherInSpaceAsync(rig, probes: 8);
+        await rig.Space.LaunchAsync(session, launcher, 2, CancellationToken.None);
+        var probes = Placed(rig).Select(p => p.ProbeId).ToArray();
+        Events.Of(session);
+
+        await rig.Space.Probes!.ReconnectAsync(session, CancellationToken.None);
+
+        var told = Events.Of(session);
+        Assert.Equal(probes, told.Where(e => e.Name == "OnNewProbe").Select(e => Events.Number(Field(e.Args[0], "probeID"))).ToArray());
+        var idle = Assert.Single(told, e => e.Name == "OnProbesIdle");
+        Assert.Equal(probes.Length, Items(idle.Args[0]).Count);
+        // the order of the notifications: each probe as new, then the idle list
+        Assert.Equal("OnProbesIdle", told[^1].Name);
+    }
+
+    [PgFact]
+    public async Task After_a_restart_the_probes_are_still_recorded_and_can_be_reconnected_and_recovered()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var (session, character, launcher) = await LauncherInSpaceAsync(rig, probes: 8);
+        await rig.Space.LaunchAsync(session, launcher, 2, CancellationToken.None);
+        var probes = Placed(rig).Select(p => p.ProbeId).ToArray();
+        Assert.Equal(6, await LoadedAsync(rig, character, launcher));
+
+        // a restart: the host's services are built again over the same records; the simulation has nothing of the balls
+        var restarted = new Eve.Services.Space.SpaceProbes(rig.Ships, rig.Statics, rig.Probes, rig.Space, rig.Sim, () => rig.Now);
+        rig.Sim.Heard.Clear();
+        await restarted.RestoreAsync((int)session.GetInt("solarsystemid2")!.Value);
+        Assert.Equal(probes, Placed(rig).Select(p => p.ProbeId).ToArray());
+
+        Events.Of(session);
+        await restarted.ReconnectAsync(session, CancellationToken.None);
+        Assert.Equal(probes.Length, Events.Of(session).Count(e => e.Name == "OnNewProbe"));
+
+        await restarted.RecoverAsync(session, probes, CancellationToken.None);
+        Assert.Equal(8, await LoadedAsync(rig, character, launcher));
+        Assert.Null(await rig.Probes.GetAsync(probes[0]));
+    }
+
+    /// <summary>Four combat probes spread apart and scanned to the end: ShipInSystem is found at 100 percent, at the origin.</summary>
+    private static async Task<(ClientSession Session, Eve.Characters.Created Character)> SpreadScanAsync(Rig rig)
+    {
+        var (session, character, launchers) = await LaunchersOfAsync(rig, 18_639, 30_028, 8);
+        await rig.Space.LaunchAsync(session, launchers[0], 4, CancellationToken.None);
+        var probes = Placed(rig).Select(p => p.ProbeId).ToArray();
+        rig.Sim.ScanTargetsAnswer = [ProbeFrigate(ShipInSystem, [0, 0, 0])];
+        double[][] spread = [[1e10, 0, 1e10], [-1e10, 0, 1e10], [-1e10, 0, -1e10], [1e10, 0, -1e10]];
+        await rig.ProbeScans.RequestScansAsync(session, ScanRequest(probes.Select((id, i) => (id, spread[i], 1)).ToArray()), CancellationToken.None);
+        rig.Now += 1_250;
+        await rig.Scheduler.RunDueAsync();
+        rig.Now += 7_500;
+        await rig.Scheduler.RunDueAsync();
+        return (session, character);
+    }
+
+    [PgFact]
+    public async Task A_warp_to_a_scan_result_goes_to_the_exact_place_the_last_completed_scan_found_at_100_percent()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var (session, _) = await SpreadScanAsync(rig);
+        var oid = await rig.BindBeyonceAsync(session);
+        var before = rig.Sim.Heard.Count;
+
+        await rig.BeyonceCallWithAsync(session, "CmdWarpToStuff", oid, [new PyStr("scan"), new PyLong(ShipInSystem)], ("minRange", new PyInt(5_000)));
+
+        var warp = Assert.Single(rig.Sim.Heard.Skip(before).OfType<SimCommand>());
+        Assert.Equal(SimCommands.WarpToPoint, warp.Code);
+        Assert.Equal(new double[] { 0, 0, 0, 5_000 }, warp.Args.ToArray());
+    }
+
+    [PgFact]
+    public async Task A_warp_to_a_scan_result_is_refused_for_a_target_no_completed_scan_found_at_100_percent()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var (session, _) = await SpreadScanAsync(rig);
+        var oid = await rig.BindBeyonceAsync(session);
+        // a target the scan did not find, and the same target after a scan that found nothing: both are refused
+        await Assert.ThrowsAnyAsync<Exception>(() => rig.BeyonceCallWithAsync(session, "CmdWarpToStuff", oid, [new PyStr("scan"), new PyLong(FarShip)]));
+
+        var probes = Placed(rig).Select(p => p.ProbeId).Take(4).ToArray();
+        var far = ScanRequest(probes.Select(id => (id, new[] { 1e13, 0, 1e13 }, 1)).ToArray());
+        await rig.ProbeScans.RequestScansAsync(session, far, CancellationToken.None);
+        rig.Now += 1_250;
+        await rig.Scheduler.RunDueAsync();
+        rig.Now += 7_500;
+        await rig.Scheduler.RunDueAsync();
+        Assert.Contains(Events.Of(session), e => e.Name == "OnSystemScanStopped");
+
+        await Assert.ThrowsAnyAsync<Exception>(() => rig.BeyonceCallWithAsync(session, "CmdWarpToStuff", oid, [new PyStr("scan"), new PyLong(ShipInSystem)]));
     }
 }

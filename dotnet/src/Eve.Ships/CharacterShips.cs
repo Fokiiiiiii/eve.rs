@@ -530,7 +530,7 @@ public sealed partial class CharacterShips(
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
         await LockAsync(connection, transaction, characterId, cancellationToken);
 
-        if (await LoadAsync(characterId, cancellationToken) is not { } snapshot || snapshot.Ship.Id != shipId)
+        if (await LoadShipAsync(characterId, shipId, cancellationToken) is not { } snapshot)
         {
             return new ShipRefused(ShipRefusal.NotFitted);
         }

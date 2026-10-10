@@ -103,4 +103,41 @@ public static class ShipNotifications
             SendItemChange(session, stack, row);
         }
     }
+
+    /// <summary>
+    /// The outcomes of one action sent as the reference batches them (EveJS <c>emitItemsChangedBatchForSession</c>, characterState.js:2728): one multi-event
+    /// message for all the events, and the item rows grouped where consecutive rows have the same previous place (one <c>OnItemsChanged</c> each).
+    /// </summary>
+    public static void SendBatch(ClientSession session, long characterId, IReadOnlyList<ShipChanged> outcomes, Func<Eve.Inventory.Item, ItemRow> row, long fileTime)
+    {
+        if (outcomes.Count == 0)
+        {
+            return;
+        }
+        var events = outcomes.SelectMany(o => o.Events).ToList();
+        if (events.Count > 0)
+        {
+            session.SendNotification("OnMultiEvent", "clientID", MultiEvent(characterId, outcomes[^1].ShipId, events, fileTime));
+        }
+        var moved = outcomes.SelectMany(o => o.Items).ToList();
+        for (var i = 0; i < moved.Count;)
+        {
+            var place = (moved[i].PreviousLocationId, moved[i].PreviousFlag);
+            var rows = new List<PyValue>();
+            while (i < moved.Count && (moved[i].PreviousLocationId, moved[i].PreviousFlag) == place)
+            {
+                rows.Add(InventoryWire.PackedRow(row(moved[i].After)));
+                i++;
+            }
+            session.SendNotification(
+                "OnItemsChanged", "charid",
+                new PyList(rows),
+                new PyDict([new(new PyInt(3), InventoryWire.Id(place.PreviousLocationId)), new(new PyInt(4), new PyInt(place.PreviousFlag))]),
+                PyNone.Instance);
+        }
+        foreach (var stack in outcomes.SelectMany(o => o.Stacks ?? []))
+        {
+            SendItemChange(session, stack, row);
+        }
+    }
 }

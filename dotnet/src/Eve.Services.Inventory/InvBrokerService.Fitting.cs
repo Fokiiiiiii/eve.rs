@@ -4,6 +4,7 @@ using Eve.Macho;
 using Eve.Marshal;
 using Eve.Services;
 using Eve.Services.Ships;
+using Eve.Dogma;
 using Eve.Ships;
 
 namespace Eve.Services.Inventory;
@@ -12,7 +13,7 @@ namespace Eve.Services.Inventory;
 /// The fitting of a saved fitting onto a docked ship (EveJS <c>invBroker/fittingOperations.js</c>, <c>Handle_FitFitting</c>): the modules and rigs by slot,
 /// then the cargo, drone, ice, implant, fighter and charge legs. Each piece is one move through the move a single drag makes
 /// (<see cref="CharacterShips.MoveAsync"/>), so the rules, the notifications and the persistence are the same. A piece that cannot go is the reply.
-/// Not ported (DEVIATIONS "Track S1: fitting a docked ship"): the re-online pass, the space-loot and structure access checks, and the ship-service checks.
+/// Not ported (DEVIATIONS "Track S1: fitting a docked ship"): the space-loot and structure access checks, the ship-service checks, and the in-space fitting services.
 /// </summary>
 public sealed partial class InvBrokerService
 {
@@ -40,8 +41,8 @@ public sealed partial class InvBrokerService
         }
         if (StationOf(call.Session) is not { } station)
         {
-            // the fitting of a ship in space is not served here (DEVIATIONS "Track S1: fitting a docked ship")
-            throw MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("A ship can be fitted only while it is docked.")));
+            // shortcut: no in-space fitting service (Mobile Depot, maintenance-bay ship, Ship Maintenance Array) is modelled, so this is always the not-found notify (EveJS IN_SPACE_FITTING_SERVICE_NOT_FOUND)
+            throw MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("You must be within 3000 meters of an active Mobile Depot you own, or within 5000 meters of an accessible maintenance-bay ship or array, to refit in space.")));
         }
         if (!await IsDockedShipContextAsync(call.Session, character, context.ItemId, call.Cancellation))
         {
@@ -55,6 +56,8 @@ public sealed partial class InvBrokerService
         var source = IdOf(call.Arg(3)) ?? station;
         var fitRigs = call.Arg(6) is not PyBool { Value: false };
         var ct = call.Cancellation;
+        var outcomes = new List<ShipChanged>();
+        var placedModules = new List<(long ItemId, long Flag, long TypeId)>();
 
         // the hangar items of each type the fitting needs, in the order the client gave them
         var candidates = new Dictionary<long, List<long>>();
@@ -108,7 +111,7 @@ public sealed partial class InvBrokerService
             {
                 return 0;
             }
-            ShipNotifications.Send(call.Session, character, changed, DogmaRow, Py.FileTimeFromUnixMs(nowUnixMs()));
+            outcomes.Add(changed);
             return quantity;
         }
 
@@ -133,6 +136,7 @@ public sealed partial class InvBrokerService
                     {
                         list.Remove(itemId);
                         fitted.Add((flag, typeId));
+                        placedModules.Add((itemId, flag, typeId));
                         placed = true;
                         break;
                     }
@@ -141,6 +145,25 @@ public sealed partial class InvBrokerService
             if (!placed)
             {
                 Missing(typeId, 1);
+            }
+        }
+
+        // the modules this fit put in are offline when they land: each is switched on where the grid and the CPU allow it, in slot order (EveJS
+        // _reonlineFitFittingModules, fittingOperations.js:327-395). A module the gate refuses stays offline.
+        foreach (var (itemId, flag, typeId) in placedModules.OrderBy(m => m.Flag))
+        {
+            if (Slots.FamilyOfFlag((int)flag) is SlotFamily.Rig or SlotFamily.Subsystem)
+            {
+                continue;
+            }
+            await statics.EnsureTypesAsync([(int)typeId], ct);
+            if (statics.Type((int)typeId)?.EffectIds.Contains(BuiltInEffects.Online) != true)
+            {
+                continue;
+            }
+            if (await ships.SetOnlineAsync(character, context.ItemId, itemId, true, ct) is ShipChanged switched)
+            {
+                outcomes.Add(switched);
             }
         }
 
@@ -174,6 +197,7 @@ public sealed partial class InvBrokerService
         await LegAsync(fighters, CharacterShips.FighterBayFlag, null);
         await LegAsync(charges, CharacterShips.CargoFlag, null);
 
+        ShipNotifications.SendBatch(call.Session, character, outcomes, DogmaRow, Py.FileTimeFromUnixMs(nowUnixMs()));
         return new PyList([.. missing.Select(pair => (PyValue)Py.Tuple(new PyInt(pair.Key), new PyInt(pair.Value)))]);
     }
 

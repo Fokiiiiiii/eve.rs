@@ -73,12 +73,14 @@ public sealed class SpaceJumpDrive(
             throw Refusal("DeniedShipChanged");
         }
         await statics.EnsureTypesAsync([shipType], cancellationToken);
-        // the drive's numbers are the flown ship's, as dogma has them: a hull bonus on the range, the fuel or the share (SDE role bonuses) is in them
+        // the hull's own numbers: the hull as dogma has it with no skills and no fitting, so a role bonus on the range, the fuel or the share (SDE, a passive
+        // effect of the hull) is in them, and the skills (Fuel Conservation, Calibration) and the economizers, which also act on 868, are taken below, once each
         if (statics.Type(shipType) is not { } hull || await ships.LoadShipAsync(character, shipId, cancellationToken) is not { } flown)
         {
             throw Notify("Your ship has no jump drive.");
         }
-        var numbers = flown.World;
+        var numbers = new DogmaWorld(statics, character, shipId);
+        numbers.Add(ItemDogma.Of(flown.Ship, character, flown.Ship.LocationId, flown.Ship.Flag, ItemState.Online));
         var baseRange = numbers.Get(shipId, JumpDriveRules.RangeAttribute);
         var spool = numbers.Get(shipId, JumpDriveRules.SpoolAttribute);
         var fuelPerLightYear = numbers.Get(shipId, JumpDriveRules.FuelPerLightYearAttribute);

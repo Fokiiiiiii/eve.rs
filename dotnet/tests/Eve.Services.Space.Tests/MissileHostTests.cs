@@ -65,6 +65,7 @@ public class MissileHostTests
     {
         await using var rig = await Rig.CreateAsync();
         var (session, character, launcher) = await ArmedInSpaceAsync(rig, loaded: true);
+        rig.Space.AutoReloadUsers = new HashSet<long> { 34 }; // a bot: the launcher is reloaded from its hold when its rockets run out
 
         // the pilot asks for the effect of the charge, as the client does; the launcher runs its own
         var answer = await rig.Space.ActivateAsync(session, launcher, "missileLaunching", 980050000105, 1000, CancellationToken.None);

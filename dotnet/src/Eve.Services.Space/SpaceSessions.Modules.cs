@@ -144,7 +144,7 @@ public sealed partial class SpaceSessions
             .Where(other => other.ShipId != pilot.ShipId && other.SolarSystemId == pilot.SolarSystemId)
             .Select(other => new TransportNeighbour(other.ShipId, _statics.Type(other.TypeId) is { } type && ShipSnapshot.CapitalGroupIds.Contains(type.GroupId)))
             .ToList();
-        var made = ModulePackages.Of(snapshot.WithNeighbours(neighbours), _statics, moduleId, effectName, targetId, repeat, aim, aimEnd);
+        var made = ModulePackages.Of(snapshot.WithNeighbours(neighbours), _statics, moduleId, effectName, targetId, repeat, aim, aimEnd, AutoReloadsOf(pilot));
         if (made.Effect is not { } package)
         {
             return ModuleResult.Refusal(made.Reason ?? "REFUSED", made.ModuleType, made.ModuleName);

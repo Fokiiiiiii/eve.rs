@@ -1,5 +1,6 @@
 using Eve.Inventory;
 using Eve.Marshal;
+using Eve.Services.Ships;
 using Eve.Space;
 
 namespace Eve.Services.Space.Tests;
@@ -40,7 +41,8 @@ public class AmmoHostTests
 
         Assert.Equal(ModuleResult.Done, answer);
         var turret = Assert.IsType<SimTurret>(Assert.IsType<SimActivate>(rig.Sim.Heard.Last()).Effect.Turret);
-        Assert.Equal(new SimTurretCharge(Antimatter, Slot, 80, 1, Reloads: true), turret.Charge);
+        // a client (the account is not one named for reloads) has its gun stopped when its rounds are spent: the simulation does not park it
+        Assert.Equal(new SimTurretCharge(Antimatter, Slot, 80, 1, Reloads: false), turret.Charge);
         // the shot is the damage of the charge (antimatter: 7 kinetic, 5 thermal) times the damage multiplier of the gun, none of it the gun's own
         var snapshot = (await rig.Ships.LoadAsync(character.CharacterId, CancellationToken.None))!;
         var multiplier = snapshot.World.Get(gun, 64);
@@ -51,6 +53,38 @@ public class AmmoHostTests
         var told = rig.Sim.Heard.OfType<SimActivate>().Last().Effect.OnChanges.Single(c => c.AttributeId == 54);
         Assert.Equal(turret.OptimalRange, told.Value);
         Assert.Equal(snapshot.World.Get(gun, 54), turret.OptimalRange, 3);
+    }
+
+    [PgFact]
+    public async Task A_client_gun_whose_rounds_run_out_is_not_reloaded_by_the_host()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var (session, _, gun) = await ArmedInSpaceAsync(rig, loaded: true);
+        var dry = new List<SpentGun>();
+        rig.Space.GunRanDry += dry.Add;
+
+        Assert.Equal(ModuleResult.Done, await rig.Space.ActivateAsync(session, gun, "projectileFired", 980050000105, 1000, CancellationToken.None));
+        rig.Sim.Say(new SimChargeSpent((ulong)session.SessionId, gun, 0));
+
+        Assert.Empty(dry);
+        Assert.DoesNotContain(rig.Sim.Heard, message => message is SimAdjustCharge);
+    }
+
+    [PgFact]
+    public async Task A_bot_account_named_for_reloads_has_its_gun_loaded_from_its_hold_when_the_rounds_run_out()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var (session, _, gun) = await ArmedInSpaceAsync(rig, loaded: true);
+        rig.Space.AutoReloadUsers = new HashSet<long> { 34 };
+        var dry = new List<SpentGun>();
+        rig.Space.GunRanDry += dry.Add;
+
+        Assert.Equal(ModuleResult.Done, await rig.Space.ActivateAsync(session, gun, "projectileFired", 980050000105, 1000, CancellationToken.None));
+        var turret = Assert.IsType<SimTurret>(Assert.IsType<SimActivate>(rig.Sim.Heard.Last()).Effect.Turret);
+        Assert.Equal(new SimTurretCharge(Antimatter, Slot, 80, 1, Reloads: true), turret.Charge);
+        rig.Sim.Say(new SimChargeSpent((ulong)session.SessionId, gun, 0));
+
+        Assert.Equal([gun], dry.Select(spent => spent.ModuleId));
     }
 
     [PgFact]

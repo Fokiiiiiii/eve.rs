@@ -5,7 +5,7 @@ namespace Eve.Ships;
 /// <summary>One buff input a ship carries as the host keeps it: its collection, the value it gives and when it runs out (milliseconds since 1970).</summary>
 public sealed record ShipBuffRecord(int CollectionId, double Value, double ExpiresAtMs);
 
-/// <summary>The ships' buff inputs in PostgreSQL (the <c>ship_buffs</c> table of the <c>space</c> schema, migration 0005).</summary>
+/// <summary>The ships' buff inputs in PostgreSQL (the <c>ship_buffs</c> table of the <c>space</c> schema, migration 0006).</summary>
 public sealed class PgShipBuffStore
 {
     public const string DefaultSchema = "space";

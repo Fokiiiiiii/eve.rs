@@ -33,4 +33,18 @@ public class SpecialHullBonusTests
 
     [PgFact]
     public async Task The_jump_freighter_bonuses_reach_the_hull() => await AssertTheHullNumbersAreBonusedAsync(JumpFreighterRhea);
+
+    /// <summary>The jump drive's fuel per light year (SDE 868) is the flown Rhea's, bonused by its role (eliteBonusJumpFreighterJumpDriveConsumptionAmount2).</summary>
+    [PgFact]
+    public async Task The_jump_freighter_fuel_per_light_year_is_the_bonused_number_of_the_flown_ship()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var c = await rig.NewCharacterAsync(shipTypeId: JumpFreighterRhea);
+        var snapshot = await rig.Ships.LoadAsync(c.CharacterId);
+        Assert.NotNull(snapshot);
+        await rig.Statics.EnsureTypesAsync([JumpFreighterRhea]);
+        const int FuelPerLightYear = 868;
+        var baseValue = rig.Statics.Type(JumpFreighterRhea)!.Attributes[FuelPerLightYear];
+        Assert.NotEqual(baseValue, snapshot.World.Get(snapshot.Ship.Id, FuelPerLightYear));
+    }
 }

@@ -371,6 +371,35 @@ impl Message {
                 put_credit(&mut out, &placement.credit);
                 out.push(u8::from(placement.is_empty));
             }
+            Self::Deployed(placement) => {
+                out.extend_from_slice(&placement.solar_system_id.to_le_bytes());
+                out.extend_from_slice(&placement.deployable_id.to_le_bytes());
+                put_text(&mut out, &placement.name);
+                out.extend_from_slice(&placement.type_id.to_le_bytes());
+                out.extend_from_slice(&placement.group_id.to_le_bytes());
+                put_vector(&mut out, &placement.position);
+                out.extend_from_slice(&placement.radius.to_le_bytes());
+                out.extend_from_slice(&placement.owner_id.to_le_bytes());
+                out.extend_from_slice(&placement.corporation_id.to_le_bytes());
+                out.extend_from_slice(&placement.alliance_id.to_le_bytes());
+                out.extend_from_slice(&placement.ship_id.to_le_bytes());
+                out.extend_from_slice(&placement.lifetime_ms.to_le_bytes());
+            }
+            Self::RemoveDeployed { deployable_id } => out.extend_from_slice(&deployable_id.to_le_bytes()),
+            Self::PlaceProbe(probe) => {
+                out.extend_from_slice(&probe.probe_id.to_le_bytes());
+                out.extend_from_slice(&probe.solar_system_id.to_le_bytes());
+                put_text(&mut out, &probe.name);
+                out.extend_from_slice(&probe.type_id.to_le_bytes());
+                out.extend_from_slice(&probe.group_id.to_le_bytes());
+                put_vector(&mut out, &probe.position);
+                out.extend_from_slice(&probe.radius.to_le_bytes());
+                out.extend_from_slice(&probe.owner_id.to_le_bytes());
+                out.extend_from_slice(&probe.corporation_id.to_le_bytes());
+                out.extend_from_slice(&probe.alliance_id.to_le_bytes());
+                out.extend_from_slice(&probe.ship_id.to_le_bytes());
+            }
+            Self::RemoveProbe { probe_id } => out.extend_from_slice(&probe_id.to_le_bytes()),
             Self::PlaceAsteroid(asteroid) => {
                 out.extend_from_slice(&asteroid.solar_system_id.to_le_bytes());
                 out.extend_from_slice(&asteroid.asteroid_id.to_le_bytes());

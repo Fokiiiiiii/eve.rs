@@ -377,7 +377,7 @@ Open (each with its exact blocker):
 - WG-8 fitting restrictions on the server: not started (low priority).
 - FP-8 target resistances for ewar and assistance (2112 to 2116, 2135): not started; needs `resist` fields on the ship's sensors block and on each `Remote` (a second wire change, not in this bump).
 - FP-C4b and FP-C5 (refresh running effects when overheat or a computer changes): not started; needs a new `SimUpdateEffect` message (wire).
-- FP-C7 ECM burst aggression and its offensive gate: DONE (track B6a, protocol 44, section 24).
+- FP-C7 ECM burst aggression and its offensive gate: DONE (track B6a, protocol 46, section 24).
 - FP-C8 automatic reload from the hold: not started. EVE.js queues the reload when the last round is spent (`localCycleRuntime.js`) and resumes at the next cycle; eve.rs would need the host to reload and re-activate and to suppress the no-charges error that the simulation sends now.
 - Cloak types (covert, prototype, non-warp cloak states): not started.
 - M-6 scanner, analyzer and relic modules: not started (Cargo and Ship Scanner results, Data Analyzer and Subverter bodies).
@@ -549,31 +549,17 @@ OPEN (each with its blocker):
 - No separate state for the buffs in the simulation (the request for "general status effects" in the simulation is not built): the numbers and the host's checks carry them (DEVIATIONS).
 - MITM: no client trace of a burst cycle or a grant was driven (`tools/mitm/README.md`).
 - The burst wiki pages were not re-read in this track (the rules are those C4 and C5 recorded); the Capital Ship Modules page was re-read for P.A.N.I.C.
-## 23. Track A5: OnDotVictimUpdated, probes, cyno jammer, jump drive and mobile objects (2026-10-09)
+## 23. Track A5: OnDotVictimUpdated, the cynosural field record, probes, cyno jammer, jump drive and mobile objects (2026-10-09)
 
 Done (tests in the crates named; decisions in DEVIATIONS "Track A5"):
-- The Python `set` in both marshal codecs: `Value::python_set` (`crates/eve-marshal`) and `PyValue.PythonSet` (`Eve.Marshal`); `InventoryWire.Set` delegates. Round-trip tests in both. Protocol unchanged (42).
-- OnDotVictimUpdated, A4's open item: the sim tells a ship its breacher applications as a destiny action on each hit, on each change of the working application and on each end (`crates/eve-space/src/dot_weapons.rs`, `dot_victim_update`). Tests: `dot_weapons/tests.rs` (two new). The client was not run.
+- The Python `set` in both marshal codecs: `Value::python_set` (`crates/eve-marshal`) and `PyValue.PythonSet` (`Eve.Marshal`); `InventoryWire.Set` delegates. Round-trip tests in both.
+- OnDotVictimUpdated (A4's open item): the simulation tells a ship its breacher applications as a destiny action on each hit, on each change of the working application and on each end (`crates/eve-space/src/dot_weapons.rs`, `dot_victim_update`). Tests: `dot_weapons/tests.rs`. The client was not run.
+- The cynosural field record (ADR 0012, kind `cyno_field`): the simulation says a field was lit (`Deployed`, kind 63), the host keeps a row in `space.deployed` (migration 0004), the expiry sweep takes the field out and forgets the row (`RemoveDeployed`, kind 64), and a ship coming into the system puts a field back with its id and what is left of its life (`crates/eve-space/src/deployable.rs` `restore_field`, `remove_field`; `dotnet/src/Eve.Services.Space/SpaceContainers.Deployed.cs`). Protocol 44 (track C6 took 43). Tests: `deployable/tests.rs` (three), `CynoFieldRecordHostTests` (PostgreSQL), codec fixtures.
 
 Open, each with its exact blocker:
-- LaunchProbes (RC-7, E-06, section 7): not started. EveJS `services/dogma/dogmaService/moduleOperation.js` `Handle_LaunchProbes` (line 3388) and `_resolveValidatedProbeLaunchContext` (425 to 567) give the checks and messages (NOT_IN_SPACE, MODULE_NOT_FOUND, INVALID_LAUNCHER, MODULE_NOT_ONLINE, NO_CHARGES, INVALID_CHARGE, INCOMPATIBLE_CHARGE, NOT_ENOUGH_CHARGES, and the cap of 8 active probes). Blocker: no probe record, no probe object in the simulation, and no scan lifecycle (E-06's notifications follow the scan).
-- GetCynoJammerState (E-03): the host callback stays unassigned, so the answer is None (no jammer). That is correct while no jammer exists. A source would be the Tenebrex cyno suppression (EveJS `services/sovereignty/sovSuppressionState.js` `getCynoJammerOnlineSimTime`, line 259) or the Mobile Cynosural Inhibitor (below). Blocker: neither is built.
-- WP-8 mobile warp disruptors: not started. Blocker: ADR 0012's `Deployed` record is not built. The cyno field from B7 is a sim-timed deployable too, and a restart drops it, so the shared record comes first.
-- Capital jump drive, cyno targeting, jump range and fuel, and the jump to the cyno field: not started. B7's field exists on main (`CynoGeneratorEffect`, `SimAction.CynoField`), so the jump can target it. Blocker: the jump-drive module body and the cross-system jump are to be built; the restrictions follow the drive.
-- Breacher pods (A4): the DoT notification is now built, but the breacher launcher's client flow and the per-tick damage message (`OnDamageMessage`, no wire shape in the sources) remain as A4 recorded them.
-
-## 24. Track B6a (2026-10-09): ECM burst report, and the baseline failures
-
-Done (tests in the projects named; the rules and their sources are in DEVIATIONS "Track B6a"):
-
-- FP-C7, the ECM burst report: `SimEcmBurst` (kind 63, protocol 44) tells the host the ship that runs a burst and each ship it reached, with whether its roll jammed it. The host records the attack on each reached pilot (`SpaceSessions.RecordEcmBurstAsync`). Tests: `crates/eve-space` (`modules/tests.rs`: the report, a resisting ship, a cloaked ship), `simlink_fixtures.rs` and `oracle/fixtures/simlink/messages.json` (one valid and three invalid frames), `SimCodecTests`, and `EcmBurstHostTests` (the attack recorded on the reached pilot; a ship that is not a pilot's is skipped; a burst from a ship that is not in space is not recorded; the high-security refusal).
-- The high-security gate of an ECM burst (wiki, Electronic Countermeasures): refused `SafetyActivated` in high security space unless the safety is none. `RepairHostTests` packaging test sets the safety to none, as its rig is in high security (Manifest, 1.0).
-- Safe logoff: the refusal during the undock's 10 s session change is removed (the wiki's Timers page does not list it; EVE.js accepts every logoff). The cause of the earlier failure was the race between that refusal and the test harness's timers; the same failure happens at 863d259 (4 runs of 4).
-- Fleet finder advert (`Fleet_finder_advert_operations_match_evejs_arguments_and_persist_the_full_payload`): a real bug. `RemoveFleetFinderAdvert` ran a `DELETE` from `fleet_advert_allowed_entities`, which migration 006 drops. Removed.
-- Mutadaptive (`RepairHostTests`, `ModuleEffectsTests`): `SpaceSessions.Dispose` and `OnLost` reset the process-wide spool, so one host cleared another host's spools. Each host now resets only its own running modules.
-- Test races: `NpcBountyHostTests.Kills_of_several_npcs_in_one_window...` and `RuntimeTests.A_persisted_engagement_expires_once_and_notifies_both_online_pilots` waited for the state, not for the notices sent after it; they now wait for the notices.
-- Stale names: `ConfigPrime` and `SessionEndsHangar` are not in the repository and are dropped from the baseline list.
-
-Open, each with its exact blocker:
-
-- The bomb's ECM kind (`jam_at`) is not reported to the host: its aggression and its cloak rule are not built (the wiki's bomb page is not read yet).
+- LaunchProbes (RC-7, E-06, section 7): not started. EveJS `services/dogma/dogmaService/moduleOperation.js` `Handle_LaunchProbes` (line 3388) and `_resolveValidatedProbeLaunchContext` (425 to 567) give the checks and messages (NOT_IN_SPACE, MODULE_NOT_FOUND, INVALID_LAUNCHER, MODULE_NOT_ONLINE, NO_CHARGES, INVALID_CHARGE, INCOMPATIBLE_CHARGE, NOT_ENOUGH_CHARGES, and the cap of 8 active probes). Blocker: no probe record, no probe object in the simulation, and no scan lifecycle (E-06's notifications follow the scan). ADR 0012 keeps probes simulation-only.
+- GetCynoJammerState (E-03): the host callback stays unassigned, so the answer is None (no jammer), correct while no jammer exists. A source would be the Tenebrex cyno suppression (EveJS `services/sovereignty/sovSuppressionState.js` `getCynoJammerOnlineSimTime`, line 259) or the Mobile Cynosural Inhibitor. Blocker: neither is built.
+- WP-8 mobile warp disruptors: not started. The record store exists (`space.deployed`), so a new kind is the store side. Blockers: ADR 0012's addendum says the SDE has no lifetime for them and the EveJS table is unverified; the anchoring job `space.deployed.anchor`, the custody path from cargo, the item-level anchorDrop activation and the scramble source are not built.
+- Capital jump drive, cyno targeting, jump range and fuel, and the jump to the cyno field: not started. The field exists (B7, persisted by this track), so the jump can target it. Blocker: the jump-drive module body and the cross-system jump still to build; the restrictions follow the drive.
+- Breacher pods (A4): the per-tick damage message (`OnDamageMessage`) has no wire shape in the sources read.
+- Known: `IndustrialInvulnerabilityTests` and `IndustrialInvulnerabilityHostTests` (`Eve.Services.Space.Tests`) expect the Nexus core's `EFFECT_NOT_IMPLEMENTED` refusal. C6 (`ee324cc`) gave it a body and left those two tests stale on origin/main; they fail there too. Not changed by track A5.

@@ -957,6 +957,25 @@ public sealed record SimChangeWreck(ulong SessionId, long WreckId, bool IsEmpty)
 /// <summary>Takes a wreck or a can out of space; <see cref="Effect"/> is the destruction effect the client plays first (0: none).</summary>
 public sealed record SimRemoveWreck(long WreckId, int Effect) : SimMessage;
 
+/// <summary>
+/// A cynosural field the host keeps a record of (protocol 44). The simulation says it was lit, with its place, owner, type and whole life; the host sends the
+/// same message back to put it in space after a restart, with what is left of its life then (<see cref="LifetimeMs"/>).
+/// </summary>
+public sealed record SimDeployed(
+    int SolarSystemId, long DeployableId, string Name, int TypeId, int GroupId, IReadOnlyList<double> Position, double Radius, long OwnerId, int CorporationId,
+    int AllianceId, long ShipId, double LifetimeMs) : SimMessage;
+
+/// <summary>The host takes a cynosural field out of space when its record's time is up (protocol 44); a deployable that is not one, or not in space, is left alone.</summary>
+public sealed record SimRemoveDeployed(long DeployableId) : SimMessage;
+
+/// <summary>A scanner probe the host launched, put in space where it was launched (protocol 45). It stays until <see cref="SimRemoveProbe"/>.</summary>
+public sealed record SimPlaceProbe(
+    long ProbeId, int SolarSystemId, string Name, int TypeId, int GroupId, IReadOnlyList<double> Position, double Radius, long OwnerId, int CorporationId,
+    int AllianceId, long ShipId) : SimMessage;
+
+/// <summary>The host takes a scanner probe out of space (recalled, or its time is up); a deployable that is not a probe is left alone (protocol 45).</summary>
+public sealed record SimRemoveProbe(long ProbeId) : SimMessage;
+
 /// <summary>The answer to <see cref="SimCommands.Measure"/>: metres from the centre of the ship to the surface of the wreck or can, or null when there is no such wreck.</summary>
 public sealed record SimMeasured(ulong SessionId, byte Command, double? Distance) : SimMessage;
 

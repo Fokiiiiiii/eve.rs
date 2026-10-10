@@ -4,15 +4,15 @@
   {
    "name": "hello",
    "kind": "Hello",
-   "version": 44,
-   "hex": "03000000012c00"
+   "version": 46,
+   "hex": "03000000012e00"
   },
   {
    "name": "hello ack",
    "kind": "HelloAck",
-   "version": 44,
+   "version": 46,
    "pollHz": 4,
-   "hex": "07000000022c0004000000"
+   "hex": "07000000022e0004000000"
   },
   {
    "name": "enter by undocking",
@@ -3110,7 +3110,7 @@
      "jammed": false
     }
    ],
-   "hex": "270000003f4f2c3859955c060093b3089b150900000200000004bc089b150900000105bc089b1509000000"
+   "hex": "27000000434f2c3859955c060093b3089b150900000200000004bc089b150900000105bc089b1509000000"
   },
   {
    "name": "destroy for a pilot to loot",
@@ -3340,6 +3340,80 @@
    "wreckId": "9988400002417",
    "effect": 0,
    "hex": "0d0000001f71b5089b1509000000000000"
+  },
+  {
+   "name": "cynosural field lit by a generator, told with its life",
+   "kind": "Deployed",
+   "solarSystemId": 30100032,
+   "deployableId": "4250000000000003",
+   "typeName": "Cynosural Field",
+   "typeId": 21094,
+   "groupId": 2020,
+   "position": [
+    311989835983.1308,
+    -13069154020.916222,
+    156646308895.76187
+   ],
+   "radius": 250.0,
+   "ownerId": "1790646377000015",
+   "corporationId": 98000001,
+   "allianceId": 0,
+   "shipId": "9988400001943",
+   "lifetimeMs": 600000.0,
+   "hex": "660000003f404acb0103a04b3c5a190f000f0043796e6f737572616c204669656c6466520000e40700005fc833c6022952426c5427b7db5708c285e10f7e6c3c42420000000000406f404f2c3859955c0600815cd7050000000097b3089b1509000000000000804f2241"
+  },
+  {
+   "name": "cynosural field put back after a restart, with what is left of its life",
+   "kind": "Deployed",
+   "solarSystemId": 30100032,
+   "deployableId": "4250000000000007",
+   "typeName": "Cynosural Field",
+   "typeId": 21094,
+   "groupId": 2020,
+   "position": [
+    311989835983.1308,
+    -13069154020.916222,
+    156646308895.76187
+   ],
+   "radius": 250.0,
+   "ownerId": "1790646377000015",
+   "corporationId": 98000001,
+   "allianceId": 0,
+   "shipId": "9988400001943",
+   "lifetimeMs": 120000.0,
+   "hex": "660000003f404acb0107a04b3c5a190f000f0043796e6f737572616c204669656c6466520000e40700005fc833c6022952426c5427b7db5708c285e10f7e6c3c42420000000000406f404f2c3859955c0600815cd7050000000097b3089b1509000000000000004cfd40"
+  },
+  {
+   "name": "cynosural field taken out of space by the host",
+   "kind": "RemoveDeployed",
+   "deployableId": "4250000000000003",
+   "hex": "090000004003a04b3c5a190f00"
+  },
+  {
+   "name": "scanner probe launched from a probe launcher and put in space",
+   "kind": "PlaceProbe",
+   "probeId": "990000000000001",
+   "solarSystemId": 30100032,
+   "typeName": "Scanner Probe I",
+   "typeId": 19415,
+   "groupId": 479,
+   "position": [
+    311989835983.1308,
+    -13069154020.916222,
+    156646308895.76187
+   ],
+   "radius": 40.0,
+   "ownerId": "1790646377000015",
+   "corporationId": 98000001,
+   "allianceId": 0,
+   "shipId": "9988400001943",
+   "hex": "5e0000004101e0535666840300404acb010f005363616e6e65722050726f62652049d74b0000df0100005fc833c6022952426c5427b7db5708c285e10f7e6c3c424200000000000044404f2c3859955c0600815cd7050000000097b3089b15090000"
+  },
+  {
+   "name": "scanner probe recalled by its pilot",
+   "kind": "RemoveProbe",
+   "probeId": "990000000000001",
+   "hex": "090000004201e0535666840300"
   },
   {
    "name": "how far a can is",
@@ -4299,19 +4373,34 @@
    "hex": "12000000354f2c3859955c0600fdb6089b1509000009"
   },
   {
+   "name": "scanner probe with a radius that is negative",
+   "reason": "bad-value",
+   "hex": "5e0000004101e0535666840300404acb010f005363616e6e65722050726f62652049d74b0000df0100005fc833c6022952426c5427b7db5708c285e10f7e6c3c4242000000000000f0bf4f2c3859955c0600815cd7050000000097b3089b15090000"
+  },
+  {
+   "name": "cynosural field with no life left",
+   "reason": "bad-value",
+   "hex": "660000003f404acb0103a04b3c5a190f000f0043796e6f737572616c204669656c6466520000e40700005fc833c6022952426c5427b7db5708c285e10f7e6c3c42420000000000406f404f2c3859955c0600815cd7050000000097b3089b15090000000000000000f0bf"
+  },
+  {
+   "name": "cynosural field with a radius that is not a number",
+   "reason": "bad-value",
+   "hex": "660000003f404acb0103a04b3c5a190f000f0043796e6f737572616c204669656c6466520000e40700005fc833c6022952426c5427b7db5708c285e10f7e6c3c4242000000000000f87f4f2c3859955c0600815cd7050000000097b3089b1509000000000000804f2241"
+  },
+  {
    "name": "ECM burst with a jam flag that is neither 0 nor 1",
    "reason": "bad-value",
-   "hex": "1e0000003f01000000000000000900000000000000010000000a0000000000000002"
+   "hex": "1e0000004301000000000000000900000000000000010000000a0000000000000002"
   },
   {
    "name": "ECM burst that promises two ships and carries one",
    "reason": "truncated",
-   "hex": "1e0000003f01000000000000000900000000000000020000000a0000000000000001"
+   "hex": "1e0000004301000000000000000900000000000000020000000a0000000000000001"
   },
   {
    "name": "ECM burst cut short before its ship",
    "reason": "truncated",
-   "hex": "0c0000003f0100000000000000000000"
+   "hex": "0c000000430100000000000000000000"
   },
   {
    "name": "warp probe with no lifetime",

@@ -55,3 +55,14 @@ deadline is a row, it survives a restart. The sim also has its own timer-like ex
 - The lance beacon (EVE.js `spawnLanceBeacon`, a container of type 41233) is a simulation deployable (`Role::Beacon` in `crates/eve-space/src/deployable.rs`), not a `Deployed` row. Its lifetime is the lance's effect: it is put in space when the strike starts and taken out when the effect ends or stops (the same reasoning as the bomb: a row swept every 30 s would outlive the beam). A restart drops it (a stated limitation).
 - The cone's beacon (EVE.js family `lance`) is put in space without a beam: its FX guid is empty in the reference, so only the ball is shown.
 
+## Addendum (2026-10-09, track A5: the cynosural field record)
+
+- A lit cynosural field has a `Deployed` record: the table `space.deployed` (migration 0004, kind `cyno_field`), written when the simulation says the field was lit
+  (`Deployed`, protocol 44) and read by the host on its own clock. `space.containers.sweep` owns the record's expiry: `ExpireDeployedAsync` runs each record's
+  kind entry (one entry per kind) and forgets the record.
+- A restart: when a ship comes into the field's system, a record whose time is not up is put back in space (`RestoreDeployedAsync`) with the id it had and what
+  is left of its life. A record whose time is up is left to the sweep.
+- The simulation still ends the field at its own end time (B7's sim-timed deployable), so the field's `RemoveBalls` is unchanged. Decision 3 above asks that the
+  simulation not decide expiry; for the field the end is kept in the simulation for this track, because B7's end-of-life behaviour is tested and the sweep may
+  run up to 30 s after it. The sweep's `RemoveDeployed` then finds the field gone and does nothing. Recorded in DEVIATIONS "Track A5: the cynosural field record".
+- Probes, bombs and the lance beacon stay simulation-only, as the addenda above say. Mobile warp disruptors are still not deployable (see TODO section 23).

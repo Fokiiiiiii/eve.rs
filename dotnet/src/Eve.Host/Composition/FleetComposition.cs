@@ -179,7 +179,8 @@ internal sealed partial class CharacterServicesComposition
                     ADD COLUMN IF NOT EXISTS ship_type_id bigint;
                 """),
             Eve.Services.Space.FleetStore.FleetFinderAllowedEntitiesMigration,
-            Eve.Services.Space.FleetStore.FleetFinderAdvertPayloadMigration
+            Eve.Services.Space.FleetStore.FleetFinderAdvertPayloadMigration,
+            Eve.Services.Space.FleetStore.FleetJoinRequestProfileMigration
         ], CancellationToken.None);
         fleetStore = new Eve.Services.Space.FleetStore(source, fleetSchema);
         // the jump drive to a fleet's cynosural field reads the fleets, so it is made after them (the space simulation is set up before the fleets)

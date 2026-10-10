@@ -290,7 +290,8 @@ private readonly Dictionary<long, ClientSession> _fleetSessions = new();
                     ADD COLUMN IF NOT EXISTS ship_type_id bigint;
                 """),
             Eve.Services.Space.FleetStore.FleetFinderAllowedEntitiesMigration,
-            Eve.Services.Space.FleetStore.FleetFinderAdvertPayloadMigration
+            Eve.Services.Space.FleetStore.FleetFinderAdvertPayloadMigration,
+            Eve.Services.Space.FleetStore.FleetJoinRequestProfileMigration
         ], CancellationToken.None);
         var catalog = CockroachCatalog(await CreationCatalog.LoadAsync(sde, Station));
         var creation = new CharacterCreation(

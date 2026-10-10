@@ -474,6 +474,13 @@ public Func<long, long, CancellationToken, Task<int>>? SkillLevelOfCharacter { g
                 {
                     await space.WarpAsync(session, targetId, range, call.Cancellation);
                 }
+                if (recipient.Member.CharacterId != characterId)
+                {
+                    List<System.Collections.Generic.KeyValuePair<PyValue, PyValue>> warpInfo = [];
+                    if (targetId > 0)
+                        warpInfo.Add(new(new PyStr("celestialID"), new PyLong(targetId)));
+                    session.SendNotification("OnRemoteMessage", "clientID", new PyStr("FleetWarp"), new PyDict(warpInfo));
+                }
             }
             catch (MachoWrappedException error) when (recipient.Member.CharacterId == characterId)
             {

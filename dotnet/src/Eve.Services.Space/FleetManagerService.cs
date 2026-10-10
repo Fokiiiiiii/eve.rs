@@ -144,36 +144,54 @@ public sealed partial class FleetManagerService(
     {
         var oldMembers = before.Members.ToDictionary(member => member.CharacterId);
         var newMembers = after?.Members.ToDictionary(member => member.CharacterId) ?? [];
+        ClientSession? LiveSession(long characterId)
+        {
+            var session = characterId == CharacterId(issuer) ? issuer : sessionOf?.Invoke(characterId);
+            return session is not null && CharacterId(session) == characterId ? session : null;
+        }
+
         var recipients = new System.Collections.Generic.HashSet<ClientSession> { issuer };
         foreach (var member in before.Members.Concat(after?.Members ?? []))
-        {
-            if (sessionOf?.Invoke(member.CharacterId) is { } session && session.CharacterId == member.CharacterId)
+            if (LiveSession(member.CharacterId) is { } session)
                 recipients.Add(session);
-        }
-        foreach (var id in oldMembers.Keys.Union(newMembers.Keys))
+
+        var changes = oldMembers.Keys.Union(newMembers.Keys).Select(characterId =>
         {
-            oldMembers.TryGetValue(id, out var oldMember);
-            newMembers.TryGetValue(id, out var newMember);
-            if (oldMember == newMember) continue;
-            var oldOptOuts = oldMember is null ? PyNone.Instance : MemberOptOuts(oldMember);
-            var newOptOuts = newMember is null ? PyNone.Instance : MemberOptOuts(newMember);
+            oldMembers.TryGetValue(characterId, out var oldMember);
+            newMembers.TryGetValue(characterId, out var newMember);
+            return (CharacterId: characterId, Old: oldMember, New: newMember);
+        }).Where(change => change.Old != change.New).ToArray();
+
+        foreach (var change in changes)
+        {
             foreach (var recipient in recipients)
             {
-                if (recipient.CharacterId is not { } recipientId ||
-                    recipientId != id && !newMembers.ContainsKey(recipientId)) continue;
-                recipient.SendNotification("OnFleetMemberChanged", "fleetid",
-                    new PyLong(id), new PyLong(fleetId),
-                    NullableLong(oldMember?.WingId), NullableLong(oldMember?.SquadId),
-                    NullableInt(oldMember?.Role), NullableInt(oldMember?.Job), oldOptOuts,
-                    NullableLong(newMember?.WingId), NullableLong(newMember?.SquadId),
-                    NullableInt(newMember?.Role), NullableInt(newMember?.Job), newOptOuts,
-                    after?.Members.Count == 1 ? PyBool.True : PyBool.False);
+                var recipientId = CharacterId(recipient);
+                if (recipientId <= 0 || !oldMembers.ContainsKey(recipientId) && !newMembers.ContainsKey(recipientId))
+                    continue;
+                if (change.New is null)
+                    recipient.SendNotification("OnFleetLeave", "fleetid", new PyLong(change.CharacterId));
+                else
+                    recipient.SendNotification("OnFleetMemberChanged", "fleetid",
+                        new PyLong(change.CharacterId), new PyLong(fleetId),
+                        NullableLong(change.Old?.WingId), NullableLong(change.Old?.SquadId),
+                        NullableInt(change.Old?.Role), NullableInt(change.Old?.Job),
+                        change.Old is null ? PyNone.Instance : MemberOptOuts(change.Old),
+                        NullableLong(change.New.WingId), NullableLong(change.New.SquadId),
+                        NullableInt(change.New.Role), NullableInt(change.New.Job), MemberOptOuts(change.New),
+                        after?.Members.Count == 1 ? PyBool.True : PyBool.False);
             }
         }
-        if (after is not null)
-            foreach (var member in after.Members)
-                if (sessionOf?.Invoke(member.CharacterId) is { } session && session.CharacterId == member.CharacterId)
-                    SetSession(session, fleetId, member);
+
+        foreach (var change in changes)
+        {
+            if (change.Old is null || change.New is null ||
+                change.Old.WingId == change.New.WingId &&
+                change.Old.SquadId == change.New.SquadId &&
+                change.Old.Role == change.New.Role)
+                continue;
+            LiveSession(change.CharacterId)?.SendNotification("OnFleetMove", "fleetid");
+        }
     }
 
     private static PyValue MemberOptOuts(FleetMemberSnapshot member) => Py.KeyVal([
@@ -209,20 +227,13 @@ public sealed partial class FleetManagerService(
     private static void SetWatchlist(ClientSession session, string key, IReadOnlyList<long> ids) =>
         session.Set(key, new PyList(ids.Select(id => (PyValue)new PyLong(id)).ToArray()));
 
-    private static void SetSession(ClientSession session, long fleetId, FleetMemberSnapshot member)
-    {
-        session.Set("fleetid", new PyLong(fleetId));
-        session.Set("fleetrole", new PyInt(member.Role));
-        session.Set("wingid", new PyLong(member.WingId));
-        session.Set("squadid", new PyLong(member.SquadId));
-    }
-
     private static void ClearSession(ClientSession session)
     {
-        session.Set("fleetid", PyNone.Instance);
-        session.Set("fleetrole", PyNone.Instance);
-        session.Set("wingid", PyNone.Instance);
-        session.Set("squadid", PyNone.Instance);
+        session.Change(
+            ("fleetid", PyNone.Instance),
+            ("fleetrole", PyNone.Instance),
+            ("wingid", PyNone.Instance),
+            ("squadid", PyNone.Instance));
     }
 
     private static long CharacterId(ClientSession session) => session.CharacterId ?? session.GetInt("charid") ?? 0;

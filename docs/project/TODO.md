@@ -351,7 +351,6 @@ Known failures in the .NET runs of 2026-10-09 (4,244 tests). The first full run 
 |---|---|
 | `Eve.Corporations.Tests` `Character_login_restores_direct_war_faction_then_corporation_faction` (CorpWarFaction) | fails |
 | `Eve.Services.Tests` `SessionChangeTests.The_client_visible_set_is_the_reference_list` (SessionChange) | fails |
-| `Eve.Services.Space.Tests` `Fleet_finder_advert_operations_match_evejs_arguments_and_persist_the_full_payload` | fails |
 | `Eve.Services.Space.Tests` `When_a_session_ends_in_space_the_simulation_is_told_and_the_ship_is_put_back_in_the_hangar` | fails |
 | ConfigPrime, SessionEndsHangar, capsule death | not failing in this run |
 | Safe logoff: `A_movement_command_aborts_a_running_safe_logoff`, `Safe_logoff_closes_the_space_session_after_its_timer` and `The_module_orders_of_a_pilot_are_asked_one_at_a_time` (final run); `Aborting_safe_logoff_keeps_the_session_and_ship_in_space` (one rerun). Flaky: each passed when rerun alone | flaky |

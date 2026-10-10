@@ -70,6 +70,7 @@ private readonly Dictionary<long, ClientSession> _fleetSessions = new();
         _schemas = [$"pc_{suffix}", $"pi_{suffix}", $"ps_{suffix}", $"pw_{suffix}", $"pf_{suffix}", $"pn_{suffix}", $"pp_{suffix}", $"pd_{suffix}", $"pe_{suffix}"];
         Events = new Eve.Events.EventBus(source, new Eve.Scheduler.DurableScheduler(source, () => Now, null, _schemas[7]), null, _schemas[8]);
         SpaceItems = new PgSpaceItemStore(source, _schemas[6]);
+        Deployed = new Eve.Ships.PgDeployedStore(source, _schemas[6]);
         Characters = new PgCharacterStore(source, _schemas[0]);
         Items = new PgItemStore(source, _schemas[1]);
         Skills = new PgSkillStore(source, _schemas[2]);
@@ -85,7 +86,7 @@ private readonly Dictionary<long, ClientSession> _fleetSessions = new();
         var npcAuthorityOf = npcAuthority ?? Eve.Npc.NpcAuthority.Load();
         Space = new SpaceSessions(Sim, Ships, statics, stations, systems, () => Now, Log.Add, protection, jumpCloak, localTimers) { Registry = Registry, RookieShipOfRace = race => catalog.Race(race)?.ShipTypeId, Npcs = new Eve.Npc.NpcSelector(npcAuthorityOf), NpcWrecks = npcLoot ? new NpcWrecks(_ => LootTable, () => Task.FromResult(new Eve.Npc.NpcLoot(LootPool)), Ships, () => 0) : null, BeltRats = beltRats is null ? null : new Eve.Npc.BeltRats(npcAuthorityOf, beltRats, type => Eve.Npc.NpcHull.HasHitPoints(statics.Type(type))) };
         Space.UseBounties(Bounties);
-        Containers = new SpaceContainers(Sim, Ships, Items, SpaceItems, new Eve.Ships.PgWorkCycleLedger(source, _schemas[6]), new EventBusFacts(Events), statics, Space, () => Now, Log.Add);
+        Containers = new SpaceContainers(Sim, Ships, Items, SpaceItems, new Eve.Ships.PgWorkCycleLedger(source, _schemas[6]), new EventBusFacts(Events), statics, Space, () => Now, Log.Add, deployed: Deployed);
         Drones = new SpaceDrones(Sim, Ships, statics, Space, () => Now, Log.Add);
         Inventory = new InvBrokerService(Items, new ItemTypeCatalog(new SdeReader(source)), Stations, Ships, statics, () => Now, Containers, Drones);
         Ship = new ShipService(Space, () => ClockMs, Containers, Drones);
@@ -148,6 +149,9 @@ private readonly Dictionary<long, ClientSession> _fleetSessions = new();
     public SpaceContainers Containers { get; }
 
     public PgSpaceItemStore SpaceItems { get; }
+
+    /// <summary>The records of the deployables the host keeps (the cynosural fields), in the same schema as the space items.</summary>
+    public Eve.Ships.PgDeployedStore Deployed { get; }
 
     public BeyonceService Beyonce { get; }
 

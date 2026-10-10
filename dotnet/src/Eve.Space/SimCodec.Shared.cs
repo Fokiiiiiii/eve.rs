@@ -73,6 +73,11 @@ public const byte UpdateEffect = 61;
 
         /// <summary>The timed buffs of a ship of this session (protocol 43, track C6), host to simulation.</summary>
         public const byte BuffState = 62;
+        public const byte Deployed = 63;
+        public const byte RemoveDeployed = 64;
+        public const byte PlaceProbe = 65;
+        public const byte RemoveProbe = 66;
+
     }
 
     private ref struct Reader(ReadOnlyMemory<byte> data)

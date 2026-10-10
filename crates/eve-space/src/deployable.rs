@@ -48,6 +48,8 @@ pub enum Role {
     Bomb { kind: BombKind, blast_radius: f64, damage: Damage, ecm: [f64; 4], neutralize: f64 },
     /// A cynosural field (the field types of the generators, group 2020 or 897): it lives until its lifetime is up, and does nothing else. Lit where its ship is.
     CynoField,
+    /// A scanner probe the host launched (protocol 45): a ball in space that does nothing; the host recalls it or its time is up.
+    ScanProbe,
     /// A lance's beacon (EVE.js `spawnLanceBeacon`, protocol 39): a transient container the beam is drawn to. It does nothing but exist; it is taken out when
     /// its strike's effect ends (or stops), or when its lifetime is up.
     Beacon,
@@ -96,6 +98,7 @@ fn release_actions(stamp: u32, deployable: &Deployable) -> Result<Vec<Value>, ev
         Role::Bomb { .. } => (Kind::Missile, LegacyMode::Stop),
         Role::Beacon => (Kind::Container, LegacyMode::Stop),
         Role::CynoField => (Kind::Other, LegacyMode::Stop),
+        Role::ScanProbe => (Kind::Other, LegacyMode::Stop),
     };
     let category = match deployable.role {
         Role::Beacon => BEACON_CATEGORY,
@@ -147,7 +150,12 @@ impl Scene {
         lifetime_ms: f64,
         at: i64,
     ) -> Vec<Out> {
-        self.place_deployable(session, effect, spec, role, None, lifetime_ms, at).1
+        let is_field = role == Role::CynoField;
+        let (id, mut out) = self.place_deployable(session, effect, spec, role, None, lifetime_ms, at);
+        if is_field {
+            out.extend(self.field_lit(id, session, at));
+        }
+        out
     }
 
     /// A lance's beacon is put in space at `offset` from the ship that runs its strike (the strike's `beacon`), for the life of the effect (`lifetime_ms`).
@@ -222,7 +230,7 @@ impl Scene {
         let owner_id = self.combat_owner(session);
         let deployable_id = DEPLOYABLE_ID_BASE + self.deployable_sequence as i64;
         self.deployable_sequence += 1;
-        let mut deployable = Deployable {
+        let deployable = Deployable {
             id: deployable_id,
             spec,
             role,
@@ -237,15 +245,142 @@ impl Scene {
             module_type: effect.module_type,
             watchers: BTreeSet::new(),
         };
-        let watchers = self.missile_audience(position);
+        (deployable_id, self.insert_deployable(deployable, at))
+    }
+
+    /// Puts a made deployable into the scene: it is kept, and those who can see its place are told of it.
+    fn insert_deployable(&mut self, mut deployable: Deployable, at: i64) -> Vec<Out> {
+        let watchers = self.missile_audience(deployable.position);
         let stamp = self.next_stamp(at);
         let mut out = Vec::new();
         if let Ok(actions) = release_actions(stamp, &deployable) {
             out.extend(watchers.iter().map(|watcher| Self::update(*watcher, actions.clone())));
         }
         deployable.watchers = watchers.into_iter().collect();
-        self.deployables.insert(deployable_id, deployable);
-        (deployable_id, out)
+        self.deployables.insert(deployable.id, deployable);
+        out
+    }
+
+    /// The record of a field that was lit by `session`'s ship at `at`, for the host (`DeployedLit`): its life is what is left of it at `at`, the whole of it.
+    fn field_lit(&self, deployable_id: i64, session: SessionId, at: i64) -> Vec<Out> {
+        let Some(d) = self.deployables.get(&deployable_id) else { return Vec::new() };
+        let lifetime_ms = (d.ends_at - at) as f64 / (TICKS_PER_SECOND as f64 / 1000.0);
+        let placement = crate::link::DeployedPlacement {
+            solar_system_id: self.solar_system_id(),
+            deployable_id: d.id,
+            name: d.spec.name.clone(),
+            type_id: d.spec.charge_type_id,
+            group_id: d.spec.group_id,
+            position: [d.position.x, d.position.y, d.position.z],
+            radius: d.spec.radius,
+            owner_id: d.owner_id,
+            corporation_id: d.corporation_id,
+            alliance_id: d.alliance_id,
+            ship_id: d.ship_id,
+            lifetime_ms,
+        };
+        vec![Out::DeployedLit { session, placement: Box::new(placement) }]
+    }
+
+    /// A cynosural field the host keeps a record of is put back in space after a restart: with the id it had, and what is left of its life. It is
+    /// given once (a field already in the scene is left as it is) and one with no life left is not put back.
+    /// A scanner probe the host launched is put in space where it is (protocol 45). It stays until the host takes it out: its end is the host's, not the
+    /// simulation's, so its end time is never reached. Given once: a probe already in space is left as it is.
+    pub(crate) fn place_probe(&mut self, placement: crate::link::ProbePlacement, now: i64) -> Vec<Out> {
+        if self.deployables.contains_key(&placement.probe_id) {
+            return Vec::new();
+        }
+        let [x, y, z] = placement.position;
+        let deployable = Deployable {
+            id: placement.probe_id,
+            spec: Spec {
+                charge_type_id: placement.type_id,
+                group_id: placement.group_id,
+                name: placement.name,
+                radius: placement.radius,
+            },
+            role: Role::ScanProbe,
+            position: Vec3::new(x, y, z),
+            ends_at: i64::MAX,
+            launcher: 0,
+            ship_id: placement.ship_id,
+            owner_id: placement.owner_id,
+            corporation_id: placement.corporation_id,
+            alliance_id: placement.alliance_id,
+            module_id: 0,
+            module_type: 0,
+            watchers: BTreeSet::new(),
+        };
+        self.insert_deployable(deployable, now)
+    }
+
+    /// The host takes a scanner probe out of space: it is removed and those who see it are told it is gone. Only a probe is taken this way.
+    pub(crate) fn remove_probe(&mut self, probe_id: i64, at: i64) -> Vec<Out> {
+        if !matches!(self.deployables.get(&probe_id), Some(d) if d.role == Role::ScanProbe) {
+            return Vec::new();
+        }
+        let Some(deployable) = self.deployables.remove(&probe_id) else { return Vec::new() };
+        let stamp = self.next_stamp(at);
+        let actions = vec![payload::remove_ships(stamp, [deployable.id])];
+        deployable
+            .watchers
+            .iter()
+            .filter(|watcher| self.pilots.get(watcher).is_some_and(|pilot| pilot.bound))
+            .map(|watcher| Self::update(*watcher, actions.clone()))
+            .collect()
+    }
+
+    pub(crate) fn restore_field(&mut self, placement: crate::link::DeployedPlacement, now: i64) -> Vec<Out> {
+        let lifetime_ms = placement.lifetime_ms;
+        if !lifetime_ms.is_finite()
+            || lifetime_ms <= 0.0
+            || self.deployables.contains_key(&placement.deployable_id)
+        {
+            return Vec::new();
+        }
+        if placement.deployable_id >= DEPLOYABLE_ID_BASE {
+            let next = (placement.deployable_id - DEPLOYABLE_ID_BASE) as u64 + 1;
+            self.deployable_sequence = self.deployable_sequence.max(next);
+        }
+        let [x, y, z] = placement.position;
+        let deployable = Deployable {
+            id: placement.deployable_id,
+            spec: Spec {
+                charge_type_id: placement.type_id,
+                group_id: placement.group_id,
+                name: placement.name,
+                radius: placement.radius,
+            },
+            role: Role::CynoField,
+            position: Vec3::new(x, y, z),
+            ends_at: now + ticks(lifetime_ms),
+            launcher: 0,
+            ship_id: placement.ship_id,
+            owner_id: placement.owner_id,
+            corporation_id: placement.corporation_id,
+            alliance_id: placement.alliance_id,
+            module_id: 0,
+            module_type: 0,
+            watchers: BTreeSet::new(),
+        };
+        self.insert_deployable(deployable, now)
+    }
+
+    /// The host takes a cynosural field out of space (its record's time is up): it is removed and those who see it are told it is gone. Only a field
+    /// is taken this way; anything else, or a field not in space, is left alone.
+    pub(crate) fn remove_field(&mut self, deployable_id: i64, at: i64) -> Vec<Out> {
+        if !matches!(self.deployables.get(&deployable_id), Some(d) if d.role == Role::CynoField) {
+            return Vec::new();
+        }
+        let Some(deployable) = self.deployables.remove(&deployable_id) else { return Vec::new() };
+        let stamp = self.next_stamp(at);
+        let actions = vec![payload::remove_ships(stamp, [deployable.id])];
+        deployable
+            .watchers
+            .iter()
+            .filter(|watcher| self.pilots.get(watcher).is_some_and(|pilot| pilot.bound))
+            .map(|watcher| Self::update(*watcher, actions.clone()))
+            .collect()
     }
 
     /// The deployables whose lifetime is up at `now` end, in the order they were released: a probe is taken out of the scene, a bomb goes off where it is
@@ -417,7 +552,7 @@ impl Scene {
                 Role::WarpSource { range } => {
                     deployable.ends_at > now && distance(position, deployable.position) <= range
                 }
-                Role::Bomb { .. } | Role::Beacon | Role::CynoField => false,
+                Role::Bomb { .. } | Role::Beacon | Role::CynoField | Role::ScanProbe => false,
             })
     }
 }

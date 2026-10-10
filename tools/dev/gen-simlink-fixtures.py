@@ -17,7 +17,7 @@ KINDS = {"Hello": 1, "HelloAck": 2, "Enter": 3, "Leave": 4, "Bind": 5, "UpdateSt
          "Destroyed": 21, "Spawn": 22, "SpawnReply": 23, "Destroy": 24, "Respawn": 25, "PlaceWreck": 26, "ChargeSpent": 27,
          "PlaceContainer": 28, "ContainerPlaced": 29, "ChangeWreck": 30, "RemoveWreck": 31, "Measured": 32,
          "AdjustCharge": 33, "ChargeAdjusted": 34, "Arrived": 35, "LaunchDrone": 36, "DroneCommand": 37, "DroneResults": 38,
-         "DroneScooped": 39, "DroneReleased": 40, "ModuleWorkCycle": 51, "ModuleWorkResult": 52, "ModuleEnded": 53, "LaunchFighter": 54, "FighterOrder": 55, "FighterResults": 56, "FighterLanded": 57, "FighterReleased": 58, "FighterGotoPoint": 59, "FighterSize": 60, "UpdateEffect": 61, "BuffState": 62}
+         "DroneScooped": 39, "DroneReleased": 40, "ModuleWorkCycle": 51, "ModuleWorkResult": 52, "ModuleEnded": 53, "LaunchFighter": 54, "FighterOrder": 55, "FighterResults": 56, "FighterLanded": 57, "FighterReleased": 58, "FighterGotoPoint": 59, "FighterSize": 60, "UpdateEffect": 61, "BuffState": 62, "Deployed": 63, "RemoveDeployed": 64, "PlaceProbe": 65, "RemoveProbe": 66}
 
 
 def s(text):  # u16 length + UTF-8
@@ -385,6 +385,18 @@ def build(m):
         return frame(k, u64(m["sessionId"]) + i64(m["wreckId"]) + bytes([1 if m["isEmpty"] else 0]))
     if k == "RemoveWreck":
         return frame(k, i64(m["wreckId"]) + struct.pack("<i", m["effect"]))
+    if k == "Deployed":
+        return frame(k, struct.pack("<i", m["solarSystemId"]) + i64(m["deployableId"]) + s(m["typeName"])
+                     + struct.pack("<ii", m["typeId"], m["groupId"]) + struct.pack("<3d", *m["position"]) + struct.pack("<d", m["radius"])
+                     + i64(m["ownerId"]) + struct.pack("<ii", m["corporationId"], m["allianceId"]) + i64(m["shipId"]) + struct.pack("<d", m["lifetimeMs"]))
+    if k == "RemoveDeployed":
+        return frame(k, i64(m["deployableId"]))
+    if k == "PlaceProbe":
+        return frame(k, i64(m["probeId"]) + struct.pack("<i", m["solarSystemId"]) + s(m["typeName"]) + struct.pack("<ii", m["typeId"], m["groupId"])
+                     + struct.pack("<3d", *m["position"]) + struct.pack("<d", m["radius"]) + i64(m["ownerId"])
+                     + struct.pack("<ii", m["corporationId"], m["allianceId"]) + i64(m["shipId"]))
+    if k == "RemoveProbe":
+        return frame(k, i64(m["probeId"]))
     if k == "Measured":
         return frame(k, u64(m["sessionId"]) + bytes([m["command"]]) + (bytes([1]) + struct.pack("<d", m["distance"]) if m.get("distance") is not None else bytes([0])))
     if k == "Spawn":
@@ -925,6 +937,20 @@ valid = [
     {"name": "wreck with nothing to take", "kind": "ChangeWreck", "sessionId": "1790646377000015", "wreckId": "9988400002417", "isEmpty": True},
     {"name": "can taken out of space with the destruction effect", "kind": "RemoveWreck", "wreckId": "9988400002948", "effect": 3},
     {"name": "wreck taken out of space without one", "kind": "RemoveWreck", "wreckId": "9988400002417", "effect": 0},
+    {"name": "cynosural field lit by a generator, told with its life", "kind": "Deployed", "solarSystemId": 30100032,
+     "deployableId": "4250000000000003", "typeName": "Cynosural Field", "typeId": 21094, "groupId": 2020,
+     "position": [311989835983.1308, -13069154020.916222, 156646308895.76187], "radius": 250.0, "ownerId": "1790646377000015",
+     "corporationId": 98000001, "allianceId": 0, "shipId": "9988400001943", "lifetimeMs": 600000.0},
+    {"name": "cynosural field put back after a restart, with what is left of its life", "kind": "Deployed", "solarSystemId": 30100032,
+     "deployableId": "4250000000000007", "typeName": "Cynosural Field", "typeId": 21094, "groupId": 2020,
+     "position": [311989835983.1308, -13069154020.916222, 156646308895.76187], "radius": 250.0, "ownerId": "1790646377000015",
+     "corporationId": 98000001, "allianceId": 0, "shipId": "9988400001943", "lifetimeMs": 120000.0},
+    {"name": "cynosural field taken out of space by the host", "kind": "RemoveDeployed", "deployableId": "4250000000000003"},
+    {"name": "scanner probe launched from a probe launcher and put in space", "kind": "PlaceProbe", "probeId": "990000000000001", "solarSystemId": 30100032,
+     "typeName": "Scanner Probe I", "typeId": 19415, "groupId": 479,
+     "position": [311989835983.1308, -13069154020.916222, 156646308895.76187], "radius": 40.0, "ownerId": "1790646377000015",
+     "corporationId": 98000001, "allianceId": 0, "shipId": "9988400001943"},
+    {"name": "scanner probe recalled by its pilot", "kind": "RemoveProbe", "probeId": "990000000000001"},
     {"name": "how far a can is", "kind": "Measured", "sessionId": "1790646377000015", "command": 20, "distance": 261.0},
     {"name": "how far a can that is not there is", "kind": "Measured", "sessionId": "1790646377000015", "command": 20, "distance": None},
     {"name": "destroy for nobody", "kind": "Destroy", "shipId": "4200000000000001", "characterId": "0",
@@ -1175,6 +1201,12 @@ invalid = [
      "hex": build(dict(named("module work cycle asking the fuel of a cycle"), miningAmountM3=20.0)).hex()},
     {"name": "module ended with an unknown reason", "reason": "bad-value",
      "hex": build(dict(named("module ended when its target is lost"), reason=9)).hex()},
+    {"name": "scanner probe with a radius that is negative", "reason": "bad-value",
+     "hex": build(dict(named("scanner probe launched from a probe launcher and put in space"), radius=-1.0)).hex()},
+    {"name": "cynosural field with no life left", "reason": "bad-value",
+     "hex": build(dict(named("cynosural field lit by a generator, told with its life"), lifetimeMs=-1.0)).hex()},
+    {"name": "cynosural field with a radius that is not a number", "reason": "bad-value",
+     "hex": build(dict(named("cynosural field lit by a generator, told with its life"), radius=float("nan"))).hex()},
     {"name": "warp probe with no lifetime", "reason": "bad-value",
      "hex": build(dict(named("activate an interdiction probe"), effect=dict(named("activate an interdiction probe")["effect"],
                        action=dict(named("activate an interdiction probe")["effect"]["action"], lifetimeMs=0.0)))).hex()},

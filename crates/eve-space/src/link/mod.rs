@@ -36,7 +36,7 @@ use crate::weapons::{Aoe, Arc, Charge, Spool, Turret};
 
 use crate::wreck::WreckKind;
 
-pub const PROTOCOL_VERSION: u16 = 43;
+pub const PROTOCOL_VERSION: u16 = 45;
 
 /// The message kinds.
 pub mod kind;
@@ -118,6 +118,41 @@ pub struct WreckPlacement {
     pub credit: Credit,
     /// Nothing in it to take.
     pub is_empty: bool,
+}
+
+/// A deployable the host keeps a record of (a cynosural field, protocol 44): where it lies, whose it is and how long it lives from now. The simulation
+/// says so when it is lit, and the host sends the same message back to put it in space again after a restart (with what is left of its life).
+#[derive(Debug, Clone, PartialEq)]
+pub struct DeployedPlacement {
+    pub solar_system_id: i32,
+    pub deployable_id: i64,
+    pub name: String,
+    pub type_id: i32,
+    pub group_id: i32,
+    pub position: [f64; 3],
+    pub radius: f64,
+    pub owner_id: i64,
+    pub corporation_id: i32,
+    pub alliance_id: i32,
+    pub ship_id: i64,
+    pub lifetime_ms: f64,
+}
+
+/// A scanner probe the host launched and keeps the record of: its id, its type and group, where it is and the radius of its ball. The simulation puts it
+/// in space as a ball (`AddBalls2`) for those who see the place; it is never ended by the simulation (the host recalls it or its time is up).
+#[derive(Debug, Clone, PartialEq)]
+pub struct ProbePlacement {
+    pub probe_id: i64,
+    pub solar_system_id: i32,
+    pub name: String,
+    pub type_id: i32,
+    pub group_id: i32,
+    pub position: [f64; 3],
+    pub radius: f64,
+    pub owner_id: i64,
+    pub corporation_id: i32,
+    pub alliance_id: i32,
+    pub ship_id: i64,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -451,6 +486,18 @@ pub enum Message {
         wreck_id: i64,
         effect: i32,
     },
+    /// A cynosural field the host keeps a record of: the simulation says it was lit (`DeployedLit`), and the host puts it back in space after a restart.
+    Deployed(Box<DeployedPlacement>),
+    /// The host takes a cynosural field out of space when its record's time is up; a deployable that is not one, or is not in space, is left alone.
+    RemoveDeployed {
+        deployable_id: i64,
+    },
+    /// The host puts a scanner probe in space where it was launched (protocol 45).
+    PlaceProbe(Box<ProbePlacement>),
+    /// The host takes a scanner probe out of space (protocol 45); a deployable that is not a probe, or not in space, is left alone.
+    RemoveProbe {
+        probe_id: i64,
+    },
     DroneWorkResult {
         session_id: u64,
         drone_id: i64,
@@ -665,6 +712,10 @@ impl Message {
             Self::ChargeAdjusted { .. } => kind::CHARGE_ADJUSTED,
             Self::FighterGotoPoint { .. } => kind::FIGHTER_GOTO_POINT,
             Self::FighterSize { .. } => kind::FIGHTER_SIZE,
+            Self::Deployed(_) => kind::DEPLOYED,
+            Self::RemoveDeployed { .. } => kind::REMOVE_DEPLOYED,
+            Self::PlaceProbe(_) => kind::PLACE_PROBE,
+            Self::RemoveProbe { .. } => kind::REMOVE_PROBE,
         }
     }
 }

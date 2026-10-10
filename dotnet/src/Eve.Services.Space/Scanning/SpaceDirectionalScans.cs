@@ -43,7 +43,7 @@ public sealed class SpaceDirectionalScans
     private const byte KindWreck = 6;
     private const byte KindCelestial = 7;
 
-    /// <summary>The directional scan query on the simulation (command 28, protocol 53).</summary>
+    /// <summary>The directional scan query on the simulation (command 28, protocol 54).</summary>
     private const byte DirectionalScanCommand = 28;
 
     private readonly SpaceSessions _space;

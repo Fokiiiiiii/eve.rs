@@ -27,7 +27,7 @@ public sealed class SimLinkException(SimLinkError error, string message) : Excep
 /// </summary>
 public static partial class SimCodec
 {
-    public const ushort ProtocolVersion = 53;
+    public const ushort ProtocolVersion = 54;
     /// <summary>The largest frame either side accepts (1 MiB).</summary>
     public const int MaxFrame = 1 << 20;
 
@@ -155,7 +155,7 @@ public static partial class SimCodec
                     var session = r.U64();
                     var command = r.U8();
                     var count = r.U32();
-                    // each target is 47 bytes: an id, a kind, a type, a position, a radius and two flags (protocol 53)
+                    // each target is 47 bytes: an id, a kind, a type, a position, a radius and two flags (protocol 54)
                     if (count > r.Remaining / 47)
                     {
                         throw new SimLinkException(SimLinkError.Truncated, "the frame ends before the message does");

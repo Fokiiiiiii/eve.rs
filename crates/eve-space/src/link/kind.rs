@@ -75,7 +75,7 @@ pub const SET_DISRUPTOR_ACTIVE: u8 = 69;
 pub const PLACE_INHIBITOR: u8 = 70;
 /// The scan targets of a system, answered to the host's scan target query (command 27, protocol 52).
 pub const SCAN_TARGETS: u8 = 71;
-/// The things a directional scan can see in a cone of space, answered to command 28 (protocol 53).
+/// The things a directional scan can see in a cone of space, answered to command 28 (protocol 54).
 pub const DIRECTIONAL_TARGETS: u8 = 72;
 pub const BUFF_STATE: u8 = 62;
 pub const ECM_BURST: u8 = 67;

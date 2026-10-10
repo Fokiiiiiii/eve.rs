@@ -33,7 +33,7 @@ public sealed record CommandReply(bool Accepted, long At, string? Reason, double
     /// <summary>What the scene holds that a probe scan can find (command 27, protocol 52).</summary>
     public IReadOnlyList<SimScanTarget> ScanTargets { get; init; } = [];
 
-    /// <summary>What the scene has that a directional scan can see (command 28, protocol 53).</summary>
+    /// <summary>What the scene has that a directional scan can see (command 28, protocol 54).</summary>
     public IReadOnlyList<SimDirectionalTarget> DirectionalTargets { get; init; } = [];
 
     /// <summary>What each fighter squadron did with an order to fighters (<see cref="SimFighterResult.Reason"/> is empty for one that took it).</summary>

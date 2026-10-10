@@ -135,19 +135,21 @@ pub enum Command {
     /// The scan targets of the scene for a probe scan (host query, code 27, protocol 52): the ships and companions the pilot can see, and the deployables a
     /// probe can scan. A cloaked ship is not one; the pilot's own ship is not.
     ScanTargets,
-    /// The things a directional scan can see in the scene (host query, code 28, protocol 53); the host takes the cone out of them.
+    /// The things a directional scan can see in the scene (host query, code 28, protocol 54); the host takes the cone out of them.
     DirectionalScan,
     /// Jump through a stargate; `destination_gate` is the gate the client says it leads to (0 when it does not say).
     Jump {
         gate_id: i64,
         destination_gate: i64,
     },
-    /// Jump to a cynosural field lit in another system (code 24): the ship's drive spools for `spool_ms`, then the ship leaves for
-    /// `destination_system` and appears at the field `field_id` there ([`Scene::arrive`]).
+    /// Jump to a cynosural field lit in another system (code 26): the ship's drive spools for `spool_ms`, then the ship leaves for
+    /// `destination_system` and appears at the field `field_id` there ([`Scene::arrive`]). The activation takes `capacitor` of the ship's full
+    /// capacitor (the host's fraction: the hull's 95 % less the pilot's Jump Drive Operation), and is refused when the charge is short.
     CynoJump {
         field_id: i64,
         destination_system: i32,
         spool_ms: f64,
+        capacitor: f64,
     },
 }
 

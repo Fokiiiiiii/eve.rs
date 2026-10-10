@@ -2054,8 +2054,11 @@ fn lit_field_in(scene: &mut Scene, at: Vec3, now: i64) {
     assert!(scene.deployables.contains_key(&CYNO_FIELD), "the field is in space");
 }
 
+/// The jump as the host sends it: the hull's 95 % of the capacitor (SDE attribute 898), with no Jump Drive Operation.
+const JUMP_CAPACITOR: f64 = 0.95;
+
 fn cyno_jump(field_id: i64, destination_system: i32, spool_ms: f64) -> Command {
-    Command::CynoJump { field_id, destination_system, spool_ms }
+    Command::CynoJump { field_id, destination_system, spool_ms, capacitor: JUMP_CAPACITOR }
 }
 
 fn distance_between(a: Vec3, b: Vec3) -> f64 {
@@ -2087,6 +2090,36 @@ fn a_cyno_jump_leaves_when_its_spool_is_over_and_appears_on_the_ring_round_the_f
     let apart = distance_between(ship.position, field);
     assert!((apart - super::jump::CYNO_ARRIVAL_RADIUS).abs() < 1e-6, "{apart} m from the field");
     assert_eq!((ship.course, ship.speed_fraction), (Course::Stop, 0.0));
+}
+
+#[test]
+fn a_cyno_jump_takes_its_share_of_the_capacitor_when_the_drive_spools() {
+    let mut scene = scene_by_a_gate();
+    let destination = other_scene().solar_system_id();
+    let capacity = scene.pilots[&SESSION].modules.capacitor.as_ref().unwrap().capacity();
+    scene.pilots.get_mut(&SESSION).unwrap().modules.capacitor =
+        Some(crate::modules::Capacitor::filled(capacity, 55.25, 1.0, NOON));
+    let told = scene.command(SESSION, cyno_jump(CYNO_FIELD, destination, 300_000.0), NOON);
+    assert!(told.iter().any(|o| matches!(o, Out::Jumping { .. })), "the spool starts: {told:?}");
+    let left = scene.pilots[&SESSION].modules.capacitor.as_ref().unwrap().charge_at(NOON);
+    assert!((left - capacity * (1.0 - JUMP_CAPACITOR)).abs() < 1e-6, "{left} GJ left of {capacity}");
+}
+
+#[test]
+fn a_cyno_jump_is_refused_when_the_capacitor_cannot_pay_and_takes_nothing() {
+    let mut scene = scene_by_a_gate();
+    let destination = other_scene().solar_system_id();
+    let capacity = scene.pilots[&SESSION].modules.capacitor.as_ref().unwrap().capacity();
+    scene.pilots.get_mut(&SESSION).unwrap().modules.capacitor =
+        Some(crate::modules::Capacitor::filled(capacity, 55.25, 0.9, NOON));
+    let refused = scene.command(SESSION, cyno_jump(CYNO_FIELD, destination, 300_000.0), NOON);
+    assert!(
+        matches!(refused.as_slice(), [Out::Refused { command: 26, reason: "NOT_ENOUGH_CAPACITOR", .. }]),
+        "{refused:?}"
+    );
+    assert!(scene.due_jumps(NOON + seconds(400)).0.is_empty(), "a refused jump leaves nothing pending");
+    let left = scene.pilots[&SESSION].modules.capacitor.as_ref().unwrap().charge_at(NOON);
+    assert!((left - capacity * 0.9).abs() < 1e-6, "the charge is untouched: {left}");
 }
 
 #[test]

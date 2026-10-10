@@ -50,6 +50,7 @@ internal sealed partial class CharacterServicesComposition
             .. InventoryRpc(),
             .. EconomyRpc(),
             .. CorporationRpc(),
+            .. FittingRpc(),
             .. FleetRpc(),
             .. MailRpc(),
             .. RewardRpc(),

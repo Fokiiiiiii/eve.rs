@@ -375,20 +375,6 @@ public delegate ValueTask<IReadOnlyList<PyValue>> ReadCommunityFittingsCallback(
     ClientSession session,
     CancellationToken cancellationToken);
 
-[Service("corpFittingMgr")]
-public sealed partial class CorpFittingMgrService(ReadCommunityFittingsCallback? readCommunityFittings = null)
-{
-    [Method("GetCommunityFittings")]
-    public async ValueTask<PyValue> GetCommunityFittings(ServiceCall call)
-    {
-        call.Cancellation.ThrowIfCancellationRequested();
-        var fittings = readCommunityFittings is { } read
-            ? await read(call.Session, call.Cancellation).ConfigureAwait(false)
-            : [];
-        return new PyList([.. fittings]);
-    }
-}
-
 public sealed record CustomAgencyContentRequest(ClientSession Session, IReadOnlyList<PyValue> Arguments);
 
 public sealed record CustomAgencyProviderRpcCallbacks(

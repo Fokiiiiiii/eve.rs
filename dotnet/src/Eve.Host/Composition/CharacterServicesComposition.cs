@@ -153,6 +153,8 @@ internal sealed partial class CharacterServicesComposition
     private string corporationSchema = default!;
     private WalletTransactions economyWallets = default!;
     private WalletAnnouncer economyAnnouncer = default!;
+    private LoyaltyPointStore loyaltyPoints = default!;
+    private LoyaltyPointAnnouncer loyaltyAnnouncer = default!;
     private PersistenceInsuranceReadModel insuranceReadModel = default!;
     private PersistenceInsuranceWriteModel insuranceWriteModel = default!;
     private InsuranceService insuranceService = default!;

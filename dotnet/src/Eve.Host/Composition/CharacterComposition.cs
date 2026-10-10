@@ -129,6 +129,8 @@ internal sealed partial class CharacterServicesComposition
     {
         economyWallets = new WalletTransactions(source, walletSchema);
         economyAnnouncer = new WalletAnnouncer(economyWallets, characterSessions);
+        loyaltyPoints = new LoyaltyPointStore(source, walletSchema);
+        loyaltyAnnouncer = new LoyaltyPointAnnouncer(loyaltyPoints, characterSessions);
         insuranceReadModel = new PersistenceInsuranceReadModel(mailStore);
         insuranceWriteModel = new PersistenceInsuranceWriteModel(
             source, items, mailStore, mailStoreOwner.Fence, economyWallets, insuranceReadModel, now);

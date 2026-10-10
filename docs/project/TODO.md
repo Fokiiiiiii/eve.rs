@@ -714,8 +714,8 @@ Done (tests: `SiegeModuleTests`, `SiegeSpeedLockTests`, `ShipStanceSlimTests`, `
 - Corrected from section 30: the module fuel per cycle (713, 714) is built (`WORK_FUEL`), and the warp, dock and speed locks of a siege are dogma while the module runs. Section 30's "NOT BUILT" for the fuel is withdrawn.
 
 Open, each with its blocker:
-- NOT VERIFIED AT MODULE LEVEL: the triage and bastion numbers, the command burst's bonused buff values, the cloak's delay bonus and the covert cyno's duration bonus. The data path is in the code (the dogma world, the module's own attributes); a test per module needs the module fitted with its skills.
-- NOT BUILT: the blockade runner restrictions. The wiki names none for the ship (DEVIATIONS Track S2b).
+- Verified at module level in section 36 (triage, bastion, core, command burst, cloak, covert cyno).
+- Blockade runner: the wiki names no restriction, so none is built (DEVIATIONS Track S2b and S2c).
 - LIMITATION: the old stance of a switch after a restart is the current one (the custom info keeps only the current stance).
 - NOT RUN: the graphical client. The stance button in space, the speed of a siege-locked ship and the jump freighter's refusal text are not seen in the client.
 
@@ -766,4 +766,13 @@ Open, each with its blocker (the remaining increments):
 - Shortcut: a beacon that is lit before a restart is not told to its fleet again (as the field of track A6; the notice is sent when it anchors, not when a ship returns to the system).
 - NOT BUILT: a mobile inhibitor's effect on a beacon's activation (the 100 km refusal at anchoring).
 - NOT BUILT: the wormhole and Pochven rules (jumps into wormhole space and into Pochven; lighting in Pochven).
+- NOT RUN: the client.
+
+## 36. Track S2c: module bonuses tested at module level, the Crimewatch timer race (2026-10-10)
+
+Done (tests: `ModuleBonusTests` (PgFact: each module fitted with its skills at level five, started, its numbers compared with the SDE), `SiegeModuleTests`, `SpecialHullBonusTests`; Crimewatch `RuntimeTests.A_timer_that_runs_out...`; fit `RulesTests`; decisions and sources in DEVIATIONS "Track S2c").
+- The engine carried every tested bonus to the dogma world without a code change: the triage, bastion and capital industrial core locks and impedances, the Shield Command burst of a Command Destroyer (2059 x skill 37615) and of a Sleipnir (1924 x level five), the Covert Ops cloak of a Black Ops hull, and the covert cyno's duration.
+- A module that names both ship groups and ship types fits a hull of either (a command burst names both); it was refused when both lists were required.
+- Crimewatch timer test: the race was in the test. It waited for the attacker's session to have three packets and then read the victim's session, but the system flag reaches each in-space session in turn. The test now waits for each session's own packet and for the timers' next wait; a probe that pauses the attacker's third send fails the old test and passes the new one. Ten consecutive runs under a CPU burner are green.
+- The Blockade Runner: the wiki states no module restriction; none is built.
 - NOT RUN: the client.

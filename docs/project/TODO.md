@@ -846,8 +846,39 @@ Open after slice C:
 | OPEN | `SelectCharacterID` population check and the entry are not atomic (two selections into a full system can both pass) | DEVIATIONS, slice C |
 | OPEN | `populationCap` alternatives are the nearest systems by distance; the reference's neighbours (stargates) need a stargate table in the static data | static data (Slice B follow-up) |
 | OPEN | `nes_intro` service (the skip action) | storylines, later slice |
-| OPEN | Live suite isolation: the mailboxes live in the shared `gamestore.mail` table, which the live script does not scope to its scratch schemas; character ids restart each run, so a new character can inherit unread mail left by an earlier run (slice C saw eight bloodline failures, `unreadMailCount` 2 for 1; the table was backed up and its mailbox rows cleared) | live script (`tools/dev/run-eve-live.sh`) and the game store |
+| CLOSED (slice D) | Live suite isolation: the live script now gives the game store and the corporation, market, fleet, industry and asset-safety tables scratch schemas and drops them at its end; `LiveScriptIsolationTests` checks it (DEVIATIONS.md, "Station entry, account requests and the live suite (slice D)") | `tools/dev/run-eve-live.sh` |
 | OPEN | Entry path: the achievement answer `achievementTrackerMgr.GetCompletedAchievementsAndClientEventCount` is a hard-coded fixture payload (`LoginInitializationRpcServices.cs`, B2) and is sent at every character entry | achievements slice |
-| OPEN | Station entry: `map.GetStationInfo`, `stationSvc.GetStationItemBits`, `invbroker.GetItemDescriptor`, `station.GetGuests` (init-requirements #19-#21) | Slice D |
+| CLOSED (slice D) | Station entry: `map.GetStationInfo`, `stationSvc.GetStationItemBits`, `invbroker.GetItemDescriptor`, `station.GetGuests` (init-requirements #19-#21) are answered in the client's shapes and tested; `GetPaperdollState` now follows the stored appearance (sliceD-status.md) | Slice D |
 | BOUNDARY | `beyonce.GetFormations` (#23) and the space ballpark load; `dogmaIM` station and ship dogma locations (#22) | the ships / space track (other Claude) |
 | BOUNDARY | Docked-ship deferred change and fitting bootstrap: implemented in the entry hooks (`SpaceSessions`, `CharacterDogmaSync`); the ship state belongs to the ships track | ships track (other Claude) |
+
+
+## 41. Station entry, init services and account requests (slice D, 2026-10-10)
+
+Done in slice D (DEVIATIONS.md, "Station entry, account requests and the live suite (slice D, 2026-10-10)"; the ranked table is in the scratchpad `work/sliceD-status.md`):
+- Character logoff: `userSvc.UserLogOffCharacter` returns the character to the selection screen on the same connection
+  (it used to close the connection). `CharacterLogoffTests`; live `test_a_character_logs_off_to_the_selection_screen_and_selects_again`.
+- `charMgr.GetPaperdollState` follows the stored appearance (2 before a doll, 0 after). `CharacterInfoTests`.
+- `userSvc.CastUpvote`, `CastDownvote`, `ReportBot`, `ReportISKSpammer`, `ActivateCharacterReSculpt` and `kiringMgr.ActivateRedeemingCode` answer False (nothing is recorded). Tests updated.
+- The live suite isolates every schema the host reads (`LiveScriptIsolationTests`).
+- The 41 manifest pairs with no implementation: 3 `lookupSvc`, 2 `map` (incursions), 2 `taleMgr`, 2 `scanMgr`, the `paperDollServer` update, `station.GetGuests` and the `warsInfoMgr` methods are implemented and tested (the earlier static list missed them). The rest are structure and shipcaster methods (the other agent): see Open.
+
+Open after slice D:
+| Status | Item | Owner / where |
+|---|---|---|
+| OPEN | Reports: `ingamereport.*` (eight methods) and `eveguard_report.heartbeat_*` are answered and not kept (the reference keeps them in memory, lost at restart) | a support / report store (later slice) |
+| OPEN | Votes and reports: `CastUpvote`, `CastDownvote`, `ReportBot`, `ReportISKSpammer` answer False; nothing is recorded | a feedback and report store (later slice) |
+| OPEN | Re-sculpt: `ActivateCharacterReSculpt` answers False; the re-sculpt token and the paperdoll states 1 (re-sculpting) and 3 (full recustomizing) are not built | the character and items slices |
+| OPEN | Redeeming codes (`kiringMgr.ActivateRedeemingCode`) answer False: no code store | the store slice (S3) |
+| OPEN | EveGuard: `ShouldKickCheater` False, `GetEveGuardServerAddress` None; no EveGuard server | anti-cheat (later) |
+| OPEN | `bannedwords`: the reference's regular-expression list is empty here; no list source | owner decision |
+| OPEN | `alphaInjectorMgr.GetNextAvailableInjection` answers 0 (available now); the alpha injections are not recorded | skill trading |
+| OPEN | `contextualOfferMgr.Track*`, `localizationServer` and `communityTrackMgr` keep their state in memory only | the offers, content and community-track slices |
+| OPEN | `LPStoreMgr` answers no offers and refuses every take | the agents and loyalty track |
+| OPEN | Map reads with no data source: visits, history, loyalty by constellation, roaming weather, my extra map info, deadspace, factional warfare zones answer the empty shape | each owning track |
+| OPEN | `map.GetEdencomFortressSystems`, `GetEdencomMinorVictorySystems`, `GetTriglavianMinorVictorySystems`: the reference's constant lists (no SDE or state source; provenance not established) | content / factional warfare |
+| OPEN | `map.GetBeaconCount` answers an empty dictionary while the mobile cynosural beacons exist | the ships track (other agent) |
+| OPEN | `repairSvc` (repair quotes and repair in a station) is not registered; the repair shop's first use fails | the ships and modules track (other agent): it repairs item damage |
+| OPEN | `reprocessingSvc` (`GetStationEfficiencyForTypeID`, `GetCharRefiningYieldPercentageForType`, `Reprocess`) is not registered; the reprocessing window's first use fails | a reprocessing slice (inventory and SDE materials) |
+| OPEN | `structure*` and `shipCaster*`/`shipcasterTravelMgr`/`starterShipcasterTravelMgr` methods answer as stubs (no callbacks) | the other agent (structures and ships) |
+| OPEN | `paperDollServer` has a second, unregistered class (`Eve.Services.Core/CompatibilityRpcServices.cs`); the registered one is `Eve.Host/CharacterRpcServices.cs` | cleanup (no behaviour) |

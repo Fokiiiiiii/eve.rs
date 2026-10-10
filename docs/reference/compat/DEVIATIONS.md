@@ -1286,3 +1286,66 @@ Sources. The wiki: "Pochven" (https://wiki.eveuniversity.org/Pochven, fetched 20
   `loginRewardFacilities.get_my_clone_grade` (an int) are what `loginCampaignService.py` and `seasonalLoginCampaignService.py`
   read. The screen's call at `characterSelection.py:155` has no try, so a wrong shape would abort the screen's open; the answers
   are covered by `RewardsServiceTests`. Status: verified (slice C).
+
+## Station entry, account requests and the live suite (slice D, 2026-10-10)
+
+- **Logging off a character.** The reference's `userSvc.UserLogOffCharacter` disconnects the session's character
+  (`server/src/services/_shared/sessionDisconnect.js`, `disconnectCharacterSession`) and answers True. eve.rs did
+  the same with the wrong effect: it closed the whole connection, so the client lost its login instead of returning to
+  the selection screen (`eve/client/script/parklife/gameui.py:493-502`: `DoCharacterLogoff` activates the `charsel` view). The
+  character now leaves the game as it does on a change of character: every entry hook gives up its state (a pilot in
+  space, the guest entry, the dogma sync), `characters.last_logoff_at` is written, the character is no longer online,
+  and the session drops the attributes that selecting it set, in one session change. The connection stays open, and
+  the character can be selected again. The reference also persists the station and system from the session; eve.rs
+  does not rewrite them, because the ships code already writes them on every dock, undock and warp
+  (`CharacterShips.Space.cs`), so the stored state is the same. A session with no character is answered True, as the
+  reference answers. Status: decided (slice D). Tests: `CharacterLogoffTests` (PostgreSQL), live
+  `test_a_character_logs_off_to_the_selection_screen_and_selects_again`.
+- **Requests that nothing records answer False, not True.** `userSvc.CastUpvote`, `CastDownvote`, `ReportBot`,
+  `ReportISKSpammer` and `ActivateCharacterReSculpt` answered True without recording anything; `kiringMgr.ActivateRedeemingCode`
+  answered True for any code. eve.rs has no feedback, report, re-sculpt token or redeeming-code store, so none is
+  accepted: the answer is False. The client does not read the answer of the votes and reports (`customersatisficationcont.py:38`,
+  `infoContentBase.py:1690`, `chat_service.py:203`); the re-sculpt activation ignores it too (`menuFunctions.py:390-391`),
+  so a re-sculpt is not offered as done. Status: open until the stores exist (TODO section 41).
+- **The paperdoll state follows the stored appearance.** `charMgr.GetPaperdollState` answered 0 for every character. The
+  reference answers 2 (no existing customization) until a doll is stored, then 0 (`paperDollPayloads.js`,
+  `resolvePaperDollState`). The client reads the state at station entry to ask about a recustomization
+  (`gameui.py:785-808`), so the value now comes from `characters.AppearanceAsync`. States 1 (re-sculpting) and 3 (full
+  recustomizing) need the re-sculpt token and are not reported. Tests: `The_paperdoll_state_follows_the_stored_appearance_of_the_character`.
+- **In-game reports and EveGuard heartbeats are not kept.** `ingamereport.*` (eight report methods) and
+  `eveguard_report.heartbeat_*` answer None and keep nothing. The reference keeps both in an in-memory list that is lost at
+  restart (`ingamereportService.js:61-80`, `eveguardReportService.js:15-31`; the list is read only
+  by the reference's tests). The client ignores the answers (`eve/client/script/ui/shared/zhReport/reportSvc.py`,
+  `serenity/eveguard/client/eveguard_service.py:96-131`). Status: open (a report store; TODO section 41).
+- **Anti-cheat and region settings answer the state that exists.** `kiringMgr.ShouldKickCheater` is False and
+  `GetEveGuardServerAddress` is None: no EveGuard server runs, so nothing is kicked. `IsMonochromeStyleEnabled` is False
+  (the account's style setting is not stored; the reference's default). Status: decided; revisit with the EveGuard and
+  account-settings slices.
+- **Banned words.** `bannedwords.fetch_regexes` answers an empty list and the checks answer None. The reference checks
+  against a list of regular expressions that it configures in memory and that is empty by default
+  (`bannedwordsService.js:98-126`); with the empty list both answer the same. eve.rs has no source for the list, so no
+  word is refused. Status: open (a configured list is the owner's decision).
+- **Alpha injection, offers, localization and community tracks.** `alphaInjectorMgr.GetNextAvailableInjection` answers 0
+  (the next alpha injection is available now): the reference computes it from the account's injections
+  (`skillTradingRuntime.js`), which eve.rs does not record. `contextualOfferMgr.Track*` keeps its events in memory; no
+  offer is served by eve.rs, so no tracking call is made. `localizationServer.UpdateLocalizationQAWrap` and
+  `ReloadFSDPickle` change only in-process state. `communityTrackMgr` keeps its instances in memory (the community track
+  state is not persisted). Status: open, each with its owner in TODO section 41.
+- **Loyalty point store.** `LPStoreMgr` answers no offers and refuses every take (False). The reference's offers come from
+  the loyalty point data that eve.rs does not have yet. Status: open (the agents and loyalty track).
+- **Map reads without a data source.** `map.GetSolarSystemVisits`, `GetHistory`, `GetConstellationLPData`,
+  `GetAllRoamingWeatherSystems`, `GetMyExtraMapInfo`, `GetMyExtraMapInfoAgents`, `GetDeadspaceAgentsMap`,
+  `GetDeadspaceComplexMap` and `GetFacWarZoneInfo` answer the reference's empty shape (a rowset, a dict, None, or the
+  faction id asked for with no upgrade levels): eve.rs has no visit, statistics, loyalty, weather, deadspace or
+  factional-warfare state. The per-system edencom and triglavian lists (`GetEdencomFortressSystems`,
+  `GetEdencomMinorVictorySystems`, `GetTriglavianMinorVictorySystems`) are the reference's constant lists; the SDE does
+  not carry them and no state produces them. `map.GetBeaconCount` answers an empty dictionary, although the cynosural
+  beacons of track A9 exist: the count belongs to the ships track (the other agent). Status: each open (TODO section 41).
+- **Incursions and anomalies come from the content state.** `map.GetIncursionGlobalReport`, `map.GetSystemsInIncursions`,
+  `taleMgr.*` and `scanMgr.*` read the content instances of kind `incursion` and `anomaly` (`PersistenceIncursionAnomalyReadModel`).
+  With none seeded, the answers are the empty contract shapes (an empty list, an empty rowset, an empty tale list).
+  Incursions are not simulated yet; the content slice that seeds them feeds these answers.
+- **Live suite isolation.** The live run kept the game store (`gamestore`, which holds the mailboxes), and the corporation,
+  market, fleet, industry and asset-safety tables, in the shared default schemas. Each run now gets its own scratch
+  schema for each of them, and the script drops them at its end (`tools/dev/run-eve-live.sh`). `LiveScriptIsolationTests`
+  checks that every schema variable the host reads is scratch in the script and dropped in its cleanup. Status: done.

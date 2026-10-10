@@ -758,8 +758,12 @@ Increment 1, done (tests: `CynoJumpHostTests`: A_revelation_jumps_to_an_anchored
 - A Titan bridge goes to a standard field or a beacon; a covert beacon is a covert field for the cyno rule, so only a Black Ops takes it.
 - A covert bridge and a Black Ops conduit take a beacon of any kind.
 
+Increment 2, done (tests: `CynoJumpHostTests`: A_beacon_that_anchors_is_told_to_its_fleet..., A_titan_bridge_tells_its_opener...; decisions in DEVIATIONS "Track A8c"):
+- A beacon that anchors is told to its lighter's fleet (`OnFleetJumpBeaconDeployableChange`, true), and told gone (false) when its time is up.
+- A bridge opener is told the anchor is activated with no passengers (`OnGroupJumpAnchorActivated`, EveJS `notifyGroupJumpAnchor`); the fleet is told the bridge is open (`OnBridgeModeChange`, as before). A bridge passage notifies no one (EveJS sends none); a conduit notifies its anchor and passengers (as before).
+
 Open, each with its blocker (the remaining increments):
-- NOT BUILT: fleet notices for a beacon (`OnFleetJumpBeaconDeployableChange` when it anchors and when it is gone).
+- Shortcut: a beacon that is lit before a restart is not told to its fleet again (as the field of track A6; the notice is sent when it anchors, not when a ship returns to the system).
 - NOT BUILT: a mobile inhibitor's effect on a beacon's activation (the 100 km refusal at anchoring).
 - NOT BUILT: the wormhole and Pochven rules (jumps into wormhole space and into Pochven; lighting in Pochven).
 - NOT RUN: the client.

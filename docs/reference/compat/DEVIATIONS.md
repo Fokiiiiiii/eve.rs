@@ -1459,3 +1459,8 @@ was not built, because the client reads its flags elsewhere (Q1 below).
   reference constant (`MARKET_TRANSACTION_TAX_DEFAULT_PERCENT = 8.0`) with 7.5 in memory before it compiles `marketRules.js`, and records every
   other value from the reference; the fixture's `source` field says so. Before the change `RulesTests` failed on the 7.5 fixture (the 8% values),
   and it passes after the change. Status: decided.
+
+## ST-E: cloak proximity and forced decloak notices (2026-10-10)
+- **Proximity radius and refusal.** The cloak breaks, and activation refuses, for a ship or a non-belt body within 2 000 m of the surface of the cloaked ship. Source: EveJS `shipCloak.js:100` (`MIN_CLOAKING_DISTANCE_METERS = 2000`). It replaces the 2 km smartbomb-range check, so the activation refusal now also counts bodies, not only smartbomb targets. Belts are not counted.
+- **Notice order.** The proximity notice goes out before the module stops; the other reasons after (EveJS `forceDecloakEntity`).
+- **Custom reasons.** The CustomNotify payload (notify, decloakReason, itemID, distanceMeters rounded to mm) follows EveJS `notifyCloakModuleForceDeactivated`. No caller exists yet.

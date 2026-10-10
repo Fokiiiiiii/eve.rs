@@ -7,6 +7,7 @@ mod bridge;
 /// The most passengers one conduit jump takes (the Black Ops limit is 30; the array leaves room for the carriers).
 pub const MAX_CONDUIT_PASSENGERS: usize = 64;
 mod collision;
+mod decloak;
 mod directional;
 mod docking;
 mod heat;
@@ -16,6 +17,7 @@ mod scan_targets;
 mod session;
 mod warping;
 use self::collision::*;
+pub use self::decloak::{CLOAK_PROXIMITY_METERS, CloakTrigger, DecloakCause};
 #[cfg(test)]
 use self::heat::*;
 use self::movement::*;

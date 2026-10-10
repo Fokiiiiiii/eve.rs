@@ -3,7 +3,7 @@ use std::sync::Arc;
 use super::*;
 use crate::modules::{ACTIVATION_BLOCKED, DISALLOW_DOCKING, WARP_SCRAMBLE_STATUS};
 use crate::scene::tests::{NOON, STATION, clear_of_the_station, spec, system};
-use crate::scene::{Command, Out};
+use crate::scene::{CloakTrigger, Command, DecloakCause, Out};
 use crate::ship::ShipSpec;
 use crate::weapons::tests::finishes_within;
 
@@ -3744,4 +3744,124 @@ fn a_refused_panic_grant_ends_the_start_with_the_host_reason() {
         "{refused:?}"
     );
     assert!(!scene.pilots[&A].modules.running.iter().any(|run| run.effect.module_id == MODULE));
+}
+
+fn cloaking_device() -> Effect {
+    let mut effect = repairer(Layer::Armor, 1.0, Applies::CycleStart);
+    effect.module_type = 11577;
+    effect.effect_id = 197;
+    effect.fx = "effects.Cloaking".to_string();
+    effect.action = Some(Action::Cloak { warp_safe: false });
+    effect
+}
+
+fn cloak_notice(out: &Out) -> Option<(&'static str, Vec<Value>)> {
+    match out {
+        Out::Notify { name: "OnCloakModuleForceDeactivated", id_type, args, .. } => Some((id_type, args.clone())),
+        _ => None,
+    }
+}
+
+#[test]
+fn a_ship_that_comes_within_two_kilometres_breaks_a_cloak_and_the_pilot_is_told_the_type() {
+    let (mut scene, t) = reaching(5_000.0);
+    scene.target_order(A, crate::targeting::Order::Clear, t);
+    assert!(accepted(&scene.activate(A, cloaking_device(), t)));
+    assert_eq!(scene.pilots[&A].cloak, crate::visibility::CloakState::Cloaked);
+    let (quiet, t) = poll_until(&mut scene, t, 3.0);
+    assert!(quiet.iter().all(|out| cloak_notice(out).is_none()), "5 km off is no trigger");
+    assert_eq!(scene.pilots[&A].cloak, crate::visibility::CloakState::Cloaked);
+
+    let (here, ra) = (scene.pilots[&A].ship.position, scene.pilots[&A].ship.spec.radius);
+    let (b_type, rb) = (scene.pilots[&B].ship.spec.type_id, scene.pilots[&B].ship.spec.radius);
+    scene.pilots.get_mut(&B).unwrap().ship.position =
+        eve_destiny::Vec3 { x: here.x + 1_999.0 + ra + rb, y: here.y, z: here.z };
+    let told = scene.poll(t + SECOND);
+
+    let notices: Vec<_> = told.iter().filter(|out| matches!(out, Out::Notify { session: A, .. })).filter_map(cloak_notice).collect();
+    assert_eq!(
+        notices,
+        [(
+            "shipid",
+            vec![
+                Value::Str("CloakDeactivatedByProximityToType".into()),
+                Value::Dict(vec![(Value::Str("proximityTypeID".into()), Value::Int(i64::from(b_type)))]),
+            ],
+        )]
+    );
+    let order = labels(&told);
+    let notice_at = order.iter().position(|l| l == "7:OnCloakModuleForceDeactivated").expect("the notice");
+    let off_at = order.iter().position(|l| l.starts_with("7:destiny")).expect("the module goes off");
+    assert!(notice_at < off_at, "{order:?}");
+    assert_eq!(scene.pilots[&A].cloak, crate::visibility::CloakState::Uncloaked);
+    assert!(scene.pilots[&A].modules.running.is_empty());
+    assert!(
+        poll_until(&mut scene, t + SECOND, 3.0).0.iter().all(|out| cloak_notice(out).is_none()),
+        "told once"
+    );
+}
+
+#[test]
+fn a_station_within_two_kilometres_refuses_a_cloak_and_breaks_one_that_runs() {
+    let (mut scene, t) = crowd();
+    let station = scene.system().body(STATION).unwrap().clone();
+    let away = scene.pilots[&A].ship.position;
+    let radius = scene.pilots[&A].ship.spec.radius;
+    let beside = eve_destiny::Vec3 { x: station.position.x + station.radius + radius + 1_000.0, ..station.position };
+    scene.pilots.get_mut(&A).unwrap().ship.position = beside;
+    assert_eq!(
+        scene.activate(A, cloaking_device(), t),
+        [Out::Refused { session: A, command: 17, reason: "CLOAK_PROXIMITY_BLOCKED" }]
+    );
+
+    scene.pilots.get_mut(&A).unwrap().ship.position = away;
+    assert!(accepted(&scene.activate(A, cloaking_device(), t)));
+    scene.pilots.get_mut(&A).unwrap().ship.position = beside;
+    let told = scene.poll(t + SECOND);
+    let notices: Vec<_> = told.iter().filter_map(cloak_notice).collect();
+    assert_eq!(
+        notices,
+        [(
+            "shipid",
+            vec![
+                Value::Str("CloakDeactivatedByProximityToType".into()),
+                Value::Dict(vec![(Value::Str("proximityTypeID".into()), Value::Int(i64::from(station.type_id)))]),
+            ],
+        )]
+    );
+    assert_eq!(scene.pilots[&A].cloak, crate::visibility::CloakState::Uncloaked);
+}
+
+#[test]
+fn a_cloak_ended_for_another_reason_tells_the_custom_notice_after_the_module_has_stopped() {
+    let (mut scene, t) = reaching(5_000.0);
+    scene.target_order(A, crate::targeting::Order::Clear, t);
+    assert!(accepted(&scene.activate(A, cloaking_device(), t)));
+    let cause = DecloakCause::Custom {
+        reason: "remoteDecloakPing".to_string(),
+        notice: "Your cloak has been deactivated by a Mobile Observatory decloaking ping.".to_string(),
+        trigger: CloakTrigger { item_id: 1_000_000_000_042, type_id: 56_173, distance: 1_234.56789 },
+    };
+    let told = scene.force_decloak(A, cause.clone(), t + SECOND);
+    let order = labels(&told);
+    assert_eq!(order.last().map(String::as_str), Some("7:OnCloakModuleForceDeactivated"), "{order:?}");
+    let (id_type, args) = cloak_notice(told.last().unwrap()).unwrap();
+    assert_eq!(id_type, "shipid");
+    assert_eq!(
+        args,
+        vec![
+            Value::Str("CustomNotify".into()),
+            Value::Dict(vec![
+                (
+                    Value::Str("notify".into()),
+                    Value::Str("Your cloak has been deactivated by a Mobile Observatory decloaking ping.".into())
+                ),
+                (Value::Str("decloakReason".into()), Value::Str("remoteDecloakPing".into())),
+                (Value::Str("itemID".into()), Value::Long(1_000_000_000_042)),
+                (Value::Str("distanceMeters".into()), Value::Real(1_234.568)),
+            ]),
+        ]
+    );
+    assert_eq!(scene.pilots[&A].cloak, crate::visibility::CloakState::Uncloaked);
+    assert!(scene.force_decloak(A, cause, t + 2 * SECOND).is_empty(), "an uncloaked ship has nothing to break");
 }

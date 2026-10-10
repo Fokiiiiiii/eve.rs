@@ -90,12 +90,15 @@ public sealed class StructureDataRpcServicesTests
         Assert.Same(call, forwarded);
     }
 
-    [Fact]
-    public async Task Unwired_moon_mutations_keep_the_reference_none_response()
+    [Theory]
+    [InlineData("StartNewExtraction")]
+    [InlineData("FractureChunkWithStructure")]
+    [InlineData("CancelExtraction")]
+    public async Task Unwired_moon_mutations_refuse_with_a_named_custom_notify(string method)
     {
-        var service = new MoonExtractionsRpcService();
-        foreach (var method in new[] { "StartNewExtraction", "FractureChunkWithStructure", "CancelExtraction" })
-            Assert.Same(PyNone.Instance, await service.CallAsync(Call(method)));
+        var error = await Assert.ThrowsAsync<MachoWrappedException>(() =>
+            new MoonExtractionsRpcService().CallAsync(Call(method)).AsTask());
+        Assert.Equal("CustomNotify", error.Error.UserErrorMessage);
     }
 
     [Fact]

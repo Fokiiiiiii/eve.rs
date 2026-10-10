@@ -38,12 +38,14 @@ public sealed class MoonExtractionsRpcService : IService
     public async ValueTask<PyValue> CallAsync(ServiceCall call)
     {
         if (!HasMethod(call.Method)) return PyNone.Instance;
-        if (call.Method == "StartNewExtraction")
-            return _mutationBackend is null ? PyNone.Instance : await _mutationBackend(call).ConfigureAwait(false);
-        if (call.Method is "FractureChunkWithStructure" or "CancelExtraction")
+        if (call.Method is "StartNewExtraction" or "FractureChunkWithStructure" or "CancelExtraction")
         {
-            if (_mutationBackend is not null) await _mutationBackend(call).ConfigureAwait(false);
-            return PyNone.Instance;
+            // The client treats any return as success (schedulingSvc.py), so an unwired mutation must refuse by name.
+            if (_mutationBackend is null)
+                throw MachoErrors.ThrowUserError("CustomNotify",
+                    ("notify", new PyStr("Moon extraction is not available on this server.")));
+            var result = await _mutationBackend(call).ConfigureAwait(false);
+            return call.Method == "StartNewExtraction" ? result : PyNone.Instance;
         }
 
         var state = _readState() ?? new JsonObject();

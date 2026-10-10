@@ -303,7 +303,7 @@ private readonly TransitionRuntime _transitions;
     private readonly ConcurrentDictionary<Task, string> _background = new();
 
     /// <summary>Starts <paramref name="work"/> off the caller; the call site (its line) names it when a wait for it fails.</summary>
-    private void Background(Func<Task> work, [System.Runtime.CompilerServices.CallerLineNumber] int line = 0)
+    internal void Background(Func<Task> work, [System.Runtime.CompilerServices.CallerLineNumber] int line = 0)
     {
         var task = Task.Run(async () =>
         {
@@ -907,7 +907,7 @@ private readonly TransitionRuntime _transitions;
 
     private void StartShipSessionChange(ulong sessionId) => _transitions.StartSessionChange(sessionId);
 
-    private void OnSessionClosed(ClientSession session) => _ = OnSessionClosedAsync(session);
+    private void OnSessionClosed(ClientSession session) => Background(() => OnSessionClosedAsync(session));
 
     private async Task<bool> SaveSpaceStateAsync(Pilot pilot)
     {

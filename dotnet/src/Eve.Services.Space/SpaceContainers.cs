@@ -509,7 +509,7 @@ private void OnReceived(SimMessage message)
     private void WreckPlaced(SimPlaceWreck wreck)
     {
         _placed[wreck.WreckId] = 0;
-        _ = KeepAsync(wreck);
+        _space.Background(() => KeepAsync(wreck));
     }
 
     private async Task KeepAsync(SimPlaceWreck wreck)

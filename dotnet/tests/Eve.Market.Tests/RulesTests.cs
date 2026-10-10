@@ -65,4 +65,14 @@ public class RulesTests
         Assert.Equal(0, MarketRules.RoundIsk(double.NaN));
         Assert.Equal(0, MarketRules.RoundIsk(double.PositiveInfinity));
     }
+
+    [Fact]
+    public void Prices_have_at_most_four_significant_figures_and_two_decimals()
+    {
+        // The client's ticks.is_tick (marketutil/ticks.py): 1234.00 is a tick; 1234.50 (five figures) and 1.005 (three decimals) are not.
+        foreach (var price in new[] { 1m, 0.01m, 0.12m, 123.4m, 100m, 1234m, 12340m, 9999m })
+            Assert.True(MarketRules.IsTick(price), price.ToString());
+        foreach (var price in new[] { 0m, -1m, 1234.5m, 12345m, 9999.9m, 1.005m, 0.001m, 1234.56m })
+            Assert.False(MarketRules.IsTick(price), price.ToString());
+    }
 }

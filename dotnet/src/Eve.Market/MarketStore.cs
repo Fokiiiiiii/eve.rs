@@ -272,7 +272,7 @@ public sealed partial class MarketStore
                 SELECT {BookColumns} FROM {_schema}.orders
                 WHERE region_id=$1 AND type_id=$2 AND bid=$3 AND state=0 AND vol_remaining>0
                     AND (is_npc OR issued_ms + duration_days::bigint*86400000 > $4)
-                ORDER BY price {(bid ? "DESC" : "ASC")},station_id,id
+                ORDER BY price {(bid ? "DESC" : "ASC")},issued_ms,id
                 """,connection,tx)
             {
                 Parameters = { new(){Value=region},new(){Value=type},new(){Value=bid},new(){Value=nowMs} },
@@ -323,7 +323,7 @@ public sealed partial class MarketStore
                 SELECT DISTINCT ON (type_id) *,
                     LEAST(SUM(vol_remaining) OVER (PARTITION BY type_id),9223372036854775807)::bigint AS total_ask_quantity
                 FROM scoped
-                ORDER BY type_id,price,station_id,id
+                ORDER BY type_id,price,issued_ms,id
             )
             SELECT {BookColumns},total_ask_quantity FROM summaries ORDER BY type_id
             """,connection)

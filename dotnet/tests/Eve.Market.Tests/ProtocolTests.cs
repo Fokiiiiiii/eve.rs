@@ -349,7 +349,7 @@ public class ProtocolTests
         Assert.Equal(9m,Decimal(Field(region200,"price")));
         Assert.Equal(15m,Decimal(Field(region200,"volRemaining")));
         Assert.Equal(200,IntegerValue(Field(region200,"typeID")));
-        Assert.Equal(Math.Min(r.Station.Id,remoteStation.Id),LongValue(Field(region200,"stationID")));
+        Assert.Equal(remoteStation.Id,LongValue(Field(region200,"stationID"))); // the only ask at the best price (9) is the remote one
         var region300=Fields(ByType(region,300));
         Assert.Equal(5m,Decimal(Field(region300,"price")));
         Assert.Equal(7m,Decimal(Field(region300,"volRemaining")));

@@ -72,7 +72,7 @@ public sealed class MarketTrading(NpgsqlDataSource source,MarketStore store,PgCh
             FROM {Schema}.orders WHERE region_id=$1 AND type_id=$2 AND bid=$3 AND state=0 AND vol_remaining>0
                 AND (is_npc OR issued_ms+duration_days::bigint*86400000>$4)
                 AND price {(r.Buying ? "<=" : ">=")} $5
-            ORDER BY price {(r.Buying ? "ASC" : "DESC")},station_id,id FOR UPDATE
+            ORDER BY price {(r.Buying ? "ASC" : "DESC")},issued_ms,id FOR UPDATE
             """,station.RegionId,r.TypeId,!r.Buying,time,r.Price + (r.Buying ? 0.0001m : -0.0001m));
         var result = new List<HeldOrder>();
         await using var reader = await command.ExecuteReaderAsync(token);
@@ -101,6 +101,7 @@ public sealed class MarketTrading(NpgsqlDataSource source,MarketStore store,PgCh
             throw new MarketError("MktInvalidMinVolumeCannotExceedQuantity");
         if (request.TypeId <= 0 || request.Price <= 0 || request.Price > (decimal)MarketRules.MaximumOrderPrice || request.Price != decimal.Round(request.Price,2))
             throw new MarketError("INVALID_MARKET_PRICE");
+        if (!MarketRules.IsTick(request.Price)) throw new MarketError("MARKET_PRICE_TICK");
         if (!MarketRules.IsAllowedDuration(request.Duration) || !MarketRules.IsAllowedBuyRange(request.Range)) throw new MarketError("INVALID_MARKET_DURATION_OR_RANGE");
         return Write(async (c,tx) =>
         {
@@ -325,12 +326,13 @@ public sealed class MarketTrading(NpgsqlDataSource source,MarketStore store,PgCh
     public Task<MarketReceipt> CancelAsync(long actorId,long orderId,string operationKey,CancellationToken token = default) =>
         CloseAsync(actorId,orderId,operationKey,false,token);
 
-public Task<MarketReceipt> ModifyAsync(long actorId,long orderId,decimal newPrice,string operationKey,CancellationToken token = default)
+public Task<MarketReceipt> ModifyAsync(long actorId,long orderId,decimal newPrice,string operationKey,CancellationToken token = default,
+        decimal? expectedPrice = null,long? expectedIssuedMs = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(operationKey);
-        newPrice = decimal.Round(newPrice,2,MidpointRounding.AwayFromZero);
         if (newPrice <= 0 || newPrice > (decimal)MarketRules.MaximumOrderPrice)
             throw new MarketError("INVALID_MARKET_PRICE");
+        if (!MarketRules.IsTick(newPrice)) throw new MarketError("MARKET_PRICE_TICK");
         return Write(async (c,tx) =>
         {
             await using (var guard=Command(c,tx,"SELECT pg_advisory_xact_lock(hashtextextended($1,0))","market:"+Schema+":command:"+operationKey))
@@ -369,6 +371,13 @@ public Task<MarketReceipt> ModifyAsync(long actorId,long orderId,decimal newPric
             }
             if (current.State != 0 || order.Row.VolumeRemaining <= 0)
                 return await Save(new(operationKey,orderId,0,0m,[],[]));
+            // Q15: the client's view of the price and the issue time must still be the order's; a stale view is refused, not applied
+            if (expectedPrice is { } shownPrice && shownPrice != order.Row.Price ||
+                expectedIssuedMs is { } shownIssued && shownIssued != order.Row.IssuedMs)
+                throw new MarketError("MARKET_ORDER_STALE");
+            // Q3: a modification waits five minutes after the later of the issue and the last modification
+            var readyAt = Math.Max(order.Row.IssuedMs,await LastModifiedAsync(c,tx,orderId,token)) + MarketRules.ModificationDelayMs;
+            if (time < readyAt) throw new MarketError("MARKET_MODIFY_TOO_SOON",("remainingSeconds",(readyAt-time+999)/1000));
             var context=await Context(c,tx,actor.Id,station,token);
             var location=new MarketLocation(actor.StationId,actor.SolarSystemId,actor.ConstellationId,actor.RegionId);
             if (topology.OrderDistance(location,MarketLocation.From(station)) > context.Limits.ModifyRange)
@@ -529,10 +538,11 @@ public Task<MarketReceipt> ModifyAsync(long actorId,long orderId,decimal newPric
             var finalEscrow=order.Row.Bid ? newValue-checked(newPrice*filled) : 0m;
             if (escrow != finalEscrow || finalEscrow < 0) throw new MarketError("MARKET_ESCROW_INCONSISTENT");
             var state=remaining==0 ? 1 : 0;
-            var changedRow=order.Row with { Price=newPrice,VolumeRemaining=remaining };
+            var changedRow=order.Row with { Price=newPrice,VolumeRemaining=remaining,IssuedMs=time };
             await using (var update=Command(c,tx,$"""
                 UPDATE {Schema}.orders SET price=$2,vol_remaining=$3,state=CASE WHEN $3=0 THEN 1 ELSE state END,
-                    escrow_isk=$4,escrow_item_id=CASE WHEN $3=0 THEN NULL ELSE escrow_item_id END,last_state_change_ms=$5
+                    escrow_isk=$4,escrow_item_id=CASE WHEN $3=0 THEN NULL ELSE escrow_item_id END,last_state_change_ms=$5,
+                    issued_ms=$5,last_modified_ms=$5
                 WHERE id=$1
                 """,orderId,newPrice,remaining,finalEscrow,time))
                 await update.ExecuteNonQueryAsync(token);
@@ -561,6 +571,13 @@ public Task<MarketReceipt> ModifyAsync(long actorId,long orderId,decimal newPric
             };
             return await Save(receipt);
         },token);
+    }
+
+    /// <summary>The time of the order's last modification (0 when never modified); a modification restarts the duration (decision Q4).</summary>
+    private async Task<long> LastModifiedAsync(NpgsqlConnection c,NpgsqlTransaction tx,long orderId,CancellationToken token)
+    {
+        await using var command = Command(c,tx,$"SELECT last_modified_ms FROM {Schema}.orders WHERE id=$1",orderId);
+        return (long)(await command.ExecuteScalarAsync(token))!;
     }
 
     public async Task<IReadOnlyList<MarketOwnedOrder>> OwnerOrdersAsync(long actorId,bool corporation,bool includeHistory,CancellationToken token = default)

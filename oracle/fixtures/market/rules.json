@@ -1,5 +1,5 @@
 {
-  "source": "EVE.js server/src/services/market/marketRules.js",
+  "source": "EVE.js server/src/services/market/marketRules.js, transaction tax constant set to 7.5 (eve.rs decision Q1)",
   "sourceCommit": "828823a75f211fdecb945b087a26c225f111491f",
   "cases": [
     {
@@ -15,7 +15,7 @@
         "modificationFeeDiscount": 0.5,
         "limits": {
           "cnt": 5,
-          "acc": 0.08,
+          "acc": 0.075,
           "ask": -1,
           "bid": -1,
           "vis": -1,
@@ -51,7 +51,7 @@
             "rawPercentage": 0,
             "usingMinimumValue": false
           },
-          "tax": 8
+          "tax": 7.5
         },
         {
           "oldAmount": null,
@@ -66,7 +66,7 @@
             "rawPercentage": 0,
             "usingMinimumValue": false
           },
-          "tax": 9876.54
+          "tax": 9259.26
         },
         {
           "oldAmount": 10000,
@@ -81,7 +81,7 @@
             "rawPercentage": 0,
             "usingMinimumValue": false
           },
-          "tax": 400
+          "tax": 375
         },
         {
           "oldAmount": 10000,
@@ -96,7 +96,7 @@
             "rawPercentage": 0,
             "usingMinimumValue": false
           },
-          "tax": 1600
+          "tax": 1500
         },
         {
           "oldAmount": null,
@@ -126,7 +126,7 @@
             "rawPercentage": 0,
             "usingMinimumValue": false
           },
-          "tax": 0.09
+          "tax": 0.08
         }
       ]
     },
@@ -143,7 +143,7 @@
         "modificationFeeDiscount": 0.5,
         "limits": {
           "cnt": 5,
-          "acc": 0.04,
+          "acc": 0.0375,
           "ask": -1,
           "bid": -1,
           "vis": -1,
@@ -179,7 +179,7 @@
             "rawPercentage": 0,
             "usingMinimumValue": false
           },
-          "tax": 4
+          "tax": 3.75
         },
         {
           "oldAmount": null,
@@ -194,7 +194,7 @@
             "rawPercentage": 0,
             "usingMinimumValue": false
           },
-          "tax": 4938.27
+          "tax": 4629.63
         },
         {
           "oldAmount": 10000,
@@ -209,7 +209,7 @@
             "rawPercentage": 0,
             "usingMinimumValue": false
           },
-          "tax": 200
+          "tax": 187.5
         },
         {
           "oldAmount": 10000,
@@ -224,7 +224,7 @@
             "rawPercentage": 0,
             "usingMinimumValue": false
           },
-          "tax": 800
+          "tax": 750
         },
         {
           "oldAmount": null,
@@ -254,7 +254,7 @@
             "rawPercentage": 0,
             "usingMinimumValue": false
           },
-          "tax": 0.05
+          "tax": 0.04
         }
       ]
     },
@@ -271,7 +271,7 @@
         "modificationFeeDiscount": 0.5,
         "limits": {
           "cnt": 5,
-          "acc": 0.08,
+          "acc": 0.075,
           "ask": -1,
           "bid": -1,
           "vis": -1,
@@ -307,7 +307,7 @@
             "rawPercentage": 0,
             "usingMinimumValue": false
           },
-          "tax": 8
+          "tax": 7.5
         },
         {
           "oldAmount": null,
@@ -322,7 +322,7 @@
             "rawPercentage": 0,
             "usingMinimumValue": false
           },
-          "tax": 9876.54
+          "tax": 9259.26
         },
         {
           "oldAmount": 10000,
@@ -337,7 +337,7 @@
             "rawPercentage": 0,
             "usingMinimumValue": false
           },
-          "tax": 400
+          "tax": 375
         },
         {
           "oldAmount": 10000,
@@ -352,7 +352,7 @@
             "rawPercentage": 0,
             "usingMinimumValue": false
           },
-          "tax": 1600
+          "tax": 1500
         },
         {
           "oldAmount": null,
@@ -382,7 +382,7 @@
             "rawPercentage": 0,
             "usingMinimumValue": false
           },
-          "tax": 0.09
+          "tax": 0.08
         }
       ]
     },
@@ -399,7 +399,7 @@
         "modificationFeeDiscount": 0.5,
         "limits": {
           "cnt": 5,
-          "acc": 0.04,
+          "acc": 0.0375,
           "ask": -1,
           "bid": -1,
           "vis": -1,
@@ -435,7 +435,7 @@
             "rawPercentage": 0,
             "usingMinimumValue": false
           },
-          "tax": 4
+          "tax": 3.75
         },
         {
           "oldAmount": null,
@@ -450,7 +450,7 @@
             "rawPercentage": 0,
             "usingMinimumValue": false
           },
-          "tax": 4938.27
+          "tax": 4629.63
         },
         {
           "oldAmount": 10000,
@@ -465,7 +465,7 @@
             "rawPercentage": 0,
             "usingMinimumValue": false
           },
-          "tax": 200
+          "tax": 187.5
         },
         {
           "oldAmount": 10000,
@@ -480,7 +480,7 @@
             "rawPercentage": 0,
             "usingMinimumValue": false
           },
-          "tax": 800
+          "tax": 750
         },
         {
           "oldAmount": null,
@@ -510,7 +510,7 @@
             "rawPercentage": 0,
             "usingMinimumValue": false
           },
-          "tax": 0.05
+          "tax": 0.04
         }
       ]
     },
@@ -527,7 +527,7 @@
         "modificationFeeDiscount": 0.5,
         "limits": {
           "cnt": 5,
-          "acc": 0.08,
+          "acc": 0.075,
           "ask": -1,
           "bid": -1,
           "vis": -1,
@@ -563,7 +563,7 @@
             "rawPercentage": 0,
             "usingMinimumValue": false
           },
-          "tax": 8
+          "tax": 7.5
         },
         {
           "oldAmount": null,
@@ -578,7 +578,7 @@
             "rawPercentage": 0,
             "usingMinimumValue": false
           },
-          "tax": 9876.54
+          "tax": 9259.26
         },
         {
           "oldAmount": 10000,
@@ -593,7 +593,7 @@
             "rawPercentage": 0,
             "usingMinimumValue": false
           },
-          "tax": 400
+          "tax": 375
         },
         {
           "oldAmount": 10000,
@@ -608,7 +608,7 @@
             "rawPercentage": 0,
             "usingMinimumValue": false
           },
-          "tax": 1600
+          "tax": 1500
         },
         {
           "oldAmount": null,
@@ -638,7 +638,7 @@
             "rawPercentage": 0,
             "usingMinimumValue": false
           },
-          "tax": 0.09
+          "tax": 0.08
         }
       ]
     },
@@ -655,7 +655,7 @@
         "modificationFeeDiscount": 0.5,
         "limits": {
           "cnt": 5,
-          "acc": 0.04,
+          "acc": 0.0375,
           "ask": -1,
           "bid": -1,
           "vis": -1,
@@ -691,7 +691,7 @@
             "rawPercentage": 0,
             "usingMinimumValue": false
           },
-          "tax": 4
+          "tax": 3.75
         },
         {
           "oldAmount": null,
@@ -706,7 +706,7 @@
             "rawPercentage": 0,
             "usingMinimumValue": false
           },
-          "tax": 4938.27
+          "tax": 4629.63
         },
         {
           "oldAmount": 10000,
@@ -721,7 +721,7 @@
             "rawPercentage": 0,
             "usingMinimumValue": false
           },
-          "tax": 200
+          "tax": 187.5
         },
         {
           "oldAmount": 10000,
@@ -736,7 +736,7 @@
             "rawPercentage": 0,
             "usingMinimumValue": false
           },
-          "tax": 800
+          "tax": 750
         },
         {
           "oldAmount": null,
@@ -766,7 +766,7 @@
             "rawPercentage": 0,
             "usingMinimumValue": false
           },
-          "tax": 0.05
+          "tax": 0.04
         }
       ]
     },
@@ -783,7 +783,7 @@
         "modificationFeeDiscount": 0.5,
         "limits": {
           "cnt": 5,
-          "acc": 0.08,
+          "acc": 0.075,
           "ask": -1,
           "bid": -1,
           "vis": -1,
@@ -819,7 +819,7 @@
             "rawPercentage": 0.005,
             "usingMinimumValue": true
           },
-          "tax": 8
+          "tax": 7.5
         },
         {
           "oldAmount": null,
@@ -834,7 +834,7 @@
             "rawPercentage": 0.005,
             "usingMinimumValue": false
           },
-          "tax": 9876.54
+          "tax": 9259.26
         },
         {
           "oldAmount": 10000,
@@ -849,7 +849,7 @@
             "rawPercentage": 0.005,
             "usingMinimumValue": true
           },
-          "tax": 400
+          "tax": 375
         },
         {
           "oldAmount": 10000,
@@ -864,7 +864,7 @@
             "rawPercentage": 0.005,
             "usingMinimumValue": false
           },
-          "tax": 1600
+          "tax": 1500
         },
         {
           "oldAmount": null,
@@ -894,7 +894,7 @@
             "rawPercentage": 0.005,
             "usingMinimumValue": true
           },
-          "tax": 0.09
+          "tax": 0.08
         }
       ]
     },
@@ -911,7 +911,7 @@
         "modificationFeeDiscount": 0.5,
         "limits": {
           "cnt": 5,
-          "acc": 0.04,
+          "acc": 0.0375,
           "ask": -1,
           "bid": -1,
           "vis": -1,
@@ -947,7 +947,7 @@
             "rawPercentage": 0.005,
             "usingMinimumValue": true
           },
-          "tax": 4
+          "tax": 3.75
         },
         {
           "oldAmount": null,
@@ -962,7 +962,7 @@
             "rawPercentage": 0.005,
             "usingMinimumValue": false
           },
-          "tax": 4938.27
+          "tax": 4629.63
         },
         {
           "oldAmount": 10000,
@@ -977,7 +977,7 @@
             "rawPercentage": 0.005,
             "usingMinimumValue": true
           },
-          "tax": 200
+          "tax": 187.5
         },
         {
           "oldAmount": 10000,
@@ -992,7 +992,7 @@
             "rawPercentage": 0.005,
             "usingMinimumValue": false
           },
-          "tax": 800
+          "tax": 750
         },
         {
           "oldAmount": null,
@@ -1022,7 +1022,7 @@
             "rawPercentage": 0.005,
             "usingMinimumValue": true
           },
-          "tax": 0.05
+          "tax": 0.04
         }
       ]
     },
@@ -1039,7 +1039,7 @@
         "modificationFeeDiscount": 0.5,
         "limits": {
           "cnt": 5,
-          "acc": 0.08,
+          "acc": 0.075,
           "ask": -1,
           "bid": -1,
           "vis": -1,
@@ -1075,7 +1075,7 @@
             "rawPercentage": 0.005,
             "usingMinimumValue": true
           },
-          "tax": 8
+          "tax": 7.5
         },
         {
           "oldAmount": null,
@@ -1090,7 +1090,7 @@
             "rawPercentage": 0.005,
             "usingMinimumValue": false
           },
-          "tax": 9876.54
+          "tax": 9259.26
         },
         {
           "oldAmount": 10000,
@@ -1105,7 +1105,7 @@
             "rawPercentage": 0.005,
             "usingMinimumValue": true
           },
-          "tax": 400
+          "tax": 375
         },
         {
           "oldAmount": 10000,
@@ -1120,7 +1120,7 @@
             "rawPercentage": 0.005,
             "usingMinimumValue": false
           },
-          "tax": 1600
+          "tax": 1500
         },
         {
           "oldAmount": null,
@@ -1150,7 +1150,7 @@
             "rawPercentage": 0.005,
             "usingMinimumValue": true
           },
-          "tax": 0.09
+          "tax": 0.08
         }
       ]
     },
@@ -1167,7 +1167,7 @@
         "modificationFeeDiscount": 0.5,
         "limits": {
           "cnt": 5,
-          "acc": 0.04,
+          "acc": 0.0375,
           "ask": -1,
           "bid": -1,
           "vis": -1,
@@ -1203,7 +1203,7 @@
             "rawPercentage": 0.005,
             "usingMinimumValue": true
           },
-          "tax": 4
+          "tax": 3.75
         },
         {
           "oldAmount": null,
@@ -1218,7 +1218,7 @@
             "rawPercentage": 0.005,
             "usingMinimumValue": false
           },
-          "tax": 4938.27
+          "tax": 4629.63
         },
         {
           "oldAmount": 10000,
@@ -1233,7 +1233,7 @@
             "rawPercentage": 0.005,
             "usingMinimumValue": true
           },
-          "tax": 200
+          "tax": 187.5
         },
         {
           "oldAmount": 10000,
@@ -1248,7 +1248,7 @@
             "rawPercentage": 0.005,
             "usingMinimumValue": false
           },
-          "tax": 800
+          "tax": 750
         },
         {
           "oldAmount": null,
@@ -1278,7 +1278,7 @@
             "rawPercentage": 0.005,
             "usingMinimumValue": true
           },
-          "tax": 0.05
+          "tax": 0.04
         }
       ]
     },
@@ -1295,7 +1295,7 @@
         "modificationFeeDiscount": 0.5,
         "limits": {
           "cnt": 5,
-          "acc": 0.08,
+          "acc": 0.075,
           "ask": -1,
           "bid": -1,
           "vis": -1,
@@ -1331,7 +1331,7 @@
             "rawPercentage": 0.005,
             "usingMinimumValue": true
           },
-          "tax": 8
+          "tax": 7.5
         },
         {
           "oldAmount": null,
@@ -1346,7 +1346,7 @@
             "rawPercentage": 0.005,
             "usingMinimumValue": false
           },
-          "tax": 9876.54
+          "tax": 9259.26
         },
         {
           "oldAmount": 10000,
@@ -1361,7 +1361,7 @@
             "rawPercentage": 0.005,
             "usingMinimumValue": true
           },
-          "tax": 400
+          "tax": 375
         },
         {
           "oldAmount": 10000,
@@ -1376,7 +1376,7 @@
             "rawPercentage": 0.005,
             "usingMinimumValue": false
           },
-          "tax": 1600
+          "tax": 1500
         },
         {
           "oldAmount": null,
@@ -1406,7 +1406,7 @@
             "rawPercentage": 0.005,
             "usingMinimumValue": true
           },
-          "tax": 0.09
+          "tax": 0.08
         }
       ]
     },
@@ -1423,7 +1423,7 @@
         "modificationFeeDiscount": 0.5,
         "limits": {
           "cnt": 5,
-          "acc": 0.04,
+          "acc": 0.0375,
           "ask": -1,
           "bid": -1,
           "vis": -1,
@@ -1459,7 +1459,7 @@
             "rawPercentage": 0.005,
             "usingMinimumValue": true
           },
-          "tax": 4
+          "tax": 3.75
         },
         {
           "oldAmount": null,
@@ -1474,7 +1474,7 @@
             "rawPercentage": 0.005,
             "usingMinimumValue": false
           },
-          "tax": 4938.27
+          "tax": 4629.63
         },
         {
           "oldAmount": 10000,
@@ -1489,7 +1489,7 @@
             "rawPercentage": 0.005,
             "usingMinimumValue": true
           },
-          "tax": 200
+          "tax": 187.5
         },
         {
           "oldAmount": 10000,
@@ -1504,7 +1504,7 @@
             "rawPercentage": 0.005,
             "usingMinimumValue": false
           },
-          "tax": 800
+          "tax": 750
         },
         {
           "oldAmount": null,
@@ -1534,7 +1534,7 @@
             "rawPercentage": 0.005,
             "usingMinimumValue": true
           },
-          "tax": 0.05
+          "tax": 0.04
         }
       ]
     },
@@ -1551,7 +1551,7 @@
         "modificationFeeDiscount": 0.56,
         "limits": {
           "cnt": 65,
-          "acc": 0.0712,
+          "acc": 0.06675,
           "ask": 0,
           "bid": 0,
           "vis": 0,
@@ -1587,7 +1587,7 @@
             "rawPercentage": 0,
             "usingMinimumValue": false
           },
-          "tax": 7.12
+          "tax": 6.68
         },
         {
           "oldAmount": null,
@@ -1602,7 +1602,7 @@
             "rawPercentage": 0,
             "usingMinimumValue": false
           },
-          "tax": 8790.12
+          "tax": 8240.74
         },
         {
           "oldAmount": 10000,
@@ -1617,7 +1617,7 @@
             "rawPercentage": 0,
             "usingMinimumValue": false
           },
-          "tax": 356
+          "tax": 333.75
         },
         {
           "oldAmount": 10000,
@@ -1632,7 +1632,7 @@
             "rawPercentage": 0,
             "usingMinimumValue": false
           },
-          "tax": 1424
+          "tax": 1335
         },
         {
           "oldAmount": null,
@@ -1679,7 +1679,7 @@
         "modificationFeeDiscount": 0.56,
         "limits": {
           "cnt": 65,
-          "acc": 0.0356,
+          "acc": 0.033375,
           "ask": 0,
           "bid": 0,
           "vis": 0,
@@ -1715,7 +1715,7 @@
             "rawPercentage": 0,
             "usingMinimumValue": false
           },
-          "tax": 3.56
+          "tax": 3.34
         },
         {
           "oldAmount": null,
@@ -1730,7 +1730,7 @@
             "rawPercentage": 0,
             "usingMinimumValue": false
           },
-          "tax": 4395.06
+          "tax": 4120.37
         },
         {
           "oldAmount": 10000,
@@ -1745,7 +1745,7 @@
             "rawPercentage": 0,
             "usingMinimumValue": false
           },
-          "tax": 178
+          "tax": 166.88
         },
         {
           "oldAmount": 10000,
@@ -1760,7 +1760,7 @@
             "rawPercentage": 0,
             "usingMinimumValue": false
           },
-          "tax": 712
+          "tax": 667.5
         },
         {
           "oldAmount": null,
@@ -1807,7 +1807,7 @@
         "modificationFeeDiscount": 0.56,
         "limits": {
           "cnt": 65,
-          "acc": 0.0712,
+          "acc": 0.06675,
           "ask": 0,
           "bid": 0,
           "vis": 0,
@@ -1843,7 +1843,7 @@
             "rawPercentage": 0,
             "usingMinimumValue": false
           },
-          "tax": 7.12
+          "tax": 6.68
         },
         {
           "oldAmount": null,
@@ -1858,7 +1858,7 @@
             "rawPercentage": 0,
             "usingMinimumValue": false
           },
-          "tax": 8790.12
+          "tax": 8240.74
         },
         {
           "oldAmount": 10000,
@@ -1873,7 +1873,7 @@
             "rawPercentage": 0,
             "usingMinimumValue": false
           },
-          "tax": 356
+          "tax": 333.75
         },
         {
           "oldAmount": 10000,
@@ -1888,7 +1888,7 @@
             "rawPercentage": 0,
             "usingMinimumValue": false
           },
-          "tax": 1424
+          "tax": 1335
         },
         {
           "oldAmount": null,
@@ -1935,7 +1935,7 @@
         "modificationFeeDiscount": 0.56,
         "limits": {
           "cnt": 65,
-          "acc": 0.0356,
+          "acc": 0.033375,
           "ask": 0,
           "bid": 0,
           "vis": 0,
@@ -1971,7 +1971,7 @@
             "rawPercentage": 0,
             "usingMinimumValue": false
           },
-          "tax": 3.56
+          "tax": 3.34
         },
         {
           "oldAmount": null,
@@ -1986,7 +1986,7 @@
             "rawPercentage": 0,
             "usingMinimumValue": false
           },
-          "tax": 4395.06
+          "tax": 4120.37
         },
         {
           "oldAmount": 10000,
@@ -2001,7 +2001,7 @@
             "rawPercentage": 0,
             "usingMinimumValue": false
           },
-          "tax": 178
+          "tax": 166.88
         },
         {
           "oldAmount": 10000,
@@ -2016,7 +2016,7 @@
             "rawPercentage": 0,
             "usingMinimumValue": false
           },
-          "tax": 712
+          "tax": 667.5
         },
         {
           "oldAmount": null,
@@ -2063,7 +2063,7 @@
         "modificationFeeDiscount": 0.56,
         "limits": {
           "cnt": 65,
-          "acc": 0.0712,
+          "acc": 0.06675,
           "ask": 0,
           "bid": 0,
           "vis": 0,
@@ -2099,7 +2099,7 @@
             "rawPercentage": 0,
             "usingMinimumValue": false
           },
-          "tax": 7.12
+          "tax": 6.68
         },
         {
           "oldAmount": null,
@@ -2114,7 +2114,7 @@
             "rawPercentage": 0,
             "usingMinimumValue": false
           },
-          "tax": 8790.12
+          "tax": 8240.74
         },
         {
           "oldAmount": 10000,
@@ -2129,7 +2129,7 @@
             "rawPercentage": 0,
             "usingMinimumValue": false
           },
-          "tax": 356
+          "tax": 333.75
         },
         {
           "oldAmount": 10000,
@@ -2144,7 +2144,7 @@
             "rawPercentage": 0,
             "usingMinimumValue": false
           },
-          "tax": 1424
+          "tax": 1335
         },
         {
           "oldAmount": null,
@@ -2191,7 +2191,7 @@
         "modificationFeeDiscount": 0.56,
         "limits": {
           "cnt": 65,
-          "acc": 0.0356,
+          "acc": 0.033375,
           "ask": 0,
           "bid": 0,
           "vis": 0,
@@ -2227,7 +2227,7 @@
             "rawPercentage": 0,
             "usingMinimumValue": false
           },
-          "tax": 3.56
+          "tax": 3.34
         },
         {
           "oldAmount": null,
@@ -2242,7 +2242,7 @@
             "rawPercentage": 0,
             "usingMinimumValue": false
           },
-          "tax": 4395.06
+          "tax": 4120.37
         },
         {
           "oldAmount": 10000,
@@ -2257,7 +2257,7 @@
             "rawPercentage": 0,
             "usingMinimumValue": false
           },
-          "tax": 178
+          "tax": 166.88
         },
         {
           "oldAmount": 10000,
@@ -2272,7 +2272,7 @@
             "rawPercentage": 0,
             "usingMinimumValue": false
           },
-          "tax": 712
+          "tax": 667.5
         },
         {
           "oldAmount": null,
@@ -2319,7 +2319,7 @@
         "modificationFeeDiscount": 0.56,
         "limits": {
           "cnt": 65,
-          "acc": 0.0712,
+          "acc": 0.06675,
           "ask": 0,
           "bid": 0,
           "vis": 0,
@@ -2355,7 +2355,7 @@
             "rawPercentage": 0.005,
             "usingMinimumValue": true
           },
-          "tax": 7.12
+          "tax": 6.68
         },
         {
           "oldAmount": null,
@@ -2370,7 +2370,7 @@
             "rawPercentage": 0.005,
             "usingMinimumValue": false
           },
-          "tax": 8790.12
+          "tax": 8240.74
         },
         {
           "oldAmount": 10000,
@@ -2385,7 +2385,7 @@
             "rawPercentage": 0.005,
             "usingMinimumValue": true
           },
-          "tax": 356
+          "tax": 333.75
         },
         {
           "oldAmount": 10000,
@@ -2400,7 +2400,7 @@
             "rawPercentage": 0.005,
             "usingMinimumValue": false
           },
-          "tax": 1424
+          "tax": 1335
         },
         {
           "oldAmount": null,
@@ -2447,7 +2447,7 @@
         "modificationFeeDiscount": 0.56,
         "limits": {
           "cnt": 65,
-          "acc": 0.0356,
+          "acc": 0.033375,
           "ask": 0,
           "bid": 0,
           "vis": 0,
@@ -2483,7 +2483,7 @@
             "rawPercentage": 0.005,
             "usingMinimumValue": true
           },
-          "tax": 3.56
+          "tax": 3.34
         },
         {
           "oldAmount": null,
@@ -2498,7 +2498,7 @@
             "rawPercentage": 0.005,
             "usingMinimumValue": false
           },
-          "tax": 4395.06
+          "tax": 4120.37
         },
         {
           "oldAmount": 10000,
@@ -2513,7 +2513,7 @@
             "rawPercentage": 0.005,
             "usingMinimumValue": true
           },
-          "tax": 178
+          "tax": 166.88
         },
         {
           "oldAmount": 10000,
@@ -2528,7 +2528,7 @@
             "rawPercentage": 0.005,
             "usingMinimumValue": false
           },
-          "tax": 712
+          "tax": 667.5
         },
         {
           "oldAmount": null,
@@ -2575,7 +2575,7 @@
         "modificationFeeDiscount": 0.56,
         "limits": {
           "cnt": 65,
-          "acc": 0.0712,
+          "acc": 0.06675,
           "ask": 0,
           "bid": 0,
           "vis": 0,
@@ -2611,7 +2611,7 @@
             "rawPercentage": 0.005,
             "usingMinimumValue": true
           },
-          "tax": 7.12
+          "tax": 6.68
         },
         {
           "oldAmount": null,
@@ -2626,7 +2626,7 @@
             "rawPercentage": 0.005,
             "usingMinimumValue": false
           },
-          "tax": 8790.12
+          "tax": 8240.74
         },
         {
           "oldAmount": 10000,
@@ -2641,7 +2641,7 @@
             "rawPercentage": 0.005,
             "usingMinimumValue": true
           },
-          "tax": 356
+          "tax": 333.75
         },
         {
           "oldAmount": 10000,
@@ -2656,7 +2656,7 @@
             "rawPercentage": 0.005,
             "usingMinimumValue": false
           },
-          "tax": 1424
+          "tax": 1335
         },
         {
           "oldAmount": null,
@@ -2703,7 +2703,7 @@
         "modificationFeeDiscount": 0.56,
         "limits": {
           "cnt": 65,
-          "acc": 0.0356,
+          "acc": 0.033375,
           "ask": 0,
           "bid": 0,
           "vis": 0,
@@ -2739,7 +2739,7 @@
             "rawPercentage": 0.005,
             "usingMinimumValue": true
           },
-          "tax": 3.56
+          "tax": 3.34
         },
         {
           "oldAmount": null,
@@ -2754,7 +2754,7 @@
             "rawPercentage": 0.005,
             "usingMinimumValue": false
           },
-          "tax": 4395.06
+          "tax": 4120.37
         },
         {
           "oldAmount": 10000,
@@ -2769,7 +2769,7 @@
             "rawPercentage": 0.005,
             "usingMinimumValue": true
           },
-          "tax": 178
+          "tax": 166.88
         },
         {
           "oldAmount": 10000,
@@ -2784,7 +2784,7 @@
             "rawPercentage": 0.005,
             "usingMinimumValue": false
           },
-          "tax": 712
+          "tax": 667.5
         },
         {
           "oldAmount": null,
@@ -2831,7 +2831,7 @@
         "modificationFeeDiscount": 0.56,
         "limits": {
           "cnt": 65,
-          "acc": 0.0712,
+          "acc": 0.06675,
           "ask": 0,
           "bid": 0,
           "vis": 0,
@@ -2867,7 +2867,7 @@
             "rawPercentage": 0.005,
             "usingMinimumValue": true
           },
-          "tax": 7.12
+          "tax": 6.68
         },
         {
           "oldAmount": null,
@@ -2882,7 +2882,7 @@
             "rawPercentage": 0.005,
             "usingMinimumValue": false
           },
-          "tax": 8790.12
+          "tax": 8240.74
         },
         {
           "oldAmount": 10000,
@@ -2897,7 +2897,7 @@
             "rawPercentage": 0.005,
             "usingMinimumValue": true
           },
-          "tax": 356
+          "tax": 333.75
         },
         {
           "oldAmount": 10000,
@@ -2912,7 +2912,7 @@
             "rawPercentage": 0.005,
             "usingMinimumValue": false
           },
-          "tax": 1424
+          "tax": 1335
         },
         {
           "oldAmount": null,
@@ -2959,7 +2959,7 @@
         "modificationFeeDiscount": 0.56,
         "limits": {
           "cnt": 65,
-          "acc": 0.0356,
+          "acc": 0.033375,
           "ask": 0,
           "bid": 0,
           "vis": 0,
@@ -2995,7 +2995,7 @@
             "rawPercentage": 0.005,
             "usingMinimumValue": true
           },
-          "tax": 3.56
+          "tax": 3.34
         },
         {
           "oldAmount": null,
@@ -3010,7 +3010,7 @@
             "rawPercentage": 0.005,
             "usingMinimumValue": false
           },
-          "tax": 4395.06
+          "tax": 4120.37
         },
         {
           "oldAmount": 10000,
@@ -3025,7 +3025,7 @@
             "rawPercentage": 0.005,
             "usingMinimumValue": true
           },
-          "tax": 178
+          "tax": 166.88
         },
         {
           "oldAmount": 10000,
@@ -3040,7 +3040,7 @@
             "rawPercentage": 0.005,
             "usingMinimumValue": false
           },
-          "tax": 712
+          "tax": 667.5
         },
         {
           "oldAmount": null,
@@ -3087,7 +3087,7 @@
         "modificationFeeDiscount": 0.62,
         "limits": {
           "cnt": 125,
-          "acc": 0.062400000000000004,
+          "acc": 0.058499999999999996,
           "ask": 5,
           "bid": 5,
           "vis": 5,
@@ -3123,7 +3123,7 @@
             "rawPercentage": 0,
             "usingMinimumValue": false
           },
-          "tax": 6.24
+          "tax": 5.85
         },
         {
           "oldAmount": null,
@@ -3138,7 +3138,7 @@
             "rawPercentage": 0,
             "usingMinimumValue": false
           },
-          "tax": 7703.7
+          "tax": 7222.22
         },
         {
           "oldAmount": 10000,
@@ -3153,7 +3153,7 @@
             "rawPercentage": 0,
             "usingMinimumValue": false
           },
-          "tax": 312
+          "tax": 292.5
         },
         {
           "oldAmount": 10000,
@@ -3168,7 +3168,7 @@
             "rawPercentage": 0,
             "usingMinimumValue": false
           },
-          "tax": 1248
+          "tax": 1170
         },
         {
           "oldAmount": null,
@@ -3215,7 +3215,7 @@
         "modificationFeeDiscount": 0.62,
         "limits": {
           "cnt": 125,
-          "acc": 0.031200000000000002,
+          "acc": 0.029249999999999998,
           "ask": 5,
           "bid": 5,
           "vis": 5,
@@ -3251,7 +3251,7 @@
             "rawPercentage": 0,
             "usingMinimumValue": false
           },
-          "tax": 3.12
+          "tax": 2.93
         },
         {
           "oldAmount": null,
@@ -3266,7 +3266,7 @@
             "rawPercentage": 0,
             "usingMinimumValue": false
           },
-          "tax": 3851.85
+          "tax": 3611.11
         },
         {
           "oldAmount": 10000,
@@ -3281,7 +3281,7 @@
             "rawPercentage": 0,
             "usingMinimumValue": false
           },
-          "tax": 156
+          "tax": 146.25
         },
         {
           "oldAmount": 10000,
@@ -3296,7 +3296,7 @@
             "rawPercentage": 0,
             "usingMinimumValue": false
           },
-          "tax": 624
+          "tax": 585
         },
         {
           "oldAmount": null,
@@ -3326,7 +3326,7 @@
             "rawPercentage": 0,
             "usingMinimumValue": false
           },
-          "tax": 0.04
+          "tax": 0.03
         }
       ]
     },
@@ -3343,7 +3343,7 @@
         "modificationFeeDiscount": 0.62,
         "limits": {
           "cnt": 125,
-          "acc": 0.062400000000000004,
+          "acc": 0.058499999999999996,
           "ask": 5,
           "bid": 5,
           "vis": 5,
@@ -3379,7 +3379,7 @@
             "rawPercentage": 0,
             "usingMinimumValue": false
           },
-          "tax": 6.24
+          "tax": 5.85
         },
         {
           "oldAmount": null,
@@ -3394,7 +3394,7 @@
             "rawPercentage": 0,
             "usingMinimumValue": false
           },
-          "tax": 7703.7
+          "tax": 7222.22
         },
         {
           "oldAmount": 10000,
@@ -3409,7 +3409,7 @@
             "rawPercentage": 0,
             "usingMinimumValue": false
           },
-          "tax": 312
+          "tax": 292.5
         },
         {
           "oldAmount": 10000,
@@ -3424,7 +3424,7 @@
             "rawPercentage": 0,
             "usingMinimumValue": false
           },
-          "tax": 1248
+          "tax": 1170
         },
         {
           "oldAmount": null,
@@ -3471,7 +3471,7 @@
         "modificationFeeDiscount": 0.62,
         "limits": {
           "cnt": 125,
-          "acc": 0.031200000000000002,
+          "acc": 0.029249999999999998,
           "ask": 5,
           "bid": 5,
           "vis": 5,
@@ -3507,7 +3507,7 @@
             "rawPercentage": 0,
             "usingMinimumValue": false
           },
-          "tax": 3.12
+          "tax": 2.93
         },
         {
           "oldAmount": null,
@@ -3522,7 +3522,7 @@
             "rawPercentage": 0,
             "usingMinimumValue": false
           },
-          "tax": 3851.85
+          "tax": 3611.11
         },
         {
           "oldAmount": 10000,
@@ -3537,7 +3537,7 @@
             "rawPercentage": 0,
             "usingMinimumValue": false
           },
-          "tax": 156
+          "tax": 146.25
         },
         {
           "oldAmount": 10000,
@@ -3552,7 +3552,7 @@
             "rawPercentage": 0,
             "usingMinimumValue": false
           },
-          "tax": 624
+          "tax": 585
         },
         {
           "oldAmount": null,
@@ -3582,7 +3582,7 @@
             "rawPercentage": 0,
             "usingMinimumValue": false
           },
-          "tax": 0.04
+          "tax": 0.03
         }
       ]
     },
@@ -3599,7 +3599,7 @@
         "modificationFeeDiscount": 0.62,
         "limits": {
           "cnt": 125,
-          "acc": 0.062400000000000004,
+          "acc": 0.058499999999999996,
           "ask": 5,
           "bid": 5,
           "vis": 5,
@@ -3635,7 +3635,7 @@
             "rawPercentage": 0,
             "usingMinimumValue": false
           },
-          "tax": 6.24
+          "tax": 5.85
         },
         {
           "oldAmount": null,
@@ -3650,7 +3650,7 @@
             "rawPercentage": 0,
             "usingMinimumValue": false
           },
-          "tax": 7703.7
+          "tax": 7222.22
         },
         {
           "oldAmount": 10000,
@@ -3665,7 +3665,7 @@
             "rawPercentage": 0,
             "usingMinimumValue": false
           },
-          "tax": 312
+          "tax": 292.5
         },
         {
           "oldAmount": 10000,
@@ -3680,7 +3680,7 @@
             "rawPercentage": 0,
             "usingMinimumValue": false
           },
-          "tax": 1248
+          "tax": 1170
         },
         {
           "oldAmount": null,
@@ -3727,7 +3727,7 @@
         "modificationFeeDiscount": 0.62,
         "limits": {
           "cnt": 125,
-          "acc": 0.031200000000000002,
+          "acc": 0.029249999999999998,
           "ask": 5,
           "bid": 5,
           "vis": 5,
@@ -3763,7 +3763,7 @@
             "rawPercentage": 0,
             "usingMinimumValue": false
           },
-          "tax": 3.12
+          "tax": 2.93
         },
         {
           "oldAmount": null,
@@ -3778,7 +3778,7 @@
             "rawPercentage": 0,
             "usingMinimumValue": false
           },
-          "tax": 3851.85
+          "tax": 3611.11
         },
         {
           "oldAmount": 10000,
@@ -3793,7 +3793,7 @@
             "rawPercentage": 0,
             "usingMinimumValue": false
           },
-          "tax": 156
+          "tax": 146.25
         },
         {
           "oldAmount": 10000,
@@ -3808,7 +3808,7 @@
             "rawPercentage": 0,
             "usingMinimumValue": false
           },
-          "tax": 624
+          "tax": 585
         },
         {
           "oldAmount": null,
@@ -3838,7 +3838,7 @@
             "rawPercentage": 0,
             "usingMinimumValue": false
           },
-          "tax": 0.04
+          "tax": 0.03
         }
       ]
     },
@@ -3855,7 +3855,7 @@
         "modificationFeeDiscount": 0.62,
         "limits": {
           "cnt": 125,
-          "acc": 0.062400000000000004,
+          "acc": 0.058499999999999996,
           "ask": 5,
           "bid": 5,
           "vis": 5,
@@ -3891,7 +3891,7 @@
             "rawPercentage": 0.005,
             "usingMinimumValue": true
           },
-          "tax": 6.24
+          "tax": 5.85
         },
         {
           "oldAmount": null,
@@ -3906,7 +3906,7 @@
             "rawPercentage": 0.005,
             "usingMinimumValue": false
           },
-          "tax": 7703.7
+          "tax": 7222.22
         },
         {
           "oldAmount": 10000,
@@ -3921,7 +3921,7 @@
             "rawPercentage": 0.005,
             "usingMinimumValue": true
           },
-          "tax": 312
+          "tax": 292.5
         },
         {
           "oldAmount": 10000,
@@ -3936,7 +3936,7 @@
             "rawPercentage": 0.005,
             "usingMinimumValue": false
           },
-          "tax": 1248
+          "tax": 1170
         },
         {
           "oldAmount": null,
@@ -3983,7 +3983,7 @@
         "modificationFeeDiscount": 0.62,
         "limits": {
           "cnt": 125,
-          "acc": 0.031200000000000002,
+          "acc": 0.029249999999999998,
           "ask": 5,
           "bid": 5,
           "vis": 5,
@@ -4019,7 +4019,7 @@
             "rawPercentage": 0.005,
             "usingMinimumValue": true
           },
-          "tax": 3.12
+          "tax": 2.93
         },
         {
           "oldAmount": null,
@@ -4034,7 +4034,7 @@
             "rawPercentage": 0.005,
             "usingMinimumValue": false
           },
-          "tax": 3851.85
+          "tax": 3611.11
         },
         {
           "oldAmount": 10000,
@@ -4049,7 +4049,7 @@
             "rawPercentage": 0.005,
             "usingMinimumValue": true
           },
-          "tax": 156
+          "tax": 146.25
         },
         {
           "oldAmount": 10000,
@@ -4064,7 +4064,7 @@
             "rawPercentage": 0.005,
             "usingMinimumValue": false
           },
-          "tax": 624
+          "tax": 585
         },
         {
           "oldAmount": null,
@@ -4094,7 +4094,7 @@
             "rawPercentage": 0.005,
             "usingMinimumValue": true
           },
-          "tax": 0.04
+          "tax": 0.03
         }
       ]
     },
@@ -4111,7 +4111,7 @@
         "modificationFeeDiscount": 0.62,
         "limits": {
           "cnt": 125,
-          "acc": 0.062400000000000004,
+          "acc": 0.058499999999999996,
           "ask": 5,
           "bid": 5,
           "vis": 5,
@@ -4147,7 +4147,7 @@
             "rawPercentage": 0.005,
             "usingMinimumValue": true
           },
-          "tax": 6.24
+          "tax": 5.85
         },
         {
           "oldAmount": null,
@@ -4162,7 +4162,7 @@
             "rawPercentage": 0.005,
             "usingMinimumValue": false
           },
-          "tax": 7703.7
+          "tax": 7222.22
         },
         {
           "oldAmount": 10000,
@@ -4177,7 +4177,7 @@
             "rawPercentage": 0.005,
             "usingMinimumValue": true
           },
-          "tax": 312
+          "tax": 292.5
         },
         {
           "oldAmount": 10000,
@@ -4192,7 +4192,7 @@
             "rawPercentage": 0.005,
             "usingMinimumValue": false
           },
-          "tax": 1248
+          "tax": 1170
         },
         {
           "oldAmount": null,
@@ -4239,7 +4239,7 @@
         "modificationFeeDiscount": 0.62,
         "limits": {
           "cnt": 125,
-          "acc": 0.031200000000000002,
+          "acc": 0.029249999999999998,
           "ask": 5,
           "bid": 5,
           "vis": 5,
@@ -4275,7 +4275,7 @@
             "rawPercentage": 0.005,
             "usingMinimumValue": true
           },
-          "tax": 3.12
+          "tax": 2.93
         },
         {
           "oldAmount": null,
@@ -4290,7 +4290,7 @@
             "rawPercentage": 0.005,
             "usingMinimumValue": false
           },
-          "tax": 3851.85
+          "tax": 3611.11
         },
         {
           "oldAmount": 10000,
@@ -4305,7 +4305,7 @@
             "rawPercentage": 0.005,
             "usingMinimumValue": true
           },
-          "tax": 156
+          "tax": 146.25
         },
         {
           "oldAmount": 10000,
@@ -4320,7 +4320,7 @@
             "rawPercentage": 0.005,
             "usingMinimumValue": false
           },
-          "tax": 624
+          "tax": 585
         },
         {
           "oldAmount": null,
@@ -4350,7 +4350,7 @@
             "rawPercentage": 0.005,
             "usingMinimumValue": true
           },
-          "tax": 0.04
+          "tax": 0.03
         }
       ]
     },
@@ -4367,7 +4367,7 @@
         "modificationFeeDiscount": 0.62,
         "limits": {
           "cnt": 125,
-          "acc": 0.062400000000000004,
+          "acc": 0.058499999999999996,
           "ask": 5,
           "bid": 5,
           "vis": 5,
@@ -4403,7 +4403,7 @@
             "rawPercentage": 0.005,
             "usingMinimumValue": true
           },
-          "tax": 6.24
+          "tax": 5.85
         },
         {
           "oldAmount": null,
@@ -4418,7 +4418,7 @@
             "rawPercentage": 0.005,
             "usingMinimumValue": false
           },
-          "tax": 7703.7
+          "tax": 7222.22
         },
         {
           "oldAmount": 10000,
@@ -4433,7 +4433,7 @@
             "rawPercentage": 0.005,
             "usingMinimumValue": true
           },
-          "tax": 312
+          "tax": 292.5
         },
         {
           "oldAmount": 10000,
@@ -4448,7 +4448,7 @@
             "rawPercentage": 0.005,
             "usingMinimumValue": false
           },
-          "tax": 1248
+          "tax": 1170
         },
         {
           "oldAmount": null,
@@ -4495,7 +4495,7 @@
         "modificationFeeDiscount": 0.62,
         "limits": {
           "cnt": 125,
-          "acc": 0.031200000000000002,
+          "acc": 0.029249999999999998,
           "ask": 5,
           "bid": 5,
           "vis": 5,
@@ -4531,7 +4531,7 @@
             "rawPercentage": 0.005,
             "usingMinimumValue": true
           },
-          "tax": 3.12
+          "tax": 2.93
         },
         {
           "oldAmount": null,
@@ -4546,7 +4546,7 @@
             "rawPercentage": 0.005,
             "usingMinimumValue": false
           },
-          "tax": 3851.85
+          "tax": 3611.11
         },
         {
           "oldAmount": 10000,
@@ -4561,7 +4561,7 @@
             "rawPercentage": 0.005,
             "usingMinimumValue": true
           },
-          "tax": 156
+          "tax": 146.25
         },
         {
           "oldAmount": 10000,
@@ -4576,7 +4576,7 @@
             "rawPercentage": 0.005,
             "usingMinimumValue": false
           },
-          "tax": 624
+          "tax": 585
         },
         {
           "oldAmount": null,
@@ -4606,7 +4606,7 @@
             "rawPercentage": 0.005,
             "usingMinimumValue": true
           },
-          "tax": 0.04
+          "tax": 0.03
         }
       ]
     },
@@ -4623,7 +4623,7 @@
         "modificationFeeDiscount": 0.6799999999999999,
         "limits": {
           "cnt": 185,
-          "acc": 0.053599999999999995,
+          "acc": 0.050249999999999996,
           "ask": 10,
           "bid": 10,
           "vis": 10,
@@ -4659,7 +4659,7 @@
             "rawPercentage": 0,
             "usingMinimumValue": false
           },
-          "tax": 5.36
+          "tax": 5.02
         },
         {
           "oldAmount": null,
@@ -4674,7 +4674,7 @@
             "rawPercentage": 0,
             "usingMinimumValue": false
           },
-          "tax": 6617.28
+          "tax": 6203.7
         },
         {
           "oldAmount": 10000,
@@ -4689,7 +4689,7 @@
             "rawPercentage": 0,
             "usingMinimumValue": false
           },
-          "tax": 268
+          "tax": 251.25
         },
         {
           "oldAmount": 10000,
@@ -4704,7 +4704,7 @@
             "rawPercentage": 0,
             "usingMinimumValue": false
           },
-          "tax": 1072
+          "tax": 1005
         },
         {
           "oldAmount": null,
@@ -4751,7 +4751,7 @@
         "modificationFeeDiscount": 0.6799999999999999,
         "limits": {
           "cnt": 185,
-          "acc": 0.026799999999999997,
+          "acc": 0.025124999999999998,
           "ask": 10,
           "bid": 10,
           "vis": 10,
@@ -4787,7 +4787,7 @@
             "rawPercentage": 0,
             "usingMinimumValue": false
           },
-          "tax": 2.68
+          "tax": 2.51
         },
         {
           "oldAmount": null,
@@ -4802,7 +4802,7 @@
             "rawPercentage": 0,
             "usingMinimumValue": false
           },
-          "tax": 3308.64
+          "tax": 3101.85
         },
         {
           "oldAmount": 10000,
@@ -4817,7 +4817,7 @@
             "rawPercentage": 0,
             "usingMinimumValue": false
           },
-          "tax": 134
+          "tax": 125.62
         },
         {
           "oldAmount": 10000,
@@ -4832,7 +4832,7 @@
             "rawPercentage": 0,
             "usingMinimumValue": false
           },
-          "tax": 536
+          "tax": 502.5
         },
         {
           "oldAmount": null,
@@ -4879,7 +4879,7 @@
         "modificationFeeDiscount": 0.6799999999999999,
         "limits": {
           "cnt": 185,
-          "acc": 0.053599999999999995,
+          "acc": 0.050249999999999996,
           "ask": 10,
           "bid": 10,
           "vis": 10,
@@ -4915,7 +4915,7 @@
             "rawPercentage": 0,
             "usingMinimumValue": false
           },
-          "tax": 5.36
+          "tax": 5.02
         },
         {
           "oldAmount": null,
@@ -4930,7 +4930,7 @@
             "rawPercentage": 0,
             "usingMinimumValue": false
           },
-          "tax": 6617.28
+          "tax": 6203.7
         },
         {
           "oldAmount": 10000,
@@ -4945,7 +4945,7 @@
             "rawPercentage": 0,
             "usingMinimumValue": false
           },
-          "tax": 268
+          "tax": 251.25
         },
         {
           "oldAmount": 10000,
@@ -4960,7 +4960,7 @@
             "rawPercentage": 0,
             "usingMinimumValue": false
           },
-          "tax": 1072
+          "tax": 1005
         },
         {
           "oldAmount": null,
@@ -5007,7 +5007,7 @@
         "modificationFeeDiscount": 0.6799999999999999,
         "limits": {
           "cnt": 185,
-          "acc": 0.026799999999999997,
+          "acc": 0.025124999999999998,
           "ask": 10,
           "bid": 10,
           "vis": 10,
@@ -5043,7 +5043,7 @@
             "rawPercentage": 0,
             "usingMinimumValue": false
           },
-          "tax": 2.68
+          "tax": 2.51
         },
         {
           "oldAmount": null,
@@ -5058,7 +5058,7 @@
             "rawPercentage": 0,
             "usingMinimumValue": false
           },
-          "tax": 3308.64
+          "tax": 3101.85
         },
         {
           "oldAmount": 10000,
@@ -5073,7 +5073,7 @@
             "rawPercentage": 0,
             "usingMinimumValue": false
           },
-          "tax": 134
+          "tax": 125.62
         },
         {
           "oldAmount": 10000,
@@ -5088,7 +5088,7 @@
             "rawPercentage": 0,
             "usingMinimumValue": false
           },
-          "tax": 536
+          "tax": 502.5
         },
         {
           "oldAmount": null,
@@ -5135,7 +5135,7 @@
         "modificationFeeDiscount": 0.6799999999999999,
         "limits": {
           "cnt": 185,
-          "acc": 0.053599999999999995,
+          "acc": 0.050249999999999996,
           "ask": 10,
           "bid": 10,
           "vis": 10,
@@ -5171,7 +5171,7 @@
             "rawPercentage": 0,
             "usingMinimumValue": false
           },
-          "tax": 5.36
+          "tax": 5.02
         },
         {
           "oldAmount": null,
@@ -5186,7 +5186,7 @@
             "rawPercentage": 0,
             "usingMinimumValue": false
           },
-          "tax": 6617.28
+          "tax": 6203.7
         },
         {
           "oldAmount": 10000,
@@ -5201,7 +5201,7 @@
             "rawPercentage": 0,
             "usingMinimumValue": false
           },
-          "tax": 268
+          "tax": 251.25
         },
         {
           "oldAmount": 10000,
@@ -5216,7 +5216,7 @@
             "rawPercentage": 0,
             "usingMinimumValue": false
           },
-          "tax": 1072
+          "tax": 1005
         },
         {
           "oldAmount": null,
@@ -5263,7 +5263,7 @@
         "modificationFeeDiscount": 0.6799999999999999,
         "limits": {
           "cnt": 185,
-          "acc": 0.026799999999999997,
+          "acc": 0.025124999999999998,
           "ask": 10,
           "bid": 10,
           "vis": 10,
@@ -5299,7 +5299,7 @@
             "rawPercentage": 0,
             "usingMinimumValue": false
           },
-          "tax": 2.68
+          "tax": 2.51
         },
         {
           "oldAmount": null,
@@ -5314,7 +5314,7 @@
             "rawPercentage": 0,
             "usingMinimumValue": false
           },
-          "tax": 3308.64
+          "tax": 3101.85
         },
         {
           "oldAmount": 10000,
@@ -5329,7 +5329,7 @@
             "rawPercentage": 0,
             "usingMinimumValue": false
           },
-          "tax": 134
+          "tax": 125.62
         },
         {
           "oldAmount": 10000,
@@ -5344,7 +5344,7 @@
             "rawPercentage": 0,
             "usingMinimumValue": false
           },
-          "tax": 536
+          "tax": 502.5
         },
         {
           "oldAmount": null,
@@ -5391,7 +5391,7 @@
         "modificationFeeDiscount": 0.6799999999999999,
         "limits": {
           "cnt": 185,
-          "acc": 0.053599999999999995,
+          "acc": 0.050249999999999996,
           "ask": 10,
           "bid": 10,
           "vis": 10,
@@ -5427,7 +5427,7 @@
             "rawPercentage": 0.005,
             "usingMinimumValue": true
           },
-          "tax": 5.36
+          "tax": 5.02
         },
         {
           "oldAmount": null,
@@ -5442,7 +5442,7 @@
             "rawPercentage": 0.005,
             "usingMinimumValue": false
           },
-          "tax": 6617.28
+          "tax": 6203.7
         },
         {
           "oldAmount": 10000,
@@ -5457,7 +5457,7 @@
             "rawPercentage": 0.005,
             "usingMinimumValue": true
           },
-          "tax": 268
+          "tax": 251.25
         },
         {
           "oldAmount": 10000,
@@ -5472,7 +5472,7 @@
             "rawPercentage": 0.005,
             "usingMinimumValue": false
           },
-          "tax": 1072
+          "tax": 1005
         },
         {
           "oldAmount": null,
@@ -5519,7 +5519,7 @@
         "modificationFeeDiscount": 0.6799999999999999,
         "limits": {
           "cnt": 185,
-          "acc": 0.026799999999999997,
+          "acc": 0.025124999999999998,
           "ask": 10,
           "bid": 10,
           "vis": 10,
@@ -5555,7 +5555,7 @@
             "rawPercentage": 0.005,
             "usingMinimumValue": true
           },
-          "tax": 2.68
+          "tax": 2.51
         },
         {
           "oldAmount": null,
@@ -5570,7 +5570,7 @@
             "rawPercentage": 0.005,
             "usingMinimumValue": false
           },
-          "tax": 3308.64
+          "tax": 3101.85
         },
         {
           "oldAmount": 10000,
@@ -5585,7 +5585,7 @@
             "rawPercentage": 0.005,
             "usingMinimumValue": true
           },
-          "tax": 134
+          "tax": 125.62
         },
         {
           "oldAmount": 10000,
@@ -5600,7 +5600,7 @@
             "rawPercentage": 0.005,
             "usingMinimumValue": false
           },
-          "tax": 536
+          "tax": 502.5
         },
         {
           "oldAmount": null,
@@ -5647,7 +5647,7 @@
         "modificationFeeDiscount": 0.6799999999999999,
         "limits": {
           "cnt": 185,
-          "acc": 0.053599999999999995,
+          "acc": 0.050249999999999996,
           "ask": 10,
           "bid": 10,
           "vis": 10,
@@ -5683,7 +5683,7 @@
             "rawPercentage": 0.005,
             "usingMinimumValue": true
           },
-          "tax": 5.36
+          "tax": 5.02
         },
         {
           "oldAmount": null,
@@ -5698,7 +5698,7 @@
             "rawPercentage": 0.005,
             "usingMinimumValue": false
           },
-          "tax": 6617.28
+          "tax": 6203.7
         },
         {
           "oldAmount": 10000,
@@ -5713,7 +5713,7 @@
             "rawPercentage": 0.005,
             "usingMinimumValue": true
           },
-          "tax": 268
+          "tax": 251.25
         },
         {
           "oldAmount": 10000,
@@ -5728,7 +5728,7 @@
             "rawPercentage": 0.005,
             "usingMinimumValue": false
           },
-          "tax": 1072
+          "tax": 1005
         },
         {
           "oldAmount": null,
@@ -5775,7 +5775,7 @@
         "modificationFeeDiscount": 0.6799999999999999,
         "limits": {
           "cnt": 185,
-          "acc": 0.026799999999999997,
+          "acc": 0.025124999999999998,
           "ask": 10,
           "bid": 10,
           "vis": 10,
@@ -5811,7 +5811,7 @@
             "rawPercentage": 0.005,
             "usingMinimumValue": true
           },
-          "tax": 2.68
+          "tax": 2.51
         },
         {
           "oldAmount": null,
@@ -5826,7 +5826,7 @@
             "rawPercentage": 0.005,
             "usingMinimumValue": false
           },
-          "tax": 3308.64
+          "tax": 3101.85
         },
         {
           "oldAmount": 10000,
@@ -5841,7 +5841,7 @@
             "rawPercentage": 0.005,
             "usingMinimumValue": true
           },
-          "tax": 134
+          "tax": 125.62
         },
         {
           "oldAmount": 10000,
@@ -5856,7 +5856,7 @@
             "rawPercentage": 0.005,
             "usingMinimumValue": false
           },
-          "tax": 536
+          "tax": 502.5
         },
         {
           "oldAmount": null,
@@ -5903,7 +5903,7 @@
         "modificationFeeDiscount": 0.6799999999999999,
         "limits": {
           "cnt": 185,
-          "acc": 0.053599999999999995,
+          "acc": 0.050249999999999996,
           "ask": 10,
           "bid": 10,
           "vis": 10,
@@ -5939,7 +5939,7 @@
             "rawPercentage": 0.005,
             "usingMinimumValue": true
           },
-          "tax": 5.36
+          "tax": 5.02
         },
         {
           "oldAmount": null,
@@ -5954,7 +5954,7 @@
             "rawPercentage": 0.005,
             "usingMinimumValue": false
           },
-          "tax": 6617.28
+          "tax": 6203.7
         },
         {
           "oldAmount": 10000,
@@ -5969,7 +5969,7 @@
             "rawPercentage": 0.005,
             "usingMinimumValue": true
           },
-          "tax": 268
+          "tax": 251.25
         },
         {
           "oldAmount": 10000,
@@ -5984,7 +5984,7 @@
             "rawPercentage": 0.005,
             "usingMinimumValue": false
           },
-          "tax": 1072
+          "tax": 1005
         },
         {
           "oldAmount": null,
@@ -6031,7 +6031,7 @@
         "modificationFeeDiscount": 0.6799999999999999,
         "limits": {
           "cnt": 185,
-          "acc": 0.026799999999999997,
+          "acc": 0.025124999999999998,
           "ask": 10,
           "bid": 10,
           "vis": 10,
@@ -6067,7 +6067,7 @@
             "rawPercentage": 0.005,
             "usingMinimumValue": true
           },
-          "tax": 2.68
+          "tax": 2.51
         },
         {
           "oldAmount": null,
@@ -6082,7 +6082,7 @@
             "rawPercentage": 0.005,
             "usingMinimumValue": false
           },
-          "tax": 3308.64
+          "tax": 3101.85
         },
         {
           "oldAmount": 10000,
@@ -6097,7 +6097,7 @@
             "rawPercentage": 0.005,
             "usingMinimumValue": true
           },
-          "tax": 134
+          "tax": 125.62
         },
         {
           "oldAmount": 10000,
@@ -6112,7 +6112,7 @@
             "rawPercentage": 0.005,
             "usingMinimumValue": false
           },
-          "tax": 536
+          "tax": 502.5
         },
         {
           "oldAmount": null,
@@ -6159,7 +6159,7 @@
         "modificationFeeDiscount": 0.74,
         "limits": {
           "cnt": 245,
-          "acc": 0.044800000000000006,
+          "acc": 0.042,
           "ask": 20,
           "bid": 20,
           "vis": 20,
@@ -6195,7 +6195,7 @@
             "rawPercentage": 0,
             "usingMinimumValue": false
           },
-          "tax": 4.48
+          "tax": 4.2
         },
         {
           "oldAmount": null,
@@ -6210,7 +6210,7 @@
             "rawPercentage": 0,
             "usingMinimumValue": false
           },
-          "tax": 5530.86
+          "tax": 5185.18
         },
         {
           "oldAmount": 10000,
@@ -6225,7 +6225,7 @@
             "rawPercentage": 0,
             "usingMinimumValue": false
           },
-          "tax": 224
+          "tax": 210
         },
         {
           "oldAmount": 10000,
@@ -6240,7 +6240,7 @@
             "rawPercentage": 0,
             "usingMinimumValue": false
           },
-          "tax": 896
+          "tax": 840
         },
         {
           "oldAmount": null,
@@ -6287,7 +6287,7 @@
         "modificationFeeDiscount": 0.74,
         "limits": {
           "cnt": 245,
-          "acc": 0.022400000000000003,
+          "acc": 0.021,
           "ask": 20,
           "bid": 20,
           "vis": 20,
@@ -6323,7 +6323,7 @@
             "rawPercentage": 0,
             "usingMinimumValue": false
           },
-          "tax": 2.24
+          "tax": 2.1
         },
         {
           "oldAmount": null,
@@ -6338,7 +6338,7 @@
             "rawPercentage": 0,
             "usingMinimumValue": false
           },
-          "tax": 2765.43
+          "tax": 2592.59
         },
         {
           "oldAmount": 10000,
@@ -6353,7 +6353,7 @@
             "rawPercentage": 0,
             "usingMinimumValue": false
           },
-          "tax": 112
+          "tax": 105
         },
         {
           "oldAmount": 10000,
@@ -6368,7 +6368,7 @@
             "rawPercentage": 0,
             "usingMinimumValue": false
           },
-          "tax": 448
+          "tax": 420
         },
         {
           "oldAmount": null,
@@ -6398,7 +6398,7 @@
             "rawPercentage": 0,
             "usingMinimumValue": false
           },
-          "tax": 0.03
+          "tax": 0.02
         }
       ]
     },
@@ -6415,7 +6415,7 @@
         "modificationFeeDiscount": 0.74,
         "limits": {
           "cnt": 245,
-          "acc": 0.044800000000000006,
+          "acc": 0.042,
           "ask": 20,
           "bid": 20,
           "vis": 20,
@@ -6451,7 +6451,7 @@
             "rawPercentage": 0,
             "usingMinimumValue": false
           },
-          "tax": 4.48
+          "tax": 4.2
         },
         {
           "oldAmount": null,
@@ -6466,7 +6466,7 @@
             "rawPercentage": 0,
             "usingMinimumValue": false
           },
-          "tax": 5530.86
+          "tax": 5185.18
         },
         {
           "oldAmount": 10000,
@@ -6481,7 +6481,7 @@
             "rawPercentage": 0,
             "usingMinimumValue": false
           },
-          "tax": 224
+          "tax": 210
         },
         {
           "oldAmount": 10000,
@@ -6496,7 +6496,7 @@
             "rawPercentage": 0,
             "usingMinimumValue": false
           },
-          "tax": 896
+          "tax": 840
         },
         {
           "oldAmount": null,
@@ -6543,7 +6543,7 @@
         "modificationFeeDiscount": 0.74,
         "limits": {
           "cnt": 245,
-          "acc": 0.022400000000000003,
+          "acc": 0.021,
           "ask": 20,
           "bid": 20,
           "vis": 20,
@@ -6579,7 +6579,7 @@
             "rawPercentage": 0,
             "usingMinimumValue": false
           },
-          "tax": 2.24
+          "tax": 2.1
         },
         {
           "oldAmount": null,
@@ -6594,7 +6594,7 @@
             "rawPercentage": 0,
             "usingMinimumValue": false
           },
-          "tax": 2765.43
+          "tax": 2592.59
         },
         {
           "oldAmount": 10000,
@@ -6609,7 +6609,7 @@
             "rawPercentage": 0,
             "usingMinimumValue": false
           },
-          "tax": 112
+          "tax": 105
         },
         {
           "oldAmount": 10000,
@@ -6624,7 +6624,7 @@
             "rawPercentage": 0,
             "usingMinimumValue": false
           },
-          "tax": 448
+          "tax": 420
         },
         {
           "oldAmount": null,
@@ -6654,7 +6654,7 @@
             "rawPercentage": 0,
             "usingMinimumValue": false
           },
-          "tax": 0.03
+          "tax": 0.02
         }
       ]
     },
@@ -6671,7 +6671,7 @@
         "modificationFeeDiscount": 0.74,
         "limits": {
           "cnt": 245,
-          "acc": 0.044800000000000006,
+          "acc": 0.042,
           "ask": 20,
           "bid": 20,
           "vis": 20,
@@ -6707,7 +6707,7 @@
             "rawPercentage": 0,
             "usingMinimumValue": false
           },
-          "tax": 4.48
+          "tax": 4.2
         },
         {
           "oldAmount": null,
@@ -6722,7 +6722,7 @@
             "rawPercentage": 0,
             "usingMinimumValue": false
           },
-          "tax": 5530.86
+          "tax": 5185.18
         },
         {
           "oldAmount": 10000,
@@ -6737,7 +6737,7 @@
             "rawPercentage": 0,
             "usingMinimumValue": false
           },
-          "tax": 224
+          "tax": 210
         },
         {
           "oldAmount": 10000,
@@ -6752,7 +6752,7 @@
             "rawPercentage": 0,
             "usingMinimumValue": false
           },
-          "tax": 896
+          "tax": 840
         },
         {
           "oldAmount": null,
@@ -6799,7 +6799,7 @@
         "modificationFeeDiscount": 0.74,
         "limits": {
           "cnt": 245,
-          "acc": 0.022400000000000003,
+          "acc": 0.021,
           "ask": 20,
           "bid": 20,
           "vis": 20,
@@ -6835,7 +6835,7 @@
             "rawPercentage": 0,
             "usingMinimumValue": false
           },
-          "tax": 2.24
+          "tax": 2.1
         },
         {
           "oldAmount": null,
@@ -6850,7 +6850,7 @@
             "rawPercentage": 0,
             "usingMinimumValue": false
           },
-          "tax": 2765.43
+          "tax": 2592.59
         },
         {
           "oldAmount": 10000,
@@ -6865,7 +6865,7 @@
             "rawPercentage": 0,
             "usingMinimumValue": false
           },
-          "tax": 112
+          "tax": 105
         },
         {
           "oldAmount": 10000,
@@ -6880,7 +6880,7 @@
             "rawPercentage": 0,
             "usingMinimumValue": false
           },
-          "tax": 448
+          "tax": 420
         },
         {
           "oldAmount": null,
@@ -6910,7 +6910,7 @@
             "rawPercentage": 0,
             "usingMinimumValue": false
           },
-          "tax": 0.03
+          "tax": 0.02
         }
       ]
     },
@@ -6927,7 +6927,7 @@
         "modificationFeeDiscount": 0.74,
         "limits": {
           "cnt": 245,
-          "acc": 0.044800000000000006,
+          "acc": 0.042,
           "ask": 20,
           "bid": 20,
           "vis": 20,
@@ -6963,7 +6963,7 @@
             "rawPercentage": 0.005,
             "usingMinimumValue": true
           },
-          "tax": 4.48
+          "tax": 4.2
         },
         {
           "oldAmount": null,
@@ -6978,7 +6978,7 @@
             "rawPercentage": 0.005,
             "usingMinimumValue": false
           },
-          "tax": 5530.86
+          "tax": 5185.18
         },
         {
           "oldAmount": 10000,
@@ -6993,7 +6993,7 @@
             "rawPercentage": 0.005,
             "usingMinimumValue": true
           },
-          "tax": 224
+          "tax": 210
         },
         {
           "oldAmount": 10000,
@@ -7008,7 +7008,7 @@
             "rawPercentage": 0.005,
             "usingMinimumValue": false
           },
-          "tax": 896
+          "tax": 840
         },
         {
           "oldAmount": null,
@@ -7055,7 +7055,7 @@
         "modificationFeeDiscount": 0.74,
         "limits": {
           "cnt": 245,
-          "acc": 0.022400000000000003,
+          "acc": 0.021,
           "ask": 20,
           "bid": 20,
           "vis": 20,
@@ -7091,7 +7091,7 @@
             "rawPercentage": 0.005,
             "usingMinimumValue": true
           },
-          "tax": 2.24
+          "tax": 2.1
         },
         {
           "oldAmount": null,
@@ -7106,7 +7106,7 @@
             "rawPercentage": 0.005,
             "usingMinimumValue": false
           },
-          "tax": 2765.43
+          "tax": 2592.59
         },
         {
           "oldAmount": 10000,
@@ -7121,7 +7121,7 @@
             "rawPercentage": 0.005,
             "usingMinimumValue": true
           },
-          "tax": 112
+          "tax": 105
         },
         {
           "oldAmount": 10000,
@@ -7136,7 +7136,7 @@
             "rawPercentage": 0.005,
             "usingMinimumValue": false
           },
-          "tax": 448
+          "tax": 420
         },
         {
           "oldAmount": null,
@@ -7166,7 +7166,7 @@
             "rawPercentage": 0.005,
             "usingMinimumValue": true
           },
-          "tax": 0.03
+          "tax": 0.02
         }
       ]
     },
@@ -7183,7 +7183,7 @@
         "modificationFeeDiscount": 0.74,
         "limits": {
           "cnt": 245,
-          "acc": 0.044800000000000006,
+          "acc": 0.042,
           "ask": 20,
           "bid": 20,
           "vis": 20,
@@ -7219,7 +7219,7 @@
             "rawPercentage": 0.005,
             "usingMinimumValue": true
           },
-          "tax": 4.48
+          "tax": 4.2
         },
         {
           "oldAmount": null,
@@ -7234,7 +7234,7 @@
             "rawPercentage": 0.005,
             "usingMinimumValue": false
           },
-          "tax": 5530.86
+          "tax": 5185.18
         },
         {
           "oldAmount": 10000,
@@ -7249,7 +7249,7 @@
             "rawPercentage": 0.005,
             "usingMinimumValue": true
           },
-          "tax": 224
+          "tax": 210
         },
         {
           "oldAmount": 10000,
@@ -7264,7 +7264,7 @@
             "rawPercentage": 0.005,
             "usingMinimumValue": false
           },
-          "tax": 896
+          "tax": 840
         },
         {
           "oldAmount": null,
@@ -7311,7 +7311,7 @@
         "modificationFeeDiscount": 0.74,
         "limits": {
           "cnt": 245,
-          "acc": 0.022400000000000003,
+          "acc": 0.021,
           "ask": 20,
           "bid": 20,
           "vis": 20,
@@ -7347,7 +7347,7 @@
             "rawPercentage": 0.005,
             "usingMinimumValue": true
           },
-          "tax": 2.24
+          "tax": 2.1
         },
         {
           "oldAmount": null,
@@ -7362,7 +7362,7 @@
             "rawPercentage": 0.005,
             "usingMinimumValue": false
           },
-          "tax": 2765.43
+          "tax": 2592.59
         },
         {
           "oldAmount": 10000,
@@ -7377,7 +7377,7 @@
             "rawPercentage": 0.005,
             "usingMinimumValue": true
           },
-          "tax": 112
+          "tax": 105
         },
         {
           "oldAmount": 10000,
@@ -7392,7 +7392,7 @@
             "rawPercentage": 0.005,
             "usingMinimumValue": false
           },
-          "tax": 448
+          "tax": 420
         },
         {
           "oldAmount": null,
@@ -7422,7 +7422,7 @@
             "rawPercentage": 0.005,
             "usingMinimumValue": true
           },
-          "tax": 0.03
+          "tax": 0.02
         }
       ]
     },
@@ -7439,7 +7439,7 @@
         "modificationFeeDiscount": 0.74,
         "limits": {
           "cnt": 245,
-          "acc": 0.044800000000000006,
+          "acc": 0.042,
           "ask": 20,
           "bid": 20,
           "vis": 20,
@@ -7475,7 +7475,7 @@
             "rawPercentage": 0.005,
             "usingMinimumValue": true
           },
-          "tax": 4.48
+          "tax": 4.2
         },
         {
           "oldAmount": null,
@@ -7490,7 +7490,7 @@
             "rawPercentage": 0.005,
             "usingMinimumValue": false
           },
-          "tax": 5530.86
+          "tax": 5185.18
         },
         {
           "oldAmount": 10000,
@@ -7505,7 +7505,7 @@
             "rawPercentage": 0.005,
             "usingMinimumValue": true
           },
-          "tax": 224
+          "tax": 210
         },
         {
           "oldAmount": 10000,
@@ -7520,7 +7520,7 @@
             "rawPercentage": 0.005,
             "usingMinimumValue": false
           },
-          "tax": 896
+          "tax": 840
         },
         {
           "oldAmount": null,
@@ -7567,7 +7567,7 @@
         "modificationFeeDiscount": 0.74,
         "limits": {
           "cnt": 245,
-          "acc": 0.022400000000000003,
+          "acc": 0.021,
           "ask": 20,
           "bid": 20,
           "vis": 20,
@@ -7603,7 +7603,7 @@
             "rawPercentage": 0.005,
             "usingMinimumValue": true
           },
-          "tax": 2.24
+          "tax": 2.1
         },
         {
           "oldAmount": null,
@@ -7618,7 +7618,7 @@
             "rawPercentage": 0.005,
             "usingMinimumValue": false
           },
-          "tax": 2765.43
+          "tax": 2592.59
         },
         {
           "oldAmount": 10000,
@@ -7633,7 +7633,7 @@
             "rawPercentage": 0.005,
             "usingMinimumValue": true
           },
-          "tax": 112
+          "tax": 105
         },
         {
           "oldAmount": 10000,
@@ -7648,7 +7648,7 @@
             "rawPercentage": 0.005,
             "usingMinimumValue": false
           },
-          "tax": 448
+          "tax": 420
         },
         {
           "oldAmount": null,
@@ -7678,7 +7678,7 @@
             "rawPercentage": 0.005,
             "usingMinimumValue": true
           },
-          "tax": 0.03
+          "tax": 0.02
         }
       ]
     },
@@ -7695,7 +7695,7 @@
         "modificationFeeDiscount": 0.8,
         "limits": {
           "cnt": 305,
-          "acc": 0.036,
+          "acc": 0.033749999999999995,
           "ask": 32767,
           "bid": 32767,
           "vis": 32767,
@@ -7731,7 +7731,7 @@
             "rawPercentage": 0,
             "usingMinimumValue": false
           },
-          "tax": 3.6
+          "tax": 3.37
         },
         {
           "oldAmount": null,
@@ -7746,7 +7746,7 @@
             "rawPercentage": 0,
             "usingMinimumValue": false
           },
-          "tax": 4444.44
+          "tax": 4166.67
         },
         {
           "oldAmount": 10000,
@@ -7761,7 +7761,7 @@
             "rawPercentage": 0,
             "usingMinimumValue": false
           },
-          "tax": 180
+          "tax": 168.75
         },
         {
           "oldAmount": 10000,
@@ -7776,7 +7776,7 @@
             "rawPercentage": 0,
             "usingMinimumValue": false
           },
-          "tax": 720
+          "tax": 675
         },
         {
           "oldAmount": null,
@@ -7823,7 +7823,7 @@
         "modificationFeeDiscount": 0.8,
         "limits": {
           "cnt": 305,
-          "acc": 0.018,
+          "acc": 0.016874999999999998,
           "ask": 32767,
           "bid": 32767,
           "vis": 32767,
@@ -7859,7 +7859,7 @@
             "rawPercentage": 0,
             "usingMinimumValue": false
           },
-          "tax": 1.8
+          "tax": 1.69
         },
         {
           "oldAmount": null,
@@ -7874,7 +7874,7 @@
             "rawPercentage": 0,
             "usingMinimumValue": false
           },
-          "tax": 2222.22
+          "tax": 2083.33
         },
         {
           "oldAmount": 10000,
@@ -7889,7 +7889,7 @@
             "rawPercentage": 0,
             "usingMinimumValue": false
           },
-          "tax": 90
+          "tax": 84.37
         },
         {
           "oldAmount": 10000,
@@ -7904,7 +7904,7 @@
             "rawPercentage": 0,
             "usingMinimumValue": false
           },
-          "tax": 360
+          "tax": 337.5
         },
         {
           "oldAmount": null,
@@ -7951,7 +7951,7 @@
         "modificationFeeDiscount": 0.8,
         "limits": {
           "cnt": 305,
-          "acc": 0.036,
+          "acc": 0.033749999999999995,
           "ask": 32767,
           "bid": 32767,
           "vis": 32767,
@@ -7987,7 +7987,7 @@
             "rawPercentage": 0,
             "usingMinimumValue": false
           },
-          "tax": 3.6
+          "tax": 3.37
         },
         {
           "oldAmount": null,
@@ -8002,7 +8002,7 @@
             "rawPercentage": 0,
             "usingMinimumValue": false
           },
-          "tax": 4444.44
+          "tax": 4166.67
         },
         {
           "oldAmount": 10000,
@@ -8017,7 +8017,7 @@
             "rawPercentage": 0,
             "usingMinimumValue": false
           },
-          "tax": 180
+          "tax": 168.75
         },
         {
           "oldAmount": 10000,
@@ -8032,7 +8032,7 @@
             "rawPercentage": 0,
             "usingMinimumValue": false
           },
-          "tax": 720
+          "tax": 675
         },
         {
           "oldAmount": null,
@@ -8079,7 +8079,7 @@
         "modificationFeeDiscount": 0.8,
         "limits": {
           "cnt": 305,
-          "acc": 0.018,
+          "acc": 0.016874999999999998,
           "ask": 32767,
           "bid": 32767,
           "vis": 32767,
@@ -8115,7 +8115,7 @@
             "rawPercentage": 0,
             "usingMinimumValue": false
           },
-          "tax": 1.8
+          "tax": 1.69
         },
         {
           "oldAmount": null,
@@ -8130,7 +8130,7 @@
             "rawPercentage": 0,
             "usingMinimumValue": false
           },
-          "tax": 2222.22
+          "tax": 2083.33
         },
         {
           "oldAmount": 10000,
@@ -8145,7 +8145,7 @@
             "rawPercentage": 0,
             "usingMinimumValue": false
           },
-          "tax": 90
+          "tax": 84.37
         },
         {
           "oldAmount": 10000,
@@ -8160,7 +8160,7 @@
             "rawPercentage": 0,
             "usingMinimumValue": false
           },
-          "tax": 360
+          "tax": 337.5
         },
         {
           "oldAmount": null,
@@ -8207,7 +8207,7 @@
         "modificationFeeDiscount": 0.8,
         "limits": {
           "cnt": 305,
-          "acc": 0.036,
+          "acc": 0.033749999999999995,
           "ask": 32767,
           "bid": 32767,
           "vis": 32767,
@@ -8243,7 +8243,7 @@
             "rawPercentage": 0,
             "usingMinimumValue": false
           },
-          "tax": 3.6
+          "tax": 3.37
         },
         {
           "oldAmount": null,
@@ -8258,7 +8258,7 @@
             "rawPercentage": 0,
             "usingMinimumValue": false
           },
-          "tax": 4444.44
+          "tax": 4166.67
         },
         {
           "oldAmount": 10000,
@@ -8273,7 +8273,7 @@
             "rawPercentage": 0,
             "usingMinimumValue": false
           },
-          "tax": 180
+          "tax": 168.75
         },
         {
           "oldAmount": 10000,
@@ -8288,7 +8288,7 @@
             "rawPercentage": 0,
             "usingMinimumValue": false
           },
-          "tax": 720
+          "tax": 675
         },
         {
           "oldAmount": null,
@@ -8335,7 +8335,7 @@
         "modificationFeeDiscount": 0.8,
         "limits": {
           "cnt": 305,
-          "acc": 0.018,
+          "acc": 0.016874999999999998,
           "ask": 32767,
           "bid": 32767,
           "vis": 32767,
@@ -8371,7 +8371,7 @@
             "rawPercentage": 0,
             "usingMinimumValue": false
           },
-          "tax": 1.8
+          "tax": 1.69
         },
         {
           "oldAmount": null,
@@ -8386,7 +8386,7 @@
             "rawPercentage": 0,
             "usingMinimumValue": false
           },
-          "tax": 2222.22
+          "tax": 2083.33
         },
         {
           "oldAmount": 10000,
@@ -8401,7 +8401,7 @@
             "rawPercentage": 0,
             "usingMinimumValue": false
           },
-          "tax": 90
+          "tax": 84.37
         },
         {
           "oldAmount": 10000,
@@ -8416,7 +8416,7 @@
             "rawPercentage": 0,
             "usingMinimumValue": false
           },
-          "tax": 360
+          "tax": 337.5
         },
         {
           "oldAmount": null,
@@ -8463,7 +8463,7 @@
         "modificationFeeDiscount": 0.8,
         "limits": {
           "cnt": 305,
-          "acc": 0.036,
+          "acc": 0.033749999999999995,
           "ask": 32767,
           "bid": 32767,
           "vis": 32767,
@@ -8499,7 +8499,7 @@
             "rawPercentage": 0.005,
             "usingMinimumValue": true
           },
-          "tax": 3.6
+          "tax": 3.37
         },
         {
           "oldAmount": null,
@@ -8514,7 +8514,7 @@
             "rawPercentage": 0.005,
             "usingMinimumValue": false
           },
-          "tax": 4444.44
+          "tax": 4166.67
         },
         {
           "oldAmount": 10000,
@@ -8529,7 +8529,7 @@
             "rawPercentage": 0.005,
             "usingMinimumValue": true
           },
-          "tax": 180
+          "tax": 168.75
         },
         {
           "oldAmount": 10000,
@@ -8544,7 +8544,7 @@
             "rawPercentage": 0.005,
             "usingMinimumValue": false
           },
-          "tax": 720
+          "tax": 675
         },
         {
           "oldAmount": null,
@@ -8591,7 +8591,7 @@
         "modificationFeeDiscount": 0.8,
         "limits": {
           "cnt": 305,
-          "acc": 0.018,
+          "acc": 0.016874999999999998,
           "ask": 32767,
           "bid": 32767,
           "vis": 32767,
@@ -8627,7 +8627,7 @@
             "rawPercentage": 0.005,
             "usingMinimumValue": true
           },
-          "tax": 1.8
+          "tax": 1.69
         },
         {
           "oldAmount": null,
@@ -8642,7 +8642,7 @@
             "rawPercentage": 0.005,
             "usingMinimumValue": false
           },
-          "tax": 2222.22
+          "tax": 2083.33
         },
         {
           "oldAmount": 10000,
@@ -8657,7 +8657,7 @@
             "rawPercentage": 0.005,
             "usingMinimumValue": true
           },
-          "tax": 90
+          "tax": 84.37
         },
         {
           "oldAmount": 10000,
@@ -8672,7 +8672,7 @@
             "rawPercentage": 0.005,
             "usingMinimumValue": false
           },
-          "tax": 360
+          "tax": 337.5
         },
         {
           "oldAmount": null,
@@ -8719,7 +8719,7 @@
         "modificationFeeDiscount": 0.8,
         "limits": {
           "cnt": 305,
-          "acc": 0.036,
+          "acc": 0.033749999999999995,
           "ask": 32767,
           "bid": 32767,
           "vis": 32767,
@@ -8755,7 +8755,7 @@
             "rawPercentage": 0.005,
             "usingMinimumValue": true
           },
-          "tax": 3.6
+          "tax": 3.37
         },
         {
           "oldAmount": null,
@@ -8770,7 +8770,7 @@
             "rawPercentage": 0.005,
             "usingMinimumValue": false
           },
-          "tax": 4444.44
+          "tax": 4166.67
         },
         {
           "oldAmount": 10000,
@@ -8785,7 +8785,7 @@
             "rawPercentage": 0.005,
             "usingMinimumValue": true
           },
-          "tax": 180
+          "tax": 168.75
         },
         {
           "oldAmount": 10000,
@@ -8800,7 +8800,7 @@
             "rawPercentage": 0.005,
             "usingMinimumValue": false
           },
-          "tax": 720
+          "tax": 675
         },
         {
           "oldAmount": null,
@@ -8847,7 +8847,7 @@
         "modificationFeeDiscount": 0.8,
         "limits": {
           "cnt": 305,
-          "acc": 0.018,
+          "acc": 0.016874999999999998,
           "ask": 32767,
           "bid": 32767,
           "vis": 32767,
@@ -8883,7 +8883,7 @@
             "rawPercentage": 0.005,
             "usingMinimumValue": true
           },
-          "tax": 1.8
+          "tax": 1.69
         },
         {
           "oldAmount": null,
@@ -8898,7 +8898,7 @@
             "rawPercentage": 0.005,
             "usingMinimumValue": false
           },
-          "tax": 2222.22
+          "tax": 2083.33
         },
         {
           "oldAmount": 10000,
@@ -8913,7 +8913,7 @@
             "rawPercentage": 0.005,
             "usingMinimumValue": true
           },
-          "tax": 90
+          "tax": 84.37
         },
         {
           "oldAmount": 10000,
@@ -8928,7 +8928,7 @@
             "rawPercentage": 0.005,
             "usingMinimumValue": false
           },
-          "tax": 360
+          "tax": 337.5
         },
         {
           "oldAmount": null,
@@ -8975,7 +8975,7 @@
         "modificationFeeDiscount": 0.8,
         "limits": {
           "cnt": 305,
-          "acc": 0.036,
+          "acc": 0.033749999999999995,
           "ask": 32767,
           "bid": 32767,
           "vis": 32767,
@@ -9011,7 +9011,7 @@
             "rawPercentage": 0.005,
             "usingMinimumValue": true
           },
-          "tax": 3.6
+          "tax": 3.37
         },
         {
           "oldAmount": null,
@@ -9026,7 +9026,7 @@
             "rawPercentage": 0.005,
             "usingMinimumValue": false
           },
-          "tax": 4444.44
+          "tax": 4166.67
         },
         {
           "oldAmount": 10000,
@@ -9041,7 +9041,7 @@
             "rawPercentage": 0.005,
             "usingMinimumValue": true
           },
-          "tax": 180
+          "tax": 168.75
         },
         {
           "oldAmount": 10000,
@@ -9056,7 +9056,7 @@
             "rawPercentage": 0.005,
             "usingMinimumValue": false
           },
-          "tax": 720
+          "tax": 675
         },
         {
           "oldAmount": null,
@@ -9103,7 +9103,7 @@
         "modificationFeeDiscount": 0.8,
         "limits": {
           "cnt": 305,
-          "acc": 0.018,
+          "acc": 0.016874999999999998,
           "ask": 32767,
           "bid": 32767,
           "vis": 32767,
@@ -9139,7 +9139,7 @@
             "rawPercentage": 0.005,
             "usingMinimumValue": true
           },
-          "tax": 1.8
+          "tax": 1.69
         },
         {
           "oldAmount": null,
@@ -9154,7 +9154,7 @@
             "rawPercentage": 0.005,
             "usingMinimumValue": false
           },
-          "tax": 2222.22
+          "tax": 2083.33
         },
         {
           "oldAmount": 10000,
@@ -9169,7 +9169,7 @@
             "rawPercentage": 0.005,
             "usingMinimumValue": true
           },
-          "tax": 90
+          "tax": 84.37
         },
         {
           "oldAmount": 10000,
@@ -9184,7 +9184,7 @@
             "rawPercentage": 0.005,
             "usingMinimumValue": false
           },
-          "tax": 360
+          "tax": 337.5
         },
         {
           "oldAmount": null,

@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using Eve.Characters;
 using Eve.Macho;
 using Eve.Marshal;
@@ -45,6 +46,8 @@ public sealed partial class MarketProxyService(MarketStore store,MarketTrading t
         "MktInvalidMinVolumeCannotExceedQuantity" => MachoErrors.ThrowUserError(error.Code),
         "MktBrokersFeeUnexpected2" => MachoErrors.ThrowUserError(error.Code,
             [.. error.Arguments.Select(argument => (argument.Name,(PyValue)Py.Number(Convert.ToDouble(argument.Value,System.Globalization.CultureInfo.InvariantCulture))))]),
+        "MARKET_MODIFY_TOO_SOON" => MachoErrors.ThrowUserError("CustomInfo",("info",new PyStr(
+            $"That order was placed or modified less than five minutes ago; it can be modified in {Convert.ToInt64(error.Arguments[0].Value,System.Globalization.CultureInfo.InvariantCulture)} seconds."))),
         _ => MachoErrors.ThrowUserError("CustomInfo",("info",new PyStr(MarketErrorText(error.Code)))),
     };
 
@@ -64,6 +67,9 @@ public sealed partial class MarketProxyService(MarketStore store,MarketTrading t
         "MARKET_STATION_NOT_FOUND" => "That station has no market.",
         "CHARACTER_NOT_FOUND" => "The character is not known to the market.",
         "INVALID_MARKET_PRICE" => "That price is not a valid order price.",
+        "MARKET_PRICE_TICK" => "Order prices have at most four significant figures.",
+        "MARKET_ORDER_STALE" => "That order has changed since it was shown. Reload the orders and try again.",
+        "MARKET_DUPLICATE_PLACEMENT" => "An identical order was placed a moment ago, so it was not placed again.",
         "INVALID_MARKET_DURATION_OR_RANGE" => "That duration or range is not offered for a market order.",
         _ => "The market refused the request.",
     };
@@ -111,6 +117,23 @@ public sealed partial class MarketProxyService(MarketStore store,MarketTrading t
             ("escrow",Py.Number(MarketRules.RoundIsk((double)owned.Escrow))));
     }
 private const int PlexTypeId = 44992;
+    /// <summary>Q14: the window in which an identical placement from the same session is refused.</summary>
+    private const long DuplicateWindowMs = 5_000;
+    private readonly ConcurrentDictionary<long,(MarketRequest Request,long AtMs)> _lastPlacement = new();
+
+    /// <summary>
+    /// Q14: a placement identical to the session's last successful one, within five seconds, is refused. The client sends no operation key
+    /// (each send has a new call id), so a repeated send is what this sees: a documented stop-gap until the client has a key.
+    /// </summary>
+    private void RefuseRepeatedPlacement(ServiceCall call,MarketRequest request)
+    {
+        if (_lastPlacement.TryGetValue(call.Session.SessionId,out var last) && last.Request == request && now() - last.AtMs < DuplicateWindowMs)
+            throw Error(new MarketError("MARKET_DUPLICATE_PLACEMENT"));
+    }
+
+    private void RecordPlacement(ServiceCall call,MarketRequest request) => _lastPlacement[call.Session.SessionId] = (request,now());
+
+    private static long FileTimeToUnixMs(PyValue value) => (Integer(value) - 116444736000000000L) / 10_000;
 
     [Method("StartupCheck")]
     public PyValue StartupCheck(ServiceCall call) => PyNone.Instance;
@@ -356,7 +379,9 @@ private const int PlexTypeId = 44992;
             ExpectedBrokerFee:call.Arg(8) is PyReal quote ? quote.Value : call.Arg(8) is PyInt whole ? whole.Value : null);
         try
         {
+            RefuseRepeatedPlacement(call,request);
             var receipt=await trading.PlaceAsync(request,Key(call,"buy"),call.Cancellation);
+            RecordPlacement(call,request);
             if (receipt.OrderId is null && receipt.FilledQuantity==0)
                 throw MachoErrors.ThrowUserError("CustomInfo",("info",new PyStr("No matching sell orders were available at the requested price.")));
             await Publish(receipt);
@@ -383,7 +408,9 @@ private const int PlexTypeId = 44992;
             ExpectedBrokerFee: expectedFee is PyReal quote ? quote.Value : expectedFee is PyInt whole ? whole.Value : null);
         try
         {
+            RefuseRepeatedPlacement(call, request);
             var receipt = await trading.PlaceAsync(request, key, call.Cancellation);
+            RecordPlacement(call, request);
             await Publish(receipt);
             return receipt.OrderId is not null || receipt.FilledQuantity > 0;
         }
@@ -409,7 +436,9 @@ private const int PlexTypeId = 44992;
         {
             foreach (var expired in await trading.ExpireDueAsync(call.Cancellation))
                 await Publish(expired);
-            var receipt=await trading.ModifyAsync(Actor(call),Integer(call.Arg(0)),Money(call.Arg(1)),Key(call,"modify"),call.Cancellation);
+            var receipt=await trading.ModifyAsync(Actor(call),Integer(call.Arg(0)),Money(call.Arg(1)),Key(call,"modify"),call.Cancellation,
+                expectedPrice:call.Arg(5) is null or PyNone ? null : Money(call.Arg(5)),
+                expectedIssuedMs:call.Arg(8) is null or PyNone ? null : FileTimeToUnixMs(call.Arg(8)));
             await Publish(receipt);
             return PyNone.Instance;
         }
@@ -437,7 +466,10 @@ private const int PlexTypeId = 44992;
                 MarketRules.RangeStation, Math.Max(1, Integer(Field(entry, "minVolume"), 1)), UseCorporation: useCorporation);
             try
             {
-                await Publish(await trading.PlaceAsync(request, key, call.Cancellation));
+                RefuseRepeatedPlacement(call, request);
+                var receipt = await trading.PlaceAsync(request, key, call.Cancellation);
+                RecordPlacement(call, request);
+                await Publish(receipt);
             }
             catch (Exception e) when (e is MarketError or MoneyLimitException or InsufficientFundsException or Eve.Corporations.CorporationError) { throw Error(e); }
         }

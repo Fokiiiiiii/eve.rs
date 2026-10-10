@@ -899,7 +899,10 @@ Done in M1 (DEVIATIONS.md, "Market slice M1"):
 Open after M1:
 | Status | Item | Owner / where |
 |---|---|---|
-| OPEN | M2: sales tax 7.5% through 'market-transaction-tax', 300 s modification delay, duration reset, price ticks, matching priority, Q15 stale-order refusal, Q14 duplicate refusal | M2 (market agent 1, next) |
+| DONE (M2) | Sales tax 7.5% (Q1), modification delay 300 s with `last_modified_ms` (Q3), duration reset (Q4), price ticks (Q12), matching by price then issue time (Q5), stale-view refusal (Q15), 5 s duplicate refusal (Q14); `RulesTests` replays the decided fixture | DEVIATIONS.md, "Market slice M2" |
+| OPEN | Client preview of the sales tax: the client reads `market-transaction-tax` from LaunchDarkly (its own SDK key), so eve.rs cannot serve 7.5; the server charges 7.5, the client may preview 8.0 | the client's flag source (Q1) |
+| OPEN | Client preview of the highsec security tax (5%, `security/common/const.py:6`): the server charges none (Q11) | confirm in game (Q11) |
+| OPEN | Matching priority (price, issue time, id) and the duplicate window are to be confirmed with a live match (Q5, Q14) | the live acceptance (M9) |
 | OPEN | M3: expiry as a durable scheduled job with a 60 s safety sweep and restart rescheduling | M3 |
 | OPEN | M4: push cache invalidation for book changes and corporation notifications to every character with market rights (G9, G11) | market agent 2 |
 | OPEN | M5 to M9: price history definitions (Q16), the read path tests (M6), locking and the bounded scan (M7), money invariants (M8), live acceptance (M9) | market agents 2 and 3 |

@@ -20,7 +20,7 @@ public class TradingTests
         Assert.Equal(4,trade.FilledQuantity);
         Assert.Equal(40m,trade.GrossAmount);
         Assert.Equal(9960m,(await r.WalletStore.GetAsync(buyer))!.Isk);
-        Assert.Equal(9936.80m,(await r.WalletStore.GetAsync(seller))!.Isk);
+        Assert.Equal(9937.00m,(await r.WalletStore.GetAsync(seller))!.Isk); // 40 less the 7.5% sales tax (3.00)
         Assert.Equal(4,Assert.Single(await r.Items.InLocationAsync(r.Station.Id,buyer)).Quantity);
         Assert.Equal(6,(await r.Book.BookAsync(r.Station.RegionId,34,r.Now)).Asks.Single().VolumeRemaining);
         await r.Reopen().PlaceAsync(r.Buy(buyer,10.00m,4),"buy"); // equivalent decimal formatting is a valid retry
@@ -43,7 +43,7 @@ public class TradingTests
         Assert.Equal(0,tooSmall.FilledQuantity);
         var trade=await r.Trading.PlaceAsync(r.Sell(seller,item,10,8),"sell");
         Assert.Equal(8,trade.FilledQuantity);
-        Assert.Equal(10088.32m,(await r.WalletStore.GetAsync(seller))!.Isk);
+        Assert.Equal(10088.80m,(await r.WalletStore.GetAsync(seller))!.Isk); // 80 less the 7.5% sales tax (6.00)
         Assert.Equal(9780m,(await r.WalletStore.GetAsync(buyer))!.Isk); // already paid escrow
         var last=await r.Trading.PlaceAsync(r.Sell(seller,item,10,2),"last");
         Assert.Equal(2,last.FilledQuantity); // remainder smaller than the original minimum may fill in full
@@ -86,7 +86,7 @@ public class TradingTests
         var bought=Assert.Single(await r.Items.InLocationAsync(r.Station.Id,actor));
         await r.Book.SeedNpcAsync([new("bid",34,true,8,100,32767,location,r.Now)]);
         await r.Trading.PlaceAsync(r.Sell(actor,bought.Id,8,5),"npc-sell");
-        Assert.Equal(9986.80m,(await r.WalletStore.GetAsync(actor))!.Isk);
+        Assert.Equal(9987.00m,(await r.WalletStore.GetAsync(actor))!.Isk); // 40 less the 7.5% sales tax (3.00)
         Assert.Empty(await r.Items.InLocationAsync(r.Station.Id,actor));
     }
 
@@ -239,6 +239,7 @@ public class TradingTests
         await r.Book.SeedNpcAsync([new("cross-ask",34,false,10m,5,MarketRules.RangeRegion,MarketLocation.From(r.Station),r.Now)]);
         var placed=await r.Trading.PlaceAsync(new MarketRequest(actor,34,true,9m,5,r.Station.Id,
             Duration:90,Range:MarketRules.RangeStation),"cross-place");
+        r.Now += MarketRules.ModificationDelayMs; // the five-minute modification delay (Q3)
         var changed=await r.Trading.ModifyAsync(actor,Assert.IsType<long>(placed.OrderId),12m,"cross-modify");
         Assert.Equal(5,changed.FilledQuantity);
         Assert.Equal(50m,changed.GrossAmount);

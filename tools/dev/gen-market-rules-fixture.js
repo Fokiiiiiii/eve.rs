@@ -4,6 +4,9 @@ const fs = require("node:fs");
 const path = require("node:path");
 const Module = require("node:module");
 const { execFileSync } = require("node:child_process");
+// The sales tax this checkout records: 7.5, CCP patch 2025-03-12.1 (decision Q1 in market-decisions.md). EVE.js hard-codes 8.0
+// (marketRules.js:43); that one constant is replaced in the reference source before it is compiled; every other formula is the reference's.
+const TAX_PERCENT = 7.5;
 const root = process.env.EVEJS_ROOT;
 if (!root) throw new Error("set EVEJS_ROOT to the reference checkout");
 const originalLoad = Module._load;
@@ -20,7 +23,17 @@ Module._load = function (request, ...args) {
   return originalLoad.call(this, request, ...args);
 };
 let rules;
-try { rules = require(path.join(root, "server/src/services/market/marketRules.js")); }
+try {
+  const rulesPath = path.join(root, "server/src/services/market/marketRules.js");
+  const referenceSource = fs.readFileSync(rulesPath, "utf8");
+  const taxLine = "const MARKET_TRANSACTION_TAX_DEFAULT_PERCENT = 8.0;";
+  if (referenceSource.split(taxLine).length !== 2) throw new Error("the reference's transaction tax constant is not where this generator expects it");
+  const rulesModule = new Module(rulesPath, module);
+  rulesModule.filename = rulesPath;
+  rulesModule.paths = Module._nodeModulePaths(path.dirname(rulesPath));
+  rulesModule._compile(referenceSource.replace(taxLine, `const MARKET_TRANSACTION_TAX_DEFAULT_PERCENT = ${TAX_PERCENT};`), rulesPath);
+  rules = rulesModule.exports;
+}
 finally { Module._load = originalLoad; }
 const cases = [];
 for (level = 0; level <= 5; level++) {
@@ -46,5 +59,5 @@ for (level = 0; level <= 5; level++) {
 }
 const output = path.join(__dirname, "../../oracle/fixtures/market/rules.json");
 fs.mkdirSync(path.dirname(output), { recursive: true });
-fs.writeFileSync(output, JSON.stringify({ source: "EVE.js server/src/services/market/marketRules.js", sourceCommit: execFileSync("git",["-C",root,"rev-parse","HEAD"], { encoding:"utf8" }).trim(), cases }, null, 2) + "\n");
+fs.writeFileSync(output, JSON.stringify({ source: `EVE.js server/src/services/market/marketRules.js, transaction tax constant set to ${TAX_PERCENT} (eve.rs decision Q1)`, sourceCommit: execFileSync("git",["-C",root,"rev-parse","HEAD"], { encoding:"utf8" }).trim(), cases }, null, 2) + "\n");
 console.log(cases.length + " contexts, " + cases.reduce((n,c) => n + c.fees.length,0) + " fee cases");

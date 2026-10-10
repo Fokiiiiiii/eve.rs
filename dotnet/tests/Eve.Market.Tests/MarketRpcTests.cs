@@ -147,8 +147,10 @@ public class MarketRpcTests
             PyBool.False, new PyInt(90), PyNone.Instance));
         Assert.Equal(PyBool.True, placed);
         var order = Assert.Single((await r.Book.BookAsync(r.Station.RegionId, Plex, r.Now)).Asks);
+        r.Now += MarketRules.ModificationDelayMs;
         Assert.Equal(PyNone.Instance, await seat.Proxy.ModifyPlexCharOrder(Call(seat.Session, "ModifyPlexCharOrder", 7, new PyLong(order.Id), new PyReal(13),
-            PyBool.False, new PyInt(r.Station.Id), new PyInt(r.Station.SolarSystemId), new PyReal(12), new PyInt(5), new PyLong(0))));
+            PyBool.False, new PyInt(r.Station.Id), new PyInt(r.Station.SolarSystemId), new PyReal(12), new PyInt(-1), new PyInt(5),
+            new PyLong(Py.FileTimeFromUnixMs(order.IssuedMs)))));
         Assert.Equal(13m, (await r.Book.BookAsync(r.Station.RegionId, Plex, r.Now)).Asks.Single().Price);
         // the Created notification of the sell and the Modified notification of the modify
         Assert.Equal(2, seat.Sink.Packets.Count);
@@ -283,5 +285,43 @@ public class MarketRpcTests
         var outsider = await SeatAsync(r, await r.Actor("Outsider"), 102);
         var denied = await Assert.ThrowsAsync<MachoWrappedException>(() => outsider.Proxy.CorpGetTransactions(Call(outsider.Session, "CorpGetTransactions", 20, PyNone.Instance, new PyInt(1006))).AsTask());
         Assert.Equal("CrpAccessDenied", UserError(denied).Label);
+    }
+
+    [PgFact]
+    public async Task A_modification_on_a_stale_view_is_a_refusal_that_changes_nothing()
+    {
+        // ModifyCharOrder (the client's oldPrice and issueDate, marketsvc.py:285-288): a stale view is a refusal, and the price stays.
+        await using var r = await TradeRig.Create();
+        var actor = await r.Actor("Stale View", 10000m);
+        var seat = await SeatAsync(r, actor);
+        var placedAt = r.Now;
+        await seat.Proxy.PlaceBuyOrder(Call(seat.Session, "PlaceBuyOrder", 20, new PyInt(r.Station.Id), new PyInt(Tritanium), new PyReal(5),
+            new PyInt(2), new PyInt(-1), new PyInt(1), new PyInt(90), PyBool.False, PyNone.Instance));
+        var order = Assert.Single((await r.Book.BookAsync(r.Station.RegionId, Tritanium, r.Now)).Bids);
+        r.Now += MarketRules.ModificationDelayMs;
+        var refusal = await Assert.ThrowsAsync<MachoWrappedException>(() => seat.Proxy.ModifyCharOrder(Call(seat.Session, "ModifyCharOrder", 21,
+            new PyLong(order.Id), new PyReal(6), PyBool.True, new PyInt(r.Station.Id), new PyInt(r.Station.SolarSystemId), new PyReal(4), new PyInt(-1),
+            new PyInt(2), new PyLong(Py.FileTimeFromUnixMs(placedAt)))).AsTask());
+        Assert.Equal("CustomInfo", refusal.Error.UserErrorMessage);
+        Assert.Equal(5m, (await r.Book.BookAsync(r.Station.RegionId, Tritanium, r.Now)).Bids.Single().Price);
+        Assert.Empty(seat.Sink.Packets.Skip(1));
+    }
+
+    [PgFact]
+    public async Task An_identical_placement_within_five_seconds_is_refused_and_a_later_one_is_placed()
+    {
+        // Q14: the same request from the same session, five seconds after the first, is not placed again; after the window it is.
+        await using var r = await TradeRig.Create();
+        var actor = await r.Actor("Repeater", 10000m);
+        var seat = await SeatAsync(r, actor);
+        Task<PyValue> Place(long callId) => seat.Proxy.PlaceBuyOrder(Call(seat.Session, "PlaceBuyOrder", callId, new PyInt(r.Station.Id), new PyInt(Tritanium),
+            new PyReal(5), new PyInt(2), new PyInt(-1), new PyInt(1), new PyInt(90), PyBool.False, PyNone.Instance)).AsTask();
+        await Place(30);
+        var refusal = await Assert.ThrowsAsync<MachoWrappedException>(() => Place(31));
+        Assert.Equal("CustomInfo", refusal.Error.UserErrorMessage);
+        Assert.Single((await r.Book.BookAsync(r.Station.RegionId, Tritanium, r.Now)).Bids);
+        r.Now += 6_000;
+        await Place(32);
+        Assert.Equal(2, (await r.Book.BookAsync(r.Station.RegionId, Tritanium, r.Now)).Bids.Count);
     }
 }

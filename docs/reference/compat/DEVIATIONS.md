@@ -1404,3 +1404,58 @@ observable behaviour of the five RPCs it implements (not its bugs). Design: `mar
   runs) in `MarketHostTests`, on scratch schemas, with `EVE_SIM=off` and `EVE_MARKET_SEED=skip`; the test project now sets
   `InvariantGlobalization` false, as the other projects that need ICU. The session's notifications are not asserted there (the
   composition attaches a session at character selection); the live walk covers them. Status: done (M1).
+
+## Market slice M2: the rules as data and the decisions (2026-10-10)
+
+Sources: the parent's binding decisions (`market-decisions.md`, Q1 to Q15); CCP-BR (EVE Development Team, "Broker Relations", 2020-02-24);
+CCP-PN22.02 (patch notes 2025-03-12.1: "Sales Tax has been increased from 4% to 7.5%"); EVE University "Tax"; the client's constants under
+`marketutil/`, `appConst.py:1485` and the feature-flag reader `featuremanagement/client/flag.py`; EVE.js `marketRules.js` for the formulas the
+reference keeps. The rules are named constants in `MarketRules` (one source for the server, the fixture and the tests); a runtime rules table
+was not built, because the client reads its flags elsewhere (Q1 below).
+
+- **Q1 sales tax 7.5%.** `MarketRules.SalesTaxPercent = 7.5` (CCP-PN22.02; EVE University "Tax": 7.5%; 3.375% at Accounting V). EVE.js hard-codes
+  8.0 (`marketRules.js:43`), as the client default does (`marketutil/const.py:30`); eve.rs does not copy it.
+  **Decision beyond market-decisions.md (the flag cannot be served):** the client reads `market-transaction-tax` through a LaunchDarkly client
+  that it starts with its own SDK key (`featuremanagement/client/flag.py:72-76`, `launchdarkly/loader.py:33-35`); the V24.01 client does not take
+  a flag value from the eve.rs server, so the server cannot serve 7.5 "through the flag". The server charges 7.5% (the official value, the rule
+  that binds the charge). The client previews with the value LaunchDarkly gives it, or its default 8.0 when LaunchDarkly gives none, so a
+  preview can differ from the charge. Status: open (client preview); the charge is correct.
+- **Q2 modification discount kept.** `MarketRules.ModificationDiscountPerLevel = 0.06` (the client's constant, `marketutil/skilllimits.py:35-36`;
+  EVE.js and eve.rs use the same). CCP-BR says +5 percentage points per level. The client previews with 0.06, so the server keeps 0.06 to agree
+  with it. Flip the one constant when the client changes. Status: decided (kept).
+- **Q3 modification delay.** Five minutes (`MarketRules.ModificationDelayMs = 300000`; CCP-BR "the five minute delay"; the client's
+  `mktModificationDelay = 300`, `appConst.py:1485`), counted from the later of the order's issue and its last modification. A modification that is
+  too early is refused with the sentence "That order was placed or modified less than five minutes ago; it can be modified in N seconds." (N is
+  the remaining seconds, carried in the refusal's argument). No client label exists for it. The time is stored in `orders.last_modified_ms`
+  (migration `006_order_modification.sql`; existing rows are 0, so their delay runs from the issue). EVE.js has no delay (its `state.rs:2707-2713`
+  updates the price only). Tests: `ModificationRulesTests.A_modification_inside_the_delay...`. Status: decided.
+- **Q4 duration reset.** A modification sets the order's issue time to the modification time (`orders.issued_ms`, and `last_modified_ms`), so the
+  expiry runs from it (CCP-BR: "Modifying an order will reset its duration back to the original."). The owner rows and the change notification
+  carry the new `issueDate`, which the client uses for the expiry it shows (`quote.py:484-490`). Test: `ModificationRulesTests.A_modification_restarts...`.
+  Status: decided.
+- **Q5 matching priority.** Price, then issue time (the older first), then order id. The station id is no longer a tie-break: no source gives
+  one, and the client sorts asks by price, issue time, jumps, then order id (`marketsvc.py:28-74`). Applied in the matching plan
+  (`MarketMatching.Plan`), in the book order, in the ask summaries and in the locking scan (`CounterOrders`). Test:
+  `ModificationRulesTests.Equal_prices_fill_the_order_issued_first...`. Status: decided. The priority is "confirm with a live match" (Q5) and is open for that.
+- **Q6 buy escrow, unchanged:** 100% of the price times the quantity up front (CCP-BR). Status: kept.
+- **Q9 minimum volume, kept.** The rule (a bid fills in full when its remainder is below its minimum) stays as it is. No CCP text was found for it:
+  not confirmed by a CCP source. Status: kept (open for confirmation).
+- **Q10 SCC surcharge, kept.** 0 at NPC stations; the structure surcharge is the structures track's. Status: kept.
+- **Q11 highsec security tax, not charged.** The client previews 5% on non-immediate orders in highsec (`security/common/const.py:6`); no official source
+  for a charge was found; neither reference server charges it; journal reference 194 is unused. The charge stays at zero. The client's preview can
+  therefore show a 5% line the server does not take. Status: open (client preview; revisit if a source appears).
+- **Q12 price ticks.** At most two decimals and at most four significant figures (`MarketRules.IsTick`; the client's `marketutil/ticks.py`
+  `is_tick`). Enforced on place and on modify; a price off the ticks is refused with "Order prices have at most four significant figures."
+  (`MARKET_PRICE_TICK`). Existing orders keep their price until modified (CCP-BR). Tests: `ModificationRulesTests.A_price_that_is_not_a_tick...`,
+  `RulesTests.Prices_have_at_most_four_significant_figures...`. Status: decided.
+- **Q14 duplicate placement.** An identical placement (the same request) from the same session within five seconds, after the first succeeded, is
+  refused with "An identical order was placed a moment ago, so it was not placed again." (`MARKET_DUPLICATE_PLACEMENT`). The client sends no
+  operation key, so this is a stop-gap: a deliberate repeat within five seconds is refused too. Test: `MarketRpcTests.An_identical_placement_within_five_seconds...`. Status: decided (stop-gap, documented).
+- **Q15 stale view.** A modification carries the client's `oldPrice` and `issueDate`; if either differs from the stored order, the modification is
+  refused with "That order has changed since it was shown. Reload the orders and try again." (`MARKET_ORDER_STALE`) and nothing moves. Source:
+  the client sends both (`marketsvc.py:288`). Tests: `ModificationRulesTests.A_modification_on_a_stale_view...`,
+  `MarketRpcTests.A_modification_on_a_stale_view_is_a_refusal...`. Status: decided.
+- **Rules fixture.** `oracle/fixtures/market/rules.json` is regenerated by `tools/dev/gen-market-rules-fixture.js`. The generator replaces the one
+  reference constant (`MARKET_TRANSACTION_TAX_DEFAULT_PERCENT = 8.0`) with 7.5 in memory before it compiles `marketRules.js`, and records every
+  other value from the reference; the fixture's `source` field says so. Before the change `RulesTests` failed on the 7.5 fixture (the 8% values),
+  and it passes after the change. Status: decided.

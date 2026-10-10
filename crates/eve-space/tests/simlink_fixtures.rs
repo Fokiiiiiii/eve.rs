@@ -68,14 +68,11 @@ fn ship_of(case: &Value) -> ShipSpec {
     let number = |field: &str| case[field].as_f64().unwrap_or_else(|| panic!("{field} in {case}"));
     let int = |field: &str| case[field].as_i64().unwrap_or_else(|| panic!("{field} in {case}")) as i32;
     ShipSpec {
-        stance: match case["stance"].as_object() {
-            None => None,
-            Some(_) => Some(ShipStance {
-                old_stance: case["stance"]["oldStance"].as_i64().unwrap_or_default() as i32,
-                switched_at: wide(&case["stance"], "switchedAt"),
-                stance: case["stance"]["stance"].as_i64().unwrap_or_default() as i32,
-            }),
-        },
+        stance: case["stance"].as_object().map(|_| ShipStance {
+            old_stance: case["stance"]["oldStance"].as_i64().unwrap_or_default() as i32,
+            switched_at: wide(&case["stance"], "switchedAt"),
+            stance: case["stance"]["stance"].as_i64().unwrap_or_default() as i32,
+        }),
         ship_id: wide(case, "shipId"),
         character_id: wide(case, "characterId"),
         type_id: int("typeId"),

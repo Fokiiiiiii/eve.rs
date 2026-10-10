@@ -56,6 +56,9 @@ pub enum Role {
     /// A Mobile Cynosural Inhibitor the host keeps a record of (protocol 50): while it is anchored (`active`), no cynosural field lights within `range` metres of it
     /// (EVE.js `findActiveInhibitorConflict`); a covert field is not stopped. The host anchors it and takes it out when its record's time is up.
     CynoInhibitor { active: bool, range: f64 },
+    /// A jump bridge a ship opened (command 28, protocol 54): it lives until its time is up, is put in no client ball, and lets the fleet ships in 2 500 metres of
+    /// the ship pass through it to the field (command 29). The field is the one the bridge targets; the destination is that field's system.
+    JumpBridge { field_id: i64, destination_system: i32 },
     /// A lance's beacon (EVE.js `spawnLanceBeacon`, protocol 39): a transient container the beam is drawn to. It does nothing but exist; it is taken out when
     /// its strike's effect ends (or stops), or when its lifetime is up.
     Beacon,
@@ -109,6 +112,7 @@ fn release_actions(stamp: u32, deployable: &Deployable) -> Result<Vec<Value>, ev
         Role::ScanProbe => (Kind::Other, LegacyMode::Stop),
         Role::MobileWarpSource { .. } => (Kind::WarpDisruptionProbe, LegacyMode::Stop),
         Role::CynoInhibitor { .. } => (Kind::Other, LegacyMode::Stop),
+        Role::JumpBridge { .. } => (Kind::Other, LegacyMode::Stop),
     };
     let category = match deployable.role {
         Role::Beacon => BEACON_CATEGORY,
@@ -221,6 +225,37 @@ impl Scene {
             );
         }
         out
+    }
+
+    /// Puts a jump bridge of the ship of `session` in space, where the ship is, for `lifetime_ms` (the module duration). No client ball is made for it: the
+    /// reference draws the portal on the ship. Returns false when the ship is not in the scene.
+    pub(crate) fn place_bridge(
+        &mut self,
+        session: SessionId,
+        field_id: i64,
+        destination_system: i32,
+        lifetime_ms: f64,
+        at: i64,
+    ) -> bool {
+        let Some(pilot) = self.pilots.get(&session) else { return false };
+        let bridge = Deployable {
+            id: DEPLOYABLE_ID_BASE + self.deployable_sequence as i64,
+            spec: Spec { charge_type_id: 0, group_id: 0, name: "Jump Bridge".to_string(), radius: 0.0 },
+            role: Role::JumpBridge { field_id, destination_system },
+            position: pilot.ship.position,
+            ends_at: at + ticks(lifetime_ms),
+            launcher: session,
+            ship_id: pilot.ship.spec.ship_id,
+            owner_id: self.combat_owner(session),
+            corporation_id: pilot.ship.spec.corporation_id,
+            alliance_id: pilot.ship.spec.alliance_id,
+            module_id: 0,
+            module_type: 0,
+            watchers: BTreeSet::new(),
+        };
+        self.deployable_sequence += 1;
+        self.deployables.insert(bridge.id, bridge);
+        true
     }
 
     /// Puts a deployable in space at `position` (its launcher's ship when none is given), and tells those who can see the place of it.
@@ -659,6 +694,7 @@ impl Scene {
                 | Role::Beacon
                 | Role::CynoField
                 | Role::ScanProbe
+                | Role::JumpBridge { .. }
                 | Role::CynoInhibitor { .. } => false,
             })
     }

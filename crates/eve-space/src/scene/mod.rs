@@ -2,6 +2,7 @@
 //!
 //! The scene has no clock of its own. Every call says what time it is (a FILETIME) and a ship's motion is worked out
 //! from the time it was last settled to that time, so the same calls at the same times give the same bytes.
+mod bridge;
 mod collision;
 mod docking;
 mod heat;
@@ -148,6 +149,21 @@ pub enum Command {
         spool_ms: f64,
         capacitor: f64,
     },
+    /// Opens a jump bridge where the ship is, to the field `field_id` lit in `destination_system` (code 28, protocol 54): the bridge lives `lifetime_ms`,
+    /// the ship holds still for `immobile_ms` (zero when it is not held), and the activation takes `capacitor` GJ.
+    OpenBridge {
+        field_id: i64,
+        destination_system: i32,
+        lifetime_ms: f64,
+        immobile_ms: f64,
+        capacitor: f64,
+    },
+    /// The ship passes through the bridge of the ship `bridge_ship_id` to the field `field_id` in `destination_system` (code 29, protocol 54).
+    BridgeJump {
+        bridge_ship_id: i64,
+        field_id: i64,
+        destination_system: i32,
+    },
 }
 
 impl Command {
@@ -164,6 +180,8 @@ impl Command {
             Self::WarpTo { .. } => 8,
             Self::Jump { .. } => 9,
             Self::CynoJump { .. } => 26,
+            Self::OpenBridge { .. } => 28,
+            Self::BridgeJump { .. } => 29,
             Self::WarpToPoint { .. } => 21,
             Self::ResolveWarpTarget { .. } => 22,
             Self::PositionOf { .. } => 23,

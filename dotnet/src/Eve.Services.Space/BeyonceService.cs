@@ -556,6 +556,43 @@ public Func<long, long, CancellationToken, Task<int>>? SkillLevelOfCharacter { g
             : None;
 
     /// <summary>
+    /// <c>CmdBridgeToFleetModuleBeacon(charID, beaconID, solarsystemID)</c>: the bridging ship opens a jump bridge to the cynosural field a fleet member lit (the
+    /// beacon is the field). The client does not read an answer, so none is given.
+    /// </summary>
+    [Method("CmdBridgeToFleetModuleBeacon")]
+    public async ValueTask<PyValue> CmdBridgeToFleetModuleBeacon(ServiceCall call)
+    {
+        if (_binding.Owns(call) && space.Bridges is { } bridges && Number(call.Arg(1)) is { } beacon && Number(call.Arg(2)) is { } system)
+        {
+            await bridges.OpenAsync(call.Session, (long)beacon, (int)system, call.Cancellation);
+        }
+        return None;
+    }
+
+    /// <summary>
+    /// <c>CmdBridgeToFleetDeployableBeacon(deployableID, solarsystemID, beaconID)</c>: the bridging ship opens a jump bridge to the field of that deployable id.
+    /// </summary>
+    [Method("CmdBridgeToFleetDeployableBeacon")]
+    public async ValueTask<PyValue> CmdBridgeToFleetDeployableBeacon(ServiceCall call)
+    {
+        if (_binding.Owns(call) && space.Bridges is { } bridges && Number(call.Arg(0)) is { } field && Number(call.Arg(1)) is { } system)
+        {
+            await bridges.OpenAsync(call.Session, (long)field, (int)system, call.Cancellation);
+        }
+        return None;
+    }
+
+    /// <summary>
+    /// <c>CmdJumpThroughFleet(otherCharID, otherShipID, beaconID, solarsystemID)</c>: the session's ship passes through the bridge of the ship
+    /// <c>otherShipID</c> to the field <c>beaconID</c> in <c>solarsystemID</c>.
+    /// </summary>
+    [Method("CmdJumpThroughFleet")]
+    public async ValueTask<PyValue> CmdJumpThroughFleet(ServiceCall call) =>
+        _binding.Owns(call) && space.Bridges is { } bridges && Number(call.Arg(1)) is { } bridgeShip && Number(call.Arg(2)) is { } beacon && Number(call.Arg(3)) is { } system
+            ? await bridges.JumpThroughAsync(call.Session, (long)bridgeShip, (long)beacon, (int)system, call.BoundObjectId, call.Cancellation)
+            : None;
+
+    /// <summary>
     /// <c>CmdDock(stationID, shipID)</c>: dock at a station. The answer is the time the docking was accepted; the docking itself is done a few
     /// seconds later, when the client is told the session has changed.
     /// </summary>

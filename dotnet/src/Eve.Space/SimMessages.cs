@@ -113,6 +113,10 @@ public static class SimCommands
 
     /// <summary>Jump to a cynosural field lit in another system (the field's id, the destination system and the spool in milliseconds): code 26.</summary>
     public const byte CynoJump = 26;
+    /// <summary>Opens a jump bridge where the ship is (protocol 54): the field, its system, the bridge's life, the hold, and the capacitor.</summary>
+    public const byte OpenBridge = 28;
+    /// <summary>A passenger's jump through the bridge of another ship (protocol 54): the bridging ship, the field, its system.</summary>
+    public const byte BridgeJump = 29;
 
     /// <summary>The scan targets of the scene for a probe scan (protocol 52).</summary>
     public const byte ScanTargets = 27;

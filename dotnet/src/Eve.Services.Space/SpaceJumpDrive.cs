@@ -103,8 +103,7 @@ public sealed class SpaceJumpDrive(
             await LevelAsync(JumpDriveRules.FuelConservationSkill, character, cancellationToken),
             await PerLevelAsync(JumpDriveRules.FuelConservationSkill, JumpDriveRules.FuelBonusAttribute, cancellationToken),
             freighter ? await LevelAsync(JumpDriveRules.JumpFreighterSkill, character, cancellationToken) : 0,
-            JumpDriveRules.EconomizerMultiplier(
-                await ships.FittedAttributeFractionsAsync(character, shipId, JumpDriveRules.EconomizerGroup, JumpDriveRules.FuelBonusAttribute, cancellationToken)));
+            JumpDriveRules.EconomizerMultiplier(await EconomizerBonusesAsync(character, shipId, hull.GroupId, cancellationToken)));
         var fuelId = (int)fuelType;
         if (await ships.FuelHeldAsync(character, shipId, fuelId, cancellationToken) < quantity)
         {
@@ -188,6 +187,25 @@ public sealed class SpaceJumpDrive(
         {
             log?.Invoke($"the jump spool of character {spool.CharacterId} to system {spool.DestinationSystem} was cancelled ({why}): its fuel is refunded");
         }
+    }
+
+    /// <summary>
+    /// The fuel bonuses (fractions) of the economizers fitted to the ship that fit its hull: an economizer that does not fit the hull is not counted (the
+    /// wiki: only Jump Freighters and Rorquals carry them, and the SDE names the groups each fits, attributes 1298 and 1299).
+    /// </summary>
+    private async Task<IReadOnlyList<double>> EconomizerBonusesAsync(long characterId, long shipId, int hullGroupId, CancellationToken cancellationToken)
+    {
+        var bonuses = new List<double>();
+        foreach (var (typeId, attributes) in await ships.FittedModulesAsync(characterId, shipId, cancellationToken))
+        {
+            if (statics.Type(typeId) is { GroupId: JumpDriveRules.EconomizerGroup }
+                && JumpDriveRules.EconomizerFits(hullGroupId, attributes)
+                && attributes.TryGetValue(JumpDriveRules.FuelBonusAttribute, out var percent))
+            {
+                bonuses.Add(percent / 100);
+            }
+        }
+        return bonuses;
     }
 
     /// <summary>A skill's percentage a level as a fraction, from its own SDE attribute (a missing attribute is a data fault, not a zero).</summary>

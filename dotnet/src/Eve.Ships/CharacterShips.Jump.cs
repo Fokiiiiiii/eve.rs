@@ -14,26 +14,61 @@ public sealed partial class CharacterShips
         .Where(item => item.TypeId == fuelTypeId && item.Flag is FuelBayFlag or CargoFlag)
         .Sum(item => item.Quantity);
 
-    /// <summary>
-    /// The values (as fractions, the attribute a percentage) of an attribute on the modules fitted to the ship that are of a group: the jump drive reads its economizers
-    /// this way (the group and the attribute are the caller's).
-    /// </summary>
-    public async Task<IReadOnlyList<double>> FittedAttributeFractionsAsync(
-        long characterId, long shipId, int groupId, int attribute, CancellationToken cancellationToken = default)
+    /// <summary>The modules fitted to the ship (its low, medium and high slots), with their type and the dogma attributes each carries.</summary>
+    public async Task<IReadOnlyList<(int TypeId, IReadOnlyDictionary<int, double> Attributes)>> FittedModulesAsync(
+        long characterId, long shipId, CancellationToken cancellationToken = default)
     {
         var fitted = (await items.InLocationAsync(shipId, characterId, cancellationToken))
             .Where(item => item.Flag is >= Eve.Inventory.ItemFlags.LowSlot0 and <= Eve.Inventory.ItemFlags.HiSlot0 + 7)
             .ToList();
         await statics.EnsureTypesAsync(fitted.Select(item => item.TypeId).Distinct().ToArray(), cancellationToken);
-        var bonuses = new List<double>();
+        var modules = new List<(int, IReadOnlyDictionary<int, double>)>();
         foreach (var item in fitted)
         {
-            if (statics.Type(item.TypeId) is { } module && module.GroupId == groupId && module.Attributes.TryGetValue(attribute, out var percent))
+            if (statics.Type(item.TypeId) is { } module)
             {
-                bonuses.Add(percent / 100);
+                modules.Add((item.TypeId, module.Attributes));
             }
         }
-        return bonuses;
+        return modules;
+    }
+
+    /// <summary>Takes units of a fuel type from the ship in its own transaction (the fuel bay first); false, with nothing taken, when the ship holds too little.</summary>
+    public async Task<bool> DebitFuelAsync(long characterId, long shipId, int fuelTypeId, long quantity, CancellationToken cancellationToken = default)
+    {
+        await using var connection = await source.OpenConnectionAsync(cancellationToken);
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        await LockAsync(connection, transaction, characterId, cancellationToken);
+        if (await TakeFuelAsync(connection, transaction, characterId, shipId, fuelTypeId, quantity, cancellationToken) > 0)
+        {
+            return false;
+        }
+        await transaction.CommitAsync(cancellationToken);
+        return true;
+    }
+
+    /// <summary>
+    /// A passenger's jump through a bridge: the isotopes come from the bridging ship (the wiki: "use up isotopes from the bridger's fuel hold") and the
+    /// passenger's fatigue state is written, in one transaction. False, with nothing changed, when the bridging ship holds too little.
+    /// </summary>
+    public async Task<bool> DebitBridgeAsync(
+        PgJumpFatigueStore fatigue, long bridgerCharacterId, long bridgerShipId, int fuelTypeId, long quantity,
+        long passengerCharacterId, JumpFatigueState passengerNext, CancellationToken cancellationToken = default)
+    {
+        await using var connection = await source.OpenConnectionAsync(cancellationToken);
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        // both characters are locked in one order, so two passages cannot wait on each other
+        foreach (var character in new[] { bridgerCharacterId, passengerCharacterId }.Distinct().OrderBy(id => id))
+        {
+            await LockAsync(connection, transaction, character, cancellationToken);
+        }
+        if (await TakeFuelAsync(connection, transaction, bridgerCharacterId, bridgerShipId, fuelTypeId, quantity, cancellationToken) > 0)
+        {
+            return false;
+        }
+        await fatigue.SaveAsync(connection, transaction, passengerCharacterId, passengerNext, cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+        return true;
     }
 
     /// <summary>

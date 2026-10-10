@@ -32,6 +32,31 @@ pub(super) fn command_of(code: u8, args: &[f64]) -> Option<Command> {
                 capacitor: *capacitor,
             })
         }
+        (28, [field, destination, lifetime, immobile, capacitor])
+            if is_id(*field)
+                && is_id(*destination)
+                && lifetime.is_finite()
+                && *lifetime > 0.0
+                && immobile.is_finite()
+                && *immobile >= 0.0
+                && capacitor.is_finite()
+                && *capacitor >= 0.0 =>
+        {
+            Some(Command::OpenBridge {
+                field_id: *field as i64,
+                destination_system: *destination as i32,
+                lifetime_ms: *lifetime,
+                immobile_ms: *immobile,
+                capacitor: *capacitor,
+            })
+        }
+        (29, [bridge, field, destination]) if is_id(*bridge) && is_id(*field) && is_id(*destination) => {
+            Some(Command::BridgeJump {
+                bridge_ship_id: *bridge as i64,
+                field_id: *field as i64,
+                destination_system: *destination as i32,
+            })
+        }
         (9, [gate]) if is_id(*gate) => Some(Command::Jump { gate_id: *gate as i64, destination_gate: 0 }),
         (9, [gate, leads_to]) if is_id(*gate) && is_id(*leads_to) => {
             Some(Command::Jump { gate_id: *gate as i64, destination_gate: *leads_to as i64 })

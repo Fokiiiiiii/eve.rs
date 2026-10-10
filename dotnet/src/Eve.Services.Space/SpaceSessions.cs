@@ -92,6 +92,14 @@ public sealed partial class SpaceSessions : IDisposable, ISpaceTargeting, ISpace
     /// <summary>The fleet a character is in (its id), or null when it is in none: a command burst reaches the ships of its source's fleet (track C6).</summary>
     public Func<long, CancellationToken, Task<long?>>? FleetIdOfAsync { get; set; }
 
+    /// <summary>
+    /// The accounts whose guns the host reloads from their holds when the rounds run out (FP-C8): a bot with no client UI, named by the operator (EVE_AUTO_RELOAD_ACCOUNTS).
+    /// Any other pilot's gun stops when its rounds are spent, and the client reloads it (<c>shipmodulebutton.py</c>), so the host does not load it twice.
+    /// </summary>
+    public IReadOnlySet<long> AutoReloadUsers { get; set; } = new HashSet<long>();
+
+    private bool AutoReloadsOf(Pilot pilot) => pilot.Session.UserId is { } user && AutoReloadUsers.Contains(user);
+
     /// <summary>The timed buffs of the ships in space (the command bursts', track C6). In memory: a restart drops them.</summary>
     public ShipBuffs Buffs { get; } = new();
     private readonly DogmaStatic _statics;

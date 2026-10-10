@@ -36,7 +36,9 @@ public sealed class FittingMgrCalls(PgSavedFittingStore store, IFittingHost host
         var owner = OwnerOf(call, scope);
         Access(call, owner, scope);
         var fittings = await store.ListAsync(scope, owner, call.Cancellation);
-        return new PyDict([.. fittings.Select(f => new KeyValuePair<PyValue, PyValue>(new PyLong(f.FittingId), FittingKeyVal(f)))]);
+        var answer = new PyDict([.. fittings.Select(f => new KeyValuePair<PyValue, PyValue>(new PyLong(f.FittingId), FittingKeyVal(f)))]);
+        // a corporation's list is cached by the client for 15 minutes; the changes invalidate it (Notify), as the reference does
+        return scope == FittingOwnerScope.Corporation ? ObjectCaching.MethodResult(answer, nowUnixMs(), "15 minutes") : answer;
     }
 
     public async ValueTask<PyValue> SaveFitting(ServiceCall call, FittingOwnerScope scope)
@@ -232,11 +234,20 @@ public sealed class FittingMgrCalls(PgSavedFittingStore store, IFittingHost host
         return ids ?? throw Refusal("OWNER_MAX_FITTINGS", limit);
     }
 
+    /// <summary>
+    /// Tells every session of the owner what changed, and for a corporation first drops the client's cached list (EveJS
+    /// <c>notifyFittingMutation</c> and <c>invalidateClientFittingListCache</c>: the invalidation is in the stream before the notification).
+    /// </summary>
     private void Notify(ServiceCall call, FittingOwnerScope scope, long owner, string name, PyValue payload)
     {
         var recipients = new HashSet<ClientSession>(host.SessionsOf(scope, owner).Append(call.Session), ReferenceEqualityComparer.Instance);
         foreach (var session in recipients)
         {
+            if (scope == FittingOwnerScope.Corporation && session.ClientId is { } clientId and > 0)
+            {
+                session.Send(ClientCallRequest.Build(clientId, session.UserId ?? 0, "objectCaching", "InvalidateCachedMethodCall",
+                    [new PyStr("corpFittingMgr"), new PyStr("GetFittings"), new PyLong(owner)], ClientCallRequest.NextCallId()));
+            }
             session.SendNotification(name, "charid", new PyLong(owner), payload);
         }
     }

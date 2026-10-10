@@ -2529,6 +2529,92 @@ public class SpaceServiceTests
         Assert.False(rig.Space.IsInSpace(session));
     }
 
+    [PgFact]
+    public async Task Space_entry_reloads_authoritative_state_after_preflight_and_previous_pilot_leave()
+    {
+        var (rig, previous, previousSession) = await DockedAsync();
+        await using var _ = rig;
+        var entering = await rig.NewCharacterAsync("Second Space Tester");
+        var enteringSession = await rig.SessionAsync(entering, id: 2);
+        var sim = new FakeSim();
+        using var space = new SpaceSessions(
+            sim, rig.Ships, rig.Statics, rig.Stations, rig.Systems, () => rig.Now, spaceItems: rig.SpaceItems);
+
+        async Task SaveSpaceItemAsync(long characterId, IReadOnlyList<double> position)
+        {
+            var snapshot = await rig.Ships.LoadAsync(characterId, CancellationToken.None);
+            Assert.NotNull(snapshot);
+            var ship = SimShips.Of(snapshot!, rig.Statics);
+            await rig.SpaceItems.SaveAsync(new Eve.Ships.SpaceItem(
+                ship.ShipId,
+                snapshot!.Character.SolarSystemId,
+                position,
+                [0d, 0d, 1d],
+                ship.Radius,
+                ship.GroupId,
+                0,
+                ship.CharacterId,
+                ship.CorporationId,
+                ship.AllianceId,
+                ship.WarFactionId,
+                long.MaxValue), CancellationToken.None);
+        }
+
+        async Task PutShipInSpaceAsync(long characterId, IReadOnlyList<double> position)
+        {
+            Assert.NotNull((await rig.Ships.UndockAsync(characterId, CancellationToken.None)).Moved);
+            await SaveSpaceItemAsync(characterId, position);
+        }
+
+        double[] previousInitialPose = [100d, 200d, 300d];
+        double[] previousSavedPose = [400d, 500d, 600d];
+        double[] enteringPreparedPose = [10d, 20d, 30d];
+        double[] enteringCurrentPose = [40d, 50d, 60d];
+        await PutShipInSpaceAsync(previous.CharacterId, previousInitialPose);
+        await PutShipInSpaceAsync(entering.CharacterId, enteringPreparedPose);
+        sim.PositionAnswers[previous.ShipId] = previousSavedPose;
+
+        var previousAttributes = await space.GetSessionAttributesAsync(previousSession, previous.CharacterId, CancellationToken.None);
+        previousSession.Change([.. previousAttributes]);
+        await space.OnCharacterEnteredAsync(previousSession, previous.CharacterId, CancellationToken.None);
+        Assert.True(space.IsInSpace(previousSession));
+        var repeatedAttributes = await space.GetSessionAttributesAsync(previousSession, previous.CharacterId, CancellationToken.None);
+        Assert.Equal(PyNone.Instance, Assert.Single(repeatedAttributes, attribute => attribute.Name == "stationid").Value);
+        Assert.Equal(Eve.Ships.CharacterShips.InSpaceFlag, (await rig.Ships.LoadAsync(previous.CharacterId, CancellationToken.None))!.Ship.Flag);
+
+        var enteringAttributes = await space.GetSessionAttributesAsync(previousSession, entering.CharacterId, CancellationToken.None);
+        Assert.True(space.IsInSpace(previousSession));
+        Assert.DoesNotContain(sim.Heard.OfType<SimLeave>(), leave => leave.SessionId == (ulong)previousSession.SessionId);
+        await SaveSpaceItemAsync(entering.CharacterId, enteringCurrentPose);
+
+        await space.OnCharacterLeavingAsync(previousSession, previous.CharacterId, CancellationToken.None);
+        Assert.False(space.IsInSpace(previousSession));
+        Assert.Contains(new SimLeave((ulong)previousSession.SessionId, LeaveWhy.LoggedOff), sim.Heard);
+
+        await space.OnCharacterEnteredAsync(previousSession, previous.CharacterId, CancellationToken.None);
+        Assert.True(space.IsInSpace(previousSession));
+        var previousEnters = sim.Heard.OfType<SimEnter>()
+            .Where(enter => enter.SessionId == (ulong)previousSession.SessionId)
+            .ToArray();
+        Assert.Equal(2, previousEnters.Length);
+        Assert.Equal(previousInitialPose, previousEnters[0].Position);
+        Assert.Equal(previousSavedPose, previousEnters[1].Position);
+
+        enteringSession.Change([.. enteringAttributes]);
+        await space.OnCharacterEnteredAsync(enteringSession, entering.CharacterId, CancellationToken.None);
+        Assert.True(space.IsInSpace(enteringSession));
+        var enteringEnter = Assert.Single(sim.Heard.OfType<SimEnter>(),
+            enter => enter.SessionId == (ulong)enteringSession.SessionId);
+        Assert.Equal(enteringCurrentPose, enteringEnter.Position);
+
+        await space.OnCharacterLeavingAsync(previousSession, previous.CharacterId, CancellationToken.None);
+        Assert.True(await rig.SpaceItems.RemoveAsync(previous.ShipId, CancellationToken.None));
+        await Assert.ThrowsAsync<MachoWrappedException>(async () =>
+            await space.OnCharacterEnteredAsync(previousSession, previous.CharacterId, CancellationToken.None));
+        Assert.False(space.IsInSpace(previousSession));
+        await space.OnCharacterLeavingAsync(enteringSession, entering.CharacterId, CancellationToken.None);
+    }
+
     [Fact]
     public void Fleet_roles_are_limited_to_valid_hierarchy_positions()
     {

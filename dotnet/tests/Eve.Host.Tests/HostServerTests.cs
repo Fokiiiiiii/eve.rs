@@ -435,6 +435,80 @@ public class HostServerTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Character_settings_roundtrip_as_json_through_the_existing_character_GameStore_row()
+    {
+        var tables = new Dictionary<string, System.Text.Json.Nodes.JsonObject>
+        {
+            ["characters"] = System.Text.Json.Nodes.JsonNode.Parse("""
+                { "1001": { "characterSettings": {
+                    "window": "chat",
+                    "fleetSetups": [{ "setupName": "Rapid" }]
+                } } }
+                """)!.AsObject(),
+            ["characterNotes"] = new System.Text.Json.Nodes.JsonObject(),
+        };
+        Task<System.Text.Json.Nodes.JsonObject> ReadTable(string name, CancellationToken _) =>
+            Task.FromResult((System.Text.Json.Nodes.JsonObject)tables[name].DeepClone());
+        var writes = new List<(string Table, string Path, System.Text.Json.Nodes.JsonNode? Data)>();
+        var model = new PersistenceCharMgrReadModel(
+            ReadTable,
+            (_, _, _, _) => ValueTask.FromResult<IReadOnlyList<Eve.Marshal.PyValue>>([]),
+            (_, _) => ValueTask.FromResult<string?>(null),
+            (_, _, _) => ValueTask.CompletedTask,
+            (_, _) => ValueTask.FromResult<long?>(null),
+            (table, path, data) =>
+            {
+                writes.Add((table, path, data?.DeepClone()));
+                return new Eve.GameStore.WriteResult(true, null);
+            },
+            (_, _) => new Eve.GameStore.WriteResult(true, null));
+
+        var read = await model.ReadAsync(1001, CancellationToken.None);
+        Assert.Equal(new Eve.Marshal.PyStr("chat"), read!.CharacterSettings["window"]);
+        var setups = Assert.IsType<Eve.Marshal.PyList>(read.CharacterSettings["fleetSetups"]);
+        Assert.IsType<Eve.Marshal.PyDict>(setups.Items[0]);
+
+        var newSettings = new Dictionary<string, Eve.Marshal.PyValue>
+        {
+            ["window"] = new Eve.Marshal.PyStr("spaceship"),
+            ["fleetSetups"] = new Eve.Marshal.PyList([new Eve.Marshal.PyStr("rapid")]),
+        };
+        await model.UpdateAsync(1001, data => data with { CharacterSettings = newSettings }, CancellationToken.None);
+        var write = Assert.Single(writes);
+        Assert.Equal("characters", write.Table);
+        Assert.Equal("/1001/characterSettings", write.Path);
+        Assert.Equal("spaceship", write.Data!["window"]!.GetValue<string>());
+        Assert.Equal("rapid", write.Data["fleetSetups"]![0]!.GetValue<string>());
+
+        var deleteTables = new Dictionary<string, System.Text.Json.Nodes.JsonObject>
+        {
+            ["characters"] = System.Text.Json.Nodes.JsonNode.Parse("""
+                { "1001": { "characterSettings": { "window": "chat" } } }
+                """)!.AsObject(),
+            ["characterNotes"] = new System.Text.Json.Nodes.JsonObject(),
+        };
+        Task<System.Text.Json.Nodes.JsonObject> ReadDeleteTable(string name, CancellationToken _) =>
+            Task.FromResult((System.Text.Json.Nodes.JsonObject)deleteTables[name].DeepClone());
+        var removals = new List<(string Table, string Path)>();
+        var deleteModel = new PersistenceCharMgrReadModel(
+            ReadDeleteTable,
+            (_, _, _, _) => ValueTask.FromResult<IReadOnlyList<Eve.Marshal.PyValue>>([]),
+            (_, _) => ValueTask.FromResult<string?>(null),
+            (_, _, _) => ValueTask.CompletedTask,
+            (_, _) => ValueTask.FromResult<long?>(null),
+            (_, _, _) => new Eve.GameStore.WriteResult(true, null),
+            (table, path) =>
+            {
+                removals.Add((table, path));
+                return new Eve.GameStore.WriteResult(true, null);
+            });
+        await deleteModel.UpdateAsync(1001, data =>
+            data with { CharacterSettings = new Dictionary<string, Eve.Marshal.PyValue>() },
+            CancellationToken.None);
+        Assert.Contains(("characters", "/1001/characterSettings"), removals);
+    }
+
+    [Fact]
     public async Task Character_personal_read_model_loads_contacts_and_notes_from_owner_scoped_tables()
     {
         var tables = new Dictionary<string, System.Text.Json.Nodes.JsonObject>

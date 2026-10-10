@@ -121,6 +121,7 @@ public sealed class PersistenceCharMgrReadModel(
             ReadItemNotes(notes?["itemNotes"]))
         {
             NextOwnerNoteId = nextNoteId > 0 ? nextNoteId : null,
+            CharacterSettings = ReadCharacterSettings(character?["characterSettings"]),
         };
     }
 
@@ -274,6 +275,21 @@ public sealed class PersistenceCharMgrReadModel(
         }
     }
 
+    if (!CharacterSettingsEqual(before.CharacterSettings, after.CharacterSettings))
+    {
+        var path = $"/{owner}/characterSettings";
+        if (after.CharacterSettings.Count == 0)
+        {
+            RemovePath("characters", path);
+        }
+        else
+        {
+            var settings = new PyDict([.. after.CharacterSettings.Select(entry =>
+                new KeyValuePair<PyValue, PyValue>(new PyStr(entry.Key), entry.Value))]);
+            WritePath("characters", path, JsonFromPy(settings));
+        }
+    }
+
     if (before.NextOwnerNoteId != after.NextOwnerNoteId)
     {
         if (after.NextOwnerNoteId is > 0)
@@ -406,6 +422,41 @@ public sealed class PersistenceCharMgrReadModel(
             .Where(note => note.NoteId > 0)
             .OrderBy(note => note.NoteId)
             .ToArray();
+
+    private static bool CharacterSettingsEqual(
+        IReadOnlyDictionary<string, PyValue> left,
+        IReadOnlyDictionary<string, PyValue> right) =>
+        left.Count == right.Count && left.All(entry =>
+            right.TryGetValue(entry.Key, out var value) && entry.Value.Equals(value));
+
+    private static IReadOnlyDictionary<string, PyValue> ReadCharacterSettings(JsonNode? source) =>
+        source is JsonObject settings
+            ? settings.ToDictionary(entry => entry.Key, entry => CharMgrJsonToPy(entry.Value), StringComparer.Ordinal)
+            : new Dictionary<string, PyValue>(StringComparer.Ordinal);
+
+    private static PyValue CharMgrJsonToPy(JsonNode? node)
+    {
+        if (node is JsonObject obj)
+            return new PyDict(obj.Select(pair => new KeyValuePair<PyValue, PyValue>(
+                new PyStr(pair.Key), CharMgrJsonToPy(pair.Value))).ToArray());
+        if (node is JsonArray array)
+            return new PyList(array.Select(CharMgrJsonToPy).ToArray());
+        if (node is not JsonValue value)
+            return PyNone.Instance;
+        if (value.TryGetValue<bool>(out var boolean))
+            return boolean ? PyBool.True : PyBool.False;
+        if (value.TryGetValue<int>(out var integer))
+            return new PyInt(integer);
+        if (value.TryGetValue<long>(out var longValue))
+            return new PyLong(longValue);
+        if (value.TryGetValue<double>(out var real))
+            return Py.Number(real);
+        if (value.TryGetValue<decimal>(out var decimalValue))
+            return Py.Number((double)decimalValue);
+        if (value.TryGetValue<string>(out var text))
+            return new PyStr(text);
+        return new PyStr(value.ToString());
+    }
 
     private static IReadOnlyDictionary<long, string> ReadItemNotes(JsonNode? source)
     {

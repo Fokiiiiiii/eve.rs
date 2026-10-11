@@ -983,7 +983,10 @@ Slice A9, part 1 (2026-10-11): DONE for the offers: ESI's official offers cached
 
 ## Agents slice AG-3 (2026-10-11)
 
-Continues AG-2 on the same branch. A9 part 2 is done (DEVIATIONS "Agents slice AG-3, A9 (part 2)"). Open after it: the
+Continues AG-2 on the same branch. A9 part 2 is done (DEVIATIONS "Agents slice AG-3, A9 (part 2)").
+A1 done: the agent catalog is a pure function (`AgentCatalog.Build`, Eve.Host) that the composition calls; `AgentCatalogSdeTests`
+(2, PostgreSQL, the pinned SDE): 10,966 agents by agentTypeID, 1,773 locators, 360 in space, and two concrete agents
+(3008416 basic, 3019369 in space). Open after it: the
 standing requirements of store offers and the structure stores (gaps), the idempotency key the client does not send.
 
 ## 43. Structures phase ST-E: remaining E wiring (2026-10-10)

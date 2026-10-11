@@ -3,6 +3,14 @@ using Npgsql;
 
 namespace Eve.Characters;
 
+public enum HomeStationChangeResult
+{
+    Changed,
+    AlreadyHome,
+    RemoteCooldown,
+    CharacterMissing,
+}
+
 public sealed record Character(
     long Id, int AccountId, string Name, int Gender, int RaceId, int BloodlineId, int AncestryId, int SchoolId, int TypeId,
     long CorporationId, long? FactionId, long? AllianceId, long StationId, long HomeStationId,
@@ -23,6 +31,8 @@ public sealed record Character(
     public long? DirectFactionId { get; init; }
 
     public long DirectEnlistmentCooldownFileTime { get; init; }
+
+    public long NextRemoteHomeStationChangeFileTime { get; init; } = 0;
 }
 
 public sealed record NewCharacter(
@@ -50,10 +60,13 @@ public sealed partial class PgCharacterStore
     private const string Columns =
         "id, account_id, name, gender, race_id, bloodline_id, ancestry_id, school_id, type_id, corporation_id, faction_id, alliance_id, " +
         "station_id, home_station_id, solar_system_id, constellation_id, region_id, ship_id, created_at, last_logoff_at, delete_prepare_at, " +
-        "tutorial_entry_mode, tutorial_first_login_handoff, air_npe_state, air_npe_reveal_on_first_login, direct_faction_id, direct_enlistment_cooldown_filetime";
+        "tutorial_entry_mode, tutorial_first_login_handoff, air_npe_state, air_npe_reveal_on_first_login, direct_faction_id, direct_enlistment_cooldown_filetime, " +
+        "next_remote_home_station_change_filetime";
 
     private readonly NpgsqlDataSource _source;
     private readonly string _schema;
+
+    private const long RemoteHomeStationChangeCooldownFileTime = 365L * TimeSpan.TicksPerDay;
 
     public PgCharacterStore(NpgsqlDataSource source, string schema = DefaultSchema)
     {
@@ -82,6 +95,7 @@ public sealed partial class PgCharacterStore
         AirNpeRevealOnFirstLogin = r.GetBoolean(24),
         DirectFactionId = r.IsDBNull(25) ? null : r.GetInt64(25),
         DirectEnlistmentCooldownFileTime = r.GetInt64(26),
+        NextRemoteHomeStationChangeFileTime = r.GetInt64(27),
     };
 
     /// <summary>The account's characters, oldest first (the order the selection screen shows them).</summary>
@@ -302,6 +316,72 @@ public sealed partial class PgCharacterStore
             Parameters = { new() { Value = stationId }, new() { Value = characterId } },
         };
         await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    public async Task<HomeStationChangeResult> TryChangeHomeStationAsync(
+        long characterId, long stationId, bool isRemote, long nowFileTime, CancellationToken ct = default)
+    {
+        if (stationId <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(stationId));
+        }
+        _ = DateTime.FromFileTimeUtc(nowFileTime);
+        var nextRemoteChangeFileTime = isRemote ? nowFileTime + RemoteHomeStationChangeCooldownFileTime : 0;
+        if (isRemote)
+        {
+            _ = DateTime.FromFileTimeUtc(nextRemoteChangeFileTime);
+        }
+
+        await using var connection = await _source.OpenConnectionAsync(ct);
+        await using var transaction = await connection.BeginTransactionAsync(ct);
+        long currentHomeStationId;
+        long currentNextRemoteChangeFileTime;
+        await using (var select = new NpgsqlCommand(
+            $"SELECT home_station_id, next_remote_home_station_change_filetime FROM {_schema}.characters WHERE id = $1 FOR UPDATE",
+            connection, transaction))
+        {
+            select.Parameters.Add(new NpgsqlParameter { Value = characterId });
+            await using var reader = await select.ExecuteReaderAsync(ct);
+            if (!await reader.ReadAsync(ct))
+            {
+                return HomeStationChangeResult.CharacterMissing;
+            }
+            currentHomeStationId = reader.GetInt64(0);
+            currentNextRemoteChangeFileTime = reader.GetInt64(1);
+        }
+
+        if (currentHomeStationId == stationId)
+        {
+            return HomeStationChangeResult.AlreadyHome;
+        }
+        if (isRemote && currentNextRemoteChangeFileTime > nowFileTime)
+        {
+            return HomeStationChangeResult.RemoteCooldown;
+        }
+
+        await using var update = new NpgsqlCommand(
+            $"UPDATE {_schema}.characters SET home_station_id = $1, next_remote_home_station_change_filetime = CASE WHEN $2 THEN $3 ELSE next_remote_home_station_change_filetime END WHERE id = $4",
+            connection, transaction)
+        {
+            Parameters =
+            {
+                new() { Value = stationId },
+                new() { Value = isRemote },
+                new() { Value = nextRemoteChangeFileTime },
+                new() { Value = characterId },
+            },
+        };
+        await update.ExecuteNonQueryAsync(ct);
+        await transaction.CommitAsync(ct);
+        return HomeStationChangeResult.Changed;
+    }
+
+    public async Task<bool> ResetRemoteHomeStationChangeTimeAsync(long characterId, CancellationToken ct = default)
+    {
+        await using var command = _source.CreateCommand(
+            $"UPDATE {_schema}.characters SET next_remote_home_station_change_filetime = 0 WHERE id = $1");
+        command.Parameters.Add(new NpgsqlParameter { Value = characterId });
+        return await command.ExecuteNonQueryAsync(ct) > 0;
     }
 
     /// <summary>Records the solar system a character is in (with its constellation and region), inside the caller's transaction.</summary>

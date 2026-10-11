@@ -18,7 +18,7 @@ Do not fabricate successful state or fake backends to close these items.
 | Status | Service/method | Missing work |
 |---|---|---|
 | FUTURE | machoNet single sign-on login (`connection.LoginSso`, the `user_sso_token` of `machoNet.Authenticate`) | The acknowledgement now carries `access_token` and `computer_hash` (None), so the client no longer fails on the keys. The token is not read: EveJS records it only (`authenticationService.js:281`), and no token-to-account rule exists. Needs a decision on how a CCP SSO token maps to an account. |
-| OPEN | `insurgencySolarsystem.GetAllVisibleCampaigns`; `GetLocalCampaignClientSnapshot` | Connect a campaign snapshot producer equivalent to EveJS's Insurgency runtime controller. The route and callback boundary exist, but no campaign producer was found in `dotnet/src`. |
+| PARTLY | `insurgencySolarsystem.GetAllVisibleCampaigns`; `GetLocalCampaignClientSnapshot`; campaign notices | The campaign state machine, store and deadline jobs exist (section 49, `Eve.Insurgency`); the snapshot reads them through the Host and the notices go to covered systems. Open: a start trigger (no client or operator path starts a campaign, Q-INS-4), the FOB structure (structures owner; `structureID` is None until then), point producers (C-P1: corruption and suppression sites, spread), and the public gateway for per-system bars (C-G1, not built; see section 49). |
 | OPEN | `essMgr.GetDataForClientSolarSystem`; `GetMainBankTheftsForClientSolarSystem`; `GetReserveBankTheftsForClientSolarSystem`; `RequestMainBankUnlink`; `RequestReserveBankUnlink` | Connect the real ESS state and operation backend to `ReadSystemStateAsync` and `ExecuteAsync`. Do not synthesize thefts or unlink success. |
 | OPEN | `abyssalMgr.ClientIsReady` | Connect the runtime client-ready path and automatic trace activation. No Abyssal runtime provider was found in the current C# source. |
 | OPEN | `scanMgr.SignalTrackerRegister` | The Host can record the character/session/system registration and has a full-state publish hook. The live signal snapshot producer and the code that calls the publisher are still absent. |
@@ -907,8 +907,8 @@ Open after M1:
 | OPEN | Client preview of the highsec security tax (5%, `security/common/const.py:6`): the server charges none (Q11) | confirm in game (Q11) |
 | OPEN | Matching priority (price, issue time, id) and the duplicate window are to be confirmed with a live match (Q5, Q14) | the live acceptance (M9) |
 | DONE (M3) | Expiry as durable jobs: one job per resting order at its expiry plus 1 s (placed, moved, cancelled in the same transaction), a 60 s safety sweep, a read sweep at most once a second, the restart reschedule, notices to the owner and the corporation members with market rights (Accountant or Trader) | DEVIATIONS.md, "Market slice M3" |
-| OPEN | M3 notices are not durable: a stop between the committed close and the send loses that one notice (balances and state stay right) | a durable notice outbox (not planned in M3) |
-| OPEN | M4: push cache invalidation for book changes; the corporation notices for fills and cancels to every character with market rights (G9, G11; expiry is done in M3) | market agent 2 |
+| DECIDED (M4) | M3 notices are not durable: no outbox, a notice goes to a live session only and the client's cache is per run (balances and state stay right) | DEVIATIONS.md, "Market slice M4" |
+| DONE (M4) | Push cache invalidation for book changes and owner lists; corporate notices for place, fill, modify, cancel and expiry to every character with market rights (G9, G11). The client's price history cache is out of the server's reach (3 h) | DEVIATIONS.md, "Market slice M4"; `MarketCoherenceTests` (5) |
 | OPEN | M5 to M9: price history definitions (Q16), the read path tests (M6), locking and the bounded scan (M7), money invariants (M8), live acceptance (M9) | market agents 2 and 3 |
 | OPEN | The client label table is partial: `MktCantSellItem2`, `MktCantSellItemOutsideStation` and `MktInvalidRegion` need values the server does not hold (localized jump texts) | the client's localization |
 | OPEN | The corporation read rule has a test for a character outside the corporation; a member holding Account Take and not an accountant is covered by M6 | M6 |
@@ -1218,6 +1218,22 @@ Plan: scratchpad `specs/structures_phase.md`, ST-3. Handoff: `docs/project/hando
 | OPEN | (c) the drop at the end of an unanchoring: hull item, container 10167 with the attached items, the quantum core, rigs destroyed; in the same transaction as the removal | ST-2 | NOT STARTED. Wiki gives only "7 days" and "rigs will be lost"; EveJS `structureAssetSafetyState.js` 1075-1422 decides. Next step in handoff-ST-2.md item 1. Today the structure leaves the simulation and the directory, items stay. |
 | VERIFIED (tests) | (d) `structure.notify`: `OnStructureStateChanged` and `OnCorporationStructuresUpdated` to the owner corporation, `OnCurrentStructureStateChanged` to the pilots docked in the structure, nothing to a stranger, nothing for a change the client does not show | `Persistence/Structures/StructureNotifications.cs`, `Composition/StructureComposition.cs` | `StructureNotificationsTests` (1). Sessions whose ship id is the structure: ST-5. |
 | UNVERIFIED | Anchor and notices on the graphical client (placement shading, the anchoring bracket, the reinforcement window) | MITM | Not verified on the client. |
+
+## 49. Pirate insurgency campaigns, C-M1 and C-S1 (2026-10-11)
+
+Plan: scratchpad `work/missions-hard-first-plan.md` track C; decisions in DEVIATIONS.md "Insurgency campaigns (C-M1, C-S1)". Gateway feasibility: scratchpad `work/insurgency-gateway-spike.md`.
+
+| status | item | where | note |
+|---|---|---|---|
+| DONE (tests) | Campaign state machine with the 24.01 numbers: forecast 48 h, active to 7 days from the start, no winner at the maximum, wind-down 48 h after any end, ambition 5 to 10 systems, FOB reinforcement 2 to 4 h (rule only), spread level 3 and contribution LP constants (rule only) | `dotnet/src/Eve.Insurgency/InsurgencyRules.cs`, `InsurgencyCampaign.cs` | `CampaignMachineTests` (10 pure tests, 6 PostgreSQL tests in `InsurgencyCampaignTests`) |
+| DONE (tests) | Store, deadline jobs (one durable job per campaign), restart keeps the expiry, points refused unless active and covered, win updates the ambition in the same transaction | `Eve.Insurgency/InsurgencyStore.cs`, `InsurgencyCampaigns.cs`, `Migrations/0001_insurgency.sql` (schema `insurgency`) | Scheduler and events are the Host's |
+| DONE (tests) | `GetAllVisibleCampaigns` and `GetLocalCampaignClientSnapshot` read the store through the real Host composition (structure of the snapshot, `structureID` None, `[systemID, None]` outside covered systems) | `dotnet/src/Eve.Host/Composition/InsurgencyComposition.cs`, `CoreRpc.cs`; `Eve.Host.Tests/InsurgencyCompositionTests` | |
+| DONE (code, tests pending live) | Campaign notices after commit: started, updated, ending for covered systems; state changed and system fully corrupted or suppressed for every pilot | `InsurgencyComposition.cs` (`NotifyCampaignChanged`, `NotifyPointScored`) | Client text and handling not checked in the graphical client |
+| OPEN | Start trigger for a campaign | none | Q-INS-4: no source names it. `InsurgencyCampaigns.StartAsync` exists; no client or operator path calls it |
+| OPEN | FOB structure and its signals | structures owner | `structureID` is None; the campaign does not yet react to the FOB's destruction or reinforcement |
+| OPEN | Point producers (C-P1): site completions, spread at level 3, top stage | next slice | `ScorePointAsync` exists and is tested; no caller in the server |
+| BLOCKED | Public gateway for corruption and suppression (C-G1) | spike | Native transport absent from the snapshot; see the spike file |
+| OPEN | Victory payouts (C-V1) | next slice | Constants only (1,500,000 LP cap, 1x and 0.4x); no LP is credited |
 
 ## 49. Host start-up: shared container type names (2026-10-11)
 | DONE (tests, live run) | Host start-up no longer throws on a container type name that several SDE types share (Secure Depot and about 40 more in groups 306, 314, 1207): the published type, then the lowest type id, is kept and each skipped type is logged. Tests: `SiteContainerTypesTests`. |

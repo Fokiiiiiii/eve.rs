@@ -50,10 +50,12 @@ internal sealed class TradeRig : IAsyncDisposable
     public long Now { get; set; } = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()+10000;
     public MarketTrading Reopen() => new(Source,Book,Characters,Corporations,Skills,Items,Wallets,Stations,Topology,() => Now,new DurableExpiryJobs(Scheduler));
     private DurableScheduler NewScheduler() => new(Source,() => Now,null,_schemas[6]);
-    private Task Announce(MarketReceipt receipt,CancellationToken token)
+    /// <summary>The notifier the host would use for the receipts the expiry announces; null: they are only recorded.</summary>
+    public MarketNotifier? Notifier { get; set; }
+    private async Task Announce(MarketReceipt receipt,CancellationToken token)
     {
         Announcements.Add(receipt);
-        return Task.CompletedTask;
+        if (Notifier is not null) await Notifier.PublishAsync(receipt);
     }
     /// <summary>A restart of the host: a new scheduler, trading engine and expiry over the same schemas, started the way the host starts them.</summary>
     public async Task Restart()

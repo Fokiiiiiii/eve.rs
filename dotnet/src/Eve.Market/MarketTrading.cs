@@ -26,7 +26,12 @@ public sealed record MarketReceipt(string OperationKey,long? OrderId,long Filled
     public IReadOnlyList<MarketOrderChange> ChangedOrders { get; init; } = [];
     public MarketOwnedOrder? ChangedOrder { get; init; }
     public string? ChangedOrderReason { get; init; }
+
+    /// <summary>The region and type books whose resting orders or fills this receipt changed (M4): a client's cached book for them is stale.</summary>
+    public IReadOnlyList<TouchedBook> TouchedBooks { get; init; } = [];
 }
+
+public sealed record TouchedBook(int RegionId,int TypeId);
 
 /// <summary>Orders, receipts, item custody and money share one transaction. No Node daemon or recovery Saga is required.</summary>
 public sealed class MarketTrading(NpgsqlDataSource source,MarketStore store,PgCharacterStore characters,CorporationStore corporations,
@@ -292,7 +297,8 @@ public sealed class MarketTrading(NpgsqlDataSource source,MarketStore store,PgCh
                 var makerState=makerVolume==0 ? 1 : 0;
                 var changedMaker=new MarketOwnedOrder(maker.Row with { VolumeRemaining=makerVolume },maker.Actor,
                     maker.Wallet.OwnerId,maker.Wallet.AccountKey,makerEscrow[makerId],makerState,time);
-                changes.Add(new(changedMaker,makerState==1 ? "Filled" : "PartialFill",[maker.Actor]));
+                changes.Add(new(changedMaker,makerState==1 ? "Filled" : "PartialFill",
+                    await NoticeRecipientsAsync(c,tx,maker.Wallet.OwnerId,maker.Actor,maker.Row.Location.StationId,[],token)));
             }
             if (opened is { } openedId)
             {
@@ -300,9 +306,10 @@ public sealed class MarketTrading(NpgsqlDataSource source,MarketStore store,PgCh
                     request.Buying ? request.MinimumVolume : 1L,request.Buying ? request.Range : -1,location,time,request.Duration);
                 var openedEscrow=request.Buying ? checked(request.Price*remaining) : 0m;
                 var created=new MarketOwnedOrder(openedRow,actor.Id,account.OwnerId,account.AccountKey,openedEscrow,0,time);
-                changes.Add(new(created,"Created",[actor.Id]));
+                changes.Add(new(created,"Created",await NoticeRecipientsAsync(c,tx,account.OwnerId,actor.Id,station.Id,[],token)));
             }
-            var receipt = new MarketReceipt(operationKey,opened,filled,grossTotal,delivered,participants) { ChangedOrders=changes };
+            var receipt = new MarketReceipt(operationKey,opened,filled,grossTotal,delivered,participants) { ChangedOrders=changes,
+                TouchedBooks=filled>0 || opened is not null ? [new TouchedBook(station.RegionId,request.TypeId)] : [] };
             await using (var finish = Command(c,tx,$"INSERT INTO {Schema}.commands(operation_key,fingerprint,time_ms,result) VALUES($1,$2,$3,$4::jsonb)",
                 operationKey,fingerprint,time,JsonSerializer.Serialize(receipt))) await finish.ExecuteNonQueryAsync(token);
             return receipt;
@@ -560,9 +567,10 @@ public Task<MarketReceipt> ModifyAsync(long actorId,long orderId,decimal newPric
                 var makerState=makerVolume==0 ? 1 : 0;
                 var changedMaker=new MarketOwnedOrder(maker.Row with { VolumeRemaining=makerVolume },maker.Actor,
                     maker.Wallet.OwnerId,maker.Wallet.AccountKey,makerEscrow[makerId],makerState,time);
-                changes.Add(new(changedMaker,makerState==1 ? "Filled" : "PartialFill",[maker.Actor]));
+                changes.Add(new(changedMaker,makerState==1 ? "Filled" : "PartialFill",
+                    await NoticeRecipientsAsync(c,tx,maker.Wallet.OwnerId,maker.Actor,maker.Row.Location.StationId,[],token)));
             }
-            var recipients=actorId==order.Actor ? new[] { order.Actor } : new[] { order.Actor,actorId };
+            var recipients=await NoticeRecipientsAsync(c,tx,order.Wallet.OwnerId,order.Actor,station.Id,[actorId],token);
             changes.Add(new(changedOrder,reason,recipients));
             var receipt=new MarketReceipt(operationKey,orderId,filled,grossTotal,delivered,
                 changedWallets.OrderBy(wallet=>wallet.OwnerId).ThenBy(wallet=>wallet.AccountKey).ToArray())
@@ -570,6 +578,7 @@ public Task<MarketReceipt> ModifyAsync(long actorId,long orderId,decimal newPric
                 ChangedOrders=changes,
                 ChangedOrder=changedOrder,
                 ChangedOrderReason=reason,
+                TouchedBooks=[new TouchedBook(station.RegionId,order.Row.TypeId)],
             };
             return await Save(receipt);
         },token);
@@ -654,12 +663,13 @@ public Task<MarketReceipt> ModifyAsync(long actorId,long orderId,decimal newPric
             var state=expired ? 2 : 3;
             var reason=expired ? "Expired" : "Cancelled";
             var closedOrder=new MarketOwnedOrder(order.Row,order.Actor,order.Wallet.OwnerId,order.Wallet.AccountKey,0m,state,nowMs);
-            var recipients=expired ? await ExpiryRecipientsAsync(c,tx,order,station.Id,token) : new[] { order.Actor,actorId }.Distinct().ToArray();
+            var recipients=await NoticeRecipientsAsync(c,tx,order.Wallet.OwnerId,order.Actor,station.Id,[actorId],token);
             var result=new MarketReceipt(operationKey,orderId,0,0m,movedIds,[order.Wallet])
             {
                 ChangedOrders=[new(closedOrder,reason,recipients)],
                 ChangedOrder=closedOrder,
                 ChangedOrderReason=reason,
+                TouchedBooks=[new TouchedBook(station.RegionId,order.Row.TypeId)],
             };
             await using (var save=Command(c,tx,$"INSERT INTO {Schema}.commands(operation_key,fingerprint,time_ms,result) VALUES($1,$2,$3,$4::jsonb)",
                 operationKey,JsonSerializer.Serialize(terms),nowMs,JsonSerializer.Serialize(result)))
@@ -710,12 +720,17 @@ public Task<MarketReceipt> ModifyAsync(long actorId,long orderId,decimal newPric
         return result;
     }
 
-    /// <summary>Who hears that an order expired: its owner and, for a corporation order, every member with the corporation's market rights at the station.</summary>
-    private async Task<long[]> ExpiryRecipientsAsync(NpgsqlConnection c,NpgsqlTransaction tx,HeldOrder order,long stationId,CancellationToken token)
+    /// <summary>
+    /// Who hears of a change to an order: its owner, the character acting on it, and for a corporation order every member with the
+    /// corporation's market rights at the station (G11; the test the client uses, buyThisTypeWindow.py:324). Zero ids are dropped.
+    /// </summary>
+    private async Task<long[]> NoticeRecipientsAsync(NpgsqlConnection c,NpgsqlTransaction tx,long walletOwnerId,long orderActor,long stationId,long[] acting,CancellationToken token)
     {
-        if (order.Wallet.OwnerId == order.Actor) return [order.Actor];
-        var holders=await corporations.MarketRightsHoldersAsync(c,tx,order.Wallet.OwnerId,stationId,token);
-        return [.. holders.Append(order.Actor).Distinct()];
+        var ids=new List<long> { orderActor };
+        ids.AddRange(acting);
+        if (walletOwnerId != orderActor)
+            ids.AddRange(await corporations.MarketRightsHoldersAsync(c,tx,walletOwnerId,stationId,token));
+        return [.. ids.Where(id => id > 0).Distinct()];
     }
 
     /// <summary>An over-cap refund stays in escrow and can be retried after space is available; no credit is clipped.</summary>

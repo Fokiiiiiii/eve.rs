@@ -18,6 +18,7 @@
     <ProjectReference Include="../Eve.Scheduler/Eve.Scheduler.csproj" />
     <ProjectReference Include="../Eve.Events/Eve.Events.csproj" />
     <ProjectReference Include="../Eve.Structures/Eve.Structures.csproj" />
+    <ProjectReference Include="../Eve.Insurgency/Eve.Insurgency.csproj" />
     <ProjectReference Include="../Eve.Relations/Eve.Relations.csproj" />
     <ProjectReference Include="../Eve.Content/Eve.Content.csproj" />
     <ProjectReference Include="../Eve.Crimewatch/Eve.Crimewatch.csproj" />

@@ -79,6 +79,8 @@ internal sealed partial class CharacterServicesComposition
             .Select(row =>
             {
                 var agent = row.Doc.GetProperty("agent");
+                // The SDE has no mission kind or importance for an agent: the eve.rs rule table decides them (AgentMissionKindRules).
+                var missionClass = AgentMissionKindRules.Classify(AgentSdeInteger(agent, "agentTypeID"), AgentSdeInteger(agent, "divisionID"));
                 var locationId = AgentSdeInteger(row.Doc, "locationID");
                 var station = locationId > 0 ? stations.Get(locationId) : null;
                 JsonElement? inSpace = agentsInSpaceById.TryGetValue(row.Key, out var inSpaceRow)
@@ -109,10 +111,12 @@ internal sealed partial class CharacterServicesComposition
                     AgentSdeBoolean(agent, "isLocator"),
                     isInSpace,
                     AgentSdeOptionalInteger(row.Doc, "careerID"),
-                    AgentSdeBoolean(row.Doc, "importantMission") || AgentSdeBoolean(agent, "importantMission"),
+                    AgentSdeBoolean(row.Doc, "importantMission") || AgentSdeBoolean(agent, "importantMission") || missionClass.ImportantMission,
                     AgentSdeText(row.Doc, "missionKind") is { Length: > 0 } missionKind
                         ? missionKind
-                        : AgentSdeText(agent, "missionKind"),
+                        : AgentSdeText(agent, "missionKind") is { Length: > 0 } agentKind
+                            ? agentKind
+                            : missionClass.MissionKind,
                     AgentSdeText(row.Doc, "missionTypeLabel") is { Length: > 0 } missionType
                         ? missionType
                         : AgentSdeText(agent, "missionTypeLabel"),

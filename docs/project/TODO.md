@@ -966,3 +966,86 @@ Plan: scratchpad `specs/structures_phase.md`, ST-11. Handoff: `docs/project/hand
 | OPEN | Level from the client difficulty above 5 (ten templates) and the downtime rule of the respawn. | DEVIATIONS "Cosmic sites (ST-11)" |
 | OPEN | The reference's anchor set (planets, belts, stations, stargates; no sun, no moons) is not compared with EveJS. | DEVIATIONS "Cosmic sites (ST-11)" |
 | OPEN | Client check (MITM): the `ABC-123` codes in the scanner list, the anomaly overlay (`scanMgr`), the dungeon fields and the warp to a result by code. | not provable headless |
+
+## 43. Mission static data, slice Mi1 (2026-10-11)
+
+Done: the official mission build (3405148) is a second pin in `sde/lock.json` (`missionPinned`); `eve-sde ensure --missions`
+loads its `missions` and `epicArcs` into schema `sde_mission`; `MissionStaticCatalog` reads them; the EveJS authority
+source and its `EVEJS_*` variables are removed from the Host; the agent mission kind and importance come from the eve.rs
+rule table (`AgentMissionKindRules`), not from EveJS. DEVIATIONS "Mission static data" has the sources and the decisions.
+
+| Status | Item | Where / blocker |
+|---|---|---|
+| DONE | Second pin 3405148 (first build with `missions` and `epicArcs`) | `sde/lock.json`; DEVIATIONS "Mission static data" |
+| DONE | Loader for the two tables into `sde_mission`, tests with synthetic fixtures and an opt-in real-data test | `crates/eve-sde/tests/missions.rs` (`EVE_SDE_MISSION_DIR`) |
+| DONE | Read side replaces `EveJsMissionAuthorityDataSource`; `EVEJS_*` no longer read | `MissionStaticCatalog.cs`, `MissionComposition.cs` |
+| DONE | Agent mission kind and importance from the rule table | `AgentMissionKindRules.cs`, `AgentComposition.cs` |
+| OPEN | Client check of the mission build against the client's `missions.fsdbinary` (not in this environment) | DEVIATIONS "Mission static data" (build newer than client) |
+| OPEN | Epic arc count: 21 official, nine on the wiki, seven in the design file | owner decision; DEVIATIONS |
+| OPEN | Basic, storyline, research, FW, heraldry pools: no official agent-to-mission link | `MissionDataGaps.BasicPools`; Mi2 cannot offer missions until a source exists |
+| DONE (exception) | Levels: 1,274 tagged missions committed with provenance (client 1,019, tq-log 13, wiki 191, rule 51) under the owner's approval for four fields; 1,618 official missions have no tag and answer unknown | `MissionStaticCatalog.Level`, `Data/mission-level-tags.v1.json`; DEVIATIONS "Mission static data" | `MissionStaticCatalog.Level`, `Data/mission-level-tags.v1.json`; DEVIATIONS "Mission static data" |
+| OPEN | Kill mission dungeon content: `dungeonID` is not a row of `dungeons` (3 of 1,460) | `MissionDataGaps.KillDungeonContent`; dungeon owner |
+| OPEN | Epic arc journal text IDs | `MissionDataGaps.EpicJournalText`; the client shows no chapter titles |
+| OPEN | LP reward per mission and the LP store standing requirement | `MissionDataGaps.Standings`; the LP store track owns the offers |
+
+### 43a. Owner decisions and the hand-off to Mi2
+
+Recorded:
+- **Exception, client and TQ-log level tags committed (owner-approved 2026-10-11).** 1,019 `client` and 13 `tq-log` values are in
+  `Data/mission-level-tags.v1.json` with the wiki and rule rows (1,274 rows). Limit: mission ID, level, provenance class, confidence
+  only. The exporter that made the client values is not available, so the file is the only record. DEVIATIONS "Mission static data"
+  has the full entry. Not decided: whether any other derived data may be committed on the same ground (the owner's decision each time).
+- **Owner's heuristic rows.** 23 cargo-volume, 4 default level-1 and 22 related-chain values are committed as `rule` rows with low or
+  medium confidence. The owner's document (section 8.2) calls them heuristic; AGENTS.md:18 forbids guessed data. Open: keep or remove.
+
+Open for the repository owner:
+- **Epic arc count** (21 official, nine on the wiki, seven in the design file): see the section above.
+
+Hand-off to Mi2 (not ported here; file:line checked against EveJS HEAD 828823a):
+- Pool selection: `server/src/services/agent/missionPoolResolver.js:69-116` (`resolveAgentRoute`: heraldry, research, epic arc,
+  agent-specific, storyline, else kind route), `:61-67` (`routeForKind`), `:165-184` (`constraintsMatch`: agent type, corporation,
+  faction, division), `:186-210` (`routeMatches`), `:216-290` (`resolveMissionPool`: a courier, mining, trade or encounter pool
+  requires the mission's authoritative level to equal the agent's level, `:264-275`), `:17-43` (`getAuthoritativeMissionLevel`).
+- Pool assembly: `server/src/services/agent/missionAuthority.js:890-909` (`listTemplateBoundMissionIDsForAgent`), `:911-975`
+  (`buildMissionPoolCandidate`; sets `clientDungeonAvailable` and `validContent`), `:977-1022` (`listPreferredMissionCandidateIDs`),
+  `:1024-1042` (`listMissionIDsForAgent`), `:863-873` (`filterUnsupportedLevelOneAgentMissions`), `:656-681` (`listMinableMissionDungeonIDs`,
+  the mining gate, which uses client `populationHints.miningRocks`).
+- Dungeon-template selection: `server/src/services/agent/agentMissionRuntime.js:497-509` (`getMissionTemplatePool`, which filters
+  `siteFamily === "mission"`, a value that no template carries), `:570-671` (`scoreMissionTemplateCandidate`: name-token overlap,
+  +240 for a source dungeon match, +600/+300 for mining rocks), `:673-781` (`resolveMissionTemplateForClientMission`).
+- Level rules (for Mi2's own tagging, if the owner's files are used): `missionLevelResolver.js:185-340` (`missionLevel`, the rule order),
+  `:40-59` (chain levels), `:63-149` (distribution volume bands), `:151-183` (mining titles). Reward constants for Mi5:
+  `agentMissionRuntime.js:207-222` (`REWARD_BY_SCALE_AND_LEVEL`, from captured logs; not committable).
+
+### 43b. Epic arc availability (owner's instruction, 2026-10-11)
+
+The server offers only the arcs the V24.01 client knows (`in-client-build`) unless `EVE_MISSION_INCLUDE_UNAVAILABLE_ARCS=1`.
+Mission availability follows the arc (a step takes its arc's status); a mission that is no arc step is `unknown`. DEVIATIONS
+"Epic arc availability" has the evidence and the method.
+
+| arc ID | availability | official steps | evidence |
+|---|---|---|---|
+| 29 | in-client-build | 64 | V24.01 client constant (eve-logic epicArcConst.py) |
+| 40 | in-client-build | 40 | V24.01 client constant (eve-logic epicArcConst.py) |
+| 48 | in-client-build | 24 | V24.01 client constant (eve-logic epicArcConst.py) |
+| 52 | in-client-build | 27 | V24.01 client constant (eve-logic epicArcConst.py) |
+| 53 | in-client-build | 19 | V24.01 client constant (eve-logic epicArcConst.py) |
+| 55 | in-client-build | 20 | V24.01 client constant (eve-logic epicArcConst.py) |
+| 56 | in-client-build | 22 | V24.01 client constant (eve-logic epicArcConst.py) |
+| 64 | newer-than-client | 4 | not in the V24.01 constants; aura agents (type 11) |
+| 67 | newer-than-client | 4 | not in the V24.01 constants; aura agents (type 11) |
+| 68 | newer-than-client | 4 | not in the V24.01 constants; aura agents (type 11) |
+| 69 | newer-than-client | 4 | not in the V24.01 constants; aura agents (type 11) |
+| 70 | newer-than-client | 4 | not in the V24.01 constants; aura agents (type 11) |
+| 71 | newer-than-client | 4 | not in the V24.01 constants; aura agents (type 11) |
+| 72 | newer-than-client | 4 | not in the V24.01 constants; aura agents (type 11) |
+| 73 | newer-than-client | 4 | not in the V24.01 constants; aura agents (type 11) |
+| 74 | newer-than-client | 4 | not in the V24.01 constants; aura agents (type 11) |
+| 75 | newer-than-client | 4 | not in the V24.01 constants; aura agents (type 11) |
+| 76 | newer-than-client | 4 | not in the V24.01 constants; aura agents (type 11) |
+| 77 | newer-than-client | 4 | not in the V24.01 constants; aura agents (type 11) |
+| 128 | in-client-build | 3 | V24.01 client constant (eve-logic epicArcConst.py) |
+| 132 | in-client-build | 8 | V24.01 client constant (eve-logic epicArcConst.py) |
+
+Hand-off to the next slice: offer missions through `MissionStaticCatalog.PlausibleMissionIds` (already filtered), and check
+`MissionAvailability(missionId)` for any mission that is not an arc step before using it (its `unknown` answer has the reason).

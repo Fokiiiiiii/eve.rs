@@ -205,7 +205,7 @@ internal sealed partial class CharacterServicesComposition
     private Eve.Services.Corporations.OfficeManagerService officeManager = default!;
     private ShipCosmeticsCatalog skinCosmeticsCatalog = default!;
     private Dictionary<long, AgentMissionAgentData> agentMissionAgentById = default!;
-    private EveJsMissionAuthorityDataSource agentMissionStaticAuthority = default!;
+    private MissionStaticCatalog agentMissionStatic = default!;
     private AgentMissionRpcCallbacks agentMissionRpcCallbacks = default!;
     private AgentMissionService agentMissionService = default!;
     private SlashService? publicQaSlashService;

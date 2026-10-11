@@ -1,0 +1,82 @@
+using Eve.Data;
+using Eve.Sde;
+using Eve.Services.Core;
+using Npgsql;
+
+namespace Eve.Services.Core.Tests;
+
+/// <summary>
+/// The rule and the mission catalog against the real loaded data: the pinned SDE (<c>sde</c>, build 3396210) for the agent rule,
+/// and the mission build (<c>sde_mission</c>, build 3405148) for the catalog. Both need PostgreSQL and the data loaded
+/// (<c>eve-sde ensure</c>, and <c>eve-sde ensure --missions</c>).
+/// </summary>
+public sealed class MissionSdeDataTests
+{
+    private sealed class PgFactAttribute : FactAttribute
+    {
+        public PgFactAttribute()
+        {
+            if (Environment.GetEnvironmentVariable("EVE_PG_URL") is null)
+                Skip = "EVE_PG_URL is not set (see tools/dev/pg18.sh)";
+        }
+    }
+
+    private static NpgsqlDataSource Source() =>
+        NpgsqlDataSource.Create(PgConnection.ToConnectionString(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
+
+    [PgFact]
+    public async Task The_rule_gives_the_pinned_agents_the_kinds_its_counts_state()
+    {
+        await using var source = Source();
+        var reader = new SdeReader(source);
+        Assert.True(await reader.BuildAsync() is not null, "no SDE is loaded: run `cargo run -p eve-sde -- ensure --pg $EVE_PG_URL`");
+        var agents = (await reader.ReadAsync("npcCharacters"))
+            .Where(row => row.Doc.TryGetProperty("agent", out var agent) && agent.ValueKind == System.Text.Json.JsonValueKind.Object)
+            .Select(row => (Type: Read(row.Doc.GetProperty("agent"), "agentTypeID"), Division: Read(row.Doc.GetProperty("agent"), "divisionID")))
+            .ToArray();
+        Assert.Equal(10966, agents.Length);
+
+        var byKind = agents
+            .Select(agent => (agent.Type, Class: AgentMissionKindRules.Classify(agent.Type, agent.Division)))
+            .GroupBy(agent => (agent.Type, agent.Class.MissionKind, agent.Class.ImportantMission))
+            .ToDictionary(group => group.Key, group => group.Count());
+        Assert.Equal(3729, byKind[(2, "courier", false)]);
+        Assert.Equal(3671, byKind[(2, "encounter", false)]);
+        Assert.Equal(1375, byKind[(2, "mining", false)]);
+        Assert.Equal(244, byKind[(4, "research", false)]);
+        Assert.Equal(52, byKind[(10, "epicArc", true)]);
+        Assert.Equal(260, byKind[(9, "encounter", false)]);
+        Assert.Equal(12, byKind[(13, "heraldry", false)]);
+        Assert.Equal(696, byKind[(8, "", false)]);
+        Assert.Equal(143, byKind[(5, "", false)]);
+    }
+
+    [PgFact]
+    public async Task The_mission_build_is_loaded_and_its_catalog_has_the_ids_the_server_reads()
+    {
+        await using var source = Source();
+        var catalog = await MissionStaticCatalog.LoadAsync(new SdeReader(source, MissionStaticCatalog.DefaultSchema));
+        Assert.True(catalog.IsLoaded, catalog.UnavailableReason);
+        Assert.Equal(3405148, catalog.Build);
+        Assert.Equal(2892, catalog.Missions.Count);
+        Assert.Equal(21, catalog.EpicArcs.Count);
+        for (var id = 17179L; id <= 17190; id++)
+            Assert.NotNull(catalog.Mission(id));
+        var arc = catalog.EpicArc(132);
+        Assert.NotNull(arc);
+        Assert.Contains(17183L, catalog.PlausibleMissionIds(3020234));
+    }
+
+    [PgFact]
+    public async Task Every_committed_level_tag_names_a_mission_of_the_loaded_build()
+    {
+        await using var source = Source();
+        var catalog = await MissionStaticCatalog.LoadAsync(new SdeReader(source, MissionStaticCatalog.DefaultSchema), MissionLevelTags.Committed);
+        Assert.True(catalog.IsLoaded, catalog.UnavailableReason);
+        var missing = MissionLevelTags.Committed.All.Where(tag => catalog.Mission(tag.MissionId) is null).Select(tag => tag.MissionId).ToArray();
+        Assert.Empty(missing);
+    }
+
+    private static long Read(System.Text.Json.JsonElement agent, string name) =>
+        agent.TryGetProperty(name, out var value) && value.TryGetInt64(out var number) ? number : 0;
+}

@@ -69,13 +69,15 @@ public static class AgentDialogueToken
 /// server yet (DEVIATIONS "Agents slice AG-2, A5"); the host answers null for every agent until a pool is loaded.
 /// </param>
 /// <param name="Now">The clock.</param>
+/// <param name="OnConversation">Called when the character talks to the agent (a DoAction), with whether the character is with the agent (in the station, or in space in its system). Talk steps complete here; null: nothing.</param>
 public sealed record AgentDialogueSources(
     AgentMissionStore Store,
     Func<long, long, long, long, CancellationToken, ValueTask<AgentStandings>> ReadStandings,
     Func<long, int, CancellationToken, ValueTask<int>> ReadSkillLevel,
     Func<long, long> FactionOfCorporation,
     Func<AgentMissionAgentData, long, CancellationToken, ValueTask<AgentMissionContent?>> PickOffer,
-    Func<DateTimeOffset> Now);
+    Func<DateTimeOffset> Now,
+    Func<long, AgentMissionAgentData, bool, CancellationToken, ValueTask>? OnConversation = null);
 
 /// <summary>The answer of DoAction: the agent's line, the buttons, and the last-action record the window reads.</summary>
 public sealed record AgentDialogueReply(PyValue AgentSays, IReadOnlyList<(long ActionId, int ButtonType)> Actions, PyDict LastActionInfo)
@@ -136,6 +138,10 @@ public sealed class AgentDialogueMachine(AgentDialogueSources sources)
         CancellationToken cancellationToken)
     {
         var now = sources.Now();
+        if (sources.OnConversation is { } onConversation)
+        {
+            await onConversation(characterId, agent, atAgentLocation, cancellationToken);
+        }
         var button = ButtonOfArgument(action);
         var standing = await ReadAccessAsync(characterId, agent, cancellationToken);
         var mission = await sources.Store.ReadAsync(characterId, agent.AgentId, cancellationToken);

@@ -10,6 +10,8 @@ Skipped unless EVE_LIVE_HOST is set. tools/dev/run-eve-live.sh runs it.
 
 from __future__ import annotations
 
+import os
+import time
 import uuid
 
 import pytest
@@ -103,3 +105,121 @@ def test_a_docked_character_reads_the_market_as_the_client_does():
         label, arguments = _label_and_arguments(refused.value)
         assert label == "CustomInfo"
         assert arguments == {"info": "Order prices have at most four significant figures."}
+
+
+# ---- M9: a trade through the market, as the client makes it ------------------------------------------------------------------------
+#
+# A seller takes stock from the station hangar (the game master's /giveitem), offers it (PlaceMultiSellOrder, quote.py), a buyer buys
+# part of it at once (PlaceBuyOrder with no duration), both read their transactions (CharGetTransactions, marketsvc.py:20-26), the seller
+# cancels the rest (CancelCharOrder) and sees its escrow come back. A change inside the five-minute modification delay is refused with
+# the labelled sentence; the change after the delay is checked when EVE_LIVE_SLOW=1 (it waits five minutes). Expiry is not live: it is
+# covered by the fake-clock tests (ExpiryTests, MarketCoherenceTests in dotnet/tests/Eve.Market.Tests).
+
+SLOW = os.environ.get("EVE_LIVE_SLOW") == "1"
+
+
+def _plain_rows(value):
+    """The rows of a rowset or a list, as dicts keyed by the column names (a cached answer is unwrapped first)."""
+    plain = _payload(m.plain(value))
+    if isinstance(plain, list):
+        return [_named(row) for row in plain]
+    if isinstance(plain, tuple) and len(plain) == 2 and isinstance(plain[1], dict):
+        args = plain[1]
+        header, lines = args.get("header"), args.get("lines")
+        if isinstance(lines, list) and all(isinstance(line, dict) for line in lines):
+            return lines
+        if isinstance(lines, list) and isinstance(header, list):
+            names = [str(name) for name in header]
+            return [dict(zip(names, line)) for line in lines]
+    raise AssertionError(f"not a rowset or a list of rows: {type(plain).__name__} {str(plain)[:600]}")
+
+
+def _named(row):
+    """A KeyVal (util.KeyVal of the wire, plain: (name, arguments)) as its dict of names."""
+    if isinstance(row, dict):
+        return row
+    if isinstance(row, tuple) and len(row) == 2 and isinstance(row[1], dict):
+        return row[1]
+    raise AssertionError(f"not a named row: {type(row).__name__} {str(row)[:400]}")
+
+
+def _field(row, *names):
+    """The first of the names a row carries (a row of a rowset is read by its column names)."""
+    for name in names:
+        if isinstance(row, dict) and name in row:
+            return row[name]
+    raise AssertionError(f"no column {names} in row {row!r}")
+
+
+def _station_hangar_items(client, station_id):
+    return _plain_rows(client.call("invbroker", "ListStationItems", station_id))
+
+
+def _own_orders(client):
+    return _plain_rows(client.call("marketProxy", "GetCharOrders"))
+
+
+def test_a_seller_and_a_buyer_trade_through_the_market():
+    seller_run = uuid.uuid4().hex[:10]
+    buyer_run = uuid.uuid4().hex[:10]
+    with base.connect(f"trade-seller-{seller_run}") as seller, base.connect(f"trade-buyer-{buyer_run}") as buyer:
+        _new_character(seller, seller_run)
+        _new_character(buyer, buyer_run)
+        station_id = seller.session.session_init.get("stationid")
+        assert isinstance(station_id, int) and buyer.session.session_init.get("stationid") == station_id
+
+        # stock: the game master's command puts the items in the station hangar and says so
+        message = seller.call("slash", "SlashCmd", "/giveitem Tritanium 100")
+        assert "Tritanium" in str(message) and "station hangar" in str(message), message
+        stock = [row for row in _station_hangar_items(seller, station_id) if _field(row, "typeID") == TRITANIUM]
+        assert stock, "the hangar lists the stock"
+        item_id = _field(stock[0], "itemID")
+
+        # place: a sell order of 40 at 50 ISK (a stack of the seller's hangar, quote.py's entry fields)
+        entry = m.Dict([("typeID", TRITANIUM), ("price", 50.0), ("quantity", 40), ("stationID", station_id), ("itemID", item_id)])
+        assert m.plain(seller.call("marketProxy", "PlaceMultiSellOrder", [entry], False, 90, None)) is True
+        ask = next(row for row in _own_orders(seller) if _field(row, "typeID") == TRITANIUM)
+        ask_id = _field(ask, "orderID")
+        assert _field(ask, "volRemaining") == 40 and _field(ask, "price") == 50.0, ask
+
+        # the book shows the ask to a buyer at the station (GetStationAsks, the KeyVal rows of M1)
+        asks = _payload(m.plain(buyer.call("marketProxy", "GetStationAsks")))
+        assert isinstance(asks, dict), f"{type(asks).__name__}: {str(asks)[:700]}"
+        best = _named(asks[TRITANIUM])
+        assert best["volRemaining"] == 40 and best["price"] == 50.0, best
+
+        # match: an immediate buy of 15 takes 15 of the ask at its price; no order rests and no row is faked
+        assert buyer.call("marketProxy", "PlaceBuyOrder", station_id, TRITANIUM, 50.0, 15, -1, 1, 0, False, None) is None
+        bought = [row for row in _plain_rows(buyer.call("marketProxy", "CharGetTransactions", None)) if _field(row, "typeID") == TRITANIUM]
+        assert bought and sum(_field(row, "quantity") for row in bought) == 15, bought
+        sold = [row for row in _plain_rows(seller.call("marketProxy", "CharGetTransactions", None)) if _field(row, "typeID") == TRITANIUM]
+        assert sold and sum(_field(row, "quantity") for row in sold) == 15, sold
+        assert _field(next(row for row in _own_orders(seller) if _field(row, "orderID") == ask_id), "volRemaining") == 25
+
+        # modify inside the five-minute delay: refused with the client's sentence, the price unchanged
+        with pytest.raises(p.MachoError) as refused:
+            seller.call("marketProxy", "ModifyCharOrder", ask_id, 55.0, 50.0, 25, None, None)
+        label, arguments = _label_and_arguments(refused.value)
+        assert label == "CustomInfo" and "seconds" in arguments["info"], arguments
+        assert _field(next(row for row in _own_orders(seller) if _field(row, "orderID") == ask_id), "price") == 50.0
+
+        if SLOW:
+            time.sleep(300)  # the five-minute delay (market-decisions Q3)
+            seller.call("marketProxy", "ModifyCharOrder", ask_id, 55.0, 50.0, 25, None, None)
+            assert _field(next(row for row in _own_orders(seller) if _field(row, "orderID") == ask_id), "price") == 55.0
+
+        # cancel: the rest of the ask leaves the book, its item returns to the hangar, and the escrow reads zero
+        assert seller.call("marketProxy", "CancelCharOrder", ask_id) is None
+        assert all(_field(row, "orderID") != ask_id for row in _own_orders(seller))
+        escrow = {k: _number(v) for k, v in describe(seller.call("marketProxy", "GetCharEscrow"))["args"]["$dict"]}
+        assert escrow == {"iskEscrow": 0, "itemsEscrow": 0}, escrow
+        # the hangar: 100 taken, 40 offered (60 stay in the hangar), then 25 of the offer returned on the cancel: 85
+        hangar = [row for row in _station_hangar_items(seller, station_id) if _field(row, "typeID") == TRITANIUM]
+        assert sum(_field(row, "quantity") for row in hangar) == 85, hangar
+
+        # the corporation's order book of a character in an NPC corporation is empty, and a corporation order is refused
+        assert _plain_rows(seller.call("marketProxy", "GetCorporationOrders")) == []
+        with pytest.raises(p.MachoError) as refused:
+            buyer.call("marketProxy", "PlaceBuyOrder", station_id, TRITANIUM, 40.0, 5, -1, 1, 90, True, None)
+        label, arguments = _label_and_arguments(refused.value)
+        assert label == "CustomInfo" and arguments == {"info": "Your character does not hold the market rights of that corporation."}, arguments

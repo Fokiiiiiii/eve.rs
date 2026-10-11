@@ -912,7 +912,8 @@ Open after M1:
 | DONE (M5) | Price history: one row per UTC day (low, high, volume-weighted average, volume, fills), the day in progress as "new" (the reference's last-row split put a past day there; corrected), `HistoriesAsync` removed (no caller) | DEVIATIONS.md, "Market slice M5"; `MarketHistoryTests` (6) |
 | DONE (M6) | Transactions by division: rights (accountant, junior accountant, Account Take, CrpAccessDenied 101), newest first, fromDate and division filters, keyID; the EXPLAIN check is not run (no index added) | DEVIATIONS.md, "Market slice M6"; `MarketTransactionReadTests` (3) |
 | DONE (M7) | Bounded order-book read: batches of 50 in book order, stop when filled; 10000-order benchmark (before 9999 rows locked per placement, after 50); no index added (EXPLAIN) | DEVIATIONS.md, "Market slice M7"; `OrderBookMatchTests`, opt-in `OrderBookBenchmarkTests` |
-| OPEN | M8 money invariants and M9 live acceptance | market agent 3 |
+| DONE (M8) | Invariants (escrow per wallet, escrowed items per sell, fill legs, order sanity) as a reconciliation the expiry job runs every 10 minutes and logs on mismatch; concurrency tests (modify and cancel racing a fill); documented lock order, with the two entry points that broke it moved; Q14 checked | DEVIATIONS.md, "Market slice M8"; `MarketInvariantTests`, `MarketConcurrencyTests`, `MarketLockOrderTests` |
+| DONE (M9) | Live walk: place, match, transactions, modify (refusal, and the change after the delay under EVE_LIVE_SLOW=1), cancel, escrow, corporation orders and refusal; the NPC seed import path has a test | DEVIATIONS.md, "Market slice M9"; `test_market.py`; `MarketSeedImportTests` |
 | OPEN | The client label table is partial: `MktCantSellItem2`, `MktCantSellItemOutsideStation` and `MktInvalidRegion` need values the server does not hold (localized jump texts) | the client's localization |
 | OPEN | The corporation read rule has a test for a character outside the corporation; a member holding Account Take and not an accountant is covered by M6 | M6 |
 
@@ -1337,5 +1338,44 @@ follow a completed step, with forks, the 90-day restart and the held-back sites 
 | OPEN | Live check of the dungeon start on the client (no client route tested) and the dungeon of arc 29 14117 (generic; held back by default) | live walk after the owner decides the switch |
 | OPEN | Bonus window and LP for kill missions | DEVIATIONS "Mission execution X1"; LP base not in official data |
 | OPEN | Talk steps (`isTalkToAgent`) complete when the pilot talks to the next agent | next slice (X1b) |
-| OPEN | Basic L4 and L5 kill missions (pool from level tags and wave data) | next slice (X2) |
-| OPEN | Journal text (`GetMissionBriefingInfo`, objectives) and the agent header (`GetAgentLocationWrap`) | next slices; see the in-space agents |
+| DONE (tests) | Basic L4 and L5 kill missions of the security agents: the lowest level-matching kill mission not completed by the pilot, whose dungeon can start (the wave director's check); 191 level-4 and 133 level-5 candidates | `Eve.Services.Core/BasicKillOffers.cs`; `BasicKillOffersTests` (5); `StartRefusalOf` in `DungeonWaveDirector` |
+| OPEN | Basic kill missions: replay after the official replay delay (missions are offered once per pilot), and the bonus and LP | DEVIATIONS "Mission execution X2" |
+| DONE (tests) | `GetAgentLocationWrap` on the bound agent (station, in space with the agentsInSpace spawn data, solar system); unknown agentMgr methods answer a named error instead of None | `AgentMissionService.cs` (`AgentLocationWrap`); `AgentLocationWrapTests` (3); the 631 Services.Core tests pass on eve_p3 |
+| OPEN | Journal text (`GetMissionBriefingInfo`, objectives), `GetMissionObjectiveInfo`, `GetReplayTimestamp`, the warp calls | next slice; they answer the named error until built |
+| OPEN | In-space agents: placement rule, the agent as a space entity, warp to the agent, talk steps (arc 29 step 2) | next slice (owner decision 1: the rule position) |
+
+## 51. Mission execution X3 step 1: in-space agents and arc 29 steps 1-2 (2026-10-11)
+
+| Status | Item | Where / blocker |
+|---|---|---|
+| DONE (tests) | In-space agents are put into the scene when a pilot enters their system: ball = agent ID, ship type and group from agentsInSpace, owner corporation; position 20 km from the system centre at the agent-ID angle (owner rule, not CCP data) | `Eve.Services.Core/InSpaceAgentPlacement.cs`; `Eve.Services.Space/SpaceContainers.Agents.cs`; `MissionComposition.cs` (`PutInSpaceAgents`); `InSpaceAgentPlacementTests` |
+| DONE (tests) | A talk step completes when the pilot talks to the next step's agent, in the station or in space in the agent's system; the reward is paid once under the step's key | `MissionDungeonRuntime.OnConversationAsync`; `AgentDialogueSources.OnConversation`; `Arc29StepsTests` (PostgreSQL) |
+| DONE (tests) | Arc 29 steps 1-2 through the store, the dialogue and the runtime: offer 14117, accept, dungeon in Arnon, completion (100,000 ISK once), talk 14118 with Tevis Jak in Tar, completion, offer 14119 | `Arc29StepsTests` (with the generic switch on) |
+| OPEN | Warp and approach to the in-space agent in the live client (the client uses its own ballpark commands; the server-side warp calls `WarpToLocation` and `WarpToAgentInSpace` still answer the named error) | next slice |
+| OPEN | Mission objective window (`GetMissionObjectiveInfo`, `GetMissionBriefingInfo`) | next slice (X3 step 2) |
+| HELD | Arc 29 on by default | kept held back: step 1's site is the family-derived template 3509 and its Damsel content is missing (owner decision 2); `EVE_MISSION_INCLUDE_GENERIC_ARCS=1` runs it |
+
+## 52. Mission execution X3 step 3: failure branches and basic re-offer (2026-10-11)
+
+| Status | Item | Where / blocker |
+|---|---|---|
+| DONE (tests) | A failure (failed or quit) whose failMissionID names another step restarts the arc run there; a self-naming failure only retries the step (arc 29) | `EpicArcOffers.cs`; `EpicArcOffersTests.A_failure_whose...`; `AgentMissionStore.ReadFailedAsync` (journal, PostgreSQL test) |
+| DONE (tests) | A basic kill mission completed is offered again after the replay delay (4 h, EveJS value, shortcut) | `BasicKillOffers.cs`; `BasicKillOffersTests` |
+
+## 53. Mission execution X3 step 4: rewards (2026-10-11)
+
+| Status | Item | Where / blocker |
+|---|---|---|
+| CHECKED | LP: the SDE holds no LP reward for missions (`fixedLpRewardAlpha` and `fixedLpRewardOmega` are 0 on all 2,892 records; no other field carries LP). No LP is paid. AG-3 LP wallet is not wired to missions | nothing to wire until a source exists (DEVIATIONS "Mission execution X3 step 4") |
+| DONE (tests) | Standings: the SDE `extraStandings` of a completion change the character's standing toward the faction (tenths: 7.0 = +0.7), once per completion | `MissionDungeonRuntime.CompleteWithRewardAsync`; `MissionComposition.ApplyMissionStandingAsync` (relations `AdjustAsync`); `MissionDungeonRuntimeTests.A_completion_moves_the_standing_once...` |
+| OPEN | Bonus time window (`bonusReward`, `bonusTimeInterval`): unit not established | DEVIATIONS |
+
+## 54. Mission execution X3 step 2: client texts and the held-mission views (2026-10-11)
+
+| Status | Item | Where / blocker |
+|---|---|---|
+| DONE (tests, opt-in real data) | Loader of the client's mission text IDs from `EVE_CLIENT_SDE_DIR/native/missions.jsonl.gz` into schema `client_sde` (replaced at each start); without the directory the log says why; nothing is committed | `Eve.Services.Core/ClientMissionMessages.cs`; `MissionComposition.LoadClientMissionMessagesAsync`; `MissionViewsTests` (synthetic, and the real export when configured: 2,886 rows with messages, 6 without) |
+| DONE (tests) | `GetMissionBriefingInfo` and `GetMissionObjectiveInfo` on the bound agent for a held (offered, accepted or completed) mission: the briefing and title IDs; the kill dungeon objective and the ISK reward; None when no mission is held | `Eve.Services.Core/MissionViews.cs`; `AgentMissionService.ReadHeldMissionAsync`; host `ReadHeldMissionAsync` |
+| OPEN | Fetch objectives (14119: item in cargo and turn-in at the agent) and courier objectives (`objectives` and `locations` lists are empty) | next slice; the EveJS builder is `buildMissionObjectivePayload` (agentMissionRuntime.js:5885) |
+| OPEN | The dungeon's enemy owner (`ownerID` is the mission's faction, a shortcut) and the dungeon location (0 placeholders) | next slice |
+| NOT FOUND | LP and text are the client's: the server sends IDs, and the client resolves the text in its own localization | none needed |

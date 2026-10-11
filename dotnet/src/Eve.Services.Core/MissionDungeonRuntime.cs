@@ -16,6 +16,9 @@ public interface IMissionDungeonHost
 
     /// <summary>Credits ISK once for the operation key (the wallet's idempotent adjustment, with the journal reference type).</summary>
     Task CreditIskAsync(long characterId, long amount, long counterpartyId, int refTypeId, string reason, string operationKey, CancellationToken cancellationToken);
+
+    /// <summary>Changes the character's standing toward a faction by <paramref name="delta"/> (the relations store's adjustment).</summary>
+    Task ApplyStandingAsync(long characterId, long factionId, double delta, CancellationToken cancellationToken);
 }
 
 /// <summary>Where an agent is: its solar system (the mission dungeon's system) and its corporation (the counterparty of the reward).</summary>
@@ -76,13 +79,7 @@ public sealed class MissionDungeonRuntime(
 
         if (outcome == "completed")
         {
-            var mission = catalog.Mission(record.Content.MissionId)!;
-            if (mission.Reward?.RewardTypeId == IskTypeId && mission.Reward.RewardQuantity > 0 && agentPlaceOf(record.AgentId) is { } place)
-            {
-                await host.CreditIskAsync(owner, mission.Reward.RewardQuantity, place.CorporationId, AgentMissionRewardRefType,
-                    $"Agent mission reward: {mission.NameEn}", $"agent-mission:{owner}:{record.Content.MissionId}:{instanceId}", cancellationToken);
-            }
-            await TransitionAsync(() => store.CompleteAsync(owner, record.AgentId, now(), $"complete:{instanceId}", cancellationToken));
+            await CompleteWithRewardAsync(owner, record, $"dungeon:{instanceId}", $"complete:{instanceId}", cancellationToken);
         }
         else
         {
@@ -90,15 +87,48 @@ public sealed class MissionDungeonRuntime(
         }
     }
 
-    private static async Task TransitionAsync(Func<Task<AgentMissionChange?>> transition)
+    /// <summary>
+    /// A talk step completes when the character talks to the agent of the step after it, while they are together (in the station, or in space in
+    /// the agent's system). The reward is paid under the step's key, so a replayed conversation pays nothing.
+    /// </summary>
+    public async Task OnConversationAsync(long characterId, long agentId, bool together, CancellationToken cancellationToken = default)
+    {
+        if (!together) return;
+        foreach (var record in (await store.ReadAsync(characterId, cancellationToken)).Where(item => item.State == AgentMissionState.Accepted))
+        {
+            var missionId = record.Content.MissionId;
+            if (!catalog.IsTalkStep(missionId) || !catalog.NextAgentsOf(missionId).Contains(agentId)) continue;
+            await CompleteWithRewardAsync(characterId, record, $"talk:{missionId}", $"talk:{missionId}:{agentId}", cancellationToken);
+        }
+    }
+
+    private async Task CompleteWithRewardAsync(long owner, AgentMissionRecord record, string rewardKey, string reference, CancellationToken cancellationToken)
+    {
+        var mission = catalog.Mission(record.Content.MissionId)!;
+        if (mission.Reward?.RewardTypeId == IskTypeId && mission.Reward.RewardQuantity > 0 && agentPlaceOf(record.AgentId) is { } place)
+        {
+            await host.CreditIskAsync(owner, mission.Reward.RewardQuantity, place.CorporationId, AgentMissionRewardRefType,
+                $"Agent mission reward: {mission.NameEn}", $"agent-mission:{owner}:{record.Content.MissionId}:{rewardKey}", cancellationToken);
+        }
+        // the standings of a fresh completion only: a replayed completion is refused and changes nothing
+        if (await TransitionAsync(() => store.CompleteAsync(owner, record.AgentId, now(), reference, cancellationToken)) is not null)
+        {
+            // the SDE gives standings in tenths (7.0 is the wiki's +0.7)
+            foreach (var (factionId, value) in mission.ExtraStandings)
+                await host.ApplyStandingAsync(owner, factionId, value / 10, cancellationToken);
+        }
+    }
+
+    private static async Task<AgentMissionChange?> TransitionAsync(Func<Task<AgentMissionChange?>> transition)
     {
         try
         {
-            await transition();
+            return await transition();
         }
         catch (AgentMissionRefusedException)
         {
             // the mission changed since it was read (a replay): nothing to do
+            return null;
         }
     }
 }

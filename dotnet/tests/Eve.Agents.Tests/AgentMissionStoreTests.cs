@@ -59,6 +59,18 @@ public class AgentMissionStoreTests
     }
 
     [PgFact]
+    public async Task A_failed_mission_comes_back_from_the_journal_with_its_time()
+    {
+        await using var rig = await Rig.Create();
+        await rig.Store.OfferAsync(Character, Agent, Courier, Rig.Start, "offer:f");
+        await rig.Store.AcceptAsync(Character, Agent, Rig.Start + Hour, "accept:f");
+        await rig.Store.FailAsync(Character, Agent, Rig.Start + Hour * 2, "fail:f");
+
+        Assert.Equal((Courier.MissionId, Rig.Start + Hour * 2), Assert.Single(await rig.Store.ReadFailedAsync(Character)));
+        Assert.Empty(await rig.Store.ReadCompletedAsync(Character));
+    }
+
+    [PgFact]
     public async Task A_refused_transition_names_its_reason_and_writes_nothing()
     {
         await using var rig = await Rig.Create();

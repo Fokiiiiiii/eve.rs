@@ -27,7 +27,7 @@ internal sealed class TradeRig : IAsyncDisposable
         Book=new(source,_schemas[0]);
         Scheduler=NewScheduler();
         Trading=Reopen();
-        Expiry=new MarketExpiryWorker(Scheduler,Trading,() => Now,Announce);
+        Expiry=NewExpiry();
     }
     public NpgsqlDataSource Source { get; }
     public StationCatalog Stations { get; }
@@ -47,6 +47,13 @@ internal sealed class TradeRig : IAsyncDisposable
     /// <summary>What the expiry announced, in order (the notifications the host would send to the sessions).</summary>
     public List<MarketReceipt> Announcements { get; } = [];
     public string MarketSchema => _schemas[0];
+    public string WalletSchema => _schemas[2];
+    public string ItemSchema => _schemas[3];
+    /// <summary>The reconciliation the expiry job runs (M8), over this rig's schemas.</summary>
+    public MarketReconciliation Reconciliation => new(Source,MarketSchema,WalletSchema,ItemSchema);
+    /// <summary>What the expiry job logged on a reconciliation mismatch (the host logs the same lines to its console).</summary>
+    public List<string> Mismatches { get; } = [];
+    private MarketExpiryWorker NewExpiry() => new(Scheduler,Trading,() => Now,Announce,Reconciliation,Mismatches.Add);
     public long Now { get; set; } = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()+10000;
     public MarketTrading Reopen() => new(Source,Book,Characters,Corporations,Skills,Items,Wallets,Stations,Topology,() => Now,new DurableExpiryJobs(Scheduler));
     private DurableScheduler NewScheduler() => new(Source,() => Now,null,_schemas[6]);
@@ -62,7 +69,7 @@ internal sealed class TradeRig : IAsyncDisposable
     {
         Scheduler=NewScheduler();
         Trading=Reopen();
-        Expiry=new MarketExpiryWorker(Scheduler,Trading,() => Now,Announce);
+        Expiry=NewExpiry();
         await Expiry.StartAsync();
     }
     public static async Task<TradeRig> Create()

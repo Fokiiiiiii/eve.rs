@@ -33,7 +33,8 @@ public sealed record AgentMissionRpcCallbacks(
     Func<CancellationToken, ValueTask<IReadOnlyList<long>>>? ReadDisabledMissions = null,
     Func<long, CancellationToken, ValueTask<IReadOnlyList<long>>>? ReadPlausibleMissionIds = null,
     Func<CancellationToken, ValueTask<JsonObject?>>? ReadEpicArcMessages = null,
-    Func<long, CancellationToken, ValueTask<long?>>? ReadSolarSystemOfAgent = null);
+    Func<long, CancellationToken, ValueTask<long?>>? ReadSolarSystemOfAgent = null,
+    Func<long, long, CancellationToken, ValueTask<HeldMissionView?>>? ReadHeldMission = null);
 
 // Readers return persisted character mission state, character-owned bookmark records,
 // and the character's already-resolved seven-field research rows. They never write.
@@ -68,6 +69,7 @@ public sealed class AgentMissionService(
         "GetMyJournalDetails" or
         "GetAgents" or
         "GetCompletedCareerAgentIDs" or
+        "GetAgentLocationWrap" or
         "GetDisabledMissions" or
         "GetMessagesForEpicArcMissions" or
         "GetMyEpicArcStatus" or
@@ -92,8 +94,83 @@ public sealed class AgentMissionService(
         "GetMyEpicArcStatus" => ReadMyEpicArcStatusAsync(call),
         "GetPlausibleMissionIDs" => ReadPlausibleMissionIdsAsync(call),
         "GetSolarSystemOfAgent" => ReadSolarSystemOfAgentAsync(call),
-        _ => ValueTask.FromResult<PyValue>(PyNone.Instance),
+        "GetAgentLocationWrap" => ReadAgentLocationWrapAsync(call),
+        "GetMissionBriefingInfo" => ReadHeldMissionAsync(call, MissionViews.Briefing),
+        "GetMissionObjectiveInfo" => ReadHeldMissionAsync(call, MissionViews.Objective),
+        _ => throw MachoErrors.ThrowUserError("CustomInfo",
+            ("info", new PyStr($"The agent service method {call.Method} is not available on this server yet."))),
     };
+
+    /// <summary>
+    /// <c>GetAgentLocationWrap</c> on a bound agent: where the agent is (EveJS <c>buildAgentLocationWrap</c>). A station agent is its station
+    /// (type, system and station ID); an agent in space is the system with the spawn data of its agentsInSpace row; the solar system otherwise.
+    /// </summary>
+    private async ValueTask<PyValue> ReadAgentLocationWrapAsync(ServiceCall call)
+    {
+        var agent = await BoundAgentAsync(call);
+        return AgentLocationWrap(agent);
+    }
+
+    /// <summary>The briefing or objective of the mission the character holds with the bound agent; None when there is none (the reference's answer).</summary>
+    private async ValueTask<PyValue> ReadHeldMissionAsync(ServiceCall call, Func<HeldMissionView, PyDict> answer)
+    {
+        call.Cancellation.ThrowIfCancellationRequested();
+        var characterId = Positive(call.Session.Get("charid"));
+        var agentId = BoundAgentId(call);
+        if (characterId == 0 || agentId == 0 || rpcCallbacks?.ReadHeldMission is not { } readHeld) return PyNone.Instance;
+        return await readHeld(characterId, agentId, call.Cancellation) is { } view ? answer(view) : PyNone.Instance;
+    }
+
+    private async ValueTask<AgentMissionAgentData> BoundAgentAsync(ServiceCall call)
+    {
+        var agentId = BoundAgentId(call);
+        if (agentId == 0)
+        {
+            throw MachoErrors.ThrowUserError("CustomInfo", ("info", new PyStr("This call is not on a bound agent.")));
+        }
+        var agents = rpcCallbacks?.ReadAgents is { } readAgents
+            ? await readAgents(call.Cancellation)
+            : Array.Empty<AgentMissionAgentData>();
+        return agents.FirstOrDefault(agent => agent.AgentId == agentId)
+            ?? throw MachoErrors.ThrowUserError("CustomInfo", ("info", new PyStr("That agent is not known.")));
+    }
+
+    /// <summary>The location wrap of an agent (the reference's shape: locationID, typeID, solarsystemID, and the locationType of an in-space agent).</summary>
+    public static PyDict AgentLocationWrap(AgentMissionAgentData agent)
+    {
+        static KeyValuePair<PyValue, PyValue> Field(string name, PyValue value) => new(new PyStr(name), value);
+        static PyValue Id(long? value) => value is > 0 ? new PyInt(value.Value) : PyNone.Instance;
+        if (agent.IsInSpace && agent.SolarSystemId is { } system)
+        {
+            return new PyDict(new List<KeyValuePair<PyValue, PyValue>>
+            {
+                Field("locationID", new PyInt(system)),
+                Field("typeID", new PyInt(5)),
+                Field("solarsystemID", new PyInt(system)),
+                Field("locationType", new PyStr("agentinspace")),
+                Field("agentInSpaceTypeID", Id(agent.TypeId)),
+                Field("dungeonID", Id(agent.DungeonId)),
+                Field("spawnPointID", Id(agent.SpawnPointId)),
+                Field("source", new PyStr("sde:agentsInSpace")),
+            });
+        }
+        if (agent.StationId is { } station)
+        {
+            return new PyDict(new List<KeyValuePair<PyValue, PyValue>>
+            {
+                Field("typeID", new PyInt(agent.StationTypeId is > 0 ? agent.StationTypeId.Value : 1531)),
+                Field("solarsystemID", new PyInt(agent.SolarSystemId ?? 0)),
+                Field("locationID", new PyInt(station)),
+            });
+        }
+        return new PyDict(new List<KeyValuePair<PyValue, PyValue>>
+        {
+            Field("locationID", new PyInt(agent.SolarSystemId ?? 0)),
+            Field("typeID", new PyInt(5)),
+            Field("solarsystemID", new PyInt(agent.SolarSystemId ?? 0)),
+            Field("locationType", new PyStr("solarsystem")),
+        });
+    }
 
     /// <summary>
     /// <c>MachoBindObject(agentID, (method, args, kwargs))</c>: binds the agent, then makes the nested call on the bound object.

@@ -48,6 +48,14 @@ public class MissionDungeonRuntimeTests
             Credits.Add((characterId, amount, counterpartyId, refTypeId, operationKey));
             return Task.CompletedTask;
         }
+
+        public List<(long Character, long Faction, double Delta)> Standings { get; } = [];
+
+        public Task ApplyStandingAsync(long characterId, long factionId, double delta, CancellationToken cancellationToken)
+        {
+            Standings.Add((characterId, factionId, delta));
+            return Task.CompletedTask;
+        }
     }
 
     private static MissionStaticCatalog Catalog() => MissionStaticCatalog.FromRows(
@@ -78,7 +86,7 @@ public class MissionDungeonRuntimeTests
         await runtime.OnDungeonOutcomeAsync("completed", Pilot, "dungeon.3509", 77, default);
         var credit = Assert.Single(host.Credits);
         Assert.Equal((Pilot, 100000L, Corporation, 33), (credit.Character, credit.Amount, credit.Counterparty, credit.RefType));
-        Assert.Equal("agent-mission:" + Pilot + ":9101:77", credit.Key);
+        Assert.Equal("agent-mission:" + Pilot + ":9101:dungeon:77", credit.Key);
         Assert.Equal(AgentMissionState.Completed, (await store.ReadAsync(Pilot, Agent))!.State);
 
         await runtime.OnDungeonOutcomeAsync("completed", Pilot, "dungeon.3509", 77, default);
@@ -123,6 +131,34 @@ public class MissionDungeonRuntimeTests
         Assert.Empty(host.Starts);
         Assert.Empty(host.Credits);
         Assert.Equal(AgentMissionState.Accepted, (await store.ReadAsync(Pilot, Agent))!.State);
+    }
+
+    // A kill mission whose completion moves the standing toward a faction by the SDE's 7.0 (the wiki's +0.7).
+    private const string StandingMission = """
+        {"_key": 9201, "name": {"en": "Standing Step"}, "nameID": 1236, "killMission": {"dungeonID": 3509, "objectiveQuantity": 0},
+         "extraStandings": [{"_key": 500003, "_value": 7.0}]}
+        """;
+
+    [AgentsPgFact]
+    public async Task A_completion_moves_the_standing_once_and_a_replay_moves_it_no_more()
+    {
+        var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
+        var schema = "mdr_" + Guid.NewGuid().ToString("N")[..12];
+        await using var cleanup = new Cleanup(source, schema);
+        await AgentMissionStore.MigrateAsync(source, schema);
+        var store = new AgentMissionStore(source, schema);
+        var host = new FakeHost();
+        var catalog = MissionStaticCatalog.FromRows(3405148, [new SdeRow(9201, JsonDocument.Parse(StandingMission).RootElement.Clone())], []);
+        var runtime = new MissionDungeonRuntime(store, catalog, host, _ => new MissionAgentPlace(System, Corporation), () => Start);
+        await store.OfferAsync(Pilot, Agent, new AgentMissionContent(9201, 1236, "Standing Step", "", false), Start, "offer:4");
+        await store.AcceptAsync(Pilot, Agent, Start, "accept:4");
+
+        await runtime.OnDungeonOutcomeAsync("completed", Pilot, "dungeon.3509", 80, default);
+        await runtime.OnDungeonOutcomeAsync("completed", Pilot, "dungeon.3509", 80, default);
+
+        var standing = Assert.Single(host.Standings);
+        Assert.Equal((Pilot, 500003L), (standing.Character, standing.Faction));
+        Assert.Equal(0.7, standing.Delta, 6);
     }
 
     private sealed class Cleanup(NpgsqlDataSource source, string schema) : IAsyncDisposable

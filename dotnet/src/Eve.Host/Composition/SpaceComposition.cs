@@ -41,6 +41,7 @@ internal sealed partial class CharacterServicesComposition
     {
         try
         {
+            PutInSpaceAgents(solarSystemId);
             if (cosmicSites is { } director)
                 await director.EnsureAsync(solarSystemId);
             // the containers the fill has just placed go into the scene at once (a pilot's entry restores the rest)

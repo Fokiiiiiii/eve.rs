@@ -169,6 +169,7 @@ internal sealed partial class CharacterServicesComposition
     private async Task AgentMissions()
     {
         agentMissionAnnouncer = new Eve.Services.Core.AgentMissionAnnouncer(agentMissionStore, characterSessions);
+        await LoadClientMissionMessagesAsync();
         // the faction of each NPC corporation (SDE npcCorporations.factionID): the access rule reads the faction standing
         var npcFactions = (await sde.ReadAsync("npcCorporations", cancellationToken: CancellationToken.None))
             .Where(row => row.Doc.TryGetProperty("factionID", out var faction) && faction.ValueKind == System.Text.Json.JsonValueKind.Number)
@@ -197,7 +198,8 @@ internal sealed partial class CharacterServicesComposition
                 agentMissionStatic.PlausibleMissionIds(agentId)),
             ReadEpicArcMessages: _ => ValueTask.FromResult<JsonObject?>(agentMissionStatic.EpicArcMessageMaps),
             ReadSolarSystemOfAgent: (agentId, _) => ValueTask.FromResult<long?>(
-                agentMissionAgentById.TryGetValue(agentId, out var agent) ? agent.SolarSystemId : null));
+                agentMissionAgentById.TryGetValue(agentId, out var agent) ? agent.SolarSystemId : null),
+            ReadHeldMission: ReadHeldMissionAsync);
         agentMissionService = new AgentMissionService(
             async (characterId, ct) =>
             {
@@ -250,18 +252,32 @@ internal sealed partial class CharacterServicesComposition
                     return level;
                 },
                 corporationId => npcFactions.GetValueOrDefault(corporationId),
-                // the offer is the next step of the agent's epic arc (EpicArcOffers): the official arc sequence, with the held-back sites
-                // kept out (owner decision). Basic agents have no official mission link yet, so they offer nothing.
+                // the offer is the next step of the agent's epic arc (EpicArcOffers: the official arc sequence, the held-back sites kept
+                // out by owner decision), else the basic kill mission of a level 4 or 5 security agent (BasicKillOffers). Other basic
+                // agents have no official mission link and offer nothing.
                 async ValueTask<Eve.Agents.AgentMissionContent?> (AgentMissionAgentData agent, long characterId, CancellationToken ct) =>
                 {
                     var completed = await agentMissionStore.ReadCompletedAsync(characterId, ct);
+                    var failed = await agentMissionStore.ReadFailedAsync(characterId, ct);
                     var now = DateTimeOffset.UtcNow;
-                    if (Eve.Services.Core.EpicArcOffers.Pick(agentMissionStatic, agent.AgentId, completed, now) is not { } missionId ||
+                    var completedAt = completed.GroupBy(item => item.MissionId).ToDictionary(group => group.Key, group => group.Max(item => item.CompletedAt));
+                    if ((Eve.Services.Core.EpicArcOffers.Pick(agentMissionStatic, agent.AgentId, completed, now, failed) ??
+                            Eve.Services.Core.BasicKillOffers.Pick(agentMissionStatic, agent, completedAt, now,
+                                dungeon => dungeonWavesDirector?.StartRefusalOf(dungeon) is null)) is not { } missionId ||
                         agentMissionStatic.Mission(missionId) is not { } mission)
                         return null;
                     return new Eve.Agents.AgentMissionContent(mission.MissionId, mission.NameId, mission.NameEn, "", false);
                 },
-                () => DateTimeOffset.UtcNow));
+                () => DateTimeOffset.UtcNow,
+                // a talk step completes when the pilot talks to the next agent, in the station or in space in the agent's system (A-X3)
+                async (characterId, agent, atLocation, ct) =>
+                {
+                    if (missionDungeons is null) return;
+                    var together = agent.IsInSpace
+                        ? agent.SolarSystemId is { } system && spaceSessions is not null && spaceSessions.IsPilotInSystem(characterId, (int)system)
+                        : atLocation;
+                    await missionDungeons.OnConversationAsync(characterId, agent.AgentId, together, ct);
+                }));
         await AttachMissionDungeonsAsync();
     }
 
@@ -279,7 +295,8 @@ internal sealed partial class CharacterServicesComposition
         var host = new SpaceMissionDungeonHost(
             (characterId, systemId) => spaceSessions is not null && spaceSessions.IsPilotInSystem(characterId, systemId),
             StartMissionDungeonAsync,
-            CreditMissionIskAsync);
+            CreditMissionIskAsync,
+            ApplyMissionStandingAsync);
         missionDungeons = new MissionDungeonRuntime(
             agentMissionStore,
             agentMissionStatic,
@@ -301,6 +318,83 @@ internal sealed partial class CharacterServicesComposition
     }
 
     private const string MissionDungeonSweepJob = "mission.dungeons.sweep";
+
+    /// <summary>The localization IDs of the missions' texts from the client export (empty when not available; see LoadClientMissionMessagesAsync).</summary>
+    private IReadOnlyDictionary<long, IReadOnlyDictionary<string, long>> clientMissionMessages = new Dictionary<long, IReadOnlyDictionary<string, long>>();
+
+    /// <summary>
+    /// Loads the client's mission text IDs from <c>EVE_CLIENT_SDE_DIR/native/missions.jsonl.gz</c> into the schema <c>client_sde</c> (replaced each
+    /// start). Without the directory, or without the file, nothing is loaded and the log says why; the briefing then carries no text ID.
+    /// </summary>
+    private async Task LoadClientMissionMessagesAsync()
+    {
+        var directory = Environment.GetEnvironmentVariable(ClientMissionMessages.DirectoryVariable);
+        if (string.IsNullOrWhiteSpace(directory))
+        {
+            Console.Error.WriteLine($"eve-host: missions: client texts are not available: {ClientMissionMessages.DirectoryVariable} is not set");
+            return;
+        }
+        var file = Path.Combine(directory, "native", "missions.jsonl.gz");
+        if (!File.Exists(file))
+        {
+            Console.Error.WriteLine($"eve-host: missions: client texts are not available: {file} is missing");
+            return;
+        }
+        var (messages, skipped) = ClientMissionMessages.Parse(File.OpenRead(file));
+        var missionIds = new List<long>();
+        var keys = new List<string>();
+        var ids = new List<long>();
+        foreach (var (missionId, texts) in messages)
+            foreach (var (key, id) in texts)
+            {
+                missionIds.Add(missionId);
+                keys.Add(key);
+                ids.Add(id);
+            }
+        await using var connection = await source.OpenConnectionAsync(CancellationToken.None);
+        await using var transaction = await connection.BeginTransactionAsync(CancellationToken.None);
+        await using (var setup = new NpgsqlCommand("""
+            CREATE SCHEMA IF NOT EXISTS client_sde;
+            CREATE TABLE IF NOT EXISTS client_sde.mission_messages (
+                mission_id bigint NOT NULL, message_key text NOT NULL, message_id bigint NOT NULL, PRIMARY KEY (mission_id, message_key));
+            DELETE FROM client_sde.mission_messages;
+            INSERT INTO client_sde.mission_messages SELECT * FROM unnest(@m::bigint[], @k::text[], @v::bigint[]);
+            """, connection, transaction))
+        {
+            setup.Parameters.Add(new NpgsqlParameter("m", missionIds.ToArray()));
+            setup.Parameters.Add(new NpgsqlParameter("k", keys.ToArray()));
+            setup.Parameters.Add(new NpgsqlParameter("v", ids.ToArray()));
+            await setup.ExecuteNonQueryAsync();
+        }
+        await transaction.CommitAsync();
+        clientMissionMessages = messages;
+        Console.Error.WriteLine($"eve-host: missions: client texts {messages.Count} missions, {ids.Count} message IDs ({skipped} rows not read)");
+    }
+
+    /// <summary>The held mission of the character with the bound agent (offered or accepted), with its briefing text ID.</summary>
+    private async ValueTask<Eve.Services.Core.HeldMissionView?> ReadHeldMissionAsync(long characterId, long agentId, CancellationToken cancellationToken)
+    {
+        var record = await agentMissionStore.ReadAsync(characterId, agentId, cancellationToken);
+        if (record is null || record.State is not (Eve.Agents.AgentMissionState.Offered or Eve.Agents.AgentMissionState.Accepted or Eve.Agents.AgentMissionState.Completed)) return null;
+        if (agentMissionStatic.Mission(record.Content.MissionId) is not { } mission) return null;
+        long? briefing = clientMissionMessages.TryGetValue(mission.MissionId, out var texts) && texts.TryGetValue(ClientMissionMessages.BriefingKey, out var id) ? id : null;
+        return new Eve.Services.Core.HeldMissionView(mission, record, briefing);
+    }
+
+    /// <summary>The SDE group of the agents in space (type 30887 "Tevis Jak's Epithal" is group 517).</summary>
+    private const int AgentInSpaceGroupId = 517;
+
+    /// <summary>The agents in space of a system go into the scene when a pilot enters it (placement: InSpaceAgentPlacement).</summary>
+    private void PutInSpaceAgents(int solarSystemId)
+    {
+        if (spaceContainers is null || solarSystems.Get(solarSystemId) is not { } system) return;
+        foreach (var agent in agentMissionAgentRows)
+        {
+            if (!agent.IsInSpace || agent.SolarSystemId != solarSystemId || agent.TypeId is not { } typeId) continue;
+            var position = Eve.Services.Core.InSpaceAgentPlacement.Position(agent.AgentId, system.X, system.Y, system.Z);
+            spaceContainers.PutAgentInSpace(solarSystemId, agent.AgentId, (int)typeId, AgentInSpaceGroupId, (int)agent.CorporationId, position);
+        }
+    }
 
     private static async Task MissionDungeonOutcomeAsync(MissionDungeonRuntime runtime, string outcome, EventContext context, CancellationToken token)
     {
@@ -331,6 +425,16 @@ internal sealed partial class CharacterServicesComposition
         return start.Started ? null : start.Refusal ?? "the dungeon did not start";
     }
 
+    /// <summary>A mission's standing change: the relations store's adjustment of the faction standing, in its own transaction.</summary>
+    private async Task ApplyMissionStandingAsync(long characterId, long factionId, double delta, CancellationToken cancellationToken)
+    {
+        await using var connection = await source.OpenConnectionAsync(cancellationToken);
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        await foundations.Relations.AdjustAsync(connection, transaction, Eve.Relations.RelationKinds.Standing.Name, factionId, characterId, delta,
+            "Agent mission standing", cancellationToken: cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+    }
+
     /// <summary>The ISK of a mission reward: one idempotent wallet adjustment, in its own transaction.</summary>
     private async Task CreditMissionIskAsync(long characterId, long amount, long counterpartyId, int refTypeId, string reason, string operationKey, CancellationToken cancellationToken)
     {
@@ -346,7 +450,8 @@ internal sealed partial class CharacterServicesComposition
 internal sealed class SpaceMissionDungeonHost(
     Func<long, int, bool> isPilotInSystem,
     Func<long, int, long, CancellationToken, Task<string?>> startDungeon,
-    Func<long, long, long, int, string, string, CancellationToken, Task> creditIsk) : IMissionDungeonHost
+    Func<long, long, long, int, string, string, CancellationToken, Task> creditIsk,
+    Func<long, long, double, CancellationToken, Task> applyStanding) : IMissionDungeonHost
 {
     public bool IsPilotInSystem(long characterId, int solarSystemId) => isPilotInSystem(characterId, solarSystemId);
 
@@ -355,4 +460,7 @@ internal sealed class SpaceMissionDungeonHost(
 
     public Task CreditIskAsync(long characterId, long amount, long counterpartyId, int refTypeId, string reason, string operationKey, CancellationToken cancellationToken) =>
         creditIsk(characterId, amount, counterpartyId, refTypeId, reason, operationKey, cancellationToken);
+
+    public Task ApplyStandingAsync(long characterId, long factionId, double delta, CancellationToken cancellationToken) =>
+        applyStanding(characterId, factionId, delta, cancellationToken);
 }

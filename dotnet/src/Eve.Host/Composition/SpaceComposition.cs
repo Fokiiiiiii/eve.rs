@@ -43,6 +43,9 @@ internal sealed partial class CharacterServicesComposition
         {
             if (cosmicSites is { } director)
                 await director.EnsureAsync(solarSystemId);
+            // the containers the fill has just placed go into the scene at once (a pilot's entry restores the rest)
+            if (spaceContainers is { } placed)
+                await placed.RestoreSiteContainersAsync(solarSystemId);
             // a pilot in the system brings its sites' first waves (a scene is made for the pilot; a wave already in it is not made twice)
             if (siteNpcs is { } npcs)
                 await npcs.SpawnForSystemAsync(solarSystemId);
@@ -123,10 +126,23 @@ internal sealed partial class CharacterServicesComposition
                 foundations.Content.Define(definition);
             }
             // the cosmic sites of the systems: content of the shared runtime, kept filled by a recurring job per system (docs/design/FOUNDATIONS.md, an anomaly end to end)
+            // the containers of the sites: their rows are kept in the sites schema. The type of a container is the static data's type of its name in the
+            // container groups (306 Spawn, 314, 1207 Scatter); a name the static data does not have falls back to the lowest type id of the kind's group
+            var siteContainers = new Eve.Services.Space.SiteContainerStore(source);
+            await Eve.Services.Space.SiteContainerStore.MigrateAsync(source);
+            var containerRows = (await sde.ReadByFieldAsync("types", "groupID", new long[] { 306, 314, 1207 }))
+                .Select(row => (Name: row.Doc.GetProperty("name").GetProperty("en").GetString() ?? "", TypeId: (int)row.Key, GroupId: row.Doc.GetProperty("groupID").GetInt32()))
+                .ToList();
+            var containerTypes = containerRows.ToDictionary(row => row.Name, row => (row.TypeId, row.GroupId), StringComparer.Ordinal);
+            (int TypeId, int GroupId) FallbackOf(int group) => containerRows.Where(row => row.GroupId == group).OrderBy(row => row.TypeId).Select(row => (row.TypeId, row.GroupId)).First();
+            var fallbackData = FallbackOf(306);
+            var fallbackRelic = FallbackOf(1207);
             cosmicSites = new Eve.Services.Space.Sites.CosmicSiteDirector(
                 source, foundations.Content, foundations.Scheduler, Eve.Services.Space.Sites.SiteTemplates.Load(), new Eve.Services.Space.Sites.SdeSiteAnchors(sde), solarSystems,
                 message => Console.Error.WriteLine($"eve-host: {message}"), system => spaceSessions?.HasPilotsIn(system) ?? false);
             cosmicSites.Attach(foundations.Content, foundations.Events);
+            cosmicSites.Containers = siteContainers;
+            cosmicSites.ContainerType = (name, relic) => containerTypes.TryGetValue(name, out var found) ? found : relic ? fallbackRelic : fallbackData;
             foundations.Events.Subscribe(DailyGoalRecorder.SubscriberName, [Eve.Ships.OreMinedEvent.Topic, Eve.Ships.SalvageWreckedEvent.Topic], (context, token) => dailyGoals.RecordAsync(context, token));
             foundations.Events.Subscribe("npc.security-status-recovery", ["npc.killed"],
                 async (context, token) => await securityRecovery.HandleAsync(context, context.Event.Id, context.Event.PayloadJson, token));
@@ -259,7 +275,9 @@ internal sealed partial class CharacterServicesComposition
             foundations.Scheduler.Register("space.bounty.pay", async (_, token) => await bounties.PayBountiesAsync(token));
             await foundations.Scheduler.EnsureRecurringAsync("space.bounty.pay", "pay", TimeSpan.FromSeconds(10));
             spaceContainers = new SpaceContainers(sim, ships, items, new PgSpaceItemStore(source, spaceSchema), new PgWorkCycleLedger(source, spaceSchema), new Eve.Services.Space.EventBusFacts(foundations.Events), dogma, spaceSessions, now, message => Console.Error.WriteLine($"eve-host: cans: {message}"), deployed: new PgDeployedStore(source, spaceSchema), scheduler: foundations.Scheduler);
-            foundations.Scheduler.Register(Eve.Services.Space.SpaceContainers.AnchorJob, async (context, token) =>
+
+            spaceContainers.SiteContainers = siteContainers;
+            spaceSessions.HackableContainers = new Eve.Services.Space.SiteContainerHacks(source, siteContainers, foundations.Events, () => foundations.Scheduler.Now, id => spaceContainers.RemoveSiteContainer(id));            foundations.Scheduler.Register(Eve.Services.Space.SpaceContainers.AnchorJob, async (context, token) =>
                 await spaceContainers.AnchorAsync(context.Payload<Eve.Services.Space.SpaceContainers.DisruptorAnchorDue>()!.DeployableId, token));
             var containers = spaceContainers;
             var probes = new Eve.Services.Space.SpaceProbes(ships, dogma, new Eve.Ships.PgProbeStore(source, spaceSchema), spaceSessions, sim, now, message => Console.Error.WriteLine($"eve-host: probes: {message}"));

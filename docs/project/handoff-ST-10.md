@@ -23,11 +23,15 @@ Updated at every push. Plan: scratchpad `specs/structures_phase.md`, section ST-
    Host routing: `HackingCompositionTests` (1 PgFact) builds the real composition and calls `hackingMgr` through the registry; it found and
    fixed a start-up failure with `EVE_SIM=off` (the service now registers without a space, with no reach).
    Gaps: reach is checked per call, not per tick; the sim's own range rule still applies to the cycle.
-4. **Containers and clear (not started).** The seams exist: `SpaceHackingSite.Find` (target lookup) and `SpaceHackingSite.Ended` (the end
-   of an attempt). Still to write: placing the site containers through `SpaceContainers` (balls in the scene, near the site anchor), the failure
-   count and destruction at two failures (persisted), `site.container.cleared` on a win, loot (D-5). Until these exist every analyzer activation
-   is refused (`ANALYZER_TARGET_INVALID`).
-
+4. **Containers and clear (d1 built, tests 4 passed; loot and the end-to-end test not started).** The containers of a new data or relic site
+   are placed in the site's fill transaction (`CosmicSiteDirector.PlaceContainersAsync`, rows in `site_containers`, sites schema, migration 0001),
+   one per template count, each beside the site (150 m spacing, 50 m radius). They go into the scene at the site's fill and on each pilot's entry
+   (`SpaceContainers.RestoreSiteContainersAsync`). `SpaceHackingSite.Find` reads them (`SiteContainerHacks.FindAsync`, secure and unexpired); a win
+   clears the row and publishes `site.container.cleared` {solarSystemId, site, container} in one transaction; two failed attempts destroy the row
+   and remove the ball. Failures live in PostgreSQL and survive a restart (`SiteContainerTests`, 4 passed). Container types are the static data's names
+   in groups 306/314/1207; a name the static data does not have falls back to the lowest type id of the kind's group (306 data, 1207 relic) (DEVIATIONS).
+   Still to write: loot on a win (D-5: wiki silent, EveJS data/relic loot tables), and the end-to-end test (site -> container -> analyzer -> win ->
+   loot + clear -> site completion; the analyzer cycle itself needs the simulation, so the test opens the attempt through the service).
 `hackOrbital` (Data Subverter) stays refused.
 
 ## Gotchas

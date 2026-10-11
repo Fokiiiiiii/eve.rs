@@ -1160,7 +1160,7 @@ Open:
 | DONE | Moon reads (`GetExtractionAndEventIDFromStructureID`, `GetExtractionsForCorp`, `GetMoonResourcesForStructure`) from the store | `Rpc/StructureRpc.cs`, `StructureDataRpcServices.cs` | Read shapes unchanged; tests `MoonExtractionStoreTests` (2 PostgreSQL tests), Host 180 of 180. |
 | VERIFIED (tests) | (b) `StartNewExtraction`: drill online, moon resources, duration clamped to 6 to 56 days, 30 000 m3/h chunk split by the moon, running extraction answered, calendar id, the named refusals, the caller's `OnMoonExtractionUpdate`. Tests: `MoonExtractionStartTests` (7), `MoonExtractionStartHostTests` (6). Gate stand-in: DEVIATIONS "Moon extraction (ST-6a)" | ST-6a | Control and profile access wait for ST-3/ST-5. |
 | VERIFIED (tests) | (c) jobs `moon.chunk_arrival`, `moon.auto_fracture`, `moon.field_decay` (48 h), the drill-offline and destroyed reactions (`offlined`), `OnMoonExtractionUpdate` broadcast on every completion, re-arm after import. Tests: `MoonExtractionJobTests` (6). The fracture start is (d) | ST-6a | |
-| OPEN | (d) `CancelExtraction`, `FractureChunkWithStructure`, `OnMoonExtractionUpdate` | ST-6a | |
+| VERIFIED (tests) | (d) `FractureChunkWithStructure` (fire on a ready chunk, `fractured` after 30 s, field decays after 48 h) and `CancelExtraction` (`cancelled`, Station Manager role); `OnMoonExtractionUpdate` to the corporation and the structure's sessions on every completion. Tests: `MoonExtractionFractureTests` (6), `MoonExtractionStartHostTests` | ST-6a | |
 | OPEN | Owner-corporation character notifications (STARTED, FINISHED, LASER_FIRED, CANCELLED, AUTOMATIC_FRACTURE) | ST-6a | No notification store in eve.rs yet. |
 | OPEN | Rig modifiers (2707 fracture delay, 2704 yield) | ST-6a | Not read yet. |
 

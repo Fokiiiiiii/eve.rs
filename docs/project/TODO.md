@@ -943,6 +943,16 @@ Web research is recorded in DEVIATIONS.md, "Agents slice AG-2". Sources read: ES
 | OPEN | Research rates and datacore price: no source read (A6) | DEVIATIONS "Agents slice AG-2" |
 | OPEN | CONCORD LP exchange: wiki rates exist but no CCP source; stays refused | DEVIATIONS "Agents slice AG-2" |
 
+Slice A5 (2026-10-11): DONE for the store and the journal: the `agents` schema (`Eve.Agents`, migration 0001), one state
+machine with idempotent references, the journal view overlaid on the game store, `OnAgentMissionChange` on commit.
+Tests: `Eve.Agents.Tests` (8, PostgreSQL), `Eve.Services.Core.Tests` (AgentMissionStoreTests, 3). Decisions: DEVIATIONS.md,
+"Agents slice AG-2, A5".
+
+| Status | Item | Where / blocker |
+|---|---|---|
+| OPEN | No live path creates an offer: the mission pool is not in the SDE build; `OfferAsync` is tested only | the mission-data track (second SDE pin) |
+| OPEN | The expiry sweep is not scheduled (durable job) and `OnMissionsUpdated` is not sent | DEVIATIONS "Agents slice AG-2, A5" |
+
 ## 43. Structures phase ST-E: remaining E wiring (2026-10-10)
 - DONE E-01: StartNewExtraction, FractureChunkWithStructure and CancelExtraction refuse by name (CustomNotify) with no backend, not PyNone (`StructureDataRpcServices.cs`, commit 59e9e89). The backend is ST-6a.
 - DONE E-04 proximity: the sim breaks a cloak that has a ship or a non-belt body within 2 km of its surface and sends `OnCloakModuleForceDeactivated` (`CloakDeactivatedByProximityToType`) before the module stops (`crates/eve-space/src/scene/decloak.rs`, polled in `scene/session.rs`). Activation refuses within the same 2 km (`modules/activation.rs`). Tests: `modules::tests` (ship, station, custom); host `SpaceServiceTests.A_forced_decloak_notice_reaches_the_pilot_with_the_message_and_its_arguments`. No protocol bump: the notice is an existing notify.

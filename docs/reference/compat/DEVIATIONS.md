@@ -1579,6 +1579,41 @@ rate, the datacore price or the remainder rule that was read. A6 implements the 
 Status: the sources are recorded; the rule matches them; the open items are Q-AG-7 (R&D missions), the LP offer data (A9),
 the research rates (A6) and the locator fee timing (A7).
 
+## Agents slice AG-2, A5: offers and mission state (2026-10-11)
+
+Sources. EveJS `services/agent/missionRuntimeState.js:26-28` (decline replay 4 h, offer lifetime 7 d, epic arc replay
+90 d); the client's action strings and states (`eve-logic eve/common/lib/appConst.py:1601-1624`); the client's
+`OnAgentMissionChange(actionID, agentID)` (`eve/client/script/ui/station/agents/agents.py:688`). Wiki (Missions, read in
+the design phase): the offer lasts 6 to 7 days; design Q-AG-10 keeps 7 days.
+
+- **The store is PostgreSQL, in the `agents` schema (`EVE_AGENTS_SCHEMA`).** Tables `missions` (one row per character and
+  agent: state, the mission's content fields and the times of the state) and `journal` (one row per applied transition).
+  EveJS keeps this in its JSON game store (`missionRuntimeState`); eve.rs has no writer for that table, so the new state
+  is written to PostgreSQL. The game store's record is still read and the store's offers and accepted missions are laid
+  over it (`AgentMissionStoreRecords.Overlay`). Status: decided (AG-2); tests `AgentMissionStoreTests` (Eve.Agents.Tests,
+  PostgreSQL) and `AgentMissionStoreTests` (Eve.Services.Core.Tests).
+- **One transition path.** Offer, accept, decline, quit, complete, fail and the expiry sweep go through one function: the
+  row is locked, the state the transition leaves is checked, the row and a journal row are written in one transaction.
+  A transition is named by its reference: a reference already in the journal applies nothing and returns null, so a
+  replayed request changes nothing and announces nothing. A refused transition names its reason (`not_offered`,
+  `offer_expired`, `already_offered`, `already_accepted`, `replay_wait`, `not_accepted`) and writes nothing.
+- **Declined offers.** The agent does not offer again for four hours (EveJS `REPLAY_DELAY_MS`); the decline replay is refused
+  as `replay_wait` until then.
+- **Expiry is an explicit sweep (`ExpireOffersAsync`).** Each due offer returns to allocated once, with one journal row per
+  expiry instant. Gap: the durable scheduler job that calls it is not wired yet (the offers are not created by any live
+  path, see below), so no expiry runs on a live server yet.
+- **Notifications follow committed transitions only.** `OnAgentMissionChange(action, agentID)` goes to the character's session
+  with the client's action string (`offered`, `offer_declined`, `offer_expired`, `accepted`, `quit`, `completed`).
+  `OnMissionsUpdated` is not sent (gap: the mission tracker's list is not refreshed on a change yet).
+- **The journal shows offered, accepted and completed missions.** Declined, quit, failed and allocated records are left out
+  of the view, because the client's journal row treats any other status as an offer.
+- **No live path creates an offer yet (gap, not a fake).** An offer needs the mission's content (name id, title, type label),
+  which comes from the mission pool. The pool is not in the SDE build (`agentAuthority` says so) and the mission data
+  comes from the mission-data track (a second SDE pin, not this slice). `OfferAsync` is the only creator, and the tests
+  call it directly. So on a live server the journal stays empty and "request mission" has nothing to offer (A4).
+- **The title is the text when the name id is missing.** The client's journal row needs a name id or a title; a mission
+  with neither is left out of the view (the reference behaves the same, `missionNameID` or `missionTitle`).
+
 ## ST-E: cloak proximity and forced decloak notices (2026-10-10)
 - **Proximity radius and refusal.** The cloak breaks, and activation refuses, for a ship or a non-belt body within 2 000 m of the surface of the cloaked ship. Source: EveJS `shipCloak.js:100` (`MIN_CLOAKING_DISTANCE_METERS = 2000`). It replaces the 2 km smartbomb-range check, so the activation refusal now also counts bodies, not only smartbomb targets. Belts are not counted.
 - **Notice order.** The proximity notice goes out before the module stops; the other reasons after (EveJS `forceDecloakEntity`).

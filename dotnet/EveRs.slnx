@@ -23,6 +23,7 @@
     <Project Path="src/Eve.Relations/Eve.Relations.csproj" />
     <Project Path="src/Eve.Scheduler/Eve.Scheduler.csproj" />
     <Project Path="src/Eve.Skills/Eve.Skills.csproj" />
+    <Project Path="src/Eve.Agents/Eve.Agents.csproj" />
     <Project Path="src/Eve.Structures/Eve.Structures.csproj" />
     <Project Path="src/Eve.Space/Eve.Space.csproj" />
     <Project Path="src/Eve.Universe/Eve.Universe.csproj" />
@@ -68,6 +69,7 @@
     <Project Path="tests/Eve.Relations.Tests/Eve.Relations.Tests.csproj" />
     <Project Path="tests/Eve.Scheduler.Tests/Eve.Scheduler.Tests.csproj" />
     <Project Path="tests/Eve.Skills.Tests/Eve.Skills.Tests.csproj" />
+    <Project Path="tests/Eve.Agents.Tests/Eve.Agents.Tests.csproj" />
     <Project Path="tests/Eve.Structures.Tests/Eve.Structures.Tests.csproj" />
     <Project Path="tests/Eve.Space.Tests/Eve.Space.Tests.csproj" />
     <Project Path="tests/Eve.Universe.Tests/Eve.Universe.Tests.csproj" />

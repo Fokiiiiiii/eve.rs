@@ -211,6 +211,8 @@ internal sealed partial class CharacterServicesComposition
     private EveJsMissionAuthorityDataSource agentMissionStaticAuthority = default!;
     private AgentMissionRpcCallbacks agentMissionRpcCallbacks = default!;
     private AgentMissionService agentMissionService = default!;
+    private Eve.Agents.AgentMissionStore agentMissionStore = default!;
+    private Eve.Services.Core.AgentMissionAnnouncer agentMissionAnnouncer = default!;
     private SlashService? publicQaSlashService;
     private GameRpcCallbacks gameRpcCallbacks = default!;
     private StationGuestLedger stationGuestLedger = default!;

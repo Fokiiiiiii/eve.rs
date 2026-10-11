@@ -6,16 +6,25 @@ namespace Eve.Services.Space.Tests;
 public sealed class EssRulesTests
 {
     [Fact]
-    public void A_bounty_in_a_system_with_an_ess_splits_forty_percent_to_the_main_bank_to_the_cent()
+    public void A_bounty_in_a_system_with_an_ess_splits_forty_percent_to_the_main_bank_and_five_to_the_reserve_to_the_cent()
     {
-        Assert.Equal((600.60m, 400.40m), EssRules.SplitBounty(1001m, essOnline: true));
-        Assert.Equal((600.00m, 400.00m), EssRules.SplitBounty(1000m, essOnline: true));
+        Assert.Equal((550.55m, 400.40m, 50.05m), EssRules.SplitBounty(1001m, essOnline: true));
+        Assert.Equal((550.00m, 400.00m, 50.00m), EssRules.SplitBounty(1000m, essOnline: true));
     }
 
     [Fact]
     public void A_bounty_without_an_ess_is_all_the_pilots()
     {
-        Assert.Equal((1001m, 0m), EssRules.SplitBounty(1001m, essOnline: false));
+        Assert.Equal((1001m, 0m, 0m), EssRules.SplitBounty(1001m, essOnline: false));
+    }
+
+    [Fact]
+    public void A_key_opens_a_bank_only_in_systems_of_its_quadrant_and_the_systems_are_named_by_the_sde()
+    {
+        Assert.Equal("NW", EssReserveKeys.Find(57714)!.Quadrant);
+        Assert.Equal("SE", EssReserveKeys.Find(57718)!.Quadrant);
+        var quadrants = EssQuadrants.BySystemId(new Dictionary<int, string> { [30000001] = "Feythabolis", [30000002] = "Jita", [30000003] = "Cache" });
+        Assert.Equal(new Dictionary<int, string> { [30000001] = "SW", [30000003] = "NE" }, quadrants);
     }
 
     [Fact]

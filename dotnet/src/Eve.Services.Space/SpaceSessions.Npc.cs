@@ -200,6 +200,34 @@ public sealed partial class SpaceSessions
     public bool IsPilotIn(long characterId, int solarSystemId) =>
         _pilots.Values.Any(pilot => pilot.CharacterId == characterId && pilot.SolarSystemId == solarSystemId);
 
+    /// <summary>
+    /// The pilot of a character in a solar system as the simulation sees it, for an ESS link: its ship, whether the ship is one that may link (the SDE's type
+    /// list 231), and where the ship is from the ESS ball. Null when the character is not in the system, or the simulation does not say where its ship is.
+    /// </summary>
+    public async Task<EssHolder?> EssHolderAsync(int solarSystemId, long characterId, CancellationToken cancellationToken)
+    {
+        if (_pilots.Values.FirstOrDefault(pilot => pilot.CharacterId == characterId && pilot.SolarSystemId == solarSystemId) is not { } pilot)
+        {
+            return null;
+        }
+        var session = pilot.Session;
+        var shipId = ShipIdOf(session);
+        var typeId = ShipTypeIdOf(session);
+        if (shipId is not > 0 || typeId is not > 0)
+        {
+            return null;
+        }
+        if (await PositionOfAsync(session, shipId.Value, cancellationToken) is not { } position)
+        {
+            return null;
+        }
+        var linkable = await _statics.TypeListNamesAsync(EssRules.LinkableShipsTypeList, typeId.Value, cancellationToken);
+        var dx = position.X - EssRules.BallX;
+        var dy = position.Y - EssRules.BallY;
+        var dz = position.Z - EssRules.BallZ;
+        return new EssHolder(true, linkable, Math.Sqrt(dx * dx + dy * dy + dz * dz), shipId.Value);
+    }
+
     /// <summary>Pays the bounties that are due (one payout at a time); each is raised as <see cref="BountyPaidOut"/>.</summary>
     public async Task<IReadOnlyList<BountyPaid>> PayBountiesAsync(CancellationToken cancellationToken = default)
     {
@@ -260,11 +288,12 @@ public sealed partial class SpaceSessions
         }
         // in a system with an ESS the Main Bank takes its share of the bounty; the share commits with the pilot's bucket or not at all
         var essOnline = Ess is not null && await Ess.IsOnlineAsync(npc.SolarSystemId);
-        var (pilotShare, mainShare) = EssRules.SplitBounty(amount, essOnline);
+        var (pilotShare, mainShare, reserveShare) = EssRules.SplitBounty(amount, essOnline);
+        var essShare = mainShare + reserveShare;
         var now = _nowUnixMs();
         if (pilotShare <= 0)
         {
-            await Ess!.CreditAsync(npc.SolarSystemId, mainShare);
+            await Ess!.CreditAsync(npc.SolarSystemId, mainShare, reserveShare);
             return;
         }
         BountyAdded added;
@@ -272,9 +301,9 @@ public sealed partial class SpaceSessions
         {
             added = await store.RecordAsync(
                 new BountyKill(killer.CharacterId, npc.SolarSystemId, npc.TypeId, destroyed.ShipId, pilotShare), now,
-                inTransaction: mainShare > 0 && Ess is { } ess ? (connection, transaction, token) => ess.CreditMainBankAsync(connection, transaction, npc.SolarSystemId, mainShare, token) : null);
+                inTransaction: essShare > 0 && Ess is { } ess ? (connection, transaction, token) => ess.CreditBountyShareAsync(connection, transaction, npc.SolarSystemId, mainShare, reserveShare, token) : null);
         }
-        catch (InvalidOperationException) when (mainShare > 0)
+        catch (InvalidOperationException) when (essShare > 0)
         {
             // the ESS went away between the check and the credit: the pilot takes the whole bounty, as in a system without one
             added = await store.RecordAsync(new BountyKill(killer.CharacterId, npc.SolarSystemId, npc.TypeId, destroyed.ShipId, amount), now);

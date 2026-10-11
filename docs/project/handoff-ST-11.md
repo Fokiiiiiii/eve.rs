@@ -11,13 +11,18 @@ Updated at every push. Plan: scratchpad `specs/structures_phase.md`, section ST-
    the async `ICosmicSiteSource` contract and the code / dungeon fields of the scan rows. Tests: `CosmicSitesTests.cs`.
    Not bound in `dotnet/src/Eve.Host`, so the server still behaves as before (`NoCosmicSites` is not replaced yet).
    Status: green. `CosmicSite` filter 11 passed; full `Eve.Services.Space.Tests` 627 passed, 0 failed, 0 skipped (EVE_PG_URL set).
-2. **Activation (next).** Host wiring: `SpaceComposition` creates and attaches the director before `foundations.StartAsync`,
-   `SystemEntered` runs `EnsureAsync`, `ContentCosmicSites` is passed to `SpaceProbeScans`, the anomaly read model asks the
-   director first, `BeyonceService` warps to a scan result by its code. The patch is kept at scratchpad `st11/activation.patch`
-   (it was written against the tree of increment 1; re-check it when applying).
+2. **Activation (built).** The host binds the director: `SpaceComposition` attaches it before `foundations.StartAsync`, a system a pilot
+   enters gets its sites (`SystemEntered` -> `EnsureSitesAsync`), probe scans read `ContentCosmicSites`, the anomaly reader asks the
+   director first, and `BeyonceService` warps to a scan result by its code (`ProbeScanWarpAuthority` keyed by text). Tests:
+   `CosmicSitesTests` (warp by code, ship numbers unchanged, partial results refused). Not tested end to end: a scan through the
+   Beyonce rig with a content-backed source (the rig builds its probe scans with `sites: null`).
 3. **NPC waves.** The director's objectives count `npc.killed { site, solarSystemId }`, but no NPC is spawned for a site yet and
    no event carries `site`. Until this lands an anomaly is never cleared, only expired.
 4. **Containers.** Objectives `containers` count `site.container.cleared`; no container is placed yet (`SpaceContainers`).
+
+## Next
+
+- NPC waves and containers (increments 3 and 4 below), then restart checks of a partly cleared site.
 
 ## Gotchas
 

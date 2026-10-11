@@ -117,6 +117,18 @@ pub fn pinned() -> Result<Pin, FetchError> {
     pin_from(LOCK, None)
 }
 
+/// The mission build of the compiled-in lock file (`missionPinned`): a second build, newer than
+/// the client's, that carries the tables the client's build does not have. See [`pinned`].
+pub fn mission_pinned() -> Result<Pin, FetchError> {
+    let lock: Value = serde_json::from_str(LOCK).map_err(|error| FetchError::Lock(error.to_string()))?;
+    let build = lock
+        .get("missionPinned")
+        .and_then(Value::as_str)
+        .and_then(|text| text.parse().ok())
+        .ok_or_else(|| FetchError::Lock("no \"missionPinned\" build".to_owned()))?;
+    pin_from(LOCK, Some(build))
+}
+
 /// What `lock` says about `build`, or about the pinned build when `None`. A build
 /// the lock does not list has no hash and only the official source.
 pub fn pin_from(lock: &str, build: Option<u64>) -> Result<Pin, FetchError> {

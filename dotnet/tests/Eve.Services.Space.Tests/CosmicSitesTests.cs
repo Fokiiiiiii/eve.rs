@@ -1,5 +1,6 @@
 using System.Text.RegularExpressions;
 using Eve.Content;
+using Eve.Services;
 using Eve.Data;
 using Eve.Events;
 using Eve.Scheduler;
@@ -72,6 +73,40 @@ public sealed class CosmicSiteRulesTests
     [InlineData(5, 104)]
     public void A_signature_needs_the_probe_strength_of_its_level(int level, double strength) =>
         Assert.Equal(strength, ProbeScanMath.SignatureStrength(level));
+}
+
+/// <summary>A warp to a scan result: a cosmic site is named by its code (any case), a ship or other target by its number, and only in the system it was scanned in.</summary>
+public sealed class ScanResultWarpTests
+{
+    private const int System = 30_000_001;
+    private static readonly double[] SitePlace = [1.0e9, 2.0e9, 3.0e9];
+
+    [Fact]
+    public void A_site_is_warped_to_by_its_code_in_any_case_and_only_in_the_system_it_was_scanned_in()
+    {
+        var authority = new ProbeScanWarpAuthority();
+        var session = new ClientSession();
+        var site = new ScanResultRow(9001, 3, 502, 19728, 0, 0, 1.0, SitePlace, 0, true, Code: "ABC-123");
+        authority.Record(session, System, [site]);
+
+        Assert.Equal(SitePlace, authority.Resolve(session, System, "abc-123"));
+        Assert.Equal(SitePlace, authority.Resolve(session, System, " ABC-123 "));
+        Assert.Null(authority.Resolve(session, System, "ABC-124"));
+        Assert.Null(authority.Resolve(session, System + 1, "ABC-123"));
+    }
+
+    [Fact]
+    public void A_ship_result_is_still_warped_to_by_its_number_and_a_result_below_100_percent_is_not()
+    {
+        var authority = new ProbeScanWarpAuthority();
+        var session = new ClientSession();
+        var ship = new ScanResultRow(55, 1, 6, 606, 0, 55, 1.0, SitePlace, 0, true);
+        var partial = new ScanResultRow(56, 3, 502, 19728, 0, 0, 0.6, SitePlace, 4_000, false, Code: "DEF-456");
+        authority.Record(session, System, [ship, partial]);
+
+        Assert.Equal(SitePlace, authority.Resolve(session, System, 55L));
+        Assert.Null(authority.Resolve(session, System, "DEF-456"));
+    }
 }
 
 /// <summary>The director and the probe source over PostgreSQL (the content runtime, the scheduler and the bus of their own schemas).</summary>

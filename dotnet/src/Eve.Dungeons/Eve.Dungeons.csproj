@@ -1,6 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <ItemGroup>
     <EmbeddedResource Include="Data/catalog/v1/*.json" LogicalName="%(Filename)%(Extension)" />
+    <EmbeddedResource Include="Data/waves/v1/*.json" LogicalName="%(Filename)%(Extension)" />
   </ItemGroup>
   <ItemGroup>
     <InternalsVisibleTo Include="Eve.Dungeons.Tests" />

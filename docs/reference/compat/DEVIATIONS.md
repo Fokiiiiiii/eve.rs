@@ -2038,6 +2038,36 @@ confirmations: the provisional answer, the YesNo, a yes applies the transition, 
   only matters with no client to ask). Status: decided. Tests: `AgentDialogueTests` (quit yes and no, decline yes),
   `ClientCallTests`. The deferred runner in `AgentMissionService` is covered by the live run only (not by a unit test).
 
+## Agents slice AG-4, A6: research buttons 12 to 14 and datacores (2026-10-11)
+
+Sources. eve-logic `appConst.py:146-164` (buttons 12 to 14), `appConst.py:741` (`refDatacoreFee` = 112); EveJS
+`services/agent/researchDialogue.js:247-419` (the start, cancel and datacore plans, their dialogs and continuations),
+`services/agent/researchRuntime.js:68-88, 196-206, 307-332, 505-539, 764-860` (labels, RP/day, refusals, the datacore
+price and the purchase); the SDE types and `typeDogma` (dogma attribute 182 = requiredSkill1).
+
+- **Fields from the SDE (decided).** A datacore's required skill (dogma attribute 182) is the research field: 24 fields
+  (the SDE's `Datacore - <name>` types whose attribute 182 names a skill other than Science; the two civilian datacores name
+  Science and are not fields). No name is matched; `AgentResearchFields.FromSde`, tested on the pinned SDE. EveJS's per-agent
+  field list (`researchAuthority`) has no source here and is not used, so every R&amp;D agent offers all 24 fields to a
+  character who qualifies: Science V and the specialty at the agent's level (wiki, "Research missions").
+- **RP/day and projects (decided).** `ResearchRules`: the formula of A6; the effective standing is the personal standing with the
+  Connections bonus (`AgentAccessRule.EffectiveStanding`); one project per agent and `1 + Research Project Management` projects.
+  Start is refused by name (standing, Science, fields, slots); a project is stored once (`ResearchProjectStore`).
+- **Dialogs (client contract).** Start: `SingleChoiceBox` (title and body labels, the choices as `(label, skillID, skillLevel)`,
+  the agent id); its answer `(true, "radioboxOption<n>Selected")` picks the field (1 based). Cancel: `YesNo` (two labels, the
+  agent id); a no answers the invalid-input line, as the reference does. Datacores: `GetQuantity` with the affordable maximum
+  (the RP accrued now, divided by 100). Status: decided, tests `AgentResearchDialogueTests` (fake port over the PostgreSQL store).
+- **Datacore purchase (decided).** One transaction under the research lock (`PersistenceAgentResearch.BuyDatacoresAsync`): the
+  RP is debited by re-anchoring the project (its accrued points, less the cost, from now); the ISK is debited with journal
+  reference type 112 (the client's `refDatacoreFee`; EveJS `JOURNAL_ENTRY_TYPE.DATACORE_FEE`, reason "Datacore purchase"); the
+  datacores are one stack in the station hangar (the station or structure the client is docked in). A refusal (RP, ISK, no
+  station) writes nothing. The buyer's session gets `OnItemChange` after the commit. Status: decided. Test: the SDE field
+  test; the purchase itself is covered by the live run only (no unit test of the Host port).
+- **Cancel (decided).** Deletes the project; the points are lost (EveJS: "All points will be lost when the connection is
+  broken"). An accepted mission with this agent is quit through the agents store, as the reference quits it.
+- **Gaps.** Research missions (the agent's daily mission, one day's RP as the reward) are not offered; the mission pool does not
+  carry them. EveJS grants the datacores through `researchDatacoreItemCustody`, which was not read; one stack is the rule used here.
+
 ## ST-E: cloak proximity and forced decloak notices (2026-10-10)
 - **Proximity radius and refusal.** The cloak breaks, and activation refuses, for a ship or a non-belt body within 2 000 m of the surface of the cloaked ship. Source: EveJS `shipCloak.js:100` (`MIN_CLOAKING_DISTANCE_METERS = 2000`). It replaces the 2 km smartbomb-range check, so the activation refusal now also counts bodies, not only smartbomb targets. Belts are not counted.
 - **Notice order.** The proximity notice goes out before the module stops; the other reasons after (EveJS `forceDecloakEntity`).

@@ -194,7 +194,10 @@ internal sealed partial class CharacterServicesComposition
         characterEntryHooks.Add(corporationLogin);
         characterEntryHooks.Add(new FleetLoginHook(fleetStore.MemberForCharacterAsync));
         characterEntryHooks.Add(dogmaSync);
-        characterEntryHooks.Add(new Eve.Services.Station.GuestLoginHook(characterSessions, stationGuestLedger));
+        var guests = new Eve.Services.Station.GuestLoginHook(characterSessions, stationGuestLedger);
+        characterEntryHooks.Add(guests);
+        if (spaceSessions is not null)
+            spaceSessions.DockedLocationChanged = guests.OnLocationChanged;
         return Task.CompletedTask;
     }
 }

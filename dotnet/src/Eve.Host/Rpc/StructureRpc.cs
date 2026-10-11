@@ -56,7 +56,7 @@ internal sealed partial class CharacterServicesComposition
             new Eve.Services.Core.StructureRpcService("structureControl"),
             new Eve.Services.Core.StructureRpcService("structureDeliveries"),
             new Eve.Services.Core.StructureRpcService("structureDeployment", structureRpcCallbacks),
-            new Eve.Services.Core.StructureRpcService("structureDocking"),
+            new Eve.Services.Core.StructureRpcService("structureDocking", structureRpcCallbacks),
             new Eve.Services.Core.StructureRpcService("structureHangarViewMgr", structureRpcCallbacks),
             new Eve.Services.Core.StructureRpcService("structureProfiles", structureRpcCallbacks),
             new Eve.Services.Core.StructureRpcService("structureVulnerability", structureRpcCallbacks),

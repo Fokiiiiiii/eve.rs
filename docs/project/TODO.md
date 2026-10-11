@@ -1193,3 +1193,18 @@ Built on main: the minigame engine (`dotnet/src/Eve.Hacking`), the `hackingMgr` 
 | OPEN | (b) `structureDeployment.Anchor` (placement checks, item consumed and structure created in one transaction, `structure.anchored`, placement in the sim) | ST-2 | Next increment. |
 | OPEN | (c) `Unanchor` (7 days, container drop), `CancelUnanchor` | ST-2 | |
 | OPEN | (d) `structure.notify` subscriber: `OnStructureStateChanged`, `OnCorporationStructuresUpdated`, `OnCurrentStructureStateChanged` | ST-2 | |
+
+## 48. Structures phase ST-3: structure docking, undock and hangars (2026-10-11)
+
+Plan: scratchpad `specs/structures_phase.md`, ST-3. Handoff: `docs/project/handoff-ST-3.md`. Decisions: DEVIATIONS.md "Structure docking and hangars (ST-3)".
+
+| Status | Item | Where | Notes |
+|---|---|---|---|
+| VERIFIED (tests) | (a) `structureDocking.Dock`: unknown structure, another ship, docking access, module and criminal timer refused by name; out of range the ship is taken to the structure and the client is told the distance; in range the simulation is asked to accept | `SpaceSessions.Structures.cs`, `StructureComposition.cs` | `StructureDockingTests` (3, PG) |
+| VERIFIED (tests) | (a) the finished docking puts the ship in the structure's hangar (`locationID` = structure, hangar flag), the character at the structure, the session with `structureid` and `solarsystemid`, and the reference's notification order | `SpaceSessions.Movement.cs` `FinishDockingAsync` | `StructureDockingTests` |
+| OPEN | (b) `Undock(structureID, shipID, ignoreContraband)` and the undock point near the structure | ST-3 (b) | Not started |
+| OPEN | (c) structure hangar listing and view state, restart while docked | ST-3 (c) | Not started |
+| OPEN | (d) headless `dock_undock` in `tools/headless-client/tests/test_structures.py` | ST-3 (d) | Not started |
+| OPEN | Contraband inspection on undock (`ShipContrabandWarningUndock`). No contraband inspection exists in eve.rs for stations either | ST-3 (b) | Separate feature |
+| OPEN | Structure guest notifications on dock and undock (`OnCharacterEnteredStructure`, `OnCharacterLeftStructure`). `GuestLoginHook` runs only at character entry; station docking has the same gap | ST-3 (c) | |
+| ENVIRONMENT | `Eve.Services.Core.Tests` `MissionSdeDataTests` (2) fail: no mission build in schema `sde_mission`. Load with `cargo run -p eve-sde -- ensure --missions --pg $EVE_PG_URL` | local DB | Not a code failure; not counted as passed |

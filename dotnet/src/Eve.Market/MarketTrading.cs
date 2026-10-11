@@ -39,6 +39,11 @@ public sealed class MarketTrading(NpgsqlDataSource source,MarketStore store,PgCh
 {
     private string Schema => store.Schema;
     private const long EscrowBase = 9200000000;
+    /// <summary>The number of resting-order rows the matching has locked over the life of this engine (diagnostics; M7 benchmark).</summary>
+    public long CandidateRowsLocked => Interlocked.Read(ref _candidateRowsLocked);
+    private long _candidateRowsLocked;
+    /// <summary>The rows one candidate read locks at most (M7): the book is read in batches of this size.</summary>
+    public const int MatchBatchSize = 50;
     private sealed record HeldOrder(MarketOrder Row,long Actor,WalletAccount Wallet,long? ItemId,decimal Escrow,
         long SourceOwner,long SourceLocation,int SourceFlag);
 
@@ -70,17 +75,53 @@ public sealed class MarketTrading(NpgsqlDataSource source,MarketStore store,PgCh
         return MarketRules.Context(new(Level(3443),Level(3444),Level(3446),Level(3447),Level(16595),Level(16596),Level(16597),
             Level(16598),Level(16594),Level(16622),Level(18580)),true,solarSystem:station.SolarSystemId);
     }
-    private async Task<IReadOnlyList<HeldOrder>> CounterOrders(NpgsqlConnection c,NpgsqlTransaction tx,MarketRequest r,Station station,long time,CancellationToken token)
+    /// <summary>
+    /// The resting orders a request can meet, and the fills planned over them (M7). The book is read in book order (price, then issue time,
+    /// then id) in batches of <see cref="MatchBatchSize"/> rows with FOR UPDATE, and the read stops as soon as the quantity is filled. A batch
+    /// locks only the rows it returns, so a call locks at most one batch more than the orders it fills.
+    /// </summary>
+    private async Task<(List<HeldOrder> Held,IReadOnlyList<MarketFillPlan> Fills)> MatchAsync(NpgsqlConnection c,NpgsqlTransaction tx,
+        int typeId,bool buying,decimal priceLimit,long quantity,int range,Station station,long time,CancellationToken token)
     {
-        await using var command = Command(c,tx,$"""
+        var walk=new MarketFillWalk(topology,typeId,buying,MarketLocation.From(station),priceLimit,quantity,range,time);
+        var held=new List<HeldOrder>();
+        HeldOrder? cursor=null;
+        while (!walk.Filled)
+        {
+            var batch=await CandidateBatchAsync(c,tx,typeId,buying,priceLimit,station.RegionId,time,cursor,token);
+            foreach (var order in batch)
+            {
+                held.Add(order);
+                walk.Offer(order.Row);
+            }
+            if (batch.Count < MatchBatchSize) break;
+            cursor=batch[^1];
+        }
+        Interlocked.Add(ref _candidateRowsLocked,held.Count);
+        return (held,walk.Fills);
+    }
+
+    /// <summary>The next batch of candidates after the cursor, in book order, locked FOR UPDATE.</summary>
+    private async Task<IReadOnlyList<HeldOrder>> CandidateBatchAsync(NpgsqlConnection c,NpgsqlTransaction tx,int typeId,bool buying,
+        decimal priceLimit,int regionId,long time,HeldOrder? after,CancellationToken token)
+    {
+        var values=new List<object?> { regionId,typeId,!buying,time,priceLimit+(buying ? 0.0001m : -0.0001m) };
+        var cursor="";
+        if (after is { } last)
+        {
+            values.AddRange(new object?[] { last.Row.Price,last.Row.IssuedMs,last.Row.Id });
+            // the range predicate lets the index start at the cursor; the OR picks up the rows after it in book order
+            cursor=$"AND price {(buying ? ">=" : "<=")} $6 AND (price {(buying ? ">" : "<")} $6 OR (price = $6 AND (issued_ms > $7 OR (issued_ms = $7 AND id > $8))))";
+        }
+        await using var command=Command(c,tx,$"""
             SELECT {MarketStore.BookColumns},actor_id,wallet_owner_id,account_key,escrow_item_id,escrow_isk,source_owner_id,source_location_id,source_flag
             FROM {Schema}.orders WHERE region_id=$1 AND type_id=$2 AND bid=$3 AND state=0 AND vol_remaining>0
                 AND (is_npc OR issued_ms+duration_days::bigint*86400000>$4)
-                AND price {(r.Buying ? "<=" : ">=")} $5
-            ORDER BY price {(r.Buying ? "ASC" : "DESC")},issued_ms,id FOR UPDATE
-            """,station.RegionId,r.TypeId,!r.Buying,time,r.Price + (r.Buying ? 0.0001m : -0.0001m));
-        var result = new List<HeldOrder>();
-        await using var reader = await command.ExecuteReaderAsync(token);
+                AND price {(buying ? "<=" : ">=")} $5 {cursor}
+            ORDER BY price {(buying ? "ASC" : "DESC")},issued_ms,id LIMIT {MatchBatchSize} FOR UPDATE
+            """,values.ToArray());
+        var result=new List<HeldOrder>();
+        await using var reader=await command.ExecuteReaderAsync(token);
         while (await reader.ReadAsync(token))
             result.Add(new(MarketStore.Read(reader),reader.IsDBNull(15) ? 0 : reader.GetInt64(15),
                 new(reader.IsDBNull(16) ? 0 : reader.GetInt64(16),reader.IsDBNull(17) ? 1000 : reader.GetInt32(17)),
@@ -151,6 +192,16 @@ public sealed class MarketTrading(NpgsqlDataSource source,MarketStore store,PgCh
                 await using var count = Command(c,tx,$"SELECT count(*) FROM {Schema}.orders WHERE actor_id=$1 AND state=0",actor.Id);
                 if ((long)(await count.ExecuteScalarAsync(token))! >= context.Limits.Count) throw new MarketError("MARKET_ORDER_LIMIT");
             }
+            // The lock is per region/type book, not server-wide. Wallet participants use their shared owner/key order.
+            await using (var bookLock = Command(c,tx,"SELECT pg_advisory_xact_lock(hashtextextended($1,0))",$"market:{Schema}:book:{station.RegionId}:{request.TypeId}"))
+                await bookLock.ExecuteNonQueryAsync(token);
+            var (held,plans) = await MatchAsync(c,tx,request.TypeId,request.Buying,request.Price,request.Quantity,request.Range,station,time,token);
+            var byId = held.ToDictionary(o => o.Row.Id);
+            var makerRemaining = held.ToDictionary(o => o.Row.Id,o => o.Row.VolumeRemaining);
+            var makerEscrow = held.ToDictionary(o => o.Row.Id,o => o.Escrow);
+            var changedMakerIds = new HashSet<long>();
+            var participants = plans.Where(p => !p.Order.IsNpc).Select(p => byId[p.Order.Id].Wallet).Append(account).Distinct().ToArray();
+            var locked = await wallets.LockBalancesAsync(c,tx,participants,token);
             Item? stock = null;
             if (!request.Buying)
             {
@@ -162,17 +213,6 @@ public sealed class MarketTrading(NpgsqlDataSource source,MarketStore store,PgCh
                     (!personalStock && !corpStock) || stock.Singleton || stock.Quantity < request.Quantity)
                     throw new MarketError("MARKET_ITEM_CUSTODY_INVALID");
             }
-            // The lock is per region/type book, not server-wide. Wallet participants use their shared owner/key order.
-            await using (var bookLock = Command(c,tx,"SELECT pg_advisory_xact_lock(hashtextextended($1,0))",$"market:{Schema}:book:{station.RegionId}:{request.TypeId}"))
-                await bookLock.ExecuteNonQueryAsync(token);
-            var held = await CounterOrders(c,tx,request,station,time,token);
-            var plans = MarketMatching.Plan(held.Select(o => o.Row),topology,request.TypeId,request.Buying,location,request.Price,request.Quantity,request.Range,time);
-            var byId = held.ToDictionary(o => o.Row.Id);
-            var makerRemaining = held.ToDictionary(o => o.Row.Id,o => o.Row.VolumeRemaining);
-            var makerEscrow = held.ToDictionary(o => o.Row.Id,o => o.Escrow);
-            var changedMakerIds = new HashSet<long>();
-            var participants = plans.Where(p => !p.Order.IsNpc).Select(p => byId[p.Order.Id].Wallet).Append(account).Distinct().ToArray();
-            var locked = await wallets.LockBalancesAsync(c,tx,participants,token);
             var upper = checked(request.Price*request.Quantity);
             if (request.Buying)
             {
@@ -406,11 +446,8 @@ public Task<MarketReceipt> ModifyAsync(long actorId,long orderId,decimal newPric
                     ownSellItem.Quantity != oldVolume) throw new MarketError("MARKET_ITEM_CUSTODY_INVALID");
             }
 
-            var request=new MarketRequest(actor.Id,order.Row.TypeId,order.Row.Bid,newPrice,oldVolume,station.Id,
-                Range:order.Row.Range,MinimumVolume:order.Row.MinimumVolume,UseCorporation:order.Wallet.OwnerId != order.Actor);
-            var opposing=await CounterOrders(c,tx,request,station,time,token);
-            var fills=MarketMatching.Plan(opposing.Select(o => o.Row),topology,order.Row.TypeId,order.Row.Bid,
-                MarketLocation.From(station),newPrice,oldVolume,order.Row.Range,time);
+
+            var (opposing,fills)=await MatchAsync(c,tx,order.Row.TypeId,order.Row.Bid,newPrice,oldVolume,order.Row.Range,station,time,token);
             var byId=opposing.ToDictionary(o=>o.Row.Id);
             var makerRemaining=opposing.ToDictionary(o=>o.Row.Id,o=>o.Row.VolumeRemaining);
             var makerEscrow=opposing.ToDictionary(o=>o.Row.Id,o=>o.Escrow);
@@ -419,7 +456,6 @@ public Task<MarketReceipt> ModifyAsync(long actorId,long orderId,decimal newPric
                 foreach (var maker in fills.Where(fill=>!fill.Order.IsNpc))
                     changedWallets.Add(byId[maker.Order.Id].Wallet);
             await wallets.LockBalancesAsync(c,tx,changedWallets.OrderBy(wallet=>wallet.OwnerId).ThenBy(wallet=>wallet.AccountKey).ToArray(),token);
-
             var reserveDelta=order.Row.Bid ? newValue-oldValue : 0m;
             var brokerFee=(decimal)MarketRules.BrokerFee(context,(double)oldValue,(double)newValue).Amount;
             var sccFee=(decimal)MarketRules.SccSurcharge(context,(double)oldValue,(double)newValue).Amount;

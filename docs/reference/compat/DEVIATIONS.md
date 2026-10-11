@@ -1613,6 +1613,41 @@ division) and of the corporation's division (`corpMarketTransactionsPanel.py:14-
   path as the buyer side, so the buyer side is the tested proof.
 - Status: done (M6).
 
+## Market slice M7: bounded order-book match and locking (2026-10-11)
+
+Source: the gap G17 (`work/market-design.md` 4.1, 4.3 M7). Decisions: none new; the design's advisory-lock rule (one lock per region and type) is kept.
+
+- **Bounded candidate read.** `MarketTrading.MatchAsync` reads the book in book order (price, then issue time, then id) in batches of
+  `MatchBatchSize` = 50 rows, each batch `FOR UPDATE`, and stops when the requested quantity is filled. Continuation is a keyset cursor
+  on (price, issued_ms, id) with a range predicate on price, so the index starts at the cursor.
+- **Same fills as before.** `MarketFillWalk` offers the candidates one at a time; each decision depends only on the candidates before it,
+  so a batched read gives the fills of the whole book. `MarketMatching.Plan` is the same walk over a whole list.
+- **Advisory lock kept; SKIP LOCKED not used** (the book lock already serialises one type in one region).
+- **Indexes: none added.** `EXPLAIN (ANALYZE, BUFFERS)` on a scratch schema with the migrations 001 to 006 and 10000 asks and 10000 bids
+  of one type: the candidate read uses the partial index `orders_asks` (or `orders_bids`) with the region, type and price condition, and
+  the LIMIT feeds an incremental sort on price (65 rows read for a 50-row batch). Before the range predicate the keyset form read 4000
+  rows and removed them by filter; with the range predicate it reads none. The expiry sweep reads only the open non-NPC orders through
+  the partial index `orders_expiry`; no index on the expression `issued_ms + duration_days * 86400000` was added (the sweep is one scan per
+  minute over open orders).
+- **Measured** (`OrderBookBenchmarkTests`, opt-in with `EVE_MARKET_BENCH=1`; 10000 NPC asks of one type at one station, 20 placements
+  each buying one unit at the cheapest ask with a limit of 200, so every call sees the full candidate set; the machine was shared with
+  other agents, load average 27 to 42 on 4 CPUs, so latencies vary between runs):
+
+  | | rows locked per placement | placement p50 | placement p95 | book read (10000 orders) |
+  |---|---|---|---|---|
+  | before (unbounded `FOR UPDATE`, one run) | 9999 to 10000 | 281 ms | 932 ms | 249 ms |
+  | after (bounded, four runs) | 50 in every call | 22, 41, 89, 111, 236 ms (five runs) | 41 to 130 ms; 700 to 840 ms in the loaded runs | 111 to 1149 ms |
+
+  The row count is deterministic and is the number the test asserts (at most 50 per call). The latency numbers are not a clean
+  before/after pair: the before run was made once, at a lower load; the after runs were made under load and are listed as measured.
+
+- **Not changed.** `GetOrders` still returns the whole book for a type and region (a book of 10000 orders is about 10000 rows; no cap,
+  as Q17 requires a client check). A placement whose quantity is not filled, or whose candidates are all out of range, still reads the
+  whole book: the bound is per fill, not per book.
+- **Tests.** `OrderBookMatchTests` (1, always run): 130 asks in ten price groups of thirteen, with ties across the batch boundaries; a
+  75-unit buy fills the first 75 in price, then issue order, locks 100 rows, and leaves exactly the orders from position 75 on.
+  `OrderBookBenchmarkTests` (1, opt-in) carries the numbers above.
+
 ## Agents slice AG-1: LP wallet (LPSvc), the access rule and the bound agentMgr (2026-10-10)
 
 Sources. eve-logic (V24.01): `eve/client/script/ui/shared/neocom/wallet/loyaltyPointsWalletSvc.py:27-67` (the balances,

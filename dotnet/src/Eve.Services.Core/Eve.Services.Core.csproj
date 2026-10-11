@@ -10,6 +10,7 @@
   <ItemGroup>
     <EmbeddedResource Include="Data/mission-level-tags.v1.json" LogicalName="mission-level-tags.v1.json" />
     <EmbeddedResource Include="Data/epic-arc-availability.v1.json" LogicalName="epic-arc-availability.v1.json" />
+    <EmbeddedResource Include="Data/mission-site-status.v1.json" LogicalName="mission-site-status.v1.json" />
     <EmbeddedResource Include="Data/new-eden-store.v1.json" LogicalName="new-eden-store.v1.json" />
   </ItemGroup>
   <ItemGroup>

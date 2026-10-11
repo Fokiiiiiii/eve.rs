@@ -65,19 +65,24 @@ public sealed class SiteNpcTests
             announced.Add(context.Event.Json());
             return Task.CompletedTask;
         });
+        // a subscriber starts at the bus's horizon when it is first pumped: pump it before the kills, or the kills published before it are never delivered to it
+        await rig.Bus.PumpAsync();
         var spawnsBefore = SiteSpawns(rig, await host.Director.ActiveAsync(system)).Length;
         foreach (var spawn in anomalySpawns)
         {
             rig.Sim.Say(Destroyed(spawn, c.ShipId));
         }
 
+        // the kills are announced in the background: wait until the subscriber has every one of them, then the objective they complete
+        int AnnouncedKills() => announced.Count(kill => kill.TryGetProperty("site", out var site) && site.GetInt64() == anomaly.InstanceId);
+        await WaitForAsync(rig, () => Task.FromResult(AnnouncedKills() == anomalySpawns.Length));
         await WaitForAsync(rig, async () => (await host.Content.ObjectivesOfAsync(anomaly.InstanceId)).Any(objective => objective.Index == 0 && objective.State == "done"));
         var sites = await host.Director.ActiveAsync(system);
         await WaitForAsync(rig, () => Task.FromResult(SiteSpawns(rig, sites).Length == spawnsBefore + (waves.Count > 1 ? waves[1].Amount : 0)));
         var next = SiteSpawns(rig, sites).Skip(spawnsBefore).ToArray();
         Assert.Equal(waves[1].Amount, next.Length);
         Assert.All(next, spawn => Assert.True(Near(spawn.Position, anomaly.Position)));
-        Assert.Equal(anomalySpawns.Length, announced.Count(kill => kill.TryGetProperty("site", out var site) && site.GetInt64() == anomaly.InstanceId));
+        Assert.Equal(anomalySpawns.Length, AnnouncedKills());
     }
 
     [PgFact]

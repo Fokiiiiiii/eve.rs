@@ -908,7 +908,7 @@ Open after M1:
 | OPEN | Matching priority (price, issue time, id) and the duplicate window are to be confirmed with a live match (Q5, Q14) | the live acceptance (M9) |
 | DONE (M3) | Expiry as durable jobs: one job per resting order at its expiry plus 1 s (placed, moved, cancelled in the same transaction), a 60 s safety sweep, a read sweep at most once a second, the restart reschedule, notices to the owner and the corporation members with market rights (Accountant or Trader) | DEVIATIONS.md, "Market slice M3" |
 | DECIDED (M4) | M3 notices are not durable: no outbox, a notice goes to a live session only and the client's cache is per run (balances and state stay right) | DEVIATIONS.md, "Market slice M4" |
-| DONE (M4): the affected-project gate is green on `2f80397`; the live run waits for the Secure Depot start-up fix on origin/main. Push invalidation and corporate notices (G9, G11); the client's 3-hour price history cache is out of the server's reach | DEVIATIONS.md, "Market slice M4"; `MarketCoherenceTests` (5) |
+| DONE (M4): the affected-project gate is green on `2f80397`; the live run passed at `f046112` (70 passed, 8 skipped by the slow-mode gates, 0 failed). Push invalidation and corporate notices (G9, G11); the client's 3-hour price history cache is out of the server's reach | DEVIATIONS.md, "Market slice M4"; `MarketCoherenceTests` (5) |
 | DONE (M5) | Price history: one row per UTC day (low, high, volume-weighted average, volume, fills), the day in progress as "new" (the reference's last-row split put a past day there; corrected), `HistoriesAsync` removed (no caller) | DEVIATIONS.md, "Market slice M5"; `MarketHistoryTests` (6) |
 | DONE (M6) | Transactions by division: rights (accountant, junior accountant, Account Take, CrpAccessDenied 101), newest first, fromDate and division filters, keyID; the EXPLAIN check is not run (no index added) | DEVIATIONS.md, "Market slice M6"; `MarketTransactionReadTests` (3) |
 | OPEN | M7 bounded scan and locking, M8 money invariants, M9 live acceptance | market agents 2 and 3 |
@@ -1310,3 +1310,20 @@ Plan: scratchpad `work/missions-hard-first-plan.md` track C; decisions in DEVIAT
 
 ## 49. Host start-up: shared container type names (2026-10-11)
 | DONE (tests, live run) | Host start-up no longer throws on a container type name that several SDE types share (Secure Depot and about 40 more in groups 306, 314, 1207): the published type, then the lowest type id, is kept and each skipped type is logged. Tests: `SiteContainerTypesTests`. |
+
+## 50. Mission execution X1a: epic arc offers (2026-10-11)
+
+Done: `PickOffer` is wired to the official arc sequence. The offer is the agent's next step: entries first, then the steps that
+follow a completed step, with forks, the 90-day restart and the held-back sites (DEVIATIONS "Mission execution X1: epic arc offers").
+
+| Status | Item | Where / blocker |
+|---|---|---|
+| DONE (tests) | Offer of the current arc step (entry, nextMissions progression, fork exclusion, one step at a time, lowest ID among offerable steps) | `Eve.Services.Core/EpicArcOffers.cs`; `EpicArcOffersTests` (9), `EpicArcDialogueTests` (PostgreSQL, the dialogue on the real store) |
+| DONE (tests) | Completed history from the journal with the game time (journal column `transition_at`, migration 0002) | `Eve.Agents/AgentMissionStore.cs` `ReadCompletedAsync`; `AgentMissionStoreTests` |
+| DONE (data) | Site status of the 182 arc kill steps: 178 generic, 4 missing, 0 specific; held back unless `EVE_MISSION_INCLUDE_GENERIC_ARCS=1` | `Data/mission-site-status.v1.json`; `MissionSiteStatus.cs`; `MissionStaticCatalog.IsHeldBack` |
+| DONE | The restart interval is minutes (`RestartIntervalMinutes`; was misnamed `RestartIntervalSeconds`) | `MissionStaticCatalog.cs` |
+| DONE | Mission content of an offer: the official English name and `nameID` | `MissionStatic.NameId`; `MissionComposition.cs` |
+| OPEN | Accept starts the mission's dungeon; kill objectives complete on `content.dungeon.*`; rewards and LP | next slice (X1b); `DungeonWaveDirector.StartAsync` needs the pilot in space in the system |
+| OPEN | Talk steps (`isTalkToAgent`) complete when the pilot talks to the next agent | next slice (X1b) |
+| OPEN | Basic L4 and L5 kill missions (pool from level tags and wave data) | next slice (X2) |
+| OPEN | Journal text (`GetMissionBriefingInfo`, objectives) and the agent header (`GetAgentLocationWrap`) | next slices; see the in-space agents |

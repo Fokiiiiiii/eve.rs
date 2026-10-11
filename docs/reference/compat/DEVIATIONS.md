@@ -1923,6 +1923,40 @@ payment), `eve/client/script/ui/station/loyaltyPointStore/lpStoreSvc.py:240-266`
   character take (LP, ISK, journal ref 26, items, granted item, two `OnItemChange` packets), the refusal with nothing changed,
   and the corporation take with and without the Director role. The Host wiring compiles; the live run exercises it.
 
+## Agents slice AG-3, A6 and A7: research and locator rules (2026-10-11)
+
+Sources (community, not CCP; the CCP pages were not reachable). EVE University wiki "Research missions" and "Datacore farming":
+RP/day = (1 + (20 + 5N + AS) / 100) * (SS + AL)^2 (N Negotiation, AS personal agent standing, SS specialty level, AL agent level);
+the wiki's maximum for a level IV agent, 125.55, is reproduced exactly by N 5, AS 10, SS 5, AL 4 (the wiki's flattened fraction
+is read without a division by two; EveJS `researchRuntime.js:196-206` has the same form). Science V and a specialty at the agent's
+level qualify; one project slot plus one per Research Project Management level; a datacore costs 100 RP and 10,000 ISK. Locator
+fees, cooldowns and standings: EVE University "Locator Agents" (the table AG-2 recorded). EveJS `researchRuntime.js` and `agentMissionRuntime.js` cross-check.
+
+- **Research rules and the project store (built).** `ResearchRules` (pure formula, slots, qualification, datacore price),
+  `AgentAccessRule.EffectiveStanding` (the Connections bonus on the personal standing), `ResearchProjectStore` (PostgreSQL
+  table `research_projects`, migration 0003 in the agents schema): a start counts the character's projects under an advisory
+  lock and refuses `too_many_projects` or `already_researching` with nothing written; a project's points are the banked remainder
+  plus the rate times the days since the start; a cancel deletes the row and the points are lost (EveJS: "All points will be
+  lost when the connection is broken"). Status: decided. Tests: `ResearchRulesTests`, `ResearchProjectStoreTests` (PostgreSQL).
+- **Research is not wired to the agent's buttons (gap, the cut line).** Start (12), cancel (13) and buy datacores (14) still answer
+  "This agent service is not available on this server yet." The reference runs them as client dialogs (SingleChoiceBox for the
+  field, YesNo for the cancel, GetQuantity for the datacores; EveJS `researchDialogue.js:247-380`), and eve.rs has no deferred
+  response path for a client dialog (the same gap as the decline and quit confirmations, AG-2 A4). Blocked on that path.
+- **Qualifying fields (decided from the wiki, not from data).** The SDE agent rows carry no research-field list and the client has
+  none; the wiki says "one or more of the science specialty skills trained to the level required". The reference's per-agent
+  field list (`researchAuthority`) has no source in this repository, so it is not used.
+- **Datacores (gap).** The price is the wiki's. The datacore item (type per science field, "Datacore - <field>" in the SDE) and its
+  grant to the station hangar are not built. No datacore is created and no RP or ISK is debited.
+- **Research missions (gap).** Not built. Wiki: one mission per day for a research agent, one day's RP as a reward; the mission
+  pool is not in the SDE build.
+- **Locator rules (built, not wired).** `LocatorRules`: fee by agent level and distance tier (same system, constellation,
+  region, other region; level 1 cannot locate beyond its constellation, and level 2 cannot locate in another region, as the table's "cannot" entries say), cooldown and standing.
+  The wiki gives the fee amounts and says "for a fee"; it does not say when the fee is charged, so the rule only prices a locate.
+  Status: decided for the rule; the locate flow (buttons 15 to 17) stays refused by name. Blockers: the target character's
+  location is not held in eve.rs (no character location store read by the agents track), and the locate dialog and result
+  need the client dialog path. Tests: `LocatorRulesTests`.
+- **ISK and LP for research and the locator are not moved.** No journal row is written by either rule.
+
 ## ST-E: cloak proximity and forced decloak notices (2026-10-10)
 - **Proximity radius and refusal.** The cloak breaks, and activation refuses, for a ship or a non-belt body within 2 000 m of the surface of the cloaked ship. Source: EveJS `shipCloak.js:100` (`MIN_CLOAKING_DISTANCE_METERS = 2000`). It replaces the 2 km smartbomb-range check, so the activation refusal now also counts bodies, not only smartbomb targets. Belts are not counted.
 - **Notice order.** The proximity notice goes out before the module stops; the other reasons after (EveJS `forceDecloakEntity`).

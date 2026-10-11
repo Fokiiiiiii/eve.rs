@@ -65,6 +65,10 @@ public static class AgentAccessRule
         return PirateFactions.Contains(factionId) ? CriminalConnectionsSkill : ConnectionsSkill;
     }
 
+    /// <summary>The standing an agent's skill bonus raises it to (eveCfg.py:130-138): the effective agent standing AS of the research rate.</summary>
+    public static double EffectiveStanding(double standing, long factionId, Func<int, int> trainedLevelOf) =>
+        WithBonus(standing, factionId, trainedLevelOf);
+
     /// <summary>eveCfg.py:130-138: the standing raised by its bonus, as 10 * (1 - (1 - s/10)(1 - b/10)).</summary>
     private static double WithBonus(double standing, long factionId, Func<int, int> trainedLevelOf)
     {

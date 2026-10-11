@@ -167,6 +167,33 @@ public sealed class CosmicSiteDirectorTests
         });
     }
 
+    [PgFact]
+    public async Task A_site_cleared_by_its_npcs_is_replaced_at_once_elsewhere_and_a_restart_keeps_the_progress()
+    {
+        await using var rig = await SiteRig.CreateAsync();
+        await rig.FillAsync(NullSystem);
+        var before = await rig.Director.ActiveAsync(NullSystem);
+        var anomaly = before.Single(site => site.IsAnomaly);
+        var template = rig.Director.Templates.ById(anomaly.TemplateId)!;
+        var half = template.NpcCount / 2;
+
+        await rig.KillAsync(anomaly.InstanceId, NullSystem, half);
+        await rig.RestartAsync();
+        await rig.KillAsync(anomaly.InstanceId, NullSystem, template.NpcCount - half);
+        for (var i = 0; i < template.ContainerCount; i++)
+        {
+            await rig.Bus.PublishAsync(CosmicSiteDirector.ContainerClearedTopic, new { site = anomaly.InstanceId, solarSystemId = NullSystem });
+        }
+        await rig.RunDueAndDeliverAsync();
+
+        var after = await rig.Director.ActiveAsync(NullSystem);
+        Assert.DoesNotContain(after, site => site.InstanceId == anomaly.InstanceId);
+        Assert.Equal(new[] { 0, 1, 2, 3 }, after.Select(site => site.Slot).OrderBy(slot => slot).ToArray());
+        var replacement = after.Single(site => site.IsAnomaly);
+        Assert.NotEqual(anomaly.Code, replacement.Code);
+        Assert.Equal(4, after.Select(site => site.Code).Distinct().Count());
+    }
+
     /// <summary>The site of the system test: a null-sec system with an anchor pair (the director takes the anchors from the static data, here from a fixture).</summary>
     private sealed class FixedAnchors : ISiteAnchors
     {
@@ -184,6 +211,7 @@ public sealed class CosmicSiteDirectorTests
         private SiteRig(NpgsqlDataSource source, string[] schemas)
         {
             Source = source;
+            _schemas = schemas;
             Scheduler = new DurableScheduler(source, () => _now, null, schemas[0]);
             Bus = new EventBus(source, Scheduler, null, schemas[1]);
             Content = new ContentRuntime(source, Scheduler, Bus, schemas[2]);
@@ -191,12 +219,14 @@ public sealed class CosmicSiteDirectorTests
             Director = NewDirector();
         }
 
+        private readonly string[] _schemas;
+
         public NpgsqlDataSource Source { get; }
-        public DurableScheduler Scheduler { get; }
-        public EventBus Bus { get; }
-        public ContentRuntime Content { get; }
+        public DurableScheduler Scheduler { get; private set; }
+        public EventBus Bus { get; private set; }
+        public ContentRuntime Content { get; private set; }
         public SolarSystemCatalog Systems { get; }
-        public CosmicSiteDirector Director { get; }
+        public CosmicSiteDirector Director { get; private set; }
 
         public static async Task<SiteRig> CreateAsync()
         {
@@ -218,6 +248,28 @@ public sealed class CosmicSiteDirectorTests
         public CosmicSiteDirector NewDirector() => new(Source, Content, Scheduler, SiteTemplates.Load(), new FixedAnchors(), Systems);
 
         public void Advance(TimeSpan span) => _now += (long)span.TotalMilliseconds;
+
+        /// <summary>A host restarted over the same schemas: new runtime objects, the same records.</summary>
+        public async Task RestartAsync()
+        {
+            Scheduler = new DurableScheduler(Source, () => _now, null, _schemas[0]);
+            Bus = new EventBus(Source, Scheduler, null, _schemas[1]);
+            Content = new ContentRuntime(Source, Scheduler, Bus, _schemas[2]);
+            Director = NewDirector();
+            Director.Attach(Content, Bus);
+            await Content.AttachAsync();
+            await Bus.PumpAsync();
+        }
+
+        /// <summary>A site's NPCs are killed: the kills are announced as the simulation announces them, with the site they belong to.</summary>
+        public async Task KillAsync(long site, int solarSystemId, int count)
+        {
+            for (var i = 0; i < count; i++)
+            {
+                await Bus.PublishAsync("npc.killed", new { site, solarSystemId, characterId = 1, typeId = 0 });
+            }
+            await RunDueAndDeliverAsync();
+        }
 
         public async Task FillAsync(int solarSystemId)
         {

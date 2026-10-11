@@ -16,13 +16,16 @@ Updated at every push. Plan: scratchpad `specs/structures_phase.md`, section ST-
    director first, and `BeyonceService` warps to a scan result by its code (`ProbeScanWarpAuthority` keyed by text). Tests:
    `CosmicSitesTests` (warp by code, ship numbers unchanged, partial results refused). Not tested end to end: a scan through the
    Beyonce rig with a content-backed source (the rig builds its probe scans with `sites: null`).
-3. **NPC waves.** The director's objectives count `npc.killed { site, solarSystemId }`, but no NPC is spawned for a site yet and
+3. **Clear and respawn (built, test-only).** A site cleared by its NPC kills (`npc.killed { site, solarSystemId }` counted per wave)
+   and its containers completes, the respawn subscriber replaces it in its slot elsewhere, and a host restart in the middle keeps
+   the progress (`CosmicSiteDirectorTests.A_site_cleared_by_its_npcs...`). The kills are published by the test; no NPC is spawned yet.
+4. **NPC waves (open).** The director's objectives count `npc.killed { site, solarSystemId }`, but no NPC is spawned for a site yet and
    no event carries `site`. Until this lands an anomaly is never cleared, only expired.
-4. **Containers.** Objectives `containers` count `site.container.cleared`; no container is placed yet (`SpaceContainers`).
+5. **Containers.** Objectives `containers` count `site.container.cleared`; no container is placed yet (`SpaceContainers`).
 
 ## Next
 
-- NPC waves and containers (increments 3 and 4 below), then restart checks of a partly cleared site.
+- NPC spawning for a site (item 4) and containers (item 5), both need the sim side; then a real kill through the simulation.
 
 ## Gotchas
 

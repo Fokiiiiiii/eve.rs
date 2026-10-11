@@ -1,0 +1,30 @@
+{
+ "schema": "eve.dungeon-catalog.manifest.v1",
+ "sdeBuild": 3405148,
+ "dungeonFiles": [
+  "dungeons-01.json",
+  "dungeons-02.json"
+ ],
+ "missionFile": "missions.json",
+ "knownGapsFile": "known-gaps.json",
+ "counts": {
+  "dungeonTemplates": 4653,
+  "fromAuthority": 4613,
+  "fromMiningPack": 40,
+  "overlayApplied": 26,
+  "killMissionBindings": 1661,
+  "missionDungeonIDs": 1460,
+  "missionDungeonIDsWithTemplate": 1453,
+  "missionDungeonIDsWithoutTemplate": 7,
+  "goldenSecurityMissions": 13,
+  "missionDefects": 2,
+  "missionsWithoutDungeon": 1,
+  "epicLikeMissionsWithoutOfficialArc": 9
+ },
+ "validation": {
+  "typeIDMismatches": 0,
+  "archetypeIDMismatches": 0,
+  "encounterSingularNotInList": 0,
+  "archetypeIDClientOnly": 3688
+ }
+}

@@ -40,13 +40,31 @@ internal sealed partial class CharacterServicesComposition
     private string structureSchema = "";
     private Eve.Structures.StructureStore structureStore = default!;
 
+    /// <summary>The structures as the directory and profile readers see them: the legacy shape of the structures schema.</summary>
+    Task<JsonObject> ReadStructuresAsync(CancellationToken token) =>
+        (structureStore ?? throw new InvalidOperationException("the structures are read before the structure store is open")).ReadLegacyTableAsync(token);
+
+    private Task SetStructureDescriptionAsync(long structureId, string description, CancellationToken token) =>
+        WithStructureConnectionAsync((connection, transaction) =>
+            structureStore.SetDescriptionAsync(connection, transaction, structureId, description, token), token);
+
+    private Task SetStructureProfileAsync(IReadOnlyCollection<long> structureIds, long profileId, CancellationToken token) =>
+        WithStructureConnectionAsync((connection, transaction) =>
+            structureStore.SetProfileAsync(connection, transaction, structureIds, profileId, token), token);
+
+    private async Task WithStructureConnectionAsync(Func<NpgsqlConnection, NpgsqlTransaction?, Task> work, CancellationToken token)
+    {
+        await using var connection = await source.OpenConnectionAsync(token);
+        await work(connection, null);
+    }
+
     private async Task StructureRecords()
     {
         // ST-0: the structures schema owns the records; the game store's table is copied in once (ADR 0003 rule 3: the bridge is the importer, not a read path)
         structureSchema = Env("EVE_STRUCTURES_SCHEMA", Eve.Structures.StructureStore.DefaultSchema);
         await Eve.Structures.StructureStore.MigrateAsync(source, structureSchema);
         structureStore = new Eve.Structures.StructureStore(source, structureSchema);
-        var legacy = await ReadGameStoreTableAsync("structures", CancellationToken.None);
+        var legacy = await ReadGameStoreRawAsync("structures", CancellationToken.None);
         await using var connection = await source.OpenConnectionAsync();
         await using var transaction = await connection.BeginTransactionAsync();
         var copied = await structureStore.ImportAsync(connection, transaction, legacy, now());
@@ -57,13 +75,12 @@ internal sealed partial class CharacterServicesComposition
 
     private async Task Structures()
     {
-        await StructureRecords();
-        structureDirectoryReadModel = new PersistenceStructureDirectoryReadModel(ReadGameStoreTableAsync, AffiliationOfAsync, sde, mailCache);
+        structureDirectoryReadModel = new PersistenceStructureDirectoryReadModel(ReadGameStoreTableAsync, AffiliationOfAsync, sde, SetStructureDescriptionAsync);
         if (spaceSessions is not null)
             spaceSessions.StructureExistsAsync = async (structureId, cancellationToken) =>
                 await structureDirectoryReadModel.GetStructureInfoAsync(structureId, cancellationToken) is { PersistentlyDeployed: true };
         structureProfilesRpcBackend = new Eve.Host.PersistenceStructureProfilesRpcBackend(
-            ReadGameStoreTableAsync, mailCache, characterSessions);
+            ReadGameStoreTableAsync, mailCache, characterSessions, SetStructureProfileAsync);
         structureRpcCallbacks = new Eve.Services.Core.StructureRpcCallbacks
         {
             GetProfilesAsync = structureProfilesRpcBackend.GetProfilesAsync,

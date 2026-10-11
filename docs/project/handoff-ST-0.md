@@ -8,17 +8,15 @@ Owner: the structures phase (plan in the scratchpad `specs/structures_phase.md`,
   (`StructureTimersTests.cs`, 6 pass; 53 in the project with `EVE_PG_URL`).
 - The decisions D-1 (SDE `rigSize`) and D-2 (30 days) are in DEVIATIONS "Structure timeline (ST-0)".
 
-## Written, inert (not yet clients-visible)
-- Host start-up: `StructureRecords()` migrates the schema and copies the game store's `structures` table once (`Composition/StructureComposition.cs`).
-  `ArchitectureTests` lists `Eve.Structures`; `Eve.Scheduler` and `Eve.Events` are the allowed foundations.
-- Readers and writers still use the GameStore table. The store is a copy until the switch below.
+## Host wiring (done, pushed)
+- Start-up: `StructureRecords()` migrates the schema and copies the game store's `structures` table once; it runs right after the character stores migrate.
+- Readers: `ReadGameStoreTableAsync("structures")` returns `StructureStore.ReadLegacyTableAsync` (`Composition/GameStoreReaders.cs`).
+- Writers: the description (`PersistenceStructureDirectoryReadModel`) and the profile change (`PersistenceStructureProfilesRpcBackend`) write the store.
 
 ## Next step
 1. The Host rules source over the SDE (`rigSize`, system security band), and `StructureTimers.Register()` with a first pump after start.
-2. The reader switch, file by file, with the existing structure tests green: the `ReadGameStoreTableAsync` "structures" branch
-   (`Composition/GameStoreReaders.cs`) to `StructureStore.ReadLegacyTableAsync`, and the two writes (`PersistenceStructureProfilesRpcBackend`
-   `ChangeProfilesAsync` → `SetProfileAsync`; `PersistenceStructureDirectoryReadModel` description → `SetDescriptionAsync`).
-3. A Host test that starts the composition on a seeded game store and checks the copied rows and the store-backed reads.
+2. A Host test that starts the composition on a seeded game store, checks the copied rows, sets a description and a profile through the RPC
+   callbacks, restarts and reads them back.
 
 ## Files
 - `dotnet/src/Eve.Structures/*`, `dotnet/tests/Eve.Structures.Tests/*`, `dotnet/EveRs.slnx`

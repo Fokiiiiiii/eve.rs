@@ -56,6 +56,8 @@ internal sealed partial class CharacterServicesComposition
     private async Task<(IReadOnlyList<IService> Services, SpaceSessions? Space, SimClient? Simulation, Eve.Services.Crimewatch.CrimewatchRuntime? Crimewatch, Eve.Calendar.ICalendarStore? CalendarStore, Eve.Calendar.ICalendarAudienceReader? CalendarAudience, Eve.Services.Core.GameRpcCallbacks? GameRpcCallbacks, Eve.Services.Core.KeeperRpcCallbacks? KeeperRpcCallbacks)> RunAsync()
     {
         await MigrateCharacterStores();
+        // before anything reads the structures: the structures schema is the record owner from here on (ST-0)
+        await StructureRecords();
         await OpenStorageAndCrimewatch();
         var buildVersion = await sde.BuildAsync();
         if (buildVersion is null)

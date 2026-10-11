@@ -1555,6 +1555,9 @@ The record owner and the timeline of Upwell structures (`dotnet/src/Eve.Structur
   fields the timeline does not own in `doc`. A structure without a state is imported as one that already works (`ShieldVulnerable`), and a Low Power
   structure without an abandon day starts its clock at the import. Status: decided; the import call is not wired yet.
 - **`structure.state_changed` is published in the same transaction as the change**, with the timer of the structure. Status: decided.
+- **The game store's `structures` table is frozen after the import.** The import copies by id and skips ids already in the schema; the readers and
+  the description and profile writes use the schema from then on. A game store row written later under a new id is not copied (a second import would
+  copy it), which is the migration path, not a runtime path. Status: decided; the freeze is the ADR 0003 rule 3 bridge.
 ## Cosmic sites (ST-11)
 
 Sources: the wiki's probe-scanning and site rules first; EveJS `services/dungeon/dungeonUniverseRuntime.js` where the wiki is silent; the SDE for names and the sensor attributes.

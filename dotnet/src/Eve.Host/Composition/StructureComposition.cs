@@ -40,6 +40,7 @@ internal sealed partial class CharacterServicesComposition
     private string structureSchema = "";
     private Eve.Structures.StructureStore structureStore = default!;
     private Eve.Structures.StructureTimers structureTimers = default!;
+    private Eve.Structures.StructureFuel structureFuel = default!;
 
     /// <summary>The structures as the directory and profile readers see them: the legacy shape of the structures schema.</summary>
     Task<JsonObject> ReadStructuresAsync(CancellationToken token) =>
@@ -80,6 +81,9 @@ internal sealed partial class CharacterServicesComposition
         var rules = await StructureRulesSource.LoadAsync(sde);
         structureTimers = new Eve.Structures.StructureTimers(structureStore, foundations.Scheduler, foundations.Events, rules);
         structureTimers.Register();
+        // ST-7: the service fuel is paid from the fuel bay (inventory) at each full hour; the rules are the SDE's service modules
+        structureFuel = new Eve.Structures.StructureFuel(structureStore, foundations.Scheduler, structureTimers, ServiceFuelRulesSource.Load(dogma), new InventoryStructureFuelBay(items, dogma));
+        structureFuel.Register();
         await using (var connection = await source.OpenConnectionAsync())
         await using (var transaction = await connection.BeginTransactionAsync())
         {

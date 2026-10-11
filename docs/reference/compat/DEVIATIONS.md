@@ -1769,3 +1769,25 @@ client's use of mission data: eve-logic `evemissions/client/data.py`, `eve/clien
 - **Joins.** The server reads no table of build 3405148 other than `missions` and `epicArcs`. The agent and corporation
   references in an arc (agent IDs) are checked against the pinned build at read time; no reference table is loaded from the
   second build. Status: decided.
+
+## Structure services fuel (ST-7, increment a, 2026-10-11)
+
+Sources: SDE build 3396210 (`typeDogma` attributes 2108-2110 of the service modules; [S]); EveJS v0.12.9 `server/src/services/structure/structureServiceModules.js`
+(`consumeStructureServiceModuleOnlineFuel` 449, `consumeStructureServiceFuelQuantity` 380, `consumeStructureServiceModuleCycleFuel` 652),
+`structureConstants.js` (`STRUCTURE_SERVICE_ID` 105-138, `FLEX_SERVICE_IDS_BY_TYPE_ID` 508-512), `fuelBayInventory.js` (`STRUCTURE_FUEL_BAY_FLAG` 172) [J];
+EVE University wiki (three days of fuel to online, [W] per `structures_phase.md`).
+
+- Decided (D-4, SDE first): the hourly burn is attribute 2109 and the online charge is 2110 of the service module. For every service module in the
+  build 2110 = 72 x 2109, which is the wiki's three days. Module types: 35899 Standup Reprocessing Facility I (service 4), 35912 Standup Cynosural Field
+  Generator I (service 16, built into the Pharolux Cyno Beacon in EveJS), 35914 Standup Cynosural System Jammer I (service 17). [S][J]
+- Fuel is the structure's fuel bay: fuel-block items (group 1136) at the structure in flag 172, taken oldest stack first inside the transaction. [J][S]
+- Onlining consumes the online charge (EveJS does the same). Already online costs nothing. [J]
+- The hourly charge is paid at each full UTC hour for the services online then (EveJS burns per cycle; the hour boundary is the wiki's "beginning of each
+  hour"). A short hour takes every service offline and the structure into Low Power (`StructureTimers.FuelOutAsync`). [J][W]
+- Not applied: the rig and skill reductions of the online charge (EveJS `getEffectiveStructureServiceModuleOnlineFuelNeed`). Status: open, with the rigs.
+- Not sent: the owner's client does not get an `OnItemChange` for an hourly burn (no session at burn time). Status: open.
+- Spec correction: the ST-7 plan named the Standup Cynosural System Jammer I as group 2016. In the build, 35914 is group 1324 (Standup) and group 2016 is
+  the Tenebrex Cyno Jammer (37534, a sovereignty structure with the jammer service built in), group 2017 is the Pharolux Cyno Beacon (35840). The jammer
+  module's onlining needs the sovereignty hub's Cynosural Suppression upgrade (SDE description of 35914). [S]
+- No EveJS service id maps the Structure Compression Plant (35900, fuel 5/h, online 360). EveJS gates the structure compression by the Reprocessing
+  service (4) online (`miningIndustry.js` 281-288). Decided for increment (b): the same gate. [J]

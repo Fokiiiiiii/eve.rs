@@ -10,7 +10,8 @@
 //! `EVE_SDE_CACHE` sets the default `--cache` (`.cache/sde`) and
 //! `EVE_SDE_BASE_URL` replaces CCP's static-data host.
 //! `--missions` is the mission build (`missionPinned` in the lock): with `--pg` only its
-//! `missions` and `epicArcs` tables are loaded, into schema `sde_mission`.
+//! `missions` and `epicArcs` tables are loaded, into schema `sde_mission`; the archive and the
+//! extracted build are then removed (the lock keeps the hash).
 
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -88,6 +89,11 @@ fn ensure_command(args: &[String]) -> Result<ExitCode, Failure> {
     let url = value(args, "--pg")
         .cloned()
         .or_else(|| std::env::var("EVE_PG_URL").ok().filter(|url| !url.is_empty()));
+    if missions && url.is_none() {
+        return Err(
+            "--missions needs --pg: the mission tables are loaded and the build is then discarded".into()
+        );
+    }
     let dir = match url {
         Some(url) => {
             let mut client = Client::connect(&url, NoTls)?;

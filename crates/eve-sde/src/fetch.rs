@@ -287,10 +287,24 @@ fn remove_dir_if_present(dir: &Path) -> io::Result<()> {
 /// are reduced to their last component, so nothing lands outside `dir`. The
 /// directory appears only when it is whole.
 pub fn extract(archive: &Path, dir: &Path) -> Result<(), FetchError> {
+    extract_selected(archive, dir, None)?;
+    File::create(dir.join(".complete"))?;
+    Ok(())
+}
+
+/// Extract only `_sde.jsonl` and the `<table>.jsonl` files of `tables` from `archive` flat into `dir`.
+/// A named table the archive does not hold is an error, and then nothing is extracted. The directory
+/// appears only when it is whole.
+pub fn extract_tables(archive: &Path, dir: &Path, tables: &[&str]) -> Result<(), FetchError> {
+    let names: Vec<String> = tables.iter().map(|table| format!("{table}.jsonl")).collect();
+    extract_selected(archive, dir, Some(&names))
+}
+
+fn extract_selected(archive: &Path, dir: &Path, only: Option<&[String]>) -> Result<(), FetchError> {
     let partial = sibling(dir, ".partial");
     remove_dir_if_present(&partial)?;
     fs::create_dir_all(&partial)?;
-    let result = extract_into(archive, &partial);
+    let result = extract_into(archive, &partial, only);
     if result.is_err() {
         let _ = fs::remove_dir_all(&partial);
         return result;
@@ -300,21 +314,62 @@ pub fn extract(archive: &Path, dir: &Path) -> Result<(), FetchError> {
     Ok(())
 }
 
-fn extract_into(archive: &Path, partial: &Path) -> Result<(), FetchError> {
+fn extract_into(archive: &Path, partial: &Path, only: Option<&[String]>) -> Result<(), FetchError> {
     let mut zip = zip::ZipArchive::new(File::open(archive)?)?;
+    let mut found = Vec::new();
     for index in 0..zip.len() {
         let mut entry = zip.by_index(index)?;
         if entry.is_dir() {
             continue;
         }
         let Some(name) = base_name(entry.name()).map(str::to_owned) else { continue };
-        io::copy(&mut entry, &mut File::create(partial.join(name))?)?;
+        if only.is_some_and(|wanted| name != "_sde.jsonl" && !wanted.contains(&name)) {
+            continue;
+        }
+        io::copy(&mut entry, &mut File::create(partial.join(&name))?)?;
+        found.push(name);
     }
     if !partial.join("_sde.jsonl").is_file() {
         return Err(FetchError::BadArchive("it has no _sde.jsonl".to_owned()));
     }
-    File::create(partial.join(".complete"))?;
+    if let Some(missing) = only.and_then(|wanted| wanted.iter().find(|name| !found.contains(name))) {
+        return Err(FetchError::BadArchive(format!("it has no {missing}")));
+    }
     Ok(())
+}
+
+/// Make sure the archive of `options.build` is on disk and verified, without extracting it. A local archive
+/// (`options.archive`) is used in place. Otherwise the archive is the one under the cache, or it is downloaded to
+/// `<cache>/<name>.zip`; the caller removes that cached archive when it is done, unless `keep_archive` is set.
+pub fn fetch_archive(options: &FetchOptions) -> Result<(PathBuf, Origin), FetchError> {
+    let name = archive_name(options.build);
+    fs::create_dir_all(&options.cache_dir)?;
+    if let Some(archive) = &options.archive {
+        verify(archive, &archive.display().to_string(), &options.expect)?;
+        return Ok((archive.clone(), Origin::LocalArchive(archive.clone())));
+    }
+    let archive = options.cache_dir.join(format!("{name}.zip"));
+    if archive.is_file() && verify(&archive, &archive.display().to_string(), &options.expect).is_ok() {
+        return Ok((archive.clone(), Origin::LocalArchive(archive)));
+    }
+    if options.sources.is_empty() {
+        return Err(FetchError::NoSources);
+    }
+    let partial = options.cache_dir.join(format!("{name}.zip.partial"));
+    let mut failures = Vec::new();
+    for url in &options.sources {
+        let _ = fs::remove_file(&partial);
+        match download(url, &partial).and_then(|()| verify(&partial, url, &options.expect)) {
+            Ok(()) => {
+                fs::rename(&partial, &archive)?;
+                return Ok((archive, Origin::Downloaded(url.clone())));
+            }
+            Err(FetchError::Download { detail, .. }) => failures.push(format!("{url}: {detail}")),
+            Err(error) => failures.push(format!("{url}: {error}")),
+        }
+    }
+    let _ = fs::remove_file(&partial);
+    Err(FetchError::AllSourcesFailed(failures))
 }
 
 /// Make sure the build is extracted under `options.cache_dir`, fetching it if not.

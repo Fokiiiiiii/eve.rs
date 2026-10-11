@@ -56,6 +56,18 @@ public static class ProbeScanMath
         Math.Max(0.25, Math.Max(1, sensorStrength) / Math.Max(1, signatureRadius) * 20);
 
     /// <summary>
+    /// The probe strength a cosmic signature of a level needs (the wiki, "Probe scanning", minimum sensor strength: 42, which a Core Scanner Probe's base 40 and Astrometrics I give, is enough
+    /// for signatures up to level III; level IV needs 72 and level V needs 104). It stands where <see cref="RequiredStrength"/> does for a ship: a probe weaker than this finds the signature
+    /// only in part.
+    /// </summary>
+    public static double SignatureStrength(int level) => level switch
+    {
+        >= 5 => 104,
+        4 => 72,
+        _ => 42,
+    };
+
+    /// <summary>
     /// What one probe contributes to a target's result: 0 beyond the probe's range, else the distance falloff (1 - (distance / range)^2) times the probe's strength
     /// over what the target needs, at most 1 (EVE.js <c>scoreProbeCoverage</c>).
     /// </summary>

@@ -945,12 +945,24 @@ Done (verified):
 | Status | Item | Evidence |
 |---|---|---|
 | VERIFIED (tests) | The pure timeline `StructureStateMachine`: anchor, anchoring, onlining, shield, armor and hull stages, reinforcements, Low Power, abandonment, unanchoring, reinforcement time change | `dotnet/tests/Eve.Structures.Tests/StateMachineTests.cs`: 47 passed, 0 skipped |
-| WRITTEN, NOT TESTED | Schema `structures` (migration 0001), `StructureStore` (read, write, legacy view, import) and `StructureTimers` (job `structure.timer`, event `structure.state_changed`) | compiles; no Postgres test yet |
+| VERIFIED (tests) | Schema `structures` (migration 0001), `StructureStore` (read, write, legacy view, import) and `StructureTimers` (job `structure.timer`, event `structure.state_changed` in the change's transaction; refusal changes nothing; restart fires once; import once) | `StructureTimersTests`: 6 PostgreSQL tests (scratch schemas via `Rig`), 53 passed, 0 skipped with `EVE_PG_URL` |
 
 Open (next steps, in order):
 | Status | Item |
 |---|---|
-| OPEN | Postgres tests for `StructureStore` and `StructureTimers` with the `Rig` scratch schema: restart fires the job once, replay is a no-op, import is idempotent, the event is published with the change |
 | OPEN | The Host rules source (`IStructureRulesSource`) over the SDE (`rigSize`, system security band) |
 | OPEN | Register the migration and the timers at start-up (`Foundations`/`Program.cs`, like `Eve.Ships`), the GameStore import (host side only, ADR 0003 rule 3), `ArchitectureTests` entry |
 | OPEN | Switch the readers of the GameStore `structures` table (`PersistenceStructureDirectoryReadModel{,.Part2}`, `PersistenceStructureAssetSafetyReadModel{,.Part2}`, `PersistenceStructureProfilesRpcBackend` reads and writes, `StructureComposition.cs` `StructureExistsAsync`, `IndustryComposition.cs:68`, `CharacterRpc.cs:98`) to the store, one file at a time, with the existing structure tests green |
+## 45. Track ST-11: cosmic sites as content, the director and the probe source (2026-10-10)
+
+Plan: scratchpad `specs/structures_phase.md`, ST-11. Handoff: `docs/project/handoff-ST-11.md`. Decisions: DEVIATIONS.md, "Cosmic sites (ST-11)".
+
+| Status | Item | Evidence |
+|---|---|---|
+| BUILT (tests) | Increment 1, not bound in the host: the site definitions (`anomaly`, `signature`, `site.{id}`) from the static table `Sites/Data/site-templates.json` (419 templates, from `tools/dev/extract-site-templates.py`); `CosmicSiteDirector` (the recurring `site.spawn` job per system, the slots `system:{id}:slot:{n}`, the respawn subscriber on `content.{anomaly,signature}.{completed,expired}`); `ICosmicSiteSource` async, implemented by `ContentCosmicSites` (signatures with their code and level); the scan rows carry the code and the dungeon fields; the warp authority keys results by text. | `CosmicSitesTests.cs` (CosmicSiteRulesTests: codes, placement, template coverage, probe strength; CosmicSiteDirectorTests, PgFact: one site per slot once and idempotent, restart keeps them, expiry replaces each site in its slot elsewhere, the probe source lists the signatures with their codes). Run: `dotnet test Eve.Services.Space.Tests --filter CosmicSite`, 11 passed, 0 skipped, EVE_PG_URL set. |
+| OPEN | Increment 2, the host binding: `SpaceComposition` attaches the director before `foundations.StartAsync`, `SystemEntered` asks for the sites, `SpaceProbeScans` gets `ContentCosmicSites` instead of `NoCosmicSites`, the anomaly read model asks first, `BeyonceService` warps to a result by code. Patch kept in the scratchpad, not committed. | handoff |
+| OPEN | NPCs of a site: spawn the waves through the existing spawner, publish `npc.killed { site, solarSystemId }` in the kill transaction, so a site can be cleared and respawned (the respawn is covered by the director's tests). | the director's objectives already count `npc.killed` by `site` |
+| OPEN | Containers of a data and relic site: place them through `SpaceContainers`, publish `site.container.cleared` on the analyzer's completion. | `CosmicSiteDirector.ContainerClearedTopic` |
+| OPEN | Level from the client difficulty above 5 (ten templates) and the downtime rule of the respawn. | DEVIATIONS "Cosmic sites (ST-11)" |
+| OPEN | The reference's anchor set (planets, belts, stations, stargates; no sun, no moons) is not compared with EveJS. | DEVIATIONS "Cosmic sites (ST-11)" |
+| OPEN | Client check (MITM): the `ABC-123` codes in the scanner list, the anomaly overlay (`scanMgr`), the dungeon fields and the warp to a result by code. | not provable headless |

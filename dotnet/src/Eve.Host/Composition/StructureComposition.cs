@@ -149,6 +149,7 @@ internal sealed partial class CharacterServicesComposition
             spaceStructures = new Eve.Services.Space.SpaceStructures(sim, spaceSessions, source, structureStore, structureTimers, dogma,
                 message => Console.Error.WriteLine($"eve-host: space structures: {message}"));
             spaceStructures.Subscribe(foundations.Events);
+            spaceSessions.PlaceStructuresAsync = spaceStructures.RestoreAsync;
         }
         // ST-2 d: the client's structure notices (the owner corporation, the pilots docked in the structure), after each commit of a state change
         Eve.Host.StructureNotifications.Subscribe(foundations.Events, structureStore, characterSessions);
@@ -224,6 +225,9 @@ internal sealed partial class CharacterServicesComposition
             GetProfileSettingsAsync = structureProfilesRpcBackend.GetProfileSettingsAsync,
             GetMyHangarViewStateAsync = (call, structureId) =>
                 structureProfilesRpcBackend.GetMyHangarViewStateAsync(structureId, call.Cancellation),
+            UndockAsync = (call, structureId, shipId, _) => spaceSessions is null
+                ? default
+                : new ValueTask(spaceSessions.UndockStructureAsync(call.Session, structureId, shipId, call.Cancellation)),
             DockAsync = (call, structureId, shipId) => spaceSessions is null
                 ? default
                 : new ValueTask(spaceSessions.DockStructureAsync(call.Session, structureId, shipId, call.Cancellation)),

@@ -14,7 +14,7 @@ at equal rank; client wire shapes = eve-logic. When no source states the spec, t
 | ST-0 structure record owner, state machine, timers | done | `Eve.Structures`; GameStore `structures` imported once and frozen |
 | ST-1 structure ball in the sim | code complete | kinds 74-77, protocol 59/60; headless `test_structures.py` never ran live |
 | ST-2 deployment / vulnerability RPCs | partly | rename, reinforce times, Anchor, Unanchor/Cancel, 3 notices done; unanchor-completion drop, some Anchor refusals, reinforcement-change mail are open (see its handoff) |
-| ST-3 structure docking / hangars | partly | Dock done; Undock/hangars see its handoff |
+| ST-3 structure docking / hangars | partly | Dock, Undock and hangar listing done (PG tests); OnHangarViewStateUpdated, contraband and structure guest notices open; headless scenario never ran live (see its handoff) |
 | ST-6a moon extraction (host) | done | notices to owner corp characters and rig modifiers (2704, 2707) open; control gate is provisional until ST-5 |
 | ST-7 structure services | partly | fuel, compression plant, cyno jammer E-03/E-15 done; cyno beacon jump open |
 | ST-10 hacking | closed with 2 open rows | site completion on emptying and removal of an emptied ball need an `inventory.item_moved` event |

@@ -603,6 +603,7 @@ impl Scene {
         centre: [f64; 3],
         radius: f64,
         exclude_ship: Option<i64>,
+        at: i64,
     ) -> Vec<(SessionId, i64)> {
         let candidates = self.pilots.iter().map(|(other, pilot)| self.spatial_ship(*other, pilot));
         let mut inside: Vec<(SessionId, i64)> = crate::geo::SpatialQuery::surface_radius(
@@ -618,6 +619,7 @@ impl Scene {
         )
         .execute(candidates)
         .into_iter()
+        .filter(|hit| !self.is_tethered_session(hit.item, at))
         .filter_map(|hit| self.pilots.get(&hit.item).map(|pilot| (hit.item, pilot.ship.spec.ship_id)))
         .collect();
         inside.sort_by_key(|(_, ship_id)| *ship_id);
@@ -634,7 +636,7 @@ impl Scene {
         match kind {
             BombKind::Damage => {
                 let mut out = Vec::new();
-                for target in self.ships_in_area(centre, *blast_radius, Some(deployable.ship_id)) {
+                for target in self.ships_in_area(centre, *blast_radius, Some(deployable.ship_id), at) {
                     if self.pilots.get(&target.0).is_none_or(|pilot| pilot.protected_until > at) {
                         continue;
                     }
@@ -651,7 +653,7 @@ impl Scene {
             BombKind::Ecm => self.jam_at(centre, 0.0, Some(deployable.ship_id), ecm, *blast_radius, at),
             BombKind::Neutralize => {
                 let mut out = Vec::new();
-                for (target, _) in self.ships_in_area(centre, *blast_radius, Some(deployable.ship_id)) {
+                for (target, _) in self.ships_in_area(centre, *blast_radius, Some(deployable.ship_id), at) {
                     let amount = neutralize * self.capacitor_warfare_multiplier(target);
                     out.extend(self.take_capacitor(target, amount, at).0);
                 }
@@ -675,7 +677,7 @@ impl Scene {
         let Some(pilot) = self.pilots.get(&session) else { return Vec::new() };
         let (own, owner, p) = (pilot.ship.spec.ship_id, self.combat_owner(session), pilot.ship.position);
         let mut out = Vec::new();
-        for target in self.ships_in_area([p.x, p.y, p.z], range, Some(own)) {
+        for target in self.ships_in_area([p.x, p.y, p.z], range, Some(own), at) {
             let target_type_id = self.pilots.get(&target.0).map_or(0, |pilot| pilot.ship.spec.type_id);
             self.aggressions.push(crate::weapons::Aggression {
                 attacker_ship: own,
@@ -709,7 +711,7 @@ impl Scene {
         at: i64,
     ) -> Vec<Out> {
         let mut out = Vec::new();
-        for target in self.ships_in_area(centre, radius, None) {
+        for target in self.ships_in_area(centre, radius, None, at) {
             out.extend(self.damage_ship(launcher, module_type, target, damage, at));
         }
         out

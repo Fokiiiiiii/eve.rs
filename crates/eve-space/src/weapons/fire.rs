@@ -164,6 +164,9 @@ impl Scene {
         at: i64,
     ) -> Vec<Out> {
         let (target_session, target_id) = target;
+        if self.is_tethered_session(target_session, at) {
+            return Vec::new();
+        }
         let Some(attacker_id) = self.pilots.get(&session).map(|pilot| pilot.ship.spec.ship_id) else {
             return Vec::new();
         };

@@ -96,6 +96,7 @@ impl Scene {
         let profile = warp::Profile::new(total, ship.spec.warp_speed_au, ship.spec.max_velocity);
         let ship_id = id(ship.spec.ship_id);
         let boosted = ship.spec.max_velocity * warp::START_SPEED_SCALE;
+        let mut out = self.break_tether(session, now);
         let stamp = self.next_stamp(now);
         let pilot = self.pilots.get_mut(&session).expect("checked above");
         pilot.ship.course = Course::Warp {
@@ -125,7 +126,7 @@ impl Scene {
             "GotoDirection",
             with_id(&ship_id, vector(toward.x, toward.y, toward.z)),
         )];
-        let mut out = self.tell_split(session, own, watchers);
+        out.extend(self.tell_split(session, own, watchers));
         out.push(Out::Accepted { session, command: code, at: now });
         out
     }

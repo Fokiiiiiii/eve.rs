@@ -168,6 +168,9 @@ impl Scene {
             return vec![Out::Refused { session, command: CODE, reason: "NOT_IMPLEMENTED" }];
         }
         self.settle_all(now);
+        if self.tether_refuses_activation(session, &effect, now) {
+            return vec![Out::Refused { session, command: CODE, reason: "TETHERED" }];
+        }
         let pilot = &self.pilots[&session];
         if pilot.modules.running.iter().any(|r| r.effect.module_id == effect.module_id)
             || pilot.modules.pending_starts.iter().any(|start| start.effect.module_id == effect.module_id)
@@ -530,6 +533,18 @@ impl Scene {
         }
         // the pilot has given up the undocking protection by flying the ship (the host tells the client)
         let (owner, ship_id) = (pilot.ship.spec.character_id, pilot.ship.spec.ship_id);
+        if self.tether_refuses_activation(session, &effect, now) {
+            return vec![Out::Refused { session, command: CODE, reason: "TETHERED" }];
+        }
+        let mut out = if effect.offensive() {
+            // Revoke the cached grant until the host supplies its authoritative weapons timer.
+            let controller = self.controller_of_drone(session).filter(|id| *id != 0).unwrap_or(session);
+            self.clear_tether_policy(controller, now)
+        } else if self.effect_breaks_tether(session, &effect) {
+            self.break_tether(session, now)
+        } else {
+            Vec::new()
+        };
         let pilot = self.pilots.get_mut(&session).expect("the pilot is in the scene");
         pilot.protected_until = 0;
         let rounds = effect.turret.as_ref().and_then(|t| t.charge).map(|c| c.rounds).or_else(|| {
@@ -560,7 +575,7 @@ impl Scene {
         if let Some(Action::ResistanceShift { seed, shift, .. }) = run.effect.action.as_ref() {
             pilot.ship.health.start_shift(*seed, *shift);
         }
-        let mut out = vec![Out::Accepted { session, command: CODE, at: now }];
+        out.push(Out::Accepted { session, command: CODE, at: now });
         out.push(Self::charge_told(session, owner, ship_id, now, after, before));
         let stamp = self.next_stamp(now);
         let ship = id(ship_id);

@@ -147,6 +147,9 @@ impl Sim {
             Out::Docked { session, station_id, condition } => {
                 Message::Docked { session_id: session, station_id, condition }
             }
+            Out::TetherChanged { session, previous_structure_id, structure_id, repairing } => {
+                Message::TetherChanged { session_id: session, previous_structure_id, structure_id, repairing }
+            }
             Out::DeployedLit { placement, .. } => Message::Deployed(placement),
             Out::StructureDamaged { structure_id, depleted, over_threshold } => {
                 Message::StructureDamaged { structure_id, depleted, over_threshold }
@@ -396,7 +399,8 @@ impl Sim {
             | Message::PlaceDisruptor(..)
             | Message::PlaceInhibitor(..)
             | Message::PlaceCynoBeacon(..)
-            | Message::SetDisruptorActive { .. } => self.handle_world(message, now),
+            | Message::SetDisruptorActive { .. }
+            | Message::TetherPolicy { .. } => self.handle_world(message, now),
             other => Err(ProtocolError(format!(
                 "a message of kind {} is for the host, not the simulation",
                 other.kind()
@@ -879,6 +883,11 @@ impl Sim {
     /// Asteroids, wrecks and containers that the host places in a system or removes from it.
     fn handle_world(&mut self, message: Message, now: i64) -> Result<Vec<Message>, ProtocolError> {
         let outs = match message {
+            Message::TetherPolicy { session_id, blocked_for_ms, lease_ms, candidates } => {
+                self.scene_of(session_id).map(|scene| {
+                    scene.set_tether_policy(session_id, blocked_for_ms, lease_ms, candidates, now)
+                }).unwrap_or_default()
+            }
             Message::PlaceAsteroid(placement) => match self.scenes.get_mut(&placement.solar_system_id) {
                 Some(scene) => {
                     let p = *placement;

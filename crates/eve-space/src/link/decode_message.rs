@@ -1124,6 +1124,38 @@ impl Message {
                     bonus_max,
                 }
             }
+            kind::TETHER_POLICY => {
+                let session_id = r.u64()?;
+                let blocked_for_ms = r.u64()?;
+                let lease_ms = r.u64()?;
+                let count = r.u32()? as usize;
+                if count > r.data.len() / 16 {
+                    return Err(DecodeError::Truncated);
+                }
+                let mut candidates = Vec::with_capacity(count);
+                for _ in 0..count {
+                    let structure_id = r.u64()? as i64;
+                    let range = r.f64()?;
+                    if structure_id <= 0 {
+                        return Err(DecodeError::BadValue("tether structure"));
+                    }
+                    if !(range.is_finite() && range > 0.0) {
+                        return Err(DecodeError::BadValue("tether range"));
+                    }
+                    candidates.push(TetherCandidate { structure_id, range });
+                }
+                Message::TetherPolicy { session_id, blocked_for_ms, lease_ms, candidates }
+            }
+            kind::TETHER_CHANGED => {
+                let session_id = r.u64()?;
+                let previous_structure_id = r.u64()? as i64;
+                let structure_id = r.u64()? as i64;
+                let repairing = read_flag(&mut r, "tether repairing")?;
+                if previous_structure_id < 0 || structure_id < 0 || (structure_id == 0 && repairing) {
+                    return Err(DecodeError::BadValue("tether state"));
+                }
+                Message::TetherChanged { session_id, previous_structure_id, structure_id, repairing }
+            },
             kind::DESTROY => Message::Destroy { ship_id: r.i64()?, credit: read_credit(&mut r)? },
             kind::TARGET_REFUSED => Message::TargetRefused {
                 session_id: r.u64()?,

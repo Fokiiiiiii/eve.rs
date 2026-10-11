@@ -718,6 +718,22 @@ impl Message {
                 out.extend_from_slice(&bonus_per_cycle.to_le_bytes());
                 out.extend_from_slice(&bonus_max.to_le_bytes());
             }
+            Self::TetherPolicy { session_id, blocked_for_ms, lease_ms, candidates } => {
+                out.extend_from_slice(&session_id.to_le_bytes());
+                out.extend_from_slice(&blocked_for_ms.to_le_bytes());
+                out.extend_from_slice(&lease_ms.to_le_bytes());
+                out.extend_from_slice(&(candidates.len() as u32).to_le_bytes());
+                for candidate in candidates {
+                    out.extend_from_slice(&(candidate.structure_id as u64).to_le_bytes());
+                    out.extend_from_slice(&candidate.range.to_le_bytes());
+                }
+            }
+            Self::TetherChanged { session_id, previous_structure_id, structure_id, repairing } => {
+                out.extend_from_slice(&session_id.to_le_bytes());
+                out.extend_from_slice(&(*previous_structure_id as u64).to_le_bytes());
+                out.extend_from_slice(&(*structure_id as u64).to_le_bytes());
+                out.push(u8::from(*repairing));
+            }
             Self::Destroy { ship_id, credit } => {
                 out.extend_from_slice(&ship_id.to_le_bytes());
                 put_credit(&mut out, credit);

@@ -331,6 +331,9 @@ impl Scene {
         let mut out = self.retune(target, at);
         // a ship that is still lining up for a warp it can no longer make is stopped (the reference stops it as the scramble lands)
         if matches!(what, Lasting::Scramble { .. } | Lasting::Tackle { .. }) {
+            if self.pilots.get(&target).is_some_and(|pilot| pilot.incoming.scrambled_with(self.scramble_status(target))) {
+                out.extend(self.break_tether(target, at));
+            }
             out.extend(self.cancel_alignment(target, at));
         }
         // and a microwarpdrive that is running on it is stopped when the scrambler blocks one
@@ -464,7 +467,8 @@ impl Scene {
             .burst_reach(source_position, source_radius, Some(source_ship_id), radius)
             .into_iter()
             .filter(|target| {
-                self.pilots
+                !self.is_tethered_session(*target, at)
+                    && self.pilots
                     .get(target)
                     .is_some_and(|pilot| pilot.cloak != crate::visibility::CloakState::Cloaked)
             })
@@ -505,6 +509,9 @@ impl Scene {
         }
         let mut out = Vec::new();
         for target in self.burst_reach(centre, centre_radius, exclude_ship, radius) {
+            if self.is_tethered_session(target, at) {
+                continue;
+            }
             let chance = self.pilots.get(&target).map_or(0.0, |pilot| {
                 jam_chance(strength, &pilot.ship.spec.sensor_strength, pilot.ship.spec.ecm_resistance, 1.0)
             });

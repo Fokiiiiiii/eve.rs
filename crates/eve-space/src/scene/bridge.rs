@@ -223,6 +223,7 @@ impl Scene {
         stamp: u32,
         now: i64,
     ) -> Vec<Out> {
+        let mut out = self.clear_tether_policy(session, now);
         let pilot = self.pilots.get_mut(&session).expect("checked by the caller");
         let ship = &mut pilot.ship;
         if !matches!(ship.course, Course::Stop) || ship.speed_fraction > 0.0 || speed_of(ship.velocity) > 0.5
@@ -240,7 +241,7 @@ impl Scene {
         });
         let ship_id = id(ship.spec.ship_id);
         let actions = [payload::action(stamp, "Stop", [ship_id])];
-        let mut out = self.tell_all(session, actions.into());
+        out.extend(self.tell_all(session, actions.into()));
         out.push(Out::Jumping { session, command: code, destination_system, destination_gate: 0 });
         out
     }

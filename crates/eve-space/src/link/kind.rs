@@ -89,3 +89,7 @@ pub const SCAN_TARGETS: u8 = 71;
 pub const DIRECTIONAL_TARGETS: u8 = 72;
 pub const BUFF_STATE: u8 = 62;
 pub const ECM_BURST: u8 = 67;
+/// Host permissions and deadlines for a pilot's tether (protocol 61).
+pub const TETHER_POLICY: u8 = 78;
+/// Simulation tether transition sent to the host (protocol 61).
+pub const TETHER_CHANGED: u8 = 79;

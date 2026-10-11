@@ -93,7 +93,7 @@ impl Scene {
             work: DroneWorkProfile::default(),
             effect: None,
         };
-        let (session, out) = self.launch_companion(CompanionKind::Fighter, controller, spec, flight, now)?;
+        let (session, launched) = self.launch_companion(CompanionKind::Fighter, controller, spec, flight, now)?;
         if let Some(link) = self
             .pilots
             .get_mut(&session)
@@ -102,6 +102,8 @@ impl Scene {
         {
             link.squadron = Some(Squadron { members_max: squadron_size, told_size: squadron_size });
         }
+        let mut out = self.break_tether(controller, now);
+        out.extend(launched);
         Ok((session, out))
     }
 

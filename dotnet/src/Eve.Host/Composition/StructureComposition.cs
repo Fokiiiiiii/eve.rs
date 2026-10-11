@@ -87,6 +87,26 @@ internal sealed partial class CharacterServicesComposition
             services.GetValueOrDefault(Eve.Structures.StructureServiceIds.CynoBeacon) == Eve.Structures.ServiceState.Online);
     }
 
+    /// <summary>
+    /// ST-3 a: whether a character may dock at a structure: its Docking service is online and the character is on the structure's docking access
+    /// (the rule of <c>StructureDirectoryService.CanDock</c>, on the access the directory reads for the character's corporation and alliance).
+    /// </summary>
+    private async Task<bool> StructureDockingAllowedAsync(long characterId, long structureId, CancellationToken token)
+    {
+        var affiliation = await AffiliationOfAsync(characterId, token);
+        var corporationId = affiliation.Corporation ?? 0;
+        var allianceId = affiliation.Alliance ?? 0;
+        await using (var connection = await source.OpenConnectionAsync(token))
+        {
+            var services = await structureStore.ServicesAsync(connection, null, structureId, token);
+            if (services.GetValueOrDefault(Eve.Structures.StructureServiceIds.Docking) != Eve.Structures.ServiceState.Online)
+                return false;
+        }
+        var snapshots = await structureDirectoryReadModel.GetDockingAccessSnapshotsAsync(characterId, corporationId, allianceId, [structureId], token);
+        return snapshots.FirstOrDefault(snapshot => snapshot.StructureId == structureId) is { } access
+            && Eve.Services.Core.StructureDirectoryService.CanDock(access, structureId, characterId, corporationId, allianceId);
+    }
+
     private async Task StructureRecords()
     {
         // ST-0: the structures schema owns the records; the game store's table is copied in once (ADR 0003 rule 3: the bridge is the importer, not a read path)
@@ -147,6 +167,8 @@ internal sealed partial class CharacterServicesComposition
         if (spaceSessions is not null)
             spaceSessions.StructureExistsAsync = async (structureId, cancellationToken) =>
                 await structureDirectoryReadModel.GetStructureInfoAsync(structureId, cancellationToken) is { PersistentlyDeployed: true };
+        if (spaceSessions is not null)
+            spaceSessions.StructureDockingAllowedAsync = StructureDockingAllowedAsync;
         // E-03: a cynosural field is refused in a system its jammer runs in (the state is 0 once the warm-up has passed)
         if (spaceSessions is not null)
             spaceSessions.CynoJammedAsync = CynoJammedAsync;
@@ -187,6 +209,9 @@ internal sealed partial class CharacterServicesComposition
             GetProfileSettingsAsync = structureProfilesRpcBackend.GetProfileSettingsAsync,
             GetMyHangarViewStateAsync = (call, structureId) =>
                 structureProfilesRpcBackend.GetMyHangarViewStateAsync(structureId, call.Cancellation),
+            DockAsync = (call, structureId, shipId) => spaceSessions is null
+                ? default
+                : new ValueTask(spaceSessions.DockStructureAsync(call.Session, structureId, shipId, call.Cancellation)),
             CreateProfileAsync = (call, corporationId, name, description) =>
                 structureProfilesRpcBackend.CreateProfileAsync(corporationId, name, description, call.Cancellation),
             UpdateProfileAsync = (call, corporationId, profileId, name, description) =>

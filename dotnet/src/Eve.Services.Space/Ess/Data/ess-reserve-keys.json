@@ -1,43 +1,59 @@
 {
-  "source": "SDE essreservekeys (native/essreservekeys.jsonl.gz), build 3396210",
+  "source": "SDE essreservekeys (native/essreservekeys.jsonl.gz), build 3396210; names from sde.types",
   "keys": [
     {
       "keyTypeId": 57714,
+      "name": "ESS-NW-15 Reserve Security Key",
+      "quadrant": "NW",
       "totalPulses": 15,
       "locationListId": 4609
     },
     {
       "keyTypeId": 57715,
+      "name": "ESS-NW-45 Reserve Security Key",
+      "quadrant": "NW",
       "totalPulses": 45,
       "locationListId": 4609
     },
     {
       "keyTypeId": 57716,
+      "name": "ESS-NE-15 Reserve Security Key",
+      "quadrant": "NE",
       "totalPulses": 15,
       "locationListId": 4610
     },
     {
       "keyTypeId": 57717,
+      "name": "ESS-SE-15 Reserve Security Key",
+      "quadrant": "SE",
       "totalPulses": 15,
       "locationListId": 4612
     },
     {
       "keyTypeId": 57718,
+      "name": "ESS-SE-45 Reserve Security Key",
+      "quadrant": "SE",
       "totalPulses": 45,
       "locationListId": 4612
     },
     {
       "keyTypeId": 57719,
+      "name": "ESS-NE-45 Reserve Security Key",
+      "quadrant": "NE",
       "totalPulses": 45,
       "locationListId": 4610
     },
     {
       "keyTypeId": 57720,
+      "name": "ESS-SW-15 Reserve Security Key",
+      "quadrant": "SW",
       "totalPulses": 15,
       "locationListId": 4611
     },
     {
       "keyTypeId": 57721,
+      "name": "ESS-SW-45 Reserve Security Key",
+      "quadrant": "SW",
       "totalPulses": 45,
       "locationListId": 4611
     }

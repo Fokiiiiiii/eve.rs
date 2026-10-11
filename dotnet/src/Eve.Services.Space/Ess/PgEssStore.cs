@@ -7,8 +7,14 @@ using Npgsql;
 
 namespace Eve.Services.Space;
 
-/// <summary>A thief's link to the Main Bank: the link's id, who holds it, when it began and when it completes.</summary>
-public sealed record EssLinkRecord(string Id, long CharacterId, long StartedMs, long CompletesMs);
+/// <summary>A thief's link to the Main Bank: the link's id, who holds it, the ship it was made from, when it began and when it completes.</summary>
+public sealed record EssLinkRecord(string Id, long CharacterId, long ShipId, long StartedMs, long CompletesMs);
+
+/// <summary>
+/// A pilot as the space simulation sees it, for a link: whether the pilot is in the system, whether the ship is one that may link (type list 231), where the ship
+/// is in metres from the ESS ball, and which ship it is. Null from the holder callback when the character is not in the system.
+/// </summary>
+public sealed record EssHolder(bool InSystem, bool LinkableShip, double DistanceMeters, long ShipId);
 
 /// <summary>One taken amount: a Main Bank theft (<c>AtMs</c> the moment) or the reserve payouts of a character (summed, the last one's moment).</summary>
 public sealed record EssTheftRecord(long CharacterId, decimal Amount, long AtMs);
@@ -60,20 +66,29 @@ public sealed class PgEssStore
     private readonly WalletTransactions _wallet;
     private readonly string _schema;
     private readonly Action<string>? _log;
-    private readonly Func<int, long, long, CancellationToken, ValueTask<bool>>? _linkGeometry;
+    private readonly Func<int, long, long, CancellationToken, ValueTask<EssHolder?>>? _holderOf;
+    private readonly Func<long, long, CancellationToken, ValueTask<bool>>? _consumeKey;
+    private readonly Func<int, string?>? _quadrantOf;
+    private readonly Func<int, CancellationToken, ValueTask<long?>>? _sovereigntyOwnerOf;
     private readonly double _reserveMaxPayout;
 
-    /// <param name="linkGeometry">
-    /// Whether a ship of the character may link to the ESS <paramref name="essId"/> of the system now (in the ship-type list, within range and on the grid). Without it
-    /// no link can be checked, so none is made.
+    /// <param name="holderOf">
+    /// The pilot of a character in the system, as the space simulation sees it (null when the character is not in it). Without it no link can be checked, so none is
+    /// made, and a link already made breaks.
     /// </param>
+    /// <param name="consumeKey">Takes one key of the type out of the character's inventory; false when the character has none.</param>
+    /// <param name="quadrantOf">The quadrant of a system, or null when it is in none.</param>
+    /// <param name="sovereigntyOwnerOf">The alliance that holds the system's sovereignty, or null when none does (the owner is then the configured one).</param>
     /// <param name="reserveMaxPayout">The largest payout of one reserve pulse (<see cref="EssRules.ReserveBankMaxPayout"/> unless a test sets another).</param>
     public PgEssStore(
         NpgsqlDataSource source,
         WalletTransactions wallet,
         string schema = DefaultSchema,
         Action<string>? log = null,
-        Func<int, long, long, CancellationToken, ValueTask<bool>>? linkGeometry = null,
+        Func<int, long, long, CancellationToken, ValueTask<EssHolder?>>? holderOf = null,
+        Func<long, long, CancellationToken, ValueTask<bool>>? consumeKey = null,
+        Func<int, string?>? quadrantOf = null,
+        Func<int, CancellationToken, ValueTask<long?>>? sovereigntyOwnerOf = null,
         double reserveMaxPayout = EssRules.ReserveBankMaxPayout)
     {
         if (!System.Text.RegularExpressions.Regex.IsMatch(schema, "^[a-z_][a-z0-9_]{0,62}$"))
@@ -84,7 +99,10 @@ public sealed class PgEssStore
         _wallet = wallet;
         _schema = schema;
         _log = log;
-        _linkGeometry = linkGeometry;
+        _holderOf = holderOf;
+        _consumeKey = consumeKey;
+        _quadrantOf = quadrantOf;
+        _sovereigntyOwnerOf = sovereigntyOwnerOf;
         _reserveMaxPayout = reserveMaxPayout;
     }
 
@@ -95,7 +113,8 @@ public sealed class PgEssStore
 
     private const string Columns =
         "solar_system_id, ess_id, beacon_id, type_id, owner_id, current_output, main_value, reserve_value, main_link_id, main_link_character_id, " +
-        "main_link_started_ms, main_link_completes_ms, next_payout_ms, reserve_key_type_id, reserve_pulses_total, reserve_pulses_remaining, reserve_opened_ms, next_pulse_ms";
+        "main_link_started_ms, main_link_completes_ms, next_payout_ms, reserve_key_type_id, reserve_pulses_total, reserve_pulses_remaining, reserve_opened_ms, next_pulse_ms, " +
+        "main_link_ship_id";
 
     private NpgsqlCommand Command(string sql, NpgsqlConnection connection, NpgsqlTransaction? transaction, params object?[] values)
     {
@@ -161,30 +180,31 @@ public sealed class PgEssStore
     }
 
     /// <summary>
-    /// The bounty of a kill in this system is paid into the Main Bank in the transaction of the bounty (the caller passes it through
+    /// The ESS share of a bounty earned in this system: the Main Bank's and the Reserve Bank's, in the transaction of the bounty (the caller passes it through
     /// <c>PgBountyStore.RecordAsync</c>). Throws when the system has no ESS, so that nothing is recorded that cannot be paid.
     /// </summary>
-    public async Task CreditMainBankAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, int solarSystemId, decimal amount, CancellationToken cancellationToken = default)
+    public async Task CreditBountyShareAsync(
+        NpgsqlConnection connection, NpgsqlTransaction transaction, int solarSystemId, decimal mainBank, decimal reserveBank, CancellationToken cancellationToken = default)
     {
-        if (amount <= 0)
+        if (mainBank <= 0 && reserveBank <= 0)
         {
             return;
         }
         await using var command = Command(
-            "UPDATE {schema}.systems SET main_value = main_value + $2 WHERE solar_system_id = $1",
-            connection, transaction, solarSystemId, EssRules.Money(amount));
+            "UPDATE {schema}.systems SET main_value = main_value + $2, reserve_value = reserve_value + $3 WHERE solar_system_id = $1",
+            connection, transaction, solarSystemId, EssRules.Money(mainBank), EssRules.Money(reserveBank));
         if (await command.ExecuteNonQueryAsync(cancellationToken) != 1)
         {
             throw new InvalidOperationException($"no ESS in solar system {solarSystemId}");
         }
     }
 
-    /// <summary>Pays an amount into the Main Bank of a system on its own (a bounty whose pilot share is nothing has no bucket to commit with).</summary>
-    public async Task CreditAsync(int solarSystemId, decimal amount, CancellationToken cancellationToken = default)
+    /// <summary>Pays a bounty's ESS shares into a system on their own (a bounty whose pilot share is nothing has no bucket to commit with).</summary>
+    public async Task CreditAsync(int solarSystemId, decimal mainBank, decimal reserveBank, CancellationToken cancellationToken = default)
     {
         await using var connection = await _source.OpenConnectionAsync(cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
-        await CreditMainBankAsync(connection, transaction, solarSystemId, amount, cancellationToken);
+        await CreditBountyShareAsync(connection, transaction, solarSystemId, mainBank, reserveBank, cancellationToken);
         await transaction.CommitAsync(cancellationToken);
     }
 
@@ -209,11 +229,11 @@ public sealed class PgEssStore
         {
             case EssMgrOperation.AttemptLinkToMainBank:
                 if (character <= 0 || state.ReserveLinked.Contains(character) || state.MainLink is not null ||
-                    !await LinkAllowedAsync(systemId, character, state.EssId, cancellationToken))
+                    await LinkHolderAsync(systemId, character, state.EssId, cancellationToken) is not { } holder)
                 {
                     return new EssMgrOperationResult(false, ToClient(state));
                 }
-                var link = new EssLinkRecord(Guid.NewGuid().ToString("D"), character, nowMs, nowMs + EssRules.LinkDurationMs);
+                var link = new EssLinkRecord(Guid.NewGuid().ToString("D"), character, holder.ShipId, nowMs, nowMs + EssRules.LinkDurationMs);
                 state = state with { MainLink = link };
                 await SaveLinkAsync(connection, transaction, systemId, link, cancellationToken);
                 result = new EssMgrOperationResult(true, ToClient(state));
@@ -221,7 +241,7 @@ public sealed class PgEssStore
 
             case EssMgrOperation.AttemptLinkToReserveBank:
                 if (character <= 0 || state.PulsesRemaining <= 0 || state.ReserveLinked.Contains(character) ||
-                    state.MainLink?.CharacterId == character || !await LinkAllowedAsync(systemId, character, state.EssId, cancellationToken))
+                    state.MainLink?.CharacterId == character || await LinkHolderAsync(systemId, character, state.EssId, cancellationToken) is null)
                 {
                     return new EssMgrOperationResult(false, ToClient(state));
                 }
@@ -260,21 +280,24 @@ public sealed class PgEssStore
                 break;
 
             case EssMgrOperation.RequestUnlockReserveBank:
-                if (!EssReserveKeys.TryGetPulses(request.KeyTypeId, out var pulses) || state.PulsesRemaining > 0)
+                // a key opens a bank only in its own quadrant, and only when the character holds one: the key is taken out of the inventory
+                if (EssReserveKeys.Find(request.KeyTypeId) is not { } key || state.PulsesRemaining > 0 ||
+                    _quadrantOf?.Invoke(systemId) != key.Quadrant || _consumeKey is null ||
+                    !await _consumeKey(character, key.KeyTypeId, cancellationToken))
                 {
                     return new EssMgrOperationResult(false, ToClient(state));
                 }
                 state = state with
                 {
-                    ReserveKeyTypeId = request.KeyTypeId,
-                    PulsesTotal = pulses,
-                    PulsesRemaining = pulses,
+                    ReserveKeyTypeId = key.KeyTypeId,
+                    PulsesTotal = key.TotalPulses,
+                    PulsesRemaining = key.TotalPulses,
                     ReserveOpenedMs = nowMs,
                     NextPulseMs = nowMs + EssRules.PulseIntervalMs,
                 };
                 await using (var open = Command(
                     "UPDATE {schema}.systems SET reserve_key_type_id = $2, reserve_pulses_total = $3, reserve_pulses_remaining = $3, reserve_opened_ms = $4, next_pulse_ms = $5 WHERE solar_system_id = $1",
-                    connection, transaction, systemId, request.KeyTypeId, pulses, nowMs, state.NextPulseMs))
+                    connection, transaction, systemId, key.KeyTypeId, key.TotalPulses, nowMs, state.NextPulseMs))
                 {
                     await open.ExecuteNonQueryAsync(cancellationToken);
                 }
@@ -288,22 +311,31 @@ public sealed class PgEssStore
         return result;
     }
 
-    private async ValueTask<bool> LinkAllowedAsync(int systemId, long characterId, long essId, CancellationToken cancellationToken) =>
-        _linkGeometry is not null && await _linkGeometry(systemId, characterId, essId, cancellationToken);
+    /// <summary>The pilot of a character in the system when it may link now (in the system, a linkable ship, within range); null otherwise.</summary>
+    private async ValueTask<EssHolder?> LinkHolderAsync(int systemId, long characterId, long essId, CancellationToken cancellationToken) =>
+        await HolderAsync(systemId, characterId, essId, cancellationToken) is { InSystem: true, LinkableShip: true } holder
+        && holder.DistanceMeters <= EssRules.MaxLinkDistanceMeters
+            ? holder
+            : null;
+
+    private async ValueTask<EssHolder?> HolderAsync(int systemId, long characterId, long essId, CancellationToken cancellationToken) =>
+        _holderOf is null ? null : await _holderOf(systemId, characterId, essId, cancellationToken);
 
     /// <summary>
-    /// What the clock does now: a link that has completed becomes a theft (the thief's wallet gets <see cref="EssRules.ThiefPayout"/>, the bank is emptied) or ends
-    /// if the thief has left, the owner is paid when its time comes, and each Reserve Bank pulse that is due is paid to the linked characters. Systems are worked
-    /// one at a time; a system whose wallet cannot take the money is logged and retried at the next tick.
+    /// What the clock does now. A link is checked on every tick: a thief who has left the system, changed ship, or gone beyond the link range breaks it (the
+    /// client's reasons 1 and 2); a link that completes while its thief is still linked is a theft (the thief's wallet gets <see cref="EssRules.ThiefPayout"/>,
+    /// the bank is emptied, the rest is destroyed). The owner is paid when its time comes (the sovereignty holder when there is one, else the configured owner),
+    /// and each Reserve Bank pulse that is due is paid to the linked characters. Systems are worked one at a time; a system whose wallet cannot take the money is
+    /// logged and retried at the next tick.
     /// </summary>
-    public async Task<IReadOnlyList<EssEvent>> TickAsync(long nowMs, Func<int, long, bool> pilotInSystem, CancellationToken cancellationToken = default)
+    public async Task<IReadOnlyList<EssEvent>> TickAsync(long nowMs, CancellationToken cancellationToken = default)
     {
         var events = new List<EssEvent>();
         foreach (var systemId in await DueSystemsAsync(nowMs, cancellationToken))
         {
             try
             {
-                events.AddRange(await TickSystemAsync(systemId, nowMs, pilotInSystem, cancellationToken));
+                events.AddRange(await TickSystemAsync(systemId, nowMs, cancellationToken));
             }
             catch (Exception error) when (error is WalletNotFoundException or MoneyLimitException or InsufficientFundsException or WalletOperationConflictException or Npgsql.NpgsqlException)
             {
@@ -319,7 +351,7 @@ public sealed class PgEssStore
         await using var command = Command(
             """
             SELECT solar_system_id FROM {schema}.systems
-            WHERE main_link_completes_ms <= $1 OR next_payout_ms <= $1 OR (reserve_pulses_remaining > 0 AND next_pulse_ms <= $1)
+            WHERE main_link_id IS NOT NULL OR next_payout_ms <= $1 OR (reserve_pulses_remaining > 0 AND next_pulse_ms <= $1)
             ORDER BY solar_system_id
             """,
             connection, null, nowMs);
@@ -332,7 +364,7 @@ public sealed class PgEssStore
         return ids;
     }
 
-    private async Task<IReadOnlyList<EssEvent>> TickSystemAsync(int systemId, long nowMs, Func<int, long, bool> pilotInSystem, CancellationToken cancellationToken)
+    private async Task<IReadOnlyList<EssEvent>> TickSystemAsync(int systemId, long nowMs, CancellationToken cancellationToken)
     {
         await using var connection = await _source.OpenConnectionAsync(cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
@@ -342,9 +374,22 @@ public sealed class PgEssStore
         }
         var events = new List<EssEvent>();
 
-        if (state.MainLink is { } link && link.CompletesMs <= nowMs)
+        if (state.MainLink is { } link)
         {
-            if (pilotInSystem(systemId, link.CharacterId))
+            var holder = await HolderAsync(systemId, link.CharacterId, state.EssId, cancellationToken);
+            var breakReason = holder is not { InSystem: true }
+                ? EssRules.UnlinkedProximity
+                : holder.ShipId != link.ShipId
+                    ? EssRules.UnlinkedShipChange
+                    : holder.DistanceMeters > EssRules.MaxLinkDistanceMeters
+                        ? EssRules.UnlinkedProximity
+                        : (int?)null;
+            if (breakReason is { } reason)
+            {
+                state = state with { MainLink = null };
+                events.Add(new EssEvent(EssEventKind.LinkEnded, systemId, link.Id, link.CharacterId, 0, reason));
+            }
+            else if (link.CompletesMs <= nowMs)
             {
                 var taken = state.MainValue;
                 var thiefPayout = EssRules.ThiefPayout(taken);
@@ -357,20 +402,17 @@ public sealed class PgEssStore
                 state = state with { MainValue = 0, MainLink = null, MainThefts = [.. state.MainThefts, new(link.CharacterId, thiefPayout, nowMs)] };
                 events.Add(new EssEvent(EssEventKind.Theft, systemId, link.Id, link.CharacterId, thiefPayout, 0));
             }
-            else
-            {
-                state = state with { MainLink = null };
-                events.Add(new EssEvent(EssEventKind.LinkEnded, systemId, link.Id, link.CharacterId, 0, EssRules.UnlinkedProximity));
-            }
         }
 
         if (state.NextPayoutMs <= nowMs)
         {
-            if (state.OwnerId is { } owner && state.MainValue > 0)
+            var owner = _sovereigntyOwnerOf is null ? null : await _sovereigntyOwnerOf(systemId, cancellationToken);
+            owner ??= state.OwnerId;
+            if (owner is { } payee && state.MainValue > 0)
             {
-                await _wallet.AdjustAsync(connection, transaction, owner, state.MainValue, 0, EssRules.EssRefType, "ESS main bank autopayment",
+                await _wallet.AdjustAsync(connection, transaction, payee, state.MainValue, 0, EssRules.EssRefType, "ESS main bank autopayment",
                     nowMs, $"ess:autopay:{systemId}:{state.NextPayoutMs}", cancellationToken);
-                events.Add(new EssEvent(EssEventKind.Changed, systemId, string.Empty, owner, state.MainValue, 0));
+                events.Add(new EssEvent(EssEventKind.Changed, systemId, string.Empty, payee, state.MainValue, 0));
                 state = state with { MainValue = 0 };
             }
             var next = state.NextPayoutMs;
@@ -416,11 +458,11 @@ public sealed class PgEssStore
         await using (var save = Command(
             """
             UPDATE {schema}.systems SET main_value = $2, reserve_value = $3, main_link_id = $4, main_link_character_id = $5, main_link_started_ms = $6,
-                main_link_completes_ms = $7, next_payout_ms = $8, reserve_pulses_remaining = $9, next_pulse_ms = $10
+                main_link_completes_ms = $7, next_payout_ms = $8, reserve_pulses_remaining = $9, next_pulse_ms = $10, main_link_ship_id = $11
             WHERE solar_system_id = $1
             """,
             connection, transaction, systemId, state.MainValue, state.ReserveValue, state.MainLink?.Id, state.MainLink?.CharacterId,
-            state.MainLink?.StartedMs, state.MainLink?.CompletesMs, state.NextPayoutMs, state.PulsesRemaining, state.NextPulseMs))
+            state.MainLink?.StartedMs, state.MainLink?.CompletesMs, state.NextPayoutMs, state.PulsesRemaining, state.NextPulseMs, state.MainLink?.ShipId))
         {
             await save.ExecuteNonQueryAsync(cancellationToken);
         }
@@ -439,15 +481,15 @@ public sealed class PgEssStore
     private async Task SaveLinkAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, int systemId, EssLinkRecord link, CancellationToken cancellationToken)
     {
         await using var save = Command(
-            "UPDATE {schema}.systems SET main_link_id = $2, main_link_character_id = $3, main_link_started_ms = $4, main_link_completes_ms = $5 WHERE solar_system_id = $1",
-            connection, transaction, systemId, link.Id, link.CharacterId, link.StartedMs, link.CompletesMs);
+            "UPDATE {schema}.systems SET main_link_id = $2, main_link_character_id = $3, main_link_started_ms = $4, main_link_completes_ms = $5, main_link_ship_id = $6 WHERE solar_system_id = $1",
+            connection, transaction, systemId, link.Id, link.CharacterId, link.StartedMs, link.CompletesMs, link.ShipId);
         await save.ExecuteNonQueryAsync(cancellationToken);
     }
 
     private async Task ClearLinkAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, int systemId, CancellationToken cancellationToken)
     {
         await using var clear = Command(
-            "UPDATE {schema}.systems SET main_link_id = NULL, main_link_character_id = NULL, main_link_started_ms = NULL, main_link_completes_ms = NULL WHERE solar_system_id = $1",
+            "UPDATE {schema}.systems SET main_link_id = NULL, main_link_character_id = NULL, main_link_started_ms = NULL, main_link_completes_ms = NULL, main_link_ship_id = NULL WHERE solar_system_id = $1",
             connection, transaction, systemId);
         await clear.ExecuteNonQueryAsync(cancellationToken);
     }
@@ -472,7 +514,7 @@ public sealed class PgEssStore
                 CurrentOutput: reader.GetDouble(5),
                 MainValue: reader.GetDecimal(6),
                 ReserveValue: reader.GetDecimal(7),
-                MainLink: reader.IsDBNull(8) ? null : new EssLinkRecord(reader.GetString(8), reader.GetInt64(9), reader.GetInt64(10), reader.GetInt64(11)),
+                MainLink: reader.IsDBNull(8) ? null : new EssLinkRecord(reader.GetString(8), reader.GetInt64(9), reader.GetInt64(18), reader.GetInt64(10), reader.GetInt64(11)),
                 NextPayoutMs: reader.GetInt64(12),
                 ReserveKeyTypeId: reader.IsDBNull(13) ? null : reader.GetInt64(13),
                 PulsesTotal: reader.GetInt32(14),

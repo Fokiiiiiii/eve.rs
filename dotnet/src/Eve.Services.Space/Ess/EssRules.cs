@@ -21,6 +21,12 @@ public static class EssRules
     /// <summary>The share of a bounty earned in an ESS system that is held in the Main Bank (EVE University wiki: 40%; EveJS <c>bountiesCut</c> 0.4).</summary>
     public const decimal MainBankShare = 0.40m;
 
+    /// <summary>
+    /// The share of a bounty earned in an ESS system that goes into the Reserve Bank. CCP's notes say "a smaller portion" without a number; a community
+    /// test of the high-security bank split reports 5% (forum thread "ESS Reserve Bank: An Underwhelming Design"). Owner decision: confirm this value.
+    /// </summary>
+    public const decimal ReserveBankShare = 0.05m;
+
     /// <summary>The share of the Main Bank a thief receives (EVE University wiki: "about four-fifths").</summary>
     public const decimal ThiefShare = 0.80m;
 
@@ -47,10 +53,21 @@ public static class EssRules
     public const double ReservePayoutExponentTail = 2;
 
     /// <summary>
-    /// The largest payout of one Reserve Bank pulse (EveJS <c>reserveBankMaxPayout</c> 0). No source gives the value, so until an owner decision sets it the
-    /// reserve pays nothing and the pulses only run down.
+    /// The largest payout of one Reserve Bank pulse: 150 million ISK per minute, the peak that CCP's 2021 ESS reserve bank article gives (quoted by
+    /// tagn.wordpress.com, 2021-07-27). The pulse is one minute, so this is the per-pulse cap.
     /// </summary>
-    public const double ReserveBankMaxPayout = 0;
+    public const double ReserveBankMaxPayout = 150_000_000;
+
+    /// <summary>The weapon timer a link starts (CCP patch notes 2021-11-09.1, version 19.10: "a 60-second weapon-timer"); it does not refresh the log-off timer.</summary>
+    public const long WeaponsTimerMs = 60_000;
+
+    /// <summary>
+    /// Where an ESS ball is put in its system: the system's origin. The operator places systems, not positions, so the position is fixed by the rule and is not
+    /// a per-system value.
+    /// </summary>
+    public const double BallX = 0;
+    public const double BallY = 0;
+    public const double BallZ = 0;
 
     /// <summary>The padding added to every pulse's payout (EveJS <c>reservePayoutPaddingValue</c> 0).</summary>
     public const double ReservePayoutPaddingValue = 0;
@@ -61,6 +78,9 @@ public static class EssRules
     /// <summary>Why a link ends (the client's <c>UNLINKED_MANUAL</c>, <c>UNLINKED_PROXIMITY</c>, <c>UNLINKED_SHIP_CHANGE</c>).</summary>
     public const int UnlinkedManual = 0;
     public const int UnlinkedProximity = 1;
+
+    /// <summary>The link ends because the pilot changed ship (the client's <c>UNLINKED_SHIP_CHANGE</c>).</summary>
+    public const int UnlinkedShipChange = 2;
 
     /// <summary>The autopayment window state the client shows (EveJS <c>deriveAutopaymentWindowState</c>; the client's <c>ESS_AUTOPAY_STATE_*</c>).</summary>
     public const int AutopayStateLong = 0;
@@ -77,18 +97,19 @@ public static class EssRules
     public static decimal Money(decimal value) => decimal.Round(Math.Max(0, value), 2, MidpointRounding.AwayFromZero);
 
     /// <summary>
-    /// The split of a bounty earned in a system: the pilot keeps the rest and the Main Bank takes <see cref="MainBankShare"/> when the system has an ESS
-    /// online; with no ESS the pilot keeps all of it.
+    /// The split of a bounty earned in a system: the pilot keeps the rest, the Main Bank takes <see cref="MainBankShare"/> and the Reserve Bank
+    /// <see cref="ReserveBankShare"/> when the system has an ESS online; with no ESS the pilot keeps all of it.
     /// </summary>
-    public static (decimal Pilot, decimal MainBank) SplitBounty(decimal amount, bool essOnline)
+    public static (decimal Pilot, decimal MainBank, decimal ReserveBank) SplitBounty(decimal amount, bool essOnline)
     {
         var total = Money(amount);
         if (!essOnline)
         {
-            return (total, 0m);
+            return (total, 0m, 0m);
         }
         var mainBank = Money(total * MainBankShare);
-        return (total - mainBank, mainBank);
+        var reserveBank = Money(total * ReserveBankShare);
+        return (total - mainBank - reserveBank, mainBank, reserveBank);
     }
 
     /// <summary>What a thief takes from a Main Bank of this value.</summary>
@@ -135,8 +156,8 @@ public static class EssRules
     }
 }
 
-/// <summary>The Reserve Security Keys of the SDE: each opens a Reserve Bank for <see cref="TotalPulses"/> pulses.</summary>
-public sealed record EssReserveKey(long KeyTypeId, int TotalPulses, long LocationListId);
+/// <summary>The Reserve Security Keys of the SDE: each opens a Reserve Bank for <see cref="TotalPulses"/> pulses in its <see cref="Quadrant"/>.</summary>
+public sealed record EssReserveKey(long KeyTypeId, string Quadrant, int TotalPulses, long LocationListId);
 
 /// <summary>The SDE's eight ESS Reserve Security Keys, as <c>tools/dev/extract-ess-reserve-keys.py</c> wrote them into the assembly.</summary>
 public static class EssReserveKeys
@@ -168,8 +189,68 @@ public static class EssReserveKeys
         return [.. document.RootElement.GetProperty("keys").EnumerateArray()
             .Select(key => new EssReserveKey(
                 key.GetProperty("keyTypeId").GetInt64(),
+                key.GetProperty("quadrant").GetString() ?? throw new InvalidOperationException("an ESS key has no quadrant"),
                 key.GetProperty("totalPulses").GetInt32(),
                 key.GetProperty("locationListId").GetInt64()))
             .OrderBy(key => key.KeyTypeId)];
+    }
+
+    /// <summary>The key record of a type, or null when the type is not an ESS reserve key.</summary>
+    public static EssReserveKey? Find(long keyTypeId)
+    {
+        foreach (var key in All)
+        {
+            if (key.KeyTypeId == keyTypeId)
+            {
+                return key;
+            }
+        }
+        return null;
+    }
+}
+
+/// <summary>
+/// The quadrant of each system a reserve key works in (CCP's ESS reserve key article: the systems of SW, SE, NE and NW). A key opens a bank only in a system
+/// of its own quadrant.
+/// </summary>
+public static class EssQuadrants
+{
+    private static readonly Lazy<IReadOnlyDictionary<string, IReadOnlyList<string>>> Embedded = new(Load);
+
+    /// <summary>The system names of each quadrant, as the data file has them.</summary>
+    public static IReadOnlyDictionary<string, IReadOnlyList<string>> ByName => Embedded.Value;
+
+    /// <summary>The quadrant of each solar system id, given the names of the systems (the SDE's names; a name that is in no quadrant is in none).</summary>
+    public static Dictionary<int, string> BySystemId(IReadOnlyDictionary<int, string> namesById)
+    {
+        var quadrantByName = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var (quadrant, names) in ByName)
+        {
+            foreach (var name in names)
+            {
+                quadrantByName[name] = quadrant;
+            }
+        }
+        var result = new Dictionary<int, string>();
+        foreach (var (systemId, name) in namesById)
+        {
+            if (quadrantByName.TryGetValue(name, out var quadrant))
+            {
+                result[systemId] = quadrant;
+            }
+        }
+        return result;
+    }
+
+    private static IReadOnlyDictionary<string, IReadOnlyList<string>> Load()
+    {
+        using var stream = typeof(EssQuadrants).Assembly.GetManifestResourceStream("ess-quadrants.json")
+            ?? throw new InvalidOperationException("ess-quadrants.json is not in the assembly");
+        using var document = JsonDocument.Parse(stream);
+        return document.RootElement.GetProperty("quadrants").EnumerateObject()
+            .ToDictionary(
+                quadrant => quadrant.Name,
+                quadrant => (IReadOnlyList<string>)[.. quadrant.Value.EnumerateArray().Select(name => name.GetString()!)],
+                StringComparer.Ordinal);
     }
 }

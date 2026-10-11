@@ -10,7 +10,8 @@ namespace Eve.Services.Space;
 public sealed class DynamicResourceCacheMgrService(
     Func<ServiceCall, CancellationToken, ValueTask<PyValue?>>? rpcHandler = null,
     Func<long, CancellationToken, ValueTask<EssMgrSystemData?>>? readSystem = null,
-    Func<CancellationToken, ValueTask<IReadOnlyList<EssMgrSystemData>>>? listSystems = null) : IService
+    Func<CancellationToken, ValueTask<IReadOnlyList<EssMgrSystemData>>>? listSystems = null,
+    Func<int, string?>? quadrantOf = null) : IService
 {
     private static readonly (string Name, double Value)[] DefaultSettings =
     [
@@ -93,11 +94,13 @@ public sealed class DynamicResourceCacheMgrService(
 
     private async ValueTask<PyValue> ReserveKeysAsync(ServiceCall call)
     {
-        // every SDE key is listed for an ESS system: the quadrant of each key is not in the committed data (see DEVIATIONS)
-        var state = readSystem is null ? null : await readSystem(SystemIdArgument(call), call.Cancellation);
-        return state is null
+        // the keys of the system's quadrant (CCP's ESS reserve key article); a system in no quadrant lists none
+        var systemId = SystemIdArgument(call);
+        var state = readSystem is null ? null : await readSystem(systemId, call.Cancellation);
+        var quadrant = quadrantOf?.Invoke((int)systemId);
+        return state is null || quadrant is null
             ? new PyList([])
-            : new PyList([.. EssReserveKeys.All.Select(key => (PyValue)Py.Number(key.KeyTypeId))]);
+            : new PyList([.. EssReserveKeys.All.Where(key => key.Quadrant == quadrant).Select(key => (PyValue)Py.Number(key.KeyTypeId))]);
     }
 
     private static long SystemIdArgument(ServiceCall call) => call.Args.Count > 0 && call.Args[0] is PyInt { Value: > 0 } id ? id.Value : 0;

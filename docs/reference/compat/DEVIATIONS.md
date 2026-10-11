@@ -2603,6 +2603,8 @@ Focused PostgreSQL verification: Station 28/28, selected Space docking/undocking
 
 ## Encounter Surveillance System: Main Bank, Reserve Bank and the clock (ESS-1, 2026-10-11)
 
+> Superseded in part by "Encounter Surveillance System, slice ESS-2" below: the Reserve Bank share and maximum payout, the link breaks, the ESS ball, the quadrant gate, key consumption, the weapon timer and the owner rule are now as ESS-2 states.
+
 Sources: the EVE University wiki page "Encounter Surveillance System" (revision oldid 229695, 4 March 2026); CCP patch notes 18.11 (2020), 19.06, 19.10 and 23.01; the client's `dynamicresources/common/ess` (`const.py`, `formulas.py`), `dynamicresources/client/ess` (the main and reserve bank states), `dynamicResourceSvc.py`; EveJS `dynamicResourceState.js`, `essMgrService.js`, `bountyRuntime.js`; the pinned SDE (type list 231 `ESSLinkableShips`, the eight `essReserveKeys`).
 
 The client's RPC names, notification names and fields, unlink reasons and link errors are taken from the client code. The reserve keys are committed as `dotnet/src/Eve.Services.Space/Ess/Data/ess-reserve-keys.json`, written by `tools/dev/extract-ess-reserve-keys.py` from the SDE.
@@ -2673,3 +2675,53 @@ The client's RPC names, notification names and fields, unlink reasons and link e
 - **Completion and standings in one transaction.** `AgentMissionStore.CompleteInAsync` writes the completion inside the caller's transaction; the host adds the relations standing changes to the same transaction and commits; the commit notice is raised after the commit. Status: decided; the rollback path is not tested.
 - **Named errors and dispatch.** `DoAction`, `GetMissionBriefingInfo` and `GetMissionObjectiveInfo` are listed in the agent service's `HasMethod` (the dispatcher refuses an unlisted method before `CallAsync`). Status: fixed.
 - **Fetch and courier objectives (item 2).** Not built: a fetch objective needs the item in the pilot's cargo and a turn-in at the agent, a courier one needs a pickup and a drop-off; the objective payload still lists none. Status: OPEN.
+
+## Encounter Surveillance System, slice ESS-2 (2026-10-11)
+
+ESS-2 closes the cut list of ESS-1. The numbers below replace the ESS-1 zeros; each states its source and how sure the source is.
+
+### Sourced values (changed from ESS-1)
+
+| Number | Value | Source and the rule used |
+|---|---|---|
+| Reserve share of a bounty in an ESS system | 5% (the pilot keeps 55%, the Main Bank 40%) | CCP's ESS update calls it "a smaller portion" without a number. The only figure is a community test of the high-security split, reported in the forum thread "ESS Reserve Bank: An Underwhelming Design, And What It Could Have Been" (5% reserve, 35% main there, against the wiki's 40% main here). Kept as the one numeric source; a weak one. Owner decision 2. |
+| Reserve Bank maximum payout per pulse | 150,000,000 ISK | CCP's 2021 ESS reserve bank key article as quoted at tagn.wordpress.com (2021-07-27): "a potential peak payout of 150 million ISK per minute". The pulse is one minute. The article calls it a peak, so it is used as the per-pulse cap. |
+| Key duration (pulses) | 15 or 45 minutes = 15 or 45 pulses | SDE `totalPulses` 15/45, and CCP's article "the durations, 15 and 45 minutes", at one pulse a minute: the two sources agree. |
+| Key quadrant | NW, NE, SE, SW (the SDE names `ESS-NW-15 Reserve Security Key` and so on) | The English names in `sde.types`, written into `Ess/Data/ess-reserve-keys.json` by `tools/dev/extract-ess-reserve-keys.py`. |
+| System quadrant | the SW/SE/NE/NW lists of CCP's article (as quoted by tagn.wordpress.com) | `Ess/Data/ess-quadrants.json`; names resolved to ids from `sde."mapSolarSystems"` when an ESS is placed. The article's NW list names 11 systems although its text says ten; all 11 are used. |
+| Key consumption | one key of the type is taken from the pilot's inventory per bank opened | CCP's update calls the key "a consumable key". The unlock is refused when the pilot holds none. |
+| Weapon timer on linking | 60 seconds, not refreshing the log-off timer | CCP patch notes 2021-11-09.1 (version 19.10): "linking to an ESS now gives a 60-second weapon-timer and does not refresh the Capsuleer Log-Off Timer". |
+| Link range | 10 km (client `ESS_MAX_LINK_DISTANCE_METERS`) | Unchanged from ESS-1. |
+| Link break reasons | out of range (1), ship change (2) | The client's `UNLINKED_PROXIMITY` and `UNLINKED_SHIP_CHANGE` with their texts (`text.py`). The wiki says leaving 10 km resets the countdown; the client's reason says the link is broken. The break is used (the client's text is the evidence), so the countdown reset is not. |
+| Owner | the alliance that holds the system's sovereignty (`sovereignty.systems[id].allianceID` in the game store), else the operator's `ownerId` | Coordinator decision 1. The sovereignty row names the holder; the operator entry is the fallback. |
+| Unclaimed 20% after a theft | destroyed | Coordinator decision 3 (the wiki gives no destination). |
+| Journal reference | 155 for owner payouts, thefts and reserve payouts | Coordinator decision 5: the client defines no other ESS reference. |
+
+### The ESS ball
+
+The ESS is a ball in space (`SimPlaceStructure`, the simulation's machinery for a structure body) at the system's origin (0, 0, 0, the rule; the operator places systems, not positions), with the type's hit points and radius (dogma attributes 263, 265, 9, 162, as the structures track reads them), group 4079 from the SDE, and state `ShieldVulnerable` with upkeep `FullPower` (the normal state of an anchored body). It is placed when the host starts, for each registered ESS. The ball is not a structure record: it is not in the structures table and cannot be anchored, attacked or repaired.
+
+### What a link needs now
+
+The holder is the pilot as the simulation sees it (`SpaceSessions.EssHolderAsync`): in the system; the ship's type is in the SDE type list 231 (`ESSLinkableShips`); the ship is within 10 km of the ESS ball. A link records the ship; a later tick breaks it when the pilot is no longer in the system (reason 1), has changed ship (reason 2), or is beyond 10 km (reason 1). A link that completes while its thief is still linked is a theft.
+
+### Smaller changes
+
+- The NPC bounty split is three-way: pilot 55%, Main Bank 40%, Reserve Bank 5%. The bank credits commit with the pilot's bucket.
+- The reserve's key must match the system's quadrant, and the reserve pays the linked characters from its own balance, capped by the reserve value.
+- `GetESSReserveBankKeys` lists the keys of the system's quadrant only (a system in no quadrant lists none).
+- The weapon timer is set in the crimewatch state when a link is made (`CombatState.WeaponsUntilMs`).
+
+### Remaining cuts and why
+
+- The live walk (link, theft, payout) was not run. The walk character holds a rookie hull, which is not on the linkable list, and the host has no way to grant a linkable ship to a test character. The 9900-second payout cannot be waited for live either. The clock is covered by `PgEssStoreTests` against PostgreSQL, and the live check covers the placed ESS (the cache, the agency data, the reserve keys, the refused link on an unlinkable character).
+- Key consumption and the bank opening are two steps: the key is taken before the ESS transaction commits, so a failure in between loses the key. Making them one transaction needs the item store and the ESS store to share a transaction.
+- Graphical-client acceptance: not run.
+
+### Owner decisions (still open)
+
+1. Confirm the 5% reserve share (community test only; the CCP notes give no number).
+2. Confirm that the 150,000,000 ISK per minute peak is a per-pulse cap, not a maximum total.
+3. Confirm the quadrant lists (the article's NW list has 11 names, its text says ten).
+4. Whether a key should be consumed when the pilot has it in a container, not only in the hangar (the implementation takes it from any stack the character owns).
+

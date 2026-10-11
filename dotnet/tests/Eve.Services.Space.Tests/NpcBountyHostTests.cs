@@ -38,7 +38,8 @@ public class NpcBountyHostTests
         var spawn = await SpawnAsync(rig, session, "Blood Visionary");
 
         rig.Sim.Say(Destroyed(spawn, c.ShipId));
-        await Rig.UntilAsync(() => rig.Bounties.PendingAsync().Result.Count == 1);
+        // the notification follows the bucket's commit by a moment: wait for the notification itself, then read the bucket
+        await Rig.UntilAsync(() => Events.Of(session).Any(e => e.Name == "OnBountyAddedToPayout") && rig.Bounties.PendingAsync().Result.Count == 1);
 
         var told = Events.Of(session).Single(e => e.Name == "OnBountyAddedToPayout");
         Assert.Equal("charid", told.IdType);

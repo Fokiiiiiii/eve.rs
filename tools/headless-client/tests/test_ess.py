@@ -40,6 +40,8 @@ ESS_KEYS = {
 }
 DETAIL_KEYS = {"autopaymentWindowState", "activeLinks", "totalPulses", "reserveTimeWindowState", "reserveTimeChosen"}
 SDE_RESERVE_KEYS = {57714, 57715, 57716, 57717, 57718, 57719, 57720, 57721}
+# the 15 and 45 keys of each quadrant (SDE names ESS-NW-15, ESS-NW-45 and so on)
+QUADRANT_KEY_PAIRS = [{57714, 57715}, {57716, 57719}, {57717, 57718}, {57720, 57721}]
 
 
 def _placed_entry() -> tuple[int, int] | None:
@@ -79,7 +81,8 @@ def test_a_docked_character_reads_its_systems_ess_as_the_client_does():
         assert (data["essID"], data["solarSystemID"]) == (ess_id, ess_system)
         assert data["mainBankLink"] is None and data["reserveBankActiveLinks"] == 0
         assert data["mainValue"] == 0 and data["reserveValue"] == 0
-        assert set(keys) == SDE_RESERVE_KEYS, "every SDE key is offered in an ESS system (quadrant gate not implemented)"
+        # the keys of the system's quadrant: the 15 and the 45 variant of one quadrant, or none when the system is in no quadrant
+        assert keys == [] or set(keys) in QUADRANT_KEY_PAIRS, keys
         assert details["autopaymentWindowState"] == 0, "an empty Main Bank has the long autopayment window"
 
         # a link the client asks for: refused here (no ESS in space), answered with None and no change to the state

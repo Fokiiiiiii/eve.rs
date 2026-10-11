@@ -379,7 +379,8 @@ async fn the_second_client_is_told_how_many_users_are_on() {
     let host = fake_host().await;
     let front = start_front(&host, ServeConfig::default()).await;
     let first = connect(&front, "one").await;
-    assert_eq!(dict_get(&first.session.handshake, "cluster_usercount").and_then(int_of), Some(0));
+    // no session was open before this login; the reference still reports one user (EveJS getClusterUserCount)
+    assert_eq!(dict_get(&first.session.handshake, "cluster_usercount").and_then(int_of), Some(1));
     tokio::time::sleep(Duration::from_millis(50)).await;
     let second = connect(&front, "two").await;
     assert_eq!(dict_get(&second.session.handshake, "cluster_usercount").and_then(int_of), Some(1));

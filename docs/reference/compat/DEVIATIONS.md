@@ -2418,3 +2418,12 @@ Focused PostgreSQL verification: Station 28/28, selected Space docking/undocking
 - **Outcome.** `completed` credits the SDE base reward when its type is ISK (29) and completes the mission; `failed`, `abandoned` and `expired` fail it (state Failed, which the offer rule re-offers) and pay nothing. The EveJS failure and quit penalties are not carried. Status: decided; the penalties are OPEN.
 - **Reward ISK.** One wallet adjustment with the agent corporation as counterparty, reference type 33 (`AGENT_MISSION_REWARD`, EveJS `walletState.js:53`) and the key `agent-mission:{character}:{mission}:{instance}`, so a replayed outcome credits nothing. The bonus (`bonusReward`, type 34 when paid) and the time window are not paid. Status: decided; bonus OPEN.
 - **LP not paid.** The SDE gives no LP base for basic missions (`fixedLpRewardAlpha/Omega` are per record and not established); `LoyaltyPointStore.ApplyAsync` is not called for missions. Status: OPEN (decision D-R1).
+
+
+## Mission execution X2: basic level 4 and 5 kill missions (2026-10-11)
+
+- **Pool.** A basic security agent (agent type 2, division 24, kind `encounter`, `AgentMissionKindRules`) of level 4 or 5 offers the lowest kill mission of its own level that the pilot has not completed. The level is the committed tag (`mission-level-tags.v1.json`; the owner's rule; 191 level-4 and 133 level-5 kill missions outside the arcs, the owner's count). A dungeon whose start is refused (no template, or a spawn query the NPC authority does not resolve) is not offered. Level 3 and below are not offered (cut line). Status: decided; the lowest-ID choice is eve.rs's deterministic rule.
+- **Composition.** The dungeon is the catalog's wave data (owner decision): the official data gives no composition for these missions (`MissionDataGaps.KillDungeonContent`). Status: decided.
+- **Replay.** A completed mission is not offered again (the pool is exhausted after one completion each). EveJS replays basic missions after its replay delay; that delay and the reward-free replays are not modelled. Status: OPEN.
+- **Reward.** The official data holds no ISK for these missions (basic `missionRewards` are absent or not ISK), so completion pays nothing; the LP base is not in official data (D-R1). Status: OPEN (owner decision D-R1).
+

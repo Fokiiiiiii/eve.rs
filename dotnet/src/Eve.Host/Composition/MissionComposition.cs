@@ -250,13 +250,17 @@ internal sealed partial class CharacterServicesComposition
                     return level;
                 },
                 corporationId => npcFactions.GetValueOrDefault(corporationId),
-                // the offer is the next step of the agent's epic arc (EpicArcOffers): the official arc sequence, with the held-back sites
-                // kept out (owner decision). Basic agents have no official mission link yet, so they offer nothing.
+                // the offer is the next step of the agent's epic arc (EpicArcOffers: the official arc sequence, the held-back sites kept
+                // out by owner decision), else the basic kill mission of a level 4 or 5 security agent (BasicKillOffers). Other basic
+                // agents have no official mission link and offer nothing.
                 async ValueTask<Eve.Agents.AgentMissionContent?> (AgentMissionAgentData agent, long characterId, CancellationToken ct) =>
                 {
                     var completed = await agentMissionStore.ReadCompletedAsync(characterId, ct);
                     var now = DateTimeOffset.UtcNow;
-                    if (Eve.Services.Core.EpicArcOffers.Pick(agentMissionStatic, agent.AgentId, completed, now) is not { } missionId ||
+                    var completedIds = completed.Select(item => item.MissionId).ToHashSet();
+                    if ((Eve.Services.Core.EpicArcOffers.Pick(agentMissionStatic, agent.AgentId, completed, now) ??
+                            Eve.Services.Core.BasicKillOffers.Pick(agentMissionStatic, agent, completedIds,
+                                dungeon => dungeonWavesDirector?.StartRefusalOf(dungeon) is null)) is not { } missionId ||
                         agentMissionStatic.Mission(missionId) is not { } mission)
                         return null;
                     return new Eve.Agents.AgentMissionContent(mission.MissionId, mission.NameId, mission.NameEn, "", false);

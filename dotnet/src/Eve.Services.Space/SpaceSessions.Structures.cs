@@ -13,6 +13,12 @@ public sealed partial class SpaceSessions
     public Func<long, long, CancellationToken, Task<bool>>? StructureDockingAllowedAsync { get; set; }
 
     /// <summary>
+    /// Puts the structures of a system in the simulation (ST-3 b: an undock from a structure needs its ball in the scene). Set by the host from the
+    /// structure restore of ST-1 d, which places a system's structures once; the restore is idempotent.
+    /// </summary>
+    public Func<int, CancellationToken, Task>? PlaceStructuresAsync { get; set; }
+
+    /// <summary>
     /// <c>structureDocking.Dock(structureID, shipID)</c> (ST-3 a): the pilot asks to dock at a structure. Another ship, an unknown structure, a character
     /// without the docking access and a criminal timer are refused (EveJS structureDockingService.Handle_Dock). Out of range the ship goes to the structure
     /// on its own and the client is told the distance (DockingApproach); in range the simulation accepts the docking, and the ship is put in the structure's
@@ -73,4 +79,17 @@ public sealed partial class SpaceSessions
 
     private static MachoWrappedException DockingRequestDenied(string reason) =>
         MachoErrors.ThrowUserError("DockingRequestDenied", ("reason", new PyStr(reason)));
+
+    /// <summary>
+    /// <c>structureDocking.Undock(structureID, shipID, ignoreContraband=)</c> (ST-3 b): the pilot leaves the structure it is docked in. Another structure or
+    /// ship is refused as the reference refuses it (DeniedShipChanged). The ship is put in space near the structure
+    /// (<c>scene/docking.rs</c> undock point, DEVIATIONS "Structure docking and hangars (ST-3)"). Contraband is not inspected: the server has no inspection for
+    /// a station either.
+    /// </summary>
+    public Task UndockStructureAsync(ClientSession session, long structureId, long shipId, CancellationToken cancellationToken)
+    {
+        if (session.GetInt("structureid") != structureId || (shipId > 0 && session.GetInt("shipid") is { } active && active != shipId))
+            throw MachoErrors.ThrowUserError("DeniedShipChanged");
+        return UndockFromAsync(session, "structureid", null, cancellationToken);
+    }
 }

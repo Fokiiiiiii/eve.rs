@@ -18,7 +18,7 @@ Do not fabricate successful state or fake backends to close these items.
 | Status | Service/method | Missing work |
 |---|---|---|
 | FUTURE | machoNet single sign-on login (`connection.LoginSso`, the `user_sso_token` of `machoNet.Authenticate`) | The acknowledgement now carries `access_token` and `computer_hash` (None), so the client no longer fails on the keys. The token is not read: EveJS records it only (`authenticationService.js:281`), and no token-to-account rule exists. Needs a decision on how a CCP SSO token maps to an account. |
-| OPEN | `insurgencySolarsystem.GetAllVisibleCampaigns`; `GetLocalCampaignClientSnapshot` | Connect a campaign snapshot producer equivalent to EveJS's Insurgency runtime controller. The route and callback boundary exist, but no campaign producer was found in `dotnet/src`. |
+| PARTLY | `insurgencySolarsystem.GetAllVisibleCampaigns`; `GetLocalCampaignClientSnapshot`; campaign notices | The campaign state machine, store and deadline jobs exist (section 49, `Eve.Insurgency`); the snapshot reads them through the Host and the notices go to covered systems. Open: a start trigger (no client or operator path starts a campaign, Q-INS-4), the FOB structure (structures owner; `structureID` is None until then), point producers (C-P1: corruption and suppression sites, spread), and the public gateway for per-system bars (C-G1, not built; see section 49). |
 | OPEN | `essMgr.GetDataForClientSolarSystem`; `GetMainBankTheftsForClientSolarSystem`; `GetReserveBankTheftsForClientSolarSystem`; `RequestMainBankUnlink`; `RequestReserveBankUnlink` | Connect the real ESS state and operation backend to `ReadSystemStateAsync` and `ExecuteAsync`. Do not synthesize thefts or unlink success. |
 | OPEN | `abyssalMgr.ClientIsReady` | Connect the runtime client-ready path and automatic trace activation. No Abyssal runtime provider was found in the current C# source. |
 | OPEN | `scanMgr.SignalTrackerRegister` | The Host can record the character/session/system registration and has a full-state publish hook. The live signal snapshot producer and the code that calls the publisher are still absent. |
@@ -1228,3 +1228,22 @@ Plan: scratchpad `specs/structures_phase.md`, ST-3. Handoff: `docs/project/hando
 | OPEN | (c) the drop at the end of an unanchoring: hull item, container 10167 with the attached items, the quantum core, rigs destroyed; in the same transaction as the removal | ST-2 | NOT STARTED. Wiki gives only "7 days" and "rigs will be lost"; EveJS `structureAssetSafetyState.js` 1075-1422 decides. Next step in handoff-ST-2.md item 1. Today the structure leaves the simulation and the directory, items stay. |
 | VERIFIED (tests) | (d) `structure.notify`: `OnStructureStateChanged` and `OnCorporationStructuresUpdated` to the owner corporation, `OnCurrentStructureStateChanged` to the pilots docked in the structure, nothing to a stranger, nothing for a change the client does not show | `Persistence/Structures/StructureNotifications.cs`, `Composition/StructureComposition.cs` | `StructureNotificationsTests` (1). Sessions whose ship id is the structure: ST-5. |
 | UNVERIFIED | Anchor and notices on the graphical client (placement shading, the anchoring bracket, the reinforcement window) | MITM | Not verified on the client. |
+
+## 49. Pirate insurgency campaigns, C-M1 and C-S1 (2026-10-11)
+
+Plan: scratchpad `work/missions-hard-first-plan.md` track C; decisions in DEVIATIONS.md "Insurgency campaigns (C-M1, C-S1)". Gateway feasibility: scratchpad `work/insurgency-gateway-spike.md`.
+
+| status | item | where | note |
+|---|---|---|---|
+| DONE (tests) | Campaign state machine with the 24.01 numbers: forecast 48 h, active to 7 days from the start, no winner at the maximum, wind-down 48 h after any end, ambition 5 to 10 systems, FOB reinforcement 2 to 4 h (rule only), spread level 3 and contribution LP constants (rule only) | `dotnet/src/Eve.Insurgency/InsurgencyRules.cs`, `InsurgencyCampaign.cs` | `CampaignMachineTests` (10 pure tests, 6 PostgreSQL tests in `InsurgencyCampaignTests`) |
+| DONE (tests) | Store, deadline jobs (one durable job per campaign), restart keeps the expiry, points refused unless active and covered, win updates the ambition in the same transaction | `Eve.Insurgency/InsurgencyStore.cs`, `InsurgencyCampaigns.cs`, `Migrations/0001_insurgency.sql` (schema `insurgency`) | Scheduler and events are the Host's |
+| DONE (tests) | `GetAllVisibleCampaigns` and `GetLocalCampaignClientSnapshot` read the store through the real Host composition (structure of the snapshot, `structureID` None, `[systemID, None]` outside covered systems) | `dotnet/src/Eve.Host/Composition/InsurgencyComposition.cs`, `CoreRpc.cs`; `Eve.Host.Tests/InsurgencyCompositionTests` | |
+| DONE (code, tests pending live) | Campaign notices after commit: started, updated, ending for covered systems; state changed and system fully corrupted or suppressed for every pilot | `InsurgencyComposition.cs` (`NotifyCampaignChanged`, `NotifyPointScored`) | Client text and handling not checked in the graphical client |
+| OPEN | Start trigger for a campaign | none | Q-INS-4: no source names it. `InsurgencyCampaigns.StartAsync` exists; no client or operator path calls it |
+| OPEN | FOB structure and its signals | structures owner | `structureID` is None; the campaign does not yet react to the FOB's destruction or reinforcement |
+| OPEN | Point producers (C-P1): site completions, spread at level 3, top stage | next slice | `ScorePointAsync` exists and is tested; no caller in the server |
+| BLOCKED | Public gateway for corruption and suppression (C-G1) | spike | Native transport absent from the snapshot; see the spike file |
+| OPEN | Victory payouts (C-V1) | next slice | Constants only (1,500,000 LP cap, 1x and 0.4x); no LP is credited |
+
+## 49. Host start-up: shared container type names (2026-10-11)
+| DONE (tests, live run) | Host start-up no longer throws on a container type name that several SDE types share (Secure Depot and about 40 more in groups 306, 314, 1207): the published type, then the lowest type id, is kept and each skipped type is logged. Tests: `SiteContainerTypesTests`. |

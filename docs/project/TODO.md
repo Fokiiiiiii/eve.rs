@@ -1173,3 +1173,7 @@ Open:
 | OPEN | Structure placement on anchoring (ST-2) and the slim `repairing`/`unanchoring` fields | ST-2 | A structure anchored with a pilot in the system is not shown until the next entry. |
 | WRITTEN, NOT RUN LIVE | (e) headless scenario `tools/headless-client/tests/test_structures.py`: a pilot in a system with an imported Astrahus sees it in the ballpark with its state and timer | ST-1 (e) | Collects and skips without `EVE_LIVE_HOST` and the structure's environment; no live server has run it. |
 | UNVERIFIED | Client behaviour of a structure's dock (`OnDockingAccepted` and the docked session), the damage the ball shows, the state label | MITM | Not verified on the graphical client. |
+
+## 46. Host start-up: shared container type names (2026-10-11)
+
+| DONE (tests, live run) | Host start-up no longer throws on a container type name that several SDE types share (Secure Depot and about 40 more in groups 306, 314, 1207): the published type, then the lowest type id, is kept and each skipped type is logged. Tests: `SiteContainerTypesTests`. |

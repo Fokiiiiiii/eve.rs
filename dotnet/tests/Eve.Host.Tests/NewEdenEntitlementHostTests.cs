@@ -64,8 +64,21 @@ public sealed class NewEdenEntitlementHostTests : IAsyncLifetime
             await using var source = NpgsqlDataSource.Create(Eve.Data.PgConnection.ToConnectionString(url));
             foreach (var schema in _schemas)
             {
-                await using var command = source.CreateCommand($"DROP SCHEMA IF EXISTS {schema} CASCADE");
-                await command.ExecuteNonQueryAsync();
+                // a background job of this run may still hold a lock on the scratch schema: the drop is retried when the server
+                // picks it as the deadlock victim (SQLSTATE 40P01), and fails the test when it keeps failing
+                for (var attempt = 1; ; attempt++)
+                {
+                    try
+                    {
+                        await using var command = source.CreateCommand($"DROP SCHEMA IF EXISTS {schema} CASCADE");
+                        await command.ExecuteNonQueryAsync();
+                        break;
+                    }
+                    catch (PostgresException error) when (error.SqlState == "40P01" && attempt < 5)
+                    {
+                        await Task.Delay(TimeSpan.FromSeconds(attempt));
+                    }
+                }
             }
         }
         foreach (var (name, value) in _saved) Environment.SetEnvironmentVariable(name, value);

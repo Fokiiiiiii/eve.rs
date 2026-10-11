@@ -240,7 +240,8 @@ public sealed class AgentMissionService(
             ?? throw MachoErrors.ThrowUserError("CustomInfo", ("info", new PyStr("That agent is not known.")));
         var atLocation = isAtAgentLocation?.Invoke(characterId, agentId, call.Session) == true;
         var step = await _dialogue.StepAsync(
-            characterId, agent, call.Args.Count > 0 ? call.Args[0] : PyNone.Instance, atLocation, call.Cancellation);
+            characterId, agent, call.Args.Count > 0 ? call.Args[0] : PyNone.Instance, atLocation, call.Cancellation,
+            call.Session.DockedLocationId ?? 0);
         if (step.Reply is { } reply) return reply.ToWire();
         // The client is asked first: the window gets the provisional answer now, and the reply when the client has answered.
         var prompt = step.Prompt!;

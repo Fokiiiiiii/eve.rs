@@ -200,6 +200,9 @@ internal sealed partial class CharacterServicesComposition
             ReadSolarSystemOfAgent: (agentId, _) => ValueTask.FromResult<long?>(
                 agentMissionAgentById.TryGetValue(agentId, out var agent) ? agent.SolarSystemId : null),
             ReadHeldMission: ReadHeldMissionAsync);
+        // the R&D agents: the science fields from the SDE, and the datacore purchase in the store's transaction (AG-4 / A6)
+        var researchPort = new PersistenceAgentResearch(source, agentResearchProjects, economyWallets, items, itemTypes, characterSessions,
+            await PersistenceAgentResearch.LoadFieldsAsync(sde, CancellationToken.None), () => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
         agentMissionService = new AgentMissionService(
             async (characterId, ct) =>
             {
@@ -277,7 +280,7 @@ internal sealed partial class CharacterServicesComposition
                         ? agent.SolarSystemId is { } system && spaceSessions is not null && spaceSessions.IsPilotInSystem(characterId, (int)system)
                         : atLocation;
                     await missionDungeons.OnConversationAsync(characterId, agent.AgentId, together, ct);
-                }));
+                }, researchPort));
         await AttachMissionDungeonsAsync();
     }
 

@@ -985,7 +985,9 @@ Slice A9, part 1 (2026-10-11): DONE for the offers: ESI's official offers cached
 ## Agents slice AG-4 (2026-10-11)
 
 A4 client dialog path done: deferred `DoAction` with the client's YesNo (`SendClientCall`, `Provisional`); decline and quit
-confirmations use it (DEVIATIONS "Agents slice AG-4, A4"). Next: research buttons 12 to 14, locator 15 to 17, live coverage.
+confirmations use it (DEVIATIONS "Agents slice AG-4, A4").
+A6 research buttons 12 to 14 done: field choice, cancel, datacores from the SDE link, the purchase in one transaction (DEVIATIONS
+"Agents slice AG-4, A6 ..."). Open: research missions. Next: locator 15 to 17, live coverage.
 
 ## Agents slice AG-3 (2026-10-11)
 

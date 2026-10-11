@@ -138,7 +138,8 @@ public class MachoNetServiceTests
         Assert.Equal(new PyInt(3_500_000), defaults["HyperNetPlexPriceOverride"]);
         Assert.Equal(new PyInt(1), defaults["SkillPurchaseEnabled"]);
         Assert.Equal(new PyInt(1), defaults["expert_system_feature_enabled"]);
-        Assert.Equal(8, defaults.Count);
+        // the 8 base keys and the 7 New Eden Store keys (their values: NewEdenStoreHostTests)
+        Assert.Equal(15, defaults.Count);
 
         var changed = GlobalConfig.Build(new ClusterOptions
         {

@@ -181,6 +181,23 @@ public sealed class CosmicSiteDirectorTests
     }
 
     [PgFact]
+    public async Task A_system_nobody_is_in_gets_no_site_and_the_first_pilot_brings_them()
+    {
+        await using var rig = await SiteRig.CreateAsync();
+        var empty = rig.NewDirector(_ => false);
+        await using (var connection = await rig.Source.OpenConnectionAsync())
+        await using (var transaction = await connection.BeginTransactionAsync())
+        {
+            await empty.FillAsync(connection, transaction, NullSystem);
+            await transaction.CommitAsync();
+        }
+        Assert.Empty(await empty.ActiveAsync(NullSystem));
+
+        await rig.FillAsync(NullSystem, rig.NewDirector(_ => true));
+        Assert.Equal(4, (await rig.Director.ActiveAsync(NullSystem)).Count);
+    }
+
+    [PgFact]
     public async Task The_probe_source_lists_each_signature_of_the_system_by_its_code_with_the_strength_of_its_level()
     {
         await using var rig = await SiteRig.CreateAsync();
@@ -274,7 +291,7 @@ public sealed class CosmicSiteDirectorTests
         }
 
         /// <summary>A director over the same stores (what a restarted host makes).</summary>
-        public CosmicSiteDirector NewDirector() => new(Source, Content, Scheduler, SiteTemplates.Load(), new FixedAnchors(), Systems);
+        public CosmicSiteDirector NewDirector(Func<int, bool>? occupied = null) => new(Source, Content, Scheduler, SiteTemplates.Load(), new FixedAnchors(), Systems, occupied: occupied);
 
         public void Advance(TimeSpan span) => _now += (long)span.TotalMilliseconds;
 
@@ -300,11 +317,11 @@ public sealed class CosmicSiteDirectorTests
             await RunDueAndDeliverAsync();
         }
 
-        public async Task FillAsync(int solarSystemId)
+        public async Task FillAsync(int solarSystemId, CosmicSiteDirector? director = null)
         {
             await using var connection = await Source.OpenConnectionAsync();
             await using var transaction = await connection.BeginTransactionAsync();
-            await Director.FillAsync(connection, transaction, solarSystemId);
+            await (director ?? Director).FillAsync(connection, transaction, solarSystemId);
             await transaction.CommitAsync();
         }
 

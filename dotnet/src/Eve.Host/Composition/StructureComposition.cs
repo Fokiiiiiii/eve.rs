@@ -69,6 +69,20 @@ internal sealed partial class CharacterServicesComposition
             await structureStore.OnlineSinceAsync(connection, null, (int)solarSystemId, Eve.Structures.StructureServiceIds.CynoJammer, token), now());
     }
 
+    /// <summary>Whether standard cynosural fields are refused in the system (its jammer runs: the state is 0).</summary>
+    private async ValueTask<bool> CynoJammedAsync(long solarSystemId, CancellationToken token) => await CynoJammerOnlineSimTimeAsync(solarSystemId, token) == 0;
+
+    /// <summary>The structure a cyno beacon jump names, as the beacon travel checks it: its type, its system and its Cyno Beacon service (null when it is gone).</summary>
+    private async ValueTask<Eve.Services.Space.StructureBeaconInfo?> StructureBeaconAsync(long structureId, CancellationToken token)
+    {
+        await using var connection = await source.OpenConnectionAsync(token);
+        if (await structureStore.GetAsync(connection, null, structureId, false, token) is not { } record || record.Snapshot.DestroyedMs > 0)
+            return null;
+        var services = await structureStore.ServicesAsync(connection, null, structureId, token);
+        return new Eve.Services.Space.StructureBeaconInfo(record.TypeId, record.SolarSystemId,
+            services.GetValueOrDefault(Eve.Structures.StructureServiceIds.CynoBeacon) == Eve.Structures.ServiceState.Online);
+    }
+
     private async Task StructureRecords()
     {
         // ST-0: the structures schema owns the records; the game store's table is copied in once (ADR 0003 rule 3: the bridge is the importer, not a read path)
@@ -116,6 +130,9 @@ internal sealed partial class CharacterServicesComposition
         if (spaceSessions is not null)
             spaceSessions.StructureExistsAsync = async (structureId, cancellationToken) =>
                 await structureDirectoryReadModel.GetStructureInfoAsync(structureId, cancellationToken) is { PersistentlyDeployed: true };
+        // E-03: a cynosural field is refused in a system its jammer runs in (the state is 0 once the warm-up has passed)
+        if (spaceSessions is not null)
+            spaceSessions.CynoJammedAsync = CynoJammedAsync;
         structureProfilesRpcBackend = new Eve.Host.PersistenceStructureProfilesRpcBackend(
             ReadGameStoreTableAsync, mailCache, characterSessions, SetStructureProfileAsync);
         structureCompression = new StructureCompressionAuthority(source, structureStore, items, dogma, sde, skills);

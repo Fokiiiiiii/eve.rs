@@ -1075,16 +1075,16 @@ Sources, in the order of the rule. SDE (sde.types and sde."typeDogma", the build
   (`objectCaching.py:222-225`). Building the remote service would answer calls nobody makes. The reference's proxy cache
   (`proxyCache: true` in `beyonceService.js:2482`, `mapService.js:755`, `corpService.js:590`, `agentMgrService.js:901`)
   would need it; a slice that returns such a reference must implement `GetCachableObject` first. Status: tolerated (A).
-- **Global-config keys: the store keys are not given yet.** The reference returns the 8 base keys and 7 keys from the New
-  Eden Store (`server/src/services/newEdenStore/storeState.js:503-527`). eve.rs gives the 8 base keys, each with a
-  consumer in the client (`globalConfig/getFunctions.py`, `ui/services/evePhotosvc.py`, `raffles/common/util.py`,
-  `expertSystems/feature_flag.py`). Of the 7, `fake_vgs_enabled` has a consumer (`eve/client/script/environment/vgsService.py:51,101`),
-  but the reference's value is derived from the store's state (`storeState.js:517`: enabled and has legacy offers), and
-  eve.rs has no store (S3, see "Store entries in the global config" above). Absent, the client reads its default (`False`,
-  `globalConfig/const.py:102`), which is the only value eve.rs can state. The other six have getters
-  (`globalConfig/getFunctions.py:233-258`) that no V24.01 caller uses, and their fast-checkout values come from the
-  FastCheckoutService (`fastcheckout/client/fastCheckoutClientService.py:76`), which eve.rs does not have. Status: deferred
-  to S3.
+- **Global-config store keys: given from the store catalog (done).** The seven keys of EVE.js `storeState.js:503-527` are in the base entries (`GlobalConfig.Build`), with values from `Data/new-eden-store.v1.json`: `fake_vgs_enabled` 1 (store enabled and has offers), `fake_fast_checkout_enabled` 1, `fake_fast_checkout_plex_offers`, `fake_fast_checkout_response` "OK", `fake_china_funnel_enabled` 0, `fake_buy_plex_offer_url` "", `use_shell_execute_to_buy_plex_offer` 1. Their consumers: `globalConfig/getFunctions.py:233-258`, `vgsService.py:51,101`, `fastCheckoutClientService.py:76`. The flags are 0/1 integers because `GetGlobalConfigBooleanValue` reads `bool(int(value))` (`getFunctions.py`). Tests: `NewEdenStoreHostTests.The_client_global_config_carries_the_store_keys...`.
+- **New Eden Store: real-money offers are granted free (owner policy).** Every offer purchasable with real money is free and really granted. The in-game ISK market is not touched. What this means in eve.rs:
+  - **Charge.** A purchase charges nothing, in PLX, AUR, or a fiat currency (CNY, JPY, EUR, GBP, USD, RUB). The listed price is display data. There is no balance gate. EVE.js charges PLEX for PLX offers (`storeFulfillment.js` `purchasePlexVaultOffer`); eve.rs does not.
+  - **Grants.** PLEX packs are credited to the recipient's vault. Items are created in the recipient's hangar at the station or structure the character is docked at, else its home station (EVE.js `storeFulfillment.js:490-528` grants items into the hangar; eve.rs no longer uses redeem tokens for purchases). Bundles grant each part. A quantity of 1 to 100 per purchase is a limit of this server.
+  - **Idempotency.** The receipt is keyed `account:operationId` (the call id), written in the same transaction as the grant. A repeated call answers True and grants nothing. FastCheckout keys its receipts `account:fast-checkout:<call id>`. The receipt row grows with every purchase (a known cost; EVE.js caps its log).
+  - **Notifications.** After commit, each new item is sent to the recipient's live session as `OnItemChange` (CrateService.cs:192 pattern; the client handles it at `eve/client/script/ui/shared/container.py:123`). The PLEX balance change reaches the client through the message bus, which eve.rs does not serve (TODO).
+  - **Refused, not granted.** Omega (`omega_30_days`, `cash_omega_*`) and MCT (`mct_slot_30_days`, `cash_mct_*`) are refused before any charge or receipt: Omega waits for the subscription end time of the Omega track, MCT for a training-slot state. Bundles with skill points (`cash_*_bundle`, `cash_level_*_mastery_pack`, `cash_omega_30_days`) are left out of the catalog (no skill-point grant yet).
+  - **Catalog.** The seed is EVE.js `tools/DatabaseCreator/staticTables/newEdenStore/data.json` (sha256 in the catalog meta), the owner-approved data source. Product type ids were checked against the pinned SDE build 3396210 (zip sha256 matches `sde/lock.json`): Omega 29143 "Clone Grade Omega", MCT 63188 "Multiple Pilot Training", PLEX 44992 "PLEX". The real-money cash offers have no price in the seed, so they carry no `offerPricings`.
+  - **FastCheckout.** `BuyOffer` does not check the account password (EVE.js does not either; the session is already authenticated). `ClearFastCheckoutCacheForUser` answers True because the server keeps no per-user cache.
+  - **Status.** Tests: `NewEdenStoreCatalogTests`, `StoreOffersServiceTests`, `FastCheckoutServiceTests`, `NewEdenStoreHostTests` (PostgreSQL). The live headless walk does not yet issue store calls.
 - **`machoNet.SetGlobalConfigValue` is saved, and its write is observed.** The reference keeps a runtime override in
   memory (`server/src/services/machoNet/globalConfig.js:99-117`, and `machoNetService.js:357-400`), so a restart drops it.
   eve.rs saves it in PostgreSQL (schema `zsystem`, table `global_config`, as the reference's own `zsystem.GlobalConfig`)
@@ -1693,7 +1693,7 @@ Sources: the wiki's probe-scanning and site rules first; EveJS `services/dungeon
 - **Respawn.** Wiki: a site respawns at once, somewhere else, after it is cleared, and not after downtime. Here the content subscriber replaces a site on `content.{anomaly,signature}.{completed,expired}` and a sweep every five minutes fills any empty slot. Downtime is not modelled. Status: decided, downtime open.
 - **Codes and seeds.** A signature's code is three letters, a dash and three digits (`ABC-123`, the client's listing form, not verified in the client). Its place and code come from an FNV-1a hash of the system, the slot, the family and the instance it replaces, so the same history gives the same place; the reference's random source is not used. A code that a system already has is re-seeded. Status: decided.
 - **Signatures and anomalies.** Only signatures are scan targets (`ContentCosmicSites`); an anomaly comes from the system scanner's overlay and is not a probe target, as the client expects. Scan rows carry the code as their id and the dungeon fields; a signature's item id is none (EveJS `buildScanResultEntry`, the item id left to the site source).
-- **Not yet built.** The NPCs of a site are not spawned, so no `npc.killed` carries the site and no site is cleared by its NPCs; containers are not placed, so `site.container.cleared` is never published. Until these land a site ends by expiry only.
+- **Not yet built.** Containers of a data or relic site are not placed (their clear comes with the analyzer and hacking, ST-10). NPC waves are in the section below.
 
 ## Mission static data: the official build, the EveJS source removed, the gaps (Mi1, 2026-10-11)
 
@@ -1921,3 +1921,34 @@ Sources: EveJS `services/sovereignty/sovSuppressionState.js` 177-277 (`broadcast
   its jammer state; the warm-up's end is not announced by either (the client asks `GetCynoJammerState`). Status: decided, same as EveJS.
 - The announcement is a subscriber to `structure.service_changed` (published in the change's transaction), so it is sent at least once: a replay sends the
   same state twice (idempotent for the client). [J]
+- The refusal of a standard cynosural field in a jammed system (`CYNO_JAMMED`, `SpaceSessions.Modules.cs`, text in `ModuleRefusals.cs`): host side, since the
+  simulation has no jammer role; checked after the fleet rule and before the high-security rule, so both are reachable in the rig. The covert field (28650) is
+  immune (SDE 35914 description). The industrial field (52696) is treated as standard (the description says "standard" and names only the covert one as
+  immune); unverified against the client. The refusal's text is ours: EveJS's wording for this refusal was not located. Status: decided, the text open.
+
+## Structure cyno beacon (ST-7, increment d, 2026-10-11)
+
+Sources: EveJS `services/structure/structureCynoBeaconMgrService.js` (`resolveUsableBeacon` 417-455: the notices and their order; `Handle_CmdJumpToStructureBeacon`
+676, args `[structureID, solarSystemID]`); SDE 35840 Pharolux Cyno Beacon (group 2017; its built-in Standup Cynosural Field Generator I, service 16). [J][S]
+
+- Decided: the beacon is the Pharolux (type 35840) with the Cyno Beacon service (16) online; the spec's "group 2017 Upwell Cyno Beacon" names the group, the
+  checks use the type. [S]
+- Checks in the reference order: the beacon exists and is a Pharolux; the requested system (if any) is its system; the pilot is in space; it is not the
+  pilot's system; the service is online; the system is not jammed (E-03); the access check (`characterHasStructureService`, the structure's profile). Each
+  refusal is a named notice with EveJS's text. [J]
+- Not built: the access check and the jump drive's fuel and range, and the jump itself. A beacon that passes every built check is refused by name ("not wired
+  in the simulation yet"), not answered empty. The field is not placed in the simulation (a sim cynosural beacon at the structure's position with the
+  structure's id), so the jump has no target. Status: open; the named refusal is the state until then.
+## Cosmic site NPC waves (ST-11, increment 5)
+
+Sources: the wiki (a site's NPCs are its waves; a site is cleared by them); EveJS `services/dungeon/dungeonUniverseSiteService.js` (an encounter is spawned once per instance, `spawnedAtMs`, and its alive entities are kept as `remainingEntityIDs` and rematerialized when the scene is made again: `rematerializeStoredDungeonEncounterEntities`).
+
+- **Where the NPCs live.** In the scene of their system, which the simulation keeps only while a pilot is in the system. No new simulation message: the host spawns them with the existing `SimSpawn` and tags the host's record with the site (`NpcShip.SiteId`). A protocol bump is not needed. Status: decided.
+- **Which wave is alive.** The active objective of the site (`wave1` to `waveN`, in order), with the NPCs left to kill: its target less its progress, kept by the content runtime. A wave is made when a pilot is in the system and no NPC of the site is in the scene; a second pilot entering a system with the NPCs alive makes none. Status: decided.
+- **Re-entry and restart.** A scene made again (everybody left, then a pilot came back) brings back exactly the kills still to come. EveJS keeps the alive entities themselves (`remainingEntityIDs`) and places the same entities again; eve.rs keeps the count (the progress the content runtime holds) and spawns new NPCs at the site, with profiles rolled again from the wave's query. The kill count is the same; the identities and positions of the survivors are not. Status: decided (identities not kept; EveJS difference).
+- **Downtime.** The wiki: sites do not respawn during downtime. Implemented: a system nobody is in gets no site and no wave (the director's occupancy rule, `CosmicSiteDirector(occupied:)`), so a restart does not refill the slots of a system; the first pilot who enters brings them back. EveJS has no separate downtime rule for dungeons that this inspection found. Status: decided (wiki).
+- **Placement.** A wave comes into space around the site with the spawner's batch formation: 5 km, plus or minus 2 km, plus 1.25 km for each NPC of the batch (at most 12 km more). The reference's placement of dungeon NPCs is not compared yet. Status: open.
+- **Kill announcement.** `npc.killed` carries `site` (the instance id) for an NPC of a site, and `site` is null for any other NPC, so the existing consumers are not changed. Status: decided.
+- **Level above 5.** An SDE difficulty above 5 is level V (strength 104). Status: decided (coordinator).
+- **Waves without NPCs.** A data or relic site may start with its containers only (its first objective is not a wave): no NPC is made for it, and its completion waits for the containers. Status: decided.
+

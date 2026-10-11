@@ -1563,7 +1563,33 @@ push mechanism of the fittings (`FittingMgrServices.cs:241-253`).
   Two native clients observing each other's changes are not checked: no second native client runs in this environment.
 - **Tests.** `MarketCoherenceTests` (5): a placement, a cancel, a fill and an expiry, each seen by a second session in the region (the
   invalidation is asserted on the wire, and the next read shows the change), with a session in another region not asked; and a corporate
-  placement, fill and cancel that reaches the trader with the market right and not the bystander. Status: done (M4).
+  placement, fill and cancel that reaches the trader with the market right and not the bystander. Status: done (M4) for the affected-project gate (Market, Host, Corporations and Scheduler green on the merge `2f80397`); the live run is blocked by the Secure Depot start-up error on origin/main (`SpaceComposition`), which is not an M4 change, and is re-run once it is fixed.
+
+## Market slice M5: price history by day (2026-10-11)
+
+Sources: the decision Q16 (`market-decisions.md`); the client's reading of the two rowsets (`marketsvc.py:344-366`,
+`GetHistoryRowList`: the old rows, placeholder rows through yesterday, then the new rows) and of the average (`marketsvc.py:368-386`,
+`GetAveragePrice`); the reference's split (`marketProxyService.js:469-487`).
+
+- **Deviation (the split).** "Old" holds the days before today and "new" the day in progress (none when nothing traded today). The
+  reference splits off the last row (`splitHistoryRows`, `rows.slice(-1)`). With traded-only days, that puts a past trading day in
+  "new": the client then writes its placeholder rows for that day and yesterday, and appends the real row after them. The result is
+  a duplicated, out-of-order day and a 7-day average that counts placeholders. The client reads "new" as today (`midnightToday`,
+  `marketsvc.py:346-358`), so eve.rs splits by the day. Test: `MarketHistoryTests.Each_day_is_one_row_and_the_day_in_progress_is_the_new_row`.
+- **Definitions (Q16), per UTC day.** Low is the lowest fill price, high the highest. The average is the sum of the gross amounts over the
+  sum of the quantities (volume-weighted). The volume is the sum of the quantities and the orders count the fills. The client's own
+  average (`avgPrice x volume` over the last seven days, divided by the volume) reproduces the day's gross exactly (test:
+  `The_seven_day_average_the_client_takes_is_the_volume_weighted_mean_of_the_rows`).
+- **Rows exist only for days with fills.** Days without trades are the client's placeholders (volume 2, `marketsvc.py:352`); the
+  server sends no gap rows.
+- **Same transaction as the fill.** The history is read from the `fills` table, which a fill writes in its own transaction, so a
+  rolled-back fill leaves no history row and the earlier fills stay (test: `A_fill_that_rolls_back_leaves_no_history_row_and_the_earlier_fill_stays`).
+- **Removed.** `MarketStore.HistoriesAsync` had no caller; it had no region filter, so a caller would have mixed the regions.
+- **Cost.** Each read aggregates the region's fills for the type (`GROUP BY` over `fills`, the `fills_type_history` index). No server
+  cache. Not measured beyond the tests.
+- **Tests.** `MarketHistoryTests` (6): several days with one row per day and the day in progress as "new"; the client's seven-day
+  average; a type without fills and a region without trades; the region scope (a trader in another region sees none); PLEX as its own
+  type; and a rolled-back fill. Status: done (M5).
 
 ## Agents slice AG-1: LP wallet (LPSvc), the access rule and the bound agentMgr (2026-10-10)
 

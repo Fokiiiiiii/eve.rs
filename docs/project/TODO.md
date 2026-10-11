@@ -908,8 +908,9 @@ Open after M1:
 | OPEN | Matching priority (price, issue time, id) and the duplicate window are to be confirmed with a live match (Q5, Q14) | the live acceptance (M9) |
 | DONE (M3) | Expiry as durable jobs: one job per resting order at its expiry plus 1 s (placed, moved, cancelled in the same transaction), a 60 s safety sweep, a read sweep at most once a second, the restart reschedule, notices to the owner and the corporation members with market rights (Accountant or Trader) | DEVIATIONS.md, "Market slice M3" |
 | DECIDED (M4) | M3 notices are not durable: no outbox, a notice goes to a live session only and the client's cache is per run (balances and state stay right) | DEVIATIONS.md, "Market slice M4" |
-| DONE (M4) | Push cache invalidation for book changes and owner lists; corporate notices for place, fill, modify, cancel and expiry to every character with market rights (G9, G11). The client's price history cache is out of the server's reach (3 h) | DEVIATIONS.md, "Market slice M4"; `MarketCoherenceTests` (5) |
-| OPEN | M5 to M9: price history definitions (Q16), the read path tests (M6), locking and the bounded scan (M7), money invariants (M8), live acceptance (M9) | market agents 2 and 3 |
+| DONE (M4): the affected-project gate is green on `2f80397`; the live run waits for the Secure Depot start-up fix on origin/main. Push invalidation and corporate notices (G9, G11); the client's 3-hour price history cache is out of the server's reach | DEVIATIONS.md, "Market slice M4"; `MarketCoherenceTests` (5) |
+| DONE (M5) | Price history: one row per UTC day (low, high, volume-weighted average, volume, fills), the day in progress as "new" (the reference's last-row split put a past day there; corrected), `HistoriesAsync` removed (no caller) | DEVIATIONS.md, "Market slice M5"; `MarketHistoryTests` (6) |
+| OPEN | M6 transactions by division (tests), M7 bounded scan and locking, M8 money invariants, M9 live acceptance | market agents 2 and 3 |
 | OPEN | The client label table is partial: `MktCantSellItem2`, `MktCantSellItemOutsideStation` and `MktInvalidRegion` need values the server does not hold (localized jump texts) | the client's localization |
 | OPEN | The corporation read rule has a test for a character outside the corporation; a member holding Account Take and not an accountant is covered by M6 | M6 |
 

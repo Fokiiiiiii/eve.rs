@@ -910,7 +910,8 @@ Open after M1:
 | DECIDED (M4) | M3 notices are not durable: no outbox, a notice goes to a live session only and the client's cache is per run (balances and state stay right) | DEVIATIONS.md, "Market slice M4" |
 | DONE (M4): the affected-project gate is green on `2f80397`; the live run waits for the Secure Depot start-up fix on origin/main. Push invalidation and corporate notices (G9, G11); the client's 3-hour price history cache is out of the server's reach | DEVIATIONS.md, "Market slice M4"; `MarketCoherenceTests` (5) |
 | DONE (M5) | Price history: one row per UTC day (low, high, volume-weighted average, volume, fills), the day in progress as "new" (the reference's last-row split put a past day there; corrected), `HistoriesAsync` removed (no caller) | DEVIATIONS.md, "Market slice M5"; `MarketHistoryTests` (6) |
-| OPEN | M6 transactions by division (tests), M7 bounded scan and locking, M8 money invariants, M9 live acceptance | market agents 2 and 3 |
+| DONE (M6) | Transactions by division: rights (accountant, junior accountant, Account Take, CrpAccessDenied 101), newest first, fromDate and division filters, keyID; the EXPLAIN check is not run (no index added) | DEVIATIONS.md, "Market slice M6"; `MarketTransactionReadTests` (3) |
+| OPEN | M7 bounded scan and locking, M8 money invariants, M9 live acceptance | market agents 2 and 3 |
 | OPEN | The client label table is partial: `MktCantSellItem2`, `MktCantSellItemOutsideStation` and `MktInvalidRegion` need values the server does not hold (localized jump texts) | the client's localization |
 | OPEN | The corporation read rule has a test for a character outside the corporation; a member holding Account Take and not an accountant is covered by M6 | M6 |
 
@@ -957,6 +958,17 @@ Tests: `Eve.Agents.Tests` (8, PostgreSQL), `Eve.Services.Core.Tests` (AgentMissi
 |---|---|---|
 | OPEN | No live path creates an offer: the mission pool is not in the SDE build; `OfferAsync` is tested only | the mission-data track (second SDE pin) |
 | OPEN | The expiry sweep is not scheduled (durable job) and `OnMissionsUpdated` is not sent | DEVIATIONS "Agents slice AG-2, A5" |
+
+Slice A4 (2026-10-11): DONE for the dialogue on the bound agent: `DoAction` answers the reference's reply shape; the greeting,
+the standing refusal (read from the relations and the skills), request (through the store), accept, decline, quit at the
+station; research and the locator refused by name. Tests: `AgentDialogueTests` (Eve.Services.Core.Tests, 6, PostgreSQL).
+Decisions: DEVIATIONS.md, "Agents slice AG-2, A4".
+
+| Status | Item | Where / blocker |
+|---|---|---|
+| OPEN | Decline and quit confirmations (YesNo, deferred response) are not ported; the transition is made on the button | DEVIATIONS "Agents slice AG-2, A4" |
+| OPEN | The mission briefing (`GetMissionBriefingInfo`, objectives, offer text) is not bound: no mission content yet | mission-data track |
+| OPEN | The headless walk does not yet call DoAction (the live run covers the Services.Core tests only) | tools/headless-client |
 
 ## 43. Structures phase ST-E: remaining E wiring (2026-10-10)
 - DONE E-01: StartNewExtraction, FractureChunkWithStructure and CancelExtraction refuse by name (CustomNotify) with no backend, not PyNone (`StructureDataRpcServices.cs`, commit 59e9e89). The backend is ST-6a.

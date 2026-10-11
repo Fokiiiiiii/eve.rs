@@ -2461,3 +2461,8 @@ Focused PostgreSQL verification: Station 28/28, selected Space docking/undocking
 - **Replay.** A completed mission is not offered again (the pool is exhausted after one completion each). EveJS replays basic missions after its replay delay; that delay and the reward-free replays are not modelled. Status: OPEN.
 - **Reward.** The official data holds no ISK for these missions (basic `missionRewards` are absent or not ISK), so completion pays nothing; the LP base is not in official data (D-R1). Status: OPEN (owner decision D-R1).
 
+## Mission execution X1c: agent location and unknown agent calls (2026-10-11)
+
+- **`GetAgentLocationWrap` is answered** on the bound agent with the EveJS shape (`agentMissionRuntime.js:6209-6240`): a station agent is `{typeID, solarsystemID, locationID}` (type default 1531); an agent in space is `{locationID, typeID 5, solarsystemID, locationType "agentinspace", agentInSpaceTypeID, dungeonID, spawnPointID, source}`. The in-space wrap carries no coordinates (the spawn point is not in the official data; owner decision 1 places the agent by rule, not yet built). Status: decided.
+- **Unknown agentMgr methods raise a named error** (`CustomInfo`, "not available on this server yet") instead of answering None. The brief's rule: no silent None on a bound call. Methods still answered this way: `GetMissionObjectiveInfo`, `GetMissionBriefingInfo`, `GetReplayTimestamp`, `WarpToLocation`, `WarpToAgentInSpace`, research, locator. Status: decided; each is OPEN as a slice.
+

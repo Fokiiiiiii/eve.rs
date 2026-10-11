@@ -976,6 +976,41 @@ fn message_of(case: &Value) -> Message {
             ship_id: wide(case, "shipId"),
         })),
         "RemoveProbe" => Message::RemoveProbe { probe_id: wide(case, "probeId") },
+        "PlaceStructure" => Message::PlaceStructure(Box::new(eve_space::link::StructurePlacement {
+            structure_id: wide(case, "structureId"),
+            solar_system_id: number("solarSystemId") as i32,
+            name: text(case, "typeName"),
+            type_id: number("typeId") as i32,
+            group_id: number("groupId") as i32,
+            position: vector_of(case, "position"),
+            radius: case["radius"].as_f64().unwrap(),
+            owner_id: wide(case, "ownerId"),
+            corporation_id: number("corporationId") as i32,
+            alliance_id: number("allianceId") as i32,
+            vitals: structure_vitals_of(case),
+            shield_recharge_ms: case["shieldRechargeMs"].as_f64().unwrap(),
+            limits: eve_space::health::StructureLimits {
+                per_second: std::array::from_fn(|i| case["perSecond"][i].as_f64().unwrap()),
+                repair_pause: std::array::from_fn(|i| case["repairPause"][i].as_f64().unwrap()),
+            },
+            status: status_of(&case["status"]),
+        })),
+        "StructureDamaged" => Message::StructureDamaged {
+            structure_id: wide(case, "structureId"),
+            depleted: match number("depleted") {
+                0 => None,
+                1 => Some(eve_space::health::Layer::Shield),
+                2 => Some(eve_space::health::Layer::Armor),
+                _ => Some(eve_space::health::Layer::Structure),
+            },
+            over_threshold: case["overThreshold"].as_bool().unwrap(),
+        },
+        "RemoveStructure" => Message::RemoveStructure { structure_id: wide(case, "structureId") },
+        "SetStructureState" => Message::SetStructureState {
+            solar_system_id: number("solarSystemId") as i32,
+            structure_id: wide(case, "structureId"),
+            status: status_of(&case["status"]),
+        },
         "PlaceDisruptor" => Message::PlaceDisruptor(Box::new(eve_space::link::DisruptorPlacement {
             deployable_id: wide(case, "deployableId"),
             solar_system_id: number("solarSystemId") as i32,
@@ -1399,3 +1434,28 @@ fn every_invalid_frame_is_refused_for_the_stated_reason() {
         assert_eq!(reason_of(error), text(case, "reason"), "{name}");
     }
 }
+
+/// A structure's slim fields from its fixture: a timer is `[start, end, paused or null]`.
+fn status_of(value: &serde_json::Value) -> eve_space::world::StructureStatus {
+    eve_space::world::StructureStatus {
+        state: value["state"].as_i64().unwrap() as i32,
+        upkeep_state: value["upkeepState"].as_i64().unwrap() as i32,
+        timer: value["timer"].as_array().map(|t| (t[0].as_i64().unwrap(), t[1].as_i64().unwrap(), t[2].as_i64())),
+        unanchoring: value["unanchoring"].as_i64(),
+        repairing: value["repairing"].as_bool(),
+    }
+}
+
+/// A structure's vitals from its fixture: the points of its shield, armor and hull, and the resonances of each layer.
+fn structure_vitals_of(case: &serde_json::Value) -> eve_space::health::Vitals {
+    let v = &case["vitals"];
+    let layer = |name: &str| -> [f64; 4] { std::array::from_fn(|i| v["resonances"][name][i].as_f64().unwrap()) };
+    eve_space::health::Vitals {
+        shield_capacity: v["shieldCapacity"].as_f64().unwrap(),
+        armor_hp: v["armorHp"].as_f64().unwrap(),
+        structure_hp: v["structureHp"].as_f64().unwrap(),
+        resonances: eve_space::health::Resonances { shield: layer("shield"), armor: layer("armor"), structure: layer("structure") },
+        armor_pinned: false,
+    }
+}
+

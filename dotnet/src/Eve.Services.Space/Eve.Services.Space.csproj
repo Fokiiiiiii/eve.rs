@@ -11,15 +11,19 @@
     <ProjectReference Include="../Eve.Dogma/Eve.Dogma.csproj" />
     <ProjectReference Include="../Eve.Universe/Eve.Universe.csproj" />
     <ProjectReference Include="../Eve.Npc/Eve.Npc.csproj" />
+    <ProjectReference Include="../Eve.Dungeons/Eve.Dungeons.csproj" />
     <ProjectReference Include="../Eve.Scheduler/Eve.Scheduler.csproj" />
     <ProjectReference Include="../Eve.Crimewatch/Eve.Crimewatch.csproj" />
     <ProjectReference Include="../Eve.Events/Eve.Events.csproj" />
     <ProjectReference Include="../Eve.Content/Eve.Content.csproj" />
+    <ProjectReference Include="../Eve.Hacking/Eve.Hacking.csproj" />
     <ProjectReference Include="../Eve.Services.Generator/Eve.Services.Generator.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
+    <ProjectReference Include="../Eve.Structures/Eve.Structures.csproj" />
   </ItemGroup>
   <ItemGroup>
     <EmbeddedResource Include="Effects/Data/fighter-abilities.json" LogicalName="fighter-abilities.json" />
     <EmbeddedResource Include="Sites/Data/site-templates.json" LogicalName="site-templates.json" />
+    <EmbeddedResource Include="Migrations/*.sql" />
   </ItemGroup>
   <ItemGroup>
     <InternalsVisibleTo Include="Eve.Services.Space.Tests" />

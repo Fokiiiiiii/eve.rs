@@ -69,7 +69,7 @@ internal sealed class Rig : IAsyncDisposable
         Bus = new EventBus(Source, Scheduler, new EventBusOptions { MaxAttempts = 3 }, EventsSchema, Log.Add);
         Timers = new StructureTimers(Store, Scheduler, Bus, Rules, () => Roll);
         Timers.Register();
-        Bus.Subscribe("test.collector", ["structure.*"], (context, _) =>
+        Bus.Subscribe("test.collector", [StructureTimers.StateChangedTopic], (context, _) =>
         {
             Changes.Add(context.Event.Payload<StructureStateChanged>()!);
             return Task.CompletedTask;

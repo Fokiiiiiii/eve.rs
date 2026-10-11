@@ -120,8 +120,7 @@ public sealed class UnportedFeatureRpcServicesTests
         TourneyQueryRequest? tourneyRequest = null;
 
         var services = CoreServices.Create(
-            new SubscriptionSettings(),
-            new NoOmegaAccounts(),
+            new PolicyOmegaAccounts(),
             () => 0,
             customAgencyProviderRpcCallbacks: new CustomAgencyProviderRpcCallbacks(
                 ReadContentAsync: (request, _) =>
@@ -315,9 +314,9 @@ public sealed class UnportedFeatureRpcServicesTests
     private static PyValue Field(PyDict source, string name) =>
         source.Entries.Single(entry => entry.Key == new PyStr(name)).Value;
 
-    private sealed class NoOmegaAccounts : IOmegaAccountStore
+    private sealed class PolicyOmegaAccounts : IOmegaAccountStore
     {
-        public string? GetOmegaExpiry(long accountId) => null;
+        public string? GetOmegaExpiry(long accountId) => OmegaLicenses.DefaultOmegaExpiryText;
     }
 
     /// <summary>The text a CustomNotify user error shows the client (its "notify" argument).</summary>

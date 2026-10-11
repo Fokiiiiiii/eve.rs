@@ -14,9 +14,9 @@ use eve_destiny::Vec3;
 const TABLE: &str = include_str!("../data/undock_points.json");
 
 const SMALL: &str = "undockPointSmall";
-const LARGE: &str = "undockPointLarge";
-const CAPITAL: &str = "undockPointCapital";
-const SUPERCAPITAL: &str = "undockPointSupercapital";
+pub(crate) const LARGE: &str = "undockPointLarge";
+pub(crate) const CAPITAL: &str = "undockPointCapital";
+pub(crate) const SUPERCAPITAL: &str = "undockPointSupercapital";
 /// The category of a point that suits every ship.
 const GENERIC: &str = "undockPoint";
 

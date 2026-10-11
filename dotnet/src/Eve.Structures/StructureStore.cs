@@ -147,11 +147,22 @@ public sealed class StructureStore
             (short)s.ReinforceWeekday, (short)s.ReinforceHour, (short)s.FightWeekday, (short)s.FightHour, (short)s.PendingWeekday, (short)s.PendingHour,
             s.PendingEffectiveMs, s.UnanchorEndsMs, s.LowPowerSinceMs, s.DestroyedMs);
 
-    public async Task SetServiceAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long structureId, int serviceId, int state, CancellationToken cancellationToken = default) =>
+    /// <summary>Sets a service's state. An online service records <paramref name="nowMs"/> as the time it came online; an offline one holds 0.</summary>
+    public async Task SetServiceAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long structureId, int serviceId, int state, long nowMs, CancellationToken cancellationToken = default) =>
         await Sql.ExecuteAsync(connection, transaction, Q("""
-            INSERT INTO {schema}.structure_services (structure_id, service_id, state) VALUES ($1, $2, $3)
-            ON CONFLICT (structure_id, service_id) DO UPDATE SET state = EXCLUDED.state
-            """), cancellationToken, structureId, serviceId, (short)state);
+            INSERT INTO {schema}.structure_services (structure_id, service_id, state, online_since_ms) VALUES ($1, $2, $3, CASE WHEN $3 = 1 THEN $4::bigint ELSE 0 END)
+            ON CONFLICT (structure_id, service_id) DO UPDATE SET state = EXCLUDED.state, online_since_ms = EXCLUDED.online_since_ms
+            """), cancellationToken, structureId, serviceId, (short)state, nowMs);
+
+    /// <summary>
+    /// When the first online service of this kind in the system came online: 0 when it was online before the record existed, null when none is online in a
+    /// structure that is not gone.
+    /// </summary>
+    public async Task<long?> OnlineSinceAsync(NpgsqlConnection connection, NpgsqlTransaction? transaction, int solarSystemId, int serviceId, CancellationToken cancellationToken = default) =>
+        await Sql.ScalarAsync(connection, transaction, Q("""
+            SELECT min(v.online_since_ms) FROM {schema}.structure_services v JOIN {schema}.structures s ON s.structure_id = v.structure_id
+            WHERE s.solar_system_id = $1 AND s.destroyed_ms = 0 AND v.service_id = $2 AND v.state = 1
+            """), cancellationToken, solarSystemId, serviceId) is long since ? since : null;
 
     /// <summary>Takes every online service of a structure offline (the fuel ran out). Returns how many were online.</summary>
     public async Task<int> TakeServicesOfflineAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long structureId, CancellationToken cancellationToken = default) =>
@@ -159,6 +170,10 @@ public sealed class StructureStore
 
     public async Task SetDescriptionAsync(NpgsqlConnection connection, NpgsqlTransaction? transaction, long structureId, string description, CancellationToken cancellationToken = default) =>
         await Sql.ExecuteAsync(connection, transaction, Q("UPDATE {schema}.structures SET bio = $2, version = version + 1 WHERE structure_id = $1"), cancellationToken, structureId, description);
+
+    /// <summary>Renames a structure that is not gone (EVE.js <c>renameStructureByID</c>: the name is the one the directory and the ball show).</summary>
+    public async Task SetNameAsync(NpgsqlConnection connection, NpgsqlTransaction? transaction, long structureId, string name, CancellationToken cancellationToken = default) =>
+        await Sql.ExecuteAsync(connection, transaction, Q("UPDATE {schema}.structures SET name = $2, version = version + 1 WHERE structure_id = $1 AND destroyed_ms = 0"), cancellationToken, structureId, name);
 
     public async Task SetProfileAsync(NpgsqlConnection connection, NpgsqlTransaction? transaction, IEnumerable<long> structureIds, long profileId, CancellationToken cancellationToken = default) =>
         await Sql.ExecuteAsync(connection, transaction,
@@ -311,7 +326,7 @@ public sealed class StructureStore
                 {
                     if (int.TryParse(serviceKey, NumberStyles.None, CultureInfo.InvariantCulture, out var serviceId) && serviceId > 0 && IsNumber(state))
                     {
-                        await SetServiceAsync(connection, transaction, id, serviceId, (int)Integer(state), cancellationToken);
+                        await SetServiceAsync(connection, transaction, id, serviceId, (int)Integer(state), 0, cancellationToken);
                     }
                 }
             }

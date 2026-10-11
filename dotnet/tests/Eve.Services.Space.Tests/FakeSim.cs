@@ -9,6 +9,9 @@ internal sealed class FakeSim : ISimulation
 
     public event Action<SimMessage>? Received;
 
+    /// <summary>A message the simulation sends to the host (a test's stand-in for the link's receive loop).</summary>
+    public void Deliver(SimMessage message) => Received?.Invoke(message);
+
     public event Action? Lost;
 
     public System.Collections.Concurrent.ConcurrentQueue<SimMessage> Heard { get; } = new();
@@ -193,6 +196,12 @@ internal sealed class FakeSim : ISimulation
     public void PlaceProbe(SimPlaceProbe probe) => Heard.Enqueue(probe);
 
     public void RemoveProbe(long probeId) => Heard.Enqueue(new SimRemoveProbe(probeId));
+
+    public void PlaceStructure(SimPlaceStructure structure) => Heard.Enqueue(structure);
+
+    public void RemoveStructure(long structureId) => Heard.Enqueue(new SimRemoveStructure(structureId));
+
+    public void SetStructureState(SimSetStructureState state) => Heard.Enqueue(state);
 
     public void PlaceDisruptor(SimPlaceDisruptor disruptor) => Heard.Enqueue(disruptor);
 

@@ -46,7 +46,8 @@ public sealed partial class PersistenceNewEdenStoreRuntime(
     CharacterSessions sessions,
     Func<long> nowUnixMs,
     Func<CancellationToken, Task<JsonObject>> readStoreState)
-    : Eve.Services.Core.IRedeemCallbacks, Eve.Services.Core.IVaultManagerCallbacks, Eve.Services.Core.ILoginRewardCallbacks
+    : Eve.Services.Core.IRedeemCallbacks, Eve.Services.Core.IVaultManagerCallbacks, Eve.Services.Core.ILoginRewardCallbacks,
+      Eve.Services.Core.IFastCheckoutCallbacks
 {
     private const string ReceiptsTable = "newEdenStorePurchaseSettlements";
     private const string ReceiptsRow = "purchasesByOperationID";
@@ -61,6 +62,16 @@ public sealed partial class PersistenceNewEdenStoreRuntime(
     private const int DailyLoginRewardTypeId = 49810;
     private readonly SemaphoreSlim _gate = new(1, 1);
 
+    /// <summary>The most units one purchase may take: a limit of this server (the client sends one cart per confirmed purchase).</summary>
+    public const long MaxPurchaseQuantity = 100;
+
+    /// <summary>The currencies a store purchase may name. Each is charged nothing: the currency only selects the listed price shown.</summary>
+    private static readonly string[] AcceptedCurrencies = ["PLX", "AUR", "CNY", "JPY", "EUR", "GBP", "USD", "RUB"];
+
+    /// <summary>
+    /// A store purchase (<c>storeManager.buy_offer</c>), granted at no charge. The offer's fulfillment is granted to the recipient in one
+    /// transaction together with its receipt, keyed by <c>user:operationId</c>: a repeated request answers the first result and grants nothing again.
+    /// </summary>
     public async ValueTask<PyValue> PurchaseAsync(
         Eve.Services.Core.StoreOfferPurchaseRequest request,
         CancellationToken cancellationToken)
@@ -70,146 +81,215 @@ public sealed partial class PersistenceNewEdenStoreRuntime(
         var operationId = Text(request.OperationId);
         if (operationId.Length == 0)
             throw new InvalidOperationException("A store purchase operation ID is required.");
-        var operationKey = $"{request.AuthenticatedUserId}:{operationId}";
         var storeId = Positive(request.Store);
+        var quantity = Positive(request.Qty);
+        if (storeId <= 0 || quantity <= 0 || quantity > MaxPurchaseQuantity)
+            throw new InvalidOperationException($"The store or purchase quantity is invalid (1 to {MaxPurchaseQuantity} units).");
         var currency = Text(request.Currency).Trim().ToUpperInvariant();
-        var purchaseQuantity = Positive(request.Qty);
-        if (storeId <= 0 || purchaseQuantity <= 0)
-            throw new InvalidOperationException("The store or purchase quantity is invalid.");
+        if (Array.IndexOf(AcceptedCurrencies, currency) < 0)
+            throw new NotSupportedException($"The store currency {currency} is not offered.");
 
         var state = await readStoreState(cancellationToken);
         var storeCatalog = (state["stores"] as JsonObject)?[storeId.ToString(System.Globalization.CultureInfo.InvariantCulture)] as JsonObject;
         var offer = FindOffer(storeCatalog?["offers"] as JsonArray, request.Offer);
-        if (offer is null || offer["products"] is not JsonArray products || products.Count == 0)
+        if (offer is null || offer["products"] is not JsonArray { Count: > 0 })
             throw new InvalidOperationException("The selected store offer is unavailable.");
-
-        var unitPrice = PriceFor(offer, currency);
-        var cashPurchase = IsFiat(currency) && unitPrice is > 0;
-        if (request.SkipPayment && !cashPurchase)
-            throw new InvalidOperationException("Payment may only be skipped for a positive fiat-priced offer.");
-        long plexCost = 0;
-        if (!cashPurchase)
-        {
-            if (currency != "PLX" || unitPrice is not { } plexPrice || plexPrice <= 0)
-                throw new NotSupportedException($"The store currency {currency} has no normal settlement provider.");
-            var total = checked(plexPrice * purchaseQuantity);
-            if (decimal.Truncate(total) != total || total > long.MaxValue)
-                throw new InvalidOperationException("PLEX prices must be positive whole units.");
-            plexCost = decimal.ToInt64(total);
-        }
+        var storeOfferId = String(offer["storeOfferID"]);
+        var grants = GrantsFor(state, storeOfferId, quantity);
 
         var recipientCharacterId = request.Recipient is PyNone
             ? request.AuthenticatedCharacterId
             : Positive(request.Recipient);
-        var recipient = await characters.GetAsync(recipientCharacterId, cancellationToken);
-        if (recipient is null)
-            throw new InvalidOperationException("The recipient character does not exist.");
+        await GrantAsync(new StorePurchase(
+            OperationKey: $"{request.AuthenticatedUserId}:{operationId}",
+            AccountId: request.AuthenticatedUserId,
+            PayerCharacterId: request.AuthenticatedCharacterId,
+            RecipientCharacterId: recipientCharacterId,
+            OfferId: String(offer["id"]),
+            StoreOfferId: storeOfferId,
+            Currency: currency,
+            Quantity: quantity,
+            Grants: grants), cancellationToken);
+        return PyBool.True;
+    }
 
-        var createdAt = ToFileTime(nowUnixMs());
-        var newTokens = new JsonObject();
-        var tokenIds = new List<long>();
-        var productIndex = 0;
-        foreach (var product in products.OfType<JsonObject>())
+    /// <summary>
+    /// The fast-checkout purchase of a PLEX pack (<c>FastCheckoutService.BuyOffer</c>): the pack's public offer is granted to the character
+    /// at no charge, keyed by the account and the call's operation id, so a retried call grants once.
+    /// </summary>
+    public async ValueTask GrantFastCheckoutOfferAsync(
+        long authenticatedUserId,
+        long characterId,
+        string storeOfferId,
+        string currency,
+        string operationId,
+        CancellationToken cancellationToken)
+    {
+        RequireAccount(authenticatedUserId);
+        if (characterId <= 0)
+            throw new UnauthorizedAccessException("An authenticated character is required.");
+        var state = await readStoreState(cancellationToken);
+        await GrantAsync(new StorePurchase(
+            OperationKey: $"{authenticatedUserId}:fast-checkout:{operationId}",
+            AccountId: authenticatedUserId,
+            PayerCharacterId: characterId,
+            RecipientCharacterId: characterId,
+            OfferId: storeOfferId,
+            StoreOfferId: storeOfferId,
+            Currency: currency.ToUpperInvariant(),
+            Quantity: 1,
+            Grants: GrantsFor(state, storeOfferId, 1)), cancellationToken);
+    }
+
+    /// <summary>The grants of a public offer for a quantity, from its fulfillment in the store catalog.</summary>
+    private static IReadOnlyList<StoreGrant> GrantsFor(JsonObject state, string storeOfferId, long quantity)
+    {
+        if ((state["publicOffers"] as JsonObject)?[storeOfferId] is not JsonObject { } publicOffer ||
+            publicOffer["fulfillment"] is not JsonObject fulfillment)
+            throw new InvalidOperationException($"Store offer {storeOfferId} has no fulfillment in the catalog.");
+        var grants = new List<StoreGrant>();
+        AddGrants(fulfillment, quantity, grants);
+        return grants;
+    }
+
+    /// <summary>
+    /// Adds a fulfillment's grants. Plex goes to the vault, items to the recipient's hangar; an Omega or Multiple Character Training grant
+    /// has no path on this server yet, so it is refused before any charge or grant (never a silent success).
+    /// </summary>
+    private static void AddGrants(JsonObject fulfillment, long quantity, List<StoreGrant> grants)
+    {
+        var kind = String(fulfillment["kind"]);
+        switch (kind)
         {
-            var typeId = checked((int)Integer(product["typeId"]));
-            var quantity = checked(Integer(product["quantity"]) * purchaseQuantity);
-            if (typeId <= 0 || quantity <= 0)
-                throw new InvalidOperationException("The selected offer contains an invalid product.");
-            var productName = String(product["productName"]);
-            var description = Text(request.Message);
-            if (description.Length == 0)
-                description = productName;
-            var tokenId = TokenId(operationKey, productIndex++);
-            tokenIds.Add(tokenId);
-            newTokens[tokenId.ToString(System.Globalization.CultureInfo.InvariantCulture)] = new JsonObject
-            {
-                ["tokenID"] = tokenId,
-                ["massTokenID"] = 0,
-                ["typeID"] = typeId,
-                ["quantity"] = quantity,
-                ["stationID"] = 0,
-                ["expireDateTime"] = 0,
-                ["dateTime"] = createdAt,
-                ["description"] = description,
-                ["isAutoInject"] = false,
-                ["status"] = "pending",
-            };
+            case "grant_plex":
+                grants.Add(new PlexGrant(checked(Integer(fulfillment["plexAmount"]) * quantity)));
+                break;
+            case "item":
+                grants.Add(new ItemGrant(
+                    checked((int)Integer(fulfillment["typeID"])),
+                    checked(Math.Max(1, Integer(fulfillment["quantity"], 1)) * quantity)));
+                break;
+            case "bundle":
+                foreach (var grant in fulfillment["grants"] as JsonArray ?? [])
+                    AddGrants(grant as JsonObject ?? throw new InvalidOperationException("A bundle grant is malformed."), quantity, grants);
+                break;
+            case "omega":
+                throw new NotSupportedException("The Omega grant is not available: the subscription end time is not granted by this server yet.");
+            case "mct":
+                throw new NotSupportedException("The Multiple Character Training grant is not available: no training-slot state exists yet.");
+            default:
+                throw new NotSupportedException($"The store fulfillment kind '{kind}' has no grant path.");
         }
-        if (!newTokens.Any())
-            throw new InvalidOperationException("The selected offer contains no fulfillable products.");
+    }
+
+    /// <summary>
+    /// Grants a purchase in one transaction with its receipt, then tells the recipient's live session about the new items. A repeated
+    /// operation key returns without granting anything.
+    /// </summary>
+    private async ValueTask GrantAsync(StorePurchase purchase, CancellationToken cancellationToken)
+    {
+        var recipient = await characters.GetAsync(purchase.RecipientCharacterId, cancellationToken)
+            ?? throw new InvalidOperationException("The recipient character does not exist.");
+
+        var itemTypesById = new Dictionary<int, ItemType>();
+        foreach (var grant in purchase.Grants.OfType<ItemGrant>())
+        {
+            if (itemTypesById.ContainsKey(grant.TypeId))
+                continue;
+            itemTypesById[grant.TypeId] = await itemTypes.GetAsync(grant.TypeId, cancellationToken)
+                ?? throw new InvalidOperationException($"Item type {grant.TypeId} is missing from the item catalog.");
+        }
+        var deliveryStationId = itemTypesById.Count == 0 ? 0 : DeliveryStationId(recipient, purchase.RecipientCharacterId);
+        if (itemTypesById.Count > 0 && deliveryStationId <= 0)
+            throw new InvalidOperationException("Items can only be delivered to a station or structure.");
 
         await _gate.WaitAsync(cancellationToken);
         try
         {
             var receiptState = await PersistenceReadHelpers.ReadOptionalTableAsync(store, ReceiptsTable, cancellationToken);
             var receipts = receiptState[ReceiptsRow] as JsonObject ?? new JsonObject();
-            if (receipts[operationKey] is JsonObject)
-                return PyBool.True;
+            if (receipts[purchase.OperationKey] is JsonObject)
+                return;
 
-            var redeemState = await PersistenceReadHelpers.ReadOptionalTableAsync(store, RedeemTable, cancellationToken);
-            var accounts = redeemState[RedeemRow] as JsonObject ?? new JsonObject();
-            var recipientAccountId = recipient.AccountId.ToString(System.Globalization.CultureInfo.InvariantCulture);
-            var accountTokens = accounts[recipientAccountId] as JsonObject ?? new JsonObject();
-            foreach (var (key, token) in newTokens)
-            {
-                if (accountTokens.ContainsKey(key))
-                    throw new InvalidOperationException("A store fulfillment token already exists.");
-                accountTokens[key] = token?.DeepClone();
-            }
-            accounts[recipientAccountId] = accountTokens;
-
+            var createdAt = ToFileTime(nowUnixMs());
+            long plexGranted = 0;
+            var granted = new List<GrantedItem>();
             await using var connection = await source.OpenConnectionAsync(cancellationToken);
             await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
-            if (plexCost > 0)
+            foreach (var grant in purchase.Grants)
             {
-                var accountCharacters = await characters.ForAccountAsync(
-                    checked((int)request.AuthenticatedUserId), cancellationToken);
-                var characterIds = accountCharacters.Select(character => character.Id).Order().ToArray();
-                var balances = await plexWallets.ReadPlexBalancesAsync(
-                    connection, transaction, characterIds, cancellationToken);
-                var totalBalance = balances.Values.Aggregate(0L, (sum, balance) => checked(sum + balance));
-                if (totalBalance < plexCost)
-                    throw new Eve.Wallet.InsufficientFundsException(request.AuthenticatedCharacterId);
-
-                var remaining = plexCost;
-                foreach (var characterId in characterIds)
+                switch (grant)
                 {
-                    if (!balances.TryGetValue(characterId, out var balance) || balance <= 0)
-                        continue;
-                    var debit = Math.Min(balance, remaining);
-                    await plexWallets.AdjustPlexAsync(
-                        connection, transaction, characterId, -debit, cancellationToken);
-                    remaining -= debit;
-                    if (remaining == 0)
+                    case PlexGrant plex:
+                        await plexWallets.AdjustPlexAsync(connection, transaction, purchase.RecipientCharacterId, plex.Amount, cancellationToken);
+                        plexGranted = checked(plexGranted + plex.Amount);
+                        break;
+                    case ItemGrant item:
+                        var type = itemTypesById[item.TypeId];
+                        var singleton = type.CategoryId is 6 or 9;
+                        var itemCount = singleton ? item.Quantity : 1;
+                        var stackQuantity = singleton ? 1 : item.Quantity;
+                        for (var index = 0L; index < itemCount; index++)
+                        {
+                            var itemId = await items.CreateAsync(
+                                connection, transaction,
+                                new NewItem(type.TypeId, purchase.RecipientCharacterId, deliveryStationId, Eve.Inventory.ItemFlags.Hangar,
+                                    stackQuantity, singleton),
+                                cancellationToken);
+                            granted.Add(new GrantedItem(itemId, type.TypeId, stackQuantity, type.GroupId, type.CategoryId));
+                        }
                         break;
                 }
             }
 
-            receipts[operationKey] = new JsonObject
+            receipts[purchase.OperationKey] = new JsonObject
             {
-                ["accountID"] = request.AuthenticatedUserId,
-                ["characterID"] = request.AuthenticatedCharacterId,
-                ["recipientCharacterID"] = recipientCharacterId,
-                ["offerID"] = Text(request.Offer),
-                ["currency"] = currency,
-                ["quantity"] = purchaseQuantity,
-                ["plexDebited"] = plexCost,
-                ["tokenIDs"] = new JsonArray([.. tokenIds.Select(tokenId => (JsonNode?)JsonValue.Create(tokenId))]),
+                ["accountID"] = purchase.AccountId,
+                ["characterID"] = purchase.PayerCharacterId,
+                ["recipientCharacterID"] = purchase.RecipientCharacterId,
+                ["offerID"] = purchase.OfferId,
+                ["storeOfferID"] = purchase.StoreOfferId,
+                ["currency"] = purchase.Currency,
+                ["quantity"] = purchase.Quantity,
+                ["chargedAmount"] = 0,
+                ["plexGranted"] = plexGranted,
+                ["itemsGranted"] = new JsonArray([.. granted.Select(item => (JsonNode?)new JsonObject
+                {
+                    ["itemID"] = item.ItemId,
+                    ["typeID"] = item.TypeId,
+                    ["quantity"] = item.Quantity,
+                })]),
                 ["createdAt"] = createdAt,
             };
             await store.ApplyChangesAsync(
                 connection, transaction, ReceiptsTable,
                 [new RowUpsert(ReceiptsRow, receipts.ToJsonString())], [], ownerFence, cancellationToken);
-            await store.ApplyChangesAsync(
-                connection, transaction, RedeemTable,
-                [new RowUpsert(RedeemRow, accounts.ToJsonString())], [], ownerFence, cancellationToken);
             await transaction.CommitAsync(cancellationToken);
-            return PyBool.True;
+
+            if (sessions.Of(purchase.RecipientCharacterId) is { } session)
+            {
+                foreach (var item in granted)
+                {
+                    session.SendNotification(
+                        "OnItemChange", "clientID",
+                        InventoryWire.PackedRow(new ItemRow(item.ItemId, item.TypeId, purchase.RecipientCharacterId, deliveryStationId,
+                            Eve.Inventory.ItemFlags.Hangar, item.Quantity, item.GroupId, item.CategoryId)),
+                        new PyDict([]),
+                        PyNone.Instance);
+                }
+            }
         }
         finally
         {
             _gate.Release();
         }
+    }
+
+    /// <summary>Where a purchase's items are delivered: the station or structure the recipient is docked at, else the home station.</summary>
+    private long DeliveryStationId(Eve.Characters.Character recipient, long characterId)
+    {
+        var docked = sessions.Of(characterId)?.GetInt("stationid") ?? sessions.Of(characterId)?.GetInt("structureid") ?? 0;
+        return docked > 0 ? docked : recipient.HomeStationId;
     }
 
     public async ValueTask<Eve.Services.Core.LoginCampaignSnapshot?> GetLoginCampaignStateAsync(
@@ -685,22 +765,6 @@ public sealed partial class PersistenceNewEdenStoreRuntime(
         return null;
     }
 
-    private static decimal? PriceFor(JsonObject offer, string currency)
-    {
-        foreach (var pricing in (offer["offerPricings"] as JsonArray)?.OfType<JsonObject>() ?? [])
-        {
-            if (!String(pricing["currency"]).Equals(currency, StringComparison.OrdinalIgnoreCase))
-                continue;
-            if (decimal.TryParse(pricing["price"]?.ToString(), System.Globalization.NumberStyles.Float,
-                    System.Globalization.CultureInfo.InvariantCulture, out var price) && price > 0)
-                return price;
-        }
-        return null;
-    }
-
-    private static bool IsFiat(string currency) =>
-        currency is "CNY" or "JPY" or "EUR" or "GBP" or "USD" or "RUB";
-
     private static long TokenId(string operationKey, int productIndex)
     {
         var bytes = System.Security.Cryptography.SHA256.HashData(
@@ -767,4 +831,23 @@ public sealed partial class PersistenceNewEdenStoreRuntime(
         value is JsonValue scalar && scalar.TryGetValue<string>(out var text) ? text : value?.ToString() ?? string.Empty;
 
     private readonly record struct TokenPair(long TokenId, long MassTokenId);
+
+    private abstract record StoreGrant;
+
+    private sealed record PlexGrant(long Amount) : StoreGrant;
+
+    private sealed record ItemGrant(int TypeId, long Quantity) : StoreGrant;
+
+    private sealed record GrantedItem(long ItemId, int TypeId, long Quantity, int GroupId, int CategoryId);
+
+    private sealed record StorePurchase(
+        string OperationKey,
+        long AccountId,
+        long PayerCharacterId,
+        long RecipientCharacterId,
+        string OfferId,
+        string StoreOfferId,
+        string Currency,
+        long Quantity,
+        IReadOnlyList<StoreGrant> Grants);
 }

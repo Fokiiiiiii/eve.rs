@@ -424,6 +424,36 @@ impl Message {
                 out.extend_from_slice(&probe.alliance_id.to_le_bytes());
                 out.extend_from_slice(&probe.ship_id.to_le_bytes());
             }
+            Self::PlaceStructure(structure) => {
+                out.extend_from_slice(&structure.structure_id.to_le_bytes());
+                out.extend_from_slice(&structure.solar_system_id.to_le_bytes());
+                put_text(&mut out, &structure.name);
+                out.extend_from_slice(&structure.type_id.to_le_bytes());
+                out.extend_from_slice(&structure.group_id.to_le_bytes());
+                put_vector(&mut out, &structure.position);
+                out.extend_from_slice(&structure.radius.to_le_bytes());
+                out.extend_from_slice(&structure.owner_id.to_le_bytes());
+                out.extend_from_slice(&structure.corporation_id.to_le_bytes());
+                out.extend_from_slice(&structure.alliance_id.to_le_bytes());
+                put_structure_health(&mut out, &structure.vitals, structure.shield_recharge_ms, &structure.limits);
+                put_structure_status(&mut out, &structure.status);
+            }
+            Self::RemoveStructure { structure_id } => out.extend_from_slice(&structure_id.to_le_bytes()),
+            Self::StructureDamaged { structure_id, depleted, over_threshold } => {
+                out.extend_from_slice(&structure_id.to_le_bytes());
+                out.push(match depleted {
+                    None => 0,
+                    Some(Layer::Shield) => 1,
+                    Some(Layer::Armor) => 2,
+                    Some(Layer::Structure) => 3,
+                });
+                out.push(u8::from(*over_threshold));
+            }
+            Self::SetStructureState { solar_system_id, structure_id, status } => {
+                out.extend_from_slice(&solar_system_id.to_le_bytes());
+                out.extend_from_slice(&structure_id.to_le_bytes());
+                put_structure_status(&mut out, status);
+            }
             Self::RemoveProbe { probe_id } => out.extend_from_slice(&probe_id.to_le_bytes()),
             Self::PlaceDisruptor(disruptor)
             | Self::PlaceInhibitor(disruptor)

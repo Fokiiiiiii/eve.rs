@@ -33,20 +33,44 @@ public sealed class EpicArcAvailabilityTests
 
     private static SdeRow Row(long key, string json) => new(key, System.Text.Json.JsonDocument.Parse(json).RootElement.Clone());
 
+    private static SdeRow ArcRow(long arcId, long missionId, long agentId) =>
+        Row(arcId, $$"""{"_key": {{arcId}}, "name": {"en": "Fixture arc"}, "arcRestartInterval": 129600, "iconID": 1, "missions": [{"_key": {{missionId}}, "agentID": {{agentId}}, "nextMissions": []}]}""");
+
     private static SdeRow Fixture(long key) => new(key, System.Text.Json.JsonDocument.Parse("{\"_key\": " + key + ", \"name\": {\"en\": \"Fixture mission\"}}").RootElement.Clone());
 
     [Fact]
-    public void The_committed_table_holds_21_arcs_with_9_in_the_client_build_and_12_newer_and_no_unknown()
+    public void The_committed_table_holds_21_arcs_all_in_the_client_build_and_none_newer_or_unknown()
     {
         var table = EpicArcAvailability.Committed;
         Assert.Equal(21, table.All.Count);
-        Assert.Equal(9, table.All.Count(row => row.Availability == "in-client-build"));
-        Assert.Equal(12, table.All.Count(row => row.Availability == "newer-than-client"));
+        Assert.Equal(21, table.All.Count(row => row.Availability == "in-client-build"));
+        Assert.Equal(0, table.All.Count(row => row.Availability == "newer-than-client"));
         Assert.Equal(0, table.All.Count(row => row.Availability == "unknown"));
         foreach (var arc in new long[] { 29, 40, 48, 52, 53, 55, 56, 128, 132 })
             Assert.Equal("in-client-build", table.Availability(arc));
         foreach (var arc in new long[] { 64, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77 })
-            Assert.Equal("newer-than-client", table.Availability(arc));
+            Assert.Equal("in-client-build", table.Availability(arc));
+    }
+
+    [Fact]
+    public void The_twelve_pilot_certification_arcs_have_owner_confirmed_evidence()
+    {
+        foreach (var arc in new long[] { 64, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77 })
+            Assert.Contains("Owner-confirmed", EpicArcAvailability.Committed.Row(arc)!.Evidence, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void All_21_committed_arcs_are_offered_by_default_to_their_agents()
+    {
+        var arcIds = EpicArcAvailability.Committed.All.Select(row => row.ArcId).Order().ToArray();
+        Assert.Equal(21, arcIds.Length);
+        var arcRows = arcIds.Select(id => ArcRow(id, id * 10 + 1, 3020000 + id)).ToArray();
+        var missionRows = arcIds.Select(id => Fixture(id * 10 + 1)).ToArray();
+        var catalog = MissionStaticCatalog.FromRows(3405148, missionRows, arcRows);
+        Assert.False(catalog.IncludesUnavailableArcs);
+        Assert.Equal(arcIds, catalog.OfferableEpicArcs.Select(arc => arc.ArcId));
+        foreach (var id in arcIds)
+            Assert.Equal([id * 10 + 1], catalog.PlausibleMissionIds(3020000 + id));
     }
 
     [Fact]

@@ -453,6 +453,12 @@ public sealed class SimClient : ISimulation, IAsyncDisposable
 
     public void RemoveProbe(long probeId) => Send(new SimRemoveProbe(probeId));
 
+    public void PlaceStructure(SimPlaceStructure structure) => Send(structure);
+
+    public void RemoveStructure(long structureId) => Send(new SimRemoveStructure(structureId));
+
+    public void SetStructureState(SimSetStructureState state) => Send(state);
+
     public void PlaceDisruptor(SimPlaceDisruptor disruptor) => Send(disruptor);
 
     public void SetDisruptorActive(long deployableId, bool active) => Send(new SimSetDisruptorActive(deployableId, active));

@@ -47,33 +47,38 @@ public sealed class StoreOffersServiceTests
     }
 
     [Theory]
-    [InlineData("CNY")]
-    [InlineData("JPY")]
-    [InlineData("EUR")]
-    [InlineData("GBP")]
-    [InlineData("USD")]
-    [InlineData("RUB")]
-    public async Task Buy_offer_invokes_redeem_fulfillment_without_payment_for_cash_offer(string currency)
+    [InlineData("PLX", 4)]
+    [InlineData("AUR", 4)]
+    [InlineData("USD", 9)]
+    [InlineData("EUR", 9)]
+    public async Task Buy_offer_passes_the_full_request_to_the_grant_for_any_accepted_currency(string currency, long storeId)
     {
-        var providerCalls = 0;
-        var state = StoreState(currency, enabled: false, canPurchase: false, storeId: 9);
-        var response = new PyStr("redeem-queued");
+        var call = PurchaseCall(currency, storeId: storeId);
+        var response = new PyStr("granted");
         StoreOfferPurchaseRequest? received = null;
-        var service = Service(state, (request, _) =>
+        var providerCalls = 0;
+        var service = Service(StoreState(currency, storeId: storeId), (request, _) =>
         {
             received = request;
             providerCalls++;
             return ValueTask.FromResult<PyValue>(response);
         });
 
-        var result = await service.CallAsync(PurchaseCall(currency, storeId: 9));
+        var result = await service.CallAsync(call);
 
         Assert.Same(response, result);
         Assert.Equal(1, providerCalls);
         var purchase = Assert.IsType<StoreOfferPurchaseRequest>(received);
         Assert.Equal(9001L, purchase.AuthenticatedUserId);
         Assert.Equal(new PyLong(781234), purchase.OperationId);
-        Assert.True(purchase.SkipPayment);
+        Assert.Same(call.Args[0], purchase.Offer);
+        Assert.Same(call.Args[1], purchase.Currency);
+        Assert.Same(call.Args[2], purchase.Qty);
+        Assert.Same(call.Kwarg("from_character_id"), purchase.Sender);
+        Assert.Same(call.Kwarg("to_character_id"), purchase.Recipient);
+        Assert.Same(call.Kwarg("message"), purchase.Message);
+        Assert.Same(call.Kwarg("is_game_time"), purchase.GameTime);
+        Assert.Same(call.Kwarg("store_id"), purchase.Store);
         Assert.Equal(new PyStr("cash-sku"), purchase.ThirdPartyGoodsId);
         var products = Assert.IsType<PyList>(purchase.Products);
         Assert.Equal(2, products.Items.Count);
@@ -87,55 +92,27 @@ public sealed class StoreOffersServiceTests
             products.Items[0]);
     }
 
-    [Theory]
-    [InlineData("PLX", "PLX", 4)]
-    [InlineData("GMS", "GMS", 4)]
-    [InlineData("ISK", "ISK", 4)]
-    [InlineData("PLX", "USD", 4)]
-    [InlineData("USD", "USD", 4)]
-    [InlineData("PLX", "PLX", 9)]
-    public async Task Buy_offer_uses_provider_unless_paid_store_pricing_matches(
-        string offeredCurrency,
-        string requestedCurrency,
-        long storeId)
+    [Fact]
+    public async Task Buy_offer_does_not_need_a_positive_price_row_because_nothing_is_charged()
     {
-        var call = PurchaseCall(requestedCurrency, storeId: storeId);
-        var response = new PyStr("settled");
-        StoreOfferPurchaseRequest? received = null;
+        // The price rows are the listed prices shown to the player; the purchase names a currency and is granted at no charge.
         var providerCalls = 0;
-        var service = Service(StoreState(offeredCurrency, storeId: storeId), (request, _) =>
+        var service = Service(StoreState("PLX", price: 0, storeId: 9), (_, _) =>
         {
-            received = request;
             providerCalls++;
-            return ValueTask.FromResult<PyValue>(response);
+            return ValueTask.FromResult<PyValue>(new PyStr("granted"));
         });
 
-        var result = await service.CallAsync(call);
-
-        Assert.Same(response, result);
+        Assert.Equal(new PyStr("granted"), await service.CallAsync(PurchaseCall("USD", storeId: 9)));
         Assert.Equal(1, providerCalls);
-        var purchase = Assert.IsType<StoreOfferPurchaseRequest>(received);
-        Assert.Equal(9001L, purchase.AuthenticatedUserId);
-        Assert.False(purchase.SkipPayment);
-        Assert.Same(call.Args[0], purchase.Offer);
-        Assert.Same(call.Args[1], purchase.Currency);
-        Assert.Same(call.Args[2], purchase.Qty);
-        Assert.Same(call.Kwarg("from_character_id"), purchase.Sender);
-        Assert.Same(call.Kwarg("to_character_id"), purchase.Recipient);
-        Assert.Same(call.Kwarg("message"), purchase.Message);
-        Assert.Same(call.Kwarg("is_game_time"), purchase.GameTime);
-        Assert.Same(call.Kwarg("store_id"), purchase.Store);
-        Assert.Equal(2, Assert.IsType<PyList>(purchase.Products).Items.Count);
     }
 
     [Fact]
-    public async Task Cash_offer_still_fails_when_redeem_fulfillment_is_rejected()
+    public async Task Buy_offer_fails_when_the_grant_is_rejected()
     {
         var providerCalls = 0;
-        StoreOfferPurchaseRequest? received = null;
-        var service = Service(StoreState("USD", storeId: 9), (request, _) =>
+        var service = Service(StoreState("USD", storeId: 9), (_, _) =>
         {
-            received = request;
             providerCalls++;
             return ValueTask.FromResult<PyValue>(PyBool.False);
         });
@@ -144,32 +121,7 @@ public sealed class StoreOffersServiceTests
         {
             await service.CallAsync(PurchaseCall("USD", storeId: 9));
         });
-
         Assert.Equal(1, providerCalls);
-        Assert.True(Assert.IsType<StoreOfferPurchaseRequest>(received).SkipPayment);
-    }
-
-    [Theory]
-    [InlineData("USD", 0)]
-    [InlineData("PLX", 9.99)]
-    public async Task Cash_offer_skips_payment_without_a_positive_matching_price_row(
-        string catalogCurrency,
-        double price)
-    {
-        var providerCalls = 0;
-        StoreOfferPurchaseRequest? received = null;
-        var service = Service(StoreState(catalogCurrency, price: price, storeId: 9), (request, _) =>
-        {
-            received = request;
-            providerCalls++;
-            return ValueTask.FromResult<PyValue>(new PyStr("redeem-queued"));
-        });
-
-        var result = await service.CallAsync(PurchaseCall("USD", storeId: 9));
-
-        Assert.Equal(new PyStr("redeem-queued"), result);
-        Assert.Equal(1, providerCalls);
-        Assert.True(Assert.IsType<StoreOfferPurchaseRequest>(received).SkipPayment);
     }
 
     [Fact]
@@ -195,7 +147,7 @@ public sealed class StoreOffersServiceTests
     }
 
     [Fact]
-    public async Task Buy_offer_requires_provider_and_fails_when_non_cash_settlement_is_rejected()
+    public async Task Buy_offer_requires_a_grant_provider_and_fails_when_the_grant_is_rejected()
     {
         var call = PurchaseCall("PLX");
         await Assert.ThrowsAsync<InvalidOperationException>(async () =>

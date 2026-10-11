@@ -50,11 +50,10 @@ internal sealed partial class CharacterServicesComposition
         return fighters;
     }
 
-    /// <summary>The clone grades the multi-login check reads: the same settings and the same (no-account) store as the core services.</summary>
+    /// <summary>The clone grades the multi-login check reads: the same stored subscription state as every other answer.</summary>
     private SubscriptionMgrService? _cloneGradeSource;
 
-    private SubscriptionMgrService CloneGradeSource => _cloneGradeSource ??= new SubscriptionMgrService(
-        new SubscriptionSettings(), new OmegaLicenses(new SubscriptionSettings(), new NoOmegaAccounts(), now));
+    private SubscriptionMgrService CloneGradeSource => _cloneGradeSource ??= new SubscriptionMgrService(omega);
 
     /// <summary>
     /// Who is in each solar system now. The cap is <c>EVE_SYSTEM_POPULATION_CAP</c> characters per system (a positive

@@ -45,7 +45,7 @@ public class HostServerTests : IAsyncLifetime
         Func<long> now = () => FixedNowMs;
         var calendarStore = new TestCalendarStore();
         var calendarAudience = new TestCalendarAudienceReader();
-        foreach (var service in CoreServices.Create(new SubscriptionSettings(), new NoAccounts(), now, calendarStore, calendarAudience))
+        foreach (var service in CoreServices.Create(new NoAccounts(), now, calendarStore, calendarAudience))
         {
             registry.Register(service);
         }
@@ -101,7 +101,7 @@ public class HostServerTests : IAsyncLifetime
 
     private sealed class NoAccounts : IOmegaAccountStore
     {
-        public string? GetOmegaExpiry(long accountId) => null;
+        public string? GetOmegaExpiry(long accountId) => OmegaLicenses.DefaultOmegaExpiryText;
     }
 
     private sealed class EmptyStructureDirectoryReadCallbacks :

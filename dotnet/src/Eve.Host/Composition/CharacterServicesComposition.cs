@@ -37,13 +37,14 @@ namespace Eve.Host;
 
 internal sealed partial class CharacterServicesComposition
 {
-    internal static async Task<(IReadOnlyList<IService> Services, SpaceSessions? Space, SimClient? Simulation, Eve.Services.Crimewatch.CrimewatchRuntime? Crimewatch, Eve.Calendar.ICalendarStore? CalendarStore, Eve.Calendar.ICalendarAudienceReader? CalendarAudience, Eve.Services.Core.GameRpcCallbacks? GameRpcCallbacks, Eve.Services.Core.KeeperRpcCallbacks? KeeperRpcCallbacks)> CharacterServicesAsync(NpgsqlDataSource source, IAccountLookup accounts, OnlineCharacters online, Func<long> now, Foundations foundations, PersistenceStore mailStore, OwnerSession mailStoreOwner, GameStoreCache mailCache, string newCharacterExperienceMode)
-        => await new CharacterServicesComposition(source, accounts, online, now, foundations, mailStore, mailStoreOwner, mailCache, newCharacterExperienceMode).RunAsync();
+    internal static async Task<(IReadOnlyList<IService> Services, SpaceSessions? Space, SimClient? Simulation, Eve.Services.Crimewatch.CrimewatchRuntime? Crimewatch, Eve.Calendar.ICalendarStore? CalendarStore, Eve.Calendar.ICalendarAudienceReader? CalendarAudience, Eve.Services.Core.GameRpcCallbacks? GameRpcCallbacks, Eve.Services.Core.KeeperRpcCallbacks? KeeperRpcCallbacks)> CharacterServicesAsync(NpgsqlDataSource source, IAccountLookup accounts, OnlineCharacters online, Func<long> now, Foundations foundations, PersistenceStore mailStore, OwnerSession mailStoreOwner, GameStoreCache mailCache, string newCharacterExperienceMode, IOmegaAccountStore omegaAccounts)
+        => await new CharacterServicesComposition(source, accounts, online, now, foundations, mailStore, mailStoreOwner, mailCache, newCharacterExperienceMode, omegaAccounts).RunAsync();
 
-    public CharacterServicesComposition(NpgsqlDataSource source, IAccountLookup accounts, OnlineCharacters online, Func<long> now, Foundations foundations, PersistenceStore mailStore, OwnerSession mailStoreOwner, GameStoreCache mailCache, string newCharacterExperienceMode)
+    public CharacterServicesComposition(NpgsqlDataSource source, IAccountLookup accounts, OnlineCharacters online, Func<long> now, Foundations foundations, PersistenceStore mailStore, OwnerSession mailStoreOwner, GameStoreCache mailCache, string newCharacterExperienceMode, IOmegaAccountStore omegaAccounts)
     {
         this.source = source;
         this.accounts = accounts;
+        omega = new OmegaLicenses(omegaAccounts, now);
         this.online = online;
         this.now = now;
         this.foundations = foundations;
@@ -173,6 +174,7 @@ internal sealed partial class CharacterServicesComposition
     private SpaceContainers? spaceContainers;
     private SpaceDrones? spaceDrones;
     private Eve.Services.Space.Sites.CosmicSiteDirector? cosmicSites;
+    private Eve.Services.Space.Sites.SiteNpcs? siteNpcs;
     private Func<long, CancellationToken, Task> allianceAffiliationNotify = default!;
     private Eve.Services.Corporations.AllianceApplicationDueWorker allianceDue = default!;
     private Eve.Services.Corporations.AllianceRegistryService allianceRegistry = default!;
@@ -211,6 +213,8 @@ internal sealed partial class CharacterServicesComposition
     private MissionStaticCatalog agentMissionStatic = default!;
     private AgentMissionRpcCallbacks agentMissionRpcCallbacks = default!;
     private AgentMissionService agentMissionService = default!;
+    private Eve.Agents.AgentMissionStore agentMissionStore = default!;
+    private Eve.Services.Core.AgentMissionAnnouncer agentMissionAnnouncer = default!;
     private SlashService? publicQaSlashService;
     private GameRpcCallbacks gameRpcCallbacks = default!;
     private StationGuestLedger stationGuestLedger = default!;

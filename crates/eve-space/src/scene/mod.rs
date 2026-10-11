@@ -15,6 +15,7 @@ mod jump;
 mod movement;
 mod scan_targets;
 mod session;
+mod structures;
 mod warping;
 use self::collision::*;
 pub use self::decloak::{CLOAK_PROXIMITY_METERS, CloakTrigger, DecloakCause};
@@ -251,6 +252,8 @@ pub enum Out {
     Condition { session: SessionId, command: u8, condition: Condition },
     /// A cynosural field was lit by the ship of `session`: the host keeps its record (`Message::Deployed`).
     DeployedLit { session: SessionId, placement: Box<crate::link::DeployedPlacement> },
+    /// A hit emptied a layer of a structure or paused its repair; the host decides what that means (protocol 60).
+    StructureDamaged { structure_id: i64, depleted: Option<crate::health::Layer>, over_threshold: bool },
     /// A command the scene cannot do.
     Refused { session: SessionId, command: u8, reason: &'static str },
     /// The answer to a targeting order: whether a lock is going, and the ships and bodies locked (or, to `GetTargeters`, the ships that lock this one).
@@ -392,6 +395,8 @@ impl Out {
             | Out::Position { session, .. }
             | Out::ScanTargets { session, .. }
             | Out::DirectionalTargets { session, .. } => *session,
+            // a structure's notice is for the host, not a pilot: no pilot has this session
+            Out::StructureDamaged { .. } => 0,
         }
     }
 }
@@ -677,6 +682,8 @@ pub struct Scene {
     pub(crate) widowed: BTreeMap<SessionId, Widow>,
     /// Unpiloted ships stay in the scene under synthetic sessions until someone boards or destroys them.
     pub(crate) unpiloted: BTreeMap<i64, SessionId>,
+    /// The health of each structure in space, by id (`crate::health::StructureHealth`).
+    pub(crate) structure_health: BTreeMap<i64, crate::health::StructureHealth>,
 }
 
 /// What the client of a destroyed ship still has of the ballpark: it keeps it when it is given a new ship.
@@ -723,6 +730,7 @@ impl Scene {
             destroyed: Vec::new(),
             widowed: BTreeMap::new(),
             unpiloted: BTreeMap::new(),
+            structure_health: BTreeMap::new(),
             wreck_catalog: None,
         }
     }

@@ -13,8 +13,14 @@ public interface IStructureRulesSource
 /// <summary>The running timer of a structure, as the event and the client's slim item show it.</summary>
 public sealed record StructureTimerInfo(long StartedMs, long EndsMs, long PausedMs);
 
-/// <summary>The payload of <see cref="StructureTimers.StateChangedTopic"/>. <c>Repaired</c>: a repair countdown completed, the simulation must make the layers whole. <c>Removal</c>: "unanchored" or "destroyed" when the structure is gone.</summary>
-public sealed record StructureStateChanged(long StructureId, int SolarSystemId, int State, int Upkeep, StructureTimerInfo Timer, bool Repaired, string? Removal);
+/// <summary>The payload of <see cref="StructureTimers.StateChangedTopic"/>. <c>PreviousState</c>/<c>PreviousUpkeep</c>: what the structure was before the change. <c>Repaired</c>: a repair countdown completed, the simulation must make the layers whole. <c>Removal</c>: "unanchored" or "destroyed" when the structure is gone.</summary>
+public sealed record StructureStateChanged(long StructureId, int SolarSystemId, int State, int Upkeep, StructureTimerInfo Timer, bool Repaired, string? Removal, int PreviousState = 0, int PreviousUpkeep = 0);
+
+/// <summary>The payload of <c>structure.anchored</c> (<c>StructureAnchorAuthority.AnchoredTopic</c>): an Upwell structure was anchored from an item of the pilot's ship.</summary>
+public sealed record StructureAnchored(long StructureId, int SolarSystemId, int TypeId, long OwnerCorporationId);
+
+/// <summary>The payload of <see cref="StructureTimers.ServiceChangedTopic"/>: a service module went online (<c>OnlineSinceMs</c> is when) or offline (0).</summary>
+public sealed record StructureServiceChanged(long StructureId, int SolarSystemId, int ServiceId, int State, long OnlineSinceMs);
 
 /// <summary>
 /// The glue of the timeline: loads a structure, applies an event with <see cref="StructureStateMachine"/>, saves the result, publishes <c>structure.state_changed</c> and schedules the next
@@ -25,6 +31,7 @@ public sealed class StructureTimers
 {
     public const string JobKind = "structure.timer";
     public const string StateChangedTopic = "structure.state_changed";
+    public const string ServiceChangedTopic = "structure.service_changed";
 
     private sealed record TimerJob(long StructureId);
 
@@ -71,7 +78,7 @@ public sealed class StructureTimers
             var next = transition.Next;
             await _events.PublishInTransactionAsync(connection, transaction, StateChangedTopic,
                 new StructureStateChanged(structureId, record.SolarSystemId, next.State, next.Upkeep, new StructureTimerInfo(next.StateStartedMs, next.StateEndsMs, next.TimerPausedMs),
-                    transition.Repaired, transition.Removal switch { StructureRemoval.Unanchored => "unanchored", StructureRemoval.Destroyed => "destroyed", _ => null }),
+                    transition.Repaired, transition.Removal switch { StructureRemoval.Unanchored => "unanchored", StructureRemoval.Destroyed => "destroyed", _ => null }, record.Snapshot.State, record.Snapshot.Upkeep),
                 $"structure:{structureId}", cancellationToken);
         }
         await ScheduleAsync(connection, transaction, transition.Next, rules, cancellationToken);
@@ -87,14 +94,33 @@ public sealed class StructureTimers
     /// <summary>Puts a service module online or offline, then lets the timeline react (Low Power ends or begins).</summary>
     public async Task<StructureTransition?> SetServiceAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long structureId, int serviceId, bool online, CancellationToken cancellationToken = default)
     {
-        await _store.SetServiceAsync(connection, transaction, structureId, serviceId, online ? ServiceState.Online : ServiceState.Offline, cancellationToken);
+        var state = online ? ServiceState.Online : ServiceState.Offline;
+        await _store.SetServiceAsync(connection, transaction, structureId, serviceId, state, online ? _scheduler.Now : 0, cancellationToken);
+        await PublishServiceAsync(connection, transaction, structureId, serviceId, state, online ? _scheduler.Now : 0, cancellationToken);
         return await ApplyAsync(connection, transaction, structureId, online ? new ServiceOnline() : new ServiceOffline(), cancellationToken);
+    }
+
+    /// <summary>Announces a service's change in the caller's transaction (the cyno jammer's notice is one of its subscribers).</summary>
+    private async Task PublishServiceAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long structureId, int serviceId, int state, long onlineSinceMs, CancellationToken cancellationToken)
+    {
+        if (await _store.GetAsync(connection, transaction, structureId, false, cancellationToken) is not { } record)
+        {
+            return;
+        }
+        await _events.PublishInTransactionAsync(connection, transaction, ServiceChangedTopic,
+            new StructureServiceChanged(structureId, record.SolarSystemId, serviceId, state, onlineSinceMs), $"structure:{structureId}", cancellationToken);
     }
 
     /// <summary>The fuel ran out: every service goes offline and the structure goes into Low Power.</summary>
     public async Task<StructureTransition?> FuelOutAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long structureId, CancellationToken cancellationToken = default)
     {
+        var online = (await _store.ServicesAsync(connection, transaction, structureId, cancellationToken))
+            .Where(service => service.Value == ServiceState.Online).Select(service => service.Key).ToList();
         await _store.TakeServicesOfflineAsync(connection, transaction, structureId, cancellationToken);
+        foreach (var serviceId in online)
+        {
+            await PublishServiceAsync(connection, transaction, structureId, serviceId, ServiceState.Offline, 0, cancellationToken);
+        }
         return await ApplyAsync(connection, transaction, structureId, new FuelOut(), cancellationToken);
     }
 

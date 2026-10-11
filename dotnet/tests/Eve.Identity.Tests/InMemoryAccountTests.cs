@@ -8,6 +8,10 @@ public class InMemoryAccountTests
     public Task First_login_creates_the_account_and_then_needs_the_same_hash() => AccountScenarios.First_login_creates_the_account_and_then_needs_the_same_hash(Directory);
 
     [Fact]
+    public Task New_accounts_are_stored_until_2100_and_an_operator_can_set_an_earlier_end() =>
+        AccountScenarios.New_accounts_are_stored_until_2100_and_an_operator_can_set_an_earlier_end(Directory);
+
+    [Fact]
     public Task An_account_can_be_looked_up_by_its_id() => AccountScenarios.An_account_can_be_looked_up_by_its_id(Directory);
 
     [Fact]

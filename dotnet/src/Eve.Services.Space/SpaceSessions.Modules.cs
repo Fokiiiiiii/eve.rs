@@ -24,6 +24,9 @@ public sealed partial class SpaceSessions
     /// </summary>
     public Func<long, CancellationToken, Task<bool>>? IsInFleetAsync { get; set; }
 
+    /// <summary>Whether a system is jammed for the standard cynosural fields (the structures' cyno jammer, E-03): a field is refused there. Null: no jammer.</summary>
+    public Func<long, CancellationToken, ValueTask<bool>>? CynoJammedAsync { get; set; }
+
     /// <summary>
     /// An order about the ship's targets. The simulation keeps the locks (a lock takes time, and ends when either ship warps or goes); this asks and
     /// hears back. A lock the simulation accepts ends the undocking protection, and the client is told once more that it is over, as the reference
@@ -125,6 +128,12 @@ public sealed partial class SpaceSessions
             if (IsInFleetAsync is not { } inFleet || !await inFleet(pilot.CharacterId, cancellationToken).ConfigureAwait(false))
             {
                 return ModuleResult.Refusal("CYNO_NOT_IN_FLEET", cynoModule.TypeId, _statics.Type(cynoModule.TypeId)?.Name ?? "");
+            }
+            // a jammer of the system refuses the standard field (the covert one is immune); checked before the security rule, so both are reachable
+            if (CynoJammedAsync is { } jammed && Eve.Services.Space.Effects.CynoFieldTypes.FieldTypeOf(cynoModule.TypeId) != Eve.Services.Space.Effects.CynoFieldTypes.CovertFieldType
+                && await jammed(pilot.SolarSystemId, cancellationToken))
+            {
+                return ModuleResult.Refusal("CYNO_JAMMED", cynoModule.TypeId, _statics.Type(cynoModule.TypeId)?.Name ?? "");
             }
             if (_systems.Get(pilot.SolarSystemId) is { } cynoPlace && Security.IsHighSecOrHigher(Security.ClassFromLevel(cynoPlace.Security)))
             {
@@ -320,6 +329,12 @@ public sealed partial class SpaceSessions
                 package = package with { Action = bomb with { HurtsPilots = false } };
             }
         }
+        // an analyzer's container is checked before the cycle starts (EveJS moduleOperation.js _resolveAnalyzerHackingContext)
+        if (string.Equals(effectName, AnalyzerEffectName, StringComparison.OrdinalIgnoreCase) && HackingService is { } analyzerChecks
+            && await analyzerChecks.AnalyzerRefusalAsync(characterId, targetId, AnalyzerValuesOf(snapshot, moduleId, made.ModuleType), cancellationToken) is { } analyzerRefusal)
+        {
+            return ModuleResult.Refusal(analyzerRefusal, made.ModuleType, made.ModuleName);
+        }
         // the module is marked active while its start is pending: a start the simulation parks for the host (a fuel ask, a P.A.N.I.C.'s grant) asks the host
         // whether the module runs, and its answer comes only when the start is accepted (track C6); a refused start is unmarked below
         var markedHere = pilot.ActiveModules.TryAdd(moduleId, ItemState.Active);
@@ -353,6 +368,11 @@ public sealed partial class SpaceSessions
         AnnounceModeChange(pilot, snapshot, moduleId, started: true);
         await SendShipAsync(id, pilot, SimShips.VitalsOf(snapshot), cancellationToken);
         made.Accepted?.Invoke();
+        // the analyzer opens its attempt once the simulation accepted the start (EveJS: the attempt starts with the accepted activation)
+        if (string.Equals(effectName, AnalyzerEffectName, StringComparison.OrdinalIgnoreCase) && HackingService is { } analyzerOpen)
+        {
+            await analyzerOpen.OpenAnalyzerAttemptAsync(session, characterId, targetId, AnalyzerValuesOf(snapshot, moduleId, made.ModuleType), cancellationToken);
+        }
         // a module that may run in a gate cloak (canActivateInGateCloak: the warp core stabilizers and interdiction nullifiers) keeps the cloak of a jump
         EndInvulnerability(pilot, keepsJumpCloak: snapshot.World.Get(moduleId, ModuleAttributes.CanActivateInGateCloak) > 0);
         if (assistanceRequest is { } remoteRequest && recordAssistance is { } recordRemoteAssistance)

@@ -55,8 +55,7 @@ public sealed class PosMgrServiceTests
     {
         var session = new ClientSession();
         var services = CoreServices.Create(
-            new SubscriptionSettings(),
-            new NoOmegaAccounts(),
+            new PolicyOmegaAccounts(),
             () => 0,
             readControlTowerRows: (actualSession, _) =>
             {
@@ -82,8 +81,8 @@ public sealed class PosMgrServiceTests
         Session = new ClientSession(),
     };
 
-    private sealed class NoOmegaAccounts : IOmegaAccountStore
+    private sealed class PolicyOmegaAccounts : IOmegaAccountStore
     {
-        public string? GetOmegaExpiry(long accountId) => null;
+        public string? GetOmegaExpiry(long accountId) => OmegaLicenses.DefaultOmegaExpiryText;
     }
 }

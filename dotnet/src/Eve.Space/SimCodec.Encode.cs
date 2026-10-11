@@ -50,6 +50,51 @@ public static partial class SimCodec
         foreach (var id in ids) w.I64(id);
     }
 
+    /// <summary>A structure's health, in the order <c>ReadStructureHealth</c> reads it (protocol 60).</summary>
+    private static void WriteStructureHealth(Writer w, SimStructureHealth health)
+    {
+        w.F64(health.ShieldCapacity);
+        w.F64(health.ArmorHp);
+        w.F64(health.StructureHp);
+        foreach (var value in health.Resonances)
+        {
+            w.F64(value);
+        }
+        w.F64(health.ShieldRechargeMs);
+        foreach (var value in health.PerSecondLimit)
+        {
+            w.F64(value);
+        }
+        foreach (var value in health.RepairPause)
+        {
+            w.F64(value);
+        }
+    }
+
+    /// <summary>A structure's slim fields, in the order <c>ReadStructureStatus</c> reads them (protocol 59).</summary>
+    private static void WriteStructureStatus(Writer w, SimStructureStatus status)
+    {
+        w.I32(status.State);
+        w.I32(status.UpkeepState);
+        w.U8(status.Timer is null ? (byte)0 : (byte)1);
+        if (status.Timer is { } timer)
+        {
+            w.I64(timer.Start);
+            w.I64(timer.End);
+            w.U8(timer.Paused is null ? (byte)0 : (byte)1);
+            if (timer.Paused is { } paused)
+            {
+                w.I64(paused);
+            }
+        }
+        w.U8(status.Unanchoring is null ? (byte)0 : (byte)1);
+        if (status.Unanchoring is { } unanchoring)
+        {
+            w.I64(unanchoring);
+        }
+        w.U8(status.Repairing is null ? (byte)0 : status.Repairing.Value ? (byte)2 : (byte)1);
+    }
+
     private static void WriteVector(Writer w, IReadOnlyList<double> v)
     {
         foreach (var number in v)
@@ -890,6 +935,37 @@ private static void WriteAction(Writer w, SimAction action)
                 w.I32(m.CorporationId);
                 w.I32(m.AllianceId);
                 w.I64(m.ShipId);
+                break;
+            case SimPlaceStructure m:
+                w.U8(Kind.PlaceStructure);
+                w.I64(m.StructureId);
+                w.I32(m.SolarSystemId);
+                w.Text(m.Name);
+                w.I32(m.TypeId);
+                w.I32(m.GroupId);
+                WriteVector(w, m.Position);
+                w.F64(m.Radius);
+                w.I64(m.OwnerId);
+                w.I32(m.CorporationId);
+                w.I32(m.AllianceId);
+                WriteStructureHealth(w, m.Health);
+                WriteStructureStatus(w, m.Status);
+                break;
+            case SimStructureDamaged m:
+                w.U8(Kind.StructureDamaged);
+                w.I64(m.StructureId);
+                w.U8((byte)m.Depleted);
+                w.U8(m.OverThreshold ? (byte)1 : (byte)0);
+                break;
+            case SimRemoveStructure m:
+                w.U8(Kind.RemoveStructure);
+                w.I64(m.StructureId);
+                break;
+            case SimSetStructureState m:
+                w.U8(Kind.SetStructureState);
+                w.I32(m.SolarSystemId);
+                w.I64(m.StructureId);
+                WriteStructureStatus(w, m.Status);
                 break;
             case SimRemoveProbe m:
                 w.U8(Kind.RemoveProbe);

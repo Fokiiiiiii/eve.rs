@@ -14,14 +14,14 @@ public sealed class MoonExtractionsRpcService : IService
     private const long MinimumDurationSeconds = 518460;
     private const long MaximumDurationSeconds = 4838400;
     private const long DefaultFractureDelaySeconds = 10800;
-    private readonly Func<JsonObject?> _readState;
+    private readonly Func<Task<JsonObject?>> _readState;
     private readonly Func<ServiceCall, ValueTask<PyValue>>? _mutationBackend;
 
     public MoonExtractionsRpcService(
-        Func<JsonObject?>? readState = null,
+        Func<Task<JsonObject?>>? readState = null,
         Func<ServiceCall, ValueTask<PyValue>>? mutationBackend = null)
     {
-        _readState = readState ?? (() => null);
+        _readState = readState ?? (() => Task.FromResult<JsonObject?>(null));
         _mutationBackend = mutationBackend;
     }
 
@@ -48,7 +48,7 @@ public sealed class MoonExtractionsRpcService : IService
             return call.Method == "StartNewExtraction" ? result : PyNone.Instance;
         }
 
-        var state = _readState() ?? new JsonObject();
+        var state = await _readState().ConfigureAwait(false) ?? new JsonObject();
         return call.Method switch
         {
             "GetExtractionAndEventIDFromStructureID" => ExtractionAndEvent(call, state),
@@ -57,6 +57,10 @@ public sealed class MoonExtractionsRpcService : IService
             _ => PyNone.Instance,
         };
     }
+
+    /// <summary>An extraction as the client reads it (the record of GetExtractionAndEventIDFromStructureID), or None without one.</summary>
+    public static PyValue ExtractionPayload(JsonObject? source) =>
+        source is not null && NormalizeExtraction(source) is { } row ? ExtractionKeyVal(row) : PyNone.Instance;
 
     private static PyValue ExtractionAndEvent(ServiceCall call, JsonObject state)
     {
@@ -141,16 +145,19 @@ public sealed class MoonExtractionsRpcService : IService
     }
 
     private static PyValue ExtractionKeyVal(Extraction row) => Py.KeyVal(
-        ("extractionID", new PyInt(row.ExtractionId)),
-        ("structureID", new PyInt(row.StructureId)),
-        ("moonID", new PyInt(row.MoonId)),
-        ("solarSystemID", new PyInt(row.SolarSystemId)),
-        ("ownerID", new PyInt(row.OwnerId)),
+        ("extractionID", Id(row.ExtractionId)),
+        ("structureID", Id(row.StructureId)),
+        ("moonID", Id(row.MoonId)),
+        ("solarSystemID", Id(row.SolarSystemId)),
+        ("ownerID", Id(row.OwnerId)),
         ("startMoveTime", Py.FileTimeLong(Py.FileTimeFromUnixMs(row.StartMoveTimeMs))),
         ("chunkAvailableTime", Py.FileTimeLong(Py.FileTimeFromUnixMs(row.ChunkAvailableTimeMs))),
         ("naturalDecayTime", Py.FileTimeLong(Py.FileTimeFromUnixMs(row.NaturalDecayTimeMs))),
         ("durationSeconds", new PyInt(row.DurationSeconds)),
         ("yieldMultiplier", Py.Number(row.YieldMultiplier)));
+
+    /// <summary>An id as the client marshals it: a 32-bit int when it fits, a long otherwise (structure ids are 64-bit).</summary>
+    private static PyValue Id(long value) => value > int.MaxValue ? new PyLong(value) : new PyInt(value);
 
     private static long SessionStructureId(ClientSession session)
     {

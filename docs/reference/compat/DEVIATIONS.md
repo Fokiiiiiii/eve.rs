@@ -2570,3 +2570,64 @@ Focused PostgreSQL verification: Station 28/28, selected Space docking/undocking
 - **Texts are IDs.** The server sends the localization IDs of a mission's title and briefing (`nameID`, `messages.mission.briefing`) from the client's own export; the client shows the text from its localization. The official SDE gives English text only, not IDs, so the client export is the source of the IDs. Status: decided.
 - **Loader.** `EVE_CLIENT_SDE_DIR` names the client's static data directory; `native/missions.jsonl.gz` is read at each start into the schema `client_sde` (table `mission_messages`), replacing the earlier load. The directory is not committed and not read by the tests except through an opt-in test. Without the directory the answers carry no text ID and the log says why. Status: decided.
 - **Views.** `GetMissionBriefingInfo` and `GetMissionObjectiveInfo` answer the held mission (offered, accepted or completed) with EveJS's keys; the objective carries the kill dungeon and the ISK reward. Fetch and courier objectives are not built (empty lists), and the dungeon location and enemy owner are shortcuts (the faction, and no location). A character with no held mission gets None, as in EveJS. Status: shortcut for the listed parts; the rest OPEN.
+
+## Encounter Surveillance System: Main Bank, Reserve Bank and the clock (ESS-1, 2026-10-11)
+
+Sources: the EVE University wiki page "Encounter Surveillance System" (revision oldid 229695, 4 March 2026); CCP patch notes 18.11 (2020), 19.06, 19.10 and 23.01; the client's `dynamicresources/common/ess` (`const.py`, `formulas.py`), `dynamicresources/client/ess` (the main and reserve bank states), `dynamicResourceSvc.py`; EveJS `dynamicResourceState.js`, `essMgrService.js`, `bountyRuntime.js`; the pinned SDE (type list 231 `ESSLinkableShips`, the eight `essReserveKeys`).
+
+The client's RPC names, notification names and fields, unlink reasons and link errors are taken from the client code. The reserve keys are committed as `dotnet/src/Eve.Services.Space/Ess/Data/ess-reserve-keys.json`, written by `tools/dev/extract-ess-reserve-keys.py` from the SDE.
+
+### Numbers and where they come from
+
+| Number | Value | Source and rule |
+|---|---|---|
+| Main Bank share of an NPC bounty earned in an ESS system | 40%, the pilot keeps 60% | Wiki ("40% of bounties ... held in the Main Bank"); EveJS `bountiesCut` 0.4. EveJS itself pays the full amount to the pilot (`resolveEssBountySplit`), so the split follows the wiki, not EveJS. Rounded to the cent, halves away from zero. The bank credit commits with the pilot's bucket. |
+| Link duration (the hack) | 360 s | Wiki ("six-minute countdown"); EveJS `bufferTimeSeconds` 360. CCP 18.11 said 6 min 30 s (390 s); the current wiki and EveJS agree on 360, so 360 is used. |
+| Auto payout of the Main Bank to its owner | every 9900 s (2 h 45 min) | Wiki; EveJS `autopaymentIntervalSeconds` 9900. CCP 18.11 said 2 hours; the wiki value is used. |
+| Thief's share of the Main Bank | 80%, the bank is then empty | Wiki ("about four-fifths"). No source says where the other 20% goes, so it is not paid to anyone. Owner decision 3. |
+| Linking range | 10 km | Client `ESS_MAX_LINK_DISTANCE_METERS`; wiki. Checked by the link geometry callback, which the Host does not yet supply (see the cut list). |
+| Linkable hulls | SDE type list 231 | SDE `typeLists` 231 (`ESSLinkableShips`). |
+| Reserve key | 15 or 45 pulses, one key per SDE type | SDE `essreservekeys`; CCP 19.06 ("15 or 45 minutes"). |
+| Reserve pulse interval | 60 s | CCP 19.06 ("pay out every minute"). |
+| Reserve payout curve | the client's `formulas.GetPayout`, exponents 2 and 2, window factor 1.5, padding 0 | Client `formulas.py`; EveJS `reservePayoutExponentLead`/`Tail`, `reserveWindowAccessFactor`, `reservePayoutPaddingValue`. |
+| Reserve maximum payout | 0 | EveJS `reserveBankMaxPayout` 0. No source gives a value: until owner decision 2 is answered, reserve pulses run down and pay nothing. |
+| Reserve share of a bounty | 0 | CCP 18.11 says "a smaller portion" goes to the Reserve Bank and gives no number. The share stays at 0 (owner decision 2). |
+| Equilibrium output of a new ESS | 1.5 | EveJS `equilibriumValue`. Not tied to the dynamic bounty system. |
+| Journal reference of ESS money | 155 (`refESSMainBankAutopayment`) | The only ESS reference in the client. Owner payouts, thefts and reserve payouts all use it (owner decision 5). |
+
+### Rules implemented
+
+- A kill in a system with an ESS online credits 40% of the bounty to the Main Bank and the rest to the pilot's bucket, in the transaction of the bucket. A kill in a system without one is paid in full, as before. A kill is credited once (the bucket's victim check).
+- `AttemptLinkToMainBank`: refused when the pilot holds a reserve link, when the bank is held, or when the geometry check does not pass. The holder gets a link that completes 360 s later (`OnESSMainBankLinkNotification` to the holder, `OnSystemESSDataChanged` to the system).
+- `RequestMainBankUnlink`: only the holder of the link can release it (`OnMainBankPlayerLinkDisconnected`, reason 0). EveJS lets any pilot release it; that is not copied.
+- `AttemptLinkToReserveBank`: needs an open reserve bank (pulses left) and no main link of the same pilot; a pilot holds one bank at a time (CCP 19.06).
+- `RequestReserveBankUnlink`: removes the caller's reserve link (`OnReserveBankPlayerLinkDisconnected`, reason 0).
+- `RequestUnlockReserveBank(keyTypeId)`: a key of the SDE opens the bank for its pulses. A bank with pulses left cannot be reopened (EveJS overwrites it; this is a rule choice).
+- Clock (`space.ess.tick`, every 10 s, one transaction per system under the row lock): a link that has completed becomes a theft if its thief is still in the system (80% to the thief's wallet, the bank emptied, `OnMainBankPlayerHackSuccess`), or ends with reason 1 (proximity) if the thief has left (`OnMainBankPlayerLinkDisconnected`). The owner is paid the bank every 9900 s; with no owner the money stays in the bank. Each due reserve pulse pays its share to the linked characters.
+- A wallet that cannot take a payout (no wallet, money limit) rolls the system back and is retried at the next tick; the money is not lost.
+- Theft history: the main bank keeps its last 50 thefts; the reserve history is one row per character with the sum and the last payout.
+
+### Deviations from the client-visible reference
+
+- Presence, not range: the thief's 10 km range is not tracked while the link runs (the space simulation reports no link range yet). The thief is checked only at completion, against being in the system. The wiki resets the countdown on leaving range; this does not.
+- Refusals are silent (`None`), as the client expects and as EveJS does. The client checks link eligibility itself before it calls.
+- The ESS of a system is placed by the operator through `EVE_ESS_SYSTEMS=solarSystemId:essId[:ownerId]` (comma separated, validated at start; nothing else creates an ESS). There is no sovereignty owner model for systems in eve.rs (the sovereignty state is a legacy JSON table with no system owner), so the owner is the operator's.
+- `GetESSReserveBankKeys` lists all eight SDE keys for a system that has an ESS. The client filters them by quadrant; the quadrant table is not in the committed data.
+
+### Cut, and why
+
+- ESS object in space (ball, beacon, the grid). The client refuses a link when `ballpark.GetBall(essItemID)` is None, so no client link is sent until an ESS is spawned. Who spawns it (a deployable under the structures track, or site content) is owner decision 4. Until then the `linkGeometry` callback is not supplied and the server refuses every link it cannot check. The ESS shows as online in the agency and the system data, and linking is refused.
+- Weapon timer on linking (CCP 19.10: 60 s). Not implemented: the crimewatch weapon timer is not set by the link.
+- Proximity (leaving 10 km) and ship-change unlinks (client reasons 1 and 2 beyond the completion check). Need movement hooks in the space simulation.
+- Key consumption from the pilot's inventory and the quadrant gate of the keys (SCC Secure Key Storage sites, regional quadrants). Not in the sources read in committed form.
+- The escalation interaction, and the reserve share of bounties and maximum payout (owner decision 2).
+- Graphical-client and headless acceptance: not run in this slice (no live ESS to link to).
+
+### Owner decisions needed
+
+1. Who owns an ESS system (a sovereignty holder, or the operator-placed owner of `EVE_ESS_SYSTEMS`).
+2. The reserve share of bounties and the reserve maximum payout (no source has the numbers; both are 0 now).
+3. Where the 20% of the Main Bank a thief does not take goes (now: nowhere).
+4. Who spawns the ESS object in space (needed before a live link can be sent).
+5. Whether thefts and reserve payouts get their own journal reference (now 155 for all).
+6. Key consumption and the quadrant gate of keys; whether the weapon timer and the 10 km proximity check are wanted in this step.

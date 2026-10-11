@@ -1,0 +1,45 @@
+{
+  "source": "SDE essreservekeys (native/essreservekeys.jsonl.gz), build 3396210",
+  "keys": [
+    {
+      "keyTypeId": 57714,
+      "totalPulses": 15,
+      "locationListId": 4609
+    },
+    {
+      "keyTypeId": 57715,
+      "totalPulses": 45,
+      "locationListId": 4609
+    },
+    {
+      "keyTypeId": 57716,
+      "totalPulses": 15,
+      "locationListId": 4610
+    },
+    {
+      "keyTypeId": 57717,
+      "totalPulses": 15,
+      "locationListId": 4612
+    },
+    {
+      "keyTypeId": 57718,
+      "totalPulses": 45,
+      "locationListId": 4612
+    },
+    {
+      "keyTypeId": 57719,
+      "totalPulses": 45,
+      "locationListId": 4610
+    },
+    {
+      "keyTypeId": 57720,
+      "totalPulses": 15,
+      "locationListId": 4611
+    },
+    {
+      "keyTypeId": 57721,
+      "totalPulses": 45,
+      "locationListId": 4611
+    }
+  ]
+}

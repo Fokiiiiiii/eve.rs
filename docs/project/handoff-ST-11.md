@@ -25,9 +25,18 @@ Updated at every push. Plan: scratchpad `specs/structures_phase.md`, section ST-
    no event carries `site`. Until this lands an anomaly is never cleared, only expired.
 6. **Containers.** Objectives `containers` count `site.container.cleared`; no container is placed yet (`SpaceContainers`).
 
-## Next
+## Next (item 5, then item 6)
 
-- NPC spawning for a site (item 5) and containers (item 6), both need the sim side; then a real kill through the simulation.
+- NPC waves: `SpaceSessions.SpawnGroupAsync` (`dotnet/src/Eve.Services.Space/SpaceSessions.Npc.cs`, around line 330) spawns around a
+  `SpawnAnchor` that is a ship. A site needs an anchor at the site's position (no ship), with each wave's query rolled by
+  `NpcSelector.Select`/`Roll`. Its `NpcShip` record needs the site instance id, and the kill path (`SpaceSessions.Npc.cs` around
+  line 235) must add `site` to `npc.killed`.
+- Restart and re-entry: NPCs live only in the simulation. A site that is not cleared must get back exactly its remaining NPCs
+  after a restart or when a pilot enters, so the wave progress in the content runtime decides the count. This is the design point
+  to settle first (write it down before coding).
+- A sim identity field for the site may need a protocol bump: take the next free `PROTOCOL_VERSION` at push time (AGENT_RULES).
+- Item 6 (containers): place data and relic containers through `SpaceContainers`, publish `site.container.cleared` on the analyzer.
+- Then a real kill through the simulation (headless client), since the test currently publishes the kills itself.
 
 ## Gotchas
 

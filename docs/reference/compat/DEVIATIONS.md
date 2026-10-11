@@ -1563,7 +1563,7 @@ push mechanism of the fittings (`FittingMgrServices.cs:241-253`).
   Two native clients observing each other's changes are not checked: no second native client runs in this environment.
 - **Tests.** `MarketCoherenceTests` (5): a placement, a cancel, a fill and an expiry, each seen by a second session in the region (the
   invalidation is asserted on the wire, and the next read shows the change), with a session in another region not asked; and a corporate
-  placement, fill and cancel that reaches the trader with the market right and not the bystander. Status: done (M4) for the affected-project gate (Market, Host, Corporations and Scheduler green on the merge `2f80397`); the live run is blocked by the Secure Depot start-up error on origin/main (`SpaceComposition`), which is not an M4 change, and is re-run once it is fixed.
+  placement, fill and cancel that reaches the trader with the market right and not the bystander. Status: done (M4) for the affected-project gate (Market, Host, Corporations and Scheduler green on the merge `2f80397`). The live run passed at `f046112` (70 passed, 8 skipped, 0 failed); it had waited for the Secure Depot start-up fix on origin/main (`SpaceComposition`), which is not an M4 change.
 
 ## Market slice M5: price history by day (2026-10-11)
 

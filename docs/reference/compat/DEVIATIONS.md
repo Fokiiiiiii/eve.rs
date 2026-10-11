@@ -1904,3 +1904,21 @@ Sources: EveJS `services/sovereignty/sovSuppressionState.js` 177-277 (`broadcast
   its jammer state; the warm-up's end is not announced by either (the client asks `GetCynoJammerState`). Status: decided, same as EveJS.
 - The announcement is a subscriber to `structure.service_changed` (published in the change's transaction), so it is sent at least once: a replay sends the
   same state twice (idempotent for the client). [J]
+- The refusal of a standard cynosural field in a jammed system (`CYNO_JAMMED`, `SpaceSessions.Modules.cs`, text in `ModuleRefusals.cs`): host side, since the
+  simulation has no jammer role; checked after the fleet rule and before the high-security rule, so both are reachable in the rig. The covert field (28650) is
+  immune (SDE 35914 description). The industrial field (52696) is treated as standard (the description says "standard" and names only the covert one as
+  immune); unverified against the client. The refusal's text is ours: EveJS's wording for this refusal was not located. Status: decided, the text open.
+
+## Structure cyno beacon (ST-7, increment d, 2026-10-11)
+
+Sources: EveJS `services/structure/structureCynoBeaconMgrService.js` (`resolveUsableBeacon` 417-455: the notices and their order; `Handle_CmdJumpToStructureBeacon`
+676, args `[structureID, solarSystemID]`); SDE 35840 Pharolux Cyno Beacon (group 2017; its built-in Standup Cynosural Field Generator I, service 16). [J][S]
+
+- Decided: the beacon is the Pharolux (type 35840) with the Cyno Beacon service (16) online; the spec's "group 2017 Upwell Cyno Beacon" names the group, the
+  checks use the type. [S]
+- Checks in the reference order: the beacon exists and is a Pharolux; the requested system (if any) is its system; the pilot is in space; it is not the
+  pilot's system; the service is online; the system is not jammed (E-03); the access check (`characterHasStructureService`, the structure's profile). Each
+  refusal is a named notice with EveJS's text. [J]
+- Not built: the access check and the jump drive's fuel and range, and the jump itself. A beacon that passes every built check is refused by name ("not wired
+  in the simulation yet"), not answered empty. The field is not placed in the simulation (a sim cynosural beacon at the structure's position with the
+  structure's id), so the jump has no target. Status: open; the named refusal is the state until then.

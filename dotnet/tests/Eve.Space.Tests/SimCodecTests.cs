@@ -361,6 +361,11 @@ public class SimCodecTests
             "PlaceStructure" => new SimPlaceStructure(Wide(c, "structureId"), (int)c["solarSystemId"]!, (string)c["typeName"]!, (int)c["typeId"]!,
                 (int)c["groupId"]!, VectorOf(c["position"]!), (double)c["radius"]!, Wide(c, "ownerId"), (int)c["corporationId"]!, (int)c["allianceId"]!,
                 HealthOf(c), StatusOf(c["status"]!)),
+            "TetherPolicy" => new SimTetherPolicy(ulong.Parse((string)c["sessionId"]!, CultureInfo.InvariantCulture),
+                ulong.Parse((string)c["blockedForMs"]!, CultureInfo.InvariantCulture), ulong.Parse((string)c["leaseMs"]!, CultureInfo.InvariantCulture),
+                [.. ((JsonArray)c["candidates"]!).Select(candidate => new SimTetherCandidate(Wide(candidate!, "structureId"), (double)candidate!["range"]!))]),
+            "TetherChanged" => new SimTetherChanged(ulong.Parse((string)c["sessionId"]!, CultureInfo.InvariantCulture),
+                Wide(c, "previousStructureId"), Wide(c, "structureId"), (bool)c["repairing"]!),
             "StructureDamaged" => new SimStructureDamaged(Wide(c, "structureId"), (int)c["depleted"]!, (bool)c["overThreshold"]!),
             "RemoveStructure" => new SimRemoveStructure(Wide(c, "structureId")),
             "SetStructureState" => new SimSetStructureState((int)c["solarSystemId"]!, Wide(c, "structureId"), StatusOf(c["status"]!)),
@@ -405,8 +410,29 @@ public class SimCodecTests
     public void The_fixtures_cover_every_message_kind()
     {
         var kinds = ((JsonArray)Fixtures["valid"]!).Select(c => (string)c!["kind"]!).Distinct().Order().ToArray();
-        Assert.Equal(["Accepted", "Activate", "AdjustCharge", "Approaching", "Arrived", "Bind", "BuffState", "ChangeWreck", "ChargeAdjusted", "ChargeSpent", "Command", "Condition", "ContainerPlaced", "Deployed", "Destroy", "Destroyed", "DirectionalTargets", "Docked", "DroneCommand", "DroneReleased", "DroneResults", "DroneScooped", "EcmBurst", "Enter", "EnterReply", "FighterGotoPoint", "FighterLanded", "FighterOrder", "FighterReleased", "FighterResults", "FighterSize", "Hello", "HelloAck", "Jumped", "Jumping", "LaunchDrone", "LaunchFighter", "Leave", "Measured", "ModuleEnded", "ModuleWorkCycle", "ModuleWorkResult", "Notify", "PlaceContainer", "PlaceCynoBeacon", "PlaceDisruptor", "PlaceInhibitor", "PlaceProbe", "PlaceStructure", "PlaceWreck", "Refused", "RemoveDeployed", "RemoveProbe", "RemoveStructure", "RemoveWreck", "Respawn", "ScanTargets", "SetDisruptorActive", "SetStructureState", "ShipSpec", "Spawn", "SpawnReply", "StructureDamaged", "TargetRefused", "Targets", "UpdateEffect", "UpdateState"], kinds);
+        Assert.Equal(["Accepted", "Activate", "AdjustCharge", "Approaching", "Arrived", "Bind", "BuffState", "ChangeWreck", "ChargeAdjusted", "ChargeSpent", "Command", "Condition", "ContainerPlaced", "Deployed", "Destroy", "Destroyed", "DirectionalTargets", "Docked", "DroneCommand", "DroneReleased", "DroneResults", "DroneScooped", "EcmBurst", "Enter", "EnterReply", "FighterGotoPoint", "FighterLanded", "FighterOrder", "FighterReleased", "FighterResults", "FighterSize", "Hello", "HelloAck", "Jumped", "Jumping", "LaunchDrone", "LaunchFighter", "Leave", "Measured", "ModuleEnded", "ModuleWorkCycle", "ModuleWorkResult", "Notify", "PlaceContainer", "PlaceCynoBeacon", "PlaceDisruptor", "PlaceInhibitor", "PlaceProbe", "PlaceStructure", "PlaceWreck", "Refused", "RemoveDeployed", "RemoveProbe", "RemoveStructure", "RemoveWreck", "Respawn", "ScanTargets", "SetDisruptorActive", "SetStructureState", "ShipSpec", "Spawn", "SpawnReply", "StructureDamaged", "TargetRefused", "Targets", "TetherChanged", "TetherPolicy", "UpdateEffect", "UpdateState"], kinds);
         Assert.True(((JsonArray)Fixtures["invalid"]!).Count >= 10);    }
+
+    [Theory]
+    [InlineData(0.0)]
+    [InlineData(-1.0)]
+    [InlineData(double.NaN)]
+    [InlineData(double.PositiveInfinity)]
+    public void A_tether_policy_refuses_nonpositive_or_nonfinite_ranges(double range)
+    {
+        var error = Assert.Throws<SimLinkException>(() =>
+            SimCodec.Encode(new SimTetherPolicy(77, 0, 3000, [new(1_040_000_000_001, range)])));
+        Assert.Equal(SimLinkError.BadValue, error.Error);
+    }
+
+    [Fact]
+    public void A_tether_policy_bounds_its_count_before_allocating_candidates()
+    {
+        var frame = SimCodec.Encode(new SimTetherPolicy(77, 0, 3000, []));
+        System.Buffers.Binary.BinaryPrimitives.WriteUInt32LittleEndian(frame.AsSpan(25, 4), uint.MaxValue);
+        var error = Assert.Throws<SimLinkException>(() => SimCodec.Decode(frame));
+        Assert.Equal(SimLinkError.Truncated, error.Error);
+    }
 
     [Theory]
     [MemberData(nameof(Valid))]

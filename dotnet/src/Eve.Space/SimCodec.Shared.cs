@@ -91,6 +91,8 @@ public const byte UpdateEffect = 61;
         public const byte SetStructureState = 76;
         /// <summary>The simulation says a hit emptied a layer of a structure or paused its repair (simulation to host, protocol 60).</summary>
         public const byte StructureDamaged = 77;
+        public const byte TetherPolicy = 78;
+        public const byte TetherChanged = 79;
 
 
 /// <summary>Protocol 46 (FP-C7): an ECM burst reached ships; the ship that ran it and each ship reached, with whether its roll jammed it (simulation to host).</summary>

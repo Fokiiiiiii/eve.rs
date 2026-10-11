@@ -4,15 +4,15 @@
   {
    "name": "hello",
    "kind": "Hello",
-   "version": 47,
-   "hex": "03000000012f00"
+   "version": 61,
+   "hex": "03000000013d00"
   },
   {
    "name": "hello ack",
    "kind": "HelloAck",
-   "version": 47,
+   "version": 61,
    "pollHz": 4,
-   "hex": "07000000022f0004000000"
+   "hex": "07000000023d0004000000"
   },
   {
    "name": "enter by undocking",
@@ -3742,6 +3742,47 @@
    "hex": "0b0000004d010091dedfb103000101"
   },
   {
+   "name": "host tether policy grants a leased range",
+   "kind": "TetherPolicy",
+   "sessionId": "77",
+   "blockedForMs": "1000",
+   "leaseMs": "3000",
+   "candidates": [
+    {
+     "structureId": "1040000000000001",
+     "range": 10000.0
+    }
+   ],
+   "hex": "2d0000004e4d00000000000000e803000000000000b80b00000000000001000000010091dedfb10300000000000088c340"
+  },
+  {
+   "name": "host tether policy clears all rights",
+   "kind": "TetherPolicy",
+   "sessionId": "77",
+   "blockedForMs": "0",
+   "leaseMs": "0",
+   "candidates": [],
+   "hex": "1d0000004e4d000000000000000000000000000000000000000000000000000000"
+  },
+  {
+   "name": "tether engages and repairs the ship",
+   "kind": "TetherChanged",
+   "sessionId": "77",
+   "previousStructureId": "0",
+   "structureId": "1040000000000001",
+   "repairing": true,
+   "hex": "1a0000004f4d000000000000000000000000000000010091dedfb1030001"
+  },
+  {
+   "name": "tether breaks",
+   "kind": "TetherChanged",
+   "sessionId": "77",
+   "previousStructureId": "1040000000000001",
+   "structureId": "0",
+   "repairing": false,
+   "hex": "1a0000004f4d00000000000000010091dedfb10300000000000000000000"
+  },
+  {
    "name": "structure taken out of space by the host",
    "kind": "RemoveStructure",
    "structureId": "1040000000000001",
@@ -4602,6 +4643,26 @@
   }
  ],
  "invalid": [
+  {
+   "name": "tether candidate count exceeds its frame",
+   "reason": "truncated",
+   "hex": "1d0000004e4d000000000000000000000000000000b80b000000000000ffffffff"
+  },
+  {
+   "name": "tether candidate has zero range",
+   "reason": "bad-value",
+   "hex": "2d0000004e4d000000000000000000000000000000b80b00000000000001000000010091dedfb103000000000000000000"
+  },
+  {
+   "name": "tether candidate has NaN range",
+   "reason": "bad-value",
+   "hex": "2d0000004e4d000000000000000000000000000000b80b00000000000001000000010091dedfb10300000000000000f87f"
+  },
+  {
+   "name": "tether repair flag is not boolean",
+   "reason": "bad-value",
+   "hex": "1a0000004f4d000000000000000000000000000000010091dedfb1030002"
+  },
   {
    "name": "unknown kind",
    "reason": "unknown-kind",

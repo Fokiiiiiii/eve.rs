@@ -22,7 +22,7 @@ at equal rank; client wire shapes = eve-logic. When no source states the spec, t
 | ST-C in-space compression | done | ship module, not a structure |
 | ST-E (E-01, E-04, E-02/E-05 assertions) | done | custom cloak notice needs Mobile Observatory |
 
-Not started: ST-4 tether, ST-5 control/boarding/deliveries, ST-6b moon rocks in space, ST-8a/8b structure modules and doomsdays, ST-9 entosis
+In progress: ST-4 tether (Rust/Host workers, protocol 61). Not started: ST-5 control/boarding/deliveries, ST-6b moon rocks in space, ST-8a/8b structure modules and doomsdays, ST-9 entosis
 (depends on a Sovereignty Hub ball). Order and dependencies: `plan.md` section 5.
 
 ## Things that will bite

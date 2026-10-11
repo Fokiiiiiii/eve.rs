@@ -199,6 +199,8 @@ internal sealed class FakeSim : ISimulation
 
     public void PlaceStructure(SimPlaceStructure structure) => Heard.Enqueue(structure);
 
+    public void SetTetherPolicy(SimTetherPolicy policy) => Heard.Enqueue(policy);
+
     public void RemoveStructure(long structureId) => Heard.Enqueue(new SimRemoveStructure(structureId));
 
     public void SetStructureState(SimSetStructureState state) => Heard.Enqueue(state);

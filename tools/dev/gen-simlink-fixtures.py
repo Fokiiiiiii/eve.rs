@@ -19,7 +19,7 @@ KINDS = {"Hello": 1, "HelloAck": 2, "Enter": 3, "Leave": 4, "Bind": 5, "UpdateSt
          "AdjustCharge": 33, "ChargeAdjusted": 34, "Arrived": 35, "LaunchDrone": 36, "DroneCommand": 37, "DroneResults": 38,
          "DroneScooped": 39, "DroneReleased": 40, "ModuleWorkCycle": 51, "ModuleWorkResult": 52, "ModuleEnded": 53, "LaunchFighter": 54, "FighterOrder": 55, "FighterResults": 56, "FighterLanded": 57, "FighterReleased": 58, "FighterGotoPoint": 59, "FighterSize": 60, "UpdateEffect": 61, "BuffState": 62, "Deployed": 63, "RemoveDeployed": 64, "PlaceProbe": 65, "RemoveProbe": 66,
          "EcmBurst": 67, "PlaceDisruptor": 68, "SetDisruptorActive": 69, "PlaceInhibitor": 70, "ScanTargets": 71, "DirectionalTargets": 72,
-         "PlaceCynoBeacon": 73, "PlaceStructure": 74, "RemoveStructure": 75, "SetStructureState": 76, "StructureDamaged": 77}
+         "PlaceCynoBeacon": 73, "PlaceStructure": 74, "RemoveStructure": 75, "SetStructureState": 76, "StructureDamaged": 77, "TetherPolicy": 78, "TetherChanged": 79}
 
 def s(text):  # u16 length + UTF-8
     data = text.encode("utf-8")
@@ -431,6 +431,14 @@ def build(m):
                      + struct.pack("<ii", m["corporationId"], m["allianceId"]) + structure_health(m) + structure_status(m["status"]))
     if k == "RemoveStructure":
         return frame(k, i64(m["structureId"]))
+    if k == "TetherPolicy":
+        candidates = m["candidates"]
+        payload = u64(m["sessionId"]) + u64(m["blockedForMs"]) + u64(m["leaseMs"]) + struct.pack("<I", len(candidates))
+        for candidate in candidates:
+            payload += i64(candidate["structureId"]) + struct.pack("<d", candidate["range"])
+        return frame(k, payload)
+    if k == "TetherChanged":
+        return frame(k, u64(m["sessionId"]) + i64(m["previousStructureId"]) + i64(m["structureId"]) + bytes([1 if m["repairing"] else 0]))
     if k == "StructureDamaged":  # sent by the simulation: the layer a hit emptied (0 none, 1 shield, 2 armor, 3 hull) and whether a repair is paused
         return frame(k, i64(m["structureId"]) + bytes([m["depleted"]]) + bytes([1 if m["overThreshold"] else 0]))
     if k == "SetStructureState":
@@ -526,8 +534,8 @@ BARE = dict(IBIS, name="", modules=[], allianceId=99000001, securityStatus=-2.5,
             condition={"damage": 0.0, "armorDamage": 0.0, "shieldCharge": 1.0, "charge": 1.0})
 
 valid = [
-    {"name": "hello", "kind": "Hello", "version": 47},
-    {"name": "hello ack", "kind": "HelloAck", "version": 47, "pollHz": 4},
+    {"name": "hello", "kind": "Hello", "version": 61},
+    {"name": "hello ack", "kind": "HelloAck", "version": 61, "pollHz": 4},
     {"name": "enter by undocking", "kind": "Enter", "sessionId": "1790646377000015", "solarSystemId": 30100032,
      "how": 0, "stationId": "60015249", "ship": IBIS},
     {"name": "enter already in space, no modules, non-ASCII name", "kind": "Enter", "sessionId": "1",
@@ -1028,6 +1036,10 @@ valid = [
      "structureId": "1040000000000001",
      "status": {"state": 111, "upkeepState": 3, "timer": [132000000000000000, 132000860000000000, 132000100000000000], "unanchoring": 132000900000000000, "repairing": True}},
     {"name": "a hit empties a structure's shield and pauses its repair", "kind": "StructureDamaged", "structureId": "1040000000000001", "depleted": 1, "overThreshold": True},
+    {"name": "host tether policy grants a leased range", "kind": "TetherPolicy", "sessionId": "77", "blockedForMs": "1000", "leaseMs": "3000", "candidates": [{"structureId": "1040000000000001", "range": 10000.0}]},
+    {"name": "host tether policy clears all rights", "kind": "TetherPolicy", "sessionId": "77", "blockedForMs": "0", "leaseMs": "0", "candidates": []},
+    {"name": "tether engages and repairs the ship", "kind": "TetherChanged", "sessionId": "77", "previousStructureId": "0", "structureId": "1040000000000001", "repairing": True},
+    {"name": "tether breaks", "kind": "TetherChanged", "sessionId": "77", "previousStructureId": "1040000000000001", "structureId": "0", "repairing": False},
     {"name": "structure taken out of space by the host", "kind": "RemoveStructure", "structureId": "1040000000000001"},
     {"name": "mobile warp disruptor dropped from a ship and not yet anchored", "kind": "PlaceDisruptor", "deployableId": "4250000000000009",
      "solarSystemId": 30100032, "typeName": "Mobile Small Warp Disruptor I", "typeId": 12198, "groupId": 361,
@@ -1225,6 +1237,10 @@ panic_negative = dict(panic, effect=dict(panic["effect"], action={"kind": "panic
 grant = named("module work cycle of the invulnerability core's grant, two ships in reach")
 buff_state = named("buff state of a ship: a shield resistance buff and a repair buff")
 invalid = [
+    {"name": "tether candidate count exceeds its frame", "reason": "truncated", "hex": frame("TetherPolicy", u64("77") + u64("0") + u64("3000") + struct.pack("<I", 0xffffffff)).hex()},
+    {"name": "tether candidate has zero range", "reason": "bad-value", "hex": frame("TetherPolicy", u64("77") + u64("0") + u64("3000") + struct.pack("<I", 1) + i64("1040000000000001") + struct.pack("<d", 0.0)).hex()},
+    {"name": "tether candidate has NaN range", "reason": "bad-value", "hex": frame("TetherPolicy", u64("77") + u64("0") + u64("3000") + struct.pack("<I", 1) + i64("1040000000000001") + struct.pack("<d", float("nan"))).hex()},
+    {"name": "tether repair flag is not boolean", "reason": "bad-value", "hex": frame("TetherChanged", u64("77") + i64("0") + i64("1040000000000001") + bytes([2])).hex()},
     {"name": "unknown kind", "reason": "unknown-kind", "hex": "01000000ff"},
     {"name": "kind zero", "reason": "unknown-kind", "hex": "0100000000"},
     {"name": "empty frame", "reason": "empty", "hex": "00000000"},

@@ -27,7 +27,7 @@ public sealed class SimLinkException(SimLinkError error, string message) : Excep
 /// </summary>
 public static partial class SimCodec
 {
-    public const ushort ProtocolVersion = 60;
+    public const ushort ProtocolVersion = 61;
     /// <summary>The largest frame either side accepts (1 MiB).</summary>
     public const int MaxFrame = 1 << 20;
 
@@ -712,6 +712,37 @@ public static partial class SimCodec
                         throw new SimLinkException(SimLinkError.BadValue, "bad structure");
                     }
                     message = new SimPlaceStructure(structure, system, name, type, group, position, radius, owner, corporation, alliance, health, status);
+                    break;
+                }
+            case Kind.TetherPolicy:
+                {
+                    var session = r.U64();
+                    var blocked = r.U64();
+                    var lease = r.U64();
+                    var count = r.U32();
+                    if (count > int.MaxValue || count > r.Remaining / 16)
+                        throw new SimLinkException(SimLinkError.Truncated, "tether candidates");
+                    var candidates = new SimTetherCandidate[(int)count];
+                    for (var index = 0; index < candidates.Length; index++)
+                    {
+                        var structure = r.I64();
+                        var range = r.F64();
+                        if (structure <= 0 || !double.IsFinite(range) || range <= 0)
+                            throw new SimLinkException(SimLinkError.BadValue, "tether candidate");
+                        candidates[index] = new(structure, range);
+                    }
+                    message = new SimTetherPolicy(session, blocked, lease, candidates);
+                    break;
+                }
+            case Kind.TetherChanged:
+                {
+                    var session = r.U64();
+                    var previous = r.I64();
+                    var structure = r.I64();
+                    var repairing = ReadFlag(ref r, "tether repair");
+                    if (previous < 0 || structure < 0 || (structure == 0 && repairing))
+                        throw new SimLinkException(SimLinkError.BadValue, "tether state");
+                    message = new SimTetherChanged(session, previous, structure, repairing);
                     break;
                 }
             case Kind.StructureDamaged:

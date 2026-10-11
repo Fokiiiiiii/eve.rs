@@ -881,6 +881,8 @@ public sealed partial class CharMgrService(
 public sealed record HomeStationLocation(
     long Id, int TypeId, string? Name, int SolarSystemId, int ConstellationId, int RegionId, long OwnerId, bool IsFallback);
 
+public sealed record HomeStationCandidate(HomeStationLocation Location, bool IsCurrentStation, bool IsSchoolHQ);
+
 public sealed record HomeStationStructure(HomeStationLocation? Location, bool PersistentlyDeployed, bool IsLost);
 
 public sealed record HomeStationResolution(Character? Character, HomeStationLocation? Location);
@@ -889,12 +891,17 @@ public sealed class HomeStationResolver(
     Func<long, CancellationToken, Task<Character?>> readCharacter,
     StationCatalog stations,
     CreationCatalog creation,
-    Func<long, CancellationToken, Task<HomeStationStructure?>> readStructure)
+    Func<long, CancellationToken, Task<HomeStationStructure?>> readStructure,
+    Func<Character, CancellationToken, Task<IReadOnlyList<HomeStationLocation>>>? readCorporationOfficeCandidates = null)
 {
+    public async ValueTask<Character?> ReadCharacterAsync(ServiceCall call) =>
+        call.Session.CharacterId is { } characterId
+            ? await readCharacter(characterId, call.Cancellation)
+            : null;
+
     public async ValueTask<HomeStationResolution> ResolveAsync(ServiceCall call)
     {
-        if (call.Session.CharacterId is not { } characterId ||
-            await readCharacter(characterId, call.Cancellation) is not { } character)
+        if (await ReadCharacterAsync(call) is not { } character)
             return new(null, null);
 
         if (stations.Get(character.HomeStationId) is { } home)
@@ -913,11 +920,63 @@ public sealed class HomeStationResolver(
             : null);
     }
 
+    public async ValueTask<IReadOnlyList<HomeStationCandidate>> ResolveCandidatesAsync(Character character, ServiceCall call)
+    {
+        var school = SchoolStation(character);
+        var currentId = CurrentLocationId(call.Session, character);
+        var locations = new List<HomeStationLocation>();
+        if (school is not null)
+            locations.Add(FromStation(school, false));
+        if (readCorporationOfficeCandidates is not null)
+            locations.AddRange(await readCorporationOfficeCandidates(character, call.Cancellation));
+        if (await ResolveLocationAsync(currentId, call.Cancellation) is { } current)
+            locations.Add(current);
+
+        var seen = new HashSet<long>();
+        return locations
+            .Where(location => location.Id > 0 && seen.Add(location.Id))
+            .Select(location => new HomeStationCandidate(location, location.Id == currentId, location.Id == school?.Id))
+            .ToArray();
+    }
+
+    public async ValueTask<HomeStationLocation?> ResolveLocationAsync(long id, CancellationToken cancellationToken = default)
+    {
+        if (id <= 0)
+            return null;
+        if (stations.Get(id) is { } station)
+            return FromStation(station, false);
+        return await readStructure(id, cancellationToken) is { PersistentlyDeployed: true, Location: { } location }
+            ? location with { IsFallback = false }
+            : null;
+    }
+
     private Station? SchoolStation(Character character)
     {
         var school = CreationCatalog.ResolveSchool(character.SchoolId, character.RaceId);
         var starter = school is null ? null : creation.StarterFor(school.CorporationId);
         return starter is null ? null : stations.Get(starter.StationId);
+    }
+
+    private static long CurrentLocationId(ClientSession session, Character character)
+    {
+        var stationId = session.GetInt("stationid");
+        if (stationId is not > 0)
+            stationId = session.GetInt("stationID");
+        if (stationId is > 0)
+            return stationId.Value;
+
+        var structureId = session.GetInt("structureid");
+        if (structureId is not > 0)
+            structureId = session.GetInt("structureID");
+        if (structureId is > 0)
+        {
+            var shipId = session.GetInt("shipid");
+            if (shipId is not > 0)
+                shipId = session.GetInt("shipID");
+            return structureId == shipId ? 0 : structureId.Value;
+        }
+
+        return character.StationId;
     }
 
     private static HomeStationLocation FromStation(Station station, bool isFallback) =>
@@ -926,8 +985,21 @@ public sealed class HomeStationResolver(
 }
 
 [Service("home_station")]
-public sealed partial class HomeStationService(HomeStationResolver homeStations)
+public sealed partial class HomeStationService(
+    HomeStationResolver homeStations,
+    Func<long, long, bool, long, CancellationToken, Task<HomeStationChangeResult>>? tryChangeHomeStationAsync = null,
+    Func<long, CancellationToken, Task<bool>>? resetRemoteChangeTimeAsync = null,
+    Func<long>? nowFileTime = null)
 {
+    private const string ValidationErrorClass = "homestation.validation.ChangeHomeStationValidationError";
+    private const string RemoteChangeNotExpectedErrorClass = "homestation.error.RemoteChangeNotExpectedError";
+    private const int UnhandledException = 0;
+    private const int StationInWormhole = 1;
+    private const int AlreadyHomeStation = 2;
+    private const int RemoteCooldown = 3;
+    private const int InvalidCandidate = 5;
+    private readonly Func<long> _nowFileTime = nowFileTime ?? (() => DateTime.UtcNow.ToFileTimeUtc());
+
     [Method("get_home_station")]
     public async ValueTask<PyValue> GetHomeStation(ServiceCall call)
     {
@@ -945,5 +1017,184 @@ public sealed partial class HomeStationService(HomeStationResolver homeStations)
                 ("id", new PyInt(station.Id)),
                 ("type_id", new PyInt(station.TypeId))));
         return new PyObjectEx(ObjectExKind.Ex2, header, [], []);
+    }
+
+    [Method("get_home_station_candidates")]
+    public async ValueTask<PyValue> GetHomeStationCandidates(ServiceCall call)
+    {
+        if (await homeStations.ReadCharacterAsync(call) is not { } character)
+            return new PyList([]);
+
+        var now = _nowFileTime();
+        var remoteCooldown = character.NextRemoteHomeStationChangeFileTime > now;
+        var candidates = await homeStations.ResolveCandidatesAsync(character, call);
+        return new PyList(candidates.Select(candidate => CandidatePayload(candidate, character, remoteCooldown)).ToArray());
+    }
+
+    [Method("get_next_remote_change_time")]
+    public async ValueTask<PyValue> GetNextRemoteChangeTime(ServiceCall call)
+    {
+        if (await homeStations.ReadCharacterAsync(call) is not { } character)
+            return PyNone.Instance;
+
+        var fileTime = character.NextRemoteHomeStationChangeFileTime;
+        return fileTime > _nowFileTime()
+            ? PythonDatetime(DateTime.FromFileTimeUtc(fileTime))
+            : PyNone.Instance;
+    }
+
+    [Method("set_home_station")]
+    public async ValueTask<PyValue> SetHomeStation(ServiceCall call)
+    {
+        if (call.Session.CharacterId is not { } characterId ||
+            await homeStations.ReadCharacterAsync(call) is not { } character)
+            throw ValidationError(InvalidCandidate);
+
+        var stationId = ParseStationId(call.Arg(0));
+        var candidates = await homeStations.ResolveCandidatesAsync(character, call);
+        var candidate = candidates.FirstOrDefault(item => item.Location.Id == stationId);
+        if (stationId is null || candidate is null)
+            throw ValidationError(InvalidCandidate);
+
+        if (IsWormholeHomeStationSystem(candidate.Location.SolarSystemId))
+            throw ValidationError(StationInWormhole);
+        if (candidate.Location.Id == character.HomeStationId)
+            throw ValidationError(AlreadyHomeStation);
+
+        var isRemote = !candidate.IsCurrentStation && !candidate.IsSchoolHQ;
+        if (isRemote && !call.Arg(1).Equals(PyBool.True))
+            throw new MachoWrappedException(MachoErrors.Wrapped(
+                RemoteChangeNotExpectedErrorClass,
+                [],
+                [new KeyValuePair<PyValue, PyValue>(new PyStr("msg"), new PyStr("RemoteChangeNotExpectedError"))]));
+
+        var now = _nowFileTime();
+        if (isRemote && character.NextRemoteHomeStationChangeFileTime > now)
+            throw ValidationError(RemoteCooldown);
+        if (tryChangeHomeStationAsync is null)
+            throw new InvalidOperationException("Home-station mutation is not configured.");
+
+        var result = await tryChangeHomeStationAsync(characterId, candidate.Location.Id, isRemote, now, call.Cancellation);
+        switch (result)
+        {
+            case HomeStationChangeResult.Changed:
+                SetSessionHomeStation(call.Session, candidate.Location.Id);
+                call.Session.SendNotification("OnHomeStationChanged", "charid", new PyInt(candidate.Location.Id));
+                return PyNone.Instance;
+            case HomeStationChangeResult.AlreadyHome:
+                throw ValidationError(AlreadyHomeStation);
+            case HomeStationChangeResult.RemoteCooldown:
+                throw ValidationError(RemoteCooldown);
+            case HomeStationChangeResult.CharacterMissing:
+                throw ValidationError(InvalidCandidate);
+            default:
+                throw ValidationError(UnhandledException);
+        }
+    }
+
+    [Method("reset_remote_change_time")]
+    public async ValueTask<PyValue> ResetRemoteChangeTime(ServiceCall call)
+    {
+        if (call.Session.CharacterId is { } characterId)
+        {
+            if (resetRemoteChangeTimeAsync is null)
+                throw new InvalidOperationException("Home-station cooldown reset is not configured.");
+            await resetRemoteChangeTimeAsync(characterId, call.Cancellation);
+        }
+        return PyNone.Instance;
+    }
+
+    private static PyValue CandidatePayload(HomeStationCandidate candidate, Character character, bool remoteCooldown)
+    {
+        var errors = CandidateErrors(candidate, character, remoteCooldown);
+        var location = candidate.Location;
+        var header = Py.Tuple(
+            Py.Tuple(new PyToken("homestation.types.StationCandidateData")),
+            Py.Dict(
+                ("errors", new PyList(errors)),
+                ("solar_system_id", new PyInt(location.SolarSystemId)),
+                ("type_id", new PyInt(location.TypeId)),
+                ("is_current_station", candidate.IsCurrentStation ? PyBool.True : PyBool.False),
+                ("is_school_hq", candidate.IsSchoolHQ ? PyBool.True : PyBool.False),
+                ("id", new PyInt(location.Id))));
+        return new PyObjectEx(ObjectExKind.Ex2, header, [], []);
+    }
+
+    private static List<PyValue> CandidateErrors(HomeStationCandidate candidate, Character character, bool remoteCooldown)
+    {
+        var errors = new List<PyValue>();
+        if (IsWormholeHomeStationSystem(candidate.Location.SolarSystemId))
+            errors.Add(new PyInt(StationInWormhole));
+        if (candidate.Location.Id == character.HomeStationId)
+            errors.Add(new PyInt(AlreadyHomeStation));
+        if (errors.Count == 0 && remoteCooldown && !candidate.IsCurrentStation && !candidate.IsSchoolHQ)
+            errors.Add(new PyInt(RemoteCooldown));
+        return errors;
+    }
+
+    // Thera has wormhole space, but retail allows home stations in its NPC stations.
+    private static bool IsWormholeHomeStationSystem(int solarSystemId) =>
+        solarSystemId is >= 31_000_000 and <= 31_999_999 && solarSystemId != 31_000_005;
+
+    private static long? ParseStationId(PyValue value) => value switch
+    {
+        PyInt number => number.Value,
+        PyLong number => number.Value,
+        _ => null,
+    };
+
+    private static void SetSessionHomeStation(ClientSession session, long stationId)
+    {
+        var value = new PyInt(stationId);
+        session.Set("homeStationID", value);
+        session.Set("homestationid", value);
+        session.Set("cloneStationID", value);
+        session.Set("clonestationid", value);
+    }
+
+    private static MachoWrappedException ValidationError(params int[] codes)
+    {
+        var errors = new PyList(codes.Select(code => (PyValue)new PyInt(code)).ToArray());
+        return new MachoWrappedException(MachoErrors.Wrapped(
+            ValidationErrorClass,
+            [errors],
+            [new KeyValuePair<PyValue, PyValue>(new PyStr("errors"), errors)]));
+    }
+
+    private static PyCPickled PythonDatetime(DateTime date)
+    {
+        Span<byte> datetime = stackalloc byte[10];
+        System.Buffers.Binary.BinaryPrimitives.WriteUInt16BigEndian(datetime, (ushort)date.Year);
+        datetime[2] = (byte)date.Month;
+        datetime[3] = (byte)date.Day;
+        datetime[4] = (byte)date.Hour;
+        datetime[5] = (byte)date.Minute;
+        datetime[6] = (byte)date.Second;
+        var microsecond = (int)((date.Ticks % TimeSpan.TicksPerSecond) / 10);
+        datetime[7] = (byte)(microsecond >> 16);
+        datetime[8] = (byte)(microsecond >> 8);
+        datetime[9] = (byte)microsecond;
+
+        using var pickle = new System.IO.MemoryStream();
+        pickle.WriteByte(0x80);
+        pickle.WriteByte(0x02);
+        pickle.Write(System.Text.Encoding.ASCII.GetBytes("cdatetime\ndatetime\nq\0c_codecs\nencode\nq\u0001X"));
+        WriteUnicode(pickle, System.Text.Encoding.UTF8.GetBytes(System.Text.Encoding.Latin1.GetString(datetime)));
+        pickle.Write(System.Text.Encoding.ASCII.GetBytes("q\u0002X"));
+        WriteUnicode(pickle, System.Text.Encoding.ASCII.GetBytes("latin1"));
+        pickle.Write(System.Text.Encoding.ASCII.GetBytes("q\u0003"));
+        pickle.WriteByte(0x86);
+        pickle.Write(System.Text.Encoding.ASCII.GetBytes("q\u0004Rq\u0005"));
+        pickle.WriteByte(0x85);
+        pickle.Write(System.Text.Encoding.ASCII.GetBytes("q\u0006Rq\u0007."));
+        return new PyCPickled(pickle.ToArray());
+    }
+
+    private static void WriteUnicode(System.IO.Stream stream, byte[] value)
+    {
+        Span<byte> length = stackalloc byte[4];
+        System.Buffers.Binary.BinaryPrimitives.WriteInt32LittleEndian(length, value.Length);
+        stream.Write(length);
+        stream.Write(value);
     }
 }

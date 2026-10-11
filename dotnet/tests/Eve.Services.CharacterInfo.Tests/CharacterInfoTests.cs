@@ -72,7 +72,8 @@ internal sealed class Rig : IAsyncDisposable
 
 public static HomeStationResolver CreateHomeStationResolver(
     PgCharacterStore characters,
-    Func<long, CancellationToken, Task<HomeStationStructure?>>? readStructure = null)
+    Func<long, CancellationToken, Task<HomeStationStructure?>>? readStructure = null,
+    Func<Character, CancellationToken, Task<IReadOnlyList<HomeStationLocation>>>? readCorporationOfficeCandidates = null)
 {
     var starter = Stations.Get(60015249)!;
     var catalog = new CreationCatalog([], [], [
@@ -82,7 +83,8 @@ public static HomeStationResolver CreateHomeStationResolver(
         (id, token) => characters.GetAsync(id, token),
         Stations,
         catalog,
-        readStructure ?? ((_, _) => Task.FromResult<HomeStationStructure?>(null)));
+        readStructure ?? ((_, _) => Task.FromResult<HomeStationStructure?>(null)),
+        readCorporationOfficeCandidates);
 }
 
     private ValueTask<IReadOnlyList<PyValue>> ReadRecentShipKillmailPageAsync(long characterId, int num, int startIndex, CancellationToken _)
@@ -789,6 +791,222 @@ public class CharMgrTests
         Assert.Equal(
             Py.Rowset(["noteID", "label"], []),
             await Rig.CallAsync(rig.CharMgr, unbound, "GetOwnerNoteLabels"));
+    }
+
+    [PgFact]
+    public async Task Home_station_candidates_list_school_offices_and_current_with_client_validation_flags()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var id = await rig.MakeAsync("Home Candidate Pilot");
+        var (session, _) = Rig.Session(id);
+        session.Set("stationid", new PyInt(60015249));
+
+        var office = Rig.Stations.Get(60000610)!;
+        var officeLocation = new HomeStationLocation(office.Id, office.TypeId, office.Name, office.SolarSystemId,
+            office.ConstellationId, office.RegionId, office.OwnerId, false);
+        var offices = new HomeStationLocation[]
+        {
+            officeLocation,
+            officeLocation,
+            new(60001000, 4023, "Wormhole Office", 31_000_001, 2_000_001, 11_000_001, 1_000_006, false),
+            new(60001001, 4023, "Thera Office", 31_000_005, 2_000_001, 11_000_031, 1_000_006, false),
+        };
+        var resolver = Rig.CreateHomeStationResolver(rig.Characters,
+            readCorporationOfficeCandidates: (_, _) => Task.FromResult<IReadOnlyList<HomeStationLocation>>(offices));
+        var candidateNow = new DateTime(2026, 10, 11, 12, 34, 56, DateTimeKind.Utc).ToFileTimeUtc();
+        var service = new HomeStationService(resolver, nowFileTime: () => candidateNow);
+
+        var candidates = Assert.IsType<PyList>(await Rig.CallAsync(service, session, "get_home_station_candidates"));
+        Assert.Equal(4, candidates.Items.Count);
+
+        var school = ObjectFields(candidates.Items[0]);
+        Assert.Equal(new PyInt(60015249), school["id"]);
+        Assert.Equal(PyBool.True, school["is_current_station"]);
+        Assert.Equal(PyBool.True, school["is_school_hq"]);
+        Assert.Equal(new PyList([new PyInt(2)]), school["errors"]);
+
+        var officeFields = ObjectFields(candidates.Items[1]);
+        Assert.Equal(new PyInt(60000610), officeFields["id"]);
+        Assert.Equal(PyBool.False, officeFields["is_current_station"]);
+        Assert.Equal(PyBool.False, officeFields["is_school_hq"]);
+        Assert.Equal(new PyList([]), officeFields["errors"]);
+
+        Assert.Equal(new PyList([new PyInt(1)]), ObjectFields(candidates.Items[2])["errors"]);
+        Assert.Equal(new PyList([]), ObjectFields(candidates.Items[3])["errors"]);
+        Assert.Equal(PyNone.Instance, await Rig.CallAsync(service, session, "get_next_remote_change_time"));
+    }
+
+    [PgFact]
+    public async Task Home_station_candidates_include_the_current_structure_without_a_corporation_office()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var id = await rig.MakeAsync("Structure Home Candidate");
+        var (session, _) = Rig.Session(id);
+        const long structureId = 1_000_000_000_051;
+        var location = new HomeStationLocation(structureId, 35841, "Current Structure", 30_002_775,
+            2_000_407, 10_000_033, 98_000_051, false);
+        var resolver = Rig.CreateHomeStationResolver(rig.Characters,
+            (candidateId, _) => Task.FromResult<HomeStationStructure?>(candidateId == structureId
+                ? new(location, true, false) : null));
+        session.Set("stationid", PyNone.Instance);
+        session.Set("structureid", new PyInt(structureId));
+        session.Set("shipid", new PyInt(1_000_000_000_052));
+        var service = new HomeStationService(resolver, rig.Characters.TryChangeHomeStationAsync,
+            rig.Characters.ResetRemoteHomeStationChangeTimeAsync,
+            () => new DateTime(2026, 10, 11, 0, 0, 0, DateTimeKind.Utc).ToFileTimeUtc());
+
+        var candidates = Assert.IsType<PyList>(await Rig.CallAsync(service, session, "get_home_station_candidates"));
+        var current = Assert.Single(candidates.Items, candidate => ObjectFields(candidate)["id"].Equals(new PyInt(structureId)));
+        Assert.Equal(PyBool.True, ObjectFields(current)["is_current_station"]);
+        Assert.Equal(new PyList([]), ObjectFields(current)["errors"]);
+        Assert.Equal(PyNone.Instance, await Rig.CallAsync(service, session, "set_home_station", new PyInt(structureId), PyBool.False));
+        Assert.Equal(structureId, (await rig.Characters.GetAsync(id))!.HomeStationId);
+
+        session.Set("shipid", new PyInt(structureId));
+        candidates = Assert.IsType<PyList>(await Rig.CallAsync(service, session, "get_home_station_candidates"));
+        Assert.DoesNotContain(candidates.Items, candidate => ObjectFields(candidate)["id"].Equals(new PyInt(structureId)));
+    }
+
+    [PgFact]
+    public async Task Home_station_remote_change_persists_notifies_serializes_datetime_and_resets()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var id = await rig.MakeAsync("Remote Home Pilot");
+        var sink = new RecordingPacketSink();
+        var session = new ClientSession(sink) { SessionId = 1, ClientId = 2, UserId = 34 };
+        session.CharacterId = id;
+        session.Set("stationid", new PyInt(60015249));
+
+        var office = Rig.Stations.Get(60000610)!;
+        var officeLocation = new HomeStationLocation(office.Id, office.TypeId, office.Name, office.SolarSystemId,
+            office.ConstellationId, office.RegionId, office.OwnerId, false);
+        var anotherOffice = new HomeStationLocation(60001000, 4023, "Remote Office", 30_002_775,
+            2_000_407, 10_000_033, 1_000_006, false);
+        var resolver = Rig.CreateHomeStationResolver(rig.Characters,
+            readCorporationOfficeCandidates: (_, _) => Task.FromResult<IReadOnlyList<HomeStationLocation>>([officeLocation, anotherOffice]));
+        var now = new DateTime(2026, 10, 11, 12, 34, 56, 789, DateTimeKind.Utc).ToFileTimeUtc();
+        var service = new HomeStationService(resolver, rig.Characters.TryChangeHomeStationAsync,
+            rig.Characters.ResetRemoteHomeStationChangeTimeAsync, () => now);
+
+        Assert.Equal(PyNone.Instance, await Rig.CallAsync(service, session, "set_home_station", new PyInt(60000610), PyBool.True));
+
+        var expectedNext = now + TimeSpan.FromDays(365).Ticks;
+        var persisted = Assert.IsType<Character>(await rig.Characters.GetAsync(id, CancellationToken.None));
+        Assert.Equal(60000610, persisted.HomeStationId);
+        Assert.Equal(expectedNext, persisted.NextRemoteHomeStationChangeFileTime);
+        Assert.Equal(new PyInt(60000610), ObjectFields(await Rig.CallAsync(service, session, "get_home_station"))["id"]);
+        foreach (var name in new[] { "homeStationID", "homestationid", "cloneStationID", "clonestationid" })
+            Assert.Equal(60000610, session.GetInt(name));
+
+        Assert.Equal(MarshalCodec.Encode(Eve.Services.ClientNotification.Build(session.UserId ?? 0, session.NodeId,
+            "OnHomeStationChanged", "charid", [new PyInt(60000610)], 0)), MarshalCodec.Encode(Assert.Single(sink.Packets)));
+
+        var next = Assert.IsType<PyCPickled>(await Rig.CallAsync(service, session, "get_next_remote_change_time"));
+        Assert.Equal(
+            "8002636461746574696D650A6461746574696D650A7100635F636F646563730A656E636F64650A7101580B00000007C3AB0A0B0C22380C0A08710258060000006C6174696E3171038671045271058571065271072E",
+            Convert.ToHexString(next.Value.Span));
+
+        var candidates = Assert.IsType<PyList>(await Rig.CallAsync(service, session, "get_home_station_candidates"));
+        var remote = candidates.Items.Single(item => ObjectFields(item)["id"].Equals(new PyInt(60001000)));
+        Assert.Equal(new PyList([new PyInt(3)]), ObjectFields(remote)["errors"]);
+        await AssertHomeStationValidationAsync(
+            async () => { await Rig.CallAsync(service, session, "set_home_station", new PyInt(60001000), PyBool.True); }, 3);
+        Assert.Single(sink.Packets);
+
+        var expiredService = new HomeStationService(resolver, rig.Characters.TryChangeHomeStationAsync,
+            rig.Characters.ResetRemoteHomeStationChangeTimeAsync, () => expectedNext + 1);
+        Assert.Equal(PyNone.Instance, await Rig.CallAsync(expiredService, session, "get_next_remote_change_time"));
+
+        Assert.Equal(PyNone.Instance, await Rig.CallAsync(service, session, "reset_remote_change_time"));
+        persisted = Assert.IsType<Character>(await rig.Characters.GetAsync(id, CancellationToken.None));
+        Assert.Equal(0, persisted.NextRemoteHomeStationChangeFileTime);
+        Assert.Equal(PyNone.Instance, await Rig.CallAsync(service, session, "get_next_remote_change_time"));
+
+        Assert.Equal(PyNone.Instance, await Rig.CallAsync(service, session, "set_home_station", new PyInt(60015249), PyBool.False));
+        persisted = Assert.IsType<Character>(await rig.Characters.GetAsync(id, CancellationToken.None));
+        Assert.Equal(60015249, persisted.HomeStationId);
+        Assert.Equal(0, persisted.NextRemoteHomeStationChangeFileTime);
+        Assert.Equal(2, sink.Packets.Count);
+        Assert.Equal(MarshalCodec.Encode(Eve.Services.ClientNotification.Build(session.UserId ?? 0, session.NodeId,
+            "OnHomeStationChanged", "charid", [new PyInt(60015249)], 1)), MarshalCodec.Encode(sink.Packets[1]));
+    }
+
+    [PgFact]
+    public async Task Home_station_mutation_rejects_invalid_choices_and_maps_atomic_store_results()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var office = Rig.Stations.Get(60000610)!;
+        var officeLocation = new HomeStationLocation(office.Id, office.TypeId, office.Name, office.SolarSystemId,
+            office.ConstellationId, office.RegionId, office.OwnerId, false);
+        var anotherOffice = new HomeStationLocation(60001000, 4023, "Remote Office", 30_002_775,
+            2_000_407, 10_000_033, 1_000_006, false);
+        var wormholeOffice = new HomeStationLocation(60001001, 4023, "Wormhole Office", 31_000_001,
+            2_000_001, 11_000_001, 1_000_006, false);
+        var resolver = Rig.CreateHomeStationResolver(rig.Characters,
+            readCorporationOfficeCandidates: (_, _) => Task.FromResult<IReadOnlyList<HomeStationLocation>>(
+                [officeLocation, anotherOffice, wormholeOffice]));
+        var now = new DateTime(2026, 10, 11, 12, 34, 56, DateTimeKind.Utc).ToFileTimeUtc();
+
+        var id = await rig.MakeAsync("Invalid Home Pilot");
+        var (session, _) = Rig.Session(id);
+        session.Set("stationid", new PyInt(60015249));
+        var service = new HomeStationService(resolver, rig.Characters.TryChangeHomeStationAsync,
+            rig.Characters.ResetRemoteHomeStationChangeTimeAsync, () => now);
+
+        await AssertHomeStationValidationAsync(
+            async () => { await Rig.CallAsync(service, session, "set_home_station", new PyInt(60009999), PyBool.True); }, 5);
+        await AssertHomeStationValidationAsync(
+            async () => { await Rig.CallAsync(service, session, "set_home_station", new PyInt(60015249), PyBool.True); }, 2);
+        await AssertHomeStationValidationAsync(
+            async () => { await Rig.CallAsync(service, session, "set_home_station", new PyInt(60001001), PyBool.True); }, 1);
+        var remoteError = await Assert.ThrowsAsync<Eve.Services.MachoWrappedException>(
+            async () => { await Rig.CallAsync(service, session, "set_home_station", new PyInt(60000610), PyBool.False); });
+        Assert.Equal("homestation.error.RemoteChangeNotExpectedError", remoteError.Error.ClassName);
+        Assert.Equal(60015249, (await rig.Characters.GetAsync(id, CancellationToken.None))!.HomeStationId);
+
+        var racedId = await rig.MakeAsync("Raced Home Pilot");
+        var (racedSession, _) = Rig.Session(racedId);
+        racedSession.Set("stationid", new PyInt(60015249));
+        var alreadyHomeRace = new HomeStationService(resolver, async (characterId, stationId, isRemote, fileTime, ct) =>
+        {
+            var first = await rig.Characters.TryChangeHomeStationAsync(characterId, stationId, isRemote, fileTime, ct);
+            return first == HomeStationChangeResult.Changed
+                ? await rig.Characters.TryChangeHomeStationAsync(characterId, stationId, isRemote, fileTime, ct)
+                : first;
+        }, rig.Characters.ResetRemoteHomeStationChangeTimeAsync, () => now);
+        await AssertHomeStationValidationAsync(
+            async () => { await Rig.CallAsync(alreadyHomeRace, racedSession, "set_home_station", new PyInt(60000610), PyBool.True); }, 2);
+        Assert.Equal(60000610, (await rig.Characters.GetAsync(racedId, CancellationToken.None))!.HomeStationId);
+
+        var cooldownId = await rig.MakeAsync("Cooldown Home Pilot");
+        var (cooldownSession, _) = Rig.Session(cooldownId);
+        cooldownSession.Set("stationid", new PyInt(60015249));
+        var cooldownRace = new HomeStationService(resolver, async (characterId, stationId, isRemote, fileTime, ct) =>
+        {
+            var first = await rig.Characters.TryChangeHomeStationAsync(characterId, officeLocation.Id, true, fileTime, ct);
+            return first == HomeStationChangeResult.Changed
+                ? await rig.Characters.TryChangeHomeStationAsync(characterId, stationId, isRemote, fileTime, ct)
+                : first;
+        }, rig.Characters.ResetRemoteHomeStationChangeTimeAsync, () => now);
+        await AssertHomeStationValidationAsync(
+            async () => { await Rig.CallAsync(cooldownRace, cooldownSession, "set_home_station", new PyInt(60001000), PyBool.True); }, 3);
+        Assert.Equal(officeLocation.Id, (await rig.Characters.GetAsync(cooldownId, CancellationToken.None))!.HomeStationId);
+    }
+
+    private sealed class RecordingPacketSink : Eve.Services.IPacketSink
+    {
+        public List<PyValue> Packets { get; } = [];
+        public void Send(PyValue packet) => Packets.Add(packet);
+    }
+
+    private static async Task AssertHomeStationValidationAsync(Func<Task> action, int code)
+    {
+        var error = await Assert.ThrowsAsync<Eve.Services.MachoWrappedException>(action);
+        Assert.Equal("homestation.validation.ChangeHomeStationValidationError", error.Error.ClassName);
+        var header = Assert.IsType<PyTuple>(Assert.IsType<PyObjectEx>(error.Error.Payload).Header);
+        var state = Assert.IsType<PyDict>(header.Items[2]);
+        var errors = state.Entries.Single(entry => Assert.IsType<PyStr>(entry.Key).Value == "errors").Value;
+        Assert.Equal(new PyList([new PyInt(code)]), errors);
     }
 
 

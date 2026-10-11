@@ -44,8 +44,9 @@ internal sealed partial class CharacterServicesComposition
             new Eve.Services.Core.LoginCampaignMgrService(storeRuntime),
             new Eve.Services.Core.SeasonalLoginCampaignMgrService(storeRuntime),
             new StoreOffersService(
-                async ct => await ReadGameStoreTableAsync("newEdenStore", ct),
+                _ => ValueTask.FromResult<JsonObject?>(Eve.Services.Core.NewEdenStoreCatalog.Default.Root),
                 storeRuntime.PurchaseAsync),
+            new Eve.Services.Core.FastCheckoutService(Eve.Services.Core.NewEdenStoreCatalog.Default, storeRuntime),
             new Eve.Services.Core.RedeemService(
                 storeRuntime,
                 async (userId, ct) => (await accounts.FindAsync(checked((uint)userId), ct))?.UserName,

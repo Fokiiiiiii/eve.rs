@@ -138,7 +138,7 @@ internal sealed partial class CharacterServicesComposition
         insuranceService = new Eve.Services.Core.InsuranceService(insuranceReadModel, now, insuranceWriteModel);
         storeRuntime = new PersistenceNewEdenStoreRuntime(
             source, mailStore, mailStoreOwner.Fence, wallets, characters, items, itemTypes,
-            characterSessions, now, ct => ReadGameStoreTableAsync("newEdenStore", ct));
+            characterSessions, now, _ => Task.FromResult(Eve.Services.Core.NewEdenStoreCatalog.Default.Root));
         return Task.CompletedTask;
     }
 

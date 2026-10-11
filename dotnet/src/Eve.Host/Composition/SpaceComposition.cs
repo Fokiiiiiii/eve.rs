@@ -43,6 +43,9 @@ internal sealed partial class CharacterServicesComposition
         {
             if (cosmicSites is { } director)
                 await director.EnsureAsync(solarSystemId);
+            // a pilot in the system brings its sites' first waves (a scene is made for the pilot; a wave already in it is not made twice)
+            if (siteNpcs is { } npcs)
+                await npcs.SpawnForSystemAsync(solarSystemId);
         }
         catch (Exception error)
         {
@@ -57,6 +60,7 @@ internal sealed partial class CharacterServicesComposition
         spaceContainers = null;
         spaceDrones = null;
         cosmicSites = null;
+        siteNpcs = null;
         if (Env("EVE_SIM", "on") is not ("off" or "0" or "false"))
         {
             var socket = Env("EVE_SIM_SOCKET", DefaultSimSocket(OperatingSystem.IsWindows()));
@@ -121,7 +125,7 @@ internal sealed partial class CharacterServicesComposition
             // the cosmic sites of the systems: content of the shared runtime, kept filled by a recurring job per system (docs/design/FOUNDATIONS.md, an anomaly end to end)
             cosmicSites = new Eve.Services.Space.Sites.CosmicSiteDirector(
                 source, foundations.Content, foundations.Scheduler, Eve.Services.Space.Sites.SiteTemplates.Load(), new Eve.Services.Space.Sites.SdeSiteAnchors(sde), solarSystems,
-                message => Console.Error.WriteLine($"eve-host: {message}"));
+                message => Console.Error.WriteLine($"eve-host: {message}"), system => spaceSessions?.HasPilotsIn(system) ?? false);
             cosmicSites.Attach(foundations.Content, foundations.Events);
             foundations.Events.Subscribe(DailyGoalRecorder.SubscriberName, [Eve.Ships.OreMinedEvent.Topic, Eve.Ships.SalvageWreckedEvent.Topic], (context, token) => dailyGoals.RecordAsync(context, token));
             foundations.Events.Subscribe("npc.security-status-recovery", ["npc.killed"],
@@ -270,6 +274,14 @@ internal sealed partial class CharacterServicesComposition
                 Eve.Dungeons.DungeonCatalog.LoadEmbedded(), Eve.Dungeons.WaveRules.LoadEmbedded(), new NpcSelector(npcAuthority),
                 new Eve.Services.Space.SpaceDungeonNpcs(spaceSessions), spaceSchema);
             await dungeonWaves.AttachAsync();
+            if (cosmicSites is { } sitesOfWaves)
+            {
+                // the NPC waves of the sites: a kill of a site's NPC is counted by the content runtime; the next wave starts when one is done
+                var waves = new Eve.Services.Space.Sites.SiteNpcs(sitesOfWaves, foundations.Content, spaceSessions);
+                siteNpcs = waves;
+                foundations.Events.Subscribe(Eve.Services.Space.Sites.SiteNpcs.SubscriberName, Eve.Services.Space.Sites.SiteNpcs.Topics,
+                    (context, token) => waves.OnObjectiveCompletedAsync(context.Event.Json(), token));
+            }
             probeScans.Register();
             spaceSessions.ProbeScans = probeScans;
             spaceSessions.DirectionalScans = new Eve.Services.Space.Scanning.SpaceDirectionalScans(spaceSessions, sim, dogma);

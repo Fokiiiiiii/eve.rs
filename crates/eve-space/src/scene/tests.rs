@@ -2588,3 +2588,69 @@ fn a_hit_on_a_structure_is_cut_to_its_layers_limit_each_second_and_an_emptied_sh
     assert!(scene.damage_structure(STRUCTURE + 1, [1_000.0, 0.0, 0.0, 0.0], NOON).is_empty(), "a structure not in space is left alone");
 }
 
+/// A scene with a structure of `type_id` in the given state, 5 000 km out, and a ship of `group` in its docking range.
+fn near_the_structure(type_id: i32, group: i32, state: i32) -> Scene {
+    let mut scene = Scene::new(system());
+    let mut placement = structure_placement(&scene, NOON);
+    placement.position = [5_000_000.0, 0.0, 0.0];
+    placement.type_id = type_id;
+    placement.status.state = state;
+    scene.place_structure(placement, NOON);
+    let mut near = spec();
+    near.max_velocity = 0.0;
+    near.group_id = group;
+    scene.enter_in_space(SESSION, near, [5_000_000.0 + 60_000.0 + 47.0 + 500.0, 0.0, 0.0], [0.0, 0.0, 1.0], NOON).unwrap();
+    scene
+}
+
+#[test]
+fn a_structure_in_a_state_that_takes_ships_docks_a_ship_as_a_station_does() {
+    let mut scene = near_the_structure(35_832, 27, 111);
+    let out = scene.command(SESSION, Command::Dock { station_id: STRUCTURE }, NOON);
+    assert!(
+        matches!(&out[0], Out::Notify { name: "OnDockingAccepted", id_type: "charid", args, .. } if args == &[Value::Long(STRUCTURE)]),
+        "{out:?}"
+    );
+    assert_eq!(
+        scene.poll(NOON + seconds(4)),
+        [Out::Docked { session: SESSION, station_id: STRUCTURE, condition: Condition::FULL }]
+    );
+}
+
+#[test]
+fn a_structure_in_a_state_that_disables_docking_refuses_the_ship() {
+    for state in [0, 1, 2, 102, 113, 114, 115, 116] {
+        let mut scene = near_the_structure(35_832, 27, state);
+        let out = scene.command(SESSION, Command::Dock { station_id: STRUCTURE }, NOON);
+        assert_eq!(out, [Out::Refused { session: SESSION, command: 4, reason: "STRUCTURE_DISABLED" }], "state {state}");
+    }
+}
+
+#[test]
+fn a_structure_takes_the_hulls_its_docks_are_for_and_no_bigger() {
+    // (structure type, ship group, is taken): Astrahus subcapital, Fortizar capital, Keepstar supercapital
+    let cases = [
+        (35_832, 27, true),
+        (35_832, 547, false),
+        (35_832, 30, false),
+        (35_833, 547, true),
+        (35_833, 30, false),
+        (35_834, 30, true),
+    ];
+    for (type_id, group, taken) in cases {
+        let mut scene = near_the_structure(type_id, group, 111);
+        let out = scene.command(SESSION, Command::Dock { station_id: STRUCTURE }, NOON);
+        let refused = matches!(out.first(), Some(Out::Refused { reason: "SHIP_TOO_LARGE", .. }));
+        assert_eq!(!refused, taken, "type {type_id}, group {group}: {out:?}");
+    }
+}
+
+#[test]
+fn a_ship_undocks_from_a_structure_as_it_does_from_a_station() {
+    let mut scene = Scene::new(system());
+    let mut placement = structure_placement(&scene, NOON);
+    placement.status.state = 1;
+    scene.place_structure(placement, NOON);
+    scene.undock(SESSION, spec(), STRUCTURE, NOON).expect("a structure is a dock, whatever its state");
+    assert!(scene.contains(SESSION));
+}

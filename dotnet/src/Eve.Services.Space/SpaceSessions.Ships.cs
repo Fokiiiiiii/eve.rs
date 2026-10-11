@@ -26,12 +26,20 @@ public sealed partial class SpaceSessions
     /// bound to the station let go, the session changed, the undocking protection started) and the answer is the object it called and the time
     /// from which it may go on. Returns None when there is nothing to undock.
     /// </summary>
-    public async Task<PyValue> UndockAsync(ClientSession session, string? boundObjectId, CancellationToken cancellationToken)
+    public Task<PyValue> UndockAsync(ClientSession session, string? boundObjectId, CancellationToken cancellationToken) =>
+        UndockFromAsync(session, "stationid", boundObjectId, cancellationToken);
+
+    /// <summary>
+    /// The undock from the station or the structure the session is in (<paramref name="placeKey"/> names which): the same ship, simulation and session
+    /// changes; a structure is put in the simulation first (its ball is placed when a pilot comes into its system, which the undock may precede).
+    /// </summary>
+    private async Task<PyValue> UndockFromAsync(ClientSession session, string placeKey, string? boundObjectId, CancellationToken cancellationToken)
     {
-        if (session.CharacterId is not { } characterId || session.GetInt("stationid") is not { } stationId || IsInSpace(session))
+        if (session.CharacterId is not { } characterId || session.GetInt(placeKey) is not { } placeId || IsInSpace(session))
         {
             return None;
         }
+        var inStructure = placeKey == "structureid";
         if (!_sim.IsConnected)
         {
             throw Notify("Space is not available right now. Try again in a moment.");
@@ -63,7 +71,9 @@ public sealed partial class SpaceSessions
                 string? refusal;
                 try
                 {
-                    refusal = await _sim.EnterAsync(new SimEnter(sessionId, systemId, EnterHow.Undock, stationId, spec), token);
+                    if (inStructure && PlaceStructuresAsync is { } placeStructures)
+                        await placeStructures(systemId, token);
+                    refusal = await _sim.EnterAsync(new SimEnter(sessionId, systemId, EnterHow.Undock, placeId, spec), token);
                     if (refusal is null)
                         await _sim.SetHeatProfileAsync(sessionId, SimShips.HeatProfileOf(snapshot, _statics), token);
                 }
@@ -86,7 +96,7 @@ public sealed partial class SpaceSessions
                 var moved = result.Moved!;
                 var now = FileTimeNow();
                 pilot = new Pilot(session, characterId, moved.Ship.Id, moved.Ship.TypeId,
-                    systemId, now + UndockInvulnerabilityTicks, stationId);
+                    systemId, now + UndockInvulnerabilityTicks, placeId);
                 _pilots[sessionId] = pilot;
                 SystemEntered?.Invoke(systemId);
                 session.Closed += () => OnSessionClosed(session);
@@ -99,10 +109,10 @@ public sealed partial class SpaceSessions
                 var type = _statics.Type(moved.Ship.TypeId);
                 session.SendNotification(
                     "OnItemsChanged", "charid",
-                    new PyList([InventoryWire.PackedRow(ShipRow(moved.Ship, type), new PyStr($"Undocking:{stationId}"))]),
+                    new PyList([InventoryWire.PackedRow(ShipRow(moved.Ship, type), new PyStr(inStructure ? "UndockingStructure:" : $"Undocking:{placeId}"))]),
                     ChangedFrom(moved), None);
                 ReleaseBoundObjects(session);
-                session.Change(("stationid", None), ("locationid", new PyInt(systemId)), ("solarsystemid", new PyInt(systemId)));
+                session.Change((placeKey, None), ("locationid", new PyInt(systemId)), ("solarsystemid", new PyInt(systemId)));
                 session.SendNotification("OnInvulunOnUndockingUpdated", "shipid", InventoryWire.Id(pilot!.ShipId),
                     new PyLong(pilot.InvulnerableUntil), new PyLong(UndockInvulnerabilityTicks));
                 return Task.CompletedTask;

@@ -1,4 +1,5 @@
 use super::*;
+use crate::locators::{CAPITAL, LARGE, SUPERCAPITAL, category_of};
 use crate::modules::DISALLOW_DOCKING;
 
 impl Scene {
@@ -16,7 +17,7 @@ impl Scene {
         let station = self
             .system
             .body(station_id)
-            .filter(|b| b.kind == BodyKind::Station)
+            .filter(|b| is_dock_body(b))
             .ok_or(SceneError::UnknownStation(station_id))?;
         let (position, direction) = undock_place(station, spec.group_id);
         let speed = spec.max_velocity;
@@ -104,7 +105,7 @@ impl Scene {
 
     pub(super) fn dock(&mut self, session: SessionId, station_id: i64, now: i64) -> Vec<Out> {
         let code = Command::Dock { station_id }.code();
-        let Some(station) = self.system.body(station_id).filter(|b| b.kind == BodyKind::Station).cloned()
+        let Some(station) = self.system.body(station_id).filter(|b| is_dock_body(b)).cloned()
         else {
             return vec![Out::Refused { session, command: code, reason: "STATION_NOT_FOUND" }];
         };
@@ -132,6 +133,9 @@ impl Scene {
         }
         if pilot.flight.is_some() {
             return vec![Out::Refused { session, command: code, reason: "IN_WARP" }];
+        }
+        if let Some(reason) = dock_refusal(&station, pilot.ship.spec.group_id) {
+            return vec![Out::Refused { session, command: code, reason }];
         }
         let distance = surface_distance(&pilot.ship, station.position, station.radius);
         if distance > DOCKING_RANGE {
@@ -216,4 +220,43 @@ pub(super) fn surface_distance(ship: &Ship, station: Vec3, station_radius: f64) 
     let (dx, dy, dz) =
         (ship.position.x - station.x, ship.position.y - station.y, ship.position.z - station.z);
     ((dx * dx + dy * dy + dz * dz).sqrt() - ship.spec.radius - station_radius).max(0.0)
+}
+
+/// The states of an Upwell structure in which it takes no ship (EVE.js `STRUCTURE_DISABLED_STATES`, `structureConstants.js`): unknown, unanchored,
+/// anchoring, onlining, hull reinforce and hull vulnerable, anchor and deploy vulnerable.
+const STRUCTURE_DISABLED_STATES: [i32; 8] = [0, 1, 2, 102, 113, 114, 115, 116];
+
+/// Whether a body is one a ship docks at or undocks from: a station, or an Upwell structure (ST-1 c).
+pub(super) fn is_dock_body(body: &crate::world::Body) -> bool {
+    matches!(body.kind, BodyKind::Station | BodyKind::Structure)
+}
+
+/// The size of a hull as the undock points name it: 0 small, 1 large (a battleship is a subcapital), 2 capital, 3 supercapital.
+fn hull_size(ship_group: i32) -> u8 {
+    match category_of(ship_group) {
+        SUPERCAPITAL => 3,
+        CAPITAL => 2,
+        LARGE => 1,
+        _ => 0,
+    }
+}
+
+/// The largest hull a structure type takes in its docks (the wiki's "Max docking": Astrahus subcapitals, Fortizar capitals, Keepstar supercapitals).
+/// Other types are taken as subcapital only; their own limits are not in the sim yet (DEVIATIONS "Structure docking (ST-1 c)").
+fn largest_hull_docked(structure_type: i32) -> u8 {
+    match structure_type {
+        35_834 => 3,
+        35_833 => 2,
+        _ => 1,
+    }
+}
+
+/// Why a ship of `ship_group` may not dock at `body`: a structure in a state that takes no ship, or one whose docks do not take the ship's hull.
+/// None when it may. A station is judged by its own rules (`locators::can_dock`), which the docking does not apply yet.
+pub(super) fn dock_refusal(body: &crate::world::Body, ship_group: i32) -> Option<&'static str> {
+    let Detail::Structure { status, .. } = &body.detail else { return None };
+    if STRUCTURE_DISABLED_STATES.contains(&status.state) {
+        return Some("STRUCTURE_DISABLED");
+    }
+    (hull_size(ship_group) > largest_hull_docked(body.type_id)).then_some("SHIP_TOO_LARGE")
 }

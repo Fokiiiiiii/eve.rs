@@ -46,7 +46,7 @@ internal sealed partial class CharacterServicesComposition
             // Mutation needs structure-control/drill authority and the space timer/settlement backend.
             new Eve.Services.Core.MoonExtractionsRpcService(
                 readState: ReadMoonExtractionsAsync,
-                mutationBackend: null),
+                mutationBackend: call => structureMoon.CallAsync(call)),
             new Eve.Services.Space.StructureTravelRpcService(
                 "structureJumpBridgeMgr",
                 jumpBridgeDestination: structureDirectoryReadModel.GetJbStructureDestinationAsync,
@@ -55,11 +55,11 @@ internal sealed partial class CharacterServicesComposition
             new Eve.Services.Core.StructureRpcService("structureCompressionMgr", structureRpcCallbacks),
             new Eve.Services.Core.StructureRpcService("structureControl"),
             new Eve.Services.Core.StructureRpcService("structureDeliveries"),
-            new Eve.Services.Core.StructureRpcService("structureDeployment"),
-            new Eve.Services.Core.StructureRpcService("structureDocking"),
+            new Eve.Services.Core.StructureRpcService("structureDeployment", structureRpcCallbacks),
+            new Eve.Services.Core.StructureRpcService("structureDocking", structureRpcCallbacks),
             new Eve.Services.Core.StructureRpcService("structureHangarViewMgr", structureRpcCallbacks),
             new Eve.Services.Core.StructureRpcService("structureProfiles", structureRpcCallbacks),
-            new Eve.Services.Core.StructureRpcService("structureVulnerability"),
+            new Eve.Services.Core.StructureRpcService("structureVulnerability", structureRpcCallbacks),
             new Eve.Services.Core.StructureAssetSafetyService(structureAssetSafetyReadModel),
             structureSettingsService,
             skyhookResourceMgrService,

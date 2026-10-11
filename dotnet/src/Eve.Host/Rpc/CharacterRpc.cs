@@ -44,7 +44,8 @@ internal sealed partial class CharacterServicesComposition
             (characterId, token) => characters.GetAsync(characterId, token),
             stations,
             catalog,
-            ReadHomeStationStructureAsync);
+            ReadHomeStationStructureAsync,
+            ReadHomeStationOfficeLocationsAsync);
         return [
             new SkillMgr2Service(),
             skillHandler,
@@ -83,7 +84,11 @@ internal sealed partial class CharacterServicesComposition
                             Math.Max(0, warFactionId));
                     });
                 }),
-            new Eve.Services.CharacterInfo.HomeStationService(homeStations),
+            new Eve.Services.CharacterInfo.HomeStationService(
+                homeStations,
+                characters.TryChangeHomeStationAsync,
+                characters.ResetRemoteHomeStationChangeTimeAsync,
+                () => DateTimeOffset.FromUnixTimeMilliseconds(now()).ToFileTime()),
             new Eve.Services.CharacterInfo.OnlineStatusService(characterSessions, ReadWatchlistAsync),
         ];
     }
@@ -114,5 +119,23 @@ internal sealed partial class CharacterServicesComposition
 
         static string? Text(JsonNode? node) =>
             node is JsonValue value && value.TryGetValue<string>(out var text) ? text : null;
+    }
+
+    private async Task<IReadOnlyList<Eve.Services.CharacterInfo.HomeStationLocation>> ReadHomeStationOfficeLocationsAsync(
+        Character character,
+        CancellationToken cancellationToken)
+    {
+        var offices = await corporationOfficeStore.ForCorporationAsync(character.CorporationId, cancellationToken);
+        var locations = new List<Eve.Services.CharacterInfo.HomeStationLocation>();
+        foreach (var stationId in offices.Select(office => office.StationId).Distinct())
+        {
+            if (stations.Get(stationId) is { } station)
+                locations.Add(new(station.Id, station.TypeId, station.Name, station.SolarSystemId,
+                    station.ConstellationId, station.RegionId, station.OwnerId, false));
+            else if (await ReadHomeStationStructureAsync(stationId, cancellationToken) is
+                     { PersistentlyDeployed: true, Location: { } location })
+                locations.Add(location);
+        }
+        return locations;
     }
 }

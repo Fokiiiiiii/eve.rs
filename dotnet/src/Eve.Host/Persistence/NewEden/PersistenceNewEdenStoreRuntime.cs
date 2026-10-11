@@ -45,9 +45,10 @@ public sealed partial class PersistenceNewEdenStoreRuntime(
     ItemTypeCatalog itemTypes,
     CharacterSessions sessions,
     Func<long> nowUnixMs,
-    Func<CancellationToken, Task<JsonObject>> readStoreState)
+    Func<CancellationToken, Task<JsonObject>> readStoreState,
+    PgAccountDirectory accountDirectory)
     : Eve.Services.Core.IRedeemCallbacks, Eve.Services.Core.IVaultManagerCallbacks, Eve.Services.Core.ILoginRewardCallbacks,
-      Eve.Services.Core.IFastCheckoutCallbacks
+      Eve.Services.Core.IFastCheckoutCallbacks, Eve.Services.Core.IMultipleTrainingCallbacks
 {
     private const string ReceiptsTable = "newEdenStorePurchaseSettlements";
     private const string ReceiptsRow = "purchasesByOperationID";
@@ -153,8 +154,8 @@ public sealed partial class PersistenceNewEdenStoreRuntime(
     }
 
     /// <summary>
-    /// Adds a fulfillment's grants. Plex goes to the vault, items to the recipient's hangar; an Omega or Multiple Character Training grant
-    /// has no path on this server yet, so it is refused before any charge or grant (never a silent success).
+    /// Adds a fulfillment's grants. Plex goes to the vault, items to the recipient's hangar, an Omega grant extends the account's stored
+    /// end time and a Multiple Character Training grant extends training slots (both in the purchase's own transaction).
     /// </summary>
     private static void AddGrants(JsonObject fulfillment, long quantity, List<StoreGrant> grants)
     {
@@ -174,9 +175,13 @@ public sealed partial class PersistenceNewEdenStoreRuntime(
                     AddGrants(grant as JsonObject ?? throw new InvalidOperationException("A bundle grant is malformed."), quantity, grants);
                 break;
             case "omega":
-                throw new NotSupportedException("The Omega grant is not available: the subscription end time is not granted by this server yet.");
+                grants.Add(new OmegaGrant(checked(RequiredPositive(fulfillment, "durationDays") * quantity)));
+                break;
             case "mct":
-                throw new NotSupportedException("The Multiple Character Training grant is not available: no training-slot state exists yet.");
+                grants.Add(new TrainingGrant(
+                    checked(RequiredPositive(fulfillment, "slotCount") * quantity),
+                    checked((int)RequiredPositive(fulfillment, "durationDays"))));
+                break;
             default:
                 throw new NotSupportedException($"The store fulfillment kind '{kind}' has no grant path.");
         }
@@ -211,9 +216,13 @@ public sealed partial class PersistenceNewEdenStoreRuntime(
             if (receipts[purchase.OperationKey] is JsonObject)
                 return;
 
-            var createdAt = ToFileTime(nowUnixMs());
+            var nowUnix = nowUnixMs();
+            var now = DateTimeOffset.FromUnixTimeMilliseconds(nowUnix);
+            var createdAt = ToFileTime(nowUnix);
             long plexGranted = 0;
             var granted = new List<GrantedItem>();
+            DateTimeOffset? omegaEndsAt = null;
+            var trainingSlots = new List<(int Slot, DateTimeOffset EndsAt)>();
             await using var connection = await source.OpenConnectionAsync(cancellationToken);
             await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
             foreach (var grant in purchase.Grants)
@@ -239,6 +248,15 @@ public sealed partial class PersistenceNewEdenStoreRuntime(
                             granted.Add(new GrantedItem(itemId, type.TypeId, stackQuantity, type.GroupId, type.CategoryId));
                         }
                         break;
+                    case OmegaGrant omega:
+                        omegaEndsAt = await accountDirectory.ExtendSubscriptionAsync(
+                            connection, transaction, checked((uint)purchase.AccountId), TimeSpan.FromDays(omega.Days), now, cancellationToken);
+                        break;
+                    case TrainingGrant training:
+                        for (var unit = 0L; unit < training.Units; unit++)
+                            trainingSlots.Add(await accountDirectory.ExtendTrainingSlotAsync(
+                                connection, transaction, checked((uint)purchase.AccountId), null, TimeSpan.FromDays(training.Days), now, cancellationToken));
+                        break;
                 }
             }
 
@@ -259,6 +277,12 @@ public sealed partial class PersistenceNewEdenStoreRuntime(
                     ["typeID"] = item.TypeId,
                     ["quantity"] = item.Quantity,
                 })]),
+                ["subscriptionEndAt"] = omegaEndsAt is { } endsAt ? ToFileTime(endsAt.ToUnixTimeMilliseconds()) : null,
+                ["trainingSlotsGranted"] = new JsonArray([.. trainingSlots.Select(slot => (JsonNode?)new JsonObject
+                {
+                    ["slot"] = slot.Slot,
+                    ["endsAt"] = ToFileTime(slot.EndsAt.ToUnixTimeMilliseconds()),
+                })]),
                 ["createdAt"] = createdAt,
             };
             await store.ApplyChangesAsync(
@@ -266,6 +290,12 @@ public sealed partial class PersistenceNewEdenStoreRuntime(
                 [new RowUpsert(ReceiptsRow, receipts.ToJsonString())], [], ownerFence, cancellationToken);
             await transaction.CommitAsync(cancellationToken);
 
+            // The account's sessions hear about the grant once it is committed: the clone grade and end time, and the training slots.
+            if (omegaEndsAt is { } purchasedEnd)
+                SubscriptionTransitions.Announce(sessions.OfUser(purchase.AccountId), checked((uint)purchase.AccountId), purchasedEnd, createdAt);
+            if (trainingSlots.Count > 0)
+                foreach (var accountSession in sessions.OfUser(purchase.AccountId))
+                    SkillNotifications.MultipleCharactersTrainingUpdated(accountSession);
             if (sessions.Of(purchase.RecipientCharacterId) is { } session)
             {
                 foreach (var item in granted)
@@ -773,6 +803,12 @@ public sealed partial class PersistenceNewEdenStoreRuntime(
         return value == 0 ? 1 : value;
     }
 
+    /// <summary>A positive number a fulfillment must carry: a store offer without it is malformed, so it is refused rather than granted as nothing.</summary>
+    private static long RequiredPositive(JsonObject fulfillment, string key) =>
+        Integer(fulfillment[key]) is var value and > 0
+            ? value
+            : throw new InvalidOperationException($"The store fulfillment has no positive {key}.");
+
     private static long ToFileTime(long unixMilliseconds) =>
         checked(116444736000000000L + unixMilliseconds * 10_000L);
 
@@ -837,6 +873,12 @@ public sealed partial class PersistenceNewEdenStoreRuntime(
     private sealed record PlexGrant(long Amount) : StoreGrant;
 
     private sealed record ItemGrant(int TypeId, long Quantity) : StoreGrant;
+
+    /// <summary>Extends the account's Omega subscription end time by this many days.</summary>
+    private sealed record OmegaGrant(long Days) : StoreGrant;
+
+    /// <summary>Adds <paramref name="Units"/> units of <paramref name="Days"/> days each to the account's training slots.</summary>
+    private sealed record TrainingGrant(long Units, int Days) : StoreGrant;
 
     private sealed record GrantedItem(long ItemId, int TypeId, long Quantity, int GroupId, int CategoryId);
 

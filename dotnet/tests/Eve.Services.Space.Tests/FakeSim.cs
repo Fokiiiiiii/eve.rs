@@ -9,6 +9,9 @@ internal sealed class FakeSim : ISimulation
 
     public event Action<SimMessage>? Received;
 
+    /// <summary>A message the simulation sends to the host (a test's stand-in for the link's receive loop).</summary>
+    public void Deliver(SimMessage message) => Received?.Invoke(message);
+
     public event Action? Lost;
 
     public System.Collections.Concurrent.ConcurrentQueue<SimMessage> Heard { get; } = new();

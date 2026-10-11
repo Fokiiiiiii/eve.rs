@@ -121,7 +121,7 @@ private readonly Dictionary<long, ClientSession> _fleetSessions = new();
         // the fleets have a schema of their own: the shared one kept the memberships of earlier tests
         FleetStore = new Eve.Services.Space.FleetStore(source, $"pl_{suffix}");
         _suffix = suffix;
-        _schemas = [$"pc_{suffix}", $"pi_{suffix}", $"ps_{suffix}", $"pw_{suffix}", $"pf_{suffix}", $"pn_{suffix}", $"pp_{suffix}", $"pd_{suffix}", $"pe_{suffix}", $"pl_{suffix}"];
+        _schemas = [$"pc_{suffix}", $"pi_{suffix}", $"ps_{suffix}", $"pw_{suffix}", $"pf_{suffix}", $"pn_{suffix}", $"pp_{suffix}", $"pd_{suffix}", $"pe_{suffix}", $"pl_{suffix}", $"pt_{suffix}"];
         Events = new Eve.Events.EventBus(source, new Eve.Scheduler.DurableScheduler(source, () => Now, null, _schemas[7]), null, _schemas[8]);
         SpaceItems = new PgSpaceItemStore(source, _schemas[6]);
         Deployed = new Eve.Ships.PgDeployedStore(source, _schemas[6]);
@@ -162,6 +162,9 @@ private readonly Dictionary<long, ClientSession> _fleetSessions = new();
 
     /// <summary>The PostgreSQL schema of the space items and the work-cycle ledger: a host restarted over it reads the same ledger.</summary>
     public string SpaceSchema => _schemas[6];
+
+    /// <summary>The Eve.Structures schema of this rig (ST-1 d tests).</summary>
+    public string StructureSchema => _schemas[^1];
 
 
 

@@ -2,6 +2,12 @@
 
 Owner: the structures phase (plan in the scratchpad `specs/structures_phase.md`, section ST-1). Branch `wt-st1`, worktree `/home/user/wt-st1`.
 
+## Increments c and d (in progress, see TODO section 46)
+- (c) `scene/docking.rs`: docks and undocks take a structure; refusals `STRUCTURE_DISABLED` and `SHIP_TOO_LARGE` (DEVIATIONS "Structure docking (ST-1 c)").
+- (d) `dotnet/src/Eve.Services.Space/SpaceStructures.cs` with the composition wiring in `Eve.Host/Composition/StructureComposition.cs`; `Eve.Services.Space` now references `Eve.Structures`. Tests: `dotnet/tests/Eve.Services.Space.Tests/SpaceStructuresTests.cs` (3 PG tests); `Rig` gained a `StructureSchema`.
+- (e) `tools/headless-client/tests/test_structures.py` is written. It is skipped unless the live environment is set (`EVE_LIVE_HOST`, `EVE_LIVE_STRUCTURE_ID`, `EVE_LIVE_STRUCTURE_SYSTEM`, `EVE_LIVE_CHARACTER`, `EVE_LIVE_USER`). Collected and skipped with the headless venv (`/home/user/eve.rs/tools/headless-client/.venv`). It has NOT run against a live server: the character-select step is the assumed client call (`charMgr.SelectCharacterID`), and the ballpark parsing reuses `tests/test_undock` helpers. Verify it with the live stack before trusting it.
+- Open: structure placement on anchoring (ST-2); the live run of (e); the slim `repairing` and `unanchoring` fields.
+
 ## Pushed to main
 - `8eaccdb` ST-1 (a): sim structure body, commands 74-76, protocol 59.
 - `6186267` ST-1 (b): structure health, per-second cap, `StructureDamaged` (77), protocol 60.

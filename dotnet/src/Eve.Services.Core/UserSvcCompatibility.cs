@@ -9,25 +9,64 @@ public sealed partial class RedeemService
 {
     private const long OldAccountCreateFileTime = 132000000000000000L;
 
+    /// <summary>The extra training queues that run now (Multiple Character Training), as slot number to end time (FILETIME).</summary>
     [Method("GetMultiCharactersTrainingSlots")]
-    public async ValueTask<PyValue> GetMultiCharactersTrainingSlots(ServiceCall call) =>
-        await OverrideUserCallAsync(call, new PyDict([]));
+    public async ValueTask<PyValue> GetMultiCharactersTrainingSlots(ServiceCall call)
+    {
+        var slots = await ActiveTrainingSlotsAsync(call);
+        return new PyDict([.. slots.Select(slot => new KeyValuePair<PyValue, PyValue>(new PyInt(slot.Slot), Py.FileTimeLong(slot.EndsAt)))]);
+    }
 
+    /// <summary>The same queues as a list of (slot, end time) pairs, the form the activation window reads.</summary>
     [Method("GetUpdatedMultiCharacterTraining")]
-    public async ValueTask<PyValue> GetUpdatedMultiCharacterTraining(ServiceCall call) =>
-        await OverrideUserCallAsync(call, new PyList([]));
+    public async ValueTask<PyValue> GetUpdatedMultiCharacterTraining(ServiceCall call)
+    {
+        var slots = await ActiveTrainingSlotsAsync(call);
+        return new PyList([.. slots.Select(slot => (PyValue)Py.Tuple(new PyInt(slot.Slot), Py.FileTimeLong(slot.EndsAt)))]);
+    }
 
+    /// <summary>
+    /// Activates an item certificate of the account (<c>ActivateMultiTraining(itemID, trainingID)</c>). Consuming an inventory item is not
+    /// implemented yet: the call is refused, so no item is consumed and no queue is granted.
+    /// </summary>
     [Method("ActivateMultiTraining")]
-    public async ValueTask<PyValue> ActivateMultiTraining(ServiceCall call) =>
-        await OverrideUserCallAsync(call, new PyList([]));
+    public ValueTask<PyValue> ActivateMultiTraining(ServiceCall call) =>
+        throw new NotSupportedException("Activating a Multiple Character Training item is not implemented: the item is not consumed and no queue is granted.");
 
+    /// <summary>Activates the soulbound certificates in the tokens (<c>ActivateSoulboundMultiTraining(charID, tokens, trainingID)</c>).</summary>
     [Method("ActivateSoulboundMultiTraining")]
-    public async ValueTask<PyValue> ActivateSoulboundMultiTraining(ServiceCall call) =>
-        await OverrideUserCallAsync(call, new PyList([]));
+    public async ValueTask<PyValue> ActivateSoulboundMultiTraining(ServiceCall call)
+    {
+        call.Cancellation.ThrowIfCancellationRequested();
+        var requestedTraining = call.Args.Count > 2 ? call.Arg(2) : call.Kwarg("trainingID") ?? PyNone.Instance;
+        var slots = _multipleTraining is null
+            ? []
+            : await _multipleTraining.ActivateCertificatesAsync(AuthenticatedUserId(call), call.Arg(1), TrainingSlotArgument(requestedTraining), call.Cancellation);
+        return new PyList([.. slots.Select(slot => (PyValue)Py.Tuple(new PyInt(slot.Slot), Py.FileTimeLong(slot.EndsAt)))]);
+    }
 
+    /// <summary>
+    /// The queue list is read from the account store on every call (there is no cache of it on this server), so there is nothing to
+    /// invalidate: the answer is None, which the client does not read.
+    /// </summary>
     [Method("InvalidateMultiCharacterTrainingCache")]
     public async ValueTask<PyValue> InvalidateMultiCharacterTrainingCache(ServiceCall call) =>
         await OverrideUserCallAsync(call, PyNone.Instance);
+
+    private async ValueTask<IReadOnlyList<(int Slot, long EndsAt)>> ActiveTrainingSlotsAsync(ServiceCall call)
+    {
+        call.Cancellation.ThrowIfCancellationRequested();
+        return _multipleTraining is null
+            ? []
+            : await _multipleTraining.GetActiveSlotsAsync(AuthenticatedUserId(call), call.Cancellation);
+    }
+
+    /// <summary>The queue the client named (2 or 3), or null when it named none: the server then chooses the queue.</summary>
+    private static int? TrainingSlotArgument(PyValue value)
+    {
+        var number = JsSemantics.ToNumber(value);
+        return double.IsFinite(number) && number >= 2 && number <= int.MaxValue ? (int)Math.Truncate(number) : null;
+    }
 
     [Method("CreateRedeemTokenQA")]
     public async ValueTask<PyValue> CreateRedeemTokenQA(ServiceCall call)

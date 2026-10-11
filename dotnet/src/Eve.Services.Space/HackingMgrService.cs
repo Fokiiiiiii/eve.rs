@@ -4,38 +4,72 @@ using Eve.Services;
 
 namespace Eve.Services.Space;
 
+/// <summary>An open attempt: its rules, the container it works on and the reach the window keeps (0 when none).</summary>
+public sealed record HackingWindow(HackingGame Game, HackableTarget Target, double MaxRange);
+
+/// <summary>The analyzer's values after dogma and what its type can hack (skills 21718 data, 13278 archaeology).</summary>
+public sealed record AnalyzerValues(
+    int ModuleTypeId,
+    bool CanHackData,
+    bool CanHackRelic,
+    double MaxRange,
+    double VirusCoherence,
+    double VirusStrength,
+    double VirusSlots,
+    double AccessDifficultyBonus);
+
 /// <summary>
-/// The attempts of the hacking minigame, one per character. Held in memory: an attempt does not survive a restart,
-/// as the window closing does not (EveJS keeps its attempts in memory too).
+/// The attempts of the hacking minigame, one per character, in memory: a restart ends them (EveJS keeps its attempts in memory too).
 /// </summary>
 public sealed class HackingAttempts
 {
-    private readonly Dictionary<long, HackingGame> _games = new();
+    private readonly Dictionary<long, HackingWindow> _windows = new();
     private readonly object _gate = new();
 
-    public HackingGame? Get(long characterId)
+    public HackingWindow? Get(long characterId)
     {
-        lock (_gate) return _games.GetValueOrDefault(characterId);
+        lock (_gate) return _windows.GetValueOrDefault(characterId);
     }
 
-    public void Set(long characterId, HackingGame game)
+    public void Set(long characterId, HackingWindow window)
     {
-        lock (_gate) _games[characterId] = game;
+        lock (_gate) _windows[characterId] = window;
     }
 
-    public void Remove(long characterId)
+    public void Remove(long characterId, HackingWindow window)
     {
-        lock (_gate) _games.Remove(characterId);
+        lock (_gate)
+        {
+            if (_windows.TryGetValue(characterId, out var current) && ReferenceEquals(current, window))
+                _windows.Remove(characterId);
+        }
+    }
+
+    public bool IsBeingHacked(long targetId)
+    {
+        lock (_gate) return _windows.Values.Any(window => window.Target.ItemId == targetId);
     }
 }
 
 /// <summary>
-/// The client's <c>hackingMgr</c> service. Each call is one step of the attempt the character has open; the
-/// events of the step go to the client as <c>OnHackingTurnComplete</c> (EveJS <c>hackingMgrService.js</c>).
-/// An attempt is opened by the analyzer activation (<see cref="Start"/>).
+/// The client's <c>hackingMgr</c> service. Each call is one step of the attempt the character has open; the events of the step go to the
+/// client as <c>OnHackingTurnComplete</c> (EveJS <c>hackingMgrService.js</c>). The analyzer opens an attempt on its activation, and the
+/// window closes on a warp, out of the analyzer's reach, or when the attempt is lost or won; each end reports to <see cref="IHackingSite"/>.
 /// </summary>
-public sealed class HackingMgrService(HackingAttempts attempts) : IService
+public sealed class HackingMgrService : IService
 {
+    private readonly HackingAttempts attempts;
+    private readonly IHackingSite site;
+    private readonly Func<HackingAttempt, HackingGame> newGame;
+
+    /// <param name="newGame">The game of an attempt; the board is generated unless a test supplies one.</param>
+    public HackingMgrService(HackingAttempts attempts, IHackingSite site, Func<HackingAttempt, HackingGame>? newGame = null)
+    {
+        this.attempts = attempts;
+        this.site = site;
+        this.newGame = newGame ?? HackingGame.Create;
+    }
+
     private static readonly HashSet<string> Methods = new(StringComparer.Ordinal)
     {
         "ClickedOnTile", "UsedUtilityElement", "UsedUtilityElementOnVirus", "QuitHackingAttempt",
@@ -45,42 +79,90 @@ public sealed class HackingMgrService(HackingAttempts attempts) : IService
 
     public bool HasMethod(string method) => Methods.Contains(method);
 
-    public ValueTask<PyValue> CallAsync(ServiceCall call)
+    public async ValueTask<PyValue> CallAsync(ServiceCall call)
     {
         if (!HasMethod(call.Method) || call.Session.CharacterId is not { } characterId || characterId <= 0)
-            return ValueTask.FromResult<PyValue>(PyNone.Instance);
+            return PyNone.Instance;
 
         var session = call.Session;
-        var game = attempts.Get(characterId);
-        IReadOnlyList<HackingEvent> events;
-        if (game is null)
+        if (attempts.Get(characterId) is not { } window)
         {
-            events = [new HackingEvent(HackingWire.EventAck, new Dictionary<string, object?>())];
+            Send(session, [Ack()]);
+            return PyNone.Instance;
+        }
+
+        IReadOnlyList<HackingEvent> events;
+        if (window.MaxRange > 0 && !await site.InReachAsync(session, window.Target.ItemId, window.MaxRange, call.Cancellation))
+        {
+            events = window.Game.Quit();
         }
         else
         {
             events = call.Method switch
             {
-                "ClickedOnTile" when ReadCoord(call.Arg(0)) is { } tile => game.ClickTile(tile),
-                "UsedUtilityElement" when ReadInt(call.Arg(0)) is { } index && ReadCoord(call.Arg(1)) is { } target => game.UseOnTarget(index, target),
-                "UsedUtilityElementOnVirus" when ReadInt(call.Arg(0)) is { } index => game.UseOnVirus(index),
-                "QuitHackingAttempt" => game.Quit(),
-                _ => [new HackingEvent(HackingWire.EventAck, new Dictionary<string, object?>())],
+                "ClickedOnTile" when ReadCoord(call.Arg(0)) is { } tile => window.Game.ClickTile(tile),
+                "UsedUtilityElement" when ReadInt(call.Arg(0)) is { } index && ReadCoord(call.Arg(1)) is { } target => window.Game.UseOnTarget(index, target),
+                "UsedUtilityElementOnVirus" when ReadInt(call.Arg(0)) is { } index => window.Game.UseOnVirus(index),
+                "QuitHackingAttempt" => window.Game.Quit(),
+                _ => [Ack()],
             };
-            if (game.Outcome != HackingOutcome.Active)
-                attempts.Remove(characterId);
         }
         Send(session, events);
-        return ValueTask.FromResult<PyValue>(PyNone.Instance);
+        await EndIfOverAsync(session, characterId, window, call.Cancellation);
+        return PyNone.Instance;
     }
 
-    /// <summary>Opens an attempt for the character and sends its start events. A character's earlier attempt is replaced.</summary>
-    public void Start(ClientSession session, long characterId, HackingAttempt attempt)
+    /// <summary>Whether a fitted analyzer may start on the container now: the reason it may not, or null.</summary>
+    public async ValueTask<string?> AnalyzerRefusalAsync(long characterId, long targetId, AnalyzerValues values, CancellationToken cancellationToken)
     {
-        var game = HackingGame.Create(attempt);
-        attempts.Set(characterId, game);
-        Send(session, game.Start());
+        if (await site.FindAsync(characterId, targetId, cancellationToken) is not { } target)
+            return "ANALYZER_TARGET_INVALID";
+        if (target.Relic ? !values.CanHackRelic : !values.CanHackData)
+            return "ANALYZER_TYPE_MISMATCH";
+        return attempts.IsBeingHacked(target.ItemId) ? "ANALYZER_TARGET_BUSY" : null;
     }
+
+    /// <summary>Opens the analyzer's attempt on the container and sends its start events. A character's earlier attempt ends as lost first.</summary>
+    public async ValueTask OpenAnalyzerAttemptAsync(ClientSession session, long characterId, long targetId, AnalyzerValues values, CancellationToken cancellationToken)
+    {
+        if (await site.FindAsync(characterId, targetId, cancellationToken) is not { } target)
+            return;
+        if (attempts.Get(characterId) is { } previous)
+            await LoseAsync(session, characterId, previous, cancellationToken);
+
+        var attempt = new HackingAttempt(
+            target.ItemId,
+            values.ModuleTypeId,
+            target.Relic ? HackingWire.GameTypeArchaeology : HackingWire.GameTypeHacking,
+            Math.Max(1, (int)Math.Floor(target.Difficulty - values.AccessDifficultyBonus / 5)),
+            (int)Math.Round(values.VirusCoherence),
+            (int)Math.Round(values.VirusStrength),
+            (int)Math.Round(values.VirusSlots),
+            Random.Shared.Next());
+        var window = new HackingWindow(newGame(attempt), target, values.MaxRange);
+        attempts.Set(characterId, window);
+        Send(session, window.Game.Start());
+    }
+
+    /// <summary>The window closes at a warp: the attempt is lost.</summary>
+    public ValueTask CloseOnWarpAsync(ClientSession session, long characterId, CancellationToken cancellationToken) =>
+        attempts.Get(characterId) is { } window ? LoseAsync(session, characterId, window, cancellationToken) : ValueTask.CompletedTask;
+
+    private async ValueTask LoseAsync(ClientSession session, long characterId, HackingWindow window, CancellationToken cancellationToken)
+    {
+        Send(session, window.Game.Quit());
+        await EndIfOverAsync(session, characterId, window, cancellationToken);
+    }
+
+    private async ValueTask EndIfOverAsync(ClientSession session, long characterId, HackingWindow window, CancellationToken cancellationToken)
+    {
+        if (window.Game.Outcome == HackingOutcome.Active)
+            return;
+        attempts.Remove(characterId, window);
+        await site.AttemptEndedAsync(session, window.Target, window.Game.Outcome == HackingOutcome.Won, cancellationToken);
+    }
+
+    private static HackingEvent Ack() => new(HackingWire.EventAck, new Dictionary<string, object?>());
 
     private static void Send(ClientSession session, IReadOnlyList<HackingEvent> events)
     {

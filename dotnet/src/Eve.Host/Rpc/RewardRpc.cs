@@ -63,7 +63,8 @@ internal sealed partial class CharacterServicesComposition
                     if (call.Method == "CreateRedeemTokenQA")
                         return await storeRuntime.CreateRedeemTokenQAAsync(call, ct).ConfigureAwait(false);
                     return null;
-                }),
+                },
+                storeRuntime),
             new Eve.Services.Core.VaultManagerService(storeRuntime),
     ];
 }

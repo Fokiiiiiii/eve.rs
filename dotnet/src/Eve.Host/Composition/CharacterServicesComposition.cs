@@ -223,6 +223,7 @@ internal sealed partial class CharacterServicesComposition
     private AgentMissionService agentMissionService = default!;
     private Eve.Agents.AgentMissionStore agentMissionStore = default!;
     private Eve.Agents.ResearchProjectStore agentResearchProjects = default!;
+    private Eve.Agents.LocateStore agentLocates = default!;
     private Eve.Services.Core.AgentMissionAnnouncer agentMissionAnnouncer = default!;
     private SlashService? publicQaSlashService;
     private GameRpcCallbacks gameRpcCallbacks = default!;

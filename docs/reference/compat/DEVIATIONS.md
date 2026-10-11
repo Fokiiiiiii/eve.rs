@@ -2068,6 +2068,36 @@ price and the purchase); the SDE types and `typeDogma` (dogma attribute 182 = re
 - **Gaps.** Research missions (the agent's daily mission, one day's RP as the reward) are not offered; the mission pool does not
   carry them. EveJS grants the datacores through `researchDatacoreItemCustody`, which was not read; one stack is the rule used here.
 
+## Agents slice AG-4, A7: locator buttons 15 to 17 (2026-10-11)
+
+Sources. eve-logic `appConst.py:146-164` (buttons 15 to 17), `eve/common/script/util/notificationconst.py:73, 423` (type 69, the
+"PilotLocated" name), `notificationUtil.py:540-591` (`FormatLocateCharNotification`: the data keys and the group ids 3, 4, 5, 15).
+EveJS v0.12.9 has no locate dialogue: `agentMissionRuntime.js:6258` only publishes the locator's service row, so the rule below is
+the wiki's ("Locator Agents") and the client's, not EveJS's.
+
+- **Fee timing (decided, the rule).** The name is asked for free and the offer states the fee. The fee is charged when the pilot
+  accepts (16), in the same transaction that starts the cooldown. A pilot who cannot pay is refused by name: nothing is written
+  and the request stays open. The wiki gives the fee in its table and says "for a fee" without saying when it is taken; charging
+  on accept means a pilot pays only for a result it is offered. Status: decided by this rule; not checked against CCP.
+- **Where the pilot is.** The system is the online session's (`solarsystemid2`, else `solarsystemid`); the station is the session's
+  docked location. A pilot who is offline is refused by name. The constellation and region come from the SDE solar system.
+- **Reach, fee and cooldown.** `LocatorRules`: the fee table, cooldowns of 5, 5, 15, 30 and 60 minutes by level, and the rule that
+  a level-one locator cannot reach beyond its constellation and a level-two one cannot reach another region (the table's
+  "cannot"). Wormhole systems (ids 31000000 to 31999999) are refused ("wormholes are excluded"). A refusal is by name and writes
+  nothing. Status: decided.
+- **Standing.** The required standing per level (`LocatorRules.RequiredStandingFor`) is compared with the pilot's effective
+  standing toward the agent (the Connections bonus applied, as the research start does). The wiki names this as faction standing;
+  the corporation and faction standings are not split out here. Status: a gap.
+- **Result.** The located notification: type 69, group agents, sent by the agent, with `characterID`, `messageIndex` (0),
+  `agentLocation` and `targetLocation` keyed by group id (3 region, 4 constellation, 5 system, 15 station; the station only when
+  docked). It is written after the commit. If the notification cannot be written, the fee is refunded (journal reference type 27,
+  "Locate refund") and the error is returned to the pilot. Status: decided; the payload is read from the client formatter, not
+  shown in a client run.
+- **Gaps.** The prompt caption, its label and the lines the agent says are plain English: the client's `UI/Agents/Locator/*` labels
+  are not mapped to the dialog yet. `messageIndex` is always 0 (the first intro line). A refund that fails after a failed
+  notification leaves the cooldown started. No Host test covers the delivery, the refund or the name lookup; the dialogue tests
+  (`AgentLocatorDialogueTests`, PostgreSQL, fake port) cover the ask, offer, accept, reject, refusals, cooldown and the unpaid case.
+
 ## ST-E: cloak proximity and forced decloak notices (2026-10-10)
 - **Proximity radius and refusal.** The cloak breaks, and activation refuses, for a ship or a non-belt body within 2 000 m of the surface of the cloaked ship. Source: EveJS `shipCloak.js:100` (`MIN_CLOAKING_DISTANCE_METERS = 2000`). It replaces the 2 km smartbomb-range check, so the activation refusal now also counts bodies, not only smartbomb targets. Belts are not counted.
 - **Notice order.** The proximity notice goes out before the module stops; the other reasons after (EveJS `forceDecloakEntity`).

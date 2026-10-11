@@ -969,6 +969,16 @@ Decisions: DEVIATIONS.md, "Agents slice AG-2, A4".
 | OPEN | The mission briefing (`GetMissionBriefingInfo`, objectives, offer text) is not bound: no mission content yet | mission-data track |
 | OPEN | The headless walk does not yet call DoAction (the live run covers the Services.Core tests only) | tools/headless-client |
 
+Slice A9, part 1 (2026-10-11): DONE for the offers: ESI's official offers cached daily (offline switch `EVE_LP_STORE_SEED=skip`),
+`lp_store_offers` (wallet migration 007), `GetAvailableOffersFromCorp` as the reference's rows; the stub is gone. Tests:
+`Eve.Wallet.Tests` (LpStoreOffersTests, 4), `Eve.Services.Wallet.Tests` (LpStoreMgrServiceTests, 1). Decisions: DEVIATIONS.md,
+"Agents slice AG-2, A9 (part 1)".
+
+| Status | Item | Where / blocker |
+|---|---|---|
+| OPEN | Take an offer (LP, ISK, required items, the granted item): refused by name; blocked on the ISK journal reference type (no source), the item-change announcement and the corporation rules | DEVIATIONS "Agents slice AG-2, A9 (part 1)" |
+| OPEN | Standing requirements of LP store offers: ESI returns none, so none is shown | DEVIATIONS "Agents slice AG-2, A9 (part 1)" |
+
 ## 43. Structures phase ST-E: remaining E wiring (2026-10-10)
 - DONE E-01: StartNewExtraction, FractureChunkWithStructure and CancelExtraction refuse by name (CustomNotify) with no backend, not PyNone (`StructureDataRpcServices.cs`, commit 59e9e89). The backend is ST-6a.
 - DONE E-04 proximity: the sim breaks a cloak that has a ship or a non-belt body within 2 km of its surface and sends `OnCloakModuleForceDeactivated` (`CloakDeactivatedByProximityToType`) before the module stops (`crates/eve-space/src/scene/decloak.rs`, polled in `scene/session.rs`). Activation refuses within the same 2 km (`modules/activation.rs`). Tests: `modules::tests` (ship, station, custom); host `SpaceServiceTests.A_forced_decloak_notice_reaches_the_pilot_with_the_message_and_its_arguments`. No protocol bump: the notice is an existing notify.

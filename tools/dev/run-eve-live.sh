@@ -14,6 +14,8 @@
 # (with KEEP_LOGS=1), for CI to upload. Passwords are checked (an unknown user name
 # creates the account; the same name needs the same password afterwards), so the wrong-password test runs too.
 set -euo pipefail
+# the live run calls no ESI for the loyalty store (EVE_LP_STORE_SEED=skip answers what is stored); set EVE_LP_STORE_SEED=auto to refresh
+export EVE_LP_STORE_SEED="${EVE_LP_STORE_SEED:-skip}"
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 TARGET="${CARGO_TARGET_DIR:-$HERE/target}"

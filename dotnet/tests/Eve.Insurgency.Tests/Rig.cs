@@ -90,6 +90,18 @@ public sealed class Rig : IAsyncDisposable
     public async ValueTask DisposeAsync()
     {
         await Scheduler.StopAsync();
+        foreach (var schema in new[] { SchedulerSchema, EventsSchema, InsurgencySchema })
+        {
+            try
+            {
+                await using var drop = Source.CreateCommand($"DROP SCHEMA IF EXISTS \"{schema}\" CASCADE");
+                await drop.ExecuteNonQueryAsync();
+            }
+            catch (NpgsqlException)
+            {
+                // Leaving a scratch schema behind is better than failing the test.
+            }
+        }
         await Source.DisposeAsync();
     }
 }

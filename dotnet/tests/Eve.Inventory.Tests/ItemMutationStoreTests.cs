@@ -6,16 +6,52 @@ using Npgsql;
 namespace Eve.Inventory.Tests;
 
 /// <summary>The provenance table, in a scratch schema of a real PostgreSQL (skipped without EVE_PG_URL; skipped is not passed).</summary>
-public class ItemMutationStoreTests
+public class ItemMutationStoreTests : IAsyncLifetime
 {
     private const int Mutaplasmid = 47297;
     private const int Microwarpdrive = 12052;
     private const int Abyssal = 47408;
     private const long Character = 140_000_001;
 
-    private static NpgsqlDataSource Source() => NpgsqlDataSource.Create(PgConnection.ToConnectionString(PgFactAttribute.Url!));
+    private readonly List<NpgsqlDataSource> _sources = [];
+    private readonly List<string> _schemas = [];
 
-    private static string NewSchema() => $"im_{Guid.NewGuid():N}"[..20];
+    private NpgsqlDataSource Source()
+    {
+        var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(PgFactAttribute.Url!));
+        _sources.Add(source);
+        return source;
+    }
+
+    private string NewSchema()
+    {
+        var schema = $"im_{Guid.NewGuid():N}"[..20];
+        _schemas.Add(schema);
+        return schema;
+    }
+
+    /// <summary>Drops this test's schemas (a failed drop does not fail the test), then closes its sources.</summary>
+    public Task InitializeAsync() => Task.CompletedTask;
+
+    public async Task DisposeAsync()
+    {
+        foreach (var schema in _schemas)
+        {
+            try
+            {
+                await using var drop = _sources[0].CreateCommand($"DROP SCHEMA IF EXISTS \"{schema}\" CASCADE");
+                await drop.ExecuteNonQueryAsync();
+            }
+            catch (NpgsqlException)
+            {
+                // Leaving a scratch schema behind is better than failing the test.
+            }
+        }
+        foreach (var source in _sources)
+        {
+            await source.DisposeAsync();
+        }
+    }
 
     private static bool SameBits(double expected, double actual) =>
         BitConverter.DoubleToInt64Bits(expected) == BitConverter.DoubleToInt64Bits(actual);

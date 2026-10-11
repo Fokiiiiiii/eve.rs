@@ -44,6 +44,7 @@ public class MutatedModuleTests
     {
         var catalog = await MutatorCatalog.LoadAsync(new SdeReader(rig.Source));
         var id = Guid.NewGuid().ToString("N")[..12];
+        rig.KeepSchemas($"shs_{id}", $"she_{id}");
         await DurableScheduler.MigrateAsync(rig.Source, $"shs_{id}");
         await EventBus.MigrateAsync(rig.Source, $"she_{id}");
         var bus = new EventBus(rig.Source, new DurableScheduler(rig.Source, () => ClockMs, new SchedulerOptions { Concurrency = 1 }, $"shs_{id}"), null, $"she_{id}");

@@ -357,6 +357,18 @@ public sealed class IncursionDirectorTests
 
         public async ValueTask DisposeAsync()
         {
+            foreach (var schema in _schemas)
+            {
+                try
+                {
+                    await using var drop = _source.CreateCommand($"DROP SCHEMA IF EXISTS \"{schema}\" CASCADE");
+                    await drop.ExecuteNonQueryAsync();
+                }
+                catch (NpgsqlException)
+                {
+                    // Leaving a scratch schema behind is better than failing the test.
+                }
+            }
             await _source.DisposeAsync();
         }
     }

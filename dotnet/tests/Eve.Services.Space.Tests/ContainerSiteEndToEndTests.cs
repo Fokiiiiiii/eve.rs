@@ -62,6 +62,7 @@ public sealed class ContainerSiteEndToEndTests
         var content = new ContentRuntime(rig.Source, scheduler, bus, "e2e_content_" + id);
         var sitesSchema = "e2e_sites_" + id;
         var itemsSchema = "e2e_items_" + id;
+        rig.KeepSchemas("e2e_sch_" + id, "e2e_evt_" + id, "e2e_content_" + id, sitesSchema, itemsSchema);
         await SiteContainerStore.MigrateAsync(rig.Source, sitesSchema);
         await PgItemStore.MigrateAsync(rig.Source, itemsSchema);
         var store = new SiteContainerStore(rig.Source, sitesSchema);

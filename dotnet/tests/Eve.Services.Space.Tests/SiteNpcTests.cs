@@ -193,6 +193,7 @@ public sealed class SiteNpcTests
         public static async Task<SiteHost> CreateAsync(Rig rig)
         {
             var schema = "site_npc_" + Guid.NewGuid().ToString("N")[..12];
+            rig.KeepSchemas(schema);
             await ContentRuntime.MigrateAsync(rig.Source, schema);
             var content = new ContentRuntime(rig.Source, rig.Scheduler, rig.Bus!, schema);
             var templates = SiteTemplates.Load();

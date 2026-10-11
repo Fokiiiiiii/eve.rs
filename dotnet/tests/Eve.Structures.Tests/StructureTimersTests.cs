@@ -135,4 +135,18 @@ public class StructureTimersTests
         Assert.Equal(1.5, legacy["position"]!["x"]!.GetValue<double>());
         Assert.Equal(ServiceState.Online, legacy["serviceStates"]!["1"]!.GetValue<int>());
     }
+
+    [PgFact]
+    public async Task A_description_and_a_profile_are_written_to_the_structure_and_read_back_in_the_legacy_shape()
+    {
+        await using var rig = await Rig.Create();
+        await rig.Anchor(1001);
+        await rig.Tick();
+        await rig.Commit(async (c, t) => { await rig.Store.SetDescriptionAsync(c, t, 1001, "a new description"); return 0; });
+        await rig.Commit(async (c, t) => { await rig.Store.SetProfileAsync(c, t, new long[] { 1001 }, 77); return 0; });
+
+        var row = (await rig.Store.ReadLegacyTableAsync())["1001"]!.AsObject();
+        Assert.Equal("a new description", row["description"]!.GetValue<string>());
+        Assert.Equal(77, row["profileID"]!.GetValue<long>());
+    }
 }

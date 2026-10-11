@@ -1561,6 +1561,64 @@ Faction lists: `eve/common/lib/appConst.py:618-632`.
   bound object is refused as an `InvalidOperationException` (the host logs it and answers the wrapped unexpected error) while no
   bound method exists: `DoAction` and the mission methods are slices A4 and A5. A release forgets the object. Status: tested
   (`AgentMissionServiceTests`); the bound object answers no method yet.
+## Agents slice AG-2: web research and the rule check (2026-10-11)
+
+Sources read (2026-10-11). CCP's own pages were not reachable: `support.eveonline.com` answers 403 and
+`developers.eveonline.com/docs/services/esi/` answers 404, so the CCP facts below come from the ESI OpenAPI document and
+every other number comes from the EVE University wiki, a community source.
+- ESI OpenAPI, `https://esi.evetech.net/meta/openapi.json` (CCP): `GetLoyaltyStoresCorporationIdOffers` response
+  (`offer_id`, `type_id`, `quantity`, `lp_cost`, `isk_cost`, `ak_cost` optional, `required_items[type_id, quantity]`);
+  `GetCharactersCharacterIdLoyaltyPoints` (`corporation_id`, `loyalty_points`); `GetCharactersCharacterIdAgentsResearch`
+  (`agent_id`, `skill_type_id`, `started_at`, `points_per_day`, `remainder_points`).
+- EVE University wiki, `https://wiki.eveuniversity.org/Agent` (levels, standing table, access, divisions, locator wording),
+  `https://wiki.eveuniversity.org/Loyalty_Points` (LP sources, Connections bonus, LP store, CONCORD exchange),
+  `https://wiki.eveuniversity.org/Locator_Agents` (fee table, cooldowns, restrictions), `https://wiki.eveuniversity.org/Missions`
+  (read in the design phase). `https://wiki.eveuniversity.org/Research` is the blueprint research page, not agent research.
+
+Agreement with the access rule (`AgentAccessRule`, eveCfg.py:112-143): the level thresholds 1, 3, 5, 7 for levels 2 to 5
+(`m = 2(level-1) - 1`), the floor (all three standings above -2, "All three types of standing need to be above -2.00"), the
+research rule (corporation standing of at least `m - 2`, "no more than 2 below the required level"), the -10 to +10 range and
+the three standings (personal, corporation, faction). No code change.
+
+Disagreement, the client wins:
+- **Skill bonus targets.** The wiki says Connections, Diplomacy and Criminal Connections raise "effective corporation and
+  faction standing". The V24.01 client applies the bonus to all three standings, the personal one included
+  (`eveCfg.py:130-138`: `fac`, `coc` and `cac` each get `standingUtil.GetStandingBonus`). `AgentAccessRule` follows the
+  client, and `AgentAccessRuleTests` covers a personal standing that passes only with the bonus. No code change.
+- **Other-faction space.** The wiki says an agent in another faction's sovereign space is not unlocked by standings with
+  its own faction. The client rule has no location term (`eveCfg.py:112-143`), so none is added.
+- **COSMOS thresholds.** The wiki gives COSMOS -2, 2, 4 and 6 for levels 1 to 4. The client has no COSMOS rule (Q-AG-1); the
+  COSMOS numbers stay a note.
+- **R&D missions.** The wiki says R&D has "only two missions, a trade and a courier" and no LP; CCP's 2011 article says
+  research missions (Q-AG-7). Still open.
+
+Locator fees (A7). Source: the wiki's locator table (community, not CCP; the page says "for a fee" in the prose and gives
+the amounts in the table). Columns: required faction standing, the cooldown, then the fee for the same solar system, the
+same constellation, the same region and a different region.
+- level 1: any, 5 min, 1,000 / 5,000 / cannot / cannot
+- level 2: 1.0, 5 min, 5,000 / 10,000 / 25,000 / cannot
+- level 3: 3.0, 15 min, 10,000 / 25,000 / 50,000 / 100,000
+- level 4: 5.0, 30 min, 25,000 / 50,000 / 100,000 / 250,000
+- level 5: 7.0, 60 min, 50,000 / 100,000 / 250,000 / 500,000
+The wiki also says: wormholes are excluded; levels 4 and 5 need an Omega account (not modelled); the target is never notified;
+corporation standing qualifies as well as personal. The wiki does not say when the fee is charged.
+
+CONCORD LP exchange (`ExchangeConcordLP`, still refused). The wiki gives the rate for an empire faction corporation as 1:0.8
+(a 20% loss), for other non-pirate, non-empire corporations as 1:0.4, and none for Factional Warfare, pirate, Triglavian or
+some SoE corporations. It has no CCP source. It stays refused: the rate table, the corporation classification and the result
+shape of the client call are not in eve-logic, so no rule is implemented from the wiki alone.
+
+LP store (A9). The wiki gives no per-item LP cost and no standing requirement for a store. The ESI offer schema above is the
+shape to serve. The pinned SDE (build 3396210, `.cache/sde`) has no LP offer file (`npcCorporations.lpOfferTables` names the
+tables, but no table rows are in the export), so offer data is a source gap for A9.
+
+Research (A6). ESI gives the shape (`points_per_day`, `remainder_points`, `started_at`); no CCP or wiki text gives the points
+rate, the datacore price or the remainder rule that was read. A6 implements the stored state and the ESI arithmetic
+(`remainder_points + points_per_day * days`); the rates come from the data the server holds, and the datacore price is a gap.
+
+Status: the sources are recorded; the rule matches them; the open items are Q-AG-7 (R&D missions), the LP offer data (A9),
+the research rates (A6) and the locator fee timing (A7).
+
 ## ST-E: cloak proximity and forced decloak notices (2026-10-10)
 - **Proximity radius and refusal.** The cloak breaks, and activation refuses, for a ship or a non-belt body within 2 000 m of the surface of the cloaked ship. Source: EveJS `shipCloak.js:100` (`MIN_CLOAKING_DISTANCE_METERS = 2000`). It replaces the 2 km smartbomb-range check, so the activation refusal now also counts bodies, not only smartbomb targets. Belts are not counted.
 - **Notice order.** The proximity notice goes out before the module stops; the other reasons after (EveJS `forceDecloakEntity`).
@@ -1595,6 +1653,17 @@ The record owner and the timeline of Upwell structures (`dotnet/src/Eve.Structur
   fields the timeline does not own in `doc`. A structure without a state is imported as one that already works (`ShieldVulnerable`), and a Low Power
   structure without an abandon day starts its clock at the import. Status: decided; the import call is not wired yet.
 - **`structure.state_changed` is published in the same transaction as the change**, with the timer of the structure. Status: decided.
+- **The band of a system (Host rules source, `StructureRulesSource`).** From SDE `mapSolarSystems`: Wormhole for ids 31000000 to 31999999 (J-space), Pochven for
+  region 10000070, otherwise the client's class (`Security.ClassFromLevel`, null below 0.0, low below 0.45, else high). The rigSize is read from SDE
+  `typeDogma` (attribute 1547) because `DogmaStatic` does not load the structure types. A type or system without static data is an error, not a guess
+  (the timer job is retried). Test: `StructureRulesSourceTests`. Status: decided.
+- **Imported deadlines run from start-up.** A structure whose imported record has a deadline (a repair, a reinforcement, an anchoring, an unanchoring)
+  is scheduled as a `structure.timer` job; the timeline then moves it on its own. The reference has no such timer for structures in the game store:
+  EveJS advances them on its own tick, so this follows the reference's behaviour. The state change is published (`structure.state_changed`), and the
+  client is told by the notification subscriber of ST-2, which is not written yet. Status: decided; the notice is open.
+- **The game store's `structures` table is frozen after the import.** The import copies by id and skips ids already in the schema; the readers and
+  the description and profile writes use the schema from then on. A game store row written later under a new id is not copied (a second import would
+  copy it), which is the migration path, not a runtime path. Status: decided; the freeze is the ADR 0003 rule 3 bridge.
 ## Cosmic sites (ST-11)
 
 Sources: the wiki's probe-scanning and site rules first; EveJS `services/dungeon/dungeonUniverseRuntime.js` where the wiki is silent; the SDE for names and the sensor attributes.
@@ -1608,3 +1677,135 @@ Sources: the wiki's probe-scanning and site rules first; EveJS `services/dungeon
 - **Codes and seeds.** A signature's code is three letters, a dash and three digits (`ABC-123`, the client's listing form, not verified in the client). Its place and code come from an FNV-1a hash of the system, the slot, the family and the instance it replaces, so the same history gives the same place; the reference's random source is not used. A code that a system already has is re-seeded. Status: decided.
 - **Signatures and anomalies.** Only signatures are scan targets (`ContentCosmicSites`); an anomaly comes from the system scanner's overlay and is not a probe target, as the client expects. Scan rows carry the code as their id and the dungeon fields; a signature's item id is none (EveJS `buildScanResultEntry`, the item id left to the site source).
 - **Not yet built.** The NPCs of a site are not spawned, so no `npc.killed` carries the site and no site is cleared by its NPCs; containers are not placed, so `site.container.cleared` is never published. Until these land a site ends by expiry only.
+
+## Mission static data: the official build, the EveJS source removed, the gaps (Mi1, 2026-10-11)
+
+Sources. CCP's static-data host: the schema change log (`schema-changelog.yaml`), the change files `changes/3402511.jsonl`
+and `changes/3405148.jsonl`, and the builds 3402511, 3405148 and 3586130 (the archives, inspected for this record).
+EVE University wiki, Agent page (last modified 28 April 2024) and Epic arc page (last modified 14 June 2026). The
+client's use of mission data: eve-logic `evemissions/client/data.py`, `eve/client/script/ui/shared/epicArcs/epicArcController.py:67-69`,
+`eve/client/script/ui/station/agents/agents.py:356-363`, `eve/client/script/ui/shared/neocom/journal.py:686-701`.
+
+- **The mission build is newer than the client build.** The client build is 3396210 (`sde/lock.json` `pinned`). Mission
+  data is pinned to build 3405148 (`sde/lock.json` `missionPinned`, record `builds."3405148"`), the first build whose
+  change file adds `missions` and `epicArcs` (`changes/3405148.jsonl`, `fileAdded: true`, `lastBuildNumber` 3402511).
+  Build 3402511 does not have the tables (its archive has the 60 tables of 3396210 and no others). An earlier survey said
+  3402511; that was wrong. Evidence that the IDs agree with the client's tables as far as they can be checked here: the
+  mission IDs 17179 to 17190 (the twelve EveJS ingests) and epic arc 132 are present in 3405148 with the names EveJS
+  used; the latest build 3586130 has the same 2,892 mission IDs and the same 21 arcs, with 2,845 mission rows identical
+  and 47 differing only in their `messages`. Not checked: the client's `missions.fsdbinary` and `epicArcs.fsdbinary`
+  (no client files here), so whether every mission of the client exists in 3405148 is open. Status: decided; the
+  deviation stands until a client check is done.
+- **Only two tables of the build are loaded**, `missions` and `epicArcs`, into schema `sde_mission`
+  (`eve-sde ensure --missions --pg ...`, `eve_sde::ensure::MISSION_TABLES`). The other 76 tables of 3405148 are not
+  loaded: the server reads the rest of the static data from the pinned build. Status: decided; tests
+  `crates/eve-sde/tests/missions.rs`.
+- **Epic arc count: 21 official, nine on the wiki, seven in the design file.** The official `epicArcs` table has 21 rows;
+  the wiki's Epic arc page (revision of 14 June 2026) describes nine; the design file (`ess-insurgency-agents-missions-design.md`)
+  says seven. The data is implemented from the official table, so 21 arcs are offered by the catalog. Not reconciled:
+  the official table may hold arcs the wiki does not list (for example arcs that are not epic arcs in the game).
+  Status: open, a question for the owner. Test: `MissionStaticCatalogTests`, the real-data test in `missions.rs`.
+- **The EveJS authority source is removed from the Host.** `EVEJS_GAMESTORE_DATA_DIR`, `EVEJS_SERVER_ROOT`,
+  `EVEJS_PRODUCTION_MISSION_POLICY_PATH` and the Windows launcher discovery are no longer read.
+  `EveJsMissionAuthorityDataSource` and `AgentMissionStaticAuthority` are deleted; `MissionStaticCatalog` replaces them
+  (`dotnet/src/Eve.Services.Core/MissionStaticCatalog.cs`). Before, a missing EveJS directory returned empty lists
+  without a message (`AgentMissionService.cs:180-182`, `216-218`); now the Host prints the catalog state at startup.
+  Status: decided.
+- **Plausible missions: only epic arc agents.** The build links an agent to a mission only through `epicArcs`
+  (59 agents). `GetPlausibleMissionIDs` answers the arc steps of that agent, and an empty list for every other agent.
+  The official data has no mission-to-agent pool for basic, storyline, research, factional-warfare, heraldry, career,
+  tutorial or event agents, and no level to choose among missions (reason text: `MissionDataGaps.BasicPools`). The EveJS
+  routing rules used `missionKind`, `missionFlavor`, `missionLevel` and template fields that the build does not have,
+  so they are not reproduced. Status: open, the reason is printed at startup; mission offers (Mi2) need the pools.
+- **Disabled missions: none.** `GetDisabledMissions` answers an empty list. The reference's one entry (mission 4743, a
+  template of its own content policy) is not carried: it is not a CCP fact. Status: decided (`MissionDataGaps.DisabledMissions`).
+- **Epic arc journal text: no IDs.** The reference answers `GetMessagesForEpicArcMissions` with localization message
+  IDs under `messages.epicMission.journalText.*`. The official build has no such keys and no message IDs (its texts are
+  English and other languages under CCP's own keys). Each message type maps to an empty object, so the client shows no
+  chapter titles on the epic arc screen. Status: open (`MissionDataGaps.EpicJournalText`). Before this change the server
+  gave the same empty answer on any install without the EveJS directory.
+- **Levels: 1,274 basic missions tagged, with provenance, committed by the owner's exception.** The official build has no
+  mission level. The repository owner's level tags (EveJS work of 2026-09-26) are committed in
+  `dotnet/src/Eve.Services.Core/Data/mission-level-tags.v1.json` (embedded resource): 1,274 rows, one per official mission
+  ID (every ID exists in build 3405148, table `missions`). Provenance classes: `client` 1,019 (client dungeon difficulty 790,
+  client dungeon name 229), `tq-log` 13 (the golden security missions, from captured TQ logs), `wiki` 191 (EVE University wiki
+  tables, transcribed by the owner), `rule` 51 (owner rules and defaults; 23 cargo-volume estimates, 22 related-chain, 4 default
+  level 1). Confidence: high 1,223, medium 24, low 27. Each row has exactly four fields: `missionID`, `level`, `provenance`,
+  `confidence`. Missions without a row answer `unknown` with the reason; they are never given a default level.
+  `MissionStaticCatalog.Level` returns the provenance with every level. Status: decided (exception below).
+- **Exception to the rule against committing client-derived and captured-log data (owner-approved, 2026-10-11).** The
+  repository owner approved committing the `client` and `tq-log` tag values above, and nothing else from the owner's
+  data. The rule this overrides: README.md:9-10 and :115-118, CLAUDE.md:14, AGENTS.md:18 (no CCP client data, no captured
+  logs, no guessed data in the repository). The approval is limited to: the official mission ID, the level (an integer 1 to 5),
+  the provenance class (`client`, `tq-log`, `wiki`, `rule`), and the owner's confidence flag. Not in the file: names, message
+  text, rewards, dungeon contents, rule IDs, source URLs or any other CCP string. Reason for the exception: the exporter that
+  generated the client-derived values (`client-mission-export.json`, the client's embedded-Python export) is not in any
+  repository available here, so the values cannot be regenerated from source; this file is the only record of them. The
+  loader refuses any row or top-level field outside the allowed set, and a test reads the committed file and fails if it ever
+  carries another field. The values come from the owner's EveJS table (`missionAuthority/data.json`, `missionLevel`,
+  `missionLevelSource`, `missionLevelConfidence`), extracted once with `python3 -I`; no EveJS script was run.
+  Status: decided by the owner; the policy statements above are unchanged for every other data set.
+- **The rule and default rows are the owner's guesses in part.** 23 cargo-volume estimates, 4 default level-1 values and 22
+  related-chain values are the owner's own heuristics (the owner's document, section 8.2, calls them heuristic; AGENTS.md:18
+  forbids guessed data). They are committed with their confidence flag so that the read side can show them as low or medium.
+  Status: open, the owner decides whether to keep them (TODO section 43a).
+- **Optional owner file.** `EVE_MISSION_LEVEL_TAGS` names a path to a further tag file (same schema; provenance `owner`). A
+  mission already tagged in the committed file is refused (no silent overwrite). Status: decided.
+- **Kill mission dungeon content: not answered.** A `killMission.dungeonID` refers to a client dungeon template. Only 3 of
+  the 1,460 distinct IDs in the build are rows of the SDE `dungeons` table (checked on 3405148 and on the pinned 3396210),
+  so the rooms and spawns cannot be taken from `dungeons`. `MissionStaticCatalog` returns the ID; `MissionDataGaps.DungeonContent`
+  gives the reason. Status: open, belongs to the dungeon owner.
+- **LP and standings: not answered by the mission data.** Mission LP rewards and LP store standing requirements are not in
+  the build (the official `missions` rows carry ISK and item rewards and standings in `extraStandings`). LP store offers
+  come from the agents track (its ESI source). Status: open (`MissionDataGaps.Standings`).
+- **Reward terms are official.** `missionRewards` (reward, bonus reward, bonus interval) is read for the 940 missions that
+  have it. The reward base per level is not in the build. Status: decided.
+- **Agent mission kind and importance: an eve.rs rule table** (`dotnet/src/Eve.Services.Core/AgentMissionKindRules.cs`).
+  The SDE has neither field. The rule keys on the agent type name (`agentTypes`) and the division name
+  (`npcCorporationDivisions`), both of build 3396210, and on the wiki's Agent page for the division kinds: Security
+  encounter, Distribution courier, Mining mining. Research agents (type 4) are research; epic arc agents (type 10) are
+  `epicArc`; factional-warfare agents (type 9) are encounter (wiki); heraldry agents (type 13) are `heraldry`. Event, aura,
+  CONCORD and career agents, non-agents, and R&D (division 18: the wiki gives it only a trade and a courier) get an empty
+  kind. Importance is true for the storyline and epic arc types (6, 7, 10). The EveJS rule is not copied: EveJS also maps
+  divisions 25, 27 and 37 (career and InterBus) to kinds that the wiki does not state; this rule leaves them empty.
+  Status: decided; the agent counts per kind are in the test notes below.
+- **The V24.01 client does not read the agent row's `missionKind` or `importantMission`** (checked: no reader in eve-logic;
+  the journal reads `importantMission` from the mission record). The values are sent because the rowset has the columns;
+  they have no client effect in V24.01. `missionTypeLabel` stays empty: the client reads a label from the mission record,
+  and the build has no label key for an agent. Status: decided.
+- **Counts that this rule gives on build 3396210** (the 10,966 agents with an agent object in `npcCharacters`, recounted for this record): basic (type 2) 8,775 agents: courier 3,729, encounter 3,671, mining 1,375; tutorial (3) 14: courier 12, encounter 2; storyline (6, 7) 658 and important: courier 275, encounter 279, mining 104; epic arc (10) 52 and important; research (4) 244; factional warfare (9) 260 encounter; heraldry (13) 12; empty kind: event (8) 696, CONCORD (5) 143, career (12) 100, aura (11) 12.
+
+- **Mission-to-dungeon mapping: the official `dungeonID` is kept, its content is not answered.** `killMission.dungeonID` is a client
+  dungeon ID (the key of the owner's `dungeonAuthority` client table). 1,460 distinct IDs; 3 of them are rows of the SDE `dungeons`
+  table (13341, 13342, 14100). `MissionStaticCatalog.KillDungeon` returns the official ID with `OfficialContent: false` and the
+  reason. No mapping to another dungeon is invented. Status: decided; belongs to the dungeon owner.
+- **Pool selection and dungeon-template selection are not ported (Mi2).** They are the owner's rules in EveJS. The list for the
+  hand-off is in TODO section 43.
+
+## Epic arc availability and the second SDE's discard (2026-10-11)
+
+- **Arcs newer than the client are not offered.** The official build 3405148 has 21 epic arcs; the server targets client build
+  3396210, whose data has no mission tables. The availability of each arc is an eve.rs table,
+  `dotnet/src/Eve.Services.Core/Data/epic-arc-availability.v1.json` (embedded resource): nine arcs `in-client-build`, twelve
+  `newer-than-client`, none `unknown`. Evidence: the V24.01 client's own epic arc constants (eve-logic
+  `eve/client/script/ui/shared/epicArcs/epicArcConst.py:7-15`, which list nine arc IDs, the same nine the EVE University
+  Epic arc page describes). The twelve others (IDs 64 and 67 to 77) are not in those constants; their agents are aura agents
+  (agent type 11, division 22) in the pinned build's `npcCharacters`, not epic arc agents (type 10). The owner's client export
+  holds them, but the export's client build is not recorded, so they are treated as newer than the client. The pinned build
+  3396210 has no mission table, so it gives no direct evidence for any arc. Status: decided; the table is the eve.rs record.
+- **Per mission.** A step of an epic arc takes its arc's availability: 275 steps, 227 in the nine client arcs, 48 in the twelve
+  newer arcs. The other 2,617 missions are not epic arc steps; this table has no evidence for them, so they answer `unknown`
+  with the reason. Heraldry (78) and factional warfare (160) missions are in that group.
+- **Default offer.** `MissionStaticCatalog.PlausibleMissionIds` and `OfferableEpicArcs` offer only `in-client-build` arcs.
+  The explicit switch `EVE_MISSION_INCLUDE_UNAVAILABLE_ARCS=1` (or `true`) offers every arc. The startup log prints the counts.
+  Status: decided; tests `EpicArcAvailabilityTests`.
+- **The second SDE is discarded after loading** (owner's instruction, 2026-10-11). `eve-sde ensure --missions --pg` fetches the
+  archive, extracts only `_sde.jsonl`, `missions.jsonl` and `epicArcs.jsonl` to a scratch directory, loads those two tables into
+  `sde_mission`, then removes the scratch directory, any full extract of the build under the cache, and the downloaded
+  archive (a local archive named with `--archive` is never removed). The lock keeps the SHA-256, so a later run can verify the
+  build again. The loader needs `--pg`; without it `--missions` is an error, so no full copy is left behind. Tests:
+  `crates/eve-sde/tests/missions.rs` (a fake archive: only the named tables loaded; nothing left under the cache; a local
+  archive kept). Status: decided.
+- **Joins.** The server reads no table of build 3405148 other than `missions` and `epicArcs`. The agent and corporation
+  references in an arc (agent IDs) are checked against the pinned build at read time; no reference table is loaded from the
+  second build. Status: decided.

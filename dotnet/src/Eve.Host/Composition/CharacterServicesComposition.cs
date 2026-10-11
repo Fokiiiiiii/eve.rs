@@ -56,6 +56,8 @@ internal sealed partial class CharacterServicesComposition
     private async Task<(IReadOnlyList<IService> Services, SpaceSessions? Space, SimClient? Simulation, Eve.Services.Crimewatch.CrimewatchRuntime? Crimewatch, Eve.Calendar.ICalendarStore? CalendarStore, Eve.Calendar.ICalendarAudienceReader? CalendarAudience, Eve.Services.Core.GameRpcCallbacks? GameRpcCallbacks, Eve.Services.Core.KeeperRpcCallbacks? KeeperRpcCallbacks)> RunAsync()
     {
         await MigrateCharacterStores();
+        // before anything reads the structures: the structures schema is the record owner from here on (ST-0)
+        await StructureRecords();
         await OpenStorageAndCrimewatch();
         var buildVersion = await sde.BuildAsync();
         if (buildVersion is null)
@@ -170,6 +172,7 @@ internal sealed partial class CharacterServicesComposition
     private SpaceSessions? spaceSessions;
     private SpaceContainers? spaceContainers;
     private SpaceDrones? spaceDrones;
+    private Eve.Services.Space.Sites.CosmicSiteDirector? cosmicSites;
     private Func<long, CancellationToken, Task> allianceAffiliationNotify = default!;
     private Eve.Services.Corporations.AllianceApplicationDueWorker allianceDue = default!;
     private Eve.Services.Corporations.AllianceRegistryService allianceRegistry = default!;
@@ -205,7 +208,7 @@ internal sealed partial class CharacterServicesComposition
     private Eve.Services.Corporations.OfficeManagerService officeManager = default!;
     private ShipCosmeticsCatalog skinCosmeticsCatalog = default!;
     private Dictionary<long, AgentMissionAgentData> agentMissionAgentById = default!;
-    private EveJsMissionAuthorityDataSource agentMissionStaticAuthority = default!;
+    private MissionStaticCatalog agentMissionStatic = default!;
     private AgentMissionRpcCallbacks agentMissionRpcCallbacks = default!;
     private AgentMissionService agentMissionService = default!;
     private SlashService? publicQaSlashService;

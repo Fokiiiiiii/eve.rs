@@ -40,7 +40,13 @@ internal sealed partial class CharacterServicesComposition
     private Task IncursionsDungeonsKeeper()
     {
         incursionAnomalyReadModel = new PersistenceIncursionAnomalyReadModel(
-            foundations.Content.ActiveOfAsync,
+            async (kind, owner, token) =>
+            {
+                // the anomalies of a system the system scanner asks about exist by then (the sites are made when a system is first looked at)
+                if (kind == "anomaly" && cosmicSites is { } director && owner is > 0 and <= int.MaxValue)
+                    await director.EnsureAsync((int)owner, token);
+                return await foundations.Content.ActiveOfAsync(kind, owner, token);
+            },
             ReadGameStoreTableAsync,
             now);
         dungeonReadModel = new Eve.Host.PersistenceDungeonReadModel(

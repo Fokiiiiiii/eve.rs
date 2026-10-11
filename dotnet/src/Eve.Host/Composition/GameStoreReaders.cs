@@ -41,6 +41,9 @@ internal sealed partial class CharacterServicesComposition
         foundations.Relations.AffiliationOfAsync(character, cancellationToken: token);
 
     Task<JsonObject> ReadGameStoreTableAsync(string table, CancellationToken token) =>
+        table == "structures" ? ReadStructuresAsync(token) : ReadGameStoreRawAsync(table, token);
+
+    Task<JsonObject> ReadGameStoreRawAsync(string table, CancellationToken token) =>
         PersistenceReadHelpers.ReadOptionalTableAsync(
             (name, cancellation) => mailStore.LoadTableAsync(name, createIfMissing: false, cancellation),
             table,

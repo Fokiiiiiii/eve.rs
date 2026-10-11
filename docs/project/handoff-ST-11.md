@@ -11,13 +11,32 @@ Updated at every push. Plan: scratchpad `specs/structures_phase.md`, section ST-
    the async `ICosmicSiteSource` contract and the code / dungeon fields of the scan rows. Tests: `CosmicSitesTests.cs`.
    Not bound in `dotnet/src/Eve.Host`, so the server still behaves as before (`NoCosmicSites` is not replaced yet).
    Status: green. `CosmicSite` filter 11 passed; full `Eve.Services.Space.Tests` 627 passed, 0 failed, 0 skipped (EVE_PG_URL set).
-2. **Activation (next).** Host wiring: `SpaceComposition` creates and attaches the director before `foundations.StartAsync`,
-   `SystemEntered` runs `EnsureAsync`, `ContentCosmicSites` is passed to `SpaceProbeScans`, the anomaly read model asks the
-   director first, `BeyonceService` warps to a scan result by its code. The patch is kept at scratchpad `st11/activation.patch`
-   (it was written against the tree of increment 1; re-check it when applying).
-3. **NPC waves.** The director's objectives count `npc.killed { site, solarSystemId }`, but no NPC is spawned for a site yet and
+2. **Activation (built).** The host binds the director: `SpaceComposition` attaches it before `foundations.StartAsync`, a system a pilot
+   enters gets its sites (`SystemEntered` -> `EnsureSitesAsync`), probe scans read `ContentCosmicSites`, the anomaly reader asks the
+   director first, and `BeyonceService` warps to a scan result by its code (`ProbeScanWarpAuthority` keyed by text). Tests:
+   `CosmicSitesTests` (warp by code, ship numbers unchanged, partial results refused). Not tested end to end: a scan through the
+   Beyonce rig with a content-backed source (the rig builds its probe scans with `sites: null`).
+3. **Clear and respawn (built, test-only).** A site cleared by its NPC kills (`npc.killed { site, solarSystemId }` counted per wave)
+   and its containers completes, the respawn subscriber replaces it in its slot elsewhere, and a host restart in the middle keeps
+   the progress (`CosmicSiteDirectorTests.A_site_cleared_by_its_npcs...`). The kills are published by the test; no NPC is spawned yet.
+4. **Probe results (built, tests).** A signature's result follows the coverage rule at the wiki strengths (42, 72, 104):
+   `SignatureScanResultTests`. The full 100 % of four well-spread probes is the engine's existing rule, not re-derived here.
+5. **NPC waves (open).** The director's objectives count `npc.killed { site, solarSystemId }`, but no NPC is spawned for a site yet and
    no event carries `site`. Until this lands an anomaly is never cleared, only expired.
-4. **Containers.** Objectives `containers` count `site.container.cleared`; no container is placed yet (`SpaceContainers`).
+6. **Containers.** Objectives `containers` count `site.container.cleared`; no container is placed yet (`SpaceContainers`).
+
+## Next (item 5, then item 6)
+
+- NPC waves: `SpaceSessions.SpawnGroupAsync` (`dotnet/src/Eve.Services.Space/SpaceSessions.Npc.cs`, around line 330) spawns around a
+  `SpawnAnchor` that is a ship. A site needs an anchor at the site's position (no ship), with each wave's query rolled by
+  `NpcSelector.Select`/`Roll`. Its `NpcShip` record needs the site instance id, and the kill path (`SpaceSessions.Npc.cs` around
+  line 235) must add `site` to `npc.killed`.
+- Restart and re-entry: NPCs live only in the simulation. A site that is not cleared must get back exactly its remaining NPCs
+  after a restart or when a pilot enters, so the wave progress in the content runtime decides the count. This is the design point
+  to settle first (write it down before coding).
+- A sim identity field for the site may need a protocol bump: take the next free `PROTOCOL_VERSION` at push time (AGENT_RULES).
+- Item 6 (containers): place data and relic containers through `SpaceContainers`, publish `site.container.cleared` on the analyzer.
+- Then a real kill through the simulation (headless client), since the test currently publishes the kills itself.
 
 ## Gotchas
 

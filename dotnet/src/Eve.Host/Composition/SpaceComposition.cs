@@ -37,12 +37,26 @@ namespace Eve.Host;
 
 internal sealed partial class CharacterServicesComposition
 {
+    private async Task EnsureSitesAsync(int solarSystemId)
+    {
+        try
+        {
+            if (cosmicSites is { } director)
+                await director.EnsureAsync(solarSystemId);
+        }
+        catch (Exception error)
+        {
+            Console.Error.WriteLine($"eve-host: the sites of system {solarSystemId} could not be made: {error.Message}");
+        }
+    }
+
     private async Task SpaceSimulation()
     {
         sim = null;
         spaceSessions = null;
         spaceContainers = null;
         spaceDrones = null;
+        cosmicSites = null;
         if (Env("EVE_SIM", "on") is not ("off" or "0" or "false"))
         {
             var socket = Env("EVE_SIM_SOCKET", DefaultSimSocket(OperatingSystem.IsWindows()));
@@ -104,6 +118,11 @@ internal sealed partial class CharacterServicesComposition
             {
                 foundations.Content.Define(definition);
             }
+            // the cosmic sites of the systems: content of the shared runtime, kept filled by a recurring job per system (docs/design/FOUNDATIONS.md, an anomaly end to end)
+            cosmicSites = new Eve.Services.Space.Sites.CosmicSiteDirector(
+                source, foundations.Content, foundations.Scheduler, Eve.Services.Space.Sites.SiteTemplates.Load(), new Eve.Services.Space.Sites.SdeSiteAnchors(sde), solarSystems,
+                message => Console.Error.WriteLine($"eve-host: {message}"));
+            cosmicSites.Attach(foundations.Content, foundations.Events);
             foundations.Events.Subscribe(DailyGoalRecorder.SubscriberName, [Eve.Ships.OreMinedEvent.Topic, Eve.Ships.SalvageWreckedEvent.Topic], (context, token) => dailyGoals.RecordAsync(context, token));
             foundations.Events.Subscribe("npc.security-status-recovery", ["npc.killed"],
                 async (context, token) => await securityRecovery.HandleAsync(context, context.Event.Id, context.Event.PayloadJson, token));
@@ -241,7 +260,10 @@ internal sealed partial class CharacterServicesComposition
             var containers = spaceContainers;
             var probes = new Eve.Services.Space.SpaceProbes(ships, dogma, new Eve.Ships.PgProbeStore(source, spaceSchema), spaceSessions, sim, now, message => Console.Error.WriteLine($"eve-host: probes: {message}"));
             spaceSessions.Probes = probes;
-            var probeScans = new Eve.Services.Space.SpaceProbeScans(spaceSessions, sim, dogma, new Eve.Ships.PgProbeStore(source, spaceSchema), ships, skills, foundations.Scheduler, probes, now);
+            var probeScans = new Eve.Services.Space.SpaceProbeScans(spaceSessions, sim, dogma, new Eve.Ships.PgProbeStore(source, spaceSchema), ships, skills, foundations.Scheduler, probes, now,
+                sites: new Eve.Services.Space.Sites.ContentCosmicSites(cosmicSites));
+            // a system a pilot comes to has its sites (a restart or a system nobody has scanned yet)
+            spaceSessions.SystemEntered += system => _ = EnsureSitesAsync(system);
             probeScans.Register();
             spaceSessions.ProbeScans = probeScans;
             spaceSessions.DirectionalScans = new Eve.Services.Space.Scanning.SpaceDirectionalScans(spaceSessions, sim, dogma);

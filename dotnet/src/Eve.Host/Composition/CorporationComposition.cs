@@ -137,7 +137,10 @@ internal sealed partial class CharacterServicesComposition
         marketTrading = new Eve.Market.MarketTrading(source, market, characters, corporations, skills, items, economyWallets, stations, marketTopology, now, new Eve.Services.Market.DurableExpiryJobs(foundations.Scheduler));
         // M3: resting orders expire as durable jobs; the minute sweep and the restart reschedule are started with the market
         var marketNotifier = new Eve.Services.Market.MarketNotifier(economyWallets, characterSessions);
-        marketExpiry = new Eve.Services.Market.MarketExpiryWorker(foundations.Scheduler, marketTrading, now, (receipt, _) => marketNotifier.PublishAsync(receipt));
+        // M8: the minute sweep runs the market's invariants (escrow, item custody, fill journal) and logs any mismatch
+        marketExpiry = new Eve.Services.Market.MarketExpiryWorker(foundations.Scheduler, marketTrading, now, (receipt, _) => marketNotifier.PublishAsync(receipt),
+            new Eve.Market.MarketReconciliation(source, marketSchema, walletSchema, inventorySchema),
+            message => Console.Error.WriteLine($"eve-host: {message}"));
         await marketExpiry.StartAsync();
     }
 

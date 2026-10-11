@@ -33,7 +33,18 @@ public sealed record MarketReceipt(string OperationKey,long? OrderId,long Filled
 
 public sealed record TouchedBook(int RegionId,int TypeId);
 
-/// <summary>Orders, receipts, item custody and money share one transaction. No Node daemon or recovery Saga is required.</summary>
+/// <summary>
+/// Orders, receipts, item custody and money share one transaction. No Node daemon or recovery Saga is required.
+/// <para>Lock order (M8; every entry point follows it, MarketLockOrderTests checks the order in the source):</para>
+/// <list type="number">
+/// <item>the command guard: an advisory lock on the operation key (a replay or a conflicting replay waits here);</item>
+/// <item>the character row (LockAndGetAsync), then the corporation row for a corporation order (MarketAuthorityAsync);</item>
+/// <item>the book's advisory lock, one per region and type;</item>
+/// <item>the order rows, FOR UPDATE, in book order (price, issue time, id);</item>
+/// <item>the wallet rows, FOR UPDATE, sorted by owner and account key (LockBalancesAsync);</item>
+/// <item>the item rows: the stock or escrow stacks the fills and the custody moves touch.</item>
+/// </list>
+/// </summary>
 public sealed class MarketTrading(NpgsqlDataSource source,MarketStore store,PgCharacterStore characters,CorporationStore corporations,
     PgSkillStore skills,PgItemStore items,WalletTransactions wallets,StationCatalog stations,MarketTopology topology,Func<long> now,IMarketExpiryJobs expiryJobs)
 {
@@ -437,6 +448,15 @@ public Task<MarketReceipt> ModifyAsync(long actorId,long orderId,decimal newPric
             var newValue=checked(newPrice*oldVolume);
             if (order.Row.Bid && order.Escrow != oldValue || !order.Row.Bid && order.Escrow != 0m)
                 throw new MarketError("MARKET_ESCROW_INCONSISTENT");
+            var (opposing,fills)=await MatchAsync(c,tx,order.Row.TypeId,order.Row.Bid,newPrice,oldVolume,order.Row.Range,station,time,token);
+            var byId=opposing.ToDictionary(o=>o.Row.Id);
+            var makerRemaining=opposing.ToDictionary(o=>o.Row.Id,o=>o.Row.VolumeRemaining);
+            var makerEscrow=opposing.ToDictionary(o=>o.Row.Id,o=>o.Escrow);
+            var changedWallets=new HashSet<WalletAccount>{order.Wallet};
+            if (order.Row.Bid)
+                foreach (var maker in fills.Where(fill=>!fill.Order.IsNpc))
+                    changedWallets.Add(byId[maker.Order.Id].Wallet);
+            await wallets.LockBalancesAsync(c,tx,changedWallets.OrderBy(wallet=>wallet.OwnerId).ThenBy(wallet=>wallet.AccountKey).ToArray(),token);
             Item? ownSellItem=null;
             if (!order.Row.Bid)
             {
@@ -447,15 +467,6 @@ public Task<MarketReceipt> ModifyAsync(long actorId,long orderId,decimal newPric
             }
 
 
-            var (opposing,fills)=await MatchAsync(c,tx,order.Row.TypeId,order.Row.Bid,newPrice,oldVolume,order.Row.Range,station,time,token);
-            var byId=opposing.ToDictionary(o=>o.Row.Id);
-            var makerRemaining=opposing.ToDictionary(o=>o.Row.Id,o=>o.Row.VolumeRemaining);
-            var makerEscrow=opposing.ToDictionary(o=>o.Row.Id,o=>o.Escrow);
-            var changedWallets=new HashSet<WalletAccount>{order.Wallet};
-            if (order.Row.Bid)
-                foreach (var maker in fills.Where(fill=>!fill.Order.IsNpc))
-                    changedWallets.Add(byId[maker.Order.Id].Wallet);
-            await wallets.LockBalancesAsync(c,tx,changedWallets.OrderBy(wallet=>wallet.OwnerId).ThenBy(wallet=>wallet.AccountKey).ToArray(),token);
             var reserveDelta=order.Row.Bid ? newValue-oldValue : 0m;
             var brokerFee=(decimal)MarketRules.BrokerFee(context,(double)oldValue,(double)newValue).Amount;
             var sccFee=(decimal)MarketRules.SccSurcharge(context,(double)oldValue,(double)newValue).Amount;

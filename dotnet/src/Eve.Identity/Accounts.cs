@@ -42,6 +42,35 @@ public interface IAccountLookup
 public static class SubscriptionPolicy
 {
     public static readonly DateTimeOffset NewAccountSubscriptionEnd = new(2100, 1, 1, 0, 0, 0, TimeSpan.Zero);
+
+    /// <summary>
+    /// The latest end time a purchase may set. A purchase never runs an account (or a training slot) past this horizon, and an end
+    /// time at or past it is left as it is: an account written with the policy end time keeps it when it buys more time.
+    /// </summary>
+    public static DateTimeOffset PurchaseHorizon => NewAccountSubscriptionEnd;
+
+    /// <summary>
+    /// The end time after a purchase of <paramref name="extension"/>: counted from the later of the stored end and <paramref name="now"/>,
+    /// capped at <see cref="PurchaseHorizon"/>. It never moves an end time earlier; a stored end at or past the horizon is returned unchanged.
+    /// </summary>
+    public static DateTimeOffset Extend(DateTimeOffset stored, DateTimeOffset now, TimeSpan extension)
+    {
+        if (extension <= TimeSpan.Zero)
+        {
+            throw new ArgumentOutOfRangeException(nameof(extension), "A purchase extends an end time by a positive duration.");
+        }
+        if (stored >= PurchaseHorizon)
+        {
+            return stored;
+        }
+        var from = stored > now ? stored : now;
+        var target = from + extension;
+        if (target > PurchaseHorizon)
+        {
+            target = PurchaseHorizon;
+        }
+        return target > stored ? target : stored;
+    }
 }
 
 /// <summary>An account's stored subscription end time: read by every path that answers Omega or Alpha, and set by an operator.</summary>

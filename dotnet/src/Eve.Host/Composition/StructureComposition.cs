@@ -43,6 +43,8 @@ internal sealed partial class CharacterServicesComposition
     private Eve.Structures.StructureFuel structureFuel = default!;
     private StructureCompressionAuthority structureCompression = default!;
     private Eve.Structures.MoonExtractionStore moonExtractionStore = default!;
+    private Eve.Structures.MoonExtractions moonExtractions = default!;
+    private StructureMoonAuthority structureMoon = default!;
 
     /// <summary>The structures as the directory and profile readers see them: the legacy shape of the structures schema.</summary>
     Task<JsonObject> ReadStructuresAsync(CancellationToken token) =>
@@ -143,6 +145,10 @@ internal sealed partial class CharacterServicesComposition
         structureProfilesRpcBackend = new Eve.Host.PersistenceStructureProfilesRpcBackend(
             ReadGameStoreTableAsync, mailCache, characterSessions, SetStructureProfileAsync);
         structureCompression = new StructureCompressionAuthority(source, structureStore, items, dogma, sde, skills);
+        // ST-6a: the moon drill starts a chunk (StartNewExtraction); the fracture and the cancel follow in (d)
+        var moonRules = await MoonRulesSource.LoadAsync(sde);
+        moonExtractions = new Eve.Structures.MoonExtractions(structureStore, moonExtractionStore, foundations.Scheduler, moonRules);
+        structureMoon = new StructureMoonAuthority(source, structureStore, moonExtractions, moonRules);
         structureRpcCallbacks = new Eve.Services.Core.StructureRpcCallbacks
         {
             CompressItemInStructureAsync = async (call, itemId) => await structureCompression.CompressAsync(call, itemId),

@@ -2014,3 +2014,25 @@ Engine: `dotnet/src/Eve.Hacking` (pure rules, no Host). Sources: EVE University 
 - **Start of an attempt.** EveJS starts the attempt when the analyzer activation is accepted (`moduleOperation.js` 3228). The ST-10 plan said "on cycle completion"; eve.rs follows EveJS (the working reference). Status: decided, not yet wired.
 - **Not yet covered.** The Host service, the analyzer body, container placement and the loot on success (D-5) are the next increments. Status: open.
 
+## Moon extraction (ST-6a)
+
+- **Start gate (a stand-in).** EVE.js `validateMoonExtractionMutationAccess` needs the pilot to control the structure (`isControllingStructureSession`:
+  docked and `shipid` equal to the structure) and the profile's moon-mining access setting. Both wait for ST-3 (docking) and ST-5 (control, profiles).
+  Until then the start requires the pilot docked at the structure (`structureid`) and the structure owned by the pilot's corporation; a refusal is
+  `StructureDefenseDenied`. Source: EVE.js `moonExtractionsService.js:279-305`, `structureControlState.js` `isControllingStructureSession`.
+- **Duration.** EVE.js clamps the requested duration to 518 460 to 4 838 400 s and answers `None` for a duration that is not positive. We clamp the same
+  way; a duration that is not positive is refused by name (`MoonminingEventTooShort`, the client's own user error), because the client reports success on
+  any reply.
+- **Moon binding.** EVE.js binds a structure to its moon at read time (`moonMiningBindingRuntime.ensureMoonMiningReady`). We use the seeded resource profile
+  (`structure_moon_resources`, imported from the game store): a structure without one is refused with `This structure has no moon to mine.` (our wording;
+  EVE.js returned `None` and logged).
+- **Drill check.** The drill is the Moon Mining service (id 14) online; its module is Standup Moon Drill I, type 45009 (EVE.js `TYPE_STANDUP_MOON_DRILL`).
+  The check reads the structure's service state, as the reprocessing and jammer checks do.
+- **Chunk volume.** 720 000 m3 a day times the duration and the profile's yield multiplier, as the EVE.js planner (`moonExtractionRules.js:129`), which is
+  30 000 m3 an hour. The rig yield (SDE 2704 through the fitted rigs) is not applied yet (ST-6a open item).
+- **Decay and fracture delay (SDE first).** The auto-fracture delay is the refinery's SDE attribute 2698 (10 800 s for Athanor and Tatara), the field's
+  lifetime is 2728 hours times 2706 (48 h). EVE.js reads the profile's `autoFractureDelaySeconds`, which defaults to 10 800 s; the SDE value wins here, the
+  two agree for the refineries in the pinned build. The rig modifier 2707 is not applied yet.
+- **Calendar.** `calendarEventID` is stored as given and returned; the client owns the calendar entry (EVE.js does not create one either).
+- **Id width.** Structure, owner and moon ids are sent as `PyLong` when they exceed the 32-bit range (`PyInt` is 32-bit on the wire).
+

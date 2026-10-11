@@ -9,8 +9,13 @@ Owner: the structures phase (plan in the scratchpad `specs/structures_phase.md`,
   transaction as the structures; `StructureRpc.cs` reads the store (`ReadMoonExtractionsAsync`). `MoonExtractionsRpcService` reads asynchronously now.
   Tests: `Eve.Host.Tests/MoonExtractionStoreTests.cs` (2 PostgreSQL tests, the reads through the real service, idempotent import).
 
+## Done (increment b, pending push at the time of writing)
+- (b) `StartNewExtraction`: `MoonExtractions.StartAsync` (domain, `Eve.Structures/MoonExtractions.cs`) and `StructureMoonAuthority` (Host gate, the named
+  refusals, the caller's `OnMoonExtractionUpdate`), the SDE rules `MoonRulesSource` (2698, 2728 x 2706, Pochven), the chunk at 30 000 m3/h split by the moon.
+  Tests: `MoonExtractionStartTests` (7, Structures) and `MoonExtractionStartHostTests` (6, Host). Decisions: DEVIATIONS "Moon extraction (ST-6a)".
+
 ## Open (next increments)
-- (b) StartNewExtraction validation and chunk volume, (c) durable jobs `moon.chunk_arrival`, `moon.auto_fracture`, `moon.field_decay`, (d) CancelExtraction and
+- (c) durable jobs `moon.chunk_arrival`, `moon.auto_fracture`, `moon.field_decay`, (d) CancelExtraction and
   FractureChunkWithStructure with OnMoonExtractionUpdate. Until (b) lands, the three mutations keep their named refusal.
 - The moon binding is the seeded resource profile (`structure_moon_resources`); EveJS's `moonMiningBindingRuntime` (bind on read) is not ported.
 - The rig modifiers (SDE 2707 fracture delay, 2704 yield) are not applied yet.

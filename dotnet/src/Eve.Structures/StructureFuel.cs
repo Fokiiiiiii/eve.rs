@@ -9,6 +9,7 @@ public static class StructureServiceIds
     public const int Reprocessing = 4;
     public const int CynoBeacon = 16;
     public const int CynoJammer = 17;
+    public const int MoonMining = 14;
 
     /// <summary>The service module of each service (SDE): Standup Reprocessing Facility I, the Pharolux's built-in Standup Cynosural Field Generator I, Standup Cynosural System Jammer I.</summary>
     public static readonly IReadOnlyDictionary<int, int> ModuleTypeOf = new Dictionary<int, int>
@@ -16,6 +17,7 @@ public static class StructureServiceIds
         [Reprocessing] = 35899,
         [CynoBeacon] = 35912,
         [CynoJammer] = 35914,
+        [MoonMining] = 45009,
     };
 }
 

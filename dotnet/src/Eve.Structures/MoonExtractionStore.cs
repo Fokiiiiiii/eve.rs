@@ -115,6 +115,19 @@ public sealed class MoonExtractionStore
         return added;
     }
 
+    /// <summary>
+    /// The next extraction id and the next calendar event id (one past the highest ones). The advisory lock serialises the starts of every structure until the
+    /// caller's transaction ends, so two starts cannot take the same id.
+    /// </summary>
+    public async Task<(long ExtractionId, long EventId)> NextIdsAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, CancellationToken cancellationToken = default)
+    {
+        await Sql.ScalarAsync(connection, transaction, "SELECT pg_advisory_xact_lock(hashtext('structure_moon_extractions'))", cancellationToken);
+        await using var command = Sql.Command(connection, transaction, Q("SELECT COALESCE(MAX(extraction_id), 0) + 1, COALESCE(MAX(calendar_event_id), 0) + 1 FROM {schema}.structure_moon_extractions"));
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        await reader.ReadAsync(cancellationToken);
+        return (reader.GetInt64(0), reader.GetInt64(1));
+    }
+
     /// <summary>Inserts an extraction unless its id is taken. Returns 1 when it was added.</summary>
     public async Task<int> InsertExtractionAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, MoonExtraction e, CancellationToken cancellationToken = default) =>
         await Sql.ExecuteAsync(connection, transaction, Q("""
@@ -140,7 +153,7 @@ public sealed class MoonExtractionStore
         r.GetInt64(0), r.GetInt64(1), r.GetInt64(2), r.GetInt64(3), r.GetInt64(4), r.GetInt64(5), r.GetInt64(6), r.GetInt64(7), r.GetInt64(8), r.GetDouble(9),
         r.GetInt64(10), r.GetString(11), r.GetInt64(12), r.GetInt64(13), r.GetInt64(14), OreOf(r.GetString(15)), r.GetInt64(16), r.GetInt64(17), r.GetString(18));
 
-    private static JsonObject ToLegacy(MoonExtraction e) => new()
+    public static JsonObject ToLegacy(MoonExtraction e) => new()
     {
         ["extractionID"] = e.ExtractionId,
         ["structureID"] = e.StructureId,

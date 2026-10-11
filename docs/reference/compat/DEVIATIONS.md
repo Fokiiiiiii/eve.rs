@@ -2039,3 +2039,17 @@ Engine: `dotnet/src/Eve.Hacking` (pure rules, no Host). Sources: EVE University 
 - **Calendar.** `calendarEventID` is stored as given and returned; the client owns the calendar entry (EVE.js does not create one either).
 - **Id width.** Structure, owner and moon ids are sent as `PyLong` when they exceed the 32-bit range (`PyInt` is 32-bit on the wire).
 
+## Structure docking (ST-1 c)
+
+- **Docks take a structure as a station does, with two refusals the station does not have.** A structure in a state of `STRUCTURE_DISABLED_STATES` (EVE.js `structureConstants.js` 46-55: unknown, unanchored, anchoring, onlining, hull reinforce and vulnerable, anchor and deploy vulnerable) refuses `STRUCTURE_DISABLED`; a hull the structure's docks do not take refuses `SHIP_TOO_LARGE`. The size classes are the undock-point categories of `locators::category_of` (V24.01 client `ballparkCommon/docking.py`).
+- **Max docking by type (wiki "Max docking").** Astrahus takes subcapitals (up to large), Fortizar capitals, Keepstar supercapitals. Every other structure type is taken as subcapital only: its own limit is not in the sim yet. Source: the spec's wiki table for these three; the others are not verified.
+- **Undock from a structure** uses the station's undock placement; a structure has no undock-point table, so the fallback places the ship a third of the radius out, away from the star (stated in the first section of this file, for stations).
+
+## Structures in the simulation and the host (ST-1 d)
+
+- **The restore places every structure of the system that is not Unanchored (state 1), at its record's state.** Points restart full: the simulation keeps no damage between two placements, and the record holds no points. A restart therefore heals a damaged structure in the scene (stated limitation).
+- **Vitals and limits come from the static data.** Points: attributes 263, 265, 9. Resonances: the ship's own attribute sets (shield 271/274/273/272, armor 267/270/269/268, hull 113/110/109/111, as `SimShips`). Per-second limits: 2034, 2035, 2036. Repair pauses: 3354, 3355, 3356. Shield recharge: attribute 479 in milliseconds.
+- **The slim state is the record's state, upkeep and timer.** `repairing` and `unanchoring` are not sent yet: the record keeps no repair or unanchoring time in the state-changed event (ST-2 and the anchoring placement).
+- **A hit's layer.** A depleted layer is the layer the hit emptied. A hit that only pauses the repair lands on the layer named by the state (shield, armor or hull). Stated approximation.
+- **Structure placement on anchoring is not wired yet.** A structure anchored while a pilot is in its system is not placed until the next pilot enters it (ST-2 places it on anchoring); the simulation ignores the state change of a structure it does not have.
+- **The simulation's state change publishes through the bus.** The subscriber `structure.space` sends `SetStructureState` on every `structure.state_changed`, or `RemoveStructure` when the record says it was unanchored or destroyed. At-least-once delivery is safe: the simulation ignores a state it already has (FOUNDATIONS rule 2).

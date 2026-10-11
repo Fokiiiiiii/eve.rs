@@ -1163,3 +1163,13 @@ Open:
 | OPEN | (d) `CancelExtraction`, `FractureChunkWithStructure`, `OnMoonExtractionUpdate` | ST-6a | |
 | OPEN | Owner-corporation character notifications (STARTED, FINISHED, LASER_FIRED, CANCELLED, AUTOMATIC_FRACTURE) | ST-6a | No notification store in eve.rs yet. |
 | OPEN | Rig modifiers (2707 fracture delay, 2704 yield) | ST-6a | Not read yet. |
+
+### ST-1 status after increments c and d (2026-10-11)
+
+| status | item | where | note |
+|---|---|---|---|
+| DONE | Dockable body: `dock`, `accept_docking`, `undock`, `undock_place` take a structure; `STRUCTURE_DISABLED` and `SHIP_TOO_LARGE` refusals | `crates/eve-space/src/scene/docking.rs`, `scene/tests.rs` | Four scene tests; the eve-space unit suite passes. |
+| DONE | Host `SpaceStructures`: restore on system entry, `structure.state_changed` to `SetStructureState` and `RemoveStructure`, `StructureDamaged` to the state machine in one transaction | `dotnet/src/Eve.Services.Space/SpaceStructures.cs`, `dotnet/src/Eve.Host/Composition/StructureComposition.cs` | Three PG tests in `SpaceStructuresTests.cs`. |
+| OPEN | Structure placement on anchoring (ST-2) and the slim `repairing`/`unanchoring` fields | ST-2 | A structure anchored with a pilot in the system is not shown until the next entry. |
+| OPEN | (e) headless test `tools/headless-client/tests/test_structures.py` | ST-1 (e) | Not started. |
+| UNVERIFIED | Client behaviour of a structure's dock (`OnDockingAccepted` and the docked session), the damage the ball shows, the state label | MITM | Not verified on the graphical client. |

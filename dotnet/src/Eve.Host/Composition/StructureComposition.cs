@@ -113,6 +113,13 @@ internal sealed partial class CharacterServicesComposition
         var rules = await StructureRulesSource.LoadAsync(sde);
         structureTimers = new Eve.Structures.StructureTimers(structureStore, foundations.Scheduler, foundations.Events, rules);
         structureTimers.Register();
+        // ST-1 d: a system's structures are in the simulation once a pilot comes into it; the simulation's hits and the records' state changes meet here
+        if (sim is not null && spaceSessions is not null)
+        {
+            var spaceStructures = new Eve.Services.Space.SpaceStructures(sim, spaceSessions, source, structureStore, structureTimers, dogma,
+                message => Console.Error.WriteLine($"eve-host: space structures: {message}"));
+            spaceStructures.Subscribe(foundations.Events);
+        }
         // ST-7: the service fuel is paid from the fuel bay (inventory) at each full hour; the rules are the SDE's service modules
         structureFuel = new Eve.Structures.StructureFuel(structureStore, foundations.Scheduler, structureTimers, ServiceFuelRulesSource.Load(dogma), new InventoryStructureFuelBay(items, dogma));
         structureFuel.Register();

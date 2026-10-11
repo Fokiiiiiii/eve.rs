@@ -2,6 +2,11 @@
 
 Owner: the structures phase (plan in the scratchpad `specs/structures_phase.md`, section ST-1). Branch `wt-st1`, worktree `/home/user/wt-st1`.
 
+## Increments c and d (in progress, see TODO section 46)
+- (c) `scene/docking.rs`: docks and undocks take a structure; refusals `STRUCTURE_DISABLED` and `SHIP_TOO_LARGE` (DEVIATIONS "Structure docking (ST-1 c)").
+- (d) `dotnet/src/Eve.Services.Space/SpaceStructures.cs` with the composition wiring in `Eve.Host/Composition/StructureComposition.cs`; `Eve.Services.Space` now references `Eve.Structures`. Tests: `dotnet/tests/Eve.Services.Space.Tests/SpaceStructuresTests.cs` (3 PG tests); `Rig` gained a `StructureSchema`.
+- Open: (e) headless test; structure placement on anchoring (ST-2).
+
 ## Pushed to main
 - `8eaccdb` ST-1 (a): sim structure body, commands 74-76, protocol 59.
 - `6186267` ST-1 (b): structure health, per-second cap, `StructureDamaged` (77), protocol 60.

@@ -37,24 +37,6 @@ namespace Eve.Host;
 
 internal sealed partial class CharacterServicesComposition
 {
-    static long AgentSdeInteger(JsonElement document, string name) =>
-        document.TryGetProperty(name, out var value) &&
-        value.ValueKind == JsonValueKind.Number &&
-        value.TryGetInt64(out var result)
-            ? result
-            : 0;
-
-    static long? AgentSdeOptionalInteger(JsonElement document, string name) =>
-        AgentSdeInteger(document, name) is > 0 and var value ? value : null;
-
-    static string AgentSdeText(JsonElement document, string name) =>
-        document.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String
-            ? value.GetString() ?? ""
-            : "";
-
-    static bool AgentSdeBoolean(JsonElement document, string name) =>
-        document.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.True;
-
     private async Task NpcAgents()
     {
         npcCharacterRows = await sde.ReadAsync("npcCharacters", cancellationToken: CancellationToken.None);
@@ -72,63 +54,10 @@ internal sealed partial class CharacterServicesComposition
             }
         }
 
-        agentMissionAgentRows = npcCharacterRows
-            .Where(row => row.Key > 0 &&
-                row.Doc.TryGetProperty("agent", out var agent) &&
-                agent.ValueKind == JsonValueKind.Object)
-            .Select(row =>
-            {
-                var agent = row.Doc.GetProperty("agent");
-                // The SDE has no mission kind or importance for an agent: the eve.rs rule table decides them (AgentMissionKindRules).
-                var missionClass = AgentMissionKindRules.Classify(AgentSdeInteger(agent, "agentTypeID"), AgentSdeInteger(agent, "divisionID"));
-                var locationId = AgentSdeInteger(row.Doc, "locationID");
-                var station = locationId > 0 ? stations.Get(locationId) : null;
-                JsonElement? inSpace = agentsInSpaceById.TryGetValue(row.Key, out var inSpaceRow)
-                    ? inSpaceRow.Doc
-                    : null;
-                var inSpaceSolarSystemId = inSpace is { } inSpaceDoc
-                    ? AgentSdeInteger(inSpaceDoc, "solarSystemID")
-                    : 0;
-                var isInSpace = inSpaceSolarSystemId is > 0 and <= int.MaxValue &&
-                    solarSystems.Get((int)inSpaceSolarSystemId) is not null;
-                long? solarSystemId = isInSpace
-                    ? inSpaceSolarSystemId
-                    : station?.SolarSystemId;
-                if (solarSystemId is null &&
-                    locationId is > 0 and <= int.MaxValue &&
-                    solarSystems.Get((int)locationId) is not null)
-                {
-                    solarSystemId = locationId;
-                }
-
-                return new AgentMissionAgentData(
-                    row.Key,
-                    AgentSdeInteger(agent, "agentTypeID"),
-                    AgentSdeInteger(agent, "divisionID"),
-                    AgentSdeInteger(agent, "level") is > 0 and var level ? level : 1,
-                    isInSpace ? null : AgentSdeOptionalInteger(row.Doc, "locationID"),
-                    AgentSdeInteger(row.Doc, "corporationID"),
-                    AgentSdeBoolean(agent, "isLocator"),
-                    isInSpace,
-                    AgentSdeOptionalInteger(row.Doc, "careerID"),
-                    AgentSdeBoolean(row.Doc, "importantMission") || AgentSdeBoolean(agent, "importantMission") || missionClass.ImportantMission,
-                    AgentSdeText(row.Doc, "missionKind") is { Length: > 0 } missionKind
-                        ? missionKind
-                        : AgentSdeText(agent, "missionKind") is { Length: > 0 } agentKind
-                            ? agentKind
-                            : missionClass.MissionKind,
-                    AgentSdeText(row.Doc, "missionTypeLabel") is { Length: > 0 } missionType
-                        ? missionType
-                        : AgentSdeText(agent, "missionTypeLabel"),
-                    AgentSdeOptionalInteger(row.Doc, "specialityID"),
-                    station?.TypeId > 0 ? station.TypeId : AgentSdeOptionalInteger(row.Doc, "stationTypeID"),
-                    AgentSdeOptionalInteger(row.Doc, "bloodlineID"),
-                    solarSystemId,
-                    isInSpace && inSpace is { } spaceDungeon ? AgentSdeOptionalInteger(spaceDungeon, "dungeonID") : null,
-                    isInSpace && inSpace is { } spaceSpawn ? AgentSdeOptionalInteger(spaceSpawn, "spawnPointID") : null,
-                    isInSpace && inSpace is { } spaceType ? AgentSdeOptionalInteger(spaceType, "typeID") : null);
-            })
-            .OrderBy(agent => agent.AgentId)
-            .ToArray();
+        agentMissionAgentRows = AgentCatalog.Build(
+            npcCharacterRows,
+            agentsInSpaceById.Values,
+            id => stations.Get(id) is { } station ? new AgentStationPlace(station.TypeId, station.SolarSystemId) : null,
+            id => solarSystems.Get((int)id) is not null).ToArray();
     }
 }

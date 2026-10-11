@@ -911,7 +911,8 @@ Open after M1:
 | DONE (M4): the affected-project gate is green on `2f80397`; the live run passed at `f046112` (70 passed, 8 skipped by the slow-mode gates, 0 failed). Push invalidation and corporate notices (G9, G11); the client's 3-hour price history cache is out of the server's reach | DEVIATIONS.md, "Market slice M4"; `MarketCoherenceTests` (5) |
 | DONE (M5) | Price history: one row per UTC day (low, high, volume-weighted average, volume, fills), the day in progress as "new" (the reference's last-row split put a past day there; corrected), `HistoriesAsync` removed (no caller) | DEVIATIONS.md, "Market slice M5"; `MarketHistoryTests` (6) |
 | DONE (M6) | Transactions by division: rights (accountant, junior accountant, Account Take, CrpAccessDenied 101), newest first, fromDate and division filters, keyID; the EXPLAIN check is not run (no index added) | DEVIATIONS.md, "Market slice M6"; `MarketTransactionReadTests` (3) |
-| OPEN | M7 bounded scan and locking, M8 money invariants, M9 live acceptance | market agents 2 and 3 |
+| DONE (M7) | Bounded order-book read: batches of 50 in book order, stop when filled; 10000-order benchmark (before 9999 rows locked per placement, after 50); no index added (EXPLAIN) | DEVIATIONS.md, "Market slice M7"; `OrderBookMatchTests`, opt-in `OrderBookBenchmarkTests` |
+| OPEN | M8 money invariants and M9 live acceptance | market agent 3 |
 | OPEN | The client label table is partial: `MktCantSellItem2`, `MktCantSellItemOutsideStation` and `MktInvalidRegion` need values the server does not hold (localized jump texts) | the client's localization |
 | OPEN | The corporation read rule has a test for a character outside the corporation; a member holding Account Take and not an accountant is covered by M6 | M6 |
 
@@ -982,8 +983,12 @@ Slice A9, part 1 (2026-10-11): DONE for the offers: ESI's official offers cached
 
 ## Agents slice AG-3 (2026-10-11)
 
-Continues AG-2 on the same branch. A9 part 2 is done (DEVIATIONS "Agents slice AG-3, A9 (part 2)"). Open after it: the
+Continues AG-2 on the same branch. A9 part 2 is done (DEVIATIONS "Agents slice AG-3, A9 (part 2)").
+A1 done: the agent catalog is a pure function (`AgentCatalog.Build`, Eve.Host) that the composition calls; `AgentCatalogSdeTests`
+(2, PostgreSQL, the pinned SDE): 10,966 agents by agentTypeID, 1,773 locators, 360 in space, and two concrete agents
+(3008416 basic, 3019369 in space). Open after it: the
 standing requirements of store offers and the structure stores (gaps), the idempotency key the client does not send.
+Offer cross-check (eve.starweb.cc): no rows changed; 1,104 calculator-only offers are an owner question (DEVIATIONS AG-3).
 
 ## 43. Structures phase ST-E: remaining E wiring (2026-10-10)
 - DONE E-01: StartNewExtraction, FractureChunkWithStructure and CancelExtraction refuse by name (CustomNotify) with no backend, not PyNone (`StructureDataRpcServices.cs`, commit 59e9e89). The backend is ST-6a.

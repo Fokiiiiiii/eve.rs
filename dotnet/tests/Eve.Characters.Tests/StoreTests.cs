@@ -178,4 +178,92 @@ public class StoreTests
         Assert.Null(removed.DirectFactionId);
         Assert.Equal(cooldown, removed.DirectEnlistmentCooldownFileTime);
     }
+
+    [PgFact]
+    public async Task Home_station_cooldown_migration_preserves_existing_rows()
+    {
+        await using var s = await PgSchemas.CreateAsync();
+        await using (var connection = await s.Source.OpenConnectionAsync())
+        {
+            await using var drop = connection.CreateCommand();
+            drop.CommandText = $"DROP SCHEMA IF EXISTS {s.CharactersSchema} CASCADE";
+            await drop.ExecuteNonQueryAsync();
+        }
+
+        var legacyMigrations = PgCharacterStore.MigrationSet().Take(3).ToArray();
+        Assert.Equal(
+            new[] { "0001_characters", "0002_character_tutorial_state", "0003_character_faction_warfare" },
+            await Eve.Data.Migrations.ApplyAsync(s.Source, s.CharactersSchema, legacyMigrations));
+        var id = await Insert(s, Pilot("Legacy Home"));
+        Assert.Equal(
+            new[] { "0004_remote_home_station_cooldown" },
+            await PgCharacterStore.MigrateAsync(s.Source, s.CharactersSchema));
+
+        var migrated = (await s.Characters.GetAsync(id))!;
+        Assert.Equal(("Legacy Home", 60000610L, 0L), (migrated.Name, migrated.HomeStationId, migrated.NextRemoteHomeStationChangeFileTime));
+        Assert.Empty(await PgCharacterStore.MigrateAsync(s.Source, s.CharactersSchema));
+    }
+
+    [PgFact]
+    public async Task Home_station_changes_enforce_and_persist_remote_cooldown()
+    {
+        await using var s = await PgSchemas.CreateAsync();
+        var id = await Insert(s, Pilot("Home Pilot"));
+        var nowFileTime = DateTime.UtcNow.ToFileTimeUtc();
+        var cooldown = 365L * TimeSpan.TicksPerDay;
+
+        Assert.Equal(HomeStationChangeResult.Changed,
+            await s.Characters.TryChangeHomeStationAsync(id, 60000611, false, nowFileTime));
+        Assert.Equal(HomeStationChangeResult.AlreadyHome,
+            await s.Characters.TryChangeHomeStationAsync(id, 60000611, false, nowFileTime));
+        Assert.Equal(0L, (await s.Characters.GetAsync(id))!.NextRemoteHomeStationChangeFileTime);
+
+        var nextChangeFileTime = nowFileTime + cooldown;
+        Assert.Equal(HomeStationChangeResult.Changed,
+            await s.Characters.TryChangeHomeStationAsync(id, 60000612, true, nowFileTime));
+        Assert.Equal(HomeStationChangeResult.Changed,
+            await s.Characters.TryChangeHomeStationAsync(id, 60000613, false, nowFileTime + 1));
+        Assert.Equal(nextChangeFileTime, (await s.Characters.GetAsync(id))!.NextRemoteHomeStationChangeFileTime);
+        Assert.Equal(HomeStationChangeResult.RemoteCooldown,
+            await s.Characters.TryChangeHomeStationAsync(id, 60000614, true, nextChangeFileTime - 1));
+
+        await PgCharacterStore.MigrateAsync(s.Source, s.CharactersSchema);
+        var reopened = new PgCharacterStore(s.Source, s.CharactersSchema);
+        var persisted = (await reopened.GetAsync(id))!;
+        Assert.Equal((60000613L, nextChangeFileTime), (persisted.HomeStationId, persisted.NextRemoteHomeStationChangeFileTime));
+        Assert.Equal(nextChangeFileTime, (await reopened.GetManyAsync(new[] { id }))[0].NextRemoteHomeStationChangeFileTime);
+        Assert.Equal(nextChangeFileTime, (await reopened.ForAccountAsync(1))[0].NextRemoteHomeStationChangeFileTime);
+        Assert.Equal(nextChangeFileTime, (await reopened.AllAsync())[0].NextRemoteHomeStationChangeFileTime);
+
+        Assert.Equal(HomeStationChangeResult.Changed,
+            await reopened.TryChangeHomeStationAsync(id, 60000614, true, nextChangeFileTime));
+        Assert.Equal(nextChangeFileTime + cooldown, (await reopened.GetAsync(id))!.NextRemoteHomeStationChangeFileTime);
+        Assert.True(await reopened.ResetRemoteHomeStationChangeTimeAsync(id));
+        Assert.Equal(0L, (await reopened.GetAsync(id))!.NextRemoteHomeStationChangeFileTime);
+        Assert.False(await reopened.ResetRemoteHomeStationChangeTimeAsync(id + 1));
+        Assert.Equal(HomeStationChangeResult.CharacterMissing,
+            await reopened.TryChangeHomeStationAsync(id + 1, 60000615, true, nowFileTime));
+
+        await Assert.ThrowsAsync<ArgumentOutOfRangeException>(
+            () => reopened.TryChangeHomeStationAsync(id, 0, false, nowFileTime));
+        await Assert.ThrowsAsync<ArgumentOutOfRangeException>(
+            () => reopened.TryChangeHomeStationAsync(id, 60000615, false, long.MaxValue));
+    }
+
+    [PgFact]
+    public async Task Concurrent_remote_home_changes_allow_only_one_change()
+    {
+        await using var s = await PgSchemas.CreateAsync();
+        var id = await Insert(s, Pilot("Concurrent Home"));
+        var nowFileTime = DateTime.UtcNow.ToFileTimeUtc();
+        var results = await Task.WhenAll(
+            s.Characters.TryChangeHomeStationAsync(id, 60000611, true, nowFileTime),
+            s.Characters.TryChangeHomeStationAsync(id, 60000612, true, nowFileTime));
+
+        Assert.Equal(1, results.Count(result => result == HomeStationChangeResult.Changed));
+        Assert.Equal(1, results.Count(result => result == HomeStationChangeResult.RemoteCooldown));
+        var persisted = (await s.Characters.GetAsync(id))!;
+        Assert.Contains(persisted.HomeStationId, new[] { 60000611L, 60000612L });
+        Assert.Equal(nowFileTime + 365L * TimeSpan.TicksPerDay, persisted.NextRemoteHomeStationChangeFileTime);
+    }
 }

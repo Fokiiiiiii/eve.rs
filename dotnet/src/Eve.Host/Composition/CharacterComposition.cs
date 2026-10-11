@@ -131,6 +131,12 @@ internal sealed partial class CharacterServicesComposition
         economyWallets = new WalletTransactions(source, walletSchema);
         economyAnnouncer = new WalletAnnouncer(economyWallets, characterSessions);
         loyaltyPoints = new LoyaltyPointStore(source, walletSchema);
+        // the loyalty store offers: ESI's official offers, refreshed daily; EVE_LP_STORE_SEED=skip answers what is stored and calls nothing
+        lpStoreCache = new Eve.Wallet.LpStoreOfferCache(
+            new Eve.Wallet.LpStoreOfferStore(source, walletSchema),
+            Env("EVE_LP_STORE_SEED", "auto") == "skip" ? null : new Eve.Wallet.EsiLpStoreOffers(lpStoreHttp, Eve.Wallet.EsiLpStoreOffers.DefaultBase),
+            () => DateTimeOffset.UtcNow,
+            message => Console.Error.WriteLine($"eve-host: lp store: {message}"));
         loyaltyAnnouncer = new LoyaltyPointAnnouncer(loyaltyPoints, characterSessions);
         insuranceReadModel = new PersistenceInsuranceReadModel(mailStore);
         insuranceWriteModel = new PersistenceInsuranceWriteModel(

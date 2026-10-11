@@ -2,6 +2,11 @@
 
 Owner: the structures phase (plan in the scratchpad `specs/structures_phase.md`, section ST-1). Branch `wt-st1`, worktree `/home/user/wt-st1`.
 
+## Pushed to main
+- `8eaccdb` ST-1 (a): sim structure body, commands 74-76, protocol 59.
+- `6186267` ST-1 (b): structure health, per-second cap, `StructureDamaged` (77), protocol 60.
+- Open: (c) dockable body in `scene/docking.rs`, (d) host `SpaceStructures.cs` and the vitals/limits source, (e) headless test. Nothing below is started.
+
 ## Done (increments a and b)
 - Increment b: `crates/eve-space/src/health/structure.rs` (`StructureHealth`: the ship's layers with a per-second limit per layer and the repair-pause report); `Scene::damage_structure`; `Out::StructureDamaged` -> kind 77; `PlaceStructure` carries the vitals, recharge and limits. Protocol is now 60 (59 was pushed with increment a; see ADR 0013).
 - Tests for b: `health::structure::tests` (2), `scene::tests::a_hit_on_a_structure_is_cut...` (1), the fixtures for `PlaceStructure` and `StructureDamaged` in Rust and C#.
@@ -20,7 +25,8 @@ Owner: the structures phase (plan in the scratchpad `specs/structures_phase.md`,
 - `EVE_PG_URL='Host=127.0.0.1;Username=postgres;Database=eve' dotnet test dotnet/tests/Eve.Services.Space.Tests`: 648 pass, 0 skipped.
 - New scene tests in `scene/tests.rs`: a structure is a body in the bind; placed while a pilot is in the system it is told; its state change is told once; removal is told once.
 
-## Next steps
+## Next steps (c, d, e are open; the order is c, then d, then e)
+0. (c) and (d) are the next work; the TODO rows 46 are the status.
 1. The host supplies the vitals (SDE 263/265/9 layers, 2034-2036 limits, 3354-3356 pauses) in `PlaceStructure`; nothing does yet. A weapon path that hits a structure body is not wired (ST-8a).
 2. (c) Dockable body in `scene/docking.rs` (`Station` -> dockable body; state gate from J `STRUCTURE_DISABLED_STATES`).
 3. (d) Host `dotnet/src/Eve.Services.Space/SpaceStructures.cs`: restore on first pilot entry, `structure.state_changed` -> `SetStructureState`, `StructureDamaged` -> ST-0 machine.

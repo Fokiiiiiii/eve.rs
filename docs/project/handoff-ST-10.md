@@ -1,4 +1,4 @@
-# Handoff: ST-10 hacking minigame (structures phase, package ST-10)
+# Handoff: ST-10 hacking minigame (structures phase, package ST-10) — CLOSED 2026-10-11
 
 Updated at every push. Plan: scratchpad `specs/structures_phase.md`, section ST-10. Rules: `specs/AGENT_RULES.md`. Decisions: DEVIATIONS "Hacking minigame (ST-10)".
 
@@ -40,3 +40,11 @@ Updated at every push. Plan: scratchpad `specs/structures_phase.md`, section ST-
 
 - Run `dotnet test` with `flock -o -w 1800 /tmp/eve-heavy.lock` and `-p:UseSharedCompilation=false`; a build can queue for minutes.
 - Bash grep is denied in this worktree: use python for searches.
+
+## Closed
+
+ST-10 is closed. Everything in the increments above is on main. Two EveJS behaviours are open and tracked in `docs/project/TODO.md`
+section 48, with the exact next step: site completion when the hacked containers are empty, and removal of an emptied container ball. The
+first step is that `PgItemStore.MoveAsync` publishes an `inventory.item_moved` event (none exists on the bus today). Decisions: DEVIATIONS
+"Hacking minigame (ST-10)", "Site loot", "Container items", "Site container types", "Site completion", "Cleared container ball".
+

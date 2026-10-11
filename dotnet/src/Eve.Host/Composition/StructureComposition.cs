@@ -41,6 +41,7 @@ internal sealed partial class CharacterServicesComposition
     private Eve.Structures.StructureStore structureStore = default!;
     private Eve.Structures.StructureTimers structureTimers = default!;
     private Eve.Structures.StructureFuel structureFuel = default!;
+    private StructureCompressionAuthority structureCompression = default!;
 
     /// <summary>The structures as the directory and profile readers see them: the legacy shape of the structures schema.</summary>
     Task<JsonObject> ReadStructuresAsync(CancellationToken token) =>
@@ -98,8 +99,12 @@ internal sealed partial class CharacterServicesComposition
                 await structureDirectoryReadModel.GetStructureInfoAsync(structureId, cancellationToken) is { PersistentlyDeployed: true };
         structureProfilesRpcBackend = new Eve.Host.PersistenceStructureProfilesRpcBackend(
             ReadGameStoreTableAsync, mailCache, characterSessions, SetStructureProfileAsync);
+        structureCompression = new StructureCompressionAuthority(source, structureStore, items, dogma, sde, skills);
         structureRpcCallbacks = new Eve.Services.Core.StructureRpcCallbacks
         {
+            CompressItemInStructureAsync = async (call, itemId) => await structureCompression.CompressAsync(call, itemId),
+            DecompressGasInStructureAsync = async (call, itemId) => await structureCompression.DecompressAsync(call, itemId),
+            GetMyGasDecompressionEfficiencyAsync = async call => await structureCompression.EfficiencyAsync(call),
             GetProfilesAsync = structureProfilesRpcBackend.GetProfilesAsync,
             GetProfileSettingsAsync = structureProfilesRpcBackend.GetProfileSettingsAsync,
             GetMyHangarViewStateAsync = (call, structureId) =>

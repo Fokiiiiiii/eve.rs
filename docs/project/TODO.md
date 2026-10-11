@@ -1102,7 +1102,8 @@ Done (verified):
 Open (next steps, in order):
 | Status | Item |
 |---|---|
-| OPEN | (b) `structureCompressionMgr` CompressItemInStructure / DecompressGasInStructure / GetMyGasDecompressionEfficiency: EveJS gate (docked at a structure with Reprocessing online), the 6-value tuple, named refusals |
+| VERIFIED (tests) | (b) `structureCompressionMgr` CompressItemInStructure / DecompressGasInStructure / GetMyGasDecompressionEfficiency on the real stores and SDE: the EveJS gate (docked at a structure with Reprocessing online), the item in the hangar or ship there, the six-value reply, the join with a stack of the output, gas decompression with the SDE efficiencies (structure 0.8 plus hull bonus, pilot 1 % a level), the removal of a stack that gives nothing, named refusals. Host route tests: `StructureCompressionTests` (6 pass) with the Host project 170 of 170. |
+| OPEN | (b) gaps: the corporation-office take path (EveJS `itemIsInDockableCorpOfficeWithTakeAccess`) waits for ST-5; no client run (docking is ST-3) |
 | OPEN | (c) E-03: `BeyonceService.CynoJammerOnlineSimTimeForSystem` from an online service 17 in the system; E-15 `OnCynoJammerChanged` from a subscriber on the service change; the non-covert cyno generator refused in a jammed system (host side, `SpaceSessions.Modules.cs`) |
 | OPEN | (d) `structureCynoBeaconMgr` backend in place of the user error (`StructureTravelRpcService.cs`): Pharolux beacon service 16 online, jump to it |
 | OPEN | Fuel burns send no `OnItemChange` to the owner's sessions (no session at burn time); rig and skill reductions of the online charge |

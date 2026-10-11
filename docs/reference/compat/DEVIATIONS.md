@@ -1854,3 +1854,33 @@ EVE University wiki (three days of fuel to online, [W] per `structures_phase.md`
 - **A structure is a body of the system, not a new entity (structures phase D-3).** `BodyKind::Structure` joins the system's bodies, so the ballpark (`SetState`), targeting, docking and the slim item already key on it. The alternative, an NPC-like entity, would duplicate those paths. Sources: the repository's `crates/eve-space/src/world.rs` and `payload.rs` (bodies are the balls of a system); `structures_phase.md` D-3 (body with health recommended).
 - **Ball kind: `Kind::Station`.** The structure ball is a rigid station ball. Unverified on the real client: the client's ball kind for an Upwell structure has not been observed (MITM). Revisit when the structure is seen in the graphical client.
 - **The host owns the state.** The sim stores the slim state the host sends and never advances a timer; the timers are the Eve.Structures machine's (ST-0). The sim-side damage cap and the reinforcement are ST-1 increments (b) and (d).
+
+## Structure compression (ST-7, increment b, 2026-10-11)
+
+Sources: EveJS `services/mining/structureCompressionMgrService.js` (the handlers), `mining/miningIndustry.js` (`resolveReprocessingContext` 262-304,
+`itemIsInStructureCompressionSource` 150, `compressInventoryItem` 628, `getStructureGasDecompressionEfficiency` 685, `decompressGasInStructure` 701,
+`getGasDecompressionCharacterEfficiency` 230); eve-logic `itemcompression/client/itemCompression.py` (`CompressItemInStructure` shows the six values and
+`ItemCompression_CompressedItemInStructure`), `gasDecompression.py` (`DecompressGasInStructure`, `GetMyGasDecompressionEfficiency` = a pair); SDE build
+3396210 ([S]: `compressibleTypes`, typeList 336, typeDogma 3260-3262, skill 62452, group "Harvestable Cloud").
+
+- Gates as EveJS: docked at a structure (`structureid`), the structure's Reprocessing service (4) online; the item is the pilot's in the structure's hangar
+  (flag 4) or in the ship it flies when that ship is at the structure; compression takes the list 336 (asteroid ores and ice); decompression takes a
+  compressed gas whose source is in a group named gas or cloud. [J][S]
+- Not built: EveJS also takes an item from a corporation office the pilot may take from (`itemIsInDockableCorpOfficeWithTakeAccess`); that path waits for the
+  corporation offices at structures (ST-5 deliveries). Status: open.
+- Named refusals (`CustomNotify`): EveJS answers None (the client then shows nothing). The client reports success on any reply, so each refusal names its
+  cause: not docked, reprocessing offline, not yours or not usable, not in the hangar or ship at the structure, not compressible here, not compressed gas.
+  Status: decided (visible refusal instead of a silent None).
+- Output item: a new item id, as the ship's compression makes it (`CharacterShips.CompressAsync`). EveJS rebuilds the same item id in place. The reply
+  carries the six values and the pilot is told the removed and the new stack with `OnItemChange` (`ShipNotifications.SendItemChange`); the client reads the
+  values, not the id. Status: decided.
+- Decompression output is the floor of the quantity times the total efficiency (capped at one) with EveJS's rounding (`floorAfterNormalizing`: the product is
+  rounded to nine decimals first, so 1000 x (0.80 + 0.03) is 830). A stack that gives nothing is removed and the reply carries output id 0 and quantity 0
+  (EveJS sends None for the id; the client tests the quantity). Status: decided.
+- Efficiency, SDE first: the structure's share is the Reprocessing facility's base (`gasDecompressionBaseEfficiency`, attribute 3262 on module 35899 =
+  0.8) plus the hull's bonus (`structureGasDecompressionEfficiencyBonus`, 3261: Athanor 0.04, Tatara 0.10, others none). EveJS uses a flat 0.79
+  (`DEFAULT_STRUCTURE_GAS_DECOMPRESSION_EFFICIENCY`, miningIndustry.js:86) for every structure. Conflict recorded: the SDE's values are taken. Status:
+  decided, the EveJS value is the fallback only where the SDE has none (not used).
+- The pilot's share: one percent per level of Gas Decompression Efficiency (skill 62452, attribute 3260 = 1.0 per level, divided by 100 as EveJS does:
+  `getGasDecompressionCharacterEfficiency`). [S][J]
+- `GetMyGasDecompressionEfficiency`: zero and zero when the gate is not open (EveJS answers 0 and 0 when the context fails).

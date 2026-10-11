@@ -2725,3 +2725,30 @@ The holder is the pilot as the simulation sees it (`SpaceSessions.EssHolderAsync
 3. Confirm the quadrant lists (the article's NW list has 11 names, its text says ten).
 4. Whether a key should be consumed when the pilot has it in a container, not only in the hangar (the implementation takes it from any stack the character owns).
 
+### Hand comparison with EveJS for the ESS calls (until the MITM compare lands)
+
+No wire capture was taken for this comparison: the MITM compare command (`docs/project/MITM_COMPARE.md`) has not landed on origin/main. It compares the ESS calls by hand, from EveJS `essMgrService.js` and `dynamicResourceState.js` against eve.rs `EssMgrService.cs`, `DynamicResourceCacheMgrService.cs` and `EssComposition.cs`.
+
+Matching shapes (same keys, same argument lists, same return values):
+
+- `GetDataForClientSolarSystem`: the same twelve keys; `None` when the system has no ESS.
+- `GetESSSystemDetails`: the same five keys; the window and autopayment states use the same derivation.
+- Refusals of `AttemptLinkToMainBank`, `AttemptLinkToReserveBank`, `RequestUnlockReserveBank`: `None`, as EveJS returns `null`.
+- `OnESSMainBankLinkNotification` and `OnESSReserveBankLinkNotification`: one argument, the system id, as EveJS sends `[solarSystemID]`.
+- `OnSystemESSDataChanged`: two arguments, the system id and the payload, as EveJS sends `[solarSystemID, payload]`.
+- `OnMainBankPlayerLinkDisconnected` (manual): one dict with `solarSystemID`, `linkID`, `characterID`, `reason` (0), as EveJS.
+- `OnReserveBankPlayerLinkDisconnected`: one dict with `solarSystemID`, `characterID`, `reason`, as EveJS.
+
+Differences, each one a deliberate choice or a behaviour EveJS does not have:
+
+1. `RequestMainBankUnlink`: EveJS lets any pilot release the main link; eve.rs lets only the holder (EveJS's behaviour is not copied).
+2. The clock sends `OnMainBankPlayerHackSuccess` (theft) and `OnMainBankPlayerLinkDisconnected` with reason 1 or 2 (proximity, ship change). EveJS has no clock and never sends these.
+3. `OnSystemESSDataChanged` is also sent to the other pilots of the system after a change. EveJS sends it only to the caller.
+4. The theft lists are written by eve.rs (main and reserve entries); EveJS never writes them, so its lists are always empty.
+5. A link starts a weapon timer (60 s, CCP 19.10); EveJS has none.
+6. Key consumption and the quadrant gate on `RequestUnlockReserveBank`: EveJS opens a bank for any key id and needs no key.
+7. The ESS ball is a structure ball in space; EveJS places none, so its `essID` has no ball and the client refuses links there.
+8. Owner and reserve payouts (wallet journal reference 155): EveJS pays nothing.
+
+A MITM capture of the same live scenario on both servers is still to do; this list is a hand reading of the two sources.
+

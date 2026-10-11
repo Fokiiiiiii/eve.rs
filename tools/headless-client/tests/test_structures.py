@@ -10,6 +10,7 @@ environment names it:
   EVE_LIVE_STRUCTURE_SYSTEM=<id>    the solar system it is anchored in
   EVE_LIVE_CHARACTER=<id>           a character of an account that may enter the system
   EVE_LIVE_USER / EVE_LIVE_PASSWORD the account of that character
+  EVE_LIVE_SHIP=<item id>           the character's active ship, within the structure's docking range (ST-3 d)
 
 This file has not been run against a live server (see docs/project/handoff-ST-1.md).
 """
@@ -19,8 +20,10 @@ import time
 
 import pytest
 
+from evecli import packet as p
 from evecli.client import Client
-from evecli.observe import events_of, timed_events
+from evecli.describe import describe
+from evecli.observe import _plain_name, events_of, timed_events
 from tests.test_undock import keyval, number, slim_by_id
 
 LIVE = os.environ.get("EVE_LIVE_HOST", "")
@@ -29,10 +32,11 @@ SYSTEM = os.environ.get("EVE_LIVE_STRUCTURE_SYSTEM", "")
 CHARACTER = os.environ.get("EVE_LIVE_CHARACTER", "")
 USER = os.environ.get("EVE_LIVE_USER", "")
 PASSWORD = os.environ.get("EVE_LIVE_PASSWORD", "")
+SHIP = os.environ.get("EVE_LIVE_SHIP", "")
 
 pytestmark = pytest.mark.skipif(
-    not (LIVE and STRUCTURE and SYSTEM and CHARACTER and USER),
-    reason="set EVE_LIVE_HOST, EVE_LIVE_STRUCTURE_ID, EVE_LIVE_STRUCTURE_SYSTEM, EVE_LIVE_CHARACTER and EVE_LIVE_USER",
+    not (LIVE and STRUCTURE and SYSTEM and CHARACTER and USER and SHIP),
+    reason="set EVE_LIVE_HOST, EVE_LIVE_STRUCTURE_ID, EVE_LIVE_STRUCTURE_SYSTEM, EVE_LIVE_CHARACTER, EVE_LIVE_USER and EVE_LIVE_SHIP",
 )
 
 # the structure's category in the client (categoryID 65, ST-1)
@@ -73,3 +77,44 @@ def test_a_pilot_in_the_system_sees_the_structure_with_its_state_and_timer():
         assert number(described["categoryID"]) == STRUCTURE_CATEGORY
         assert number(described["state"]) > 0, "the slim item has a state"
         assert "timer" in described or "upkeepState" in described
+
+
+def _user_error_label(failure: p.MachoError) -> str:
+    """The label of the client's UserError the server raised (the first item of its tuple)."""
+    payload = describe(failure.payload)["$objectex"]["$tuple"]
+    return str(payload[1]["$tuple"][0])
+
+
+def test_a_pilot_docks_at_the_structure_and_undocks_from_it():
+    """ST-3 d: the docking is finished by the simulation (OnDockingFinished) and the ship leaves the structure again.
+
+    The scenario does not fly the ship: the character's ship must already be within the docking range of the structure. If it is not, the
+    server answers DockingApproach (the reference's answer), and the scenario says so instead of passing.
+    """
+    with _client() as client:
+        client.login(USER, PASSWORD)
+        client.call("charMgr", "SelectCharacterID", int(CHARACTER))
+        seen = timed_events(client, 30.0, until=lambda events: _structure_slim(events) is not None)
+        assert _structure_slim(seen) is not None, f"the structure {STRUCTURE} is not in the ballpark"
+
+        try:
+            client.call("structureDocking", "Dock", int(STRUCTURE), int(SHIP))
+        except p.MachoError as failure:
+            label = _user_error_label(failure)
+            pytest.fail(f"the ship is not within docking range (server answered {label}); place it near the structure and rerun")
+
+        finished = timed_events(
+            client,
+            60.0,
+            until=lambda events: any(_plain_name(event["name"]) == "OnDockingFinished" for event in events if "name" in event),
+        )
+        docked = [event for event in finished if "name" in event and _plain_name(event["name"]) == "OnDockingFinished"]
+        assert docked, "the docking was not finished within 60 s (no OnDockingFinished)"
+
+        client.call("structureDocking", "Undock", int(STRUCTURE), int(SHIP), ignoreContraband=False)
+        left = timed_events(
+            client,
+            30.0,
+            until=lambda events: any(_plain_name(event["name"]) == "OnItemsChanged" for event in events if "name" in event),
+        )
+        assert any(_plain_name(event["name"]) == "OnItemsChanged" for event in left if "name" in event), "no item change after the undock"

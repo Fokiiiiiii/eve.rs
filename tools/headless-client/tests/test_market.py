@@ -103,4 +103,3 @@ def test_a_docked_character_reads_the_market_as_the_client_does():
         label, arguments = _label_and_arguments(refused.value)
         assert label == "CustomInfo"
         assert arguments == {"info": "Order prices have at most four significant figures."}
-

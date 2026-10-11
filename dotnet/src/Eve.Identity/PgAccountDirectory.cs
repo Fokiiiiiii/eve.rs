@@ -85,6 +85,112 @@ public sealed partial class PgAccountDirectory : IAccountDirectory, IAccountLook
         command.ExecuteNonQuery();
     }
 
+    /// <summary>The account's stored end time, or null when the account does not exist.</summary>
+    public async Task<DateTimeOffset?> SubscriptionEndsAtAsync(uint accountId, CancellationToken cancellationToken)
+    {
+        await using var command = _source.CreateCommand($"SELECT subscription_end_at FROM {Schema}.accounts WHERE id = $1");
+        command.Parameters.Add(new NpgsqlParameter { Value = checked((int)accountId) });
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        return await reader.ReadAsync(cancellationToken) ? reader.GetFieldValue<DateTimeOffset>(0) : null;
+    }
+
+    /// <summary>
+    /// Extends the account's stored end time inside the caller's transaction, so it is written with the receipt of the purchase
+    /// (the account row is locked for the grant). Returns the end time now stored.
+    /// </summary>
+    public async Task<DateTimeOffset> ExtendSubscriptionAsync(
+        NpgsqlConnection connection, NpgsqlTransaction transaction, uint accountId, TimeSpan extension, DateTimeOffset now, CancellationToken cancellationToken)
+    {
+        var stored = await LockAccountAsync(connection, transaction, accountId, cancellationToken);
+        var endsAt = SubscriptionPolicy.Extend(stored, now, extension);
+        if (endsAt != stored)
+        {
+            await using var update = new NpgsqlCommand($"UPDATE {Schema}.accounts SET subscription_end_at = $2 WHERE id = $1", connection, transaction)
+            {
+                Parameters = { new() { Value = checked((int)accountId) }, new() { Value = endsAt } },
+            };
+            await update.ExecuteNonQueryAsync(cancellationToken);
+        }
+        return endsAt;
+    }
+
+    /// <summary>The account's extra training queues: each slot with its end time (slots whose time has passed are included).</summary>
+    public async Task<IReadOnlyDictionary<int, DateTimeOffset>> TrainingSlotsAsync(uint accountId, CancellationToken cancellationToken)
+    {
+        await using var command = _source.CreateCommand($"SELECT slot, ends_at FROM {Schema}.account_training_slots WHERE account_id = $1");
+        command.Parameters.Add(new NpgsqlParameter { Value = checked((int)accountId) });
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        var slots = new Dictionary<int, DateTimeOffset>();
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            slots[reader.GetInt16(0)] = reader.GetFieldValue<DateTimeOffset>(1);
+        }
+        return slots;
+    }
+
+    /// <summary>How many of the account's extra training queues run at <paramref name="now"/> (synchronous: the training rules read it).</summary>
+    public int ActiveTrainingSlotCount(uint accountId, DateTimeOffset now)
+    {
+        using var command = _source.CreateCommand($"SELECT count(*) FROM {Schema}.account_training_slots WHERE account_id = $1 AND ends_at > $2");
+        command.Parameters.Add(new NpgsqlParameter { Value = checked((int)accountId) });
+        command.Parameters.Add(new NpgsqlParameter { Value = now });
+        return (int)(long)command.ExecuteScalar()!;
+    }
+
+    /// <summary>
+    /// Adds one unit of extra training time to a slot (the one named, else the planned one: see <see cref="MultipleTrainingRules.Plan"/>)
+    /// inside the caller's transaction. Returns the slot and its new end time.
+    /// </summary>
+    public async Task<(int Slot, DateTimeOffset EndsAt)> ExtendTrainingSlotAsync(
+        NpgsqlConnection connection, NpgsqlTransaction transaction, uint accountId, int? requested, TimeSpan duration, DateTimeOffset now, CancellationToken cancellationToken)
+    {
+        await LockAccountAsync(connection, transaction, accountId, cancellationToken);
+        var stored = new Dictionary<int, DateTimeOffset>();
+        await using (var read = new NpgsqlCommand($"SELECT slot, ends_at FROM {Schema}.account_training_slots WHERE account_id = $1", connection, transaction)
+        {
+            Parameters = { new() { Value = checked((int)accountId) } },
+        })
+        await using (var reader = await read.ExecuteReaderAsync(cancellationToken))
+        {
+            while (await reader.ReadAsync(cancellationToken))
+            {
+                stored[reader.GetInt16(0)] = reader.GetFieldValue<DateTimeOffset>(1);
+            }
+        }
+        var (slot, endsAt) = MultipleTrainingRules.Plan(stored, requested, now, duration);
+        await using var upsert = new NpgsqlCommand(
+            $"INSERT INTO {Schema}.account_training_slots (account_id, slot, ends_at) VALUES ($1, $2, $3) " +
+            "ON CONFLICT (account_id, slot) DO UPDATE SET ends_at = EXCLUDED.ends_at", connection, transaction)
+        {
+            Parameters =
+            {
+                new() { Value = checked((int)accountId) },
+                new() { Value = (short)slot },
+                new() { Value = endsAt },
+            },
+        };
+        await upsert.ExecuteNonQueryAsync(cancellationToken);
+        return (slot, endsAt);
+    }
+
+    /// <summary>Locks the account row for the rest of the transaction and returns its stored end time.</summary>
+    private async Task<DateTimeOffset> LockAccountAsync(
+        NpgsqlConnection connection, NpgsqlTransaction transaction, uint accountId, CancellationToken cancellationToken)
+    {
+        await using var command = new NpgsqlCommand(
+            $"SELECT subscription_end_at FROM {Schema}.accounts WHERE id = $1 FOR UPDATE", connection, transaction)
+        {
+            Parameters = { new() { Value = checked((int)accountId) } },
+        };
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        if (!await reader.ReadAsync(cancellationToken))
+        {
+            throw new InvalidOperationException($"Account {accountId} does not exist.");
+        }
+        // a typed read: ExecuteScalar returns timestamptz as DateTime, which is not the DateTimeOffset the rules use
+        return reader.GetFieldValue<DateTimeOffset>(0);
+    }
+
     public async ValueTask<LoginResult> LoginAsync(LoginAttempt attempt, CancellationToken cancellationToken)
     {
         if (!AccountNames.IsAcceptable(attempt.UserName))

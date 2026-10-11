@@ -74,9 +74,13 @@ public sealed class StructureDockingTests
         Events.Of(session, clear: false);
         ((Sink)session.Sink!).Sent.Clear();
 
+        var locationChanged = new TaskCompletionSource<(long OldStation, long OldStructure, long? NewStation, long? NewStructure)>(TaskCreationOptions.RunContinuationsAsynchronously);
+        rig.Space.DockedLocationChanged = (changedSession, oldStation, oldStructure) =>
+            locationChanged.TrySetResult((oldStation, oldStructure, changedSession.GetInt("stationid"), changedSession.GetInt("structureid")));
         rig.Sim.Say(new SimDocked((ulong)session.SessionId, Structure));
         await rig.Space.QuiesceAsync();
-        await Rig.UntilAsync(() => session.GetInt("structureid") == Structure);
+        await Rig.UntilAsync(() => locationChanged.Task.IsCompleted);
+        Assert.Equal((0L, 0L, (long?)null, (long?)Structure), await locationChanged.Task);
 
         Assert.Equal(["OnInvulnCancelled", "OnMachoObjectDisconnect", "OnItemsChanged", "$sessionchange", "OnDockingFinished"], Sequence.Of(session, clear: false));
         Assert.Equal((long?)Structure, session.GetInt("structureid"));

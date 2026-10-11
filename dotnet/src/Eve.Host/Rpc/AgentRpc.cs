@@ -49,11 +49,25 @@ internal sealed partial class CharacterServicesComposition
         return AgentRpcServices();
     }
 
+    /// <summary>
+    /// The Director rule of a corporation purchase: the character is a member of the corporation and its roles include Director
+    /// (the member's roles, as the corporation service reads them; eve-logic lpStoreSvc.py:457-462 is the client's copy).
+    /// </summary>
+    private async ValueTask<bool> IsCorporationDirectorAsync(long characterId, long corporationId, CancellationToken token)
+    {
+        var corporation = await corporations.GetAsync(corporationId, token);
+        var member = await corporations.MemberAsync(characterId, token);
+        if (corporation is null || corporation.IsNpc || member?.CorporationId != corporationId) return false;
+        var titles = await corporations.TitlesAsync(corporationId, token);
+        var roles = Eve.Corporations.CorporationRoles.Session(corporation, member, null, titles);
+        return (roles.AtAll & Eve.Corporations.CorporationRoles.Director) != 0;
+    }
+
     private IReadOnlyList<IService> AgentRpcServices() =>
     [
             agentMissionService,
             new LoyaltyPointsService(loyaltyPoints),
-            new Eve.Services.Wallet.LpStoreMgrService(lpStoreCache),
+            new Eve.Services.Wallet.LpStoreMgrService(lpStoreCache, lpStorePurchases, IsCorporationDirectorAsync),
             allianceRegistry,
             publicQaSlashService = new SlashService(new ShipHealthCommands(ships, dogma, now, spaceSessions), spaceSessions is null ? null : new DeathTestCommands(spaceSessions, new ShipTypeNames(sde)), spaceSessions is null ? null : new SuicideCommands(spaceSessions), spaceSessions is null ? null : new NpcCommands(spaceSessions), new ItemCommands(new ItemTypeNames(sde), ships, dogma, now), new SkillCommands(skillCatalog, skills, source, dogmaSync, now)),
             .. spaceSessions is null ? [] : new IService[] { new ShipService(spaceSessions, now, spaceContainers, spaceDrones, getShipFittingInfo: ShipFittingInfoOf, ships: ships,

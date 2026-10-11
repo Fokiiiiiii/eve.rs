@@ -142,6 +142,8 @@ internal sealed partial class CharacterServicesComposition
                 message => Console.Error.WriteLine($"eve-host: {message}"), system => spaceSessions?.HasPilotsIn(system) ?? false);
             cosmicSites.Attach(foundations.Content, foundations.Events);
             cosmicSites.Containers = siteContainers;
+            cosmicSites.NewContainerAsync = (connection, transaction, typeId, system) =>
+                items.CreateAsync(connection, transaction, new Eve.Inventory.NewItem(typeId, 0, system, Eve.Ships.CharacterShips.InSpaceFlag, 1, true));
             cosmicSites.ContainerType = (name, relic) => containerTypes.TryGetValue(name, out var found) ? found : relic ? fallbackRelic : fallbackData;
             foundations.Events.Subscribe(DailyGoalRecorder.SubscriberName, [Eve.Ships.OreMinedEvent.Topic, Eve.Ships.SalvageWreckedEvent.Topic], (context, token) => dailyGoals.RecordAsync(context, token));
             foundations.Events.Subscribe("npc.security-status-recovery", ["npc.killed"],

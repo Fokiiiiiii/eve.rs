@@ -75,6 +75,35 @@ public sealed class CosmicSiteRulesTests
         Assert.Equal(strength, ProbeScanMath.SignatureStrength(level));
 }
 
+/// <summary>The probe result of a cosmic signature by its level (the wiki: a probe that is weaker than the signature finds it only in part).</summary>
+public sealed class SignatureScanResultTests
+{
+    [Theory]
+    [InlineData(1, 1.0)]
+    [InlineData(3, 1.0)]
+    [InlineData(4, 42.0 / 72.0)]
+    [InlineData(5, 42.0 / 104.0)]
+    public void A_probe_of_strength_42_covers_a_signature_of_each_level_by_its_strength_over_the_level(int level, double expected) =>
+        Assert.Equal(expected, ProbeScanMath.Coverage(0, 1e6, 42, ProbeScanMath.SignatureStrength(level)), 9);
+
+    [Fact]
+    public void A_weaker_probe_finds_a_signature_in_part_and_a_probe_that_does_not_reach_it_leaves_it_alone()
+    {
+        var signature = new ScanTargetSite(77, 19728, 502, 3, [0, 0, 0], 42, true, Code: "ABC-123");
+
+        var partial = ProbeScanEngine.Compute([new ScanProbe(1, [0, 0, 0], 1e9, 21, 1e7, false)], [signature], new Random(7));
+        Assert.Empty(partial.AbsentTargets);
+        var row = Assert.Single(partial.Results);
+        Assert.False(row.Perfect);
+        Assert.InRange(row.Certainty, 0, 0.249);
+        Assert.Equal("ABC-123", row.Key);
+
+        var none = ProbeScanEngine.Compute([new ScanProbe(1, [5e9, 0, 0], 1e6, 42, 1e4, false)], [signature], new Random(7));
+        Assert.Empty(none.Results);
+        Assert.Empty(none.AbsentTargets);
+    }
+}
+
 /// <summary>A warp to a scan result: a cosmic site is named by its code (any case), a ship or other target by its number, and only in the system it was scanned in.</summary>
 public sealed class ScanResultWarpTests
 {

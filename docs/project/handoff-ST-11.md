@@ -19,13 +19,15 @@ Updated at every push. Plan: scratchpad `specs/structures_phase.md`, section ST-
 3. **Clear and respawn (built, test-only).** A site cleared by its NPC kills (`npc.killed { site, solarSystemId }` counted per wave)
    and its containers completes, the respawn subscriber replaces it in its slot elsewhere, and a host restart in the middle keeps
    the progress (`CosmicSiteDirectorTests.A_site_cleared_by_its_npcs...`). The kills are published by the test; no NPC is spawned yet.
-4. **NPC waves (open).** The director's objectives count `npc.killed { site, solarSystemId }`, but no NPC is spawned for a site yet and
+4. **Probe results (built, tests).** A signature's result follows the coverage rule at the wiki strengths (42, 72, 104):
+   `SignatureScanResultTests`. The full 100 % of four well-spread probes is the engine's existing rule, not re-derived here.
+5. **NPC waves (open).** The director's objectives count `npc.killed { site, solarSystemId }`, but no NPC is spawned for a site yet and
    no event carries `site`. Until this lands an anomaly is never cleared, only expired.
-5. **Containers.** Objectives `containers` count `site.container.cleared`; no container is placed yet (`SpaceContainers`).
+6. **Containers.** Objectives `containers` count `site.container.cleared`; no container is placed yet (`SpaceContainers`).
 
 ## Next
 
-- NPC spawning for a site (item 4) and containers (item 5), both need the sim side; then a real kill through the simulation.
+- NPC spawning for a site (item 5) and containers (item 6), both need the sim side; then a real kill through the simulation.
 
 ## Gotchas
 

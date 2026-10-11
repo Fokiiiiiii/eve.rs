@@ -194,6 +194,12 @@ internal sealed class FakeSim : ISimulation
 
     public void RemoveProbe(long probeId) => Heard.Enqueue(new SimRemoveProbe(probeId));
 
+    public void PlaceStructure(SimPlaceStructure structure) => Heard.Enqueue(structure);
+
+    public void RemoveStructure(long structureId) => Heard.Enqueue(new SimRemoveStructure(structureId));
+
+    public void SetStructureState(SimSetStructureState state) => Heard.Enqueue(state);
+
     public void PlaceDisruptor(SimPlaceDisruptor disruptor) => Heard.Enqueue(disruptor);
 
     public void SetDisruptorActive(long deployableId, bool active) => Heard.Enqueue(new SimSetDisruptorActive(deployableId, active));

@@ -1784,21 +1784,23 @@ client's use of mission data: eve-logic `evemissions/client/data.py`, `eve/clien
 
 ## Epic arc availability and the second SDE's discard (2026-10-11)
 
-- **Arcs newer than the client are not offered.** The official build 3405148 has 21 epic arcs; the server targets client build
+- **The twelve Pilot Certification Course arcs are offered (owner-confirmed).** The official build 3405148 has 21 epic arcs; the server targets client build
   3396210, whose data has no mission tables. The availability of each arc is an eve.rs table,
-  `dotnet/src/Eve.Services.Core/Data/epic-arc-availability.v1.json` (embedded resource): nine arcs `in-client-build`, twelve
-  `newer-than-client`, none `unknown`. Evidence: the V24.01 client's own epic arc constants (eve-logic
+  `dotnet/src/Eve.Services.Core/Data/epic-arc-availability.v1.json` (embedded resource): all 21 are `in-client-build`, none
+  `newer-than-client`, none `unknown`. Nine have evidence from the V24.01 client's own epic arc constants (eve-logic
   `eve/client/script/ui/shared/epicArcs/epicArcConst.py:7-15`, which list nine arc IDs, the same nine the EVE University
-  Epic arc page describes). The twelve others (IDs 64 and 67 to 77) are not in those constants; their agents are aura agents
-  (agent type 11, division 22) in the pinned build's `npcCharacters`, not epic arc agents (type 10). The owner's client export
-  holds them, but the export's client build is not recorded, so they are treated as newer than the client. The pinned build
-  3396210 has no mission table, so it gives no direct evidence for any arc. Status: decided; the table is the eve.rs record.
-- **Per mission.** A step of an epic arc takes its arc's availability: 275 steps, 227 in the nine client arcs, 48 in the twelve
-  newer arcs. The other 2,617 missions are not epic arc steps; this table has no evidence for them, so they answer `unknown`
-  with the reason. Heraldry (78) and factional warfare (160) missions are in that group.
-- **Default offer.** `MissionStaticCatalog.PlausibleMissionIds` and `OfferableEpicArcs` offer only `in-client-build` arcs.
-  The explicit switch `EVE_MISSION_INCLUDE_UNAVAILABLE_ARCS=1` (or `true`) offers every arc. The startup log prints the counts.
-  Status: decided; tests `EpicArcAvailabilityTests`.
+  Epic arc page describes). The twelve others (IDs 64 and 67 to 77, "Pilot Certification Course - <school>") are not in those
+  constants; their agents are aura agents (agent type 11, division 22) in the pinned build's `npcCharacters`, not epic arc agents
+  (type 10). The owner confirms that these arcs exist in the game, so each row records owner-confirmed evidence and the server
+  offers them like the in-client arcs. The owner's client export also holds them, but that export's client build is not recorded,
+  so it is not evidence of the build. The pinned build 3396210 has no mission table, so it gives no direct evidence for any arc.
+  Status: decided; the table is the eve.rs record.
+- **Per mission.** A step of an epic arc takes its arc's availability, so all 275 steps are offered (227 in the nine arcs from the
+  client constants, 48 in the twelve owner-confirmed arcs). The other 2,617 missions are not epic arc steps; this table has no
+  evidence for them, so they answer `unknown` with the reason. Heraldry (78) and factional warfare (160) missions are in that group.
+- **Default offer.** `MissionStaticCatalog.PlausibleMissionIds` and `OfferableEpicArcs` offer the `in-client-build` arcs, which is all
+  21 today. The explicit switch `EVE_MISSION_INCLUDE_UNAVAILABLE_ARCS=1` (or `true`) still offers every arc, including any future
+  `newer-than-client` row. The startup log prints the counts. Status: decided; tests `EpicArcAvailabilityTests`.
 - **The second SDE is discarded after loading** (owner's instruction, 2026-10-11). `eve-sde ensure --missions --pg` fetches the
   archive, extracts only `_sde.jsonl`, `missions.jsonl` and `epicArcs.jsonl` to a scratch directory, loads those two tables into
   `sde_mission`, then removes the scratch directory, any full extract of the build under the cache, and the downloaded
@@ -1810,6 +1812,21 @@ client's use of mission data: eve-logic `evemissions/client/data.py`, `eve/clien
   references in an arc (agent IDs) are checked against the pinned build at read time; no reference table is loaded from the
   second build. Status: decided.
 
+## Dungeon NPC waves (A-W1, 2026-10-11)
+
+- Breeding Facility (dungeon 2158), wave 1: the owner data has it on load; the rule file starts it after 240 seconds, from the wiki
+  (https://wiki.eveuniversity.org/Breeding_Facility). The wave compositions are the owner data's (a deadspace pool), not the wiki's (transports
+  and battleships): only the trigger is taken from the wiki. Source of the owner data: family-derived (scratchpad elysiansde.md, section 2).
+- Timer waves with no delay in the owner data are refused, not guessed; a rule must give the delay.
+- Waves whose trigger the runtime does not implement (room, gate, hack, entity kill, object, visible countdown) refuse the dungeon. Counted over
+  the 1,460 kill-mission dungeons of the owner data (a re-implementation of the planner's checks, not a run of it): 1,404 plan; 56 do not
+  (on_room_active 6, timer without delay 3, no waves 38, numbering 2, no template 7). The first two kinds are the A-W2 and later cut.
+- A dungeon's lifetime is 30 minutes: a host choice, not an official value.
+- The pilot-leaving check is a 10-second sweep over the pilots in space, because the space sessions announce no event for a pilot leaving a
+  system; a dungeon ends at most 10 seconds after the pilot leaves.
+- NPCs taken out of space (abandoned or ended dungeons) are destroyed by the simulation, which explodes them and leaves an empty wreck; no
+  npc.killed is announced for them, so they are not counted as kills or paid bounties.
+- A wave's spawn that the simulation shortens fails the dungeon with the count; the NPCs made are taken out.
 ## Structure services fuel (ST-7, increment a, 2026-10-11)
 
 Sources: SDE build 3396210 (`typeDogma` attributes 2108-2110 of the service modules; [S]); EveJS v0.12.9 `server/src/services/structure/structureServiceModules.js`
@@ -1831,3 +1848,59 @@ EVE University wiki (three days of fuel to online, [W] per `structures_phase.md`
   module's onlining needs the sovereignty hub's Cynosural Suppression upgrade (SDE description of 35914). [S]
 - No EveJS service id maps the Structure Compression Plant (35900, fuel 5/h, online 360). EveJS gates the structure compression by the Reprocessing
   service (4) online (`miningIndustry.js` 281-288). Decided for increment (b): the same gate. [J]
+
+## Structure ball (ST-1)
+
+- **A structure is a body of the system, not a new entity (structures phase D-3).** `BodyKind::Structure` joins the system's bodies, so the ballpark (`SetState`), targeting, docking and the slim item already key on it. The alternative, an NPC-like entity, would duplicate those paths. Sources: the repository's `crates/eve-space/src/world.rs` and `payload.rs` (bodies are the balls of a system); `structures_phase.md` D-3 (body with health recommended).
+- **Ball kind: `Kind::Station`.** The structure ball is a rigid station ball. Unverified on the real client: the client's ball kind for an Upwell structure has not been observed (MITM). Revisit when the structure is seen in the graphical client.
+- **The host owns the state.** The sim stores the slim state the host sends and never advances a timer; the timers are the Eve.Structures machine's (ST-0). The sim-side damage cap and the reinforcement are ST-1 increments (b) and (d).
+
+## Structure compression (ST-7, increment b, 2026-10-11)
+
+Sources: EveJS `services/mining/structureCompressionMgrService.js` (the handlers), `mining/miningIndustry.js` (`resolveReprocessingContext` 262-304,
+`itemIsInStructureCompressionSource` 150, `compressInventoryItem` 628, `getStructureGasDecompressionEfficiency` 685, `decompressGasInStructure` 701,
+`getGasDecompressionCharacterEfficiency` 230); eve-logic `itemcompression/client/itemCompression.py` (`CompressItemInStructure` shows the six values and
+`ItemCompression_CompressedItemInStructure`), `gasDecompression.py` (`DecompressGasInStructure`, `GetMyGasDecompressionEfficiency` = a pair); SDE build
+3396210 ([S]: `compressibleTypes`, typeList 336, typeDogma 3260-3262, skill 62452, group "Harvestable Cloud").
+
+- Gates as EveJS: docked at a structure (`structureid`), the structure's Reprocessing service (4) online; the item is the pilot's in the structure's hangar
+  (flag 4) or in the ship it flies when that ship is at the structure; compression takes the list 336 (asteroid ores and ice); decompression takes a
+  compressed gas whose source is in a group named gas or cloud. [J][S]
+- Not built: EveJS also takes an item from a corporation office the pilot may take from (`itemIsInDockableCorpOfficeWithTakeAccess`); that path waits for the
+  corporation offices at structures (ST-5 deliveries). Status: open.
+- Named refusals (`CustomNotify`): EveJS answers None (the client then shows nothing). The client reports success on any reply, so each refusal names its
+  cause: not docked, reprocessing offline, not yours or not usable, not in the hangar or ship at the structure, not compressible here, not compressed gas.
+  Status: decided (visible refusal instead of a silent None).
+- Output item: a new item id, as the ship's compression makes it (`CharacterShips.CompressAsync`). EveJS rebuilds the same item id in place. The reply
+  carries the six values and the pilot is told the removed and the new stack with `OnItemChange` (`ShipNotifications.SendItemChange`); the client reads the
+  values, not the id. Status: decided.
+- Decompression output is the floor of the quantity times the total efficiency (capped at one) with EveJS's rounding (`floorAfterNormalizing`: the product is
+  rounded to nine decimals first, so 1000 x (0.80 + 0.03) is 830). A stack that gives nothing is removed and the reply carries output id 0 and quantity 0
+  (EveJS sends None for the id; the client tests the quantity). Status: decided.
+- Efficiency, SDE first: the structure's share is the Reprocessing facility's base (`gasDecompressionBaseEfficiency`, attribute 3262 on module 35899 =
+  0.8) plus the hull's bonus (`structureGasDecompressionEfficiencyBonus`, 3261: Athanor 0.04, Tatara 0.10, others none). EveJS uses a flat 0.79
+  (`DEFAULT_STRUCTURE_GAS_DECOMPRESSION_EFFICIENCY`, miningIndustry.js:86) for every structure. Conflict recorded: the SDE's values are taken. Status:
+  decided, the EveJS value is the fallback only where the SDE has none (not used).
+- The pilot's share: one percent per level of Gas Decompression Efficiency (skill 62452, attribute 3260 = 1.0 per level, divided by 100 as EveJS does:
+  `getGasDecompressionCharacterEfficiency`). [S][J]
+- `GetMyGasDecompressionEfficiency`: zero and zero when the gate is not open (EveJS answers 0 and 0 when the context fails).
+
+## Cyno jammer (ST-7, increment c, E-03 and E-15, 2026-10-11)
+
+Sources: EveJS `services/sovereignty/sovSuppressionState.js` 177-277 (`broadcastCynoJammerChangesForStructureRows`, `getCynoJammerActivationTimeMs`,
+`getCynoJammerOnlineSimTime`: no jammer = null, running = 0, pending = the FILETIME of the warm-up's end), `sovNotifications.js` 267-289
+(`OnCynoJammerChanged` with the args `[solarSystemID, onlineSimTime]`, addressed by `solarsystemid2`, to the sessions in the system); SDE 35914 description
+("a 5 minute warmup period", "may only be onlined in a system that contains a sovereignty hub with the Cynosural Suppression upgrade") [S].
+
+- Decided: the jammer is the Standup Cynosural System Jammer I service (17) online in a structure of the system. The state is the earliest online time among
+  them plus 5 minutes (`StructureJammer.WarmupMs`), the answer is the FILETIME of that end, 0 once it passed, null with no jammer online. EveJS reads the
+  Tenebrex structure's operational state instead; the Tenebrex structure cannot be anchored until ST-2, so the service is the source. [J][S]
+- Recorded: `structure_services.online_since_ms` (migration 0002); 0 for a service imported as online (its warm-up is long over). A service that goes
+  offline holds 0. [J]
+- Recorded: a structure in Low Power (fuel out) takes its services offline, so the jammer goes with it (`StructureTimers.FuelOutAsync`).
+- Not built: the sovereignty upgrade check (EveJS `isCynoSuppressionUpgradeOnline`; SDE: the module needs the hub's Cynosural Suppression upgrade). The
+  jammer runs in any system where the service is online until the sov read model answers the upgrade. Status: open (gap, named in the TODO).
+- E-15 `OnCynoJammerChanged` is sent when the service changes (online or offline, also a fuel-out). EveJS also re-sends when a structure row changes
+  its jammer state; the warm-up's end is not announced by either (the client asks `GetCynoJammerState`). Status: decided, same as EveJS.
+- The announcement is a subscriber to `structure.service_changed` (published in the change's transaction), so it is sent at least once: a replay sends the
+  same state twice (idempotent for the client). [J]

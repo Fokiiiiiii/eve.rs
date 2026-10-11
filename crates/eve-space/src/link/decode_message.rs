@@ -9,6 +9,29 @@ fn read_flag(reader: &mut Reader, what: &'static str) -> Result<bool, DecodeErro
     }
 }
 
+/// A structure's slim fields: its state and upkeep, a flagged timer (start, end and a flagged pause), a flagged unanchoring time and repairing
+/// (0 none, 1 not repairing, 2 repairing).
+fn read_structure_status(reader: &mut Reader) -> Result<StructureStatus, DecodeError> {
+    let state = reader.i32()?;
+    let upkeep_state = reader.i32()?;
+    let timer = if read_flag(reader, "structure timer")? {
+        let start = reader.i64()?;
+        let end = reader.i64()?;
+        let paused = if read_flag(reader, "structure timer pause")? { Some(reader.i64()?) } else { None };
+        Some((start, end, paused))
+    } else {
+        None
+    };
+    let unanchoring = if read_flag(reader, "structure unanchoring")? { Some(reader.i64()?) } else { None };
+    let repairing = match reader.u8()? {
+        0 => None,
+        1 => Some(false),
+        2 => Some(true),
+        _ => return Err(DecodeError::BadValue("structure repairing")),
+    };
+    Ok(StructureStatus { state, upkeep_state, timer, unanchoring, repairing })
+}
+
 pub(super) fn read_heat_profile(reader: &mut Reader) -> Result<HeatProfile, DecodeError> {
     let generation_multiplier = reader.f64()?;
     let damage_multiplier = reader.f64()?;
@@ -460,6 +483,42 @@ impl Message {
                     alliance_id,
                     ship_id,
                 }))
+            }
+            kind::PLACE_STRUCTURE => {
+                let structure_id = r.i64()?;
+                let solar_system_id = r.i32()?;
+                let name = r.text()?;
+                let type_id = r.i32()?;
+                let group_id = r.i32()?;
+                let position = read_vector(&mut r)?;
+                let radius = r.f64()?;
+                let owner_id = r.i64()?;
+                let corporation_id = r.i32()?;
+                let alliance_id = r.i32()?;
+                let status = read_structure_status(&mut r)?;
+                if !(radius.is_finite() && radius >= 0.0) {
+                    return Err(DecodeError::BadValue("structure"));
+                }
+                Message::PlaceStructure(Box::new(StructurePlacement {
+                    structure_id,
+                    solar_system_id,
+                    name,
+                    type_id,
+                    group_id,
+                    position,
+                    radius,
+                    owner_id,
+                    corporation_id,
+                    alliance_id,
+                    status,
+                }))
+            }
+            kind::REMOVE_STRUCTURE => Message::RemoveStructure { structure_id: r.i64()? },
+            kind::SET_STRUCTURE_STATE => {
+                let solar_system_id = r.i32()?;
+                let structure_id = r.i64()?;
+                let status = read_structure_status(&mut r)?;
+                Message::SetStructureState { solar_system_id, structure_id, status }
             }
             kind::REMOVE_PROBE => Message::RemoveProbe { probe_id: r.i64()? },
             // a disruptor and an inhibitor have the same placement (the kind says which of the two it is)

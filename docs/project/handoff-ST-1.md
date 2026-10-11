@@ -1,0 +1,38 @@
+# ST-1 handoff (structure ball in the simulation, protocol 59)
+
+Owner: the structures phase (plan in the scratchpad `specs/structures_phase.md`, section ST-1). Branch `wt-st1`, worktree `/home/user/wt-st1`.
+
+## Done (increment a)
+- Simulation: `BodyKind::Structure` and `Detail::Structure` (`crates/eve-space/src/world.rs`); `StructureStatus` carries the host's slim fields.
+- Wire: kinds 74 `PlaceStructure`, 75 `RemoveStructure`, 76 `SetStructureState`; `PROTOCOL_VERSION` 58 -> 59 (Rust, `SimCodec.ProtocolVersion`, ADR 0013 addendum).
+- Scene: `crates/eve-space/src/scene/structures.rs` places, removes and re-states a structure body and tells the bound pilots (`AddBalls2`, `RemoveBalls`, `OnSlimItemChange`). A placed structure is in every later `SetState`.
+- Slim item: `slim::structure_fields` (corpID, allianceID, state, upkeepState, timer, unanchoring, repairing; categoryID 65).
+- Fixtures: three cases in `tools/dev/gen-simlink-fixtures.py`, regenerated `oracle/fixtures/simlink/messages.json` (176 valid); the Rust and C# fixture tests decode and re-encode them.
+
+## Tests actually run (increment a)
+- `cargo test -p eve-space`: all suites pass (711 unit tests, then the integration suites, including `simlink_fixtures`).
+- `cargo test -p eve-sim`: pass.
+- `cargo check --workspace --all-targets`: clean.
+- `dotnet build dotnet/EveRs.slnx`: 0 warnings, 0 errors.
+- `dotnet test dotnet/tests/Eve.Space.Tests`: 276 pass.
+- `EVE_PG_URL='Host=127.0.0.1;Username=postgres;Database=eve' dotnet test dotnet/tests/Eve.Services.Space.Tests`: 648 pass, 0 skipped.
+- New scene tests in `scene/tests.rs`: a structure is a body in the bind; placed while a pilot is in the system it is told; its state change is told once; removal is told once.
+
+## Next steps
+1. (b) Health layers and the damage cap in `crates/eve-space/src/health/mod.rs`, `Out::StructureDamaged`. Layers and caps from SDE 263/265/9 and 2034-2036 (structures phase section 1).
+2. (c) Dockable body in `scene/docking.rs` (`Station` -> dockable body; state gate from J `STRUCTURE_DISABLED_STATES`).
+3. (d) Host `dotnet/src/Eve.Services.Space/SpaceStructures.cs`: restore on first pilot entry, `structure.state_changed` -> `SetStructureState`, `StructureDamaged` -> ST-0 machine.
+4. (e) Headless test `tools/headless-client/tests/test_structures.py` (MITM rows stay UNVERIFIED until the graphical client is used).
+
+## Gotchas
+- The Serena MCP view did not match this worktree: edits made through it did not reach `/home/user/wt-st1` (git stayed clean). Increment a was applied with python3 scripts from Bash, as AGENT_RULES.md prescribes. Check `git status` after any edit.
+- Bash `grep` is denied in this repository; use `tail`/`head` on command output, or python3 for searches.
+- `EVE_PG_URL` must be the key=value form (`Host=127.0.0.1;Username=postgres;Database=eve`). `Eve.Services.Space.Tests` takes about 8 minutes; run it in the background.
+- The heavy lock: `flock -o -w 1800 /tmp/eve-heavy.lock <cmd>`, with `-p:UseSharedCompilation=false` on dotnet build and test, and `CARGO_TARGET_DIR=/home/user/eve.rs/target`.
+- The structure ball is `Kind::Station` and is not verified on the client (DEVIATIONS "Structure ball (ST-1)").
+
+## Files
+- `crates/eve-space/src/{world.rs, scene/structures.rs, scene/mod.rs, scene/tests.rs, sim/dispatch.rs, payload.rs, slim.rs, warp.rs}`, `link/{kind.rs, mod.rs, decode_message.rs, payload.rs, encode.rs}`, `tests/simlink_fixtures.rs`
+- `dotnet/src/Eve.Space/{SimCodec.cs, SimCodec.Decode.cs, SimCodec.Encode.cs, SimCodec.Shared.cs, SimMessages.cs, ISimulation.cs, SimClient.cs}`, `dotnet/tests/Eve.Space.Tests/SimCodecTests.cs`, `dotnet/tests/Eve.Services.Space.Tests/FakeSim.cs`
+- `tools/dev/gen-simlink-fixtures.py`, `oracle/fixtures/simlink/messages.json`
+- `docs/design/adr/0013-module-work-cycle-wire.md` (addendum), `docs/reference/compat/DEVIATIONS.md` ("Structure ball (ST-1)"), `docs/project/TODO.md` (section 46)

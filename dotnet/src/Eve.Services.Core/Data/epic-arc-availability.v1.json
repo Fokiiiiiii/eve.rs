@@ -3,13 +3,13 @@
   "source": {
     "arcIDs": "Official epic arc _key values of CCP SDE build 3405148 (table epicArcs); every row below names one of them.",
     "clientBuild": "The client build this server targets is 3396210 (sde/lock.json pinned; eve-logic is the V24.01 client).",
-    "method": "in-client-build: the arc ID is in the V24.01 client constants. newer-than-client: it is not, and other evidence says it is later. unknown: no evidence either way (none in this table).",
+    "method": "in-client-build: the arc ID is in the V24.01 client constants, or the owner confirmed that the arc exists in the game (evidence says which). newer-than-client: it is not, and other evidence says it is later. unknown: no evidence either way (none in this table).",
     "noNames": "Arc names and other CCP strings are not in this file."
   },
   "counts": {
     "total": 21,
-    "in-client-build": 9,
-    "newer-than-client": 12,
+    "in-client-build": 21,
+    "newer-than-client": 0,
     "unknown": 0
   },
   "arcs": [
@@ -50,63 +50,63 @@
     },
     {
       "arcID": 64,
-      "availability": "newer-than-client",
-      "evidence": "Not in the V24.01 client's epic arc constants (epicArcConst.py:7-15, which list nine arcs; the wiki's Epic arc page also says nine). Its agents are aura agents (agent type 11, division 22) in the pinned build 3396210. The owner's client export holds the arc, but that export's client build is not recorded, so the arc is treated as newer than the client build."
+      "availability": "in-client-build",
+      "evidence": "Owner-confirmed: the owner states this pilot certification arc exists in the game, so it is offered like the in-client arcs. Not in the V24.01 client's epic arc constants (epicArcConst.py:7-15); its agents are aura agents (agent type 11, division 22) in the pinned build 3396210. The owner's client export holds the arc, but that export's client build is not recorded."
     },
     {
       "arcID": 67,
-      "availability": "newer-than-client",
-      "evidence": "Not in the V24.01 client's epic arc constants (epicArcConst.py:7-15, which list nine arcs; the wiki's Epic arc page also says nine). Its agents are aura agents (agent type 11, division 22) in the pinned build 3396210. The owner's client export holds the arc, but that export's client build is not recorded, so the arc is treated as newer than the client build."
+      "availability": "in-client-build",
+      "evidence": "Owner-confirmed: the owner states this pilot certification arc exists in the game, so it is offered like the in-client arcs. Not in the V24.01 client's epic arc constants (epicArcConst.py:7-15); its agents are aura agents (agent type 11, division 22) in the pinned build 3396210. The owner's client export holds the arc, but that export's client build is not recorded."
     },
     {
       "arcID": 68,
-      "availability": "newer-than-client",
-      "evidence": "Not in the V24.01 client's epic arc constants (epicArcConst.py:7-15, which list nine arcs; the wiki's Epic arc page also says nine). Its agents are aura agents (agent type 11, division 22) in the pinned build 3396210. The owner's client export holds the arc, but that export's client build is not recorded, so the arc is treated as newer than the client build."
+      "availability": "in-client-build",
+      "evidence": "Owner-confirmed: the owner states this pilot certification arc exists in the game, so it is offered like the in-client arcs. Not in the V24.01 client's epic arc constants (epicArcConst.py:7-15); its agents are aura agents (agent type 11, division 22) in the pinned build 3396210. The owner's client export holds the arc, but that export's client build is not recorded."
     },
     {
       "arcID": 69,
-      "availability": "newer-than-client",
-      "evidence": "Not in the V24.01 client's epic arc constants (epicArcConst.py:7-15, which list nine arcs; the wiki's Epic arc page also says nine). Its agents are aura agents (agent type 11, division 22) in the pinned build 3396210. The owner's client export holds the arc, but that export's client build is not recorded, so the arc is treated as newer than the client build."
+      "availability": "in-client-build",
+      "evidence": "Owner-confirmed: the owner states this pilot certification arc exists in the game, so it is offered like the in-client arcs. Not in the V24.01 client's epic arc constants (epicArcConst.py:7-15); its agents are aura agents (agent type 11, division 22) in the pinned build 3396210. The owner's client export holds the arc, but that export's client build is not recorded."
     },
     {
       "arcID": 70,
-      "availability": "newer-than-client",
-      "evidence": "Not in the V24.01 client's epic arc constants (epicArcConst.py:7-15, which list nine arcs; the wiki's Epic arc page also says nine). Its agents are aura agents (agent type 11, division 22) in the pinned build 3396210. The owner's client export holds the arc, but that export's client build is not recorded, so the arc is treated as newer than the client build."
+      "availability": "in-client-build",
+      "evidence": "Owner-confirmed: the owner states this pilot certification arc exists in the game, so it is offered like the in-client arcs. Not in the V24.01 client's epic arc constants (epicArcConst.py:7-15); its agents are aura agents (agent type 11, division 22) in the pinned build 3396210. The owner's client export holds the arc, but that export's client build is not recorded."
     },
     {
       "arcID": 71,
-      "availability": "newer-than-client",
-      "evidence": "Not in the V24.01 client's epic arc constants (epicArcConst.py:7-15, which list nine arcs; the wiki's Epic arc page also says nine). Its agents are aura agents (agent type 11, division 22) in the pinned build 3396210. The owner's client export holds the arc, but that export's client build is not recorded, so the arc is treated as newer than the client build."
+      "availability": "in-client-build",
+      "evidence": "Owner-confirmed: the owner states this pilot certification arc exists in the game, so it is offered like the in-client arcs. Not in the V24.01 client's epic arc constants (epicArcConst.py:7-15); its agents are aura agents (agent type 11, division 22) in the pinned build 3396210. The owner's client export holds the arc, but that export's client build is not recorded."
     },
     {
       "arcID": 72,
-      "availability": "newer-than-client",
-      "evidence": "Not in the V24.01 client's epic arc constants (epicArcConst.py:7-15, which list nine arcs; the wiki's Epic arc page also says nine). Its agents are aura agents (agent type 11, division 22) in the pinned build 3396210. The owner's client export holds the arc, but that export's client build is not recorded, so the arc is treated as newer than the client build."
+      "availability": "in-client-build",
+      "evidence": "Owner-confirmed: the owner states this pilot certification arc exists in the game, so it is offered like the in-client arcs. Not in the V24.01 client's epic arc constants (epicArcConst.py:7-15); its agents are aura agents (agent type 11, division 22) in the pinned build 3396210. The owner's client export holds the arc, but that export's client build is not recorded."
     },
     {
       "arcID": 73,
-      "availability": "newer-than-client",
-      "evidence": "Not in the V24.01 client's epic arc constants (epicArcConst.py:7-15, which list nine arcs; the wiki's Epic arc page also says nine). Its agents are aura agents (agent type 11, division 22) in the pinned build 3396210. The owner's client export holds the arc, but that export's client build is not recorded, so the arc is treated as newer than the client build."
+      "availability": "in-client-build",
+      "evidence": "Owner-confirmed: the owner states this pilot certification arc exists in the game, so it is offered like the in-client arcs. Not in the V24.01 client's epic arc constants (epicArcConst.py:7-15); its agents are aura agents (agent type 11, division 22) in the pinned build 3396210. The owner's client export holds the arc, but that export's client build is not recorded."
     },
     {
       "arcID": 74,
-      "availability": "newer-than-client",
-      "evidence": "Not in the V24.01 client's epic arc constants (epicArcConst.py:7-15, which list nine arcs; the wiki's Epic arc page also says nine). Its agents are aura agents (agent type 11, division 22) in the pinned build 3396210. The owner's client export holds the arc, but that export's client build is not recorded, so the arc is treated as newer than the client build."
+      "availability": "in-client-build",
+      "evidence": "Owner-confirmed: the owner states this pilot certification arc exists in the game, so it is offered like the in-client arcs. Not in the V24.01 client's epic arc constants (epicArcConst.py:7-15); its agents are aura agents (agent type 11, division 22) in the pinned build 3396210. The owner's client export holds the arc, but that export's client build is not recorded."
     },
     {
       "arcID": 75,
-      "availability": "newer-than-client",
-      "evidence": "Not in the V24.01 client's epic arc constants (epicArcConst.py:7-15, which list nine arcs; the wiki's Epic arc page also says nine). Its agents are aura agents (agent type 11, division 22) in the pinned build 3396210. The owner's client export holds the arc, but that export's client build is not recorded, so the arc is treated as newer than the client build."
+      "availability": "in-client-build",
+      "evidence": "Owner-confirmed: the owner states this pilot certification arc exists in the game, so it is offered like the in-client arcs. Not in the V24.01 client's epic arc constants (epicArcConst.py:7-15); its agents are aura agents (agent type 11, division 22) in the pinned build 3396210. The owner's client export holds the arc, but that export's client build is not recorded."
     },
     {
       "arcID": 76,
-      "availability": "newer-than-client",
-      "evidence": "Not in the V24.01 client's epic arc constants (epicArcConst.py:7-15, which list nine arcs; the wiki's Epic arc page also says nine). Its agents are aura agents (agent type 11, division 22) in the pinned build 3396210. The owner's client export holds the arc, but that export's client build is not recorded, so the arc is treated as newer than the client build."
+      "availability": "in-client-build",
+      "evidence": "Owner-confirmed: the owner states this pilot certification arc exists in the game, so it is offered like the in-client arcs. Not in the V24.01 client's epic arc constants (epicArcConst.py:7-15); its agents are aura agents (agent type 11, division 22) in the pinned build 3396210. The owner's client export holds the arc, but that export's client build is not recorded."
     },
     {
       "arcID": 77,
-      "availability": "newer-than-client",
-      "evidence": "Not in the V24.01 client's epic arc constants (epicArcConst.py:7-15, which list nine arcs; the wiki's Epic arc page also says nine). Its agents are aura agents (agent type 11, division 22) in the pinned build 3396210. The owner's client export holds the arc, but that export's client build is not recorded, so the arc is treated as newer than the client build."
+      "availability": "in-client-build",
+      "evidence": "Owner-confirmed: the owner states this pilot certification arc exists in the game, so it is offered like the in-client arcs. Not in the V24.01 client's epic arc constants (epicArcConst.py:7-15); its agents are aura agents (agent type 11, division 22) in the pinned build 3396210. The owner's client export holds the arc, but that export's client build is not recorded."
     },
     {
       "arcID": 128,

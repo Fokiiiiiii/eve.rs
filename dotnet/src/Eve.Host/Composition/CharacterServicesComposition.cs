@@ -172,6 +172,7 @@ internal sealed partial class CharacterServicesComposition
     private SpaceSessions? spaceSessions;
     private SpaceContainers? spaceContainers;
     private SpaceDrones? spaceDrones;
+    private Eve.Services.Space.Sites.CosmicSiteDirector? cosmicSites;
     private Func<long, CancellationToken, Task> allianceAffiliationNotify = default!;
     private Eve.Services.Corporations.AllianceApplicationDueWorker allianceDue = default!;
     private Eve.Services.Corporations.AllianceRegistryService allianceRegistry = default!;

@@ -13,11 +13,12 @@ use eve_destiny::{BallEntity, IdRef, Kind, Vec3};
 use eve_marshal::Value;
 
 use crate::health::Damage;
+use crate::link::AnalysisBeaconState;
 use crate::missile_entity::CHARGE_CATEGORY;
 use crate::modules::Effect;
 use crate::payload;
 use crate::scene::{Out, Scene, SessionId, TICKS_PER_SECOND};
-use crate::wire::{id, int, list, text, tuple, word};
+use crate::wire::{filetime, id, int, list, slim_object, text, tuple, word};
 
 /// The id of the first deployable a scene makes (its own range, apart from the missiles and the wrecks).
 pub const DEPLOYABLE_ID_BASE: i64 = 4_250_000_000_000_000;
@@ -65,6 +66,9 @@ pub enum Role {
     /// A lance's beacon (EVE.js `spawnLanceBeacon`, protocol 39): a transient container the beam is drawn to. It does nothing but exist; it is taken out when
     /// its strike's effect ends (or stops), or when its lifetime is up.
     Beacon,
+    /// A CONCORD Rogue Analysis Beacon the host keeps a record of (protocol 61): a ball that does nothing but show what the host says of it (its activation and its
+    /// link, which the client reads from its slim item). The host takes it out when its record's time is up.
+    AnalysisBeacon { state: AnalysisBeaconState },
 }
 
 /// The beacon of a lance (EVE.js `MODULAR_EFFECT_BEACON_TYPE_ID` 41233, group 1704, radius 250): a transient "Modular Effect Beacon" container.
@@ -116,15 +120,9 @@ fn release_actions(stamp: u32, deployable: &Deployable) -> Result<Vec<Value>, ev
         Role::MobileWarpSource { .. } => (Kind::WarpDisruptionProbe, LegacyMode::Stop),
         Role::CynoInhibitor { .. } | Role::CynoBeacon { .. } => (Kind::Other, LegacyMode::Stop),
         Role::JumpBridge { .. } => (Kind::Other, LegacyMode::Stop),
+        Role::AnalysisBeacon { .. } => (Kind::Container, LegacyMode::Stop),
     };
-    let category = match deployable.role {
-        Role::Beacon => BEACON_CATEGORY,
-        Role::CynoField => CYNO_FIELD_CATEGORY,
-        Role::MobileWarpSource { .. } | Role::CynoInhibitor { .. } | Role::CynoBeacon { .. } => {
-            DEPLOYABLE_CATEGORY
-        }
-        _ => CHARGE_CATEGORY,
-    };
+    let category = category_of(&deployable.role);
     let ball = BallEntity {
         item_id: IdRef::Valid(deployable.id),
         kind,
@@ -140,22 +138,66 @@ fn release_actions(stamp: u32, deployable: &Deployable) -> Result<Vec<Value>, ev
         ..BallEntity::default()
     };
     let buffer = payload::add_balls_buffer(stamp, &[ball])?;
-    let slim = Value::Dict(
-        [
-            ("itemID", id(deployable.id)),
-            ("typeID", int(i64::from(deployable.spec.charge_type_id))),
-            ("ownerID", id(deployable.owner_id)),
-            ("name", text(deployable.spec.name.clone())),
-            ("groupID", int(i64::from(deployable.spec.group_id))),
-            ("categoryID", int(i64::from(category))),
-            ("sourceShipID", id(deployable.ship_id)),
-            ("launchModules", list([id(deployable.module_id)])),
-        ]
-        .into_iter()
-        .map(|(k, v)| (word(k), v))
-        .collect(),
-    );
+    let slim =
+        Value::Dict(slim_entries(deployable, category).into_iter().map(|(k, v)| (word(k), v)).collect());
     Ok(vec![payload::action(stamp, "AddBalls2", [tuple([buffer, list([slim])])])])
+}
+
+/// The category of a deployable's ball (EVE.js: a mobile deployable is category 22, a beacon and a field keep their own).
+fn category_of(role: &Role) -> i32 {
+    match role {
+        Role::Beacon => BEACON_CATEGORY,
+        Role::CynoField => CYNO_FIELD_CATEGORY,
+        Role::MobileWarpSource { .. }
+        | Role::CynoInhibitor { .. }
+        | Role::CynoBeacon { .. }
+        | Role::AnalysisBeacon { .. } => DEPLOYABLE_CATEGORY,
+        _ => CHARGE_CATEGORY,
+    }
+}
+
+/// The slim item of a deployable: its item, type, owner, name, group, category and launcher, and for a CRAB its components (see `analysis_beacon_entries`).
+fn slim_entries(deployable: &Deployable, category: i32) -> Vec<(&'static str, Value)> {
+    let mut entries = vec![
+        ("itemID", id(deployable.id)),
+        ("typeID", int(i64::from(deployable.spec.charge_type_id))),
+        ("ownerID", id(deployable.owner_id)),
+        ("name", text(deployable.spec.name.clone())),
+        ("groupID", int(i64::from(deployable.spec.group_id))),
+        ("categoryID", int(i64::from(category))),
+        ("sourceShipID", id(deployable.ship_id)),
+        ("launchModules", list([id(deployable.module_id)])),
+    ];
+    if let Role::AnalysisBeacon { state } = &deployable.role {
+        entries.extend(analysis_beacon_entries(state));
+    }
+    entries
+}
+
+/// A CRAB's components as its slim item keeps them (EVE.js `buildSlimItem`): `component_activate` (whether it is active, and when it becomes so otherwise; the
+/// wait is `activate_comp_durationSeconds`), and `component_linkWithShip` (when it was put in space, the link state, when the link completes, the linked ship).
+fn analysis_beacon_entries(state: &AnalysisBeaconState) -> Vec<(&'static str, Value)> {
+    let when = |ticks: i64| if ticks == 0 { Value::None } else { filetime(ticks) };
+    let linked = if state.linked_ship_id == 0 { Value::None } else { id(state.linked_ship_id) };
+    vec![
+        (
+            "component_activate",
+            list([
+                Value::Bool(state.active),
+                if state.active { Value::None } else { when(state.activate_at) },
+            ]),
+        ),
+        ("activate_comp_durationSeconds", int(i64::from(state.activation_seconds))),
+        (
+            "component_linkWithShip",
+            list([
+                when(state.deployed_at),
+                int(i64::from(state.link_state)),
+                when(state.link_complete_at),
+                linked,
+            ]),
+        ),
+    ]
 }
 
 impl Scene {
@@ -740,10 +782,73 @@ impl Scene {
                 | Role::ScanProbe
                 | Role::JumpBridge { .. }
                 | Role::CynoBeacon { .. }
-                | Role::CynoInhibitor { .. } => false,
+                | Role::CynoInhibitor { .. }
+                | Role::AnalysisBeacon { .. } => false,
             })
     }
 }
 
 #[cfg(test)]
 mod tests;
+
+impl Scene {
+    /// A CRAB the host keeps a record of is put in space where it lies (protocol 61). Given once: one already in space is left as it is. Its end is the host's.
+    pub(crate) fn place_analysis_beacon(
+        &mut self,
+        placement: crate::link::AnalysisBeaconPlacement,
+        now: i64,
+    ) -> Vec<Out> {
+        if self.deployables.contains_key(&placement.deployable_id) {
+            return Vec::new();
+        }
+        let [x, y, z] = placement.position;
+        let deployable = Deployable {
+            id: placement.deployable_id,
+            spec: Spec {
+                charge_type_id: placement.type_id,
+                group_id: placement.group_id,
+                name: placement.name,
+                radius: placement.radius,
+            },
+            role: Role::AnalysisBeacon { state: placement.state },
+            position: Vec3::new(x, y, z),
+            ends_at: i64::MAX,
+            launcher: 0,
+            ship_id: placement.ship_id,
+            owner_id: placement.owner_id,
+            corporation_id: placement.corporation_id,
+            alliance_id: placement.alliance_id,
+            module_id: 0,
+            module_type: 0,
+            watchers: BTreeSet::new(),
+        };
+        self.insert_deployable(deployable, now)
+    }
+
+    /// The host sets a CRAB's state: those who have it in view are told its slim item again (`OnSlimItemChange`, the whole slim item). A state already set is
+    /// not told again, and a deployable that is not a CRAB is left alone.
+    pub(crate) fn set_analysis_beacon_state(
+        &mut self,
+        deployable_id: i64,
+        state: AnalysisBeaconState,
+        at: i64,
+    ) -> Vec<Out> {
+        let Some(deployable) = self.deployables.get_mut(&deployable_id) else { return Vec::new() };
+        let Role::AnalysisBeacon { state: current } = &mut deployable.role else { return Vec::new() };
+        if *current == state {
+            return Vec::new();
+        }
+        *current = state;
+        let changed = deployable.clone();
+        let stamp = self.next_stamp(at);
+        let change = payload::action(
+            stamp,
+            "OnSlimItemChange",
+            [id(changed.id), slim_object(slim_entries(&changed, category_of(&changed.role)))],
+        );
+        self.missile_audience(changed.position)
+            .into_iter()
+            .map(|session| Self::update(session, vec![change.clone()]))
+            .collect()
+    }
+}

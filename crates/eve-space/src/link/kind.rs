@@ -83,13 +83,17 @@ pub const REMOVE_STRUCTURE: u8 = 75;
 pub const SET_STRUCTURE_STATE: u8 = 76;
 /// The simulation says a hit emptied a layer of a structure or paused its repair (simulation to host, protocol 60).
 pub const STRUCTURE_DAMAGED: u8 = 77;
+/// A CRAB the host keeps a record of is put in space (protocol 61).
+pub const PLACE_ANALYSIS_BEACON: u8 = 78;
+/// The host sets a CRAB's state (protocol 61).
+pub const SET_ANALYSIS_BEACON_STATE: u8 = 79;
 /// The scan targets of a system, answered to the host's scan target query (command 27, protocol 52).
 pub const SCAN_TARGETS: u8 = 71;
 /// The things a directional scan can see in a cone of space, answered to command 28 (protocol 54).
 pub const DIRECTIONAL_TARGETS: u8 = 72;
 pub const BUFF_STATE: u8 = 62;
 pub const ECM_BURST: u8 = 67;
-/// Host permissions and deadlines for a pilot's tether (protocol 61).
-pub const TETHER_POLICY: u8 = 78;
-/// Simulation tether transition sent to the host (protocol 61).
-pub const TETHER_CHANGED: u8 = 79;
+/// Host permissions and deadlines for a pilot's tether (protocol 62).
+pub const TETHER_POLICY: u8 = 80;
+/// Simulation tether transition sent to the host (protocol 62).
+pub const TETHER_CHANGED: u8 = 81;

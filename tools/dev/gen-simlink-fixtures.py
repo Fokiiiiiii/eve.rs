@@ -19,7 +19,8 @@ KINDS = {"Hello": 1, "HelloAck": 2, "Enter": 3, "Leave": 4, "Bind": 5, "UpdateSt
          "AdjustCharge": 33, "ChargeAdjusted": 34, "Arrived": 35, "LaunchDrone": 36, "DroneCommand": 37, "DroneResults": 38,
          "DroneScooped": 39, "DroneReleased": 40, "ModuleWorkCycle": 51, "ModuleWorkResult": 52, "ModuleEnded": 53, "LaunchFighter": 54, "FighterOrder": 55, "FighterResults": 56, "FighterLanded": 57, "FighterReleased": 58, "FighterGotoPoint": 59, "FighterSize": 60, "UpdateEffect": 61, "BuffState": 62, "Deployed": 63, "RemoveDeployed": 64, "PlaceProbe": 65, "RemoveProbe": 66,
          "EcmBurst": 67, "PlaceDisruptor": 68, "SetDisruptorActive": 69, "PlaceInhibitor": 70, "ScanTargets": 71, "DirectionalTargets": 72,
-         "PlaceCynoBeacon": 73, "PlaceStructure": 74, "RemoveStructure": 75, "SetStructureState": 76, "StructureDamaged": 77, "TetherPolicy": 78, "TetherChanged": 79}
+         "PlaceCynoBeacon": 73, "PlaceStructure": 74, "RemoveStructure": 75, "SetStructureState": 76, "StructureDamaged": 77,
+         "PlaceAnalysisBeacon": 78, "SetAnalysisBeaconState": 79, "TetherPolicy": 80, "TetherChanged": 81}
 
 def s(text):  # u16 length + UTF-8
     data = text.encode("utf-8")
@@ -41,6 +42,12 @@ def i64(value):
 
 def u64(value):
     return struct.pack("<Q", int(value))
+
+
+def analysis_beacon_state(state):
+    """A CRAB's state (protocol 61): active flag, activate-at and deployed-at FILETIMEs, activation seconds, link state, link-complete FILETIME, linked ship."""
+    return (bytes([1 if state["active"] else 0]) + i64(state["activateAt"]) + i64(state["deployedAt"])
+            + struct.pack("<ii", state["activationSeconds"], state["linkState"]) + i64(state["linkCompleteAt"]) + i64(state["linkedShipId"]))
 
 
 def ship(m):
@@ -449,6 +456,12 @@ def build(m):
                      + i64(m["ownerId"]) + struct.pack("<ii", m["corporationId"], m["allianceId"]) + i64(m["shipId"]))
     if k == "SetDisruptorActive":
         return frame(k, i64(m["deployableId"]) + bytes([1 if m["active"] else 0]))
+    if k == "PlaceAnalysisBeacon":  # a CRAB (protocol 61): its ball and owner, then its state (the client's activation and link, see analysis_beacon_state)
+        return frame(k, i64(m["deployableId"]) + struct.pack("<i", m["solarSystemId"]) + s(m["typeName"]) + struct.pack("<ii", m["typeId"], m["groupId"])
+                     + struct.pack("<3d", *m["position"]) + struct.pack("<d", m["radius"]) + i64(m["ownerId"])
+                     + struct.pack("<ii", m["corporationId"], m["allianceId"]) + i64(m["shipId"]) + analysis_beacon_state(m["state"]))
+    if k == "SetAnalysisBeaconState":
+        return frame(k, i64(m["deployableId"]) + analysis_beacon_state(m["state"]))
     if k == "Measured":
         return frame(k, u64(m["sessionId"]) + bytes([m["command"]]) + (bytes([1]) + struct.pack("<d", m["distance"]) if m.get("distance") is not None else bytes([0])))
     if k == "Spawn":
@@ -534,8 +547,8 @@ BARE = dict(IBIS, name="", modules=[], allianceId=99000001, securityStatus=-2.5,
             condition={"damage": 0.0, "armorDamage": 0.0, "shieldCharge": 1.0, "charge": 1.0})
 
 valid = [
-    {"name": "hello", "kind": "Hello", "version": 61},
-    {"name": "hello ack", "kind": "HelloAck", "version": 61, "pollHz": 4},
+    {"name": "hello", "kind": "Hello", "version": 62},
+    {"name": "hello ack", "kind": "HelloAck", "version": 62, "pollHz": 4},
     {"name": "enter by undocking", "kind": "Enter", "sessionId": "1790646377000015", "solarSystemId": 30100032,
      "how": 0, "stationId": "60015249", "ship": IBIS},
     {"name": "enter already in space, no modules, non-ASCII name", "kind": "Enter", "sessionId": "1",
@@ -1046,6 +1059,15 @@ valid = [
      "position": [311989835983.1308, -13069154020.916222, 156646308895.76187], "radius": 50.0, "range": 5000.0, "active": False,
      "ownerId": "1790646377000015", "corporationId": 98000001, "allianceId": 0, "shipId": "9988400001943"},
     {"name": "mobile warp disruptor anchored", "kind": "SetDisruptorActive", "deployableId": "4250000000000009", "active": True},
+    {"name": "CRAB dropped from a ship, not yet active (20 s wait), no link", "kind": "PlaceAnalysisBeacon", "deployableId": "4250000000000012",
+     "solarSystemId": 30100032, "typeName": "CONCORD Rogue Analysis Beacon", "typeId": 60244, "groupId": 4137,
+     "position": [311989835983.1308, -13069154020.916222, 156646308895.76187], "radius": 100.0,
+     "ownerId": "1790646377000015", "corporationId": 98000001, "allianceId": 0, "shipId": "9988400001943",
+     "state": {"active": False, "activateAt": "133900000000000000", "deployedAt": "133899999000000000", "activationSeconds": 20,
+               "linkState": 1, "linkCompleteAt": "0", "linkedShipId": "0"}},
+    {"name": "CRAB active with a carrier linked (running, complete later)", "kind": "SetAnalysisBeaconState", "deployableId": "4250000000000012",
+     "state": {"active": True, "activateAt": "0", "deployedAt": "133899999000000000", "activationSeconds": 20,
+               "linkState": 2, "linkCompleteAt": "133900240000000000", "linkedShipId": "9988400001944"}},
     {"name": "mobile cynosural inhibitor dropped and not yet anchored", "kind": "PlaceInhibitor", "deployableId": "4250000000000010",
      "solarSystemId": 30100032, "typeName": "Mobile Cynosural Inhibitor", "typeId": 33476, "groupId": 1249,
      "position": [311989835983.1308, -13069154020.916222, 156646308895.76187], "radius": 100.0, "range": 100000.0, "active": False,

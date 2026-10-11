@@ -904,3 +904,77 @@ fn a_mobile_cynosural_beacon_is_a_field_only_once_anchored_and_is_taken_out_on_r
     assert!(!scene.deployables.contains_key(&beacon.deployable_id));
     assert!(!removed.is_empty(), "those who see it are told it is gone");
 }
+
+/// The id of the CRAB in these tests, and of the ship it is linked to.
+const CRAB: i64 = 4_250_000_000_000_050;
+const LINKED_SHIP: i64 = 9_988_400_001_944;
+
+/// A CRAB the host places 1 km ahead of `A`'s ship: not yet active, with the link idle.
+fn crab_placement(scene: &Scene, state: AnalysisBeaconState) -> crate::link::AnalysisBeaconPlacement {
+    let a = scene.pilots[&A].ship.position;
+    crate::link::AnalysisBeaconPlacement {
+        deployable_id: CRAB,
+        solar_system_id: 30_100_032,
+        name: "CONCORD Rogue Analysis Beacon".to_string(),
+        type_id: 60_244,
+        group_id: 4_137,
+        position: [a.x + 1_000.0, a.y, a.z],
+        radius: 100.0,
+        owner_id: 1_790_646_377_000_015,
+        corporation_id: 98_000_001,
+        alliance_id: 0,
+        ship_id: 9_988_400_001_943,
+        state,
+    }
+}
+
+#[test]
+fn a_crab_is_put_in_space_once_and_the_state_the_host_sets_is_told_only_when_it_changes() {
+    let (mut scene, t) = crowd();
+    let idle = AnalysisBeaconState {
+        active: false,
+        activate_at: 133_900_000_000_000_000,
+        deployed_at: 133_899_999_000_000_000,
+        activation_seconds: 20,
+        link_state: 1,
+        link_complete_at: 0,
+        linked_ship_id: 0,
+    };
+    let placement = crab_placement(&scene, idle);
+
+    let shown = format!("{:?}", scene.place_analysis_beacon(placement.clone(), t));
+    assert!(shown.contains("AddBalls2"), "the pilots who see the place are given the ball");
+    assert!(shown.contains("component_linkWithShip") && shown.contains("component_activate"));
+    assert!(
+        shown.contains("Int(20)"),
+        "the activation wait is in the slim item (activate_comp_durationSeconds)"
+    );
+    assert!(scene.place_analysis_beacon(placement, t).is_empty(), "a CRAB already in space is given once");
+
+    let linked = AnalysisBeaconState {
+        active: true,
+        activate_at: 0,
+        link_state: 2,
+        link_complete_at: 133_900_240_000_000_000,
+        linked_ship_id: LINKED_SHIP,
+        ..idle
+    };
+    let told = scene.set_analysis_beacon_state(CRAB, linked, t);
+    let text = format!("{told:?}");
+    assert!(
+        !told.is_empty() && text.contains("OnSlimItemChange"),
+        "those who see it are told its slim item again"
+    );
+    assert!(text.contains("Long(133899999000000000)"), "linkWithShip keeps when it was put in space");
+    assert!(text.contains("Long(133900240000000000)"), "linkWithShip keeps when the link completes");
+    assert!(text.contains(&format!("Long({LINKED_SHIP})")), "linkWithShip keeps the linked ship");
+    assert!(text.contains("Int(2)"), "the link is running (state 2)");
+    assert!(
+        scene.set_analysis_beacon_state(CRAB, linked, t).is_empty(),
+        "a state already set is not told again"
+    );
+    assert!(
+        scene.set_analysis_beacon_state(CRAB + 1, linked, t).is_empty(),
+        "a deployable that is not in space is left alone"
+    );
+}

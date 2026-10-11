@@ -28,4 +28,7 @@
   <ItemGroup>
     <InternalsVisibleTo Include="Eve.Services.Space.Tests" />
   </ItemGroup>
+  <ItemGroup>
+    <EmbeddedResource Include="Beacons/Data/*.json" LogicalName="%(Filename)%(Extension)" />
+  </ItemGroup>
 </Project>

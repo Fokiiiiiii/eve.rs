@@ -1,0 +1,23 @@
+{
+  "schema": "eve.rs/analysis-beacon-rules/v1",
+  "owner": "Owner decision D-C1 (docs/project/TODO.md, CRAB). CCP publishes no CRAB Rogue Drone roster, wave count, cadence or reward quantity. These figures are EveJS v0.12.9's (crabWaveAuthority.js: batchAmount and pool; crabRewardAuthority.js: the observed standard and Carrier sample). They are eve.rs rule constants, not CCP data. Only the wave at scan progress 0 is in this file: EveJS's second wave (at 0.5) is outside the first cut.",
+  "beacons": [
+    {
+      "typeId": 60244,
+      "wave": { "atScanProgress": 0, "spawnPool": "rogue_drones", "amount": 4 },
+      "rewards": [
+        { "typeId": 60459, "quantity": 1441 },
+        { "typeId": 60466, "quantity": 1 },
+        { "typeId": 60464, "quantity": 1 }
+      ]
+    },
+    {
+      "typeId": 92183,
+      "wave": { "atScanProgress": 0, "spawnPool": "rogue_drones_deadspace_pve", "amount": 6 },
+      "rewards": [
+        { "typeId": 60459, "quantity": 2270 },
+        { "typeId": 60473, "quantity": 1 }
+      ]
+    }
+  ]
+}

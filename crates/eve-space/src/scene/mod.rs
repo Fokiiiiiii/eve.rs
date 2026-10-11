@@ -255,7 +255,7 @@ pub enum Out {
     DeployedLit { session: SessionId, placement: Box<crate::link::DeployedPlacement> },
     /// A hit emptied a layer of a structure or paused its repair; the host decides what that means (protocol 60).
     StructureDamaged { structure_id: i64, depleted: Option<crate::health::Layer>, over_threshold: bool },
-    /// A tether transition; the host owns its client FX and access policy (protocol 61).
+    /// A tether transition; the host owns its client FX and access policy (protocol 62).
     TetherChanged { session: SessionId, previous_structure_id: i64, structure_id: i64, repairing: bool },
     /// A command the scene cannot do.
     Refused { session: SessionId, command: u8, reason: &'static str },

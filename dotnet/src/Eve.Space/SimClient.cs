@@ -465,6 +465,10 @@ public sealed class SimClient : ISimulation, IAsyncDisposable
 
     public void SetDisruptorActive(long deployableId, bool active) => Send(new SimSetDisruptorActive(deployableId, active));
 
+    public void PlaceAnalysisBeacon(SimPlaceAnalysisBeacon beacon) => Send(beacon);
+
+    public void SetAnalysisBeaconState(long deployableId, SimAnalysisBeaconState state) => Send(new SimSetAnalysisBeaconState(deployableId, state));
+
     public void PlaceInhibitor(SimPlaceInhibitor inhibitor) => Send(inhibitor);
 
     public void PlaceCynoBeacon(SimPlaceCynoBeacon beacon) => Send(beacon);

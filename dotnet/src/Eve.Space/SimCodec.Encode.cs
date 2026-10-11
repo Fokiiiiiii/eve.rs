@@ -95,6 +95,18 @@ public static partial class SimCodec
         w.U8(status.Repairing is null ? (byte)0 : status.Repairing.Value ? (byte)2 : (byte)1);
     }
 
+    /// <summary>A CRAB's state as the simulation reads it (protocol 61); see <c>ReadAnalysisBeaconState</c>.</summary>
+    private static void WriteAnalysisBeaconState(Writer w, SimAnalysisBeaconState state)
+    {
+        w.U8(state.Active ? (byte)1 : (byte)0);
+        w.I64(state.ActivateAtFiletime);
+        w.I64(state.DeployedAtFiletime);
+        w.I32(state.ActivationSeconds);
+        w.I32(state.LinkState);
+        w.I64(state.LinkCompleteAtFiletime);
+        w.I64(state.LinkedShipId);
+    }
+
     private static void WriteVector(Writer w, IReadOnlyList<double> v)
     {
         foreach (var number in v)
@@ -1046,6 +1058,26 @@ private static void WriteAction(Writer w, SimAction action)
                 w.U8(Kind.SetDisruptorActive);
                 w.I64(m.DeployableId);
                 w.U8(m.Active ? (byte)1 : (byte)0);
+                break;
+            case SimPlaceAnalysisBeacon m:
+                w.U8(Kind.PlaceAnalysisBeacon);
+                w.I64(m.DeployableId);
+                w.I32(m.SolarSystemId);
+                w.Text(m.Name);
+                w.I32(m.TypeId);
+                w.I32(m.GroupId);
+                WriteVector(w, m.Position);
+                w.F64(m.Radius);
+                w.I64(m.OwnerId);
+                w.I32(m.CorporationId);
+                w.I32(m.AllianceId);
+                w.I64(m.ShipId);
+                WriteAnalysisBeaconState(w, m.State);
+                break;
+            case SimSetAnalysisBeaconState m:
+                w.U8(Kind.SetAnalysisBeaconState);
+                w.I64(m.DeployableId);
+                WriteAnalysisBeaconState(w, m.State);
                 break;
             case SimPlaceAsteroid m:
                 w.U8(Kind.PlaceAsteroid);

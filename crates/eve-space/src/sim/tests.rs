@@ -1060,7 +1060,7 @@ fn a_ship_that_has_docked_is_taken_from_the_view_of_the_others_by_the_poll() {
 }
 
 #[test]
-fn tether_protocol61_frames_round_trip_in_little_endian_with_standard_bool() {
+fn tether_protocol62_frames_round_trip_in_little_endian_with_standard_bool() {
     let policy = Message::TetherPolicy {
         session_id: 7, blocked_for_ms: 1_500, lease_ms: 5_000,
         candidates: vec![
@@ -1070,7 +1070,7 @@ fn tether_protocol61_frames_round_trip_in_little_endian_with_standard_bool() {
     };
     let frame = policy.encode();
     assert_eq!(u32::from_le_bytes(frame[..4].try_into().unwrap()), 61);
-    assert_eq!(frame[4], 78);
+    assert_eq!(frame[4], 80);
     assert_eq!(&frame[5..13], &7_u64.to_le_bytes());
     assert_eq!(&frame[13..21], &1_500_u64.to_le_bytes());
     assert_eq!(&frame[21..29], &5_000_u64.to_le_bytes());
@@ -1083,7 +1083,7 @@ fn tether_protocol61_frames_round_trip_in_little_endian_with_standard_bool() {
     };
     let frame = changed.encode();
     assert_eq!(u32::from_le_bytes(frame[..4].try_into().unwrap()), 26);
-    assert_eq!(frame[4], 79);
+    assert_eq!(frame[4], 81);
     assert_eq!(frame[29], 1);
     assert_eq!(Message::decode(&frame[4..]).unwrap(), changed);
     let mut invalid = frame[4..].to_vec();
@@ -1138,6 +1138,6 @@ fn tether_host_policy_dispatches_to_the_real_scene_and_transitions_return_to_the
     let wrong_direction = simulation.handle(
         Message::TetherChanged { session_id: SESSION, previous_structure_id: 0, structure_id, repairing: false }, NOON,
     ).unwrap_err();
-    assert!(wrong_direction.0.contains("kind 79"));
-    assert_eq!(crate::link::PROTOCOL_VERSION, 61);
+    assert!(wrong_direction.0.contains("kind 81"));
+    assert_eq!(crate::link::PROTOCOL_VERSION, 62);
 }

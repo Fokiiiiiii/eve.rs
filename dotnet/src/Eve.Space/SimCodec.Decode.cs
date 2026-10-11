@@ -50,6 +50,23 @@ public static partial class SimCodec
 
     private static double[] ReadVector(ref Reader r) => [r.F64(), r.F64(), r.F64()];
 
+    /// <summary>A CRAB's state (protocol 61): the activation flag, the FILETIME times, the wait in seconds, the link state (1 to 4) and the linked ship.</summary>
+    private static SimAnalysisBeaconState ReadAnalysisBeaconState(ref Reader r)
+    {
+        var active = ReadFlag(ref r, "analysis beacon");
+        var activateAt = r.I64();
+        var deployedAt = r.I64();
+        var activationSeconds = r.I32();
+        var linkState = r.I32();
+        var linkCompleteAt = r.I64();
+        var linkedShip = r.I64();
+        if (activationSeconds < 0 || linkState is < 1 or > 4)
+        {
+            throw new SimLinkException(SimLinkError.BadValue, "bad analysis beacon state");
+        }
+        return new SimAnalysisBeaconState(active, activateAt, deployedAt, activationSeconds, linkState, linkCompleteAt, linkedShip);
+    }
+
     /// <summary>A flag byte: 0 or 1; anything else is a bad value of <paramref name="what"/>.</summary>
     private static bool ReadFlag(ref Reader r, string what) => r.U8() switch
     {

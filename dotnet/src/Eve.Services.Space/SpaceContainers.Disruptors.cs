@@ -2,6 +2,7 @@ using Eve.Inventory;
 using Eve.Marshal;
 using Eve.Scheduler;
 using Eve.Services.Ships;
+using Eve.Services.Space.Beacons;
 using Eve.Ships;
 using Eve.Space;
 
@@ -95,9 +96,14 @@ public sealed partial class SpaceContainers
             return null;
         }
         await _statics.EnsureTypesAsync([item.TypeId], cancellationToken);
-        if (_statics.Type(item.TypeId) is not { } type || type.GroupId is not (MobileWarpDisruptorGroup or MobileCynoInhibitorGroup or MobileCynoBeaconGroup))
+        if (_statics.Type(item.TypeId) is not { } type || type.GroupId is not (MobileWarpDisruptorGroup or MobileCynoInhibitorGroup or MobileCynoBeaconGroup or AnalysisBeaconRules.Group))
         {
             return null;
+        }
+        if (type.GroupId == AnalysisBeaconRules.Group)
+        {
+            // a CONCORD Rogue Analysis Beacon has its own runtime (Beacons/AnalysisBeaconDirector)
+            return LaunchAnalysisBeacon is { } launchBeacon ? await launchBeacon(session, itemId, cancellationToken) : throw Unavailable();
         }
         var inhibitor = type.GroupId == MobileCynoInhibitorGroup;
         var beacon = type.GroupId == MobileCynoBeaconGroup;

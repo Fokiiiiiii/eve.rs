@@ -300,6 +300,16 @@ internal sealed partial class CharacterServicesComposition
                 Eve.Dungeons.DungeonCatalog.LoadEmbedded(), Eve.Dungeons.WaveRules.LoadEmbedded(), new NpcSelector(npcAuthority),
                 new Eve.Services.Space.SpaceDungeonNpcs(spaceSessions), spaceSchema);
             await dungeonWaves.AttachAsync();
+            // the CONCORD Rogue Analysis Beacon (CRAB, D-L1 and D-S1): deployed from the hold, linked, scanned, expired by its own record kind
+            await Eve.Services.Space.Beacons.AnalysisBeaconDirector.MigrateAsync(source, spaceSchema);
+            var beacons = new Eve.Services.Space.Beacons.AnalysisBeaconDirector(
+                source, spaceSchema, Eve.Services.Space.Beacons.AnalysisBeaconRules.LoadEmbedded(), foundations.Scheduler, foundations.Events, sim, ships, items, dogma,
+                spaceSessions, new Eve.Ships.PgDeployedStore(source, spaceSchema), new Eve.Services.Space.SpaceDungeonNpcs(spaceSessions), new NpcSelector(npcAuthority), now,
+                message => Console.Error.WriteLine($"eve-host: {message}"));
+            await beacons.AttachAsync();
+            spaceContainers.RegisterDeployedKind(Eve.Services.Space.Beacons.AnalysisBeaconDirector.Kind, beacons.ExpireAsync, beacons.RestoreAsync);
+            spaceContainers.LaunchAnalysisBeacon = beacons.LaunchAsync;
+            analysisBeacons = beacons;
             // the Sansha incursions (B-L1): their lifecycle, and their staging sites on the dungeon waves (B-S1); the map and the rewards read them
             await Eve.Services.Space.Incursions.IncursionDirector.MigrateAsync(source, spaceSchema);
             var incursions = new Eve.Services.Space.Incursions.IncursionDirector(source, foundations.Content, foundations.Scheduler, dungeonWaves, solarSystems, spaceSchema);

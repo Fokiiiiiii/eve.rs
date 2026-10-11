@@ -13,6 +13,21 @@ public sealed partial class SpaceContainers
     /// <summary>The record kind of a cynosural field (the only kind the simulation says it lit).</summary>
     internal const string CynoFieldKind = "cyno_field";
 
+    /// <summary>The restore entries of the record kinds that have their own runtime (a CRAB): put back in space when a ship comes into the system, with what is left of the record's life.</summary>
+    private readonly Dictionary<string, Func<DeployedRecord, long, Task>> _deployedRestore = new();
+
+    /// <summary>The launch of a CRAB from the hold, set by the composition (<see cref="Beacons.AnalysisBeaconDirector.LaunchAsync"/>).</summary>
+    public Func<ClientSession, long, CancellationToken, Task<long?>>? LaunchAnalysisBeacon { get; set; }
+
+    /// <summary>
+    /// Gives a record kind that has its own runtime its expiry (run by the sweep, before the record is forgotten) and its restore (run when a ship comes into the system).
+    /// </summary>
+    public void RegisterDeployedKind(string kind, Func<DeployedRecord, Task> expire, Func<DeployedRecord, long, Task> restore)
+    {
+        _deployedExpiry[kind] = expire;
+        _deployedRestore[kind] = restore;
+    }
+
     /// <summary>
     /// Whether a cynosural target is lit at <paramref name="now"/>: a cynosural field whose time is not up, or a Mobile Cynosural Beacon that is anchored (its
     /// activation time is past) and whose time is not up. The jump drive, the bridges and the conduit all take the same rule.
@@ -80,6 +95,11 @@ public sealed partial class SpaceContainers
             {
                 if (record.ExpiresAtMs <= now)
                 {
+                    continue;
+                }
+                if (_deployedRestore.TryGetValue(record.Kind, out var restore))
+                {
+                    await restore(record, now);
                     continue;
                 }
                 if (record.Kind == InhibitorKind)

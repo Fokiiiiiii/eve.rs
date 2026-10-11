@@ -209,6 +209,10 @@ internal sealed class FakeSim : ISimulation
 
     public void SetDisruptorActive(long deployableId, bool active) => Heard.Enqueue(new SimSetDisruptorActive(deployableId, active));
 
+    public void PlaceAnalysisBeacon(SimPlaceAnalysisBeacon beacon) => Heard.Enqueue(beacon);
+
+    public void SetAnalysisBeaconState(long deployableId, SimAnalysisBeaconState state) => Heard.Enqueue(new SimSetAnalysisBeaconState(deployableId, state));
+
     public void PlaceInhibitor(SimPlaceInhibitor inhibitor) => Heard.Enqueue(inhibitor);
     public void PlaceCynoBeacon(SimPlaceCynoBeacon beacon) => Heard.Enqueue(beacon);
 

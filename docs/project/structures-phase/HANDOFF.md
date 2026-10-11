@@ -6,7 +6,7 @@ in this folder. Open rows: `docs/project/TODO.md` (sections 44-48). Conflicts an
 
 Current source priority: gameplay rules and numbers use CCP official documentation and the matching SDE first, with EVE University wiki as a secondary reference. Client wire shapes use V24.01 eve-logic callsites and real client traces; EveJS v0.12.9 is the executable functional reference. Record justified differences in DEVIATIONS.
 
-## Status at hand-off (main, sim PROTOCOL_VERSION 61)
+## Status at hand-off (main, sim PROTOCOL_VERSION 62)
 
 | Package | State | Notes |
 |---|---|---|
@@ -14,7 +14,7 @@ Current source priority: gameplay rules and numbers use CCP official documentati
 | ST-1 structure ball in the sim | code complete | kinds 74-77, protocol 59/60; headless `test_structures.py` never ran live |
 | ST-2 deployment / vulnerability RPCs | partly | rename, reinforce times, Anchor, Unanchor/Cancel, 3 notices done; unanchor-completion drop, some Anchor refusals, reinforcement-change mail are open (see its handoff) |
 | ST-3 structure docking / hangars | PG verified | Dock, Undock, hangar listing, guest lifecycle, OnHangarViewStateUpdated and SDE/cargo confirmation gate pass PG tests. Customs fines/confiscation are a separate flow; graphical and live headless acceptance remain open (see its handoff) |
-| ST-4 tether | PG and Rust verified | protocol 61; leased core/ACL/FW permissions, immunity, engage-only repair, cyno/ship/disconnect lifecycle, FX replay and fleet-compression refusal. Rust 772 and Space PG 735 checks pass; native graphical/grid acceptance remains open. |
+| ST-4 tether | PG and Rust verified | protocol 62; leased core/ACL/FW permissions, immunity, engage-only repair, cyno/ship/disconnect lifecycle, FX replay and fleet-compression refusal. Rust 773 and Space PG 735 checks pass; native graphical/grid acceptance remains open. |
 | ST-6a moon extraction (host) | done | notices to owner corp characters and rig modifiers (2704, 2707) open; control gate is provisional until ST-5 |
 | ST-7 structure services | partly | fuel, compression plant, cyno jammer E-03/E-15 done; cyno beacon jump open |
 | ST-10 hacking | closed with 2 open rows | site completion on emptying and removal of an emptied ball need an `inventory.item_moved` event |

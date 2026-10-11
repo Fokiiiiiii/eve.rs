@@ -42,6 +42,7 @@ internal sealed partial class CharacterServicesComposition
     private Eve.Structures.StructureTimers structureTimers = default!;
     private Eve.Structures.StructureFuel structureFuel = default!;
     private StructureCompressionAuthority structureCompression = default!;
+    private Eve.Structures.MoonExtractionStore moonExtractionStore = default!;
 
     /// <summary>The structures as the directory and profile readers see them: the legacy shape of the structures schema.</summary>
     Task<JsonObject> ReadStructuresAsync(CancellationToken token) =>
@@ -90,12 +91,18 @@ internal sealed partial class CharacterServicesComposition
         await Eve.Structures.StructureStore.MigrateAsync(source, structureSchema);
         structureStore = new Eve.Structures.StructureStore(source, structureSchema);
         var legacy = await ReadGameStoreRawAsync("structures", CancellationToken.None);
+        var legacyMoon = await ReadGameStoreRawAsync("moonExtractions", CancellationToken.None);
         await using var connection = await source.OpenConnectionAsync();
         await using var transaction = await connection.BeginTransactionAsync();
         var copied = await structureStore.ImportAsync(connection, transaction, legacy, now());
+        // ST-6a: the moon extractions and resource profiles move over in the same transaction (the same importer pattern)
+        moonExtractionStore = new Eve.Structures.MoonExtractionStore(source, structureSchema);
+        var moonCopied = await moonExtractionStore.ImportAsync(connection, transaction, legacyMoon);
         await transaction.CommitAsync();
         if (copied.Count > 0)
             Console.Error.WriteLine($"eve-host: {copied.Count} structure(s) copied from the game store into the {structureSchema} schema");
+        if (moonCopied > 0)
+            Console.Error.WriteLine($"eve-host: {moonCopied} moon extraction row(s) copied from the game store into the {structureSchema} schema");
     }
 
     private async Task Structures()

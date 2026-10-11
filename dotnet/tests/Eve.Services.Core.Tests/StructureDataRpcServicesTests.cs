@@ -47,7 +47,7 @@ public sealed class StructureDataRpcServicesTests
         var session = new ClientSession();
         session.Set("structureid", new PyLong(structureId));
         session.Set("corpid", new PyInt(corporationId));
-        var service = new MoonExtractionsRpcService(() => state);
+        var service = new MoonExtractionsRpcService(() => Task.FromResult<JsonObject?>(state));
 
         var pair = Assert.IsType<PyTuple>(await service.CallAsync(Call("GetExtractionAndEventIDFromStructureID", session)));
         Assert.Equal(2, pair.Items.Count);

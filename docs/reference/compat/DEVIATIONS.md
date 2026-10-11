@@ -1805,6 +1805,37 @@ shape).
   `missionOfferText`). An offer shows the greeting with the accept and decline buttons; the briefing methods are not bound.
 - **Refusals are named.** An unknown agent is refused with CustomInfo "That agent is not known." (A3). No refusal changes state.
 
+## Agents slice AG-2, A9 (part 1): the loyalty store's offers (2026-10-11)
+
+Sources. ESI (CCP, official): `GET /loyalty/stores/{corporation_id}/offers` (the response fields are read from the ESI OpenAPI
+document, `esi.evetech.net/meta/openapi.json`). Client: eve-logic `eve/client/script/ui/station/loyaltyPointStore/lpStoreSvc.py:240-300,464-530`
+(the offer fields the client reads, the take flow). Reference: EveJS `services/loyalty/lpStoreOfferCatalog.js:133-147` (the offer row) and
+`services/evermarks/lpStoreMgrService.js:345-423` (the store service). The pinned SDE (build 3396210) and eve-logic carry no LP offer rows.
+
+- **The offers come from ESI.** The official route is the only offer source (owner decision): the SDE holds no offer
+  table in this build, and the client does not hold offer data. EveJS reads a 9 MB static JSON (`lpStoreStaticOffers.json`,
+  provenance unknown); it is not used. Status: decided.
+- **Daily cache with an offline switch.** An offer set is refreshed from ESI at most once a day (`LpStoreOfferCache`, one day).
+  `EVE_LP_STORE_SEED=skip` answers what is stored and makes no call; the live run sets it (the same role as `EVE_MARKET_SEED=skip`);
+  the host default is `auto`. A failed refresh keeps the stored offers and records a log line; the next request tries again.
+  Tests: `LpStoreOffersTests` (fake HTTP handler; a fresh set makes no call, a stale set refreshes, a 500 keeps the stored set,
+  `skip` calls nothing).
+- **No standing condition is shown (gap).** ESI does not return a standing requirement for an offer, so the offer row has no
+  `requiredStandings` (the client then treats the standing as met: `lpStoreSvc.py` `IsStandingsFulfilled`). The reference's data
+  has standing requirements for some offers; they cannot be read from ESI, so the server does not invent them.
+- **The offer row** is the reference's KeyVal (`typeID`, `iskCost`, `akCost`, `reqItems`, `offerID`, `qty`, `requiredStandings`,
+  `corpID`, `lootItems`, `lpCost`). ESI has no loot items, so `lootItems` is empty. `akCost` is ESI's `ak_cost` (0 when absent).
+  Test: `LpStoreMgrServiceTests`.
+- **`LPStoreMgr` is a real service now** (`LpStoreMgrService`, Services.Wallet, registered with the agent services). It replaces the
+  compatibility stub that answered an empty list and False (removed from Services.Core).
+- **Taking an offer is refused by name (open, part 2).** `TakeOfferForCharacter` and `TakeOfferForCorporation` answer
+  CustomInfo "This loyalty point store purchase is not available on this server yet." The purchase needs three things not
+  yet in the code: (1) the ISK debit's wallet journal reference type for an LP store purchase, which has no source in the pinned
+  SDE or in ESI's reference-type names (ESI names the types as strings, and the numeric ids were not readable); (2) the
+  announcement of the granted item to the client (`OnItemChange` is sent by the inventory RPC layer after its own mutations, not
+  by the stores); (3) the corporation wallet and director rules for the corporation take (EveJS `lpStoreMgrService.js:389-423`).
+  The LP and item halves of the purchase are the same transaction as the offer's ISK, and are written when (1) is decided.
+
 ## ST-E: cloak proximity and forced decloak notices (2026-10-10)
 - **Proximity radius and refusal.** The cloak breaks, and activation refuses, for a ship or a non-belt body within 2 000 m of the surface of the cloaked ship. Source: EveJS `shipCloak.js:100` (`MIN_CLOAKING_DISTANCE_METERS = 2000`). It replaces the 2 km smartbomb-range check, so the activation refusal now also counts bodies, not only smartbomb targets. Belts are not counted.
 - **Notice order.** The proximity notice goes out before the module stops; the other reasons after (EveJS `forceDecloakEntity`).

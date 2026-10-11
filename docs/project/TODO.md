@@ -977,8 +977,13 @@ Slice A9, part 1 (2026-10-11): DONE for the offers: ESI's official offers cached
 
 | Status | Item | Where / blocker |
 |---|---|---|
-| OPEN | Take an offer (LP, ISK, required items, the granted item): refused by name; blocked on the ISK journal reference type (no source), the item-change announcement and the corporation rules | DEVIATIONS "Agents slice AG-2, A9 (part 1)" |
+| DONE (AG-3) | Take an offer for the character and for a corporation (Director): LP, ISK, required items, the granted item, one transaction, journal, notifications. ISK reference type 26 from the client constant | DEVIATIONS "Agents slice AG-3, A9 (part 2)"; `LpStoreMgrServiceTests` |
 | OPEN | Standing requirements of LP store offers: ESI returns none, so none is shown | DEVIATIONS "Agents slice AG-2, A9 (part 1)" |
+
+## Agents slice AG-3 (2026-10-11)
+
+Continues AG-2 on the same branch. A9 part 2 is done (DEVIATIONS "Agents slice AG-3, A9 (part 2)"). Open after it: the
+standing requirements of store offers and the structure stores (gaps), the idempotency key the client does not send.
 
 ## 43. Structures phase ST-E: remaining E wiring (2026-10-10)
 - DONE E-01: StartNewExtraction, FractureChunkWithStructure and CancelExtraction refuse by name (CustomNotify) with no backend, not PyNone (`StructureDataRpcServices.cs`, commit 59e9e89). The backend is ST-6a.

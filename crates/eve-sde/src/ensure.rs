@@ -12,6 +12,12 @@ use crate::jsonl::JsonlError;
 use crate::load::{self, DEFAULT_SCHEMA, LoadError};
 use crate::manifest::{self, SdeManifest};
 
+/// The schema of the mission build (`sde/lock.json`, `missionPinned`), next to the default `sde`.
+pub const MISSION_SCHEMA: &str = "sde_mission";
+
+/// The tables the server reads from the mission build. The rest of that build is not loaded.
+pub const MISSION_TABLES: &[&str] = &["missions", "epicArcs"];
+
 #[derive(Debug)]
 pub enum EnsureError {
     Fetch(FetchError),
@@ -84,6 +90,47 @@ pub fn loaded_build(client: &mut Client, schema: &str) -> Result<Option<i64>, po
     }
     let row = client.query_opt(&format!("SELECT build_number FROM {schema}._build"), &[])?;
     Ok(row.and_then(|row| row.get::<_, Option<i64>>(0)))
+}
+
+/// The tables a schema holds, from its `_build` record (empty when nothing is loaded).
+pub fn loaded_tables(client: &mut Client, schema: &str) -> Result<Vec<String>, postgres::Error> {
+    assert!(manifest::is_valid_table_name(schema), "invalid schema name {schema:?}");
+    let exists: bool =
+        client.query_one("SELECT to_regclass($1) IS NOT NULL", &[&format!("{schema}._build")])?.get(0);
+    if !exists {
+        return Ok(Vec::new());
+    }
+    let rows = client.query(&format!("SELECT jsonb_object_keys(tables) FROM {schema}._build"), &[])?;
+    Ok(rows.iter().map(|row| row.get::<_, String>(0)).collect())
+}
+
+/// [`ensure_loaded_into`] the mission build, with [`MISSION_TABLES`], into [`MISSION_SCHEMA`].
+pub fn ensure_missions(client: &mut Client, options: &FetchOptions) -> Result<Outcome, EnsureError> {
+    ensure_tables_into(client, options, MISSION_SCHEMA, MISSION_TABLES)
+}
+
+/// [`ensure_loaded_into`] for `tables` only. The schema counts as holding the build only when
+/// it holds every one of those tables too, so a schema loaded with fewer is loaded again.
+pub fn ensure_tables_into(
+    client: &mut Client,
+    options: &FetchOptions,
+    schema: &str,
+    tables: &[&str],
+) -> Result<Outcome, EnsureError> {
+    if loaded_build(client, schema)? == i64::try_from(options.build).ok() {
+        let loaded = loaded_tables(client, schema)?;
+        if tables.iter().all(|table| loaded.iter().any(|name| name == table)) {
+            return Ok(Outcome::AlreadyLoaded);
+        }
+    }
+    let extracted = fetch::ensure_extracted(options)?;
+    let manifest = SdeManifest::read(&extracted.dir)?;
+    if manifest.build_number != i64::try_from(options.build).ok() {
+        return Err(EnsureError::BuildMismatch { wanted: options.build, found: manifest.build_number });
+    }
+    let report = load::load_tables_into(client, &manifest, schema, tables)?;
+    let records = report.tables.iter().map(|(_, count)| count).sum();
+    Ok(Outcome::Loaded { origin: extracted.origin, tables: report.tables.len(), records })
 }
 
 /// [`ensure_loaded_into`] the default schema (`sde`).

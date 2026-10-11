@@ -11,7 +11,7 @@ use postgres::Client;
 use serde_json::Value;
 
 use crate::jsonl::{self, JsonlError};
-use crate::manifest::SdeManifest;
+use crate::manifest::{SdeFile, SdeManifest};
 
 #[derive(Debug)]
 pub enum LoadError {
@@ -23,6 +23,10 @@ pub enum LoadError {
         table: String,
         key: String,
     },
+    /// A table asked for by [`load_tables_into`] is not in the archive.
+    MissingTable {
+        table: String,
+    },
 }
 
 impl std::fmt::Display for LoadError {
@@ -32,6 +36,7 @@ impl std::fmt::Display for LoadError {
             Self::Postgres(error) => write!(f, "postgres: {error}"),
             Self::Io(error) => write!(f, "{error}"),
             Self::DuplicateKey { table, key } => write!(f, "{table}: duplicate _key {key}"),
+            Self::MissingTable { table } => write!(f, "{table}: the archive has no such table"),
         }
     }
 }
@@ -89,12 +94,43 @@ pub fn load(client: &mut Client, manifest: &SdeManifest) -> Result<LoadReport, L
 
 /// [`load`] into a schema of your choosing (letters, digits and underscores).
 pub fn load_into(client: &mut Client, manifest: &SdeManifest, schema: &str) -> Result<LoadReport, LoadError> {
+    load_selected(client, manifest, schema, None)
+}
+
+/// [`load_into`] for the tables named in `tables` only. A name the archive does not hold is an
+/// error and nothing is loaded. The `_build` record lists only the tables loaded.
+pub fn load_tables_into(
+    client: &mut Client,
+    manifest: &SdeManifest,
+    schema: &str,
+    tables: &[&str],
+) -> Result<LoadReport, LoadError> {
+    load_selected(client, manifest, schema, Some(tables))
+}
+
+fn load_selected(
+    client: &mut Client,
+    manifest: &SdeManifest,
+    schema: &str,
+    only: Option<&[&str]>,
+) -> Result<LoadReport, LoadError> {
     assert!(crate::manifest::is_valid_table_name(schema), "invalid schema name {schema:?}");
+    let files: Vec<&SdeFile> = match only {
+        None => manifest.files.iter().collect(),
+        Some(wanted) => {
+            for table in wanted {
+                if !manifest.files.iter().any(|file| file.table == *table) {
+                    return Err(LoadError::MissingTable { table: (*table).to_owned() });
+                }
+            }
+            manifest.files.iter().filter(|file| wanted.contains(&file.table.as_str())).collect()
+        }
+    };
     let mut tx = client.transaction()?;
     tx.batch_execute(&format!("CREATE SCHEMA IF NOT EXISTS {schema}"))?;
     let mut tables = Vec::new();
 
-    for file in &manifest.files {
+    for file in files {
         let table = quote_ident(&file.table);
         tx.batch_execute(&format!(
             "DROP TABLE IF EXISTS {schema}.{table}; \

@@ -262,6 +262,13 @@ public sealed class CosmicSiteDirector
         var expires = _scheduler.Now + (long)Lifetime.TotalMilliseconds;
         foreach (var container in template.Containers)
         {
+            // the site table names no type for 213 of its containers (relics and graveyards): none is made up, and the site goes on
+            if (container.Types.Count == 0)
+            {
+                _log?.Invoke($"site {siteId}: the {container.Role} container of {template.Name} names no type and is not placed");
+                index += container.Count;
+                continue;
+            }
             for (var copy = 0; copy < container.Count; copy++, index++)
             {
                 var name = container.Types[(int)(SiteSeed.Hash($"{seed}:container:{index}") % (uint)container.Types.Count)];

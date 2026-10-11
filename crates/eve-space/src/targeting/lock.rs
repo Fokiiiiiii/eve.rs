@@ -111,18 +111,20 @@ impl Scene {
         }
         let spec = &self.pilots[&session].ship.spec;
         let duration = lock_duration_ms(spec.scan_resolution, subject.signature_radius);
+        let mut tether_out = self.break_tether(session, now);
         // a validated lock request gives up the undocking protection (the host tells the client)
         let sequence = self.next_sequence();
         let pilot = self.pilots.get_mut(&session).expect("the pilot is in the scene");
         pilot.protected_until = 0;
         if duration <= 1.0 {
-            let mut out = Self::answer(session, order, false, Vec::new());
-            out.extend(self.finish_lock(session, subject, sequence, origin, now));
-            return out;
+            tether_out.extend(Self::answer(session, order, false, Vec::new()));
+            tether_out.extend(self.finish_lock(session, subject, sequence, origin, now));
+            return tether_out;
         }
         let complete_at = now + (duration * TICKS_PER_SECOND as f64 / 1000.0) as i64;
         pilot.targeting.pending.push(Pending { target, sequence, complete_at, origin });
-        Self::answer(session, order, true, self.locked_by(session))
+        tether_out.extend(Self::answer(session, order, true, self.locked_by(session)));
+        tether_out
     }
 
     pub(super) fn finish_lock(

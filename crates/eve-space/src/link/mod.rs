@@ -37,7 +37,7 @@ use crate::weapons::{Aoe, Arc, Charge, Spool, Turret};
 use crate::wreck::WreckKind;
 use crate::world::StructureStatus;
 
-pub const PROTOCOL_VERSION: u16 = 60;
+pub const PROTOCOL_VERSION: u16 = 62;
 /// The message kinds.
 pub mod kind;
 
@@ -157,6 +157,37 @@ pub struct DisruptorPlacement {
     pub ship_id: i64,
 }
 
+/// A CONCORD Rogue Analysis Beacon the host keeps a record of (protocol 61): its id, type and group, its name and ball, where it lies, whose it is, and its state.
+#[derive(Debug, Clone, PartialEq)]
+pub struct AnalysisBeaconPlacement {
+    pub deployable_id: i64,
+    pub solar_system_id: i32,
+    pub name: String,
+    pub type_id: i32,
+    pub group_id: i32,
+    pub position: [f64; 3],
+    pub radius: f64,
+    pub owner_id: i64,
+    pub corporation_id: i32,
+    pub alliance_id: i32,
+    pub ship_id: i64,
+    pub state: AnalysisBeaconState,
+}
+
+/// What the client reads of a CRAB (its slim item, EVE.js `buildSlimItem`), as the host says it: whether it is active and, when it is not, when it becomes active
+/// (FILETIME ticks, 0 for none); the activation wait in seconds; when it was put in space (FILETIME); the link state (1 idle, 2 running, 3 completed, 4 disabled);
+/// when the link completes (FILETIME, 0 for none); and the linked ship (0 for none).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AnalysisBeaconState {
+    pub active: bool,
+    pub activate_at: i64,
+    pub deployed_at: i64,
+    pub activation_seconds: i32,
+    pub link_state: i32,
+    pub link_complete_at: i64,
+    pub linked_ship_id: i64,
+}
+
 /// Something a probe scan can find, as the scene knows it (command 27, protocol 52): the ship, drone, fighter squadron or deployable's item id, its kind (1 ship,
 /// 2 drone, 3 fighter, 4 deployable), its type and where it is.
 #[derive(Debug, Clone, PartialEq)]
@@ -264,6 +295,13 @@ pub struct BuffEntry {
     pub collection_id: i32,
     pub value: f64,
     pub remaining_ms: f64,
+}
+
+/// A host-authorized structure and its SDE tether range, measured between surfaces.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct TetherCandidate {
+    pub structure_id: i64,
+    pub range: f64,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -589,6 +627,13 @@ pub enum Message {
     PlaceInhibitor(Box<DisruptorPlacement>),
     /// The host puts a Mobile Cynosural Beacon in space where its pilot dropped it (protocol 58); the range is 0.
     PlaceCynoBeacon(Box<DisruptorPlacement>),
+    /// A CRAB the host keeps a record of is put in space (protocol 61).
+    PlaceAnalysisBeacon(Box<AnalysisBeaconPlacement>),
+    /// The host sets a CRAB's state (its activation and its link); those who see it are told its slim item again (protocol 61).
+    SetAnalysisBeaconState {
+        deployable_id: i64,
+        state: AnalysisBeaconState,
+    },
     /// The host says a mobile warp disruptor is anchored (`active`) or not (protocol 48); one not in space is left alone.
     SetDisruptorActive {
         deployable_id: i64,
@@ -731,6 +776,20 @@ pub enum Message {
         desired_range: f64,
         actual_distance: f64,
     },
+    /// Replaces the pilot's entire allowed tether list; lease expiry removes permission.
+    TetherPolicy {
+        session_id: u64,
+        blocked_for_ms: u64,
+        lease_ms: u64,
+        candidates: Vec<TetherCandidate>,
+    },
+    /// A simulation-owned tether transition (zero structure means off).
+    TetherChanged {
+        session_id: u64,
+        previous_structure_id: i64,
+        structure_id: i64,
+        repairing: bool,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -827,9 +886,13 @@ impl Message {
             Self::PlaceProbe(_) => kind::PLACE_PROBE,
             Self::RemoveProbe { .. } => kind::REMOVE_PROBE,
             Self::PlaceDisruptor(_) => kind::PLACE_DISRUPTOR,
+            Self::PlaceAnalysisBeacon(_) => kind::PLACE_ANALYSIS_BEACON,
             Self::PlaceInhibitor(_) => kind::PLACE_INHIBITOR,
             Self::PlaceCynoBeacon(_) => kind::PLACE_CYNO_BEACON,
             Self::SetDisruptorActive { .. } => kind::SET_DISRUPTOR_ACTIVE,
+            Self::TetherPolicy { .. } => kind::TETHER_POLICY,
+            Self::TetherChanged { .. } => kind::TETHER_CHANGED,
+            Self::SetAnalysisBeaconState { .. } => kind::SET_ANALYSIS_BEACON_STATE,
         }
     }
 }

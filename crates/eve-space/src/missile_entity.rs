@@ -364,6 +364,7 @@ impl Scene {
         Some(TargetState {
             kinematics,
             hittable: pilot.protected_until <= now
+                && !self.is_tethered_session(session, now)
                 && !pilot.flight.as_ref().is_some_and(|flight| flight.is_warping()),
             session,
         })

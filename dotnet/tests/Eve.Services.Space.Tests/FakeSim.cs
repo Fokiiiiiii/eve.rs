@@ -199,6 +199,8 @@ internal sealed class FakeSim : ISimulation
 
     public void PlaceStructure(SimPlaceStructure structure) => Heard.Enqueue(structure);
 
+    public void SetTetherPolicy(SimTetherPolicy policy) => Heard.Enqueue(policy);
+
     public void RemoveStructure(long structureId) => Heard.Enqueue(new SimRemoveStructure(structureId));
 
     public void SetStructureState(SimSetStructureState state) => Heard.Enqueue(state);
@@ -206,6 +208,10 @@ internal sealed class FakeSim : ISimulation
     public void PlaceDisruptor(SimPlaceDisruptor disruptor) => Heard.Enqueue(disruptor);
 
     public void SetDisruptorActive(long deployableId, bool active) => Heard.Enqueue(new SimSetDisruptorActive(deployableId, active));
+
+    public void PlaceAnalysisBeacon(SimPlaceAnalysisBeacon beacon) => Heard.Enqueue(beacon);
+
+    public void SetAnalysisBeaconState(long deployableId, SimAnalysisBeaconState state) => Heard.Enqueue(new SimSetAnalysisBeaconState(deployableId, state));
 
     public void PlaceInhibitor(SimPlaceInhibitor inhibitor) => Heard.Enqueue(inhibitor);
     public void PlaceCynoBeacon(SimPlaceCynoBeacon beacon) => Heard.Enqueue(beacon);

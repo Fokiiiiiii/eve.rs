@@ -1181,6 +1181,30 @@ fn missile_effect(target_id: i64, turret: Turret) -> Effect {
     }
 }
 
+#[test]
+fn a_missile_already_in_flight_cannot_damage_a_ship_that_acquires_tether() {
+    let (mut scene, npc, now) = duel();
+    scene.activate(npc, missile_effect(spec().ship_id, launcher(1_000.0, 10_000.0, 56.0)), now);
+    assert_eq!(scene.missiles.len(), 1);
+    scene.target_order(npc, Order::Clear, now);
+    scene.stop_module(npc, NPC_SHIP, now);
+    let p = scene.pilots[&PLAYER].ship.position;
+    let mut structure = crate::scene::tests::structure_placement(&scene, now);
+    structure.position = [p.x + structure.radius + spec().radius + 500.0, p.y, p.z];
+    let structure_id = structure.structure_id;
+    scene.place_structure(structure, now);
+    scene.set_tether_policy(PLAYER, 0, 30_000,
+        vec![crate::link::TetherCandidate { structure_id, range: 1_000.0 }], now);
+    assert!(scene.is_tethered(spec().ship_id, now));
+    let mut told = Vec::new();
+    for quarter in 1..=80 {
+        told.extend(scene.poll(now + quarter * SECOND / 4));
+    }
+    assert!(scene.missiles.is_empty());
+    assert_eq!(Scene::condition_of(&scene.pilots[&PLAYER], now + 20 * SECOND), crate::health::Condition::FULL);
+    assert!(messages(&told, PLAYER, "OnDamageMessage").is_empty());
+}
+
 /// The names of the actions in the destiny updates a ship was sent, in order.
 fn action_names(out: &[Out], session: SessionId) -> Vec<String> {
     out.iter()
@@ -1446,6 +1470,35 @@ fn strike_effect(module_id: i64, strike: crate::strike::Strike) -> Effect {
         on_changes: Vec::new(),
         off_changes: Vec::new(),
     }
+}
+
+#[test]
+fn a_disruptive_lance_and_its_neutralising_wave_skip_a_tethered_recipient() {
+    let (mut scene, npc, now) = duel();
+    scene.target_order(npc, Order::Clear, now);
+    let p = scene.pilots[&PLAYER].ship.position;
+    let mut structure = crate::scene::tests::structure_placement(&scene, now);
+    structure.position = [p.x + structure.radius + spec().radius + 500.0, p.y, p.z];
+    let structure_id = structure.structure_id;
+    scene.place_structure(structure, now);
+    scene.set_tether_policy(PLAYER, 0, 30_000,
+        vec![crate::link::TetherCandidate { structure_id, range: 1_000.0 }], now);
+    let strike = crate::strike::Strike {
+        direction: [-1.0, 0.0, 0.0],
+        damage: [100.0; 4],
+        debuff_ms: 60_000.0,
+        neut_amount: 50.0,
+        neut_radius: 10_000.0,
+        ..strike_of(2)
+    };
+    let mut told = scene.activate(npc, strike_effect(NPC_SHIP + 1, strike), now);
+    assert!(!told.iter().any(|out| matches!(out, Out::Refused { .. })), "{told:?}");
+    told.extend(scene.poll(now + 2 * SECOND));
+    told.extend(scene.poll(now + 3 * SECOND));
+    assert_eq!(Scene::condition_of(&scene.pilots[&PLAYER], now + 3 * SECOND), crate::health::Condition::FULL);
+    assert_eq!(scene.pilots[&PLAYER].disrupted_until, 0);
+    assert!(scene.is_tethered(spec().ship_id, now + 3 * SECOND));
+    assert!(messages(&told, PLAYER, "OnDamageMessage").is_empty());
 }
 
 /// Runs `body` on its own thread and fails the test when it has not returned within `seconds`. A simulation whose moment never clears (a

@@ -2473,7 +2473,7 @@ fn a_bridge_range_is_refused_beyond_it_and_a_restarted_scene_has_no_bridge() {
 const STRUCTURE: i64 = 1_040_000_000_001;
 const SECOND: i64 = 10_000_000;
 
-fn structure_placement(scene: &Scene, at: i64) -> crate::link::StructurePlacement {
+pub(crate) fn structure_placement(scene: &Scene, at: i64) -> crate::link::StructurePlacement {
     crate::link::StructurePlacement {
         structure_id: STRUCTURE,
         solar_system_id: scene.solar_system_id(),
@@ -2653,4 +2653,398 @@ fn a_ship_undocks_from_a_structure_as_it_does_from_a_station() {
     scene.place_structure(placement, NOON);
     scene.undock(SESSION, spec(), STRUCTURE, NOON).expect("a structure is a dock, whatever its state");
     assert!(scene.contains(SESSION));
+}
+
+fn tether_scene() -> Scene {
+    near_the_structure(35_832, 27, 111)
+}
+
+fn tether_candidates(range: f64) -> Vec<crate::link::TetherCandidate> {
+    vec![crate::link::TetherCandidate { structure_id: STRUCTURE, range }]
+}
+
+fn tether_changes(out: &[Out]) -> Vec<(SessionId, i64, i64, bool)> {
+    out.iter().filter_map(|out| match out {
+        Out::TetherChanged { session, previous_structure_id, structure_id, repairing } => {
+            Some((*session, *previous_structure_id, *structure_id, *repairing))
+        }
+        _ => None,
+    }).collect()
+}
+
+fn grant_tether(scene: &mut Scene, now: i64) -> Vec<Out> {
+    scene.set_tether_policy(SESSION, 0, 60_000, tether_candidates(1_000.0), now)
+}
+
+fn tether_other(scene: &mut Scene, offset: f64) -> (SessionId, i64) {
+    let mut other = spec();
+    other.ship_id += 1;
+    other.character_id += 1;
+    other.max_velocity = 0.0;
+    other.modules.clear();
+    let ship_id = other.ship_id;
+    let p = scene.pilots[&SESSION].ship.position;
+    scene.enter_in_space(SESSION + 1, other, [p.x + offset, p.y, p.z], [0.0, 0.0, 1.0], NOON).unwrap();
+    (SESSION + 1, ship_id)
+}
+
+fn tether_effect(action: Option<crate::modules::Action>) -> crate::modules::Effect {
+    crate::modules::Effect {
+        module_id: spec().modules[0].item_id,
+        module_type: spec().modules[0].type_id,
+        effect_id: 1,
+        fx: String::new(),
+        duration_ms: 60_000.0,
+        capacitor_need: 0.0,
+        repeat: 1,
+        target_id: 0,
+        turret: None,
+        action,
+        on: None,
+        off: None,
+        on_changes: Vec::new(),
+        off_changes: Vec::new(),
+        burns_fuel: false,
+        rules: Default::default(),
+    }
+}
+
+fn tether_test_ball() -> crate::deployable::Spec {
+    crate::deployable::Spec {
+        charge_type_id: 21_096,
+        group_id: 897,
+        name: "Test field".to_string(),
+        radius: 1.0,
+    }
+}
+
+#[test]
+fn tether_requires_host_permission_uses_surface_range_and_replaces_the_whole_list() {
+    let mut scene = tether_scene();
+    assert!(scene.tick_tethers(NOON).is_empty());
+    assert!(!scene.is_tethered(spec().ship_id, NOON));
+    assert!(scene.set_tether_policy(SESSION, 0, 60_000, tether_candidates(499.0), NOON).is_empty());
+    let engaged = scene.set_tether_policy(SESSION, 0, 60_000, tether_candidates(500.0), NOON);
+    assert_eq!(tether_changes(&engaged), [(SESSION, 0, STRUCTURE, false)]);
+    assert!(scene.set_tether_policy(SESSION, 0, 60_000, tether_candidates(500.0), NOON).is_empty());
+
+    let mut nearer = structure_placement(&scene, NOON);
+    nearer.structure_id += 1;
+    nearer.position = [5_000_200.0, 0.0, 0.0];
+    scene.place_structure(nearer, NOON);
+    let switched = scene.set_tether_policy(SESSION, 0, 60_000, vec![
+        crate::link::TetherCandidate { structure_id: STRUCTURE, range: 1_000.0 },
+        crate::link::TetherCandidate { structure_id: STRUCTURE + 1, range: 1_000.0 },
+    ], NOON);
+    assert_eq!(tether_changes(&switched), [(SESSION, STRUCTURE, STRUCTURE + 1, false)]);
+    let revoked = scene.set_tether_policy(SESSION, 0, 60_000, Vec::new(), NOON);
+    assert_eq!(tether_changes(&revoked), [(SESSION, STRUCTURE + 1, 0, false)]);
+    assert!(scene.tick_tethers(NOON).is_empty());
+    assert!(tether_scene().tick_tethers(NOON).is_empty(), "a restarted scene inherits no permission");
+}
+
+#[test]
+fn tether_block_deadline_and_lease_expiry_fail_closed_at_the_boundary() {
+    let mut scene = tether_scene();
+    assert!(scene.set_tether_policy(SESSION, 1_000, 2_000, tether_candidates(1_000.0), NOON).is_empty());
+    assert!(scene.tick_tethers(NOON + SECOND - 1).is_empty());
+    assert_eq!(tether_changes(&scene.tick_tethers(NOON + SECOND)), [(SESSION, 0, STRUCTURE, false)]);
+    assert!(scene.is_tethered(spec().ship_id, NOON + 2 * SECOND - 1));
+    assert!(!scene.is_tethered(spec().ship_id, NOON + 2 * SECOND));
+    assert_eq!(tether_changes(&scene.tick_tethers(NOON + 2 * SECOND)), [(SESSION, STRUCTURE, 0, false)]);
+    assert!(scene.tick_tethers(NOON + 3 * SECOND).is_empty());
+    let later = NOON + 3 * SECOND;
+    assert!(scene.set_tether_policy(999, 0, 60_000, tether_candidates(1_000.0), later).is_empty());
+    assert!(scene.set_tether_policy(SESSION, 0, 0, tether_candidates(1_000.0), later).is_empty());
+    grant_tether(&mut scene, later);
+    let invalid = scene.set_tether_policy(SESSION, 0, 60_000, tether_candidates(f64::NAN), later);
+    assert_eq!(tether_changes(&invalid), [(SESSION, STRUCTURE, 0, false)]);
+}
+
+#[test]
+fn tether_prevents_locking_and_a_valid_lock_start_breaks_its_own_tether_once() {
+    use crate::targeting::Order;
+    let mut scene = tether_scene();
+    let (other, other_ship) = tether_other(&mut scene, 1_000.0);
+    grant_tether(&mut scene, NOON);
+    let refused = scene.target_order(other, Order::Lock(spec().ship_id), NOON);
+    assert!(refused.iter().any(|out| matches!(out, Out::TargetRefused { reason: "TARGET_INVULNERABLE", .. })));
+    assert!(scene.pilots[&other].targeting.pending_targets().is_empty());
+    let started = scene.target_order(SESSION, Order::Lock(other_ship), NOON);
+    assert_eq!(tether_changes(&started), [(SESSION, STRUCTURE, 0, false)]);
+    assert!(!scene.pilots[&SESSION].targeting.pending_targets().is_empty());
+    assert!(scene.tick_tethers(NOON).is_empty());
+    scene.target_order(SESSION, Order::Cancel(other_ship), NOON);
+    assert_eq!(tether_changes(&scene.tick_tethers(NOON)), [(SESSION, 0, STRUCTURE, false)]);
+}
+
+#[test]
+fn tether_does_not_engage_while_another_ship_is_locking_it() {
+    use crate::targeting::Order;
+    let mut scene = tether_scene();
+    let (other, _) = tether_other(&mut scene, 1_000.0);
+    scene.target_order(other, Order::Lock(spec().ship_id), NOON);
+    assert!(grant_tether(&mut scene, NOON).is_empty());
+    scene.target_order(other, Order::Cancel(spec().ship_id), NOON);
+    assert_eq!(tether_changes(&scene.tick_tethers(NOON)), [(SESSION, 0, STRUCTURE, false)]);
+}
+
+#[test]
+fn tether_ends_on_warp_removal_and_ejection_without_reusing_the_old_pilots_policy() {
+    let mut scene = tether_scene();
+    grant_tether(&mut scene, NOON);
+    let warped = scene.begin_warp(SESSION, 3, None, Vec3::new(9_000_000.0, 0.0, 0.0), 0.0, NOON);
+    assert_eq!(tether_changes(&warped), [(SESSION, STRUCTURE, 0, false)]);
+    assert!(scene.pilots[&SESSION].flight.is_some());
+    assert!(scene.tick_tethers(NOON).is_empty());
+
+    let mut scene = tether_scene();
+    grant_tether(&mut scene, NOON);
+    assert_eq!(tether_changes(&scene.remove_structure(STRUCTURE, NOON)), [(SESSION, STRUCTURE, 0, false)]);
+    assert!(scene.tick_tethers(NOON).is_empty());
+
+    let mut scene = tether_scene();
+    grant_tether(&mut scene, NOON);
+    let ejected = scene.leave(SESSION, Departure::Ejected, NOON).unwrap();
+    assert_eq!(tether_changes(&ejected), [(SESSION, STRUCTURE, 0, false)]);
+    assert!(!scene.unpiloted.is_empty());
+    assert!(scene.tick_tethers(NOON).is_empty());
+}
+
+#[test]
+fn tether_ship_collisions_remain_active_and_leaving_surface_range_ends_the_link() {
+    let mut scene = tether_scene();
+    grant_tether(&mut scene, NOON);
+    tether_other(&mut scene, 0.0);
+    let before = scene.pilots[&SESSION].ship.position;
+    scene.poll(NOON + SECOND / 10);
+    let after = scene.pilots[&SESSION].ship.position;
+    assert_ne!((before.x, before.y, before.z), (after.x, after.y, after.z));
+    assert!(scene.is_tethered(spec().ship_id, NOON + SECOND / 10));
+    scene.pilots.get_mut(&SESSION).unwrap().ship.position.x += 2_000.0;
+    assert_eq!(tether_changes(&scene.tick_tethers(NOON + SECOND / 10)), [(SESSION, STRUCTURE, 0, false)]);
+}
+
+#[test]
+fn tether_repairs_ship_capacitor_and_fitted_heat_damage_only_on_engage() {
+    let mut scene = tether_scene();
+    let p = scene.pilots[&SESSION].ship.position;
+    scene.leave(SESSION, Departure::LoggedOff, NOON).unwrap();
+    let mut hurt = spec();
+    hurt.max_velocity = 0.0;
+    hurt.condition = Condition { damage: 0.2, armor_damage: 0.3, shield_charge: 0.4, charge: 0.5 };
+    scene.enter_in_space(SESSION, hurt, [p.x, p.y, p.z], [0.0, 0.0, 1.0], NOON).unwrap();
+    let mut profile = heat_profile_for_spec(1);
+    profile.modules[0].damage_hp = 10.0;
+    profile.initial_rack_heat = [20.0; 3];
+    scene.set_heat_profile(SESSION, profile, NOON).unwrap();
+    let engaged = grant_tether(&mut scene, NOON);
+    assert_eq!(tether_changes(&engaged), [(SESSION, 0, STRUCTURE, true)]);
+    assert!(engaged.iter().any(|out| matches!(out, Out::Condition { condition, .. } if *condition == Condition::FULL)));
+    assert_eq!(Scene::condition_of(&scene.pilots[&SESSION], NOON), Condition::FULL);
+    let module_id = spec().modules[0].item_id;
+    assert_eq!(scene.pilots[&SESSION].heat.modules[&module_id].profile.damage_hp, 0.0);
+    assert_eq!(scene.pilots[&SESSION].heat.levels, [20.0; 3], "repair does not invent rack cooling");
+
+    let pilot = scene.pilots.get_mut(&SESSION).unwrap();
+    pilot.modules.capacitor.as_mut().unwrap().draw(NOON, 10.0);
+    pilot.heat.modules.get_mut(&module_id).unwrap().profile.damage_hp = 5.0;
+    assert!(grant_tether(&mut scene, NOON).is_empty(), "a policy renewal is not another engage");
+    assert!(scene.tick_tethers(NOON).is_empty());
+    assert!(Scene::condition_of(&scene.pilots[&SESSION], NOON).charge < 1.0);
+    assert_eq!(scene.pilots[&SESSION].heat.modules[&module_id].profile.damage_hp, 5.0);
+    scene.set_tether_policy(SESSION, 1, 60_000, tether_candidates(1_000.0), NOON);
+    let repaired = scene.tick_tethers(NOON + SECOND / 1_000);
+    assert_eq!(tether_changes(&repaired), [(SESSION, 0, STRUCTURE, true)]);
+    assert_eq!(scene.pilots[&SESSION].heat.modules[&module_id].profile.damage_hp, 0.0);
+}
+
+#[test]
+fn tether_refuses_smartbomb_and_bomb_activation_without_spending_or_fake_damage() {
+    use crate::modules::Action;
+    let actions = [
+        Action::Smartbomb { range: 5_000.0, damage: [100.0; 4], hurts_pilots: true },
+        Action::Bomb {
+            ball: tether_test_ball(), kind: crate::deployable::BombKind::Damage,
+            lifetime_ms: 10_000.0, blast_radius: 15_000.0,
+            damage: [100.0; 4], ecm: [0.0; 4], neutralize: 0.0,
+        },
+    ];
+    for action in actions {
+        let mut scene = tether_scene();
+        grant_tether(&mut scene, NOON);
+        let before = Scene::condition_of(&scene.pilots[&SESSION], NOON);
+        let refused = scene.activate(SESSION, tether_effect(Some(action)), NOON);
+        assert_eq!(refused, [Out::Refused { session: SESSION, command: 17, reason: "TETHERED" }]);
+        assert_eq!(Scene::condition_of(&scene.pilots[&SESSION], NOON), before);
+        assert!(scene.deployables.is_empty());
+        assert!(scene.pilots[&SESSION].modules.running_count() == 0);
+        assert!(scene.is_tethered(spec().ship_id, NOON));
+    }
+}
+
+#[test]
+fn tether_nonoffensive_modules_keep_the_link_and_restricted_families_break_and_block_it() {
+    use crate::modules::Action;
+    let mut scene = tether_scene();
+    grant_tether(&mut scene, NOON);
+    let mut utility = tether_effect(None);
+    utility.capacitor_need = 5.0;
+    let out = scene.activate(SESSION, utility, NOON);
+    assert!(tether_changes(&out).is_empty());
+    assert!(scene.is_tethered(spec().ship_id, NOON));
+    assert!(grant_tether(&mut scene, NOON).is_empty());
+    assert!(Scene::condition_of(&scene.pilots[&SESSION], NOON).charge < 1.0);
+
+    for action in [
+        Action::CommandBurst { range_meters: 5_000.0 },
+        Action::EcmBurst { range: 5_000.0, strength: [1.0; 4] },
+        Action::CynoField { ball: tether_test_ball(), lifetime_ms: 600_000.0 },
+        Action::ScrambleStatus { delta: 1.0 },
+    ] {
+        let mut scene = tether_scene();
+        grant_tether(&mut scene, NOON);
+        let started = scene.activate(SESSION, tether_effect(Some(action)), NOON);
+        assert_eq!(tether_changes(&started), [(SESSION, STRUCTURE, 0, false)], "{started:?}");
+        assert!(grant_tether(&mut scene, NOON).is_empty());
+        assert!(!scene.is_tethered(spec().ship_id, NOON));
+    }
+    for mode in ["siege", "triage", "bastion"] {
+        let mut scene = tether_scene();
+        grant_tether(&mut scene, NOON);
+        let mut effect = tether_effect(None);
+        effect.on_changes.push(crate::modules::Change {
+            item_id: spec().ship_id, attribute_id: crate::modules::WARP_SCRAMBLE_STATUS, value: 1.0,
+        });
+        assert_eq!(tether_changes(&scene.activate(SESSION, effect, NOON)),
+            [(SESSION, STRUCTURE, 0, false)], "{mode}");
+        assert!(grant_tether(&mut scene, NOON).is_empty(), "{mode} cannot retether while running");
+    }
+}
+
+#[test]
+fn tether_cloak_and_lance_debuff_block_until_the_local_state_allows_it() {
+    let mut scene = tether_scene();
+    grant_tether(&mut scene, NOON);
+    scene.pilots.get_mut(&SESSION).unwrap().cloak = crate::visibility::CloakState::Cloaked;
+    assert_eq!(tether_changes(&scene.tick_tethers(NOON)), [(SESSION, STRUCTURE, 0, false)]);
+    scene.pilots.get_mut(&SESSION).unwrap().cloak = crate::visibility::CloakState::Uncloaked;
+    assert_eq!(tether_changes(&scene.tick_tethers(NOON)), [(SESSION, 0, STRUCTURE, false)]);
+    scene.pilots.get_mut(&SESSION).unwrap().disrupted_until = NOON + SECOND;
+    assert_eq!(tether_changes(&scene.tick_tethers(NOON)), [(SESSION, STRUCTURE, 0, false)]);
+    assert_eq!(tether_changes(&scene.tick_tethers(NOON + SECOND)), [(SESSION, 0, STRUCTURE, false)]);
+    scene.pilots.get_mut(&SESSION).unwrap().cloak = crate::visibility::CloakState::Decloaking;
+    assert!(scene.is_tethered(spec().ship_id, NOON + SECOND));
+}
+
+#[test]
+fn tether_scram_breaks_only_when_incoming_points_overcome_the_active_core_stabilizer() {
+    use crate::ewar::Lasting;
+    use crate::modules::Action;
+    let mut scene = tether_scene();
+    let (other, _) = tether_other(&mut scene, 2_000.0);
+    scene.activate(SESSION, tether_effect(Some(Action::ScrambleStatus { delta: -2.0 })), NOON);
+    grant_tether(&mut scene, NOON);
+    let resisted = scene.hold_for(other, SESSION, 999, Lasting::Scramble { strength: 1.0, blocks_mwd: false }, 1_000.0, NOON);
+    assert!(tether_changes(&resisted).is_empty());
+    assert!(scene.is_tethered(spec().ship_id, NOON));
+    let scrambled = scene.hold_for(other, SESSION, 999, Lasting::Scramble { strength: 3.0, blocks_mwd: true }, 1_000.0, NOON);
+    assert_eq!(tether_changes(&scrambled), [(SESSION, STRUCTURE, 0, false)]);
+    assert!(grant_tether(&mut scene, NOON).is_empty());
+    assert_eq!(tether_changes(&scene.poll(NOON + 2 * SECOND)), [(SESSION, 0, STRUCTURE, false)]);
+}
+
+#[test]
+fn tether_fighter_launch_breaks_and_only_nonabandoned_deployed_fighters_block_reengage() {
+    let mut scene = tether_scene();
+    grant_tether(&mut scene, NOON);
+    let mut fighter = spec();
+    fighter.ship_id += 100;
+    fighter.character_id = 0;
+    fighter.type_id = 23_055;
+    fighter.group_id = 1_652;
+    fighter.category_id = 87;
+    fighter.radius = 6.0;
+    fighter.modules.clear();
+    let fighter_id = fighter.ship_id;
+    assert!(scene.launch_fighter(SESSION, fighter.clone(), 1_200, 0.5, 0, NOON).is_err());
+    assert!(scene.is_tethered(spec().ship_id, NOON));
+    let (_, launched) = scene.launch_fighter(SESSION, fighter, 1_200, 0.5, 6, NOON).unwrap();
+    assert_eq!(tether_changes(&launched), [(SESSION, STRUCTURE, 0, false)]);
+    assert!(grant_tether(&mut scene, NOON).is_empty());
+    scene.fighter_order(SESSION, &[fighter_id], crate::fighters::FighterOrder::Abandon, NOON);
+    assert_eq!(tether_changes(&scene.tick_tethers(NOON)), [(SESSION, 0, STRUCTURE, false)]);
+}
+
+#[test]
+fn tether_blocks_direct_unresisted_and_area_damage_but_expired_permission_protects_nothing() {
+    let mut scene = tether_scene();
+    let (other, _) = tether_other(&mut scene, 2_000.0);
+    grant_tether(&mut scene, NOON);
+    assert!(scene.is_tethered(spec().ship_id, NOON));
+    assert!(scene.damage(spec().ship_id, [100.0; 4], NOON).1.is_none());
+    assert!(scene.damage_unresisted(spec().ship_id, [100.0; 4], NOON).1.is_none());
+    assert!(scene.damage_ship(other, 1, (SESSION, spec().ship_id), [100.0; 4], NOON).is_empty());
+    let p = scene.pilots[&SESSION].ship.position;
+    assert!(scene.blast_at(other, 1, [p.x, p.y, p.z], 1_000.0, [100.0; 4], NOON).is_empty());
+    assert!(scene.aggressions.is_empty());
+    assert_eq!(Scene::condition_of(&scene.pilots[&SESSION], NOON), Condition::FULL);
+    assert!(scene.damage(spec().ship_id, [100.0; 4], NOON + 60 * SECOND).1.is_some());
+}
+
+#[test]
+fn tether_jump_departure_clears_permission_before_the_ship_enters_another_scene() {
+    let mut origin = scene_by_a_gate();
+    let gate = origin.system().body(NEAR_GATE).unwrap().clone();
+    let pilot = origin.pilots.get_mut(&SESSION).unwrap();
+    pilot.ship.position = Vec3::new(gate.position.x + gate.radius + pilot.ship.spec.radius + 500.0, gate.position.y, gate.position.z);
+    pilot.ship.velocity = Vec3::ZERO;
+    pilot.ship.speed_fraction = 0.0;
+    pilot.ship.course = Course::Stop;
+    pilot.protected_until = NOON;
+    let p = pilot.ship.position;
+    let mut structure = structure_placement(&origin, NOON);
+    structure.position = [p.x + structure.radius + spec().radius + 500.0, p.y, p.z];
+    origin.place_structure(structure, NOON);
+    assert_eq!(tether_changes(&grant_tether(&mut origin, NOON)), [(SESSION, 0, STRUCTURE, false)]);
+    let jumping = origin.jump(SESSION, NEAR_GATE, 0, NOON);
+    assert_eq!(tether_changes(&jumping), [(SESSION, STRUCTURE, 0, false)]);
+    let (mut travellers, told) = origin.due_jumps(NOON + 10 * SECOND);
+    assert_eq!(travellers.len(), 1);
+    assert!(tether_changes(&told).is_empty());
+    let mut destination = other_scene();
+    destination.arrive(travellers.remove(0), NOON + 10 * SECOND).unwrap();
+    let p = destination.pilots[&SESSION].ship.position;
+    let mut same_id = structure_placement(&destination, NOON + 10 * SECOND);
+    same_id.position = [p.x + same_id.radius + spec().radius + 500.0, p.y, p.z];
+    destination.place_structure(same_id, NOON + 10 * SECOND);
+    assert!(destination.tick_tethers(NOON + 10 * SECOND).is_empty());
+    assert!(!destination.is_tethered(spec().ship_id, NOON + 10 * SECOND));
+}
+
+#[test]
+fn tether_docking_reports_disengage_before_the_docked_condition() {
+    let mut scene = tether_scene();
+    grant_tether(&mut scene, NOON);
+    scene.command(SESSION, Command::Dock { station_id: STRUCTURE }, NOON);
+    assert!(scene.is_tethered(spec().ship_id, NOON + SECOND), "docking keeps tether until the ship leaves space");
+    let docked = scene.poll(NOON + 4 * SECOND);
+    assert_eq!(tether_changes(&docked), [(SESSION, STRUCTURE, 0, false)]);
+    let off = docked.iter().position(|out| matches!(out, Out::TetherChanged { structure_id: 0, .. })).unwrap();
+    let dock = docked.iter().position(|out| matches!(out, Out::Docked { .. })).unwrap();
+    assert!(off < dock);
+}
+
+#[test]
+fn tether_offensive_start_revokes_cached_permission_until_the_host_refreshes_it() {
+    let mut scene = tether_scene();
+    grant_tether(&mut scene, NOON);
+    let effect = tether_effect(Some(crate::modules::Action::EcmBurst { range: 5_000.0, strength: [1.0; 4] }));
+    let module_id = effect.module_id;
+    let started = scene.activate(SESSION, effect, NOON);
+    assert_eq!(tether_changes(&started), [(SESSION, STRUCTURE, 0, false)]);
+    scene.stop_module(SESSION, module_id, NOON);
+    assert!(scene.tick_tethers(NOON).is_empty(), "the old grant cannot race the host's weapons timer");
+    assert!(!scene.is_tethered(spec().ship_id, NOON));
+    assert_eq!(tether_changes(&grant_tether(&mut scene, NOON)), [(SESSION, 0, STRUCTURE, false)]);
 }

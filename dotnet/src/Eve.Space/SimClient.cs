@@ -455,6 +455,8 @@ public sealed class SimClient : ISimulation, IAsyncDisposable
 
     public void PlaceStructure(SimPlaceStructure structure) => Send(structure);
 
+    public void SetTetherPolicy(SimTetherPolicy policy) => Send(policy);
+
     public void RemoveStructure(long structureId) => Send(new SimRemoveStructure(structureId));
 
     public void SetStructureState(SimSetStructureState state) => Send(state);
@@ -462,6 +464,10 @@ public sealed class SimClient : ISimulation, IAsyncDisposable
     public void PlaceDisruptor(SimPlaceDisruptor disruptor) => Send(disruptor);
 
     public void SetDisruptorActive(long deployableId, bool active) => Send(new SimSetDisruptorActive(deployableId, active));
+
+    public void PlaceAnalysisBeacon(SimPlaceAnalysisBeacon beacon) => Send(beacon);
+
+    public void SetAnalysisBeaconState(long deployableId, SimAnalysisBeaconState state) => Send(new SimSetAnalysisBeaconState(deployableId, state));
 
     public void PlaceInhibitor(SimPlaceInhibitor inhibitor) => Send(inhibitor);
 

@@ -65,12 +65,13 @@ impl Scene {
     }
 
     pub fn leave(&mut self, session: SessionId, why: Departure, now: i64) -> Option<Vec<Out>> {
+        let mut out = self.clear_tether_policy(session, now);
         let mut pilot = self.pilots.remove(&session)?;
         if let Some(brains) = self.brains.as_mut() {
             brains.forget(session);
         }
         let ship_id = pilot.ship.spec.ship_id;
-        let mut out = self.drop_targeting(ship_id, &pilot.targeting, now);
+        out.extend(self.drop_targeting(ship_id, &pilot.targeting, now));
         let logoff_at = matches!(why, Departure::LoggedOff).then_some(pilot.ship.position);
         out.extend(self.release_drones(session, logoff_at, now));
 

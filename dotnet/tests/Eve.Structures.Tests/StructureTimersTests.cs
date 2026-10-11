@@ -137,6 +137,32 @@ public class StructureTimersTests
     }
 
     [PgFact]
+    public async Task A_system_query_returns_only_its_live_structures_in_id_order()
+    {
+        await using var rig = await Rig.Create();
+        var table = new JsonObject();
+        foreach (var (id, system) in new[] { (1004, 30000142), (1003, 30000142), (1002, 30000143), (1001, 30000142) })
+            table[id.ToString()] = new JsonObject
+            {
+                ["structureID"] = id, ["typeID"] = 35832, ["solarSystemID"] = system,
+                ["ownerCorpID"] = 98000001, ["state"] = StructureState.ShieldVulnerable,
+                ["upkeepState"] = UpkeepState.FullPower,
+            };
+        await rig.Commit((c, t) => rig.Store.ImportAsync(c, t, table, rig.Now));
+        var gone = await rig.Snapshot(1003);
+        await rig.Commit(async (c, t) =>
+        {
+            await rig.Store.SaveAsync(c, t, gone with { DestroyedMs = rig.Now });
+            return true;
+        });
+
+        var live = await rig.Commit((c, t) => rig.Store.ListInSystemAsync(c, t, 30000142));
+        Assert.Equal(new long[] { 1001, 1004 }, live.Select(r => r.Snapshot.StructureId));
+        var empty = await rig.Commit((c, t) => rig.Store.ListInSystemAsync(c, t, 30000144));
+        Assert.Empty(empty);
+    }
+
+    [PgFact]
     public async Task A_description_and_a_profile_are_written_to_the_structure_and_read_back_in_the_legacy_shape()
     {
         await using var rig = await Rig.Create();

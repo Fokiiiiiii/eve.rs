@@ -75,6 +75,78 @@ fn launched() -> (Scene, SessionId, Vec<Out>) {
     (scene, drone, told)
 }
 
+#[test]
+fn an_existing_drone_attack_task_cannot_hurt_a_tethered_ship() {
+    let (mut scene, drone, _) = launched();
+    let mut target = crate::scene::tests::spec();
+    target.ship_id += 200;
+    target.character_id += 200;
+    target.max_velocity = 0.0;
+    target.modules.clear();
+    let target_id = target.ship_id;
+    let target_session = PLAYER + 200;
+    let p = scene.pilots[&drone].ship.position;
+    scene.enter_in_space(target_session, target, [p.x + 100.0, p.y, p.z], [0.0, 0.0, 1.0], LATER).unwrap();
+    let mut structure = crate::scene::tests::structure_placement(&scene, LATER);
+    structure.position = [p.x + 100.0 + structure.radius + 47.0 + 500.0, p.y, p.z];
+    let structure_id = structure.structure_id;
+    scene.place_structure(structure, LATER);
+    scene.set_tether_policy(target_session, 0, 60_000,
+        vec![crate::link::TetherCandidate { structure_id, range: 1_000.0 }], LATER);
+    assert!(scene.is_tethered(target_id, LATER));
+    scene.engage(drone, target_id, LATER);
+    for second in 1..=5 {
+        scene.poll(LATER + second * SECOND);
+    }
+    assert_eq!(Scene::condition_of(&scene.pilots[&target_session], LATER + 5 * SECOND), crate::health::Condition::FULL);
+}
+
+#[test]
+fn a_drone_starting_an_offensive_effect_breaks_its_controllers_tether() {
+    let mut scene = scene_with_a_player();
+    scene.pilots.get_mut(&PLAYER).unwrap().ship.spec.corporation_id = 1_000_006;
+    let drone = launched_with(&mut scene, webber());
+    spawn_rat_at(&mut scene, RAT_SHIP, 2_000.0);
+    let p = scene.pilots[&PLAYER].ship.position;
+    let mut structure = crate::scene::tests::structure_placement(&scene, LATER);
+    structure.position = [p.x - structure.radius - 47.0 - 500.0, p.y, p.z];
+    let structure_id = structure.structure_id;
+    scene.place_structure(structure, LATER);
+    let candidates = vec![crate::link::TetherCandidate { structure_id, range: 10_000.0 }];
+    scene.set_tether_policy(PLAYER, 0, 60_000, candidates.clone(), LATER);
+    assert!(scene.is_tethered(scene.pilots[&PLAYER].ship.spec.ship_id, LATER));
+    let sent = scene.drone_command(PLAYER, &[DRONE_SHIP], DroneCommand::Engage { target: RAT_SHIP }, LATER);
+    assert_eq!(result_of(&sent), [(DRONE_SHIP, None)]);
+    let immediate_changes = sent.iter().filter(|out| matches!(out,
+        Out::TetherChanged { session: PLAYER, previous_structure_id, structure_id: 0, .. }
+        if *previous_structure_id == structure_id)).count();
+    assert!(immediate_changes <= 1);
+    let mut disengaged_at = (immediate_changes == 1).then_some(LATER);
+    for tenth in 1..=100 {
+        if disengaged_at.is_some() { break; }
+        let at = LATER + tenth * SECOND / 10;
+        let told = scene.poll(at);
+        let changes = told.iter().filter(|out| matches!(out,
+            Out::TetherChanged { session: PLAYER, previous_structure_id, structure_id: 0, .. }
+            if *previous_structure_id == structure_id)).count();
+        if changes > 0 {
+            assert_eq!(changes, 1);
+            disengaged_at = Some(at);
+            break;
+        }
+    }
+    let at = disengaged_at.expect("the drone started its offensive cycle");
+    assert!(scene.drone_is_attacking(drone));
+    let stale_grant = scene.set_tether_policy(PLAYER, 0, 60_000, candidates.clone(), at);
+    assert!(!stale_grant.iter().any(|out| matches!(out, Out::TetherChanged { structure_id, .. } if *structure_id != 0)));
+    assert!(!scene.is_tethered(scene.pilots[&PLAYER].ship.spec.ship_id, at));
+    scene.drone_command(PLAYER, &[DRONE_SHIP], DroneCommand::ReturnHome, at);
+    assert!(!scene.drone_is_attacking(drone));
+    assert!(scene.tick_tethers(at).is_empty(), "the stale grant does not survive the attack");
+    let refreshed = scene.set_tether_policy(PLAYER, 0, 60_000, candidates, at);
+    assert!(refreshed.iter().any(|out| matches!(out, Out::TetherChanged { session: PLAYER, structure_id: id, .. } if *id == structure_id)));
+}
+
 fn work_drone() -> (Scene, SessionId, Vec<Out>) {
     let (mut scene, drone, outputs) = launched();
     scene.drones.get_mut(&drone).expect("launched drone").work = DroneWorkProfile {

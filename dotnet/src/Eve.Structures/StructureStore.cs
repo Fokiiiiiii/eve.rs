@@ -88,6 +88,19 @@ public sealed class StructureStore
         return list;
     }
 
+    public async Task<IReadOnlyList<StructureRecord>> ListInSystemAsync(
+        NpgsqlConnection connection, NpgsqlTransaction? transaction, int solarSystemId,
+        CancellationToken cancellationToken = default)
+    {
+        await using var command = Sql.Command(connection, transaction,
+            Q($"SELECT {Columns} FROM {{schema}}.structures s WHERE s.solar_system_id = $1 AND s.destroyed_ms = 0 ORDER BY s.structure_id"), solarSystemId);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        var list = new List<StructureRecord>();
+        while (await reader.ReadAsync(cancellationToken))
+            list.Add(Read(reader));
+        return list;
+    }
+
     private static StructureRecord Read(NpgsqlDataReader r) => new(
         new StructureSnapshot
         {

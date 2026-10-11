@@ -16,6 +16,7 @@ mod movement;
 mod scan_targets;
 mod session;
 mod structures;
+mod tether;
 mod warping;
 use self::collision::*;
 pub use self::decloak::{CLOAK_PROXIMITY_METERS, CloakTrigger, DecloakCause};
@@ -254,6 +255,8 @@ pub enum Out {
     DeployedLit { session: SessionId, placement: Box<crate::link::DeployedPlacement> },
     /// A hit emptied a layer of a structure or paused its repair; the host decides what that means (protocol 60).
     StructureDamaged { structure_id: i64, depleted: Option<crate::health::Layer>, over_threshold: bool },
+    /// A tether transition; the host owns its client FX and access policy (protocol 62).
+    TetherChanged { session: SessionId, previous_structure_id: i64, structure_id: i64, repairing: bool },
     /// A command the scene cannot do.
     Refused { session: SessionId, command: u8, reason: &'static str },
     /// The answer to a targeting order: whether a lock is going, and the ships and bodies locked (or, to `GetTargeters`, the ships that lock this one).
@@ -372,6 +375,7 @@ impl Out {
             | Out::Arrived { session, .. }
             | Out::Destroyed { session, .. }
             | Out::Condition { session, .. }
+            | Out::TetherChanged { session, .. }
             | Out::Refused { session, .. }
             | Out::Targets { session, .. }
             | Out::ChargeSpent { session, .. }
@@ -563,6 +567,7 @@ pub(crate) struct Pilot {
     pub(crate) cloak: crate::visibility::CloakState,
     /// The overload state, per-rack heat and module heat damage carried by this ship.
     heat: HeatState,
+    tether: tether::TetherState,
 }
 
 impl Pilot {
@@ -592,6 +597,7 @@ impl Pilot {
             incoming: crate::ewar::Incoming::default(),
             cloak: crate::visibility::CloakState::Uncloaked,
             heat: HeatState::default(),
+            tether: tether::TetherState::default(),
         }
     }
 

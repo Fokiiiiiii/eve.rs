@@ -79,6 +79,8 @@ public const byte UpdateEffect = 61;
         public const byte RemoveProbe = 66;
         public const byte PlaceDisruptor = 68;
         public const byte SetDisruptorActive = 69;
+        public const byte PlaceAnalysisBeacon = 78;
+        public const byte SetAnalysisBeaconState = 79;
         public const byte PlaceInhibitor = 70;
         public const byte ScanTargets = 71;
         public const byte DirectionalTargets = 72;
@@ -91,6 +93,8 @@ public const byte UpdateEffect = 61;
         public const byte SetStructureState = 76;
         /// <summary>The simulation says a hit emptied a layer of a structure or paused its repair (simulation to host, protocol 60).</summary>
         public const byte StructureDamaged = 77;
+        public const byte TetherPolicy = 80;
+        public const byte TetherChanged = 81;
 
 
 /// <summary>Protocol 46 (FP-C7): an ECM burst reached ships; the ship that ran it and each ship reached, with whether its roll jammed it (simulation to host).</summary>

@@ -217,6 +217,7 @@ public sealed class SpaceJumpDrive(
     {
         if (await ships.CancelJumpAsync(fatigue, spools, spool.CharacterId, spool.EndsAtMs, cancellationToken))
         {
+            space.CancelCynoTetherArrival(spool.CharacterId);
             log?.Invoke($"the jump spool of character {spool.CharacterId} to system {spool.DestinationSystem} was cancelled ({why}): its fuel is refunded");
         }
     }

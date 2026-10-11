@@ -4,15 +4,15 @@
   {
    "name": "hello",
    "kind": "Hello",
-   "version": 47,
-   "hex": "03000000012f00"
+   "version": 62,
+   "hex": "03000000013e00"
   },
   {
    "name": "hello ack",
    "kind": "HelloAck",
-   "version": 47,
+   "version": 62,
    "pollHz": 4,
-   "hex": "07000000022f0004000000"
+   "hex": "07000000023e0004000000"
   },
   {
    "name": "enter by undocking",
@@ -3742,6 +3742,47 @@
    "hex": "0b0000004d010091dedfb103000101"
   },
   {
+   "name": "host tether policy grants a leased range",
+   "kind": "TetherPolicy",
+   "sessionId": "77",
+   "blockedForMs": "1000",
+   "leaseMs": "3000",
+   "candidates": [
+    {
+     "structureId": "1040000000000001",
+     "range": 10000.0
+    }
+   ],
+   "hex": "2d000000504d00000000000000e803000000000000b80b00000000000001000000010091dedfb10300000000000088c340"
+  },
+  {
+   "name": "host tether policy clears all rights",
+   "kind": "TetherPolicy",
+   "sessionId": "77",
+   "blockedForMs": "0",
+   "leaseMs": "0",
+   "candidates": [],
+   "hex": "1d000000504d000000000000000000000000000000000000000000000000000000"
+  },
+  {
+   "name": "tether engages and repairs the ship",
+   "kind": "TetherChanged",
+   "sessionId": "77",
+   "previousStructureId": "0",
+   "structureId": "1040000000000001",
+   "repairing": true,
+   "hex": "1a000000514d000000000000000000000000000000010091dedfb1030001"
+  },
+  {
+   "name": "tether breaks",
+   "kind": "TetherChanged",
+   "sessionId": "77",
+   "previousStructureId": "1040000000000001",
+   "structureId": "0",
+   "repairing": false,
+   "hex": "1a000000514d00000000000000010091dedfb10300000000000000000000"
+  },
+  {
    "name": "structure taken out of space by the host",
    "kind": "RemoveStructure",
    "structureId": "1040000000000001",
@@ -3775,6 +3816,50 @@
    "deployableId": "4250000000000009",
    "active": true,
    "hex": "0a0000004509a04b3c5a190f0001"
+  },
+  {
+   "name": "CRAB dropped from a ship, not yet active (20 s wait), no link",
+   "kind": "PlaceAnalysisBeacon",
+   "deployableId": "4250000000000012",
+   "solarSystemId": 30100032,
+   "typeName": "CONCORD Rogue Analysis Beacon",
+   "typeId": 60244,
+   "groupId": 4137,
+   "position": [
+    311989835983.1308,
+    -13069154020.916222,
+    156646308895.76187
+   ],
+   "radius": 100.0,
+   "ownerId": "1790646377000015",
+   "corporationId": 98000001,
+   "allianceId": 0,
+   "shipId": "9988400001943",
+   "state": {
+    "active": false,
+    "activateAt": "133900000000000000",
+    "deployedAt": "133899999000000000",
+    "activationSeconds": 20,
+    "linkState": 1,
+    "linkCompleteAt": "0",
+    "linkedShipId": "0"
+   },
+   "hex": "950000004e0ca04b3c5a190f00404acb011d00434f4e434f524420526f67756520416e616c7973697320426561636f6e54eb0000291000005fc833c6022952426c5427b7db5708c285e10f7e6c3c424200000000000059404f2c3859955c0600815cd7050000000097b3089b150900000000c06c2f57b5db0100f6d1f356b5db01140000000100000000000000000000000000000000000000"
+  },
+  {
+   "name": "CRAB active with a carrier linked (running, complete later)",
+   "kind": "SetAnalysisBeaconState",
+   "deployableId": "4250000000000012",
+   "state": {
+    "active": true,
+    "activateAt": "0",
+    "deployedAt": "133899999000000000",
+    "activationSeconds": 20,
+    "linkState": 2,
+    "linkCompleteAt": "133900240000000000",
+    "linkedShipId": "9988400001944"
+   },
+   "hex": "320000004f0ca04b3c5a190f0001000000000000000000f6d1f356b5db01140000000200000000208a108fb5db0198b3089b15090000"
   },
   {
    "name": "mobile cynosural inhibitor dropped and not yet anchored",
@@ -4602,6 +4687,46 @@
   }
  ],
  "invalid": [
+  {
+   "name": "tether candidate count exceeds its frame",
+   "reason": "truncated",
+   "hex": "1d000000504d000000000000000000000000000000b80b000000000000ffffffff"
+  },
+  {
+   "name": "tether candidate has zero range",
+   "reason": "bad-value",
+   "hex": "2d000000504d000000000000000000000000000000b80b00000000000001000000010091dedfb103000000000000000000"
+  },
+  {
+   "name": "tether candidate has NaN range",
+   "reason": "bad-value",
+   "hex": "2d000000504d000000000000000000000000000000b80b00000000000001000000010091dedfb10300000000000000f87f"
+  },
+  {
+   "name": "tether repair flag is not boolean",
+   "reason": "bad-value",
+   "hex": "1a000000514d000000000000000000000000000000010091dedfb1030002"
+  },
+  {
+   "name": "tether candidate has negative structure ID",
+   "reason": "bad-value",
+   "hex": "2d000000504d000000000000000000000000000000b80b00000000000001000000ffffffffffffffff000000000088c340"
+  },
+  {
+   "name": "tether change has negative previous structure ID",
+   "reason": "bad-value",
+   "hex": "1a000000514d00000000000000ffffffffffffffff010091dedfb1030000"
+  },
+  {
+   "name": "tether change has negative current structure ID",
+   "reason": "bad-value",
+   "hex": "1a000000514d000000000000000000000000000000ffffffffffffffff00"
+  },
+  {
+   "name": "detached tether cannot repair",
+   "reason": "bad-value",
+   "hex": "1a000000514d00000000000000010091dedfb10300000000000000000001"
+  },
   {
    "name": "unknown kind",
    "reason": "unknown-kind",

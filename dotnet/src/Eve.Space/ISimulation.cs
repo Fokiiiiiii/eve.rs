@@ -154,6 +154,8 @@ public interface ISimulation
     /// <summary>The host puts an Upwell structure in space (protocol 59).</summary>
     void PlaceStructure(SimPlaceStructure structure);
 
+    void SetTetherPolicy(SimTetherPolicy policy);
+
     /// <summary>The host takes a structure out of space (protocol 59).</summary>
     void RemoveStructure(long structureId);
 
@@ -163,6 +165,10 @@ public interface ISimulation
     void PlaceDisruptor(SimPlaceDisruptor disruptor);
     /// <summary>Says a mobile warp disruptor is anchored or not (protocol 48).</summary>
     void SetDisruptorActive(long deployableId, bool active);
+    /// <summary>Puts a CRAB the host keeps a record of in space (protocol 61).</summary>
+    void PlaceAnalysisBeacon(SimPlaceAnalysisBeacon beacon);
+    /// <summary>The host sets a CRAB's state (protocol 61).</summary>
+    void SetAnalysisBeaconState(long deployableId, SimAnalysisBeaconState state);
     /// <summary>Puts a Mobile Cynosural Inhibitor in space where its pilot dropped it, anchored or not (protocol 50).</summary>
     void PlaceInhibitor(SimPlaceInhibitor inhibitor);
     /// <summary>Puts a Mobile Cynosural Beacon in space where its pilot dropped it, anchored or not (protocol 58).</summary>

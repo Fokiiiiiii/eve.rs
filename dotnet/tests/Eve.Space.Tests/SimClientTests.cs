@@ -209,6 +209,25 @@ public class SimClientTests
     }
 
     [Fact]
+    public async Task Tether_policy_reaches_the_peer_and_the_state_change_reaches_the_host()
+    {
+        const long structureId = 1_040_000_000_001;
+        var (sim, client) = await ConnectedAsync(message => message is SimTetherPolicy policy
+            ? [new SimTetherChanged(policy.SessionId, 0, policy.Candidates[0].StructureId, true)] : []);
+        await using var _ = sim;
+        await using var __ = client;
+        var heard = new System.Collections.Concurrent.ConcurrentQueue<SimMessage>();
+        client.Received += heard.Enqueue;
+        client.SetTetherPolicy(new(7, 1000, 3000, [new(structureId, 10000)]));
+        await Until(() => heard.Count == 1);
+
+        var policy = Assert.Single(sim.HeardNow().OfType<SimTetherPolicy>());
+        Assert.Equal((7UL, 1000UL, 3000UL), (policy.SessionId, policy.BlockedForMs, policy.LeaseMs));
+        Assert.Equal(new SimTetherCandidate(structureId, 10000), Assert.Single(policy.Candidates));
+        Assert.Equal(new SimTetherChanged(7, 0, structureId, true), Assert.Single(heard));
+    }
+
+    [Fact]
     public async Task Commands_reach_the_simulation_in_the_order_they_were_given()
     {
         var (sim, client) = await ConnectedAsync();

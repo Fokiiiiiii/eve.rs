@@ -162,6 +162,10 @@ private readonly Dictionary<long, ClientSession> _fleetSessions = new();
 
     /// <summary>The PostgreSQL schema of the space items and the work-cycle ledger: a host restarted over it reads the same ledger.</summary>
     public string SpaceSchema => _schemas[6];
+    /// <summary>The schema of the rig's durable scheduler (a test that restarts the host makes a second scheduler over it).</summary>
+    public string SchedulerSchema => _schemas[7];
+    /// <summary>The schema of the rig's event bus (a restarted bus over the same cursors is made over it).</summary>
+    public string EventsSchema => _schemas[8];
 
     /// <summary>The Eve.Structures schema of this rig (ST-1 d tests).</summary>
     public string StructureSchema => _schemas[^1];

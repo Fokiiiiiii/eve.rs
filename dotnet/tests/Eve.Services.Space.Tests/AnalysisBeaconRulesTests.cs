@@ -1,0 +1,139 @@
+using System.Text;
+using Eve.Data;
+using Eve.Dogma;
+using Eve.Sde;
+using Eve.Services.Space.Beacons;
+using Npgsql;
+
+namespace Eve.Services.Space.Tests;
+
+/// <summary>
+/// The CRAB rules (<see cref="AnalysisBeaconRules"/>): the embedded owner figures load and refuse what the first cut does not build, and the beacon types, their
+/// link lists and their reward types are the pinned SDE's (SDE 3396210, types 60244 and 92183, group 4137).
+/// </summary>
+public class AnalysisBeaconRulesTests
+{
+    private static AnalysisBeaconRules Parse(string json) => AnalysisBeaconRules.Load(_ => new MemoryStream(Encoding.UTF8.GetBytes(json)));
+
+    private const string Valid = """
+        {
+          "schema": "eve.rs/analysis-beacon-rules/v1",
+          "beacons": [
+            { "typeId": 60244, "wave": { "atScanProgress": 0, "spawnPool": "rogue_drones", "amount": 4 }, "rewards": [ { "typeId": 60459, "quantity": 1441 } ] },
+            { "typeId": 92183, "wave": { "atScanProgress": 0, "spawnPool": "rogue_drones_deadspace_pve", "amount": 6 }, "rewards": [ { "typeId": 60473, "quantity": 1 } ] }
+          ]
+        }
+        """;
+
+    [Fact]
+    public void The_embedded_rules_give_each_type_its_wave_and_rewards()
+    {
+        var rules = AnalysisBeaconRules.LoadEmbedded();
+
+        Assert.Equal(2, rules.Types.Count);
+        Assert.Equal(new BeaconWaveRule("rogue_drones", 4), rules.For(60244)!.Wave);
+        Assert.Equal(new BeaconWaveRule("rogue_drones_deadspace_pve", 6), rules.For(92183)!.Wave);
+        Assert.Equal([new BeaconRewardRule(60459, 1441), new BeaconRewardRule(60466, 1), new BeaconRewardRule(60464, 1)], rules.For(60244)!.Rewards);
+        Assert.Equal([new BeaconRewardRule(60459, 2270), new BeaconRewardRule(60473, 1)], rules.For(92183)!.Rewards);
+    }
+
+    [Fact]
+    public void The_durations_and_the_link_lists_are_the_official_ones()
+    {
+        Assert.Equal(TimeSpan.FromSeconds(20), AnalysisBeaconRules.ActivationDelay);
+        Assert.Equal(TimeSpan.FromHours(1), AnalysisBeaconRules.Lifetime);
+        Assert.Equal(TimeSpan.FromMinutes(4), AnalysisBeaconRules.LinkDuration);
+        Assert.Equal(TimeSpan.FromMinutes(10), AnalysisBeaconRules.ScanOf(60244));
+        Assert.Equal(TimeSpan.FromMinutes(16), AnalysisBeaconRules.ScanOf(92183));
+        Assert.Equal(300, AnalysisBeaconRules.LinkTypeListOf(60244));
+        Assert.Equal(946, AnalysisBeaconRules.LinkTypeListOf(92183));
+        Assert.True(AnalysisBeaconRules.IsBeacon(60244) && AnalysisBeaconRules.IsBeacon(92183));
+        Assert.False(AnalysisBeaconRules.IsBeacon(60245));
+    }
+
+    [Fact]
+    public void A_file_with_another_schema_is_refused()
+    {
+        var error = Assert.Throws<InvalidDataException>(() => Parse(Valid.Replace("analysis-beacon-rules/v1", "analysis-beacon-rules/v2")));
+
+        Assert.Contains("schema", error.Message);
+    }
+
+    [Fact]
+    public void A_wave_at_another_scan_progress_is_refused_because_the_first_cut_does_not_build_it()
+    {
+        var error = Assert.Throws<InvalidDataException>(() => Parse(Valid.Replace("\"atScanProgress\": 0, \"spawnPool\": \"rogue_drones\"", "\"atScanProgress\": 0.5, \"spawnPool\": \"rogue_drones\"")));
+
+        Assert.Contains("scan progress 0", error.Message);
+    }
+
+    [Fact]
+    public void A_file_without_the_carrier_beacon_is_refused()
+    {
+        const string standardOnly = """
+            { "schema": "eve.rs/analysis-beacon-rules/v1", "beacons": [
+              { "typeId": 60244, "wave": { "atScanProgress": 0, "spawnPool": "rogue_drones", "amount": 4 }, "rewards": [] } ] }
+            """;
+
+        var error = Assert.Throws<InvalidDataException>(() => Parse(standardOnly));
+
+        Assert.Contains("both CRAB types", error.Message);
+    }
+
+    [Fact]
+    public void A_file_naming_a_type_that_is_not_a_beacon_is_refused()
+    {
+        Assert.Throws<InvalidDataException>(() => Parse(Valid.Replace("\"typeId\": 92183", "\"typeId\": 60245")));
+    }
+
+    [Fact]
+    public void A_reward_without_a_quantity_or_an_unknown_field_is_refused()
+    {
+        Assert.Throws<InvalidDataException>(() => Parse(Valid.Replace("\"quantity\": 1441", "\"quantity\": 0")));
+        Assert.Throws<System.Text.Json.JsonException>(() => Parse(Valid.Replace("\"amount\": 4", "\"amount\": 4, \"extra\": 1")));
+    }
+
+    [PgFact]
+    public async Task The_beacon_types_and_their_reward_types_are_the_pinned_sde_records()
+    {
+        await using var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
+        var statics = await DogmaStatic.LoadAsync(new SdeReader(source));
+        var rules = AnalysisBeaconRules.LoadEmbedded();
+        var needed = rules.Types.Values.SelectMany(rule => rule.Rewards.Select(reward => reward.TypeId))
+            .Concat(rules.Types.Keys).Concat([23757, 11567]).ToList();
+        await statics.EnsureTypesAsync(needed);
+
+        foreach (var beacon in new[] { AnalysisBeaconRules.StandardType, AnalysisBeaconRules.CarrierType })
+        {
+            var type = statics.Type(beacon);
+            Assert.NotNull(type);
+            Assert.Equal(AnalysisBeaconRules.Group, type.GroupId);
+            Assert.Equal(AnalysisBeaconRules.DeployableCategory, type.CategoryId);
+            // the three layers: hp (9), shield capacity (263) and armor hp (265), 50,000 each; the Anchoring skill (182) at level 3 (277)
+            Assert.Equal(50_000, type.Attributes[9]);
+            Assert.Equal(50_000, type.Attributes[263]);
+            Assert.Equal(50_000, type.Attributes[265]);
+            Assert.Equal(11584, type.Attributes[182]);
+            Assert.Equal(3, type.Attributes[277]);
+        }
+        foreach (var reward in rules.Types.Values.SelectMany(rule => rule.Rewards))
+        {
+            Assert.NotNull(statics.Type(reward.TypeId));
+        }
+        // the SDE's English name of the reward item (the group is "Rogue Drone Analysis Data")
+        Assert.Equal("Rogue Drone Infestation Data", statics.Type(60459)!.Name);
+    }
+
+    [PgFact]
+    public async Task A_carrier_links_in_both_lists_and_a_titan_only_in_the_standard_one()
+    {
+        await using var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
+        var statics = await DogmaStatic.LoadAsync(new SdeReader(source));
+        await statics.EnsureTypesAsync([23757, 11567]);
+
+        Assert.True(await statics.TypeListNamesAsync(AnalysisBeaconRules.StandardLinkTypeList, 23757));
+        Assert.True(await statics.TypeListNamesAsync(AnalysisBeaconRules.CarrierLinkTypeList, 23757));
+        Assert.True(await statics.TypeListNamesAsync(AnalysisBeaconRules.StandardLinkTypeList, 11567));
+        Assert.False(await statics.TypeListNamesAsync(AnalysisBeaconRules.CarrierLinkTypeList, 11567));
+    }
+}

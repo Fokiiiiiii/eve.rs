@@ -395,7 +395,8 @@ impl Scene {
         let Some(target_session) = self.session_of(target_id) else { return Vec::new() };
         let within =
             self.apart(session, target_session).is_some_and(|apart| apart <= reach + REACH_SLACK_METERS);
-        let protected = self.pilots.get(&target_session).is_some_and(|target| target.protected_until > at);
+        let protected = self.is_tethered_session(target_session, at)
+            || self.pilots.get(&target_session).is_some_and(|target| target.protected_until > at);
         if !within {
             return self.close_in(session, target_id, reach, at);
         }
@@ -447,7 +448,9 @@ impl Scene {
             (run.effect.module_type, run.effect.target_id, damage)
         };
         let Some(target_session) = self.session_of(target_id) else { return Vec::new() };
-        if self.pilots.get(&target_session).is_some_and(|target| target.protected_until > at) {
+        if self.is_tethered_session(target_session, at)
+            || self.pilots.get(&target_session).is_some_and(|target| target.protected_until > at)
+        {
             return Vec::new();
         }
         self.damage_ship(session, module_type, (target_session, target_id), damage, at)
@@ -468,6 +471,9 @@ impl Scene {
             .filter(|other| *other != session)
             .filter_map(|other| {
                 let pilot = self.pilots.get(&other)?;
+                if self.is_tethered_session(other, at) {
+                    return None;
+                }
                 let p = pilot.ship.position;
                 let gap = ((p.x - centre.x).powi(2) + (p.y - centre.y).powi(2) + (p.z - centre.z).powi(2))
                     .sqrt()
@@ -525,6 +531,7 @@ impl Scene {
                 self.pilots.get(other).is_some_and(|pilot| {
                     let p = pilot.ship.position;
                     pilot.protected_until <= at
+                        && !self.is_tethered_session(*other, at)
                         && strike.covers(sphere, [p.x, p.y, p.z], pilot.ship.spec.radius.max(0.0))
                 })
             })
@@ -603,7 +610,7 @@ impl Scene {
             .filter(|other| *other != session)
             .filter_map(|other| {
                 let target = self.pilots.get(&other)?;
-                if target.protected_until > at {
+                if target.protected_until > at || self.is_tethered_session(other, at) {
                     return None;
                 }
                 let p = target.ship.position;

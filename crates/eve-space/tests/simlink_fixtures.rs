@@ -690,6 +690,19 @@ fn changes_of(list: &Value) -> Vec<Change> {
         .collect()
 }
 
+/// A CRAB's state as the fixture gives it (protocol 61).
+fn beacon_state(state: &Value) -> eve_space::link::AnalysisBeaconState {
+    eve_space::link::AnalysisBeaconState {
+        active: state["active"].as_bool().unwrap(),
+        activate_at: wide(state, "activateAt"),
+        deployed_at: wide(state, "deployedAt"),
+        activation_seconds: state["activationSeconds"].as_i64().unwrap() as i32,
+        link_state: state["linkState"].as_i64().unwrap() as i32,
+        link_complete_at: wide(state, "linkCompleteAt"),
+        linked_ship_id: wide(state, "linkedShipId"),
+    }
+}
+
 fn message_of(case: &Value) -> Message {
     let number = |field: &str| case[field].as_u64().unwrap_or_else(|| panic!("{field} in {case}"));
     let session_id = || wide(case, "sessionId") as u64;
@@ -1005,6 +1018,20 @@ fn message_of(case: &Value) -> Message {
             },
             over_threshold: case["overThreshold"].as_bool().unwrap(),
         },
+        "TetherPolicy" => Message::TetherPolicy {
+            session_id: wide(case, "sessionId") as u64,
+            blocked_for_ms: wide(case, "blockedForMs") as u64,
+            lease_ms: wide(case, "leaseMs") as u64,
+            candidates: case["candidates"].as_array().unwrap().iter().map(|candidate| eve_space::link::TetherCandidate {
+                structure_id: wide(candidate, "structureId"), range: candidate["range"].as_f64().unwrap(),
+            }).collect(),
+        },
+        "TetherChanged" => Message::TetherChanged {
+            session_id: wide(case, "sessionId") as u64,
+            previous_structure_id: wide(case, "previousStructureId"),
+            structure_id: wide(case, "structureId"),
+            repairing: case["repairing"].as_bool().unwrap(),
+        },
         "RemoveStructure" => Message::RemoveStructure { structure_id: wide(case, "structureId") },
         "SetStructureState" => Message::SetStructureState {
             solar_system_id: number("solarSystemId") as i32,
@@ -1059,6 +1086,26 @@ fn message_of(case: &Value) -> Message {
         "SetDisruptorActive" => Message::SetDisruptorActive {
             deployable_id: wide(case, "deployableId"),
             active: case["active"].as_bool().unwrap(),
+        },
+        "PlaceAnalysisBeacon" => {
+            Message::PlaceAnalysisBeacon(Box::new(eve_space::link::AnalysisBeaconPlacement {
+                deployable_id: wide(case, "deployableId"),
+                solar_system_id: number("solarSystemId") as i32,
+                name: text(case, "typeName"),
+                type_id: number("typeId") as i32,
+                group_id: number("groupId") as i32,
+                position: vector_of(case, "position"),
+                radius: case["radius"].as_f64().unwrap(),
+                owner_id: wide(case, "ownerId"),
+                corporation_id: number("corporationId") as i32,
+                alliance_id: number("allianceId") as i32,
+                ship_id: wide(case, "shipId"),
+                state: beacon_state(&case["state"]),
+            }))
+        }
+        "SetAnalysisBeaconState" => Message::SetAnalysisBeaconState {
+            deployable_id: wide(case, "deployableId"),
+            state: beacon_state(&case["state"]),
         },
         "Measured" => Message::Measured {
             session_id: session_id(),
@@ -1425,6 +1472,7 @@ fn mutadaptive_remote_repair_action_and_cycle_messages_roundtrip_through_the_lin
 }
 
 #[test]
+
 fn every_invalid_frame_is_refused_for_the_stated_reason() {
     let fixtures = fixtures();
     for case in fixtures["invalid"].as_array().unwrap() {

@@ -39,6 +39,7 @@ internal sealed partial class CharacterServicesComposition
 {
     private string structureSchema = "";
     private Eve.Structures.StructureStore structureStore = default!;
+    private Eve.Structures.StructurePilotStore structurePilots = default!;
     private Eve.Structures.StructureTimers structureTimers = default!;
     private Eve.Structures.StructureFuel structureFuel = default!;
     private StructureCompressionAuthority structureCompression = default!;
@@ -122,11 +123,13 @@ internal sealed partial class CharacterServicesComposition
         structureSchema = Env("EVE_STRUCTURES_SCHEMA", Eve.Structures.StructureStore.DefaultSchema);
         await Eve.Structures.StructureStore.MigrateAsync(source, structureSchema);
         structureStore = new Eve.Structures.StructureStore(source, structureSchema);
+        structurePilots = new Eve.Structures.StructurePilotStore(structureStore);
         var legacy = await ReadGameStoreRawAsync("structures", CancellationToken.None);
         var legacyMoon = await ReadGameStoreRawAsync("moonExtractions", CancellationToken.None);
         await using var connection = await source.OpenConnectionAsync();
         await using var transaction = await connection.BeginTransactionAsync();
         var copied = await structureStore.ImportAsync(connection, transaction, legacy, now());
+        await structurePilots.ClearOnRestartAsync(connection, transaction);
         // ST-6a: the moon extractions and resource profiles move over in the same transaction (the same importer pattern)
         moonExtractionStore = new Eve.Structures.MoonExtractionStore(source, structureSchema);
         var moonCopied = await moonExtractionStore.ImportAsync(connection, transaction, legacyMoon);

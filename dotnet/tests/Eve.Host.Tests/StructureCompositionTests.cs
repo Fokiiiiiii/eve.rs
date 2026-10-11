@@ -192,6 +192,35 @@ public sealed class StructureCompositionTests : IAsyncLifetime
     }
 
     [PgFact]
+    public async Task Restart_clears_stale_structure_controller_records_without_removing_the_structure()
+    {
+        var url = Environment.GetEnvironmentVariable("EVE_PG_URL")!;
+        await using var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(url));
+        await SeedGameStoreAsync(source, SeededRow(StructureId, StructureState.ShieldVulnerable, 0, 0, UpkeepState.FullPower));
+        var host = await HostComposition.BuildAsync(Settings());
+        var structures = new StructureStore(source, Schema("EVE_STRUCTURES_SCHEMA"));
+        var pilots = new StructurePilotStore(structures);
+        await using (var connection = await source.OpenConnectionAsync())
+        await using (var transaction = await connection.BeginTransactionAsync())
+        {
+            var result = await pilots.AcquireAsync(connection, transaction,
+                new StructurePilotRequest(StructureId, 90000001, 1001, 10000001, StructureId, false), true);
+            Assert.Equal(StructurePilotAcquireStatus.Acquired, result.Status);
+            await transaction.CommitAsync();
+        }
+        await host.ShutdownAsync();
+
+        var restarted = await HostComposition.BuildAsync(Settings());
+        try
+        {
+            await using var connection = await source.OpenConnectionAsync();
+            Assert.Null(await pilots.GetByStructureAsync(connection, null, StructureId));
+            Assert.NotNull(await structures.GetAsync(StructureId));
+        }
+        finally { await restarted.ShutdownAsync(); }
+    }
+
+    [PgFact]
     public async Task An_imported_structure_with_an_elapsed_deadline_advances_once_after_start_and_a_replay_changes_nothing()
     {
         var url = Environment.GetEnvironmentVariable("EVE_PG_URL")!;

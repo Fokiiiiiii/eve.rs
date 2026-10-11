@@ -367,6 +367,8 @@ public sealed partial class SpaceSessions
         try
         {
             var session = pilot.Session;
+            // an Upwell structure takes the ship the same way a station does (its id is the place the ship and the character are in)
+            var inStructure = await IsStructureAsync(stationId, CancellationToken.None);
             var transition = await _transitions.ExecuteAsync(
                 async cancellationToken =>
                 {
@@ -392,8 +394,14 @@ public sealed partial class SpaceSessions
                         "OnItemsChanged", "charid",
                         new PyList([InventoryWire.PackedRow(ShipRow(moved.Ship, type))]),
                         ChangedFrom(moved),
-                        Py.Tuple(new PyStr("Station"), InventoryWire.Id(stationId), new PyStr("StationHangar")));
-                    session.Change(("stationid", new PyInt(stationId)), ("locationid", new PyInt(stationId)), ("solarsystemid", None));
+                        inStructure
+                            ? Py.Tuple(new PyStr("Structure"), InventoryWire.Id(stationId), new PyStr("StructureShipHangar"))
+                            : Py.Tuple(new PyStr("Station"), InventoryWire.Id(stationId), new PyStr("StationHangar")));
+                    // the client needs the solar system while docked in a structure (EveJS applies it there for the hangar bootstrap)
+                    if (inStructure)
+                        session.Change(("stationid", None), ("structureid", new PyInt(stationId)), ("locationid", new PyInt(pilot.SolarSystemId)), ("solarsystemid", new PyInt(pilot.SolarSystemId)));
+                    else
+                        session.Change(("stationid", new PyInt(stationId)), ("locationid", new PyInt(stationId)), ("solarsystemid", None));
                     return Task.FromResult(true);
                 },
                 notify: (_, _) =>

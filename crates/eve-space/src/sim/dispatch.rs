@@ -148,6 +148,9 @@ impl Sim {
                 Message::Docked { session_id: session, station_id, condition }
             }
             Out::DeployedLit { placement, .. } => Message::Deployed(placement),
+            Out::StructureDamaged { structure_id, depleted, over_threshold } => {
+                Message::StructureDamaged { structure_id, depleted, over_threshold }
+            }
             Out::Arrived { session, belt_id, position } => Message::Arrived {
                 session_id: session,
                 belt_id,

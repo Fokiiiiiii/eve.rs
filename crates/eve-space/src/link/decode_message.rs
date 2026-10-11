@@ -9,6 +9,28 @@ fn read_flag(reader: &mut Reader, what: &'static str) -> Result<bool, DecodeErro
     }
 }
 
+/// A structure's health: its shield, armor and hull points, the resonances of each layer (shield, armor, hull; four kinds each), the shield's recharge
+/// in milliseconds, the limit each layer takes in a second and the repair pause of each layer.
+fn read_structure_health(reader: &mut Reader) -> Result<(Vitals, f64, StructureLimits), DecodeError> {
+    let mut point = || -> Result<f64, DecodeError> {
+        let value = reader.f64()?;
+        if !(value.is_finite() && value >= 0.0) {
+            return Err(DecodeError::BadValue("structure health"));
+        }
+        Ok(value)
+    };
+    let shield_capacity = point()?;
+    let armor_hp = point()?;
+    let structure_hp = point()?;
+    let mut damage = || -> Result<Damage, DecodeError> { Ok([point()?, point()?, point()?, point()?]) };
+    let resonances = Resonances { shield: damage()?, armor: damage()?, structure: damage()? };
+    let shield_recharge_ms = point()?;
+    let per_second = [point()?, point()?, point()?];
+    let repair_pause = [point()?, point()?, point()?];
+    let vitals = Vitals { shield_capacity, armor_hp, structure_hp, resonances, armor_pinned: false };
+    Ok((vitals, shield_recharge_ms, StructureLimits { per_second, repair_pause }))
+}
+
 /// A structure's slim fields: its state and upkeep, a flagged timer (start, end and a flagged pause), a flagged unanchoring time and repairing
 /// (0 none, 1 not repairing, 2 repairing).
 fn read_structure_status(reader: &mut Reader) -> Result<StructureStatus, DecodeError> {
@@ -495,6 +517,7 @@ impl Message {
                 let owner_id = r.i64()?;
                 let corporation_id = r.i32()?;
                 let alliance_id = r.i32()?;
+                let (vitals, shield_recharge_ms, limits) = read_structure_health(&mut r)?;
                 let status = read_structure_status(&mut r)?;
                 if !(radius.is_finite() && radius >= 0.0) {
                     return Err(DecodeError::BadValue("structure"));
@@ -510,8 +533,23 @@ impl Message {
                     owner_id,
                     corporation_id,
                     alliance_id,
+                    vitals,
+                    shield_recharge_ms,
+                    limits,
                     status,
                 }))
+            }
+            kind::STRUCTURE_DAMAGED => {
+                let structure_id = r.i64()?;
+                let depleted = match r.u8()? {
+                    0 => None,
+                    1 => Some(Layer::Shield),
+                    2 => Some(Layer::Armor),
+                    3 => Some(Layer::Structure),
+                    _ => return Err(DecodeError::BadValue("structure layer")),
+                };
+                let over_threshold = read_flag(&mut r, "structure damage")?;
+                Message::StructureDamaged { structure_id, depleted, over_threshold }
             }
             kind::REMOVE_STRUCTURE => Message::RemoveStructure { structure_id: r.i64()? },
             kind::SET_STRUCTURE_STATE => {

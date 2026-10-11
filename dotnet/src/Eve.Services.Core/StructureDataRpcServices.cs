@@ -14,14 +14,14 @@ public sealed class MoonExtractionsRpcService : IService
     private const long MinimumDurationSeconds = 518460;
     private const long MaximumDurationSeconds = 4838400;
     private const long DefaultFractureDelaySeconds = 10800;
-    private readonly Func<JsonObject?> _readState;
+    private readonly Func<Task<JsonObject?>> _readState;
     private readonly Func<ServiceCall, ValueTask<PyValue>>? _mutationBackend;
 
     public MoonExtractionsRpcService(
-        Func<JsonObject?>? readState = null,
+        Func<Task<JsonObject?>>? readState = null,
         Func<ServiceCall, ValueTask<PyValue>>? mutationBackend = null)
     {
-        _readState = readState ?? (() => null);
+        _readState = readState ?? (() => Task.FromResult<JsonObject?>(null));
         _mutationBackend = mutationBackend;
     }
 
@@ -48,7 +48,7 @@ public sealed class MoonExtractionsRpcService : IService
             return call.Method == "StartNewExtraction" ? result : PyNone.Instance;
         }
 
-        var state = _readState() ?? new JsonObject();
+        var state = await _readState().ConfigureAwait(false) ?? new JsonObject();
         return call.Method switch
         {
             "GetExtractionAndEventIDFromStructureID" => ExtractionAndEvent(call, state),

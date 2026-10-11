@@ -16,6 +16,7 @@
     <Project Path="src/Eve.Marshal/Eve.Marshal.csproj" />
     <Project Path="src/Eve.Sde/Eve.Sde.csproj" />
     <Project Path="src/Eve.Dogma/Eve.Dogma.csproj" />
+    <Project Path="src/Eve.Hacking/Eve.Hacking.csproj" />
     <Project Path="src/Eve.Dungeons/Eve.Dungeons.csproj" />
     <Project Path="src/Eve.Events/Eve.Events.csproj" />
     <Project Path="src/Eve.Fitting/Eve.Fitting.csproj" />
@@ -62,6 +63,7 @@
     <Project Path="tests/Eve.Services.Crimewatch.Tests/Eve.Services.Crimewatch.Tests.csproj" />
     <Project Path="tests/Eve.Corporations.Tests/Eve.Corporations.Tests.csproj" />
     <Project Path="tests/Eve.Dogma.Tests/Eve.Dogma.Tests.csproj" />
+    <Project Path="tests/Eve.Hacking.Tests/Eve.Hacking.Tests.csproj" />
     <Project Path="tests/Eve.Events.Tests/Eve.Events.Tests.csproj" />
     <Project Path="tests/Eve.Fitting.Tests/Eve.Fitting.Tests.csproj" />
     <Project Path="tests/Eve.Services.Wallet.Tests/Eve.Services.Wallet.Tests.csproj" />

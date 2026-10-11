@@ -16,6 +16,7 @@
     <ProjectReference Include="../Eve.Crimewatch/Eve.Crimewatch.csproj" />
     <ProjectReference Include="../Eve.Events/Eve.Events.csproj" />
     <ProjectReference Include="../Eve.Content/Eve.Content.csproj" />
+    <ProjectReference Include="../Eve.Hacking/Eve.Hacking.csproj" />
     <ProjectReference Include="../Eve.Services.Generator/Eve.Services.Generator.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
   </ItemGroup>
   <ItemGroup>

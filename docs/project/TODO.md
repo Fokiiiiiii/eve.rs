@@ -1136,8 +1136,20 @@ Open:
 | DONE | `BodyKind::Structure`, `StructureStatus`, `PlaceStructure` / `RemoveStructure` / `SetStructureState` (protocol 59) | `crates/eve-space/src/scene/structures.rs`, `link/*`, `sim/dispatch.rs` | Sim-side only; the host sends nothing yet (increment d). |
 | DONE | Slim item of a structure (state, upkeep, timer, unanchoring, repairing, category 65) | `crates/eve-space/src/slim.rs` `structure_fields` | Client field names read from eve-logic `structure.py`, `structureBracket.py`. |
 | DONE | C# codec, records, `ISimulation`, `SimClient`, fakes; fixtures regenerated | `dotnet/src/Eve.Space/*`, `oracle/fixtures/simlink/messages.json` | `Eve.Space.Tests` 276 pass; `Eve.Services.Space.Tests` 648 pass with PG. |
-| OPEN | Health layers, per-second damage cap, `Out::StructureDamaged` | ST-1 (b) | Not started. |
+| DONE (sim) | Health layers, per-second damage cap, `StructureDamaged` (protocol 60) | `crates/eve-space/src/health/structure.rs`, `scene/structures.rs` `damage_structure` | Nothing sends damage to a structure yet (no weapon path to a structure body; ST-8a and host ST-1 d). |
 | OPEN | Dockable body generalisation in `scene/docking.rs` | ST-1 (c) | Not started. |
 | OPEN | Host `SpaceStructures` (restore on first entry, `structure.state_changed` subscriber, damage to the ST-0 machine) | ST-1 (d) | Not started. |
 | OPEN | Headless test `tools/headless-client/tests/test_structures.py` | ST-1 (e) | Not started. |
 | UNVERIFIED | The client's ball kind and slim rendering of an Upwell structure | MITM | See DEVIATIONS "Structure ball (ST-1)". |
+
+## 47. Structures phase ST-6a: moon extraction record and reads (2026-10-11)
+
+| status | item | where | note |
+|---|---|---|---|
+| DONE | `structure_moon_extractions` and `structure_moon_resources` (migration 0003), the one-time import of GameStore `moonExtractions` | `dotnet/src/Eve.Structures/MoonExtractionStore.cs`, `Migrations/0003_moon_extractions.sql`, `Composition/StructureComposition.cs` | Import keeps rows already there. Completed history is not read. |
+| DONE | Moon reads (`GetExtractionAndEventIDFromStructureID`, `GetExtractionsForCorp`, `GetMoonResourcesForStructure`) from the store | `Rpc/StructureRpc.cs`, `StructureDataRpcServices.cs` | Read shapes unchanged; tests `MoonExtractionStoreTests` (2 PostgreSQL tests), Host 180 of 180. |
+| OPEN | (b) `StartNewExtraction` validation, 30 000 m3/h chunk volume | ST-6a | Named refusals stay until (b) lands. |
+| OPEN | (c) jobs `moon.chunk_arrival`, `moon.auto_fracture`, `moon.field_decay` | ST-6a | |
+| OPEN | (d) `CancelExtraction`, `FractureChunkWithStructure`, `OnMoonExtractionUpdate` | ST-6a | |
+| OPEN | Owner-corporation character notifications (STARTED, FINISHED, LASER_FIRED, CANCELLED, AUTOMATIC_FRACTURE) | ST-6a | No notification store in eve.rs yet. |
+| OPEN | Rig modifiers (2707 fracture delay, 2704 yield) | ST-6a | Not read yet. |

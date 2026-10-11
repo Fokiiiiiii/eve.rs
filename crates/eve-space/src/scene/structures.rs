@@ -6,6 +6,7 @@ use std::sync::Arc;
 use eve_destiny::Vec3;
 
 use super::{Out, Scene, SessionId};
+use crate::health::{Damage, StructureHealth};
 use crate::link::StructurePlacement;
 use crate::payload;
 use crate::world::{Body, BodyKind, Detail, STRUCTURE_CATEGORY, StructureStatus};
@@ -56,6 +57,8 @@ impl Scene {
                 return Vec::new();
             }
         };
+        let health = StructureHealth::new(placement.vitals, placement.shield_recharge_ms, placement.limits, now);
+        self.structure_health.insert(placement.structure_id, health);
         self.structure_audience().into_iter().map(|session| Self::update(session, vec![added.clone()])).collect()
     }
 
@@ -63,6 +66,7 @@ impl Scene {
     pub(crate) fn remove_structure(&mut self, structure_id: i64, at: i64) -> Vec<Out> {
         let Some(index) = self.structure_index(structure_id) else { return Vec::new() };
         Arc::make_mut(&mut self.system).bodies.remove(index);
+        self.structure_health.remove(&structure_id);
         let stamp = self.next_stamp(at);
         let removed = payload::remove_ships(stamp, [structure_id]);
         self.structure_audience().into_iter().map(|session| Self::update(session, vec![removed.clone()])).collect()
@@ -82,5 +86,21 @@ impl Scene {
         }
         let change = payload::structure_slim_change(stamp, system, index);
         self.structure_audience().into_iter().map(|session| Self::update(session, vec![change.clone()])).collect()
+    }
+
+    /// A hit on a structure of this system: its layers take what the hit does, cut to the per-second limit of the layer it lands in. Told to the host
+    /// when a layer is emptied or a layer's repair is paused in this second (`StructureDamaged`). A structure not in space is left alone.
+    // shortcut: no weapon path hits a structure body yet (ST-8a, and the host's damage command in ST-1 d); the tests call it
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) fn damage_structure(&mut self, structure_id: i64, raw: Damage, now: i64) -> Vec<Out> {
+        if self.structure_index(structure_id).is_none() {
+            return Vec::new();
+        }
+        let Some(health) = self.structure_health.get_mut(&structure_id) else { return Vec::new() };
+        let Some(hit) = health.apply(now, raw) else { return Vec::new() };
+        if hit.depleted.is_none() && !hit.over_threshold {
+            return Vec::new();
+        }
+        vec![Out::StructureDamaged { structure_id, depleted: hit.depleted, over_threshold: hit.over_threshold }]
     }
 }

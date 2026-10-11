@@ -5,6 +5,24 @@ namespace Eve.Space;
 
 public static partial class SimCodec
 {
+    /// <summary>A structure's health (protocol 60): the points of its shield, armor and hull, the resonances of each layer, the shield's recharge, the
+    /// limit each layer takes in a second and the repair pause of each layer.</summary>
+    private static SimStructureHealth ReadStructureHealth(ref Reader r)
+    {
+        var shield = r.F64();
+        var armor = r.F64();
+        var structure = r.F64();
+        var resonances = new double[12];
+        for (var i = 0; i < resonances.Length; i++)
+        {
+            resonances[i] = r.F64();
+        }
+        var recharge = r.F64();
+        var perSecond = new[] { r.F64(), r.F64(), r.F64() };
+        var repairPause = new[] { r.F64(), r.F64(), r.F64() };
+        return new SimStructureHealth(shield, armor, structure, resonances, recharge, perSecond, repairPause);
+    }
+
     /// <summary>A structure's slim fields, in the order the simulation codec writes them (protocol 59): a flagged timer (start, end and a flagged pause),
     /// a flagged unanchoring time and repairing (0 none, 1 not repairing, 2 repairing).</summary>
     private static SimStructureStatus ReadStructureStatus(ref Reader r)

@@ -18,7 +18,7 @@ use crate::death::Credit;
 
 use crate::deployable::{BombKind, Spec};
 
-use crate::health::{Condition, Layer, Resonances, Vitals};
+use crate::health::{Condition, Damage, Layer, Resonances, StructureLimits, Vitals};
 
 use crate::missiles::Missile;
 
@@ -37,7 +37,7 @@ use crate::weapons::{Aoe, Arc, Charge, Spool, Turret};
 use crate::wreck::WreckKind;
 use crate::world::StructureStatus;
 
-pub const PROTOCOL_VERSION: u16 = 59;
+pub const PROTOCOL_VERSION: u16 = 60;
 /// The message kinds.
 pub mod kind;
 
@@ -195,6 +195,10 @@ pub struct StructurePlacement {
     pub owner_id: i64,
     pub corporation_id: i32,
     pub alliance_id: i32,
+    /// The structure's health as the host has it: its layers, the shield's recharge, the limits a layer takes in a second and the repair pauses.
+    pub vitals: crate::health::Vitals,
+    pub shield_recharge_ms: f64,
+    pub limits: crate::health::StructureLimits,
     pub status: crate::world::StructureStatus,
 }
 
@@ -572,6 +576,8 @@ pub enum Message {
         structure_id: i64,
         status: crate::world::StructureStatus,
     },
+    /// A structure's hit was told to the host (simulation to host, protocol 60): the layer it emptied, if any, and whether a layer's repair is paused.
+    StructureDamaged { structure_id: i64, depleted: Option<Layer>, over_threshold: bool },
     PlaceProbe(Box<ProbePlacement>),
     /// The host takes a scanner probe out of space (protocol 45); a deployable that is not a probe, or not in space, is left alone.
     RemoveProbe {
@@ -817,6 +823,7 @@ impl Message {
             Self::PlaceStructure(_) => kind::PLACE_STRUCTURE,
             Self::RemoveStructure { .. } => kind::REMOVE_STRUCTURE,
             Self::SetStructureState { .. } => kind::SET_STRUCTURE_STATE,
+            Self::StructureDamaged { .. } => kind::STRUCTURE_DAMAGED,
             Self::PlaceProbe(_) => kind::PLACE_PROBE,
             Self::RemoveProbe { .. } => kind::REMOVE_PROBE,
             Self::PlaceDisruptor(_) => kind::PLACE_DISRUPTOR,

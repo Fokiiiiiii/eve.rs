@@ -1952,3 +1952,30 @@ Sources: the wiki (a site's NPCs are its waves; a site is cleared by them); EveJ
 - **Level above 5.** An SDE difficulty above 5 is level V (strength 104). Status: decided (coordinator).
 - **Waves without NPCs.** A data or relic site may start with its containers only (its first objective is not a wave): no NPC is made for it, and its completion waits for the containers. Status: decided.
 
+
+- **Per-second limit (ST-1 b).** A layer takes at most its SDE per-second limit (2034-2036) in one second: a hit is cut to what the layer it starts in has left that second, by scaling the whole hit. A hit that spills into the next layer is not cut there (a stated approximation; the layers are linear within one layer). A destroyed structure takes nothing more; the host decides what its destruction means.
+- **Repair pause is reported, not applied (ST-1 b).** A layer that takes its repair-pause damage (SDE 3354-3356) in one second is reported in `StructureDamaged`; the simulation does not pause anything. The host pauses the repair through its state machine (ST-0).
+- **Protocol split.** The ST-1 wire takes 59 (placement, removal and state, pushed with increment a) and 60 (the health in the placement and `StructureDamaged`), because 59 had shipped without health. The packages' single +1 is therefore two numbers.
+
+## Hacking minigame (ST-10)
+
+Engine: `dotnet/src/Eve.Hacking` (pure rules, no Host). Sources: EVE University wiki Hacking page (rules), client `eve-logic` `hackingcommon/hackingConstants.py` and `eve/client/script/ui/hacking/hackingUIConst.py` (wire ids, grid), EveJS `services/exploration/hackingMgrService.js` (event flow, attempt lifecycle).
+
+- **Board size.** Wiki silent. Taken from the client grid: 10 columns by 9 rows, odd rows shifted (`GRID_MAX_COLUMNS`/`GRID_MAX_ROWS`, `NEIGHBOR_OFFSETS1/2`). Start cell (0,4). Status: decided.
+- **Rule of 8.** Core at grid distance >= 8 from the start (BFS over the grid); random fallback when no cell qualifies (wiki). Status: decided.
+- **Rule of Six.** Read as: a complete node (six neighbours) holds no defensive subsystem unless the core is adjacent to it. Status: decided (wiki wording, our reading).
+- **Content counts per tier.** Wiki silent. Defensive subsystems = 2 + tier, utility elements 3, data caches 2. Status: decided.
+- **Tiers.** Difficulty 1 Very Easy, 2 Easy, 3 Medium, 4+ Hard (Hardest is structure-only, not generated). Natural defence and utility sets follow the wiki table; Anti-Virus and the Very Easy/Easy utility set come from data caches only (wiki note). Status: decided.
+- **Core coherence and strength.** 10 x difficulty for both (EveJS `buildSyntheticBoard`, the only source). Core subtype 11. Status: taken from EveJS.
+- **Defensive subsystem stats.** Wiki gives images only. Firewall 60/10, Anti-Virus 20/40, Restoration Node 30/10, Virus Suppressor 30/10 (coherence/strength). Status: decided, MITM to verify.
+- **Virus Suppressor timing.** Wiki: "reduces your Virus Strength by 15, but not below 10". Applied while a revealed suppressor is alive, cumulative, floor 10 and never above the base strength; event `EVENT_HONEYPOT_STRENGTH` on change. Status: decided.
+- **Restoration Node.** +20 coherence each turn end to a random alive defensive subsystem (may be itself, never the core). Status: wiki.
+- **Turn.** Every reveal click is one turn; utility use on the virus or a target is not a turn. Status: decided.
+- **Utility elements.** Self repair +5 to +10 per turn for 3 turns; polymorphic shield absorbs the next 2 retaliations; kernel rot halves the target's coherence once; secondary vector -20 per turn for 3 turns. Targets are core or defensive subsystems. Status: wiki for effects, decided for durations shape.
+- **Targets on hidden tiles.** A utility target on a hidden tile is accepted only when the tile is a core or a defensive subsystem; otherwise it is acknowledged and nothing happens. This reveals the type to the player through the outcome. Status: known gap.
+- **Hidden tiles on the wire.** EveJS sends the type of every tile, hidden ones too. eve.rs sends `type -1` and zero numbers until a tile is revealed. Status: decided (not leaking).
+- **Inventory element keys.** EveJS puts `index` in each inventory element; the client builds `UtilityElementData(index=i, **element)`, so the key would collide. eve.rs sends `id`, `subtype`, `info` only. Status: client-verified shape (eve-logic `hackingUtilityElementData.py`, `hackingUISvc.py`).
+- **Distance indicator.** Empty node shows steps to the nearest core, utility element or data cache, capped at 5 (wiki). Status: wiki.
+- **Start of an attempt.** EveJS starts the attempt when the analyzer activation is accepted (`moduleOperation.js` 3228). The ST-10 plan said "on cycle completion"; eve.rs follows EveJS (the working reference). Status: decided, not yet wired.
+- **Not yet covered.** The Host service, the analyzer body, container placement and the loot on success (D-5) are the next increments. Status: open.
+

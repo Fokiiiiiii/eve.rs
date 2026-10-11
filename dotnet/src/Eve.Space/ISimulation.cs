@@ -156,6 +156,8 @@ public interface ISimulation
 
     void SetTetherPolicy(SimTetherPolicy policy);
 
+    Task<string?> ControlStructureAsync(SimControlStructure control, CancellationToken cancellationToken = default);
+
     /// <summary>The host takes a structure out of space (protocol 59).</summary>
     void RemoveStructure(long structureId);
 

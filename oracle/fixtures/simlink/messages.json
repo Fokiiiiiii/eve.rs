@@ -4,15 +4,15 @@
   {
    "name": "hello",
    "kind": "Hello",
-   "version": 62,
-   "hex": "03000000013e00"
+   "version": 63,
+   "hex": "03000000013f00"
   },
   {
    "name": "hello ack",
    "kind": "HelloAck",
-   "version": 62,
+   "version": 63,
    "pollHz": 4,
-   "hex": "07000000023e0004000000"
+   "hex": "07000000023f0004000000"
   },
   {
    "name": "enter by undocking",
@@ -3742,6 +3742,26 @@
    "hex": "0b0000004d010091dedfb103000101"
   },
   {
+   "name": "bind a structure control observer",
+   "kind": "ControlStructure",
+   "sessionId": "77",
+   "solarSystemId": 30000142,
+   "structureId": "1040000000000001",
+   "characterId": "90000001",
+   "active": true,
+   "hex": "1e000000524d000000000000000ec4c901010091dedfb10300814a5d050000000001"
+  },
+  {
+   "name": "release a structure control observer",
+   "kind": "ControlStructure",
+   "sessionId": "77",
+   "solarSystemId": 30000142,
+   "structureId": "0",
+   "characterId": "0",
+   "active": false,
+   "hex": "1e000000524d000000000000000ec4c9010000000000000000000000000000000000"
+  },
+  {
    "name": "host tether policy grants a leased range",
    "kind": "TetherPolicy",
    "sessionId": "77",
@@ -4687,6 +4707,21 @@
   }
  ],
  "invalid": [
+  {
+   "name": "structure control active flag is not boolean",
+   "reason": "bad-value",
+   "hex": "1e000000524d000000000000000ec4c901010091dedfb10300814a5d050000000002"
+  },
+  {
+   "name": "structure control cannot bind a zero structure",
+   "reason": "bad-value",
+   "hex": "1e000000524d000000000000000ec4c9010000000000000000814a5d050000000001"
+  },
+  {
+   "name": "structure control cannot use a negative character",
+   "reason": "bad-value",
+   "hex": "1e000000524d000000000000000ec4c901010091dedfb10300ffffffffffffffff00"
+  },
   {
    "name": "tether candidate count exceeds its frame",
    "reason": "truncated",

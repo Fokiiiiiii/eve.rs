@@ -124,6 +124,7 @@ public static class SimCommands
     public const byte BridgeJump = 31;
     /// <summary>A Black Ops conduit jump (protocol 57): the anchor and the ships of the passenger list jump to the field at once, within the conduit's range.</summary>
     public const byte ConduitJump = 32;
+    public const byte ControlStructure = 33;
 
     /// <summary>The scan targets of the scene for a probe scan (protocol 52).</summary>
     public const byte ScanTargets = 27;
@@ -1043,6 +1044,9 @@ public sealed record SimTetherPolicy(
 
 public sealed record SimTetherChanged(
     ulong SessionId, long PreviousStructureId, long StructureId, bool Repairing) : SimMessage;
+
+public sealed record SimControlStructure(
+    ulong SessionId, int SolarSystemId, long StructureId, long CharacterId, bool Active) : SimMessage;
 
 /// <summary>A mobile warp disruptor the host keeps a record of, put in space where its pilot dropped it (protocol 48). Its disruption is on while <see cref="Active"/>
 /// (it is anchored); <see cref="Range"/> is the warp disruption range in metres.</summary>

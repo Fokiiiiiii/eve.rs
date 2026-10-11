@@ -1,4 +1,5 @@
 using Eve.Macho;
+using Eve.Events;
 using Eve.Scheduler;
 using Eve.Marshal;
 using Eve.Sde;
@@ -56,8 +57,11 @@ public sealed class MoonExtractionStartHostTests
             await StructureStore.MigrateAsync(source, schema);
             var structures = new StructureStore(source, schema);
             var store = new MoonExtractionStore(source, schema);
+            await DurableScheduler.MigrateAsync(source, schema + "_sch");
+            await EventBus.MigrateAsync(source, schema + "_evt");
             var scheduler = new DurableScheduler(source, () => Now, new SchedulerOptions { Concurrency = 1 }, schema + "_sch", _ => { });
-            var moons = new MoonExtractions(structures, store, scheduler, rules);
+            var bus = new EventBus(source, scheduler, new EventBusOptions(), schema + "_evt", _ => { });
+            var moons = new MoonExtractions(structures, store, scheduler, bus, rules);
             var authority = new StructureMoonAuthority(source, structures, moons, rules);
             var sink = new Sink();
             var route = new Route(schema, source, structures, store, new MoonExtractionsRpcService(mutationBackend: authority.CallAsync), sink);
@@ -108,6 +112,7 @@ public sealed class MoonExtractionStartHostTests
             await using var connection = await Source.OpenConnectionAsync();
             await using (var command = new NpgsqlCommand($"DROP SCHEMA IF EXISTS \"{_schema}\" CASCADE", connection)) await command.ExecuteNonQueryAsync();
             await using (var command = new NpgsqlCommand($"DROP SCHEMA IF EXISTS \"{_schema}_sch\" CASCADE", connection)) await command.ExecuteNonQueryAsync();
+            await using (var command = new NpgsqlCommand($"DROP SCHEMA IF EXISTS \"{_schema}_evt\" CASCADE", connection)) await command.ExecuteNonQueryAsync();
             await Source.DisposeAsync();
         }
     }

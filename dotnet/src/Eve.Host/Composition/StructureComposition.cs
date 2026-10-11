@@ -154,8 +154,27 @@ internal sealed partial class CharacterServicesComposition
         structureCompression = new StructureCompressionAuthority(source, structureStore, items, dogma, sde, skills);
         // ST-6a: the moon drill starts a chunk (StartNewExtraction); the fracture and the cancel follow in (d)
         var moonRules = await MoonRulesSource.LoadAsync(sde);
-        moonExtractions = new Eve.Structures.MoonExtractions(structureStore, moonExtractionStore, foundations.Scheduler, moonRules);
+        moonExtractions = new Eve.Structures.MoonExtractions(structureStore, moonExtractionStore, foundations.Scheduler, foundations.Events, moonRules);
+        moonExtractions.Register();
+        moonExtractions.Subscribe();
+        // ST-6a (c, d): an extraction that ended (fractured, decayed, offlined or cancelled) is announced to the corporation and to the pilots docked at the structure
+        // (EVE.js sendMoonExtractionClearedToSessions)
+        foundations.Events.Subscribe("moon.session_notice", [Eve.Structures.MoonExtractions.EndedTopic], (context, cancellation) =>
+        {
+            var ended = context.Event.Payload<Eve.Structures.MoonExtractionEnded>()!;
+            foreach (var session in characterSessions.OfCorporation(ended.OwnerCorporationId).Concat(characterSessions.InStructure(ended.StructureId)).Distinct())
+                session.SendNotification("OnMoonExtractionUpdate", "clientID", PyNone.Instance);
+            return Task.CompletedTask;
+        });
         structureMoon = new StructureMoonAuthority(source, structureStore, moonExtractions, moonRules);
+        await using (var connection = await source.OpenConnectionAsync())
+        await using (var transaction = await connection.BeginTransactionAsync())
+        {
+            var open = await moonExtractions.EnsureScheduledAsync(connection, transaction);
+            await transaction.CommitAsync();
+            if (open > 0)
+                Console.Error.WriteLine($"eve-host: {open} open moon extraction(s) have their deadlines");
+        }
         structureRpcCallbacks = new Eve.Services.Core.StructureRpcCallbacks
         {
             CompressItemInStructureAsync = async (call, itemId) => await structureCompression.CompressAsync(call, itemId),

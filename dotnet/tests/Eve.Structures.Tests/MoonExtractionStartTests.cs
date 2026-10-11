@@ -30,7 +30,7 @@ public class MoonExtractionStartTests
     private static async Task<(MoonExtractionStore Store, MoonExtractions Moons)> Services(Rig rig)
     {
         var store = new MoonExtractionStore(rig.Source, rig.StructuresSchema);
-        return (store, new MoonExtractions(rig.Store, store, rig.Scheduler, new FakeMoonRules()));
+        return (store, new MoonExtractions(rig.Store, store, rig.Scheduler, rig.Bus, new FakeMoonRules()));
     }
 
     /// <summary>A working structure whose moon drill is online (service 14, the Standup Moon Drill I).</summary>

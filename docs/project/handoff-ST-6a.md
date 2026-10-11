@@ -9,7 +9,15 @@ Owner: the structures phase (plan in the scratchpad `specs/structures_phase.md`,
   transaction as the structures; `StructureRpc.cs` reads the store (`ReadMoonExtractionsAsync`). `MoonExtractionsRpcService` reads asynchronously now.
   Tests: `Eve.Host.Tests/MoonExtractionStoreTests.cs` (2 PostgreSQL tests, the reads through the real service, idempotent import).
 
-## Done (increment b, pending push at the time of writing)
+## Done (increment c)
+- Jobs (keys `extraction:{id}`): `moon.chunk_arrival` (ready at the chunk time, publishes `moon.chunk_arrived`), `moon.auto_fracture` (the natural decay;
+  the end of a fracture in progress; not-due deadlines ask to run again), `moon.field_decay` (48 h for a fractured or decayed chunk, SDE 2728 x 2706; publishes
+  `moon.field_decayed`, stored in `field_decayed_ms`, migration 0004). Completion publishes `moon.extraction_ended {reason}`; the Host's subscriber
+  `moon.session_notice` sends `OnMoonExtractionUpdate` to the corporation's and the structure's sessions.
+- Reactions: a drill offline (service 14) ends a chunk not yet arrived as `offlined`; a destroyed structure ends any open extraction as `offlined`.
+- Restart: the deadlines are durable; `EnsureScheduledAsync` re-arms imported open extractions at start-up. Tests: `MoonExtractionJobTests` (6).
+
+## Done (increment b)
 - (b) `StartNewExtraction`: `MoonExtractions.StartAsync` (domain, `Eve.Structures/MoonExtractions.cs`) and `StructureMoonAuthority` (Host gate, the named
   refusals, the caller's `OnMoonExtractionUpdate`), the SDE rules `MoonRulesSource` (2698, 2728 x 2706, Pochven), the chunk at 30 000 m3/h split by the moon.
   Tests: `MoonExtractionStartTests` (7, Structures) and `MoonExtractionStartHostTests` (6, Host). Decisions: DEVIATIONS "Moon extraction (ST-6a)".

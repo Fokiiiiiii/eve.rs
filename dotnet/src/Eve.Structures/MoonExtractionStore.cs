@@ -9,7 +9,7 @@ namespace Eve.Structures;
 public sealed record MoonExtraction(
     long ExtractionId, long StructureId, long MoonId, long SolarSystemId, long OwnerCorporationId, long StartMs, long ChunkAvailableMs, long NaturalDecayMs,
     long DurationSeconds, double YieldMultiplier, long CalendarEventId, string State, long ReadyNotifiedMs, long FractureStartedMs, long FractureCompleteMs,
-    IReadOnlyDictionary<long, double> OreVolumeM3, long CreatedMs, long CompletedMs, string CompletedReason);
+    IReadOnlyDictionary<long, double> OreVolumeM3, long CreatedMs, long CompletedMs, string CompletedReason, long FieldDecayedMs);
 
 /// <summary>The resource profile of a structure that mines a moon: the moon, its owner, its yield and the share of each ore type (EVE.js <c>resourcesByStructureID</c>).</summary>
 public sealed record MoonResourceProfile(long StructureId, long MoonId, long SolarSystemId, long OwnerCorporationId, double YieldMultiplier, IReadOnlyDictionary<long, double> Resources);
@@ -26,7 +26,8 @@ public sealed class MoonExtractionStore
 
     private const string ExtractionColumns =
         "extraction_id, structure_id, moon_id, solar_system_id, owner_corporation_id, start_ms, chunk_available_ms, natural_decay_ms, duration_seconds, " +
-        "yield_multiplier, calendar_event_id, state, ready_notified_ms, fracture_started_ms, fracture_complete_ms, ore_volume::text, created_ms, completed_ms, completed_reason";
+        "yield_multiplier, calendar_event_id, state, ready_notified_ms, fracture_started_ms, fracture_complete_ms, ore_volume::text, created_ms, completed_ms, completed_reason, " +
+        "field_decayed_ms";
 
     private readonly NpgsqlDataSource _source;
     private readonly string _schema;
@@ -68,6 +69,42 @@ public sealed class MoonExtractionStore
         }
         return new JsonObject { ["extractions"] = extractions, ["resourcesByStructureID"] = profiles };
     }
+
+    /// <summary>An extraction by id, or null. With <paramref name="forUpdate"/> the row is locked until the transaction ends.</summary>
+    public async Task<MoonExtraction?> GetAsync(NpgsqlConnection connection, NpgsqlTransaction? transaction, long extractionId, bool forUpdate, CancellationToken cancellationToken = default)
+    {
+        var lock_ = forUpdate ? " FOR UPDATE" : "";
+        await using var command = Sql.Command(connection, transaction,
+            Q($"SELECT {ExtractionColumns} FROM {{schema}}.structure_moon_extractions WHERE extraction_id = $1{lock_}"), extractionId);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        return await reader.ReadAsync(cancellationToken) ? ReadExtraction(reader) : null;
+    }
+
+    /// <summary>The extractions that are not completed (active or fracturing), all of them or those of one structure; locked until the transaction ends with <paramref name="forUpdate"/>.</summary>
+    public async Task<IReadOnlyList<MoonExtraction>> OpenAsync(NpgsqlConnection connection, NpgsqlTransaction? transaction, long? structureId = null, bool forUpdate = false, CancellationToken cancellationToken = default)
+    {
+        var filter = structureId is null ? "" : " AND structure_id = $1";
+        var lock_ = forUpdate ? " FOR UPDATE" : "";
+        var text = Q($"SELECT {ExtractionColumns} FROM {{schema}}.structure_moon_extractions WHERE state <> 'completed'{filter} ORDER BY extraction_id{lock_}");
+        await using var command = structureId is null
+            ? Sql.Command(connection, transaction, text)
+            : Sql.Command(connection, transaction, text, structureId.Value);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        var list = new List<MoonExtraction>();
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            list.Add(ReadExtraction(reader));
+        }
+        return list;
+    }
+
+    /// <summary>Writes the mutable columns of an extraction: its state, the chunk's readiness, the fracture, the completion and the field's decay.</summary>
+    public async Task UpdateAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, MoonExtraction e, CancellationToken cancellationToken = default) =>
+        await Sql.ExecuteAsync(connection, transaction, Q("""
+            UPDATE {schema}.structure_moon_extractions SET state = $2, ready_notified_ms = $3, fracture_started_ms = $4, fracture_complete_ms = $5,
+                completed_ms = $6, completed_reason = $7, field_decayed_ms = $8
+            WHERE extraction_id = $1
+            """), cancellationToken, e.ExtractionId, e.State, e.ReadyNotifiedMs, e.FractureStartedMs, e.FractureCompleteMs, e.CompletedMs, e.CompletedReason, e.FieldDecayedMs);
 
     /// <summary>The extraction of a structure that is active or fracturing, or null.</summary>
     public async Task<MoonExtraction?> ActiveForStructureAsync(NpgsqlConnection connection, NpgsqlTransaction? transaction, long structureId, CancellationToken cancellationToken = default)
@@ -151,7 +188,7 @@ public sealed class MoonExtractionStore
 
     private static MoonExtraction ReadExtraction(NpgsqlDataReader r) => new(
         r.GetInt64(0), r.GetInt64(1), r.GetInt64(2), r.GetInt64(3), r.GetInt64(4), r.GetInt64(5), r.GetInt64(6), r.GetInt64(7), r.GetInt64(8), r.GetDouble(9),
-        r.GetInt64(10), r.GetString(11), r.GetInt64(12), r.GetInt64(13), r.GetInt64(14), OreOf(r.GetString(15)), r.GetInt64(16), r.GetInt64(17), r.GetString(18));
+        r.GetInt64(10), r.GetString(11), r.GetInt64(12), r.GetInt64(13), r.GetInt64(14), OreOf(r.GetString(15)), r.GetInt64(16), r.GetInt64(17), r.GetString(18), r.GetInt64(19));
 
     public static JsonObject ToLegacy(MoonExtraction e) => new()
     {
@@ -211,7 +248,7 @@ public sealed class MoonExtractionStore
             startMove, chunkAvailable, decay > 0 ? decay : chunkAvailable + LegacyAutoFractureDelayMs, Positive(row["durationSeconds"]),
             yield > 0 ? yield : 1, Positive(row["calendarEventID"]), string.IsNullOrEmpty(state) ? "active" : state,
             Positive(row["readyNotificationSentAtMs"] ?? row["readyNotifiedAtMs"]), Positive(row["fractureStartedAtMs"]), Positive(row["fractureCompleteAtMs"]),
-            Volumes(row["oreVolumeByType"]), Positive(row["createdAt"]), Positive(row["completedAt"]), row["completedReason"]?.ToString() ?? "");
+            Volumes(row["oreVolumeByType"]), Positive(row["createdAt"]), Positive(row["completedAt"]), row["completedReason"]?.ToString() ?? "", 0);
     }
 
     /// <summary>EVE.js <c>normalizeResourceEntry</c>: the shares are under <c>resources</c>, or the entry itself holds them.</summary>

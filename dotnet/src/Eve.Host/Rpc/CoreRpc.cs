@@ -101,7 +101,7 @@ internal sealed partial class CharacterServicesComposition
                 SaveCharacterStateAsync: async (characterId, factionId, cooldown, cancellationToken) =>
                     await characters.SetFactionWarfareStateAsync(characterId, factionId, cooldown, cancellationToken))),
             new Eve.Services.Core.FwVictoryPointMgrService(),
-            new Eve.Services.Core.InsurgencySolarsystemService(),
+            new Eve.Services.Core.InsurgencySolarsystemService(new Eve.Services.Core.InsurgencySolarsystemRpcCallbacks(ReadInsurgencyCampaignsAsync)),
             new Eve.Services.Core.AlertService(),
             new Eve.Services.Core.FighterMgrService { Provider = FighterProvider() },
             new Eve.Services.Space.EssMgrService(),

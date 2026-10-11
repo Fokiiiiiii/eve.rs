@@ -133,6 +133,34 @@ public sealed class StructureRpcServiceTests
         Assert.Equal(18, observed?.Hour);
     }
 
+    [Fact]
+    public async Task Structure_undock_only_accepts_the_clients_boolean_confirmation()
+    {
+        bool? observed = null;
+        var service = new StructureRpcService("structureDocking", new StructureRpcCallbacks
+        {
+            UndockAsync = (_, structure, ship, ignoreContraband) =>
+            {
+                Assert.Equal(1_000_000_000_051, structure);
+                Assert.Equal(1_000_000_000_052, ship);
+                observed = ignoreContraband;
+                return ValueTask.CompletedTask;
+            },
+        });
+        foreach (var keyword in new PyValue[] { PyNone.Instance, PyBool.False, PyBool.True, new PyStr("true"), new PyInt(1) })
+        {
+            PyValue kwargs = keyword is PyNone ? PyNone.Instance : Py.Dict(("ignoreContraband", keyword));
+            await service.CallAsync(new ServiceCall
+            {
+                Method = "Undock",
+                Args = [new PyLong(1_000_000_000_051), new PyLong(1_000_000_000_052)],
+                Kwargs = kwargs,
+                Session = new ClientSession(),
+            });
+            Assert.Equal(PyBool.True.Equals(keyword), observed);
+        }
+    }
+
     private static ValueTask<PyValue> Call(
         StructureRpcService service,
         string method,

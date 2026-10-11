@@ -26,20 +26,22 @@ public sealed partial class SpaceSessions
     /// bound to the station let go, the session changed, the undocking protection started) and the answer is the object it called and the time
     /// from which it may go on. Returns None when there is nothing to undock.
     /// </summary>
-    public Task<PyValue> UndockAsync(ClientSession session, string? boundObjectId, CancellationToken cancellationToken) =>
-        UndockFromAsync(session, "stationid", boundObjectId, cancellationToken);
+    public Task<PyValue> UndockAsync(ClientSession session, string? boundObjectId, CancellationToken cancellationToken, bool ignoreContraband = false) =>
+        UndockFromAsync(session, "stationid", boundObjectId, cancellationToken, ignoreContraband);
 
     /// <summary>
     /// The undock from the station or the structure the session is in (<paramref name="placeKey"/> names which): the same ship, simulation and session
     /// changes; a structure is put in the simulation first (its ball is placed when a pilot comes into its system, which the undock may precede).
     /// </summary>
-    private async Task<PyValue> UndockFromAsync(ClientSession session, string placeKey, string? boundObjectId, CancellationToken cancellationToken)
+    private async Task<PyValue> UndockFromAsync(ClientSession session, string placeKey, string? boundObjectId, CancellationToken cancellationToken, bool ignoreContraband = false)
     {
         if (session.CharacterId is not { } characterId || session.GetInt(placeKey) is not { } placeId || IsInSpace(session))
         {
             return None;
         }
         var inStructure = placeKey == "structureid";
+        var previousStationId = session.GetInt("stationid") ?? 0;
+        var previousStructureId = session.GetInt("structureid") ?? 0;
         if (!_sim.IsConnected)
         {
             throw Notify("Space is not available right now. Try again in a moment.");
@@ -48,6 +50,9 @@ public sealed partial class SpaceSessions
         {
             return None;
         }
+        if (!ignoreContraband && InspectUndockContrabandAsync is { } inspect &&
+            (await inspect(characterId, snapshot.Ship.Id, snapshot.Character.SolarSystemId, cancellationToken)).Count > 0)
+            throw MachoErrors.ThrowUserError("ShipContrabandWarningUndock");
         // a Strategic Cruiser leaves its station only with one subsystem of each class (the reference's STRATEGIC_CRUISER_FIT_INCOMPLETE)
         if (_statics.Type(snapshot.Ship.TypeId)?.GroupId == Eve.Fitting.StrategicCruisers.GroupId
             && Eve.Fitting.StrategicCruisers.IncompleteFit(snapshot.Fitted
@@ -113,6 +118,7 @@ public sealed partial class SpaceSessions
                     ChangedFrom(moved), None);
                 ReleaseBoundObjects(session);
                 session.Change((placeKey, None), ("locationid", new PyInt(systemId)), ("solarsystemid", new PyInt(systemId)));
+                DockedLocationChanged?.Invoke(session, previousStationId, previousStructureId);
                 session.SendNotification("OnInvulunOnUndockingUpdated", "shipid", InventoryWire.Id(pilot!.ShipId),
                     new PyLong(pilot.InvulnerableUntil), new PyLong(UndockInvulnerabilityTicks));
                 return Task.CompletedTask;

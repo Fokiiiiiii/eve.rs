@@ -48,7 +48,10 @@ internal sealed partial class CharacterServicesComposition
                 return await foundations.Content.ActiveOfAsync(kind, owner, token);
             },
             ReadGameStoreTableAsync,
-            now);
+            now,
+            activeIncursions: async token => incursionDirector is { } directorOfIncursions
+                ? await directorOfIncursions.ReadActiveAsync(token)
+                : Array.Empty<JsonObject>());
         dungeonReadModel = new Eve.Host.PersistenceDungeonReadModel(
             (table, token) => sde.ReadAsync(table, cancellationToken: token),
             foundations.Content.ActiveByKindAsync,

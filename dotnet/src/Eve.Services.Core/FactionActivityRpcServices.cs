@@ -323,7 +323,8 @@ public sealed class InsurgencySolarsystemService(InsurgencySolarsystemRpcCallbac
         return PyNone.Instance;
     }
 
-    private static PyValue CampaignPayload(InsurgencyCampaignSnapshot campaign) => new PyObjectEx(
+    /// <summary>The client's CampaignClientSnapshot object for a campaign (the payload of a campaign notice too).</summary>
+    public static PyValue CampaignPayload(InsurgencyCampaignSnapshot campaign) => new PyObjectEx(
         ObjectExKind.Ex2,
         new PyTuple(
         [
@@ -338,7 +339,7 @@ public sealed class InsurgencySolarsystemService(InsurgencySolarsystemRpcCallbac
                 Entry("_campaignID", new PyInt(campaign.CampaignId)),
                 Entry("_piratePointsRequired", new PyInt(campaign.PiratePointsRequired)),
                 Entry("_piratePointsScored", new PyInt(campaign.PiratePointsScored)),
-                Entry("_structureID", new PyInt(campaign.StructureId)),
+                Entry("_structureID", campaign.StructureId > 0 ? new PyInt(campaign.StructureId) : PyNone.Instance),
                 Entry("_fsmState", new PyInt(campaign.FsmState)),
                 Entry("_originSolarsystemID", new PyInt(campaign.OriginSolarSystemId)),
                 Entry("_antipiratePointsRequired", new PyInt(campaign.AntipiratePointsRequired)),

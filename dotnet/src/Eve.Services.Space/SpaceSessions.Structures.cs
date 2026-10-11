@@ -83,13 +83,12 @@ public sealed partial class SpaceSessions
     /// <summary>
     /// <c>structureDocking.Undock(structureID, shipID, ignoreContraband=)</c> (ST-3 b): the pilot leaves the structure it is docked in. Another structure or
     /// ship is refused as the reference refuses it (DeniedShipChanged). The ship is put in space near the structure
-    /// (<c>scene/docking.rs</c> undock point, DEVIATIONS "Structure docking and hangars (ST-3)"). Contraband is not inspected: the server has no inspection for
-    /// a station either.
+    /// (<c>scene/docking.rs</c> undock point, DEVIATIONS "Structure docking and hangars (ST-3)"). Contraband confirmation is checked before the ship moves.
     /// </summary>
-    public Task UndockStructureAsync(ClientSession session, long structureId, long shipId, CancellationToken cancellationToken)
+    public Task UndockStructureAsync(ClientSession session, long structureId, long shipId, CancellationToken cancellationToken, bool ignoreContraband = false)
     {
         if (session.GetInt("structureid") != structureId || (shipId > 0 && session.GetInt("shipid") is { } active && active != shipId))
             throw MachoErrors.ThrowUserError("DeniedShipChanged");
-        return UndockFromAsync(session, "structureid", null, cancellationToken);
+        return UndockFromAsync(session, "structureid", null, cancellationToken, ignoreContraband);
     }
 }

@@ -1372,7 +1372,7 @@ Sources. The wiki: "Pochven" (https://wiki.eveuniversity.org/Pochven, fetched 20
 - **Incursions and anomalies come from the content state.** `map.GetIncursionGlobalReport`, `map.GetSystemsInIncursions`,
   `taleMgr.*` and `scanMgr.*` read the content instances of kind `incursion` and `anomaly` (`PersistenceIncursionAnomalyReadModel`).
   With none seeded, the answers are the empty contract shapes (an empty list, an empty rowset, an empty tale list).
-  Incursions are not simulated yet; the content slice that seeds them feeds these answers.
+  Incursions are simulated since B-L1 (see "Incursions (B-L1, B-S1, B-M1)" below); the content kind is no longer read.
 - **Live suite isolation.** The live run kept the game store (`gamestore`, which holds the mailboxes), and the corporation,
   market, fleet, industry and asset-safety tables, in the shared default schemas. Each run now gets its own scratch
   schema for each of them, and the script drops them at its end (`tools/dev/run-eve-live.sh`). `LiveScriptIsolationTests`
@@ -1527,6 +1527,69 @@ order at its expiry instant); CCP-BR (the order duration; "Modifying an order wi
 - **Test changes for the grace.** `TradingTests` (the over-cap refund that stays pending) and `ModificationRulesTests` (the restarted
   duration) check the expiry one grace after the expiry instant; the expected values are unchanged.
 - Status: done (M3), tested with a fake clock (TradeRig.Now); the live headless walk cannot wait a day, so the expiry is not walked live.
+
+## Market slice M4: cache coherence and corporate notices (2026-10-11)
+
+Sources: `market-design.md` section 4.3 M4 and decision Q8 (`market-decisions.md`); the V24.01 client's object cache
+(`carbon/common/script/net/objectCaching.py`: `InvalidateCachedMethodCall` adds the client's own session attribute to the key, 222-238;
+the cache details come from the server's wrapped result, 510-514); the client's own invalidation list (`marketsvc.py:113-124`); the
+push mechanism of the fittings (`FittingMgrServices.cs:241-253`).
+
+- **Book invalidation.** Every change to a region and type book sends `objectCaching.InvalidateCachedMethodCall` to the sessions of
+  that region: `GetOrders(typeID)`, `GetStationAsks`, `GetSystemAsks`, and for PLEX also `GetPlexOrders` and `GetPlexBest`. A change is
+  a placement that trades or rests, a fill, a modification, a cancel or an expiry; the receipt lists the books it touched
+  (`MarketReceipt.TouchedBooks`). A session whose known `regionid` differs is not asked. The client keeps these results for the run
+  (`versionCheck` "run"), so the push is what makes the next read fresh. Invalidations are sent before the notices.
+  Deviation (scope): the station and system asks are invalidated for every change in the region, not only the station's or
+  system's own; the client keys them by its own station or system, so a wider push is harmless and simpler.
+- **Owner-list invalidation.** For each character a change reaches, the client's `GetCharOrders` (a personal order) or
+  `GetCorporationOrders` (a corporate order) and `GetMarketOrderHistory` are dropped.
+- **Corporate notices (G11).** A corporate order's change (placement, fill of a corporate resting order, modification, cancel,
+  expiry) reaches every character with the corporation's market rights at the order's station (`CorporationStore.MarketRightsHoldersAsync`,
+  the Accountant or Trader test the client uses, `buyThisTypeWindow.py:324`), together with the acting character. A personal order's
+  notices are unchanged: its owner and the acting character. The recipients are computed inside the transaction (`NoticeRecipientsAsync`),
+  so a rolled-back change sends nothing.
+- **Not invalidated, with the reason.** `GetRegionBest` is not wrapped as a cached result by the server, and the client caches only
+  wrapped results (`objectCaching.py:510-514`), so there is nothing to drop. Seed import is not a runtime change: the NPC seed is imported
+  during host composition, before any session exists, so no cached result can hold the old book.
+- **Client-side price history is not reached.** The client keeps price histories in its own `ExpiringDict` (`marketsvc.py:103`, three
+  hours), not in objectCaching, so the server cannot drop them. A second trader's new fill can show in the history view up to three
+  hours late. Open: no server-side remedy exists within the V24.01 client.
+- **Outbox: not built (decision).** A notice goes to a live session only. After a stop no session survives, and the client's object cache
+  is per run, so a reconnecting client reads fresh state. An outbox would therefore have no recipient to deliver to. The M3 gap ("a stop
+  between the committed close and the send loses that notice") is recorded here as accepted: balances, items and order state are correct
+  after a restart, and the client's next read shows them.
+- **Open acceptance item (Q8).** The push is verified on the wire in-process (the test asserts the invalidation packet and the next read).
+  Two native clients observing each other's changes are not checked: no second native client runs in this environment.
+- **Tests.** `MarketCoherenceTests` (5): a placement, a cancel, a fill and an expiry, each seen by a second session in the region (the
+  invalidation is asserted on the wire, and the next read shows the change), with a session in another region not asked; and a corporate
+  placement, fill and cancel that reaches the trader with the market right and not the bystander. Status: done (M4) for the affected-project gate (Market, Host, Corporations and Scheduler green on the merge `2f80397`); the live run is blocked by the Secure Depot start-up error on origin/main (`SpaceComposition`), which is not an M4 change, and is re-run once it is fixed.
+
+## Market slice M5: price history by day (2026-10-11)
+
+Sources: the decision Q16 (`market-decisions.md`); the client's reading of the two rowsets (`marketsvc.py:344-366`,
+`GetHistoryRowList`: the old rows, placeholder rows through yesterday, then the new rows) and of the average (`marketsvc.py:368-386`,
+`GetAveragePrice`); the reference's split (`marketProxyService.js:469-487`).
+
+- **Deviation (the split).** "Old" holds the days before today and "new" the day in progress (none when nothing traded today). The
+  reference splits off the last row (`splitHistoryRows`, `rows.slice(-1)`). With traded-only days, that puts a past trading day in
+  "new": the client then writes its placeholder rows for that day and yesterday, and appends the real row after them. The result is
+  a duplicated, out-of-order day and a 7-day average that counts placeholders. The client reads "new" as today (`midnightToday`,
+  `marketsvc.py:346-358`), so eve.rs splits by the day. Test: `MarketHistoryTests.Each_day_is_one_row_and_the_day_in_progress_is_the_new_row`.
+- **Definitions (Q16), per UTC day.** Low is the lowest fill price, high the highest. The average is the sum of the gross amounts over the
+  sum of the quantities (volume-weighted). The volume is the sum of the quantities and the orders count the fills. The client's own
+  average (`avgPrice x volume` over the last seven days, divided by the volume) reproduces the day's gross exactly (test:
+  `The_seven_day_average_the_client_takes_is_the_volume_weighted_mean_of_the_rows`).
+- **Rows exist only for days with fills.** Days without trades are the client's placeholders (volume 2, `marketsvc.py:352`); the
+  server sends no gap rows.
+- **Same transaction as the fill.** The history is read from the `fills` table, which a fill writes in its own transaction, so a
+  rolled-back fill leaves no history row and the earlier fills stay (test: `A_fill_that_rolls_back_leaves_no_history_row_and_the_earlier_fill_stays`).
+- **Removed.** `MarketStore.HistoriesAsync` had no caller; it had no region filter, so a caller would have mixed the regions.
+- **Cost.** Each read aggregates the region's fills for the type (`GROUP BY` over `fills`, the `fills_type_history` index). No server
+  cache. Not measured beyond the tests.
+- **Tests.** `MarketHistoryTests` (6): several days with one row per day and the day in progress as "new"; the client's seven-day
+  average; a type without fills and a region without trades; the region scope (a trader in another region sees none); PLEX as its own
+  type; and a rolled-back fill. Status: done (M5).
 
 ## Agents slice AG-1: LP wallet (LPSvc), the access rule and the bound agentMgr (2026-10-10)
 
@@ -2080,6 +2143,20 @@ Engine: `dotnet/src/Eve.Hacking` (pure rules, no Host). Sources: EVE University 
 - **At-least-once spawn.** The simulation spawns a wave before the commit of its drone rows. A crash between the two can make the drones twice (as for dungeon waves).
 - **Not built.** The four-minute ship lock, the interference and energy costs, four links per character per day, the 10,000 km asteroid rule, bounties, beacon damage and drone attacks (see TODO section 48).
 - **Client ball.** A beacon is released as a container ball (as the lance beacon is), with category 22. Not verified in the graphical client.
+## Incursions (B-L1, B-S1, B-M1, 2026-10-11)
+
+Sources: CCP launch article "The Nation Strikes Back" (https://www.eveonline.com/news/view/the-nation-strikes-back-1) for the respawn window (12 to 36 hours) and the loyalty point rule (paid only when the final boss is destroyed); EVE University Incursions (https://wiki.eveuniversity.org/Incursions) for the phase lengths, the concurrent limits and the site counts; client constants in `eve-logic/talecommon/const.py` for the scene types, reward groups and the scout dungeons; the owner's dungeon catalog for the site compositions. No third-party history data is used at runtime.
+
+- Phase lengths: Mobilized 48 h (wiki). Established is fixed at one day; the wiki gives one to five days and no rule for the difference. Withdrawing 24 h (wiki). CCP publishes no phase numbers.
+- Concurrent incursions per band: highsec 1, lowsec 1, nullsec 3 (wiki; the wiki itself marks the highsec single-constellation rule as inference, not applied here).
+- Band of a system: highsec security 0.45 and above, lowsec 0.05 to 0.45, nullsec below (the client's rounding of 0.5 and 0.1). Constellation choice: random among constellations with a system of the band and no live incursion; CCP does not publish the choice.
+- Staging sites: five per incursion (wiki: up to five at once). No official count per incursion exists; the count is an eve.rs choice. Dungeons are drawn at random from the four staging dungeons with the owner's compositions.
+- Influence: full (1.0) at start and not changed. CCP says Sansha pushes influence down over time and site completion lowers it, but publishes no rate. Decay rate and grace are 0 (EveJS value).
+- Loyalty points: the pending value is 0 until the final boss exists. The wiki's staging payout (400 LP to the top five) conflicts with CCP's "LP only when the final boss is destroyed"; CCP's rule is followed (open item G-I1 in the plan).
+- Template class 2 and aggressor faction 500019 are EveJS values; reward group 8 is the client's REWARD_SCOUT.
+- Map rows: only the staging system has a row in `getSystemsInIncursions` (scene type 4, staging); the other systems of the constellation carry no site row yet. templateNameID is 0 (no name id in the owner catalog).
+- The read of content kind `incursion` in `PersistenceIncursionAnomalyReadModel` is gone: nothing produced that kind, and the lifecycle is now the source of the map answers.
+- Not built: vanguard, assault and headquarters sites (B-S2), the mothership (B-F1), influence and the final-boss loyalty points (B-R1).
 - **Site container types (ST-10 d1).** The template names a container type (e.g. "High Security Containment Facility", "Research and Development Laboratories") that the SDE does not carry under that name in groups 306/314/1207; those are placed as the lowest type id of the kind's group (306 for data, 1207 for relic), and the name is logged. Status: decided, MITM to verify the model.
 - **Site container ids and spacing (ST-10 d1).** Container id = 7e15 + (site instance id mod 1e9) * 100 + index; containers lie 150 m apart along x from the site, radius 50 m. Status: decided.
 - **Failures and destruction (ST-10 d1).** Two failed attempts destroy a container (wiki); a win clears it (the row stays, the ball stays and is no longer hackable). Status: wiki; the clear's ball is not removed.
@@ -2123,3 +2200,29 @@ Engine: `dotnet/src/Eve.Hacking` (pure rules, no Host). Sources: EVE University 
 - **Undock from a structure needs its ball (ST-3 b).** The structures of the system are put in the simulation before the ship enters (the same idempotent placement as a pilot's entry, `SpaceStructures.RestoreAsync`), because the ball may not be in the scene while the pilot is still elsewhere. Status: decided.
 - **Undock notification text (ST-3 b).** The item change of the ship carries `UndockingStructure:` (EveJS `clientCustomInfo`, `space/transitions.js` 2578); a station keeps `Undocking:<stationID>`. Status: verified against EveJS.
 - **Hangar view on change (ST-3 c).** `OnHangarViewStateUpdated` is not sent yet: the state fanout (`structureLifecycleFanout.js`) needs the structure state notifications of ST-2. Status: open.
+
+### ST-3 follow-up: guest lifecycle, hangar view and undock confirmation (2026-10-11)
+
+Successful dock and undock transitions invoke the existing guest hook after persistence and the session transition. Docking finishes its client notification before joining the guest list, matching EveJS `space/transitions.js:2819-2826`; the shared ledger suppresses repeated membership updates. A dynamic, replaceable close registration reads the current character and place, supporting undock/redock and character-selection rollback. Station membership notifications carry one identity tuple; structure join carries four identity arguments and structure leave the character ID (`guestLists.js`, V24.01 station/structure consumers).
+
+The ST-2 subscriber now emits `OnHangarViewStateUpdated(structureID, state)` from the same persisted reader as `GetMyHangarViewState`. The current-structure notice precedes the hangar update; removals and control seats do not receive a hangar view. No view is read without a docked audience. The durable subscriber cursor prevents acknowledged event replay from producing duplicate client notices. Tests compare producer data after wire decoding, preserving token/string normalization, and use a new Scheduler as well as a new EventBus for restart.
+
+The confirmation gate is before any movement or simulation entry. It uses official SDE `contrabandTypes` faction `_key` / `confiscateMinSec`, `SolarSystemCatalog` faction/security, and fresh `PgItemStore` direct cargo reads. V24.01 `structureDocking.py:26-53` and `station/base.py:488-521` define `ShipContrabandWarningUndock` and boolean retry; only `PyBool.True` bypasses the gate. EveJS `contrabandInspectionRuntime.js:184-203,219-273` supplies the security threshold/direct-cargo behavior. Deliberate difference: eve.rs adds the client-defined confirmation gate and does not apply fines or confiscation in this preflight; EveJS transition inspection schedules those penalties and its `ignoreContraband` flag does not gate inspection. The customs settlement flow is outside this change. A disabled Host simulation now refuses Dock/Undock with `CustomInfo` instead of returning fake success.
+
+Focused PostgreSQL verification: Station 28/28, selected Space docking/undocking/hangar/contraband 10/10, actual Host home/structure-simulation-unavailable scenario plus structure-state fanout 2/2; structure RPC validation 32/32. Wider Host 202/202 and CharacterSelect 58/58 pass. After integrating the multiple-training/New Eden Store upstream through `de05bcd7c66afd2170481ac89bda12938ca565c6`, Host build has zero warnings/errors; own Host cases plus upstream entitlement cases pass 7/7, and selected Space cases pass 10/10. Scratch home/contraband schemas are absent after cleanup. Native graphical acceptance and live headless dock/undock remain open.
+
+## Insurgency campaigns (C-M1, C-S1)
+
+- **Wind-down after any end is 48 hours.** Source: the EVE.js wind-down (`insurgencyFobRuntime.js` INSURGENCY_WIND_DOWN_DURATION_MS). CCP's 24.01 notes and the wiki give no wind-down for a pirate win or a tie. The value applies to all three ends. Status: decided; not CCP data.
+- **No winner at the maximum length.** A campaign still active at 7 days from its start, with neither side at its required count, ends in `NO_WINNER` and pays nothing (wiki: a tie has no bonus payout). EVE.js instead starts its wind-down at the maximum and has no tie state. Status: decided.
+- **Maximum length counts from the start, including the forecast** (24.01: "Reduced Insurgency length to 7 days"; EVE.js `maxEndsAtMs = start + 7 days`). Status: decided.
+- **Ambition is a simplified rule.** Each side has a modifier from 0 to 5. The winner gains one level, the loser gives one back, down to 0; a side needs 5 + modifier systems. The wiki's underdog rule (a win by the weaker side takes one level from the streak) is not built. Status: decided; underdog rule OPEN.
+- **Required counts are fixed at the start.** A running campaign keeps the counts it started with; a later ambition change applies to the next campaign. Status: decided.
+- **The default of 20 pirate systems in EVE.js is not used.** EVE.js `insurgencyFobRuntimeController.js:595` (20 pirate, 5 antipirate) predates 24.01, whose cap is 10 systems at maximum ambition. Status: decided (24.01 over EVE.js).
+- **`fsmState` is the real state.** EVE.js reports 3 (active) for every campaign (`insurgencyFobRuntimeController.js:587`); the client's states (`pirateinsurgency/const.py`) are reported as stored. Status: decided.
+- **`structureID` is None while no FOB is known.** EVE.js sends 0. The client reads the id from `GetActiveFobStructureIdAndSystemIdForFaction` (`lpStoreSvc.py:546`), so None is the absent value. Status: decided; revisit with the FOB owner.
+- **Campaign start is not triggered by any client or operator path** (Q-INS-4: no source names the trigger). The store and `StartAsync` exist. A server with no started campaign answers the empty list. Status: OPEN decision.
+- **Notice audience.** Location notices (started, updated, ending) go to the pilots whose `solarsystemid2` (or `solarsystemid`) is a covered system, addressed with the `clientID` of each session. Faction notices (state changed, system fully corrupted or suppressed) go to every character session, because the client handlers do not filter by location (`insurgencyCampaignSvc.py:121-143`). Status: decided from the client code; not checked in the graphical client.
+- **Ending notice per covered system.** `OnInsurgencyCampaignEndingForLocation` takes one system id and the client compares it with the pilot's system, so it is sent once per covered system with that id. Status: decided.
+- **Public gateway not built (C-G1).** The corruption and suppression bars are unavailable. The client's gateway call fails on the client side (`messenger.py:71`, TypeError), which the space path catches and logs (`clientDogmaLocation.py:1506-1511`). Evidence: `scratchpad/work/insurgency-gateway-spike.md`. Status: decided; revisit with D-G1.
+

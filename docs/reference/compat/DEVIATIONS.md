@@ -2063,3 +2063,19 @@ Engine: `dotnet/src/Eve.Hacking` (pure rules, no Host). Sources: EVE University 
 - **Container items (ST-10 d2).** A site container is an inventory item of its own (ship-less, in the system, owner 0); its id is the container's id, so its cargo is the item's contents (locationID = container id), like a wreck's. Status: decided (follows the wreck path of CharacterShips.LeaveWreckAsync).
 - **Loot name without SDE type (ST-10 d2).** "Engagement Plan Data Chip" is not in the SDE under that name; the profile skips it. Status: decided.
 
+
+## Insurgency campaigns (C-M1, C-S1)
+
+- **Wind-down after any end is 48 hours.** Source: the EVE.js wind-down (`insurgencyFobRuntime.js` INSURGENCY_WIND_DOWN_DURATION_MS). CCP's 24.01 notes and the wiki give no wind-down for a pirate win or a tie. The value applies to all three ends. Status: decided; not CCP data.
+- **No winner at the maximum length.** A campaign still active at 7 days from its start, with neither side at its required count, ends in `NO_WINNER` and pays nothing (wiki: a tie has no bonus payout). EVE.js instead starts its wind-down at the maximum and has no tie state. Status: decided.
+- **Maximum length counts from the start, including the forecast** (24.01: "Reduced Insurgency length to 7 days"; EVE.js `maxEndsAtMs = start + 7 days`). Status: decided.
+- **Ambition is a simplified rule.** Each side has a modifier from 0 to 5. The winner gains one level, the loser gives one back, down to 0; a side needs 5 + modifier systems. The wiki's underdog rule (a win by the weaker side takes one level from the streak) is not built. Status: decided; underdog rule OPEN.
+- **Required counts are fixed at the start.** A running campaign keeps the counts it started with; a later ambition change applies to the next campaign. Status: decided.
+- **The default of 20 pirate systems in EVE.js is not used.** EVE.js `insurgencyFobRuntimeController.js:595` (20 pirate, 5 antipirate) predates 24.01, whose cap is 10 systems at maximum ambition. Status: decided (24.01 over EVE.js).
+- **`fsmState` is the real state.** EVE.js reports 3 (active) for every campaign (`insurgencyFobRuntimeController.js:587`); the client's states (`pirateinsurgency/const.py`) are reported as stored. Status: decided.
+- **`structureID` is None while no FOB is known.** EVE.js sends 0. The client reads the id from `GetActiveFobStructureIdAndSystemIdForFaction` (`lpStoreSvc.py:546`), so None is the absent value. Status: decided; revisit with the FOB owner.
+- **Campaign start is not triggered by any client or operator path** (Q-INS-4: no source names the trigger). The store and `StartAsync` exist. A server with no started campaign answers the empty list. Status: OPEN decision.
+- **Notice audience.** Location notices (started, updated, ending) go to the pilots whose `solarsystemid2` (or `solarsystemid`) is a covered system, addressed with the `clientID` of each session. Faction notices (state changed, system fully corrupted or suppressed) go to every character session, because the client handlers do not filter by location (`insurgencyCampaignSvc.py:121-143`). Status: decided from the client code; not checked in the graphical client.
+- **Ending notice per covered system.** `OnInsurgencyCampaignEndingForLocation` takes one system id and the client compares it with the pilot's system, so it is sent once per covered system with that id. Status: decided.
+- **Public gateway not built (C-G1).** The corruption and suppression bars are unavailable. The client's gateway call fails on the client side (`messenger.py:71`, TypeError), which the space path catches and logs (`clientDogmaLocation.py:1506-1511`). Evidence: `scratchpad/work/insurgency-gateway-spike.md`. Status: decided; revisit with D-G1.
+

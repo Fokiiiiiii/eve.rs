@@ -18,7 +18,7 @@ Do not fabricate successful state or fake backends to close these items.
 | Status | Service/method | Missing work |
 |---|---|---|
 | FUTURE | machoNet single sign-on login (`connection.LoginSso`, the `user_sso_token` of `machoNet.Authenticate`) | The acknowledgement now carries `access_token` and `computer_hash` (None), so the client no longer fails on the keys. The token is not read: EveJS records it only (`authenticationService.js:281`), and no token-to-account rule exists. Needs a decision on how a CCP SSO token maps to an account. |
-| OPEN | `insurgencySolarsystem.GetAllVisibleCampaigns`; `GetLocalCampaignClientSnapshot` | Connect a campaign snapshot producer equivalent to EveJS's Insurgency runtime controller. The route and callback boundary exist, but no campaign producer was found in `dotnet/src`. |
+| PARTLY | `insurgencySolarsystem.GetAllVisibleCampaigns`; `GetLocalCampaignClientSnapshot`; campaign notices | The campaign state machine, store and deadline jobs exist (section 48, `Eve.Insurgency`); the snapshot reads them through the Host and the notices go to covered systems. Open: a start trigger (no client or operator path starts a campaign, Q-INS-4), the FOB structure (structures owner; `structureID` is None until then), point producers (C-P1: corruption and suppression sites, spread), and the public gateway for per-system bars (C-G1, not built; see section 48). |
 | OPEN | `essMgr.GetDataForClientSolarSystem`; `GetMainBankTheftsForClientSolarSystem`; `GetReserveBankTheftsForClientSolarSystem`; `RequestMainBankUnlink`; `RequestReserveBankUnlink` | Connect the real ESS state and operation backend to `ReadSystemStateAsync` and `ExecuteAsync`. Do not synthesize thefts or unlink success. |
 | OPEN | `abyssalMgr.ClientIsReady` | Connect the runtime client-ready path and automatic trace activation. No Abyssal runtime provider was found in the current C# source. |
 | OPEN | `scanMgr.SignalTrackerRegister` | The Host can record the character/session/system registration and has a full-state publish hook. The live signal snapshot producer and the code that calls the publisher are still absent. |
@@ -1173,3 +1173,20 @@ Open:
 | OPEN | Structure placement on anchoring (ST-2) and the slim `repairing`/`unanchoring` fields | ST-2 | A structure anchored with a pilot in the system is not shown until the next entry. |
 | WRITTEN, NOT RUN LIVE | (e) headless scenario `tools/headless-client/tests/test_structures.py`: a pilot in a system with an imported Astrahus sees it in the ballpark with its state and timer | ST-1 (e) | Collects and skips without `EVE_LIVE_HOST` and the structure's environment; no live server has run it. |
 | UNVERIFIED | Client behaviour of a structure's dock (`OnDockingAccepted` and the docked session), the damage the ball shows, the state label | MITM | Not verified on the graphical client. |
+
+## 48. Pirate insurgency campaigns, C-M1 and C-S1 (2026-10-11)
+
+Plan: scratchpad `work/missions-hard-first-plan.md` track C; decisions in DEVIATIONS.md "Insurgency campaigns (C-M1, C-S1)". Gateway feasibility: scratchpad `work/insurgency-gateway-spike.md`.
+
+| status | item | where | note |
+|---|---|---|---|
+| DONE (tests) | Campaign state machine with the 24.01 numbers: forecast 48 h, active to 7 days from the start, no winner at the maximum, wind-down 48 h after any end, ambition 5 to 10 systems, FOB reinforcement 2 to 4 h (rule only), spread level 3 and contribution LP constants (rule only) | `dotnet/src/Eve.Insurgency/InsurgencyRules.cs`, `InsurgencyCampaign.cs` | `CampaignMachineTests` (10 pure tests, 6 PostgreSQL tests in `InsurgencyCampaignTests`) |
+| DONE (tests) | Store, deadline jobs (one durable job per campaign), restart keeps the expiry, points refused unless active and covered, win updates the ambition in the same transaction | `Eve.Insurgency/InsurgencyStore.cs`, `InsurgencyCampaigns.cs`, `Migrations/0001_insurgency.sql` (schema `insurgency`) | Scheduler and events are the Host's |
+| DONE (tests) | `GetAllVisibleCampaigns` and `GetLocalCampaignClientSnapshot` read the store through the real Host composition (structure of the snapshot, `structureID` None, `[systemID, None]` outside covered systems) | `dotnet/src/Eve.Host/Composition/InsurgencyComposition.cs`, `CoreRpc.cs`; `Eve.Host.Tests/InsurgencyCompositionTests` | |
+| DONE (code, tests pending live) | Campaign notices after commit: started, updated, ending for covered systems; state changed and system fully corrupted or suppressed for every pilot | `InsurgencyComposition.cs` (`NotifyCampaignChanged`, `NotifyPointScored`) | Client text and handling not checked in the graphical client |
+| OPEN | Start trigger for a campaign | none | Q-INS-4: no source names it. `InsurgencyCampaigns.StartAsync` exists; no client or operator path calls it |
+| OPEN | FOB structure and its signals | structures owner | `structureID` is None; the campaign does not yet react to the FOB's destruction or reinforcement |
+| OPEN | Point producers (C-P1): site completions, spread at level 3, top stage | next slice | `ScorePointAsync` exists and is tested; no caller in the server |
+| BLOCKED | Public gateway for corruption and suppression (C-G1) | spike | Native transport absent from the snapshot; see the spike file |
+| OPEN | Victory payouts (C-V1) | next slice | Constants only (1,500,000 LP cap, 1x and 0.4x); no LP is credited |
+

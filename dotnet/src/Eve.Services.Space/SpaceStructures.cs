@@ -91,6 +91,32 @@ public sealed class SpaceStructures
     }
 
     /// <summary>
+    /// A structure that was just anchored is put in space when a pilot is in its system (a system without pilots gets it on entry, <see cref="RestoreAsync"/>).
+    /// The simulation ignores a second placement of the same id.
+    /// </summary>
+    public async Task PlaceAsync(long structureId, CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            await using var connection = await _source.OpenConnectionAsync(cancellationToken);
+            var record = await _store.GetAsync(connection, null, structureId, forUpdate: false, cancellationToken);
+            if (record is null || record.Snapshot.State == StructureState.Unanchored || record.Snapshot.DestroyedMs > 0 || !_space.HasPilotsIn(record.SolarSystemId))
+            {
+                return;
+            }
+            await _statics.EnsureTypesAsync([record.TypeId], cancellationToken);
+            if (_statics.Type(record.TypeId) is { } type)
+            {
+                _sim.PlaceStructure(Placement(record, type));
+            }
+        }
+        catch (Exception error)
+        {
+            _log?.Invoke($"the anchored structure {structureId} was not put in space: {error.Message}");
+        }
+    }
+
+    /// <summary>
     /// A hit on a structure: the record applies it as a damage event, in one transaction with the event it publishes. A depleted layer is the layer that was
     /// emptied; a hit that only paused the repair lands on the layer the state names.
     /// </summary>

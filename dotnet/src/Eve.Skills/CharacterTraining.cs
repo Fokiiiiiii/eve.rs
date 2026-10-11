@@ -16,6 +16,9 @@ public sealed class TrainingSettings
 
     /// <summary>The value of a learning attribute of a character (charisma, intelligence, memory, perception, willpower).</summary>
     public Func<long, int, double> Attribute { get; init; } = (_, _) => BaseAttribute;
+
+    /// <summary>How many extra training queues an account has running (Multiple Character Training): each lets one more of its characters train.</summary>
+    public Func<long, int> AdditionalTrainingSlots { get; init; } = _ => 0;
 }
 
 /// <summary>The queue and skills of a character as they are at a moment: the running skill has the points it has gained by then.</summary>
@@ -40,7 +43,7 @@ public abstract record SaveOutcome;
 /// <summary>The queue was refused.</summary>
 public sealed record QueueRefused(QueueError Error) : SaveOutcome;
 
-/// <summary>The account is already training another character (each account trains one at a time).</summary>
+/// <summary>The account is already training as many characters as its queues allow (one, and one more per running extra queue).</summary>
 public sealed record TrainingBusy(int Training) : SaveOutcome;
 
 /// <summary>The queue was kept; <paramref name="Paused"/> when it was kept without running.</summary>
@@ -425,7 +428,7 @@ public sealed class CharacterTraining(
         {
             return new QueueRefused(error);
         }
-        if (requestedActive && !previous.Running && await store.RunningCountAsync(accountCharacters.Where(id => id != characterId), cancellationToken) is var others and >= SlotsPerAccount)
+        if (requestedActive && !previous.Running && await store.RunningCountAsync(accountCharacters.Where(id => id != characterId), cancellationToken) is var others && others >= SlotsPerAccount + settings.AdditionalTrainingSlots(accountId))
         {
             return new TrainingBusy(others);
         }

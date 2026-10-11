@@ -16,13 +16,22 @@ public static class SubscriptionTransitions
         IAccountSubscriptions subscriptions, OmegaLicenses licenses, IEnumerable<ClientSession> openSessions, uint accountId, DateTimeOffset endsAt)
     {
         subscriptions.SetSubscriptionEndsAt(accountId, endsAt);
-        var license = licenses.Resolve(new PyInt((long)accountId));
-        var cloneGrade = license.HasLicense ? 1L : 0L;
+        Announce(openSessions, accountId, endsAt, licenses.NowFileTime);
+    }
+
+    /// <summary>
+    /// Tells the account's open sessions the clone grade and end time it now has (after the end time was stored and committed): Omega while the
+    /// end time is later than <paramref name="nowFileTime"/>, Alpha (with no end time shown) otherwise.
+    /// </summary>
+    public static void Announce(IEnumerable<ClientSession> openSessions, uint accountId, DateTimeOffset endsAt, long nowFileTime)
+    {
+        var endFileTime = Py.FileTimeFromUnixMs(endsAt.ToUnixTimeMilliseconds());
+        var omega = endFileTime > nowFileTime;
         foreach (var session in openSessions)
         {
             if (session.UserId == accountId)
             {
-                SubscriptionMgrService.AnnounceCloneGrade(session, cloneGrade, license.ExpiryFileTime);
+                SubscriptionMgrService.AnnounceCloneGrade(session, omega ? 1L : 0L, omega ? endFileTime : null);
             }
         }
     }

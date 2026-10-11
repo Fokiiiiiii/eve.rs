@@ -274,6 +274,16 @@ internal sealed partial class CharacterServicesComposition
                 Eve.Dungeons.DungeonCatalog.LoadEmbedded(), Eve.Dungeons.WaveRules.LoadEmbedded(), new NpcSelector(npcAuthority),
                 new Eve.Services.Space.SpaceDungeonNpcs(spaceSessions), spaceSchema);
             await dungeonWaves.AttachAsync();
+            // the CONCORD Rogue Analysis Beacon (CRAB, D-L1 and D-S1): deployed from the hold, linked, scanned, expired by its own record kind
+            await Eve.Services.Space.Beacons.AnalysisBeaconDirector.MigrateAsync(source, spaceSchema);
+            var beacons = new Eve.Services.Space.Beacons.AnalysisBeaconDirector(
+                source, spaceSchema, Eve.Services.Space.Beacons.AnalysisBeaconRules.LoadEmbedded(), foundations.Scheduler, foundations.Events, sim, ships, items, dogma,
+                spaceSessions, new Eve.Ships.PgDeployedStore(source, spaceSchema), new Eve.Services.Space.SpaceDungeonNpcs(spaceSessions), new NpcSelector(npcAuthority), now,
+                message => Console.Error.WriteLine($"eve-host: {message}"));
+            await beacons.AttachAsync();
+            spaceContainers.RegisterDeployedKind(Eve.Services.Space.Beacons.AnalysisBeaconDirector.Kind, beacons.ExpireAsync, beacons.RestoreAsync);
+            spaceContainers.LaunchAnalysisBeacon = beacons.LaunchAsync;
+            analysisBeacons = beacons;
             if (cosmicSites is { } sitesOfWaves)
             {
                 // the NPC waves of the sites: a kill of a site's NPC is counted by the content runtime; the next wave starts when one is done

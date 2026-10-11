@@ -172,6 +172,9 @@ internal sealed partial class CharacterServicesComposition
     private SimClient? sim;
     private SpaceSessions? spaceSessions;
     private SpaceContainers? spaceContainers;
+    private Eve.Services.Space.Beacons.AnalysisBeaconDirector? analysisBeacons;
+    /// <summary>The link of a CRAB from a client's component call (the beacon's director, when the space runtime is up).</summary>
+    private Func<Eve.Services.ClientSession, long, Task>? AnalysisBeaconLink => analysisBeacons is { } beacons ? (session, id) => beacons.InitiateLinkAsync(session, id) : null;
     private SpaceDrones? spaceDrones;
     private Eve.Services.Space.Sites.CosmicSiteDirector? cosmicSites;
     private Eve.Services.Space.Sites.SiteNpcs? siteNpcs;

@@ -1173,3 +1173,36 @@ Open:
 | OPEN | Structure placement on anchoring (ST-2) and the slim `repairing`/`unanchoring` fields | ST-2 | A structure anchored with a pilot in the system is not shown until the next entry. |
 | WRITTEN, NOT RUN LIVE | (e) headless scenario `tools/headless-client/tests/test_structures.py`: a pilot in a system with an imported Astrahus sees it in the ballpark with its state and timer | ST-1 (e) | Collects and skips without `EVE_LIVE_HOST` and the structure's environment; no live server has run it. |
 | UNVERIFIED | Client behaviour of a structure's dock (`OnDockingAccepted` and the docked session), the damage the ball shows, the state label | MITM | Not verified on the graphical client. |
+
+## 48. Track D: CONCORD Rogue Analysis Beacon (CRAB), first cut (2026-10-11)
+
+Status: deploy, activation, link, scan, reward, expiry and restart are implemented in the host and the simulation (protocol 61) and covered by host tests with the simulation faked. Not verified in the graphical client. The figures CCP does not publish are eve.rs rule constants (owner decision D-C1, DEVIATIONS "CRAB").
+
+| Status | Item | Where / evidence |
+|---|---|---|
+| VERIFIED (tests) | D-T1: types 60244 (standard) and 92183 (Carrier), group 4137, category 22; hp, shield and armor 50,000 each; Anchoring 3; link lists 300 and 946 read from the pinned SDE 3396210 (no other build loaded) | `Beacons/AnalysisBeaconRules.cs`; `AnalysisBeaconRulesTests` (7 non-PG, 2 PG) |
+| VERIFIED (tests) | D-L1 deploy: `ship.LaunchFromShip` of a CRAB in the hold, 2,500 m ahead, active 20 s later, record for 1 h, low and null security only, skill 11584 at 3 | `AnalysisBeaconDirector.LaunchAsync`; `AnalysisBeaconHostTests` |
+| VERIFIED (tests) | D-L1 link: `CallComponentFromClient(itemID, 'linkWithShip', 'InitiateLink' or 'InitiateLinkQuick')` through `BeyonceService`; IDLE to RUNNING to COMPLETED after 4 min; the linked ship in the slim item; a ship outside the link list refused; a second link refused | `BeyonceService.Components.cs`; `AnalysisBeaconHostTests` |
+| VERIFIED (tests) | D-L1 slim state: `component_activate`, `activate_comp_durationSeconds` and `component_linkWithShip` (FILETIME times) in `AddBalls2` and `OnSlimItemChange`; protocol 61 (`PlaceAnalysisBeacon` 78, `SetAnalysisBeaconState` 79); 44 new fixture frames | `crates/eve-space/src/deployable.rs`; `oracle/fixtures/simlink/messages.json`; `tools/dev/gen-simlink-fixtures.py`; `SimCodecTests` |
+| VERIFIED (tests) | D-S1 scan: 10 min standard, 16 min Carrier; progress moves only while no drone lives (10 s tick); wave 1 (4 standard or 6 Carrier, owner figures) spawned through `IDungeonNpcSpawner.SpawnAsync`; each drone killed (`npc.killed`) is forgotten | `AnalysisBeaconDirector.ScanTickAsync`; `AnalysisBeaconHostTests` |
+| VERIFIED (tests) | D-S1 completion: the reward items go into the launching ship's hold in the scan's transaction, once; a later tick pays nothing | same |
+| VERIFIED (tests) | Expiry at 1 h: the simulation removes the beacon, its drones are taken out, its item is deleted, no reward. Restart: a new director activates the beacon from its durable job; restore puts it back with its state | same |
+
+Open (cut line, or not built):
+
+| Status | Item |
+|---|---|
+| OPEN (cut) | Wave 2 at scan progress 0.5 (EveJS). The rule file refuses any trigger other than progress 0 |
+| OPEN | Four-minute ship lock (immobile, warp, cloak, tether while linked): needs the ships owner |
+| OPEN (D-I1) | Interference cost of a link, and the character energy cost (EveJS checks both): not built |
+| OPEN | Four links per character per day (patch 2026-03-18.1): not built |
+| OPEN | No deployment within 10,000 km of an asteroid (patch 2026-03-26.1): not built, needs belt positions |
+| OPEN (D-R1) | Bounties from the NPC bounty store: not built. Reward quantities are the owner's figures |
+| OPEN | Damage to a beacon (its 50,000 HP layers are in the SDE) and drone attacks on a beacon: no damage path |
+| OPEN | Graphical client: the link UI, the activation timer and the scan UI (no caller of the client's scan UI in the V24.01 snapshot), the ball kind of a beacon (Container) |
+| LIMITATION | Drones alive in the simulation across a host restart are not re-attached: a scan that waits for them stays blocked until they die or the beacon's hour is up |
+| OPEN | Rewards go to the launching ship's hold. EveJS uses custody and a wreck. If the launching ship is gone the run ends completed with no items |
+
+Data: `dotnet/src/Eve.Services.Space/Beacons/Data/analysis-beacon-rules.json` (owner decision D-C1; EveJS v0.12.9 values; not CCP data).
+
+Runs: see the report of this track (non-PG and PostgreSQL counts; the full Rust and Space suites against the baseline).

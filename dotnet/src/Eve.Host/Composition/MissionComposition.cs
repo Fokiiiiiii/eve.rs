@@ -159,6 +159,10 @@ internal sealed partial class CharacterServicesComposition
     private async Task AgentMissions()
     {
         agentMissionAnnouncer = new Eve.Services.Core.AgentMissionAnnouncer(agentMissionStore, characterSessions);
+        // the faction of each NPC corporation (SDE npcCorporations.factionID): the access rule reads the faction standing
+        var npcFactions = (await sde.ReadAsync("npcCorporations", cancellationToken: CancellationToken.None))
+            .Where(row => row.Doc.TryGetProperty("factionID", out var faction) && faction.ValueKind == System.Text.Json.JsonValueKind.Number)
+            .ToDictionary(row => row.Key, row => row.Doc.GetProperty("factionID").GetInt64());
         agentMissionAgentById = agentMissionAgentRows.ToDictionary(agent => agent.AgentId);
         // The official mission build (sde_mission). Nothing is read from the EveJS authority tables.
         agentMissionStatic = await MissionStaticCatalog.LoadAsync(new SdeReader(source, MissionStaticCatalog.DefaultSchema));
@@ -216,6 +220,28 @@ internal sealed partial class CharacterServicesComposition
                 return stationId is { } station &&
                     (!agentLocationById.TryGetValue(agentId, out var agentStationId) || station == agentStationId);
             },
-            rpcCallbacks: agentMissionRpcCallbacks);
+            rpcCallbacks: agentMissionRpcCallbacks,
+            dialogue: new Eve.Services.Core.AgentDialogueSources(
+                agentMissionStore,
+                // the standings are the relations rows (subject: the faction, the corporation or the agent; object: the character);
+                // a missing row is 0, the reference's value for an unknown standing
+                async ValueTask<Eve.Services.Core.AgentStandings> (long characterId, long agentId, long corporationId, long factionId, CancellationToken ct) =>
+                    new Eve.Services.Core.AgentStandings(
+                        await foundations.Relations.ValueAsync(Eve.Relations.RelationKinds.Standing.Name, factionId, characterId, 0, cancellationToken: ct),
+                        await foundations.Relations.ValueAsync(Eve.Relations.RelationKinds.Standing.Name, corporationId, characterId, 0, cancellationToken: ct),
+                        await foundations.Relations.ValueAsync(Eve.Relations.RelationKinds.Standing.Name, agentId, characterId, 0, cancellationToken: ct)),
+                // the trained level of a skill, read in its own transaction
+                async ValueTask<int> (long characterId, int skillTypeId, CancellationToken ct) =>
+                {
+                    await using var connection = await source.OpenConnectionAsync(ct);
+                    await using var transaction = await connection.BeginTransactionAsync(ct);
+                    var level = await skills.LevelAsync(connection, transaction, characterId, skillTypeId, ct);
+                    await transaction.CommitAsync(ct);
+                    return level;
+                },
+                corporationId => npcFactions.GetValueOrDefault(corporationId),
+                // the mission pool is not loaded on this server yet, so no agent has a mission to offer (DEVIATIONS, Agents slice AG-2, A5)
+                (_, _, _) => ValueTask.FromResult<Eve.Agents.AgentMissionContent?>(null),
+                () => DateTimeOffset.UtcNow));
     }
 }

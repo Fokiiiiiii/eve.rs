@@ -47,4 +47,3 @@ ST-10 is closed. Everything in the increments above is on main. Two EveJS behavi
 section 48, with the exact next step: site completion when the hacked containers are empty, and removal of an emptied container ball. The
 first step is that `PgItemStore.MoveAsync` publishes an `inventory.item_moved` event (none exists on the bus today). Decisions: DEVIATIONS
 "Hacking minigame (ST-10)", "Site loot", "Container items", "Site container types", "Site completion", "Cleared container ball".
-

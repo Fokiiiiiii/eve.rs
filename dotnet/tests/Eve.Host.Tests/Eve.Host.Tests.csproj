@@ -4,6 +4,7 @@
     <InvariantGlobalization>false</InvariantGlobalization>
     <IsPackable>false</IsPackable>
     <IsTestProject>true</IsTestProject>
+    <InvariantGlobalization>false</InvariantGlobalization>
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="Microsoft.NET.Test.Sdk" />

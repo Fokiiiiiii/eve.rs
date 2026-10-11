@@ -1458,4 +1458,3 @@ fn structure_vitals_of(case: &serde_json::Value) -> eve_space::health::Vitals {
         armor_pinned: false,
     }
 }
-

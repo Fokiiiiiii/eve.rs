@@ -260,4 +260,3 @@ pub(super) fn dock_refusal(body: &crate::world::Body, ship_group: i32) -> Option
     }
     (hull_size(ship_group) > largest_hull_docked(body.type_id)).then_some("SHIP_TOO_LARGE")
 }
-

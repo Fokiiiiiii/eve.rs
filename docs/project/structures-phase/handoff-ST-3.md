@@ -1,28 +1,25 @@
-# ST-3 handoff (structure docking, undock and structure hangars)
+# ST-3 handoff (structure docking, undock, hangars, headless scenario)
 
-Owner: the structures phase (plan in the scratchpad `specs/structures_phase.md`, section ST-3). Branch `wt-st3`, worktree `/home/user/wt-st3`.
+Owner: structures phase (plan: scratchpad `specs/structures_phase.md`, ST-3). Branch `wt-st3`, worktree `/home/user/wt-st3` (delete when done).
 
-## Status (in progress)
-- (a) `structureDocking.Dock`: DONE and tested (3 PG tests pass; full Space suite 692/692 with EVE_PG_URL). Code: `dotnet/src/Eve.Services.Space/SpaceSessions.Structures.cs` (new), `SpaceSessions.Movement.cs` (`FinishDockingAsync` structure branch), `Eve.Host/Composition/StructureComposition.cs` (Dock callback, `StructureDockingAllowedAsync`), `Eve.Host/Rpc/StructureRpc.cs` (callbacks passed to `structureDocking`), `Eve.Services.Core/StructureDirectoryService.cs` (`CanDock` made public), `Eve.Structures/StructureFuel.cs` (`StructureServiceIds.Docking = 1`). Tests: `dotnet/tests/Eve.Services.Space.Tests/StructureDockingTests.cs` (3 PG tests). TODO section 48, DEVIATIONS "Structure docking and hangars (ST-3)".
-- Environment: `Eve.Services.Core.Tests` `MissionSdeDataTests` (2) need the mission SDE build in `sde_mission`; not run green here.
-- (b) Undock: not started.
-- (c) Structure hangars and restart while docked: not started.
-- (d) headless `dock_undock` in `tools/headless-client/tests/test_structures.py`: not started.
+## Done (pushed to main)
+- (a) `6096d66`: `structureDocking.Dock` approach at 2500 m (DockingApproach distance), refusals by name (unknown structure, another ship, docking access, module, criminal timer, hull too large), acceptance through the sim, finish into the structure hangar with `structureid` and the solar system in the session. Files: `dotnet/src/Eve.Services.Space/SpaceSessions.Structures.cs`, `SpaceSessions.Movement.cs` (`FinishDockingAsync`), `dotnet/src/Eve.Host/Composition/StructureComposition.cs`, `dotnet/src/Eve.Host/Rpc/StructureRpc.cs`, `dotnet/src/Eve.Services.Core/StructureDirectoryService.cs` (`CanDock` public), `dotnet/src/Eve.Structures/StructureFuel.cs` (`StructureServiceIds.Docking`). Tests: `dotnet/tests/Eve.Services.Space.Tests/StructureDockingTests.cs` (3 PG).
 
-## Facts used (verified in source this session)
-- The sim already docks and undocks Structure bodies (ST-1 c; `scene/docking.rs`, `scene/tests.rs:2654`). The host places structures on system entry (ST-1 d, `SpaceStructures.RestoreAsync`).
-- A docked character keeps its place in `characters.StationId`; a structure id goes there too (the CharacterSelect structure path already reads it with `StructureExistsAsync`).
-- EveJS `space/transitions.js` `dockSession` / `buildDockedShipLocationContext`: the item change place is `["Structure", id, "StructureShipHangar"]`.
-- EveJS `services/character/characterState.js:4395-4417`: docked in a structure: `stationid` null, `structureid` = id, `locationid` = solar system, `solarsystemid` = solar system (the hangar bootstrap needs it).
-- Client `eve/client/script/ui/services/structure/structureDocking.py`: `Dock(structureID, shipID)` after autopilot to 2500 m, `Undock` requires `session.structureid` and `session.solarsystemid`.
+## Written in this commit (`607b8b5`, rebased on origin, verification in progress)
+- (b) Undock: `SpaceSessions.Ships.cs` `UndockFromAsync(session, placeKey, ...)` shared with the station undock; `SpaceSessions.Structures.cs` `UndockStructureAsync`; `PlaceStructuresAsync` hook set in `StructureComposition` to `SpaceStructures.RestoreAsync`; Undock callback wired. Tests: `StructureUndockingTests.cs` (2 PG). Station undock tests (SpaceServiceTests) passed with the refactor.
+- (c) Hangar: no new code path; `ClientSession.DockedLocationId` already includes `structureid`. Tests: `StructureHangarTests.cs` (2 PG: listing + persistence, login while docked).
+- (d) headless: `tools/headless-client/tests/test_structures.py` `test_a_pilot_docks_at_the_structure_and_undocks_from_it`. Collected; skipped without `EVE_LIVE_*` including `EVE_LIVE_SHIP`. NOT RUN LIVE.
 
-## Open
-- Contraband inspection (`ShipContrabandWarningUndock`) does not exist in eve.rs for stations either; not built for structures.
-- Structure guest notifications (`OnCharacterEnteredStructure` / `OnCharacterLeftStructure`) on dock and undock: `GuestLoginHook` runs only at character entry; station docking has the same gap.
-- The docking service of a structure is read from the store (`structure_services`, id 1).
-- The criminal timer is checked when the docking is asked for (as the station path does), not at the finalize (EveJS `dockSession`).
+## Next steps (exact)
+1. Confirm `607b8b5` is green: `flock -o -w 1800 /tmp/eve-heavy.lock dotnet build dotnet/EveRs.slnx -p:UseSharedCompilation=false`, then `EVE_PG_URL='Host=127.0.0.1;Username=postgres;Database=eve' dotnet test dotnet/tests/Eve.Services.Space.Tests ... --filter "FullyQualifiedName~Structure"` and the Host `StructureCompositionTests`.
+2. Open: `OnHangarViewStateUpdated(structureID, state)` on `structure.state_changed` to sessions docked in the structure (EveJS `space/runtime/structureLifecycleFanout.js` 213-226); needs the ST-2 state fanout in eve.rs.
+3. Open: contraband inspection on undock (no station inspection exists either; EveJS `space/transitions.js` 2543).
+4. Open: structure guest notifications on dock/undock (`OnCharacterEnteredStructure` / `OnCharacterLeftStructure`); `GuestLoginHook` runs only at character entry.
+5. Run the headless scenario against a live stack (`tools/dev/run-eve-live.sh`) with `EVE_LIVE_SHIP` set; until then it is UNVERIFIED.
 
 ## Gotchas
-- Bash `grep`, `cat`, `find` are denied; use python3 (`python3 -I -c` or heredoc) for search and edits. Check `git status` after every edit.
-- Build: `flock -o -w 1800 /tmp/eve-heavy.lock dotnet build dotnet/EveRs.slnx -p:UseSharedCompilation=false`. Warnings are errors (`Directory.Build.props`).
-- Tests need `EVE_PG_URL='Host=127.0.0.1;Username=postgres;Database=eve'`.
+- Bash `grep`, `cat`, `find` are denied: use python3 (`python3 -I -c` or heredoc).
+- Warnings are errors (`dotnet/Directory.Build.props`). Build with `-p:UseSharedCompilation=false` under the heavy lock.
+- `EVE_PG_URL` must be key=value: `Host=127.0.0.1;Username=postgres;Database=eve`.
+- `Eve.Services.Core.Tests` `MissionSdeDataTests` (2) fail unless the mission build is loaded in `sde_mission` (`cargo run -p eve-sde -- ensure --missions --pg $EVE_PG_URL`); not ST-3.
+- Origin moves every few minutes: fetch, check overlap, rebase, push at once.

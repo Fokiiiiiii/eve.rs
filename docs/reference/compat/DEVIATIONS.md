@@ -1563,7 +1563,7 @@ push mechanism of the fittings (`FittingMgrServices.cs:241-253`).
   Two native clients observing each other's changes are not checked: no second native client runs in this environment.
 - **Tests.** `MarketCoherenceTests` (5): a placement, a cancel, a fill and an expiry, each seen by a second session in the region (the
   invalidation is asserted on the wire, and the next read shows the change), with a session in another region not asked; and a corporate
-  placement, fill and cancel that reaches the trader with the market right and not the bystander. Status: done (M4) for the affected-project gate (Market, Host, Corporations and Scheduler green on the merge `2f80397`); the live run is blocked by the Secure Depot start-up error on origin/main (`SpaceComposition`), which is not an M4 change, and is re-run once it is fixed.
+  placement, fill and cancel that reaches the trader with the market right and not the bystander. Status: done (M4) for the affected-project gate (Market, Host, Corporations and Scheduler green on the merge `2f80397`). The live run passed at `f046112` (70 passed, 8 skipped, 0 failed); it had waited for the Secure Depot start-up fix on origin/main (`SpaceComposition`), which is not an M4 change.
 
 ## Market slice M5: price history by day (2026-10-11)
 
@@ -1870,6 +1870,48 @@ document, `esi.evetech.net/meta/openapi.json`). Client: eve-logic `eve/client/sc
   announcement of the granted item to the client (`OnItemChange` is sent by the inventory RPC layer after its own mutations, not
   by the stores); (3) the corporation wallet and director rules for the corporation take (EveJS `lpStoreMgrService.js:389-423`).
   The LP and item halves of the purchase are the same transaction as the offer's ISK, and are written when (1) is decided.
+
+## Agents slice AG-3, A9 (part 2): taking an offer (2026-10-11)
+
+Sources. eve-logic `eve/common/lib/appConst.py:667` (`refPaymentToLPStore = 26`, the ISK journal reference type of a store
+payment), `eve/client/script/ui/station/loyaltyPointStore/lpStoreSvc.py:240-266` (the take calls and their reply),
+`:457-462` (the Director test), `:499-530` (the requirements). EveJS v0.12.9 `services/evermarks/lpStoreMgrService.js:223-300,
+345-423` and `services/evermarks/lpStorePurchaseState.js:242-362,546-640` (the purchase, the item legs, the Director rule).
+
+- **ISK reference type: 26.** The client constant `refPaymentToLPStore` is the store payment. The pinned SDE (build 3396210)
+  has no reference-type table (the native localization holds only the "undefined reftype" strings), ESI's reference types are
+  names, and EveJS's store debit passes no numeric type. The client constant is the only numeric source, so it is used.
+  Status: decided.
+- **One transaction** (`LpStorePurchases`, Eve.Services.Wallet). The loyalty points (`LoyaltyPointStore.ApplyAsync`; the
+  holder is the character, or the corporation when a Director pays), the ISK (`WalletTransactions.AdjustAsync` on the
+  character's account or the corporation division), the required items (the character's hangar at the station, oldest stack
+  first, as EveJS `selectRequiredItemLegs`) and the granted item (the hangar; ship and blueprint categories 6 and 9 are one
+  item per unit, as the New Eden Store grant does) are written with the `lp_store_purchases` row (wallet migration 008).
+  The journal rows carry the purchase id: the ISK journal has reference type 26 and counterparty = the store corporation;
+  the loyalty journal has reason "LP store purchase". A refusal rolls the transaction back. Status: decided.
+- **Refusals are named.** The keys and texts are EveJS `ERROR_MESSAGES`, sent as `CustomNotify` (the reference throws the same
+  way). Keys: INSUFFICIENT_LP, INSUFFICIENT_ISK, INSUFFICIENT_REQUIRED_ITEMS, OFFER_NOT_FOUND, AK_UNSUPPORTED, ACCESS_DENIED,
+  CHARACTER_NOT_FOUND, CORPORATION_NOT_FOUND, ITEM_GRANT_FAILED, INVALID_STORE, INVALID_CHARACTER, INVALID_QUANTITY. The
+  INVALID_QUANTITY text is this server's (the reference's text is for the heraldry store only). Status: decided.
+- **Corporation take: a Director only.** The client shows the corporation choice only to a Director
+  (`CanCharacterUseCorpWallets`: session corprole and Director); the reference checks the persisted role. Here the member's
+  roles come from the corporation store (`CorporationRoles.Session`, AtAll and Director), and the character must be a member.
+  The corporation's loyalty points and ISK pay (the division is the session's corpAccountKey, default 1000); the required and
+  the granted items stay with the character, as in the reference. Status: decided.
+- **No standing check.** ESI returns no standing requirement for an offer (A9 part 1), so none is checked, and the client's
+  own check passes. The reference's standing requirements are not served (gap, as in part 1). Status: gap.
+- **Location.** The take is served only from a station (session `stationid`). The reference also serves Upwell structures that
+  have the loyalty store service, which is not modelled; the heraldry store path is not served. Status: gap.
+- **Idempotency.** The wire call carries no client operation key (`lpStoreSvc.py:249-251`), so a repeated call is a new purchase,
+  as the client asked. Each committed purchase has one server id, which is the reference of its journal rows, and a refused or
+  failed call writes nothing. A retry-safe take needs a key from the client. Status: gap.
+- **Notifications, after the commit only.** `OnLPChange` / `OnCorpLPChange` (LoyaltyPointAnnouncer), `OnAccountChange`
+  (WalletAnnouncer), and `OnItemChange` to the buying session: a consumed stack shows its previous stack size (9) and, when
+  it is gone, its previous location (3) with the location moved to junk (6), as the reference and `CrateService` send it; a
+  created item has no differences. Other sessions of the same character are not told (gap). Status: decided.
+- **Tests.** `LpStoreMgrServiceTests` (4, PostgreSQL, real `LpStorePurchases` and wallet, loyalty and item stores): the
+  character take (LP, ISK, journal ref 26, items, granted item, two `OnItemChange` packets), the refusal with nothing changed,
+  and the corporation take with and without the Director role. The Host wiring compiles; the live run exercises it.
 
 ## ST-E: cloak proximity and forced decloak notices (2026-10-10)
 - **Proximity radius and refusal.** The cloak breaks, and activation refuses, for a ship or a non-belt body within 2 000 m of the surface of the cloaked ship. Source: EveJS `shipCloak.js:100` (`MIN_CLOAKING_DISTANCE_METERS = 2000`). It replaces the 2 km smartbomb-range check, so the activation refusal now also counts bodies, not only smartbomb targets. Belts are not counted.
@@ -2352,3 +2394,13 @@ Focused PostgreSQL verification: Station 28/28, selected Space docking/undocking
 - **Ending notice per covered system.** `OnInsurgencyCampaignEndingForLocation` takes one system id and the client compares it with the pilot's system, so it is sent once per covered system with that id. Status: decided.
 - **Public gateway not built (C-G1).** The corruption and suppression bars are unavailable. The client's gateway call fails on the client side (`messenger.py:71`, TypeError), which the space path catches and logs (`clientDogmaLocation.py:1506-1511`). Evidence: `scratchpad/work/insurgency-gateway-spike.md`. Status: decided; revisit with D-G1.
 
+
+## Mission execution X1: epic arc offers (2026-10-11)
+
+- **Offer rule.** The offer is one mission per agent: the lowest mission ID among the agent's offerable steps of the arcs in the client build. A step is offerable when it is an entry (no step leads to it) or a step leading to it is completed; a completed step is not offered again; once one successor of a fork is completed the other successors are not offered. EveJS offers the same entry logic (`epicArcStatusService.js:184-231`). The lowest-ID choice among several offerable steps is eve.rs's own deterministic rule. Status: decided.
+- **Restart.** A finished arc (a terminal step completed) cools down for `arcRestartInterval` (129600 minutes, the wiki's "every ninety days") and then starts a new run: entries are offered again and the earlier completions no longer count. The SDE unit is minutes (the field was misnamed seconds). EveJS uses a hard-coded 90 days (`missionRuntimeState.js:26-28`); the SDE value is used here. Status: decided.
+- **Failure.** A step the pilot quit or declined is not completed, so it is offered again (the retry). The SDE `failMissionID` targets (self for arc 29; the arc's entry for the pilot courses) are not modelled: a failure of a later pilot-course step does not restart the course from its entry. Status: OPEN, with the arc-restart work.
+- **Held-back sites (owner decision).** An arc kill step whose site is generic (the population is a family rule, not client data) or missing (no dungeon template) is not offered by default. `Data/mission-site-status.v1.json` marks the 182 arc kill steps: 178 generic and 4 missing (arc 132, dungeons 14097 to 14100); none is specific. `EVE_MISSION_INCLUDE_GENERIC_ARCS=1` offers the generic steps; a missing site is never offered. The status comes from the owner's coverage table (`popSource`; 1,398 of 1,453 mission dungeons are family or combat-wave derived). Status: decided by the owner; the switch is explicit.
+- **Talk and courier steps** have no site and are offered when reachable. Status: decided.
+- **Progression and the journal.** Completions come from the agents journal (transitions into the completed state, with the game time in the new column `transition_at`; older rows fall back to `created_at`). Status: decided.
+- **Not offered:** basic agents (no official agent-to-mission link, `MissionDataGaps.BasicPools`), and research, locator and factional-warfare agents. Status: OPEN (slice X2 for basic kill missions).

@@ -908,7 +908,7 @@ Open after M1:
 | OPEN | Matching priority (price, issue time, id) and the duplicate window are to be confirmed with a live match (Q5, Q14) | the live acceptance (M9) |
 | DONE (M3) | Expiry as durable jobs: one job per resting order at its expiry plus 1 s (placed, moved, cancelled in the same transaction), a 60 s safety sweep, a read sweep at most once a second, the restart reschedule, notices to the owner and the corporation members with market rights (Accountant or Trader) | DEVIATIONS.md, "Market slice M3" |
 | DECIDED (M4) | M3 notices are not durable: no outbox, a notice goes to a live session only and the client's cache is per run (balances and state stay right) | DEVIATIONS.md, "Market slice M4" |
-| DONE (M4): the affected-project gate is green on `2f80397`; the live run waits for the Secure Depot start-up fix on origin/main. Push invalidation and corporate notices (G9, G11); the client's 3-hour price history cache is out of the server's reach | DEVIATIONS.md, "Market slice M4"; `MarketCoherenceTests` (5) |
+| DONE (M4): the affected-project gate is green on `2f80397`; the live run passed at `f046112` (70 passed, 8 skipped by the slow-mode gates, 0 failed). Push invalidation and corporate notices (G9, G11); the client's 3-hour price history cache is out of the server's reach | DEVIATIONS.md, "Market slice M4"; `MarketCoherenceTests` (5) |
 | DONE (M5) | Price history: one row per UTC day (low, high, volume-weighted average, volume, fills), the day in progress as "new" (the reference's last-row split put a past day there; corrected), `HistoriesAsync` removed (no caller) | DEVIATIONS.md, "Market slice M5"; `MarketHistoryTests` (6) |
 | DONE (M6) | Transactions by division: rights (accountant, junior accountant, Account Take, CrpAccessDenied 101), newest first, fromDate and division filters, keyID; the EXPLAIN check is not run (no index added) | DEVIATIONS.md, "Market slice M6"; `MarketTransactionReadTests` (3) |
 | DONE (M7) | Bounded order-book read: batches of 50 in book order, stop when filled; 10000-order benchmark (before 9999 rows locked per placement, after 50); no index added (EXPLAIN) | DEVIATIONS.md, "Market slice M7"; `OrderBookMatchTests`, opt-in `OrderBookBenchmarkTests` |
@@ -978,8 +978,13 @@ Slice A9, part 1 (2026-10-11): DONE for the offers: ESI's official offers cached
 
 | Status | Item | Where / blocker |
 |---|---|---|
-| OPEN | Take an offer (LP, ISK, required items, the granted item): refused by name; blocked on the ISK journal reference type (no source), the item-change announcement and the corporation rules | DEVIATIONS "Agents slice AG-2, A9 (part 1)" |
+| DONE (AG-3) | Take an offer for the character and for a corporation (Director): LP, ISK, required items, the granted item, one transaction, journal, notifications. ISK reference type 26 from the client constant | DEVIATIONS "Agents slice AG-3, A9 (part 2)"; `LpStoreMgrServiceTests` |
 | OPEN | Standing requirements of LP store offers: ESI returns none, so none is shown | DEVIATIONS "Agents slice AG-2, A9 (part 1)" |
+
+## Agents slice AG-3 (2026-10-11)
+
+Continues AG-2 on the same branch. A9 part 2 is done (DEVIATIONS "Agents slice AG-3, A9 (part 2)"). Open after it: the
+standing requirements of store offers and the structure stores (gaps), the idempotency key the client does not send.
 
 ## 43. Structures phase ST-E: remaining E wiring (2026-10-10)
 - DONE E-01: StartNewExtraction, FractureChunkWithStructure and CancelExtraction refuse by name (CustomNotify) with no backend, not PyNone (`StructureDataRpcServices.cs`, commit 59e9e89). The backend is ST-6a.
@@ -1303,3 +1308,20 @@ Plan: scratchpad `work/missions-hard-first-plan.md` track C; decisions in DEVIAT
 
 ## 49. Host start-up: shared container type names (2026-10-11)
 | DONE (tests, live run) | Host start-up no longer throws on a container type name that several SDE types share (Secure Depot and about 40 more in groups 306, 314, 1207): the published type, then the lowest type id, is kept and each skipped type is logged. Tests: `SiteContainerTypesTests`. |
+
+## 50. Mission execution X1a: epic arc offers (2026-10-11)
+
+Done: `PickOffer` is wired to the official arc sequence. The offer is the agent's next step: entries first, then the steps that
+follow a completed step, with forks, the 90-day restart and the held-back sites (DEVIATIONS "Mission execution X1: epic arc offers").
+
+| Status | Item | Where / blocker |
+|---|---|---|
+| DONE (tests) | Offer of the current arc step (entry, nextMissions progression, fork exclusion, one step at a time, lowest ID among offerable steps) | `Eve.Services.Core/EpicArcOffers.cs`; `EpicArcOffersTests` (9), `EpicArcDialogueTests` (PostgreSQL, the dialogue on the real store) |
+| DONE (tests) | Completed history from the journal with the game time (journal column `transition_at`, migration 0002) | `Eve.Agents/AgentMissionStore.cs` `ReadCompletedAsync`; `AgentMissionStoreTests` |
+| DONE (data) | Site status of the 182 arc kill steps: 178 generic, 4 missing, 0 specific; held back unless `EVE_MISSION_INCLUDE_GENERIC_ARCS=1` | `Data/mission-site-status.v1.json`; `MissionSiteStatus.cs`; `MissionStaticCatalog.IsHeldBack` |
+| DONE | The restart interval is minutes (`RestartIntervalMinutes`; was misnamed `RestartIntervalSeconds`) | `MissionStaticCatalog.cs` |
+| DONE | Mission content of an offer: the official English name and `nameID` | `MissionStatic.NameId`; `MissionComposition.cs` |
+| OPEN | Accept starts the mission's dungeon; kill objectives complete on `content.dungeon.*`; rewards and LP | next slice (X1b); `DungeonWaveDirector.StartAsync` needs the pilot in space in the system |
+| OPEN | Talk steps (`isTalkToAgent`) complete when the pilot talks to the next agent | next slice (X1b) |
+| OPEN | Basic L4 and L5 kill missions (pool from level tags and wave data) | next slice (X2) |
+| OPEN | Journal text (`GetMissionBriefingInfo`, objectives) and the agent header (`GetAgentLocationWrap`) | next slices; see the in-space agents |

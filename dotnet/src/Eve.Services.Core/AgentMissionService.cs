@@ -162,9 +162,43 @@ public sealed class AgentMissionService(
         var agent = agents.FirstOrDefault(candidate => candidate.AgentId == agentId)
             ?? throw MachoErrors.ThrowUserError("CustomInfo", ("info", new PyStr("That agent is not known.")));
         var atLocation = isAtAgentLocation?.Invoke(characterId, agentId, call.Session) == true;
-        var reply = await _dialogue.DoActionAsync(
+        var step = await _dialogue.StepAsync(
             characterId, agent, call.Args.Count > 0 ? call.Args[0] : PyNone.Instance, atLocation, call.Cancellation);
-        return reply.ToWire();
+        if (step.Reply is { } reply) return reply.ToWire();
+        // The client is asked first: the window gets the provisional answer now, and the reply when the client has answered.
+        var prompt = step.Prompt!;
+        return new PyDeferred(context =>
+        {
+            context.Provisional();
+            Ask(prompt, context);
+            return Task.CompletedTask;
+        });
+    }
+
+    /// <summary>Raises a prompt on the client; a session that cannot take the call answers with the no-answer path (EveJS sendAgentDeclineConfirmation).</summary>
+    private static void Ask(AgentDialoguePrompt prompt, DeferredContext context)
+    {
+        if (!context.Session.SendClientCall("agents", prompt.Method, prompt.Args, answer => _ = Answer(prompt, answer, context)))
+            _ = Answer(prompt, null, context);
+    }
+
+    /// <summary>The client's answer goes to the prompt's continuation; a further prompt is raised, and the last step is the reply. A failure still answers.</summary>
+    private static async Task Answer(AgentDialoguePrompt prompt, PyValue? answer, DeferredContext context)
+    {
+        try
+        {
+            var step = await prompt.Then(answer);
+            if (step.Prompt is { } next)
+            {
+                Ask(next, context);
+                return;
+            }
+            context.Reply(step.Reply!.ToWire());
+        }
+        catch (Exception)
+        {
+            context.Reply(AgentDialogueMachine.FailureReply().ToWire());
+        }
     }
 
     private async ValueTask<PyValue> ReadAsync(ServiceCall call)

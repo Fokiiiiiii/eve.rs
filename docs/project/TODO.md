@@ -981,6 +981,11 @@ Slice A9, part 1 (2026-10-11): DONE for the offers: ESI's official offers cached
 | DONE (AG-3) | Take an offer for the character and for a corporation (Director): LP, ISK, required items, the granted item, one transaction, journal, notifications. ISK reference type 26 from the client constant | DEVIATIONS "Agents slice AG-3, A9 (part 2)"; `LpStoreMgrServiceTests` |
 | OPEN | Standing requirements of LP store offers: ESI returns none, so none is shown | DEVIATIONS "Agents slice AG-2, A9 (part 1)" |
 
+## Agents slice AG-4 (2026-10-11)
+
+A4 client dialog path done: deferred `DoAction` with the client's YesNo (`SendClientCall`, `Provisional`); decline and quit
+confirmations use it (DEVIATIONS "Agents slice AG-4, A4"). Next: research buttons 12 to 14, locator 15 to 17, live coverage.
+
 ## Agents slice AG-3 (2026-10-11)
 
 Continues AG-2 on the same branch. A9 part 2 is done (DEVIATIONS "Agents slice AG-3, A9 (part 2)").

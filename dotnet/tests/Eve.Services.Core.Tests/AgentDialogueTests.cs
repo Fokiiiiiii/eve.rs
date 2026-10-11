@@ -132,10 +132,31 @@ public class AgentDialogueTests
 
         var shown = await machine.DoActionAsync(Pilot, Basic(), PyNone.Instance, true, default);
         Assert.Equal(Pairs((AgentDialogueToken.Quit, AgentDialogueButton.Quit)), shown.Actions.ToArray());
-        var quit = await machine.DoActionAsync(Pilot, Basic(), Button(AgentDialogueToken.Quit), true, default);
+        // Quit asks the client first (YesNo); a yes quits the mission.
+        var asked = await machine.StepAsync(Pilot, Basic(), Button(AgentDialogueToken.Quit), true, default);
+        Assert.Equal("YesNo", asked.Prompt!.Method);
+        Assert.Equal(AgentMissionState.Accepted, (await world.Store.ReadAsync(Pilot, Agent))!.State);
+        var quit = Assert.IsType<AgentDialogueStep>(await asked.Prompt.Then(PyBool.True)).Reply!;
         Assert.Equal(AgentMissionState.Quit, (await world.Store.ReadAsync(Pilot, Agent))!.State);
         var quitInfo = quit.LastActionInfo;
         Assert.Equal(PyBool.True, quitInfo.Entries.Single(entry => entry.Key is PyStr { Value: "missionQuit" }).Value);
+    }
+
+    [AgentsPgFact]
+    public async Task A_no_to_the_quit_confirmation_keeps_the_mission()
+    {
+        await using var world = await World.CreateAsync();
+        await world.MigrateAsync();
+        world.Pool = Courier;
+        var machine = Machine(world);
+        await machine.DoActionAsync(Pilot, Basic(), Button(AgentDialogueToken.Request), false, default);
+        await machine.DoActionAsync(Pilot, Basic(), Button(AgentDialogueToken.Accept), false, default);
+
+        var asked = await machine.StepAsync(Pilot, Basic(), Button(AgentDialogueToken.Quit), true, default);
+        var kept = Assert.IsType<AgentDialogueStep>(await asked.Prompt!.Then(PyBool.False)).Reply!;
+
+        Assert.Equal(AgentMissionState.Accepted, (await world.Store.ReadAsync(Pilot, Agent))!.State);
+        Assert.Equal(Pairs((AgentDialogueToken.Quit, AgentDialogueButton.Quit)), kept.Actions.ToArray());
     }
 
     [AgentsPgFact]
@@ -147,7 +168,10 @@ public class AgentDialogueTests
         var machine = Machine(world);
         await machine.DoActionAsync(Pilot, Basic(), Button(AgentDialogueToken.Request), false, default);
 
-        var declined = await machine.DoActionAsync(Pilot, Basic(), Button(AgentDialogueToken.Decline), false, default);
+        // Decline asks the client first (YesNo); the yes declines, and the four-hour replay starts from there.
+        var asked = await machine.StepAsync(Pilot, Basic(), Button(AgentDialogueToken.Decline), false, default);
+        Assert.Equal("YesNo", asked.Prompt!.Method);
+        var declined = Assert.IsType<AgentDialogueStep>(await asked.Prompt.Then(PyBool.True)).Reply!;
         world.Now = Start + TimeSpan.FromHours(1);
         var during = await machine.DoActionAsync(Pilot, Basic(), Button(AgentDialogueToken.Request), false, default);
         world.Now = Start + AgentMissionStore.DeclineReplayDelay;

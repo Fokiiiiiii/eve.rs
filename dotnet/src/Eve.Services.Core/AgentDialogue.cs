@@ -91,6 +91,15 @@ public sealed record AgentDialogueReply(PyValue AgentSays, IReadOnlyList<(long A
     ]);
 }
 
+/// <summary>A client dialog the server raises before it answers (agents.YesNo, SingleChoiceBox or GetQuantity), with the continuation that takes the client's answer.</summary>
+public sealed record AgentDialoguePrompt(string Method, IReadOnlyList<PyValue> Args, PyDict Kwargs, Func<PyValue?, ValueTask<AgentDialogueStep>> Then);
+
+/// <summary>One step of the dialogue: the reply to send, or the prompt to raise first (its answer then leads to the next step).</summary>
+public sealed record AgentDialogueStep(AgentDialogueReply? Reply, AgentDialoguePrompt? Prompt)
+{
+    public static AgentDialogueStep Of(AgentDialogueReply reply) => new(reply, null);
+}
+
 /// <summary>
 /// The agent dialogue behind DoAction (A4, narrowed). It answers the conversation the client asks for and makes the mission
 /// transitions it names through the agents store. Implemented: the greeting, the standing refusal, request (an offer from
@@ -112,8 +121,14 @@ public sealed class AgentDialogueMachine(AgentDialogueSources sources)
 
     private static readonly int[] AccessSkills = [AgentAccessRule.ConnectionsSkill, AgentAccessRule.DiplomacySkill, AgentAccessRule.CriminalConnectionsSkill];
 
-    /// <summary>One DoAction. <paramref name="action"/> is the argument the window sent (PyNone for the first contact).</summary>
+    /// <summary>One DoAction, as a reply. Refused when the step needs the client to answer a question first (use <see cref="StepAsync"/>).</summary>
     public async ValueTask<AgentDialogueReply> DoActionAsync(
+        long characterId, AgentMissionAgentData agent, PyValue? action, bool atAgentLocation, CancellationToken cancellationToken) =>
+        (await StepAsync(characterId, agent, action, atAgentLocation, cancellationToken)).Reply
+            ?? throw new InvalidOperationException("the dialogue asks the client first: use StepAsync");
+
+    /// <summary>One DoAction. <paramref name="action"/> is the argument the window sent (PyNone for the first contact).</summary>
+    public async ValueTask<AgentDialogueStep> StepAsync(
         long characterId,
         AgentMissionAgentData agent,
         PyValue? action,
@@ -155,31 +170,52 @@ public sealed class AgentDialogueMachine(AgentDialogueSources sources)
                 }
                 break;
 
+            // The reference asks before it declines or quits (sendAgentDeclineConfirmation, sendAgentQuitConfirmation): the
+            // transition runs only on a yes, and a no shows the conversation as it was.
             case AgentDialogueButton.Decline when mission?.State == AgentMissionState.Offered:
-                try
-                {
-                    await sources.Store.DeclineAsync(characterId, agent.AgentId, now,
-                        $"decline:{characterId}:{agent.AgentId}:{now.ToUnixTimeMilliseconds()}", cancellationToken);
-                    return await ConversationAsync(characterId, agent, standing, atAgentLocation, cancellationToken,
-                        LastInfo(declined: true));
-                }
-                catch (AgentMissionRefusedException)
-                {
-                }
-                break;
+                return new AgentDialogueStep(null, YesNo(
+                    "UI/Agents/StandardMission/DeclineMissionTitle", "UI/Agents/StandardMission/DeclineMessage",
+                    new PyDict([new KeyValuePair<PyValue, PyValue>(new PyStr("when"), new PyLong(Py.FileTimeFromUnixMs(now.ToUnixTimeMilliseconds())))]),
+                    agent.AgentId, DeclineContentId, "AgtDeclineMission",
+                    async yes =>
+                    {
+                        if (yes)
+                        {
+                            try
+                            {
+                                await sources.Store.DeclineAsync(characterId, agent.AgentId, now,
+                                    $"decline:{characterId}:{agent.AgentId}:{now.ToUnixTimeMilliseconds()}", cancellationToken);
+                                return AgentDialogueStep.Of(await ConversationAsync(characterId, agent, standing, atAgentLocation, cancellationToken,
+                                    LastInfo(declined: true)));
+                            }
+                            catch (AgentMissionRefusedException)
+                            {
+                            }
+                        }
+                        return AgentDialogueStep.Of(await ConversationAsync(characterId, agent, standing, atAgentLocation, cancellationToken, LastInfo()));
+                    }));
 
             case AgentDialogueButton.Quit when mission?.State == AgentMissionState.Accepted && atAgentLocation:
-                try
-                {
-                    await sources.Store.QuitAsync(characterId, agent.AgentId, now,
-                        $"quit:{characterId}:{agent.AgentId}:{now.ToUnixTimeMilliseconds()}", cancellationToken);
-                    return await ConversationAsync(characterId, agent, standing, atAgentLocation, cancellationToken,
-                        LastInfo(quit: true));
-                }
-                catch (AgentMissionRefusedException)
-                {
-                }
-                break;
+                return new AgentDialogueStep(null, YesNo(
+                    "UI/Agents/StandardMission/QuitMissionTitle", "UI/Agents/StandardMission/QuitMissionMessage",
+                    EmptyDict(), agent.AgentId, mission.Content.MissionId, "AgtQuitMission",
+                    async yes =>
+                    {
+                        if (yes)
+                        {
+                            try
+                            {
+                                await sources.Store.QuitAsync(characterId, agent.AgentId, now,
+                                    $"quit:{characterId}:{agent.AgentId}:{now.ToUnixTimeMilliseconds()}", cancellationToken);
+                                return AgentDialogueStep.Of(await ConversationAsync(characterId, agent, standing, atAgentLocation, cancellationToken,
+                                    LastInfo(quit: true)));
+                            }
+                            catch (AgentMissionRefusedException)
+                            {
+                            }
+                        }
+                        return AgentDialogueStep.Of(await ConversationAsync(characterId, agent, standing, atAgentLocation, cancellationToken, LastInfo()));
+                    }));
 
             case AgentDialogueButton.StartResearch or AgentDialogueButton.CancelResearch or AgentDialogueButton.BuyDatacores
                 or AgentDialogueButton.LocateCharacter or AgentDialogueButton.LocateAccept or AgentDialogueButton.LocateReject:
@@ -187,8 +223,28 @@ public sealed class AgentDialogueMachine(AgentDialogueSources sources)
                     ("info", new PyStr("This agent service is not available on this server yet.")));
         }
 
-        return await ConversationAsync(characterId, agent, standing, atAgentLocation, cancellationToken, LastInfo());
+        return AgentDialogueStep.Of(await ConversationAsync(characterId, agent, standing, atAgentLocation, cancellationToken, LastInfo()));
     }
+
+    /// <summary>What the window is told when a prompt could not be answered (a client call that failed or raised).</summary>
+    public static AgentDialogueReply FailureReply() => new(PlainText("The agent could not answer that request."), [], LastInfo());
+
+    /// <summary>The contentID the client's decline confirmation carries (EveJS agentMgrService.js:391-396).</summary>
+    private const long DeclineContentId = 4802;
+
+    /// <summary>A YesNo prompt with the reference's arguments: the title and body labels, the agent, the content and the suppression id.</summary>
+    private static AgentDialoguePrompt YesNo(string titleLabel, string bodyLabel, PyDict bodyKwargs, long agentId, long contentId, string suppressId,
+        Func<bool, ValueTask<AgentDialogueStep>> then) => new(
+            "YesNo",
+            [
+                new PyTuple([new PyStr(titleLabel), EmptyDict()]),
+                new PyTuple([new PyStr(bodyLabel), bodyKwargs]),
+                new PyInt(agentId),
+                new PyInt(contentId),
+                new PyStr(suppressId),
+            ],
+            new PyDict([new KeyValuePair<PyValue, PyValue>(new PyStr("machoVersion"), new PyInt(1))]),
+            answer => then(answer is PyBool { Value: true }));
 
     /// <summary>The conversation the window shows after an action: the held mission's, or the greeting and what can be asked.</summary>
     private async ValueTask<AgentDialogueReply> ConversationAsync(

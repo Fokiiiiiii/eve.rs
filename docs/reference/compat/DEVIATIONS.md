@@ -1957,6 +1957,26 @@ fees, cooldowns and standings: EVE University "Locator Agents" (the table AG-2 r
   need the client dialog path. Tests: `LocatorRulesTests`.
 - **ISK and LP for research and the locator are not moved.** No journal row is written by either rule.
 
+## Agents slice AG-4, A4: the client dialog path and the decline and quit confirmations (2026-10-11)
+
+Sources. eve-logic `eve/client/script/ui/station/agents/agents.py:404-478` (YesNo returns a bool; SingleChoiceBox returns
+`(ok, "radioboxOption<n>Selected")`; GetQuantity returns the quantity or nothing); EveJS `services/network/clientSession.js:1012-1150`
+(a CallReq to the client service; the client answers with a CallRsp carrying the same call id; the answer is unwrapped from the
+one-item body tuple and the substream); EveJS `services/agent/agentMgrService.js:366-449, 926-1075` (the decline and quit
+confirmations: the provisional answer, the YesNo, a yes applies the transition, a no shows the current conversation).
+
+- **The path (built).** `ClientSession.SendClientCall` sends the CallReq with a server call id and keeps the answer callback;
+  the dispatcher routes the client's CallRsp (`PacketDispatcher`, `ClientAnswer`) to it once. `DeferredContext.Provisional` sends
+  the empty result with the `OnAgentProvisionalResponse` named payload, unwrapped. The agent's bound `DoAction` returns a
+  `PyDeferred` when the dialogue needs an answer: the provisional reply, the client call, then the reply of the continuation.
+  A continuation may raise a further prompt. A failed continuation answers with `AgentDialogueMachine.FailureReply` (the window
+  never waits forever). Status: decided.
+- **Decline and quit ask first.** Decline (button 9) and quit at the agent's station (button 11) raise `YesNo` with the
+  reference's labels, content ids (decline 4802, quit the mission's content id) and suppression ids. A yes runs the transition;
+  a no shows the conversation as it was. Without a sink, the no path runs (EveJS runs a decline at once there; the difference
+  only matters with no client to ask). Status: decided. Tests: `AgentDialogueTests` (quit yes and no, decline yes),
+  `ClientCallTests`. The deferred runner in `AgentMissionService` is covered by the live run only (not by a unit test).
+
 ## ST-E: cloak proximity and forced decloak notices (2026-10-10)
 - **Proximity radius and refusal.** The cloak breaks, and activation refuses, for a ship or a non-belt body within 2 000 m of the surface of the cloaked ship. Source: EveJS `shipCloak.js:100` (`MIN_CLOAKING_DISTANCE_METERS = 2000`). It replaces the 2 km smartbomb-range check, so the activation refusal now also counts bodies, not only smartbomb targets. Belts are not counted.
 - **Notice order.** The proximity notice goes out before the module stops; the other reasons after (EveJS `forceDecloakEntity`).

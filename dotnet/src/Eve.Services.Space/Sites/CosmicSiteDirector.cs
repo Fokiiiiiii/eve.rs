@@ -76,6 +76,9 @@ public sealed class CosmicSiteDirector
     /// <summary>The store the containers of a site are placed in (their fill is in the site's transaction). Null: a site has no containers placed.</summary>
     public SiteContainerStore? Containers { get; set; }
 
+    /// <summary>Makes the container's inventory item (a ship-less item in the system, its id is the container's id) in the caller's transaction.</summary>
+    public Func<NpgsqlConnection, NpgsqlTransaction, int, int, Task<long>>? NewContainerAsync { get; set; }
+
     /// <summary>The type and group of a container by the name the template gives (the static data) and whether it is a relic container; never null when the kind has a type.</summary>
     public Func<string, bool, (int TypeId, int GroupId)?>? ContainerType { get; set; }
     private readonly ConcurrentDictionary<int, Lazy<Task>> _ensured = new();
@@ -230,12 +233,55 @@ public sealed class CosmicSiteDirector
             }
             var started = await _content.StartAsync(connection, transaction, template.DefinitionId, solarSystemId, Data(template, solarSystemId, index, code, position, anchor), uniqueKey,
                 cancellationToken: cancellationToken);
+            if (started.Created && Containers is { } containerStore && ContainerType is { } typeOf)
+            {
+                await PlaceContainersAsync(connection, transaction, containerStore, typeOf, template, started.Id, solarSystemId, position, seed);
+            }
             if (started.Created)
             {
                 _log?.Invoke($"site {code}: {template.Name} ({template.Kind}, {template.Family}) in system {solarSystemId}, beside {anchor.Id}");
             }
         }
     }
+
+    /// <summary>
+    /// The containers of a new site, in its fill transaction: each one beside the site, its type drawn by seed from the names its template gives (a respawn
+    /// in the same place draws the same). Each container is an inventory item of its own, and its id is the container's. A name the static data does not
+    /// have is not placed.
+    /// </summary>
+    private async Task PlaceContainersAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, SiteContainerStore store, Func<string, bool, (int TypeId, int GroupId)?> typeOf,
+        SiteTemplate template, long siteId, int solarSystemId, double[] position, string seed)
+    {
+        if (NewContainerAsync is not { } newContainer)
+        {
+            _log?.Invoke($"site {siteId}: no container item maker is set, so its containers are not placed");
+            return;
+        }
+        var records = new List<SiteContainerRecord>();
+        var index = 0;
+        var expires = _scheduler.Now + (long)Lifetime.TotalMilliseconds;
+        foreach (var container in template.Containers)
+        {
+            for (var copy = 0; copy < container.Count; copy++, index++)
+            {
+                var name = container.Types[(int)(SiteSeed.Hash($"{seed}:container:{index}") % (uint)container.Types.Count)];
+                if (typeOf(name, container.Analyzer == "relic") is not { } type)
+                {
+                    _log?.Invoke($"site {siteId}: the container {name} has no type in the static data and is not placed");
+                    continue;
+                }
+                var containerId = await newContainer(connection, transaction, type.TypeId, solarSystemId);
+                var offset = ContainerSpacingMeters * (index + 1);
+                records.Add(new SiteContainerRecord(
+                    containerId, siteId, solarSystemId, container.Role, container.Analyzer == "relic", type.TypeId, type.GroupId,
+                    [position[0] + offset, position[1], position[2]], ContainerRadiusMeters, template.Difficulty, 0, "secure", expires));
+            }
+        }
+        await store.InsertAsync(connection, transaction, records);
+    }
+
+    /// <summary>The distance a container lies from the site's centre per container, and the radius a container is given (metres).</summary>
+    public const double ContainerSpacingMeters = 150, ContainerRadiusMeters = 50;
 
     /// <summary>The facts of a site that go with its instance. The names are the client's own (<c>CosmicAnomalyInfo</c>), which the anomaly reader of the host sends as they are.</summary>
     private static JsonObject Data(SiteTemplate template, int solarSystemId, int slot, string code, double[] position, SiteAnchor anchor) => new()

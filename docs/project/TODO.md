@@ -924,12 +924,11 @@ Done (verified):
 | Status | Item | Evidence |
 |---|---|---|
 | VERIFIED (tests) | The pure timeline `StructureStateMachine`: anchor, anchoring, onlining, shield, armor and hull stages, reinforcements, Low Power, abandonment, unanchoring, reinforcement time change | `dotnet/tests/Eve.Structures.Tests/StateMachineTests.cs`: 47 passed, 0 skipped |
-| WRITTEN, NOT TESTED | Schema `structures` (migration 0001), `StructureStore` (read, write, legacy view, import) and `StructureTimers` (job `structure.timer`, event `structure.state_changed`) | compiles; no Postgres test yet |
+| VERIFIED (tests) | Schema `structures` (migration 0001), `StructureStore` (read, write, legacy view, import) and `StructureTimers` (job `structure.timer`, event `structure.state_changed` in the change's transaction; refusal changes nothing; restart fires once; import once) | `StructureTimersTests`: 6 PostgreSQL tests (scratch schemas via `Rig`), 53 passed, 0 skipped with `EVE_PG_URL` |
 
 Open (next steps, in order):
 | Status | Item |
 |---|---|
-| OPEN | Postgres tests for `StructureStore` and `StructureTimers` with the `Rig` scratch schema: restart fires the job once, replay is a no-op, import is idempotent, the event is published with the change |
 | OPEN | The Host rules source (`IStructureRulesSource`) over the SDE (`rigSize`, system security band) |
 | OPEN | Register the migration and the timers at start-up (`Foundations`/`Program.cs`, like `Eve.Ships`), the GameStore import (host side only, ADR 0003 rule 3), `ArchitectureTests` entry |
 | OPEN | Switch the readers of the GameStore `structures` table (`PersistenceStructureDirectoryReadModel{,.Part2}`, `PersistenceStructureAssetSafetyReadModel{,.Part2}`, `PersistenceStructureProfilesRpcBackend` reads and writes, `StructureComposition.cs` `StructureExistsAsync`, `IndustryComposition.cs:68`, `CharacterRpc.cs:98`) to the store, one file at a time, with the existing structure tests green |

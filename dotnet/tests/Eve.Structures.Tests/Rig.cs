@@ -56,7 +56,10 @@ internal sealed class Rig : IAsyncDisposable
         await DurableScheduler.MigrateAsync(source, "sch_" + id);
         await EventBus.MigrateAsync(source, "evt_" + id);
         await StructureStore.MigrateAsync(source, "str_" + id);
-        return new Rig(source, id);
+        var rig = new Rig(source, id);
+        // the first pump makes the subscriber start "now": events published before it would be skipped
+        await rig.Bus.PumpAsync();
+        return rig;
     }
 
     /// <summary>A new process on the same database: a new scheduler, bus and timers (the old ones are dropped, their jobs and events stay).</summary>

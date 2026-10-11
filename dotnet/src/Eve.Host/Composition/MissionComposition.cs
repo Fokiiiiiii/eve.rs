@@ -5,6 +5,7 @@ using Eve.Data;
 using Eve.Host;
 using Eve.Identity;
 using Eve.Dogma;
+using Eve.Events;
 using Eve.Fitting;
 using Eve.GameStore;
 using System.Text.Json;
@@ -37,6 +38,15 @@ namespace Eve.Host;
 
 internal sealed partial class CharacterServicesComposition
 {
+    /// <summary>The offset of a mission dungeon from the pilot's position when it starts (metres): the rule of the eve.rs mission runtime.</summary>
+    public const double MissionDungeonOffsetMetres = 20_000;
+
+    /// <summary>The wave director of the dungeons (set by the space composition, which runs first).</summary>
+    private Eve.Services.Space.Waves.DungeonWaveDirector? dungeonWavesDirector;
+
+    /// <summary>The kill missions' runtime (A-X1), built with the agent missions.</summary>
+    private MissionDungeonRuntime? missionDungeons;
+
     async Task<JsonObject?> ReadCharacterGameStoreRowAsync(long characterId, CancellationToken cancellationToken)
     {
         if (characterId <= 0) return null;
@@ -240,17 +250,113 @@ internal sealed partial class CharacterServicesComposition
                     return level;
                 },
                 corporationId => npcFactions.GetValueOrDefault(corporationId),
-                // the offer is the next step of the agent's epic arc (EpicArcOffers): the official arc sequence, with the held-back sites
-                // kept out (owner decision). Basic agents have no official mission link yet, so they offer nothing.
+                // the offer is the next step of the agent's epic arc (EpicArcOffers: the official arc sequence, the held-back sites kept
+                // out by owner decision), else the basic kill mission of a level 4 or 5 security agent (BasicKillOffers). Other basic
+                // agents have no official mission link and offer nothing.
                 async ValueTask<Eve.Agents.AgentMissionContent?> (AgentMissionAgentData agent, long characterId, CancellationToken ct) =>
                 {
                     var completed = await agentMissionStore.ReadCompletedAsync(characterId, ct);
                     var now = DateTimeOffset.UtcNow;
-                    if (Eve.Services.Core.EpicArcOffers.Pick(agentMissionStatic, agent.AgentId, completed, now) is not { } missionId ||
+                    var completedIds = completed.Select(item => item.MissionId).ToHashSet();
+                    if ((Eve.Services.Core.EpicArcOffers.Pick(agentMissionStatic, agent.AgentId, completed, now) ??
+                            Eve.Services.Core.BasicKillOffers.Pick(agentMissionStatic, agent, completedIds,
+                                dungeon => dungeonWavesDirector?.StartRefusalOf(dungeon) is null)) is not { } missionId ||
                         agentMissionStatic.Mission(missionId) is not { } mission)
                         return null;
                     return new Eve.Agents.AgentMissionContent(mission.MissionId, mission.NameId, mission.NameEn, "", false);
                 },
                 () => DateTimeOffset.UtcNow));
+        await AttachMissionDungeonsAsync();
     }
+
+    /// <summary>
+    /// The kill missions run their dungeons: a durable sweep starts the dungeon of an accepted kill mission when the pilot is in space in the
+    /// agent's system, and the dungeon's outcome (content.dungeon.*) decides the mission. Registered before the bus starts.
+    /// </summary>
+    private async Task AttachMissionDungeonsAsync()
+    {
+        if (dungeonWavesDirector is null)
+        {
+            Console.Error.WriteLine("eve-host: missions: kill missions cannot run dungeons: the wave director is not composed");
+            return;
+        }
+        var host = new SpaceMissionDungeonHost(
+            (characterId, systemId) => spaceSessions is not null && spaceSessions.IsPilotInSystem(characterId, systemId),
+            StartMissionDungeonAsync,
+            CreditMissionIskAsync);
+        missionDungeons = new MissionDungeonRuntime(
+            agentMissionStore,
+            agentMissionStatic,
+            host,
+            agentId => agentMissionAgentById.TryGetValue(agentId, out var agent) && agent.SolarSystemId is { } system
+                ? new MissionAgentPlace(system, agent.CorporationId)
+                : null,
+            () => DateTimeOffset.UtcNow);
+        var runtime = missionDungeons;
+        foundations.Scheduler.Register(MissionDungeonSweepJob, (context, token) => runtime.SweepAsync(token));
+        await foundations.Scheduler.EnsureRecurringAsync(MissionDungeonSweepJob, "sweep", TimeSpan.FromSeconds(10));
+        foreach (var (topic, outcome) in new[] { ("content.dungeon.completed", "completed"), ("content.dungeon.failed", "failed"),
+                     ("content.dungeon.abandoned", "abandoned"), ("content.dungeon.expired", "expired") })
+        {
+            var subscriber = "mission.dungeons." + outcome;
+            foundations.Events.Subscribe(subscriber, [topic],
+                (EventContext context, CancellationToken token) => MissionDungeonOutcomeAsync(runtime, outcome, context, token));
+        }
+    }
+
+    private const string MissionDungeonSweepJob = "mission.dungeons.sweep";
+
+    private static async Task MissionDungeonOutcomeAsync(MissionDungeonRuntime runtime, string outcome, EventContext context, CancellationToken token)
+    {
+        using var document = JsonDocument.Parse(context.Event.PayloadJson);
+        var root = document.RootElement;
+        if (!root.TryGetProperty("owner", out var ownerElement) || !ownerElement.TryGetInt64(out var owner) ||
+            !root.TryGetProperty("instanceId", out var instanceElement) || !instanceElement.TryGetInt64(out var instanceId) ||
+            !root.TryGetProperty("definition", out var definitionElement) || definitionElement.ValueKind != JsonValueKind.String)
+            return;
+        await runtime.OnDungeonOutcomeAsync(outcome, owner, definitionElement.GetString()!, instanceId, token);
+    }
+
+    /// <summary>
+    /// Starts the mission dungeon in front of the pilot: the origin is the pilot's position offset by <see cref="MissionDungeonOffsetMetres"/> along x.
+    /// A pilot without a known position is refused by name.
+    /// </summary>
+    private async Task<string?> StartMissionDungeonAsync(long characterId, int solarSystemId, long dungeonId, CancellationToken cancellationToken)
+    {
+        if (dungeonWavesDirector is null || spaceSessions is null) return "the space is not running";
+        var session = FleetSessionForCharacter(characterId);
+        if (session is null) return "the pilot is not logged in";
+        var shipId = spaceSessions.ShipIdOf(session);
+        if (shipId is not > 0) return "the pilot has no ship in space";
+        var position = await spaceSessions.PositionOfAsync(session, shipId.Value, cancellationToken);
+        if (position is not { } at) return "the pilot's position is not known";
+        var origin = new[] { at.X + MissionDungeonOffsetMetres, at.Y, at.Z };
+        var start = await dungeonWavesDirector.StartAsync(characterId, solarSystemId, origin, dungeonId, cancellationToken);
+        return start.Started ? null : start.Refusal ?? "the dungeon did not start";
+    }
+
+    /// <summary>The ISK of a mission reward: one idempotent wallet adjustment, in its own transaction.</summary>
+    private async Task CreditMissionIskAsync(long characterId, long amount, long counterpartyId, int refTypeId, string reason, string operationKey, CancellationToken cancellationToken)
+    {
+        await using var connection = await source.OpenConnectionAsync(cancellationToken);
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        await economyWallets.AdjustAsync(connection, transaction, characterId, amount, counterpartyId, refTypeId, reason,
+            now(), operationKey, cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+    }
+}
+
+/// <summary>The host's side of <see cref="IMissionDungeonHost"/>: the space's pilot presence, the wave director's start and the wallet.</summary>
+internal sealed class SpaceMissionDungeonHost(
+    Func<long, int, bool> isPilotInSystem,
+    Func<long, int, long, CancellationToken, Task<string?>> startDungeon,
+    Func<long, long, long, int, string, string, CancellationToken, Task> creditIsk) : IMissionDungeonHost
+{
+    public bool IsPilotInSystem(long characterId, int solarSystemId) => isPilotInSystem(characterId, solarSystemId);
+
+    public Task<string?> StartDungeonAsync(long characterId, int solarSystemId, long dungeonId, CancellationToken cancellationToken) =>
+        startDungeon(characterId, solarSystemId, dungeonId, cancellationToken);
+
+    public Task CreditIskAsync(long characterId, long amount, long counterpartyId, int refTypeId, string reason, string operationKey, CancellationToken cancellationToken) =>
+        creditIsk(characterId, amount, counterpartyId, refTypeId, reason, operationKey, cancellationToken);
 }

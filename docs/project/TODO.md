@@ -990,6 +990,8 @@ A1 done: the agent catalog is a pure function (`AgentCatalog.Build`, Eve.Host) t
 (3008416 basic, 3019369 in space). Open after it: the
 standing requirements of store offers and the structure stores (gaps), the idempotency key the client does not send.
 Offer cross-check (eve.starweb.cc): no rows changed; 1,104 calculator-only offers are an owner question (DEVIATIONS AG-3).
+A6 (research): rules and the PostgreSQL project store done (`ResearchRules`, `ResearchProjectStore`, migration 0003); the buttons 12 to 14 and the datacore grant and research missions are open (client dialog path; DEVIATIONS "Agents slice AG-3, A6 and A7").
+A7 (locator): fee, cooldown and standing rules done (`LocatorRules`); the locate flow stays refused (target location store and client dialogs; DEVIATIONS AG-3).
 
 ## 43. Structures phase ST-E: remaining E wiring (2026-10-10)
 - DONE E-01: StartNewExtraction, FractureChunkWithStructure and CancelExtraction refuse by name (CustomNotify) with no backend, not PyNone (`StructureDataRpcServices.cs`, commit 59e9e89). The backend is ST-6a.
@@ -1326,7 +1328,11 @@ follow a completed step, with forks, the 90-day restart and the held-back sites 
 | DONE (data) | Site status of the 182 arc kill steps: 178 generic, 4 missing, 0 specific; held back unless `EVE_MISSION_INCLUDE_GENERIC_ARCS=1` | `Data/mission-site-status.v1.json`; `MissionSiteStatus.cs`; `MissionStaticCatalog.IsHeldBack` |
 | DONE | The restart interval is minutes (`RestartIntervalMinutes`; was misnamed `RestartIntervalSeconds`) | `MissionStaticCatalog.cs` |
 | DONE | Mission content of an offer: the official English name and `nameID` | `MissionStatic.NameId`; `MissionComposition.cs` |
-| OPEN | Accept starts the mission's dungeon; kill objectives complete on `content.dungeon.*`; rewards and LP | next slice (X1b); `DungeonWaveDirector.StartAsync` needs the pilot in space in the system |
+| DONE (tests) | An accepted kill mission starts its dungeon through `DungeonWaveDirector.StartAsync` when the pilot is in space in the agent's system (durable sweep, 10 s); the origin is the pilot's position plus 20 km along x | `Eve.Services.Core/MissionDungeonRuntime.cs`; `Eve.Host/Composition/MissionComposition.cs` (`AttachMissionDungeonsAsync`); `MissionDungeonRuntimeTests` (PostgreSQL) |
+| DONE (tests) | The dungeon's outcome decides the mission: completed credits the SDE base ISK once (wallet journal type 33, key per instance) and completes; failed, abandoned or expired fails and pays nothing; a replayed outcome pays nothing | `MissionDungeonRuntime.OnDungeonOutcomeAsync`; `content.dungeon.{completed,failed,abandoned,expired}` subscribers; `AgentMissionStore.FailAsync` |
+| OPEN | Live check of the dungeon start on the client (no client route tested) and the dungeon of arc 29 14117 (generic; held back by default) | live walk after the owner decides the switch |
+| OPEN | Bonus window and LP for kill missions | DEVIATIONS "Mission execution X1"; LP base not in official data |
 | OPEN | Talk steps (`isTalkToAgent`) complete when the pilot talks to the next agent | next slice (X1b) |
-| OPEN | Basic L4 and L5 kill missions (pool from level tags and wave data) | next slice (X2) |
+| DONE (tests) | Basic L4 and L5 kill missions of the security agents: the lowest level-matching kill mission not completed by the pilot, whose dungeon can start (the wave director's check); 191 level-4 and 133 level-5 candidates | `Eve.Services.Core/BasicKillOffers.cs`; `BasicKillOffersTests` (5); `StartRefusalOf` in `DungeonWaveDirector` |
+| OPEN | Basic kill missions: replay after the official replay delay (missions are offered once per pilot), and the bonus and LP | DEVIATIONS "Mission execution X2" |
 | OPEN | Journal text (`GetMissionBriefingInfo`, objectives) and the agent header (`GetAgentLocationWrap`) | next slices; see the in-space agents |

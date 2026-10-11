@@ -212,6 +212,12 @@ public sealed class DungeonWaveDirector
     private static DungeonStart Refused(string reason) => new(false, null, reason);
 
     /// <summary>The wave plan of a dungeon, or why it has none.</summary>
+    /// <summary>
+    /// Why the dungeon cannot start now (no plan, or a spawn query the NPC authority does not resolve), or null when it can start. The same check
+    /// <see cref="StartAsync"/> makes before it creates the instance; an offer uses it so that an accepted mission can always start.
+    /// </summary>
+    public string? StartRefusalOf(long dungeonID) => ValidatedPlan(dungeonID, out _);
+
     public WavePlanAnswer PlanOf(long dungeonID) => _catalog.GetDungeon(dungeonID) switch
     {
         DungeonFound found => WavePlanner.Plan(found.Dungeon, _rules),

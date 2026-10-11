@@ -1356,3 +1356,11 @@ follow a completed step, with forks, the 90-day restart and the held-back sites 
 |---|---|---|
 | DONE (tests) | A failure (failed or quit) whose failMissionID names another step restarts the arc run there; a self-naming failure only retries the step (arc 29) | `EpicArcOffers.cs`; `EpicArcOffersTests.A_failure_whose...`; `AgentMissionStore.ReadFailedAsync` (journal, PostgreSQL test) |
 | DONE (tests) | A basic kill mission completed is offered again after the replay delay (4 h, EveJS value, shortcut) | `BasicKillOffers.cs`; `BasicKillOffersTests` |
+
+## 53. Mission execution X3 step 4: rewards (2026-10-11)
+
+| Status | Item | Where / blocker |
+|---|---|---|
+| CHECKED | LP: the SDE holds no LP reward for missions (`fixedLpRewardAlpha` and `fixedLpRewardOmega` are 0 on all 2,892 records; no other field carries LP). No LP is paid. AG-3 LP wallet is not wired to missions | nothing to wire until a source exists (DEVIATIONS "Mission execution X3 step 4") |
+| DONE (tests) | Standings: the SDE `extraStandings` of a completion change the character's standing toward the faction (tenths: 7.0 = +0.7), once per completion | `MissionDungeonRuntime.CompleteWithRewardAsync`; `MissionComposition.ApplyMissionStandingAsync` (relations `AdjustAsync`); `MissionDungeonRuntimeTests.A_completion_moves_the_standing_once...` |
+| OPEN | Bonus time window (`bonusReward`, `bonusTimeInterval`): unit not established | DEVIATIONS |

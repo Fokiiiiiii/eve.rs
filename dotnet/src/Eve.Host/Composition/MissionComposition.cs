@@ -293,7 +293,8 @@ internal sealed partial class CharacterServicesComposition
         var host = new SpaceMissionDungeonHost(
             (characterId, systemId) => spaceSessions is not null && spaceSessions.IsPilotInSystem(characterId, systemId),
             StartMissionDungeonAsync,
-            CreditMissionIskAsync);
+            CreditMissionIskAsync,
+            ApplyMissionStandingAsync);
         missionDungeons = new MissionDungeonRuntime(
             agentMissionStore,
             agentMissionStatic,
@@ -360,6 +361,16 @@ internal sealed partial class CharacterServicesComposition
         return start.Started ? null : start.Refusal ?? "the dungeon did not start";
     }
 
+    /// <summary>A mission's standing change: the relations store's adjustment of the faction standing, in its own transaction.</summary>
+    private async Task ApplyMissionStandingAsync(long characterId, long factionId, double delta, CancellationToken cancellationToken)
+    {
+        await using var connection = await source.OpenConnectionAsync(cancellationToken);
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        await foundations.Relations.AdjustAsync(connection, transaction, Eve.Relations.RelationKinds.Standing.Name, factionId, characterId, delta,
+            "Agent mission standing", cancellationToken: cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+    }
+
     /// <summary>The ISK of a mission reward: one idempotent wallet adjustment, in its own transaction.</summary>
     private async Task CreditMissionIskAsync(long characterId, long amount, long counterpartyId, int refTypeId, string reason, string operationKey, CancellationToken cancellationToken)
     {
@@ -375,7 +386,8 @@ internal sealed partial class CharacterServicesComposition
 internal sealed class SpaceMissionDungeonHost(
     Func<long, int, bool> isPilotInSystem,
     Func<long, int, long, CancellationToken, Task<string?>> startDungeon,
-    Func<long, long, long, int, string, string, CancellationToken, Task> creditIsk) : IMissionDungeonHost
+    Func<long, long, long, int, string, string, CancellationToken, Task> creditIsk,
+    Func<long, long, double, CancellationToken, Task> applyStanding) : IMissionDungeonHost
 {
     public bool IsPilotInSystem(long characterId, int solarSystemId) => isPilotInSystem(characterId, solarSystemId);
 
@@ -384,4 +396,7 @@ internal sealed class SpaceMissionDungeonHost(
 
     public Task CreditIskAsync(long characterId, long amount, long counterpartyId, int refTypeId, string reason, string operationKey, CancellationToken cancellationToken) =>
         creditIsk(characterId, amount, counterpartyId, refTypeId, reason, operationKey, cancellationToken);
+
+    public Task ApplyStandingAsync(long characterId, long factionId, double delta, CancellationToken cancellationToken) =>
+        applyStanding(characterId, factionId, delta, cancellationToken);
 }

@@ -2538,3 +2538,9 @@ Focused PostgreSQL verification: Station 28/28, selected Space docking/undocking
 
 - **Failure branch.** A failed or quit step with a failMissionID to another step of its arc restarts the run at that step: completions before the failure no longer count. A failMissionID equal to the step itself (arc 29) only retries it. The failure is read from the journal (to-state Failed or Quit). Status: decided; the pilot-course restarts are covered by the rule, not by live play.
 - **Basic re-offer.** A completed basic kill mission is offered again after 4 hours (EveJS REPLAY_DELAY_MS, `missionRuntimeState.js:26`). The client's replay rule was not read; the value is a shortcut to upgrade when it is. Status: shortcut.
+
+## Mission execution X3 step 4: rewards (2026-10-11)
+
+- **LP.** No LP reward for a mission in the official data (`fixedLpRewardAlpha` and `fixedLpRewardOmega` are 0 on all 2,892 mission records; no other record field holds LP). LP is therefore not paid by missions. Status: decided; revisit if a source appears.
+- **Standings.** The SDE `extraStandings` (real data) change the standing toward the faction key by the value / 10 (the wiki's "+0.7" for the SDE's 7.0), once per completion (the completion transition is the guard; a replay is refused). The two writes (completion and standing) are in separate transactions; a crash between them loses the standing and does not repeat it. Status: decided; the atomic version is OPEN.
+- **Bonus time window** (`bonusReward`, `bonusTimeInterval`): not paid. The interval's unit is not established (G-R2). Status: OPEN.

@@ -73,6 +73,7 @@ public class Arc29StepsTests
             Credits.Add((characterId, amount, operationKey));
             return Task.CompletedTask;
         }
+        public Task ApplyStandingAsync(long characterId, long factionId, double delta, CancellationToken cancellationToken) => Task.CompletedTask;
     }
 
     private static AgentMissionAgentData Agent(long id, bool inSpace, long? system, long? dungeon) => new(

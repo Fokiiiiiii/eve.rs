@@ -16,6 +16,9 @@ public interface IMissionDungeonHost
 
     /// <summary>Credits ISK once for the operation key (the wallet's idempotent adjustment, with the journal reference type).</summary>
     Task CreditIskAsync(long characterId, long amount, long counterpartyId, int refTypeId, string reason, string operationKey, CancellationToken cancellationToken);
+
+    /// <summary>Changes the character's standing toward a faction by <paramref name="delta"/> (the relations store's adjustment).</summary>
+    Task ApplyStandingAsync(long characterId, long factionId, double delta, CancellationToken cancellationToken);
 }
 
 /// <summary>Where an agent is: its solar system (the mission dungeon's system) and its corporation (the counterparty of the reward).</summary>
@@ -107,18 +110,25 @@ public sealed class MissionDungeonRuntime(
             await host.CreditIskAsync(owner, mission.Reward.RewardQuantity, place.CorporationId, AgentMissionRewardRefType,
                 $"Agent mission reward: {mission.NameEn}", $"agent-mission:{owner}:{record.Content.MissionId}:{rewardKey}", cancellationToken);
         }
-        await TransitionAsync(() => store.CompleteAsync(owner, record.AgentId, now(), reference, cancellationToken));
+        // the standings of a fresh completion only: a replayed completion is refused and changes nothing
+        if (await TransitionAsync(() => store.CompleteAsync(owner, record.AgentId, now(), reference, cancellationToken)) is not null)
+        {
+            // the SDE gives standings in tenths (7.0 is the wiki's +0.7)
+            foreach (var (factionId, value) in mission.ExtraStandings)
+                await host.ApplyStandingAsync(owner, factionId, value / 10, cancellationToken);
+        }
     }
 
-    private static async Task TransitionAsync(Func<Task<AgentMissionChange?>> transition)
+    private static async Task<AgentMissionChange?> TransitionAsync(Func<Task<AgentMissionChange?>> transition)
     {
         try
         {
-            await transition();
+            return await transition();
         }
         catch (AgentMissionRefusedException)
         {
             // the mission changed since it was read (a replay): nothing to do
+            return null;
         }
     }
 }

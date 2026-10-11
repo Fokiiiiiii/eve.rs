@@ -73,7 +73,7 @@ public sealed class StructureCompressionTests
             await using var connection = await Source.OpenConnectionAsync();
             await using var transaction = await connection.BeginTransactionAsync();
             await Structures.CreateAsync(connection, transaction, new NewStructure(Structure, Astrahus, 30_000_142, 0, 0, 0, 0, 98_000_001, 0, "Test", ""));
-            await Structures.SetServiceAsync(connection, transaction, Structure, StructureServiceIds.Reprocessing, reprocessingOnline ? ServiceState.Online : ServiceState.Offline);
+            await Structures.SetServiceAsync(connection, transaction, Structure, StructureServiceIds.Reprocessing, reprocessingOnline ? ServiceState.Online : ServiceState.Offline, 0);
             await transaction.CommitAsync();
         }
 

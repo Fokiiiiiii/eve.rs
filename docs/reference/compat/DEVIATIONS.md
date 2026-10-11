@@ -1884,3 +1884,23 @@ Sources: EveJS `services/mining/structureCompressionMgrService.js` (the handlers
 - The pilot's share: one percent per level of Gas Decompression Efficiency (skill 62452, attribute 3260 = 1.0 per level, divided by 100 as EveJS does:
   `getGasDecompressionCharacterEfficiency`). [S][J]
 - `GetMyGasDecompressionEfficiency`: zero and zero when the gate is not open (EveJS answers 0 and 0 when the context fails).
+
+## Cyno jammer (ST-7, increment c, E-03 and E-15, 2026-10-11)
+
+Sources: EveJS `services/sovereignty/sovSuppressionState.js` 177-277 (`broadcastCynoJammerChangesForStructureRows`, `getCynoJammerActivationTimeMs`,
+`getCynoJammerOnlineSimTime`: no jammer = null, running = 0, pending = the FILETIME of the warm-up's end), `sovNotifications.js` 267-289
+(`OnCynoJammerChanged` with the args `[solarSystemID, onlineSimTime]`, addressed by `solarsystemid2`, to the sessions in the system); SDE 35914 description
+("a 5 minute warmup period", "may only be onlined in a system that contains a sovereignty hub with the Cynosural Suppression upgrade") [S].
+
+- Decided: the jammer is the Standup Cynosural System Jammer I service (17) online in a structure of the system. The state is the earliest online time among
+  them plus 5 minutes (`StructureJammer.WarmupMs`), the answer is the FILETIME of that end, 0 once it passed, null with no jammer online. EveJS reads the
+  Tenebrex structure's operational state instead; the Tenebrex structure cannot be anchored until ST-2, so the service is the source. [J][S]
+- Recorded: `structure_services.online_since_ms` (migration 0002); 0 for a service imported as online (its warm-up is long over). A service that goes
+  offline holds 0. [J]
+- Recorded: a structure in Low Power (fuel out) takes its services offline, so the jammer goes with it (`StructureTimers.FuelOutAsync`).
+- Not built: the sovereignty upgrade check (EveJS `isCynoSuppressionUpgradeOnline`; SDE: the module needs the hub's Cynosural Suppression upgrade). The
+  jammer runs in any system where the service is online until the sov read model answers the upgrade. Status: open (gap, named in the TODO).
+- E-15 `OnCynoJammerChanged` is sent when the service changes (online or offline, also a fuel-out). EveJS also re-sends when a structure row changes
+  its jammer state; the warm-up's end is not announced by either (the client asks `GetCynoJammerState`). Status: decided, same as EveJS.
+- The announcement is a subscriber to `structure.service_changed` (published in the change's transaction), so it is sent at least once: a replay sends the
+  same state twice (idempotent for the client). [J]

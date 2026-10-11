@@ -58,6 +58,7 @@ def test_a_docked_character_reads_its_systems_ess_as_the_client_does():
         market._new_character(client, run)
         system_id = client.session.session_init.get("solarsystemid2")
         assert isinstance(system_id, int), "a character that selected its station is in a system: the session says which"
+        print(f"ess-test: docked in solar system {system_id}; placed {placed}")
 
         data = m.plain(client.call("essMgr", "GetDataForClientSolarSystem"))
         keys = m.plain(client.call("dynamicResourceCacheMgr", "GetESSReserveBankKeys", system_id))

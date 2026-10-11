@@ -2653,6 +2653,10 @@ The client's RPC names, notification names and fields, unlink reasons and link e
 - The escalation interaction, and the reserve share of bounties and maximum payout (owner decision 2).
 - Graphical-client and headless acceptance: not run in this slice (no live ESS to link to).
 
+### Live check (ESS-1)
+
+`tools/headless-client/tests/test_ess.py` ran against the live eve.rs host (`tools/dev/run-eve-live.sh`, PostgreSQL lane eve_p4, `EVE_ESS_SYSTEMS=30100032:900000001`, market seed skipped): the docked character's essMgr payload has the client's keys, the eight SDE reserve keys are offered, the reserve-link and theft lists are empty, and a Main Bank link request is refused with no change to the state. With no placement the same test expects no ESS. Not run live: the clock's theft and payout paths on the running host (covered by `PgEssStoreTests` against PostgreSQL) and any graphical-client check.
+
 ### Owner decisions needed
 
 1. Who owns an ESS system (a sovereignty holder, or the operator-placed owner of `EVE_ESS_SYSTEMS`).

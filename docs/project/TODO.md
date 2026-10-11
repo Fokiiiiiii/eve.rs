@@ -34,7 +34,7 @@ Do not fabricate successful state or fake backends to close these items.
 | Status | Service/method | Missing work |
 |---|---|---|
 | OPEN | `dynamicItemService.CreateDynamicItem` | Headless and PostgreSQL-tested, not yet live-verified. Done: the authority (`Eve.Inventory/Mutation/ItemMutationService.cs`: one transaction for consume, create, provenance in `inventory.item_mutations` (migration `0005_item_mutation`) and the `item.mutated` event through an injected port, typed refusals); the Host route (`DynamicItemRpcService`: `CreateDynamicItem` through the authority, `CustomNotify` refusals, `GetDynamicItemInfo` from stored provenance only, the `PyNone` stub and the customInfo path removed); one dogma factory for mutated modules, charges and drones (`Eve.Ships/ItemDogma.cs`, base type = input, skill requirements from the result, stored rolled values as own values); `OnItemChange` for the mutaplasmid, the source and the item made, after the commit and before the reply. Tests: `ItemMutationServiceTests`, `ItemMutationStoreTests`, `MutatedModuleTests` (fit, skill refusal and acceptance, rolled values, twin unchanged), `DynamicItemRpcServiceTests` (route, refusals, announcements in order). Still open: a live graphical-client run (crafting window, tooltips, how the client removes a consumed row, the place it expects for an item made); the drone launch path (base, rolls, launch, prime, recall, reconnect, restart) is covered headless by `MutatedDroneHostTests` and the route-to-launch harness `MutationHarnessTests`; `GetDynamicItemInfo` attributes are the item's own dogma without the ship's modifiers (LIMITATION, see DEVIATIONS 143); the decisions D3 (volume), D5 (fitted and damaged sources), D6 (rounding) and D7 (location). The skill-handler sites (implants, boosters) are not mutable (the mapping covers modules and drones only) and are not routed through the factory. |
-| OPEN | `moonExtractions.StartNewExtraction`; `FractureChunkWithStructure`; `CancelExtraction` | Connect the missing extraction mutation authorities. Read-side extraction/event/resource methods already have GameStore data paths. |
+| OPEN | `moonExtractions.StartNewExtraction`; `FractureChunkWithStructure`; `CancelExtraction` | Connect the missing extraction mutation authorities (structures phase ST-6). Read-side extraction/event/resource methods already have GameStore data paths. Until a backend is attached the three mutations refuse with a named `CustomNotify` (the client reports success on any return, `schedulingSvc.py`); tested in `StructureDataRpcServicesTests`. |
 | OPEN | `abyssalMgr.AbyssalGateActivation`; `AbyssalEndGateActivation`; `voidSpaceMgr.VoidSpaceEndGateActivation`; `VoidSpacePlayerJump` | The routes, callback hooks, and EveJS-compatible missing-provider error behavior are implemented. Connect the real gate/runtime authority before claiming successful gate operations. |
 | OPEN | `structureCargoDelivery.DropOffItems` | Connect a real structure cargo-delivery authority. |
 | OPEN | `structureCompressionMgr.CompressItemInStructure`; `DecompressGasInStructure`; `GetMyGasDecompressionEfficiency` | Connect structure compression and gas-efficiency data providers. |
@@ -44,7 +44,7 @@ Do not fabricate successful state or fake backends to close these items.
 | OPEN | `structureDocking.Dock`; `Undock` | Connect structure docking state and transitions. |
 | OPEN | `structureVulnerability.UpdateReinforceTimesFromClient` | Connect the authoritative vulnerability schedule update. |
 | OPEN | `eject.LaunchShipOrContainerFromWreckOrContainer` | Connect the Host callback to the real container launch operation. This is separate from the tested in-space ship Eject RPC. |
-| OPEN | `inSpaceCompressionMgr.CompressItemInSpace` | No compression backend is attached (`Program.cs` passes none; owner C1 is open). The Host never answers `PyNone` here: every request it cannot serve is a named `CustomNotify` refusal. A valid request with no backend gets `UnavailableNotice`; a bad id, facility or session gets `InvalidRequestNotice`; an item not in the active ship gets `NotInActiveShipNotice`; a backend that returns no result gets `FailedNotice` (`OperationalRpcServices.cs`, pinned by `OperationalRpcServiceTests`). The V24.01 client (`itemcompression/client/itemCompression.py`) treats `None` as a failed compress with a generic message, so the old answer was not a success, but it gave no reason. Still to connect: the facility's compressible type list check, consuming the ore, creating the compressed output, the inventory sync, and the six-value result tuple. Real client behaviour for the refusal is unverified. |
+| OPEN | `inSpaceCompressionMgr.CompressItemInSpace` | Connected to the ship compressor module, not a structure (SDE group 4174, category 7 ship module; EVE University wiki, Compression; EveJS `miningIndustry.js:811-870`): a running `industrialItemCompression` module makes its ship a facility for the pilots of its fleet within range (`Effects/CompressionModuleEffect.cs`, `CompressionFacilities`). `SpaceContainers.Compression.cs` checks the facility, the fleet, the surface range and the type list (3255), replaces the stack in the hold in one inventory transaction (`CharacterShips.Compression.cs`), tells the pilot and returns the six-value tuple. Every refusal is a named `CustomNotify`, never `None`. Tested headless: `CompressionHostTests`, `OperationalRpcServiceTests`. Still open: a graphical-client run (the compress action, the facility ball the client sends, the inventory update) is unverified. Structure compression is a separate row (`structureCompressionMgr`, ST-7). |
 
 The seven structure services above account for **17 methods**. `structureHangarViewMgr.GetMyHangarViewState` is connected and is not part of this TODO list.
 
@@ -765,7 +765,7 @@ The reference advertises these 23 names; eve.rs does not register them, so it do
 | OPEN | `corpStationMgr`, `itemLocking`, `ownerGroupManager`, `standing2`, `contractMgr`, `certificateMgr`, `tutorialSvc`, `bookmarkMgr` | Slice D / corporations / contracts | eveMoniker.py:111; corporation/itemLocking.py:27; not called in eve-logic (certificateMgr, tutorialSvc, bookmarkMgr, ownerGroupManager, standing2, contractMgr) |
 | OPEN | `accessGroupBookmarkMgr` | bookmarks: a handle at `bookmarkSvc.Initialize`, called on use (address book, bookmark menus); not at start-up (slice B2) | bookmarks/bookmarkSvc.py:40-41 |
 | OPEN | `blueprintManager` | industry, lazy: `blueprintSvc.Run` calls `GetLimits()` and reads `maxBlueprintResults`, so a window that starts it fails at once (slice B2: not at start-up; no source for the limit yet) | industry/blueprintSvc.py:22-25 |
-| OPEN | `repairSvc`, `reprocessingSvc`, `LPSvc` | Slice D (station services), LP store later | eveMoniker.py:101, 227; station/repairshop/base_repairshop.py:58; loyaltyPointStore/lpStoreSvc.py:63 |
+| OPEN | `repairSvc`, `reprocessingSvc` (`LPSvc` is registered since agents slice AG-1) | Slice D (station services) | eveMoniker.py:101, 227; station/repairshop/base_repairshop.py:58; loyaltyPointStore/lpStoreSvc.py:63 |
 | OPEN | `nes_intro` | storylines, lazy: the controller is built on the user's skip action only (slice B2) | storylines/client/nes_intro.py:45; airnpetracker.py:26 |
 | OPEN | `hackingMgr` | hacking minigame, lazy: the handle is made in `hackingUISvc.Run`, calls on use (slice B2) | eve/client/script/ui/hacking/hackingUISvc.py (Run) |
 | OPEN | `FastCheckoutService` | plex store (fast checkout) | fastcheckout/client/fastCheckoutClientService.py:26 |
@@ -909,3 +909,61 @@ Open after M1:
 | OPEN | M5 to M9: price history definitions (Q16), the read path tests (M6), locking and the bounded scan (M7), money invariants (M8), live acceptance (M9) | market agents 2 and 3 |
 | OPEN | The client label table is partial: `MktCantSellItem2`, `MktCantSellItemOutsideStation` and `MktInvalidRegion` need values the server does not hold (localized jump texts) | the client's localization |
 | OPEN | The corporation read rule has a test for a character outside the corporation; a member holding Account Take and not an accountant is covered by M6 | M6 |
+
+## Agents slice AG-1: LP wallet, access rule and bound agentMgr (2026-10-10)
+
+Done (DEVIATIONS.md, "Agents slice AG-1"): LPSvc (balances, notifications, PostgreSQL journal), the client's agent access
+rule (`AgentAccessRule`), the bound agentMgr (`MachoBindObject`, release). Design slices of `ess-insurgency-agents-missions-design.md`
+section 4.7: A8 done for balances and notifications; A2 done as a rule; A3 done as a binding; A1 partly; A4 to A7 and A9 open.
+
+| Status | Item | Where / blocker |
+|---|---|---|
+| DONE | LPSvc: `GetAllMyCharacterWalletLPBalances`, `GetAllMyCorporationWalletLPBalances`, `OnLPChange`, `OnCorpLPChange` on commit | `LoyaltyPointsService`, `LoyaltyPointStore` (migration 006), `LoyaltyPointAnnouncer` |
+| OPEN | `ExchangeConcordLP`: refused; the CONCORD exchange rate and rule are not in the sources read | design 4.6; EveJS stub `lpService.js:166-168` |
+| OPEN | Donations `TransferLPFromMyWalletToOtherCorp`, `TransferLPFromMyCorpWalletToOtherCorp`: refused; need EveJS's destination, Evermark, director and membership rules | `lpWalletState.js:610-740`; client `personalDonateLPPanel.py`, `corpDonateLPPanel.py` |
+| OPEN | No credit source: missions (Mi5), factional warfare and insurgency (I5) must call `LoyaltyPointStore.ApplyAsync` in their transaction | design 4.6, 5.5 |
+| OPEN | LP store (A9): `LPStoreMgr` still answers no offers and refuses every take | design 4.7 A9; `CoreCompatibilityServiceAdapters.cs` |
+| OPEN | Access rule (A2) has no client-visible consumer yet; implants are not modelled in the skill bonus | `AgentAccessRule`; consumers A4, A5, Mi3 |
+| OPEN | Bound agentMgr (A3): no bound method yet; a nested call is refused | `AgentMissionService.BindAsync`, `BoundMethods` (empty) |
+| OPEN | Dialogue `DoAction` (A4): greeting, view, request, accept, decline and quit; needs offers (A5) and the dialogue texts of EveJS `agentMgrService.js:906-1120` | design 4.7 A4 |
+| OPEN | Journal and offers (A5): offers from the pool, mission state writes, `OnAgentMissionChange`, `OnMissionsUpdated` | design 4.7 A5; `MissionComposition.cs` (read-only today) |
+| OPEN | Research agents (A6), locator (A7, fee unknown Q-AG-6) | design 4.7 |
+| OPEN | A1 check: the GetAgents rowset against the SDE counts (10966 agents, 360 in space, 1773 locators) is not yet a test that reads the SDE | `AgentComposition.NpcAgents`; the SDE is in PostgreSQL schema `sde` |
+| OPEN | Headless walk: the balances and the refused exchange are not yet in `tests/test_login_to_character.py` | the live run |
+| CLOSED | `LPSvc` is no longer in the list of names the core registry leaves out (the Host registers it; `ServiceAdvertisementTests`) | `ServiceAdvertisementTests.cs` |
+## 43. Structures phase ST-E: remaining E wiring (2026-10-10)
+- DONE E-01: StartNewExtraction, FractureChunkWithStructure and CancelExtraction refuse by name (CustomNotify) with no backend, not PyNone (`StructureDataRpcServices.cs`, commit 59e9e89). The backend is ST-6a.
+- DONE E-04 proximity: the sim breaks a cloak that has a ship or a non-belt body within 2 km of its surface and sends `OnCloakModuleForceDeactivated` (`CloakDeactivatedByProximityToType`) before the module stops (`crates/eve-space/src/scene/decloak.rs`, polled in `scene/session.rs`). Activation refuses within the same 2 km (`modules/activation.rs`). Tests: `modules::tests` (ship, station, custom); host `SpaceServiceTests.A_forced_decloak_notice_reaches_the_pilot_with_the_message_and_its_arguments`. No protocol bump: the notice is an existing notify.
+- PARTIAL E-04 custom: `DecloakCause::Custom` (CustomNotify with notify, decloakReason, itemID, distanceMeters) is built and tested in the sim, but nothing calls it yet, so it is inert. Blocked: its only non-proximity source is the Mobile Observatory remote decloak ping (EveJS `processRemoteDecloakPing`, `services/ship/mobileObservatoryRuntime.js`); eve.rs has no observatory, so the caller belongs to that package.
+- DONE E-02 assertion: OnTarget lost, otherlost and clear reach the pilot session in order (host test `The_target_lock_notices_and_the_damage_state_action_reach_the_pilot_as_the_simulation_sent_them`). The client reaction is MITM only.
+- DONE E-05 assertion: the OnDamageStateChange destiny action reaches the session in DoDestinyUpdate with its arguments (same test). The progression widget is MITM only.
+- E-07 stays blocked on RC-5 (weapon banks). E-15 is in ST-7. E-06 stays open for the result source (ST-11).
+## 44. Structures phase, ST-0: the structure record owner, the timeline and the timers (2026-10-10)
+
+Package ST-0 of `structures_phase.md` (the scratchpad plan); decisions in DEVIATIONS.md "Structure timeline (ST-0)".
+
+Done (verified):
+| Status | Item | Evidence |
+|---|---|---|
+| VERIFIED (tests) | The pure timeline `StructureStateMachine`: anchor, anchoring, onlining, shield, armor and hull stages, reinforcements, Low Power, abandonment, unanchoring, reinforcement time change | `dotnet/tests/Eve.Structures.Tests/StateMachineTests.cs`: 47 passed, 0 skipped |
+| VERIFIED (tests) | Schema `structures` (migration 0001), `StructureStore` (read, write, legacy view, import) and `StructureTimers` (job `structure.timer`, event `structure.state_changed` in the change's transaction; refusal changes nothing; restart fires once; import once) | `StructureTimersTests`: 6 PostgreSQL tests (scratch schemas via `Rig`), 53 passed, 0 skipped with `EVE_PG_URL` |
+
+Open (next steps, in order):
+| Status | Item |
+|---|---|
+| OPEN | The Host rules source (`IStructureRulesSource`) over the SDE (`rigSize`, system security band) |
+| OPEN | Register the migration and the timers at start-up (`Foundations`/`Program.cs`, like `Eve.Ships`), the GameStore import (host side only, ADR 0003 rule 3), `ArchitectureTests` entry |
+| OPEN | Switch the readers of the GameStore `structures` table (`PersistenceStructureDirectoryReadModel{,.Part2}`, `PersistenceStructureAssetSafetyReadModel{,.Part2}`, `PersistenceStructureProfilesRpcBackend` reads and writes, `StructureComposition.cs` `StructureExistsAsync`, `IndustryComposition.cs:68`, `CharacterRpc.cs:98`) to the store, one file at a time, with the existing structure tests green |
+## 45. Track ST-11: cosmic sites as content, the director and the probe source (2026-10-10)
+
+Plan: scratchpad `specs/structures_phase.md`, ST-11. Handoff: `docs/project/handoff-ST-11.md`. Decisions: DEVIATIONS.md, "Cosmic sites (ST-11)".
+
+| Status | Item | Evidence |
+|---|---|---|
+| BUILT (tests) | Increment 1, not bound in the host: the site definitions (`anomaly`, `signature`, `site.{id}`) from the static table `Sites/Data/site-templates.json` (419 templates, from `tools/dev/extract-site-templates.py`); `CosmicSiteDirector` (the recurring `site.spawn` job per system, the slots `system:{id}:slot:{n}`, the respawn subscriber on `content.{anomaly,signature}.{completed,expired}`); `ICosmicSiteSource` async, implemented by `ContentCosmicSites` (signatures with their code and level); the scan rows carry the code and the dungeon fields; the warp authority keys results by text. | `CosmicSitesTests.cs` (CosmicSiteRulesTests: codes, placement, template coverage, probe strength; CosmicSiteDirectorTests, PgFact: one site per slot once and idempotent, restart keeps them, expiry replaces each site in its slot elsewhere, the probe source lists the signatures with their codes). Run: `dotnet test Eve.Services.Space.Tests --filter CosmicSite`, 11 passed, 0 skipped, EVE_PG_URL set. |
+| OPEN | Increment 2, the host binding: `SpaceComposition` attaches the director before `foundations.StartAsync`, `SystemEntered` asks for the sites, `SpaceProbeScans` gets `ContentCosmicSites` instead of `NoCosmicSites`, the anomaly read model asks first, `BeyonceService` warps to a result by code. Patch kept in the scratchpad, not committed. | handoff |
+| OPEN | NPCs of a site: spawn the waves through the existing spawner, publish `npc.killed { site, solarSystemId }` in the kill transaction, so a site can be cleared and respawned (the respawn is covered by the director's tests). | the director's objectives already count `npc.killed` by `site` |
+| OPEN | Containers of a data and relic site: place them through `SpaceContainers`, publish `site.container.cleared` on the analyzer's completion. | `CosmicSiteDirector.ContainerClearedTopic` |
+| OPEN | Level from the client difficulty above 5 (ten templates) and the downtime rule of the respawn. | DEVIATIONS "Cosmic sites (ST-11)" |
+| OPEN | The reference's anchor set (planets, belts, stations, stargates; no sun, no moons) is not compared with EveJS. | DEVIATIONS "Cosmic sites (ST-11)" |
+| OPEN | Client check (MITM): the `ABC-123` codes in the scanner list, the anomaly overlay (`scanMgr`), the dungeon fields and the warp to a result by code. | not provable headless |

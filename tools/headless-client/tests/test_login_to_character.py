@@ -276,6 +276,25 @@ def test_a_character_logs_off_to_the_selection_screen_and_selects_again():
         assert client.session.session_init.get("charid") == character_id
 
 
+def test_the_loyalty_point_wallet_answers_and_the_concord_exchange_is_refused():
+    """LPSvc (the loyalty point wallet): a new character's balance rowset is answered (no source credits points yet), and
+    ExchangeConcordLP is refused with the reason rather than answered as done (AG-1, DEVIATIONS.md)."""
+    run = uuid.uuid4().hex[:10]
+    with connect(f"walk-lp-{run}") as client:
+        creation = next(
+            step
+            for step in WALK["steps"]
+            if step["call"][1] == "CreateCharacterWithDoll" and "ok" in step
+        )
+        service, method, described = creation["call"]
+        character_id = m.plain(client.call(service, method, *[revive(value, run) for value in described]))
+        assert client.call("charUnboundMgr", "SelectCharacterID", charID=character_id, secondChoiceID=None, skipTutorial=False) is None
+
+        assert client.call("LPSvc", "GetAllMyCharacterWalletLPBalances") is not None
+        with pytest.raises(p.MachoError):
+            client.call("LPSvc", "ExchangeConcordLP", 1000125, 10)
+
+
 GROUP_CHARACTER = 1  # appLogConst.groupCharacter
 
 

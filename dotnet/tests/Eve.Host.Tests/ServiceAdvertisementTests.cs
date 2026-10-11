@@ -16,15 +16,16 @@ public class ServiceAdvertisementTests
     private const long NowMs = 1_790_646_377_000;
 
     /// <summary>
-    /// The 23 names the reference advertises that eve.rs does not register. Each is left out on purpose, with its reason in
-    /// DEVIATIONS.md; the structure and planet services belong to the structures track.
+    /// The names the reference advertises that the core registry does not register. Each is left out on purpose, with its
+    /// reason in DEVIATIONS.md; the structure and planet services belong to the structures track. LPSvc is not in this list:
+    /// the Host registers it with the wallet store (CharacterServicesComposition, AgentRpc), so it is advertised there.
     /// </summary>
     private static readonly string[] NotAdvertised =
     [
         "objectCaching", "FastCheckoutService", "corpStationMgr", "itemLocking", "structure", "loadService",
         "planetOrbitalRegistryBroker", "tradeMgr", "LSC", "warRegistry", "certificateMgr", "tutorialSvc", "nes_intro",
         "bookmarkMgr", "accessGroupBookmarkMgr", "ownerGroupManager", "standing2", "contractMgr", "blueprintManager",
-        "repairSvc", "reprocessingSvc", "LPSvc", "publicGatewaySvc",
+        "repairSvc", "reprocessingSvc", "publicGatewaySvc",
     ];
 
     private sealed class NoAccounts : IOmegaAccountStore
@@ -84,7 +85,7 @@ public class ServiceAdvertisementTests
         var (registry, config, _) = Host();
         var advertised = new HostMachoNetInfo(registry, config.Current).Services().Select(entry => entry.Key).ToHashSet(StringComparer.Ordinal);
 
-        Assert.Equal(23, NotAdvertised.Length);
+        Assert.Equal(22, NotAdvertised.Length);
         foreach (var name in NotAdvertised)
         {
             Assert.DoesNotContain(name, advertised);

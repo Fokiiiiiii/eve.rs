@@ -11,7 +11,7 @@ internal static class SimShips
     private const int Mass = 4;
     private const int MaxVelocity = 37;
     private const int Agility = 70;
-    private const int Radius = 162;
+    internal const int Radius = 162;
     private const int ShieldRechargeRate = 479;
     private const int WarpSpeedMultiplier = 600;
     private const int MaxTargetRange = 76;

@@ -14,10 +14,12 @@
     <ProjectReference Include="../Eve.Scheduler/Eve.Scheduler.csproj" />
     <ProjectReference Include="../Eve.Crimewatch/Eve.Crimewatch.csproj" />
     <ProjectReference Include="../Eve.Events/Eve.Events.csproj" />
+    <ProjectReference Include="../Eve.Content/Eve.Content.csproj" />
     <ProjectReference Include="../Eve.Services.Generator/Eve.Services.Generator.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
   </ItemGroup>
   <ItemGroup>
     <EmbeddedResource Include="Effects/Data/fighter-abilities.json" LogicalName="fighter-abilities.json" />
+    <EmbeddedResource Include="Sites/Data/site-templates.json" LogicalName="site-templates.json" />
   </ItemGroup>
   <ItemGroup>
     <InternalsVisibleTo Include="Eve.Services.Space.Tests" />

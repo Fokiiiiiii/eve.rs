@@ -385,7 +385,7 @@ impl Scene {
             {
                 return vec![Out::Refused { session, command: CODE, reason: "CLOAK_TARGET_LOCKED" }];
             }
-            if !self.in_smartbomb_range(session, 2_000.0).is_empty() {
+            if self.cloak_trigger(session, crate::scene::CLOAK_PROXIMITY_METERS).is_some() {
                 return vec![Out::Refused { session, command: CODE, reason: "CLOAK_PROXIMITY_BLOCKED" }];
             }
         } else if pilot.cloak != crate::visibility::CloakState::Uncloaked {

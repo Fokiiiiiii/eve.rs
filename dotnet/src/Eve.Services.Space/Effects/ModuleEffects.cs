@@ -65,8 +65,9 @@ internal static class ModuleEffects
         .Register(new ConeEffect())
         .Register(new HogEffect())
         .Register(new StructureHogEffect())
-        // the modules that act on a structure: refused by name until structures exist (phase 3), see StructureModuleEffects.cs
+        // the entosis link acts on a structure: refused by name until structures exist (phase 3), see StructureModuleEffects.cs
         .Register(new EntosisLinkEffect())
+        // the ship compressors: a facility for the fleet while they run (CompressionModuleEffect.cs)
         .Register(new CompressionModuleEffect())
         // exploration, hacking and scanner effects: wired, refused as EFFECT_NOT_IMPLEMENTED until their bodies are written (see ExplorationModuleEffects.cs)
         .Register(new DataAnalyzerEffect())

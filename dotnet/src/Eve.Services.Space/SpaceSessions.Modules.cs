@@ -613,6 +613,21 @@ public sealed partial class SpaceSessions
     public bool IsModuleActive(ulong sessionId, long moduleId) =>
         _pilots.TryGetValue(sessionId, out var pilot) && pilot.ActiveModules.ContainsKey(moduleId);
 
+    /// <summary>
+    /// What a ship in space offers as a compression facility right now (its running compressors, see <see cref="CompressionFacilities"/>): the pilot, the
+    /// system, the ship's radius and the type lists with their reach. Null when no pilot flies the ship in space or none of its compressors runs.
+    /// </summary>
+    public async Task<CompressionFacility?> CompressionFacilityOfAsync(long shipId, CancellationToken cancellationToken)
+    {
+        if (_pilots.Values.FirstOrDefault(pilot => pilot.ShipId == shipId) is not { } found
+            || await FlownShipAsync(found, cancellationToken).ConfigureAwait(false) is not { } snapshot)
+        {
+            return null;
+        }
+        var lists = Effects.CompressionFacilities.Of(snapshot, _statics);
+        return lists.Count == 0 ? null : new CompressionFacility(found.CharacterId, found.SolarSystemId, snapshot.World.Get(shipId, SimShips.Radius), lists);
+    }
+
     /// <inheritdoc/>
     public Task RefreshShipAsync(ClientSession session, CancellationToken cancellationToken) =>
         _pilots.TryGetValue((ulong)session.SessionId, out var pilot)

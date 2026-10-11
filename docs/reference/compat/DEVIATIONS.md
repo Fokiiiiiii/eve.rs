@@ -1499,3 +1499,112 @@ order at its expiry instant); CCP-BR (the order duration; "Modifying an order wi
 - **Test changes for the grace.** `TradingTests` (the over-cap refund that stays pending) and `ModificationRulesTests` (the restarted
   duration) check the expiry one grace after the expiry instant; the expected values are unchanged.
 - Status: done (M3), tested with a fake clock (TradeRig.Now); the live headless walk cannot wait a day, so the expiry is not walked live.
+
+## Agents slice AG-1: LP wallet (LPSvc), the access rule and the bound agentMgr (2026-10-10)
+
+Sources. eve-logic (V24.01): `eve/client/script/ui/shared/neocom/wallet/loyaltyPointsWalletSvc.py:27-67` (the balances,
+`OnLPChange`, `OnCorpLPChange`); `eve/client/script/ui/station/loyaltyPointStore/lpStoreSvc.py:102-103` (`ExchangeConcordLP`);
+`eve/client/script/ui/shared/neocom/wallet/panels/corp/corpDonateLPPanel.py:47` and `.../personal/personalDonateLPPanel.py:46`
+(the two transfers). EveJS v0.12.9: `server/src/services/corporation/lpService.js:70-108` (service, rowset, corporation
+holder), `lpWalletState.js:348-390` (notifications), `lpWalletState.js:392-510` (the idempotency key), `lpWalletState.js:610-740`
+(the transfers). The client's agent rule: `eve/common/script/sys/eveCfg.py:112-143`, `standingUtil.py:15-43`,
+`eve/client/script/ui/services/standingsvc.py:100-104`. Skill type IDs: `inventorycommon/const.py:1441, 1456, 1474`.
+Faction lists: `eve/common/lib/appConst.py:618-632`.
+
+- **LPSvc is registered by the Host.** It was missing (eve.rs routed the name to the station node and had no class). It is
+  built on the wallet store and answers `GetAllMyCharacterWalletLPBalances` and `GetAllMyCorporationWalletLPBalances` with a
+  `Rowset` of `(issuerCorpID, loyaltyPoints)`, the shape EveJS answers (`lpService.js:32-44`). The character is the session's
+  `charid`; the corporation is `corporationID`, then `corpid` (EveJS `lpService.js:105-107`). A session with no character or
+  corporation gets an empty rowset. Status: decided (AG-1); tests `LoyaltyPointsServiceTests`.
+- **Balances persist in PostgreSQL, in the wallet schema.** Tables `lp_balances` (one row per holder and issuing corporation)
+  and `lp_journal` (one row per applied change), migration `006_loyalty_points.sql`. The reference keeps them in its JSON
+  `lpWallets` table; eve.rs does not use the JSON game store for new state, so the reference's table name is not reused. A
+  change is one balance update and one journal row in the caller's transaction, so a coupled change (a mission reward with its
+  ISK) commits as one. Status: decided (AG-1); tests `LoyaltyPointStoreTests` (PostgreSQL).
+- **A reference applies once.** The journal is unique per (reference, holder, issuer). A replay returns no change and
+  announces nothing. The reference refuses a reused idempotency key with a different amount (`lpWalletState.js:411-420`,
+  `IDEMPOTENCY_KEY_REUSED`); eve.rs answers the replay as already applied, because the caller's reference names the award
+  and a different amount is a different reference. Status: decided (AG-1).
+- **A debit below zero is refused** (`InsufficientLoyaltyPointsException`) and leaves no row changed. The reference refuses
+  it with `INSUFFICIENT_FUNDS` only when the caller asks (`requireSufficientFunds`, `lpWalletState.js:531, 592, 631, 728`);
+  eve.rs always requires the funds, because a balance cannot be negative. Status: tested.
+- **Notifications follow committed changes only.** `OnLPChange("set", issuer, before, after)` goes to the character's
+  session (`clientID`), `OnCorpLPChange(reason, issuer)` to every session of the corporation (`clientID`, each session).
+  The change type is the reference's default `"set"` (`lpWalletState.js:348`); the client ignores it
+  (`loyaltyPointsWalletSvc.py:59`, parameter `_changeType`). Status: tested (`LoyaltyPointsServiceTests`).
+- **`ExchangeConcordLP` and the two transfers are refused, not answered.** The reference's `ExchangeConcordLP` is a stub that
+  returns an empty dictionary (`lpService.js:166-168`), so an answer would be a fake success. The transfers (the donation
+  panels) follow rules eve.rs does not have yet: the destination corporation check, the Evermark exception, the director role
+  and the membership age (`lpWalletState.js:116-135`, `:136-236`, `:610-740`). Each is refused with
+  `CustomInfo` "This loyalty point operation is not available on this server yet." Status: open (TODO section 43).
+- **Not added: `GetLPsForCharacter`, `GetLPExchangeRates`, `GetLPForCharacterCorp`.** The reference answers them
+  (`lpService.js:83-91`, `:111`), but no V24.01 caller exists in eve-logic (a search of the client tree finds none). A method
+  without a caller cannot be checked against the client, so it is not added (the same rule as slice B3).
+- **No source credits loyalty points yet.** The store's `ApplyAsync` is ready for the first credit (missions, factional
+  warfare, insurgency). Until then every balance is empty; the tests credit through the store.
+- **LPStoreMgr is unchanged** (still answers no offers and refuses every take); it is slice A9.
+
+- **The access rule is a port of the client's rule** (`AgentAccessRule`): the level threshold `m = 2(level-1) - 1`, the
+  floor (the lowest of the three standings must exceed -2), the research rule (the corporation standing must reach `m - 2`),
+  the aura bypass, and the level-one rule (open to anyone except research agents). The three standings are the client's
+  `npccharstandings` values for the agent's faction, corporation and agent (`standingsvc.py:100-104`); a missing one is 0.
+  The skill bonus is 0.4 per trained level of Diplomacy (a negative standing), Criminal Connections (a positive standing toward
+  a pirate faction) or Connections (any other positive standing), none for the four factions without a bonus
+  (`standingUtil.py:26-37`). Decisions: (1) implants are not modelled, so the effective level is the trained level (the
+  client's `effectiveSkillLevel` includes implants); (2) the rule has no quality term, because the V24.01 client has none
+  (design document, section 4.1); (3) no server path calls the rule yet: the consumers are the agent dialogue (A4), offers
+  (A5) and the accept path (Mi3), so the rule is tested as a function (`AgentAccessRuleTests`). Status: built, not yet used by
+  a client-visible path.
+- **`MachoBindObject` on agentMgr.** `Moniker('agentMgr', agentID)` binds the agent (`agents.py:319-321`,
+  `eveMoniker.py:157`). The bound object is made for an agent the catalog holds; an unknown agent is refused with
+  `CustomInfo` "That agent is not known." (ours; the reference binds any id, `agentMgrService.js:777-786`). A nested call on the
+  bound object is refused as an `InvalidOperationException` (the host logs it and answers the wrapped unexpected error) while no
+  bound method exists: `DoAction` and the mission methods are slices A4 and A5. A release forgets the object. Status: tested
+  (`AgentMissionServiceTests`); the bound object answers no method yet.
+## ST-E: cloak proximity and forced decloak notices (2026-10-10)
+- **Proximity radius and refusal.** The cloak breaks, and activation refuses, for a ship or a non-belt body within 2 000 m of the surface of the cloaked ship. Source: EveJS `shipCloak.js:100` (`MIN_CLOAKING_DISTANCE_METERS = 2000`). It replaces the 2 km smartbomb-range check, so the activation refusal now also counts bodies, not only smartbomb targets. Belts are not counted.
+- **Notice order.** The proximity notice goes out before the module stops; the other reasons after (EveJS `forceDecloakEntity`).
+- **Custom reasons.** The CustomNotify payload (notify, decloakReason, itemID, distanceMeters rounded to mm) follows EveJS `notifyCloakModuleForceDeactivated`. No caller exists yet.
+
+## In-space compression (ST-C)
+
+- **Compression is a ship module, not a structure.** The compressor is group 4174 (industrialItemCompression, category 7, ship module) in the pinned SDE (build 3396210). The EVE University wiki (Compression) describes it as a ship module that makes its ship a facility for its fleet. EveJS agrees: server/src/services/mining/miningIndustry.js:811-870 takes the facility to be a ship with compression type lists in the same fleet. The earlier refusal text (needs a compressor structure, phase 3) was wrong and is removed. Tests: CompressionHostTests, OperationalRpcServiceTests. Status: decided.
+- **Refusals are named.** EveJS server/src/services/mining/inSpaceCompressionMgrService.js:36-72 answers null on every refusal. The port answers a named CustomNotify for each refusal (not in space, no facility, not in fleet, out of range, wrong kind, not compressible), because a silent None looks like success to the client (itemcompression/client/itemCompression.py). Status: tolerated. The client-side display of the notice is unverified (no graphical run).
+- **Range is the surface distance, measured by the host.** EveJS compares entity positions in its scene. The port takes the simulation positions of both ships, subtracts both radii, and allows one metre for positions that move between the client check and the host. The reach is the compressor maxRange after dogma (SDE attribute 54), capped at the client 250 000 m facility range. Status: decided.
+## Structure timeline (ST-0)
+
+The record owner and the timeline of Upwell structures (`dotnet/src/Eve.Structures`). Stats come from the SDE, mechanics from the EVE University wiki
+("Vulnerability", "Anchoring structures"), and where the wiki is silent from EveJS v0.12.9; the client's `structures/const.py` gives the state ids.
+
+- **D-1 size class, SDE first (`rigSize`, attribute 1547).** Checked in `sde."typeDogma"` (pinned SDE build 3396210): 2 Medium (Astrahus 35832, Raitaru 35825,
+  Athanor 35835), 3 Large (Fortizar 35833, Tatara 35836), 4 X-Large (Keepstar 35834). A type with no `rigSize` is Flex (Ansiblex 35841 has none). Source:
+  `StructureRules.SizeOfRigSize`. Status: decided. The Host rules source that maps a type to this is not written yet (ST-0 next step); until it is, no
+  structure is anchored through the module.
+- **D-2 change of reinforcement time, 30 days.** The wiki says the change takes effect after 30 days; EveJS `structureVulnerabilityService.js:30`
+  (`REINFORCE_CHANGE_DELAY_MS`) and `:183-260` (`buildReinforcementPatch`) use the same 30 days and clear a pending change that is asked again for the
+  current time. Both sources agree, so the module stores `pending_*` and `pending_effective_ms` as EveJS does, with no difference. Test:
+  `StateMachineTests.A_new_reinforcement_time_is_pending_for_thirty_days_then_takes_effect`. Status: decided.
+- **Armor and hull reinforcement durations.** Wiki and EveJS `structureConstants.js` agree for Medium, Large and X-Large (`ARMOR_REINFORCE_*`). The Flex hull
+  reinforcement is 30 minutes (wiki); EveJS has 3600 s with jitter 1800 s. The wiki value is used. Status: decided (wiki over EveJS, the rule of ST-0).
+- **Repair pause threshold.** A hit of at least 10 percent of the per-second damage cap pauses the repair countdown (wiki). The SDE attributes
+  `pause{Shield,Armor,Hull}RepairDpsThreshold` (3354-3356) are 500 each, which is that 10 percent of the caps 2034-2036. The simulation computes the
+  flag (ST-1); the state machine only takes `PausesRepair`. Status: decided.
+- **Abandonment after 7 days in Low Power.** The wiki gives two versions; the "7 days Low Power" version is used (EveJS `structureConstants.js` agrees
+  on 7 days). Status: decided.
+- **Import of the legacy table.** The GameStore `structures` rows are copied once into `structures.structures`, by id, with their services and the
+  fields the timeline does not own in `doc`. A structure without a state is imported as one that already works (`ShieldVulnerable`), and a Low Power
+  structure without an abandon day starts its clock at the import. Status: decided; the import call is not wired yet.
+- **`structure.state_changed` is published in the same transaction as the change**, with the timer of the structure. Status: decided.
+## Cosmic sites (ST-11)
+
+Sources: the wiki's probe-scanning and site rules first; EveJS `services/dungeon/dungeonUniverseRuntime.js` where the wiki is silent; the SDE for names and the sensor attributes.
+
+- **Placement distance.** Wiki: a site spawns in a sphere of 4 AU around a celestial. EveJS (`dungeonUniverseRuntime.js:961`, `baseDistanceAu` 4, `distanceJitterAu` 0.35) places it at 4 AU give or take 0.35 AU, so up to 4.35 AU. Chosen: the wiki's sphere, 0.5 to 4 AU from the anchor (the minimum keeps a site off the celestial; neither source gives one). Test: `CosmicSiteRulesTests.A_site_lies_between_half_an_au_and_four_au...`. Status: decided (wiki).
+- **Vertical spread.** EveJS shifts a site vertically by up to 0.14 AU (`verticalJitterAu` 0.14), which can leave the sphere. Here the direction's pitch is within 0.14 rad, which keeps the site in the sphere. Status: decided (wiki sphere).
+- **Anchors.** The celestials placed beside are the system's planets, asteroid belts, stations and stargates from the SDE, in their simulation positions; the sun and the moons are not anchors. The reference's anchor set is not compared yet. Status: open (compare with EveJS).
+- **Signature level and strength.** The level is the site's client difficulty clamped to 1 to 5 (wiki levels I to V). Strength: 42 for I to III, 72 for IV, 104 for V (wiki probe scanning; `ProbeScanMath.SignatureStrength`). Ten signature templates have a difficulty above 5 and count as level V. Status: open (the wiki gives the levels, not the difficulty values; confirm in game).
+- **Lifetime and count.** A site lasts 24 hours unless it is cleared (EveJS `siteLifetimeMinutes` 1440, `dungeonUniverseRuntime.js`), and a system holds one site per family and kind (EveJS `universeSiteCountDefault` 1).
+- **Respawn.** Wiki: a site respawns at once, somewhere else, after it is cleared, and not after downtime. Here the content subscriber replaces a site on `content.{anomaly,signature}.{completed,expired}` and a sweep every five minutes fills any empty slot. Downtime is not modelled. Status: decided, downtime open.
+- **Codes and seeds.** A signature's code is three letters, a dash and three digits (`ABC-123`, the client's listing form, not verified in the client). Its place and code come from an FNV-1a hash of the system, the slot, the family and the instance it replaces, so the same history gives the same place; the reference's random source is not used. A code that a system already has is re-seeded. Status: decided.
+- **Signatures and anomalies.** Only signatures are scan targets (`ContentCosmicSites`); an anomaly comes from the system scanner's overlay and is not a probe target, as the client expects. Scan rows carry the code as their id and the dungeon fields; a signature's item id is none (EveJS `buildScanResultEntry`, the item id left to the site source).
+- **Not yet built.** The NPCs of a site are not spawned, so no `npc.killed` carries the site and no site is cleared by its NPCs; containers are not placed, so `site.container.cleared` is never published. Until these land a site ends by expiry only.

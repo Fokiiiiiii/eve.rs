@@ -203,6 +203,10 @@ internal sealed partial class CharacterServicesComposition
         // the R&D agents: the science fields from the SDE, and the datacore purchase in the store's transaction (AG-4 / A6)
         var researchPort = new PersistenceAgentResearch(source, agentResearchProjects, economyWallets, items, itemTypes, characterSessions,
             await PersistenceAgentResearch.LoadFieldsAsync(sde, CancellationToken.None), () => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+        // the locator agents: the pilot by name, the place from the online session and the SDE, the fee and the result (AG-4 / A7)
+        var locatorPort = new PersistenceAgentLocator(source, agentLocates, characters, characterSessions, solarSystems, economyWallets,
+            () => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+            (characterId, agentId, data, key, ct) => mailSendWriter!.WriteLocateNotificationAsync(characterId, agentId, data, key, ct));
         agentMissionService = new AgentMissionService(
             async (characterId, ct) =>
             {
@@ -280,7 +284,7 @@ internal sealed partial class CharacterServicesComposition
                         ? agent.SolarSystemId is { } system && spaceSessions is not null && spaceSessions.IsPilotInSystem(characterId, (int)system)
                         : atLocation;
                     await missionDungeons.OnConversationAsync(characterId, agent.AgentId, together, ct);
-                }, researchPort));
+                }, researchPort, locatorPort));
         await AttachMissionDungeonsAsync();
     }
 

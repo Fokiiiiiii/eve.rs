@@ -86,7 +86,8 @@ public sealed record AgentDialogueSources(
     Func<AgentMissionAgentData, long, CancellationToken, ValueTask<AgentMissionContent?>> PickOffer,
     Func<DateTimeOffset> Now,
     Func<long, AgentMissionAgentData, bool, CancellationToken, ValueTask>? OnConversation = null,
-    IAgentResearchPort? Research = null);
+    IAgentResearchPort? Research = null,
+    IAgentLocatorPort? Locator = null);
 
 /// <summary>The answer of DoAction: the agent's line, the buttons, and the last-action record the window reads.</summary>
 public sealed record AgentDialogueReply(PyValue AgentSays, IReadOnlyList<(long ActionId, int ButtonType)> Actions, PyDict LastActionInfo)
@@ -115,7 +116,7 @@ public sealed record AgentDialogueStep(AgentDialogueReply? Reply, AgentDialogueP
 /// The agent dialogue behind DoAction (A4, narrowed). It answers the conversation the client asks for and makes the mission
 /// transitions it names through the agents store. Implemented: the greeting, the standing refusal, request (an offer from
 /// <see cref="AgentDialogueSources.PickOffer"/>), view, accept, decline (the four-hour replay), quit at the agent's station, and
-/// the states that show them. Not implemented, and refused by name: research (A6) and the locator (A7). The reference's
+/// the states that show them, research (A6) and the locator (A7) when their ports are given (refused by name otherwise). The reference's
 /// confirmation windows for decline and quit are not part of this slice: the transition is made when the button is pressed
 /// (DEVIATIONS "Agents slice AG-2, A4").
 /// </summary>
@@ -233,6 +234,16 @@ public sealed class AgentDialogueMachine(AgentDialogueSources sources)
                         return AgentDialogueStep.Of(await ConversationAsync(characterId, agent, standing, atAgentLocation, cancellationToken, LastInfo()));
                     }));
 
+            case AgentDialogueButton.LocateCharacter when agent.IsLocatorAgent && sources.Locator is not null:
+                return await LocateAskAsync(characterId, agent, standing, now, cancellationToken);
+
+            case AgentDialogueButton.LocateAccept when agent.IsLocatorAgent && sources.Locator is not null:
+                return await LocateAcceptAsync(characterId, agent, standing, now, cancellationToken);
+
+            case AgentDialogueButton.LocateReject when agent.IsLocatorAgent && sources.Locator is not null:
+                await sources.Locator.Locates.SetTargetAsync(characterId, agent.AgentId, null, cancellationToken);
+                break;
+
             case AgentDialogueButton.StartResearch when sources.Research is not null:
                 return await StartResearchAsync(characterId, agent, standing, now, cancellationToken);
 
@@ -302,7 +313,7 @@ public sealed class AgentDialogueMachine(AgentDialogueSources sources)
         IReadOnlyList<(long ActionId, int ButtonType)> actions = offerable ? [(AgentDialogueToken.Request, AgentDialogueButton.RequestMission)] : [];
         return new AgentDialogueReply(
             Greeting(null),
-            [.. actions, .. await ResearchIdleActionsAsync(characterId, agent, cancellationToken)],
+            [.. actions, .. await IdleActionsAsync(characterId, agent, standing, now, cancellationToken)],
             lastInfo);
     }
 
@@ -455,6 +466,118 @@ public sealed class AgentDialogueMachine(AgentDialogueSources sources)
             ? [(AgentDialogueToken.StartResearch, AgentDialogueButton.StartResearch)]
             : [(AgentDialogueToken.BuyDatacores, AgentDialogueButton.BuyDatacores), (AgentDialogueToken.CancelResearch, AgentDialogueButton.CancelResearch)];
     }
+
+    // The locator (EveJS has no locate dialogue; the lines are plain text, see DEVIATIONS "Agents slice AG-4, A7").
+    private const string LocateCaption = "Locate a pilot";
+    private const string LocateLabel = "Enter the name of the pilot to locate.";
+    private const string LocateUnavailableText = "This locator cannot find that pilot right now.";
+    private const string LocateNotFoundText = "No pilot by that name could be found.";
+    private const string LocateDoneText = "The result has been sent to you.";
+    private const string LocateNoFundsText = "You cannot pay the locate fee.";
+
+    /// <summary>Locate (button 15): the name is asked; a found, online, reachable pilot is offered with the fee (accept 16, reject 17).</summary>
+    private async ValueTask<AgentDialogueStep> LocateAskAsync(
+        long characterId, AgentMissionAgentData agent, AccessReading standing, DateTimeOffset now, CancellationToken cancellationToken)
+    {
+        var locator = sources.Locator!;
+        if (!LocatorUsable(agent, standing) || await LocatorCoolingAsync(characterId, agent, now, cancellationToken))
+            return Say(LocateUnavailableText, await IdleActionsAsync(characterId, agent, standing, now, cancellationToken));
+        return new AgentDialogueStep(null, new AgentDialoguePrompt("RemoteNamePopup",
+            [new PyStr(LocateCaption), new PyStr(LocateLabel), new PyInt(agent.AgentId)],
+            EmptyDict(),
+            async answer =>
+            {
+                var name = answer is PyStr { Value: var text } ? text.Trim() : "";
+                var idle = await IdleActionsAsync(characterId, agent, standing, now, cancellationToken);
+                if (name.Length == 0 || await locator.FindCharacterAsync(name, cancellationToken) is not { } target)
+                    return Say(LocateNotFoundText, idle);
+                if (await LocateQuoteAsync(agent, target, cancellationToken) is not { } quote)
+                    return Say(LocateUnavailableText, idle);
+                await locator.Locates.SetTargetAsync(characterId, agent.AgentId, target, cancellationToken);
+                return Say($"Locate {name} for {quote.Fee:N0} ISK?",
+                    [(AgentDialogueButton.LocateAccept, AgentDialogueButton.LocateAccept), (AgentDialogueButton.LocateReject, AgentDialogueButton.LocateReject)]);
+            }));
+    }
+
+    /// <summary>Accept (button 16): the fee is charged and the result sent in one transaction; a pilot who cannot pay gets nothing.</summary>
+    private async ValueTask<AgentDialogueStep> LocateAcceptAsync(
+        long characterId, AgentMissionAgentData agent, AccessReading standing, DateTimeOffset now, CancellationToken cancellationToken)
+    {
+        var locator = sources.Locator!;
+        var idle = await IdleActionsAsync(characterId, agent, standing, now, cancellationToken);
+        var open = await locator.Locates.ReadAsync(characterId, agent.AgentId, cancellationToken);
+        if (open?.TargetCharacterId is not { } target || !LocatorUsable(agent, standing) || await LocatorCoolingAsync(characterId, agent, now, cancellationToken))
+            return Say(LocateUnavailableText, idle);
+        if (await LocateQuoteAsync(agent, target, cancellationToken) is not { } quote)
+        {
+            await locator.Locates.SetTargetAsync(characterId, agent.AgentId, null, cancellationToken);
+            return Say(LocateUnavailableText, idle);
+        }
+        if (!await locator.DeliverAsync(characterId, agent.AgentId, quote.Fee, LocateResult(target, agent, quote), cancellationToken))
+            return Say(LocateNoFundsText, idle);
+        return Say(LocateDoneText, await IdleActionsAsync(characterId, agent, standing, now, cancellationToken));
+    }
+
+    /// <summary>
+    /// The located notification's data (EveJS-client FormatLocateCharNotification, eve-logic notificationUtil.py:540): the pilot, the
+    /// intro variant, and the agent's and the pilot's places keyed by group id (3 region, 4 constellation, 5 system, 15 station).
+    /// </summary>
+    private static System.Text.Json.Nodes.JsonObject LocateResult(long targetCharacterId, AgentMissionAgentData agent, LocateQuote quote)
+    {
+        var agentLocation = new System.Text.Json.Nodes.JsonObject { ["5"] = agent.SolarSystemId };
+        if (agent.StationId is > 0) agentLocation["15"] = agent.StationId;
+        var targetLocation = new System.Text.Json.Nodes.JsonObject
+        {
+            ["3"] = quote.Place.RegionId, ["4"] = quote.Place.ConstellationId, ["5"] = quote.Location.SolarSystemId,
+        };
+        if (quote.Location.StationId > 0) targetLocation["15"] = quote.Location.StationId;
+        return new System.Text.Json.Nodes.JsonObject
+        {
+            ["characterID"] = targetCharacterId,
+            ["messageIndex"] = 0,
+            ["agentLocation"] = agentLocation,
+            ["targetLocation"] = targetLocation,
+        };
+    }
+
+    /// <summary>The fee for locating a pilot from the agent's system, or null when the locator cannot (offline, wormhole, or too far for its level).</summary>
+    private async ValueTask<LocateQuote?> LocateQuoteAsync(AgentMissionAgentData agent, long targetCharacterId, CancellationToken cancellationToken)
+    {
+        var locator = sources.Locator!;
+        if (await locator.TargetAsync(targetCharacterId, cancellationToken) is not { } location || LocatorRules.IsWormhole(location.SolarSystemId)) return null;
+        if (agent.SolarSystemId is not { } agentSystem || await locator.PlaceAsync(agentSystem, cancellationToken) is not { } agentPlace) return null;
+        if (await locator.PlaceAsync(location.SolarSystemId, cancellationToken) is not { } targetPlace) return null;
+        var distance = LocatorRules.Classify(agentSystem, agentPlace.ConstellationId, agentPlace.RegionId,
+            location.SolarSystemId, targetPlace.ConstellationId, targetPlace.RegionId);
+        return LocatorRules.Fee((int)agent.Level, distance) is { } fee ? new LocateQuote(fee, location, targetPlace) : null;
+    }
+
+    private sealed record LocateQuote(long Fee, LocateTarget Location, LocatePlace Place);
+
+    private static bool LocatorUsable(AgentMissionAgentData agent, AccessReading standing) =>
+        standing.CanUse && (LocatorRules.RequiredStandingFor((int)agent.Level) is not { } required ||
+            AgentAccessRule.EffectiveStanding(standing.Standings.Character, standing.FactionId, skill => standing.Levels.GetValueOrDefault(skill)) >= required);
+
+    private async ValueTask<bool> LocatorCoolingAsync(long characterId, AgentMissionAgentData agent, DateTimeOffset now, CancellationToken cancellationToken) =>
+        await sources.Locator!.Locates.ReadAsync(characterId, agent.AgentId, cancellationToken) is { LocatedAt: { } last } &&
+        now < last.AddMinutes(LocatorRules.CooldownMinutesFor((int)agent.Level));
+
+    /// <summary>The buttons an agent shows when idle: the research ones, and the locator's (ask; or accept and reject while a request is open).</summary>
+    private async ValueTask<IReadOnlyList<(long ActionId, int ButtonType)>> IdleActionsAsync(
+        long characterId, AgentMissionAgentData agent, AccessReading standing, DateTimeOffset now, CancellationToken cancellationToken)
+    {
+        var research = await ResearchIdleActionsAsync(characterId, agent, cancellationToken);
+        if (!agent.IsLocatorAgent || sources.Locator is null) return research;
+        var open = await sources.Locator.Locates.ReadAsync(characterId, agent.AgentId, cancellationToken);
+        if (open?.TargetCharacterId is not null)
+            return [.. research, (AgentDialogueButton.LocateAccept, AgentDialogueButton.LocateAccept), (AgentDialogueButton.LocateReject, AgentDialogueButton.LocateReject)];
+        return LocatorUsable(agent, standing) && !await LocatorCoolingAsync(characterId, agent, now, cancellationToken)
+            ? [.. research, (AgentDialogueButton.LocateCharacter, AgentDialogueButton.LocateCharacter)]
+            : research;
+    }
+
+    private static AgentDialogueStep Say(string text, IReadOnlyList<(long ActionId, int ButtonType)> actions) =>
+        AgentDialogueStep.Of(new AgentDialogueReply(PlainText(text), actions, LastInfo()));
 
     /// <summary>The agent's line after a research action, with the idle buttons (EveJS buildPostActionConversation).</summary>
     private async ValueTask<AgentDialogueStep> AnswerAsync(

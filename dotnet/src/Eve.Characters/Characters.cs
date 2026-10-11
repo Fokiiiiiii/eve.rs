@@ -254,6 +254,15 @@ public sealed partial class PgCharacterStore
         return (bool)(await command.ExecuteScalarAsync(cancellationToken))!;
     }
 
+    /// <summary>The id of the character with this name (in any spelling that folds to the same key), or null.</summary>
+    public async Task<long?> FindIdByNameAsync(string name, CancellationToken cancellationToken = default)
+    {
+        await using var command = _source.CreateCommand($"SELECT id FROM {_schema}.characters WHERE name_key = $1");
+        command.Parameters.Add(new NpgsqlParameter { Value = CharacterNames.Key(name) });
+        var value = await command.ExecuteScalarAsync(cancellationToken);
+        return value is null or DBNull ? null : Convert.ToInt64(value, System.Globalization.CultureInfo.InvariantCulture);
+    }
+
     /// <summary>Adds a character inside the caller's transaction. Throws <see cref="NameTakenException"/> for a taken name.</summary>
     public async Task<long> InsertAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, NewCharacter c, CancellationToken cancellationToken = default)
     {

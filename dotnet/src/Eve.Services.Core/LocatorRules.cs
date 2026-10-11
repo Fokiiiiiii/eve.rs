@@ -63,6 +63,9 @@ public static class LocatorRules
         return LocateDistance.OtherRegion;
     }
 
+    /// <summary>Wormhole systems (the J-space ids) cannot be located: the wiki says "wormholes are excluded".</summary>
+    public static bool IsWormhole(long solarSystemId) => solarSystemId is >= 31_000_000 and < 32_000_000;
+
     private static void ValidateLevel(int agentLevel)
     {
         if (agentLevel is < 1 or > 5) throw new ArgumentOutOfRangeException(nameof(agentLevel), "a locator agent is level 1 to 5");

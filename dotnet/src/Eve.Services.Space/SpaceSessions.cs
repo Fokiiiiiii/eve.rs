@@ -221,6 +221,10 @@ private readonly TransitionRuntime _transitions;
     /// <summary>A ship has come into the scene of a solar system (an undock, a jump): what lies there that the simulation does not have yet can be put in it.</summary>
     public event Action<int>? SystemEntered;
 
+    public Action<ClientSession, long, long>? DockedLocationChanged { get; set; }
+
+    public Func<long, long, int, CancellationToken, Task<IReadOnlyList<int>>>? InspectUndockContrabandAsync { get; set; }
+
     /// <summary>The host put the wreck of a destroyed ship (or the corpse of a pilot) in space.</summary>
     public event Action<SimPlaceWreck>? WreckPlaced;
 

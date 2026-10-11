@@ -1528,6 +1528,43 @@ order at its expiry instant); CCP-BR (the order duration; "Modifying an order wi
   duration) check the expiry one grace after the expiry instant; the expected values are unchanged.
 - Status: done (M3), tested with a fake clock (TradeRig.Now); the live headless walk cannot wait a day, so the expiry is not walked live.
 
+## Market slice M4: cache coherence and corporate notices (2026-10-11)
+
+Sources: `market-design.md` section 4.3 M4 and decision Q8 (`market-decisions.md`); the V24.01 client's object cache
+(`carbon/common/script/net/objectCaching.py`: `InvalidateCachedMethodCall` adds the client's own session attribute to the key, 222-238;
+the cache details come from the server's wrapped result, 510-514); the client's own invalidation list (`marketsvc.py:113-124`); the
+push mechanism of the fittings (`FittingMgrServices.cs:241-253`).
+
+- **Book invalidation.** Every change to a region and type book sends `objectCaching.InvalidateCachedMethodCall` to the sessions of
+  that region: `GetOrders(typeID)`, `GetStationAsks`, `GetSystemAsks`, and for PLEX also `GetPlexOrders` and `GetPlexBest`. A change is
+  a placement that trades or rests, a fill, a modification, a cancel or an expiry; the receipt lists the books it touched
+  (`MarketReceipt.TouchedBooks`). A session whose known `regionid` differs is not asked. The client keeps these results for the run
+  (`versionCheck` "run"), so the push is what makes the next read fresh. Invalidations are sent before the notices.
+  Deviation (scope): the station and system asks are invalidated for every change in the region, not only the station's or
+  system's own; the client keys them by its own station or system, so a wider push is harmless and simpler.
+- **Owner-list invalidation.** For each character a change reaches, the client's `GetCharOrders` (a personal order) or
+  `GetCorporationOrders` (a corporate order) and `GetMarketOrderHistory` are dropped.
+- **Corporate notices (G11).** A corporate order's change (placement, fill of a corporate resting order, modification, cancel,
+  expiry) reaches every character with the corporation's market rights at the order's station (`CorporationStore.MarketRightsHoldersAsync`,
+  the Accountant or Trader test the client uses, `buyThisTypeWindow.py:324`), together with the acting character. A personal order's
+  notices are unchanged: its owner and the acting character. The recipients are computed inside the transaction (`NoticeRecipientsAsync`),
+  so a rolled-back change sends nothing.
+- **Not invalidated, with the reason.** `GetRegionBest` is not wrapped as a cached result by the server, and the client caches only
+  wrapped results (`objectCaching.py:510-514`), so there is nothing to drop. Seed import is not a runtime change: the NPC seed is imported
+  during host composition, before any session exists, so no cached result can hold the old book.
+- **Client-side price history is not reached.** The client keeps price histories in its own `ExpiringDict` (`marketsvc.py:103`, three
+  hours), not in objectCaching, so the server cannot drop them. A second trader's new fill can show in the history view up to three
+  hours late. Open: no server-side remedy exists within the V24.01 client.
+- **Outbox: not built (decision).** A notice goes to a live session only. After a stop no session survives, and the client's object cache
+  is per run, so a reconnecting client reads fresh state. An outbox would therefore have no recipient to deliver to. The M3 gap ("a stop
+  between the committed close and the send loses that notice") is recorded here as accepted: balances, items and order state are correct
+  after a restart, and the client's next read shows them.
+- **Open acceptance item (Q8).** The push is verified on the wire in-process (the test asserts the invalidation packet and the next read).
+  Two native clients observing each other's changes are not checked: no second native client runs in this environment.
+- **Tests.** `MarketCoherenceTests` (5): a placement, a cancel, a fill and an expiry, each seen by a second session in the region (the
+  invalidation is asserted on the wire, and the next read shows the change), with a session in another region not asked; and a corporate
+  placement, fill and cancel that reaches the trader with the market right and not the bystander. Status: done (M4).
+
 ## Agents slice AG-1: LP wallet (LPSvc), the access rule and the bound agentMgr (2026-10-10)
 
 Sources. eve-logic (V24.01): `eve/client/script/ui/shared/neocom/wallet/loyaltyPointsWalletSvc.py:27-67` (the balances,
@@ -2146,3 +2183,13 @@ Engine: `dotnet/src/Eve.Hacking` (pure rules, no Host). Sources: EVE University 
 - **Undock from a structure needs its ball (ST-3 b).** The structures of the system are put in the simulation before the ship enters (the same idempotent placement as a pilot's entry, `SpaceStructures.RestoreAsync`), because the ball may not be in the scene while the pilot is still elsewhere. Status: decided.
 - **Undock notification text (ST-3 b).** The item change of the ship carries `UndockingStructure:` (EveJS `clientCustomInfo`, `space/transitions.js` 2578); a station keeps `Undocking:<stationID>`. Status: verified against EveJS.
 - **Hangar view on change (ST-3 c).** `OnHangarViewStateUpdated` is not sent yet: the state fanout (`structureLifecycleFanout.js`) needs the structure state notifications of ST-2. Status: open.
+
+### ST-3 follow-up: guest lifecycle, hangar view and undock confirmation (2026-10-11)
+
+Successful dock and undock transitions invoke the existing guest hook after persistence and the session transition. Docking finishes its client notification before joining the guest list, matching EveJS `space/transitions.js:2819-2826`; the shared ledger suppresses repeated membership updates. A dynamic, replaceable close registration reads the current character and place, supporting undock/redock and character-selection rollback. Station membership notifications carry one identity tuple; structure join carries four identity arguments and structure leave the character ID (`guestLists.js`, V24.01 station/structure consumers).
+
+The ST-2 subscriber now emits `OnHangarViewStateUpdated(structureID, state)` from the same persisted reader as `GetMyHangarViewState`. The current-structure notice precedes the hangar update; removals and control seats do not receive a hangar view. No view is read without a docked audience. The durable subscriber cursor prevents acknowledged event replay from producing duplicate client notices. Tests compare producer data after wire decoding, preserving token/string normalization, and use a new Scheduler as well as a new EventBus for restart.
+
+The confirmation gate is before any movement or simulation entry. It uses official SDE `contrabandTypes` faction `_key` / `confiscateMinSec`, `SolarSystemCatalog` faction/security, and fresh `PgItemStore` direct cargo reads. V24.01 `structureDocking.py:26-53` and `station/base.py:488-521` define `ShipContrabandWarningUndock` and boolean retry; only `PyBool.True` bypasses the gate. EveJS `contrabandInspectionRuntime.js:184-203,219-273` supplies the security threshold/direct-cargo behavior. Deliberate difference: eve.rs adds the client-defined confirmation gate and does not apply fines or confiscation in this preflight; EveJS transition inspection schedules those penalties and its `ignoreContraband` flag does not gate inspection. The customs settlement flow is outside this change. A disabled Host simulation now refuses Dock/Undock with `CustomInfo` instead of returning fake success.
+
+Focused PostgreSQL verification: Station 28/28, selected Space docking/undocking/hangar/contraband 10/10, actual Host home/structure-simulation-unavailable scenario plus structure-state fanout 2/2; structure RPC validation 32/32. Wider Host 202/202 and CharacterSelect 58/58 pass. After integrating the multiple-training/New Eden Store upstream through `de05bcd7c66afd2170481ac89bda12938ca565c6`, Host build has zero warnings/errors; own Host cases plus upstream entitlement cases pass 7/7, and selected Space cases pass 10/10. Scratch home/contraband schemas are absent after cleanup. Native graphical acceptance and live headless dock/undock remain open.

@@ -177,7 +177,7 @@ public sealed class StructureRpcService : IService
                 return PyNone.Instance;
             case ("structureDocking", "Undock"):
                 if (_callbacks.UndockAsync is { } undock)
-                    await undock(call, PositiveId(call.Arg(0)), PositiveId(call.Arg(1)), Truthy(call.Kwarg("ignoreContraband"))).ConfigureAwait(false);
+                    await undock(call, PositiveId(call.Arg(0)), PositiveId(call.Arg(1)), PyBool.True.Equals(call.Kwarg("ignoreContraband"))).ConfigureAwait(false);
                 return PyNone.Instance;
             case ("structureHangarViewMgr", "GetMyHangarViewState"):
             {

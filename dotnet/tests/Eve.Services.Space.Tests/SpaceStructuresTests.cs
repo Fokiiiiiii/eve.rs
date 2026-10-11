@@ -141,4 +141,34 @@ public sealed class SpaceStructuresTests
         await rig.Events.PumpAsync();
         Assert.Single(rig.Sim.Heard.OfType<SimSetStructureState>());
     }
+
+    [PgFact]
+    public async Task A_damage_notice_the_simulation_sends_is_applied_to_the_record_through_the_received_message()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var (store, timers) = await RecordsAsync(rig);
+        var structures = new SpaceStructures(rig.Sim, rig.Space, rig.Source, store, timers, rig.Statics);
+        structures.Subscribe(rig.Events);
+        await rig.Events.PumpAsync();
+        var now = NowMs(rig);
+        await SaveAsync(rig, store, StructureId, System, new StructureSnapshot
+        {
+            State = StructureState.ShieldVulnerable, Upkeep = UpkeepState.FullPower, OnlineServices = 1, StateStartedMs = now,
+        });
+
+        // the notice arrives as the link's receive loop delivers it; the host applies it in the background of the space sessions
+        rig.Sim.Deliver(new SimStructureDamaged(StructureId, Depleted: 1, OverThreshold: true));
+
+        var deadline = DateTime.UtcNow.AddSeconds(30);
+        var after = (await store.GetAsync(StructureId))!;
+        while (after.Snapshot.State == StructureState.ShieldVulnerable && DateTime.UtcNow < deadline)
+        {
+            await Task.Delay(100);
+            after = (await store.GetAsync(StructureId))!;
+        }
+        Assert.Equal(StructureState.ArmorReinforce, after.Snapshot.State);
+        await rig.Events.PumpAsync();
+        var told = Assert.Single(rig.Sim.Heard.OfType<SimSetStructureState>());
+        Assert.Equal(StructureState.ArmorReinforce, told.Status.State);
+    }
 }

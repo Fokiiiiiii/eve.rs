@@ -23,11 +23,12 @@ Updated at every push. Plan: scratchpad `specs/structures_phase.md`, section ST-
    Host routing: `HackingCompositionTests` (1 PgFact) builds the real composition and calls `hackingMgr` through the registry; it found and
    fixed a start-up failure with `EVE_SIM=off` (the service now registers without a space, with no reach).
    Gaps: reach is checked per call, not per tick; the sim's own range rule still applies to the cycle.
-4. **Containers and clear (not started).** The seams exist: `SpaceHackingSite.Find` (target lookup) and `SpaceHackingSite.Ended` (the end
-   of an attempt). Still to write: placing the site containers through `SpaceContainers` (balls in the scene, near the site anchor), the failure
-   count and destruction at two failures (persisted), `site.container.cleared` on a win, loot (D-5). Until these exist every analyzer activation
-   is refused (`ANALYZER_TARGET_INVALID`).
-
+4. **Containers, loot and clear (d1, d2 built; end-to-end test and emptying not done).** Placement, persistence, find, failures, destruction
+   and clear on a win are in `SiteContainerHacks` / `SiteContainerStore` (tests `SiteContainerTests`). A win also puts the loot of the
+   container's profile (`SiteLoot`: EveJS generic_data_loot / generic_relic_loot, all tags, SDE names) into the container's cargo, owned by the
+   winner (tests `SiteLootTests`, 7 passed with the container tests). Still open: the container is a deployable ball, not an inventory item, so its
+   cargo is keyed by the ball id (the client cannot open it yet); site completion on emptying (EveJS) and removing an emptied ball; the end-to-end
+   test (site -> container -> attempt through the service -> win -> loot -> cleared -> site completion).
 `hackOrbital` (Data Subverter) stays refused.
 
 ## Gotchas

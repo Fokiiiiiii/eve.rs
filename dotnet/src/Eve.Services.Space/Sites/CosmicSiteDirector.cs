@@ -72,6 +72,12 @@ public sealed class CosmicSiteDirector
     private readonly SolarSystemCatalog _systems;
     private readonly Action<string>? _log;
     private readonly Func<int, bool>? _occupied;
+
+    /// <summary>The store the containers of a site are placed in (their fill is in the site's transaction). Null: a site has no containers placed.</summary>
+    public SiteContainerStore? Containers { get; set; }
+
+    /// <summary>The type and group of a container by the name the template gives (the static data) and whether it is a relic container; never null when the kind has a type.</summary>
+    public Func<string, bool, (int TypeId, int GroupId)?>? ContainerType { get; set; }
     private readonly ConcurrentDictionary<int, Lazy<Task>> _ensured = new();
 
     /// <param name="occupied">Whether a pilot is in a system. A system nobody is in gets no site (the wiki: sites do not respawn during downtime, and a

@@ -23,6 +23,7 @@
   <ItemGroup>
     <EmbeddedResource Include="Effects/Data/fighter-abilities.json" LogicalName="fighter-abilities.json" />
     <EmbeddedResource Include="Sites/Data/site-templates.json" LogicalName="site-templates.json" />
+    <EmbeddedResource Include="Migrations/*.sql" />
   </ItemGroup>
   <ItemGroup>
     <InternalsVisibleTo Include="Eve.Services.Space.Tests" />

@@ -950,8 +950,8 @@ Done (verified):
 Open (next steps, in order):
 | Status | Item |
 |---|---|
-| OPEN | The Host rules source (`IStructureRulesSource`) over the SDE (`rigSize`, system security band) |
-| OPEN | Register the migration and the timers at start-up (`Foundations`/`Program.cs`, like `Eve.Ships`), the GameStore import (host side only, ADR 0003 rule 3), `ArchitectureTests` entry |
+| WRITTEN, INERT | Host: the module is referenced; `StructureRecords()` (`Composition/StructureComposition.cs`) migrates the `structures` schema (`EVE_STRUCTURES_SCHEMA`) and copies the game store's `structures` table in once at start-up (`StructureStore.ImportAsync`, one transaction, the ids already there are skipped). No reader or writer uses the store yet, so clients see no change. The copy itself has no dedicated test yet (the reader switch test will cover it) | Host suite: 163 passed, 0 skipped with a key=value `EVE_PG_URL`, incl. `ArchitectureTests` (`Eve.Structures` listed; `Eve.Scheduler` and `Eve.Events` are the allowed foundations) and `LiveScriptIsolationTests` (`EVE_STRUCTURES_SCHEMA` is scratch and dropped in `tools/dev/run-eve-live.sh`) |
+| OPEN | The Host rules source (`IStructureRulesSource`) over the SDE (`rigSize`, system security band), and the timers registered in the Host (`StructureTimers.Register`) with the first pump after start |
 | OPEN | Switch the readers of the GameStore `structures` table (`PersistenceStructureDirectoryReadModel{,.Part2}`, `PersistenceStructureAssetSafetyReadModel{,.Part2}`, `PersistenceStructureProfilesRpcBackend` reads and writes, `StructureComposition.cs` `StructureExistsAsync`, `IndustryComposition.cs:68`, `CharacterRpc.cs:98`) to the store, one file at a time, with the existing structure tests green |
 ## 45. Track ST-11: cosmic sites as content, the director and the probe source (2026-10-10)
 

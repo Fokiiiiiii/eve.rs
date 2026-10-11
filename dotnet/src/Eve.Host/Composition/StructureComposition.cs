@@ -37,8 +37,27 @@ namespace Eve.Host;
 
 internal sealed partial class CharacterServicesComposition
 {
+    private string structureSchema = "";
+    private Eve.Structures.StructureStore structureStore = default!;
+
+    private async Task StructureRecords()
+    {
+        // ST-0: the structures schema owns the records; the game store's table is copied in once (ADR 0003 rule 3: the bridge is the importer, not a read path)
+        structureSchema = Env("EVE_STRUCTURES_SCHEMA", Eve.Structures.StructureStore.DefaultSchema);
+        await Eve.Structures.StructureStore.MigrateAsync(source, structureSchema);
+        structureStore = new Eve.Structures.StructureStore(source, structureSchema);
+        var legacy = await ReadGameStoreTableAsync("structures", CancellationToken.None);
+        await using var connection = await source.OpenConnectionAsync();
+        await using var transaction = await connection.BeginTransactionAsync();
+        var copied = await structureStore.ImportAsync(connection, transaction, legacy, now());
+        await transaction.CommitAsync();
+        if (copied.Count > 0)
+            Console.Error.WriteLine($"eve-host: {copied.Count} structure(s) copied from the game store into the {structureSchema} schema");
+    }
+
     private async Task Structures()
     {
+        await StructureRecords();
         structureDirectoryReadModel = new PersistenceStructureDirectoryReadModel(ReadGameStoreTableAsync, AffiliationOfAsync, sde, mailCache);
         if (spaceSessions is not null)
             spaceSessions.StructureExistsAsync = async (structureId, cancellationToken) =>

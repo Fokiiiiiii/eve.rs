@@ -9,7 +9,10 @@ namespace Eve.Host.Tests;
 public class ArchitectureTests
 {
     /// <summary>The domain modules and what they may build on: each other (in this order) and the database helpers.</summary>
-    private static readonly string[] Modules = ["Eve.Data", "Eve.Sde", "Eve.Dogma", "Eve.Fitting", "Eve.Identity", "Eve.Inventory", "Eve.Skills", "Eve.Wallet", "Eve.Universe", "Eve.Characters", "Eve.Ships", "Eve.Space", "Eve.Npc", "Eve.Corporations", "Eve.Market"];
+    private static readonly string[] Modules = ["Eve.Data", "Eve.Sde", "Eve.Dogma", "Eve.Fitting", "Eve.Identity", "Eve.Inventory", "Eve.Skills", "Eve.Wallet", "Eve.Universe", "Eve.Characters", "Eve.Ships", "Eve.Space", "Eve.Npc", "Eve.Corporations", "Eve.Market", "Eve.Structures"];
+
+    /// <summary>The shared foundations a domain module may use (docs/design/FOUNDATIONS.md): the scheduler and the event bus.</summary>
+    private static readonly string[] Foundations = ["Eve.Scheduler", "Eve.Events"];
 
     private static string Source
     {
@@ -47,7 +50,7 @@ public class ArchitectureTests
     {
         foreach (var (project, references) in References().Where(p => Modules.Contains(p.Key)))
         {
-            var foreign = references.Where(r => !Modules.Contains(r)).ToArray();
+            var foreign = references.Where(r => !Modules.Contains(r) && !Foundations.Contains(r)).ToArray();
             Assert.True(foreign.Length == 0, $"{project} references {string.Join(", ", foreign)}: a domain module depends on domain modules only");
         }
     }

@@ -1676,7 +1676,7 @@ Sources: the wiki's probe-scanning and site rules first; EveJS `services/dungeon
 - **Respawn.** Wiki: a site respawns at once, somewhere else, after it is cleared, and not after downtime. Here the content subscriber replaces a site on `content.{anomaly,signature}.{completed,expired}` and a sweep every five minutes fills any empty slot. Downtime is not modelled. Status: decided, downtime open.
 - **Codes and seeds.** A signature's code is three letters, a dash and three digits (`ABC-123`, the client's listing form, not verified in the client). Its place and code come from an FNV-1a hash of the system, the slot, the family and the instance it replaces, so the same history gives the same place; the reference's random source is not used. A code that a system already has is re-seeded. Status: decided.
 - **Signatures and anomalies.** Only signatures are scan targets (`ContentCosmicSites`); an anomaly comes from the system scanner's overlay and is not a probe target, as the client expects. Scan rows carry the code as their id and the dungeon fields; a signature's item id is none (EveJS `buildScanResultEntry`, the item id left to the site source).
-- **Not yet built.** The NPCs of a site are not spawned, so no `npc.killed` carries the site and no site is cleared by its NPCs; containers are not placed, so `site.container.cleared` is never published. Until these land a site ends by expiry only.
+- **Not yet built.** Containers of a data or relic site are not placed (their clear comes with the analyzer and hacking, ST-10). NPC waves are in the section below.
 
 ## Mission static data: the official build, the EveJS source removed, the gaps (Mi1, 2026-10-11)
 
@@ -1922,3 +1922,16 @@ Sources: EveJS `services/structure/structureCynoBeaconMgrService.js` (`resolveUs
 - Not built: the access check and the jump drive's fuel and range, and the jump itself. A beacon that passes every built check is refused by name ("not wired
   in the simulation yet"), not answered empty. The field is not placed in the simulation (a sim cynosural beacon at the structure's position with the
   structure's id), so the jump has no target. Status: open; the named refusal is the state until then.
+## Cosmic site NPC waves (ST-11, increment 5)
+
+Sources: the wiki (a site's NPCs are its waves; a site is cleared by them); EveJS `services/dungeon/dungeonUniverseSiteService.js` (an encounter is spawned once per instance, `spawnedAtMs`, and its alive entities are kept as `remainingEntityIDs` and rematerialized when the scene is made again: `rematerializeStoredDungeonEncounterEntities`).
+
+- **Where the NPCs live.** In the scene of their system, which the simulation keeps only while a pilot is in the system. No new simulation message: the host spawns them with the existing `SimSpawn` and tags the host's record with the site (`NpcShip.SiteId`). A protocol bump is not needed. Status: decided.
+- **Which wave is alive.** The active objective of the site (`wave1` to `waveN`, in order), with the NPCs left to kill: its target less its progress, kept by the content runtime. A wave is made when a pilot is in the system and no NPC of the site is in the scene; a second pilot entering a system with the NPCs alive makes none. Status: decided.
+- **Re-entry and restart.** A scene made again (everybody left, then a pilot came back) brings back exactly the kills still to come. EveJS keeps the alive entities themselves (`remainingEntityIDs`) and places the same entities again; eve.rs keeps the count (the progress the content runtime holds) and spawns new NPCs at the site, with profiles rolled again from the wave's query. The kill count is the same; the identities and positions of the survivors are not. Status: decided (identities not kept; EveJS difference).
+- **Downtime.** The wiki: sites do not respawn during downtime. Implemented: a system nobody is in gets no site and no wave (the director's occupancy rule, `CosmicSiteDirector(occupied:)`), so a restart does not refill the slots of a system; the first pilot who enters brings them back. EveJS has no separate downtime rule for dungeons that this inspection found. Status: decided (wiki).
+- **Placement.** A wave comes into space around the site with the spawner's batch formation: 5 km, plus or minus 2 km, plus 1.25 km for each NPC of the batch (at most 12 km more). The reference's placement of dungeon NPCs is not compared yet. Status: open.
+- **Kill announcement.** `npc.killed` carries `site` (the instance id) for an NPC of a site, and `site` is null for any other NPC, so the existing consumers are not changed. Status: decided.
+- **Level above 5.** An SDE difficulty above 5 is level V (strength 104). Status: decided (coordinator).
+- **Waves without NPCs.** A data or relic site may start with its containers only (its first objective is not a wave): no NPC is made for it, and its completion waits for the containers. Status: decided.
+

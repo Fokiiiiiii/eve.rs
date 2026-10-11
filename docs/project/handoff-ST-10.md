@@ -8,8 +8,11 @@ Updated at every push. Plan: scratchpad `specs/structures_phase.md`, section ST-
    exploration, defensive subsystem combat and retaliation, the four utility elements, data caches, virus suppressor, restoration,
    win and loss. Events carry the client's event ids and named fields (`HackingWire`). No Host, no service yet.
    Status: green. `Eve.Hacking.Tests` 25 passed, 0 failed, 0 skipped.
-2. **hackingMgr service (not started).** Host registration of `ClickedOnTile`, `UsedUtilityElement`, `UsedUtilityElementOnVirus`,
-   `QuitHackingAttempt`; notification `OnHackingTurnComplete` with the event list; attempts held per character in memory.
+2. **hackingMgr service (built, tests; Host registration not yet covered by a Host test).** `Eve.Services.Space/HackingMgrService.cs`:
+   `ClickedOnTile`, `UsedUtilityElement`, `UsedUtilityElementOnVirus`, `QuitHackingAttempt`; `OnHackingTurnComplete` (clientID) with
+   the event list as util.KeyVal records; one `HackingAttempts` store per composition (`SpaceRpc.cs`). A call without an open attempt is
+   acknowledged. `HackingMgrService.Start` opens an attempt (the analyzer calls it in increment 3). Tests: `HackingMgrServiceTests`
+   5 passed, 0 failed. Gap: no Host-level test that the composition routes the calls, and no end-to-end client run.
 3. **Analyzer body (not started).** `DataAnalyzerEffect` (`Effects/ExplorationModuleEffects.cs`) starts an attempt on accepted activation
    (EveJS); window closes on warp and when out of `maxRange` 54; two failures destroy the container.
 4. **Containers and clear (not started).** Data and relic containers placed through `SpaceContainers`; `site.container.cleared` on

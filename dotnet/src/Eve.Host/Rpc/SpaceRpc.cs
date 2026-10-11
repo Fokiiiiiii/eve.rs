@@ -37,6 +37,9 @@ namespace Eve.Host;
 
 internal sealed partial class CharacterServicesComposition
 {
+    /// <summary>The hacking minigame's open attempts (the analyzer opens them, the hackingMgr service plays them).</summary>
+    private readonly Eve.Services.Space.HackingAttempts hackingAttempts = new();
+
     async ValueTask<Eve.Services.Space.SpaceRpcItem?> ReadTravelRpcItemAsync(long itemId, CancellationToken cancellationToken)
     {
         var item = await items.GetAsync(itemId, cancellationToken);
@@ -48,6 +51,7 @@ internal sealed partial class CharacterServicesComposition
     /// <summary>Space services that run after the others: filaments, jumps, warp vectors, wormholes and structure guests.</summary>
     private IReadOnlyList<IService> SpaceRpc() =>
     [
+            new Eve.Services.Space.HackingMgrService(hackingAttempts),
             new Eve.Services.Space.PvpFilamentMgrService(),
             new Eve.Services.Space.RandomJumpMgrService(ReadTravelRpcItemAsync),
             new Eve.Services.Space.WarpVectorMgrService(ReadTravelRpcItemAsync),

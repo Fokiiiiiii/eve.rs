@@ -2038,6 +2038,7 @@ Engine: `dotnet/src/Eve.Hacking` (pure rules, no Host). Sources: EVE University 
   two agree for the refineries in the pinned build. The rig modifier 2707 is not applied yet.
 - **Calendar.** `calendarEventID` is stored as given and returned; the client owns the calendar entry (EVE.js does not create one either).
 - **Id width.** Structure, owner and moon ids are sent as `PyLong` when they exceed the 32-bit range (`PyInt` is 32-bit on the wire).
+- **Hacking stat re-check (ST-10).** Re-read on 2026-10-11: the wiki Hacking page gives no numeric firewall, anti-virus, restoration or core values in text; its difficulty table and stat icons are images without numbers, and the board size is not stated. The wiki's numbers used are the virus stats (40/20, T2 60/30), the restoration heal 20, suppressor 15 (floor 10), self repair 5-10, kernel rot 50%, secondary vector 20, shield 2 hits. The defensive subsystem stats (60/10, 20/40, 30/10, 30/10) and the content counts remain eve.rs decisions; the core is EveJS `buildSyntheticBoard` (10 x difficulty). Status: decided, MITM to verify.
 
 ## Structure docking (ST-1 c)
 

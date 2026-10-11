@@ -21,7 +21,7 @@ public interface IHackingSite
 /// ends of attempts are seams the site content fills (<see cref="Find"/>, <see cref="Ended"/>). Until a container is placed, <see cref="Find"/>
 /// finds none and every analyzer activation is refused as <c>ANALYZER_TARGET_INVALID</c>.
 /// </summary>
-public sealed class SpaceHackingSite(SpaceSessions space) : IHackingSite
+public sealed class SpaceHackingSite(SpaceSessions? space) : IHackingSite
 {
     public Func<long, long, CancellationToken, ValueTask<HackableTarget?>> Find { get; set; } =
         (_, _, _) => ValueTask.FromResult<HackableTarget?>(null);
@@ -32,8 +32,9 @@ public sealed class SpaceHackingSite(SpaceSessions space) : IHackingSite
     public ValueTask<HackableTarget?> FindAsync(long characterId, long targetId, CancellationToken cancellationToken) =>
         Find(characterId, targetId, cancellationToken);
 
+    /// <summary>Without a space simulation nothing is in reach, so an open window closes.</summary>
     public async ValueTask<bool> InReachAsync(ClientSession session, long targetId, double maxRange, CancellationToken cancellationToken) =>
-        await space.SurfaceDistanceToItemAsync(session, targetId, cancellationToken) is { } distance && distance <= maxRange + 1;
+        space is not null && await space.SurfaceDistanceToItemAsync(session, targetId, cancellationToken) is { } distance && distance <= maxRange + 1;
 
     public ValueTask AttemptEndedAsync(ClientSession session, HackableTarget target, bool won, CancellationToken cancellationToken) =>
         Ended(session, target, won, cancellationToken);

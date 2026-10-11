@@ -20,9 +20,13 @@ Updated at every push. Plan: scratchpad `specs/structures_phase.md`, section ST-
    (`maxRange` 54 + 1 m, sim positions via `SurfaceDistanceToItemAsync`) and on a `WarpTo` accepted for the pilot. A lost or won attempt
    reports `IHackingSite.AttemptEndedAsync`. Targets come from `SpaceHackingSite.Find`, which is empty until increment 4, so every activation
    is refused today. Tests: `HackingMgrServiceTests` (9 passed). `ModuleEffectsTests` manifest updated for doHacking (3 assertions).
-   Gaps: no Host-level routing test yet; reach is checked per call, not per tick; the sim's own range rule still applies to the cycle.
-4. **Containers and clear (not started).** Data and relic containers placed through `SpaceContainers`; `site.container.cleared` on
-   success (ST-11 item 6); loot per D-5 (wiki silent, EveJS `maybeCompleteAttemptSite`).
+   Host routing: `HackingCompositionTests` (1 PgFact) builds the real composition and calls `hackingMgr` through the registry; it found and
+   fixed a start-up failure with `EVE_SIM=off` (the service now registers without a space, with no reach).
+   Gaps: reach is checked per call, not per tick; the sim's own range rule still applies to the cycle.
+4. **Containers and clear (not started).** The seams exist: `SpaceHackingSite.Find` (target lookup) and `SpaceHackingSite.Ended` (the end
+   of an attempt). Still to write: placing the site containers through `SpaceContainers` (balls in the scene, near the site anchor), the failure
+   count and destruction at two failures (persisted), `site.container.cleared` on a win, loot (D-5). Until these exist every analyzer activation
+   is refused (`ANALYZER_TARGET_INVALID`).
 
 `hackOrbital` (Data Subverter) stays refused.
 

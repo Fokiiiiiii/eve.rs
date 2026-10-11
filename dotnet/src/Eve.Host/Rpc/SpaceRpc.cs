@@ -51,10 +51,11 @@ internal sealed partial class CharacterServicesComposition
     /// <summary>Space services that run after the others: filaments, jumps, warp vectors, wormholes and structure guests.</summary>
     private IReadOnlyList<IService> SpaceRpc()
     {
-        // the space simulation is composed before the service list (CharacterServicesComposition: SpaceSimulation, then CharacterServiceList)
-        var hackingSite = new Eve.Services.Space.SpaceHackingSite(spaceSessions ?? throw new InvalidOperationException("the space simulation is composed before the services"));
+        // without a space simulation (EVE_SIM=off) there is no reach and no analyzer: the service is still registered
+        var hackingSite = new Eve.Services.Space.SpaceHackingSite(spaceSessions);
         var hackingMgr = new Eve.Services.Space.HackingMgrService(hackingAttempts, hackingSite);
-        spaceSessions.HackingService = hackingMgr;
+        if (spaceSessions is not null)
+            spaceSessions.HackingService = hackingMgr;
         return
     [
             hackingMgr,

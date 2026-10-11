@@ -218,4 +218,111 @@ public sealed class StructureCompositionTests : IAsyncLifetime
         Assert.Equal(deadline + StructureTimes.AnchoringMs, again.Snapshot.StateEndsMs);
         Assert.Equal(2, again.Version);
     }
+
+    private static ClientSession RoleSession(long characterId, long corporationId, int roles)
+    {
+        var session = new ClientSession(new Sink()) { SessionId = 402 };
+        session.Set("charid", new PyInt(characterId));
+        session.Set("corpid", new PyInt(corporationId));
+        session.Set("corprole", new PyInt(roles));
+        return session;
+    }
+
+    /// <summary>The user error a call was refused with: its name, and the notice it carries when it is a CustomNotify.</summary>
+    private static (string Name, string? Notice) Refusal(Exception exception)
+    {
+        var error = Assert.IsType<MachoWrappedException>(exception).Error;
+        if (error.Payload is not PyObjectEx payload || payload.Header is not PyTuple header || header.Items.Count < 2 || header.Items[1] is not PyTuple arguments
+            || arguments.Items.Count < 2 || arguments.Items[1] is not PyDict dict)
+        {
+            return (error.UserErrorMessage, null);
+        }
+        var notice = dict.Entries.SingleOrDefault(e => JsSemantics.StringValue(e.Key) == "notify").Value is PyStr text ? text.Value : null;
+        return (error.UserErrorMessage, notice);
+    }
+
+    [PgFact]
+    public async Task A_reinforcement_time_is_pending_for_thirty_days_and_a_request_for_the_current_time_clears_it()
+    {
+        var url = Environment.GetEnvironmentVariable("EVE_PG_URL")!;
+        await using var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(url));
+        await SeedGameStoreAsync(source, SeededRow(StructureId, StructureState.ShieldVulnerable, 0, 0, UpkeepState.FullPower));
+        var session = ManagerSession(await SeedManagerAsync());
+        var store = new StructureStore(source, Schema("EVE_STRUCTURES_SCHEMA"));
+
+        var host = await HostComposition.BuildAsync(Settings());
+        var vulnerability = host.Registry.Lookup("structureVulnerability") ?? throw new InvalidOperationException("structureVulnerability is not registered");
+        var before = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        await vulnerability.CallAsync(Call(session, "UpdateReinforceTimesFromClient", 1, new PyList([new PyInt(StructureId)]), new PyInt(2), new PyInt(10)));
+        var after = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+
+        var pending = (await store.GetAsync(StructureId))!.Snapshot;
+        Assert.Equal((5, 18), (pending.ReinforceWeekday, pending.ReinforceHour));
+        Assert.Equal((2, 10), (pending.PendingWeekday, pending.PendingHour));
+        Assert.InRange(pending.PendingEffectiveMs, before + StructureTimes.ReinforceChangeDelayMs, after + StructureTimes.ReinforceChangeDelayMs);
+
+        // the structure's own time asked for again: the pending change is withdrawn
+        await vulnerability.CallAsync(Call(session, "UpdateReinforceTimesFromClient", 2, new PyList([new PyInt(StructureId)]), new PyInt(5), new PyInt(18)));
+        var cleared = (await store.GetAsync(StructureId))!.Snapshot;
+        Assert.Equal((-1, -1, 0L), (cleared.PendingWeekday, cleared.PendingHour, cleared.PendingEffectiveMs));
+        Assert.Equal((5, 18), (cleared.ReinforceWeekday, cleared.ReinforceHour));
+        await host.ShutdownAsync();
+    }
+
+    [PgFact]
+    public async Task A_reinforcement_request_is_refused_for_another_corporation_a_pilot_without_a_role_or_an_unknown_structure_and_changes_nothing()
+    {
+        var url = Environment.GetEnvironmentVariable("EVE_PG_URL")!;
+        await using var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(url));
+        await SeedGameStoreAsync(source, SeededRow(StructureId, StructureState.ShieldVulnerable, 0, 0, UpkeepState.FullPower));
+        var characterId = await SeedManagerAsync();
+        var store = new StructureStore(source, Schema("EVE_STRUCTURES_SCHEMA"));
+
+        var host = await HostComposition.BuildAsync(Settings());
+        var vulnerability = host.Registry.Lookup("structureVulnerability") ?? throw new InvalidOperationException("structureVulnerability is not registered");
+        // a Director may ask (the role set is Station Manager, Director or CEO)
+        await vulnerability.CallAsync(Call(RoleSession(characterId, Corporation, 1), "UpdateReinforceTimesFromClient", 1, new PyList([new PyInt(StructureId)]), new PyInt(2), new PyInt(10)));
+        Assert.Equal(2, (await store.GetAsync(StructureId))!.Snapshot.PendingWeekday);
+
+        var stranger = await Assert.ThrowsAsync<MachoWrappedException>(async () => await vulnerability.CallAsync(
+            Call(RoleSession(characterId, Corporation + 1, 2048), "UpdateReinforceTimesFromClient", 2, new PyList([new PyInt(StructureId)]), new PyInt(3), new PyInt(11))));
+        Assert.Equal("CrpAccessDenied", Refusal(stranger).Name);
+        var roleless = await Assert.ThrowsAsync<MachoWrappedException>(async () => await vulnerability.CallAsync(
+            Call(RoleSession(characterId, Corporation, 0), "UpdateReinforceTimesFromClient", 3, new PyList([new PyInt(StructureId)]), new PyInt(3), new PyInt(11))));
+        Assert.Equal("CrpAccessDenied", Refusal(roleless).Name);
+        var unknown = await Assert.ThrowsAsync<MachoWrappedException>(async () => await vulnerability.CallAsync(
+            Call(RoleSession(characterId, Corporation, 2048), "UpdateReinforceTimesFromClient", 4, new PyList([new PyInt(StructureId), new PyInt(StructureId + 9)]), new PyInt(3), new PyInt(11))));
+        Assert.Equal("TargetingAttemptCancelled", Refusal(unknown).Name);
+
+        var unchanged = (await store.GetAsync(StructureId))!.Snapshot;
+        Assert.Equal((2, 10), (unchanged.PendingWeekday, unchanged.PendingHour));
+        await host.ShutdownAsync();
+    }
+
+    [PgFact]
+    public async Task Rename_normalizes_the_name_the_directory_shows_refuses_a_short_name_and_survives_a_restart()
+    {
+        var url = Environment.GetEnvironmentVariable("EVE_PG_URL")!;
+        await using var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(url));
+        await SeedGameStoreAsync(source, SeededRow(StructureId, StructureState.ShieldVulnerable, 0, 0, UpkeepState.FullPower));
+        var characterId = await SeedManagerAsync();
+        var session = ManagerSession(characterId);
+        var store = new StructureStore(source, Schema("EVE_STRUCTURES_SCHEMA"));
+
+        var host = await HostComposition.BuildAsync(Settings());
+        var deployment = host.Registry.Lookup("structureDeployment") ?? throw new InvalidOperationException("structureDeployment is not registered");
+        await deployment.CallAsync(Call(session, "RenameStructure", 1, new PyInt(StructureId), new PyStr("  Fort   Knox\n Two  ")));
+        Assert.Equal("Fort Knox Two", (await store.GetAsync(StructureId))!.Name);
+        Assert.Equal("Fort Knox Two", (await store.ReadLegacyTableAsync())[StructureId.ToString()]!["itemName"]!.GetValue<string>());
+
+        var tooShort = await Assert.ThrowsAsync<MachoWrappedException>(async () => await deployment.CallAsync(Call(session, "RenameStructure", 2, new PyInt(StructureId), new PyStr(" ab "))));
+        Assert.Equal("CharNameTooShort", Refusal(tooShort).Name);
+        var stranger = await Assert.ThrowsAsync<MachoWrappedException>(async () => await deployment.CallAsync(Call(RoleSession(characterId, Corporation + 1, 2048), "RenameStructure", 3, new PyInt(StructureId), new PyStr("Stolen name"))));
+        Assert.Equal("CrpAccessDenied", Refusal(stranger).Name);
+        await host.ShutdownAsync();
+
+        var restarted = await HostComposition.BuildAsync(Settings());
+        Assert.Equal("Fort Knox Two", (await new StructureStore(source, Schema("EVE_STRUCTURES_SCHEMA")).GetAsync(StructureId))!.Name);
+        await restarted.ShutdownAsync();
+    }
 }

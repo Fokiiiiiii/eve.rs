@@ -42,6 +42,7 @@ internal sealed partial class CharacterServicesComposition
     private Eve.Structures.StructureTimers structureTimers = default!;
     private Eve.Structures.StructureFuel structureFuel = default!;
     private StructureCompressionAuthority structureCompression = default!;
+    private StructureDeploymentAuthority structureDeployment = default!;
     private Eve.Structures.MoonExtractionStore moonExtractionStore = default!;
     private Eve.Structures.MoonExtractions moonExtractions = default!;
     private StructureMoonAuthority structureMoon = default!;
@@ -152,6 +153,8 @@ internal sealed partial class CharacterServicesComposition
         structureProfilesRpcBackend = new Eve.Host.PersistenceStructureProfilesRpcBackend(
             ReadGameStoreTableAsync, mailCache, characterSessions, SetStructureProfileAsync);
         structureCompression = new StructureCompressionAuthority(source, structureStore, items, dogma, sde, skills);
+        // ST-2 a: the rename and the reinforcement times of a structure (the owner's Station Manager, Director or CEO)
+        structureDeployment = new StructureDeploymentAuthority(source, structureStore, structureTimers, foundations.Scheduler);
         // ST-6a: the moon drill starts a chunk (StartNewExtraction); the fracture and the cancel follow in (d)
         var moonRules = await MoonRulesSource.LoadAsync(sde);
         moonExtractions = new Eve.Structures.MoonExtractions(structureStore, moonExtractionStore, foundations.Scheduler, foundations.Events, moonRules);
@@ -198,6 +201,9 @@ internal sealed partial class CharacterServicesComposition
                 structureProfilesRpcBackend.DeleteProfileAsync(corporationId, profileId, call.Cancellation),
             DuplicateProfileAsync = (call, corporationId, profileId) =>
                 structureProfilesRpcBackend.DuplicateProfileAsync(corporationId, profileId, call.Cancellation),
+            RenameStructureAsync = (call, structureId, name) => new ValueTask(structureDeployment.RenameAsync(call, structureId, name, call.Cancellation)),
+            UpdateReinforceTimesFromClientAsync = (call, structureIds, weekday, hour) =>
+                new ValueTask(structureDeployment.UpdateReinforceTimesAsync(call, structureIds, weekday, hour, call.Cancellation)),
         };
         structureAssetSafetyReadModel = new PersistenceStructureAssetSafetyReadModel(
             source, items, new PgSpaceItemStore(source, spaceSchema), economyWallets, sde,

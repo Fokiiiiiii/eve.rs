@@ -2063,3 +2063,10 @@ Engine: `dotnet/src/Eve.Hacking` (pure rules, no Host). Sources: EVE University 
 - **Container items (ST-10 d2).** A site container is an inventory item of its own (ship-less, in the system, owner 0); its id is the container's id, so its cargo is the item's contents (locationID = container id), like a wreck's. Status: decided (follows the wreck path of CharacterShips.LeaveWreckAsync).
 - **Loot name without SDE type (ST-10 d2).** "Engagement Plan Data Chip" is not in the SDE under that name; the profile skips it. Status: decided.
 
+
+## Structure deployment and vulnerability RPCs (ST-2 a)
+
+- **Reinforcement change, 30 days.** A requested day and hour become pending and take effect after 30 days (`StructureTimes.ReinforceChangeDelayMs`). Sources agree: wiki "Vulnerability" (the wiki says the delay still needs verification) and EveJS `structureVulnerabilityService.js` `REINFORCE_CHANGE_DELAY_MS`. A request equal to the structure's own time withdraws the pending change (EveJS `buildReinforcementPatch`).
+- **Management role.** Station Manager, Director or CEO, and the structure's corporation (wiki "Anchoring structures"; the same set as EveJS `requireStructureManagementSession`). A corporation other than the owner is refused with `CrpAccessDenied` "Structure belongs to another corporation".
+- **Rename.** The name is trimmed, line breaks and runs of white space become one space, and it is cut to 256 characters (EveJS `normalizeStructureName`). Less than three characters is `CharNameTooShort` (EveJS `MIN_STRUCTURE_NAME_LENGTH`).
+- **No notice for a reinforcement change yet.** EveJS writes a persistent `STRUCTURES_REINFORCEMENT_CHANGED` notification to each corporation member's mailbox. The .NET notification box has readers only (`NotificationMgrService`), so this notice is not written; it is an open gap, not a substitute.

@@ -14,7 +14,7 @@ public interface IStructureRulesSource
 public sealed record StructureTimerInfo(long StartedMs, long EndsMs, long PausedMs);
 
 /// <summary>The payload of <see cref="StructureTimers.StateChangedTopic"/>. <c>Repaired</c>: a repair countdown completed, the simulation must make the layers whole. <c>Removal</c>: "unanchored" or "destroyed" when the structure is gone.</summary>
-public sealed record StructureStateChanged(long StructureId, int SolarSystemId, int State, int Upkeep, StructureTimerInfo Timer, bool Repaired, string? Removal);
+public sealed record StructureStateChanged(long StructureId, int SolarSystemId, int State, int Upkeep, StructureTimerInfo Timer, bool Repaired, string? Removal, int PreviousState = 0);
 
 /// <summary>The payload of <see cref="StructureTimers.ServiceChangedTopic"/>: a service module went online (<c>OnlineSinceMs</c> is when) or offline (0).</summary>
 public sealed record StructureServiceChanged(long StructureId, int SolarSystemId, int ServiceId, int State, long OnlineSinceMs);
@@ -75,7 +75,7 @@ public sealed class StructureTimers
             var next = transition.Next;
             await _events.PublishInTransactionAsync(connection, transaction, StateChangedTopic,
                 new StructureStateChanged(structureId, record.SolarSystemId, next.State, next.Upkeep, new StructureTimerInfo(next.StateStartedMs, next.StateEndsMs, next.TimerPausedMs),
-                    transition.Repaired, transition.Removal switch { StructureRemoval.Unanchored => "unanchored", StructureRemoval.Destroyed => "destroyed", _ => null }),
+                    transition.Repaired, transition.Removal switch { StructureRemoval.Unanchored => "unanchored", StructureRemoval.Destroyed => "destroyed", _ => null }, record.Snapshot.State),
                 $"structure:{structureId}", cancellationToken);
         }
         await ScheduleAsync(connection, transaction, transition.Next, rules, cancellationToken);

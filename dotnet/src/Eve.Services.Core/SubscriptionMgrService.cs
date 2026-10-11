@@ -1,35 +1,31 @@
+using System.Globalization;
 using Eve.Macho;
 using Eve.Marshal;
 
 namespace Eve.Services.Core;
 
-/// <summary>How the subscription (Omega/Alpha) state is configured.</summary>
-public sealed class SubscriptionSettings
-{
-    /// <summary>The raw <c>EVE_CLONE_GRADE</c> value (null when unset): "omega", "alpha", "trial", or 0/1.</summary>
-    public string? CloneGradeOverride { get; init; }
-
-    /// <summary>Whether Omega is granted by default (the <c>omegaLicenseEnabled</c> setting).</summary>
-    public bool OmegaLicenseEnabled { get; init; } = true;
-}
-
-/// <summary>Where a runtime account's Omega expiry is kept (<c>newEdenStoreRuntime.accounts[id].omegaExpiryFileTime</c>).</summary>
+/// <summary>Where an account's stored Omega subscription end time is read from, as FILETIME text (null when it has none).</summary>
 public interface IOmegaAccountStore
 {
-    /// <summary>The account's expiry text, trimmed, or null when it has none.</summary>
+    /// <summary>The account's stored end time as FILETIME text, trimmed, or null when it has none.</summary>
     string? GetOmegaExpiry(long accountId);
 }
 
 /// <summary>The outcome of looking up an account's Omega licence.</summary>
 public sealed record OmegaLicense(bool HasLicense, long? ExpiryFileTime);
 
-/// <summary>Resolves whether an account holds an Omega licence, from settings, its stored expiry and the clock.</summary>
-public sealed class OmegaLicenses(SubscriptionSettings settings, IOmegaAccountStore accounts, Func<long> nowUnixMs)
+/// <summary>
+/// Resolves an account's Omega licence from its stored subscription end time and the clock. Nothing else decides it: no
+/// setting or environment variable grants or removes Omega, so the selection screen, the subscription services, the
+/// clone-grade answers and the skill and injector rules all read the same state.
+/// </summary>
+public sealed class OmegaLicenses(IOmegaAccountStore accounts, Func<long> nowUnixMs)
 {
-    /// <summary>2100-01-01T00:00:00Z as a FILETIME: the licence every account has unless disabled.</summary>
+    /// <summary>2100-01-01T00:00:00Z as a FILETIME: the end time every account is written with (SubscriptionPolicy in Eve.Identity).</summary>
     public const long DefaultOmegaExpiryFileTime = 157469184000000000L;
 
-    public long ConfiguredExpiry => settings.OmegaLicenseEnabled ? DefaultOmegaExpiryFileTime : 0;
+    /// <summary><see cref="DefaultOmegaExpiryFileTime"/> as the text the account store returns.</summary>
+    public static string DefaultOmegaExpiryText => DefaultOmegaExpiryFileTime.ToString(CultureInfo.InvariantCulture);
 
     public long NowFileTime => Py.FileTimeFromUnixMs(nowUnixMs());
 
@@ -44,93 +40,40 @@ public sealed class OmegaLicenses(SubscriptionSettings settings, IOmegaAccountSt
         return parsed is { } value && value >= long.MinValue && value <= long.MaxValue ? (long)value : 0;
     }
 
-    public OmegaLicense Resolve(PyValue? userId)
+    /// <summary>The account's stored end time (a FILETIME), or 0 when it has none.</summary>
+    public long StoredExpiry(PyValue? userId)
     {
         var accountId = JsSemantics.ToPositiveInteger(userId);
-        var runtimeExpiry = accountId > 0 ? ParseExpiry(accounts.GetOmegaExpiry(accountId)) : 0;
-        var effective = Math.Max(runtimeExpiry, ConfiguredExpiry);
-        return effective > NowFileTime ? new OmegaLicense(true, effective) : new OmegaLicense(false, null);
+        return accountId > 0 ? ParseExpiry(accounts.GetOmegaExpiry(accountId)) : 0;
     }
+
+    public OmegaLicense Resolve(PyValue? userId)
+    {
+        var expiry = StoredExpiry(userId);
+        return expiry > NowFileTime ? new OmegaLicense(true, expiry) : new OmegaLicense(false, null);
+    }
+
 }
 
-/// <summary>Subscription status queries the client makes while logging in.</summary>
+/// <summary>Subscription status queries the client makes while logging in, and the clone-grade notifications.</summary>
 [Service("subscriptionMgr")]
-public sealed partial class SubscriptionMgrService(SubscriptionSettings settings, OmegaLicenses licenses)
+public sealed partial class SubscriptionMgrService(OmegaLicenses licenses)
 {
     private const long CloneStateAlpha = 0;
     private const long CloneStateOmega = 1;
     private const long FileTimeTicksPerDay = 864000000000L;
 
-    /// <summary>The clone grade forced by the environment, or null. Only 0/1 and the names alpha, trial and omega count.</summary>
-    private long? CloneGradeOverride()
-    {
-        var raw = settings.CloneGradeOverride;
-        if (string.IsNullOrEmpty(raw))
-        {
-            return null;
-        }
-        var value = JsNumber.TrimJs(raw).ToLowerInvariant();
-        switch (value)
-        {
-            case "omega":
-                return CloneStateOmega;
-            case "alpha" or "trial":
-                return CloneStateAlpha;
-        }
-        var parsed = ParseInt10(value);
-        return parsed is CloneStateAlpha or CloneStateOmega ? parsed : null;
-    }
-
-    /// <summary><c>Number.parseInt(text, 10)</c>: the leading integer, null when there is none.</summary>
-    private static long? ParseInt10(string text)
-    {
-        var index = 0;
-        while (index < text.Length && char.IsWhiteSpace(text[index]))
-        {
-            index++;
-        }
-        var negative = false;
-        if (index < text.Length && text[index] is '+' or '-')
-        {
-            negative = text[index] == '-';
-            index++;
-        }
-        var start = index;
-        long value = 0;
-        while (index < text.Length && text[index] is >= '0' and <= '9' && value < 100_000_000_000_000L)
-        {
-            value = (value * 10) + (text[index] - '0');
-            index++;
-        }
-        return index == start ? null : negative ? -value : value;
-    }
+    /// <summary>The session attribute holding the clone grade last told to the session. The client never reads it.</summary>
+    public const string AnnouncedCloneGradeKey = "subscriptionCloneGrade";
 
     /// <summary>The clone grade of an account (0 Alpha, 1 Omega), as the clone-grade answers report it.</summary>
-    public long CloneGradeOf(PyValue? userId) => ResolveCloneGrade(userId);
-
-    private long ResolveCloneGrade(PyValue? userId)
-    {
-        // This client build only cleanly recognises Alpha (0) and Omega (1).
-        if (CloneGradeOverride() is { } forced)
-        {
-            return forced;
-        }
-        if (licenses.Resolve(userId).HasLicense)
-        {
-            return CloneStateOmega;
-        }
-        return settings.OmegaLicenseEnabled ? CloneStateOmega : CloneStateAlpha;
-    }
+    public long CloneGradeOf(PyValue? userId) => licenses.Resolve(userId).HasLicense ? CloneStateOmega : CloneStateAlpha;
 
     private (long CloneGrade, bool IsSubscribed, long? EndTime, long DaysRemaining) State(ServiceCall call)
     {
-        var userId = call.Session.Get("userid");
-        var cloneGrade = ResolveCloneGrade(userId);
-        var isSubscribed = cloneGrade == CloneStateOmega;
-        var license = licenses.Resolve(userId);
-        long? endTime = isSubscribed
-            ? license.ExpiryFileTime ?? OmegaLicenses.DefaultOmegaExpiryFileTime
-            : null;
+        var license = licenses.Resolve(call.Session.Get("userid"));
+        var cloneGrade = license.HasLicense ? CloneStateOmega : CloneStateAlpha;
+        long? endTime = license.HasLicense ? license.ExpiryFileTime : null;
         long days = 0;
         if (endTime is { } end)
         {
@@ -140,7 +83,36 @@ public sealed partial class SubscriptionMgrService(SubscriptionSettings settings
                 days = (remaining + FileTimeTicksPerDay - 1) / FileTimeTicksPerDay;
             }
         }
-        return (cloneGrade, isSubscribed, endTime, days);
+        NoteCloneGrade(call.Session, cloneGrade, endTime);
+        return (cloneGrade, license.HasLicense, endTime, days);
+    }
+
+    /// <summary>
+    /// Tells a session its clone grade and end time: the client caches the grade (OnSubscriptionChangedServer) and shows the
+    /// time (OnSubscriptionTimeUpdateServer; None for Alpha). Used when an operator changes the account's end time.
+    /// </summary>
+    public static void AnnounceCloneGrade(ClientSession session, long cloneGrade, long? endTime)
+    {
+        session.Set(AnnouncedCloneGradeKey, new PyInt(cloneGrade));
+        session.SendNotification("OnSubscriptionChangedServer", "clientID", new PyInt(cloneGrade));
+        session.SendNotification("OnSubscriptionTimeUpdateServer", "clientID", endTime is { } end ? new PyLong(end) : PyNone.Instance);
+    }
+
+    /// <summary>
+    /// A query that finds the grade changed since the session last heard it (the end time passed while it was logged in)
+    /// announces the change. The first answer only records the grade: the client has it from this answer.
+    /// </summary>
+    private static void NoteCloneGrade(ClientSession session, long cloneGrade, long? endTime)
+    {
+        var announced = session.Get(AnnouncedCloneGradeKey) is PyInt known ? known.Value : (long?)null;
+        if (announced is null)
+        {
+            session.Set(AnnouncedCloneGradeKey, new PyInt(cloneGrade));
+        }
+        else if (announced != cloneGrade)
+        {
+            AnnounceCloneGrade(session, cloneGrade, endTime);
+        }
     }
 
     private static PyValue EndTime(long? endTime) => endTime is { } value ? Py.FileTimeLong(value) : PyNone.Instance;

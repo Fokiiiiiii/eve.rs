@@ -253,6 +253,21 @@ def test_new_account_enters_a_new_character_with_named_arguments():
         assert any(row[1]["typeID"] == 1004 for row in notifications)
 
 
+OMEGA_END_FILETIME = 157469184000000000  # 2100-01-01T00:00:00Z: the end time every new account is written with
+
+
+def test_a_new_account_is_omega_until_2100_on_every_answer():
+    """The Omega state is one stored value per account (its subscription end time). A new account is Omega until 2100:
+    the clone grade, the subscription time, the lapsed-Omega check and the selection screen's account row must agree."""
+    run = uuid.uuid4().hex[:10]
+    with connect(f"walk-omega-{run}") as client:
+        assert m.plain(client.call("subscriptionMgr", "GetCloneGrade")) == 1
+        assert m.plain(client.call("subscriptionMgr", "GetSubscriptionTime")) == OMEGA_END_FILETIME
+        assert m.plain(client.call("charUnboundMgr", "GetCharOmegaDowngradeStatus")) is False
+        account_row = m.plain(client.call("charUnboundMgr", "GetCharacterSelectionData"))[0][0][1]
+        assert account_row["subscriptionEndTime"] == OMEGA_END_FILETIME
+
+
 def test_a_character_logs_off_to_the_selection_screen_and_selects_again():
     """The client's "log off character": userSvc.UserLogOffCharacter answers True, the connection stays open, the
     selection screen lists the character again, and selecting it enters the game again (the session's charid)."""

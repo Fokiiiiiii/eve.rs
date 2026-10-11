@@ -44,7 +44,7 @@ public class LegacyOmegaTests
         Assert.Equal(future.ToString(), accounts.GetOmegaExpiry(90000001));
         Assert.Null(accounts.GetOmegaExpiry(90000002));
 
-        var services = CoreServices.Create(new SubscriptionSettings { OmegaLicenseEnabled = false }, accounts, () => NowMs);
+        var services = CoreServices.Create(accounts, () => NowMs);
         var subscription = services.Single(s => s.Name == "subscriptionMgr");
         var info = (PyObject)await Call(subscription, "GetSubscriptionInfo", 90000001);
         var entries = ((PyDict)info.Args).Entries.ToDictionary(e => ((PyStr)e.Key).Value, e => e.Value);

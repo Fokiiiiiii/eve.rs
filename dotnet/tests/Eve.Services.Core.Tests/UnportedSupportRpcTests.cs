@@ -10,7 +10,7 @@ public sealed class UnportedSupportRpcTests
     [Fact]
     public void Core_routes_register_the_missing_support_services()
     {
-        var services = CoreServices.Create(new SubscriptionSettings(), new NoAccounts(), () => 0);
+        var services = CoreServices.Create(new NoAccounts(), () => 0);
 
         Assert.Contains(services, service => service.Name == "ingamereport");
         Assert.Contains(services, service => service.Name == "nonDiminishingInjectionMgr");
@@ -103,6 +103,6 @@ public sealed class UnportedSupportRpcTests
 
     private sealed class NoAccounts : IOmegaAccountStore
     {
-        public string? GetOmegaExpiry(long accountId) => null;
+        public string? GetOmegaExpiry(long accountId) => OmegaLicenses.DefaultOmegaExpiryText;
     }
 }

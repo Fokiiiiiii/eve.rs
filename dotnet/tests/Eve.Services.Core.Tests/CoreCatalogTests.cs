@@ -578,7 +578,7 @@ public class CoreCatalogTests
     [Fact]
     public void The_catalog_names_the_core_services()
     {
-        var created = CoreServices.Create(new SubscriptionSettings(), new NoAccounts(), () => 0);
+        var created = CoreServices.Create(new NoAccounts(), () => 0);
         var createdNames = created.Select(service => service.Name).Order().ToArray();
 
         var expectedNames = new[]
@@ -600,7 +600,6 @@ public class CoreCatalogTests
     {
         Eve.Services.Core.NodeGraphRequest? observed = null;
         var services = CoreServices.Create(
-            new SubscriptionSettings(),
             new NoAccounts(),
             () => 0,
             nodeGraphRpcCallback: (request, _) =>
@@ -625,6 +624,6 @@ public class CoreCatalogTests
 
     private sealed class NoAccounts : IOmegaAccountStore
     {
-        public string? GetOmegaExpiry(long accountId) => null;
+        public string? GetOmegaExpiry(long accountId) => OmegaLicenses.DefaultOmegaExpiryText;
     }
 }

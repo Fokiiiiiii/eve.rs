@@ -42,7 +42,6 @@ internal sealed partial class CharacterServicesComposition
         // the abyssal mutation authority (ADR 0016): the mutaplasmid catalog of the static data, the item store and its provenance, the event bus
         itemMutations = new Eve.Inventory.Mutation.ItemMutationService(
             source, items, items.Mutations, await Eve.Inventory.Mutation.MutatorCatalog.LoadAsync(sde), dogma, new BusItemMutationEvents(foundations.Events), now);
-        omega = new OmegaLicenses(new SubscriptionSettings(), new NoOmegaAccounts(), now);
         training = new CharacterTraining(
             source, skillCatalog, skills, new PgTrainingStore(source, skillsSchema),
             new TrainingSettings

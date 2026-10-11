@@ -1083,3 +1083,18 @@ Open (next steps, in order):
 | OPEN | (c) E-03: `BeyonceService.CynoJammerOnlineSimTimeForSystem` from an online service 17 in the system; E-15 `OnCynoJammerChanged` from a subscriber on the service change; the non-covert cyno generator refused in a jammed system (host side, `SpaceSessions.Modules.cs`) |
 | OPEN | (d) `structureCynoBeaconMgr` backend in place of the user error (`StructureTravelRpcService.cs`): Pharolux beacon service 16 online, jump to it |
 | OPEN | Fuel burns send no `OnItemChange` to the owner's sessions (no session at burn time); rig and skill reductions of the online charge |
+
+## 41. Omega state (slice D, 2026-10-11)
+
+Done: the Omega state is the account's stored subscription end time (DEVIATIONS.md, "Omega state is the account's stored subscription
+end time"). New accounts are written with 2100-01-01; existing rows are back-filled once; every answer reads the same value
+(`OmegaStateTests`, `SubscriptionTransitionsTests`, `ValidationAndOmegaTests`, live `test_a_new_account_is_omega_until_2100_on_every_answer`).
+
+Open:
+- A lapse that happens while a session is logged in is announced only on that session's next subscription query, not pushed (needs a timer
+  that walks the open sessions).
+- No operator command or admin route sets an account's end time yet; `SubscriptionTransitions.SetSubscriptionEnd` is the path, tested.
+- The Omega readers are synchronous ADO.NET calls (`PgAccountDirectory.SubscriptionEndsAt`), one primary-key read each; fine at this size,
+  a cache with invalidation would be the next step.
+- Not verified against the native V24.01 client: whether the fanfare on `OnSubscriptionChangedServer` is shown for a lapse (the client's
+  `clone_grade_fanfare_ui_controller.py:59-85`).

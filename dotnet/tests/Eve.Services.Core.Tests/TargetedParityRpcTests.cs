@@ -15,7 +15,6 @@ public sealed class TargetedParityRpcTests
         session.Set("corporationID", new PyInt(42));
         long ownerId = 0;
         var services = CoreServices.Create(
-            new SubscriptionSettings(),
             new NoAccounts(),
             () => 0,
             gameRpcCallbacks: new GameRpcCallbacks(ReadPeaceTreaties: (owner, _) =>
@@ -38,7 +37,7 @@ public sealed class TargetedParityRpcTests
     [Fact]
     public void Core_services_register_pos_mgr_once_with_the_control_tower_method()
     {
-        var services = CoreServices.Create(new SubscriptionSettings(), new NoAccounts(), () => 0);
+        var services = CoreServices.Create(new NoAccounts(), () => 0);
 
         var posMgr = Assert.Single(services, service => service.Name == "posMgr");
         Assert.True(posMgr.HasMethod("GetControlTowers"));
@@ -91,6 +90,6 @@ public sealed class TargetedParityRpcTests
 
     private sealed class NoAccounts : IOmegaAccountStore
     {
-        public string? GetOmegaExpiry(long accountId) => null;
+        public string? GetOmegaExpiry(long accountId) => OmegaLicenses.DefaultOmegaExpiryText;
     }
 }

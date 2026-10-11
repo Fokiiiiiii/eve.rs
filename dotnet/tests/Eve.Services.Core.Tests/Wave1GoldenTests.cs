@@ -1,3 +1,5 @@
+using System.Globalization;
+using System.Text.RegularExpressions;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Eve.Marshal;
@@ -14,7 +16,17 @@ public class Wave1GoldenTests
     private static readonly JsonArray Scenarios = (JsonArray)JsonNode.Parse(
         File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "fixtures", "services", "wave1.json")))!;
 
-    public static IEnumerable<object[]> Ids() => Scenarios.Select(s => new object[] { (string)s!["id"]! });
+    /// <summary>
+    /// Recorded answers this server does not give by design. The reference answers Omega after 2100 through its constant fallback
+    /// (subscriptionMgrService.js:66-68: no licence and the default on means Omega). Here a stored end time in the past is Alpha;
+    /// OmegaStateTests pins that behaviour directly.
+    /// </summary>
+    private static readonly HashSet<string> IntentionalDeviations = ["subscription:after-default-expiry"];
+
+    public static IEnumerable<object[]> Ids() => Scenarios
+        .Select(s => (string)s!["id"]!)
+        .Where(id => !IntentionalDeviations.Contains(id))
+        .Select(id => new object[] { id });
 
     private sealed class Capture : IPacketSink
     {
@@ -33,6 +45,55 @@ public class Wave1GoldenTests
             && text.Trim().Length > 0
                 ? text.Trim()
                 : null;
+    }
+
+    /// <summary>
+    /// The recorded setup as a store. The recording was made from the reference, which floors every account at 2100 while the
+    /// Omega default is on (subscriptionMgrService.js:61-68, storeState.js:618-622) and reads the EVE_CLONE_GRADE override
+    /// with parseInt (subscriptionMgrService.js:33-52). The replay reproduces that configuration; production has neither the
+    /// floor nor the override (an operator's earlier end time lapses the account), so this helper is test-only.
+    /// </summary>
+    private sealed class RecordedAccounts(JsonObject accounts, string? cloneGrade, bool omegaEnabled) : IOmegaAccountStore
+    {
+        private readonly FakeAccounts _runtime = new(accounts);
+
+        public string? GetOmegaExpiry(long accountId)
+        {
+            var forced = ForcedGrade(cloneGrade);
+            if (forced == false)
+            {
+                return null;
+            }
+            var floor = forced == true || (forced is null && omegaEnabled) ? OmegaLicenses.DefaultOmegaExpiryFileTime : 0L;
+            var text = _runtime.GetOmegaExpiry(accountId);
+            if (floor == 0)
+            {
+                return text; // production parses the stored text itself (BigInt semantics)
+            }
+            var runtime = long.TryParse(text, NumberStyles.Integer, CultureInfo.InvariantCulture, out var stored) ? stored : 0L;
+            return Math.Max(runtime, floor).ToString(CultureInfo.InvariantCulture);
+        }
+
+        /// <summary>The recorded override: true Omega, false Alpha, null when absent or not 0/1 (the config then decides).</summary>
+        private static bool? ForcedGrade(string? raw)
+        {
+            var value = raw?.Trim().ToLowerInvariant();
+            if (string.IsNullOrEmpty(value))
+            {
+                return null;
+            }
+            switch (value)
+            {
+                case "omega":
+                    return true;
+                case "alpha" or "trial":
+                    return false;
+            }
+            var leading = Regex.Match(value, @"^[+-]?\d+");
+            return leading.Success && long.TryParse(leading.Value, NumberStyles.AllowLeadingSign, CultureInfo.InvariantCulture, out var parsed) && parsed is 0 or 1
+                ? parsed == 1
+                : null;
+        }
     }
 
     /// <summary>A session attribute from its JSON form: numbers, strings, {"$big": "..."} and null.</summary>
@@ -73,16 +134,13 @@ public class Wave1GoldenTests
     [InlineData("omega", 1)]
     public async Task Login_reward_facilities_returns_the_existing_clone_grade(string cloneGrade, long expected)
     {
-        var settings = new SubscriptionSettings
+        // The grade follows the account's stored end time: an Omega account has the policy end time, an Alpha one has none.
+        var accounts = new FakeAccounts(new JsonObject
         {
-            CloneGradeOverride = cloneGrade,
-            OmegaLicenseEnabled = true,
-        };
+            ["90000001"] = new JsonObject { ["omegaExpiryFileTime"] = cloneGrade == "omega" ? OmegaLicenses.DefaultOmegaExpiryText : "" },
+        });
         var nowUnixMs = 1_700_000_000_000L;
-        var subscriptions = new SubscriptionMgrService(
-            settings,
-            new OmegaLicenses(settings, new FakeAccounts(new JsonObject()), () => nowUnixMs));
-        IService service = CoreServices.Create(settings, new FakeAccounts(new JsonObject()), () => nowUnixMs)
+        IService service = CoreServices.Create(accounts, () => nowUnixMs)
             .Single(candidate => candidate.Name == "loginRewardFacilities");
         var session = new ClientSession();
         session.Set("userid", new PyLong(90000001));
@@ -107,17 +165,15 @@ public class Wave1GoldenTests
         var setup = (JsonObject)scenario["setup"]!;
         var nowMs = (long)setup["nowMs"]!;
 
-        var settings = new SubscriptionSettings
-        {
-            CloneGradeOverride = (string?)setup["cloneGrade"],
-            OmegaLicenseEnabled = (bool)setup["omegaEnabled"]!,
-        };
-        var licenses = new OmegaLicenses(settings, new FakeAccounts((JsonObject)setup["accounts"]!), () => nowMs);
+        // The recording's configuration (a forced grade, or the Omega default switch) read as stored state.
+        var licenses = new OmegaLicenses(
+            new RecordedAccounts((JsonObject)setup["accounts"]!, (string?)setup["cloneGrade"], (bool)setup["omegaEnabled"]!),
+            () => nowMs);
 
         var registry = new ServiceRegistry();
         registry.Register((IService)new PingService());
         registry.Register((IService)new BrowserLockdownService());
-        registry.Register((IService)new SubscriptionMgrService(settings, licenses));
+        registry.Register((IService)new SubscriptionMgrService(licenses));
 
         var capture = new Capture();
         var session = new ClientSession(capture) { SessionId = 77 };

@@ -18,7 +18,7 @@ public sealed class SharedSettingsRpcTests
                 savedState = state.DeepClone() as JsonObject;
                 return ValueTask.FromResult(true);
             });
-        var services = CoreServices.Create(new SubscriptionSettings(), new NoAccounts(), () => 0,
+        var services = CoreServices.Create(new NoAccounts(), () => 0,
             gameRpcCallbacks: callbacks);
         var service = Assert.Single(services, candidate => candidate.Name == "sharedSettingsMgr");
         var session = new ClientSession { CharacterId = 42 };
@@ -70,6 +70,6 @@ public sealed class SharedSettingsRpcTests
 
     private sealed class NoAccounts : IOmegaAccountStore
     {
-        public string? GetOmegaExpiry(long accountId) => null;
+        public string? GetOmegaExpiry(long accountId) => OmegaLicenses.DefaultOmegaExpiryText;
     }
 }

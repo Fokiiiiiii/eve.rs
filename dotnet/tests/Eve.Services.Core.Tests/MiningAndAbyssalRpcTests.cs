@@ -10,7 +10,7 @@ public sealed class MiningAndAbyssalRpcTests
     [Fact]
     public void Core_factory_registers_both_exact_service_names_and_methods()
     {
-        var services = CoreServices.Create(new SubscriptionSettings(), new NoAccounts(), () => 0);
+        var services = CoreServices.Create(new NoAccounts(), () => 0);
 
         var mining = Assert.Single(services, service => service.Name == "miningScanMgr");
         Assert.True(mining.HasMethod("perform_scan"));
@@ -32,7 +32,7 @@ public sealed class MiningAndAbyssalRpcTests
                 receivedReport = request;
                 return ValueTask.FromResult<PyValue?>(report);
             });
-        var services = CoreServices.Create(new SubscriptionSettings(), new NoAccounts(), () => 0,
+        var services = CoreServices.Create(new NoAccounts(), () => 0,
             gameRpcCallbacks: callbacks);
         var mining = services.Single(service => service.Name == "miningScanMgr");
         var abyssal = services.Single(service => service.Name == "abyssal_content_manager");
@@ -131,6 +131,6 @@ public sealed class MiningAndAbyssalRpcTests
 
     private sealed class NoAccounts : IOmegaAccountStore
     {
-        public string? GetOmegaExpiry(long accountId) => null;
+        public string? GetOmegaExpiry(long accountId) => OmegaLicenses.DefaultOmegaExpiryText;
     }
 }

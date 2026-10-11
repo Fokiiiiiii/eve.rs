@@ -14,7 +14,7 @@ public sealed class GameRpcServicesTests
     [Fact]
     public void Core_catalog_registers_every_audited_rpc_once()
     {
-        var services = CoreServices.Create(new SubscriptionSettings(), new NoAccounts(), () => 0);
+        var services = CoreServices.Create(new NoAccounts(), () => 0);
         var expected = new Dictionary<string, string[]>
         {
             ["raffleMgr"] = ["QA_SeedRaffles"],
@@ -44,7 +44,7 @@ public sealed class GameRpcServicesTests
                 seededQuantity = quantity ?? -1;
                 return ValueTask.FromResult<int?>(quantity ?? 8);
             });
-        var services = CoreServices.Create(new SubscriptionSettings(), new NoAccounts(), () => 1_700_000_000_000,
+        var services = CoreServices.Create(new NoAccounts(), () => 1_700_000_000_000,
             gameRpcCallbacks: callbacks);
         var raffle = services.Single(service => service.Name == "raffleMgr");
         var raffleProxy = services.Single(service => service.Name == "raffleProxy");
@@ -208,7 +208,7 @@ public sealed class GameRpcServicesTests
     }
 
     private static IService Service(string name, GameRpcCallbacks? callbacks = null, long now = 1_700_000_000_000) =>
-        CoreServices.Create(new SubscriptionSettings(), new NoAccounts(), () => now,
+        CoreServices.Create(new NoAccounts(), () => now,
                 gameRpcCallbacks: callbacks)
             .Single(service => service.Name == name);
 
@@ -237,6 +237,6 @@ public sealed class GameRpcServicesTests
 
     private sealed class NoAccounts : IOmegaAccountStore
     {
-        public string? GetOmegaExpiry(long accountId) => null;
+        public string? GetOmegaExpiry(long accountId) => OmegaLicenses.DefaultOmegaExpiryText;
     }
 }

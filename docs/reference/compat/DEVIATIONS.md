@@ -1253,7 +1253,7 @@ Sources. The wiki: "Pochven" (https://wiki.eveuniversity.org/Pochven, fetched 20
 - **`multiLoginBlocker.Login` checks the computer.** The reference answers True unless `EVE_ENFORCE_ALPHA_MULTILOGIN` is set
   (`multiLoginBlockerService.js:87-90`, off by default). eve.rs enforces the Alpha rule without a switch: a session is refused when
   another account on the same computer hash is logged in and either account is Alpha. Reason: the clone grades here are real
-  (`SubscriptionMgrService.ResolveCloneGrade` reads the Omega licence), so the rule can apply, and the brief requires real behaviour
+  (`SubscriptionMgrService` reads each account's stored Omega end time), so the rule can apply, and the brief requires real behaviour
   where the constant True was. The computer hash exists only on the SSO path (see "Single sign-on login"), so the client calls
   `Login` only after SSO has been built. Status: decided (slice C); tests `MultiLoginBlockerTests`.
 - **`ToggleValidation` is per session and role-gated.** Same rule as the reference (`charService.js:1883-1902`): the content,
@@ -1261,8 +1261,25 @@ Sources. The wiki: "Pochven" (https://wiki.eveuniversity.org/Pochven, fetched 20
   (the reference does not read it either). Replaces a constant False, which a non-elevated client showed as "Validation Off" while
   validation was on. The recording was made from a GM session, whose first toggle gives False; the live walk expects True for its
   ordinary account, and `ValidationAndOmegaTests` pins both roles. Status: decided (slice C).
-- **`GetCharOmegaDowngradeStatus` answers False.** It was missing, so each character-screen open logged a traceback. Every
-  account's subscription ends at the open-ended time (`SubscriptionEndFileTime`), so no account has lapsed. Status: done.
+- **`GetCharOmegaDowngradeStatus` answers from the stored end time.** True only when the account's stored subscription end time has
+  passed (`CharUnboundMgrService.GetCharOmegaDowngradeStatus`); otherwise False. It was missing before, so each character-screen open logged a
+  traceback. Status: done (slice D; `ValidationAndOmegaTests`).
+- **Omega state is the account's stored subscription end time (slice D, 2026-10-11).** Policy: every real-money item is free, so every
+  account is Omega until 2100-01-01T00:00:00Z. Storage: `identity.accounts.subscription_end_at` (migration `0002_subscription.sql`, NOT
+  NULL, default 2100). A new account is written with 2100 at creation (`PgAccountDirectory`, `InMemoryAccountDirectory`,
+  `SubscriptionPolicy`). The migration back-fills only rows with no end time and never shortens a stored one. Every answer reads this one
+  value through `OmegaLicenses` (one instance per host, `AccountOmegaStore`): `subscriptionMgr` (GetCloneGrade, GetSubscriptionStatus,
+  GetSubscriptionInfo, GetSubscriptionTime), `loginRewardFacilities.get_my_clone_grade`, `multiLoginBlocker`, the injector and skill
+  rules (`isAlphaClone`, `HasOmega`), the selection account row (`subscriptionEndTime`) and the lapsed-Omega check.
+  Removed: the `EVE_CLONE_GRADE` override, the `omegaLicenseEnabled` switch, and the constant floor at 2100 that the reference applies
+  (`subscriptionMgrService.js:61-68`, `storeState.js:612-622`). The floor would stop an operator's earlier end time from lapsing an
+  account. An account with no stored end time (unknown account) is Alpha.
+  Transitions: `SubscriptionTransitions.SetSubscriptionEnd` writes the end time, then announces the new grade to the account's open
+  sessions with `OnSubscriptionChangedServer(grade)` and `OnSubscriptionTimeUpdateServer(endOrNone)`. A lapse that happens while a
+  session is logged in is announced on that session's next subscription query (the session keeps the grade last told in the
+  `subscriptionCloneGrade` attribute, which the client never reads). It is not pushed on a timer; see TODO section 41.
+  Tests: `OmegaStateTests`, `SubscriptionTransitionsTests`, `ValidationAndOmegaTests`, `Wave1GoldenTests` (the recorded setups are read
+  as stored state), and the live walk `test_a_new_account_is_omega_until_2100_on_every_answer`.
 - **`GetCharacterLockType` answers None and `GetCohortsForUser` answers an empty list.** Kept: eve.rs has no transfer, sale,
   lock or cohort state, and the reference answers the same constants (`charService.js:1458-1461`, `:1914-1916`). Status: kept.
 - **`charMgr.GetSettingsInfo` is the reference's blob, which the client cannot verify here.** The blob is byte-identical to the

@@ -300,6 +300,76 @@ public sealed class StructureCompositionTests : IAsyncLifetime
     }
 
     [PgFact]
+    public async Task Anchor_outside_space_is_refused_by_name_through_the_registered_service()
+    {
+        var url = Environment.GetEnvironmentVariable("EVE_PG_URL")!;
+        await using var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(url));
+        await SeedGameStoreAsync(source, SeededRow(StructureId, StructureState.ShieldVulnerable, 0, 0, UpkeepState.FullPower));
+        var characterId = await SeedManagerAsync();
+        var session = ManagerSession(characterId);
+
+        var host = await HostComposition.BuildAsync(Settings());
+        var deployment = host.Registry.Lookup("structureDeployment") ?? throw new InvalidOperationException("structureDeployment is not registered");
+        // no simulation in this host: the pilot is not in space, so the anchor is refused by name before any item is read
+        var args = new PyValue[] { new PyInt(9_001), PyNone.Instance, PyNone.Instance, PyNone.Instance, PyNone.Instance, new PyStr("Anchored"), new PyStr(""), PyNone.Instance, PyNone.Instance, PyNone.Instance };
+        var refused = await Assert.ThrowsAsync<MachoWrappedException>(async () => await deployment.CallAsync(Call(session, "Anchor", 1, args)));
+        var error = refused.Error;
+        Assert.Equal("CustomNotify", error.UserErrorMessage);
+        Assert.Equal("You must be in space to deploy a structure.", Assert.IsType<PyStr>(((PyDict)((PyTuple)((PyTuple)((PyObjectEx)error.Payload!).Header).Items[1]).Items[1]).Entries.Single(e => JsSemantics.StringValue(e.Key) == "notify").Value).Value);
+        await host.ShutdownAsync();
+    }
+
+    [PgFact]
+    public async Task Unanchor_starts_a_seven_day_timer_for_a_director_and_cancelling_stops_it()
+    {
+        var url = Environment.GetEnvironmentVariable("EVE_PG_URL")!;
+        await using var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(url));
+        await SeedGameStoreAsync(source, SeededRow(StructureId, StructureState.ShieldVulnerable, 0, 0, UpkeepState.FullPower));
+        var characterId = await SeedManagerAsync();
+        var store = new StructureStore(source, Schema("EVE_STRUCTURES_SCHEMA"));
+
+        var host = await HostComposition.BuildAsync(Settings());
+        var deployment = host.Registry.Lookup("structureDeployment") ?? throw new InvalidOperationException("structureDeployment is not registered");
+        // a Station Manager may manage the structure but not unanchor it (EVE.js requireStructureDecommissionSession: Director or CEO)
+        var manager = await Assert.ThrowsAsync<MachoWrappedException>(async () => await deployment.CallAsync(Call(RoleSession(characterId, Corporation, 2048), "Unanchor", 1, new PyInt(StructureId))));
+        Assert.Equal("CrpAccessDenied", Refusal(manager).Name);
+
+        var director = RoleSession(characterId, Corporation, 1);
+        var before = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        await deployment.CallAsync(Call(director, "Unanchor", 2, new PyInt(StructureId)));
+        var after = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        var unanchoring = (await store.GetAsync(StructureId))!.Snapshot.UnanchorEndsMs;
+        Assert.InRange(unanchoring, before + StructureTimes.UnanchoringMs, after + StructureTimes.UnanchoringMs);
+
+        // asking again while it runs changes nothing (EVE.js answers success)
+        await deployment.CallAsync(Call(director, "Unanchor", 3, new PyInt(StructureId)));
+        Assert.Equal(unanchoring, (await store.GetAsync(StructureId))!.Snapshot.UnanchorEndsMs);
+
+        await deployment.CallAsync(Call(director, "CancelUnanchor", 4, new PyInt(StructureId)));
+        Assert.Equal(0, (await store.GetAsync(StructureId))!.Snapshot.UnanchorEndsMs);
+        // nothing to cancel is not an error
+        await deployment.CallAsync(Call(director, "CancelUnanchor", 5, new PyInt(StructureId)));
+        await host.ShutdownAsync();
+    }
+
+    [PgFact]
+    public async Task Unanchor_is_refused_by_name_in_a_state_that_cancels_it_and_changes_nothing()
+    {
+        var url = Environment.GetEnvironmentVariable("EVE_PG_URL")!;
+        await using var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(url));
+        await SeedGameStoreAsync(source, SeededRow(StructureId, StructureState.ArmorReinforce, 0, 0, UpkeepState.FullPower));
+        var characterId = await SeedManagerAsync();
+        var store = new StructureStore(source, Schema("EVE_STRUCTURES_SCHEMA"));
+
+        var host = await HostComposition.BuildAsync(Settings());
+        var deployment = host.Registry.Lookup("structureDeployment") ?? throw new InvalidOperationException("structureDeployment is not registered");
+        var refused = await Assert.ThrowsAsync<MachoWrappedException>(async () => await deployment.CallAsync(Call(RoleSession(characterId, Corporation, 1), "Unanchor", 1, new PyInt(StructureId))));
+        Assert.Equal(("CustomNotify", "Failed to unanchor structure: STRUCTURE_CANNOT_UNANCHOR_IN_STATE."), Refusal(refused));
+        Assert.Equal(0, (await store.GetAsync(StructureId))!.Snapshot.UnanchorEndsMs);
+        await host.ShutdownAsync();
+    }
+
+    [PgFact]
     public async Task Rename_normalizes_the_name_the_directory_shows_refuses_a_short_name_and_survives_a_restart()
     {
         var url = Environment.GetEnvironmentVariable("EVE_PG_URL")!;

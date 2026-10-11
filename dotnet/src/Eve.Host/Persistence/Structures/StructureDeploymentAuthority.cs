@@ -57,6 +57,42 @@ public sealed class StructureDeploymentAuthority
     }
 
     /// <summary>
+    /// <c>Unanchor</c>: the structure's unanchoring starts and ends after 7 days (45 minutes for a Flex structure); the structure leaves the system then. Only a
+    /// Director or the CEO may ask (EVE.js <c>requireStructureDecommissionSession</c>). A structure already unanchoring is answered as EVE.js does: nothing changes.
+    /// </summary>
+    public Task UnanchorAsync(ServiceCall call, long structureId, CancellationToken cancellationToken = default) =>
+        ChangeUnanchorAsync(call, structureId, new UnanchorStarted(), cancellationToken);
+
+    /// <summary>
+    /// <c>CancelUnanchor</c>: a structure that is unanchoring stops doing so; one that is not is answered without a change (EVE.js
+    /// <c>cancelStructureUnanchoring</c>). The same roles as <see cref="UnanchorAsync"/>.
+    /// </summary>
+    public Task CancelUnanchorAsync(ServiceCall call, long structureId, CancellationToken cancellationToken = default) =>
+        ChangeUnanchorAsync(call, structureId, new UnanchorCancelled(), cancellationToken);
+
+    private async Task ChangeUnanchorAsync(ServiceCall call, long structureId, StructureEvent change, CancellationToken cancellationToken)
+    {
+        await using var connection = await _source.OpenConnectionAsync(cancellationToken);
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        var record = await LockedAsync(connection, transaction, structureId, cancellationToken);
+        RequireOwner(call, record);
+        var roles = call.Session.GetInt("corprole") ?? 0;
+        var ceo = call.Session.Get("isCEO") is PyBool { Value: true };
+        if (!ceo && (roles & DirectorRole) == 0)
+        {
+            throw MachoErrors.ThrowUserError("CrpAccessDenied", ("reason", new PyStr("Insufficient roles")));
+        }
+        var transition = await _timers.ApplyAsync(connection, transaction, structureId, change, cancellationToken);
+        if (transition?.Refusal is { } refusal && !(refusal is "ALREADY_UNANCHORING" or "NOT_UNANCHORING"))
+        {
+            // the same words as EVE.js (structureState.startStructureUnanchoring: STRUCTURE_CANNOT_UNANCHOR_IN_STATE)
+            throw Refusal($"Failed to unanchor structure: {(refusal == "UNANCHOR_NOT_ALLOWED" ? "STRUCTURE_CANNOT_UNANCHOR_IN_STATE" : refusal)}.");
+        }
+        await transaction.CommitAsync(cancellationToken);
+        _scheduler.Wake();
+    }
+
+    /// <summary>
     /// <c>RenameStructure</c>: the name is trimmed, its line breaks and runs of spaces become one space, and it is cut to 256 characters; less than three
     /// characters is refused (EVE.js <c>normalizeStructureName</c>, <c>MIN_STRUCTURE_NAME_LENGTH</c>).
     /// </summary>
@@ -74,24 +110,37 @@ public sealed class StructureDeploymentAuthority
         await transaction.CommitAsync(cancellationToken);
     }
 
-    /// <summary>The structure, locked, when it exists, is not gone and the pilot may manage it; otherwise the named refusal.</summary>
-    private async Task<StructureRecord> ManagedAsync(ServiceCall call, NpgsqlConnection connection, NpgsqlTransaction transaction, long structureId, CancellationToken cancellationToken)
+    /// <summary>The structure, locked, when it exists and is not gone; otherwise the named refusal.</summary>
+    private async Task<StructureRecord> LockedAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long structureId, CancellationToken cancellationToken)
     {
         if (await _store.GetAsync(connection, transaction, structureId, forUpdate: true, cancellationToken) is not { } record || record.Snapshot.DestroyedMs > 0)
         {
             throw MachoErrors.ThrowUserError("TargetingAttemptCancelled");
         }
+        return record;
+    }
+
+    /// <summary>The structure, locked, when it exists, is not gone and the pilot may manage it; otherwise the named refusal.</summary>
+    private async Task<StructureRecord> ManagedAsync(ServiceCall call, NpgsqlConnection connection, NpgsqlTransaction transaction, long structureId, CancellationToken cancellationToken)
+    {
+        var record = await LockedAsync(connection, transaction, structureId, cancellationToken);
         RequireManagement(call, record);
         return record;
     }
 
-    private static void RequireManagement(ServiceCall call, StructureRecord record)
+    /// <summary>The pilot's corporation owns the structure (a corporation the pilot has none in is refused too, as EVE.js does for a pilot with a corporation).</summary>
+    private static void RequireOwner(ServiceCall call, StructureRecord record)
     {
         var corporationId = call.Session.GetInt("corporationID") ?? call.Session.GetInt("corpid") ?? 0;
         if (corporationId > 0 && corporationId != record.OwnerCorporationId)
         {
             throw MachoErrors.ThrowUserError("CrpAccessDenied", ("reason", new PyStr("Structure belongs to another corporation")));
         }
+    }
+
+    private static void RequireManagement(ServiceCall call, StructureRecord record)
+    {
+        RequireOwner(call, record);
         var roles = call.Session.GetInt("corprole") ?? 0;
         var ceo = call.Session.Get("isCEO") is PyBool { Value: true };
         if (!ceo && (roles & (StationManagerRole | DirectorRole)) == 0)

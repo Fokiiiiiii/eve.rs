@@ -66,7 +66,22 @@ internal sealed class SiteContainerRig : IAsyncDisposable
         await transaction.CommitAsync();
     }
 
-    public async ValueTask DisposeAsync() => await Source.DisposeAsync();
+    public async ValueTask DisposeAsync()
+    {
+        foreach (var schema in new[] { "sch_" + _id, "evt_" + _id, SitesSchema, ItemsSchema })
+        {
+            try
+            {
+                await using var drop = Source.CreateCommand($"DROP SCHEMA IF EXISTS \"{schema}\" CASCADE");
+                await drop.ExecuteNonQueryAsync();
+            }
+            catch (NpgsqlException)
+            {
+                // Leaving a scratch schema behind is better than failing the test.
+            }
+        }
+        await Source.DisposeAsync();
+    }
 }
 
 public sealed class SiteContainerTests

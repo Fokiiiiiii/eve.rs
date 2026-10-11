@@ -41,6 +41,11 @@ public static class AgentDialogueToken
     public const int QuitReady = 383;
     public const int RequestAfterCompletion = 384;
 
+    /// <summary>The research action tokens (EveJS researchDialogue.js:29-31); they name the buttons 12 to 14.</summary>
+    public const int StartResearch = 830;
+    public const int CancelResearch = 831;
+    public const int BuyDatacores = 832;
+
     private static readonly Dictionary<long, int> ButtonByToken = new()
     {
         [Request] = AgentDialogueButton.RequestMission,
@@ -52,6 +57,9 @@ public static class AgentDialogueToken
         [CompleteReady] = AgentDialogueButton.Complete,
         [QuitReady] = AgentDialogueButton.Quit,
         [RequestAfterCompletion] = AgentDialogueButton.RequestMission,
+        [StartResearch] = AgentDialogueButton.StartResearch,
+        [CancelResearch] = AgentDialogueButton.CancelResearch,
+        [BuyDatacores] = AgentDialogueButton.BuyDatacores,
     };
 
     /// <summary>The button an action names: a slot maps to its button, a button id is itself; null for anything else.</summary>
@@ -77,7 +85,8 @@ public sealed record AgentDialogueSources(
     Func<long, long> FactionOfCorporation,
     Func<AgentMissionAgentData, long, CancellationToken, ValueTask<AgentMissionContent?>> PickOffer,
     Func<DateTimeOffset> Now,
-    Func<long, AgentMissionAgentData, bool, CancellationToken, ValueTask>? OnConversation = null);
+    Func<long, AgentMissionAgentData, bool, CancellationToken, ValueTask>? OnConversation = null,
+    IAgentResearchPort? Research = null);
 
 /// <summary>The answer of DoAction: the agent's line, the buttons, and the last-action record the window reads.</summary>
 public sealed record AgentDialogueReply(PyValue AgentSays, IReadOnlyList<(long ActionId, int ButtonType)> Actions, PyDict LastActionInfo)
@@ -135,7 +144,8 @@ public sealed class AgentDialogueMachine(AgentDialogueSources sources)
         AgentMissionAgentData agent,
         PyValue? action,
         bool atAgentLocation,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        long stationId = 0)
     {
         var now = sources.Now();
         if (sources.OnConversation is { } onConversation)
@@ -223,6 +233,15 @@ public sealed class AgentDialogueMachine(AgentDialogueSources sources)
                         return AgentDialogueStep.Of(await ConversationAsync(characterId, agent, standing, atAgentLocation, cancellationToken, LastInfo()));
                     }));
 
+            case AgentDialogueButton.StartResearch when sources.Research is not null:
+                return await StartResearchAsync(characterId, agent, standing, now, cancellationToken);
+
+            case AgentDialogueButton.CancelResearch when sources.Research is not null:
+                return await CancelResearchAsync(characterId, agent, mission, now, cancellationToken);
+
+            case AgentDialogueButton.BuyDatacores when sources.Research is not null:
+                return await BuyDatacoresAsync(characterId, agent, now, stationId, cancellationToken);
+
             case AgentDialogueButton.StartResearch or AgentDialogueButton.CancelResearch or AgentDialogueButton.BuyDatacores
                 or AgentDialogueButton.LocateCharacter or AgentDialogueButton.LocateAccept or AgentDialogueButton.LocateReject:
                 throw MachoErrors.ThrowUserError("CustomInfo",
@@ -280,11 +299,199 @@ public sealed class AgentDialogueMachine(AgentDialogueSources sources)
         }
         var canRequest = mission?.DeclineUntil is not { } until || until <= now;
         var offerable = canRequest && await sources.PickOffer(agent, characterId, cancellationToken) is not null;
+        IReadOnlyList<(long ActionId, int ButtonType)> actions = offerable ? [(AgentDialogueToken.Request, AgentDialogueButton.RequestMission)] : [];
         return new AgentDialogueReply(
             Greeting(null),
-            offerable ? [(AgentDialogueToken.Request, AgentDialogueButton.RequestMission)] : [],
+            [.. actions, .. await ResearchIdleActionsAsync(characterId, agent, cancellationToken)],
             lastInfo);
     }
+
+    // The R&D labels (EveJS researchRuntime.js:69-88), resolved by the client's localization.
+    private const string SkillsNotSufficientLabel = "UI/Agents/Research/CharacterSkillsNotSufficient";
+    private const string TooLowRpmLabel = "UI/Agents/Research/TooLowRpm";
+    private const string ResearchStartedLabel = "UI/Agents/Research/ResearchStarted";
+    private const string ResearchCancelledLabel = "UI/Agents/Research/ResearchCancelled";
+    private const string BoughtDatacoresLabel = "UI/Agents/Research/BoughtDatacores";
+    private const string NotEnoughRpLabel = "UI/Agents/Research/NotEnoughRPForDatacores";
+    private const string NotEnoughIskLabel = "UI/Agents/Research/NotEnoughISKForDatacores";
+    private const string InvalidInputLabel = "UI/Agents/Research/DatacoreInvalidInput";
+    private const string DatacorePriceLabel = "UI/Agents/Research/DatacorePrice";
+    private const string DatacoresCaptionLabel = "UI/Agents/Research/Datacores";
+    private const string SelectTypeTitleLabel = "UI/Agents/Research/SelectResearchTypeTitle";
+    private const string SelectTypeMessageLabel = "UI/Agents/Research/SelectResearchTypeMessage";
+    private const string SkillListingLabel = "UI/Agents/Research/SkillListing";
+    private const string CancelQuestionLabel = "UI/Agents/Research/CancelResearchQuestion";
+    private const string SureToCancelLabel = "UI/Agents/Research/SureToCancelResearch";
+    private const string SureToCancelAndMissionLabel = "UI/Agents/Research/SureToCancelResearchAndMission";
+
+    /// <summary>Start research (button 12): the refusals in the reference's order, then the field choice; the answer starts the project.</summary>
+    private async ValueTask<AgentDialogueStep> StartResearchAsync(
+        long characterId, AgentMissionAgentData agent, AccessReading standing, DateTimeOffset now, CancellationToken cancellationToken)
+    {
+        var research = sources.Research!;
+        if (!standing.CanUse) return Refusal(ResearchTooLowLabel);
+        var science = await SkillAsync(characterId, ResearchRules.ScienceSkillTypeId, cancellationToken);
+        if (science < ResearchRules.ScienceRequiredLevel) return Refusal(SkillsNotSufficientLabel);
+        var fields = new List<AgentResearchField>();
+        foreach (var field in research.Fields)
+        {
+            if (ResearchRules.Qualifies(science, await SkillAsync(characterId, (int)field.SkillTypeId, cancellationToken), (int)agent.Level))
+                fields.Add(field);
+        }
+        if (fields.Count == 0) return Refusal(SkillsNotSufficientLabel);
+        var slots = ResearchRules.MaxConcurrentProjects(await SkillAsync(characterId, ResearchRules.ResearchProjectManagementSkillTypeId, cancellationToken));
+        if ((await research.Projects.ReadAllAsync(characterId, cancellationToken)).Count >= slots) return Refusal(TooLowRpmLabel);
+
+        var choices = fields.Select(field => (PyValue)new PyTuple(
+            [new PyStr(SkillListingLabel), Dict(("skillID", new PyInt(field.SkillTypeId)), ("skillLevel", new PyInt(agent.Level)))])).ToArray();
+        return new AgentDialogueStep(null, new AgentDialoguePrompt("SingleChoiceBox",
+            [Label(SelectTypeTitleLabel), Label(SelectTypeMessageLabel), new PyList(choices), new PyInt(agent.AgentId)],
+            EmptyDict(),
+            async answer =>
+            {
+                var index = ChoiceIndex(answer);
+                if (index is not { } chosen || chosen < 0 || chosen >= fields.Count)
+                    return await AnswerAsync(characterId, agent, InvalidInputLabel, null, idle: true, cancellationToken);
+                var field = fields[chosen];
+                var negotiation = await SkillAsync(characterId, ResearchRules.NegotiationSkillTypeId, cancellationToken);
+                var specialty = await SkillAsync(characterId, (int)field.SkillTypeId, cancellationToken);
+                var effective = AgentAccessRule.EffectiveStanding(standing.Standings.Character, standing.FactionId,
+                    skill => standing.Levels.GetValueOrDefault(skill));
+                var perDay = ResearchRules.PointsPerDay(negotiation, effective, specialty, (int)agent.Level);
+                try
+                {
+                    await research.Projects.StartAsync(new ResearchProject(characterId, agent.AgentId, field.SkillTypeId, sources.Now(), perDay, 0),
+                        slots, cancellationToken);
+                }
+                catch (ResearchRefusedException)
+                {
+                    return await AnswerAsync(characterId, agent, TooLowRpmLabel, null, idle: true, cancellationToken);
+                }
+                return await AnswerAsync(characterId, agent, ResearchStartedLabel, null, idle: true, cancellationToken);
+            }));
+    }
+
+    /// <summary>Cancel research (button 13): a YesNo, and a yes deletes the project (its points are lost) and quits an accepted mission.</summary>
+    private async ValueTask<AgentDialogueStep> CancelResearchAsync(
+        long characterId, AgentMissionAgentData agent, AgentMissionRecord? mission, DateTimeOffset now, CancellationToken cancellationToken)
+    {
+        var research = sources.Research!;
+        if (await research.Projects.ReadAsync(characterId, agent.AgentId, cancellationToken) is null)
+            return await AnswerAsync(characterId, agent, InvalidInputLabel, null, idle: true, cancellationToken);
+        var accepted = mission?.State == AgentMissionState.Accepted;
+        return new AgentDialogueStep(null, new AgentDialoguePrompt("YesNo",
+            [Label(CancelQuestionLabel), Label(accepted ? SureToCancelAndMissionLabel : SureToCancelLabel), new PyInt(agent.AgentId)],
+            EmptyDict(),
+            async answer =>
+            {
+                // The reference answers a no with the invalid-input line (researchDialogue.js planCancelResearch).
+                if (answer is not PyBool { Value: true })
+                    return await AnswerAsync(characterId, agent, InvalidInputLabel, null, idle: true, cancellationToken);
+                if (accepted)
+                {
+                    try
+                    {
+                        await sources.Store.QuitAsync(characterId, agent.AgentId, now,
+                            $"research-cancel:{characterId}:{agent.AgentId}:{now.ToUnixTimeMilliseconds()}", cancellationToken);
+                    }
+                    catch (AgentMissionRefusedException)
+                    {
+                        // the mission changed since it was read: the project is cancelled all the same
+                    }
+                }
+                await research.Projects.CancelAsync(characterId, agent.AgentId, cancellationToken);
+                return await AnswerAsync(characterId, agent, ResearchCancelledLabel, null, idle: true, cancellationToken);
+            }));
+    }
+
+    /// <summary>Buy datacores (button 14): the affordable quantity is asked; the purchase is the port's (RP, ISK and the item in one transaction).</summary>
+    private async ValueTask<AgentDialogueStep> BuyDatacoresAsync(
+        long characterId, AgentMissionAgentData agent, DateTimeOffset now, long stationId, CancellationToken cancellationToken)
+    {
+        var research = sources.Research!;
+        var project = await research.Projects.ReadAsync(characterId, agent.AgentId, cancellationToken);
+        var field = project is null ? null : research.Fields.FirstOrDefault(candidate => candidate.SkillTypeId == project.SkillTypeId);
+        if (project is null || field is null)
+            return await AnswerAsync(characterId, agent, InvalidInputLabel, null, idle: true, cancellationToken);
+        var affordable = (long)Math.Floor(ResearchProjectStore.AccruedPoints(project, now) / ResearchRules.DatacoreResearchPoints);
+        if (affordable < 1)
+            return Refusal(NotEnoughRpLabel, Dict(("datacoreTypeID", new PyInt(field.DatacoreTypeId)), ("rpAmount", new PyInt(ResearchRules.DatacoreResearchPoints))));
+
+        return new AgentDialogueStep(null, new AgentDialoguePrompt("GetQuantity", [],
+            Dict(
+                ("maxvalue", new PyInt(affordable)),
+                ("minvalue", new PyInt(1)),
+                ("setvalue", new PyInt(affordable)),
+                ("caption", Label(DatacoresCaptionLabel)),
+                ("label", new PyTuple([new PyStr(DatacorePriceLabel), Dict(
+                    ("datacoreTypeID", new PyInt(field.DatacoreTypeId)),
+                    ("rpAmount", new PyInt(ResearchRules.DatacoreResearchPoints)),
+                    ("iskAmount", new PyInt(ResearchRules.DatacoreIsk)))])),
+                ("digits", new PyInt(0))),
+            async answer =>
+            {
+                var quantity = Quantity(answer);
+                if (quantity <= 0 || stationId <= 0)
+                    return await AnswerAsync(characterId, agent, InvalidInputLabel, null, idle: true, cancellationToken);
+                var purchase = await research.BuyDatacoresAsync(characterId, agent.AgentId, field.SkillTypeId, quantity, stationId, cancellationToken);
+                var kwargs = Dict(("datacoreTypeID", new PyInt(field.DatacoreTypeId)), ("rpAmount", new PyInt(ResearchRules.DatacoreResearchPoints)),
+                    ("iskAmount", new PyInt(ResearchRules.DatacoreIsk)));
+                return purchase.Refusal switch
+                {
+                    AgentDatacoreRefusal.None => await AnswerAsync(characterId, agent, BoughtDatacoresLabel, null, idle: true, cancellationToken),
+                    AgentDatacoreRefusal.NotEnoughRp => await AnswerAsync(characterId, agent, NotEnoughRpLabel, kwargs, idle: true, cancellationToken),
+                    AgentDatacoreRefusal.NotEnoughIsk => await AnswerAsync(characterId, agent, NotEnoughIskLabel, kwargs, idle: true, cancellationToken),
+                    _ => await AnswerAsync(characterId, agent, InvalidInputLabel, null, idle: true, cancellationToken),
+                };
+            }));
+    }
+
+    /// <summary>The buttons an R&amp;D agent shows: start with no project; datacores and cancel with one (EveJS buildResearchIdleActions).</summary>
+    private async ValueTask<IReadOnlyList<(long ActionId, int ButtonType)>> ResearchIdleActionsAsync(
+        long characterId, AgentMissionAgentData agent, CancellationToken cancellationToken)
+    {
+        if (agent.AgentTypeId != AgentAccessRule.ResearchAgentType || sources.Research is not { } research) return [];
+        return await research.Projects.ReadAsync(characterId, agent.AgentId, cancellationToken) is null
+            ? [(AgentDialogueToken.StartResearch, AgentDialogueButton.StartResearch)]
+            : [(AgentDialogueToken.BuyDatacores, AgentDialogueButton.BuyDatacores), (AgentDialogueToken.CancelResearch, AgentDialogueButton.CancelResearch)];
+    }
+
+    /// <summary>The agent's line after a research action, with the idle buttons (EveJS buildPostActionConversation).</summary>
+    private async ValueTask<AgentDialogueStep> AnswerAsync(
+        long characterId, AgentMissionAgentData agent, string label, PyDict? kwargs, bool idle, CancellationToken cancellationToken) =>
+        AgentDialogueStep.Of(new AgentDialogueReply(
+            new PyTuple([new PyTuple([new PyStr(label), kwargs ?? EmptyDict()]), PyNone.Instance]),
+            idle ? await ResearchIdleActionsAsync(characterId, agent, cancellationToken) : [],
+            LastInfo()));
+
+    /// <summary>A refusal by name: the agent's line with no buttons (EveJS saysConversation for a refusal).</summary>
+    private static AgentDialogueStep Refusal(string label, PyDict? kwargs = null) => AgentDialogueStep.Of(new AgentDialogueReply(
+        new PyTuple([new PyTuple([new PyStr(label), kwargs ?? EmptyDict()]), PyNone.Instance]), [], LastInfo()));
+
+    private static PyTuple Label(string label) => new([new PyStr(label), EmptyDict()]);
+
+    private static PyDict Dict(params (string Key, PyValue Value)[] entries) => new(entries
+        .Select(entry => new KeyValuePair<PyValue, PyValue>(new PyStr(entry.Key), entry.Value)).ToList());
+
+    private async ValueTask<int> SkillAsync(long characterId, int skillTypeId, CancellationToken cancellationToken) =>
+        await sources.ReadSkillLevel(characterId, skillTypeId, cancellationToken);
+
+    /// <summary>The index of a SingleChoiceBox answer: (true, "radioboxOption&lt;n&gt;Selected"), n counted from one (EveJS readChoiceIndex).</summary>
+    private static int? ChoiceIndex(PyValue? answer) => answer is PyTuple { Items.Count: >= 2 } tuple &&
+        tuple.Items[0] is PyBool { Value: true } &&
+        tuple.Items[1] is PyStr { Value: var selection } &&
+        System.Text.RegularExpressions.Regex.Match(selection, "^radioboxOption(\\d+)Selected$") is { Success: true } match
+            ? int.Parse(match.Groups[1].Value, System.Globalization.CultureInfo.InvariantCulture) - 1
+            : null;
+
+    /// <summary>The quantity a GetQuantity answer carries, or 0 when it was cancelled.</summary>
+    private static long Quantity(PyValue? answer) => answer switch
+    {
+        PyInt integer => integer.Value,
+        PyLong integer => integer.Value,
+        PyReal real => (long)real.Value,
+        _ => 0,
+    };
 
     private static int? ButtonOfArgument(PyValue? action) => action switch
     {
@@ -304,10 +511,10 @@ public sealed class AgentDialogueMachine(AgentDialogueSources sources)
             levels[skill] = await sources.ReadSkillLevel(characterId, skill, cancellationToken);
         }
         var canUse = AgentAccessRule.CanUse(agent.Level, agent.AgentTypeId, standings, factionId, skill => levels.GetValueOrDefault(skill));
-        return new AccessReading(canUse);
+        return new AccessReading(canUse, standings, factionId, levels);
     }
 
-    private sealed record AccessReading(bool CanUse);
+    private sealed record AccessReading(bool CanUse, AgentStandings Standings, long FactionId, IReadOnlyDictionary<int, int> Levels);
 
     private static PyValue Greeting(long? contentId) => new PyTuple(
     [

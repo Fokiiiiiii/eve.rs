@@ -91,11 +91,7 @@ public sealed class ResearchProjectStore
 
         await using var connection = await _source.OpenConnectionAsync(cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
-        await using (var locked = new NpgsqlCommand("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", connection, transaction))
-        {
-            locked.Parameters.Add(new NpgsqlParameter { Value = "research:" + _schema + ":" + project.CharacterId });
-            await locked.ExecuteNonQueryAsync(cancellationToken);
-        }
+        await LockAsync(connection, transaction, project.CharacterId, cancellationToken);
         await using (var existing = new NpgsqlCommand(
             $"SELECT count(*), count(*) FILTER (WHERE agent_id = $2) FROM {_schema}.research_projects WHERE character_id = $1", connection, transaction))
         {
@@ -121,6 +117,43 @@ public sealed class ResearchProjectStore
         }
         await transaction.CommitAsync(cancellationToken);
         return project;
+    }
+
+    /// <summary>Takes a character's research lock for the caller's transaction: starts, cancels and datacore purchases of one character run in turn.</summary>
+    public async Task LockAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long characterId, CancellationToken cancellationToken = default)
+    {
+        await using var locked = new NpgsqlCommand("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", connection, transaction);
+        locked.Parameters.Add(new NpgsqlParameter { Value = "research:" + _schema + ":" + characterId });
+        await locked.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    /// <summary>A project read on the caller's transaction (after <see cref="LockAsync"/>).</summary>
+    public async Task<ResearchProject?> ReadAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long characterId, long agentId, CancellationToken cancellationToken = default)
+    {
+        await using var command = new NpgsqlCommand(
+            $"SELECT character_id, agent_id, skill_type_id, started_at_ms, points_per_day, remainder_points FROM {_schema}.research_projects WHERE character_id = $1 AND agent_id = $2",
+            connection, transaction)
+        {
+            Parameters = { new() { Value = characterId }, new() { Value = agentId } },
+        };
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        return await reader.ReadAsync(cancellationToken) ? Read(reader) : null;
+    }
+
+    /// <summary>Re-anchors a project on the caller's transaction: its banked remainder and its start (the points it holds now).</summary>
+    public async Task RebaseAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, ResearchProject project, CancellationToken cancellationToken = default)
+    {
+        await using var command = new NpgsqlCommand(
+            $"UPDATE {_schema}.research_projects SET started_at_ms = $3, remainder_points = $4 WHERE character_id = $1 AND agent_id = $2",
+            connection, transaction)
+        {
+            Parameters =
+            {
+                new() { Value = project.CharacterId }, new() { Value = project.AgentId },
+                new() { Value = project.StartedAt.ToUnixTimeMilliseconds() }, new() { Value = project.RemainderPoints },
+            },
+        };
+        if (await command.ExecuteNonQueryAsync(cancellationToken) != 1) throw new InvalidOperationException("the research project is missing");
     }
 
     /// <summary>Cancels a project: the row is deleted and its points are lost. False when the character has no such project.</summary>

@@ -20,6 +20,7 @@ public class GasCloudMiningTests
         var system = (int)(await rig.Items.GetAsync(c.ShipId))!.LocationId;
         var harvester = await rig.GiveAsync(c.CharacterId, GasCloudHarvesterI, singleton: true, quantity: 1, location: c.ShipId, flag: ItemFlags.HiSlot0);
         var schema = $"sp_{Guid.NewGuid():N}"[..14];
+        rig.KeepSchemas(schema);
         await PgSpaceItemStore.MigrateAsync(rig.Source, schema);
         var spaceItems = new PgSpaceItemStore(rig.Source, schema);
         var ledger = new PgWorkCycleLedger(rig.Source, schema);

@@ -347,6 +347,21 @@ public sealed class CosmicSiteDirectorTests
             return distance >= SitePlacement.MinimumAu * ProbeScanMath.AuMeters - 1 && distance <= SitePlacement.MaximumAu * ProbeScanMath.AuMeters + 1;
         });
 
-        public async ValueTask DisposeAsync() => await Source.DisposeAsync();
+        public async ValueTask DisposeAsync()
+        {
+            foreach (var schema in _schemas)
+            {
+                try
+                {
+                    await using var drop = Source.CreateCommand($"DROP SCHEMA IF EXISTS \"{schema}\" CASCADE");
+                    await drop.ExecuteNonQueryAsync();
+                }
+                catch (NpgsqlException)
+                {
+                    // Leaving a scratch schema behind is better than failing the test.
+                }
+            }
+            await Source.DisposeAsync();
+        }
     }
 }

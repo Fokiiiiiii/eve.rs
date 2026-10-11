@@ -87,6 +87,7 @@ public class MiningProfileTests
         var module = await rig.GiveAsync(c.CharacterId, MinerI, singleton: true, quantity: 1, location: c.ShipId, flag: ItemFlags.HiSlot0);
         var rock = await rig.GiveAsync(c.CharacterId, Veldspar, singleton: false, quantity: 1000, location: system, flag: CharacterShips.InSpaceFlag);
         var schema = $"sp_{Guid.NewGuid():N}"[..14];
+        rig.KeepSchemas(schema);
         await PgSpaceItemStore.MigrateAsync(rig.Source, schema);
         var spaceItems = new PgSpaceItemStore(rig.Source, schema);
         var ledger = new PgWorkCycleLedger(rig.Source, schema);
@@ -128,6 +129,7 @@ public class MiningProfileTests
         var module = await rig.GiveAsync(c.CharacterId, MinerI, singleton: true, quantity: 1, location: c.ShipId, flag: ItemFlags.HiSlot0);
         var rock = await rig.GiveAsync(c.CharacterId, Veldspar, singleton: false, quantity: 1000, location: system, flag: CharacterShips.InSpaceFlag);
         var schema = $"sp_{Guid.NewGuid():N}"[..14];
+        rig.KeepSchemas(schema);
         await PgSpaceItemStore.MigrateAsync(rig.Source, schema);
         var spaceItems = new PgSpaceItemStore(rig.Source, schema);
         var ledger = new PgWorkCycleLedger(rig.Source, schema);

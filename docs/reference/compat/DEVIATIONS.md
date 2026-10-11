@@ -1372,7 +1372,7 @@ Sources. The wiki: "Pochven" (https://wiki.eveuniversity.org/Pochven, fetched 20
 - **Incursions and anomalies come from the content state.** `map.GetIncursionGlobalReport`, `map.GetSystemsInIncursions`,
   `taleMgr.*` and `scanMgr.*` read the content instances of kind `incursion` and `anomaly` (`PersistenceIncursionAnomalyReadModel`).
   With none seeded, the answers are the empty contract shapes (an empty list, an empty rowset, an empty tale list).
-  Incursions are not simulated yet; the content slice that seeds them feeds these answers.
+  Incursions are simulated since B-L1 (see "Incursions (B-L1, B-S1, B-M1)" below); the content kind is no longer read.
 - **Live suite isolation.** The live run kept the game store (`gamestore`, which holds the mailboxes), and the corporation,
   market, fleet, industry and asset-safety tables, in the shared default schemas. Each run now gets its own scratch
   schema for each of them, and the script drops them at its end (`tools/dev/run-eve-live.sh`). `LiveScriptIsolationTests`
@@ -2128,6 +2128,21 @@ Engine: `dotnet/src/Eve.Hacking` (pure rules, no Host). Sources: EVE University 
 - **A hit's layer.** A depleted layer is the layer the hit emptied. A hit that only pauses the repair lands on the layer named by the state (shield, armor or hull). Stated approximation.
 - **Structure placement on anchoring is not wired yet.** A structure anchored while a pilot is in its system is not placed until the next pilot enters it (ST-2 places it on anchoring); the simulation ignores the state change of a structure it does not have.
 - **The simulation's state change publishes through the bus.** The subscriber `structure.space` sends `SetStructureState` on every `structure.state_changed`, or `RemoveStructure` when the record says it was unanchored or destroyed. At-least-once delivery is safe: the simulation ignores a state it already has (FOUNDATIONS rule 2).
+
+## Incursions (B-L1, B-S1, B-M1, 2026-10-11)
+
+Sources: CCP launch article "The Nation Strikes Back" (https://www.eveonline.com/news/view/the-nation-strikes-back-1) for the respawn window (12 to 36 hours) and the loyalty point rule (paid only when the final boss is destroyed); EVE University Incursions (https://wiki.eveuniversity.org/Incursions) for the phase lengths, the concurrent limits and the site counts; client constants in `eve-logic/talecommon/const.py` for the scene types, reward groups and the scout dungeons; the owner's dungeon catalog for the site compositions. No third-party history data is used at runtime.
+
+- Phase lengths: Mobilized 48 h (wiki). Established is fixed at one day; the wiki gives one to five days and no rule for the difference. Withdrawing 24 h (wiki). CCP publishes no phase numbers.
+- Concurrent incursions per band: highsec 1, lowsec 1, nullsec 3 (wiki; the wiki itself marks the highsec single-constellation rule as inference, not applied here).
+- Band of a system: highsec security 0.45 and above, lowsec 0.05 to 0.45, nullsec below (the client's rounding of 0.5 and 0.1). Constellation choice: random among constellations with a system of the band and no live incursion; CCP does not publish the choice.
+- Staging sites: five per incursion (wiki: up to five at once). No official count per incursion exists; the count is an eve.rs choice. Dungeons are drawn at random from the four staging dungeons with the owner's compositions.
+- Influence: full (1.0) at start and not changed. CCP says Sansha pushes influence down over time and site completion lowers it, but publishes no rate. Decay rate and grace are 0 (EveJS value).
+- Loyalty points: the pending value is 0 until the final boss exists. The wiki's staging payout (400 LP to the top five) conflicts with CCP's "LP only when the final boss is destroyed"; CCP's rule is followed (open item G-I1 in the plan).
+- Template class 2 and aggressor faction 500019 are EveJS values; reward group 8 is the client's REWARD_SCOUT.
+- Map rows: only the staging system has a row in `getSystemsInIncursions` (scene type 4, staging); the other systems of the constellation carry no site row yet. templateNameID is 0 (no name id in the owner catalog).
+- The read of content kind `incursion` in `PersistenceIncursionAnomalyReadModel` is gone: nothing produced that kind, and the lifecycle is now the source of the map answers.
+- Not built: vanguard, assault and headquarters sites (B-S2), the mothership (B-F1), influence and the final-boss loyalty points (B-R1).
 - **Site container types (ST-10 d1).** The template names a container type (e.g. "High Security Containment Facility", "Research and Development Laboratories") that the SDE does not carry under that name in groups 306/314/1207; those are placed as the lowest type id of the kind's group (306 for data, 1207 for relic), and the name is logged. Status: decided, MITM to verify the model.
 - **Site container ids and spacing (ST-10 d1).** Container id = 7e15 + (site instance id mod 1e9) * 100 + index; containers lie 150 m apart along x from the site, radius 50 m. Status: decided.
 - **Failures and destruction (ST-10 d1).** Two failed attempts destroy a container (wiki); a win clears it (the row stays, the ball stays and is no longer hackable). Status: wiki; the clear's ball is not removed.
@@ -2181,3 +2196,19 @@ The ST-2 subscriber now emits `OnHangarViewStateUpdated(structureID, state)` fro
 The confirmation gate is before any movement or simulation entry. It uses official SDE `contrabandTypes` faction `_key` / `confiscateMinSec`, `SolarSystemCatalog` faction/security, and fresh `PgItemStore` direct cargo reads. V24.01 `structureDocking.py:26-53` and `station/base.py:488-521` define `ShipContrabandWarningUndock` and boolean retry; only `PyBool.True` bypasses the gate. EveJS `contrabandInspectionRuntime.js:184-203,219-273` supplies the security threshold/direct-cargo behavior. Deliberate difference: eve.rs adds the client-defined confirmation gate and does not apply fines or confiscation in this preflight; EveJS transition inspection schedules those penalties and its `ignoreContraband` flag does not gate inspection. The customs settlement flow is outside this change. A disabled Host simulation now refuses Dock/Undock with `CustomInfo` instead of returning fake success.
 
 Focused PostgreSQL verification: Station 28/28, selected Space docking/undocking/hangar/contraband 10/10, actual Host home/structure-simulation-unavailable scenario plus structure-state fanout 2/2; structure RPC validation 32/32. Wider Host 202/202 and CharacterSelect 58/58 pass. After integrating the multiple-training/New Eden Store upstream through `de05bcd7c66afd2170481ac89bda12938ca565c6`, Host build has zero warnings/errors; own Host cases plus upstream entitlement cases pass 7/7, and selected Space cases pass 10/10. Scratch home/contraband schemas are absent after cleanup. Native graphical acceptance and live headless dock/undock remain open.
+
+## Insurgency campaigns (C-M1, C-S1)
+
+- **Wind-down after any end is 48 hours.** Source: the EVE.js wind-down (`insurgencyFobRuntime.js` INSURGENCY_WIND_DOWN_DURATION_MS). CCP's 24.01 notes and the wiki give no wind-down for a pirate win or a tie. The value applies to all three ends. Status: decided; not CCP data.
+- **No winner at the maximum length.** A campaign still active at 7 days from its start, with neither side at its required count, ends in `NO_WINNER` and pays nothing (wiki: a tie has no bonus payout). EVE.js instead starts its wind-down at the maximum and has no tie state. Status: decided.
+- **Maximum length counts from the start, including the forecast** (24.01: "Reduced Insurgency length to 7 days"; EVE.js `maxEndsAtMs = start + 7 days`). Status: decided.
+- **Ambition is a simplified rule.** Each side has a modifier from 0 to 5. The winner gains one level, the loser gives one back, down to 0; a side needs 5 + modifier systems. The wiki's underdog rule (a win by the weaker side takes one level from the streak) is not built. Status: decided; underdog rule OPEN.
+- **Required counts are fixed at the start.** A running campaign keeps the counts it started with; a later ambition change applies to the next campaign. Status: decided.
+- **The default of 20 pirate systems in EVE.js is not used.** EVE.js `insurgencyFobRuntimeController.js:595` (20 pirate, 5 antipirate) predates 24.01, whose cap is 10 systems at maximum ambition. Status: decided (24.01 over EVE.js).
+- **`fsmState` is the real state.** EVE.js reports 3 (active) for every campaign (`insurgencyFobRuntimeController.js:587`); the client's states (`pirateinsurgency/const.py`) are reported as stored. Status: decided.
+- **`structureID` is None while no FOB is known.** EVE.js sends 0. The client reads the id from `GetActiveFobStructureIdAndSystemIdForFaction` (`lpStoreSvc.py:546`), so None is the absent value. Status: decided; revisit with the FOB owner.
+- **Campaign start is not triggered by any client or operator path** (Q-INS-4: no source names the trigger). The store and `StartAsync` exist. A server with no started campaign answers the empty list. Status: OPEN decision.
+- **Notice audience.** Location notices (started, updated, ending) go to the pilots whose `solarsystemid2` (or `solarsystemid`) is a covered system, addressed with the `clientID` of each session. Faction notices (state changed, system fully corrupted or suppressed) go to every character session, because the client handlers do not filter by location (`insurgencyCampaignSvc.py:121-143`). Status: decided from the client code; not checked in the graphical client.
+- **Ending notice per covered system.** `OnInsurgencyCampaignEndingForLocation` takes one system id and the client compares it with the pilot's system, so it is sent once per covered system with that id. Status: decided.
+- **Public gateway not built (C-G1).** The corruption and suppression bars are unavailable. The client's gateway call fails on the client side (`messenger.py:71`, TypeError), which the space path catches and logs (`clientDogmaLocation.py:1506-1511`). Evidence: `scratchpad/work/insurgency-gateway-spike.md`. Status: decided; revisit with D-G1.
+

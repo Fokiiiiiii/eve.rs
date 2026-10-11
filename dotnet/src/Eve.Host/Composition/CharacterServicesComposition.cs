@@ -82,6 +82,7 @@ internal sealed partial class CharacterServicesComposition
         await Alliances();
         await NpcAgents();
         await Structures();
+        await Insurgency();
         await SovereigntyWriteOperations();
         await SkyhookJobs();
         await Fleet();
@@ -174,6 +175,7 @@ internal sealed partial class CharacterServicesComposition
     private SpaceContainers? spaceContainers;
     private SpaceDrones? spaceDrones;
     private Eve.Services.Space.Sites.CosmicSiteDirector? cosmicSites;
+    private Eve.Services.Space.Incursions.IncursionDirector? incursionDirector;
     private Eve.Services.Space.Sites.SiteNpcs? siteNpcs;
     private Func<long, CancellationToken, Task> allianceAffiliationNotify = default!;
     private Eve.Services.Corporations.AllianceApplicationDueWorker allianceDue = default!;

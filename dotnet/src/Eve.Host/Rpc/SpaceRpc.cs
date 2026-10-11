@@ -56,6 +56,13 @@ internal sealed partial class CharacterServicesComposition
         var hackingMgr = new Eve.Services.Space.HackingMgrService(hackingAttempts, hackingSite);
         if (spaceSessions is not null)
             spaceSessions.HackingService = hackingMgr;
+        // the containers of the sites are the site content's (the space's SiteContainerHacks, set by the space composition)
+        hackingSite.Find = (characterId, containerId, cancellationToken) => spaceSessions?.HackableContainers is { } hacks
+            ? hacks.FindAsync(containerId, cancellationToken)
+            : ValueTask.FromResult<HackableTarget?>(null);
+        hackingSite.Ended = (session, target, won, cancellationToken) => spaceSessions?.HackableContainers is { } hacks
+            ? hacks.EndedAsync(target, won, session.CharacterId ?? 0, cancellationToken)
+            : ValueTask.CompletedTask;
         return
     [
             hackingMgr,

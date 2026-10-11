@@ -56,8 +56,20 @@ public sealed class HackingAttempts
 /// client as <c>OnHackingTurnComplete</c> (EveJS <c>hackingMgrService.js</c>). The analyzer opens an attempt on its activation, and the
 /// window closes on a warp, out of the analyzer's reach, or when the attempt is lost or won; each end reports to <see cref="IHackingSite"/>.
 /// </summary>
-public sealed class HackingMgrService(HackingAttempts attempts, IHackingSite site) : IService
+public sealed class HackingMgrService : IService
 {
+    private readonly HackingAttempts attempts;
+    private readonly IHackingSite site;
+    private readonly Func<HackingAttempt, HackingGame> newGame;
+
+    /// <param name="newGame">The game of an attempt; the board is generated unless a test supplies one.</param>
+    public HackingMgrService(HackingAttempts attempts, IHackingSite site, Func<HackingAttempt, HackingGame>? newGame = null)
+    {
+        this.attempts = attempts;
+        this.site = site;
+        this.newGame = newGame ?? HackingGame.Create;
+    }
+
     private static readonly HashSet<string> Methods = new(StringComparer.Ordinal)
     {
         "ClickedOnTile", "UsedUtilityElement", "UsedUtilityElementOnVirus", "QuitHackingAttempt",
@@ -127,7 +139,7 @@ public sealed class HackingMgrService(HackingAttempts attempts, IHackingSite sit
             (int)Math.Round(values.VirusStrength),
             (int)Math.Round(values.VirusSlots),
             Random.Shared.Next());
-        var window = new HackingWindow(HackingGame.Create(attempt), target, values.MaxRange);
+        var window = new HackingWindow(newGame(attempt), target, values.MaxRange);
         attempts.Set(characterId, window);
         Send(session, window.Game.Start());
     }

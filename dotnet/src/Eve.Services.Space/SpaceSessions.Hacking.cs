@@ -16,6 +16,9 @@ public sealed partial class SpaceSessions
     private const int DataHackingSkill = 21718;
     private const int ArchaeologySkill = 13278;
 
+    /// <summary>The site containers an analyzer hacks (the target lookup and the end of an attempt). Null without a space simulation.</summary>
+    public SiteContainerHacks? HackableContainers { get; set; }
+
     /// <summary>The hacking service: the analyzer's refusal and open, and the window's warp close. Set by the host.</summary>
     public HackingMgrService? HackingService { get; set; }
 

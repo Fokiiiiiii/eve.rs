@@ -26,9 +26,11 @@ public sealed class MoonExtractionStartHostTests
     {
         private readonly string _schema;
 
-        private Route(string schema, NpgsqlDataSource source, StructureStore structures, MoonExtractionStore store, MoonExtractionsRpcService moon, Sink packets)
+        private Route(string schema, NpgsqlDataSource source, StructureStore structures, MoonExtractionStore store, MoonExtractionsRpcService moon, Sink packets, DurableScheduler scheduler, TestClock clock)
         {
             _schema = schema;
+            Scheduler = scheduler;
+            Clock = clock;
             Source = source;
             Structures = structures;
             Store = store;
@@ -41,6 +43,8 @@ public sealed class MoonExtractionStartHostTests
         }
 
         public NpgsqlDataSource Source { get; }
+        public DurableScheduler Scheduler { get; }
+        public TestClock Clock { get; }
         public StructureStore Structures { get; }
         public MoonExtractionStore Store { get; }
         public MoonExtractionsRpcService Moon { get; }
@@ -59,16 +63,22 @@ public sealed class MoonExtractionStartHostTests
             var store = new MoonExtractionStore(source, schema);
             await DurableScheduler.MigrateAsync(source, schema + "_sch");
             await EventBus.MigrateAsync(source, schema + "_evt");
-            var scheduler = new DurableScheduler(source, () => Now, new SchedulerOptions { Concurrency = 1 }, schema + "_sch", _ => { });
+            var clock = new TestClock();
+            var scheduler = new DurableScheduler(source, () => clock.Now, new SchedulerOptions { Concurrency = 1 }, schema + "_sch", _ => { });
             var bus = new EventBus(source, scheduler, new EventBusOptions(), schema + "_evt", _ => { });
             var moons = new MoonExtractions(structures, store, scheduler, bus, rules);
+            moons.Register();
             var authority = new StructureMoonAuthority(source, structures, moons, rules);
             var sink = new Sink();
-            var route = new Route(schema, source, structures, store, new MoonExtractionsRpcService(mutationBackend: authority.CallAsync), sink);
+            var route = new Route(schema, source, structures, store, new MoonExtractionsRpcService(mutationBackend: authority.CallAsync), sink, scheduler, clock);
             return route;
         }
 
-        public static long Now => 1_700_006_400_000;
+        /// <summary>The clock of the route: the scheduler reads it, and a test moves it.</summary>
+        public sealed class TestClock
+        {
+            public long Now { get; set; } = 1_700_006_400_000;
+        }
 
         /// <summary>A refinery of the corporation with its moon drill online (or not), and the moon's resources (or none).</summary>
         public async Task RefineryAsync(bool drillOnline = true, bool withMoon = true, long structure = Structure, long owner = Corporation, long solarSystem = SolarSystem)
@@ -232,5 +242,76 @@ public sealed class MoonExtractionStartHostTests
 
         Assert.Equal(Field(started, "extractionID"), Field(pair.Items[0], "extractionID"));
         Assert.Equal(new PyInt(1), pair.Items[1]);
+    }
+
+    private static ServiceCall Mutation(string method, ClientSession session) => new()
+    {
+        Method = method,
+        Args = [],
+        Session = session,
+    };
+
+    [PgFact]
+    public async Task A_fracture_before_the_chunk_is_ready_is_refused_by_name()
+    {
+        await using var route = await Route.CreateAsync(PgUrl());
+        await route.RefineryAsync();
+        await route.Moon.CallAsync(route.Start());
+
+        Assert.Equal("The moon chunk is not ready to fracture.", Notice(await Assert.ThrowsAsync<MachoWrappedException>(() =>
+            route.Moon.CallAsync(Mutation("FractureChunkWithStructure", route.Session)).AsTask())));
+    }
+
+    [PgFact]
+    public async Task A_fracture_by_a_pilot_not_docked_at_the_structure_is_refused()
+    {
+        await using var route = await Route.CreateAsync(PgUrl());
+        await route.RefineryAsync();
+        await route.Moon.CallAsync(route.Start());
+
+        Assert.Equal("StructureDefenseDenied", Assert.IsType<MachoWrappedException>(await Assert.ThrowsAsync<MachoWrappedException>(() =>
+            route.Moon.CallAsync(Mutation("FractureChunkWithStructure", new ClientSession(route.Packets))).AsTask())).Error.UserErrorMessage);
+    }
+
+    [PgFact]
+    public async Task A_ready_chunk_fires_and_the_drill_completes_it_as_fractured_when_its_time_comes()
+    {
+        await using var route = await Route.CreateAsync(PgUrl());
+        await route.RefineryAsync();
+        await route.Moon.CallAsync(route.Start());
+        route.Clock.Now += 518_460_000;
+        await route.Scheduler.RunDueAsync();
+
+        Assert.Equal(PyNone.Instance, await route.Moon.CallAsync(Mutation("FractureChunkWithStructure", route.Session)));
+        route.Clock.Now += 30_000;
+        await route.Scheduler.RunDueAsync();
+
+        var legacy = await route.Store.ReadLegacyAsync();
+        Assert.Empty(legacy["extractions"]!.AsObject());
+        var pair = Assert.IsType<PyTuple>(await route.Moon.CallAsync(new ServiceCall
+        {
+            Method = "GetExtractionAndEventIDFromStructureID",
+            Args = [],
+            Session = route.Session,
+        }));
+        Assert.Equal(PyNone.Instance, pair.Items[0]);
+    }
+
+    [PgFact]
+    public async Task A_cancel_needs_the_station_manager_role_and_then_ends_the_chunk()
+    {
+        await using var route = await Route.CreateAsync(PgUrl());
+        await route.RefineryAsync();
+        await route.Moon.CallAsync(route.Start());
+
+        Assert.Equal("Station Manager role is required.", Notice(await Assert.ThrowsAsync<MachoWrappedException>(() =>
+            route.Moon.CallAsync(Mutation("CancelExtraction", route.Session)).AsTask())));
+        Assert.Single(NotificationNames(route.Packets));
+
+        route.Session.Set("corprole", new PyLong(2048));
+        Assert.Equal(PyNone.Instance, await route.Moon.CallAsync(Mutation("CancelExtraction", route.Session)));
+
+        var legacy = await route.Store.ReadLegacyAsync();
+        Assert.Empty(legacy["extractions"]!.AsObject());
     }
 }

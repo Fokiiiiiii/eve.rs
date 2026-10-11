@@ -13,8 +13,14 @@ Updated at every push. Plan: scratchpad `specs/structures_phase.md`, section ST-
    the event list as util.KeyVal records; one `HackingAttempts` store per composition (`SpaceRpc.cs`). A call without an open attempt is
    acknowledged. `HackingMgrService.Start` opens an attempt (the analyzer calls it in increment 3). Tests: `HackingMgrServiceTests`
    5 passed, 0 failed. Gap: no Host-level test that the composition routes the calls, and no end-to-end client run.
-3. **Analyzer body (not started).** `DataAnalyzerEffect` (`Effects/ExplorationModuleEffects.cs`) starts an attempt on accepted activation
-   (EveJS); window closes on warp and when out of `maxRange` 54; two failures destroy the container.
+3. **Analyzer body (built, tests).** `DataAnalyzerEffect` is a one-cycle `ShipEffect` (repeat 1, module duration and capacitor). Activation
+   (`SpaceSessions.Modules.cs`) refuses before the cycle with `ANALYZER_TARGET_INVALID` / `ANALYZER_TYPE_MISMATCH` / `ANALYZER_TARGET_BUSY`
+   (`HackingMgrService.AnalyzerRefusalAsync`), and opens the attempt after the simulation accepts it (`OpenAnalyzerAttemptAsync`, virus values
+   1909/1910/1911, skill kinds 21718/13278, difficulty less access bonus 902 / 5). The window closes on the next call out of reach
+   (`maxRange` 54 + 1 m, sim positions via `SurfaceDistanceToItemAsync`) and on a `WarpTo` accepted for the pilot. A lost or won attempt
+   reports `IHackingSite.AttemptEndedAsync`. Targets come from `SpaceHackingSite.Find`, which is empty until increment 4, so every activation
+   is refused today. Tests: `HackingMgrServiceTests` (9 passed). `ModuleEffectsTests` manifest updated for doHacking (3 assertions).
+   Gaps: no Host-level routing test yet; reach is checked per call, not per tick; the sim's own range rule still applies to the cycle.
 4. **Containers and clear (not started).** Data and relic containers placed through `SpaceContainers`; `site.container.cleared` on
    success (ST-11 item 6); loot per D-5 (wiki silent, EveJS `maybeCompleteAttemptSite`).
 

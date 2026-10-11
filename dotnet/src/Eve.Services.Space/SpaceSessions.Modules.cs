@@ -329,6 +329,12 @@ public sealed partial class SpaceSessions
                 package = package with { Action = bomb with { HurtsPilots = false } };
             }
         }
+        // an analyzer's container is checked before the cycle starts (EveJS moduleOperation.js _resolveAnalyzerHackingContext)
+        if (string.Equals(effectName, AnalyzerEffectName, StringComparison.OrdinalIgnoreCase) && HackingService is { } analyzerChecks
+            && await analyzerChecks.AnalyzerRefusalAsync(characterId, targetId, AnalyzerValuesOf(snapshot, moduleId, made.ModuleType), cancellationToken) is { } analyzerRefusal)
+        {
+            return ModuleResult.Refusal(analyzerRefusal, made.ModuleType, made.ModuleName);
+        }
         // the module is marked active while its start is pending: a start the simulation parks for the host (a fuel ask, a P.A.N.I.C.'s grant) asks the host
         // whether the module runs, and its answer comes only when the start is accepted (track C6); a refused start is unmarked below
         var markedHere = pilot.ActiveModules.TryAdd(moduleId, ItemState.Active);
@@ -362,6 +368,11 @@ public sealed partial class SpaceSessions
         AnnounceModeChange(pilot, snapshot, moduleId, started: true);
         await SendShipAsync(id, pilot, SimShips.VitalsOf(snapshot), cancellationToken);
         made.Accepted?.Invoke();
+        // the analyzer opens its attempt once the simulation accepted the start (EveJS: the attempt starts with the accepted activation)
+        if (string.Equals(effectName, AnalyzerEffectName, StringComparison.OrdinalIgnoreCase) && HackingService is { } analyzerOpen)
+        {
+            await analyzerOpen.OpenAnalyzerAttemptAsync(session, characterId, targetId, AnalyzerValuesOf(snapshot, moduleId, made.ModuleType), cancellationToken);
+        }
         // a module that may run in a gate cloak (canActivateInGateCloak: the warp core stabilizers and interdiction nullifiers) keeps the cloak of a jump
         EndInvulnerability(pilot, keepsJumpCloak: snapshot.World.Get(moduleId, ModuleAttributes.CanActivateInGateCloak) > 0);
         if (assistanceRequest is { } remoteRequest && recordAssistance is { } recordRemoteAssistance)

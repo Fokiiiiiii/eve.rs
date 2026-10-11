@@ -1,27 +1,41 @@
+using Eve.Space;
+using static Eve.Services.Space.Effects.ModuleAttributes;
+
 namespace Eve.Services.Space.Effects;
 
-// The hacking module effects and the projected ECCM that have no body yet. Each is wired (fitted, onlined, registered in ModuleEffects.Default) and refused with
+// The Data Subverter (hackOrbital) and the projected ECCM have no body yet (the data and relic analyzers have one, DataAnalyzerEffect). Each is wired (fitted, onlined, registered in ModuleEffects.Default) and refused with
 // PendingModuleEffect.NotImplemented; none of them cycles, takes capacitor or reports success. (The scanners have bodies: ScannerModuleEffects.cs.) The SDE rows are the published facts; the attributes listed are those
 // the real body must read, on the module's values after dogma (ModuleEffectContext.Cycle reads duration and capacitor for every one of them).
 //
 // Shared for every effect below (SDE effect records of this build, guid as the static data gives it):
 //   duration        attribute 73  (the cycle length; the effect's durationAttributeID)
 //   capacitorNeed   attribute 6   (the cost of a cycle; the effect's dischargeAttributeID)
-// Types are counted from the SDE join of typeDogma.dogmaEffects with dogmaEffects.name, all categories of the type (published and unpublished).
-
-/// <summary>
-/// <c>doHacking</c> (effect 1738, guid <c>effects.TargetScan</c>, category 2 activeTarget): the Data and Relic Analyzers that hack a site (23 types, 10 published:
-/// Data Analyzer I and II, Relic Analyzer I and II, the integrated analyzers and the Sansha and Deathless Circle variants; unpublished: the faction variants such as
-/// 'Daemon' and 'Codex', the civilian and Citizen analyzers, the QA Analyzer (72879) and the QA Cross Protocol Analyzer (33375)).
-/// Reads: <c>maxRange</c> 54 (the effect's rangeAttributeID; 5000 m on Data Analyzer I), <c>accessDifficultyBonus</c> 902 (5 on Data Analyzer I), the virus
-/// attributes <c>virusCoherence</c> 1909, <c>virusStrength</c> 1910 and <c>virusElementSlots</c> 1911. The hacking and archaeology skills (21718, 13278) add to
-/// <c>virusCoherence</c> through dogma (<c>virusCoherenceBonus</c> 10 per level), so the body reads the live map and does not add the skill again.
-/// Reference: EveJS v0.12.9 <c>server/src/services/dogma/dogmaService/moduleOperation.js</c>, the analyzer section (<c>_isAnalyzerModuleActivation</c>,
-/// <c>_resolveAnalyzerVirusStats</c>, <c>_resolveAnalyzerHackingContext</c>; constants at lines 146-158) and <c>shared.js</c> (<c>ANALYZER_EFFECT_NAME</c>).
+// Types are counted from the SDE join of typeDogma.dogmaEffects with dogmaEffects.na/// <summary>
+/// <c>doHacking</c> (effect 1738, guid <c>effects.TargetScan</c>, category 2 activeTarget): the Data and Relic Analyzers. One cycle (repeat 1, the
+/// module's duration and capacitor after dogma); the attempt itself opens in the host once the simulation accepts the start
+/// (<see cref="SpaceSessions.AnalyzerEffectName"/>, <c>SpaceSessions.Hacking.cs</c>), and the container's checks are the host's. The virus values are the
+/// module's <c>virusCoherence</c> 1909, <c>virusStrength</c> 1910 and <c>virusElementSlots</c> 1911 after dogma; <c>maxRange</c> 54 is the reach of the window.
+/// Reference: EveJS v0.12.9 <c>server/src/services/dogma/dogmaService/moduleOperation.js</c>, the analyzer section.
 /// </summary>
-internal sealed class DataAnalyzerEffect : PendingModuleEffect
+internal sealed class DataAnalyzerEffect : ShipEffect
 {
-    public DataAnalyzerEffect() : base("doHacking") { }
+    public override IReadOnlyCollection<string> EffectNames => ["doHacking"];
+
+    /// <summary>An analyzer with no reach is refused as unsupported, not run.</summary>
+    protected override string? Refusal(ModuleEffectContext module) => module.Value(MaxRange, 0) > 0 ? null : "UNSUPPORTED_EFFECT";
+
+    protected override SimEffect Build(ModuleEffectContext module)
+    {
+        var (duration, capacitor, durationAttribute) = module.Cycle();
+        SimChange[] told =
+        [
+            new(module.ModuleId, CapacitorNeed, capacitor),
+            new(module.ModuleId, durationAttribute, Three(duration)),
+        ];
+        return new SimEffect(
+            module.ModuleId, module.Module.TypeId, module.Effect.Id, module.Effect.Guid, duration, capacitor, 1,
+            Math.Max(0, module.TargetId), null, null, told, told);
+    }
 }
 
 /// <summary>

@@ -742,6 +742,9 @@ private readonly TransitionRuntime _transitions;
                         _warping.TryRemove(accepted.SessionId, out _);
                     if (accepted.Command != SimCommands.Dock)
                         EndInvulnerability(mover);
+                    // a warp closes the hacking window of the pilot (EveJS hackingMgrService: the window closes when the ship enters warp)
+                    if (accepted.Command == SimCommands.WarpTo && HackingService is { } hackingWindow)
+                        Background(() => hackingWindow.CloseOnWarpAsync(mover.Session, mover.CharacterId, CancellationToken.None).AsTask());
                     break;
                 case SimArrived arrived when _pilots.ContainsKey(arrived.SessionId):
                     _warping.TryRemove(arrived.SessionId, out _);

@@ -2013,6 +2013,9 @@ Engine: `dotnet/src/Eve.Hacking` (pure rules, no Host). Sources: EVE University 
 - **Distance indicator.** Empty node shows steps to the nearest core, utility element or data cache, capped at 5 (wiki). Status: wiki.
 - **Start of an attempt.** EveJS starts the attempt when the analyzer activation is accepted (`moduleOperation.js` 3228). The ST-10 plan said "on cycle completion"; eve.rs follows EveJS (the working reference). Status: decided, not yet wired.
 - **Not yet covered.** The Host service, the analyzer body, container placement and the loot on success (D-5) are the next increments. Status: open.
+- **Analyzer window reach (ST-10 c).** EveJS closes a hack on a scene tick; eve.rs checks the reach on the next call of the client's hackingMgr and at each accepted warp. Status: decided (tick deferred).
+- **Attempt start (ST-10 c).** Opened after the simulation accepts the analyzer's start (EveJS moduleOperation.js 3228). Status: decided.
+- **Analyzer kind (ST-10 c).** Data and relic compatibility from the required skills (21718 / 13278). EveJS has an "integrated" kind for an analyzer that needs both; eve.rs accepts a container for either skill. Status: decided.
 
 ## Moon extraction (ST-6a)
 

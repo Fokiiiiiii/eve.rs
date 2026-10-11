@@ -49,9 +49,15 @@ internal sealed partial class CharacterServicesComposition
     }
 
     /// <summary>Space services that run after the others: filaments, jumps, warp vectors, wormholes and structure guests.</summary>
-    private IReadOnlyList<IService> SpaceRpc() =>
+    private IReadOnlyList<IService> SpaceRpc()
+    {
+        // the space simulation is composed before the service list (CharacterServicesComposition: SpaceSimulation, then CharacterServiceList)
+        var hackingSite = new Eve.Services.Space.SpaceHackingSite(spaceSessions ?? throw new InvalidOperationException("the space simulation is composed before the services"));
+        var hackingMgr = new Eve.Services.Space.HackingMgrService(hackingAttempts, hackingSite);
+        spaceSessions.HackingService = hackingMgr;
+        return
     [
-            new Eve.Services.Space.HackingMgrService(hackingAttempts),
+            hackingMgr,
             new Eve.Services.Space.PvpFilamentMgrService(),
             new Eve.Services.Space.RandomJumpMgrService(ReadTravelRpcItemAsync),
             new Eve.Services.Space.WarpVectorMgrService(ReadTravelRpcItemAsync),
@@ -71,4 +77,5 @@ internal sealed partial class CharacterServicesComposition
                 return ValueTask.FromResult<IReadOnlyList<Eve.Services.Core.StructureGuestSnapshot>>(guests);
             }, seedObserverGuestLedger: stationGuestLedger.SeedObserverGuestLedger),
     ];
+    }
 }

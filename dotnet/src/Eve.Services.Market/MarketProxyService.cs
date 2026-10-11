@@ -187,14 +187,14 @@ private const int PlexTypeId = 44992;
     public async ValueTask<PyValue> GetOldPriceHistory(ServiceCall call)
     {
         var type=(int)Integer(call.Arg(0));
-        return MarketHistoryWire.Pair(await HistoryForRegion(await MarketRegion(call),type,call.Cancellation)).Old;
+        return MarketHistoryWire.Pair(now(),await HistoryForRegion(await MarketRegion(call),type,call.Cancellation)).Old;
     }
 
     [Method("GetNewPriceHistory")]
     public async ValueTask<PyValue> GetNewPriceHistory(ServiceCall call)
     {
         var type=(int)Integer(call.Arg(0));
-        return MarketHistoryWire.Pair(await HistoryForRegion(await MarketRegion(call),type,call.Cancellation)).New;
+        return MarketHistoryWire.Pair(now(),await HistoryForRegion(await MarketRegion(call),type,call.Cancellation)).New;
     }
 
     [Method("GetHistoryForManyTypeIDs")]
@@ -212,7 +212,7 @@ private const int PlexTypeId = 44992;
         var entries=new List<KeyValuePair<PyValue,PyValue>>(typeIds.Length);
         foreach(var typeId in typeIds)
         {
-            var pair=MarketHistoryWire.Pair(await HistoryForRegion(region,typeId,call.Cancellation));
+            var pair=MarketHistoryWire.Pair(now(),await HistoryForRegion(region,typeId,call.Cancellation));
             entries.Add(new(new PyInt(typeId),new PyList([pair.Old,pair.New])));
         }
         return new PyDict(entries);
@@ -344,17 +344,17 @@ private const int PlexTypeId = 44992;
     [Method("GetPlexHistory")]
     public async ValueTask<PyValue> GetPlexHistory(ServiceCall call)
     {
-        var pair=MarketHistoryWire.Pair(await HistoryForRegion(await MarketRegion(call),PlexTypeId,call.Cancellation));
+        var pair=MarketHistoryWire.Pair(now(),await HistoryForRegion(await MarketRegion(call),PlexTypeId,call.Cancellation));
         return new PyDict([new KeyValuePair<PyValue,PyValue>(new PyInt(PlexTypeId),new PyList([pair.Old,pair.New]))]);
     }
 
     [Method("GetPlexOldPriceHistory")]
     public async ValueTask<PyValue> GetPlexOldPriceHistory(ServiceCall call) =>
-        MarketHistoryWire.Pair(await HistoryForRegion(await MarketRegion(call),PlexTypeId,call.Cancellation)).Old;
+        MarketHistoryWire.Pair(now(),await HistoryForRegion(await MarketRegion(call),PlexTypeId,call.Cancellation)).Old;
 
     [Method("GetPlexNewPriceHistory")]
     public async ValueTask<PyValue> GetPlexNewPriceHistory(ServiceCall call) =>
-        MarketHistoryWire.Pair(await HistoryForRegion(await MarketRegion(call),PlexTypeId,call.Cancellation)).New;
+        MarketHistoryWire.Pair(now(),await HistoryForRegion(await MarketRegion(call),PlexTypeId,call.Cancellation)).New;
     [Method("PlaceBuyOrder")]
     public async ValueTask<PyValue> PlaceBuyOrder(ServiceCall call)
     {

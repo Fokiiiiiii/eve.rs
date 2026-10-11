@@ -131,9 +131,13 @@ internal sealed partial class CharacterServicesComposition
             var siteContainers = new Eve.Services.Space.SiteContainerStore(source);
             await Eve.Services.Space.SiteContainerStore.MigrateAsync(source);
             var containerRows = (await sde.ReadByFieldAsync("types", "groupID", new long[] { 306, 314, 1207 }))
-                .Select(row => (Name: row.Doc.GetProperty("name").GetProperty("en").GetString() ?? "", TypeId: (int)row.Key, GroupId: row.Doc.GetProperty("groupID").GetInt32()))
+                .Select(row => (Name: row.Doc.GetProperty("name").GetProperty("en").GetString() ?? "", TypeId: (int)row.Key, GroupId: row.Doc.GetProperty("groupID").GetInt32(),
+                    Published: row.Doc.TryGetProperty("published", out var published) && published.ValueKind == System.Text.Json.JsonValueKind.True))
                 .ToList();
-            var containerTypes = containerRows.ToDictionary(row => row.Name, row => (row.TypeId, row.GroupId), StringComparer.Ordinal);
+            // a name several types share (the static data has such names) resolves to one of them, with a warning for the others (SiteContainerTypes)
+            var containerTypes = Eve.Services.Space.Sites.SiteContainerTypes.ByName(
+                containerRows.Select(row => new Eve.Services.Space.Sites.SiteContainerType(row.Name, row.TypeId, row.GroupId, row.Published)),
+                message => Console.Error.WriteLine($"eve-host: {message}"));
             (int TypeId, int GroupId) FallbackOf(int group) => containerRows.Where(row => row.GroupId == group).OrderBy(row => row.TypeId).Select(row => (row.TypeId, row.GroupId)).First();
             var fallbackData = FallbackOf(306);
             var fallbackRelic = FallbackOf(1207);
@@ -296,6 +300,11 @@ internal sealed partial class CharacterServicesComposition
                 Eve.Dungeons.DungeonCatalog.LoadEmbedded(), Eve.Dungeons.WaveRules.LoadEmbedded(), new NpcSelector(npcAuthority),
                 new Eve.Services.Space.SpaceDungeonNpcs(spaceSessions), spaceSchema);
             await dungeonWaves.AttachAsync();
+            // the Sansha incursions (B-L1): their lifecycle, and their staging sites on the dungeon waves (B-S1); the map and the rewards read them
+            await Eve.Services.Space.Incursions.IncursionDirector.MigrateAsync(source, spaceSchema);
+            var incursions = new Eve.Services.Space.Incursions.IncursionDirector(source, foundations.Content, foundations.Scheduler, dungeonWaves, solarSystems, spaceSchema);
+            await incursions.AttachAsync();
+            incursionDirector = incursions;
             if (cosmicSites is { } sitesOfWaves)
             {
                 // the NPC waves of the sites: a kill of a site's NPC is counted by the content runtime; the next wave starts when one is done

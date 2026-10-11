@@ -222,7 +222,7 @@ public static class StructureStateMachine
 
     private static StructureTransition OnUnanchorStarted(StructureSnapshot s, StructureRules rules, long now) =>
         s.UnanchorEndsMs > 0 ? Refuse(s, "ALREADY_UNANCHORING")
-        : s.State is not (StructureState.OnliningVulnerable or StructureState.ShieldVulnerable) ? Refuse(s, "UNANCHOR_NOT_ALLOWED")
+        : StructureState.CancelsUnanchor(s.State) ? Refuse(s, "UNANCHOR_NOT_ALLOWED")
         : Moved(s, s with { UnanchorEndsMs = now + rules.UnanchoringMs });
 
     private static StructureTransition OnReinforceTimeRequested(StructureSnapshot s, ReinforceTimeRequested r, long now)

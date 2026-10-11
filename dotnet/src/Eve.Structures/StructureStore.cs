@@ -171,6 +171,10 @@ public sealed class StructureStore
     public async Task SetDescriptionAsync(NpgsqlConnection connection, NpgsqlTransaction? transaction, long structureId, string description, CancellationToken cancellationToken = default) =>
         await Sql.ExecuteAsync(connection, transaction, Q("UPDATE {schema}.structures SET bio = $2, version = version + 1 WHERE structure_id = $1"), cancellationToken, structureId, description);
 
+    /// <summary>Renames a structure that is not gone (EVE.js <c>renameStructureByID</c>: the name is the one the directory and the ball show).</summary>
+    public async Task SetNameAsync(NpgsqlConnection connection, NpgsqlTransaction? transaction, long structureId, string name, CancellationToken cancellationToken = default) =>
+        await Sql.ExecuteAsync(connection, transaction, Q("UPDATE {schema}.structures SET name = $2, version = version + 1 WHERE structure_id = $1 AND destroyed_ms = 0"), cancellationToken, structureId, name);
+
     public async Task SetProfileAsync(NpgsqlConnection connection, NpgsqlTransaction? transaction, IEnumerable<long> structureIds, long profileId, CancellationToken cancellationToken = default) =>
         await Sql.ExecuteAsync(connection, transaction,
             Q("UPDATE {schema}.structures SET profile_id = $2, version = version + 1 WHERE structure_id = ANY($1) AND destroyed_ms = 0"), cancellationToken, structureIds.ToArray(), profileId);

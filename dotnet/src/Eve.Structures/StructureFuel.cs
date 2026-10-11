@@ -6,6 +6,7 @@ namespace Eve.Structures;
 /// <summary>The EveJS service ids (<c>structureConstants.js</c> STRUCTURE_SERVICE_ID) the structure phase uses, and the service module type that carries each one.</summary>
 public static class StructureServiceIds
 {
+    public const int Docking = 1;
     public const int Reprocessing = 4;
     public const int CynoBeacon = 16;
     public const int CynoJammer = 17;

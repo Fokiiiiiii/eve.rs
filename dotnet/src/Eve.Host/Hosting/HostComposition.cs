@@ -56,6 +56,7 @@ internal static class HostComposition
         LegacyGameStore? legacy = null;
         IGlobalConfigPersistence globalConfigPersistence = new InMemoryGlobalConfigPersistence();
         var online = new OnlineCharacters();
+        CharacterSessions? characterSessions = null;
         if (Env("EVE_PG_URL", "") is { Length: > 0 } pgUrl)
         {
             var schema = Env("EVE_IDENTITY_SCHEMA", PgAccountDirectory.DefaultSchema);
@@ -70,7 +71,7 @@ internal static class HostComposition
             Func<long> clock = () => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
             foundations = await Foundations.CreateAsync(source, clock, Env, message => Console.Error.WriteLine($"eve-host: {message}"));
             legacy = await LegacyGameStoreComposition.OpenAsync(source);
-            (characterServices, space, simulation, crimewatch, calendarStore, calendarAudience, gameRpcCallbacks, keeperRpcCallbacks) = await CharacterServicesComposition.CharacterServicesAsync(source, directory, online, clock, foundations, legacy.Store, legacy.Owner, legacy.Cache, options.NewCharacterExperienceMode, new AccountOmegaStore(directory));
+            (characterServices, space, simulation, crimewatch, calendarStore, calendarAudience, gameRpcCallbacks, keeperRpcCallbacks, characterSessions) = await CharacterServicesComposition.CharacterServicesAsync(source, directory, online, clock, foundations, legacy.Store, legacy.Owner, legacy.Cache, options.NewCharacterExperienceMode, new AccountOmegaStore(directory));
             // every feature has registered its job handlers by now: the scheduler may start running jobs
             await foundations.StartAsync();
         }
@@ -168,6 +169,6 @@ internal static class HostComposition
             accounts,
             () => MarshalCodec.Encode(config.Current()));
 
-        return new HostRuntime(server, registry, legacy, foundations, space, crimewatch, simulation);
+        return new HostRuntime(server, registry, legacy, foundations, space, crimewatch, simulation, characterSessions);
     }
 }

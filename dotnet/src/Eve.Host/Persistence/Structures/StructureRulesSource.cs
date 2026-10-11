@@ -49,6 +49,9 @@ public sealed class StructureRulesSource : IStructureRulesSource
         return new StructureRulesSource(types, rigSizes, systems);
     }
 
+    /// <summary>Whether the type is an Upwell structure that can be anchored (it has a size: the Flex structures are not in this package).</summary>
+    public bool IsAnchorable(int typeId) => _rigSizes.ContainsKey(typeId);
+
     public StructureRules RulesOf(int typeId, int solarSystemId)
     {
         if (!_types.Contains(typeId))

@@ -288,9 +288,10 @@ public interface IRedeemCallbacks
 }
 
 [Service("userSvc")]
-public sealed partial class RedeemService(IRedeemCallbacks callbacks, Func<long, CancellationToken, ValueTask<string?>>? readUserName = null, Func<long, CancellationToken, ValueTask<long?>>? readCharacterCreateFileTime = null, Func<ServiceCall, CancellationToken, ValueTask<PyValue?>>? userRpcHandler = null)
+public sealed partial class RedeemService(IRedeemCallbacks callbacks, Func<long, CancellationToken, ValueTask<string?>>? readUserName = null, Func<long, CancellationToken, ValueTask<long?>>? readCharacterCreateFileTime = null, Func<ServiceCall, CancellationToken, ValueTask<PyValue?>>? userRpcHandler = null, IMultipleTrainingCallbacks? multipleTraining = null)
 {
     private readonly IRedeemCallbacks _callbacks = callbacks ?? throw new ArgumentNullException(nameof(callbacks));
+    private readonly IMultipleTrainingCallbacks? _multipleTraining = multipleTraining;
 
     [Method("GetRedeemTokens")]
     public async ValueTask<PyValue> GetRedeemTokens(ServiceCall call)

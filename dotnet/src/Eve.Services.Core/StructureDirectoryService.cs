@@ -287,7 +287,7 @@ public sealed class StructureDirectoryService(IStructureDirectoryReadCallbacks r
         return result;
     }
 
-    private static bool CanDock(
+    public static bool CanDock(
         StructureDockingAccessSnapshot structure,
         long requestedStructureId,
         long characterId,

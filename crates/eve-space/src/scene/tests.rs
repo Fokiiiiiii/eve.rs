@@ -2654,4 +2654,3 @@ fn a_ship_undocks_from_a_structure_as_it_does_from_a_station() {
     scene.undock(SESSION, spec(), STRUCTURE, NOON).expect("a structure is a dock, whatever its state");
     assert!(scene.contains(SESSION));
 }
-

@@ -264,6 +264,12 @@ internal sealed partial class CharacterServicesComposition
                 sites: new Eve.Services.Space.Sites.ContentCosmicSites(cosmicSites));
             // a system a pilot comes to has its sites (a restart or a system nobody has scanned yet)
             spaceSessions.SystemEntered += system => _ = EnsureSitesAsync(system);
+            // the NPC waves of the dungeons (A-W1): the host runs their sweep and kill subscriber; a feature starts a dungeon through DungeonWaveDirector.StartAsync
+            await Eve.Services.Space.Waves.DungeonWaveDirector.MigrateAsync(source, spaceSchema);
+            var dungeonWaves = new Eve.Services.Space.Waves.DungeonWaveDirector(source, foundations.Content, foundations.Scheduler, foundations.Events,
+                Eve.Dungeons.DungeonCatalog.LoadEmbedded(), Eve.Dungeons.WaveRules.LoadEmbedded(), new NpcSelector(npcAuthority),
+                new Eve.Services.Space.SpaceDungeonNpcs(spaceSessions), spaceSchema);
+            await dungeonWaves.AttachAsync();
             probeScans.Register();
             spaceSessions.ProbeScans = probeScans;
             spaceSessions.DirectionalScans = new Eve.Services.Space.Scanning.SpaceDirectionalScans(spaceSessions, sim, dogma);

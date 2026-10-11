@@ -67,6 +67,7 @@ public sealed class MissionStaticCatalog
     private readonly IReadOnlyList<EpicArcStatic> _arcs;
     private readonly Dictionary<long, List<(long ArcId, EpicArcStep Step)>> _stepsByAgent;
     private readonly Dictionary<long, long> _arcByMission;
+    private readonly Dictionary<long, EpicArcStep> _stepByMission = new();
     private readonly EpicArcAvailability _availability;
     private readonly bool _includeUnavailableArcs;
     private readonly IReadOnlyDictionary<long, string> _siteStatus;
@@ -104,6 +105,7 @@ public sealed class MissionStaticCatalog
                     _stepsByAgent[step.AgentId] = steps = [];
                 steps.Add((arc.ArcId, step));
                 _arcByMission.TryAdd(step.MissionId, arc.ArcId);
+                _stepByMission.TryAdd(step.MissionId, step);
             }
         }
     }
@@ -133,6 +135,18 @@ public sealed class MissionStaticCatalog
         !IsLoaded || !_stepsByAgent.TryGetValue(agentId, out var steps)
             ? NoIds
             : steps.Where(step => IsOfferable(step.ArcId)).Select(step => step.Step.MissionId).Distinct().Order().ToArray();
+
+    /// <summary>
+    /// A talk step: an epic arc step with neither a kill nor a courier objective, completed by talking to the agent of the step that follows it.
+    /// </summary>
+    public bool IsTalkStep(long missionId) =>
+        _stepByMission.ContainsKey(missionId) && Mission(missionId) is { Kill: null, Courier: null };
+
+    /// <summary>The agents of the steps that follow an arc step (the agent a talk step is completed with).</summary>
+    public IReadOnlyList<long> NextAgentsOf(long missionId) =>
+        _stepByMission.TryGetValue(missionId, out var step)
+            ? step.NextMissionIds.Where(_stepByMission.ContainsKey).Select(next => _stepByMission[next].AgentId).Distinct().ToArray()
+            : NoIds;
 
     /// <summary>
     /// The mission IDs the server disables. eve.rs disables none; see <see cref="MissionDataGaps.DisabledMissions"/>.

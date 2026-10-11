@@ -76,18 +76,38 @@ public sealed class MissionDungeonRuntime(
 
         if (outcome == "completed")
         {
-            var mission = catalog.Mission(record.Content.MissionId)!;
-            if (mission.Reward?.RewardTypeId == IskTypeId && mission.Reward.RewardQuantity > 0 && agentPlaceOf(record.AgentId) is { } place)
-            {
-                await host.CreditIskAsync(owner, mission.Reward.RewardQuantity, place.CorporationId, AgentMissionRewardRefType,
-                    $"Agent mission reward: {mission.NameEn}", $"agent-mission:{owner}:{record.Content.MissionId}:{instanceId}", cancellationToken);
-            }
-            await TransitionAsync(() => store.CompleteAsync(owner, record.AgentId, now(), $"complete:{instanceId}", cancellationToken));
+            await CompleteWithRewardAsync(owner, record, $"dungeon:{instanceId}", $"complete:{instanceId}", cancellationToken);
         }
         else
         {
             await TransitionAsync(() => store.FailAsync(owner, record.AgentId, now(), $"fail:{instanceId}:{outcome}", cancellationToken));
         }
+    }
+
+    /// <summary>
+    /// A talk step completes when the character talks to the agent of the step after it, while they are together (in the station, or in space in
+    /// the agent's system). The reward is paid under the step's key, so a replayed conversation pays nothing.
+    /// </summary>
+    public async Task OnConversationAsync(long characterId, long agentId, bool together, CancellationToken cancellationToken = default)
+    {
+        if (!together) return;
+        foreach (var record in (await store.ReadAsync(characterId, cancellationToken)).Where(item => item.State == AgentMissionState.Accepted))
+        {
+            var missionId = record.Content.MissionId;
+            if (!catalog.IsTalkStep(missionId) || !catalog.NextAgentsOf(missionId).Contains(agentId)) continue;
+            await CompleteWithRewardAsync(characterId, record, $"talk:{missionId}", $"talk:{missionId}:{agentId}", cancellationToken);
+        }
+    }
+
+    private async Task CompleteWithRewardAsync(long owner, AgentMissionRecord record, string rewardKey, string reference, CancellationToken cancellationToken)
+    {
+        var mission = catalog.Mission(record.Content.MissionId)!;
+        if (mission.Reward?.RewardTypeId == IskTypeId && mission.Reward.RewardQuantity > 0 && agentPlaceOf(record.AgentId) is { } place)
+        {
+            await host.CreditIskAsync(owner, mission.Reward.RewardQuantity, place.CorporationId, AgentMissionRewardRefType,
+                $"Agent mission reward: {mission.NameEn}", $"agent-mission:{owner}:{record.Content.MissionId}:{rewardKey}", cancellationToken);
+        }
+        await TransitionAsync(() => store.CompleteAsync(owner, record.AgentId, now(), reference, cancellationToken));
     }
 
     private static async Task TransitionAsync(Func<Task<AgentMissionChange?>> transition)

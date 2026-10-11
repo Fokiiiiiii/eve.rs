@@ -78,7 +78,7 @@ public class MissionDungeonRuntimeTests
         await runtime.OnDungeonOutcomeAsync("completed", Pilot, "dungeon.3509", 77, default);
         var credit = Assert.Single(host.Credits);
         Assert.Equal((Pilot, 100000L, Corporation, 33), (credit.Character, credit.Amount, credit.Counterparty, credit.RefType));
-        Assert.Equal("agent-mission:" + Pilot + ":9101:77", credit.Key);
+        Assert.Equal("agent-mission:" + Pilot + ":9101:dungeon:77", credit.Key);
         Assert.Equal(AgentMissionState.Completed, (await store.ReadAsync(Pilot, Agent))!.State);
 
         await runtime.OnDungeonOutcomeAsync("completed", Pilot, "dungeon.3509", 77, default);

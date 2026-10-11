@@ -1338,3 +1338,14 @@ follow a completed step, with forks, the 90-day restart and the held-back sites 
 | DONE (tests) | `GetAgentLocationWrap` on the bound agent (station, in space with the agentsInSpace spawn data, solar system); unknown agentMgr methods answer a named error instead of None | `AgentMissionService.cs` (`AgentLocationWrap`); `AgentLocationWrapTests` (3); the 631 Services.Core tests pass on eve_p3 |
 | OPEN | Journal text (`GetMissionBriefingInfo`, objectives), `GetMissionObjectiveInfo`, `GetReplayTimestamp`, the warp calls | next slice; they answer the named error until built |
 | OPEN | In-space agents: placement rule, the agent as a space entity, warp to the agent, talk steps (arc 29 step 2) | next slice (owner decision 1: the rule position) |
+
+## 51. Mission execution X3 step 1: in-space agents and arc 29 steps 1-2 (2026-10-11)
+
+| Status | Item | Where / blocker |
+|---|---|---|
+| DONE (tests) | In-space agents are put into the scene when a pilot enters their system: ball = agent ID, ship type and group from agentsInSpace, owner corporation; position 20 km from the system centre at the agent-ID angle (owner rule, not CCP data) | `Eve.Services.Core/InSpaceAgentPlacement.cs`; `Eve.Services.Space/SpaceContainers.Agents.cs`; `MissionComposition.cs` (`PutInSpaceAgents`); `InSpaceAgentPlacementTests` |
+| DONE (tests) | A talk step completes when the pilot talks to the next step's agent, in the station or in space in the agent's system; the reward is paid once under the step's key | `MissionDungeonRuntime.OnConversationAsync`; `AgentDialogueSources.OnConversation`; `Arc29StepsTests` (PostgreSQL) |
+| DONE (tests) | Arc 29 steps 1-2 through the store, the dialogue and the runtime: offer 14117, accept, dungeon in Arnon, completion (100,000 ISK once), talk 14118 with Tevis Jak in Tar, completion, offer 14119 | `Arc29StepsTests` (with the generic switch on) |
+| OPEN | Warp and approach to the in-space agent in the live client (the client uses its own ballpark commands; the server-side warp calls `WarpToLocation` and `WarpToAgentInSpace` still answer the named error) | next slice |
+| OPEN | Mission objective window (`GetMissionObjectiveInfo`, `GetMissionBriefingInfo`) | next slice (X3 step 2) |
+| HELD | Arc 29 on by default | kept held back: step 1's site is the family-derived template 3509 and its Damsel content is missing (owner decision 2); `EVE_MISSION_INCLUDE_GENERIC_ARCS=1` runs it |

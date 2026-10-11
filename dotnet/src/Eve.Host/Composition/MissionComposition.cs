@@ -265,7 +265,16 @@ internal sealed partial class CharacterServicesComposition
                         return null;
                     return new Eve.Agents.AgentMissionContent(mission.MissionId, mission.NameId, mission.NameEn, "", false);
                 },
-                () => DateTimeOffset.UtcNow));
+                () => DateTimeOffset.UtcNow,
+                // a talk step completes when the pilot talks to the next agent, in the station or in space in the agent's system (A-X3)
+                async (characterId, agent, atLocation, ct) =>
+                {
+                    if (missionDungeons is null) return;
+                    var together = agent.IsInSpace
+                        ? agent.SolarSystemId is { } system && spaceSessions is not null && spaceSessions.IsPilotInSystem(characterId, (int)system)
+                        : atLocation;
+                    await missionDungeons.OnConversationAsync(characterId, agent.AgentId, together, ct);
+                }));
         await AttachMissionDungeonsAsync();
     }
 
@@ -305,6 +314,21 @@ internal sealed partial class CharacterServicesComposition
     }
 
     private const string MissionDungeonSweepJob = "mission.dungeons.sweep";
+
+    /// <summary>The SDE group of the agents in space (type 30887 "Tevis Jak's Epithal" is group 517).</summary>
+    private const int AgentInSpaceGroupId = 517;
+
+    /// <summary>The agents in space of a system go into the scene when a pilot enters it (placement: InSpaceAgentPlacement).</summary>
+    private void PutInSpaceAgents(int solarSystemId)
+    {
+        if (spaceContainers is null || solarSystems.Get(solarSystemId) is not { } system) return;
+        foreach (var agent in agentMissionAgentRows)
+        {
+            if (!agent.IsInSpace || agent.SolarSystemId != solarSystemId || agent.TypeId is not { } typeId) continue;
+            var position = Eve.Services.Core.InSpaceAgentPlacement.Position(agent.AgentId, system.X, system.Y, system.Z);
+            spaceContainers.PutAgentInSpace(solarSystemId, agent.AgentId, (int)typeId, AgentInSpaceGroupId, (int)agent.CorporationId, position);
+        }
+    }
 
     private static async Task MissionDungeonOutcomeAsync(MissionDungeonRuntime runtime, string outcome, EventContext context, CancellationToken token)
     {

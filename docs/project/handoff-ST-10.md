@@ -23,12 +23,17 @@ Updated at every push. Plan: scratchpad `specs/structures_phase.md`, section ST-
    Host routing: `HackingCompositionTests` (1 PgFact) builds the real composition and calls `hackingMgr` through the registry; it found and
    fixed a start-up failure with `EVE_SIM=off` (the service now registers without a space, with no reach).
    Gaps: reach is checked per call, not per tick; the sim's own range rule still applies to the cycle.
-4. **Containers, loot and clear (d1, d2 built; end-to-end test and emptying not done).** Placement, persistence, find, failures, destruction
-   and clear on a win are in `SiteContainerHacks` / `SiteContainerStore` (tests `SiteContainerTests`). A win also puts the loot of the
-   container's profile (`SiteLoot`: EveJS generic_data_loot / generic_relic_loot, all tags, SDE names) into the container's cargo, owned by the
-   winner (tests `SiteLootTests`, 7 passed with the container tests). Still open: the container is a deployable ball, not an inventory item, so its
-   cargo is keyed by the ball id (the client cannot open it yet); site completion on emptying (EveJS) and removing an emptied ball; the end-to-end
-   test (site -> container -> attempt through the service -> win -> loot -> cleared -> site completion).
+4. **Containers, loot, clear and the end-to-end chain (built; two EveJS items open).** A new data or relic site places its containers in
+   its fill transaction (`CosmicSiteDirector.PlaceContainersAsync`): each container is an inventory item of its own (`NewContainerAsync`),
+   its id is the container's, and its row is in `site_containers` (sites schema, migration 0001). The containers go into the scene on the fill
+   and on each pilot's entry. `SpaceHackingSite.Find` reads them. A win puts the profile's loot (`SiteLoot`: EveJS generic_data_loot /
+   generic_relic_loot, all tags) into the container's cargo, owned by the winner, clears the row and publishes `site.container.cleared`. Two lost
+   attempts destroy the row and remove the ball; failures survive a restart. Tests: `SiteContainerTests` (4), `SiteLootTests` (3),
+   `ContainerSiteEndToEndTests` (1: fill -> containers -> attempts through `HackingMgrService` with a winning board -> loot in cargo -> cleared ->
+   the site leaves the active list). Open, both EveJS: (a) the site completes on the win, not when the hacked containers are emptied; (b) a
+   cleared container's ball stays in the scene (EveJS removes an emptied one). Both recorded in DEVIATIONS.
+   Fixed in this round: the d1 fill never wrote its placement (the placement code was lost before the d1 commit); the test that caught it is the
+   end-to-end one.
 `hackOrbital` (Data Subverter) stays refused.
 
 ## Gotchas

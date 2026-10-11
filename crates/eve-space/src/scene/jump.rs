@@ -76,6 +76,7 @@ impl Scene {
             now
         };
         let leaves_at = (now + JUMP_DELAY).max(boundary + JUMP_EFFECT_DELAY);
+        let mut out = self.clear_tether_policy(session, now);
         let pilot = self.pilots.get_mut(&session).expect("checked above");
         let ship = &mut pilot.ship;
         if !matches!(ship.course, Course::Stop) || ship.speed_fraction > 0.0 || speed_of(ship.velocity) > 0.5
@@ -115,7 +116,7 @@ impl Scene {
             ),
             payload::action(stamp, "Stop", [ship_id]),
         ];
-        let mut out = self.tell_all(session, actions.into());
+        out.extend(self.tell_all(session, actions.into()));
         out.push(Out::Jumping {
             session,
             command: code,
@@ -172,6 +173,7 @@ impl Scene {
         if capacitor.charge_at(now) < need {
             return refused("NOT_ENOUGH_CAPACITOR");
         }
+        let mut out = self.clear_tether_policy(session, now);
         let stamp = self.next_stamp(now);
         let pilot = self.pilots.get_mut(&session).expect("checked above");
         let (before, after) = match pilot.modules.capacitor.as_mut() {
@@ -218,7 +220,7 @@ impl Scene {
             ),
             payload::action(stamp, "Stop", [ship_id]),
         ];
-        let mut out = vec![Self::charge_told(session, owner, ship_no, now, after, before)];
+        out.push(Self::charge_told(session, owner, ship_no, now, after, before));
         out.extend(self.tell_all(session, actions.into()));
         out.push(Out::Jumping { session, command: code, destination_system, destination_gate: 0 });
         out
@@ -239,6 +241,7 @@ impl Scene {
             self.settle_pilot(session, now);
             // the jump stops what the ship runs before it leaves (EVE.js stops every active module at a stargate jump)
             told.extend(self.stop_all_modules(session, now));
+            told.extend(self.clear_tether_policy(session, now));
             let Some(mut pilot) = self.pilots.remove(&session) else { continue };
             let Some(jump) = pilot.jump.take() else { continue };
             pilot.clear_overheat_for_jump();
@@ -294,6 +297,7 @@ impl Scene {
         pilot.docking = None;
         pilot.flight = None;
         pilot.jump = None;
+        pilot.tether = Default::default();
         pilot.jumped_in = true;
         // the client binds the ballpark of this system afresh, and is then sent what is in view
         pilot.bound = false;

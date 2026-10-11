@@ -65,11 +65,13 @@ impl Scene {
     /// The host takes a structure out of space: its body goes and those who had it in view are told (`RemoveBalls`). Only a structure is taken so.
     pub(crate) fn remove_structure(&mut self, structure_id: i64, at: i64) -> Vec<Out> {
         let Some(index) = self.structure_index(structure_id) else { return Vec::new() };
+        let mut out = self.break_structure_tethers(structure_id, at);
         Arc::make_mut(&mut self.system).bodies.remove(index);
         self.structure_health.remove(&structure_id);
         let stamp = self.next_stamp(at);
         let removed = payload::remove_ships(stamp, [structure_id]);
-        self.structure_audience().into_iter().map(|session| Self::update(session, vec![removed.clone()])).collect()
+        out.extend(self.structure_audience().into_iter().map(|session| Self::update(session, vec![removed.clone()])));
+        out
     }
 
     /// The host sets a structure's slim state: those who have it in view are told its slim item again (`OnSlimItemChange`). A state already

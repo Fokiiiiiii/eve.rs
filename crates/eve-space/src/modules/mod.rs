@@ -913,6 +913,15 @@ impl Modules {
         self.running.iter().map(|run| (&run.effect, run.cycle_start))
     }
 
+    pub(crate) fn active_or_pending_effects(&self) -> impl Iterator<Item = &Effect> {
+        self.running.iter().map(|run| &run.effect)
+            .chain(self.pending_starts.iter().map(|start| &start.effect))
+    }
+
+    pub(crate) fn repair_burnt_out(&mut self, module_id: i64) {
+        self.burnt_out.retain(|id| *id != module_id);
+    }
+
     pub(crate) fn is_mjd_spooling(&self) -> bool {
         self.running
             .iter()

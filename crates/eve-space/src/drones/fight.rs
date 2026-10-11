@@ -51,6 +51,9 @@ impl Scene {
                 ai.next_shot =
                     now + (effect.duration_ms * crate::scene::TICKS_PER_SECOND as f64 / 1000.0) as i64;
             }
+            if let Some(controller) = self.controller_of_drone(session).filter(|id| *id != 0) {
+                out.extend(self.clear_tether_policy(controller, now));
+            }
             out.extend(self.cycle_fx(session, &effect, now));
             out.extend(self.fire_turret(session, &effect, now));
         }
@@ -71,6 +74,14 @@ impl Scene {
             out.extend(self.go_home(session, IDLE, now));
         }
         out
+    }
+
+    pub(crate) fn drone_is_attacking(&self, session: SessionId) -> bool {
+        self.activity_of(session) == COMBAT && self.drones.get(&session).is_some_and(|ai| {
+            ai.landing.as_ref().is_some_and(|effect| effect.offensive())
+                || self.pilots.get(&session).and_then(|pilot| pilot.ship.npc.as_ref())
+                    .is_some_and(|npc| !npc.combat.weapons.is_empty())
+        })
     }
 
     /// The client is told that the drone's effect plays at its target (`OnSpecialFX`), to those who look on as to its pilot.
@@ -137,6 +148,10 @@ impl Scene {
         let mut out = Vec::new();
         if let Some(ended) = self.drones.get_mut(&session).and_then(|ai| ai.ending.take()) {
             out.extend(self.land_remote(session, &ended, now));
+        }
+        if effect.offensive()
+            && let Some(controller) = self.controller_of_drone(session).filter(|id| *id != 0) {
+            out.extend(self.clear_tether_policy(controller, now));
         }
         let landing = Effect { duration_ms: lasting_ms, ..effect.clone() };
         let Some((_, _, when)) = landing.remote() else { return out };

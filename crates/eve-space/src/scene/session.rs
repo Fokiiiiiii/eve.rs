@@ -262,6 +262,7 @@ impl Scene {
             })
             .collect();
         for (session, station_id) in due {
+            told.extend(self.clear_tether_policy(session, now));
             if let Some(pilot) = self.pilots.remove(&session) {
                 told.push(Out::Docked { session, station_id, condition: Self::condition_of(&pilot, now) });
                 told.extend(self.drop_targeting(pilot.ship.spec.ship_id, &pilot.targeting, now));
@@ -289,6 +290,7 @@ impl Scene {
         told.extend(self.reconcile_wrecks(now));
         told.extend(self.reconcile_asteroids(now));
         told.extend(self.expire_wrecks(now));
+        told.extend(self.tick_tethers(now));
         self.with_backlog(told)
     }
 }

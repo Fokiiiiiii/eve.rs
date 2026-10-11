@@ -37,7 +37,7 @@ use crate::weapons::{Aoe, Arc, Charge, Spool, Turret};
 use crate::wreck::WreckKind;
 use crate::world::StructureStatus;
 
-pub const PROTOCOL_VERSION: u16 = 61;
+pub const PROTOCOL_VERSION: u16 = 62;
 /// The message kinds.
 pub mod kind;
 
@@ -295,6 +295,13 @@ pub struct BuffEntry {
     pub collection_id: i32,
     pub value: f64,
     pub remaining_ms: f64,
+}
+
+/// A host-authorized structure and its SDE tether range, measured between surfaces.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct TetherCandidate {
+    pub structure_id: i64,
+    pub range: f64,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -769,6 +776,20 @@ pub enum Message {
         desired_range: f64,
         actual_distance: f64,
     },
+    /// Replaces the pilot's entire allowed tether list; lease expiry removes permission.
+    TetherPolicy {
+        session_id: u64,
+        blocked_for_ms: u64,
+        lease_ms: u64,
+        candidates: Vec<TetherCandidate>,
+    },
+    /// A simulation-owned tether transition (zero structure means off).
+    TetherChanged {
+        session_id: u64,
+        previous_structure_id: i64,
+        structure_id: i64,
+        repairing: bool,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -869,6 +890,8 @@ impl Message {
             Self::PlaceInhibitor(_) => kind::PLACE_INHIBITOR,
             Self::PlaceCynoBeacon(_) => kind::PLACE_CYNO_BEACON,
             Self::SetDisruptorActive { .. } => kind::SET_DISRUPTOR_ACTIVE,
+            Self::TetherPolicy { .. } => kind::TETHER_POLICY,
+            Self::TetherChanged { .. } => kind::TETHER_CHANGED,
             Self::SetAnalysisBeaconState { .. } => kind::SET_ANALYSIS_BEACON_STATE,
         }
     }

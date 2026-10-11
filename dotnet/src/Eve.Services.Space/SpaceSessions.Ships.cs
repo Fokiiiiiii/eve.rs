@@ -130,6 +130,7 @@ public sealed partial class SpaceSessions
             _log?.Invoke($"undock of character {characterId} refused: {transition.Refusal}");
             return None;
         }
+        await RefreshTetherPolicyAsync(session, cancellationToken);
         return Py.Tuple(boundObjectId is null ? None : new PyStr(boundObjectId),
             new PyLong(Py.FileTimeFromUnixMs(_nowUnixMs() + SessionChangeCooldownMs)));
     }
@@ -233,6 +234,7 @@ public sealed partial class SpaceSessions
                 var ejected = result!;
                 _ejectedShips[ejected.Ship.Id] = new EjectedShip(
                     pilot.CharacterId, fitting.Character.CorporationId, ejected.Ship.TypeId, pilot.SolarSystemId);
+                EndTetherPilot(pilot);
                 pilot.End();
                 var capsulePilot = new Pilot(
                     session, pilot.CharacterId, ejected.PilotShip.Id, ejected.PilotShip.TypeId, pilot.SolarSystemId, 0);
@@ -242,6 +244,7 @@ public sealed partial class SpaceSessions
                     return Task.FromResult(false);
                 }
                 session.Change(("shipid", new PyLong(ejected.PilotShip.Id)));
+                Background(() => RefreshTetherPolicyAsync(session));
                 return Task.FromResult(true);
             },
             (result, _) =>
@@ -381,6 +384,7 @@ public sealed partial class SpaceSessions
 
                 var nextPilot = new Pilot(
                     session, characterId, shipId, nextShipTypeId, currentPilot.SolarSystemId, 0);
+                EndTetherPilot(currentPilot);
                 currentPilot.End();
                 if (!_pilots.TryUpdate(id, nextPilot, currentPilot))
                 {
@@ -388,6 +392,7 @@ public sealed partial class SpaceSessions
                     return Task.FromResult(false);
                 }
                 session.Change(("shipid", new PyLong(shipId)));
+                Background(() => RefreshTetherPolicyAsync(session));
                 return Task.FromResult(true);
             },
             async (result, _) =>
@@ -532,6 +537,7 @@ public sealed partial class SpaceSessions
                 pilot.Session.SendNotification("OnJumpCloakCancelled", "shipid", InventoryWire.Id(pilot.ShipId));
             }
             pilot.Session.SendNotification("OnInvulnCancelled", "shipid", InventoryWire.Id(pilot.ShipId));
+            TetherProtectionEnded(pilot);
         }
     }
 

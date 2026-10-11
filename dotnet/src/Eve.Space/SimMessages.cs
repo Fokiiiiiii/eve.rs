@@ -1036,6 +1036,14 @@ public sealed record SimRemoveStructure(long StructureId) : SimMessage;
 /// <summary>The host changes a structure's slim state (protocol 59); a structure not in space is left alone.</summary>
 public sealed record SimSetStructureState(int SolarSystemId, long StructureId, SimStructureStatus Status) : SimMessage;
 
+public sealed record SimTetherCandidate(long StructureId, double Range);
+
+public sealed record SimTetherPolicy(
+    ulong SessionId, ulong BlockedForMs, ulong LeaseMs, IReadOnlyList<SimTetherCandidate> Candidates) : SimMessage;
+
+public sealed record SimTetherChanged(
+    ulong SessionId, long PreviousStructureId, long StructureId, bool Repairing) : SimMessage;
+
 /// <summary>A mobile warp disruptor the host keeps a record of, put in space where its pilot dropped it (protocol 48). Its disruption is on while <see cref="Active"/>
 /// (it is anchored); <see cref="Range"/> is the warp disruption range in metres.</summary>
 public sealed record SimPlaceDisruptor(

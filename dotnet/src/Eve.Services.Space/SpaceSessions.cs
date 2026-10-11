@@ -53,6 +53,21 @@ public sealed partial class SpaceSessions : IDisposable, ISpaceTargeting, ISpace
         /// <summary>Whether the protection is the cloak of a ship that has come through a stargate (its end is told with one more notification).</summary>
         public bool JumpCloak { get; } = jumpCloak;
 
+        public bool ProtectionEnded;
+        public bool CynoJumpPending;
+        public bool CynoArrival;
+        public long TetherDelayUntilMs;
+        public long TetherStructureId;
+        public long TetherPolicyExpiresMs;
+        public long TetherPolicyBlockedUntilMs;
+        public IReadOnlyList<SimTetherCandidate> TetherAllowedCandidates = [];
+        public bool TetherRepairing;
+        public bool BallparkBound;
+        public TetherGeometry? TetherGeometry;
+        public SemaphoreSlim TetherPolicyGate { get; } = new(1, 1);
+        public object TetherSync { get; } = new();
+        public Task TetherWork { get; set; } = Task.CompletedTask;
+
         private int _ended;
 
         /// <summary>Stops the timer that ends the protection when it runs out (set when the timer is; the pilot ends it by hand first when a command breaks the protection).</summary>
@@ -349,6 +364,7 @@ private readonly TransitionRuntime _transitions;
 
     public void Dispose()
 {
+    StopTetherRefresh();
     if (_ownsTimers) _timers.Dispose();
     _sim.Received -= OnReceived;
     _sim.Lost -= OnLost;
@@ -599,6 +615,7 @@ private readonly TransitionRuntime _transitions;
         _pilots[sessionId] = new Pilot(
             session, characterId, snapshot.Ship.Id, snapshot.Ship.TypeId,
             systemId, FileTimeNow(), snapshot.Character.StationId);
+        await RefreshTetherPolicyAsync(session, cancellationToken);
         if (PilotEntered is { } entered)
         {
             try
@@ -735,6 +752,9 @@ private readonly TransitionRuntime _transitions;
         {
             switch (message)
             {
+                case SimTetherChanged tether:
+                    HandleTetherChanged(tether);
+                    break;
                 case SimRemoteRepairCycle cycle:
                     HandleMutadaptiveRepairCycle(cycle);
                     break;
@@ -766,14 +786,17 @@ private readonly TransitionRuntime _transitions;
                     break;
                 case SimDocked docked when _pilots.TryGetValue(docked.SessionId, out var pilot):
                     _warping.TryRemove(docked.SessionId, out _);
+                    EndTetherPilot(pilot);
                     Background(() => FinishDockingAsync(pilot, docked.StationId, docked.Condition));
                     break;
                 case SimJumped jumped when _pilots.TryGetValue(jumped.SessionId, out var jumper):
                     _warping.TryRemove(jumped.SessionId, out _);
+                    EndTetherPilot(jumper);
                     Background(() => FinishJumpAsync(jumper, jumped));
                     break;
                 case SimDestroyed destroyed when _pilots.TryGetValue(destroyed.SessionId, out var victim) && victim.ShipId == destroyed.ShipId:
                     _warping.TryRemove(destroyed.SessionId, out _);
+                    EndTetherPilot(victim);
                     ForgetLockedTarget(destroyed.ShipId);
                     _lockedTargets.TryRemove(destroyed.SessionId, out _);
                     Background(() => FinishDeathAsync(victim, destroyed));
@@ -850,10 +873,11 @@ private readonly TransitionRuntime _transitions;
 
 
 
-    private static void Forward(ClientSession session, SimNotify notify)
+    private void Forward(ClientSession session, SimNotify notify)
     {
         var args = MarshalCodec.Decode(notify.Args.ToArray()) is PyTuple tuple ? tuple.Items : [];
         session.SendNotification(notify.Name, notify.IdType, [.. args]);
+        if (notify.Name == "SetState" || notify.Name == "DoDestinyUpdate" && args.Any(HasBallparkState)) ReplayTetherFx(session);
     }
 
     // ── the end of a jump ────────────────────────────────────────────────────
@@ -982,9 +1006,13 @@ private readonly TransitionRuntime _transitions;
         if (!_pilots.TryRemove(id, out var pilot))
             return;
 
+        if (pilot.CynoArrival) TetherProtectionEnded(pilot);
+        EndTetherPilot(pilot);
         pilot.End();
         try
         {
+            try { await pilot.TetherWork.ConfigureAwait(false); }
+            catch (Exception error) { _log?.Invoke($"tether work on disconnect failed: {error.Message}"); }
             await CancelRepairsAsync(pilot, CancellationToken.None).ConfigureAwait(false);
             var chargesSaved = true;
             try

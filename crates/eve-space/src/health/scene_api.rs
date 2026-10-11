@@ -53,6 +53,9 @@ impl Scene {
         now: i64,
         resisted: bool,
     ) -> (Vec<Out>, Option<Applied>) {
+        if self.is_tethered(ship_id, now) {
+            return (Vec::new(), None);
+        }
         let Some(session) = self.pilots.iter().find(|(_, p)| p.ship.spec.ship_id == ship_id).map(|(s, _)| *s)
         else {
             return (Vec::new(), None);

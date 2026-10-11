@@ -1058,3 +1058,86 @@ fn a_ship_that_has_docked_is_taken_from_the_view_of_the_others_by_the_poll() {
     assert_eq!(recipients(&gone), [(OTHER, "Docked".to_string()), (SESSION, "DoDestinyUpdate".to_string())]);
     assert_eq!(sim.ships(), 1, "the first ship is still there");
 }
+
+#[test]
+fn tether_protocol62_frames_round_trip_in_little_endian_with_standard_bool() {
+    let policy = Message::TetherPolicy {
+        session_id: 7, blocked_for_ms: 1_500, lease_ms: 5_000,
+        candidates: vec![
+            crate::link::TetherCandidate { structure_id: 1_040_000_000_001, range: 10_000.0 },
+            crate::link::TetherCandidate { structure_id: 1_040_000_000_002, range: 20_000.0 },
+        ],
+    };
+    let frame = policy.encode();
+    assert_eq!(u32::from_le_bytes(frame[..4].try_into().unwrap()), 61);
+    assert_eq!(frame[4], 80);
+    assert_eq!(&frame[5..13], &7_u64.to_le_bytes());
+    assert_eq!(&frame[13..21], &1_500_u64.to_le_bytes());
+    assert_eq!(&frame[21..29], &5_000_u64.to_le_bytes());
+    assert_eq!(&frame[29..33], &2_u32.to_le_bytes());
+    assert_eq!(&frame[33..41], &1_040_000_000_001_u64.to_le_bytes());
+    assert_eq!(&frame[41..49], &10_000_f64.to_le_bytes());
+    assert_eq!(Message::decode(&frame[4..]).unwrap(), policy);
+    let changed = Message::TetherChanged {
+        session_id: 7, previous_structure_id: 0, structure_id: 1_040_000_000_001, repairing: true,
+    };
+    let frame = changed.encode();
+    assert_eq!(u32::from_le_bytes(frame[..4].try_into().unwrap()), 26);
+    assert_eq!(frame[4], 81);
+    assert_eq!(frame[29], 1);
+    assert_eq!(Message::decode(&frame[4..]).unwrap(), changed);
+    let mut invalid = frame[4..].to_vec();
+    *invalid.last_mut().unwrap() = 2;
+    assert!(matches!(Message::decode(&invalid), Err(crate::link::DecodeError::BadValue("tether repairing"))));
+}
+
+#[test]
+fn tether_codec_rejects_nonpositive_nonfinite_ranges_truncation_and_trailing_bytes() {
+    for range in [0.0, -1.0, f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+        let frame = Message::TetherPolicy {
+            session_id: SESSION, blocked_for_ms: 0, lease_ms: 10,
+            candidates: vec![crate::link::TetherCandidate { structure_id: 1, range }],
+        }.encode();
+        assert!(matches!(Message::decode(&frame[4..]), Err(crate::link::DecodeError::BadValue("tether range"))));
+    }
+    let policy = Message::TetherPolicy { session_id: SESSION, blocked_for_ms: 0, lease_ms: 10, candidates: Vec::new() };
+    let frame = policy.encode();
+    let mut malformed = frame[4..].to_vec();
+    malformed[25..29].copy_from_slice(&u32::MAX.to_le_bytes());
+    assert_eq!(Message::decode(&malformed), Err(crate::link::DecodeError::Truncated));
+    let mut trailing = frame[4..].to_vec();
+    trailing.push(0);
+    assert_eq!(Message::decode(&trailing), Err(crate::link::DecodeError::Trailing));
+}
+
+#[test]
+fn tether_host_policy_dispatches_to_the_real_scene_and_transitions_return_to_the_host() {
+    let mut simulation = undocked();
+    let placement = crate::scene::tests::structure_placement(&simulation.scenes[&SYSTEM], NOON);
+    let structure_id = placement.structure_id;
+    let position = [placement.position[0] + placement.radius + spec().radius + 500.0, 0.0, 0.0];
+    simulation.handle(Message::PlaceStructure(Box::new(placement)), NOON).unwrap();
+    let pilot = simulation.scenes.get_mut(&SYSTEM).unwrap().pilots.get_mut(&SESSION).unwrap();
+    pilot.ship.position = eve_destiny::Vec3::new(position[0], position[1], position[2]);
+    pilot.ship.velocity = eve_destiny::Vec3::ZERO;
+    pilot.ship.speed_fraction = 0.0;
+    pilot.ship.course = crate::ship::Course::Stop;
+    pilot.protected_until = NOON;
+    let policy = Message::TetherPolicy {
+        session_id: SESSION, blocked_for_ms: 0, lease_ms: 1_000,
+        candidates: vec![crate::link::TetherCandidate { structure_id, range: 1_000.0 }],
+    };
+    assert_eq!(simulation.handle(policy.clone(), NOON).unwrap(), [
+        Message::TetherChanged { session_id: SESSION, previous_structure_id: 0, structure_id, repairing: false },
+    ]);
+    assert!(simulation.handle(policy, NOON).unwrap().is_empty());
+    let expired = simulation.poll(NOON + SECOND);
+    assert!(expired.iter().any(|message| matches!(message,
+        Message::TetherChanged { session_id: SESSION, previous_structure_id, structure_id: 0, repairing: false }
+        if *previous_structure_id == structure_id)));
+    let wrong_direction = simulation.handle(
+        Message::TetherChanged { session_id: SESSION, previous_structure_id: 0, structure_id, repairing: false }, NOON,
+    ).unwrap_err();
+    assert!(wrong_direction.0.contains("kind 81"));
+    assert_eq!(crate::link::PROTOCOL_VERSION, 62);
+}

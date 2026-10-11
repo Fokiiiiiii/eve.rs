@@ -103,8 +103,13 @@ pub(crate) struct Targeting {
 }
 
 impl Targeting {
-    fn is_empty(&self) -> bool {
+    pub(crate) fn is_empty(&self) -> bool {
         self.pending.is_empty() && self.locked.is_empty()
+    }
+
+    /// Held and pending targets without allocating a sorted snapshot.
+    pub(crate) fn all_targets(&self) -> impl Iterator<Item = i64> + '_ {
+        self.locked.iter().map(|lock| lock.target).chain(self.pending.iter().map(|lock| lock.target))
     }
 
     /// The targets being locked, in the order they were asked for.
@@ -187,7 +192,7 @@ impl Scene {
                 state: pilot.ship.health.state_at(now),
                 has_damage_state: true,
                 warping: pilot.flight.as_ref().is_some_and(|f| f.is_warping()),
-                protected: pilot.protected_until > now,
+                protected: pilot.protected_until > now || self.is_tethered_session(*session, now),
             });
         }
         if let Some(wreck) = self.wrecks.get(&target) {

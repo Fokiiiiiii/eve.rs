@@ -111,4 +111,21 @@ public sealed class EpicArcOffersTests
         Assert.Equal(182, MissionSiteStatus.Committed.Count);
         Assert.Equal(0, MissionSiteStatus.Committed.Count(pair => pair.Value == MissionSiteStatus.Specific));
     }
+
+    // 9301 leads to 9302, whose failMissionID is 9301: a failure of 9302 restarts the run at 9301.
+    private const string RestartArc = """
+        {"_key": 9003, "name": {"en": "Restart Arc"}, "arcRestartInterval": 129600,
+         "missions": [
+           {"_key": 9301, "agentID": 5001, "nextMissions": [9302]},
+           {"_key": 9302, "agentID": 5001, "nextMissions": [], "failMissionID": 9301}]}
+        """;
+
+    [Fact]
+    public void A_failure_whose_failMissionID_is_an_earlier_step_restarts_the_run_there()
+    {
+        var catalog = MissionStaticCatalog.FromRows(3405148, [], [Row(9003, RestartArc)], includeUnavailableArcs: true);
+        Assert.Equal(9302, EpicArcOffers.Pick(catalog, 5001, Done(9301), T0));
+        Assert.Equal(9301, EpicArcOffers.Pick(catalog, 5001, Done(9301), T0 + TimeSpan.FromHours(2),
+            new[] { (9302L, T0 + TimeSpan.FromHours(1)) }));
+    }
 }

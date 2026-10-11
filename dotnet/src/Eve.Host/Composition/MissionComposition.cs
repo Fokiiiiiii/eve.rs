@@ -256,10 +256,11 @@ internal sealed partial class CharacterServicesComposition
                 async ValueTask<Eve.Agents.AgentMissionContent?> (AgentMissionAgentData agent, long characterId, CancellationToken ct) =>
                 {
                     var completed = await agentMissionStore.ReadCompletedAsync(characterId, ct);
+                    var failed = await agentMissionStore.ReadFailedAsync(characterId, ct);
                     var now = DateTimeOffset.UtcNow;
-                    var completedIds = completed.Select(item => item.MissionId).ToHashSet();
-                    if ((Eve.Services.Core.EpicArcOffers.Pick(agentMissionStatic, agent.AgentId, completed, now) ??
-                            Eve.Services.Core.BasicKillOffers.Pick(agentMissionStatic, agent, completedIds,
+                    var completedAt = completed.GroupBy(item => item.MissionId).ToDictionary(group => group.Key, group => group.Max(item => item.CompletedAt));
+                    if ((Eve.Services.Core.EpicArcOffers.Pick(agentMissionStatic, agent.AgentId, completed, now, failed) ??
+                            Eve.Services.Core.BasicKillOffers.Pick(agentMissionStatic, agent, completedAt, now,
                                 dungeon => dungeonWavesDirector?.StartRefusalOf(dungeon) is null)) is not { } missionId ||
                         agentMissionStatic.Mission(missionId) is not { } mission)
                         return null;

@@ -1349,3 +1349,10 @@ follow a completed step, with forks, the 90-day restart and the held-back sites 
 | OPEN | Warp and approach to the in-space agent in the live client (the client uses its own ballpark commands; the server-side warp calls `WarpToLocation` and `WarpToAgentInSpace` still answer the named error) | next slice |
 | OPEN | Mission objective window (`GetMissionObjectiveInfo`, `GetMissionBriefingInfo`) | next slice (X3 step 2) |
 | HELD | Arc 29 on by default | kept held back: step 1's site is the family-derived template 3509 and its Damsel content is missing (owner decision 2); `EVE_MISSION_INCLUDE_GENERIC_ARCS=1` runs it |
+
+## 52. Mission execution X3 step 3: failure branches and basic re-offer (2026-10-11)
+
+| Status | Item | Where / blocker |
+|---|---|---|
+| DONE (tests) | A failure (failed or quit) whose failMissionID names another step restarts the arc run there; a self-naming failure only retries the step (arc 29) | `EpicArcOffers.cs`; `EpicArcOffersTests.A_failure_whose...`; `AgentMissionStore.ReadFailedAsync` (journal, PostgreSQL test) |
+| DONE (tests) | A basic kill mission completed is offered again after the replay delay (4 h, EveJS value, shortcut) | `BasicKillOffers.cs`; `BasicKillOffersTests` |

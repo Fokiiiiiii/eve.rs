@@ -112,16 +112,23 @@ public sealed class AgentMissionStore
     /// The missions the character has completed, with the time of each completion, from the journal (the transitions into
     /// <see cref="AgentMissionState.Completed"/>). The store keeps one row per agent, so the history is read here.
     /// </summary>
-    public async Task<IReadOnlyList<(long MissionId, DateTimeOffset CompletedAt)>> ReadCompletedAsync(long characterId, CancellationToken cancellationToken = default)
+    public Task<IReadOnlyList<(long MissionId, DateTimeOffset CompletedAt)>> ReadCompletedAsync(long characterId, CancellationToken cancellationToken = default) =>
+        ReadJournalAsync(characterId, [(int)AgentMissionState.Completed], cancellationToken);
+
+    /// <summary>The missions the character failed or quit (the transitions into Failed or Quit), with their times, from the journal.</summary>
+    public Task<IReadOnlyList<(long MissionId, DateTimeOffset At)>> ReadFailedAsync(long characterId, CancellationToken cancellationToken = default) =>
+        ReadJournalAsync(characterId, [(int)AgentMissionState.Failed, (int)AgentMissionState.Quit], cancellationToken);
+
+    private async Task<IReadOnlyList<(long MissionId, DateTimeOffset At)>> ReadJournalAsync(long characterId, int[] toStates, CancellationToken cancellationToken)
     {
         if (characterId <= 0) return [];
         await using var connection = await _source.OpenConnectionAsync(cancellationToken);
         await using var command = new NpgsqlCommand(
-            $"SELECT mission_id, COALESCE(transition_at, created_at) FROM {_schema}.journal WHERE character_id = $1 AND to_state = {(int)AgentMissionState.Completed} ORDER BY id", connection)
+            $"SELECT mission_id, COALESCE(transition_at, created_at) FROM {_schema}.journal WHERE character_id = $1 AND to_state = ANY($2) ORDER BY id", connection)
         {
-            Parameters = { new() { Value = characterId } },
+            Parameters = { new() { Value = characterId }, new() { Value = toStates } },
         };
-        var rows = new List<(long MissionId, DateTimeOffset CompletedAt)>();
+        var rows = new List<(long MissionId, DateTimeOffset At)>();
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         while (await reader.ReadAsync(cancellationToken))
         {

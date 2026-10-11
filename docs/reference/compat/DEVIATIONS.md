@@ -2533,3 +2533,8 @@ Focused PostgreSQL verification: Station 28/28, selected Space docking/undocking
 - **Entity.** The agent is a deployable in the simulation with ball ID = agent ID (EveJS uses the agent ID as the item ID too), type and group from its agentsInSpace row (30887, group 517), owner corporation, lifetime one year. It is put into the scene on each pilot entry into its system, like the site containers. Status: decided; a live check of the client's ball rendering for an unpublished type is OPEN.
 - **Talk steps.** A talk step (an arc step with no kill and no courier objective) completes when the character talks to the agent of the step after it, while they are together: in the station, or in space in the agent's system. The reward is paid under the step's key. Status: decided.
 - **Arc 29 default.** Held back: step 1's site is generic (see the held-back decision above). With the switch, steps 1 and 2 run end to end in the tests; the live client path is OPEN.
+
+## Mission execution X3 step 3: failure branches and basic re-offer (2026-10-11)
+
+- **Failure branch.** A failed or quit step with a failMissionID to another step of its arc restarts the run at that step: completions before the failure no longer count. A failMissionID equal to the step itself (arc 29) only retries it. The failure is read from the journal (to-state Failed or Quit). Status: decided; the pilot-course restarts are covered by the rule, not by live play.
+- **Basic re-offer.** A completed basic kill mission is offered again after 4 hours (EveJS REPLAY_DELAY_MS, `missionRuntimeState.js:26`). The client's replay rule was not read; the value is a shortcut to upgrade when it is. Status: shortcut.

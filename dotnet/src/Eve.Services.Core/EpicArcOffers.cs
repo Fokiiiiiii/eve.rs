@@ -8,7 +8,7 @@ namespace Eve.Services.Core;
 /// <item>A completed step is not offered again. Once one successor of a fork is completed, the other successors are not offered.</item>
 /// <item>A finished arc (a terminal step completed) cools down for its restart interval. After that a new run starts: the entries are offered again and the completions of the previous run no longer count.</item>
 /// <item>A step held back by <see cref="MissionStaticCatalog.IsHeldBack"/> is not offered (generic or missing kill sites, owner decision).</item>
-/// <item>A step the character quit or declined is not completed, so it is offered again: the retry of the failure branch.</item>
+/// <item>A step the character quit or failed is not completed, so it is offered again. A failure whose failMissionID is another step restarts the run at that step (the completions before the failure no longer count).</item>
 /// <item>Among the offerable steps of the agent, the lowest mission ID is offered (a deterministic choice).</item>
 /// </list>
 /// </summary>
@@ -19,8 +19,10 @@ public static class EpicArcOffers
         MissionStaticCatalog catalog,
         long agentId,
         IEnumerable<(long MissionId, DateTimeOffset CompletedAt)> completed,
-        DateTimeOffset now)
+        DateTimeOffset now,
+        IEnumerable<(long MissionId, DateTimeOffset At)>? failed = null)
     {
+        var failures = (failed ?? []).ToList();
         if (!catalog.IsLoaded) return null;
         var completions = completed
             .GroupBy(item => item.MissionId)
@@ -43,7 +45,14 @@ public static class EpicArcOffers
             foreach (var step in steps.Values.Where(step => step.NextMissionIds.Count == 0))
                 if (completions.TryGetValue(step.MissionId, out var at) && (runEnd is null || at > runEnd)) runEnd = at;
             if (runEnd is { } ended && now < ended + restart) continue;
-            var done = runEnd is { } start
+            // a failure with a failMissionID to another step restarts the run at that step: the completions before it do not count
+            DateTimeOffset? resetAt = null;
+            foreach (var (missionId, at) in failures)
+                if (steps.TryGetValue(missionId, out var failedStep) && failedStep.FailMissionId is { } target && target != missionId &&
+                    steps.ContainsKey(target) && (resetAt is null || at > resetAt))
+                    resetAt = at;
+            var floor = runEnd is null ? resetAt : resetAt is { } reset && reset > runEnd ? reset : runEnd;
+            var done = floor is { } start
                 ? completions.Where(pair => pair.Value > start).Select(pair => pair.Key).ToHashSet()
                 : completions.Keys.ToHashSet();
 

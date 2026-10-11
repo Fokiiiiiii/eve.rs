@@ -21,37 +21,46 @@ public class BasicKillOffersTests
         DungeonId: null, SpawnPointId: null, TypeId: null);
 
     private static readonly Func<long, bool> AllStart = _ => true;
+    private static readonly Dictionary<long, DateTimeOffset> NoneDone = new();
+    private static readonly DateTimeOffset Now = new(2026, 10, 11, 12, 0, 0, TimeSpan.Zero);
+
+    [Fact]
+    public void A_mission_completed_before_the_replay_delay_is_offered_again()
+    {
+        var completedLongAgo = new Dictionary<long, DateTimeOffset> { [3318] = Now - BasicKillOffers.ReplayDelay - TimeSpan.FromMinutes(1) };
+        Assert.Equal(3318, BasicKillOffers.Pick(Catalog, Agent(5), completedLongAgo, Now, AllStart));
+    }
 
     [Fact]
     public void A_level_5_security_agent_offers_the_lowest_level_5_basic_kill_mission()
     {
-        Assert.Equal(3318, BasicKillOffers.Pick(Catalog, Agent(5), new HashSet<long>(), AllStart));
+        Assert.Equal(3318, BasicKillOffers.Pick(Catalog, Agent(5), NoneDone, Now, AllStart));
     }
 
     [Fact]
     public void A_mission_whose_dungeon_cannot_start_is_not_offered()
     {
-        Assert.Equal(3319, BasicKillOffers.Pick(Catalog, Agent(5), new HashSet<long>(), dungeon => dungeon != 2147));
+        Assert.Equal(3319, BasicKillOffers.Pick(Catalog, Agent(5), NoneDone, Now, dungeon => dungeon != 2147));
     }
 
     [Fact]
-    public void A_completed_mission_is_not_offered_again()
+    public void A_mission_completed_within_the_replay_delay_is_not_offered_again()
     {
-        Assert.Equal(3319, BasicKillOffers.Pick(Catalog, Agent(5), new HashSet<long> { 3318 }, AllStart));
+        Assert.Equal(3319, BasicKillOffers.Pick(Catalog, Agent(5), new Dictionary<long, DateTimeOffset> { [3318] = Now - TimeSpan.FromHours(1) }, Now, AllStart));
     }
 
     [Fact]
     public void A_level_4_agent_offers_a_level_4_mission_and_levels_3_or_below_are_not_offered()
     {
-        Assert.Equal(891, BasicKillOffers.Pick(Catalog, Agent(4), new HashSet<long>(), AllStart));
-        Assert.Null(BasicKillOffers.Pick(Catalog, Agent(3), new HashSet<long>(), AllStart));
+        Assert.Equal(891, BasicKillOffers.Pick(Catalog, Agent(4), NoneDone, Now, AllStart));
+        Assert.Null(BasicKillOffers.Pick(Catalog, Agent(3), NoneDone, Now, AllStart));
     }
 
     [Fact]
     public void Only_basic_security_agents_offer_these_missions()
     {
-        Assert.Null(BasicKillOffers.Pick(Catalog, Agent(5, type: 9), new HashSet<long>(), AllStart));
-        Assert.Null(BasicKillOffers.Pick(Catalog, Agent(5, division: 22, kind: "courier"), new HashSet<long>(), AllStart));
-        Assert.Null(BasicKillOffers.Pick(MissionStaticCatalog.Unavailable("no build"), Agent(5), new HashSet<long>(), AllStart));
+        Assert.Null(BasicKillOffers.Pick(Catalog, Agent(5, type: 9), NoneDone, Now, AllStart));
+        Assert.Null(BasicKillOffers.Pick(Catalog, Agent(5, division: 22, kind: "courier"), NoneDone, Now, AllStart));
+        Assert.Null(BasicKillOffers.Pick(MissionStaticCatalog.Unavailable("no build"), Agent(5), NoneDone, Now, AllStart));
     }
 }

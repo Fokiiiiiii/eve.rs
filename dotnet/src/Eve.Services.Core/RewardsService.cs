@@ -108,7 +108,7 @@ public sealed class EmptyLoginRewardCallbacks : ILoginRewardCallbacks
         SeasonalLoginCampaignClaimRequest request, CancellationToken cancellationToken = default) => ValueTask.FromResult(false);
 }
 
-public sealed class RewardsService : IService
+public sealed class RewardsService(Func<IReadOnlyList<long>, CancellationToken, Task<IReadOnlyDictionary<long, long>>>? pendingLoyaltyPoints = null) : IService
 {
     public string Name => "rewardMgr";
 
@@ -118,10 +118,42 @@ public sealed class RewardsService : IService
 
     public ValueTask<PyValue> CallAsync(ServiceCall call) => call.Method switch
     {
-        "GetDelayedRewardsByGroupIDs" => ValueTask.FromResult<PyValue>(Py.Dict()),
+        "GetDelayedRewardsByGroupIDs" => DelayedRewardsAsync(call),
         "GetRewardLPLogs" => ValueTask.FromResult<PyValue>(new PyList([])),
         _ => ValueTask.FromResult<PyValue>(PyNone.Instance),
     };
+
+    /// <summary>
+    /// <c>GetDelayedRewardsByGroupIDs(groupIDs)</c>: a dict from each group to its rows, each row carrying the <c>rewardQuantity</c> the client shows (the loyalty points
+    /// delayed on the group). The points come from the live incursions that use the group; a group with none has no key, as the client expects.
+    /// </summary>
+    private async ValueTask<PyValue> DelayedRewardsAsync(ServiceCall call)
+    {
+        if (pendingLoyaltyPoints is null)
+        {
+            return new PyDict([]);
+        }
+        IReadOnlyList<PyValue> items = call.Arg(0) switch
+        {
+            PyTuple tuple => tuple.Items,
+            PyList list => list.Items,
+            _ => Array.Empty<PyValue>(),
+        };
+        var groupIds = items.Select(item => item switch
+        {
+            PyLong number => number.Value,
+            PyInt number => number.Value,
+            _ => 0L,
+        }).Where(id => id > 0).Distinct().ToList();
+        if (groupIds.Count == 0)
+        {
+            return new PyDict([]);
+        }
+        var pending = await pendingLoyaltyPoints(groupIds, call.Cancellation);
+        return new PyDict(pending.Select(group => new KeyValuePair<PyValue, PyValue>(
+            Py.Number(group.Key),
+            new PyList([Py.KeyVal(("rewardQuantity", Py.Number(group.Value)))]))).ToArray());
+    }
 }
 
 /// <summary>Login campaign read and claim RPCs; no campaign is advertised without campaign data.</summary>

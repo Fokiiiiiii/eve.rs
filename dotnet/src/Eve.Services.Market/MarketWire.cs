@@ -45,9 +45,15 @@ internal static class MarketHistoryWire
                 new PyLong(Py.FileTimeFromUnixMs(checked(row.UnixDay*86_400_000))),Py.Number((double)row.Low),
                 Py.Number((double)row.High),Py.Number((double)row.Average),new PyLong(row.Volume),new PyInt(row.Orders)))]))));
 
-    public static (PyValue Old,PyValue New) Pair(IReadOnlyList<MarketHistory> rows)
+    /// <summary>
+    /// The two rowsets of a history: "old" holds the days before today and "new" the day in progress (none when nothing traded today). The
+    /// client reads "new" as today: it fills the days from the last "old" row to yesterday with placeholders, then appends "new"
+    /// (marketsvc.py:344-366). The reference splits off the last row instead (marketProxyService.js:469-482), which puts a past trading day
+    /// in "new" behind the placeholders; eve.rs splits by the day (DEVIATIONS, market slice M5).
+    /// </summary>
+    public static (PyValue Old,PyValue New) Pair(long nowMs,IReadOnlyList<MarketHistory> rows)
     {
-        var oldCount=Math.Max(0,rows.Count-1);
-        return (Rowset(rows.Take(oldCount)),Rowset(rows.Skip(oldCount)));
+        var today=nowMs/86_400_000;
+        return (Rowset(rows.Where(row => row.UnixDay<today)),Rowset(rows.Where(row => row.UnixDay>=today)));
     }
 }

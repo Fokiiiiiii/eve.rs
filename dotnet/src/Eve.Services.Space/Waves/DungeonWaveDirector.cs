@@ -131,28 +131,15 @@ public sealed class DungeonWaveDirector
     /// </summary>
     public async Task<DungeonStart> StartAsync(long characterId, int solarSystemId, double[] origin, long dungeonID, CancellationToken cancellationToken = default)
     {
-        if (_catalog.GetDungeon(dungeonID) is not DungeonFound found)
+        if (ValidatedPlan(dungeonID, out var plan) is { } refusal)
         {
-            return Refused($"dungeon {dungeonID} is not in the catalog");
-        }
-        WavePlanAnswer answer = WavePlanner.Plan(found.Dungeon, _rules);
-        if (answer.Plan is not { } plan)
-        {
-            return Refused(answer.Refusal!);
-        }
-        foreach (PlannedWave wave in plan.Waves)
-        {
-            var (_, refusal) = WaveComposition.Resolve(_selector, wave.SpawnQuery);
-            if (refusal is not null)
-            {
-                return Refused($"wave {wave.WaveIndex}: {refusal}");
-            }
+            return Refused(refusal);
         }
         if (!_spawner.IsPilotInSystem(characterId, solarSystemId))
         {
             return Refused("the pilot is not in space in this system");
         }
-        var data = new DungeonInstanceData(dungeonID, solarSystemId, origin, plan.Waves.Select(w => new DungeonWaveData(w.WaveIndex, w.SpawnQuery, w.Amount)).ToList());
+        var data = InstanceOf(dungeonID, solarSystemId, origin, plan!);
         await using var connection = await _source.OpenConnectionAsync(cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
         StartResult started = await _content.StartAsync(connection, transaction, DefinitionOf(dungeonID), characterId, data, $"dungeon:{characterId}:{dungeonID}", cancellationToken: cancellationToken);
@@ -160,6 +147,58 @@ public sealed class DungeonWaveDirector
         _scheduler.Wake();
         return new DungeonStart(started.Created, started.Id, started.Created ? null : "the pilot already has this dungeon running");
     }
+
+
+    /// <summary>The owner of a dungeon that belongs to no pilot (an incursion's staging site): the global owner, which no character has.</summary>
+    public const long NoPilotOwner = 0;
+
+    /// <summary>
+    /// Starts a dungeon that belongs to no pilot (an incursion's staging site): its waves are checked as <see cref="StartAsync"/> checks them, it lasts for
+    /// <paramref name="lifetime"/> unless its feature ends it, and no pilot leaving its system abandons it. It is started once per <paramref name="uniqueKey"/>: a second
+    /// start answers the instance that is running (its <see cref="DungeonStart.InstanceId"/>).
+    /// </summary>
+    public async Task<DungeonStart> StartForSystemAsync(int solarSystemId, double[] origin, long dungeonID, string uniqueKey, TimeSpan lifetime, CancellationToken cancellationToken = default)
+    {
+        if (ValidatedPlan(dungeonID, out var plan) is { } refusal)
+        {
+            return Refused(refusal);
+        }
+        var data = InstanceOf(dungeonID, solarSystemId, origin, plan!);
+        await using var connection = await _source.OpenConnectionAsync(cancellationToken);
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        StartResult started = await _content.StartAsync(connection, transaction, DefinitionOf(dungeonID), NoPilotOwner, data, uniqueKey, (long)lifetime.TotalMilliseconds, cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+        _scheduler.Wake();
+        return new DungeonStart(started.Created, started.Id, started.Created ? null : "the dungeon is already running");
+    }
+
+    /// <summary>The waves of a dungeon, checked against the planner and the NPC authority: the plan, or why there is none (nothing starts then).</summary>
+    private string? ValidatedPlan(long dungeonID, out WavePlan? plan)
+    {
+        plan = null;
+        if (_catalog.GetDungeon(dungeonID) is not DungeonFound found)
+        {
+            return $"dungeon {dungeonID} is not in the catalog";
+        }
+        WavePlanAnswer answer = WavePlanner.Plan(found.Dungeon, _rules);
+        if (answer.Plan is not { } checkedPlan)
+        {
+            return answer.Refusal!;
+        }
+        foreach (PlannedWave wave in checkedPlan.Waves)
+        {
+            var (_, refusal) = WaveComposition.Resolve(_selector, wave.SpawnQuery);
+            if (refusal is not null)
+            {
+                return $"wave {wave.WaveIndex}: {refusal}";
+            }
+        }
+        plan = checkedPlan;
+        return null;
+    }
+
+    private static DungeonInstanceData InstanceOf(long dungeonID, int solarSystemId, double[] origin, WavePlan plan) =>
+        new(dungeonID, solarSystemId, origin, plan.Waves.Select(w => new DungeonWaveData(w.WaveIndex, w.SpawnQuery, w.Amount)).ToList());
 
     /// <summary>The content of a dungeon: one sequential objective per wave, counting its NPCs; a wave's delay is its objective's parameter.</summary>
     private static ContentDefinition Definition(WavePlan plan)
@@ -258,7 +297,7 @@ public sealed class DungeonWaveDirector
         var abandoned = new List<long>();
         foreach (ContentInstance instance in await _content.ActiveByKindAsync(Kind, cancellationToken))
         {
-            if (instance.Data<DungeonInstanceData>() is { } data && !_spawner.IsPilotInSystem(instance.Owner, data.SolarSystemId)
+            if (instance.Owner != NoPilotOwner && instance.Data<DungeonInstanceData>() is { } data && !_spawner.IsPilotInSystem(instance.Owner, data.SolarSystemId)
                 && await _content.AbandonAsync(context.Connection, context.Transaction, instance.Id, AbandonReason, cancellationToken))
             {
                 abandoned.Add(instance.Id);

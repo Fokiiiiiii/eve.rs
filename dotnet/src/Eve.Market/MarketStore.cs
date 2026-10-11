@@ -420,23 +420,6 @@ public sealed partial class MarketStore
     }
 
 
-    public async Task<IReadOnlyDictionary<int,IReadOnlyList<MarketHistory>>> HistoriesAsync(IEnumerable<int> types,CancellationToken token = default)
-    {
-        var typeIds=types.Where(id=>id>0).Distinct().ToArray();
-        if(typeIds.Length==0) return new Dictionary<int,IReadOnlyList<MarketHistory>>();
-        var rows=typeIds.ToDictionary(id=>id,_=>new List<MarketHistory>());
-        await using var command=_source.CreateCommand($"""
-            SELECT type_id,floor(time_ms/86400000.0)::bigint,MIN(price),MAX(price),SUM(gross)/SUM(quantity),
-                   SUM(quantity)::bigint,COUNT(*)::bigint
-            FROM {_schema}.fills WHERE type_id=ANY($1)
-            GROUP BY type_id,floor(time_ms/86400000.0) ORDER BY type_id,2
-            """);
-        command.Parameters.Add(new NpgsqlParameter { Value=typeIds });
-        await using var r=await command.ExecuteReaderAsync(token);
-        while(await r.ReadAsync(token))
-            rows[r.GetInt32(0)].Add(new(r.GetInt64(1),r.GetDecimal(2),r.GetDecimal(3),r.GetDecimal(4),r.GetInt64(5),r.GetInt64(6)));
-        return rows.ToDictionary(entry=>entry.Key,entry=>(IReadOnlyList<MarketHistory>)entry.Value);
-    }
 
     /// <summary>
     /// The average sale price of each type that has a sale: the newest day with sales, the volume-weighted average of its fills

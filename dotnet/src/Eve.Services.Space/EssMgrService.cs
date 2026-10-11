@@ -168,7 +168,8 @@ public sealed partial class EssMgrService
         return PyNone.Instance;
     }
 
-    private static void NotifyEssDataChanged(ClientSession session, EssMgrSystemData state) =>
+    /// <summary>What a pilot is told when the ESS of its system changes (<c>OnSystemESSDataChanged</c>).</summary>
+    public static void NotifyEssDataChanged(ClientSession session, EssMgrSystemData state) =>
         session.SendNotification(
             "OnSystemESSDataChanged", "clientID",
             Py.Number(state.SolarSystemId), DataPayload(state));

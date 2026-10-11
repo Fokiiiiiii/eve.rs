@@ -189,6 +189,17 @@ public sealed partial class SpaceSessions
     /// </summary>
     public void UseBounties(PgBountyStore store) => _bounties = store;
 
+    /// <summary>The Encounter Surveillance Systems: a bounty earned where one is online pays its Main Bank share into it.</summary>
+    public PgEssStore? Ess { get; set; }
+
+    /// <summary>The sessions of the pilots in a solar system, for what the system is told (the ESS's changes, its thefts).</summary>
+    public IReadOnlyList<ClientSession> PilotSessionsIn(int solarSystemId) =>
+        [.. _pilots.Values.Where(pilot => pilot.SolarSystemId == solarSystemId).Select(pilot => pilot.Session)];
+
+    /// <summary>Whether the character flies in the solar system now.</summary>
+    public bool IsPilotIn(long characterId, int solarSystemId) =>
+        _pilots.Values.Any(pilot => pilot.CharacterId == characterId && pilot.SolarSystemId == solarSystemId);
+
     /// <summary>Pays the bounties that are due (one payout at a time); each is raised as <see cref="BountyPaidOut"/>.</summary>
     public async Task<IReadOnlyList<BountyPaid>> PayBountiesAsync(CancellationToken cancellationToken = default)
     {
@@ -247,7 +258,27 @@ public sealed partial class SpaceSessions
         {
             return;
         }
-        var added = await store.RecordAsync(new BountyKill(killer.CharacterId, npc.SolarSystemId, npc.TypeId, destroyed.ShipId, amount), _nowUnixMs());
+        // in a system with an ESS the Main Bank takes its share of the bounty; the share commits with the pilot's bucket or not at all
+        var essOnline = Ess is not null && await Ess.IsOnlineAsync(npc.SolarSystemId);
+        var (pilotShare, mainShare) = EssRules.SplitBounty(amount, essOnline);
+        var now = _nowUnixMs();
+        if (pilotShare <= 0)
+        {
+            await Ess!.CreditAsync(npc.SolarSystemId, mainShare);
+            return;
+        }
+        BountyAdded added;
+        try
+        {
+            added = await store.RecordAsync(
+                new BountyKill(killer.CharacterId, npc.SolarSystemId, npc.TypeId, destroyed.ShipId, pilotShare), now,
+                inTransaction: mainShare > 0 && Ess is { } ess ? (connection, transaction, token) => ess.CreditMainBankAsync(connection, transaction, npc.SolarSystemId, mainShare, token) : null);
+        }
+        catch (InvalidOperationException) when (mainShare > 0)
+        {
+            // the ESS went away between the check and the credit: the pilot takes the whole bounty, as in a system without one
+            added = await store.RecordAsync(new BountyKill(killer.CharacterId, npc.SolarSystemId, npc.TypeId, destroyed.ShipId, amount), now);
+        }
         if (!added.AlreadyRecorded)
         {
             // `util.KeyVal`; the payout time is a FILETIME, past what a JavaScript number holds, so it goes as a long

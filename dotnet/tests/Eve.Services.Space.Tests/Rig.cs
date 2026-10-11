@@ -523,14 +523,24 @@ private readonly Dictionary<long, ClientSession> _fleetSessions = new();
         Space.Events = Bus;
     }
 
+    /// <summary>Makes a test's own scratch schemas on this rig's source: they are dropped with the rig.</summary>
+    public void KeepSchemas(params string[] schemas) => _extraSchemas.AddRange(schemas);
+
     public async ValueTask DisposeAsync()
     {
         Containers.Dispose();
         Space.Dispose();
         foreach (var schema in _schemas.Concat(_extraSchemas))
         {
-            await using var command = Source.CreateCommand($"DROP SCHEMA IF EXISTS {schema} CASCADE");
-            await command.ExecuteNonQueryAsync();
+            try
+            {
+                await using var command = Source.CreateCommand($"DROP SCHEMA IF EXISTS \"{schema}\" CASCADE");
+                await command.ExecuteNonQueryAsync();
+            }
+            catch (NpgsqlException)
+            {
+                // Leaving a scratch schema behind is better than failing the test.
+            }
         }
         await Source.DisposeAsync();
     }

@@ -66,6 +66,9 @@ public sealed class AgentMissionService(
 
     public bool HasMethod(string method) => method is
         "MachoBindObject" or
+        "DoAction" or
+        "GetMissionBriefingInfo" or
+        "GetMissionObjectiveInfo" or
         "GetMyJournalDetails" or
         "GetAgents" or
         "GetCompletedCareerAgentIDs" or

@@ -73,7 +73,11 @@ public class Arc29StepsTests
             Credits.Add((characterId, amount, operationKey));
             return Task.CompletedTask;
         }
-        public Task ApplyStandingAsync(long characterId, long factionId, double delta, CancellationToken cancellationToken) => Task.CompletedTask;
+        public AgentMissionStore? Store { get; set; }
+
+        public async Task<bool> CompleteMissionAsync(long characterId, long agentId, DateTimeOffset now, string reference,
+            IReadOnlyList<(long FactionId, double Delta)> standings, CancellationToken cancellationToken) =>
+            Store is not null && await Store.CompleteAsync(characterId, agentId, now, reference, cancellationToken) is not null;
     }
 
     private static AgentMissionAgentData Agent(long id, bool inSpace, long? system, long? dungeon) => new(
@@ -91,7 +95,7 @@ public class Arc29StepsTests
         await AgentMissionStore.MigrateAsync(source, schema);
         var store = new AgentMissionStore(source, schema);
         var catalog = Catalog();
-        var host = new Host();
+        var host = new Host { Store = store };
         var agents = new Dictionary<long, AgentMissionAgentData>
         {
             [Alitura] = Agent(Alitura, false, ArnonSystem, null),

@@ -1066,3 +1066,20 @@ Mission availability follows the arc (a step takes its arc's status); a mission 
 
 Hand-off to the next slice: offer missions through `MissionStaticCatalog.PlausibleMissionIds` (already filtered), and check
 `MissionAvailability(missionId)` for any mission that is not an arc step before using it (its `unknown` answer has the reason).
+
+## 46. Structures phase, ST-7: service fuel, compression plant, cyno jammer, cyno beacon (2026-10-11)
+
+Package ST-7 of `structures_phase.md`; handoff `docs/project/handoff-ST-7.md`; decisions in DEVIATIONS.md "Structure services fuel (ST-7, increment a)".
+
+Done (verified):
+| Status | Item | Evidence |
+|---|---|---|
+| VERIFIED (tests) | Service fuel: online against the SDE's 72-hour charge from the fuel bay, hourly burn of each online service at the full hour (job `structure.fuel_hour`), a short hour takes every service offline into Low Power | `dotnet/tests/Eve.Structures.Tests/StructureFuelTests.cs` (7 pass on PostgreSQL); Host wiring builds and `dotnet/tests/Eve.Host.Tests` passes 164 of 164 with the composition; `Eve.Inventory.Tests` 55 of 55 (the new `PgItemStore.InContainerAsync` overload) |
+
+Open (next steps, in order):
+| Status | Item |
+|---|---|
+| OPEN | (b) `structureCompressionMgr` CompressItemInStructure / DecompressGasInStructure / GetMyGasDecompressionEfficiency: EveJS gate (docked at a structure with Reprocessing online), the 6-value tuple, named refusals |
+| OPEN | (c) E-03: `BeyonceService.CynoJammerOnlineSimTimeForSystem` from an online service 17 in the system; E-15 `OnCynoJammerChanged` from a subscriber on the service change; the non-covert cyno generator refused in a jammed system (host side, `SpaceSessions.Modules.cs`) |
+| OPEN | (d) `structureCynoBeaconMgr` backend in place of the user error (`StructureTravelRpcService.cs`): Pharolux beacon service 16 online, jump to it |
+| OPEN | Fuel burns send no `OnItemChange` to the owner's sessions (no session at burn time); rig and skill reductions of the online charge |

@@ -572,6 +572,19 @@ private static void EnsureUnlocked(Item? item)
         return list;
     }
 
+    /// <summary>Everything in a place, read inside the caller's transaction (a structure's fuel bay is read and burned under the structure's row lock).</summary>
+    public async Task<IReadOnlyList<Item>> InContainerAsync(NpgsqlConnection connection, NpgsqlTransaction? transaction, long locationId, CancellationToken cancellationToken = default)
+    {
+        await using var command = Sql.Command(connection, transaction, $"SELECT {Columns} FROM {_schema}.items WHERE location_id = $1 ORDER BY id", locationId);
+        var list = new List<Item>();
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            list.Add(Read(reader));
+        }
+        return list;
+    }
+
     /// <summary>Takes an item out of the world, inside the caller's transaction.</summary>
     public async Task DeleteAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long id, CancellationToken cancellationToken = default)
     {

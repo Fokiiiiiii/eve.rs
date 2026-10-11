@@ -9,6 +9,7 @@ using Xunit;
 
 namespace Eve.Host.Tests;
 
+[Collection("host-composition")]
 public sealed class HomeStationHostTests
 {
     [PgFact]
@@ -76,6 +77,17 @@ public sealed class HomeStationHostTests
         Assert.Equal(0, (await rig.Characters.GetAsync(character.Id))!.NextRemoteHomeStationChangeFileTime);
         Assert.IsType<PyNone>(await CallAsync(service, "get_next_remote_change_time", session));
         Assert.Equal(2, Notifications(sink).Count);
+
+        var structureId = await rig.SeedStructureAsync();
+        session.Set("stationid", PyNone.Instance);
+        session.Set("structureid", new PyInt(structureId));
+        session.Set("shipid", new PyInt(structureId + 1));
+        candidates = Assert.IsType<PyList>(await CallAsync(service, "get_home_station_candidates", session));
+        Assert.Single(candidates.Items, candidate => HomeStationId(candidate).Value == structureId);
+        Assert.IsType<PyNone>(await CallAsync(service, "set_home_station", session, new PyLong(structureId), PyBool.False));
+        Assert.Equal(structureId, (await rig.Characters.GetAsync(character.Id))!.HomeStationId);
+        Assert.Equal(new PyInt(structureId), HomeStationId(await CallAsync(service, "get_home_station", session)));
+        AssertNotification(Notifications(sink)[2], structureId);
     }
 
     private static async Task<PyValue> CallAsync(IService service, string method, ClientSession session, params PyValue[] args) =>
@@ -110,7 +122,7 @@ public sealed class HomeStationHostTests
     private static void AssertNotification((string Name, PyValue[] Args) notification, long stationId)
     {
         Assert.Equal("OnHomeStationChanged", notification.Name);
-        Assert.Equal(new PyInt(stationId), Assert.Single(notification.Args));
+        Assert.Equal(InventoryWire.Id(stationId), Assert.Single(notification.Args));
     }
 
     private sealed class RecordingPacketSink : IPacketSink
@@ -143,6 +155,8 @@ public sealed class HomeStationHostTests
             "EVE_EVENTS_SCHEMA",
             "EVE_RELATIONS_SCHEMA",
             "EVE_CONTENT_SCHEMA",
+            "EVE_STRUCTURES_SCHEMA",
+            "EVE_AGENTS_SCHEMA",
         ];
 
         private const long CorporationId = 900_001_001;
@@ -165,6 +179,7 @@ public sealed class HomeStationHostTests
             Registry = registry;
             Characters = new PgCharacterStore(source, schemas["EVE_CHARACTERS_SCHEMA"]);
             CorporationSchema = schemas["EVE_CORPORATIONS_SCHEMA"];
+            StructureSchema = schemas["EVE_STRUCTURES_SCHEMA"];
             InitialHomeStation = initialHomeStation;
             LocalOfficeStation = localOfficeStation;
             RemoteOfficeStation = remoteOfficeStation;
@@ -173,6 +188,7 @@ public sealed class HomeStationHostTests
         public ServiceRegistry Registry { get; }
         public PgCharacterStore Characters { get; }
         public string CorporationSchema { get; }
+        public string StructureSchema { get; }
         public Station InitialHomeStation { get; }
         public Station LocalOfficeStation { get; }
         public Station RemoteOfficeStation { get; }
@@ -268,6 +284,31 @@ public sealed class HomeStationHostTests
                 await command.ExecuteNonQueryAsync();
             }
             await transaction.CommitAsync();
+        }
+
+        public async Task<long> SeedStructureAsync()
+        {
+            const long id = 1_000_000_000_051;
+            var row = new System.Text.Json.Nodes.JsonObject
+            {
+                ["structureID"] = id,
+                ["typeID"] = 35832,
+                ["solarSystemID"] = LocalOfficeStation.SolarSystemId,
+                ["ownerCorpID"] = CorporationId,
+                ["itemName"] = "Home Station Structure",
+                ["state"] = (int)Eve.Structures.StructureState.ShieldVulnerable,
+                ["upkeepState"] = (int)Eve.Structures.UpkeepState.FullPower,
+                ["hasQuantumCore"] = true,
+            };
+            await using var connection = await _source.OpenConnectionAsync();
+            await using var transaction = await connection.BeginTransactionAsync();
+            var structures = new Eve.Structures.StructureStore(_source, StructureSchema);
+            var imported = await structures.ImportAsync(connection, transaction,
+                new() { [id.ToString(System.Globalization.CultureInfo.InvariantCulture)] = row },
+                DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+            Assert.Equal(id, Assert.Single(imported));
+            await transaction.CommitAsync();
+            return id;
         }
 
         public async Task<Character> CreateCharacterAsync()

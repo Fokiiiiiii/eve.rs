@@ -69,14 +69,24 @@ public sealed partial class CharacterShips
     /// The character's ship is mended: full shield, armor, hull and capacitor, and each fitted module that is not whole (one nobody has mended has
     /// not a full shield) made whole. Null when the character has no ship.
     /// </summary>
-    public async Task<ConditionChanged?> HealAsync(long characterId, CancellationToken cancellationToken = default)
+    public Task<ConditionChanged?> HealAsync(long characterId, CancellationToken cancellationToken = default) =>
+        HealActiveShipAsync(characterId, null, cancellationToken);
+
+    /// <summary>Mends only the notified ship while it remains the character's active ship.</summary>
+    public Task<ConditionChanged?> HealAsync(long characterId, long expectedShipId, CancellationToken cancellationToken) =>
+        expectedShipId > 0 ? HealActiveShipAsync(characterId, expectedShipId, cancellationToken) : Task.FromResult<ConditionChanged?>(null);
+
+    private async Task<ConditionChanged?> HealActiveShipAsync(long characterId, long? expectedShipId, CancellationToken cancellationToken)
     {
-        if (await ActiveShipAsync(characterId, cancellationToken) is not var (ship, fitted, owner))
+        if (await ActiveShipAsync(characterId, cancellationToken) is not var (ship, fitted, owner)
+            || expectedShipId is { } expected && ship.Id != expected)
         {
             return null;
         }
         var before = await modules.ShipConditionAsync(ship.Id, cancellationToken);
         var beforeModules = await modules.ModuleConditionsAsync(fitted.Select(m => m.Id), cancellationToken);
+        if (expectedShipId is { } boundShip && (await characters.GetAsync(characterId, cancellationToken))?.ShipId != boundShip)
+            return null;
         var after = ShipCondition.Full with { Incapacitated = before.Incapacitated };
         await modules.SetShipConditionAsync(ship.Id, after, cancellationToken);
         var changes = new List<ModuleConditionChanged>();
@@ -91,6 +101,8 @@ public sealed partial class CharacterShips
             kept[module.Id] = ModuleCondition.Mended;
             changes.Add(new ModuleConditionChanged(module, was, ModuleCondition.Mended));
         }
+        if (expectedShipId is { } boundModulesShip && (await characters.GetAsync(characterId, cancellationToken))?.ShipId != boundModulesShip)
+            return null;
         await modules.SetModuleConditionsAsync(kept, cancellationToken);
         return new ConditionChanged(ship, before, after, changes, owner.SolarSystemId);
     }

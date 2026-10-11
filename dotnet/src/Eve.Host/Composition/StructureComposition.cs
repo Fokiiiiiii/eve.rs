@@ -179,6 +179,20 @@ internal sealed partial class CharacterServicesComposition
                 await structureDirectoryReadModel.GetStructureInfoAsync(structureId, cancellationToken) is { PersistentlyDeployed: true };
         if (spaceSessions is not null)
             spaceSessions.StructureDockingAllowedAsync = StructureDockingAllowedAsync;
+        if (spaceSessions is not null)
+        {
+            var tether = new TetherAuthority(source, structureStore, dogma, structureDirectoryReadModel,
+                StructureDockingAllowedAsync, spaceSessions.ShipTypeIdOf, ReadGameStoreTableAsync,
+                async (corporationId, token) => Eve.Services.Corporations.CorporationWire.FactionId(await corporations.GetAsync(corporationId, token)),
+                ships, items, modules, mailCache, spaceSessions.CanRepairTetheredShip);
+            spaceSessions.ReadTetherCandidatesAsync = tether.ReadTetherCandidatesAsync;
+            spaceSessions.ReadTetherGeometryAsync = tether.ReadTetherGeometryAsync;
+            spaceSessions.RepairTetheredItemsAsync = tether.RepairTetheredItemsAsync;
+            spaceSessions.ReadTetherBlockUntilAsync = tether.ReadTetherBlockUntilAsync;
+            spaceSessions.WriteTetherBlockUntilAsync = tether.WriteTetherBlockUntilAsync;
+            foundations.Events.Subscribe("structure.tether_policy", [Eve.Structures.StructureTimers.StateChangedTopic, Eve.Structures.StructureTimers.ServiceChangedTopic],
+                (_, token) => spaceSessions.RefreshTetherPoliciesAsync(token));
+        }
         // E-03: a cynosural field is refused in a system its jammer runs in (the state is 0 once the warm-up has passed)
         if (spaceSessions is not null)
             spaceSessions.CynoJammedAsync = CynoJammedAsync;
@@ -235,14 +249,26 @@ internal sealed partial class CharacterServicesComposition
                 structureProfilesRpcBackend.CreateProfileAsync(corporationId, name, description, call.Cancellation),
             UpdateProfileAsync = (call, corporationId, profileId, name, description) =>
                 structureProfilesRpcBackend.UpdateProfileAsync(corporationId, profileId, name, description, call.Cancellation),
-            SaveProfileSettingsAsync = (call, corporationId, profileId, settings) =>
-                structureProfilesRpcBackend.SaveProfileSettingsAsync(corporationId, profileId, settings, call.Cancellation),
-            SetDefaultProfileAsync = (call, corporationId, profileId) =>
-                structureProfilesRpcBackend.SetDefaultProfileAsync(corporationId, profileId, call.Cancellation),
-            ChangeProfilesAsync = (call, corporationId, structureIds, profileId) =>
-                structureProfilesRpcBackend.ChangeProfilesAsync(corporationId, structureIds, profileId, call.Cancellation),
-            DeleteProfileAsync = (call, corporationId, profileId) =>
-                structureProfilesRpcBackend.DeleteProfileAsync(corporationId, profileId, call.Cancellation),
+            SaveProfileSettingsAsync = async (call, corporationId, profileId, settings) =>
+            {
+                await structureProfilesRpcBackend.SaveProfileSettingsAsync(corporationId, profileId, settings, call.Cancellation);
+                if (spaceSessions is not null) await spaceSessions.RefreshTetherPoliciesAsync(call.Cancellation);
+            },
+            SetDefaultProfileAsync = async (call, corporationId, profileId) =>
+            {
+                await structureProfilesRpcBackend.SetDefaultProfileAsync(corporationId, profileId, call.Cancellation);
+                if (spaceSessions is not null) await spaceSessions.RefreshTetherPoliciesAsync(call.Cancellation);
+            },
+            ChangeProfilesAsync = async (call, corporationId, structureIds, profileId) =>
+            {
+                await structureProfilesRpcBackend.ChangeProfilesAsync(corporationId, structureIds, profileId, call.Cancellation);
+                if (spaceSessions is not null) await spaceSessions.RefreshTetherPoliciesAsync(call.Cancellation);
+            },
+            DeleteProfileAsync = async (call, corporationId, profileId) =>
+            {
+                await structureProfilesRpcBackend.DeleteProfileAsync(corporationId, profileId, call.Cancellation);
+                if (spaceSessions is not null) await spaceSessions.RefreshTetherPoliciesAsync(call.Cancellation);
+            },
             DuplicateProfileAsync = (call, corporationId, profileId) =>
                 structureProfilesRpcBackend.DuplicateProfileAsync(corporationId, profileId, call.Cancellation),
             RenameStructureAsync = (call, structureId, name) => new ValueTask(structureDeployment.RenameAsync(call, structureId, name, call.Cancellation)),

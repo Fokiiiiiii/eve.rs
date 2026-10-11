@@ -4664,6 +4664,26 @@
    "hex": "1a0000004f4d000000000000000000000000000000010091dedfb1030002"
   },
   {
+   "name": "tether candidate has negative structure ID",
+   "reason": "bad-value",
+   "hex": "2d0000004e4d000000000000000000000000000000b80b00000000000001000000ffffffffffffffff000000000088c340"
+  },
+  {
+   "name": "tether change has negative previous structure ID",
+   "reason": "bad-value",
+   "hex": "1a0000004f4d00000000000000ffffffffffffffff010091dedfb1030000"
+  },
+  {
+   "name": "tether change has negative current structure ID",
+   "reason": "bad-value",
+   "hex": "1a0000004f4d000000000000000000000000000000ffffffffffffffff00"
+  },
+  {
+   "name": "detached tether cannot repair",
+   "reason": "bad-value",
+   "hex": "1a0000004f4d00000000000000010091dedfb10300000000000000000001"
+  },
+  {
    "name": "unknown kind",
    "reason": "unknown-kind",
    "hex": "01000000ff"

@@ -13,7 +13,8 @@ public sealed record InSpaceCompression(long SourceItemId, int SourceTypeId, lon
 public sealed partial class SpaceContainers
 {
     public const string CompressNotInSpaceNotice = "You must be in space to compress that item.";
-    public const string CompressNoFacilityNotice = "That ship is not running a compressor.";
+    public const string CompressTetheredNotice = "You cannot use in-space compression while tethered.";
+      public const string CompressNoFacilityNotice = "That ship is not running a compressor.";
     public const string CompressNotInFleetNotice = "You can only compress at the compressor of a ship in your fleet.";
     public const string CompressOutOfRangeNotice = "That compressor is too far away.";
     public const string CompressWrongKindNotice = "That compressor cannot compress that item.";
@@ -37,7 +38,8 @@ public sealed partial class SpaceContainers
         {
             throw CompressRefusal(CompressNotInSpaceNotice);
         }
-        await _statics.EnsureTypesAsync([item.TypeId], cancellationToken);
+        if (_space.IsTethered(session)) throw CompressRefusal(CompressTetheredNotice);
+          await _statics.EnsureTypesAsync([item.TypeId], cancellationToken);
         if (await _statics.CompressedTypeOfAsync(item.TypeId, cancellationToken) is not { } compressedTypeId)
         {
             throw CompressRefusal(CompressNotCompressibleNotice);

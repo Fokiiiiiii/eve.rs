@@ -360,6 +360,7 @@ public sealed partial class SpaceSessions
                     }
                     NotifyDeathClient(pilot, lost, destroyed);
                     session.Change(("shipid", new PyLong(survivor.Id)));
+                    Background(() => RefreshTetherPolicyAsync(session));
                     handedOver = true;
                     return true;
                 },

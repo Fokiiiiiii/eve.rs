@@ -89,7 +89,7 @@ public sealed class MissionStaticCatalogTests
         var arc = Fixture().EpicArc(132);
         Assert.NotNull(arc);
         Assert.Equal("Visions of Greatness", arc.NameEn);
-        Assert.Equal(129600, arc.RestartIntervalSeconds);
+        Assert.Equal(129600, arc.RestartIntervalMinutes);
         Assert.Equal(3804, arc.IconId);
         Assert.Equal(3, arc.Steps.Count);
         Assert.Equal(17189, arc.Steps[2].MissionId);

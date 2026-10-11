@@ -1,0 +1,1282 @@
+{
+ "schema": "eve.rs.mission-site-status.v1",
+ "sdeBuild": 3405148,
+ "policy": "Epic arc steps with a kill objective: the site composition is the owner data population. generic = family_derived or combat_wave_derived (a rule, not client data); missing = no dungeon template; specific = a captured or client-static population. Held back by default: generic and missing steps are not offered unless EVE_MISSION_INCLUDE_GENERIC_ARCS=1.",
+ "source": "owner coverage table (EveJS dungeonAuthority popSource, build-independent) joined to the official epicArcs kill steps; killMissionDungeons from Data/catalog/v1/missions.json",
+ "steps": [
+  {
+   "missionID": 14117,
+   "arcID": 29,
+   "dungeonID": 3509,
+   "siteStatus": "generic",
+   "populationSource": "family_derived"
+  },
+  {
+   "missionID": 14119,
+   "arcID": 29,
+   "dungeonID": 3660,
+   "siteStatus": "generic",
+   "populationSource": "family_derived"
+  },
+  {
+   "missionID": 14120,
+   "arcID": 29,
+   "dungeonID": 3661,
+   "siteStatus": "generic",
+   "populationSource": "family_derived"
+  },
+  {
+   "missionID": 14122,
+   "arcID": 29,
+   "dungeonID": 3533,
+   "siteStatus": "generic",
+   "populationSource": "family_derived"
+  },
+  {
+   "missionID": 14123,
+   "arcID": 29,
+   "dungeonID": 3662,
+   "siteStatus": "generic",
+   "populationSource": "family_derived"
+  },
+  {
+   "missionID": 14124,
+   "arcID": 29,
+   "dungeonID": 3675,
+   "siteStatus": "generic",
+   "populationSource": "family_derived"
+  },
+  {
+   "missionID": 14125,
+   "arcID": 29,
+   "dungeonID": 3676,
+   "siteStatus": "generic",
+   "populationSource": "family_derived"
+  },
+  {
+   "missionID": 14127,
+   "arcID": 29,
+   "dungeonID": 3649,
+   "siteStatus": "generic",
+   "populationSource": "family_derived"
+  },
+  {
+   "missionID": 14128,
+   "arcID": 29,
+   "dungeonID": 3651,
+   "siteStatus": "generic",
+   "populationSource": "family_derived"
+  },
+  {
+   "missionID": 14129,
+   "arcID": 29,
+   "dungeonID": 3657,
+   "siteStatus": "generic",
+   "populationSource": "family_derived"
+  },
+  {
+   "missionID": 14130,
+   "arcID": 29,
+   "dungeonID": 3658,
+   "siteStatus": "generic",
+   "populationSource": "family_derived"
+  },
+  {
+   "missionID": 14132,
+   "arcID": 29,
+   "dungeonID": 3686,
+   "siteStatus": "generic",
+   "populationSource": "family_derived"
+  },
+  {
+   "missionID": 14133,
+   "arcID": 29,
+   "dungeonID": 3690,
+   "siteStatus": "generic",
+   "populationSource": "family_derived"
+  },
+  {
+   "missionID": 14135,
+   "arcID": 29,
+   "dungeonID": 3692,
+   "siteStatus": "generic",
+   "populationSource": "family_derived"
+  },
+  {
+   "missionID": 14137,
+   "arcID": 29,
+   "dungeonID": 3693,
+   "siteStatus": "generic",
+   "populationSource": "family_derived"
+  },
+  {
+   "missionID": 14138,
+   "arcID": 29,
+   "dungeonID": 3677,
+   "siteStatus": "generic",
+   "populationSource": "family_derived"
+  },
+  {
+   "missionID": 14139,
+   "arcID": 29,
+   "dungeonID": 3683,
+   "siteStatus": "generic",
+   "populationSource": "family_derived"
+  },
+  {
+   "missionID": 14387,
+   "arcID": 29,
+   "dungeonID": 3694,
+   "siteStatus": "generic",
+   "populationSource": "family_derived"
+  },
+  {
+   "missionID": 14388,
+   "arcID": 29,
+   "dungeonID": 3687,
+   "siteStatus": "generic",
+   "populationSource": "family_derived"
+  },
+  {
+   "missionID": 14389,
+   "arcID": 29,
+   "dungeonID": 3691,
+   "siteStatus": "generic",
+   "populationSource": "family_derived"
+  },
+  {
+   "missionID": 14390,
+   "arcID": 29,
+   "dungeonID": 3700,
+   "siteStatus": "generic",
+   "populationSource": "combat_wave_derived"
+  },
+  {
+   "missionID": 14391,
+   "arcID": 29,
+   "dungeonID": 3689,
+   "siteStatus": "generic",
+   "populationSource": "family_derived"
+  },
+  {
+   "missionID": 14393,
+   "arcID": 29,
+   "dungeonID": 3698,
+   "siteStatus": "generic",
+   "populationSource": "family_derived"
+  },
+  {
+   "missionID": 14394,
+   "arcID": 29,
+   "dungeonID": 3695,
+   "siteStatus": "generic",
+   "populationSource": "family_derived"
+  },
+  {
+   "missionID": 14396,
+   "arcID": 29,
+   "dungeonID": 3719,
+   "siteStatus": "generic",
+   "populationSource": "family_derived"
+  },
+  {
+   "missionID": 14397,
+   "arcID": 29,
+   "dungeonID": 3701,
+   "siteStatus": "generic",
+   "populationSource": "family_derived"
+  },
+  {
+   "missionID": 14399,
+   "arcID": 29,
+   "dungeonID": 3685,
+   "siteStatus": "generic",
+   "populationSource": "family_derived"
+  },
+  {
+   "missionID": 14403,
+   "arcID": 29,
+   "dungeonID": 3684,
+   "siteStatus": "generic",
+   "populationSource": "family_derived"
+  },
+  {
+   "missionID": 14404,
+   "arcID": 29,
+   "dungeonID": 3682,
+   "siteStatus": "generic",
+   "populationSource": "family_derived"
+  },
+  {
+   "missionID": 14406,
+   "arcID": 29,
+   "dungeonID": 3681,
+   "siteStatus": "generic",
+   "populationSource": "family_derived"
+  },
+  {
+   "missionID": 14414,
+   "arcID": 29,
+   "dungeonID": 3650,
+   "siteStatus": "generic",
+   "populationSource": "family_derived"
+  },
+  {
+   "missionID": 14415,
+   "arcID": 29,
+   "dungeonID": 3653,
+   "siteStatus": "generic",
+   "populationSource": "family_derived"
+  },
+  {
+   "missionID": 14416,
+   "arcID": 29,
+   "dungeonID": 3654,
+   "siteStatus": "generic",
+   "populationSource": "family_derived"
+  },
+  {
+   "missionID": 14443,
+   "arcID": 29,
+   "dungeonID": 3673,
+   "siteStatus": "generic",
+   "populationSource": "family_derived"
+  },
+  {
+   "missionID": 14444,
+   "arcID": 29,
+   "dungeonID": 3678,
+   "siteStatus": "generic",
+   "populationSource": "family_derived"
+  },
+  {
+   "missionID": 14445,
+   "arcID": 29,
+   "dungeonID": 3679,
+   "siteStatus": "generic",
+   "populationSource": "family_derived"
+  },
+  {
+   "missionID": 14446,
+   "arcID": 29,
+   "dungeonID": 3680,
+   "siteStatus": "generic",
+   "populationSource": "family_derived"
+  },
+  {
+   "missionID": 14467,
+   "arcID": 29,
+   "dungeonID": 3758,
+   "siteStatus": "generic",
+   "populationSource": "family_derived"
+  },
+  {
+   "missionID": 14468,
+   "arcID": 29,
+   "dungeonID": 3758,
+   "siteStatus": "generic",
+   "populationSource": "family_derived"
+  },
+  {
+   "missionID": 14469,
+   "arcID": 29,
+   "dungeonID": 3758,
+   "siteStatus": "generic",
+   "populationSource": "family_derived"
+  },
+  {
+   "missionID": 14470,
+   "arcID": 29,
+   "dungeonID": 3758,
+   "siteStatus": "generic",
+   "populationSource": "family_derived"
+  },
+  {
+   "missionID": 14492,
+   "arcID": 40,
+   "dungeonID": 3833,
+   "siteStatus": "generic",
+   "populationSource": "family_derived"
+  },
+  {
+   "missionID": 14552,
+   "arcID": 40,
+   "dungeonID": 3831,
+   "siteStatus": "generic",
+   "populationSource": "family_derived"
+  },
+  {
+   "missionID": 14553,
+   "arcID": 40,
+   "dungeonID": 3834,
+   "siteStatus": "generic",
+   "populationSource": "family_derived"
+  },
+  {
+   "missionID": 14558,
+   "arcID": 40,
+   "dungeonID": 3831,
+   "siteStatus": "generic",
+   "populationSource": "family_derived"
+  },
+  {
+   "missionID": 14559,
+   "arcID": 40,
+   "dungeonID": 3862,
+   "siteStatus": "generic",
+   "populationSource": "family_derived"
+  },
+  {
+   "missionID": 14599,
+   "arcID": 40,
+   "dungeonID": 3838,
+   "siteStatus": "generic",
+   "populationSource": "family_derived"
+  },
+  {
+   "missionID": 14607,
+   "arcID": 40,
+   "dungeonID": 3842,
+   "siteStatus": "generic",
+   "populationSource": "family_derived"
+  },
+  {
+   "missionID": 14610,
+   "arcID": 40,
+   "dungeonID": 3835,
+   "siteStatus": "generic",
+   "populationSource": "combat_wave_derived"
+  },
+  {
+   "missionID": 14612,
+   "arcID": 40,
+   "dungeonID": 3835,
+   "siteStatus": "generic",
+   "populationSource": "combat_wave_derived"
+  },
+  {
+   "missionID": 14613,
+   "arcID": 40,
+   "dungeonID": 3836,
+   "siteStatus": "generic",
+   "populationSource": "family_derived"
+  },
+  {
+   "missionID": 14619,
+   "arcID": 40,
+   "dungeonID": 3842,
+   "siteStatus": "generic",
+   "populationSource": "family_derived"
+  },
+  {
+   "missionID": 14623,
+   "arcID": 48,
+   "dungeonID": 3840,
+   "siteStatus": "generic",
+   "populationSource": "combat_wave_derived"
+  },
+  {
+   "missionID": 14624,
+   "arcID": 48,
+   "dungeonID": 3850,
+   "siteStatus": "generic",
+   "populationSource": "combat_wave_derived"
+  },
+  {
+   "missionID": 14627,
+   "arcID": 48,
+   "dungeonID": 3847,
+   "siteStatus": "generic",
+   "populationSource": "family_derived"
+  },
+  {
+   "missionID": 14628,
+   "arcID": 48,
+   "dungeonID": 3853,
+   "siteStatus": "generic",
+   "populationSource": "family_derived"
+  },
+  {
+   "missionID": 14645,
+   "arcID": 48,
+   "dungeonID": 3873,
+   "siteStatus": "generic",
+   "populationSource": "family_derived"
+  },
+  {
+   "missionID": 14646,
+   "arcID": 48,
+   "dungeonID": 3860,
+   "siteStatus": "generic",
+   "populationSource": "family_derived"
+  },
+  {
+   "missionID": 14647,
+   "arcID": 48,
+   "dungeonID": 3865,
+   "siteStatus": "generic",
+   "populationSource": "family_derived"
+  },
+  {
+   "missionID": 14648,
+   "arcID": 48,
+   "dungeonID": 3869,
+   "siteStatus": "generic",
+   "populationSource": "combat_wave_derived"
+  },
+  {
+   "missionID": 14746,
+   "arcID": 52,
+   "dungeonID": 3882,
+   "siteStatus": "generic",
+   "populationSource": "family_derived"
+  },
+  {
+   "missionID": 14819,
+   "arcID": 52,
+   "dungeonID": 3884,
+   "siteStatus": "generic",
+   "populationSource": "family_derived"
+  },
+  {
+   "missionID": 14820,
+   "arcID": 52,
+   "dungeonID": 3888,
+   "siteStatus": "generic",
+   "populationSource": "family_derived"
+  },
+  {
+   "missionID": 14822,
+   "arcID": 52,
+   "dungeonID": 3893,
+   "siteStatus": "generic",
+   "populationSource": "family_derived"
+  },
+  {
+   "missionID": 14838,
+   "arcID": 48,
+   "dungeonID": 3907,
+   "siteStatus": "generic",
+   "populationSource": "family_derived"
+  },
+  {
+   "missionID": 14839,
+   "arcID": 48,
+   "dungeonID": 3912,
+   "siteStatus": "generic",
+   "populationSource": "family_derived"
+  },
+  {
+   "missionID": 14842,
+   "arcID": 48,
+   "dungeonID": 3927,
+   "siteStatus": "generic",
+   "populationSource": "family_derived"
+  },
+  {
+   "missionID": 14843,
+   "arcID": 48,
+   "dungeonID": 3917,
+   "siteStatus": "generic",
+   "populationSource": "family_derived"
+  },
+  {
+   "missionID": 14847,
+   "arcID": 40,
+   "dungeonID": 3851,
+   "siteStatus": "generic",
+   "populationSource": "family_derived"
+  },
+  {
+   "missionID": 14848,
+   "arcID": 40,
+   "dungeonID": 3961,
+   "siteStatus": "generic",
+   "populationSource": "family_derived"
+  },
+  {
+   "missionID": 14852,
+   "arcID": 53,
+   "dungeonID": 3909,
+   "siteStatus": "generic",
+   "populationSource": "family_derived"
+  },
+  {
+   "missionID": 14853,
+   "arcID": 53,
+   "dungeonID": 3911,
+   "siteStatus": "generic",
+   "populationSource": "family_derived"
+  },
+  {
+   "missionID": 14854,
+   "arcID": 53,
+   "dungeonID": 3915,
+   "siteStatus": "generic",
+   "populationSource": "family_derived"
+  },
+  {
+   "missionID": 14855,
+   "arcID": 53,
+   "dungeonID": 3918,
+   "siteStatus": "generic",
+   "populationSource": "family_derived"
+  },
+  {
+   "missionID": 14856,
+   "arcID": 53,
+   "dungeonID": 3922,
+   "siteStatus": "generic",
+   "populationSource": "family_derived"
+  },
+  {
+   "missionID": 14861,
+   "arcID": 48,
+   "dungeonID": 3950,
+   "siteStatus": "generic",
+   "populationSource": "family_derived"
+  },
+  {
+   "missionID": 14863,
+   "arcID": 48,
+   "dungeonID": 3977,
+   "siteStatus": "generic",
+   "populationSource": "family_derived"
+  },
+  {
+   "missionID": 14864,
+   "arcID": 48,
+   "dungeonID": 3957,
+   "siteStatus": "generic",
+   "populationSource": "family_derived"
+  },
+  {
+   "missionID": 14885,
+   "arcID": 40,
+   "dungeonID": 3955,
+   "siteStatus": "generic",
+   "populationSource": "family_derived"
+  },
+  {
+   "missionID": 14886,
+   "arcID": 40,
+   "dungeonID": 3955,
+   "siteStatus": "generic",
+   "populationSource": "family_derived"
+  },
+  {
+   "missionID": 14891,
+   "arcID": 52,
+   "dungeonID": 3938,
+   "siteStatus": "generic",
+   "populationSource": "family_derived"
+  },
+  {
+   "missionID": 14892,
+   "arcID": 52,
+   "dungeonID": 3948,
+   "siteStatus": "generic",
+   "populationSource": "combat_wave_derived"
+  },
+  {
+   "missionID": 14893,
+   "arcID": 52,
+   "dungeonID": 3941,
+   "siteStatus": "generic",
+   "populationSource": "family_derived"
+  },
+  {
+   "missionID": 14894,
+   "arcID": 52,
+   "dungeonID": 3952,
+   "siteStatus": "generic",
+   "populationSource": "family_derived"
+  },
+  {
+   "missionID": 14895,
+   "arcID": 52,
+   "dungeonID": 3944,
+   "siteStatus": "generic",
+   "populationSource": "family_derived"
+  },
+  {
+   "missionID": 14896,
+   "arcID": 52,
+   "dungeonID": 3959,
+   "siteStatus": "generic",
+   "populationSource": "family_derived"
+  },
+  {
+   "missionID": 14901,
+   "arcID": 40,
+   "dungeonID": 3956,
+   "siteStatus": "generic",
+   "populationSource": "family_derived"
+  },
+  {
+   "missionID": 14903,
+   "arcID": 40,
+   "dungeonID": 3963,
+   "siteStatus": "generic",
+   "populationSource": "family_derived"
+  },
+  {
+   "missionID": 14912,
+   "arcID": 48,
+   "dungeonID": 3986,
+   "siteStatus": "generic",
+   "populationSource": "family_derived"
+  },
+  {
+   "missionID": 14913,
+   "arcID": 48,
+   "dungeonID": 3987,
+   "siteStatus": "generic",
+   "populationSource": "family_derived"
+  },
+  {
+   "missionID": 14914,
+   "arcID": 48,
+   "dungeonID": 3989,
+   "siteStatus": "generic",
+   "populationSource": "family_derived"
+  },
+  {
+   "missionID": 14915,
+   "arcID": 48,
+   "dungeonID": 3995,
+   "siteStatus": "generic",
+   "populationSource": "family_derived"
+  },
+  {
+   "missionID": 14934,
+   "arcID": 53,
+   "dungeonID": 3964,
+   "siteStatus": "generic",
+   "populationSource": "family_derived"
+  },
+  {
+   "missionID": 14935,
+   "arcID": 53,
+   "dungeonID": 3967,
+   "siteStatus": "generic",
+   "populationSource": "family_derived"
+  },
+  {
+   "missionID": 14936,
+   "arcID": 53,
+   "dungeonID": 3971,
+   "siteStatus": "generic",
+   "populationSource": "family_derived"
+  },
+  {
+   "missionID": 14937,
+   "arcID": 53,
+   "dungeonID": 3972,
+   "siteStatus": "generic",
+   "populationSource": "family_derived"
+  },
+  {
+   "missionID": 14943,
+   "arcID": 52,
+   "dungeonID": 3969,
+   "siteStatus": "generic",
+   "populationSource": "family_derived"
+  },
+  {
+   "missionID": 14944,
+   "arcID": 52,
+   "dungeonID": 3975,
+   "siteStatus": "generic",
+   "populationSource": "family_derived"
+  },
+  {
+   "missionID": 14945,
+   "arcID": 52,
+   "dungeonID": 3979,
+   "siteStatus": "generic",
+   "populationSource": "family_derived"
+  },
+  {
+   "missionID": 14946,
+   "arcID": 52,
+   "dungeonID": 3983,
+   "siteStatus": "generic",
+   "populationSource": "family_derived"
+  },
+  {
+   "missionID": 14947,
+   "arcID": 52,
+   "dungeonID": 3993,
+   "siteStatus": "generic",
+   "populationSource": "family_derived"
+  },
+  {
+   "missionID": 14948,
+   "arcID": 52,
+   "dungeonID": 3997,
+   "siteStatus": "generic",
+   "populationSource": "family_derived"
+  },
+  {
+   "missionID": 14950,
+   "arcID": 52,
+   "dungeonID": 4002,
+   "siteStatus": "generic",
+   "populationSource": "family_derived"
+  },
+  {
+   "missionID": 14951,
+   "arcID": 52,
+   "dungeonID": 4004,
+   "siteStatus": "generic",
+   "populationSource": "family_derived"
+  },
+  {
+   "missionID": 14961,
+   "arcID": 53,
+   "dungeonID": 3990,
+   "siteStatus": "generic",
+   "populationSource": "family_derived"
+  },
+  {
+   "missionID": 14962,
+   "arcID": 53,
+   "dungeonID": 3994,
+   "siteStatus": "generic",
+   "populationSource": "family_derived"
+  },
+  {
+   "missionID": 14963,
+   "arcID": 53,
+   "dungeonID": 3996,
+   "siteStatus": "generic",
+   "populationSource": "family_derived"
+  },
+  {
+   "missionID": 14965,
+   "arcID": 53,
+   "dungeonID": 3998,
+   "siteStatus": "generic",
+   "populationSource": "family_derived"
+  },
+  {
+   "missionID": 14967,
+   "arcID": 53,
+   "dungeonID": 4003,
+   "siteStatus": "generic",
+   "populationSource": "family_derived"
+  },
+  {
+   "missionID": 14968,
+   "arcID": 53,
+   "dungeonID": 4000,
+   "siteStatus": "generic",
+   "populationSource": "family_derived"
+  },
+  {
+   "missionID": 14972,
+   "arcID": 40,
+   "dungeonID": 3981,
+   "siteStatus": "generic",
+   "populationSource": "family_derived"
+  },
+  {
+   "missionID": 14975,
+   "arcID": 40,
+   "dungeonID": 3984,
+   "siteStatus": "generic",
+   "populationSource": "family_derived"
+  },
+  {
+   "missionID": 15018,
+   "arcID": 55,
+   "dungeonID": 4085,
+   "siteStatus": "generic",
+   "populationSource": "family_derived"
+  },
+  {
+   "missionID": 15020,
+   "arcID": 55,
+   "dungeonID": 4086,
+   "siteStatus": "generic",
+   "populationSource": "family_derived"
+  },
+  {
+   "missionID": 15021,
+   "arcID": 55,
+   "dungeonID": 4097,
+   "siteStatus": "generic",
+   "populationSource": "family_derived"
+  },
+  {
+   "missionID": 15028,
+   "arcID": 56,
+   "dungeonID": 4110,
+   "siteStatus": "generic",
+   "populationSource": "combat_wave_derived"
+  },
+  {
+   "missionID": 15033,
+   "arcID": 56,
+   "dungeonID": 4114,
+   "siteStatus": "generic",
+   "populationSource": "family_derived"
+  },
+  {
+   "missionID": 15034,
+   "arcID": 56,
+   "dungeonID": 4121,
+   "siteStatus": "generic",
+   "populationSource": "family_derived"
+  },
+  {
+   "missionID": 15035,
+   "arcID": 56,
+   "dungeonID": 4122,
+   "siteStatus": "generic",
+   "populationSource": "combat_wave_derived"
+  },
+  {
+   "missionID": 15036,
+   "arcID": 56,
+   "dungeonID": 4112,
+   "siteStatus": "generic",
+   "populationSource": "family_derived"
+  },
+  {
+   "missionID": 15037,
+   "arcID": 56,
+   "dungeonID": 4116,
+   "siteStatus": "generic",
+   "populationSource": "family_derived"
+  },
+  {
+   "missionID": 15038,
+   "arcID": 56,
+   "dungeonID": 4125,
+   "siteStatus": "generic",
+   "populationSource": "family_derived"
+  },
+  {
+   "missionID": 15039,
+   "arcID": 56,
+   "dungeonID": 4137,
+   "siteStatus": "generic",
+   "populationSource": "family_derived"
+  },
+  {
+   "missionID": 15040,
+   "arcID": 56,
+   "dungeonID": 4117,
+   "siteStatus": "generic",
+   "populationSource": "family_derived"
+  },
+  {
+   "missionID": 15045,
+   "arcID": 56,
+   "dungeonID": 4145,
+   "siteStatus": "generic",
+   "populationSource": "family_derived"
+  },
+  {
+   "missionID": 15046,
+   "arcID": 56,
+   "dungeonID": 4146,
+   "siteStatus": "generic",
+   "populationSource": "family_derived"
+  },
+  {
+   "missionID": 15047,
+   "arcID": 56,
+   "dungeonID": 4148,
+   "siteStatus": "generic",
+   "populationSource": "family_derived"
+  },
+  {
+   "missionID": 15055,
+   "arcID": 55,
+   "dungeonID": 4095,
+   "siteStatus": "generic",
+   "populationSource": "family_derived"
+  },
+  {
+   "missionID": 15056,
+   "arcID": 55,
+   "dungeonID": 4216,
+   "siteStatus": "generic",
+   "populationSource": "family_derived"
+  },
+  {
+   "missionID": 15057,
+   "arcID": 55,
+   "dungeonID": 4100,
+   "siteStatus": "generic",
+   "populationSource": "family_derived"
+  },
+  {
+   "missionID": 15058,
+   "arcID": 56,
+   "dungeonID": 4110,
+   "siteStatus": "generic",
+   "populationSource": "combat_wave_derived"
+  },
+  {
+   "missionID": 15061,
+   "arcID": 55,
+   "dungeonID": 4111,
+   "siteStatus": "generic",
+   "populationSource": "family_derived"
+  },
+  {
+   "missionID": 15062,
+   "arcID": 55,
+   "dungeonID": 4119,
+   "siteStatus": "generic",
+   "populationSource": "family_derived"
+  },
+  {
+   "missionID": 15063,
+   "arcID": 55,
+   "dungeonID": 4130,
+   "siteStatus": "generic",
+   "populationSource": "family_derived"
+  },
+  {
+   "missionID": 15064,
+   "arcID": 55,
+   "dungeonID": 4140,
+   "siteStatus": "generic",
+   "populationSource": "family_derived"
+  },
+  {
+   "missionID": 15065,
+   "arcID": 55,
+   "dungeonID": 4136,
+   "siteStatus": "generic",
+   "populationSource": "family_derived"
+  },
+  {
+   "missionID": 15066,
+   "arcID": 55,
+   "dungeonID": 4135,
+   "siteStatus": "generic",
+   "populationSource": "family_derived"
+  },
+  {
+   "missionID": 15143,
+   "arcID": 55,
+   "dungeonID": 4085,
+   "siteStatus": "generic",
+   "populationSource": "family_derived"
+  },
+  {
+   "missionID": 15144,
+   "arcID": 56,
+   "dungeonID": 4197,
+   "siteStatus": "generic",
+   "populationSource": "family_derived"
+  },
+  {
+   "missionID": 15565,
+   "arcID": 64,
+   "dungeonID": 5228,
+   "siteStatus": "generic",
+   "populationSource": "family_derived"
+  },
+  {
+   "missionID": 15566,
+   "arcID": 64,
+   "dungeonID": 5232,
+   "siteStatus": "generic",
+   "populationSource": "family_derived"
+  },
+  {
+   "missionID": 15568,
+   "arcID": 64,
+   "dungeonID": 5220,
+   "siteStatus": "generic",
+   "populationSource": "family_derived"
+  },
+  {
+   "missionID": 15622,
+   "arcID": 67,
+   "dungeonID": 5228,
+   "siteStatus": "generic",
+   "populationSource": "family_derived"
+  },
+  {
+   "missionID": 15623,
+   "arcID": 67,
+   "dungeonID": 5232,
+   "siteStatus": "generic",
+   "populationSource": "family_derived"
+  },
+  {
+   "missionID": 15624,
+   "arcID": 67,
+   "dungeonID": 5220,
+   "siteStatus": "generic",
+   "populationSource": "family_derived"
+  },
+  {
+   "missionID": 15626,
+   "arcID": 68,
+   "dungeonID": 5228,
+   "siteStatus": "generic",
+   "populationSource": "family_derived"
+  },
+  {
+   "missionID": 15627,
+   "arcID": 68,
+   "dungeonID": 5232,
+   "siteStatus": "generic",
+   "populationSource": "family_derived"
+  },
+  {
+   "missionID": 15628,
+   "arcID": 68,
+   "dungeonID": 5220,
+   "siteStatus": "generic",
+   "populationSource": "family_derived"
+  },
+  {
+   "missionID": 15630,
+   "arcID": 69,
+   "dungeonID": 5268,
+   "siteStatus": "generic",
+   "populationSource": "family_derived"
+  },
+  {
+   "missionID": 15631,
+   "arcID": 69,
+   "dungeonID": 5270,
+   "siteStatus": "generic",
+   "populationSource": "family_derived"
+  },
+  {
+   "missionID": 15632,
+   "arcID": 69,
+   "dungeonID": 5226,
+   "siteStatus": "generic",
+   "populationSource": "family_derived"
+  },
+  {
+   "missionID": 15634,
+   "arcID": 70,
+   "dungeonID": 5268,
+   "siteStatus": "generic",
+   "populationSource": "family_derived"
+  },
+  {
+   "missionID": 15635,
+   "arcID": 70,
+   "dungeonID": 5270,
+   "siteStatus": "generic",
+   "populationSource": "family_derived"
+  },
+  {
+   "missionID": 15636,
+   "arcID": 70,
+   "dungeonID": 5226,
+   "siteStatus": "generic",
+   "populationSource": "family_derived"
+  },
+  {
+   "missionID": 15638,
+   "arcID": 71,
+   "dungeonID": 5268,
+   "siteStatus": "generic",
+   "populationSource": "family_derived"
+  },
+  {
+   "missionID": 15639,
+   "arcID": 71,
+   "dungeonID": 5270,
+   "siteStatus": "generic",
+   "populationSource": "family_derived"
+  },
+  {
+   "missionID": 15640,
+   "arcID": 71,
+   "dungeonID": 5226,
+   "siteStatus": "generic",
+   "populationSource": "family_derived"
+  },
+  {
+   "missionID": 15642,
+   "arcID": 72,
+   "dungeonID": 5273,
+   "siteStatus": "generic",
+   "populationSource": "family_derived"
+  },
+  {
+   "missionID": 15643,
+   "arcID": 72,
+   "dungeonID": 5274,
+   "siteStatus": "generic",
+   "populationSource": "family_derived"
+  },
+  {
+   "missionID": 15644,
+   "arcID": 72,
+   "dungeonID": 5262,
+   "siteStatus": "generic",
+   "populationSource": "family_derived"
+  },
+  {
+   "missionID": 15646,
+   "arcID": 73,
+   "dungeonID": 5273,
+   "siteStatus": "generic",
+   "populationSource": "family_derived"
+  },
+  {
+   "missionID": 15647,
+   "arcID": 73,
+   "dungeonID": 5274,
+   "siteStatus": "generic",
+   "populationSource": "family_derived"
+  },
+  {
+   "missionID": 15648,
+   "arcID": 73,
+   "dungeonID": 5262,
+   "siteStatus": "generic",
+   "populationSource": "family_derived"
+  },
+  {
+   "missionID": 15650,
+   "arcID": 74,
+   "dungeonID": 5273,
+   "siteStatus": "generic",
+   "populationSource": "family_derived"
+  },
+  {
+   "missionID": 15651,
+   "arcID": 74,
+   "dungeonID": 5274,
+   "siteStatus": "generic",
+   "populationSource": "family_derived"
+  },
+  {
+   "missionID": 15652,
+   "arcID": 74,
+   "dungeonID": 5262,
+   "siteStatus": "generic",
+   "populationSource": "family_derived"
+  },
+  {
+   "missionID": 15654,
+   "arcID": 75,
+   "dungeonID": 5265,
+   "siteStatus": "generic",
+   "populationSource": "family_derived"
+  },
+  {
+   "missionID": 15655,
+   "arcID": 75,
+   "dungeonID": 5267,
+   "siteStatus": "generic",
+   "populationSource": "family_derived"
+  },
+  {
+   "missionID": 15656,
+   "arcID": 75,
+   "dungeonID": 5222,
+   "siteStatus": "generic",
+   "populationSource": "family_derived"
+  },
+  {
+   "missionID": 15658,
+   "arcID": 76,
+   "dungeonID": 5265,
+   "siteStatus": "generic",
+   "populationSource": "family_derived"
+  },
+  {
+   "missionID": 15659,
+   "arcID": 76,
+   "dungeonID": 5267,
+   "siteStatus": "generic",
+   "populationSource": "family_derived"
+  },
+  {
+   "missionID": 15660,
+   "arcID": 76,
+   "dungeonID": 5222,
+   "siteStatus": "generic",
+   "populationSource": "family_derived"
+  },
+  {
+   "missionID": 15662,
+   "arcID": 77,
+   "dungeonID": 5265,
+   "siteStatus": "generic",
+   "populationSource": "family_derived"
+  },
+  {
+   "missionID": 15663,
+   "arcID": 77,
+   "dungeonID": 5267,
+   "siteStatus": "generic",
+   "populationSource": "family_derived"
+  },
+  {
+   "missionID": 15664,
+   "arcID": 77,
+   "dungeonID": 5222,
+   "siteStatus": "generic",
+   "populationSource": "family_derived"
+  },
+  {
+   "missionID": 17130,
+   "arcID": 128,
+   "dungeonID": 13338,
+   "siteStatus": "generic",
+   "populationSource": "family_derived"
+  },
+  {
+   "missionID": 17131,
+   "arcID": 128,
+   "dungeonID": 13339,
+   "siteStatus": "generic",
+   "populationSource": "family_derived"
+  },
+  {
+   "missionID": 17132,
+   "arcID": 128,
+   "dungeonID": 13340,
+   "siteStatus": "generic",
+   "populationSource": "combat_wave_derived"
+  },
+  {
+   "missionID": 17183,
+   "arcID": 132,
+   "dungeonID": 14097,
+   "siteStatus": "missing",
+   "populationSource": null
+  },
+  {
+   "missionID": 17184,
+   "arcID": 132,
+   "dungeonID": 14098,
+   "siteStatus": "missing",
+   "populationSource": null
+  },
+  {
+   "missionID": 17185,
+   "arcID": 132,
+   "dungeonID": 14099,
+   "siteStatus": "missing",
+   "populationSource": null
+  },
+  {
+   "missionID": 17186,
+   "arcID": 132,
+   "dungeonID": 14100,
+   "siteStatus": "missing",
+   "populationSource": null
+  }
+ ]
+}

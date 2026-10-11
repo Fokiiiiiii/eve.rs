@@ -240,8 +240,17 @@ internal sealed partial class CharacterServicesComposition
                     return level;
                 },
                 corporationId => npcFactions.GetValueOrDefault(corporationId),
-                // the mission pool is not loaded on this server yet, so no agent has a mission to offer (DEVIATIONS, Agents slice AG-2, A5)
-                (_, _, _) => ValueTask.FromResult<Eve.Agents.AgentMissionContent?>(null),
+                // the offer is the next step of the agent's epic arc (EpicArcOffers): the official arc sequence, with the held-back sites
+                // kept out (owner decision). Basic agents have no official mission link yet, so they offer nothing.
+                async ValueTask<Eve.Agents.AgentMissionContent?> (AgentMissionAgentData agent, long characterId, CancellationToken ct) =>
+                {
+                    var completed = await agentMissionStore.ReadCompletedAsync(characterId, ct);
+                    var now = DateTimeOffset.UtcNow;
+                    if (Eve.Services.Core.EpicArcOffers.Pick(agentMissionStatic, agent.AgentId, completed, now) is not { } missionId ||
+                        agentMissionStatic.Mission(missionId) is not { } mission)
+                        return null;
+                    return new Eve.Agents.AgentMissionContent(mission.MissionId, mission.NameId, mission.NameEn, "", false);
+                },
                 () => DateTimeOffset.UtcNow));
     }
 }

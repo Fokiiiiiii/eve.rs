@@ -11,9 +11,9 @@ Owner: the structures phase (plan in the scratchpad `specs/structures_phase.md`,
 - (c, part 1) E-03 jammer state and E-15 announcement (de4f4e5): `Eve.Structures/StructureJammer.cs`, migration 0002 (`online_since_ms`), the topic
   `structure.service_changed`, `GetCynoJammerState` through `BeyonceService`, the subscriber `structure.cyno_jammer_notice`. Tests: `StructureJammerTests` (2).
 - (c, part 2) the standard cynosural field refused in a jammed system (`CYNO_JAMMED`, after the fleet rule; the covert field immune). Tests:
-  `CynoFieldHostTests` (4, two new). Not yet pushed at the time of writing; see the TODO rows.
+  `CynoFieldHostTests` (4, two new). Pushed in 7a69bff.
 - (d) the structure cyno beacon checks (`Eve.Services.Space/StructureBeaconTravel.cs`, EveJS `resolveUsableBeacon` order and texts). The jump itself is refused
-  by name. Tests: `StructureBeaconTravelTests` (5). Not yet pushed at the time of writing.
+  by name. Tests: `StructureBeaconTravelTests` (5). Pushed in 7a69bff; the Space test project passes 672 of 672 with it.
 
 ## Open
 1. The jump to a structure beacon: the access check (`characterHasStructureService`), the jump drive's fuel and range, and the sim cynosural beacon at the

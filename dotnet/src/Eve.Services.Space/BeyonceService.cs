@@ -253,13 +253,22 @@ public Func<long, long, CancellationToken, Task<int>>? SkillLevelOfCharacter { g
         }
 
         var coordinate = type == "position" ? Coordinates(call.Arg(1)) : null;
-        var requestedTarget = type == "position" ? null : Number(call.Arg(1));
+        // a cosmic site's scan result is named by its code (ABC-123), which the client sends as text; every other target is a number
+        var scanCode = type == "scan" ? JsSemantics.StringValue(call.Arg(1)) : null;
+        var requestedTarget = type == "position" || scanCode is not null ? null : Number(call.Arg(1));
         if (type == "position")
         {
             if (coordinate is not { } parsedPoint
                 || !double.IsFinite(parsedPoint.X)
                 || !double.IsFinite(parsedPoint.Y)
                 || !double.IsFinite(parsedPoint.Z))
+            {
+                throw WarpRefusal();
+            }
+        }
+        else if (scanCode is not null)
+        {
+            if (scanCode.Trim().Length == 0)
             {
                 throw WarpRefusal();
             }
@@ -335,7 +344,8 @@ public Func<long, long, CancellationToken, Task<int>>? SkillLevelOfCharacter { g
         else if (type == "scan")
         {
             // a scan result is warped to only as the reference allows: the 100 percent place of the last completed scan in this system (no fleet warp)
-            if (fleetWarp || callerSystem is not { } scanSystem || space.WarpAuthority.Resolve(call.Session, scanSystem, targetId) is not { } place)
+            if (fleetWarp || callerSystem is not { } scanSystem
+                || (scanCode is null ? space.WarpAuthority.Resolve(call.Session, scanSystem, targetId) : space.WarpAuthority.Resolve(call.Session, scanSystem, scanCode)) is not { } place)
             {
                 throw WarpRefusal();
             }

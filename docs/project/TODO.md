@@ -930,6 +930,19 @@ section 4.7: A8 done for balances and notifications; A2 done as a rule; A3 done 
 | OPEN | A1 check: the GetAgents rowset against the SDE counts (10966 agents, 360 in space, 1773 locators) is not yet a test that reads the SDE | `AgentComposition.NpcAgents`; the SDE is in PostgreSQL schema `sde` |
 | OPEN | Headless walk: the balances and the refused exchange are not yet in `tests/test_login_to_character.py` | the live run |
 | CLOSED | `LPSvc` is no longer in the list of names the core registry leaves out (the Host registers it; `ServiceAdvertisementTests`) | `ServiceAdvertisementTests.cs` |
+## Agents slice AG-2: research, the rule check and the locator (2026-10-11)
+
+Web research is recorded in DEVIATIONS.md, "Agents slice AG-2". Sources read: ESI OpenAPI (CCP), the EVE University wiki
+(Agent, Loyalty_Points, Locator_Agents). CCP's support and developer pages were not reachable (403, 404).
+
+| Status | Item | Where / blocker |
+|---|---|---|
+| DONE (research) | Sources read and compared with the access rule: thresholds, the -2 floor and the research rule agree; the wiki's skill bonus target is wrong and the client (all three standings) wins | DEVIATIONS "Agents slice AG-2" |
+| OPEN | R&D missions: wiki "only two missions, a trade and a courier" vs CCP 2011 research missions (Q-AG-7) | design 4.8 |
+| OPEN | LP store offer data: no LP offer rows in the pinned SDE build 3396210 and none in eve-logic (A9 source gap) | DEVIATIONS "Agents slice AG-2" |
+| OPEN | Research rates and datacore price: no source read (A6) | DEVIATIONS "Agents slice AG-2" |
+| OPEN | CONCORD LP exchange: wiki rates exist but no CCP source; stays refused | DEVIATIONS "Agents slice AG-2" |
+
 ## 43. Structures phase ST-E: remaining E wiring (2026-10-10)
 - DONE E-01: StartNewExtraction, FractureChunkWithStructure and CancelExtraction refuse by name (CustomNotify) with no backend, not PyNone (`StructureDataRpcServices.cs`, commit 59e9e89). The backend is ST-6a.
 - DONE E-04 proximity: the sim breaks a cloak that has a ship or a non-belt body within 2 km of its surface and sends `OnCloakModuleForceDeactivated` (`CloakDeactivatedByProximityToType`) before the module stops (`crates/eve-space/src/scene/decloak.rs`, polled in `scene/session.rs`). Activation refuses within the same 2 km (`modules/activation.rs`). Tests: `modules::tests` (ship, station, custom); host `SpaceServiceTests.A_forced_decloak_notice_reaches_the_pilot_with_the_message_and_its_arguments`. No protocol bump: the notice is an existing notify.
@@ -950,8 +963,9 @@ Done (verified):
 Open (next steps, in order):
 | Status | Item |
 |---|---|
-| OPEN | The Host rules source (`IStructureRulesSource`) over the SDE (`rigSize`, system security band) |
-| OPEN | Register the migration and the timers at start-up (`Foundations`/`Program.cs`, like `Eve.Ships`), the GameStore import (host side only, ADR 0003 rule 3), `ArchitectureTests` entry |
+| VERIFIED (tests) | Host: the structures schema is the record owner. `StructureRecords()` (run right after the character stores migrate) copies the game store's `structures` table in once; `ReadGameStoreTableAsync("structures")` reads the store's legacy-shaped view; the description (`SetStructureDescriptionAsync`) and the profile change (`ChangeProfilesAsync`) write the store, and the game store's `structures` table is no longer written. Tests: Host suite 165 passed (`StructureDataRpcPersistenceTests`, `PersistenceStructureHangarViewRpcTests`); Services.Core structure tests 78 passed (`StructureDirectoryServiceTests`); `StructureTimersTests.A_description_and_a_profile_...` (54 in the Structures project) | `ArchitectureTests` lists `Eve.Structures`; `Eve.Scheduler` and `Eve.Events` are the allowed foundations; `LiveScriptIsolationTests` (`EVE_STRUCTURES_SCHEMA`) |
+| VERIFIED (tests) | Host timers: `StructureRulesSource` (SDE `rigSize` and `mapSolarSystems`: size and band; `StructureRulesSourceTests`, 2 tests with the pinned SDE); `StructureTimers` registered in `Structures()` before the foundations start; the deadlines of the imported structures are scheduled (`EnsureScheduledAsync`). Decisions in DEVIATIONS "Structure timeline (ST-0)" |
+| OPEN | A Host-level test (the RPC callbacks, not the store) that a description and a profile set through the composition are read back after a restart; a Host test that an imported structure with an elapsed deadline advances once after start |
 | OPEN | Switch the readers of the GameStore `structures` table (`PersistenceStructureDirectoryReadModel{,.Part2}`, `PersistenceStructureAssetSafetyReadModel{,.Part2}`, `PersistenceStructureProfilesRpcBackend` reads and writes, `StructureComposition.cs` `StructureExistsAsync`, `IndustryComposition.cs:68`, `CharacterRpc.cs:98`) to the store, one file at a time, with the existing structure tests green |
 ## 45. Track ST-11: cosmic sites as content, the director and the probe source (2026-10-10)
 
@@ -960,7 +974,7 @@ Plan: scratchpad `specs/structures_phase.md`, ST-11. Handoff: `docs/project/hand
 | Status | Item | Evidence |
 |---|---|---|
 | BUILT (tests) | Increment 1, not bound in the host: the site definitions (`anomaly`, `signature`, `site.{id}`) from the static table `Sites/Data/site-templates.json` (419 templates, from `tools/dev/extract-site-templates.py`); `CosmicSiteDirector` (the recurring `site.spawn` job per system, the slots `system:{id}:slot:{n}`, the respawn subscriber on `content.{anomaly,signature}.{completed,expired}`); `ICosmicSiteSource` async, implemented by `ContentCosmicSites` (signatures with their code and level); the scan rows carry the code and the dungeon fields; the warp authority keys results by text. | `CosmicSitesTests.cs` (CosmicSiteRulesTests: codes, placement, template coverage, probe strength; CosmicSiteDirectorTests, PgFact: one site per slot once and idempotent, restart keeps them, expiry replaces each site in its slot elsewhere, the probe source lists the signatures with their codes). Run: `dotnet test Eve.Services.Space.Tests --filter CosmicSite`, 11 passed, 0 skipped, EVE_PG_URL set. |
-| OPEN | Increment 2, the host binding: `SpaceComposition` attaches the director before `foundations.StartAsync`, `SystemEntered` asks for the sites, `SpaceProbeScans` gets `ContentCosmicSites` instead of `NoCosmicSites`, the anomaly read model asks first, `BeyonceService` warps to a result by code. Patch kept in the scratchpad, not committed. | handoff |
+| BUILT (tests) | Increment 2, the host binding: `SpaceComposition` attaches the director before `foundations.StartAsync`, `SystemEntered` asks for the sites, `SpaceProbeScans` gets `ContentCosmicSites` instead of `NoCosmicSites`, the anomaly read model asks first, `BeyonceService` warps to a result by code. The Eve.Host build is clean. Not tested through the Beyonce rig with a content-backed source. | `CosmicSitesTests` (warp authority by code); the full `Eve.Services.Space.Tests` (642 passed) and `Eve.Host.Tests` runs; handoff |
 | OPEN | NPCs of a site: spawn the waves through the existing spawner, publish `npc.killed { site, solarSystemId }` in the kill transaction, so a site can be cleared and respawned (the respawn is covered by the director's tests). | the director's objectives already count `npc.killed` by `site` |
 | OPEN | Containers of a data and relic site: place them through `SpaceContainers`, publish `site.container.cleared` on the analyzer's completion. | `CosmicSiteDirector.ContainerClearedTopic` |
 | OPEN | Level from the client difficulty above 5 (ten templates) and the downtime rule of the respawn. | DEVIATIONS "Cosmic sites (ST-11)" |

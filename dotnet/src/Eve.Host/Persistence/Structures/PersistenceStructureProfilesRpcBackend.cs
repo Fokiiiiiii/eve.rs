@@ -10,7 +10,8 @@ namespace Eve.Host;
 public sealed class PersistenceStructureProfilesRpcBackend(
     Func<string, CancellationToken, Task<JsonObject>> readTable,
     GameStoreCache gameStoreCache,
-    CharacterSessions characterSessions)
+    CharacterSessions characterSessions,
+    Func<IReadOnlyCollection<long>, long, CancellationToken, Task>? setStructureProfileAsync = null)
 {
     private const string Table = "structureProfiles";
     private const string DefaultName = "Default Profile";
@@ -189,19 +190,20 @@ public sealed class PersistenceStructureProfilesRpcBackend(
             await WriteRootAsync(profileRoot, cancellationToken).ConfigureAwait(false);
 
         var structures = await readTable("structures", cancellationToken).ConfigureAwait(false);
-        var changed = false;
+        var moved = new List<long>();
         foreach (var structureId in structureIds.Where(id => id > 0).Distinct())
         {
             if (structures[structureId.ToString(CultureInfo.InvariantCulture)] is not JsonObject structure ||
                 Truthy(structure["destroyedAt"]) ||
                 Integer(structure["ownerCorpID"] ?? structure["ownerID"]) != corporationId)
                 continue;
-            structure["profileID"] = profileId;
-            changed = true;
+            moved.Add(structureId);
         }
-        if (changed)
+        if (moved.Count > 0)
         {
-            await WriteTableAsync("structures", structures, cancellationToken).ConfigureAwait(false);
+            // the structures schema owns the profile of a structure (ST-0); the game store's table is no longer written
+            var set = setStructureProfileAsync ?? throw new InvalidOperationException("structure profiles are not wired to the structure store");
+            await set(moved, profileId, cancellationToken).ConfigureAwait(false);
             NotifyCorporationStructuresUpdated(corporationId);
         }
     }

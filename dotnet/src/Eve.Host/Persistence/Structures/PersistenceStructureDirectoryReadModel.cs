@@ -39,14 +39,14 @@ public sealed partial class PersistenceStructureDirectoryReadModel(
     Func<string, CancellationToken, Task<JsonObject>> readTable,
     Func<long, CancellationToken, Task<Eve.Relations.Affiliation>> affiliationOf,
     Eve.Sde.SdeReader sde,
-    Eve.GameStore.GameStoreCache gameStoreCache) :
+    Func<long, string, CancellationToken, Task>? setDescriptionAsync) :
     Eve.Services.Core.IStructureDirectoryReadCallbacks,
     Eve.Services.Core.IStructureSettingsReadCallbacks
 {
     public PersistenceStructureDirectoryReadModel(
         Func<string, CancellationToken, Task<JsonObject>> readTable,
         Func<long, CancellationToken, Task<Eve.Relations.Affiliation>> affiliationOf)
-        : this(readTable, affiliationOf, null!, null!)
+        : this(readTable, affiliationOf, null!, null)
     {
     }
 
@@ -497,7 +497,7 @@ public async ValueTask<Eve.Services.Core.PersistedStructureInfo?> GetStructureIn
 
     public async ValueTask<bool> SetStructureDescriptionAsync(ServiceCall call)
     {
-        if (gameStoreCache is null)
+        if (setDescriptionAsync is null)
             return false;
         var characterId = call.Session?.CharacterId ?? 0;
         var corporationId = call.Session?.GetInt("corpid") ?? 0;
@@ -535,13 +535,8 @@ public async ValueTask<Eve.Services.Core.PersistedStructureInfo?> GetStructureIn
             _ => string.Empty,
         };
         var description = text[..Math.Min(1000, text.Length)];
-        var write = gameStoreCache.Write(
-            "structures",
-            $"/{structureId}/description",
-            JsonValue.Create(description));
-        if (!write.Success)
-            throw new InvalidOperationException($"Could not update structure {structureId} description: {write.ErrorMsg}");
-        await gameStoreCache.FlushTableAsync("structures", call.Cancellation);
+        // the structures schema owns the description (ST-0); the game store's table is no longer written
+        await setDescriptionAsync(structureId, description, call.Cancellation);
         return true;
     }
 

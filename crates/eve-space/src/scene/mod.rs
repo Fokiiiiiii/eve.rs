@@ -15,6 +15,7 @@ mod jump;
 mod movement;
 mod scan_targets;
 mod session;
+mod structures;
 mod warping;
 use self::collision::*;
 pub use self::decloak::{CLOAK_PROXIMITY_METERS, CloakTrigger, DecloakCause};

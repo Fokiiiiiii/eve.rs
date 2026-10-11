@@ -168,6 +168,39 @@ pub(super) fn put_vector(out: &mut Vec<u8>, vector: &[f64; 3]) {
     }
 }
 
+/// A structure's slim fields, in the order `decode_message::read_structure_status` reads them.
+pub(super) fn put_structure_status(out: &mut Vec<u8>, status: &crate::world::StructureStatus) {
+    out.extend_from_slice(&status.state.to_le_bytes());
+    out.extend_from_slice(&status.upkeep_state.to_le_bytes());
+    match status.timer {
+        Some((start, end, paused)) => {
+            out.push(1);
+            out.extend_from_slice(&start.to_le_bytes());
+            out.extend_from_slice(&end.to_le_bytes());
+            match paused {
+                Some(paused) => {
+                    out.push(1);
+                    out.extend_from_slice(&paused.to_le_bytes());
+                }
+                None => out.push(0),
+            }
+        }
+        None => out.push(0),
+    }
+    match status.unanchoring {
+        Some(time) => {
+            out.push(1);
+            out.extend_from_slice(&time.to_le_bytes());
+        }
+        None => out.push(0),
+    }
+    out.push(match status.repairing {
+        None => 0,
+        Some(false) => 1,
+        Some(true) => 2,
+    });
+}
+
 pub(super) fn put_optional_vector(out: &mut Vec<u8>, vector: Option<[f64; 3]>) {
     match vector {
         Some(vector) => {

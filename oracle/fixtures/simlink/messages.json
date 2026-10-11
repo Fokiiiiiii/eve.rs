@@ -3650,6 +3650,60 @@
    "hex": "090000004201e0535666840300"
   },
   {
+   "name": "structure put in space by the host with a running timer",
+   "kind": "PlaceStructure",
+   "structureId": "1040000000000001",
+   "solarSystemId": 30100032,
+   "typeName": "Astrahus",
+   "typeId": 35832,
+   "groupId": 1657,
+   "position": [
+    311989835983.1308,
+    -13069154020.916222,
+    156646308895.76187
+   ],
+   "radius": 60000.0,
+   "ownerId": "98000001",
+   "corporationId": 98000001,
+   "allianceId": 0,
+   "status": {
+    "state": 110,
+    "upkeepState": 3,
+    "timer": [
+     132000000000000000,
+     132000860000000000,
+     null
+    ],
+    "unanchoring": null,
+    "repairing": null
+   },
+   "hex": "6b0000004a010091dedfb10300404acb0108004173747261687573f88b0000790600005fc833c6022952426c5427b7db5708c285e10f7e6c3c424200000000004ced40815cd70500000000815cd705000000006e000000030000000100005af64cf5d4010098583215f6d401000000"
+  },
+  {
+   "name": "structure state set by the host: paused timer, unanchoring, repairing",
+   "kind": "SetStructureState",
+   "solarSystemId": 30100032,
+   "structureId": "1040000000000001",
+   "status": {
+    "state": 111,
+    "upkeepState": 3,
+    "timer": [
+     132000000000000000,
+     132000860000000000,
+     132000100000000000
+    ],
+    "unanchoring": 132000900000000000,
+    "repairing": true
+   },
+   "hex": "390000004c404acb01010091dedfb103006f000000030000000100005af64cf5d4010098583215f6d4010100e8d03e64f5d40101002888821ef6d40102"
+  },
+  {
+   "name": "structure taken out of space by the host",
+   "kind": "RemoveStructure",
+   "structureId": "1040000000000001",
+   "hex": "090000004b010091dedfb10300"
+  },
+  {
    "name": "mobile warp disruptor dropped from a ship and not yet anchored",
    "kind": "PlaceDisruptor",
    "deployableId": "4250000000000009",

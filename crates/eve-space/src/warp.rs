@@ -198,7 +198,7 @@ pub fn stop_distance(body: &Body, ship_radius: f64, range: f64) -> f64 {
     let radius = body.radius.max(0.0);
     let ship = ship_radius * 2.0;
     match body.kind {
-        BodyKind::Station => radius + range + ship,
+        BodyKind::Station | BodyKind::Structure => radius + range + ship,
         BodyKind::Belt => 2_500.0f64.max(range) + ship,
         _ => match body.group_id {
             GROUP_PLANET | 8 => (radius + 1_000_000.0).max(range) + ship,

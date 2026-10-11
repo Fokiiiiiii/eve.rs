@@ -1848,3 +1848,9 @@ EVE University wiki (three days of fuel to online, [W] per `structures_phase.md`
   module's onlining needs the sovereignty hub's Cynosural Suppression upgrade (SDE description of 35914). [S]
 - No EveJS service id maps the Structure Compression Plant (35900, fuel 5/h, online 360). EveJS gates the structure compression by the Reprocessing
   service (4) online (`miningIndustry.js` 281-288). Decided for increment (b): the same gate. [J]
+
+## Structure ball (ST-1)
+
+- **A structure is a body of the system, not a new entity (structures phase D-3).** `BodyKind::Structure` joins the system's bodies, so the ballpark (`SetState`), targeting, docking and the slim item already key on it. The alternative, an NPC-like entity, would duplicate those paths. Sources: the repository's `crates/eve-space/src/world.rs` and `payload.rs` (bodies are the balls of a system); `structures_phase.md` D-3 (body with health recommended).
+- **Ball kind: `Kind::Station`.** The structure ball is a rigid station ball. Unverified on the real client: the client's ball kind for an Upwell structure has not been observed (MITM). Revisit when the structure is seen in the graphical client.
+- **The host owns the state.** The sim stores the slim state the host sends and never advances a timer; the timers are the Eve.Structures machine's (ST-0). The sim-side damage cap and the reinforcement are ST-1 increments (b) and (d).

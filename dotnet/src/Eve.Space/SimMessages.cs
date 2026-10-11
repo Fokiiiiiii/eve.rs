@@ -1011,6 +1011,21 @@ public sealed record SimPlaceProbe(
 /// <summary>The host takes a scanner probe out of space (recalled, or its time is up); a deployable that is not a probe is left alone (protocol 45).</summary>
 public sealed record SimRemoveProbe(long ProbeId) : SimMessage;
 
+/// <summary>A structure's slim fields as the host has them (protocol 59): its state and upkeep, its timer (start, end and the time it was paused, when it is),
+/// its unanchoring time and whether it is repaired (none when the client should show no repair). The simulation shows them and decides nothing.</summary>
+public sealed record SimStructureStatus(int State, int UpkeepState, (long Start, long End, long? Paused)? Timer, long? Unanchoring, bool? Repairing);
+
+/// <summary>An Upwell structure the host puts in space, as a body of the system with its slim state (protocol 59). It stays until <see cref="SimRemoveStructure"/>.</summary>
+public sealed record SimPlaceStructure(
+    long StructureId, int SolarSystemId, string Name, int TypeId, int GroupId, IReadOnlyList<double> Position, double Radius, long OwnerId, int CorporationId,
+    int AllianceId, SimStructureStatus Status) : SimMessage;
+
+/// <summary>The host takes a structure out of space (protocol 59); a body that is not a structure is left alone.</summary>
+public sealed record SimRemoveStructure(long StructureId) : SimMessage;
+
+/// <summary>The host changes a structure's slim state (protocol 59); a structure not in space is left alone.</summary>
+public sealed record SimSetStructureState(int SolarSystemId, long StructureId, SimStructureStatus Status) : SimMessage;
+
 /// <summary>A mobile warp disruptor the host keeps a record of, put in space where its pilot dropped it (protocol 48). Its disruption is on while <see cref="Active"/>
 /// (it is anchored); <see cref="Range"/> is the warp disruption range in metres.</summary>
 public sealed record SimPlaceDisruptor(

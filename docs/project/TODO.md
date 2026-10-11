@@ -1106,3 +1106,16 @@ Open (next steps, in order):
 | OPEN | (c) E-03: `BeyonceService.CynoJammerOnlineSimTimeForSystem` from an online service 17 in the system; E-15 `OnCynoJammerChanged` from a subscriber on the service change; the non-covert cyno generator refused in a jammed system (host side, `SpaceSessions.Modules.cs`) |
 | OPEN | (d) `structureCynoBeaconMgr` backend in place of the user error (`StructureTravelRpcService.cs`): Pharolux beacon service 16 online, jump to it |
 | OPEN | Fuel burns send no `OnItemChange` to the owner's sessions (no session at burn time); rig and skill reductions of the online charge |
+
+## 46. Structures phase ST-1: the structure ball in the simulation (protocol 59, 2026-10-11)
+
+| status | item | where | note |
+|---|---|---|---|
+| DONE | `BodyKind::Structure`, `StructureStatus`, `PlaceStructure` / `RemoveStructure` / `SetStructureState` (protocol 59) | `crates/eve-space/src/scene/structures.rs`, `link/*`, `sim/dispatch.rs` | Sim-side only; the host sends nothing yet (increment d). |
+| DONE | Slim item of a structure (state, upkeep, timer, unanchoring, repairing, category 65) | `crates/eve-space/src/slim.rs` `structure_fields` | Client field names read from eve-logic `structure.py`, `structureBracket.py`. |
+| DONE | C# codec, records, `ISimulation`, `SimClient`, fakes; fixtures regenerated | `dotnet/src/Eve.Space/*`, `oracle/fixtures/simlink/messages.json` | `Eve.Space.Tests` 276 pass; `Eve.Services.Space.Tests` 648 pass with PG. |
+| OPEN | Health layers, per-second damage cap, `Out::StructureDamaged` | ST-1 (b) | Not started. |
+| OPEN | Dockable body generalisation in `scene/docking.rs` | ST-1 (c) | Not started. |
+| OPEN | Host `SpaceStructures` (restore on first entry, `structure.state_changed` subscriber, damage to the ST-0 machine) | ST-1 (d) | Not started. |
+| OPEN | Headless test `tools/headless-client/tests/test_structures.py` | ST-1 (e) | Not started. |
+| UNVERIFIED | The client's ball kind and slim rendering of an Upwell structure | MITM | See DEVIATIONS "Structure ball (ST-1)". |

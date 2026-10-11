@@ -118,9 +118,29 @@ pub fn body_entries(system: &SolarSystem, body: &Body) -> Entries {
             }
         }
         BodyKind::Stargate => stargate_fields(system, body, &mut entries),
+        BodyKind::Structure => structure_fields(body, &mut entries),
         BodyKind::Planet | BodyKind::Moon | BodyKind::Belt | BodyKind::Star => {}
     }
     entries
+}
+
+/// A structure's slim fields (the client's structure bracket and `structure.py` read them): its owner, its state and upkeep, its timer
+/// `(start, end, paused)`, its unanchoring time and whether it is repaired.
+fn structure_fields(body: &Body, entries: &mut Entries) {
+    let Detail::Structure { corporation_id, alliance_id, status } = &body.detail else {
+        return;
+    };
+    entries.push(("corpID", id(*corporation_id)));
+    entries.push(("allianceID", int(*alliance_id)));
+    entries.push(("state", int(i64::from(status.state))));
+    entries.push(("upkeepState", int(i64::from(status.upkeep_state))));
+    let timer = match status.timer {
+        Some((start, end, paused)) => tuple([filetime(start), filetime(end), paused.map_or(Value::None, filetime)]),
+        None => Value::None,
+    };
+    entries.push(("timer", timer));
+    entries.push(("unanchoring", status.unanchoring.map_or(Value::None, filetime)));
+    entries.push(("repairing", status.repairing.map_or(Value::None, Value::Bool)));
 }
 
 /// The entries of a ship's slim item: a player's, or an NPC's (which has no name and ends with the limits of its owner's reactions).

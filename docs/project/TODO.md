@@ -913,7 +913,7 @@ Open after M1:
 | DONE (M6) | Transactions by division: rights (accountant, junior accountant, Account Take, CrpAccessDenied 101), newest first, fromDate and division filters, keyID; the EXPLAIN check is not run (no index added) | DEVIATIONS.md, "Market slice M6"; `MarketTransactionReadTests` (3) |
 | DONE (M7) | Bounded order-book read: batches of 50 in book order, stop when filled; 10000-order benchmark (before 9999 rows locked per placement, after 50); no index added (EXPLAIN) | DEVIATIONS.md, "Market slice M7"; `OrderBookMatchTests`, opt-in `OrderBookBenchmarkTests` |
 | DONE (M8) | Invariants (escrow per wallet, escrowed items per sell, fill legs, order sanity) as a reconciliation the expiry job runs every 10 minutes and logs on mismatch; concurrency tests (modify and cancel racing a fill); documented lock order, with the two entry points that broke it moved; Q14 checked | DEVIATIONS.md, "Market slice M8"; `MarketInvariantTests`, `MarketConcurrencyTests`, `MarketLockOrderTests` |
-| OPEN | M9 live acceptance and the NPC seed import | market agent 3 |
+| DONE (M9) | Live walk: place, match, transactions, modify (refusal, and the change after the delay under EVE_LIVE_SLOW=1), cancel, escrow, corporation orders and refusal; the NPC seed import path has a test | DEVIATIONS.md, "Market slice M9"; `test_market.py`; `MarketSeedImportTests` |
 | OPEN | The client label table is partial: `MktCantSellItem2`, `MktCantSellItemOutsideStation` and `MktInvalidRegion` need values the server does not hold (localized jump texts) | the client's localization |
 | OPEN | The corporation read rule has a test for a character outside the corporation; a member holding Account Take and not an accountant is covered by M6 | M6 |
 

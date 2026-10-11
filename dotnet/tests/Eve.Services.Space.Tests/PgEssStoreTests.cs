@@ -25,6 +25,9 @@ internal sealed class EssRig : IAsyncDisposable
     /// <summary>The quadrant of the systems (null: in none).</summary>
     public string? SystemQuadrant { get; set; } = "NW";
 
+    /// <summary>What the key removal does inside the bank's transaction (a test writes a marker there, or fails after it).</summary>
+    public Func<NpgsqlConnection, NpgsqlTransaction, Task>? KeyEffect { get; set; }
+
     /// <summary>The alliance that holds the sovereignty of the systems (null: none does).</summary>
     public long? SovereigntyOwner { get; set; }
 
@@ -55,7 +58,18 @@ internal sealed class EssRig : IAsyncDisposable
     public PgEssStore Store(double reserveMaxPayout = EssRules.ReserveBankMaxPayout) => new(
         Source, Transactions, _essSchema, Log.Add,
         holderOf: (_, _, _, _) => ValueTask.FromResult(Holder),
-        consumeKey: (_, _, _) => ValueTask.FromResult(KeyHeld),
+        consumeKey: async (connection, transaction, _, _, _) =>
+        {
+            if (!KeyHeld)
+            {
+                return false;
+            }
+            if (KeyEffect is { } effect)
+            {
+                await effect(connection, transaction);
+            }
+            return true;
+        },
         quadrantOf: _ => SystemQuadrant,
         sovereigntyOwnerOf: (_, _) => ValueTask.FromResult(SovereigntyOwner),
         reserveMaxPayout: reserveMaxPayout);
@@ -67,7 +81,18 @@ internal sealed class EssRig : IAsyncDisposable
         await PgWalletStore.MigrateAsync(source, rig._walletSchema);
         await PgBountyStore.MigrateAsync(source, rig._npcSchema);
         await PgEssStore.MigrateAsync(source, rig._essSchema);
+        await using (var create = source.CreateCommand($"CREATE TABLE {rig._essSchema}.key_marks (id bigserial PRIMARY KEY)"))
+        {
+            await create.ExecuteNonQueryAsync();
+        }
         return rig;
+    }
+
+    /// <summary>The markers a key removal left in the bank's transaction (committed ones only, from another connection).</summary>
+    public async Task<long> MarkerCountAsync()
+    {
+        await using var command = Source.CreateCommand($"SELECT count(*) FROM {_essSchema}.key_marks");
+        return (long)(await command.ExecuteScalarAsync())!;
     }
 
     public async Task OpenWalletAsync(long owner, decimal isk)
@@ -218,6 +243,44 @@ public sealed class PgEssStoreTests
         var unlinked = await rig.Ess.ExecuteAsync(Request(EssMgrOperation.RequestReserveBankUnlink, Jita, Thief), Now);
         Assert.True(unlinked.Succeeded);
         Assert.DoesNotContain(Thief, unlinked.State!.ReserveLinkedCharacterIds!);
+    }
+
+    [PgFact]
+    public async Task The_key_is_taken_in_the_same_transaction_that_opens_the_bank()
+    {
+        await using var rig = await EssRig.CreateAsync();
+        await rig.Ess.RegisterAsync(Jita, EssId, Owner, Now);
+        rig.KeyEffect = (connection, transaction) => InsertMarkerAsync(connection, transaction, rig.EssSchema);
+
+        var opened = await rig.Ess.ExecuteAsync(Request(EssMgrOperation.RequestUnlockReserveBank, Jita, Thief, keyTypeId: 57714), Now);
+
+        Assert.True(opened.Succeeded);
+        Assert.Equal((15, 1L), (opened.State!.ReserveBankPulsesRemaining, await rig.MarkerCountAsync()));
+    }
+
+    [PgFact]
+    public async Task A_failure_after_the_key_is_taken_takes_the_key_back_and_the_bank_stays_shut()
+    {
+        await using var rig = await EssRig.CreateAsync();
+        await rig.Ess.RegisterAsync(Jita, EssId, Owner, Now);
+        rig.KeyEffect = async (connection, transaction) =>
+        {
+            await InsertMarkerAsync(connection, transaction, rig.EssSchema);
+            throw new InvalidOperationException("the bank could not be opened");
+        };
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            rig.Ess.ExecuteAsync(Request(EssMgrOperation.RequestUnlockReserveBank, Jita, Thief, keyTypeId: 57714), Now));
+
+        Assert.Equal((0L, 0), (await rig.MarkerCountAsync(), (await rig.Ess.ReadAsync(Jita))!.PulsesRemaining));
+    }
+
+    private static async Task InsertMarkerAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, string schema)
+    {
+        await using var insert = connection.CreateCommand();
+        insert.Transaction = transaction;
+        insert.CommandText = $"INSERT INTO {schema}.key_marks DEFAULT VALUES";
+        await insert.ExecuteNonQueryAsync();
     }
 
     [PgFact]

@@ -67,7 +67,7 @@ public sealed class PgEssStore
     private readonly string _schema;
     private readonly Action<string>? _log;
     private readonly Func<int, long, long, CancellationToken, ValueTask<EssHolder?>>? _holderOf;
-    private readonly Func<long, long, CancellationToken, ValueTask<bool>>? _consumeKey;
+    private readonly Func<NpgsqlConnection, NpgsqlTransaction, long, long, CancellationToken, ValueTask<bool>>? _consumeKey;
     private readonly Func<int, string?>? _quadrantOf;
     private readonly Func<int, CancellationToken, ValueTask<long?>>? _sovereigntyOwnerOf;
     private readonly double _reserveMaxPayout;
@@ -76,7 +76,10 @@ public sealed class PgEssStore
     /// The pilot of a character in the system, as the space simulation sees it (null when the character is not in it). Without it no link can be checked, so none is
     /// made, and a link already made breaks.
     /// </param>
-    /// <param name="consumeKey">Takes one key of the type out of the character's inventory; false when the character has none.</param>
+    /// <param name="consumeKey">
+    /// Takes one key of the type out of the character's inventory, inside the given transaction (the bank opens in the same one, so a failure takes the key back);
+    /// false when the character has none.
+    /// </param>
     /// <param name="quadrantOf">The quadrant of a system, or null when it is in none.</param>
     /// <param name="sovereigntyOwnerOf">The alliance that holds the system's sovereignty, or null when none does (the owner is then the configured one).</param>
     /// <param name="reserveMaxPayout">The largest payout of one reserve pulse (<see cref="EssRules.ReserveBankMaxPayout"/> unless a test sets another).</param>
@@ -86,7 +89,7 @@ public sealed class PgEssStore
         string schema = DefaultSchema,
         Action<string>? log = null,
         Func<int, long, long, CancellationToken, ValueTask<EssHolder?>>? holderOf = null,
-        Func<long, long, CancellationToken, ValueTask<bool>>? consumeKey = null,
+        Func<NpgsqlConnection, NpgsqlTransaction, long, long, CancellationToken, ValueTask<bool>>? consumeKey = null,
         Func<int, string?>? quadrantOf = null,
         Func<int, CancellationToken, ValueTask<long?>>? sovereigntyOwnerOf = null,
         double reserveMaxPayout = EssRules.ReserveBankMaxPayout)
@@ -283,7 +286,7 @@ public sealed class PgEssStore
                 // a key opens a bank only in its own quadrant, and only when the character holds one: the key is taken out of the inventory
                 if (EssReserveKeys.Find(request.KeyTypeId) is not { } key || state.PulsesRemaining > 0 ||
                     _quadrantOf?.Invoke(systemId) != key.Quadrant || _consumeKey is null ||
-                    !await _consumeKey(character, key.KeyTypeId, cancellationToken))
+                    !await _consumeKey(connection, transaction, character, key.KeyTypeId, cancellationToken))
                 {
                     return new EssMgrOperationResult(false, ToClient(state));
                 }

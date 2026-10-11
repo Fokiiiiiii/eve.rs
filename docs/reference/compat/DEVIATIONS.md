@@ -2782,3 +2782,17 @@ Differences, each one a deliberate choice or a behaviour EveJS does not have:
 
 A MITM capture of the same live scenario on both servers is still to do; this list is a hand reading of the two sources.
 
+## Encounter Surveillance System, slice ESS-3 (2026-10-11)
+
+- Key removal and the bank's opening are one transaction. The store passes its connection and transaction to the key callback; the composition finds a hangar stack of the key type, locks it in that transaction and removes one item. A failure after the removal rolls back both (`PgEssStoreTests`: the key is taken in the bank's transaction; a failure after the key is taken takes it back and the bank stays shut). Keys come from the hangar only (owner decision 4 of ESS-2: accepted).
+- The quadrant list is the article's own list. The article's NW list names 11 systems and its text says ten; the list is used as published (no change; owner decision 3 of ESS-2: accepted as is).
+- The 5% reserve share and the 150,000,000 ISK per-pulse cap are kept as sourced (owner decisions 1 and 2 of ESS-2: accepted).
+
+Not done in ESS-3, with reasons:
+
+- Live link, break, relink and theft walk. Three things are missing, and each is a change of scope rather than a seed step: (1) the station the walk undocks from is about 3.1 x 10^11 m from the system origin, where the ESS ball is placed by rule, so a pilot who undocks cannot be within the 10 km link range; the ESS would have to be placed near the station, which changes the placement rule; (2) the walk character holds a rookie hull, so a linkable hull must be seeded in the live database, and then undocking it needs a headless flow of its own (the existing undock test replays a recorded rookie-hull fixture); (3) the 360 s countdown would then be waited for live.
+- A short payout interval for the test environment: the server has no such override, and none was added (the coordinator's condition was that one already exists). The payout clock stays covered by `PgEssStoreTests`.
+- MITM comparison of the ESS walk: `tools/mitm` captures existing traffic, but the compare command named in the coordinator's note (`docs/project/MITM_COMPARE.md`) is not on origin/main. Without a walk there is nothing new to compare. The hand comparison of the ESS calls stays the reference (see the ESS-2 section).
+
+Affected gates on the merged tree: Services.Core 652/652, Host 223/223, Space host batch 256/256, Space non-host 516/516 (one run hit PostgreSQL's connection limit, `53300 too many clients`; the same test passed when re-run alone, and the batch then totals 516/516 with that re-run).
+

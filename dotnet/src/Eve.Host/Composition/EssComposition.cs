@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Text.Json.Nodes;
 using Eve.Marshal;
 using Eve.Services;
+using Eve.Inventory;
 using Eve.Services.Space;
 using Eve.Space;
 using Eve.Structures;
@@ -75,16 +76,22 @@ internal sealed partial class CharacterServicesComposition
         return EssQuadrants.BySystemId(names);
     }
 
-    /// <summary>Takes one key of the type out of the character's inventory (one of the stack; the stack is removed when it was the last).</summary>
-    private async ValueTask<bool> ConsumeEssKeyAsync(long characterId, long keyTypeId, CancellationToken cancellationToken)
+    /// <summary>
+    /// Takes one key of the type out of the character's hangar, in the bank's transaction: the candidate stack is found, then locked and read again inside the
+    /// transaction, so that a key taken by another request makes this one refuse (the key comes from the hangar only).
+    /// </summary>
+    private async ValueTask<bool> ConsumeEssKeyAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long characterId, long keyTypeId, CancellationToken cancellationToken)
     {
-        var stack = (await items.OwnedByAsync(characterId, cancellationToken)).FirstOrDefault(item => item.TypeId == keyTypeId && item.Quantity > 0);
-        if (stack is null)
+        var candidate = (await items.OwnedByAsync(characterId, cancellationToken))
+            .FirstOrDefault(item => item.TypeId == keyTypeId && item.Flag == ItemFlags.Hangar && item.Quantity > 0);
+        if (candidate is null || await items.LockAndGetAsync(connection, transaction, candidate.Id, cancellationToken) is not { } stack)
         {
             return false;
         }
-        await using var connection = await source.OpenConnectionAsync(cancellationToken);
-        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        if (stack.OwnerId != characterId || stack.TypeId != keyTypeId || stack.Flag != ItemFlags.Hangar || stack.Quantity <= 0)
+        {
+            return false;
+        }
         if (stack.Quantity > 1)
         {
             await items.SetQuantityAsync(connection, transaction, stack.Id, stack.Quantity - 1, cancellationToken);
@@ -93,7 +100,6 @@ internal sealed partial class CharacterServicesComposition
         {
             await items.DeleteAsync(connection, transaction, stack.Id, cancellationToken);
         }
-        await transaction.CommitAsync(cancellationToken);
         return true;
     }
 

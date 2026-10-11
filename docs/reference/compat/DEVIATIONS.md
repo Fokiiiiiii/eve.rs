@@ -1784,21 +1784,23 @@ client's use of mission data: eve-logic `evemissions/client/data.py`, `eve/clien
 
 ## Epic arc availability and the second SDE's discard (2026-10-11)
 
-- **Arcs newer than the client are not offered.** The official build 3405148 has 21 epic arcs; the server targets client build
+- **The twelve Pilot Certification Course arcs are offered (owner-confirmed).** The official build 3405148 has 21 epic arcs; the server targets client build
   3396210, whose data has no mission tables. The availability of each arc is an eve.rs table,
-  `dotnet/src/Eve.Services.Core/Data/epic-arc-availability.v1.json` (embedded resource): nine arcs `in-client-build`, twelve
-  `newer-than-client`, none `unknown`. Evidence: the V24.01 client's own epic arc constants (eve-logic
+  `dotnet/src/Eve.Services.Core/Data/epic-arc-availability.v1.json` (embedded resource): all 21 are `in-client-build`, none
+  `newer-than-client`, none `unknown`. Nine have evidence from the V24.01 client's own epic arc constants (eve-logic
   `eve/client/script/ui/shared/epicArcs/epicArcConst.py:7-15`, which list nine arc IDs, the same nine the EVE University
-  Epic arc page describes). The twelve others (IDs 64 and 67 to 77) are not in those constants; their agents are aura agents
-  (agent type 11, division 22) in the pinned build's `npcCharacters`, not epic arc agents (type 10). The owner's client export
-  holds them, but the export's client build is not recorded, so they are treated as newer than the client. The pinned build
-  3396210 has no mission table, so it gives no direct evidence for any arc. Status: decided; the table is the eve.rs record.
-- **Per mission.** A step of an epic arc takes its arc's availability: 275 steps, 227 in the nine client arcs, 48 in the twelve
-  newer arcs. The other 2,617 missions are not epic arc steps; this table has no evidence for them, so they answer `unknown`
-  with the reason. Heraldry (78) and factional warfare (160) missions are in that group.
-- **Default offer.** `MissionStaticCatalog.PlausibleMissionIds` and `OfferableEpicArcs` offer only `in-client-build` arcs.
-  The explicit switch `EVE_MISSION_INCLUDE_UNAVAILABLE_ARCS=1` (or `true`) offers every arc. The startup log prints the counts.
-  Status: decided; tests `EpicArcAvailabilityTests`.
+  Epic arc page describes). The twelve others (IDs 64 and 67 to 77, "Pilot Certification Course - <school>") are not in those
+  constants; their agents are aura agents (agent type 11, division 22) in the pinned build's `npcCharacters`, not epic arc agents
+  (type 10). The owner confirms that these arcs exist in the game, so each row records owner-confirmed evidence and the server
+  offers them like the in-client arcs. The owner's client export also holds them, but that export's client build is not recorded,
+  so it is not evidence of the build. The pinned build 3396210 has no mission table, so it gives no direct evidence for any arc.
+  Status: decided; the table is the eve.rs record.
+- **Per mission.** A step of an epic arc takes its arc's availability, so all 275 steps are offered (227 in the nine arcs from the
+  client constants, 48 in the twelve owner-confirmed arcs). The other 2,617 missions are not epic arc steps; this table has no
+  evidence for them, so they answer `unknown` with the reason. Heraldry (78) and factional warfare (160) missions are in that group.
+- **Default offer.** `MissionStaticCatalog.PlausibleMissionIds` and `OfferableEpicArcs` offer the `in-client-build` arcs, which is all
+  21 today. The explicit switch `EVE_MISSION_INCLUDE_UNAVAILABLE_ARCS=1` (or `true`) still offers every arc, including any future
+  `newer-than-client` row. The startup log prints the counts. Status: decided; tests `EpicArcAvailabilityTests`.
 - **The second SDE is discarded after loading** (owner's instruction, 2026-10-11). `eve-sde ensure --missions --pg` fetches the
   archive, extracts only `_sde.jsonl`, `missions.jsonl` and `epicArcs.jsonl` to a scratch directory, loads those two tables into
   `sde_mission`, then removes the scratch directory, any full extract of the build under the cache, and the downloaded

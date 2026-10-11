@@ -1033,7 +1033,7 @@ Hand-off to Mi2 (not ported here; file:line checked against EveJS HEAD 828823a):
 
 ### 43b. Epic arc availability (owner's instruction, 2026-10-11)
 
-The server offers only the arcs the V24.01 client knows (`in-client-build`) unless `EVE_MISSION_INCLUDE_UNAVAILABLE_ARCS=1`.
+The server offers all 21 official arcs: the nine the V24.01 client knows (`in-client-build`) and the twelve Pilot Certification Course arcs (`in-client-build` by owner confirmation; the owner states they exist in the game). `EVE_MISSION_INCLUDE_UNAVAILABLE_ARCS=1` still offers any arc that is not `in-client-build` (none today).
 Mission availability follows the arc (a step takes its arc's status); a mission that is no arc step is `unknown`. DEVIATIONS
 "Epic arc availability" has the evidence and the method.
 
@@ -1046,18 +1046,18 @@ Mission availability follows the arc (a step takes its arc's status); a mission 
 | 53 | in-client-build | 19 | V24.01 client constant (eve-logic epicArcConst.py) |
 | 55 | in-client-build | 20 | V24.01 client constant (eve-logic epicArcConst.py) |
 | 56 | in-client-build | 22 | V24.01 client constant (eve-logic epicArcConst.py) |
-| 64 | newer-than-client | 4 | not in the V24.01 constants; aura agents (type 11) |
-| 67 | newer-than-client | 4 | not in the V24.01 constants; aura agents (type 11) |
-| 68 | newer-than-client | 4 | not in the V24.01 constants; aura agents (type 11) |
-| 69 | newer-than-client | 4 | not in the V24.01 constants; aura agents (type 11) |
-| 70 | newer-than-client | 4 | not in the V24.01 constants; aura agents (type 11) |
-| 71 | newer-than-client | 4 | not in the V24.01 constants; aura agents (type 11) |
-| 72 | newer-than-client | 4 | not in the V24.01 constants; aura agents (type 11) |
-| 73 | newer-than-client | 4 | not in the V24.01 constants; aura agents (type 11) |
-| 74 | newer-than-client | 4 | not in the V24.01 constants; aura agents (type 11) |
-| 75 | newer-than-client | 4 | not in the V24.01 constants; aura agents (type 11) |
-| 76 | newer-than-client | 4 | not in the V24.01 constants; aura agents (type 11) |
-| 77 | newer-than-client | 4 | not in the V24.01 constants; aura agents (type 11) |
+| 64 | in-client-build | 4 | owner-confirmed (the owner states the arc exists in the game); aura agents (type 11), not in the V24.01 constants |
+| 67 | in-client-build | 4 | owner-confirmed (the owner states the arc exists in the game); aura agents (type 11), not in the V24.01 constants |
+| 68 | in-client-build | 4 | owner-confirmed (the owner states the arc exists in the game); aura agents (type 11), not in the V24.01 constants |
+| 69 | in-client-build | 4 | owner-confirmed (the owner states the arc exists in the game); aura agents (type 11), not in the V24.01 constants |
+| 70 | in-client-build | 4 | owner-confirmed (the owner states the arc exists in the game); aura agents (type 11), not in the V24.01 constants |
+| 71 | in-client-build | 4 | owner-confirmed (the owner states the arc exists in the game); aura agents (type 11), not in the V24.01 constants |
+| 72 | in-client-build | 4 | owner-confirmed (the owner states the arc exists in the game); aura agents (type 11), not in the V24.01 constants |
+| 73 | in-client-build | 4 | owner-confirmed (the owner states the arc exists in the game); aura agents (type 11), not in the V24.01 constants |
+| 74 | in-client-build | 4 | owner-confirmed (the owner states the arc exists in the game); aura agents (type 11), not in the V24.01 constants |
+| 75 | in-client-build | 4 | owner-confirmed (the owner states the arc exists in the game); aura agents (type 11), not in the V24.01 constants |
+| 76 | in-client-build | 4 | owner-confirmed (the owner states the arc exists in the game); aura agents (type 11), not in the V24.01 constants |
+| 77 | in-client-build | 4 | owner-confirmed (the owner states the arc exists in the game); aura agents (type 11), not in the V24.01 constants |
 | 128 | in-client-build | 3 | V24.01 client constant (eve-logic epicArcConst.py) |
 | 132 | in-client-build | 8 | V24.01 client constant (eve-logic epicArcConst.py) |
 

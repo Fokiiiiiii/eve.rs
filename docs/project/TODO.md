@@ -903,8 +903,9 @@ Open after M1:
 | OPEN | Client preview of the sales tax: the client reads `market-transaction-tax` from LaunchDarkly (its own SDK key), so eve.rs cannot serve 7.5; the server charges 7.5, the client may preview 8.0 | the client's flag source (Q1) |
 | OPEN | Client preview of the highsec security tax (5%, `security/common/const.py:6`): the server charges none (Q11) | confirm in game (Q11) |
 | OPEN | Matching priority (price, issue time, id) and the duplicate window are to be confirmed with a live match (Q5, Q14) | the live acceptance (M9) |
-| OPEN | M3: expiry as a durable scheduled job with a 60 s safety sweep and restart rescheduling | M3 |
-| OPEN | M4: push cache invalidation for book changes and corporation notifications to every character with market rights (G9, G11) | market agent 2 |
+| DONE (M3) | Expiry as durable jobs: one job per resting order at its expiry plus 1 s (placed, moved, cancelled in the same transaction), a 60 s safety sweep, a read sweep at most once a second, the restart reschedule, notices to the owner and the corporation members with market rights (Accountant or Trader) | DEVIATIONS.md, "Market slice M3" |
+| OPEN | M3 notices are not durable: a stop between the committed close and the send loses that one notice (balances and state stay right) | a durable notice outbox (not planned in M3) |
+| OPEN | M4: push cache invalidation for book changes; the corporation notices for fills and cancels to every character with market rights (G9, G11; expiry is done in M3) | market agent 2 |
 | OPEN | M5 to M9: price history definitions (Q16), the read path tests (M6), locking and the bounded scan (M7), money invariants (M8), live acceptance (M9) | market agents 2 and 3 |
 | OPEN | The client label table is partial: `MktCantSellItem2`, `MktCantSellItemOutsideStation` and `MktInvalidRegion` need values the server does not hold (localized jump texts) | the client's localization |
 | OPEN | The corporation read rule has a test for a character outside the corporation; a member holding Account Take and not an accountant is covered by M6 | M6 |
@@ -1092,3 +1093,19 @@ L5 kill mission (A-X1) to call. Not verified with the graphical client.
   cleared.
 - Tests: Eve.Dungeons.Tests `WavePlannerTests` (17); Eve.Services.Space.Tests `DungeonWaveTests` (9 scenarios), `DungeonWaveSpaceTests` (1),
   `WaveCompositionTests` (7).
+## 46. Structures phase, ST-7: service fuel, compression plant, cyno jammer, cyno beacon (2026-10-11)
+
+Package ST-7 of `structures_phase.md`; handoff `docs/project/handoff-ST-7.md`; decisions in DEVIATIONS.md "Structure services fuel (ST-7, increment a)".
+
+Done (verified):
+| Status | Item | Evidence |
+|---|---|---|
+| VERIFIED (tests) | Service fuel: online against the SDE's 72-hour charge from the fuel bay, hourly burn of each online service at the full hour (job `structure.fuel_hour`), a short hour takes every service offline into Low Power | `dotnet/tests/Eve.Structures.Tests/StructureFuelTests.cs` (7 pass on PostgreSQL); Host wiring builds and `dotnet/tests/Eve.Host.Tests` passes 164 of 164 with the composition; `Eve.Inventory.Tests` 55 of 55 (the new `PgItemStore.InContainerAsync` overload) |
+
+Open (next steps, in order):
+| Status | Item |
+|---|---|
+| OPEN | (b) `structureCompressionMgr` CompressItemInStructure / DecompressGasInStructure / GetMyGasDecompressionEfficiency: EveJS gate (docked at a structure with Reprocessing online), the 6-value tuple, named refusals |
+| OPEN | (c) E-03: `BeyonceService.CynoJammerOnlineSimTimeForSystem` from an online service 17 in the system; E-15 `OnCynoJammerChanged` from a subscriber on the service change; the non-covert cyno generator refused in a jammed system (host side, `SpaceSessions.Modules.cs`) |
+| OPEN | (d) `structureCynoBeaconMgr` backend in place of the user error (`StructureTravelRpcService.cs`): Pharolux beacon service 16 online, jump to it |
+| OPEN | Fuel burns send no `OnItemChange` to the owner's sessions (no session at burn time); rig and skill reductions of the online charge |

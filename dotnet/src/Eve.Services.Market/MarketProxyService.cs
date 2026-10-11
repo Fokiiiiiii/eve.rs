@@ -9,7 +9,7 @@ namespace Eve.Services.Market;
 
 [Service("marketProxy")]
 public sealed partial class MarketProxyService(MarketStore store,MarketTrading trading,MarketTopology topology,
-    PgCharacterStore characters,Eve.Corporations.CorporationStore corporations,WalletTransactions wallets,MarketCatalog catalog,Func<long> now,CharacterSessions? characterSessions=null)
+    PgCharacterStore characters,Eve.Corporations.CorporationStore corporations,WalletTransactions wallets,MarketCatalog catalog,Func<long> now,MarketExpiryWorker expiry,CharacterSessions? characterSessions=null)
 {
     private static long Integer(PyValue v,long fallback = 0) => v switch
     {
@@ -73,26 +73,10 @@ public sealed partial class MarketProxyService(MarketStore store,MarketTrading t
         "INVALID_MARKET_DURATION_OR_RANGE" => "That duration or range is not offered for a market order.",
         _ => "The market refused the request.",
     };
-    private async Task Publish(MarketReceipt receipt)
-    {
-        // A successful replay announces the current balance, not the original receipt's historical balance.
-        foreach (var account in receipt.ChangedWallets)
-            if (await wallets.AccountBalanceAsync(account) is { } balance)
-                wallets.AnnounceCommitted(new(account.OwnerId,account.AccountKey,balance));
+    private readonly MarketNotifier notifier = new(wallets,characterSessions);
+    private Task Publish(MarketReceipt receipt) => notifier.PublishAsync(receipt);
 
-        var changes=receipt.ChangedOrders;
-        if (changes.Count==0 && receipt.ChangedOrder is { } legacyOrder)
-            changes=[new(legacyOrder,receipt.ChangedOrderReason ?? "Modified",[legacyOrder.ActorId])];
-        foreach (var change in changes)
-        {
-            var orderIsCorp=change.Order.WalletOwnerId != change.Order.ActorId;
-            foreach (var characterId in change.RecipientCharacterIds.Distinct())
-                characterSessions?.Of(characterId)?.SendNotification("OnOwnOrdersChanged","charid",
-                    Py.List(OrderNotificationEntry(change.Order)),new PyStr(change.Reason),new PyInt(orderIsCorp ? 1 : 0));
-        }
-    }
-
-    private static PyValue OrderNotificationEntry(MarketOwnedOrder owned)
+    internal static PyValue OrderNotificationEntry(MarketOwnedOrder owned)
     {
         var order=owned.Order;
         var ownerId=owned.WalletOwnerId != owned.ActorId ? owned.WalletOwnerId : owned.ActorId;
@@ -305,7 +289,7 @@ private const int PlexTypeId = 44992;
             return Py.KeyVal(("iskEscrow",Py.Number(0)),("itemsEscrow",Py.Number(0)));
         try
         {
-            foreach(var expired in await trading.ExpireDueAsync(call.Cancellation)) await Publish(expired);
+            await expiry.SweepAsync(call.Cancellation, readTriggered: true);
             var orders=await trading.OwnerOrdersAsync(actor,false,false,call.Cancellation);
             var isk=orders.Where(order=>order.Order.Bid).Sum(order=>order.Escrow);
             var items=orders.Where(order=>!order.Order.Bid).Sum(order=>order.Order.VolumeRemaining);
@@ -320,7 +304,7 @@ private const int PlexTypeId = 44992;
         if(call.Session.CharacterId is not { } actor) return OwnerOrderRowset([],null);
         try
         {
-            foreach(var expired in await trading.ExpireDueAsync(call.Cancellation)) await Publish(expired);
+            await expiry.SweepAsync(call.Cancellation, readTriggered: true);
             var characterOrders=await trading.OwnerOrdersAsync(actor,false,true,call.Cancellation);
             var corporationOrders=await trading.OwnerOrdersAsync(actor,true,true,call.Cancellation);
             var history=characterOrders.Concat(corporationOrders).Where(order=>order.State!=0).ToArray();
@@ -434,8 +418,7 @@ private const int PlexTypeId = 44992;
     {
         try
         {
-            foreach (var expired in await trading.ExpireDueAsync(call.Cancellation))
-                await Publish(expired);
+            await expiry.SweepAsync(call.Cancellation, readTriggered: true);
             var receipt=await trading.ModifyAsync(Actor(call),Integer(call.Arg(0)),Money(call.Arg(1)),Key(call,"modify"),call.Cancellation,
                 expectedPrice:call.Arg(5) is null or PyNone ? null : Money(call.Arg(5)),
                 expectedIssuedMs:call.Arg(8) is null or PyNone ? null : FileTimeToUnixMs(call.Arg(8)));

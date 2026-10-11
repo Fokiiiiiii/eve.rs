@@ -64,7 +64,7 @@ public class MarketRpcTests
         var sessions = new CharacterSessions();
         sessions.Enter(actor, session);
         var catalog = await MarketCatalog.LoadAsync(new Eve.Sde.SdeReader(rig.Source));
-        var proxy = new MarketProxyService(rig.Book, rig.Trading, rig.Topology, rig.Characters, rig.Corporations, rig.Wallets, catalog, () => rig.Now, sessions);
+        var proxy = new MarketProxyService(rig.Book, rig.Trading, rig.Topology, rig.Characters, rig.Corporations, rig.Wallets, catalog, () => rig.Now, rig.Expiry, sessions);
         return new Seat(rig, actor, sink, session, proxy);
     }
 

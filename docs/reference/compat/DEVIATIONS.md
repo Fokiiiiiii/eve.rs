@@ -1460,6 +1460,46 @@ was not built, because the client reads its flags elsewhere (Q1 below).
   other value from the reference; the fixture's `source` field says so. Before the change `RulesTests` failed on the 7.5 fixture (the 8% values),
   and it passes after the change. Status: decided.
 
+## Market slice M3: expiry as a durable job (2026-10-10)
+
+Sources: the parent's decision Q7 (expire at issued + duration plus a small grace; refund at that moment; notify with reason 'Expiry');
+EVE.js `marketProxyService.js:248-253` (a one-second grace, a one-second sweep throttle, the durable job kinds) and `2170-2350` (a job per
+order at its expiry instant); CCP-BR (the order duration; "Modifying an order will reset its duration back to the original"); EVE University
+"Trading" ("If the order is taken down or expires the fee is not paid back"); the client's `marketsvc.py:113-124` (the Expiry reason) and
+`buyMultiFromBase.py:559`. The forum statement that expiry waits for daily downtime is not official and is not adopted (Q7).
+
+- **One job per resting order.** Kind `market.order.expire`, key `order:{id}`, due at issued + duration + 1 s. It is scheduled in the transaction that
+  places the order (immediate orders rest nowhere, so they get no job), replaced in the transaction that modifies it (the duration restarts, Q4)
+  and cancelled in the transaction that closes it (a fill, a cancel or an expiry). The job's handler re-reads the order: a closed order is left
+  alone; a duration that a modification has moved is waited for again. Code: `Eve.Market/MarketTrading.cs` (`ScheduleExpiryAsync`, `CancelExpiryAsync`, `ExpireOrderAsync`) keeps the job through the domain
+  interface `IMarketExpiryJobs` (`Eve.Market/MarketExpiry.cs` holds the grace and the tries); `Eve.Services.Market/DurableExpiryJobs.cs` is the
+  scheduler adapter and `Eve.Services.Market/MarketExpiryWorker.cs` runs the jobs. The domain module does not reference the scheduler (the
+  architecture test `ArchitectureTests` keeps domain modules on domain modules only).
+- **Safety sweep.** A recurring job `market.expiry.sweep` runs every 60 s and closes every due order. A read of the market (escrow, order history,
+  placement, modification) runs the same sweep at most once a second (EVE.js 1 s throttle). The sweep applies the same grace as the job, so the two
+  never disagree on when an order expires.
+- **One notice per expiry.** The job and the sweep can reach the same order at once (the scheduler runs jobs in parallel). The close is keyed
+  (`expiry:{id}:{issued}`), so the second call replays the stored receipt; an expiry replay returns no receipt, so only the call that performed the
+  expiry announces it. Test: `ExpiryTests.A_restart_gives_the_open_order...` and the other expiry tests, which failed before this rule (two notices).
+- **Restart.** `MarketExpiryWorker.StartAsync` registers the two kinds and gives every open resting order its job again (an existing job is kept). An
+  overdue job runs at once. Test: `ExpiryTests.A_restart_gives_the_open_order_its_job_back...`, `An_overdue_order_expires_at_once_after_a_restart`.
+- **Refund and items, once.** A buy returns its escrow; a sell returns its stack to its origin; the broker fee is not returned (EVE University
+  "Trading"). A refund over the wallet cap stays pending in escrow (`MoneyLimitException`): the job fails and is tried again with the scheduler's
+  back-off (up to 100 tries), and the sweep retries it too. Tests: `ExpiryTests` (buy, sell, lost job, cancel, modification, throttle).
+- **Notifications.** `OnOwnOrdersChanged` with reason 'Expiry' goes to the owner. For a corporation order it goes to every member who has the
+  corporation's market rights at the station: Accountant or Trader, the client's own test (`buyThisTypeWindow.py:324`,
+  `marketOrdersWnd.py:40-41`; `CorporationStore.MarketRightsHoldersAsync`). The notice is sent after the close commits, from
+  `MarketNotifier`, which is also the RPCs' notifier. Test: `ExpiryTests.A_corporate_order_that_expires...` (the founder and a second member
+  with the Trader role are notified; a member without a market role and a character outside the corporation are not).
+- **Host.** The host composition (`CorporationComposition.MarketSeed`) starts the expiry; the test `MarketHostTests.The_host_gives_each_resting...`
+  checks that the job exists with its due time and survives a host restart.
+- **Known gap (not closed in M3).** The notices are not durable: a process that stops between the committed close and the send loses that one
+  notice. The balances, the items and the order state are correct after the restart, and the client refreshes its own lists on its next read.
+  A durable notice outbox is not in M3.
+- **Test changes for the grace.** `TradingTests` (the over-cap refund that stays pending) and `ModificationRulesTests` (the restarted
+  duration) check the expiry one grace after the expiry instant; the expected values are unchanged.
+- Status: done (M3), tested with a fake clock (TradeRig.Now); the live headless walk cannot wait a day, so the expiry is not walked live.
+
 ## Agents slice AG-1: LP wallet (LPSvc), the access rule and the bound agentMgr (2026-10-10)
 
 Sources. eve-logic (V24.01): `eve/client/script/ui/shared/neocom/wallet/loyaltyPointsWalletSvc.py:27-67` (the balances,
@@ -1785,3 +1825,24 @@ client's use of mission data: eve-logic `evemissions/client/data.py`, `eve/clien
 - NPCs taken out of space (abandoned or ended dungeons) are destroyed by the simulation, which explodes them and leaves an empty wreck; no
   npc.killed is announced for them, so they are not counted as kills or paid bounties.
 - A wave's spawn that the simulation shortens fails the dungeon with the count; the NPCs made are taken out.
+## Structure services fuel (ST-7, increment a, 2026-10-11)
+
+Sources: SDE build 3396210 (`typeDogma` attributes 2108-2110 of the service modules; [S]); EveJS v0.12.9 `server/src/services/structure/structureServiceModules.js`
+(`consumeStructureServiceModuleOnlineFuel` 449, `consumeStructureServiceFuelQuantity` 380, `consumeStructureServiceModuleCycleFuel` 652),
+`structureConstants.js` (`STRUCTURE_SERVICE_ID` 105-138, `FLEX_SERVICE_IDS_BY_TYPE_ID` 508-512), `fuelBayInventory.js` (`STRUCTURE_FUEL_BAY_FLAG` 172) [J];
+EVE University wiki (three days of fuel to online, [W] per `structures_phase.md`).
+
+- Decided (D-4, SDE first): the hourly burn is attribute 2109 and the online charge is 2110 of the service module. For every service module in the
+  build 2110 = 72 x 2109, which is the wiki's three days. Module types: 35899 Standup Reprocessing Facility I (service 4), 35912 Standup Cynosural Field
+  Generator I (service 16, built into the Pharolux Cyno Beacon in EveJS), 35914 Standup Cynosural System Jammer I (service 17). [S][J]
+- Fuel is the structure's fuel bay: fuel-block items (group 1136) at the structure in flag 172, taken oldest stack first inside the transaction. [J][S]
+- Onlining consumes the online charge (EveJS does the same). Already online costs nothing. [J]
+- The hourly charge is paid at each full UTC hour for the services online then (EveJS burns per cycle; the hour boundary is the wiki's "beginning of each
+  hour"). A short hour takes every service offline and the structure into Low Power (`StructureTimers.FuelOutAsync`). [J][W]
+- Not applied: the rig and skill reductions of the online charge (EveJS `getEffectiveStructureServiceModuleOnlineFuelNeed`). Status: open, with the rigs.
+- Not sent: the owner's client does not get an `OnItemChange` for an hourly burn (no session at burn time). Status: open.
+- Spec correction: the ST-7 plan named the Standup Cynosural System Jammer I as group 2016. In the build, 35914 is group 1324 (Standup) and group 2016 is
+  the Tenebrex Cyno Jammer (37534, a sovereignty structure with the jammer service built in), group 2017 is the Pharolux Cyno Beacon (35840). The jammer
+  module's onlining needs the sovereignty hub's Cynosural Suppression upgrade (SDE description of 35914). [S]
+- No EveJS service id maps the Structure Compression Plant (35900, fuel 5/h, online 360). EveJS gates the structure compression by the Reprocessing
+  service (4) online (`miningIndustry.js` 281-288). Decided for increment (b): the same gate. [J]

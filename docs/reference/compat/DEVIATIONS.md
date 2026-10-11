@@ -1769,3 +1769,19 @@ client's use of mission data: eve-logic `evemissions/client/data.py`, `eve/clien
 - **Joins.** The server reads no table of build 3405148 other than `missions` and `epicArcs`. The agent and corporation
   references in an arc (agent IDs) are checked against the pinned build at read time; no reference table is loaded from the
   second build. Status: decided.
+
+## Dungeon NPC waves (A-W1, 2026-10-11)
+
+- Breeding Facility (dungeon 2158), wave 1: the owner data has it on load; the rule file starts it after 240 seconds, from the wiki
+  (https://wiki.eveuniversity.org/Breeding_Facility). The wave compositions are the owner data's (a deadspace pool), not the wiki's (transports
+  and battleships): only the trigger is taken from the wiki. Source of the owner data: family-derived (scratchpad elysiansde.md, section 2).
+- Timer waves with no delay in the owner data are refused, not guessed; a rule must give the delay.
+- Waves whose trigger the runtime does not implement (room, gate, hack, entity kill, object, visible countdown) refuse the dungeon. Counted over
+  the 1,460 kill-mission dungeons of the owner data (a re-implementation of the planner's checks, not a run of it): 1,404 plan; 56 do not
+  (on_room_active 6, timer without delay 3, no waves 38, numbering 2, no template 7). The first two kinds are the A-W2 and later cut.
+- A dungeon's lifetime is 30 minutes: a host choice, not an official value.
+- The pilot-leaving check is a 10-second sweep over the pilots in space, because the space sessions announce no event for a pilot leaving a
+  system; a dungeon ends at most 10 seconds after the pilot leaves.
+- NPCs taken out of space (abandoned or ended dungeons) are destroyed by the simulation, which explodes them and leaves an empty wreck; no
+  npc.killed is announced for them, so they are not counted as kills or paid bounties.
+- A wave's spawn that the simulation shortens fails the dungeon with the count; the NPCs made are taken out.

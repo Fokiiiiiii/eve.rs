@@ -1065,3 +1065,30 @@ Mission availability follows the arc (a step takes its arc's status); a mission 
 
 Hand-off to the next slice: offer missions through `MissionStaticCatalog.PlausibleMissionIds` (already filtered), and check
 `MissionAvailability(missionId)` for any mission that is not an arc step before using it (its `unknown` answer has the reason).
+
+## 46. Track A-W1: dungeon NPC waves on the content runtime (2026-10-11)
+
+Status: the wave runtime is implemented and tested at the host level (PostgreSQL, a fake clock, and the real space sessions with the simulation's
+kill reports). No client route starts a dungeon yet; the entry point is `DungeonWaveDirector.StartAsync` (Eve.Services.Space/Waves), for the
+L5 kill mission (A-X1) to call. Not verified with the graphical client.
+
+- Planner and rules: `Eve.Dungeons/Waves/WaveRules.cs` (`WavePlanner`, `WaveRules`) and `Data/waves/v1/trigger-rules.json` (embedded, keyed by
+  the official dungeon id, each rule with its source). Triggers implemented: `on_load`, `wave_cleared` (all NPCs of the wave killed), `timer`
+  (a delay from a rule or from `countdownSeconds`). Anything else (room, gate, hack, entity kill, object, visible countdown) refuses the dungeon
+  with the reason. Breeding Facility (2158) is the first rule: wave 1 after 240 s (wiki).
+- Composition: each wave's spawn query must be an exact pool or profile name of the NPC authority (aliases and derived standard pools count);
+  anything else refuses the start with the name. Only `parity_drifter_dungeon_family` (109 mission waves) is unresolved in the owner data.
+- Runtime: one content definition per plannable dungeon (`dungeon.{id}`), one sequential objective per wave (target = NPC count). A wave's
+  objective schedules its spawn job when it becomes the one to do. Kills come from `npc.killed` (ship id to wave in `dungeon_wave_npcs`), each
+  counted once. Tables: `dungeon_wave_spawns`, `dungeon_wave_npcs` (migration 001 in the space schema).
+- Sweep (every 10 s): ends a dungeon whose pilot is no longer in space in its system, and takes out the NPCs of every ended dungeon
+  (completed, failed, abandoned, expired).
+- Coverage (owner data, 1,460 kill-mission dungeons, planner checks re-implemented, not run): 1,404 plan; 56 are refused (on_room_active 6,
+  timer without delay 3, no waves 38, numbering 2, no template 7). The composition is not yet checked against the authority for all of them.
+- Open after A-W1: object_destroyed and proximity triggers (A-W2), entity_killed, room and hack triggers, reinforcements, the bonus window,
+  the L4/L5 composition table (D-D1), and a real-client run.
+- Known gaps: a crash between a wave's simulation spawn and its commit can spawn that wave twice (at-least-once); NPCs alive in the simulation
+  across a host restart are not re-attached (the dungeon's lifetime bounds the stall); the timer of a wave starts when the wave before it is
+  cleared.
+- Tests: Eve.Dungeons.Tests `WavePlannerTests` (17); Eve.Services.Space.Tests `DungeonWaveTests` (9 scenarios), `DungeonWaveSpaceTests` (1),
+  `WaveCompositionTests` (7).

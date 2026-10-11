@@ -3079,13 +3079,12 @@ private sealed class InSpaceInventory : Eve.Services.Ships.ISpaceContainers
         const long now = 1_790_646_377_000;
         var active = new[]
         {
-            new Eve.Content.ContentInstance(501, "incursion", "incursion-template", 0, "active",
-                "{\"taleID\":501,\"templateClassID\":7,\"templateNameID\":5001,\"stagingSolarSystemID\":30000142,\"aggressorFactionID\":500001,\"state\":1,\"influence\":0.4,\"systems\":[{\"solarSystemID\":30000142,\"sceneType\":1}]}",
-                now - 1000, null, null, null),
             new Eve.Content.ContentInstance(601, "anomaly", "anomaly-template", systemId, "active",
                 "{\"siteID\":601,\"targetID\":\"anomaly-601\",\"solarSystemID\":30000142,\"position\":[1,2,3],\"difficulty\":2,\"dungeonID\":91}",
                 now - 1000, null, null, null),
         };
+        // the incursion comes from the lifecycle (IncursionDirector), not from the content runtime
+        var incursionRow = System.Text.Json.Nodes.JsonNode.Parse("{\"taleID\":501,\"templateClassID\":7,\"templateNameID\":5001,\"stagingSolarSystemID\":30000142,\"aggressorFactionID\":500001,\"state\":1,\"influence\":0.4,\"systems\":[{\"solarSystemID\":30000142,\"sceneType\":1}]}")!.AsObject();
         Task<IReadOnlyList<Eve.Content.ContentInstance>> ActiveOf(string kind, long owner, CancellationToken _) =>
             Task.FromResult<IReadOnlyList<Eve.Content.ContentInstance>>(active
                 .Where(instance => instance.Kind == kind && (instance.Kind == "incursion" ? owner == 0 : instance.Owner == owner))
@@ -3110,7 +3109,8 @@ private sealed class InSpaceInventory : Eve.Services.Ships.ISpaceContainers
                     },
                 }
                 : new System.Text.Json.Nodes.JsonObject());
-        var readModel = new PersistenceIncursionAnomalyReadModel(ActiveOf, ReadGameStore, () => now);
+        var readModel = new PersistenceIncursionAnomalyReadModel(ActiveOf, ReadGameStore, () => now,
+            _ => Task.FromResult<IReadOnlyList<System.Text.Json.Nodes.JsonObject>>([incursionRow]));
         var session = new Eve.Services.ClientSession();
         session.Set("solarsystemid2", new Eve.Marshal.PyInt(systemId));
         var call = new Eve.Services.ServiceCall { Method = "GetIncursionGlobalReport", Args = [], Session = session };

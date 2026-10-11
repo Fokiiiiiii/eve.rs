@@ -39,6 +39,7 @@ internal sealed partial class CharacterServicesComposition
 {
     private string structureSchema = "";
     private Eve.Structures.StructureStore structureStore = default!;
+    private Eve.Structures.StructureTimers structureTimers = default!;
 
     /// <summary>The structures as the directory and profile readers see them: the legacy shape of the structures schema.</summary>
     Task<JsonObject> ReadStructuresAsync(CancellationToken token) =>
@@ -75,6 +76,18 @@ internal sealed partial class CharacterServicesComposition
 
     private async Task Structures()
     {
+        // ST-0: the deadlines of the structures are durable jobs; the handler is registered here, before the foundations start
+        var rules = await StructureRulesSource.LoadAsync(sde);
+        structureTimers = new Eve.Structures.StructureTimers(structureStore, foundations.Scheduler, foundations.Events, rules);
+        structureTimers.Register();
+        await using (var connection = await source.OpenConnectionAsync())
+        await using (var transaction = await connection.BeginTransactionAsync())
+        {
+            var scheduled = await structureTimers.EnsureScheduledAsync(connection, transaction);
+            await transaction.CommitAsync();
+            if (scheduled > 0)
+                Console.Error.WriteLine($"eve-host: {scheduled} structure deadline(s) scheduled");
+        }
         structureDirectoryReadModel = new PersistenceStructureDirectoryReadModel(ReadGameStoreTableAsync, AffiliationOfAsync, sde, SetStructureDescriptionAsync);
         if (spaceSessions is not null)
             spaceSessions.StructureExistsAsync = async (structureId, cancellationToken) =>

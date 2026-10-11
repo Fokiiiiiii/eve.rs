@@ -1555,6 +1555,14 @@ The record owner and the timeline of Upwell structures (`dotnet/src/Eve.Structur
   fields the timeline does not own in `doc`. A structure without a state is imported as one that already works (`ShieldVulnerable`), and a Low Power
   structure without an abandon day starts its clock at the import. Status: decided; the import call is not wired yet.
 - **`structure.state_changed` is published in the same transaction as the change**, with the timer of the structure. Status: decided.
+- **The band of a system (Host rules source, `StructureRulesSource`).** From SDE `mapSolarSystems`: Wormhole for ids 31000000 to 31999999 (J-space), Pochven for
+  region 10000070, otherwise the client's class (`Security.ClassFromLevel`, null below 0.0, low below 0.45, else high). The rigSize is read from SDE
+  `typeDogma` (attribute 1547) because `DogmaStatic` does not load the structure types. A type or system without static data is an error, not a guess
+  (the timer job is retried). Test: `StructureRulesSourceTests`. Status: decided.
+- **Imported deadlines run from start-up.** A structure whose imported record has a deadline (a repair, a reinforcement, an anchoring, an unanchoring)
+  is scheduled as a `structure.timer` job; the timeline then moves it on its own. The reference has no such timer for structures in the game store:
+  EveJS advances them on its own tick, so this follows the reference's behaviour. The state change is published (`structure.state_changed`), and the
+  client is told by the notification subscriber of ST-2, which is not written yet. Status: decided; the notice is open.
 - **The game store's `structures` table is frozen after the import.** The import copies by id and skips ids already in the schema; the readers and
   the description and profile writes use the schema from then on. A game store row written later under a new id is not copied (a second import would
   copy it), which is the migration path, not a runtime path. Status: decided; the freeze is the ADR 0003 rule 3 bridge.

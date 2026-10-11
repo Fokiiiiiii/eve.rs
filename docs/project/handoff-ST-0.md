@@ -10,13 +10,15 @@ Owner: the structures phase (plan in the scratchpad `specs/structures_phase.md`,
 
 ## Host wiring (done, pushed)
 - Start-up: `StructureRecords()` migrates the schema and copies the game store's `structures` table once; it runs right after the character stores migrate.
+- Timers: `StructureRulesSource` (SDE) and `StructureTimers` are registered in `Structures()`; deadlines of imported structures are scheduled.
 - Readers: `ReadGameStoreTableAsync("structures")` returns `StructureStore.ReadLegacyTableAsync` (`Composition/GameStoreReaders.cs`).
 - Writers: the description (`PersistenceStructureDirectoryReadModel`) and the profile change (`PersistenceStructureProfilesRpcBackend`) write the store.
 
 ## Next step
-1. The Host rules source over the SDE (`rigSize`, system security band), and `StructureTimers.Register()` with a first pump after start.
-2. A Host test that starts the composition on a seeded game store, checks the copied rows, sets a description and a profile through the RPC
-   callbacks, restarts and reads them back.
+1. A Host-level test through the composition: a description and a profile set through the RPC callbacks are read back after a restart; an
+   imported structure with an elapsed deadline advances once after start.
+2. ST-0 is then complete: remove this file's "next step" and close the TODO section 44 rows; start ST-1 (sim structure ball, protocol 59) from
+   `structures_phase.md` only after the ST-1 owner is free (the wire is shared).
 
 ## Files
 - `dotnet/src/Eve.Structures/*`, `dotnet/tests/Eve.Structures.Tests/*`, `dotnet/EveRs.slnx`

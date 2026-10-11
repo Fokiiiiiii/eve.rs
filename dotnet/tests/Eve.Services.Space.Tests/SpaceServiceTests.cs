@@ -1604,6 +1604,12 @@ public class SpaceServiceTests
         rig.Sim.ActivateGate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var first = rig.Space.ActivateAsync(session, afterburner, "moduleBonusAfterburner", 0, 1000, CancellationToken.None);
         var second = rig.Space.ActivateAsync(session, afterburner, "moduleBonusAfterburner", 0, 1, CancellationToken.None);
+        // the first order reaches the simulation after awaits of its own, which a loaded machine can stretch past any fixed delay: wait for it
+        for (var attempt = 0; attempt < 400 && !rig.Sim.Heard.OfType<SimActivate>().Any(); attempt++)
+        {
+            await Task.Delay(25);
+        }
+        // a second send would show within this window (the negative check has no completion signal to wait for)
         await Task.Delay(100);
         Assert.Single(rig.Sim.Heard.OfType<SimActivate>());
         rig.Sim.ActivateGate.SetResult();

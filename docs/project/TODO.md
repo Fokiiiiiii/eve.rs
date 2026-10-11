@@ -1206,7 +1206,7 @@ Open (cut line, or not built):
 
 Data: `dotnet/src/Eve.Services.Space/Beacons/Data/analysis-beacon-rules.json` (owner decision D-C1; EveJS v0.12.9 values; not CCP data).
 
-Runs: see the report of this track (non-PG and PostgreSQL counts; the full Rust and Space suites against the baseline).
+Runs (database eve_p3, merged head): Eve.Services.Space.Tests 737 of 737 passed (173 + 564, PostgreSQL included); Eve.Space.Tests 279 of 279; the Rust workspace 1,395 of 1,395 against a baseline of 1,394 (the one added test is the CRAB state test); the live headless suite 70 passed, 8 skipped by its slow-mode gates, 0 failed. The live suite has no CRAB flow: the beacon is verified only through the host tests.
 ## 48. Track B: Incursions, lifecycle, staging sites and the map (B-M1, B-L1, B-S1, 2026-10-11)
 
 Status: implemented and tested at the host level on PostgreSQL (`IncursionDirectorTests`, 8 scenarios; `IncursionRulesTests`, 18 cases). Not run with the graphical client; no live run of the incursion path.

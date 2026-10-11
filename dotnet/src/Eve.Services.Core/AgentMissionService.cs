@@ -33,7 +33,8 @@ public sealed record AgentMissionRpcCallbacks(
     Func<CancellationToken, ValueTask<IReadOnlyList<long>>>? ReadDisabledMissions = null,
     Func<long, CancellationToken, ValueTask<IReadOnlyList<long>>>? ReadPlausibleMissionIds = null,
     Func<CancellationToken, ValueTask<JsonObject?>>? ReadEpicArcMessages = null,
-    Func<long, CancellationToken, ValueTask<long?>>? ReadSolarSystemOfAgent = null);
+    Func<long, CancellationToken, ValueTask<long?>>? ReadSolarSystemOfAgent = null,
+    Func<long, long, CancellationToken, ValueTask<HeldMissionView?>>? ReadHeldMission = null);
 
 // Readers return persisted character mission state, character-owned bookmark records,
 // and the character's already-resolved seven-field research rows. They never write.
@@ -94,6 +95,8 @@ public sealed class AgentMissionService(
         "GetPlausibleMissionIDs" => ReadPlausibleMissionIdsAsync(call),
         "GetSolarSystemOfAgent" => ReadSolarSystemOfAgentAsync(call),
         "GetAgentLocationWrap" => ReadAgentLocationWrapAsync(call),
+        "GetMissionBriefingInfo" => ReadHeldMissionAsync(call, MissionViews.Briefing),
+        "GetMissionObjectiveInfo" => ReadHeldMissionAsync(call, MissionViews.Objective),
         _ => throw MachoErrors.ThrowUserError("CustomInfo",
             ("info", new PyStr($"The agent service method {call.Method} is not available on this server yet."))),
     };
@@ -106,6 +109,16 @@ public sealed class AgentMissionService(
     {
         var agent = await BoundAgentAsync(call);
         return AgentLocationWrap(agent);
+    }
+
+    /// <summary>The briefing or objective of the mission the character holds with the bound agent; None when there is none (the reference's answer).</summary>
+    private async ValueTask<PyValue> ReadHeldMissionAsync(ServiceCall call, Func<HeldMissionView, PyDict> answer)
+    {
+        call.Cancellation.ThrowIfCancellationRequested();
+        var characterId = Positive(call.Session.Get("charid"));
+        var agentId = BoundAgentId(call);
+        if (characterId == 0 || agentId == 0 || rpcCallbacks?.ReadHeldMission is not { } readHeld) return PyNone.Instance;
+        return await readHeld(characterId, agentId, call.Cancellation) is { } view ? answer(view) : PyNone.Instance;
     }
 
     private async ValueTask<AgentMissionAgentData> BoundAgentAsync(ServiceCall call)

@@ -169,6 +169,7 @@ internal sealed partial class CharacterServicesComposition
     private async Task AgentMissions()
     {
         agentMissionAnnouncer = new Eve.Services.Core.AgentMissionAnnouncer(agentMissionStore, characterSessions);
+        await LoadClientMissionMessagesAsync();
         // the faction of each NPC corporation (SDE npcCorporations.factionID): the access rule reads the faction standing
         var npcFactions = (await sde.ReadAsync("npcCorporations", cancellationToken: CancellationToken.None))
             .Where(row => row.Doc.TryGetProperty("factionID", out var faction) && faction.ValueKind == System.Text.Json.JsonValueKind.Number)
@@ -197,7 +198,8 @@ internal sealed partial class CharacterServicesComposition
                 agentMissionStatic.PlausibleMissionIds(agentId)),
             ReadEpicArcMessages: _ => ValueTask.FromResult<JsonObject?>(agentMissionStatic.EpicArcMessageMaps),
             ReadSolarSystemOfAgent: (agentId, _) => ValueTask.FromResult<long?>(
-                agentMissionAgentById.TryGetValue(agentId, out var agent) ? agent.SolarSystemId : null));
+                agentMissionAgentById.TryGetValue(agentId, out var agent) ? agent.SolarSystemId : null),
+            ReadHeldMission: ReadHeldMissionAsync);
         agentMissionService = new AgentMissionService(
             async (characterId, ct) =>
             {
@@ -316,6 +318,68 @@ internal sealed partial class CharacterServicesComposition
     }
 
     private const string MissionDungeonSweepJob = "mission.dungeons.sweep";
+
+    /// <summary>The localization IDs of the missions' texts from the client export (empty when not available; see LoadClientMissionMessagesAsync).</summary>
+    private IReadOnlyDictionary<long, IReadOnlyDictionary<string, long>> clientMissionMessages = new Dictionary<long, IReadOnlyDictionary<string, long>>();
+
+    /// <summary>
+    /// Loads the client's mission text IDs from <c>EVE_CLIENT_SDE_DIR/native/missions.jsonl.gz</c> into the schema <c>client_sde</c> (replaced each
+    /// start). Without the directory, or without the file, nothing is loaded and the log says why; the briefing then carries no text ID.
+    /// </summary>
+    private async Task LoadClientMissionMessagesAsync()
+    {
+        var directory = Environment.GetEnvironmentVariable(ClientMissionMessages.DirectoryVariable);
+        if (string.IsNullOrWhiteSpace(directory))
+        {
+            Console.Error.WriteLine($"eve-host: missions: client texts are not available: {ClientMissionMessages.DirectoryVariable} is not set");
+            return;
+        }
+        var file = Path.Combine(directory, "native", "missions.jsonl.gz");
+        if (!File.Exists(file))
+        {
+            Console.Error.WriteLine($"eve-host: missions: client texts are not available: {file} is missing");
+            return;
+        }
+        var (messages, skipped) = ClientMissionMessages.Parse(File.OpenRead(file));
+        var missionIds = new List<long>();
+        var keys = new List<string>();
+        var ids = new List<long>();
+        foreach (var (missionId, texts) in messages)
+            foreach (var (key, id) in texts)
+            {
+                missionIds.Add(missionId);
+                keys.Add(key);
+                ids.Add(id);
+            }
+        await using var connection = await source.OpenConnectionAsync(CancellationToken.None);
+        await using var transaction = await connection.BeginTransactionAsync(CancellationToken.None);
+        await using (var setup = new NpgsqlCommand("""
+            CREATE SCHEMA IF NOT EXISTS client_sde;
+            CREATE TABLE IF NOT EXISTS client_sde.mission_messages (
+                mission_id bigint NOT NULL, message_key text NOT NULL, message_id bigint NOT NULL, PRIMARY KEY (mission_id, message_key));
+            DELETE FROM client_sde.mission_messages;
+            INSERT INTO client_sde.mission_messages SELECT * FROM unnest(@m::bigint[], @k::text[], @v::bigint[]);
+            """, connection, transaction))
+        {
+            setup.Parameters.Add(new NpgsqlParameter("m", missionIds.ToArray()));
+            setup.Parameters.Add(new NpgsqlParameter("k", keys.ToArray()));
+            setup.Parameters.Add(new NpgsqlParameter("v", ids.ToArray()));
+            await setup.ExecuteNonQueryAsync();
+        }
+        await transaction.CommitAsync();
+        clientMissionMessages = messages;
+        Console.Error.WriteLine($"eve-host: missions: client texts {messages.Count} missions, {ids.Count} message IDs ({skipped} rows not read)");
+    }
+
+    /// <summary>The held mission of the character with the bound agent (offered or accepted), with its briefing text ID.</summary>
+    private async ValueTask<Eve.Services.Core.HeldMissionView?> ReadHeldMissionAsync(long characterId, long agentId, CancellationToken cancellationToken)
+    {
+        var record = await agentMissionStore.ReadAsync(characterId, agentId, cancellationToken);
+        if (record is null || record.State is not (Eve.Agents.AgentMissionState.Offered or Eve.Agents.AgentMissionState.Accepted or Eve.Agents.AgentMissionState.Completed)) return null;
+        if (agentMissionStatic.Mission(record.Content.MissionId) is not { } mission) return null;
+        long? briefing = clientMissionMessages.TryGetValue(mission.MissionId, out var texts) && texts.TryGetValue(ClientMissionMessages.BriefingKey, out var id) ? id : null;
+        return new Eve.Services.Core.HeldMissionView(mission, record, briefing);
+    }
 
     /// <summary>The SDE group of the agents in space (type 30887 "Tevis Jak's Epithal" is group 517).</summary>
     private const int AgentInSpaceGroupId = 517;

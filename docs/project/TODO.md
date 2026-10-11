@@ -1364,3 +1364,13 @@ follow a completed step, with forks, the 90-day restart and the held-back sites 
 | CHECKED | LP: the SDE holds no LP reward for missions (`fixedLpRewardAlpha` and `fixedLpRewardOmega` are 0 on all 2,892 records; no other field carries LP). No LP is paid. AG-3 LP wallet is not wired to missions | nothing to wire until a source exists (DEVIATIONS "Mission execution X3 step 4") |
 | DONE (tests) | Standings: the SDE `extraStandings` of a completion change the character's standing toward the faction (tenths: 7.0 = +0.7), once per completion | `MissionDungeonRuntime.CompleteWithRewardAsync`; `MissionComposition.ApplyMissionStandingAsync` (relations `AdjustAsync`); `MissionDungeonRuntimeTests.A_completion_moves_the_standing_once...` |
 | OPEN | Bonus time window (`bonusReward`, `bonusTimeInterval`): unit not established | DEVIATIONS |
+
+## 54. Mission execution X3 step 2: client texts and the held-mission views (2026-10-11)
+
+| Status | Item | Where / blocker |
+|---|---|---|
+| DONE (tests, opt-in real data) | Loader of the client's mission text IDs from `EVE_CLIENT_SDE_DIR/native/missions.jsonl.gz` into schema `client_sde` (replaced at each start); without the directory the log says why; nothing is committed | `Eve.Services.Core/ClientMissionMessages.cs`; `MissionComposition.LoadClientMissionMessagesAsync`; `MissionViewsTests` (synthetic, and the real export when configured: 2,886 rows with messages, 6 without) |
+| DONE (tests) | `GetMissionBriefingInfo` and `GetMissionObjectiveInfo` on the bound agent for a held (offered, accepted or completed) mission: the briefing and title IDs; the kill dungeon objective and the ISK reward; None when no mission is held | `Eve.Services.Core/MissionViews.cs`; `AgentMissionService.ReadHeldMissionAsync`; host `ReadHeldMissionAsync` |
+| OPEN | Fetch objectives (14119: item in cargo and turn-in at the agent) and courier objectives (`objectives` and `locations` lists are empty) | next slice; the EveJS builder is `buildMissionObjectivePayload` (agentMissionRuntime.js:5885) |
+| OPEN | The dungeon's enemy owner (`ownerID` is the mission's faction, a shortcut) and the dungeon location (0 placeholders) | next slice |
+| NOT FOUND | LP and text are the client's: the server sends IDs, and the client resolves the text in its own localization | none needed |

@@ -988,6 +988,7 @@ A1 done: the agent catalog is a pure function (`AgentCatalog.Build`, Eve.Host) t
 (2, PostgreSQL, the pinned SDE): 10,966 agents by agentTypeID, 1,773 locators, 360 in space, and two concrete agents
 (3008416 basic, 3019369 in space). Open after it: the
 standing requirements of store offers and the structure stores (gaps), the idempotency key the client does not send.
+Offer cross-check (eve.starweb.cc): no rows changed; 1,104 calculator-only offers are an owner question (DEVIATIONS AG-3).
 
 ## 43. Structures phase ST-E: remaining E wiring (2026-10-10)
 - DONE E-01: StartNewExtraction, FractureChunkWithStructure and CancelExtraction refuse by name (CustomNotify) with no backend, not PyNone (`StructureDataRpcServices.cs`, commit 59e9e89). The backend is ST-6a.

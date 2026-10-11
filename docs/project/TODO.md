@@ -1173,3 +1173,14 @@ Open:
 | OPEN | Structure placement on anchoring (ST-2) and the slim `repairing`/`unanchoring` fields | ST-2 | A structure anchored with a pilot in the system is not shown until the next entry. |
 | WRITTEN, NOT RUN LIVE | (e) headless scenario `tools/headless-client/tests/test_structures.py`: a pilot in a system with an imported Astrahus sees it in the ballpark with its state and timer | ST-1 (e) | Collects and skips without `EVE_LIVE_HOST` and the structure's environment; no live server has run it. |
 | UNVERIFIED | Client behaviour of a structure's dock (`OnDockingAccepted` and the docked session), the damage the ball shows, the state label | MITM | Not verified on the graphical client. |
+
+## 48. Track B: Incursions, lifecycle, staging sites and the map (B-M1, B-L1, B-S1, 2026-10-11)
+
+Status: implemented and tested at the host level on PostgreSQL (`IncursionDirectorTests`, 8 scenarios; `IncursionRulesTests`, 18 cases). Not run with the graphical client; no live run of the incursion path.
+
+- Lifecycle (`Eve.Services.Space/Incursions/IncursionDirector.cs`): capacity highsec 1, lowsec 1, nullsec 3; Mobilized 48 h, Established 1 day (fixed), Withdrawing 24 h; a band's next incursion spawns 12 to 36 h after the one it replaces ended. Durable jobs `incursion.spawn`, `incursion.phase`, `incursion.sites`; state in `incursions` and `incursion_sites` (migration `001_incursions` in the space schema). Restart keeps the phases and the respawn gaps.
+- Map: `map.GetIncursionGlobalReport` and `map.GetSystemsInIncursions` now read the live incursions (`PersistenceIncursionAnomalyReadModel` through `IncursionDirector.ReadActiveAsync`), replacing the read of content kind `incursion`, which nothing produced.
+- Rewards: `rewardMgr.GetDelayedRewardsByGroupIDs` answers the loyalty points pending on the groups of the live incursions. The pending value is 0 until the final-boss pipeline exists (B-R1).
+- Staging sites (B-S1): five sites per incursion, dungeons 5188, 5190, 5191 and 5193 (archetype 60), started with `DungeonWaveDirector.StartForSystemAsync` (owner 0, lifetime of the incursion, ended with it). Their waves are the owner data's (`sanshas_deadspace_pve`). All four plan on the owner data's `on_load` and `wave_cleared` triggers, so `Data/waves/v1/trigger-rules.json` needed no entry and is unchanged.
+- Not built (cut line): vanguard, assault and headquarters sites (B-S2), the mothership (B-F1), influence change by site completion, influence decay, final-boss loyalty points (B-R1). Decisions and sources: DEVIATIONS.md, "Incursions (B-L1, B-S1, B-M1)".
+- Not verified: the simulation spawns site NPCs with no pilot in the system (the path is covered with the fake simulation only); templateNameID is 0 because the owner catalog gives no name id for these dungeons.

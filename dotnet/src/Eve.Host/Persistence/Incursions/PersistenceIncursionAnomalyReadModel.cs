@@ -38,7 +38,8 @@ namespace Eve.Host;
 public sealed class PersistenceIncursionAnomalyReadModel(
     Func<string, long, CancellationToken, Task<IReadOnlyList<Eve.Content.ContentInstance>>> activeOf,
     Func<string, CancellationToken, Task<JsonObject>> readGameStoreTable,
-    Func<long> nowUnixMs)
+    Func<long> nowUnixMs,
+    Func<CancellationToken, Task<IReadOnlyList<JsonObject>>>? activeIncursions = null)
 {
     private const long GlobalOwnerId = 0;
     private static readonly HashSet<string> ActiveDungeonStates = new(StringComparer.OrdinalIgnoreCase)
@@ -46,24 +47,9 @@ public sealed class PersistenceIncursionAnomalyReadModel(
         "active", "seeded", "paused"
     };
 
-    public async ValueTask<IReadOnlyList<JsonObject>> ReadIncursionsAsync(CancellationToken cancellationToken)
-    {
-        var now = nowUnixMs();
-        var active = await activeOf("incursion", GlobalOwnerId, cancellationToken);
-        var result = new List<JsonObject>();
-        foreach (var instance in active)
-        {
-            if (instance.ExpiresMs is { } expires && expires <= now ||
-                ParseObject(instance.DataJson) is not { } data)
-                continue;
-            if (data["taleID"] is null)
-                data["taleID"] = instance.Id;
-            if (data["state"] is null)
-                data["state"] = instance.State;
-            result.Add(data);
-        }
-        return result;
-    }
+    /// <summary>The incursions that are not gone: the Sansha incursions of the lifecycle (<c>IncursionDirector</c>), or none when the host runs without space.</summary>
+    public async ValueTask<IReadOnlyList<JsonObject>> ReadIncursionsAsync(CancellationToken cancellationToken) =>
+        activeIncursions is null ? Array.Empty<JsonObject>() : await activeIncursions(cancellationToken);
 
     public async ValueTask<IReadOnlyList<JsonObject>> ReadAnomaliesAsync(
         long solarSystemId,

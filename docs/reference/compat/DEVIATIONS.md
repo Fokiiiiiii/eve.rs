@@ -1361,7 +1361,7 @@ Sources. The wiki: "Pochven" (https://wiki.eveuniversity.org/Pochven, fetched 20
 - **Incursions and anomalies come from the content state.** `map.GetIncursionGlobalReport`, `map.GetSystemsInIncursions`,
   `taleMgr.*` and `scanMgr.*` read the content instances of kind `incursion` and `anomaly` (`PersistenceIncursionAnomalyReadModel`).
   With none seeded, the answers are the empty contract shapes (an empty list, an empty rowset, an empty tale list).
-  Incursions are not simulated yet; the content slice that seeds them feeds these answers.
+  Incursions are simulated since B-L1 (see "Incursions (B-L1, B-S1, B-M1)" below); the content kind is no longer read.
 - **Live suite isolation.** The live run kept the game store (`gamestore`, which holds the mailboxes), and the corporation,
   market, fleet, industry and asset-safety tables, in the shared default schemas. Each run now gets its own scratch
   schema for each of them, and the script drops them at its end (`tools/dev/run-eve-live.sh`). `LiveScriptIsolationTests`
@@ -2054,3 +2054,18 @@ Engine: `dotnet/src/Eve.Hacking` (pure rules, no Host). Sources: EVE University 
 - **A hit's layer.** A depleted layer is the layer the hit emptied. A hit that only pauses the repair lands on the layer named by the state (shield, armor or hull). Stated approximation.
 - **Structure placement on anchoring is not wired yet.** A structure anchored while a pilot is in its system is not placed until the next pilot enters it (ST-2 places it on anchoring); the simulation ignores the state change of a structure it does not have.
 - **The simulation's state change publishes through the bus.** The subscriber `structure.space` sends `SetStructureState` on every `structure.state_changed`, or `RemoveStructure` when the record says it was unanchored or destroyed. At-least-once delivery is safe: the simulation ignores a state it already has (FOUNDATIONS rule 2).
+
+## Incursions (B-L1, B-S1, B-M1, 2026-10-11)
+
+Sources: CCP launch article "The Nation Strikes Back" (https://www.eveonline.com/news/view/the-nation-strikes-back-1) for the respawn window (12 to 36 hours) and the loyalty point rule (paid only when the final boss is destroyed); EVE University Incursions (https://wiki.eveuniversity.org/Incursions) for the phase lengths, the concurrent limits and the site counts; client constants in `eve-logic/talecommon/const.py` for the scene types, reward groups and the scout dungeons; the owner's dungeon catalog for the site compositions. No third-party history data is used at runtime.
+
+- Phase lengths: Mobilized 48 h (wiki). Established is fixed at one day; the wiki gives one to five days and no rule for the difference. Withdrawing 24 h (wiki). CCP publishes no phase numbers.
+- Concurrent incursions per band: highsec 1, lowsec 1, nullsec 3 (wiki; the wiki itself marks the highsec single-constellation rule as inference, not applied here).
+- Band of a system: highsec security 0.45 and above, lowsec 0.05 to 0.45, nullsec below (the client's rounding of 0.5 and 0.1). Constellation choice: random among constellations with a system of the band and no live incursion; CCP does not publish the choice.
+- Staging sites: five per incursion (wiki: up to five at once). No official count per incursion exists; the count is an eve.rs choice. Dungeons are drawn at random from the four staging dungeons with the owner's compositions.
+- Influence: full (1.0) at start and not changed. CCP says Sansha pushes influence down over time and site completion lowers it, but publishes no rate. Decay rate and grace are 0 (EveJS value).
+- Loyalty points: the pending value is 0 until the final boss exists. The wiki's staging payout (400 LP to the top five) conflicts with CCP's "LP only when the final boss is destroyed"; CCP's rule is followed (open item G-I1 in the plan).
+- Template class 2 and aggressor faction 500019 are EveJS values; reward group 8 is the client's REWARD_SCOUT.
+- Map rows: only the staging system has a row in `getSystemsInIncursions` (scene type 4, staging); the other systems of the constellation carry no site row yet. templateNameID is 0 (no name id in the owner catalog).
+- The read of content kind `incursion` in `PersistenceIncursionAnomalyReadModel` is gone: nothing produced that kind, and the lifecycle is now the source of the map answers.
+- Not built: vanguard, assault and headquarters sites (B-S2), the mothership (B-F1), influence and the final-boss loyalty points (B-R1).

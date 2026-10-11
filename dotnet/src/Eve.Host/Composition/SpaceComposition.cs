@@ -274,6 +274,11 @@ internal sealed partial class CharacterServicesComposition
                 Eve.Dungeons.DungeonCatalog.LoadEmbedded(), Eve.Dungeons.WaveRules.LoadEmbedded(), new NpcSelector(npcAuthority),
                 new Eve.Services.Space.SpaceDungeonNpcs(spaceSessions), spaceSchema);
             await dungeonWaves.AttachAsync();
+            // the Sansha incursions (B-L1): their lifecycle, and their staging sites on the dungeon waves (B-S1); the map and the rewards read them
+            await Eve.Services.Space.Incursions.IncursionDirector.MigrateAsync(source, spaceSchema);
+            var incursions = new Eve.Services.Space.Incursions.IncursionDirector(source, foundations.Content, foundations.Scheduler, dungeonWaves, solarSystems, spaceSchema);
+            await incursions.AttachAsync();
+            incursionDirector = incursions;
             if (cosmicSites is { } sitesOfWaves)
             {
                 // the NPC waves of the sites: a kill of a site's NPC is counted by the content runtime; the next wave starts when one is done

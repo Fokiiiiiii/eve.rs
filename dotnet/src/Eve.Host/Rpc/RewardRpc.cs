@@ -40,7 +40,9 @@ internal sealed partial class CharacterServicesComposition
     /// <summary>Rewards, login campaigns, store offers, redeem and vault.</summary>
     private IReadOnlyList<IService> RewardRpc() =>
     [
-            new RewardsService(),
+            new RewardsService(async (groupIds, token) => incursionDirector is { } directorOfIncursions
+                ? await directorOfIncursions.PendingLoyaltyPointsAsync(groupIds, token)
+                : new Dictionary<long, long>()),
             new Eve.Services.Core.LoginCampaignMgrService(storeRuntime),
             new Eve.Services.Core.SeasonalLoginCampaignMgrService(storeRuntime),
             new StoreOffersService(

@@ -183,7 +183,7 @@ public sealed partial class ShipService(
     /// <summary>The client call <c>LeaveShip(shipID)</c> returns the capsule made active by the session.</summary>
     [Method("Undock")]
     public async ValueTask<PyValue> Undock(ServiceCall call) =>
-        _binding.Owns(call) ? await space.UndockAsync(call.Session, call.BoundObjectId, call.Cancellation) : None;
+        _binding.Owns(call) ? await space.UndockAsync(call.Session, call.BoundObjectId, call.Cancellation, call.Arg(1).Equals(PyBool.True)) : None;
 
     /// <summary><c>Board(shipID, currentShipID)</c>: selects an owned ship in the station hangar.</summary>
     [Method("Board")]

@@ -367,6 +367,8 @@ public sealed partial class SpaceSessions
         try
         {
             var session = pilot.Session;
+            var previousStationId = session.GetInt("stationid") ?? 0;
+            var previousStructureId = session.GetInt("structureid") ?? 0;
             // an Upwell structure takes the ship the same way a station does (its id is the place the ship and the character are in)
             var inStructure = await IsStructureAsync(stationId, CancellationToken.None);
             var transition = await _transitions.ExecuteAsync(
@@ -407,6 +409,7 @@ public sealed partial class SpaceSessions
                 notify: (_, _) =>
                 {
                     session.SendNotification("OnDockingFinished", "charid", InventoryWire.Id(stationId));
+                    DockedLocationChanged?.Invoke(session, previousStationId, previousStructureId);
                     return Task.CompletedTask;
                 },
                 cancellationToken: CancellationToken.None,

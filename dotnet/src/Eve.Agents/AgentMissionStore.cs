@@ -191,6 +191,30 @@ public sealed class AgentMissionStore
             return current with { State = AgentMissionState.Quit, QuitAt = now };
         });
 
+    /// <summary>The accepted mission fails (its dungeon failed, was abandoned or expired); the agent offers it again later and no reward is paid.</summary>
+    public Task<AgentMissionChange?> FailAsync(
+        long characterId, long agentId, DateTimeOffset now, string reference, CancellationToken cancellationToken = default) =>
+        ChangeAsync(characterId, agentId, reference, "failed", now, cancellationToken, current =>
+        {
+            if (current?.State != AgentMissionState.Accepted) throw Refused("not_accepted", "there is no accepted mission to fail");
+            return current with { State = AgentMissionState.Failed };
+        });
+
+    /// <summary>Every accepted mission of every character, for the mission runtime's sweep (one row per character and agent).</summary>
+    public async Task<IReadOnlyList<AgentMissionRecord>> ReadAcceptedAsync(CancellationToken cancellationToken = default)
+    {
+        await using var connection = await _source.OpenConnectionAsync(cancellationToken);
+        await using var command = new NpgsqlCommand(
+            $"SELECT {Columns} FROM {_schema}.missions WHERE state = {(int)AgentMissionState.Accepted} ORDER BY character_id, agent_id", connection);
+        var rows = new List<AgentMissionRecord>();
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            rows.Add(ReadRecord(reader));
+        }
+        return rows;
+    }
+
     /// <summary>The accepted mission is completed (the mission runtime calls this when its objectives are done).</summary>
     public Task<AgentMissionChange?> CompleteAsync(
         long characterId, long agentId, DateTimeOffset now, string reference, CancellationToken cancellationToken = default) =>

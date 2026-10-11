@@ -3,7 +3,7 @@ namespace Eve.Market.Tests;
 public class MatchingTests
 {
     [Fact]
-    public void Matching_merges_seed_and_player_prices_then_station_and_id_and_respects_minimum_volume_and_expiry()
+    public void Matching_merges_seed_and_player_prices_then_issue_time_and_id_and_respects_minimum_volume_and_expiry()
     {
         var topology = new MarketTopology([(1,2),(2,3)]);
         var here = new MarketLocation(10,1,100,1000);
@@ -18,11 +18,12 @@ public class MatchingTests
         var expired = Order(2,1,100) with { Duration=1,IssuedMs=now-86400000 };
         var otherRegion = Order(3,1,100) with { Location=here with { RegionId=2000 } };
         var fills = MarketMatching.Plan([askElsewhere,seed,player,expensive,expired,otherRegion],topology,34,true,here,10,6,32767,now);
-        Assert.Equal([4L,9L,1L],fills.Select(f => f.Order.Id));
-        Assert.Equal([3L,2L,1L],fills.Select(f => f.Quantity));
+        // Q5: the seed is the oldest (issued at 0); the two issued now are taken by id: 1 before 4
+        Assert.Equal([9L,1L],fills.Select(f => f.Order.Id));
+        Assert.Equal([2L,4L],fills.Select(f => f.Quantity));
         Assert.Equal(60m,fills.Sum(f => f.GrossAmount));
         Assert.Equal(3,player.VolumeRemaining); // a plan does not mutate its input book
-        Assert.Equal([4L,9L],MarketMatching.Plan([seed,player,askElsewhere],topology,34,true,here,10,20,-1,now).Select(f => f.Order.Id));
+        Assert.Equal([9L,4L],MarketMatching.Plan([seed,player,askElsewhere],topology,34,true,here,10,20,-1,now).Select(f => f.Order.Id)); // Q5: oldest first; the station-range buy takes no away ask
         var largeBid = Order(1,12,10,true,8);
         var smallRemainder = Order(2,11,3,true,8);
         Assert.Empty(MarketMatching.Plan([largeBid],topology,34,false,here,10,7,-1,now));

@@ -81,6 +81,9 @@ public static class ModuleRefusals
             "CLOAK_PROXIMITY_BLOCKED" => Notify("You are too close to another object to activate your cloaking device."),
         // the wiki (EVE University, Cynosural Field Generator): a cynosural field is lit by a fleet member; the client's own wording is not in the tables read
         "CYNO_NOT_IN_FLEET" => Notify($"{name} can only be lit by a member of a fleet."),
+        "CYNO_JAMMED" => Notify($"{name} cannot be lit: a cynosural jammer is active in this system."),
+        // the text of EveJS's CYNOSURAL_FIELD_JAMMED (moduleOperation.js); eve-logic has no string for it. Pochven's jammer gives it too (the wiki)
+        "CYNOSURAL_FIELD_JAMMED" => Notify("A cynosural system jammer is preventing cynosural fields from forming in this solar system."),
         "SMARTBOMB_NEAR_STATION" => Notify($"{name} cannot be activated this close to a station or stargate."),
             "MODULE_CLOAKED" => Notify("You cannot activate modules while cloaked."),
             // a disruptive lance needs an active siege module on the ship (EveJS ACTIVE_SIEGE_MODULE_REQUIRED, moduleActivationRequiresActiveSiegeModule)
@@ -92,7 +95,7 @@ public static class ModuleRefusals
             // the host refused the fuel for a reason that is not the lack of it: the module cannot be run
             "FUEL_REFUSED" => Notify($"{name} cannot be activated."),
             "UNSUPPORTED_EFFECT" or "EFFECT_NOT_IMPLEMENTED" => Notify($"{name} cannot be activated."),
-            // a module that acts on a structure (entosis link, compressor): no structure is in space on this server yet (phase 3)
+            // a module that acts on a structure (the entosis link): no structure is in space on this server yet (phase 3)
             "STRUCTURES_PHASE_3" => Notify($"{name} acts on a structure, and structures are not on this server yet (phase 3)."),
             // a module of a group of which one runs at a time (the reactive armor hardeners) while another of its group runs
             "MAX_GROUP_ACTIVE" => Notify($"{name} cannot run while another module of its group is active."),

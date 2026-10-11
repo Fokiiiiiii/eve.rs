@@ -111,6 +111,13 @@ public class TargetingTests
         Assert.Equal("TargetNotWithinRangeGeneric", UserError(ModuleRefusals.Of(far with { EffectName = "shipModuleRemoteArmorRepairer" }, starting: true)).Name);
     }
 
+    [Fact]
+    public void A_cynosural_field_refused_by_a_jammer_says_the_jammer_is_preventing_it()
+    {
+        var (name, values) = UserError(ModuleRefusals.Of(ModuleResult.Refusal("CYNOSURAL_FIELD_JAMMED", 21096, "Cynosural Field Generator I"), starting: true));
+        Assert.Equal(("CustomNotify", new PyStr("A cynosural system jammer is preventing cynosural fields from forming in this solar system.")), (name, values["notify"]));
+    }
+
     [PgFact]
     public async Task A_lock_that_is_refused_is_the_error_the_reference_raises_for_the_reason()
     {

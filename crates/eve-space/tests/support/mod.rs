@@ -203,6 +203,7 @@ pub fn recorded_ship(race: &Value, ball: &[u8], direction: Vec3) -> Ship {
     // the ball: id, mode, radius, position, flags, mass, cloak, harmonic, corporation, alliance, top speed, velocity, inertia, speed fraction
     let f32_at = |at: usize| f64::from(f32::from_le_bytes(ball[at..at + 4].try_into().unwrap()));
     let spec = ShipSpec {
+        stance: None,
         ship_id: number(&field(slim, "itemID")),
         character_id: number(&field(slim, "charID")),
         type_id: number(&field(slim, "typeID")) as i32,

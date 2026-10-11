@@ -7,6 +7,9 @@
 //! stored fractions, not the points it tells), and this does the same, so the numbers a client is told are the same to the last digit.
 mod scene_api;
 mod shift;
+mod structure;
+
+pub use self::structure::{StructureHealth, StructureHit, StructureLimits};
 
 use crate::scene::TICKS_PER_SECOND;
 

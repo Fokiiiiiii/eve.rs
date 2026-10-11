@@ -32,7 +32,7 @@ public sealed class RedeemUserSvcCompatibilityTests
         Assert.Equal(new PyList([]), await Call(service, session, "GetUpdatedMultiCharacterTraining"));
         Assert.Equal(new PyList([]), await Call(service, session, "ActivateMultiTraining"));
         Assert.Equal(new PyList([]), await Call(service, session, "ActivateSoulboundMultiTraining"));
-        Assert.Same(PyBool.True, await Call(service, session, "ReportBot", new PyInt(90000004)));
+        Assert.Same(PyBool.False, await Call(service, session, "ReportBot", new PyInt(90000004)));
         Assert.Same(PyBool.False, await Call(service, session, "CreateRedeemTokenQA"));
     }
 

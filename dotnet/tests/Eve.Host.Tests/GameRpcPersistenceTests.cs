@@ -64,7 +64,7 @@ public sealed class GameRpcPersistenceTests
                 ReadInterferenceTableAsync: _ => ValueTask.FromResult<JsonObject?>(cache.Read("solarSystemInterferenceState", "/").Data as JsonObject),
                 ReadKillmailAsync: (killId, _) => ValueTask.FromResult<JsonObject?>(
                     cache.Read("killmails", $"/records/{killId}").Data as JsonObject));
-            var services = CoreServices.Create(new SubscriptionSettings(), new NoOmegaAccounts(), () => now,
+            var services = CoreServices.Create(new PolicyOmegaAccounts(), () => now,
                 gameRpcCallbacks: callbacks);
 
             var sharedSettings = services.Single(service => service.Name == "sharedSettingsMgr");
@@ -106,8 +106,8 @@ public sealed class GameRpcPersistenceTests
         return dict.Entries.Single(entry => JsSemantics.StringValue(entry.Key) == name).Value;
     }
 
-    private sealed class NoOmegaAccounts : IOmegaAccountStore
+    private sealed class PolicyOmegaAccounts : IOmegaAccountStore
     {
-        public string? GetOmegaExpiry(long accountId) => null;
+        public string? GetOmegaExpiry(long accountId) => OmegaLicenses.DefaultOmegaExpiryText;
     }
 }

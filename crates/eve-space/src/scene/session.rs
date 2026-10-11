@@ -144,9 +144,36 @@ impl Scene {
             Command::PositionOf { target_id } => self.position_of(session, target_id),
             Command::DropPoint { distance } => self.drop_point(session, distance),
             Command::ScanTargets => self.scan_targets(session, now),
+            Command::DirectionalScan => self.directional_targets(session, now),
             Command::Jump { gate_id, destination_gate } => self.jump(session, gate_id, destination_gate, now),
-            Command::CynoJump { field_id, destination_system, spool_ms } => {
-                self.cyno_jump(session, field_id, destination_system, spool_ms, now)
+            Command::CynoJump { field_id, destination_system, spool_ms, capacitor } => {
+                self.cyno_jump(session, field_id, destination_system, spool_ms, capacitor, now)
+            }
+            Command::OpenBridge {
+                field_id,
+                destination_system,
+                lifetime_ms,
+                immobile_ms,
+                range_meters,
+                capacitor,
+            } => self.open_bridge(
+                session,
+                field_id,
+                destination_system,
+                (lifetime_ms, immobile_ms, range_meters),
+                capacitor,
+                now,
+            ),
+            Command::ConduitJump { field_id, destination_system, passenger_count, passengers, .. } => self
+                .conduit_jump(
+                    session,
+                    field_id,
+                    destination_system,
+                    &passengers[..passenger_count as usize],
+                    now,
+                ),
+            Command::BridgeJump { bridge_ship_id, field_id, destination_system } => {
+                self.bridge_jump(session, bridge_ship_id, field_id, destination_system, now)
             }
             other => self.steer_pilot(session, other, now),
         };
@@ -177,6 +204,12 @@ impl Scene {
         let Some(pilot) = self.pilots.get_mut(&session) else { return Vec::new() };
         let armor_before = pilot.ship.health.armor_resonance();
         let old = std::mem::replace(&mut pilot.ship.spec, spec);
+        // a switch is from the stance the ship had: the host sends the new one, the simulation knows the old one
+        if pilot.ship.spec.stance != old.stance
+            && let (Some(now), Some(before)) = (pilot.ship.spec.stance.as_mut(), old.stance)
+        {
+            now.old_stance = before.stance;
+        }
         let new = &pilot.ship.spec;
         pilot.ship.health.respec(new.vitals, new.shield_recharge_ms, now);
         // a reactive armor hardener that runs is shown the armor's resonances as they now are (a pin, or a new base, moves them)
@@ -186,6 +219,8 @@ impl Scene {
             })
             .unwrap_or_default();
         let security_changed = new.security_status != old.security_status;
+        // a stance that changed is in the slim item too (`shipStance`, the reference's slim update after a switch)
+        let stance_changed = new.stance != old.stance;
         let ship_id = id(new.ship_id);
         let (owner, ship) = (new.character_id, new.ship_id);
         let mut actions = Vec::new();
@@ -204,7 +239,7 @@ impl Scene {
             told.extend(self.tell_all(session, actions));
         }
         // a security status that changed is in the slim item: the pilot and whoever sees the ship are shown it again (the reference does, when a crime costs a pilot some)
-        if security_changed {
+        if security_changed || stance_changed {
             let ship = &self.pilots[&session].ship;
             let change = payload::ship_slim_item_change(stamp, ship);
             told.extend(self.tell_all(session, vec![change]));
@@ -245,6 +280,7 @@ impl Scene {
         let heat = self.prepare_overheating(now);
         told.extend(self.settle_modules(now));
         told.extend(self.apply_overheating(heat, now));
+        told.extend(self.decloak_by_proximity(now));
         told.extend(self.advance_missiles(now));
         told.extend(self.advance_dots(now));
         told.extend(self.advance_deployables(now));

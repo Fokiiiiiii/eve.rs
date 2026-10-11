@@ -578,14 +578,14 @@ public class CoreCatalogTests
     [Fact]
     public void The_catalog_names_the_core_services()
     {
-        var created = CoreServices.Create(new SubscriptionSettings(), new NoAccounts(), () => 0);
+        var created = CoreServices.Create(new NoAccounts(), () => 0);
         var createdNames = created.Select(service => service.Name).Order().ToArray();
 
         var expectedNames = new[]
         {
                 "abyssal_content_manager", "alphaInjectorMgr", "authentication", "bannedwords", "browserLockdownSvc", "cache", "calendarMgr", "calendarProxy",
                 "chatAuthenticationService", "communityTrackMgr", "contextualOfferMgr", "contractProxy", "dynamicBountyMgr", "ingamereport", "jumpCloneSvc", "jumpTimers", "nonDiminishingInjectionMgr", "overviewPresetMgr", "ProjectDiscovery", "eveguard_report", "expertSystemMgr", "infoGatheringMgr", "kiringMgr", "loginRewardFacilities", "localizationServer", "LPStoreMgr",
-                "corpFittingMgr", "dungeonExplorationMgr", "epicArcStatus", "keeper", "miningScanMgr", "node_graph", "peaceTreatyMgr", "petitioner", "pingService", "posMgr", "publicQaToolsServer", "seasonManager", "subscriptionMgr",
+                "dungeonExplorationMgr", "epicArcStatus", "keeper", "miningScanMgr", "node_graph", "peaceTreatyMgr", "petitioner", "pingService", "posMgr", "publicQaToolsServer", "seasonManager", "subscriptionMgr",
                 "custom_agency_provider", "superWeaponMgr", "tourneyMgr",
                 "raffleMgr", "raffleProxy", "serviceGatewayMgr", "sharedSettingsMgr", "shipStanceMgr",
                 "solarsystemInterferenceMgr", "survey", "warStatisticMgr",
@@ -600,7 +600,6 @@ public class CoreCatalogTests
     {
         Eve.Services.Core.NodeGraphRequest? observed = null;
         var services = CoreServices.Create(
-            new SubscriptionSettings(),
             new NoAccounts(),
             () => 0,
             nodeGraphRpcCallback: (request, _) =>
@@ -625,6 +624,6 @@ public class CoreCatalogTests
 
     private sealed class NoAccounts : IOmegaAccountStore
     {
-        public string? GetOmegaExpiry(long accountId) => null;
+        public string? GetOmegaExpiry(long accountId) => OmegaLicenses.DefaultOmegaExpiryText;
     }
 }

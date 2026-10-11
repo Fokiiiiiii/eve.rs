@@ -238,8 +238,24 @@ public sealed partial class CharMgrService(
             : None;
     }
 
+    /// <summary>
+    /// The recustomization state (the reference's <c>Paperdoll.State</c>): 0 (no recustomization) once the character has a
+    /// stored doll or portrait, 2 (no existing customization) before that, as the reference answers
+    /// (<c>paperDollPayloads.js</c>, <c>resolvePaperDollState</c>). Re-sculpting (1) and full recustomizing (3) need the
+    /// re-sculpt token, which does not exist yet, so they are never reported.
+    /// </summary>
     [Method("GetPaperdollState")]
-    public PyValue GetPaperdollState(ServiceCall call) => new PyInt(0);
+    public async ValueTask<PyValue> GetPaperdollState(ServiceCall call)
+    {
+        var characterId = call.Arg(0) is PyInt { Value: > 0 } given ? given.Value : call.Session.CharacterId ?? 0;
+        if (characterId <= 0)
+            return new PyInt(NoExistingCustomization);
+        var (doll, portrait) = await characters.AppearanceAsync(characterId, call.Cancellation);
+        return new PyInt(doll is not null || portrait is not null ? NoRecustomization : NoExistingCustomization);
+    }
+
+    private const int NoRecustomization = 0;
+    private const int NoExistingCustomization = 2;
 
     [Method("GetCohortsForCharacter")]
     public PyValue GetCohortsForCharacter(ServiceCall call) => new PyList([]);

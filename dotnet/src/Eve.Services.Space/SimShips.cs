@@ -11,7 +11,7 @@ internal static class SimShips
     private const int Mass = 4;
     private const int MaxVelocity = 37;
     private const int Agility = 70;
-    private const int Radius = 162;
+    internal const int Radius = 162;
     private const int ShieldRechargeRate = 479;
     private const int WarpSpeedMultiplier = 600;
     private const int MaxTargetRange = 76;
@@ -111,8 +111,16 @@ public static SimHeatProfile HeatProfileOf(ShipSnapshot snapshot, DogmaStatic st
             Attribute(MaxTargetRange), Attribute(ScanResolution), Attribute(SignatureRadius), LockLimit(Attribute(MaxLockedTargets), snapshot.World.Get(character.Id, MaxLockedTargets)),
             Attribute(CapacitorCapacity), Attribute(RechargeRate) / 1000.0,
             [.. snapshot.Fitted.Select(module => new SimModule(module.Id, module.TypeId, module.Flag))],
-            VitalsOf(snapshot), ConditionOf(snapshot.Condition), SensorsOf(Attribute, _ => true), DroneDamageMultiplierOf(snapshot));
+            VitalsOf(snapshot), ConditionOf(snapshot.Condition), SensorsOf(Attribute, _ => true), DroneDamageMultiplierOf(snapshot), StanceOf(snapshot));
     }
+
+    /// <summary>
+    /// The ship's stance for its slim item (protocol 55): the stance, and when it switched as a FILETIME. A ship that was never switched has no stance and no field.
+    /// The simulation keeps the old stance of a switch it is told (the host sends the new one only), so the old stance here is the current one.
+    /// </summary>
+    public static SimShipStance? StanceOf(ShipSnapshot snapshot) => snapshot.Stance is { } stance
+        ? new SimShipStance(stance.Stance, Eve.Services.Py.FileTimeFromUnixMs(stance.SwitchedAtMs), stance.Stance)
+        : null;
 
     /// <summary>The attribute of a ship that a drone bonus or penalty writes (industrialBonusDroneDamage, SDE 2580).</summary>
     public const int IndustrialBonusDroneDamage = 2580;
@@ -156,7 +164,8 @@ public static SimHeatProfile HeatProfileOf(ShipSnapshot snapshot, DogmaStatic st
         double[] Layer(int[] ids) => [.. ids.Select(id => Math.Max(0, attributes.GetValueOrDefault(id, 1.0)))];
         return new SimVitals(
             Math.Max(0, attributes.GetValueOrDefault(ShieldCapacity)), Math.Max(0, attributes.GetValueOrDefault(ArmorHitPoints)), Math.Max(0, attributes.GetValueOrDefault(HullPoints)),
-            new SimResonances(Layer(ShieldResonances), Layer(ArmorResonances), Layer(HullResonances)), ArmorPinned(snapshot));
+            new SimResonances(Layer(ShieldResonances), Layer(ArmorResonances), Layer(HullResonances)), ArmorPinned(snapshot),
+            attributes.GetValueOrDefault(MaxVelocity), attributes.GetValueOrDefault(Mass));
     }
 
     /// <summary>

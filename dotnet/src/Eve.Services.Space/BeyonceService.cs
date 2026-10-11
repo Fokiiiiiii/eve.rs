@@ -253,13 +253,22 @@ public Func<long, long, CancellationToken, Task<int>>? SkillLevelOfCharacter { g
         }
 
         var coordinate = type == "position" ? Coordinates(call.Arg(1)) : null;
-        var requestedTarget = type == "position" ? null : Number(call.Arg(1));
+        // a cosmic site's scan result is named by its code (ABC-123), which the client sends as text; every other target is a number
+        var scanCode = type == "scan" ? JsSemantics.StringValue(call.Arg(1)) : null;
+        var requestedTarget = type == "position" || scanCode is not null ? null : Number(call.Arg(1));
         if (type == "position")
         {
             if (coordinate is not { } parsedPoint
                 || !double.IsFinite(parsedPoint.X)
                 || !double.IsFinite(parsedPoint.Y)
                 || !double.IsFinite(parsedPoint.Z))
+            {
+                throw WarpRefusal();
+            }
+        }
+        else if (scanCode is not null)
+        {
+            if (scanCode.Trim().Length == 0)
             {
                 throw WarpRefusal();
             }
@@ -335,7 +344,8 @@ public Func<long, long, CancellationToken, Task<int>>? SkillLevelOfCharacter { g
         else if (type == "scan")
         {
             // a scan result is warped to only as the reference allows: the 100 percent place of the last completed scan in this system (no fleet warp)
-            if (fleetWarp || callerSystem is not { } scanSystem || space.WarpAuthority.Resolve(call.Session, scanSystem, targetId) is not { } place)
+            if (fleetWarp || callerSystem is not { } scanSystem
+                || (scanCode is null ? space.WarpAuthority.Resolve(call.Session, scanSystem, targetId) : space.WarpAuthority.Resolve(call.Session, scanSystem, scanCode)) is not { } place)
             {
                 throw WarpRefusal();
             }
@@ -553,6 +563,62 @@ public Func<long, long, CancellationToken, Task<int>>? SkillLevelOfCharacter { g
     public async ValueTask<PyValue> CmdJumpToFleetDeployableBeacon(ServiceCall call) =>
         _binding.Owns(call) && space.JumpDrive is { } drive && Number(call.Arg(0)) is { } field && Number(call.Arg(1)) is { } system
             ? await drive.JumpToFieldAsync(call.Session, (long)field, 0, (int)system, call.BoundObjectId, call.Cancellation)
+            : None;
+
+    /// <summary>
+    /// <c>CmdBridgeToFleetModuleBeacon(charID, beaconID, solarsystemID)</c>: the bridging ship opens a jump bridge to the cynosural field a fleet member lit (the
+    /// beacon is the field). The client does not read an answer, so none is given.
+    /// </summary>
+    [Method("CmdBridgeToFleetModuleBeacon")]
+    public async ValueTask<PyValue> CmdBridgeToFleetModuleBeacon(ServiceCall call)
+    {
+        if (_binding.Owns(call) && space.Bridges is { } bridges && Number(call.Arg(1)) is { } beacon && Number(call.Arg(2)) is { } system)
+        {
+            await bridges.OpenAsync(call.Session, (long)beacon, (int)system, call.Cancellation);
+        }
+        return None;
+    }
+
+    /// <summary>
+    /// <c>CmdBridgeToFleetDeployableBeacon(deployableID, solarsystemID, beaconID)</c>: the bridging ship opens a jump bridge to the field of that deployable id.
+    /// </summary>
+    [Method("CmdBridgeToFleetDeployableBeacon")]
+    public async ValueTask<PyValue> CmdBridgeToFleetDeployableBeacon(ServiceCall call)
+    {
+        if (_binding.Owns(call) && space.Bridges is { } bridges && Number(call.Arg(0)) is { } field && Number(call.Arg(1)) is { } system)
+        {
+            await bridges.OpenAsync(call.Session, (long)field, (int)system, call.Cancellation);
+        }
+        return None;
+    }
+
+    /// <summary>
+    /// <c>CmdGroupJumpToFleetModuleBeacon(charID, beaconID, solarsystemID)</c>: the Black Ops makes a conduit jump to the cynosural field a fleet member lit,
+    /// and the fleet ships in its 10 km go with it.
+    /// </summary>
+    [Method("CmdGroupJumpToFleetModuleBeacon")]
+    public async ValueTask<PyValue> CmdGroupJumpToFleetModuleBeacon(ServiceCall call) =>
+        _binding.Owns(call) && space.Conduits is { } conduits && Number(call.Arg(1)) is { } beacon && Number(call.Arg(2)) is { } system
+            ? await conduits.GroupJumpAsync(call.Session, (long)beacon, (int)system, call.BoundObjectId, call.Cancellation)
+            : None;
+
+    /// <summary>
+    /// <c>CmdGroupJumpToFleetDeployableBeacon(deployableID, solarsystemID, beaconID)</c>: the conduit jump to the field of that deployable id.
+    /// </summary>
+    [Method("CmdGroupJumpToFleetDeployableBeacon")]
+    public async ValueTask<PyValue> CmdGroupJumpToFleetDeployableBeacon(ServiceCall call) =>
+        _binding.Owns(call) && space.Conduits is { } conduits && Number(call.Arg(0)) is { } field && Number(call.Arg(1)) is { } system
+            ? await conduits.GroupJumpAsync(call.Session, (long)field, (int)system, call.BoundObjectId, call.Cancellation)
+            : None;
+
+    /// <summary>
+    /// <c>CmdJumpThroughFleet(otherCharID, otherShipID, beaconID, solarsystemID)</c>: the session's ship passes through the bridge of the ship
+    /// <c>otherShipID</c> to the field <c>beaconID</c> in <c>solarsystemID</c>.
+    /// </summary>
+    [Method("CmdJumpThroughFleet")]
+    public async ValueTask<PyValue> CmdJumpThroughFleet(ServiceCall call) =>
+        _binding.Owns(call) && space.Bridges is { } bridges && Number(call.Arg(1)) is { } bridgeShip && Number(call.Arg(2)) is { } beacon && Number(call.Arg(3)) is { } system
+            ? await bridges.JumpThroughAsync(call.Session, (long)bridgeShip, (long)beacon, (int)system, call.BoundObjectId, call.Cancellation)
             : None;
 
     /// <summary>

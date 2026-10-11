@@ -31,7 +31,9 @@ public sealed record SimResonances(IReadOnlyList<double> Shield, IReadOnlyList<d
 /// What a ship can take, in points, and how it resists: dogma's numbers for the ship as it is fitted and flown. <paramref name="ArmorPinned"/> is set while a fitted
 /// Polarized weapon holds the armor's resonances at one: the simulation then keeps them there whatever a reactive armor hardener does.
 /// </summary>
-public sealed record SimVitals(double ShieldCapacity, double ArmorHp, double StructureHp, SimResonances Resonances, bool ArmorPinned = false)
+/// <summary>What the ship takes and resists, and the numbers a running module can change without it being hurt (the maximum velocity of a siege, its mass).
+/// The host compares them to decide whether the simulation must be told the ship again (they are not on the wire).</summary>
+public sealed record SimVitals(double ShieldCapacity, double ArmorHp, double StructureHp, SimResonances Resonances, bool ArmorPinned = false, double MaxVelocity = 0, double Mass = 0)
 {
     /// <summary>Nothing to hurt.</summary>
     public static readonly SimVitals Unhurtable = new(0, 0, 0, SimResonances.None);
@@ -44,12 +46,15 @@ public sealed record SimCondition(double Damage, double ArmorDamage, double Shie
     public static readonly SimCondition Full = new(0, 0, 1, 1);
 }
 
+/// <summary>A ship's stance (a Tactical Destroyer's mode): the stance it had before, when it switched (a FILETIME), and the stance it has. The slim item carries it (protocol 55).</summary>
+public sealed record SimShipStance(int OldStance, long SwitchedAt, int Stance);
+
 /// <summary>What motion and the slim item need to know of a ship: the host works these out (dogma, skills, fitting), the simulation only uses them.</summary>
 public sealed record SimShip(
     long ShipId, long CharacterId, int TypeId, int GroupId, int CategoryId, string Name, long OwnerId, int CorporationId, int AllianceId, int WarFactionId,
     double SecurityStatus, double Radius, double Mass, double MaxVelocity, double Agility, double WarpSpeedAu, double ShieldRechargeMs,
     double MaxTargetRange, double ScanResolution, double SignatureRadius, int MaxLockedTargets, double CapacitorCapacity, double CapacitorRechargeSeconds, IReadOnlyList<SimModule> Modules,
-    SimVitals? Vitals = null, SimCondition? Condition = null, SimSensors? Sensors = null, double DroneDamageMultiplier = 1d);
+    SimVitals? Vitals = null, SimCondition? Condition = null, SimSensors? Sensors = null, double DroneDamageMultiplier = 1d, SimShipStance? Stance = null);
 
 /// <summary>What a ship holds against a jammer and a neutraliser: the strength of its sensors (gravimetric, ladar, magnetometric, radar; the strongest counts), how much of a jam it takes (<c>ECMResistance</c>: 1 for an ordinary ship, 0 for one that cannot be jammed) and how much of an energy neutralisation it takes (<c>energyWarfareResistance</c>, 2045: 1 for an ordinary ship, 0 for one that cannot be neutralised; protocol 27).</summary>
 public sealed record SimSensors(double Gravimetric, double Ladar, double Magnetometric, double Radar, double EcmResistance, double EnergyWarfareResistance)
@@ -113,9 +118,18 @@ public static class SimCommands
 
     /// <summary>Jump to a cynosural field lit in another system (the field's id, the destination system and the spool in milliseconds): code 26.</summary>
     public const byte CynoJump = 26;
+    /// <summary>Opens a jump bridge where the ship is (protocol 55): the field, its system, the bridge's life, the hold, and the capacitor.</summary>
+    public const byte OpenBridge = 30;
+    /// <summary>A passenger's jump through the bridge of another ship (protocol 55): the bridging ship, the field, its system.</summary>
+    public const byte BridgeJump = 31;
+    /// <summary>A Black Ops conduit jump (protocol 57): the anchor and the ships of the passenger list jump to the field at once, within the conduit's range.</summary>
+    public const byte ConduitJump = 32;
 
     /// <summary>The scan targets of the scene for a probe scan (protocol 52).</summary>
     public const byte ScanTargets = 27;
+
+    /// <summary>What a directional scan can see in the scene (protocol 54).</summary>
+    public const byte DirectionalScan = 28;
 
     /// <summary>Start locking a target (the target's id).</summary>
     public const byte AddTarget = 10;
@@ -200,6 +214,13 @@ public sealed record SimScanTarget(long Id, byte Kind, int TypeId, IReadOnlyList
 
 /// <summary>The scan targets of the scene, the answer to command 27 (protocol 52).</summary>
 public sealed record SimScanTargets(ulong SessionId, byte Command, IReadOnlyList<SimScanTarget> Targets) : SimMessage;
+
+/// <summary>Something a directional scan can see (protocol 54): the item id, its kind (1 ship, 2 NPC, 3 drone, 4 fighter, 5 probe, 6 wreck, 7 celestial), its type,
+/// where it is, its radius, and whether it is cloaked and whether it warps.</summary>
+public sealed record SimDirectionalTarget(long Id, byte Kind, int TypeId, IReadOnlyList<double> Position, double Radius, bool Cloaked, bool Warping);
+
+/// <summary>What the scene has in a cone of space for a directional scan, the answer to command 28 (protocol 54).</summary>
+public sealed record SimDirectionalTargets(ulong SessionId, byte Command, IReadOnlyList<SimDirectionalTarget> Targets) : SimMessage;
 
 /// <summary>A <c>Dock</c> could not be done from where the ship is: it now approaches the station, <paramref name="Distance"/> metres off its surface.</summary>
 public sealed record SimApproaching(ulong SessionId, byte Command, double Distance) : SimMessage;
@@ -990,6 +1011,31 @@ public sealed record SimPlaceProbe(
 /// <summary>The host takes a scanner probe out of space (recalled, or its time is up); a deployable that is not a probe is left alone (protocol 45).</summary>
 public sealed record SimRemoveProbe(long ProbeId) : SimMessage;
 
+/// <summary>A structure's health as the host has it (protocol 60): the points of its shield, armor and hull, the resonances of each layer (shield, armor
+/// and hull, four kinds each), the shield's recharge in milliseconds, the limit each layer takes in a second and the repair pause of each layer.</summary>
+public sealed record SimStructureHealth(
+    double ShieldCapacity, double ArmorHp, double StructureHp, IReadOnlyList<double> Resonances, double ShieldRechargeMs,
+    IReadOnlyList<double> PerSecondLimit, IReadOnlyList<double> RepairPause);
+
+/// <summary>A structure's slim fields as the host has them (protocol 59): its state and upkeep, its timer (start, end and the time it was paused, when it is),
+/// its unanchoring time and whether it is repaired (none when the client should show no repair). The simulation shows them and decides nothing.</summary>
+public sealed record SimStructureStatus(int State, int UpkeepState, (long Start, long End, long? Paused)? Timer, long? Unanchoring, bool? Repairing);
+
+/// <summary>An Upwell structure the host puts in space, as a body of the system with its slim state (protocol 59). It stays until <see cref="SimRemoveStructure"/>.</summary>
+public sealed record SimPlaceStructure(
+    long StructureId, int SolarSystemId, string Name, int TypeId, int GroupId, IReadOnlyList<double> Position, double Radius, long OwnerId, int CorporationId,
+    int AllianceId, SimStructureHealth Health, SimStructureStatus Status) : SimMessage;
+
+/// <summary>The simulation says a hit emptied a layer of a structure (<c>Depleted</c>: 0 none, 1 shield, 2 armor, 3 hull) or paused its repair
+/// (<c>OverThreshold</c>), to the host (simulation to host, protocol 60).</summary>
+public sealed record SimStructureDamaged(long StructureId, int Depleted, bool OverThreshold) : SimMessage;
+
+/// <summary>The host takes a structure out of space (protocol 59); a body that is not a structure is left alone.</summary>
+public sealed record SimRemoveStructure(long StructureId) : SimMessage;
+
+/// <summary>The host changes a structure's slim state (protocol 59); a structure not in space is left alone.</summary>
+public sealed record SimSetStructureState(int SolarSystemId, long StructureId, SimStructureStatus Status) : SimMessage;
+
 /// <summary>A mobile warp disruptor the host keeps a record of, put in space where its pilot dropped it (protocol 48). Its disruption is on while <see cref="Active"/>
 /// (it is anchored); <see cref="Range"/> is the warp disruption range in metres.</summary>
 public sealed record SimPlaceDisruptor(
@@ -1003,6 +1049,12 @@ public sealed record SimSetDisruptorActive(long DeployableId, bool Active) : Sim
 /// with the inhibitor's range in metres (no cynosural field lights within it while it is anchored).</summary>
 public sealed record SimPlaceInhibitor(
     long DeployableId, int SolarSystemId, string Name, int TypeId, int GroupId, IReadOnlyList<double> Position, double Radius, double Range, bool Active,
+    long OwnerId, int CorporationId, int AllianceId, long ShipId) : SimMessage;
+
+/// <summary>A Mobile Cynosural Beacon the host keeps a record of, put in space where its pilot dropped it (protocol 58). It is a cynosural field a pilot may jump
+/// to while <see cref="Active"/> (anchored); the wire carries it as a disruptor's placement with a range of 0.</summary>
+public sealed record SimPlaceCynoBeacon(
+    long DeployableId, int SolarSystemId, string Name, int TypeId, int GroupId, IReadOnlyList<double> Position, double Radius, bool Active,
     long OwnerId, int CorporationId, int AllianceId, long ShipId) : SimMessage;
 
 /// <summary>The answer to <see cref="SimCommands.Measure"/>: metres from the centre of the ship to the surface of the wreck or can, or null when there is no such wreck.</summary>

@@ -254,6 +254,7 @@ mod tests {
 
     fn ship(course: Course) -> Ship {
         let spec = ShipSpec {
+            stance: None,
             ship_id: 1,
             character_id: 2,
             owner_id: 2,

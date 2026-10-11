@@ -37,6 +37,36 @@ public class CynoFieldHostTests
     }
 
     [PgFact]
+    public async Task A_fleet_member_is_refused_a_standard_field_in_a_jammed_system()
+    {
+        var (rig, session, module) = await GeneratorAsync(inFleet: true);
+        await using (rig)
+        {
+            rig.Space.CynoJammedAsync = (_, _) => ValueTask.FromResult(true);
+            var answer = await rig.Space.ActivateAsync(session, module, "cynosuralGeneration", 0, 1000, CancellationToken.None);
+            Assert.Equal(ModuleResult.Refusal("CYNO_JAMMED", CynosuralFieldGeneratorI, "Cynosural Field Generator I"), answer);
+            Assert.Empty(rig.Sim.Heard.OfType<SimActivate>());
+        }
+    }
+
+    [PgFact]
+    public async Task The_covert_field_is_not_stopped_by_a_jammer_and_meets_the_security_rule()
+    {
+        const int CovertGenerator = 28646;
+        var rig = await Rig.CreateAsync();
+        rig.Space.IsInFleetAsync = (_, _) => Task.FromResult(true);
+        rig.Space.CynoJammedAsync = (_, _) => ValueTask.FromResult(true);
+        var (session, _, module) = await RepairHostTests.InSpaceWithAsync(rig, CovertGenerator, HighSlot, shipTypeId: Falcon);
+        await using (rig)
+        {
+            var error = await Assert.ThrowsAsync<MachoWrappedException>(() => rig.Space.ActivateAsync(session, module, "cynosuralGeneration", 0, 1000, CancellationToken.None));
+            var arguments = ((PyTuple)((PyObjectEx)error.Error.Payload).Header).Items;
+            Assert.Equal("CantInHighSecSpace", ((PyStr)((PyTuple)arguments[1]).Items[0]).Value);
+            Assert.Empty(rig.Sim.Heard.OfType<SimActivate>());
+        }
+    }
+
+    [PgFact]
     public async Task A_fleet_member_is_refused_a_cynosural_field_in_high_security_space()
     {
         var (rig, session, module) = await GeneratorAsync(inFleet: true);

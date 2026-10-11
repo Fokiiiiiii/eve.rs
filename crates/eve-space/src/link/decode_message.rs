@@ -9,6 +9,51 @@ fn read_flag(reader: &mut Reader, what: &'static str) -> Result<bool, DecodeErro
     }
 }
 
+/// A structure's health: its shield, armor and hull points, the resonances of each layer (shield, armor, hull; four kinds each), the shield's recharge
+/// in milliseconds, the limit each layer takes in a second and the repair pause of each layer.
+fn read_structure_health(reader: &mut Reader) -> Result<(Vitals, f64, StructureLimits), DecodeError> {
+    let mut point = || -> Result<f64, DecodeError> {
+        let value = reader.f64()?;
+        if !(value.is_finite() && value >= 0.0) {
+            return Err(DecodeError::BadValue("structure health"));
+        }
+        Ok(value)
+    };
+    let shield_capacity = point()?;
+    let armor_hp = point()?;
+    let structure_hp = point()?;
+    let mut damage = || -> Result<Damage, DecodeError> { Ok([point()?, point()?, point()?, point()?]) };
+    let resonances = Resonances { shield: damage()?, armor: damage()?, structure: damage()? };
+    let shield_recharge_ms = point()?;
+    let per_second = [point()?, point()?, point()?];
+    let repair_pause = [point()?, point()?, point()?];
+    let vitals = Vitals { shield_capacity, armor_hp, structure_hp, resonances, armor_pinned: false };
+    Ok((vitals, shield_recharge_ms, StructureLimits { per_second, repair_pause }))
+}
+
+/// A structure's slim fields: its state and upkeep, a flagged timer (start, end and a flagged pause), a flagged unanchoring time and repairing
+/// (0 none, 1 not repairing, 2 repairing).
+fn read_structure_status(reader: &mut Reader) -> Result<StructureStatus, DecodeError> {
+    let state = reader.i32()?;
+    let upkeep_state = reader.i32()?;
+    let timer = if read_flag(reader, "structure timer")? {
+        let start = reader.i64()?;
+        let end = reader.i64()?;
+        let paused = if read_flag(reader, "structure timer pause")? { Some(reader.i64()?) } else { None };
+        Some((start, end, paused))
+    } else {
+        None
+    };
+    let unanchoring = if read_flag(reader, "structure unanchoring")? { Some(reader.i64()?) } else { None };
+    let repairing = match reader.u8()? {
+        0 => None,
+        1 => Some(false),
+        2 => Some(true),
+        _ => return Err(DecodeError::BadValue("structure repairing")),
+    };
+    Ok(StructureStatus { state, upkeep_state, timer, unanchoring, repairing })
+}
+
 pub(super) fn read_heat_profile(reader: &mut Reader) -> Result<HeatProfile, DecodeError> {
     let generation_multiplier = reader.f64()?;
     let damage_multiplier = reader.f64()?;
@@ -119,7 +164,15 @@ pub(super) fn read_ship(reader: &mut Reader) -> Result<ShipSpec, DecodeError> {
     if !drone_damage_multiplier.is_finite() || drone_damage_multiplier < 0.0 {
         return Err(DecodeError::BadValue("drone damage multiplier"));
     }
+    let stance = match reader.u8()? {
+        0 => None,
+        1 => {
+            Some(ShipStance { old_stance: reader.i32()?, switched_at: reader.i64()?, stance: reader.i32()? })
+        }
+        _ => return Err(DecodeError::BadValue("ship stance flag")),
+    };
     Ok(ShipSpec {
+        stance,
         ship_id,
         character_id,
         type_id,
@@ -266,6 +319,28 @@ impl Message {
             kind::ACCEPTED => Message::Accepted { session_id: r.u64()?, command: r.u8()?, at: r.i64()? },
             kind::POSITION => {
                 Message::Position { session_id: r.u64()?, command: r.u8()?, position: read_vector(&mut r)? }
+            }
+            kind::DIRECTIONAL_TARGETS => {
+                let (session_id, command) = (r.u64()?, r.u8()?);
+                let count = r.u32()? as usize;
+                // each target is 47 bytes: an id, a kind, a type, a position, a radius and two flags
+                if count > r.data.len() / 47 {
+                    return Err(DecodeError::Truncated);
+                }
+                let targets = (0..count)
+                    .map(|_| {
+                        Ok(DirectionalTarget {
+                            id: r.i64()?,
+                            kind: r.u8()?,
+                            type_id: r.i32()?,
+                            position: read_vector(&mut r)?,
+                            radius: r.f64()?,
+                            cloaked: r.u8()? != 0,
+                            warping: r.u8()? != 0,
+                        })
+                    })
+                    .collect::<Result<Vec<_>, DecodeError>>()?;
+                Message::DirectionalTargets { session_id, command, targets }
             }
             kind::SCAN_TARGETS => {
                 let (session_id, command) = (r.u64()?, r.u8()?);
@@ -431,9 +506,61 @@ impl Message {
                     ship_id,
                 }))
             }
+            kind::PLACE_STRUCTURE => {
+                let structure_id = r.i64()?;
+                let solar_system_id = r.i32()?;
+                let name = r.text()?;
+                let type_id = r.i32()?;
+                let group_id = r.i32()?;
+                let position = read_vector(&mut r)?;
+                let radius = r.f64()?;
+                let owner_id = r.i64()?;
+                let corporation_id = r.i32()?;
+                let alliance_id = r.i32()?;
+                let (vitals, shield_recharge_ms, limits) = read_structure_health(&mut r)?;
+                let status = read_structure_status(&mut r)?;
+                if !(radius.is_finite() && radius >= 0.0) {
+                    return Err(DecodeError::BadValue("structure"));
+                }
+                Message::PlaceStructure(Box::new(StructurePlacement {
+                    structure_id,
+                    solar_system_id,
+                    name,
+                    type_id,
+                    group_id,
+                    position,
+                    radius,
+                    owner_id,
+                    corporation_id,
+                    alliance_id,
+                    vitals,
+                    shield_recharge_ms,
+                    limits,
+                    status,
+                }))
+            }
+            kind::STRUCTURE_DAMAGED => {
+                let structure_id = r.i64()?;
+                let depleted = match r.u8()? {
+                    0 => None,
+                    1 => Some(Layer::Shield),
+                    2 => Some(Layer::Armor),
+                    3 => Some(Layer::Structure),
+                    _ => return Err(DecodeError::BadValue("structure layer")),
+                };
+                let over_threshold = read_flag(&mut r, "structure damage")?;
+                Message::StructureDamaged { structure_id, depleted, over_threshold }
+            }
+            kind::REMOVE_STRUCTURE => Message::RemoveStructure { structure_id: r.i64()? },
+            kind::SET_STRUCTURE_STATE => {
+                let solar_system_id = r.i32()?;
+                let structure_id = r.i64()?;
+                let status = read_structure_status(&mut r)?;
+                Message::SetStructureState { solar_system_id, structure_id, status }
+            }
             kind::REMOVE_PROBE => Message::RemoveProbe { probe_id: r.i64()? },
             // a disruptor and an inhibitor have the same placement (the kind says which of the two it is)
-            kind::PLACE_DISRUPTOR | kind::PLACE_INHIBITOR => {
+            kind::PLACE_DISRUPTOR | kind::PLACE_INHIBITOR | kind::PLACE_CYNO_BEACON => {
                 let deployable_id = r.i64()?;
                 let solar_system_id = r.i32()?;
                 let name = r.text()?;
@@ -467,6 +594,8 @@ impl Message {
                 });
                 if kind == kind::PLACE_INHIBITOR {
                     Message::PlaceInhibitor(placement)
+                } else if kind == kind::PLACE_CYNO_BEACON {
+                    Message::PlaceCynoBeacon(placement)
                 } else {
                     Message::PlaceDisruptor(placement)
                 }

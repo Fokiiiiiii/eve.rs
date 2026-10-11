@@ -18,7 +18,7 @@ public static class MarketMatching
             (o.IsNpc || o.Duration > 0 && (decimal)o.IssuedMs + (decimal)o.Duration * 86400000 > nowMs) &&
             (buying ? o.Price <= priceLimit + 0.0001m : o.Price + 0.0001m >= priceLimit));
         var ordered = (buying ? candidates.OrderBy(o => o.Price) : candidates.OrderByDescending(o => o.Price))
-            .ThenBy(o => o.Location.StationId).ThenBy(o => o.Id);
+            .ThenBy(o => o.IssuedMs).ThenBy(o => o.Id);
         var remaining = quantity;
         var fills = new List<MarketFillPlan>();
         foreach (var order in ordered)

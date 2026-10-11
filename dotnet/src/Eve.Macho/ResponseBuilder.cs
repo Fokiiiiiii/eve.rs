@@ -162,16 +162,23 @@ public static class ResponseBuilder
         int errorCode,
         PyValue payload,
         PyValue? sessionUserId,
-        string? responseServiceName)
+        string? responseServiceName,
+        PyValue? detail = null)
     {
         var service = !string.IsNullOrEmpty(responseServiceName) ? responseServiceName : request.Dest.Service;
+        // The wrapped exception, then (for an unexpected exception) the server's debug tuple: (exception, debug).
+        var wrapped = new List<PyValue> { new PySubStream(payload) };
+        if (detail is not null)
+        {
+            wrapped.Add(detail);
+        }
         return Packet(ErrorResponseClass,
         [
             new PyInt(MachoMessage.ErrorResponse),
             (request.Dest with { Service = service }).Encode(),
             ToClient(request).Encode(),
             User(sessionUserId, request),
-            new PyTuple([new PyInt(MachoMessage.CallReq), new PyInt(errorCode), new PyTuple([new PySubStream(payload)])]),
+            new PyTuple([new PyInt(MachoMessage.CallReq), new PyInt(errorCode), new PyTuple(wrapped)]),
             new PyDict([]),
             JsSemantics.OrNull(request.Oob),
             .. Tail(request),

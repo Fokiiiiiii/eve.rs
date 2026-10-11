@@ -44,8 +44,9 @@ internal sealed partial class CharacterServicesComposition
             new Eve.Services.Core.LoginCampaignMgrService(storeRuntime),
             new Eve.Services.Core.SeasonalLoginCampaignMgrService(storeRuntime),
             new StoreOffersService(
-                async ct => await ReadGameStoreTableAsync("newEdenStore", ct),
+                _ => ValueTask.FromResult<JsonObject?>(Eve.Services.Core.NewEdenStoreCatalog.Default.Root),
                 storeRuntime.PurchaseAsync),
+            new Eve.Services.Core.FastCheckoutService(Eve.Services.Core.NewEdenStoreCatalog.Default, storeRuntime),
             new Eve.Services.Core.RedeemService(
                 storeRuntime,
                 async (userId, ct) => (await accounts.FindAsync(checked((uint)userId), ct))?.UserName,
@@ -57,10 +58,8 @@ internal sealed partial class CharacterServicesComposition
                 async (call, ct) =>
                 {
                     if (call.Method == "UserLogOffCharacter")
-                    {
-                        call.Session.AfterResponse(call.Session.Close);
-                        return PyBool.True;
-                    }
+                        return PyValue.Of(await new CharacterLogoff(characters, online, characterEntryHooks, now)
+                            .LogOffAsync(call.Session, ct).ConfigureAwait(false));
                     if (call.Method == "CreateRedeemTokenQA")
                         return await storeRuntime.CreateRedeemTokenQAAsync(call, ct).ConfigureAwait(false);
                     return null;

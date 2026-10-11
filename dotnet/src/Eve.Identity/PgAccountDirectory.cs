@@ -6,7 +6,7 @@ using Npgsql;
 namespace Eve.Identity;
 
 /// <summary>Accounts in PostgreSQL, in the module's own schema (<c>identity</c> unless told otherwise).</summary>
-public sealed partial class PgAccountDirectory : IAccountDirectory, IAccountLookup
+public sealed partial class PgAccountDirectory : IAccountDirectory, IAccountLookup, IAccountSubscriptions
 {
     public const string DefaultSchema = "identity";
 
@@ -31,9 +31,9 @@ public sealed partial class PgAccountDirectory : IAccountDirectory, IAccountLook
         Schema = schema;
         const string Columns = "id, password_hash, role, banned";
         _find = $"SELECT {Columns} FROM {schema}.accounts WHERE user_name = $1";
-        _create = $"INSERT INTO {schema}.accounts (user_name, password_hash, role, country_code) VALUES ($1, $2, $3, $4) " +
+        _create = $"INSERT INTO {schema}.accounts (user_name, password_hash, role, country_code, subscription_end_at) VALUES ($1, $2, $3, $4, $5) " +
                   $"ON CONFLICT (user_name) DO NOTHING RETURNING {Columns}";
-        _info = $"SELECT id, user_name, created_at FROM {schema}.accounts WHERE id = $1";
+        _info = $"SELECT id, user_name, created_at, subscription_end_at FROM {schema}.accounts WHERE id = $1";
         _touch = $"UPDATE {schema}.accounts SET last_login_at = now() WHERE id = $1";
     }
 
@@ -62,8 +62,27 @@ public sealed partial class PgAccountDirectory : IAccountDirectory, IAccountLook
         command.Parameters.Add(new NpgsqlParameter { Value = checked((int)accountId) });
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         return await reader.ReadAsync(cancellationToken)
-            ? new AccountInfo((uint)reader.GetInt32(0), reader.GetString(1), reader.GetFieldValue<DateTimeOffset>(2))
+            ? new AccountInfo((uint)reader.GetInt32(0), reader.GetString(1), reader.GetFieldValue<DateTimeOffset>(2), reader.GetFieldValue<DateTimeOffset>(3))
             : null;
+    }
+
+    // The character selection and the Omega readers are synchronous (a session change or a rule check cannot await); one
+    // primary-key read is cheap, so they use the blocking ADO.NET calls of the same data source.
+    public DateTimeOffset? SubscriptionEndsAt(uint accountId)
+    {
+        using var command = _source.CreateCommand($"SELECT subscription_end_at FROM {Schema}.accounts WHERE id = $1");
+        command.Parameters.Add(new NpgsqlParameter { Value = checked((int)accountId) });
+        using var reader = command.ExecuteReader();
+        DateTimeOffset? endsAt = reader.Read() ? reader.GetFieldValue<DateTimeOffset>(0) : null;
+        return endsAt;
+    }
+
+    public void SetSubscriptionEndsAt(uint accountId, DateTimeOffset endsAt)
+    {
+        using var command = _source.CreateCommand($"UPDATE {Schema}.accounts SET subscription_end_at = $2 WHERE id = $1");
+        command.Parameters.Add(new NpgsqlParameter { Value = checked((int)accountId) });
+        command.Parameters.Add(new NpgsqlParameter { Value = endsAt });
+        command.ExecuteNonQuery();
     }
 
     public async ValueTask<LoginResult> LoginAsync(LoginAttempt attempt, CancellationToken cancellationToken)
@@ -90,6 +109,7 @@ public sealed partial class PgAccountDirectory : IAccountDirectory, IAccountLook
                     new() { Value = attempt.PasswordHash.ToArray() },
                     new() { Value = unchecked((long)_options.NewAccountRole) },
                     new() { Value = _options.CountryCode },
+                    new() { Value = SubscriptionPolicy.NewAccountSubscriptionEnd },
                 },
             };
             // Another login may have created the account since the lookup: then the insert returns nothing.

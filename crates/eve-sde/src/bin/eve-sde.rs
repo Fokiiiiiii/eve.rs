@@ -1,5 +1,5 @@
 //! eve-sde ensure [--build N|latest] [--cache DIR] [--pg URL] [--source URL]...
-//!                [--archive FILE] [--sha256 HEX|skip] [--keep-archive]
+//!                [--archive FILE] [--sha256 HEX|skip] [--keep-archive] [--missions]
 //! eve-sde info <dir>
 //! eve-sde load <dir> --pg <url>
 //! eve-sde verify <dir> --pg <url>
@@ -9,6 +9,9 @@
 //! holds it. Progress goes to stderr; stdout gets the extracted directory, if there is one.
 //! `EVE_SDE_CACHE` sets the default `--cache` (`.cache/sde`) and
 //! `EVE_SDE_BASE_URL` replaces CCP's static-data host.
+//! `--missions` is the mission build (`missionPinned` in the lock): with `--pg` only its
+//! `missions` and `epicArcs` tables are loaded, into schema `sde_mission`; the archive and the
+//! extracted build are then removed (the lock keeps the hash).
 
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -23,7 +26,7 @@ type Failure = Box<dyn std::error::Error>;
 fn usage() -> ExitCode {
     eprintln!(
         "usage: eve-sde ensure [--build N|latest] [--cache DIR] [--pg URL] [--source URL]... [--archive FILE] \
-         [--sha256 HEX|skip] [--keep-archive]\n       \
+         [--sha256 HEX|skip] [--keep-archive] [--missions]\n       \
          eve-sde info <dir> | load <dir> --pg <url> | verify <dir> --pg <url>"
     );
     ExitCode::from(2)
@@ -44,7 +47,8 @@ fn values<'a>(args: &'a [String], flag: &str) -> Vec<&'a String> {
 }
 
 fn ensure_command(args: &[String]) -> Result<ExitCode, Failure> {
-    let pin = fetch::pinned()?;
+    let missions = args.iter().any(|arg| arg == "--missions");
+    let pin = if missions { fetch::mission_pinned()? } else { fetch::pinned()? };
     let base = std::env::var("EVE_SDE_BASE_URL").ok().filter(|base| !base.is_empty());
     let official = base.as_deref().unwrap_or(fetch::OFFICIAL_BASE);
 
@@ -85,14 +89,24 @@ fn ensure_command(args: &[String]) -> Result<ExitCode, Failure> {
     let url = value(args, "--pg")
         .cloned()
         .or_else(|| std::env::var("EVE_PG_URL").ok().filter(|url| !url.is_empty()));
+    if missions && url.is_none() {
+        return Err(
+            "--missions needs --pg: the mission tables are loaded and the build is then discarded".into()
+        );
+    }
     let dir = match url {
         Some(url) => {
             let mut client = Client::connect(&url, NoTls)?;
-            match ensure::ensure_loaded(&mut client, &options)? {
-                Outcome::AlreadyLoaded => eprintln!("SDE build {build} is already loaded"),
+            let (outcome, schema) = if missions {
+                (ensure::ensure_missions(&mut client, &options)?, ensure::MISSION_SCHEMA)
+            } else {
+                (ensure::ensure_loaded(&mut client, &options)?, load::DEFAULT_SCHEMA)
+            };
+            match outcome {
+                Outcome::AlreadyLoaded => eprintln!("SDE build {build} is already loaded in {schema}"),
                 Outcome::Loaded { origin, tables, records } => {
                     eprintln!(
-                        "loaded SDE build {build} ({}): {tables} tables, {records} records",
+                        "loaded SDE build {build} into {schema} ({}): {tables} tables, {records} records",
                         describe(&origin)
                     );
                 }

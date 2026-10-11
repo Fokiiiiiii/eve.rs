@@ -54,6 +54,7 @@ internal static class HostComposition
         Eve.Services.Crimewatch.CrimewatchRuntime? crimewatch = null;
         SimClient? simulation = null;
         LegacyGameStore? legacy = null;
+        IGlobalConfigPersistence globalConfigPersistence = new InMemoryGlobalConfigPersistence();
         var online = new OnlineCharacters();
         if (Env("EVE_PG_URL", "") is { Length: > 0 } pgUrl)
         {
@@ -63,10 +64,13 @@ internal static class HostComposition
             Console.Error.WriteLine($"eve-host: accounts in PostgreSQL, schema {schema}{(applied.Count > 0 ? "; applied " + string.Join(", ", applied) : "")}");
             var directory = new PgAccountDirectory(source, accountOptions, schema);
             accounts = directory;
+            var configSchema = Env("EVE_GLOBAL_CONFIG_SCHEMA", PgGlobalConfigPersistence.DefaultSchema);
+            await PgGlobalConfigPersistence.MigrateAsync(source, configSchema);
+            globalConfigPersistence = new PgGlobalConfigPersistence(source, configSchema);
             Func<long> clock = () => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
             foundations = await Foundations.CreateAsync(source, clock, Env, message => Console.Error.WriteLine($"eve-host: {message}"));
             legacy = await LegacyGameStoreComposition.OpenAsync(source);
-            (characterServices, space, simulation, crimewatch, calendarStore, calendarAudience, gameRpcCallbacks, keeperRpcCallbacks) = await CharacterServicesComposition.CharacterServicesAsync(source, directory, online, clock, foundations, legacy.Store, legacy.Owner, legacy.Cache, options.NewCharacterExperienceMode);
+            (characterServices, space, simulation, crimewatch, calendarStore, calendarAudience, gameRpcCallbacks, keeperRpcCallbacks) = await CharacterServicesComposition.CharacterServicesAsync(source, directory, online, clock, foundations, legacy.Store, legacy.Owner, legacy.Cache, options.NewCharacterExperienceMode, new AccountOmegaStore(directory));
             // every feature has registered its job handlers by now: the scheduler may start running jobs
             await foundations.StartAsync();
         }
@@ -104,13 +108,17 @@ internal static class HostComposition
                 .ActivatePointTargetedAsync(request.Session, request.ModuleId, request.EffectId, request.Destination, cancellationToken),
             ActivateSlashAsync: (request, cancellationToken) => (superWeapons ?? throw SuperWeaponMgrService.NotWired())
                 .ActivateSlashAsync(request.Session, request.ModuleId, request.StartPoint, request.EndPoint, cancellationToken));
+        IOmegaAccountStore omegaAccounts = new AccountOmegaStore(accounts as IAccountSubscriptions
+            ?? throw new InvalidOperationException("the account directory keeps no subscription end times"));
         foreach (var service in CoreServices.Create(
-            new SubscriptionSettings(), new NoOmegaAccounts(), now, calendarStore, calendarAudience,
+            omegaAccounts, now, calendarStore, calendarAudience,
             gameRpcCallbacks: gameRpcCallbacks,
             readJumpTimers: readJumpTimers,
             readNonDiminishingInjections: readNonDiminishingInjections,
             keeperRpcCallbacks: keeperRpcCallbacks,
-            superWeaponRpcCallbacks: superWeaponCallbacks))
+            superWeaponRpcCallbacks: superWeaponCallbacks,
+            spaceModules: space,
+            isShipInSpace: space is null ? null : (Func<ClientSession, bool>)space.IsInSpace))
         {
             registry.Register(service);
         }
@@ -128,9 +136,12 @@ internal static class HostComposition
         {
             space.Registry = registry;
         }
-        var config = GlobalConfig.Build(options);
-        var info = new HostMachoNetInfo(registry, config);
-        registry.Register(new MachoNetService(info, now));
+        // machoNet's configuration: the settings, with the administrator's writes on top (saved in PostgreSQL when it is configured)
+        var config = await GlobalConfigStore.OpenAsync(GlobalConfig.Build(options), globalConfigPersistence);
+        HostServer? server = null;
+        var connected = new ConnectedSessions();
+        var info = new HostMachoNetInfo(registry, config.Current);
+        registry.Register(new MachoNetService(info, now, GlobalConfigWrites.Create(config, connected, () => server?.PublishClusterConfig())));
 
         var dispatcher = new PacketDispatcher(registry, now) { StrictRpc = settings.StrictRpc };
         dispatcher.OnProblem = (message, error) =>
@@ -139,16 +150,23 @@ internal static class HostComposition
             if (error is not null)
                 SentrySdk.CaptureException(error);
         };
-        var clusterConfig = MarshalCodec.Encode(config);
-        var server = new HostServer(
+        server = new HostServer(
             new HostOptions
             {
                 Log = message => Console.Error.WriteLine($"eve-host: {message}"),
-                SessionOpened = session => session.Closed += () => online.Leave(session.SessionId),
+                SessionOpened = session =>
+                {
+                    connected.Add(session);
+                    session.Closed += () =>
+                    {
+                        connected.Remove(session);
+                        online.Leave(session.SessionId);
+                    };
+                },
             },
             dispatcher,
             accounts,
-            () => clusterConfig);
+            () => MarshalCodec.Encode(config.Current()));
 
         return new HostRuntime(server, registry, legacy, foundations, space, crimewatch, simulation);
     }

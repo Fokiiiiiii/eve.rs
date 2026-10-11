@@ -263,8 +263,10 @@ public sealed class OperationalRpcServiceTests
         var arguments = ((PyTuple)((PyTuple)((PyObjectEx)error.Error.Payload).Header).Items[1]).Items;
         Assert.Equal("CustomNotify", ((PyStr)arguments[0]).Value);
         var values = ((PyDict)arguments[1]).Entries.ToDictionary(e => ((PyStr)e.Key).Value, e => e.Value);
-        Assert.Equal(
-            "In-space ore compression needs a compressor structure, and structures are not on this server yet (phase 3).",
-            ((PyStr)values["notify"]).Value);
+        var notice = ((PyStr)values["notify"]).Value;
+        Assert.Equal("In-space compression is not available right now. Try again in a moment.", notice);
+        // a ship's compressor module does this work: no structure and no phase is involved
+        Assert.DoesNotContain("structure", notice, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("phase", notice, StringComparison.OrdinalIgnoreCase);
     }
 }

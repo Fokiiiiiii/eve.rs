@@ -1,5 +1,7 @@
+using System.Collections.Concurrent;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using Eve.Macho;
 using Eve.Marshal;
 using Eve.Services;
 
@@ -40,8 +42,14 @@ public sealed class AgentMissionService(
     Func<long, IReadOnlyList<long>, CancellationToken, ValueTask<IReadOnlyDictionary<long, JsonObject>>> readBookmarks,
     Func<long, CancellationToken, ValueTask<JsonArray?>> readResearchRows,
     Func<long, long, ClientSession, bool>? isAtAgentLocation = null,
-    AgentMissionRpcCallbacks? rpcCallbacks = null) : IService
+    AgentMissionRpcCallbacks? rpcCallbacks = null) : IService, IBoundObjectReleaseHandler
 {
+    /// <summary>Methods a bound agent answers. Empty until the dialogue slice (A4) and the journal slice (A5) add them.</summary>
+    private static readonly HashSet<string> BoundMethods = [];
+
+    // The agent each bound object was made for (MachoBindObject(agentID)). The moniker is Moniker('agentMgr', agentID).
+    private readonly ConcurrentDictionary<string, long> _agentByBoundObject = new(StringComparer.Ordinal);
+
     private static readonly string[] AgentColumns =
     [
         "agentID", "agentTypeID", "divisionID", "level", "stationID", "corporationID",
@@ -53,6 +61,7 @@ public sealed class AgentMissionService(
     public string Name => "agentMgr";
 
     public bool HasMethod(string method) => method is
+        "MachoBindObject" or
         "GetMyJournalDetails" or
         "GetAgents" or
         "GetCompletedCareerAgentIDs" or
@@ -62,8 +71,15 @@ public sealed class AgentMissionService(
         "GetPlausibleMissionIDs" or
         "GetSolarSystemOfAgent";
 
+    public void OnBoundObjectReleased(string oid, ClientSession? session) => _agentByBoundObject.TryRemove(oid, out _);
+
+    /// <summary>The agent of a bound object of this session, or 0 when the call is not on a bound agent.</summary>
+    public long BoundAgentId(ServiceCall call) =>
+        call.BoundObjectId is { } oid && _agentByBoundObject.TryGetValue(oid, out var agentId) ? agentId : 0;
+
     public ValueTask<PyValue> CallAsync(ServiceCall call) => call.Method switch
     {
+        "MachoBindObject" => BindAsync(call),
         "GetMyJournalDetails" => ReadAsync(call),
         "GetAgents" => ReadAgentsAsync(call),
         "GetCompletedCareerAgentIDs" => ReadCompletedCareerAgentIdsAsync(call),
@@ -74,6 +90,54 @@ public sealed class AgentMissionService(
         "GetSolarSystemOfAgent" => ReadSolarSystemOfAgentAsync(call),
         _ => ValueTask.FromResult<PyValue>(PyNone.Instance),
     };
+
+    /// <summary>
+    /// <c>MachoBindObject(agentID, (method, args, kwargs))</c>: binds the agent, then makes the nested call on the bound object.
+    /// An agent the catalog does not hold is refused; the bound object answers only the methods that exist for a bound agent.
+    /// </summary>
+    private async ValueTask<PyValue> BindAsync(ServiceCall call)
+    {
+        call.Cancellation.ThrowIfCancellationRequested();
+        var agentId = Positive(call.Args.Count > 0 ? call.Args[0] : null);
+        var agents = rpcCallbacks?.ReadAgents is { } readAgents
+            ? await readAgents(call.Cancellation)
+            : Array.Empty<AgentMissionAgentData>();
+        if (agentId == 0 || agents.All(agent => agent.AgentId != agentId))
+        {
+            throw MachoErrors.ThrowUserError("CustomInfo", ("info", new PyStr("That agent is not known.")));
+        }
+
+        var nestedMethod = call.Arg(1) is PyTuple { Items.Count: > 0 } pending ? JsSemantics.StringValue(pending.Items[0]) : null;
+        if (nestedMethod is not null && !BoundMethods.Contains(nestedMethod))
+        {
+            throw new InvalidOperationException($"agentMgr has no bound method {nestedMethod}");
+        }
+
+        var oid = $"N={MachoMessage.ProxyNodeId}:{BoundObjectIds.Next()}";
+        _agentByBoundObject[oid] = agentId;
+        var bound = new PySubStruct(new PySubStream(Py.Tuple(
+            new PyStr(oid),
+            new PyLong(Py.FileTimeFromUnixMs(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds())))));
+        PyValue result = PyNone.Instance;
+        if (call.Arg(1) is PyTuple { Items.Count: > 0 } nested && JsSemantics.StringValue(nested.Items[0]) is { } method)
+        {
+            var args = nested.Items.Count > 1
+                ? nested.Items[1] switch { PyTuple tuple => tuple.Items, PyList list => list.Items, _ => [] }
+                : [];
+            result = await CallAsync(new ServiceCall
+            {
+                Method = method,
+                Args = args,
+                Kwargs = nested.Items.Count > 2 ? nested.Items[2] : PyNone.Instance,
+                Session = call.Session,
+                CallId = call.CallId,
+                BoundObjectId = oid,
+                BoundObjectParameters = call.Arg(0),
+                Cancellation = call.Cancellation,
+            });
+        }
+        return Py.Tuple(bound, result);
+    }
 
     private async ValueTask<PyValue> ReadAsync(ServiceCall call)
     {

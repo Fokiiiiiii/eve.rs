@@ -47,7 +47,7 @@ public sealed class StructureDataRpcServicesTests
         var session = new ClientSession();
         session.Set("structureid", new PyLong(structureId));
         session.Set("corpid", new PyInt(corporationId));
-        var service = new MoonExtractionsRpcService(() => state);
+        var service = new MoonExtractionsRpcService(() => Task.FromResult<JsonObject?>(state));
 
         var pair = Assert.IsType<PyTuple>(await service.CallAsync(Call("GetExtractionAndEventIDFromStructureID", session)));
         Assert.Equal(2, pair.Items.Count);
@@ -90,12 +90,15 @@ public sealed class StructureDataRpcServicesTests
         Assert.Same(call, forwarded);
     }
 
-    [Fact]
-    public async Task Unwired_moon_mutations_keep_the_reference_none_response()
+    [Theory]
+    [InlineData("StartNewExtraction")]
+    [InlineData("FractureChunkWithStructure")]
+    [InlineData("CancelExtraction")]
+    public async Task Unwired_moon_mutations_refuse_with_a_named_custom_notify(string method)
     {
-        var service = new MoonExtractionsRpcService();
-        foreach (var method in new[] { "StartNewExtraction", "FractureChunkWithStructure", "CancelExtraction" })
-            Assert.Same(PyNone.Instance, await service.CallAsync(Call(method)));
+        var error = await Assert.ThrowsAsync<MachoWrappedException>(() =>
+            new MoonExtractionsRpcService().CallAsync(Call(method)).AsTask());
+        Assert.Equal("CustomNotify", error.Error.UserErrorMessage);
     }
 
     [Fact]

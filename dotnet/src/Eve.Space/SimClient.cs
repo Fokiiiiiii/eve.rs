@@ -219,6 +219,11 @@ public sealed class SimClient : ISimulation, IAsyncDisposable
                 break;
             case SimScanTargets:
                 break; // nobody is waiting for it
+            case SimDirectionalTargets directional when _answered.TryRemove((directional.SessionId, directional.Command), out var sweeping):
+                sweeping.TrySetResult(new CommandReply(true, 0, null) { DirectionalTargets = directional.Targets });
+                break;
+            case SimDirectionalTargets:
+                break; // nobody is waiting for it
             case SimRefused refused when _answered.TryRemove((refused.SessionId, refused.Command), out var refusing):
                 refusing.TrySetResult(new CommandReply(false, 0, refused.Reason));
                 break;
@@ -448,11 +453,19 @@ public sealed class SimClient : ISimulation, IAsyncDisposable
 
     public void RemoveProbe(long probeId) => Send(new SimRemoveProbe(probeId));
 
+    public void PlaceStructure(SimPlaceStructure structure) => Send(structure);
+
+    public void RemoveStructure(long structureId) => Send(new SimRemoveStructure(structureId));
+
+    public void SetStructureState(SimSetStructureState state) => Send(state);
+
     public void PlaceDisruptor(SimPlaceDisruptor disruptor) => Send(disruptor);
 
     public void SetDisruptorActive(long deployableId, bool active) => Send(new SimSetDisruptorActive(deployableId, active));
 
     public void PlaceInhibitor(SimPlaceInhibitor inhibitor) => Send(inhibitor);
+
+    public void PlaceCynoBeacon(SimPlaceCynoBeacon beacon) => Send(beacon);
 
     public void Destroy(long shipId, SimCredit credit) => Send(new SimDestroy(shipId, credit));
 

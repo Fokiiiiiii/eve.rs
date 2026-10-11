@@ -34,6 +34,7 @@ pub(crate) fn system() -> Arc<SolarSystem> {
 
 pub(crate) fn spec() -> ShipSpec {
     ShipSpec {
+        stance: None,
         ship_id: 9_988_400_001_939,
         character_id: 140_000_342,
         type_id: 601,
@@ -443,6 +444,7 @@ fn a_station_bump_deflects_heading_used_by_a_micro_jump() {
     {
         let pilot = scene.pilots.get_mut(&SESSION).unwrap();
         pilot.protected_until = 0;
+        pilot.leaving_station = None; // placed inside the station, not flying out of it: the station bumps it
         pilot.ship.position = Vec3::new(
             station.position.x + station.radius + radius - 10.0,
             station.position.y,
@@ -587,6 +589,39 @@ fn a_ship_just_outside_a_station_does_not_bump() {
     assert_eq!(ship.velocity.x, velocity.x);
     assert_eq!(ship.velocity.y, velocity.y);
     assert_eq!(ship.velocity.z, velocity.z);
+}
+
+#[test]
+fn a_ship_leaving_its_station_is_not_bumped_by_it_when_it_first_moves() {
+    // a station whose sphere holds the undock point of its type (about 5.4 km from the centre, 0.34 of a 16 km radius, as recorded)
+    let mut scene = scene_with_station_type(1531, 16_000.0);
+    let station = scene.system.body(STATION).unwrap().clone();
+    let radius = scene.pilots[&SESSION].ship.spec.radius;
+    // the surface gap to the station: negative while the ship is in its sphere
+    let gap = |scene: &Scene| {
+        let ship = &scene.pilots[&SESSION].ship;
+        let (dx, dy, dz) = (
+            ship.position.x - station.position.x,
+            ship.position.y - station.position.y,
+            ship.position.z - station.position.z,
+        );
+        dx.hypot(dy).hypot(dz) - radius - station.radius
+    };
+    assert!(gap(&scene) < 0.0, "the undock point is inside the station's sphere");
+
+    let first_move = NOON + seconds(1);
+    scene.command(SESSION, Command::SetSpeedFraction(0.5), first_move);
+    let told = scene.poll(first_move + seconds(1));
+
+    assert!(gap(&scene) < 0.0, "the ship is still leaving the station");
+    let names: Vec<&str> = told
+        .iter()
+        .filter_map(|o| match o {
+            Out::Notify { name, .. } => Some(*name),
+            _ => None,
+        })
+        .collect();
+    assert!(!names.contains(&"DoDestinyUpdate"), "{names:?}");
 }
 
 #[test]
@@ -1273,6 +1308,24 @@ fn a_change_of_the_ships_numbers_tells_the_client_what_differs() {
         action_names(&scene.respec(SESSION, heavier, NOON)[0]),
         ["SetBallMass", "SetBallAgility", "SetMaxSpeed"]
     );
+}
+
+#[test]
+fn a_switched_stance_is_shown_in_the_slim_item_with_the_stance_the_ship_moved_from() {
+    let mut scene = scene();
+    let mut before = spec();
+    before.stance = Some(crate::ship::ShipStance { old_stance: 1, switched_at: NOON, stance: 1 });
+    scene.respec(SESSION, before, NOON);
+    // the host sends the new stance and its time only; the simulation keeps the stance the ship had
+    let mut switched = spec();
+    switched.stance =
+        Some(crate::ship::ShipStance { old_stance: 3, switched_at: NOON + 10_000_000, stance: 3 });
+    let out = scene.respec(SESSION, switched, NOON + 10_000_000);
+    assert_eq!(action_names(&out[0]), ["OnSlimItemChange"]);
+    let stance = scene.ship(SESSION, NOON).unwrap().spec.stance.unwrap();
+    assert_eq!((stance.old_stance, stance.stance), (1, 3));
+    let same = scene.ship(SESSION, NOON).unwrap().spec.clone();
+    assert!(scene.respec(SESSION, same, NOON).is_empty(), "nothing changed");
 }
 
 #[test]
@@ -2054,8 +2107,11 @@ fn lit_field_in(scene: &mut Scene, at: Vec3, now: i64) {
     assert!(scene.deployables.contains_key(&CYNO_FIELD), "the field is in space");
 }
 
+/// The jump as the host sends it: the hull's 95 % of the capacitor (SDE attribute 898), with no Jump Drive Operation.
+const JUMP_CAPACITOR: f64 = 0.95;
+
 fn cyno_jump(field_id: i64, destination_system: i32, spool_ms: f64) -> Command {
-    Command::CynoJump { field_id, destination_system, spool_ms }
+    Command::CynoJump { field_id, destination_system, spool_ms, capacitor: JUMP_CAPACITOR }
 }
 
 fn distance_between(a: Vec3, b: Vec3) -> f64 {
@@ -2087,6 +2143,36 @@ fn a_cyno_jump_leaves_when_its_spool_is_over_and_appears_on_the_ring_round_the_f
     let apart = distance_between(ship.position, field);
     assert!((apart - super::jump::CYNO_ARRIVAL_RADIUS).abs() < 1e-6, "{apart} m from the field");
     assert_eq!((ship.course, ship.speed_fraction), (Course::Stop, 0.0));
+}
+
+#[test]
+fn a_cyno_jump_takes_its_share_of_the_capacitor_when_the_drive_spools() {
+    let mut scene = scene_by_a_gate();
+    let destination = other_scene().solar_system_id();
+    let capacity = scene.pilots[&SESSION].modules.capacitor.as_ref().unwrap().capacity();
+    scene.pilots.get_mut(&SESSION).unwrap().modules.capacitor =
+        Some(crate::modules::Capacitor::filled(capacity, 55.25, 1.0, NOON));
+    let told = scene.command(SESSION, cyno_jump(CYNO_FIELD, destination, 300_000.0), NOON);
+    assert!(told.iter().any(|o| matches!(o, Out::Jumping { .. })), "the spool starts: {told:?}");
+    let left = scene.pilots[&SESSION].modules.capacitor.as_ref().unwrap().charge_at(NOON);
+    assert!((left - capacity * (1.0 - JUMP_CAPACITOR)).abs() < 1e-6, "{left} GJ left of {capacity}");
+}
+
+#[test]
+fn a_cyno_jump_is_refused_when_the_capacitor_cannot_pay_and_takes_nothing() {
+    let mut scene = scene_by_a_gate();
+    let destination = other_scene().solar_system_id();
+    let capacity = scene.pilots[&SESSION].modules.capacitor.as_ref().unwrap().capacity();
+    scene.pilots.get_mut(&SESSION).unwrap().modules.capacitor =
+        Some(crate::modules::Capacitor::filled(capacity, 55.25, 0.9, NOON));
+    let refused = scene.command(SESSION, cyno_jump(CYNO_FIELD, destination, 300_000.0), NOON);
+    assert!(
+        matches!(refused.as_slice(), [Out::Refused { command: 26, reason: "NOT_ENOUGH_CAPACITOR", .. }]),
+        "{refused:?}"
+    );
+    assert!(scene.due_jumps(NOON + seconds(400)).0.is_empty(), "a refused jump leaves nothing pending");
+    let left = scene.pilots[&SESSION].modules.capacitor.as_ref().unwrap().charge_at(NOON);
+    assert!((left - capacity * 0.9).abs() < 1e-6, "the charge is untouched: {left}");
 }
 
 #[test]
@@ -2123,4 +2209,448 @@ fn a_ship_whose_field_is_no_longer_lit_at_its_destination_comes_back_to_where_it
         "the ship is back in the system it left: {restored:?}"
     );
     assert!(there.ship(SESSION, NOON + seconds(302)).is_none());
+}
+
+/// The reason of the one refusal an answer holds, whatever command it refuses.
+fn refused_by(out: &[Out]) -> &'static str {
+    match out {
+        [Out::Refused { reason, .. }] => reason,
+        other => panic!("{other:?}"),
+    }
+}
+
+fn open_bridge(field: i64, destination: i32, lifetime_ms: f64, immobile_ms: f64) -> Command {
+    Command::OpenBridge {
+        field_id: field,
+        destination_system: destination,
+        lifetime_ms,
+        immobile_ms,
+        range_meters: 2_500.0,
+        capacitor: 0.0,
+    }
+}
+
+fn bridge_jump(bridge_ship: i64, field: i64, destination: i32) -> Command {
+    Command::BridgeJump { bridge_ship_id: bridge_ship, field_id: field, destination_system: destination }
+}
+
+/// A warp disruption source (an interdiction probe) of 16 km at `at`: the bubble a ship in it cannot jump out of.
+fn interdiction_at(scene: &mut Scene, at: Vec3, now: i64) {
+    let probe = crate::deployable::Deployable {
+        id: 9_000_001,
+        spec: crate::deployable::Spec {
+            charge_type_id: 0,
+            group_id: 0,
+            name: "Interdiction Probe".to_string(),
+            radius: 0.0,
+        },
+        role: crate::deployable::Role::WarpSource { range: 16_000.0 },
+        position: at,
+        ends_at: now + seconds(3600),
+        launcher: 0,
+        ship_id: 0,
+        owner_id: 0,
+        corporation_id: 0,
+        alliance_id: 0,
+        module_id: 0,
+        module_type: 0,
+        watchers: std::collections::BTreeSet::new(),
+    };
+    scene.deployables.insert(probe.id, probe);
+}
+
+#[test]
+fn a_titan_bridge_opens_where_the_ship_is_and_holds_the_ship_for_its_minute() {
+    let mut scene = scene_by_a_gate();
+    let destination = other_scene().solar_system_id();
+    let told = scene.command(SESSION, open_bridge(CYNO_FIELD, destination, 60_000.0, 60_000.0), NOON);
+    assert!(told.iter().any(|o| matches!(o, Out::Accepted { command: 30, .. })), "{told:?}");
+    assert!(
+        scene
+            .deployables
+            .values()
+            .any(|d| matches!(d.role, crate::deployable::Role::JumpBridge { .. })
+                && d.ship_id == spec().ship_id),
+        "the bridge is in space"
+    );
+    assert_eq!(refused_by(&scene.command(SESSION, jump(NEAR_GATE, 0), NOON + seconds(30))), "IMMOBILE");
+    scene.advance_deployables(NOON + seconds(61));
+    assert!(
+        scene.deployables.values().all(|d| !matches!(d.role, crate::deployable::Role::JumpBridge { .. })),
+        "the bridge ends with its minute"
+    );
+}
+
+#[test]
+fn a_fleet_ship_in_range_passes_through_the_bridge_and_leaves_at_once_for_the_field() {
+    let mut scene = scene_by_a_gate();
+    let passenger = add_other_ship(&mut scene);
+    let destination = other_scene().solar_system_id();
+    scene.command(SESSION, open_bridge(CYNO_FIELD, destination, 60_000.0, 60_000.0), NOON);
+    let told =
+        scene.command(passenger, bridge_jump(spec().ship_id, CYNO_FIELD, destination), NOON + seconds(1));
+    assert!(
+        told.iter().any(
+            |o| matches!(o, Out::Jumping { destination_system, .. } if *destination_system == destination)
+        ),
+        "{told:?}"
+    );
+    let (travellers, _) = scene.due_jumps(NOON + seconds(2));
+    let traveller =
+        travellers.into_iter().find(|t| t.session == passenger).expect("the passenger leaves at once");
+    assert_eq!((traveller.to_system, traveller.to_field), (destination, Some(CYNO_FIELD)));
+}
+
+#[test]
+fn a_passenger_beyond_2500_metres_or_inside_a_bubble_or_after_the_bridge_is_gone_is_refused() {
+    let mut scene = scene_by_a_gate();
+    let passenger = add_other_ship(&mut scene);
+    let destination = other_scene().solar_system_id();
+    scene.command(SESSION, open_bridge(CYNO_FIELD, destination, 60_000.0, 60_000.0), NOON);
+    scene.pilots.get_mut(&passenger).unwrap().ship.position = Vec3::new(10_000.0, 0.0, 0.0);
+    assert_eq!(
+        refused_by(&scene.command(
+            passenger,
+            bridge_jump(spec().ship_id, CYNO_FIELD, destination),
+            NOON + seconds(1)
+        )),
+        "OUT_OF_BRIDGE_RANGE"
+    );
+    scene.pilots.get_mut(&passenger).unwrap().ship.position = scene.pilots[&SESSION].ship.position;
+    let here = scene.pilots[&passenger].ship.position;
+    interdiction_at(&mut scene, here, NOON);
+    assert_eq!(
+        refused_by(&scene.command(
+            passenger,
+            bridge_jump(spec().ship_id, CYNO_FIELD, destination),
+            NOON + seconds(1)
+        )),
+        "WARP_DISRUPTED_BY_BUBBLE"
+    );
+    scene.deployables.remove(&9_000_001);
+    assert_eq!(
+        refused_by(&scene.command(
+            passenger,
+            bridge_jump(spec().ship_id, CYNO_FIELD + 1, destination),
+            NOON + seconds(1)
+        )),
+        "BRIDGE_NOT_FOUND"
+    );
+    scene.deployables.clear();
+    scene.command(SESSION, open_bridge(CYNO_FIELD, destination, 20_000.0, 0.0), NOON + seconds(2));
+    scene.advance_deployables(NOON + seconds(30));
+    assert_eq!(
+        refused_by(&scene.command(
+            passenger,
+            bridge_jump(spec().ship_id, CYNO_FIELD, destination),
+            NOON + seconds(30)
+        )),
+        "BRIDGE_NOT_FOUND"
+    );
+}
+
+#[test]
+fn a_cynosural_jump_is_refused_inside_a_warp_bubble() {
+    let mut scene = scene_by_a_gate();
+    let destination = other_scene().solar_system_id();
+    let here = scene.pilots[&SESSION].ship.position;
+    interdiction_at(&mut scene, here, NOON);
+    assert_eq!(
+        refused_by(&scene.command(SESSION, cyno_jump(CYNO_FIELD, destination, 300_000.0), NOON)),
+        "WARP_DISRUPTED_BY_BUBBLE"
+    );
+}
+
+/// A conduit jump of the ships `passengers` (ship ids) to the field `field_id`, with the conduit's 10 km.
+fn conduit_jump(field_id: i64, destination_system: i32, passengers: &[i64]) -> Command {
+    let mut ships = [0_i64; crate::scene::MAX_CONDUIT_PASSENGERS];
+    ships[..passengers.len()].copy_from_slice(passengers);
+    Command::ConduitJump {
+        field_id,
+        destination_system,
+        range_meters: 10_000.0,
+        passenger_count: passengers.len() as u8,
+        passengers: ships,
+    }
+}
+
+#[test]
+fn a_conduit_jump_takes_the_fleet_ships_in_its_range_with_it_at_once() {
+    let mut scene = scene_by_a_gate();
+    let passenger = add_other_ship(&mut scene);
+    let passenger_ship = spec().ship_id + 1;
+    let destination = other_scene().solar_system_id();
+    let told = scene.command(SESSION, conduit_jump(CYNO_FIELD, destination, &[passenger_ship]), NOON);
+    assert!(
+        told.iter().any(|o| matches!(o, Out::Jumping { session, command: 32, .. } if *session == SESSION)),
+        "{told:?}"
+    );
+    assert!(
+        told.iter().any(|o| matches!(o, Out::Jumping { session, command: 32, .. } if *session == passenger)),
+        "{told:?}"
+    );
+    let (travellers, _) = scene.due_jumps(NOON + seconds(1));
+    let sessions: Vec<SessionId> = travellers.iter().map(|t| t.session).collect();
+    assert!(sessions.contains(&SESSION) && sessions.contains(&passenger), "both leave at once: {sessions:?}");
+    assert!(travellers.iter().all(|t| t.to_field == Some(CYNO_FIELD) && t.to_system == destination));
+}
+
+#[test]
+fn a_conduit_jump_is_refused_for_a_passenger_beyond_its_range_or_not_in_space() {
+    let mut scene = scene_by_a_gate();
+    let passenger = add_other_ship(&mut scene);
+    let destination = other_scene().solar_system_id();
+    scene.pilots.get_mut(&passenger).unwrap().ship.position = Vec3::new(20_000.0, 0.0, 0.0);
+    assert_eq!(
+        refused_by(&scene.command(
+            SESSION,
+            conduit_jump(CYNO_FIELD, destination, &[spec().ship_id + 1]),
+            NOON
+        )),
+        "OUT_OF_CONDUIT_RANGE"
+    );
+    assert_eq!(
+        refused_by(&scene.command(SESSION, conduit_jump(CYNO_FIELD, destination, &[424_242]), NOON)),
+        "PASSENGER_NOT_IN_SPACE"
+    );
+    assert!(scene.due_jumps(NOON + seconds(400)).0.is_empty(), "a refused conduit jump takes nobody");
+}
+
+#[test]
+fn a_bridge_takes_only_the_ships_within_the_range_it_was_opened_with() {
+    let mut scene = scene_by_a_gate();
+    let passenger = add_other_ship(&mut scene);
+    let destination = other_scene().solar_system_id();
+    let bridger_at = scene.pilots[&SESSION].ship.position;
+    scene.command(SESSION, open_bridge(CYNO_FIELD, destination, 60_000.0, 0.0), NOON);
+    // a bridge of 2 500 metres: a passenger 500 metres away passes
+    scene.pilots.get_mut(&passenger).unwrap().ship.position =
+        Vec3::new(bridger_at.x + 500.0, bridger_at.y, bridger_at.z);
+    let told =
+        scene.command(passenger, bridge_jump(spec().ship_id, CYNO_FIELD, destination), NOON + seconds(1));
+    assert!(told.iter().any(|o| matches!(o, Out::Jumping { .. })), "{told:?}");
+}
+
+#[test]
+fn a_bridge_range_is_refused_beyond_it_and_a_restarted_scene_has_no_bridge() {
+    let mut scene = scene_by_a_gate();
+    let passenger = add_other_ship(&mut scene);
+    let destination = other_scene().solar_system_id();
+    let bridger_at = scene.pilots[&SESSION].ship.position;
+    // a bridge of 100 metres, opened with the range as the host gives it
+    let open = Command::OpenBridge {
+        field_id: CYNO_FIELD,
+        destination_system: destination,
+        lifetime_ms: 60_000.0,
+        immobile_ms: 0.0,
+        range_meters: 100.0,
+        capacitor: 0.0,
+    };
+    scene.command(SESSION, open, NOON);
+    scene.pilots.get_mut(&passenger).unwrap().ship.position =
+        Vec3::new(bridger_at.x + 500.0, bridger_at.y, bridger_at.z);
+    assert_eq!(
+        refused_by(&scene.command(
+            passenger,
+            bridge_jump(spec().ship_id, CYNO_FIELD, destination),
+            NOON + seconds(1)
+        )),
+        "OUT_OF_BRIDGE_RANGE"
+    );
+    // a restart: the simulation starts with no bridge, so the passage is refused
+    let mut restarted = scene_by_a_gate();
+    let back = add_other_ship(&mut restarted);
+    assert_eq!(
+        refused_by(&restarted.command(
+            back,
+            bridge_jump(spec().ship_id, CYNO_FIELD, destination),
+            NOON + seconds(2)
+        )),
+        "BRIDGE_NOT_FOUND"
+    );
+}
+
+const STRUCTURE: i64 = 1_040_000_000_001;
+const SECOND: i64 = 10_000_000;
+
+fn structure_placement(scene: &Scene, at: i64) -> crate::link::StructurePlacement {
+    crate::link::StructurePlacement {
+        structure_id: STRUCTURE,
+        solar_system_id: scene.solar_system_id(),
+        name: "Astrahus".to_string(),
+        type_id: 35_832,
+        group_id: 1_657,
+        position: [10_000.0, 0.0, 0.0],
+        radius: 60_000.0,
+        owner_id: 98_000_001,
+        corporation_id: 98_000_001,
+        alliance_id: 0,
+        vitals: crate::health::Vitals { shield_capacity: 1_000.0, armor_hp: 500.0, structure_hp: 300.0, ..Default::default() },
+        shield_recharge_ms: 1.0e15,
+        limits: crate::health::StructureLimits { per_second: [5.0e6, 5.0e3, 5.0e3], repair_pause: [500.0, 500.0, 500.0] },
+        status: crate::world::StructureStatus {
+            state: 110,
+            upkeep_state: 3,
+            timer: Some((at, at + 3_600 * 10_000_000, None)),
+            unanchoring: None,
+            repairing: None,
+        },
+    }
+}
+
+#[test]
+fn a_structure_put_in_space_is_a_body_with_its_slim_item_and_is_in_the_bind_of_a_pilot_who_comes_later() {
+    let mut scene = scene();
+    let placement = structure_placement(&scene, NOON);
+    let placed = scene.place_structure(placement.clone(), NOON);
+    assert!(placed.is_empty(), "no pilot is bound yet: nobody has it in view");
+    assert!(scene.structure_index(STRUCTURE).is_some(), "the structure is a body of the system");
+
+    let bound = scene.bind(SESSION, NOON);
+    assert!(
+        format!("{bound:?}").contains(&STRUCTURE.to_string()),
+        "the structure is in the state a pilot is given when it binds"
+    );
+    let body = scene.system.bodies[scene.structure_index(STRUCTURE).unwrap()].clone();
+    let entries = crate::slim::body_entries(&scene.system, &body);
+    let category = entries.iter().find(|(k, _)| *k == "categoryID").map(|(_, v)| v.clone());
+    assert_eq!(category, Some(crate::wire::int(65)), "a structure is category 65");
+    let state = entries.iter().find(|(k, _)| *k == "state").map(|(_, v)| v.clone());
+    assert_eq!(state, Some(crate::wire::int(110)), "the state is the host's");
+    assert!(scene.place_structure(placement, NOON).is_empty(), "a structure already in space is not put in twice");
+}
+
+#[test]
+fn a_structure_placed_while_a_pilot_is_in_the_system_is_added_to_its_view_and_its_state_change_and_removal_are_told() {
+    let mut scene = scene();
+    scene.bind(SESSION, NOON);
+    let placement = structure_placement(&scene, NOON);
+    let placed = scene.place_structure(placement.clone(), NOON);
+    assert_eq!(placed.len(), 1, "the bound pilot is told of the structure");
+    assert_eq!(action_names(&placed[0]), ["AddBalls2"]);
+    let added = format!("{:?}", placed[0]);
+    assert!(added.contains("Astrahus") && added.contains(&STRUCTURE.to_string()), "{added}");
+
+    // a state the host already has is not told again
+    assert!(scene.set_structure_state(STRUCTURE, placement.status.clone(), NOON + SECOND).is_empty());
+    let mut paused = placement.status.clone();
+    paused.timer = Some((NOON, NOON + 3_600 * SECOND, Some(NOON + 60 * SECOND)));
+    paused.repairing = Some(true);
+    let changed = scene.set_structure_state(STRUCTURE, paused.clone(), NOON + 2 * SECOND);
+    assert_eq!(changed.len(), 1);
+    assert_eq!(action_names(&changed[0]), ["OnSlimItemChange"]);
+    let idx = scene.structure_index(STRUCTURE).unwrap();
+    assert!(
+        matches!(&scene.system.bodies[idx].detail, Detail::Structure { status, .. } if *status == paused),
+        "the scene now has the state the host gave"
+    );
+    assert!(
+        scene.set_structure_state(STRUCTURE + 1, paused, NOON).is_empty(),
+        "a structure that is not in space is left alone"
+    );
+
+    let removed = scene.remove_structure(STRUCTURE, NOON + 3 * SECOND);
+    assert_eq!(removed.len(), 1);
+    assert_eq!(action_names(&removed[0]), ["RemoveBalls"]);
+    assert!(scene.structure_index(STRUCTURE).is_none(), "the body is gone");
+    assert!(scene.remove_structure(STRUCTURE, NOON + 3 * SECOND).is_empty(), "a structure already gone is left alone");
+}
+
+#[test]
+fn a_hit_on_a_structure_is_cut_to_its_layers_limit_each_second_and_an_emptied_shield_is_told_to_the_host_once() {
+    let mut scene = scene();
+    scene.bind(SESSION, NOON);
+    let mut placement = structure_placement(&scene, NOON);
+    placement.vitals = crate::health::Vitals { shield_capacity: 1_000.0, armor_hp: 500.0, structure_hp: 300.0, ..Default::default() };
+    placement.limits = crate::health::StructureLimits { per_second: [400.0, 200.0, 100.0], repair_pause: [300.0, 150.0, 80.0] };
+    scene.place_structure(placement, NOON);
+    let shield = |scene: &Scene, at: i64| scene.structure_health[&STRUCTURE].state_at(at).shield;
+
+    let told = scene.damage_structure(STRUCTURE, [1_000.0, 0.0, 0.0, 0.0], NOON);
+    assert!(
+        told.iter().any(|o| matches!(o, Out::StructureDamaged { structure_id, over_threshold: true, depleted: None } if *structure_id == STRUCTURE)),
+        "a shield that took 400 in a second is above its pause: {told:?}"
+    );
+    assert_eq!(shield(&scene, NOON), 0.6, "a hit of 1000 takes the shield's 400 of this second");
+    scene.damage_structure(STRUCTURE, [1_000.0, 0.0, 0.0, 0.0], NOON);
+    assert_eq!(shield(&scene, NOON), 0.6, "the second hit in the same second takes nothing from the shield");
+
+    let mut emptied = 0;
+    for second in 1..=3 {
+        let at = NOON + second * SECOND;
+        emptied += scene
+            .damage_structure(STRUCTURE, [400.0, 0.0, 0.0, 0.0], at)
+            .iter()
+            .filter(|o| matches!(o, Out::StructureDamaged { depleted: Some(crate::health::Layer::Shield), .. }))
+            .count();
+    }
+    assert_eq!(emptied, 1, "the shield is told it is empty once");
+    assert!(scene.damage_structure(STRUCTURE + 1, [1_000.0, 0.0, 0.0, 0.0], NOON).is_empty(), "a structure not in space is left alone");
+}
+
+/// A scene with a structure of `type_id` in the given state, 5 000 km out, and a ship of `group` in its docking range.
+fn near_the_structure(type_id: i32, group: i32, state: i32) -> Scene {
+    let mut scene = Scene::new(system());
+    let mut placement = structure_placement(&scene, NOON);
+    placement.position = [5_000_000.0, 0.0, 0.0];
+    placement.type_id = type_id;
+    placement.status.state = state;
+    scene.place_structure(placement, NOON);
+    let mut near = spec();
+    near.max_velocity = 0.0;
+    near.group_id = group;
+    scene.enter_in_space(SESSION, near, [5_000_000.0 + 60_000.0 + 47.0 + 500.0, 0.0, 0.0], [0.0, 0.0, 1.0], NOON).unwrap();
+    scene
+}
+
+#[test]
+fn a_structure_in_a_state_that_takes_ships_docks_a_ship_as_a_station_does() {
+    let mut scene = near_the_structure(35_832, 27, 111);
+    let out = scene.command(SESSION, Command::Dock { station_id: STRUCTURE }, NOON);
+    assert!(
+        matches!(&out[0], Out::Notify { name: "OnDockingAccepted", id_type: "charid", args, .. } if args == &[Value::Long(STRUCTURE)]),
+        "{out:?}"
+    );
+    assert_eq!(
+        scene.poll(NOON + seconds(4)),
+        [Out::Docked { session: SESSION, station_id: STRUCTURE, condition: Condition::FULL }]
+    );
+}
+
+#[test]
+fn a_structure_in_a_state_that_disables_docking_refuses_the_ship() {
+    for state in [0, 1, 2, 102, 113, 114, 115, 116] {
+        let mut scene = near_the_structure(35_832, 27, state);
+        let out = scene.command(SESSION, Command::Dock { station_id: STRUCTURE }, NOON);
+        assert_eq!(out, [Out::Refused { session: SESSION, command: 4, reason: "STRUCTURE_DISABLED" }], "state {state}");
+    }
+}
+
+#[test]
+fn a_structure_takes_the_hulls_its_docks_are_for_and_no_bigger() {
+    // (structure type, ship group, is taken): Astrahus subcapital, Fortizar capital, Keepstar supercapital
+    let cases = [
+        (35_832, 27, true),
+        (35_832, 547, false),
+        (35_832, 30, false),
+        (35_833, 547, true),
+        (35_833, 30, false),
+        (35_834, 30, true),
+    ];
+    for (type_id, group, taken) in cases {
+        let mut scene = near_the_structure(type_id, group, 111);
+        let out = scene.command(SESSION, Command::Dock { station_id: STRUCTURE }, NOON);
+        let refused = matches!(out.first(), Some(Out::Refused { reason: "SHIP_TOO_LARGE", .. }));
+        assert_eq!(!refused, taken, "type {type_id}, group {group}: {out:?}");
+    }
+}
+
+#[test]
+fn a_ship_undocks_from_a_structure_as_it_does_from_a_station() {
+    let mut scene = Scene::new(system());
+    let mut placement = structure_placement(&scene, NOON);
+    placement.status.state = 1;
+    scene.place_structure(placement, NOON);
+    scene.undock(SESSION, spec(), STRUCTURE, NOON).expect("a structure is a dock, whatever its state");
+    assert!(scene.contains(SESSION));
 }

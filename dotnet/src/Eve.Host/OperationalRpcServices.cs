@@ -156,10 +156,10 @@ public sealed partial class InSpaceCompressionMgrRpcService(
     Func<ServiceCall, Item, long, CancellationToken, ValueTask<SpaceCompressionResult?>>? compress = null)
 {
     /// <summary>
-    /// Shown to the pilot when no compression authority is attached. Owner C1 (structures) is open, so the
-    /// request is refused by name instead of answering None, which would look like a silent success.
+    /// Shown to the pilot when no compression authority is attached (the space host is not running). In-space compression is done by a ship's compressor module and
+    /// needs no structure; the request is refused by name instead of answering None, which would look like a silent success.
     /// </summary>
-    public const string UnavailableNotice = "In-space ore compression needs a compressor structure, and structures are not on this server yet (phase 3).";
+    public const string UnavailableNotice = "In-space compression is not available right now. Try again in a moment.";
 
     /// <summary>Shown when the request names no usable item, facility or active ship. Never answered with None (a silent success).</summary>
     public const string InvalidRequestNotice = "That item cannot be compressed here: pick an item in your active ship and a valid facility.";

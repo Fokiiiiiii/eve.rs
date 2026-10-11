@@ -6,6 +6,7 @@ using Eve.Inventory;
 using Eve.Marshal;
 using Eve.Services;
 using Eve.Services.Skills;
+using Eve.Universe;
 using Eve.Skills;
 using Eve.Wallet;
 using Npgsql;
@@ -73,7 +74,9 @@ public sealed class Harness : IAsyncDisposable
         string suffix,
         bool newCharacterExperienceEnabled,
         double securityStatus,
-        IReadOnlyList<Eve.Services.ICharacterEntryHook>? entryHooks)
+        IReadOnlyList<Eve.Services.ICharacterEntryHook>? entryHooks,
+        SolarSystemCatalog? systems,
+        int populationCapacity)
     {
         Source = source;
         _characterSchema = $"cs_test_{suffix}";
@@ -92,6 +95,7 @@ public sealed class Harness : IAsyncDisposable
         Online = new OnlineCharacters();
         Training = new CharacterTraining(source, Skills, SkillStore, new PgTrainingStore(source, _skillsSchema), new TrainingSettings(), () => ClockUnixMs);
         Sessions = new CharacterSessions();
+        Population = systems is null ? null : new SystemPopulation(Sessions, systems, populationCapacity);
         Announcer = new TrainingAnnouncer(Training, Skills, Sessions, null, () => ClockUnixMs, schedule: false);
         Service = new CharUnboundMgrService(
             Accounts, Characters, Items, Training, Wallets,
@@ -100,7 +104,8 @@ public sealed class Harness : IAsyncDisposable
             entryHooks ?? [new SkillsLoginHook(Training, Skills, Sessions, Announcer, () => ClockUnixMs),
                 new Eve.Services.Corporations.CorporationLoginHook(Corporations, Characters)],
             new Random(7), newCharacterExperienceEnabled,
-            securityStatusOf: (_, _) => Task.FromResult(securityStatus));
+            securityStatusOf: (_, _) => Task.FromResult(securityStatus),
+            population: Population);
         var dogma = new Eve.Dogma.DogmaStatic([], [], []);
         Handler = new SkillHandlerService(
             SkillStore, Skills, Training, Characters, Items, dogma, Announcer, () => ClockUnixMs,
@@ -138,15 +143,20 @@ public sealed class Harness : IAsyncDisposable
 
     public CharUnboundMgrService Service { get; }
 
-      public static async Task<Harness> CreateAsync(
+    /// <summary>The population of the systems, when the harness was given a catalog (see <see cref="CreateAsync"/>).</summary>
+    public SystemPopulation? Population { get; }
+
+    public static async Task<Harness> CreateAsync(
         bool newCharacterExperienceEnabled = false,
         double securityStatus = 0,
-        IReadOnlyList<Eve.Services.ICharacterEntryHook>? entryHooks = null)
+        IReadOnlyList<Eve.Services.ICharacterEntryHook>? entryHooks = null,
+        SolarSystemCatalog? systems = null,
+        int populationCapacity = SystemPopulation.DefaultCapacity)
     {
         CharacterNames.EnsureUnicodeSupport();
         var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(Url!));
         var harness = new Harness(
-            source, Guid.NewGuid().ToString("N")[..12], newCharacterExperienceEnabled, securityStatus, entryHooks);
+            source, Guid.NewGuid().ToString("N")[..12], newCharacterExperienceEnabled, securityStatus, entryHooks, systems, populationCapacity);
         await PgCharacterStore.MigrateAsync(source, harness._characterSchema);
         await PgItemStore.MigrateAsync(source, harness._inventorySchema);
         await PgSkillStore.MigrateAsync(source, harness._skillsSchema);

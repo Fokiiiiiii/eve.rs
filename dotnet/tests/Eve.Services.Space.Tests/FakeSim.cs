@@ -9,6 +9,9 @@ internal sealed class FakeSim : ISimulation
 
     public event Action<SimMessage>? Received;
 
+    /// <summary>A message the simulation sends to the host (a test's stand-in for the link's receive loop).</summary>
+    public void Deliver(SimMessage message) => Received?.Invoke(message);
+
     public event Action? Lost;
 
     public System.Collections.Concurrent.ConcurrentQueue<SimMessage> Heard { get; } = new();
@@ -194,11 +197,18 @@ internal sealed class FakeSim : ISimulation
 
     public void RemoveProbe(long probeId) => Heard.Enqueue(new SimRemoveProbe(probeId));
 
+    public void PlaceStructure(SimPlaceStructure structure) => Heard.Enqueue(structure);
+
+    public void RemoveStructure(long structureId) => Heard.Enqueue(new SimRemoveStructure(structureId));
+
+    public void SetStructureState(SimSetStructureState state) => Heard.Enqueue(state);
+
     public void PlaceDisruptor(SimPlaceDisruptor disruptor) => Heard.Enqueue(disruptor);
 
     public void SetDisruptorActive(long deployableId, bool active) => Heard.Enqueue(new SimSetDisruptorActive(deployableId, active));
 
     public void PlaceInhibitor(SimPlaceInhibitor inhibitor) => Heard.Enqueue(inhibitor);
+    public void PlaceCynoBeacon(SimPlaceCynoBeacon beacon) => Heard.Enqueue(beacon);
 
     public void Destroy(long shipId, SimCredit credit) => Heard.Enqueue(new SimDestroy(shipId, credit));
 
@@ -250,9 +260,16 @@ internal sealed class FakeSim : ISimulation
     /// <summary>What a scan-target query (command 27) is answered with: the targets the scene holds.</summary>
     public IReadOnlyList<SimScanTarget> ScanTargetsAnswer { get; set; } = [];
 
+    /// <summary>What a directional scan (command 28) is answered with: what the scene has that a cone can see.</summary>
+    public IReadOnlyList<SimDirectionalTarget> DirectionalAnswer { get; set; } = [];
+
     public Task<CommandReply> CommandAsync(ulong sessionId, byte code, double[] args, CancellationToken cancellationToken = default)
     {
         Heard.Enqueue(new SimCommand(sessionId, code, args));
+        if (code == SimCommands.DirectionalScan)
+        {
+            return Task.FromResult(new CommandReply(true, 0, null) { DirectionalTargets = DirectionalAnswer });
+        }
         if (code == SimCommands.ScanTargets)
         {
             return Task.FromResult(new CommandReply(true, 0, null) { ScanTargets = ScanTargetsAnswer });
@@ -293,7 +310,7 @@ internal sealed class FakeSim : ISimulation
                 Position = PositionAnswers.GetValueOrDefault(targetId, [0, 0, 0])
             });
         }
-        return Task.FromResult(code switch { SimCommands.WarpTo or SimCommands.WarpToPoint => WarpAnswer, SimCommands.Jump => JumpAnswer, SimCommands.CynoJump => CynoJumpAnswer, _ => DockAnswer });
+        return Task.FromResult(code switch { SimCommands.WarpTo or SimCommands.WarpToPoint => WarpAnswer, SimCommands.Jump => JumpAnswer, SimCommands.CynoJump or SimCommands.OpenBridge or SimCommands.BridgeJump or SimCommands.ConduitJump => CynoJumpAnswer, _ => DockAnswer });
     }
 
     /// <summary>How far a wreck or can is said to be (null: there is none).</summary>

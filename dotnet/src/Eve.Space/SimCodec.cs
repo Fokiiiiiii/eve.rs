@@ -27,7 +27,7 @@ public sealed class SimLinkException(SimLinkError error, string message) : Excep
 /// </summary>
 public static partial class SimCodec
 {
-    public const ushort ProtocolVersion = 52;
+    public const ushort ProtocolVersion = 60;
     /// <summary>The largest frame either side accepts (1 MiB).</summary>
     public const int MaxFrame = 1 << 20;
 
@@ -150,6 +150,24 @@ public static partial class SimCodec
             case Kind.Position:
                 message = new SimPosition(r.U64(), r.U8(), ReadVector(ref r));
                 break;
+            case Kind.DirectionalTargets:
+                {
+                    var session = r.U64();
+                    var command = r.U8();
+                    var count = r.U32();
+                    // each target is 47 bytes: an id, a kind, a type, a position, a radius and two flags (protocol 54)
+                    if (count > r.Remaining / 47)
+                    {
+                        throw new SimLinkException(SimLinkError.Truncated, "the frame ends before the message does");
+                    }
+                    var targets = new SimDirectionalTarget[count];
+                    for (var i = 0; i < targets.Length; i++)
+                    {
+                        targets[i] = new SimDirectionalTarget(r.I64(), r.U8(), r.I32(), ReadVector(ref r), r.F64(), r.U8() != 0, r.U8() != 0);
+                    }
+                    message = new SimDirectionalTargets(session, command, targets);
+                    break;
+                }
             case Kind.ScanTargets:
                 {
                     var session = r.U64();
@@ -675,11 +693,54 @@ public static partial class SimCodec
                     message = new SimPlaceProbe(probe, system, name, type, group, position, radius, owner, corporation, alliance, ship);
                     break;
                 }
+            case Kind.PlaceStructure:
+                {
+                    var structure = r.I64();
+                    var system = r.I32();
+                    var name = r.Text();
+                    var type = r.I32();
+                    var group = r.I32();
+                    var position = ReadVector(ref r);
+                    var radius = r.F64();
+                    var owner = r.I64();
+                    var corporation = r.I32();
+                    var alliance = r.I32();
+                    var health = ReadStructureHealth(ref r);
+                    var status = ReadStructureStatus(ref r);
+                    if (!(double.IsFinite(radius) && radius >= 0))
+                    {
+                        throw new SimLinkException(SimLinkError.BadValue, "bad structure");
+                    }
+                    message = new SimPlaceStructure(structure, system, name, type, group, position, radius, owner, corporation, alliance, health, status);
+                    break;
+                }
+            case Kind.StructureDamaged:
+                {
+                    var structure = r.I64();
+                    var depleted = r.U8();
+                    if (depleted > 3)
+                    {
+                        throw new SimLinkException(SimLinkError.BadValue, "structure layer");
+                    }
+                    message = new SimStructureDamaged(structure, depleted, ReadFlag(ref r, "structure damage"));
+                    break;
+                }
+            case Kind.RemoveStructure:
+                message = new SimRemoveStructure(r.I64());
+                break;
+            case Kind.SetStructureState:
+                {
+                    var system = r.I32();
+                    var structure = r.I64();
+                    message = new SimSetStructureState(system, structure, ReadStructureStatus(ref r));
+                    break;
+                }
             case Kind.RemoveProbe:
                 message = new SimRemoveProbe(r.I64());
                 break;
             case Kind.PlaceDisruptor:
             case Kind.PlaceInhibitor:
+            case Kind.PlaceCynoBeacon:
                 {
                     var deployable = r.I64();
                     var system = r.I32();
@@ -698,9 +759,12 @@ public static partial class SimCodec
                     {
                         throw new SimLinkException(SimLinkError.BadValue, "bad disruptor");
                     }
-                    message = payload.Span[0] == Kind.PlaceInhibitor
-                        ? new SimPlaceInhibitor(deployable, system, name, type, group, position, radius, range, active, owner, corporation, alliance, ship)
-                        : new SimPlaceDisruptor(deployable, system, name, type, group, position, radius, range, active, owner, corporation, alliance, ship);
+                    message = payload.Span[0] switch
+                    {
+                        Kind.PlaceInhibitor => new SimPlaceInhibitor(deployable, system, name, type, group, position, radius, range, active, owner, corporation, alliance, ship),
+                        Kind.PlaceCynoBeacon => new SimPlaceCynoBeacon(deployable, system, name, type, group, position, radius, active, owner, corporation, alliance, ship),
+                        _ => new SimPlaceDisruptor(deployable, system, name, type, group, position, radius, range, active, owner, corporation, alliance, ship),
+                    };
                     break;
                 }
             case Kind.SetDisruptorActive:

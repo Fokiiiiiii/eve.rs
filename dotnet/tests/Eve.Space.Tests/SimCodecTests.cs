@@ -33,7 +33,8 @@ public class SimCodecTests
         (double)s["maxVelocity"]!, (double)s["agility"]!, (double)s["warpSpeedAu"]!, (double)s["shieldRechargeMs"]!,
         (double)s["maxTargetRange"]!, (double)s["scanResolution"]!, (double)s["signatureRadius"]!, (int)s["maxLockedTargets"]!, (double)s["capacitorCapacity"]!, (double)s["capacitorRechargeS"]!,
         [.. ((JsonArray)s["modules"]!).Select(m => new SimModule(Wide(m!, "itemId"), (int)m!["typeId"]!, (int)m["flag"]!))],
-        VitalsOf(s["vitals"]!), ConditionOf(s["condition"]!), SensorsOf(s), s["droneDamageMultiplier"] is { } drone ? (double)drone : 1d);
+        VitalsOf(s["vitals"]!), ConditionOf(s["condition"]!), SensorsOf(s), s["droneDamageMultiplier"] is { } drone ? (double)drone : 1d,
+            s["stance"] is { } stance ? new SimShipStance((int)stance["oldStance"]!, long.Parse((string)stance["switchedAt"]!, CultureInfo.InvariantCulture), (int)stance["stance"]!) : null);
 
     private static SimSensors SensorsOf(JsonNode s)
     {
@@ -269,6 +270,34 @@ public class SimCodecTests
 
     private static SimWreckKind? WreckKindOf(JsonNode? w) => w is null ? null : new SimWreckKind((int)w["typeId"]!, (string)w["name"]!, (int)w["graphicId"]!);
 
+    private static SimStructureHealth HealthOf(JsonNode c)
+    {
+        var v = c["vitals"]!;
+        var resonances = new List<double>();
+        foreach (var layer in new[] { "shield", "armor", "structure" })
+        {
+            resonances.AddRange(((JsonArray)v["resonances"]![layer]!).Select(x => (double)x!));
+        }
+        return new SimStructureHealth(
+            (double)v["shieldCapacity"]!, (double)v["armorHp"]!, (double)v["structureHp"]!, resonances, (double)c["shieldRechargeMs"]!,
+            VectorOf(c["perSecond"]!), VectorOf(c["repairPause"]!));
+    }
+
+    private static SimStructureStatus StatusOf(JsonNode s)
+    {
+        (long Start, long End, long? Paused)? timer = null;
+        if (s["timer"] is JsonArray t)
+        {
+            timer = ((long)t[0]!, (long)t[1]!, t[2] is null ? (long?)null : (long)t[2]!);
+        }
+        return new SimStructureStatus(
+            (int)s["state"]!,
+            (int)s["upkeepState"]!,
+            timer,
+            s["unanchoring"] is null ? (long?)null : (long)s["unanchoring"]!,
+            s["repairing"] is null ? (bool?)null : (bool)s["repairing"]!);
+    }
+
     private static SimMessage MessageOf(JsonObject c)
     {
         ulong Session() => (ulong)Wide(c, "sessionId");
@@ -329,8 +358,17 @@ public class SimCodecTests
             "PlaceProbe" => new SimPlaceProbe(Wide(c, "probeId"), (int)c["solarSystemId"]!, (string)c["typeName"]!, (int)c["typeId"]!, (int)c["groupId"]!, VectorOf(c["position"]!),
                 (double)c["radius"]!, Wide(c, "ownerId"), (int)c["corporationId"]!, (int)c["allianceId"]!, Wide(c, "shipId")),
             "RemoveProbe" => new SimRemoveProbe(Wide(c, "probeId")),
+            "PlaceStructure" => new SimPlaceStructure(Wide(c, "structureId"), (int)c["solarSystemId"]!, (string)c["typeName"]!, (int)c["typeId"]!,
+                (int)c["groupId"]!, VectorOf(c["position"]!), (double)c["radius"]!, Wide(c, "ownerId"), (int)c["corporationId"]!, (int)c["allianceId"]!,
+                HealthOf(c), StatusOf(c["status"]!)),
+            "StructureDamaged" => new SimStructureDamaged(Wide(c, "structureId"), (int)c["depleted"]!, (bool)c["overThreshold"]!),
+            "RemoveStructure" => new SimRemoveStructure(Wide(c, "structureId")),
+            "SetStructureState" => new SimSetStructureState((int)c["solarSystemId"]!, Wide(c, "structureId"), StatusOf(c["status"]!)),
             "PlaceDisruptor" => new SimPlaceDisruptor(Wide(c, "deployableId"), (int)c["solarSystemId"]!, (string)c["typeName"]!, (int)c["typeId"]!, (int)c["groupId"]!,
                 VectorOf(c["position"]!), (double)c["radius"]!, (double)c["range"]!, (bool)c["active"]!, Wide(c, "ownerId"), (int)c["corporationId"]!,
+                (int)c["allianceId"]!, Wide(c, "shipId")),
+            "PlaceCynoBeacon" => new SimPlaceCynoBeacon(Wide(c, "deployableId"), (int)c["solarSystemId"]!, (string)c["typeName"]!, (int)c["typeId"]!, (int)c["groupId"]!,
+                VectorOf(c["position"]!), (double)c["radius"]!, (bool)c["active"]!, Wide(c, "ownerId"), (int)c["corporationId"]!,
                 (int)c["allianceId"]!, Wide(c, "shipId")),
             "SetDisruptorActive" => new SimSetDisruptorActive(Wide(c, "deployableId"), (bool)c["active"]!),
             "PlaceInhibitor" => new SimPlaceInhibitor(Wide(c, "deployableId"), (int)c["solarSystemId"]!, (string)c["typeName"]!, (int)c["typeId"]!, (int)c["groupId"]!,
@@ -346,6 +384,7 @@ public class SimCodecTests
                 Effect: c["effect"] is { } drone ? new SimDroneEffect((int)drone["effectId"]!, (string)drone["fx"]!, (double)drone["cycleMs"]!, (double)drone["lastingMs"]!, ActionOf(drone["action"]!)) : null),
             "DroneCommand" => new SimDroneCommand(Session(), (byte)(int)c["command"]!, Wide(c, "targetId"), [.. ((JsonArray)c["droneIds"]!).Select(d => long.Parse((string)d!))], (double)c["controlRange"]!),
             "DroneResults" => new SimDroneResults(Session(), (byte)(int)c["command"]!, [.. ((JsonArray)c["results"]!).Select(r => new SimDroneResult(Wide(r!, "droneId"), (string)r!["reason"]!))]),
+            "DirectionalTargets" => new SimDirectionalTargets(Session(), (byte)(int)c["command"]!, [.. ((JsonArray)c["targets"]!).Select(t => new SimDirectionalTarget(Wide(t!, "id"), (byte)(int)t!["kind"]!, (int)t!["typeId"]!, VectorOf(t!["position"]!), (double)t!["radius"]!, (bool)t!["cloaked"]!, (bool)t!["warping"]!))]),
             "ScanTargets" => new SimScanTargets(Session(), (byte)(int)c["command"]!, [.. ((JsonArray)c["targets"]!).Select(t => new SimScanTarget(Wide(t!, "id"), (byte)(int)t!["kind"]!, (int)t!["typeId"]!, VectorOf(t!["position"]!)))]),
             "DroneScooped" => new SimDroneScooped(Session(), Wide(c, "droneId")),
             "DroneReleased" => new SimDroneReleased(Session(), Wide(c, "droneId"), VectorOf(c["position"]!)),
@@ -366,7 +405,7 @@ public class SimCodecTests
     public void The_fixtures_cover_every_message_kind()
     {
         var kinds = ((JsonArray)Fixtures["valid"]!).Select(c => (string)c!["kind"]!).Distinct().Order().ToArray();
-        Assert.Equal(["Accepted", "Activate", "AdjustCharge", "Approaching", "Arrived", "Bind", "BuffState", "ChangeWreck", "ChargeAdjusted", "ChargeSpent", "Command", "Condition", "ContainerPlaced", "Deployed", "Destroy", "Destroyed", "Docked", "DroneCommand", "DroneReleased", "DroneResults", "DroneScooped", "EcmBurst", "Enter", "EnterReply", "FighterGotoPoint", "FighterLanded", "FighterOrder", "FighterReleased", "FighterResults", "FighterSize", "Hello", "HelloAck", "Jumped", "Jumping", "LaunchDrone", "LaunchFighter", "Leave", "Measured", "ModuleEnded", "ModuleWorkCycle", "ModuleWorkResult", "Notify", "PlaceContainer", "PlaceDisruptor", "PlaceInhibitor", "PlaceProbe", "PlaceWreck", "Refused", "RemoveDeployed", "RemoveProbe", "RemoveWreck", "Respawn", "ScanTargets", "SetDisruptorActive", "ShipSpec", "Spawn", "SpawnReply", "TargetRefused", "Targets", "UpdateEffect", "UpdateState"], kinds);
+        Assert.Equal(["Accepted", "Activate", "AdjustCharge", "Approaching", "Arrived", "Bind", "BuffState", "ChangeWreck", "ChargeAdjusted", "ChargeSpent", "Command", "Condition", "ContainerPlaced", "Deployed", "Destroy", "Destroyed", "DirectionalTargets", "Docked", "DroneCommand", "DroneReleased", "DroneResults", "DroneScooped", "EcmBurst", "Enter", "EnterReply", "FighterGotoPoint", "FighterLanded", "FighterOrder", "FighterReleased", "FighterResults", "FighterSize", "Hello", "HelloAck", "Jumped", "Jumping", "LaunchDrone", "LaunchFighter", "Leave", "Measured", "ModuleEnded", "ModuleWorkCycle", "ModuleWorkResult", "Notify", "PlaceContainer", "PlaceCynoBeacon", "PlaceDisruptor", "PlaceInhibitor", "PlaceProbe", "PlaceStructure", "PlaceWreck", "Refused", "RemoveDeployed", "RemoveProbe", "RemoveStructure", "RemoveWreck", "Respawn", "ScanTargets", "SetDisruptorActive", "SetStructureState", "ShipSpec", "Spawn", "SpawnReply", "StructureDamaged", "TargetRefused", "Targets", "UpdateEffect", "UpdateState"], kinds);
         Assert.True(((JsonArray)Fixtures["invalid"]!).Count >= 10);    }
 
     [Theory]

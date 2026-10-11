@@ -251,6 +251,12 @@ impl Scene {
         {
             return vec![Out::Refused { session, command: CODE, reason: "SafetyActivated" }];
         }
+        // a cynosural field does not light in Pochven: its region-wide jammer stops every kind of field there (the wiki, "Pochven": "stops anyone from lighting a cyno")
+        if matches!(effect.action.as_ref(), Some(Action::CynoField { .. }))
+            && self.system().region_id == POCHVEN_REGION_ID
+        {
+            return vec![Out::Refused { session, command: CODE, reason: "CYNOSURAL_FIELD_JAMMED" }];
+        }
         // a cynosural field does not light within 100 km of an anchored Mobile Cynosural Inhibitor (EVE.js CYNOSURAL_FIELD_INHIBITED); a covert field is not stopped
         if let Some(Action::CynoField { ball, .. }) = effect.action.as_ref()
             && ball.charge_type_id != COVERT_CYNOSURAL_FIELD_TYPE
@@ -379,7 +385,7 @@ impl Scene {
             {
                 return vec![Out::Refused { session, command: CODE, reason: "CLOAK_TARGET_LOCKED" }];
             }
-            if !self.in_smartbomb_range(session, 2_000.0).is_empty() {
+            if self.cloak_trigger(session, crate::scene::CLOAK_PROXIMITY_METERS).is_some() {
                 return vec![Out::Refused { session, command: CODE, reason: "CLOAK_PROXIMITY_BLOCKED" }];
             }
         } else if pilot.cloak != crate::visibility::CloakState::Uncloaked {
@@ -1090,6 +1096,9 @@ impl Scene {
 const SMARTBOMB_NEAR_METERS: f64 = 5_000.0;
 /// The covert cynosural field's type (EVE.js `TYPE_COVERT_CYNOSURAL_FIELD`): a Mobile Cynosural Inhibitor does not stop it.
 const COVERT_CYNOSURAL_FIELD_TYPE: i32 = 28_650;
+
+/// Pochven (SDE region 10000070): the Triglavian region, a region-wide cynosural jammer (the wiki, "Pochven").
+const POCHVEN_REGION_ID: i32 = 10_000_070;
 
 impl Scene {
     /// Whether the surface of a station or a stargate of this system is less than `metres` from `at`.

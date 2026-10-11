@@ -8,8 +8,8 @@ public interface IService
     string Name { get; }
 
     /// <summary>
-    /// Calls <paramref name="call"/>.Method. A method the service does not have is answered with None,
-    /// as the reference server does (and logs it).
+    /// Calls <paramref name="call"/>.Method. The dispatcher only calls a method the service reports in
+    /// <see cref="HasMethod"/>; for any other method it answers the client with an error, not with this call.
     /// </summary>
     ValueTask<PyValue> CallAsync(ServiceCall call);
 

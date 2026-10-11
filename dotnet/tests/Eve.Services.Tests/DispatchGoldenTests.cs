@@ -19,6 +19,28 @@ public class DispatchGoldenTests
 
     public static IEnumerable<object[]> Ids() => Scenarios.Select(s => new object[] { (string)s!["id"]! });
 
+    private const int ErrorResponseCommand = 15;
+
+    /// <summary>
+    /// The recorded steps (scenario id, note) whose answer is the reference's None: a call to an unknown service or
+    /// method, or a handler that throws or rejects. The V24.01 server answers them with a wrapped error, so the recording
+    /// is not replayed for them (DEVIATIONS.md, "Unknown service and method" and "A failing handler"); each one is still
+    /// checked for its state.
+    /// </summary>
+    private static readonly HashSet<(string Id, string Note)> ErrorAnswers =
+    [
+        ("errors:plain", "throws"),
+        ("results:async", "rejects"),
+        ("errors:plain", "unknown method"),
+        ("errors:plain", "unknown service"),
+        ("errors:plain", "service name is not a string"),
+        ("packets:arguments", "a table-string method name"),
+        ("packets:malformed", "not a call body"),
+    ];
+
+    private static int CommandOf(string hex) =>
+        (int)((PyInt)((PyTuple)((PyObject)MarshalCodec.Decode(Convert.FromHexString(hex))).Args).Items[0]).Value;
+
     private sealed class Capture : IPacketSink
     {
         public List<string> Sent { get; } = [];
@@ -54,9 +76,19 @@ public class DispatchGoldenTests
             await dispatcher.DispatchAsync(packet, session);
 
             var expected = ((JsonArray)step["responses"]!).Select(r => (string)r!).ToArray();
-            Assert.True(
-                expected.SequenceEqual(capture.Sent),
-                $"{id} / {note}: responses differ\n  expected {string.Join(" | ", expected.Select(Clip))}\n  actual   {string.Join(" | ", capture.Sent.Select(Clip))}");
+            if (ErrorAnswers.Contains((id, note)))
+            {
+                // The recording has the reference's None for a call it does not have; the V24.01 server answers the
+                // call with a wrapped error (DEVIATIONS.md, "Unknown service and method"). Only that answer changes.
+                Assert.Single(capture.Sent);
+                Assert.Equal(ErrorResponseCommand, CommandOf(capture.Sent[0]));
+            }
+            else
+            {
+                Assert.True(
+                    expected.SequenceEqual(capture.Sent),
+                    $"{id} / {note}: responses differ\n  expected {string.Join(" | ", expected.Select(Clip))}\n  actual   {string.Join(" | ", capture.Sent.Select(Clip))}");
+            }
 
             var state = (JsonObject)step["state"]!;
             var bound = ((JsonObject)state["boundObjects"]!).ToDictionary(

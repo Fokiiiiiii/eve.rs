@@ -1,4 +1,5 @@
 use super::*;
+use crate::scene::MAX_CONDUIT_PASSENGERS;
 
 /// The command a code and its arguments say, if they say one.
 pub(super) fn command_of(code: u8, args: &[f64]) -> Option<Command> {
@@ -17,13 +18,67 @@ pub(super) fn command_of(code: u8, args: &[f64]) -> Option<Command> {
         (8, [target, range]) if is_id(*target) && range.is_finite() => {
             Some(Command::WarpTo { target_id: *target as i64, range: *range })
         }
-        (26, [field, destination, spool])
-            if is_id(*field) && is_id(*destination) && spool.is_finite() && *spool > 0.0 =>
+        (26, [field, destination, spool, capacitor])
+            if is_id(*field)
+                && is_id(*destination)
+                && spool.is_finite()
+                && *spool > 0.0
+                && capacitor.is_finite()
+                && *capacitor >= 0.0 =>
         {
             Some(Command::CynoJump {
                 field_id: *field as i64,
                 destination_system: *destination as i32,
                 spool_ms: *spool,
+                capacitor: *capacitor,
+            })
+        }
+        (30, [field, destination, lifetime, immobile, range, capacitor])
+            if is_id(*field)
+                && is_id(*destination)
+                && lifetime.is_finite()
+                && *lifetime > 0.0
+                && immobile.is_finite()
+                && *immobile >= 0.0
+                && range.is_finite()
+                && *range > 0.0
+                && capacitor.is_finite()
+                && *capacitor >= 0.0 =>
+        {
+            Some(Command::OpenBridge {
+                field_id: *field as i64,
+                destination_system: *destination as i32,
+                lifetime_ms: *lifetime,
+                immobile_ms: *immobile,
+                range_meters: *range,
+                capacitor: *capacitor,
+            })
+        }
+        (32, [field, destination, range, passengers @ ..])
+            if is_id(*field)
+                && is_id(*destination)
+                && range.is_finite()
+                && *range > 0.0
+                && passengers.len() <= MAX_CONDUIT_PASSENGERS
+                && passengers.iter().all(|p| is_id(*p)) =>
+        {
+            let mut ships = [0_i64; MAX_CONDUIT_PASSENGERS];
+            for (slot, ship) in ships.iter_mut().zip(passengers) {
+                *slot = *ship as i64;
+            }
+            Some(Command::ConduitJump {
+                field_id: *field as i64,
+                destination_system: *destination as i32,
+                range_meters: *range,
+                passenger_count: passengers.len() as u8,
+                passengers: ships,
+            })
+        }
+        (31, [bridge, field, destination]) if is_id(*bridge) && is_id(*field) && is_id(*destination) => {
+            Some(Command::BridgeJump {
+                bridge_ship_id: *bridge as i64,
+                field_id: *field as i64,
+                destination_system: *destination as i32,
             })
         }
         (9, [gate]) if is_id(*gate) => Some(Command::Jump { gate_id: *gate as i64, destination_gate: 0 }),
@@ -40,6 +95,7 @@ pub(super) fn command_of(code: u8, args: &[f64]) -> Option<Command> {
         (23, [target]) if is_id(*target) => Some(Command::PositionOf { target_id: *target as i64 }),
         (25, [distance]) if distance.is_finite() => Some(Command::DropPoint { distance: *distance }),
         (27, []) => Some(Command::ScanTargets),
+        (28, []) => Some(Command::DirectionalScan),
         _ => None,
     }
 }
@@ -92,6 +148,9 @@ impl Sim {
                 Message::Docked { session_id: session, station_id, condition }
             }
             Out::DeployedLit { placement, .. } => Message::Deployed(placement),
+            Out::StructureDamaged { structure_id, depleted, over_threshold } => {
+                Message::StructureDamaged { structure_id, depleted, over_threshold }
+            }
             Out::Arrived { session, belt_id, position } => Message::Arrived {
                 session_id: session,
                 belt_id,
@@ -172,6 +231,9 @@ impl Sim {
             },
             Out::ScanTargets { session, command, targets } => {
                 Message::ScanTargets { session_id: session, command, targets }
+            }
+            Out::DirectionalTargets { session, command, targets } => {
+                Message::DirectionalTargets { session_id: session, command, targets }
             }
             Out::DroneResults { session, command, results } => Message::DroneResults {
                 session_id: session,
@@ -326,10 +388,14 @@ impl Sim {
             | Message::RemoveWreck { .. }
             | Message::Deployed(..)
             | Message::RemoveDeployed { .. }
+            | Message::PlaceStructure(..)
+            | Message::RemoveStructure { .. }
+            | Message::SetStructureState { .. }
             | Message::PlaceProbe(..)
             | Message::RemoveProbe { .. }
             | Message::PlaceDisruptor(..)
             | Message::PlaceInhibitor(..)
+            | Message::PlaceCynoBeacon(..)
             | Message::SetDisruptorActive { .. } => self.handle_world(message, now),
             other => Err(ProtocolError(format!(
                 "a message of kind {} is for the host, not the simulation",
@@ -878,6 +944,25 @@ impl Sim {
                     None => Vec::new(),
                 }
             }
+            Message::PlaceStructure(structure) => {
+                let structure = *structure;
+                match self.scenes.get_mut(&structure.solar_system_id) {
+                    Some(scene) => scene.place_structure(structure, now),
+                    None => Vec::new(),
+                }
+            }
+            Message::RemoveStructure { structure_id } => self
+                .scenes
+                .values_mut()
+                .find(|scene| scene.structure_index(structure_id).is_some())
+                .map(|scene| scene.remove_structure(structure_id, now))
+                .unwrap_or_default(),
+            Message::SetStructureState { solar_system_id, structure_id, status } => {
+                match self.scenes.get_mut(&solar_system_id) {
+                    Some(scene) => scene.set_structure_state(structure_id, status, now),
+                    None => Vec::new(),
+                }
+            }
             Message::PlaceProbe(probe) => {
                 let probe = *probe;
                 match self.scenes.get_mut(&probe.solar_system_id) {
@@ -895,6 +980,13 @@ impl Sim {
                 let disruptor = *disruptor;
                 match self.scenes.get_mut(&disruptor.solar_system_id) {
                     Some(scene) => scene.place_disruptor(disruptor, now),
+                    None => Vec::new(),
+                }
+            }
+            Message::PlaceCynoBeacon(beacon) => {
+                let beacon = *beacon;
+                match self.scenes.get_mut(&beacon.solar_system_id) {
+                    Some(scene) => scene.place_cyno_beacon(beacon, now),
                     None => Vec::new(),
                 }
             }

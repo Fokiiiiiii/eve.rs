@@ -47,7 +47,7 @@ public class ProtocolTests
         var characterSessions=new CharacterSessions();
         characterSessions.Enter(actor,session);
         var catalog=await MarketCatalog.LoadAsync(new Eve.Sde.SdeReader(r.Source));
-        var proxy=new MarketProxyService(r.Book,r.Trading,r.Topology,r.Characters,r.Wallets,catalog,() => r.Now,characterSessions);
+        var proxy=new MarketProxyService(r.Book,r.Trading,r.Topology,r.Characters,r.Corporations,r.Wallets,catalog,() => r.Now,r.Expiry,characterSessions);
         var events=new List<Eve.Wallet.WalletBalanceChange>();
         r.Wallets.BalanceCommitted+=events.Add;
         var groups=Fields(proxy.GetMarketGroups(Call(session,"GetMarketGroups",0)));
@@ -83,11 +83,12 @@ public class ProtocolTests
         var sell=Py.Dict(("stationID",new PyInt(r.Station.Id)),("typeID",new PyInt(34)),("itemID",new PyLong(bought.Id)),
             ("price",new PyReal(12)),("quantity",new PyInt(5)));
         Assert.Equal(PyBool.True,await proxy.PlaceMultiSellOrder(Call(session,"PlaceMultiSellOrder",6,new PyList([sell]),PyBool.False,new PyInt(90))));
-        Assert.Equal(2,sink.Packets.Count);
+        // the immediate buy sends nothing (G8: no fabricated order-0 row); the sell sends the Created notification
+        Assert.Single(sink.Packets);
         Assert.All(sink.Packets,packet => Assert.Equal("OnOwnOrdersChanged",NotificationName(packet)));
         var own=(await r.Book.BookAsync(r.Station.RegionId,34,r.Now)).Asks.Single(o => !o.IsNpc);
         Assert.Equal(PyNone.Instance,await proxy.CancelCharOrder(Call(session,"CancelCharOrder",7,new PyLong(own.Id))));
-        Assert.Equal(3,sink.Packets.Count);
+        Assert.Equal(2,sink.Packets.Count);
         Assert.All(sink.Packets,packet => Assert.Equal("OnOwnOrdersChanged",NotificationName(packet)));
         Assert.Equal(5,Assert.Single(await r.Items.InLocationAsync(r.Station.Id,actor)).Quantity);
     }
@@ -120,7 +121,7 @@ public class ProtocolTests
         var characterSessions=new CharacterSessions();
         characterSessions.Enter(actor,session);
         var catalog=await MarketCatalog.LoadAsync(new Eve.Sde.SdeReader(r.Source));
-        var proxy=new MarketProxyService(r.Book,r.Trading,r.Topology,r.Characters,r.Wallets,catalog,() => r.Now,characterSessions);
+        var proxy=new MarketProxyService(r.Book,r.Trading,r.Topology,r.Characters,r.Corporations,r.Wallets,catalog,() => r.Now,r.Expiry,characterSessions);
         const int plex=44992;
         var location=MarketLocation.From(r.Station);
         await r.Book.SeedNpcAsync([new("ask",plex,false,1000,3,32767,location,r.Now)]);
@@ -169,14 +170,8 @@ public class ProtocolTests
         Assert.Equal(PyNone.Instance,await proxy.PlaceBuyOrder(Call(session,"PlaceBuyOrder",24,
             new PyInt(r.Station.Id),new PyInt(plex),new PyReal(1000),new PyInt(1),new PyInt(-1),
             new PyInt(1),new PyInt(0),PyBool.False)));
-        Assert.Equal(3,sink.Packets.Count);
-        var filledNotification=NotificationArguments(sink.Packets[2]);
-        Assert.Equal("Filled",Eve.Macho.JsSemantics.PlainText(filledNotification.Items[1]));
-        var filledOrders=Assert.IsType<PyList>(filledNotification.Items[0]);
-        var immediateOrder=Fields(Assert.Single(filledOrders.Items));
-        Assert.Equal(new PyLong(0),Field(immediateOrder,"orderID"));
-        Assert.Equal(new PyInt(plex),Field(immediateOrder,"typeID"));
-        Assert.Equal(new PyInt(0),Field(immediateOrder,"volRemaining"));
+        // an immediate fill sends no notification: the fabricated order-0 row is gone (G8); M4 invalidates the caches instead
+        Assert.Equal(2,sink.Packets.Count);
         var histories=Assert.IsType<PyDict>(await proxy.GetPlexHistory(Call(session,"GetPlexHistory",25)));
         var pair=Assert.IsType<PyList>(Assert.Single(histories.Entries).Value);
         Assert.Equal(2,pair.Items.Count);
@@ -223,7 +218,7 @@ public class ProtocolTests
         sessions.Enter(firstActor,firstSession);
         sessions.Enter(secondActor,secondSession);
         var catalog=await MarketCatalog.LoadAsync(new Eve.Sde.SdeReader(r.Source));
-        var proxy=new MarketProxyService(r.Book,r.Trading,r.Topology,r.Characters,r.Wallets,catalog,() => r.Now,sessions);
+        var proxy=new MarketProxyService(r.Book,r.Trading,r.Topology,r.Characters,r.Corporations,r.Wallets,catalog,() => r.Now,r.Expiry,sessions);
         const int type=34;
         await r.Book.SeedNpcAsync([
             new("ask:origin",type,false,10,1,32767,MarketLocation.From(r.Station),r.Now),
@@ -260,7 +255,7 @@ public class ProtocolTests
         characterSessions.Enter(actor,session);
         var catalog=await MarketCatalog.LoadAsync(new Eve.Sde.SdeReader(r.Source));
         Assert.Contains(r.Station.Id,catalog.NpcStationIds);
-        var proxy=new MarketProxyService(r.Book,r.Trading,r.Topology,r.Characters,r.Wallets,catalog,() => r.Now,characterSessions);
+        var proxy=new MarketProxyService(r.Book,r.Trading,r.Topology,r.Characters,r.Corporations,r.Wallets,catalog,() => r.Now,r.Expiry,characterSessions);
 
         var location=MarketLocation.From(r.Station);
         var remoteStation=Assert.Single(r.Stations.All.Where(s=>s.RegionId==r.Station.RegionId && s.SolarSystemId!=r.Station.SolarSystemId).Take(1));
@@ -331,17 +326,18 @@ public class ProtocolTests
 
         foreach(var dict in new[]{station,system})
         {
-            var type100=Assert.IsType<PyTuple>(ByType(dict,100));
-            Assert.Equal(30m,Decimal(type100.Items[0]));
-            Assert.Equal(1m,Decimal(type100.Items[1]));
-            Assert.Equal(100,IntegerValue(type100.Items[2]));
-            Assert.Equal(r.Station.Id,LongValue(type100.Items[3]));
+            // the ask summaries are KeyVal rows read by name (Q13, G10)
+            var type100=Fields(ByType(dict,100));
+            Assert.Equal(30m,Decimal(Field(type100,"price")));
+            Assert.Equal(1m,Decimal(Field(type100,"volRemaining")));
+            Assert.Equal(100,IntegerValue(Field(type100,"typeID")));
+            Assert.Equal(r.Station.Id,LongValue(Field(type100,"stationID")));
 
-            var type200=Assert.IsType<PyTuple>(ByType(dict,200));
-            Assert.Equal(9m,Decimal(type200.Items[0]));
-            Assert.Equal(9m,Decimal(type200.Items[1]));
-            Assert.Equal(200,IntegerValue(type200.Items[2]));
-            Assert.Equal(r.Station.Id,LongValue(type200.Items[3]));
+            var type200=Fields(ByType(dict,200));
+            Assert.Equal(9m,Decimal(Field(type200,"price")));
+            Assert.Equal(9m,Decimal(Field(type200,"volRemaining")));
+            Assert.Equal(200,IntegerValue(Field(type200,"typeID")));
+            Assert.Equal(r.Station.Id,LongValue(Field(type200,"stationID")));
         }
 
         var region100=Fields(ByType(region,100));
@@ -353,7 +349,7 @@ public class ProtocolTests
         Assert.Equal(9m,Decimal(Field(region200,"price")));
         Assert.Equal(15m,Decimal(Field(region200,"volRemaining")));
         Assert.Equal(200,IntegerValue(Field(region200,"typeID")));
-        Assert.Equal(Math.Min(r.Station.Id,remoteStation.Id),LongValue(Field(region200,"stationID")));
+        Assert.Equal(remoteStation.Id,LongValue(Field(region200,"stationID"))); // the only ask at the best price (9) is the remote one
         var region300=Fields(ByType(region,300));
         Assert.Equal(5m,Decimal(Field(region300,"price")));
         Assert.Equal(7m,Decimal(Field(region300,"volRemaining")));

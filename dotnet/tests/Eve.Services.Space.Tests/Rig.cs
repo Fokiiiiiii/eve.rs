@@ -42,9 +42,59 @@ public sealed class PgTheoryAttribute : TheoryAttribute
 /// <summary>Keeps what the server sent, so a test can read the events.</summary>
 internal sealed class Sink : IPacketSink
 {
-    public List<PyValue> Sent { get; } = [];
+    public SentLog Sent { get; } = new();
 
     public void Send(PyValue packet) => Sent.Add(packet);
+}
+
+/// <summary>
+/// What a session was sent. The host's background work sends from its own threads while a test reads and clears the log, so every access takes the lock (a plain
+/// list read during an add loses or tears what the test reads: a load-dependent failure of the death tests).
+/// </summary>
+internal sealed class SentLog : IEnumerable<PyValue>
+{
+    private readonly object _gate = new();
+    private readonly List<PyValue> _items = [];
+
+    public void Add(PyValue packet)
+    {
+        lock (_gate)
+        {
+            _items.Add(packet);
+        }
+    }
+
+    public void Clear()
+    {
+        lock (_gate)
+        {
+            _items.Clear();
+        }
+    }
+
+    public int Count
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return _items.Count;
+            }
+        }
+    }
+
+    /// <summary>A snapshot of what was sent so far.</summary>
+    public PyValue[] ToArray()
+    {
+        lock (_gate)
+        {
+            return _items.ToArray();
+        }
+    }
+
+    public IEnumerator<PyValue> GetEnumerator() => ((IEnumerable<PyValue>)ToArray()).GetEnumerator();
+
+    System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() => GetEnumerator();
 }
 
 /// <summary>Real stores in throwaway schemas, the real static data, a character made the way the game makes one, and a simulation played by the test.</summary>
@@ -71,7 +121,7 @@ private readonly Dictionary<long, ClientSession> _fleetSessions = new();
         // the fleets have a schema of their own: the shared one kept the memberships of earlier tests
         FleetStore = new Eve.Services.Space.FleetStore(source, $"pl_{suffix}");
         _suffix = suffix;
-        _schemas = [$"pc_{suffix}", $"pi_{suffix}", $"ps_{suffix}", $"pw_{suffix}", $"pf_{suffix}", $"pn_{suffix}", $"pp_{suffix}", $"pd_{suffix}", $"pe_{suffix}", $"pl_{suffix}"];
+        _schemas = [$"pc_{suffix}", $"pi_{suffix}", $"ps_{suffix}", $"pw_{suffix}", $"pf_{suffix}", $"pn_{suffix}", $"pp_{suffix}", $"pd_{suffix}", $"pe_{suffix}", $"pl_{suffix}", $"pt_{suffix}"];
         Events = new Eve.Events.EventBus(source, new Eve.Scheduler.DurableScheduler(source, () => Now, null, _schemas[7]), null, _schemas[8]);
         SpaceItems = new PgSpaceItemStore(source, _schemas[6]);
         Deployed = new Eve.Ships.PgDeployedStore(source, _schemas[6]);
@@ -98,6 +148,7 @@ private readonly Dictionary<long, ClientSession> _fleetSessions = new();
         ProbeScans = new Eve.Services.Space.SpaceProbeScans(Space, Sim, statics, Probes, Ships, Skills, Scheduler, Space.Probes, () => Now, sites: null, random: new Random(7));
         ProbeScans.Register();
         Space.ProbeScans = ProbeScans;
+        Space.DirectionalScans = new Eve.Services.Space.Scanning.SpaceDirectionalScans(Space, Sim, statics);
         Drones = new SpaceDrones(Sim, Ships, statics, Space, () => Now, Log.Add);
         Inventory = new InvBrokerService(Items, new ItemTypeCatalog(new SdeReader(source)), Stations, Ships, statics, () => Now, Containers, Drones);
         Ship = new ShipService(Space, () => ClockMs, Containers, Drones);
@@ -111,6 +162,9 @@ private readonly Dictionary<long, ClientSession> _fleetSessions = new();
 
     /// <summary>The PostgreSQL schema of the space items and the work-cycle ledger: a host restarted over it reads the same ledger.</summary>
     public string SpaceSchema => _schemas[6];
+
+    /// <summary>The Eve.Structures schema of this rig (ST-1 d tests).</summary>
+    public string StructureSchema => _schemas[^1];
 
 
 

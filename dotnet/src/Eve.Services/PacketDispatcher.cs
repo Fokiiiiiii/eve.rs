@@ -11,6 +11,8 @@ namespace Eve.Services;
 public sealed class PacketDispatcher
 {
     private const string ReleaseMethod = "ClientHasReleasedTheseObjects";
+    private const string ServiceNotFoundClass = "eveexceptions.ServiceNotFound";
+    private const string AttributeErrorClass = "exceptions.AttributeError";
     private const string ReleaseKey = "OID-";
 
     private readonly ServiceRegistry _registry;
@@ -26,8 +28,12 @@ public sealed class PacketDispatcher
     public Action<string, Exception?>? OnProblem { get; set; }
 
     /// <summary>
-    /// Strict mode (EVE_STRICT_RPC=1): an unknown service or method, a call with no service and a failing handler
-    /// are answered with a Macho error and logged with their details, instead of a None result.
+    /// An unknown service, an unknown method and a call with no service are answered with the Macho error the V24.01
+    /// server sends for them (a wrapped <c>ServiceNotFound</c> or <c>AttributeError</c>), which the client raises at
+    /// its call site; a None result would be read as the call's answer (the client dies on <c>None.level</c>).
+    /// A handler that throws an exception other than a user error is answered with the V24.01 server's wrapped
+    /// <c>RuntimeError</c> carrying an error ID; the host logs the exception under that ID. Strict mode (EVE_STRICT_RPC=1)
+    /// also names the failure in the error text and logs the call's arguments and the stack trace.
     /// </summary>
     public bool StrictRpc { get; init; }
 
@@ -93,7 +99,7 @@ public sealed class PacketDispatcher
                 FailStrictly(packet, session, null, call, "unknown service", "the call names no service");
                 return true;
             }
-            SendCallResponse(packet, PyNone.Instance, session, null);
+            SendError(packet, MachoErrors.UserError("UnMachoDestination"), session, null);
             return true;
         }
 
@@ -129,16 +135,25 @@ public sealed class PacketDispatcher
                 return true;
             }
             if (traceRpc)
-                Console.Error.WriteLine($"[rpc-trace] unhandled session={session.SessionId} service={serviceName} method={call.Method} reason=service-not-registered result=PyNone");
-            SendCallResponse(packet, PyNone.Instance, session, serviceName);
+                Console.Error.WriteLine($"[rpc-trace] unhandled session={session.SessionId} service={serviceName} method={call.Method} reason=service-not-registered");
+            // The V24.01 server's answer to an unknown service: ServiceNotFound, wrapped (machoNetTransport.SessionCall).
+            SendError(packet, MachoErrors.Wrapped(ServiceNotFoundClass, [new PyStr(serviceName)]), session, serviceName);
             return true;
         }
 
-        if (traceRpc && !service.HasMethod(call.Method))
-            Console.Error.WriteLine($"[rpc-trace] unhandled session={session.SessionId} service={service.Name} method={call.Method} reason=method-not-registered");
-        if (StrictRpc && !service.HasMethod(call.Method))
+        if (!service.HasMethod(call.Method))
         {
-            FailStrictly(packet, session, service.Name, call, "unknown method", $"{service.Name}.{call.Method}");
+            if (traceRpc)
+                Console.Error.WriteLine($"[rpc-trace] unhandled session={session.SessionId} service={service.Name} method={call.Method} reason=method-not-registered");
+            if (StrictRpc)
+            {
+                FailStrictly(packet, session, service.Name, call, "unknown method", $"{service.Name}.{call.Method}");
+                return true;
+            }
+            // The V24.01 server's answer to a method it does not export: the AttributeError of getattr, wrapped
+            // (ObjectCallGPCS.ObjectCall, then ExceptionWrapper.CallUp).
+            SendError(packet, MachoErrors.Wrapped(AttributeErrorClass,
+                [new PyStr($"'{service.Name}' object has no attribute '{call.Method}'")]), session, service.Name);
             return true;
         }
 
@@ -202,7 +217,6 @@ public sealed class PacketDispatcher
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            // The reference answers a failing handler with a None result rather than an error.
             if (trace)
             {
                 Console.Error.WriteLine(
@@ -210,13 +224,17 @@ public sealed class PacketDispatcher
                     $"method={call.Method} error={ex.GetType().Name}");
             }
             session.DropAfterResponse();
-            OnProblem?.Invoke($"{service.Name}.{call.Method}: {ex.Message}", ex);
             if (StrictRpc)
             {
+                OnProblem?.Invoke($"{service.Name}.{call.Method}: {ex.Message}", ex);
                 FailStrictly(packet, session, service.Name, call, "unhandled exception", $"{ex.GetType().Name}: {ex.Message}", ex);
                 return true;
             }
-            SendCallResponse(packet, PyNone.Instance, session, service.Name);
+            // Answered as the V24.01 server answers an unexpected exception: a wrapped error under an ID. The host logs
+            // the exception under the same ID; the client gets the ID and neither the message nor the stack.
+            var errorId = RpcDiagnostics.CorrelationId();
+            OnProblem?.Invoke($"{service.Name}.{call.Method} [{errorId}]: {ex.GetType().Name}: {ex.Message}", ex);
+            SendError(packet, MachoErrors.UnexpectedFailure(errorId, $"{service.Name}.{call.Method}"), session, service.Name);
             return true;
         }
         finally
@@ -243,7 +261,7 @@ public sealed class PacketDispatcher
         session.Send(ResponseBuilder.CallResponse(packet, result, session.Get("userid"), serviceName));
 
     private static void SendError(MachoPacket packet, MachoError error, ClientSession session, string? serviceName) =>
-        session.Send(ResponseBuilder.ErrorResponse(packet, error.ErrorCode, error.Payload, session.Get("userid"), serviceName));
+        session.Send(ResponseBuilder.ErrorResponse(packet, error.ErrorCode, error.Payload, session.Get("userid"), serviceName, error.Detail));
 
     /// <summary>
     /// A result that hands out a bound object (<c>[substruct(substream((oid, refID))), callResult]</c>, or the

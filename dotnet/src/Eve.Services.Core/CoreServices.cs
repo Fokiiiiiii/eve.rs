@@ -8,7 +8,6 @@ public static class CoreServices
 {
     /// <summary>Creates every core service. Register them with <see cref="ServiceRegistry.Register"/>.</summary>
     public static IReadOnlyList<IService> Create(
-        SubscriptionSettings settings,
         IOmegaAccountStore accounts,
         Func<long> nowUnixMs,
         Eve.Calendar.ICalendarStore? calendarStore = null,
@@ -24,15 +23,16 @@ public static class CoreServices
         ReadEscalatingPathDetailsCallback? readEscalatingPathDetails = null,
         KeeperRpcCallbacks? keeperRpcCallbacks = null,
         ReadControlTowerRowsCallback? readControlTowerRows = null,
-        ReadCommunityFittingsCallback? readCommunityFittings = null,
         CustomAgencyProviderRpcCallbacks? customAgencyProviderRpcCallbacks = null,
         ReadEpicArcStatusCallback? readEpicArcStatus = null,
         SuperWeaponRpcCallbacks? superWeaponRpcCallbacks = null,
-        TourneyQueryCallback? tourneyQueryCallback = null)
+        TourneyQueryCallback? tourneyQueryCallback = null,
+        ISpaceModules? spaceModules = null,
+        Func<ClientSession, bool>? isShipInSpace = null)
     {
         gameRpcCallbacks ??= new GameRpcCallbacks();
-        var licenses = new OmegaLicenses(settings, accounts, nowUnixMs);
-        var subscriptionManager = new SubscriptionMgrService(settings, licenses);
+        var licenses = new OmegaLicenses(accounts, nowUnixMs);
+        var subscriptionManager = new SubscriptionMgrService(licenses);
         var calendarManager = calendarStore is null
             ? new CalendarMgrService()
             : new CalendarMgrService(calendarStore,
@@ -54,7 +54,6 @@ public static class CoreServices
             new NodeGraphService(nodeGraphRpcCallback),
             new PeaceTreatyMgrService(gameRpcCallbacks.ReadPeaceTreaties),
             new PublicQaToolsServerService(gameRpcCallbacks.PublicQaTools),
-            new CorpFittingMgrService(readCommunityFittings),
             new CustomAgencyProviderService(customAgencyProviderRpcCallbacks),
             new EpicArcStatusService(readEpicArcStatus),
             new SuperWeaponMgrService(superWeaponRpcCallbacks),
@@ -67,7 +66,8 @@ public static class CoreServices
             new ServiceGatewayMgrService(gameRpcCallbacks.SetHijackMode, gameRpcCallbacks.IsHijackModeEnabled),
             new SharedSettingsMgrService(gameRpcCallbacks.ReadSharedSettings, gameRpcCallbacks.WriteSharedSettingsAsync, nowUnixMs),
             new OverviewPresetMgrService(gameRpcCallbacks.ReadOverviewPresets, gameRpcCallbacks.WriteOverviewPresets),
-            new ShipStanceMgrService(gameRpcCallbacks.SetShipStanceAsync),
+            new ShipStanceMgrService(gameRpcCallbacks.SetShipStanceAsync,
+                spaceModules is null ? null : (session, cancellationToken) => spaceModules.RefreshShipAsync(session, cancellationToken), isShipInSpace),
             new SolarSystemInterferenceMgrService(gameRpcCallbacks.ReadInterferenceTableAsync, nowUnixMs),
             new SurveyService(gameRpcCallbacks.ReadActiveSurveyIdAsync, gameRpcCallbacks.RecordSurveyEventAsync),
             new WarStatisticMgrService(gameRpcCallbacks.ReadKillmailAsync, nowUnixMs),

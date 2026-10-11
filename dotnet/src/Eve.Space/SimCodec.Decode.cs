@@ -5,6 +5,49 @@ namespace Eve.Space;
 
 public static partial class SimCodec
 {
+    /// <summary>A structure's health (protocol 60): the points of its shield, armor and hull, the resonances of each layer, the shield's recharge, the
+    /// limit each layer takes in a second and the repair pause of each layer.</summary>
+    private static SimStructureHealth ReadStructureHealth(ref Reader r)
+    {
+        var shield = r.F64();
+        var armor = r.F64();
+        var structure = r.F64();
+        var resonances = new double[12];
+        for (var i = 0; i < resonances.Length; i++)
+        {
+            resonances[i] = r.F64();
+        }
+        var recharge = r.F64();
+        var perSecond = new[] { r.F64(), r.F64(), r.F64() };
+        var repairPause = new[] { r.F64(), r.F64(), r.F64() };
+        return new SimStructureHealth(shield, armor, structure, resonances, recharge, perSecond, repairPause);
+    }
+
+    /// <summary>A structure's slim fields, in the order the simulation codec writes them (protocol 59): a flagged timer (start, end and a flagged pause),
+    /// a flagged unanchoring time and repairing (0 none, 1 not repairing, 2 repairing).</summary>
+    private static SimStructureStatus ReadStructureStatus(ref Reader r)
+    {
+        var state = r.I32();
+        var upkeep = r.I32();
+        (long Start, long End, long? Paused)? timer = null;
+        if (ReadFlag(ref r, "structure timer"))
+        {
+            var start = r.I64();
+            var end = r.I64();
+            long? paused = ReadFlag(ref r, "structure timer pause") ? r.I64() : null;
+            timer = (start, end, paused);
+        }
+        long? unanchoring = ReadFlag(ref r, "structure unanchoring") ? r.I64() : null;
+        bool? repairing = r.U8() switch
+        {
+            0 => null,
+            1 => false,
+            2 => true,
+            _ => throw new SimLinkException(SimLinkError.BadValue, "bad structure repairing"),
+        };
+        return new SimStructureStatus(state, upkeep, timer, unanchoring, repairing);
+    }
+
     private static double[] ReadVector(ref Reader r) => [r.F64(), r.F64(), r.F64()];
 
     /// <summary>A flag byte: 0 or 1; anything else is a bad value of <paramref name="what"/>.</summary>
@@ -135,7 +178,13 @@ public static partial class SimCodec
         {
             throw new SimLinkException(SimLinkError.BadValue, "the drone damage multiplier is not a non-negative number");
         }
-        return new SimShip(shipId, characterId, typeId, groupId, categoryId, name, ownerId, corporationId, allianceId, warFactionId, security, radius, mass, maxVelocity, agility, warpSpeed, shieldRecharge, maxTargetRange, scanResolution, signatureRadius, maxLockedTargets, capacitorCapacity, capacitorRecharge, modules, vitals, condition, sensors, droneDamageMultiplier);
+        var flag = r.U8();
+        if (flag > 1)
+        {
+            throw new SimLinkException(SimLinkError.BadValue, "the ship stance flag is neither 0 nor 1");
+        }
+        var stance = flag == 0 ? null : new SimShipStance(r.I32(), r.I64(), r.I32());
+        return new SimShip(shipId, characterId, typeId, groupId, categoryId, name, ownerId, corporationId, allianceId, warFactionId, security, radius, mass, maxVelocity, agility, warpSpeed, shieldRecharge, maxTargetRange, scanResolution, signatureRadius, maxLockedTargets, capacitorCapacity, capacitorRecharge, modules, vitals, condition, sensors, droneDamageMultiplier, stance);
     }
 
     private static SimCondition ReadCondition(ref Reader r) => new(r.F64(), r.F64(), r.F64(), r.F64());

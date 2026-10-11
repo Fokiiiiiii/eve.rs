@@ -3,6 +3,7 @@ using System.Buffers.Binary;
 using System.Net;
 using System.Net.Sockets;
 using System.Text;
+using System.Text.RegularExpressions;
 using Eve.Identity;
 using Eve.Macho;
 using Eve.Marshal;
@@ -37,20 +38,20 @@ public class HostServerTests : IAsyncLifetime
 
     public Task InitializeAsync() => Task.CompletedTask;
 
-    private void Start(AccountOptions? identity = null, int maxPending = 10_000, Action<ServiceRegistry>? configure = null, IAccountDirectory? accounts = null, bool strictRpc = false)
+    private void Start(AccountOptions? identity = null, int maxPending = 10_000, Action<ServiceRegistry>? configure = null, IAccountDirectory? accounts = null, bool strictRpc = false, Action<string, Exception?>? onProblem = null)
     {
         var registry = new ServiceRegistry();
         configure?.Invoke(registry);
         Func<long> now = () => FixedNowMs;
         var calendarStore = new TestCalendarStore();
         var calendarAudience = new TestCalendarAudienceReader();
-        foreach (var service in CoreServices.Create(new SubscriptionSettings(), new NoAccounts(), now, calendarStore, calendarAudience))
+        foreach (var service in CoreServices.Create(new NoAccounts(), now, calendarStore, calendarAudience))
         {
             registry.Register(service);
         }
         var config = GlobalConfig.Build(Options);
         registry.Register(new MachoNetService(new Info(registry, config), now));
-        var dispatcher = new PacketDispatcher(registry, now) { StrictRpc = strictRpc };
+        var dispatcher = new PacketDispatcher(registry, now) { StrictRpc = strictRpc, OnProblem = onProblem };
         var encoded = MarshalCodec.Encode(config);
         _server = new HostServer(
             new HostOptions { MaxPendingPacketsPerSession = maxPending, Log = message => { lock (_log) { _log.Add(message); } } },
@@ -100,7 +101,7 @@ public class HostServerTests : IAsyncLifetime
 
     private sealed class NoAccounts : IOmegaAccountStore
     {
-        public string? GetOmegaExpiry(long accountId) => null;
+        public string? GetOmegaExpiry(long accountId) => OmegaLicenses.DefaultOmegaExpiryText;
     }
 
     private sealed class EmptyStructureDirectoryReadCallbacks :
@@ -1184,7 +1185,7 @@ public class HostServerTests : IAsyncLifetime
         var online = new Eve.Services.CharacterInfo.OnlineStatusService(new Eve.Services.CharacterSessions(),
             (_, _) => ValueTask.FromResult<IReadOnlyCollection<long>>([]));
         var multiLoginBlocker = new Eve.Services.CharacterSelect.MultiLoginBlockerService();
-        var populationCap = new Eve.Services.CharacterSelect.PopulationCapService(null!);
+        var populationCap = new Eve.Services.CharacterSelect.PopulationCapService(null!, null!);
         var config = new Eve.Services.CharacterInfo.ConfigService(null!, null!, null!, null!);
         var securityMgr = new Eve.Services.Core.SecurityMgrService();
         var alert = new Eve.Services.Core.AlertService();
@@ -1256,7 +1257,7 @@ public class HostServerTests : IAsyncLifetime
           Assert.Same(fleetProxy, registry.Lookup("fleetProxy"));
         Assert.Same(online, registry.Lookup("onlineStatus"));
         Assert.Same(multiLoginBlocker, registry.Lookup("multiLoginBlocker"));
-        Assert.Same(PyBool.True, multiLoginBlocker.Login(null!));
+        Assert.Same(PyBool.True, multiLoginBlocker.Login(new ServiceCall { Method = "Login", Args = [], Session = null! }));
         Assert.Same(populationCap, registry.Lookup("populationCap"));
         Assert.Same(config, registry.Lookup("config"));
         Assert.Same(loginCampaigns, registry.Lookup("loginCampaignManager"));
@@ -1344,7 +1345,7 @@ public class HostServerTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task A_ping_is_answered_and_an_unknown_service_gets_none_as_the_reference_does()
+    public async Task A_ping_is_answered_and_an_unknown_service_gets_a_service_not_found_error()
     {
         Start();
         var front = await Handshaken(await ConnectAsync());
@@ -1356,9 +1357,38 @@ public class HostServerTests : IAsyncLifetime
         var pong = Assert.IsType<Send>(await front.ReceiveAsync());
         Assert.Equal(21, ((PyInt)((PyTuple)((PyObject)MarshalCodec.Decode(pong.Payload)).Args).Items[0]).Value);
 
+        // The V24.01 server's answer to a service it does not have: a wrapped ServiceNotFound, not a None result.
         await front.SendAsync(new Packet(open.SessionId, MarshalCodec.Encode(Packets.Call(open, 2, "noSuchService", "Nothing"))));
-        var none = Assert.IsType<Send>(await front.ReceiveAsync());
-        Assert.IsType<PyNone>(Result(MarshalCodec.Decode(none.Payload)));
+        var error = Assert.IsType<Send>(await front.ReceiveAsync());
+        AssertWrappedError(error, "eveexceptions.ServiceNotFound", "noSuchService");
+    }
+
+    [Fact]
+    public async Task An_unknown_method_gets_a_wrapped_attribute_error_and_a_known_method_still_answers()
+    {
+        Start();
+        var front = await Handshaken(await ConnectAsync());
+        var open = Open();
+        await front.SendAsync(open);
+        await front.ReceiveAsync();
+
+        await front.SendAsync(new Packet(open.SessionId, MarshalCodec.Encode(Packets.Call(open, 1, "machoNet", "NoSuchMethod"))));
+        AssertWrappedError(Assert.IsType<Send>(await front.ReceiveAsync()), "exceptions.AttributeError", "NoSuchMethod");
+
+        await front.SendAsync(new Packet(open.SessionId, MarshalCodec.Encode(Packets.Call(open, 2, "machoNet", "GetTime"))));
+        var time = Assert.IsType<PyLong>(Result(MarshalCodec.Decode(Assert.IsType<Send>(await front.ReceiveAsync()).Payload)));
+        Assert.Equal(Py.FileTimeFromUnixMs(FixedNowMs), time.Value);
+    }
+
+    /// <summary>An ERRORRESPONSE (command 15) whose wrapped exception has <paramref name="className"/> and names <paramref name="mention"/>.</summary>
+    private static void AssertWrappedError(Send reply, string className, string mention)
+    {
+        var state = ((PyTuple)((PyObject)MarshalCodec.Decode(reply.Payload)).Args).Items;
+        Assert.Equal(15, ((PyInt)state[0]).Value); // ERRORRESPONSE
+        var text = Encoding.ASCII.GetString(reply.Payload.Span);
+        Assert.Contains(className, text);
+        Assert.Contains(mention, text);
+        Assert.DoesNotContain("Server error ", text); // a wrapped exception of the server, not the strict-mode notice
     }
 
     [Fact]
@@ -1380,6 +1410,73 @@ public class HostServerTests : IAsyncLifetime
         Assert.Contains("Server error ", text);
     }
 
+    /// <summary>
+    /// The owner rows of <c>config.GetMultiOwnersEx</c> through the host, with the client's row layout: the header the client's
+    /// <c>cfg.EveOwners</c> reads (eveCfg.py:1188-1201), one row per known owner, and no placeholder row for an unknown id.
+    /// </summary>
+    [PgFact]
+    public async Task The_owner_rows_reach_the_client_through_the_host_and_an_unknown_id_has_no_row()
+    {
+        var url = Environment.GetEnvironmentVariable("EVE_PG_URL")!;
+        await using var source = Npgsql.NpgsqlDataSource.Create(Eve.Data.PgConnection.ToConnectionString(url));
+        var schema = $"host_cfg_{Guid.NewGuid():N}"[..20];
+        var charactersSchema = $"host_chr_{Guid.NewGuid():N}"[..20];
+        try
+        {
+            await Eve.Corporations.CorporationStore.MigrateAsync(source, schema);
+            await Eve.Characters.PgCharacterStore.MigrateAsync(source, charactersSchema);
+            await using (var seed = source.CreateCommand($"""
+                INSERT INTO {schema}.owner_names(owner_id,name_key,ticker_key)
+                VALUES (1400000001,'test corporation','test-corp'),(1500000001,'test alliance','test-alliance');
+                INSERT INTO {schema}.corporations(
+                    id,name,ticker,ceo_id,creator_id,station_id,solar_system_id,tax_rate,lp_tax_rate,
+                    description,url,member_limit,created_ms)
+                VALUES (1400000001,'Test Corporation','TST',1,1,60000004,30000142,0,0,'','',10,0);
+                INSERT INTO {schema}.alliances(
+                    id,name,short_name,description,url,executor_corporation_id,creator_corporation_id,
+                    creator_character_id,created_ms,founding_key,deleted)
+                VALUES (1500000001,'Test Alliance','TAL','', '',1400000001,1400000001,1,0,'host-live',false);
+                """))
+                await seed.ExecuteNonQueryAsync();
+            var characters = new Eve.Characters.PgCharacterStore(source, charactersSchema);
+            var corporations = new Eve.Corporations.CorporationStore(source, characters, null!, null!, null!, () => 0, schema);
+            Start(configure: registry => registry.Register(new ConfigService(characters, corporations, null!, null!)));
+            var front = await Handshaken(await ConnectAsync());
+            var open = Open();
+            await front.SendAsync(open);
+            await front.ReceiveAsync(); // the initial state
+
+            var requested = new PyList([new PyInt(1400000001), new PyInt(999999999), new PyInt(1500000001)]);
+            await front.SendAsync(new Packet(open.SessionId, MarshalCodec.Encode(Packets.Call(open, 1, "config", "GetMultiOwnersEx", requested))));
+            var value = Result(MarshalCodec.Decode(Assert.IsType<Send>(await front.ReceiveAsync()).Payload));
+
+            var tupleSet = Assert.IsType<PyTuple>(value);
+            var header = Assert.IsType<PyTuple>(tupleSet.Items[0]).Items.Select(item => T(item) ?? "").ToArray();
+            Assert.Equal(["ownerID", "ownerName", "typeID", "gender", "ownerNameID"], header);
+            var rows = Assert.IsType<PyTuple>(tupleSet.Items[1]).Items.Select(item => Assert.IsType<PyTuple>(item).Items).ToArray();
+            Assert.Equal(2, rows.Length);
+            Assert.All(rows, row => Assert.Equal(header.Length, row.Count));
+            Assert.Equal(1400000001, Number(rows[0][0]));
+            Assert.Equal("Test Corporation", T(rows[0][1]));
+            Assert.Equal(2, Number(rows[0][2]));
+            Assert.Equal(1500000001, Number(rows[1][0]));
+            Assert.Equal("Test Alliance", T(rows[1][1]));
+            Assert.Equal(16159, Number(rows[1][2]));
+        }
+        finally
+        {
+            await using var cleanup = source.CreateCommand($"DROP SCHEMA IF EXISTS {schema} CASCADE; DROP SCHEMA IF EXISTS {charactersSchema} CASCADE");
+            await cleanup.ExecuteNonQueryAsync();
+        }
+    }
+
+    private static long Number(PyValue value) => value switch
+    {
+        PyInt number => number.Value,
+        PyLong number => number.Value,
+        _ => throw new InvalidOperationException($"not an integer: {value.GetType().Name}"),
+    };
+
     /// <summary>A service whose only method throws.</summary>
     private sealed class BoomService : IService
     {
@@ -1388,6 +1485,85 @@ public class HostServerTests : IAsyncLifetime
         public bool HasMethod(string method) => method is "Boom";
 
         public ValueTask<PyValue> CallAsync(ServiceCall call) => throw new InvalidOperationException("boom went the handler");
+    }
+
+    /// <summary>A service whose only method refuses on purpose, with a user error the client shows.</summary>
+    private sealed class RefusingService : IService
+    {
+        public string Name => "refusingSvc";
+
+        public bool HasMethod(string method) => method is "Refuse";
+
+        public ValueTask<PyValue> CallAsync(ServiceCall call) =>
+            throw MachoErrors.ThrowUserError("Refused for the test", ("reason", new PyStr("not today")));
+    }
+
+    [Fact]
+    public async Task A_handler_that_throws_is_answered_with_a_wrapped_runtime_error_logged_under_the_same_id_and_the_connection_stays_usable()
+    {
+        var problems = new List<(string Message, Exception? Error)>();
+        Start(
+            configure: registry => registry.Register(new BoomService()),
+            onProblem: (message, error) => { lock (problems) { problems.Add((message, error)); } });
+        var front = await Handshaken(await ConnectAsync());
+        var open = Open();
+        await front.SendAsync(open);
+        await front.ReceiveAsync(); // the initial state
+
+        await front.SendAsync(new Packet(open.SessionId, MarshalCodec.Encode(Packets.Call(open, 1, "boomSvc", "Boom"))));
+        var reply = Assert.IsType<Send>(await front.ReceiveAsync());
+        // the V24.01 server's wrapped exception: a RuntimeError that names the call, never the exception's text
+        AssertWrappedError(reply, "exceptions.RuntimeError", "boomSvc.Boom");
+        var text = Encoding.ASCII.GetString(reply.Payload.Span);
+        Assert.DoesNotContain("boom went the handler", text);
+        Assert.DoesNotContain("InvalidOperationException", text);
+        var errorId = Regex.Match(text, "Unhandled error ([0-9a-f]{8}) in ").Groups[1].Value;
+        Assert.Matches("^[0-9a-f]{8}$", errorId);
+
+        // the debug tuple after the exception object carries the same id, as the release server's does
+        var payloadItems = ((PyTuple)((PyTuple)((PyObject)MarshalCodec.Decode(reply.Payload)).Args).Items[4]).Items;
+        var debugPayload = ((PyTuple)payloadItems[2]).Items;
+        Assert.Equal(2, debugPayload.Count);
+        var debug = Assert.IsType<PyTuple>(debugPayload[1]);
+        Assert.Equal(1, ((PyInt)debug.Items[0]).Value);
+        Assert.Equal(errorId, T(debug.Items[3]));
+
+        // the host logs the exception itself, under the id the client was given
+        var logged = Assert.Single(problems);
+        Assert.Contains(errorId, logged.Message);
+        Assert.IsType<InvalidOperationException>(logged.Error);
+        Assert.Equal("boom went the handler", logged.Error!.Message);
+
+        // the connection carries on: the next call is answered normally
+        await front.SendAsync(new Packet(open.SessionId, MarshalCodec.Encode(Packets.Call(open, 2, "machoNet", "GetTime"))));
+        var time = Assert.IsType<PyLong>(Result(MarshalCodec.Decode(Assert.IsType<Send>(await front.ReceiveAsync()).Payload)));
+        Assert.Equal(Py.FileTimeFromUnixMs(FixedNowMs), time.Value);
+    }
+
+    [Fact]
+    public async Task A_deliberate_user_error_reaches_the_client_as_the_user_error_and_is_not_logged_as_a_problem()
+    {
+        var problems = new List<(string Message, Exception? Error)>();
+        Start(
+            configure: registry => registry.Register(new RefusingService()),
+            onProblem: (message, error) => { lock (problems) { problems.Add((message, error)); } });
+        var front = await Handshaken(await ConnectAsync());
+        var open = Open();
+        await front.SendAsync(open);
+        await front.ReceiveAsync();
+
+        await front.SendAsync(new Packet(open.SessionId, MarshalCodec.Encode(Packets.Call(open, 1, "refusingSvc", "Refuse"))));
+        var reply = Assert.IsType<Send>(await front.ReceiveAsync());
+        var text = Encoding.ASCII.GetString(reply.Payload.Span);
+        Assert.Equal(15, ((PyInt)((PyTuple)((PyObject)MarshalCodec.Decode(reply.Payload)).Args).Items[0]).Value); // ERRORRESPONSE
+        Assert.Contains("eveexceptions.UserError", text);
+        Assert.Contains("Refused for the test", text);
+        Assert.DoesNotContain("Unhandled error ", text);
+        Assert.Empty(problems);
+
+        await front.SendAsync(new Packet(open.SessionId, MarshalCodec.Encode(Packets.Call(open, 2, "machoNet", "GetTime"))));
+        var time = Assert.IsType<PyLong>(Result(MarshalCodec.Decode(Assert.IsType<Send>(await front.ReceiveAsync()).Payload)));
+        Assert.Equal(Py.FileTimeFromUnixMs(FixedNowMs), time.Value);
     }
 
     [Fact]

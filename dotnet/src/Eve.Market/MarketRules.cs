@@ -1,5 +1,7 @@
 // Port of EVE.js server/src/services/market/marketRules.js (828823a), ADR 0009.
 // Double arithmetic and operation order here are the external fee contract; settlement uses decimal cents.
+using System.Globalization;
+
 namespace Eve.Market;
 
 public sealed record MarketSkillLevels(int Trade = 0, int Retail = 0, int Broker = 0, int Visibility = 0,
@@ -18,6 +20,28 @@ public static class MarketRules
     public const int RangeEsiFourJumps = -4;
     public const int RangeRegion = 32767;
 
+    /// <summary>Base sales tax in percent: CCP patch 2025-03-12.1 ("Sales Tax has been increased from 4% to 7.5%"); decision Q1. Not the client's 8.0 default.</summary>
+    public const double SalesTaxPercent = 7.5;
+    /// <summary>The modification discount grows by this much per Advanced Broker Relations level: the client's own constant (decision Q2; CCP's text says 5 points).</summary>
+    public const double ModificationDiscountPerLevel = 0.06;
+    /// <summary>A modification waits this long after the later of the order's issue and its last modification (CCP-BR; the client's mktModificationDelay = 300).</summary>
+    public const long ModificationDelayMs = 300_000;
+    /// <summary>Order prices have at most this many significant figures (CCP-BR; the client's marketutil/ticks.py TICK_SIGNIFICANT_FIGURES = 4).</summary>
+    public const int PriceSignificantFigures = 4;
+
+    /// <summary>
+    /// A legal order price: positive, at most two decimals and at most four significant figures (the client's ticks.is_tick). Counted on the
+    /// price in cents with its trailing zeros removed: 1234.00 is a tick, 1234.50 and 12345 are not.
+    /// </summary>
+    public static bool IsTick(decimal price)
+    {
+        if (price <= 0 || price > (decimal)MaximumOrderPrice) return false;
+        var cents = price * 100m;
+        if (cents != decimal.Truncate(cents)) return false;
+        var digits = decimal.Truncate(cents).ToString(CultureInfo.InvariantCulture).TrimEnd('0');
+        return digits.Length <= PriceSignificantFigures;
+    }
+
     public static bool IsAllowedDuration(int days) => days is 0 or 1 or 3 or 7 or 14 or 30 or 90;
     public static bool IsAllowedBuyRange(int range) => range is -1 or 0 or 1 or 2 or 3 or 4 or 5 or 10 or 20 or 30 or 40 or RangeRegion;
     private static int Skill(int level) => Math.Clamp(level, 0, 5);
@@ -35,10 +59,10 @@ public static class MarketRules
             broker -= Skill(skills.Broker) * 0.3 / 100;
             broker -= factionStanding * 0.0003 + corpStanding * 0.0002;
         }
-        var tax = 8.0 / 100;
+        var tax = SalesTaxPercent / 100;
         tax *= 1 - Skill(skills.Accounting) * 0.11;
         tax *= 1 - (solarSystem == 30100000 && warFaction is 500018 or 500019 ? 0.5 : 0);
-        return new MarketContext(broker, isStation ? 0 : 0.5 / 100, 0.5 + 0.06 * Skill(skills.Margin),
+        return new MarketContext(broker, isStation ? 0 : 0.5 / 100, 0.5 + ModificationDiscountPerLevel * Skill(skills.Margin),
             new MarketLimits(5 + Skill(skills.Trade) * 4 + Skill(skills.Retail) * 8
                 + Skill(skills.Wholesale) * 16 + Skill(skills.Tycoon) * 32, tax,
                 RangeOf(skills.Marketing), RangeOf(skills.Procurement), RangeOf(skills.Visibility), RangeOf(skills.Daytrading)));

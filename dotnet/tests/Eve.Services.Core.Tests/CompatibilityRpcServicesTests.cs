@@ -95,7 +95,7 @@ public sealed class CompatibilityRpcServicesTests
         Assert.Same(PyNone.Instance, await rpc.CallAsync(Call("GetEveGuardServerAddress")));
         Assert.Same(PyBool.False, await rpc.CallAsync(Call("IsMonochromeStyleEnabled")));
         Assert.Same(PyBool.False, await rpc.CallAsync(Call("ShouldKickCheater")));
-        Assert.Same(PyBool.True, await rpc.CallAsync(Call("ActivateRedeemingCode")));
+        Assert.Same(PyBool.False, await rpc.CallAsync(Call("ActivateRedeemingCode")));
 
         var order = Assert.IsType<PyStr>(await rpc.CallAsync(Call("PlaceKiringOrder")));
         Assert.StartsWith("evejs-kiring-", order.Value);

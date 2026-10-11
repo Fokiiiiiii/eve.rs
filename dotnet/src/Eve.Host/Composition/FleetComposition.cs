@@ -187,9 +187,23 @@ internal sealed partial class CharacterServicesComposition
         if (spaceSessions is not null)
         {
             var jumpDrive = new Eve.Services.Space.SpaceJumpDrive(
-                ships, dogma, new Eve.Ships.PgDeployedStore(source, spaceSchema), new Eve.Ships.PgJumpFatigueStore(source, spaceSchema), solarSystems, skills,
+                ships, dogma, new Eve.Ships.PgDeployedStore(source, spaceSchema), new Eve.Ships.PgJumpFatigueStore(source, spaceSchema), new Eve.Ships.PgJumpSpoolStore(source, spaceSchema), solarSystems, skills,
                 source, spaceSessions, fleetStore, now, message => Console.Error.WriteLine($"eve-host: jump drive: {message}"), FleetSessionForCharacter);
             spaceSessions.JumpDrive = jumpDrive;
+            var bridges = new Eve.Services.Space.SpaceBridges(
+                ships, dogma, new Eve.Ships.PgDeployedStore(source, spaceSchema), new Eve.Ships.PgJumpFatigueStore(source, spaceSchema), solarSystems, skills,
+                source, spaceSessions, fleetStore, now, message => Console.Error.WriteLine($"eve-host: jump bridge: {message}"), FleetSessionForCharacter);
+            spaceSessions.Bridges = bridges;
+            spaceSessions.Conduits = new Eve.Services.Space.SpaceConduits(
+                ships, dogma, new Eve.Ships.PgDeployedStore(source, spaceSchema), new Eve.Ships.PgJumpFatigueStore(source, spaceSchema), solarSystems, skills,
+                source, spaceSessions, fleetStore, now, message => Console.Error.WriteLine($"eve-host: conduit: {message}"), FleetSessionForCharacter);
+            // a bridge ends with its time: its fleet is told it is closed (the sweep runs every five seconds)
+            foundations.Scheduler.Register("space.jump_bridge.sweep", async (_, _) => await bridges.SweepAsync());
+            await foundations.Scheduler.EnsureRecurringAsync("space.jump_bridge.sweep", "sweep", TimeSpan.FromSeconds(5));
+            // a spool does not survive a restart: it is refunded now, and the sweep refunds a spool the simulation loses
+            await jumpDrive.CancelInterruptedAsync();
+            foundations.Scheduler.Register("space.jump_spool.sweep", async (_, token) => await jumpDrive.SweepAsync(token));
+            await foundations.Scheduler.EnsureRecurringAsync("space.jump_spool.sweep", "sweep", TimeSpan.FromSeconds(30));
             // a lit cynosural field is told to the fleet of its lighter, so the jump menu lists it (OnFleetJumpBeaconModuleChange)
             if (spaceContainers is not null)
             {

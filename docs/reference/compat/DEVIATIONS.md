@@ -757,7 +757,7 @@ Source order: the SDE for numbers (explosionDelay 281 and radius 162; the core p
 - **Ball radius: attribute 162 when the type has one, else 40 m.** The core probes of the SDE carry no radius; 40 m is a choice, not a source value.
 - **Charge use: the stack is spent, not refunded.** The stack loaded in the launcher loses the probes launched; an emptied stack is removed (`SpendProbesAsync`).
 - **One probe launcher per ship.** The ship's group limit refuses a second (`MaxGroupFitted`), as the fitting rules do.
-- **NOT BUILT: scanning, probe states and warp.** The scan itself (`scanMgr` system scans and their results), probe warp, reconnection to lost probes and the lifecycle notifications `OnProbesIdle`, `OnSystemScanStarted`, `OnSystemScanStopped`, `OnProbeWarpStart` and `OnProbeWarpEnd` are not built. Probes stay in state idle.
+- **Scanning, recovery, reconnection and probe warp: built in track A7 (below).** They were not built at this track; the line is kept as the record of it.
 - **Restart: the balls come back with the records.** The records are in `space.scan_probes`, and each probe still in its life is put back in space when a ship comes into its system (`SpaceProbes.RestoreAsync`, on `SystemEntered`, as the cynosural fields are): the same id, the place it was launched at, the remaining life. A probe whose time is up is not put back, and the sweep removes its record. Tests: `ScanProbeHostTests`. LIMITATION: a restart of the process itself is not exercised by a test; the restore is run by a second arrival in the system.
 - **NOT RUN: the client.** No graphical client or MITM capture on this host; the probe's place in the client's probe scanner is not seen.
 
@@ -836,6 +836,20 @@ Sources, in the order of the scanner rule: numbers from the SDE (pinned build 33
 - **Test isolation.** The rig's fleets had a shared schema, which kept memberships across tests; the rig now gives the fleets a schema of their own (`pl_<suffix>`, dropped at dispose). The probe test counts only the probes it launched: a restore on arrival may put back the record the test saved (the race A5 later serialized per system).
 - **NOT RUN: the client.** No graphical client or MITM capture; the fleet menu, the spool and the arrival are not seen.
 
+## Track A8: the capacitor, the spool, the economizers and the skill numbers (2026-10-10)
+
+Sources, in the order of the scanner rule (user rule, FINAL): numbers from the SDE (pinned build 3396210, typeDogma of the hulls and the skills, dogmaAttributes, groups); mechanics from the EVE University wiki, implemented as written (Jump drive: https://wiki.eveuniversity.org/Jump_drive, fetched 2026-10-10; Stacking penalty: https://wiki.eveuniversity.org/Stacking_penalty, fetched 2026-10-10); EveJS v0.12.9 and eve-logic at equal rank as the last line (EveJS has no capital jump and no economizer; eve-logic decides the wire shapes).
+
+- Capacitor (built; SDE and wiki agree). SDE attribute 898 (jumpDriveCapacitorNeed) is 0.95 on every drive hull. The skill Jump Drive Operation (3456) carries attribute 899 (jumpDriveCapacitorNeedBonus) of -5 a level. The wiki: the activation consumes 95 percent of the energy in the capacitor, reduced by 5 percent a level, 71.25 percent at level five. The need is the hull share times (1 - 0.05 x level) of the full capacity (the SDE description: from full capacitor in modifier percent). It is taken from the charge when the spool starts, refused with NOT_ENOUGH_CAPACITOR when the charge is short, and told as OnModuleAttributeChanges. Tests: scene/tests.rs (a_cyno_jump_takes_its_share_of_the_capacitor and a_cyno_jump_is_refused_when_the_capacitor_cannot_pay), JumpDriveRulesTests (Capacitor_need), CynoJumpHostTests (the spool carries 0.95).
+- Refusal wording (ours). The wiki gives no refusal text. The host answers a capacitor refusal with a CustomNotify text of its own. No source read gives a text.
+- Skill numbers from the SDE, not constants. Jump Drive Calibration (21611) attribute 870 = 20 (a percentage a level), Jump Fuel Conservation (21610) attribute 1296 = -10, Jump Drive Operation attribute 899 = -5. The host reads them from the skill type own typeDogma (SpaceJumpDrive.PerLevelAsync; a missing attribute throws and is not read as zero). The values equal the constants A6 used, so no number changes; the wiki 20 and 10 percent agree.
+- Economizers (built). The Jump Drive Economizers are SDE group 1299 (Limited, Experimental, Prototype: attribute 1296 = -4, -7, -10). The wiki (Jump drive): stacking penalized, highest bonus first; only Jump Freighters and Rorquals. The wiki Stacking penalty page: the n-th modifier (from 0) is multiplied by e^(-(n/2.67)^2), i.e. 100, 86.9, 57.1, 28.3 percent, applied strongest first (JumpDriveRules.EconomizerMultiplier). The multiplier is applied before the round-up of the fuel. The economizers are the modules fitted in the low, medium and high slots (ItemFlags 11 to 34). Shortcut: the host does not check the SDE canFit attributes (1298, 1299) at the jump; fitting validation belongs to the fitting service, not this track. Tests: A_fitted_economizer_takes_its_share_of_the_fuel_before_the_rounding (a Limited economizer, 4 percent: 3 000 units become 2 880) and JumpDriveRulesTests.Economizers_stack.
+- The spool is kept, and a restart refunds it (decision; no source states it). The wiki Jump drive page does not say what happens to an in-progress jump on a server restart or a logoff, or whether it can be cancelled. Decision: a spool is recorded with the debit (migration 0010, space.jump_spool, one row a character: the fuel taken, the field, the system, the end time and the fatigue state the jump replaced). It completes when the ship jumps (FinishJumpAsync forgets it). At the host start every spool still in the table is cancelled: the fuel goes back into the fuel bay as a new stack and the fatigue state the jump replaced is restored (CharacterShips.CancelJumpAsync, SpaceJumpDrive.CancelInterruptedAsync). Not resumed: the sessions of a restarted host are gone, and the arrival needs a live session to change the ship system. Shortcut: a spool not completed a minute after its end (SpaceJumpDrive.SpoolGraceMs; a sweep every 30 s, space.jump_spool.sweep) is taken to have been lost by the simulation and is refunded the same way. No source read gives a rule for a lost spool. Shortcut: no fuel refund into a ship that no longer exists (it was destroyed). Shortcut: the capacitor drawn for a spool is not refunded (after a restart the ship has the charge it is restored with). Tests: CynoJumpHostTests.A_spool_in_progress_is_kept_and_a_restart_refunds and A_completed_spool_is_forgotten_and_a_sweep_refunds.
+- One spool a character. The table key is the character, as the simulation refuses a second spool while the first runs. Shortcut: a debit that meets a stale row of the same character (a spool the simulation lost less than a minute ago) fails with a unique violation after the simulation has accepted, and the spool stands (the same shortcut as A6 for the fuel check).
+- Protocol 52. Command 26 carries a fourth argument (the capacitor share). The bump is the link protocol (crates/eve-space/src/link/mod.rs, dotnet/src/Eve.Space/SimCodec.cs), taken at push time as the next free number after 51.
+- Not built (A6 open list, blockers as they stand). Jump bridges (CmdBridgeToFleetModuleBeacon, CmdBridgeToFleetDeployableBeacon), the Titan Jump Portal Generator (type 23953, group 590, fits group 30, cycle 60 s), the Covert Jump Portal Generator (type 28652, group 4127, fits group 898), portals and conduits (CmdGroupJumpTo, CmdJumpThroughFleet). Blocker: each needs a world object with a lifetime in the simulation (a portal, a bridge open state, the Titan one-minute immobilisation, the covert and industrial 20 seconds), the fleet and 2 500 m rule of a bridge, the fuel per passing mass (the wiki formula: mass times 0.000000001 for a Titan, 0.000000135 for a Black Ops, base 3 000 and 700 isotopes, skill modifier 1 - 0.1 x Jump Fuel Conservation, times the distance), and the client calls (eve-logic cynoTravelSvc.py), which are not read yet. Not started in this track.
+- Not built, and no source found. Compressed fuel use: the SDE has no compressed jump isotope (the jump fuel is the group 423 isotopes 16274 and 17887 to 17889; the group 422 gaseous isotopes are not jump fuel). The wiki rule that a jump cannot be activated inside a warp interdiction bubble is not checked: the host has no bubble object for a jump to test against.
+- NOT RUN: the client. No graphical client or MITM capture on this host; the capacitor bar, the refusal text and the refund are not seen in the client.
 ### Character-selection reservation and notification arguments (2026-10-10)
 
 `SelectCharacterID` reserves the target character before invoking session-attribute hooks. `SpaceSessions.GetSessionAttributesAsync` may recover a stale space ship into a hangar, so a duplicate login must be rejected before that preparation can mutate persistent state. The same online authority holds the previous character until all entry hooks finish; commit releases it, rollback restores it, and disconnect cancels both reservations. Counts and snapshots expose one current character per session. Failed attribute preparation leaves the previous runtime active; rollback restores the full session attribute snapshot, removes attributes created by the failed entry, and restores the online registry before reentering previous hooks. Deferred docked-ship flags are part of that snapshot. A disconnect cancels the pending reservation, so entry cannot report success or recreate the old runtime after the connection has closed.
@@ -887,6 +901,7 @@ Source order, as in "Source priority for the scanner track": the SDE for every n
 - **Warp to a result is the existing warp; the completed-scan warp authority is not ported.** The client warps to a probed object by its id (the existing warp commands, which the simulation answers for a ball in the scene). EVE.js keeps the perfect results of each completed scan per session (`probeScanWarpAuthority.js`, `recordCompletedScan` and `resolveCompletedScanWarpTarget`) and resolves a scan warp only through them. That authority is not built: a warp to a probed ship or deployable is not checked against the scan, so "warpable at 100 percent" is not enforced by the server. Signatures, which need that path, are not built either.
 - **NOT RUN: the client.** The probe scanner's windows, the rows, the warp to a result and the MITM capture (`tools/mitm/README.md`) are not run on this host: the headless client has no scenario that scans.
 
+
 ### Home-station change workflow (2026-10-11)
 
 Implementation extends the existing shared home-station resolver with candidates, the remote-change deadline, set and reset RPCs. The write authority is the PostgreSQL character row; office candidates come from active `CorporationOfficeStore` rentals and deployed-structure/SDE locations through Host composition. Coupled home/deadline updates must commit before the session and `OnHomeStationChanged` notification.
@@ -894,3 +909,1191 @@ Implementation extends the existing shared home-station resolver with candidates
 Contract sources: EveJS `828823a75f211fdecb945b087a26c225f111491f`, `server/src/services/character/homeStationService.js` (candidate generation, validation, datetime pickle, mutation and reset); V24.01 eve-logic `1dbb5711a072a146e1d228365668ac05655eefe1`, `homestation/client/service.py`, `homestation/types.py`, `homestation/validation.py`, `homestation/const.py`. Both executable reference and client define a 365-day remote cooldown; the school station is exempt. Corporation office eligibility is also documented by [CCP Corporation Offices](https://support.eveonline.com/hc/en-us/articles/203209652-Corporation-Offices); [Home Station](https://wiki.eveuniversity.org/Home_Station) corroborates the school exception and Thera allowance.
 
 Reference verification: executed the actual pinned EveJS service source in an in-memory dependency harness covering candidate ordering/deduplication, remote confirmation refusal, remote change, deadline and cooldown refusal, local/school exemption, reset, and expiry. Python decoded the reference datetime pickle and matched its UTC deadline. This is executable service verification, not a running EveJS server or graphical-client test. PostgreSQL verification: Characters 104/104, CharacterInfo 59/59, and actual Host-composition candidate/change/reset scenario 1/1, no skips. The Host fixture disables unrelated ESI market capture and simulation, restores all overridden environment values, and drops its scratch schemas. A regression reproduces and fixes current-structure candidates without an office, including control-seat exclusion. Notification comparisons include the complete marshalled packet and sequence. Re-run the reference with `node tools/dev/test-home-station-reference.cjs <EveJS repository root>`. The desktop's Codex Serena exposure omits `create_text_file`; a transient desktop-app MCP session recovered that tool and created the comparison script without changing persistent configuration.
+
+## Track A8: the jump bridges, the bubble check and the economizer fit (protocol 55, 2026-10-10)
+
+Sources, in the order of the scanner rule (user rule, FINAL). Numbers: the SDE (pinned build 3396210): the generator modules 23953 (Jump Portal Generator I, group 590) and 28652 (Covert Jump Portal Generator I, group 4127): attribute 6 (capacitor need, 1000 and absent), 713 and 714 (the activation isotopes: 16275 and 500, Titan only), 1001 (the portal consumption mass factor: 1.5e-9 and 2e-7), 1002 (the portal duration: 60 000 and 20 000 ms), 1298 (the hull group it fits: 30 and 898), 3318 (the passenger flag it requires: 3319, 3320); the hulls: 866 to 868, 1971, 1972 (0.25 on Black Ops hulls), attribute 4 (mass); the passenger flags 3319 (default 1), 3320 and 3325 (default 0), read as the SDE defaults when a hull has no row; the skill Jump Portal Generation (24562) attribute 1775 (-10 a level). Mechanics: the wiki "Jump drives" (https://wiki.eveuniversity.org/Jump_drives, fetched 2026-10-10: a Titan bridge stays open one minute and immobilises the ship holding it; covert and industrial bridges 20 seconds; fleetmates within 2 500 metres; the fuel formula with base cost 3 000 (Titan) and 700 (Black Ops); the Strontium of 500 modified by Jump Portal Generation; Black Ops and Rorqual bridges have no opening cost; a Titan bridge goes only to a standard cynosural field or a beacon, a covert bridge to any cyno; the bridge cannot be taken inside a warp disruption bubble; a bridge needs Jump Portal Generation at level one) and the wiki "Black Ops" (https://wiki.eveuniversity.org/Black_Ops, fetched 2026-10-10: the covert generator and its passengers: covert ops ships). EveJS v0.12.9: server/src/services/ship/beyonceService.js (Handle_CmdBridgeToFleetModuleBeacon at line 2871, Handle_CmdBridgeToFleetDeployableBeacon at 3019, Handle_CmdJumpThroughFleet at 2954, resolveBridgePortalModule at 991, calculateBridgeFuelQuantity at 1236, the passenger resolution at 1560 to 1720, JUMP_PORTAL_MASS_FACTOR_BY_TYPE_ID at 216, isEligibleJumpPortalPassenger at 973). eve-logic: eve/client/script/parklife/cynoTravelSvc.py (read in full: the five bridge and jump-through calls and their arguments), eve/client/script/parklife/fleetSvc.py (OnBridgeModeChange at 200, GetActiveBridgeForShip at 242).
+
+- Decision: the portal mass factor is the generator module's own attribute 1001 (1.5e-9 for the Titan generator, 2e-7 for the covert one). The wiki gives 1e-9 and 1.35e-7 (its table) and EveJS uses the module's attribute before its table (the same numbers as the SDE module). The SDE is first: the module's attribute is used. Conflict with the wiki recorded here.
+- Decision: the covert bridge goes to any cynosural field, as the wiki says. EveJS gives the covert generator only the covert fields (getRequiredPortalPassengerAttributeForField, line 876). The wiki is the logic source at the higher rank; the conflict is recorded here.
+- Decision: a Titan bridge holds the ship still for its minute (the wiki: it immobilises the ship holding it open). A covert bridge holds nothing: the wiki does not say it does (it says only the lifetime), so none is taken.
+- Decision: the activation isotopes are the SDE's 714 less 10 percent a level of Jump Portal Generation (1775). They are checked against the bridging ship before the simulation is asked, and debited after it accepts (as the jump drive's fuel is). The capacitor is the module's attribute 6 in GJ (1 000 for the Titan generator), taken when the bridge opens.
+- Decision: the passenger fuel is the wiki's formula with the SDE numbers: LY times passenger mass times the mass factor times the bridging hull's 868 less 10 percent a level of Jump Fuel Conservation, plus the module's 2793 (none on the generators), rounded up after rounding to six decimals (the SDE products carry float noise: EveJS notes the same defect). The isotopes come from the bridging ship (fuel bay first), not the passenger's.
+- Decision: the passenger's fatigue is the wiki's rule (JumpDriveRules.AfterJump) on LY times the passenger hull's 1971 times the bridging hull's 1972 (a Black Ops bridge gives 0.25; a Titan 1.0). The two multipliers compose, as EveJS composes them. The passenger's cooldown applies too.
+- Decision: a passenger leaves at once through the bridge (command 29 has no spool); the sources read give no delay (EveJS jumps the session at once).
+- Decision: the eligibility of a passenger is its hull's flag for the generator's 3318 (SDE default for a row-less hull; the wiki: Titan bridges take all subcapital ships, Black Ops bridges take the covert-cloak ships). Refused with the text "Your ship cannot pass through that jump bridge." (ours).
+- Decision: the Titan bridge is refused in high security (the wiki's capital rule, "Capital ships", as the jump drive's). The bridging ship must be within its own jump range of the field (the wiki), using the same SDE range and calibration as the jump.
+- Decision: the bubble check. The wiki says a jump drive cannot be activated inside a warp interdiction bubble, and a ship in one cannot take a bridge. The simulation's warp_disrupted_at (every warp disruption source: a bubble, a probe, a mobile disruptor) refuses the cyno jump (WARP_DISRUPTED_BY_BUBBLE), the bridge opening and the passage. Shortcut: the sources in the check are the simulation's, which are wider than the bubble alone.
+- Decision: economizers count only when they fit the hull (SDE 1298 and 1299 name the groups: 902 and 883). The wiki: only Jump Freighters and Rorquals carry them.
+- Decision: the bridge lives in the simulation as a deployable of role JumpBridge with no client ball (the reference draws the portal on the ship; no ball was read). It ends with its time (the simulation's expiry); the host keeps the record for the fleet and its isotopes and closes it on a sweep every five seconds (OnBridgeModeChange, not active). A restart ends every bridge (the simulation and the host both lose them), as the spools did in A8 part one. Shortcut: the sweep's five seconds is the only delay in the fleet's closing notice.
+- Decision: the fleet is told the bridge is open with OnBridgeModeChange(shipID, destination system, beacon id, true) (eve-logic fleetSvc.py line 200); the beacon id is the field's deployable id, as the A6 beacon is. The second argument of the notification ("fleetid") follows A6's fleet notifications.
+- Decision: the deployable variant (CmdBridgeToFleetDeployableBeacon) takes the field by its deployable id and gives no answer, as the module variant does; EveJS's Handle_CmdBridgeToFleetDeployableBeacon returns no answer either (line 3019 to 3090).
+- Refusal texts: the wiki gives none. Those that EveJS gives ("That fleet bridge is no longer available.", "The bridge ship does not have enough jump portal fuel.", "Your ship is not fitted with an online jump portal generator for that cynosural field.", "Your pilot cannot ...") are the same words; the rest are ours.
+- Tests: scene/tests.rs (a_titan_bridge_opens..., a_fleet_ship_in_range..., a_passenger_beyond..., a_cynosural_jump_is_refused_inside...); CynoJumpHostTests (A_titan_bridge_opens..., A_bridge_is_closed...); JumpDriveRulesTests (A_bridge_takes..., A_passenger_flag..., An_economizer_counts...).
+- Not built: conduit jumps and group jumps (CmdGroupJumpToFleetModuleBeacon, CmdGroupJumpToFleetDeployableBeacon, the conduit ships Black Ops, Rorqual, carriers). Blocker: a conduit moves its passengers WITH the anchor, so the spool timing and the passengers' departure need a rule the wiki gives only in part (passenger count and radius are given, the spool is not), and EveJS conduitJumpRuntime.js (568 lines) is not read in full yet. Not built, not claimed. The industrial bridge (Rorqual, generator 63140, flag 3325) is not built either: the OpenAsync only accepts the Titan and the covert generator.
+- NOT RUN: the client. No graphical client or MITM capture; the bridge's notice, the jump menu and the passage are not seen in the client.
+- **Warp to a result: the completed scan's 100 percent places only** (EveJS `probeScanWarpAuthority.js`, `recordCompletedScan` and `resolveCompletedScanWarpTarget`). `ProbeScanWarpAuthority` keeps the perfect results of each completed scan per session (a `ConditionalWeakTable` keyed by the client session) and `BeyonceService` `CmdWarpToStuff` takes a "scan" warp only to one of them, to its exact place. A warp to a target that no completed scan found at 100 percent is refused. The record is in memory: a restart drops it, so a pilot warps to a result only after a scan completes again. Cosmic signatures reach the same path through `ICosmicSiteSource` once a source exists.
+- **Recover: the charges go back where they came from** (EveJS `Handle_RecoverProbes` and `restoreRecoveredProbeCharges`, 1391 to 1552). Each probe that left goes back into the launcher it came from while that launcher holds no other charge and has room for it (its capacity, `AmmoRules.Capacity`); the rest go to the ship's cargo hold, joining the stack of their type there (`CharacterShips.RestoreProbesAsync`, one transaction). The pilot is told the stacks that changed and each probe that left (`OnRemoveProbe`); the reply is the ids that were recovered.
+- **Reconnect: the probes come back to the pilot's screen** (EveJS `Handle_ReconnectToLostProbes`, 2778). Each probe still in its life and not inactive is told as new (`OnNewProbe`), then all of them as idle (`OnProbesIdle`). The balls are not placed again: a restart puts them back in space when a ship enters the system (track A5).
+- **Directional scan: the cone of the wiki, from the ship** (EveJS `Handle_ConeScan`, 2470 to 2590, and the helpers 436 to 624; the wiki's "Directional scanning"). Command 28 (protocol 55, `DirectionalScan`, answered as `DirectionalTargets`, kind 72) gives every object the scene can show: ships (player and NPC hull ships), drones, fighter squadrons, scanner probes, wrecks, and the bodies of the system. The host decides. The cone is the scan angle around the direction (a sphere at 2π), out to the range: at least 10 km, at most the ship's SDE 5796 range, and 14.3 AU when the ship has none (`DSCAN_FALLBACK_MAX_RANGE_METERS`). Distance and cone are measured from the ship's surface to the target's, each target's radius being the SDE 162 of its type (ships: the simulation's radius). Shown: a ship that is not cloaked, not in warp and not a combat recon ship; drones; probes; wrecks (group 186, not corpses); planets, moons, asteroid belts, stargates and stations (groups 7, 8, 9, 10, 15). Not shown: a type with SDE 1958 (`dscanImmune`). The rows are nearest first (ties by id), each with the id, the type and the group only. A pilot not in space, or a zero direction, gets an empty list (the reference's answer too).
+- **Directional scan: what is not shown, and the gaps.** Normal NPCs: the wiki shows the ones named with a diamond, and the simulation keeps no NPC names, so none is shown. Fighter squadrons, containers, corpses, beacons and the star (group 6) are not in the wiki's list and are not shown. Cosmic signatures and anomalies are the separate system (`ICosmicSiteSource`). The scope check of `canEntityDiscoverTarget` is always true: eve.rs has no abyssal or dungeon scopes. The 5-second cycle is the client's; the server does not limit the scan rate.
+- **NOT RUN: the client.** The probe scanner's windows, the rows, the directional palette, the warp to a result and the MITM capture (`tools/mitm/README.md`) are not run on this host: the headless client has no scenario that scans.
+
+## Track S1: ships and fitting, part 1
+
+- **The sweep reads the SDE, not a fixed list.** Ships come from `DogmaStatic.TypesInCategoryAsync("Ship")` (published category-6 types with dogma), and the subsystems from the "Subsystem" category. The count of 423 published ships is the SDE of build 3396210 (`sde/lock.json`), asserted as the baseline.
+- **Subsystems belong to a hull by name.** The SDE has no `canFit` attribute on a subsystem (the Legion Defensive item 45586 carries only 182, 277, 1366, 1374, 1375, 1376). The sweep matches the name prefix `<hull name> <class> - ` (for example "Legion Defensive - Covert Reconfiguration"), which the SDE names give for all 48 items. The fitting rules themselves are not changed here; how eve.rs decides hull membership in production is SF-4's question.
+- **Known gap, asserted exactly, not hidden.** The Strategic Cruisers offer five subsystem flags (SDE 1367 = 5, clamp to eight) against four classes. The test lists the four hulls and fails if the list changes (see TODO section 29). Choice of the four-class rule: the SDE holds four subsystem classes (1366 values 125 to 128, twelve items each); the wiki (Strategic Cruisers) states four subsystem types. Record: SDE is the data of record (AGENTS.md source priority).
+- **Probe rigs by hull rig size.** The rig of the hull's SDE rigSize (1547): 1 small (26929), 2 medium (4395), 3 large (4397), 4 capital (33303, Capital Processor Overclocking Unit I). Each rig is 150 calibration (SDE 1153) and is fitted alone, so the calibration check does not decide the probe.
+- **Probe high module: the Small Energy Neutralizer I (533)** (SDE effect 12, high power, no turret or launcher effect). The Civilian Miner (3651) is not used: it carries the turret effect (42), so it is refused on any hull without turret hardpoints, which is the rule working, not a bug.
+- **Skills for the probes:** the pilot is trained to the highest level any probe type asks (`FittingRules.RequiredSkills`), so the sweep tests the slots and not the skills.
+
+- **Fitting persistence lives in the fitting schema, not in the JSON game store.** The reference keeps `savedFittings` in its store (fittingStore.js); eve.rs keeps the same records in `fitting.saved_fitting` (migration 0005), so a restart keeps them and the owner's limit is counted in the same transaction as the insert.
+- **Fitting ids come from a PostgreSQL identity column**, not from the reference's allocator (fittingStore.js `allocateNextFittingID`). The client only needs a positive integer, unique across owners; the ids are not compared with the reference's numbers.
+- **The Fitting Manager role is read from the member's role mask** (`Member.Masks.Roles`, bit 1 << 59, the reference's `CORP_ROLE_FITTING_MANAGER`, fittingStore.js:50). The reference reads the session's `corprole`; eve.rs keeps no such session attribute. Alliance changes also need the session's corporation to be the alliance executor (`AllianceRecord.ExecutorCorporationId`), as in `assertSessionCanMutateOwner`.
+- **Notifications reach every session of the owner** (`CharacterSessions.Of`, `OfCorporation`, and the sessions whose `allianceid` matches), with idtype `charid` as the reference sends them (fittingMgrServiceHelpers.js `notifyFittingMutation`).
+- **Validation uses the SDE categories through the static data** (`DogmaStatic`): the ship type is category 6 or 65 and each item type must exist. The reference uses its own type table (`resolveItemByTypeID`); the categories are the same SDE data.
+- **A missing or foreign fitting is refused before the draft is checked** (`FITTING_NOT_FOUND`), as the reference orders the checks. The reference's name and description limits (50 and 500) are applied by cutting the trimmed text.
+
+
+## Track S2: ships and fitting, part 2 (2026-10-10)
+
+Source order (user rule): numbers and attributes from the SDE first; mechanics from the EVE University wiki as written, then EveJS v0.12.9, CCP documents and eve-logic at equal rank; client wire from eve-logic. Where a source states nothing, the choice is recorded here with the sources it was checked against.
+
+- **Stance mode items are in the ship's dogma world, in the hidden modifier bucket (flag 156), and are not fitted modules.** EveJS `liveFittingState.js` keeps the stance item in the fit state; eve.rs loaded only the slot flags (`ShipSnapshot.LoadAsync`). Test: `ShipStanceWorldTests` (SDE effects 6010 and 6014).
+- **OnStanceActive (shipID, stanceID) goes to the pilot after the commit, and a ship in space is sent again.** EveJS `shipStanceRuntime.js` `setShipStance` (notification after the replacement of the item). The notification is the `charid` form (`shipmode/notifier.py:18`). Test: `ShipStanceNotifyTests`.
+- **Deviation from EveJS: a stance is switched in space only.** EveJS has no station or space gate. The wiki's Tactical Destroyers page says the modes are switched "while in space", and the wiki ranks above EveJS, so the server refuses a switch in station with `SHIP_STANCE_NOT_IN_SPACE` ("Tactical modes can only be switched in space."). The client shows the buttons in station too (`station/base.py:269`), so a click there gets this refusal. Test: `ShipStanceNotifyTests`.
+- **The stance table is checked against the SDE, not derived from it at run time.** The six hulls and their mode types match the client's `shipmode/data.py` and EveJS's table (34317, 34562, 34828, 35683, 89808, 89807). Group 1306 holds the modes; the switch time (1985) is the cooldown: 10 s for the four Tactical Destroyers and Anhinga, 2 s for Skua. The wiki's page gives one cooldown, "once every 10 seconds", for all hulls; the SDE value is used, since the SDE is the data of record and it says 2 s for Skua. Test: `ShipStanceTableTests`.
+- **The slim `shipStance` field is not sent.** The client reads it (`environment/spaceObject/ship.py:214`) and treats a missing one as no stance; the field is a Destiny change in the simulation wire, which this track does not change (the integrator's batch). Its value would be the old stance, the switch time and the new stance (`notifier.py:37`).
+- **AssembleShip answers the assembled ship's id (or a list, or None), not the rows EveJS answers.** The client reads the answer as an item id (`invItemFunctions.py:197-211`: `GetInventoryFromId(item_id)` and the default skin). EveJS `Handle_AssembleShip` answers `[{list of rows}, {dict}]`, which the client does not read as ids.
+- **AssembleShip assembles any packaged hull, and a Strategic Cruiser also takes its subsystems.** EveJS `Handle_AssembleShip` (`moveItemsAndSetShipPackagingState(..., packaged=false)` sets the ship singleton). Refusals are silent, as in EveJS: a ship that cannot be assembled is left out, and the client shows nothing for it.
+- **A Strategic Cruiser takes one subsystem of each class (125 Core, 126 Defensive, 127 Offensive, 128 Propulsion), each for its hull (SDE 1380, `fitsToShipType`).** EveJS `liveFittingState.js` (`STRATEGIC_CRUISER_SUBSYSTEM_FLAGS`, `isSubsystemCompatibleWithStrategicCruiser`); the wiki (Strategic Cruisers: four subsystems, one per class). The hull's `maxSubSystems` (1367) says five, and the SDE holds four classes: `Slots.Count` caps the subsystem family at four. The SDE's subsystem names are the wiki's classes. Tests: `StrategicCruiserAssemblyTests`, `StrategicCruiserRulesTests`.
+- **The fit check refuses a subsystem for another hull** (SDE 1380 on the subsystem; EveJS checks the same in `isSubsystemCompatibleWithStrategicCruiser`). Before this track the fit check did not read 1380, so a Legion's defensive subsystem could be fitted to a Tengu.
+- **Undock of an incomplete Strategic Cruiser is refused with the reference's words, before the simulation is asked.** EveJS `shipService.js` `_assertStrategicCruiserSubsystems` (`CustomNotify`: "A strategic cruiser requires one Core, Defensive, Offensive, and Propulsion subsystem before it can be used. Missing: ..."). The reference's further checks (CPU, powergrid, turret and launcher overloads at undock) are not made here: the fit check makes them when a module is fitted.
+- **Hull cargo is the SDE's `types.capacity`.** The intrinsic attribute 38 is loaded from the `types` table (`DogmaStatic.IntrinsicAttributes`); the SDE's `typeDogma` has no attribute 38 for hulls. The earlier note that the SDE had no hull cargo was the wrong table. Test: `HullDataTests`.
+- **The packaged volumes are the client's table, not SDE values.** `ItemVolumes` holds the client's `packagedVolumeOverrides` (per group and type). The SDE's `types.volume` is the assembled volume (Tengu 92000 m3, packaged 5000 m3). The two are different quantities; the table is kept.
+- **Pinned SDE gaps (no value in the static data, and the SDE is the data of record):** no `capacity` for Capsule 670, Capsule Genolution 33328 and Monitor 45534 (cargo 0); no skill requirement (attribute 182) for Capsule 670, Capsule Genolution 33328, Echelon 3532 and Primae 2863 (nothing is required to fly them); no `typeBonus` row and no dogma effect for Opux Luxury Yacht 635. Test: `HullDataTests`. The wiki and CCP pages for these four hulls were not read in this track.
+- **Ship-scope effects are all passive, and every modifier is applied.** The sweep reads the published ships, the subsystems and the T3D mode items (group 1306): every effect is category 0 (passive); every modifier is one of the five functions the loader applies on the domains shipID, charID, itemID or otherID; the effects the engine states itself (`BuiltInEffects.All`: slotModifier 3774, hardPointModifierEffect 3773, subSystem 3772, rigSlot, online, the skill rates and the drone and missile damage bonuses) are checked against the engine's list. The four category-2 module effects with an `EffectStopper` function or a `target` domain (the 4 effects of the module survey) are outside the sweep: they are module and target work. Test: `ShipEffectSweepTests`.
+- **The special hulls' role bonuses are in the world.** The command destroyer (Bifrost 37480, group 1534), the blockade runner (Crane 12729, group 1202), the black ops (Redeemer 22428, group 898) and the jump freighter (Rhea 28844, group 902): each hull's passive effects change at least one of its numbers in the world. Test: `SpecialHullBonusTests`. Not checked: the restrictions (no warp, no bumping) are not in the SDE effects of the hull and are not built.
+- **Not built, with blockers (SF-10 and the rest of SF-11).** The siege, triage, bastion and core modules' fuel (consumption types 713 and 714, `FUEL_NOT_IMPLEMENTED`), the warp and speed locks (852, 104), the one-per-ship rule (763) and the deactivation rules: these are module-driven and need the simulation's rules and one wire bump (`module_rules.md`). Command bursts are the buff track's (section 21, 22). The jump drive and the cloak are sections 26 and 28. The client was not run on this host: the assembly window, the stance button and the undock text are not seen in the client.
+
+## Track S1: fitting a docked ship
+
+- **The apply is the client's: `fittingSvc.LoadFitting` calls `shipInv.FitFitting` once** (eve-logic `environment/fittingSvc.py:554-629`, the call at 618; `shipfitting/fitting.py` builds the arguments: `itemsByType` as the hangar items of each type, `fittingKeyVal` as `KeyVal(modulesByFlag, chargesByType, dronesByType, fightersByTypeID, iceByType, implantsByTypeID)`, `cargoItemsByType` for rigs not fitted, `fitRigs`). The server answers the (typeID, quantity) of what did not fit, sorted by type (EveJS `fittingOperations.js` `Handle_FitFitting`, the list at 1485-1492).
+- **Order of the legs follows the reference:** the modules and rigs by slot (subsystems, then rigs, then the rest by flag: `_rankFitFittingSlotApplyOrder`, fittingOperations.js:196), then cargo (the rigs not fitted), drones, ice, implants, fighters, charges (1372-1455). Charges go to the cargo hold, not into the modules; the client loads them after the fit (`RemoveAndLoadChargesFromSimulatedShip`, fittingSvc.py:1212).
+- **Each piece is one move through the drag path** (`CharacterShips.MoveAsync`: the rules of `FittingRules.Check`, the drone and hold checks, the notifications of `ShipNotifications.Send`), so a refusal of the rules is the same refusal a drag gets. The reference's move is the same rule set (`_validateFittingMove`, `_validateShipBayMove`, `_checkCapacityForMove`, fittingOperations.js:1245-1263); its refusals are silent (`continue`), so ours are too: the piece counts as not fitted.
+- **A bay leg reports what is left, after what is already in the bay** (fittingOperations.js:699-707, 840-845): a request of 8 charges with 5 in the hold reports 3.
+- **One batch at the end of the apply.** The reference publishes all the changes of one apply at the end (`_finalizeFitFittingBatch`, fittingOperations.js:1008, called at 1463 and 1476). eve.rs sends the same batch: one `OnMultiEvent` to the client with every event, and one `OnItemsChanged` to the character for each run of consecutive rows with the same previous location and flag (`ShipNotifications.SendBatch`, the grouping of `emitItemsChangedBatchForSession`, characterState.js:2728). Test: `FitFittingTests.A_fit_tells_the_pilot_its_changes_in_one_batch_at_the_end`.
+- **Re-online after the modules.** The reference switches on each fitted module that has the online effect, in the order of the fit, after the modules are placed (`_reonlineFitFittingModules`, fittingOperations.js:327, called at 1373). eve.rs does the same through `CharacterShips.SetOnlineAsync`, for the modules placed by the module leg whose effects include the online effect (BuiltInEffects.Online); rigs and subsystems are skipped. The reference weighs the modules of the ship it was given (`resolveFitOnlineState(charID, shipRecord, ...)`, fittingOperations.js:359), which need not be the active ship, so `CharacterShips.SetOnlineAsync` now reads the ship it is given (`LoadShipAsync`) rather than only the active ship. Test: `FitFittingTests.The_modules_of_a_fit_are_switched_on_where_the_grid_allows`.
+- **Not ported, each with its reason:** the space-loot, structure and ship-service access checks (`_preflightFitFittingSourceAccess`, `_validateShipServiceTransferAccess`, `_validateDockedStructureFittingServiceAccess`, 1140-1244): eve.rs has no space loot, structure fitting or ship-service state to check; the module attribute snapshots and the fitting deltas (1105-1124, 1283-1289): the client gets its changes from the notifications above.
+- **A ship in space is refused with the in-space fitting service's not-found notify.** The reference fits a ship in space only through a fitting service in range: a Mobile Depot you own, a maintenance-bay ship, or a Ship Maintenance Array (`_getInSpaceFittingServiceAccess`, invBrokerService.js:4815-4880). eve.rs models none of these providers, so the refusal is always the reference's `IN_SPACE_FITTING_SERVICE_NOT_FOUND` text (invBrokerService.js:4974-4976, with the ranges 3000 m from mobileDepotRuntime.js:50 and 5000 m from ejectRuntime.js:72). The EVE University wiki (Anchoring, https://wiki.eveuniversity.org/Anchoring) says a deployed Mobile Depot lets its owner "refit your ship's modules and subsystems" and gives no range; the range is the reference's. Test: `FitFittingTests.A_ship_in_space_is_not_fitted_here_and_says_so`. Not built: the Mobile Depot, the maintenance-bay ship and the Ship Maintenance Array.
+- **Set values:** the client's `itemsByType` values are Python sets. eve.rs reads a value that is a list, a tuple or a single item, as the reference's normaliser does (fittingOperations.js:97-106). Whether the marshal writes a set as one of those is not separately checked on the client.
+- **Sources of the numbers used by the tests:** Civilian Miner needs skill 3386 at level 1 and Hobgoblin I needs 24241 and 3436 at level 1 (SDE typeDogma attributes 182 and 277/279); the Ibis drone bay holds 5 m3 (SDE attribute 283 = 5.0) and a Hobgoblin I is 5 m3 (so one drone fits, two do not); the ice-product group is 423 (SDE group "Ice Product"; EveJS `fuelBayInventory.js` `ICE_PRODUCT_GROUP_ID`); the implant category is 20 (SDE category "Implant").
+
+
+
+## Track S2b: module rules, the stance on the wire, special hulls (2026-10-10)
+
+Sources as in the Track S2 section above: the SDE first (the module and hull attributes and effects), the EVE University wiki as written, then EveJS v0.12.9 and the client (eve-logic) for wire shapes.
+
+- **Protocol 56: the ship spec carries the stance.** `ShipSpec` (Rust) and `SimShip` (C#) gain a trailing stance: a flag, then the old stance, the switch time (a FILETIME) and the new stance. The slim item gets `shipStance` as `(old, switchedAt, new)` (client `environment/spaceObject/ship.py:214-217` reads the three), and a stance that changed is shown again to whoever has the ship in view (EveJS `shipStanceRuntime.js` `broadcastShipStanceSlimChange`). Protocol 55 was taken on main by the bridges while this was in review, so this is 56. `oracle/fixtures/simlink/messages.json` is written by `tools/dev/gen-simlink-fixtures.py` with a switched ship; the Rust replay (7 tests) and the C# codec (272 tests) read it. Tests: `scene::tests` (a switched stance is shown; the simulation keeps the old stance it had), `ShipStanceSlimTests` (the host sends the stance in space; a never-switched ship has none).
+- **The old stance is the one the simulation had.** The host sends the new stance; the simulation takes the old one from the ship it had. A ship sent from the host's snapshot (entry, undock, a module start) has old = current, because the custom info of the hidden item keeps only the current stance (EveJS `buildShipStanceCustomInfo`, the same format). The first switch after a restart is announced from the stored value. Limitation, not a rule difference.
+- **The speed lock reaches the simulation.** A started siege module sets the ship's maximum velocity to zero (SDE 6582 modifier on attribute 37, operation -100 percent), and the warp scramble (104, from 852) and the docking lock (2354). The simulation takes the warp scramble and the docking lock from the module's own changes; the maximum velocity came only from the ship it was sent, and the host sent the ship again only when the resonances or hit points moved. The maximum velocity and the mass now take part in that comparison (`SimVitals`, host-side). Tests: `SiegeModuleTests` (real SDE: the numbers while the module runs, restored when it stops), `SiegeSpeedLockTests` (the start sends the ship with a zero maximum velocity; it was not sent before this change).
+- **The fuel of a module cycle is built.** A module with a consumption type (SDE 713) asks the host for its fuel before each cycle (`WORK_FUEL`, ADR 0013; `ShipEffect.BurnsFuel`), and the host takes the consumption quantity (714) in the transaction that records the answer. Sim tests: `modules/tests.rs` (`a_fuel_burning_effect_asks_the_host...`, `a_refused_fuel_ask_starts_nothing...`). The earlier note `FUEL_NOT_IMPLEMENTED` (DEVIATIONS Track S2, TODO section 30) is out of date and is withdrawn.
+- **One siege per ship, and the warp, speed and dock locks.** The siege's group limit (SDE 763 = 1) is the simulation's activation rule (`modules/activation.rs`, the group check); the locks above are dogma while the module runs.
+- **Jump freighters do not jump into high-security space.** The wiki (Jump Freighters): "Jump freighters cannot use their jump drives and cynos to jump into highsec space, but they can jump out of highsec space." The activation refuses a freighter whose field is in a high-security system (`JumpDriveRules.MayJumpInto`, security class from `Security.ClassFromLevel`, so 0.45 is high security as the client has it). EveJS has no such rule (searched `evejs-v0.12.9`), so the refusal text is ours: "Jump freighters cannot jump into high-security space." Test: `JumpDriveRulesTests`.
+- **The jump drive's numbers are the flown ship's.** The jump read the range, spool, fuel per light year, fuel type, capacitor share and fatigue multiplier from the hull's static type, so a hull bonus on them did not reach the jump. They are read from a dogma world holding the hull alone (no skills, no fitting: `ItemDogma.Of` of the flown ship), so the hull's passive role bonus is in them (the Rhea's jump drive consumption bonus, SDE `eliteBonusJumpFreighterJumpDriveConsumptionAmount2` on attribute 868). The skills (Fuel Conservation, Calibration) and the economizers (SDE 5911 on 868) act on 868 too; they are taken once each by the explicit formula (`JumpDriveRules`), so a read from the flown ship's whole world would count them twice (the `A_fitted_economizer...` test caught it). Tests: `SpecialHullBonusTests` (the flown Rhea's 868 differs from its base), the cyno jump host tests (23 jump tests pass). Not checked: the hull-only read against a jump of a Rhea (no such fixture).
+- **Special hulls, the rest.** The role bonuses are passive effects on the hull (`SpecialHullBonusTests`). The effects that feed the rules are read where they are used: the cloak's reactivation delay (669, the covert-ops bonus `covertOpsAndReconOpsCloakModuleDelayBonus`) by the module rules; the cyno duration (73) by the cyno effect; the command burst's buff values (2469, 2471, 2473, 2537) by `CommandBurstEffect`. Not checked at module level: that each burst, cloak and cyno module shows the bonused value in a test. Blockade runners: the wiki's Blockade Runners page names no restriction on the ship (it says a blockade runner "can fit covert ops (CovOps) cloaking devices"); the SDE's blockade bonus is the cloak's CPU (50 percent, `blockadeRunnerCloakCpuPercentBonus`), a fitting number, not checked here.
+- **Triage and bastion modules.** Triage (SDE 6581) and bastion (6658, the micro jump block in `BuiltInEffects.ClientModifiers`) are in the dogma world like the siege's effects. Their numbers are not checked by a test in this track; the triage fits Force Auxiliaries (SDE 1298 = 1538), not the Dreadnought the siege test uses.
+
+## Track A9: the bridge range, the Black Ops conduit, the industrial bridge (protocol 57, 2026-10-10)
+
+Sources, in the order of the rule (SDE first, the wiki's logic as written, then EveJS, CCP and eve-logic at equal rank). SDE (build 3396210, typeDogma): the Industrial Jump Portal Generator I (63140, group 4184): attribute 6 = 100 (GJ), 1001 = 1e-9, 1002 = 20 000 ms, 1298 = 883 (fits the Rorqual's group), 3126 = 1 (a conduit generator), 3318 = 3325 (industrial passengers), 3321 = 3324 (industrial conduit passengers). The Covert Jump Portal Generator I (28652): 3126 = 1, 3321 = 3322, 1001 = 2e-7, 1002 = 20 000. The Redeemer (22428, group 898): 3131 = 1 000 (conduit isotopes a light year), 3133 = 30 (conduit passengers), 3320 = 1, 3322 = 1, 866 = 16 274, 867 = 4, 868 = 700, 1971 = 0.25. The Rorqual (28352, group 883): 3131 = 5 000, 3133 = 30, 867 = 5, 868 = 4 000, 866 = 17 887, 1971 = 0.1, 3319 = 0. The Porpoise (42244): 3324 = 1, 3325 = 1, 1971 = 0.1. The Industrial Cynosural Field (52696, group 2020) is industrial by its type. Wiki (https://wiki.eveuniversity.org/Jump_drives, fetched 2026-10-10): the Black Ops conduit (30 ships in a 10 km radius, the covert generator needed, the isotopes a light year by its table: 1 000 a Black Ops, 5 000 a Rorqual); the Rorqual's industrial generator (mining frigates, expedition frigates, mining barges, exhumers and the Porpoise; 20 seconds); the bridge's 2 500 metres. Wiki (https://wiki.eveuniversity.org/Black_Ops, fetched 2026-10-10): the covert generator fits a Black Ops and is needed for a conduit. EveJS v0.12.9: server/src/services/_shared/conduitJumpRuntime.js (CONDUIT_JUMP_RANGE_METERS line 50; resolveConduitJumpActivation fuel trunc(distance x 3131) at 287 to 325; buildConduitPassengerPlans at 328; executeConduitPassengerJumps at 499 to 545: passengers jump at once, their timers with their own 1971 multiplier, OnGroupJumpedPassenger); server/src/services/ship/beyonceService.js (Handle_CmdGroupJumpToFleetModuleBeacon at 2865, notifyGroupJumpAnchor at 1723 with OnGroupJumpAnchorActivated and [destination, passengers]; getRequiredPortalPassengerAttributeForField at 876). eve-logic: eve/client/script/parklife/cynoTravelSvc.py (read in full: GroupJumpToFleetModuleBeacon(charID, solarsystemID, beaconID) calls CmdGroupJumpToFleetModuleBeacon(charID, beaconID, solarsystemID); OnGroupJumpAnchorActivated(toSolarsystemID, numPassengers); OnGroupJumpedPassenger(anchorCharID, toSolarsystemID)).
+
+- Decision, the bridge range (command 30 gains a range argument, the Role keeps it): the wiki gives 2 500 metres for a bridge; the host sends 2 500, and the passage (command 31) is refused beyond the range the bridge was opened with (OUT_OF_BRIDGE_RANGE). Tests: scene/tests.rs a_bridge_range_is_refused_beyond_it_and_a_restarted_scene_has_no_bridge.
+- Decision, the passenger list (command 32, ConduitJump): the anchor and the listed ships leave at once, as EveJS's executeConduitPassengerJumps does (no spool is in the sources read). The simulation takes the group whole or refuses it whole (a passenger beyond 10 km, not in space, in a bubble, or not ready is named in the refusal). The host builds the list: the anchor's fleet members in the same system within 10 km (PositionOf), eligible by the Black Ops conduit flag 3322 (default 0, the SDE's), not cooling down, up to the hull's 3133. EveJS takes only the passengers in range, so a member out of range or ineligible is left out without refusing the group. Shortcut: a member is checked by the host and again by the simulation, so a race between the two refuses the group.
+- Decision, the fuel: the anchor pays once for the group, distance times 3131 times the conservation skill (the same rounding as the jump drive's). EveJS takes trunc(distance x 3131) once for the anchor. The wiki prose says "a flat amount no matter the size or mass", and its table gives isotopes a light year; the SDE gives 3131 as a per-light-year figure. The per-light-year reading is taken: the SDE and the table agree, and EveJS charges it.
+- Decision, the fatigue: the anchor takes the jump drive rule with its hull's 1971 (0.25 for a Black Ops); each passenger takes the same rule with its own hull's 1971, as EveJS's applyJumpTimersBestEffort is given (the passenger's multiplier is its 1971 only). The wiki's fatigue list does not name conduit jumps; EveJS is the source for the passengers. Decision, a passenger cooling down is left out of the group (EveJS does not check passengers' cooldowns; the wiki is silent; the choice keeps a cooling ship from a jump the drive would refuse).
+- Decision, no capacitor is taken by a conduit jump: no source read gives a conduit activation cost; the simplest reading is taken, and the generator's capacitor is kept for the bridges.
+- Decision, the conduit anchor is a Black Ops with a covert generator fitted that fits its hull (SDE 1298 = 898) and whose 3126 enables the conduit; Jump Portal Generation at level one (the wiki, the module's requirement, as for the bridges). A Rorqual conduit is NOT built: the Rorqual conduit needs its industrial core to be inactive (the wiki, "Jump drives"), and the simulation does not keep the industrial core's state as a fact the host can read; the host refuses it by name ("Only a Black Ops battleship makes a conduit jump.").
+- Decision, the industrial bridge: a Rorqual with its Industrial generator opens a bridge to an industrial cynosural field only (EveJS's getRequiredPortalPassengerAttributeForField gives the industrial generator's passenger flag to the industrial field only; the wiki gives no target rule for an industrial bridge, so the reference's rule stands). Its passengers take flag 3325; its bridge lives 20 seconds (SDE 1002), takes 100 GJ (SDE 6), needs no Strontium (no 713 or 714 on the generator, as the wiki's "no opening cost" for a Rorqual bridge), and holds the ship still for nothing (the wiki gives no hold for a covert or industrial bridge). A Rorqual is a capital, so the high-security refusal applies (the wiki, Capital ships).
+- Decision, the cyno rule for every bridge: the bridging hull must be allowed to jump to the field's kind (JumpDriveRules.MayJumpTo: the SDE and the wiki's field rules, as the jump drive's). A Titan and a Rorqual and a Black Ops are checked by that one rule, with the generator's own field rule on top (a Titan to standard only; an industrial generator to industrial only).
+- Decision, restart: a bridge and a conduit are held in memory by the host and the simulation; a restart ends them (the wiki gives no rule). Test: CynoJumpHostTests A_bridge_does_not_survive_a_restart_of_the_host; the simulation test above.
+- Protocol 57: command 30 has six arguments (the range added), command 32 is new.
+- NOT RUN: the client. No graphical client or MITM capture; the passenger list, the fleet notices and the arrival are not seen in the client.
+- Fix, the fuel of a jump drive jump: the flown ship's fuel per light year (SDE 868) carried Jump Fuel Conservation from the skill's effects (SDE 3527 and 3532 on skill 21610), and the explicit formula cut it again, so a Rorqual at level one took 3 111 units, not 3 456 (test CynoJumpHostTests.A_fitted_economizer_takes_its_share_of_the_fuel_before_the_rounding). The numbers are now read from a dogma world holding the hull alone (commit 07e9bda, SF-11), so each skill and economizer is taken once, by the formula. The conduit and the bridge read the hull's static value and keep their own cut.
+
+## Track S2c: module bonuses of the special hulls and the cloak, cyno and burst numbers (2026-10-10)
+
+Sources, in the order of the rule: the SDE first (typeDogma, dogmaEffects, dogmaAttributes, the pinned build), then the wiki's rules as written, then EveJS and CCP where the SDE and the wiki are silent. Tests: `dotnet/tests/Eve.Ships.Tests/ModuleBonusTests.cs` (PG-backed: each module is fitted to its hull with the skills at level five, started, and the modified numbers are compared with the SDE values).
+
+- Bastion Module I, triage module and capital industrial core: the locks (maximum velocity 0, warp scramble 852 added to 104, the docking lock 2354) and the remote repair, remote assistance and sensor dampener impedances reach the hull. The Bastion Module I states no sensor dampener bonus (2351 is absent from its row); its modifier (effect 6658) reads the attribute default, 0, so the sensor dampener resistance stays at the hull's value.
+- Command burst of a Command Destroyer: the hull states 2 per level of Command Destroyers (2059; skill 37615 multiplies it by the skill level), so a level-five pilot has 10. The Shield Command Burst I's buff value (2469, 1.0) takes that bonus as a percentage (eliteBonusCommandDestroyerShield1, PostPercent, on the burst because it requires Shield Command, skill 3350), and the Shield Harmonizing charge multiplies the result by its buff multiplier (2596 = -8, effect 6737, PostMul). The wiki's Command Destroyers page gives +2 % command burst strength per level of Command Destroyers, the same figure.
+- Covert Ops cloak on a Black Ops hull: the Black Ops role (effect 2252) assigns the hull's cloak delay (1034 = 5 000 ms) to a module that requires Covert Ops (11579), so the Covert Ops Cloaking Device II's delay (669) becomes 5 000 instead of 30 000.
+- Covert cynosural field generator on a Black Ops hull: the Black Ops role (effect 2008) takes the field's duration (73, 60 000 ms) by the hull's percentage (66 = -50 %) for a generator that requires Cynosural Field Theory (21603). The skill does not scale the percentage (its effects are on the consumption only, 3526 and 3527), so the duration is 30 000 ms at every level.
+- Blockade Runner: the EVE University wiki states no restriction on its modules, so no module restriction is modelled and no module-bonus test is added; the hull's role bonuses are checked by `SpecialHullBonusTests`.
+- Command ship burst: a Sleipnir (attack, SDE 1924 = 4 per level, wiki 4 %/level) fitted with Shield Command Burst I and a Shield Harmonizing charge at Command Ships level five gives strength 20; the burst buff is 1.0 raised by 20 % and multiplied by -8 (test A_shield_command_burst_on_a_command_ship_carries_the_ships_strength_into_its_buff).
+- No code change was needed for these rules: the bonuses reach the dogma world through the ship's and the module's effects as the SDE gives them.
+
+## Track A9 continued: the mobile cynosural beacon and the structure beacon refusal (protocol 58, 2026-10-10)
+
+Sources, in the order of the rule. SDE (sde.types and sde."typeDogma", the build loaded in Postgres): group 4093 holds the Mobile Cynosural Beacon (57319, radius 100, Anchoring III: requiredSkill1 11584 at level 3), the Highsec Authorized Mobile Cynosural Beacon (58906, unpublished, Anchoring III and Polaris 9955 at level 5) and the Covert Mobile Cynosural Beacon (59630, Anchoring V and Cynosural Field Theory 21603 at level 5, isCovert 1252 = 1). The SDE carries no anchoring delay (556), no lifetime and no range for the three types. EveJS v0.12.9, server/src/services/ship/deployableCynoRuntime.js: the activation delays (lines 50 and 52: 2 minutes, covert 60 seconds), the lifetimes (lines 51 and 53: 60 minutes, covert 30 minutes), the deploy distance (line 49: 2 500 m), the security cutoff (line 54: 0.45, applied at line 297) and the skill lists (lines 59 to 81, which agree with the SDE for the standard and covert types). The EVE University wiki: no page for the Mobile Cynosural Beacon was found (the page address returned 404 and a search found none), so the activation and lifetime figures are EveJS's, and only those.
+
+- Decision, the security cutoff: a standard (57319) and a covert (59630) beacon cannot be deployed at 0.45 security or above (EveJS). The highsec authorized beacon (58906) is exempt: the SDE gives it its own type and a Polaris 5 requirement for high security, which would be pointless if the cutoff applied to it. Tests: BeaconHostTests.A_standard_or_covert_beacon_is_refused_at_high_security_but_the_highsec_authorized_one_is_not. EveJS's refusal text says "below 0.5 security"; the text is kept, the constant is 0.45.
+- Decision, the skills: the host reads the SDE's requiredSkill attributes (182, 183, 277, 278) through the same check as the mobile disruptor, so the highsec type asks for Polaris 5 from the SDE. EveJS's skill list gives the highsec type the standard list; the SDE is followed. Test: BeaconHostTests.A_pilot_without_the_skills_of_the_beacon_cannot_drop_it_and_it_stays_in_the_hold.
+- Decision, the activation and the life: two minutes for the standard and highsec beacons, one minute for the covert one, and an hour for the standard and highsec beacons, thirty minutes for the covert one (all EveJS, as above). The beacon is not a field until it is anchored: the simulation's role is CynoBeacon { active }, and a pilot may jump to it only once it is anchored. Tests: BeaconHostTests (the standard beacon anchored at two minutes, leaves at an hour; the covert one at a minute and thirty minutes); scene test deployable/tests.rs a_mobile_cynosural_beacon_is_a_field_only_once_anchored_and_is_taken_out_on_request.
+- Decision, the kind of a beacon jump: the covert beacon (59630) is a covert field for the jump drive's rule (only a Black Ops battleship may jump to it); the standard and highsec beacons are standard fields. The SDE's group and the wiki's field rules are the reference.
+- Decision, the restart: a beacon in space comes back with the state its record gives (not anchored before its activation time, anchored after). Test: BeaconHostTests.A_beacon_in_space_comes_back_after_a_restart_unanchored_or_anchored_as_its_record_says.
+- Protocol 58: the placement of a beacon is command kind 73 (PlaceCynoBeacon), a disruptor's placement with a range of 0. Kinds 71 and 72 are the scan targets and the directional targets, which main already has. The host's record kind is mobile_cyno_beacon (migration 0011 widens the deployed kind check).
+- Decision, a structure beacon (the Pharolux and Upwell cynosural beacons, group 2017, category 65, the structureCynoBeaconMgr remote service): the host answers a named refusal. The text names the missing piece: the structure service that keeps the beacon's state (the Upwell structure phase) is not built on this server. Test: StructureTravelTests.An_unwired_cyno_beacon_call_is_a_user_error_with_its_text. The jump bridge's structure call keeps its own generic text.
+- Shortcut, not built: a beacon as the target of a bridge or a conduit (both keep the field-only check, so a beacon is refused as not lit); the fleet notices for a beacon (no AnnounceFieldAsync call); the mobile inhibitor's effect on a beacon's activation; the wormhole and Pochven refusals (EveJS lines 287 to 291); the host jump to an anchored beacon (SpaceJumpDrive accepts it; no host test drives a jump to one); the simulation's arrival at a beacon (the arrival filter accepts an active beacon; not tested). The client was not run on this host.
+
+## Handshake, machoNet and the global config (slice A, 2026-10-10)
+
+- **Unknown service and unknown method.** The reference (EVE.js, `server/src/network/packetDispatcher.js:775-795`) answers a call to a
+  service it does not register, or to a method the service does not have, with a None result. The V24.01 server answers with a Macho
+  error: a wrapped `eveexceptions.ServiceNotFound` for an unknown service (`carbon/common/script/net/machoNetTransport.py:550-555`), and a
+  wrapped `exceptions.AttributeError` for a method the service does not export (`carbon/common/script/net/ObjectCallGPCS.py:100-105`,
+  wrapped by `ExceptionWrapperGPCS.py:35-45`). The client takes a None result as the call's answer (a colony dies on `None.level`, the
+  reason the released-bound-object path already answers with an error), and raises the wrapped exception at the call site. eve.rs
+  answers the non-strict default with the V24.01 error; `EVE_STRICT_RPC=1` keeps its named error with the log line. A call that names
+  no service is answered with the `UnMachoDestination` user error, as the released-object path does. Tests: `HostServerTests`
+  (`An_unknown_method_gets_a_wrapped_attribute_error...`, `A_ping_is_answered_and_an_unknown_service_gets_a_service_not_found_error`),
+  `StrictRpcTests` (flag off), and `DispatchGoldenTests` where five recorded None steps (`ErrorAnswers`) are replayed for the error answer
+  only; their state checks still run. Status: tolerated (A).
+- **Service table: the names left out.** The reference advertises 143 service names in `machoNet.GetServiceInfo`
+  (`server/src/services/machoNet/machoNetService.js:175-322`). eve.rs advertises the names it registers, and leaves out
+  23 that it does not implement: `objectCaching`, `FastCheckoutService`, `corpStationMgr`, `itemLocking`, `structure`,
+  `loadService`, `planetOrbitalRegistryBroker`, `tradeMgr`, `LSC`, `warRegistry`, `certificateMgr`, `tutorialSvc`,
+  `nes_intro`, `bookmarkMgr`, `accessGroupBookmarkMgr`, `ownerGroupManager`, `standing2`, `contractMgr`,
+  `blueprintManager`, `repairSvc`, `reprocessingSvc`, `LPSvc`, `publicGatewaySvc`. The V24.01 client calls a name it is
+  advertised only through `RemoteSvc`/`ProxySvc` or a route table (`carbon/common/script/net/ServiceCallGPCS.py:194-213`);
+  for the names above the client's calls are on demand (station, corporation, industry, LP store), local
+  (`sm.GetService`, `publicGatewaySvc`, `LSC`, `warRegistry`), or not found in eve-logic (`certificateMgr`, `tutorialSvc`,
+  `bookmarkMgr`, `ownerGroupManager`, `standing2`, `contractMgr`, `tradeMgr`). `structure` and
+  `planetOrbitalRegistryBroker` belong to the structures track. An advertised name with no service would be called and
+  answered with the unknown-service error, so a name is advertised only with a real service. Each is added when its
+  service is built (its own slice). Test: `ServiceAdvertisementTests`. Status: tolerated (A); the on-demand names are
+  listed as open in TODO.md.
+- **objectCaching is not a service here.** The reference registers it (`server/src/services/cache/objCacheService.js:38`)
+  and advertises it. In V24.01, the cache check that a call makes is local: `ServiceCallGPCS.py:185-193` asks the client's
+  own `objectCaching` (`sm.GetService`). The remote `objectCaching.GetCachableObject` is reached only when a server result
+  is an `objectCaching.CachedObject` reference (`carbon/common/script/net/objectCaching.py:299-332`,
+  `cachedObject.py:103`). eve.rs returns every cached result inline (`ObjectCaching.MethodResult`, a substream), so the
+  client never asks for one. The cache-version and invalidation calls the client makes are local too
+  (`objectCaching.py:222-225`). Building the remote service would answer calls nobody makes. The reference's proxy cache
+  (`proxyCache: true` in `beyonceService.js:2482`, `mapService.js:755`, `corpService.js:590`, `agentMgrService.js:901`)
+  would need it; a slice that returns such a reference must implement `GetCachableObject` first. Status: tolerated (A).
+- **Global-config store keys: given from the store catalog (done).** The seven keys of EVE.js `storeState.js:503-527` are in the base entries (`GlobalConfig.Build`), with values from `Data/new-eden-store.v1.json`: `fake_vgs_enabled` 1 (store enabled and has offers), `fake_fast_checkout_enabled` 1, `fake_fast_checkout_plex_offers`, `fake_fast_checkout_response` "OK", `fake_china_funnel_enabled` 0, `fake_buy_plex_offer_url` "", `use_shell_execute_to_buy_plex_offer` 1. Their consumers: `globalConfig/getFunctions.py:233-258`, `vgsService.py:51,101`, `fastCheckoutClientService.py:76`. The flags are 0/1 integers because `GetGlobalConfigBooleanValue` reads `bool(int(value))` (`getFunctions.py`). Tests: `NewEdenStoreHostTests.The_client_global_config_carries_the_store_keys...`.
+- **New Eden Store: real-money offers are granted free (owner policy).** Every offer purchasable with real money is free and really granted. The in-game ISK market is not touched. What this means in eve.rs:
+  - **Charge.** A purchase charges nothing, in PLX, AUR, or a fiat currency (CNY, JPY, EUR, GBP, USD, RUB). The listed price is display data. There is no balance gate. EVE.js charges PLEX for PLX offers (`storeFulfillment.js` `purchasePlexVaultOffer`); eve.rs does not.
+  - **Grants.** PLEX packs are credited to the recipient's vault. Items are created in the recipient's hangar at the station or structure the character is docked at, else its home station (EVE.js `storeFulfillment.js:490-528` grants items into the hangar; eve.rs no longer uses redeem tokens for purchases). Bundles grant each part. A quantity of 1 to 100 per purchase is a limit of this server.
+  - **Idempotency.** The receipt is keyed `account:operationId` (the call id), written in the same transaction as the grant. A repeated call answers True and grants nothing. FastCheckout keys its receipts `account:fast-checkout:<call id>`. The receipt row grows with every purchase (a known cost; EVE.js caps its log).
+  - **Notifications.** After commit, each new item is sent to the recipient's live session as `OnItemChange` (CrateService.cs:192 pattern; the client handles it at `eve/client/script/ui/shared/container.py:123`). The PLEX balance change reaches the client through the message bus, which eve.rs does not serve (TODO).
+  - **Refused, not granted.** Omega (`omega_30_days`, `cash_omega_*`) and MCT (`mct_slot_30_days`, `cash_mct_*`) are refused before any charge or receipt: Omega waits for the subscription end time of the Omega track, MCT for a training-slot state. Bundles with skill points (`cash_*_bundle`, `cash_level_*_mastery_pack`, `cash_omega_30_days`) are left out of the catalog (no skill-point grant yet).
+  - **Catalog.** The seed is EVE.js `tools/DatabaseCreator/staticTables/newEdenStore/data.json` (sha256 in the catalog meta), the owner-approved data source. Product type ids were checked against the pinned SDE build 3396210 (zip sha256 matches `sde/lock.json`): Omega 29143 "Clone Grade Omega", MCT 63188 "Multiple Pilot Training", PLEX 44992 "PLEX". The real-money cash offers have no price in the seed, so they carry no `offerPricings`.
+  - **FastCheckout.** `BuyOffer` does not check the account password (EVE.js does not either; the session is already authenticated). `ClearFastCheckoutCacheForUser` answers True because the server keeps no per-user cache.
+  - **Status.** Tests: `NewEdenStoreCatalogTests`, `StoreOffersServiceTests`, `FastCheckoutServiceTests`, `NewEdenStoreHostTests` (PostgreSQL). The live headless walk does not yet issue store calls.
+- **`machoNet.SetGlobalConfigValue` is saved, and its write is observed.** The reference keeps a runtime override in
+  memory (`server/src/services/machoNet/globalConfig.js:99-117`, and `machoNetService.js:357-400`), so a restart drops it.
+  eve.rs saves it in PostgreSQL (schema `zsystem`, table `global_config`, as the reference's own `zsystem.GlobalConfig`)
+  and reads it back at start-up, because the brief requires a write to survive a restart and the Host keeps its state in
+  PostgreSQL. The reference also tells every connected client with `OnGlobalConfigUpdated`
+  (`carbon/common/script/net/machoNet.py:1494-1498`, handler `:3356-3367`); eve.rs does the same, sending None for a
+  removal, and sends the new cluster configuration to each connected front so the next login reads it (the handshake's
+  `config_vals`, `machoNet.py:1708-1709`). `isUpdate` (the other nodes of a cluster) has no effect on a single node.
+  Two further differences: (1) the write needs `ROLE_ADMIN` or `ROLE_SERVICE` on the account, as the reference's exported
+  calls say (`machoNet.py:295-296`), which the reference's own handler does not check (`machoNetService.js:357`); a player
+  is refused with `RuntimeError('RoleNotAssigned')`; (2) the bug-report server and the Honeycomb write key cannot be set or
+  removed (the reference's protected keys, `globalConfig.js:99-104`), and eve.rs refuses such a write with an error where
+  the reference ignores it silently. Without a store the call is refused, not answered as done. Tests: `GlobalConfigTests`
+  (store semantics, socket write path, PostgreSQL round trip), `MachoNetServiceTests`. Status: tolerated (A).
+- **`machoNet.GetGlobalConfig` and `GetGlobalConfigValue` answer any session.** The reference restricts both to
+  `ROLE_SERVICE` (or `ROLE_ADMIN` for the value) (`machoNet.py:293-298`). eve.rs answers any session. The values are read
+  only, and the same dictionary reaches every client in the handshake's `config_vals` (`handshake.rs:340`), so nothing
+  secret is exposed. Status: tolerated (A).
+- **Single sign-on login (`connection.LoginSso`).** The acknowledgement carries `access_token` and `computer_hash`, which
+  the client reads after an SSO login (`carbon/client/script/remote/connectionService.py:139-140`). The reference's
+  authentication returns both (`machoNet.py:3445`). eve.rs sends both as None (the reference's answer when the client sends
+  no computer hash, `authenticationService.js:288-292`). The SSO token itself is not read: the reference only records it
+  (`authenticationService.js:281`), and no token-to-account rule exists in either implementation. A real SSO token therefore
+  does not sign a pilot in; the login is the ordinary account check. Status: open (FUTURE, see TODO.md).
+
+## Track A8c: the mobile beacon as a jump target (2026-10-10)
+
+Sources, in the order of the rule. The wiki (https://wiki.eveuniversity.org/Jump_drive, fetched 2026-10-10): "Ships with a jump drive can only jump to cynosural fields or beacons."; "Titan jump bridges can only be created to standard Cynosural Fields, or Cynosural Beacons."; "Covert jump bridges can be created to any form of cyno."; "Black ops battleships and Rorquals have a fixed limit of 30 ships" and the conduit to a cyno. The SDE (types 57319, 58906, 59630; group 4093; `sde.types`, `typeDogma`) gives the covert type's covert flag. The cyno rule (the field kinds) is `JumpDriveRules.MayJumpTo`, as built in track A6. EveJS v0.12.9 `server/src/services/ship/beyonceService.js` resolves the module and deployable beacons through the same field check (`resolveFleetModuleBeacon`, `Handle_CmdGroupJumpToFleetModuleBeacon` at 2865), and `deployableCynoRuntime.js` only lights a beacon after its activation timers (`activateMobileCynoDeployable`, line 513).
+
+- Decision, the beacon's lit state: a beacon is lit for a jump, bridge or conduit while its activation time is past and its record's time is not up. The wiki names beacons as jump targets but gives no lighting time; the anchoring time is EveJS's (track A9 continued). One rule (`SpaceContainers.IsLitField`) is shared by the jump drive, the bridge and the conduit, so the three cannot disagree.
+- Decision, a Titan bridge to a covert beacon: refused by the cyno rule. The wiki's Titan clause says "standard Cynosural Fields, or Cynosural Beacons", which read literally would take a covert beacon. The cyno rule of the Jump drive page (its cyno kinds: a covert field takes only black ops battleships) decides, and a Titan is not a black ops, so the covert beacon is refused. Recorded as a reading of two wiki clauses.
+- Decision, a covert bridge and a Black Ops conduit take a beacon of any kind (the wiki's "any form of cyno"; the conduit's "a cyno").
+- Refusal texts: the wiki gives none. A Titan bridge to a non-standard field is named "A titan jump bridge goes only to a standard cynosural field or a beacon." (ours; the text is widened for the beacon). An unlit beacon keeps the existing "That cynosural field is not lit." (ours, as track A6).
+- Notices (increment 2). A beacon that anchors is told to its lighter's fleet as `OnFleetJumpBeaconDeployableChange(deployableID, solarsystemID, beaconID, ownerID, active)`: eve-logic `fleetSvc.py` line 218 (the client keeps the entry for active, drops it otherwise); EveJS `fleetRuntime.js` `setJumpBeaconDeployableState` (line 1431) and `deployableCynoRuntime.js` `setFleetDeployableBeaconState` (line 450), which pass the beacon's own id as the beacon id, as eve.rs does. Told when it expires (false). The opener of a bridge is told `OnGroupJumpAnchorActivated(destination, 0)`: EveJS `beyonceService.js` lines 2939 and 3090 (`notifyGroupJumpAnchor`), and eve-logic `cynoTravelSvc.py` line 22 (the client's dialog). A bridge passage notifies no passenger (EveJS `Handle_CmdJumpThroughFleet`, lines 2954 to 3006, sends none); a conduit notifies its anchor and each passenger (track A9, unchanged).
+- Tests: CynoJumpHostTests (A_revelation_jumps_to_an_anchored_beacon_of_its_fleet_as_it_does_to_a_field, A_titan_bridge_opens_to_an_anchored_beacon_and_is_refused_while_the_beacon_is_still_anchoring, A_titan_bridge_is_refused_to_a_covert_beacon_which_only_a_black_ops_takes, A_black_ops_conduit_jumps_to_an_anchored_covert_beacon).
+- Inhibitor (increment 3). The wiki's Mobile Cynosural Inhibitor page (https://wiki.eveuniversity.org/Mobile_Cynosural_Inhibitor, fetched 2026-10-10): "prevents all normal cyno fields (but not covert cynos) from activating within 100km of the inhibitor"; "it takes two minutes to set up"; one hour. The Cynosural field page (https://wiki.eveuniversity.org/Cynosural_field) says "200km radius" for the same effect: the conflict is recorded here and the inhibitor's own page (100 km) is taken, as the task names. EveJS `mobileCynoInhibitorRuntime.js` line 50 gives 100 000 m, which agrees. The SDE carries no range for type 33476 (group 1249).
+- Decision, the beacon's activation: the record of a standard or highsec authorized beacon whose activation falls within 100 km of an anchored inhibitor (its anchoring time past, its time not up) is kept with an activation time of never (`long.MaxValue`, bigint). The beacon is never lit and a jump to it is refused as not lit; a restart keeps it unlit (the record says so). The wiki gives no rule for a beacon's activation; the choice follows its "prevents the activation of cynos". EveJS `deployableCynoRuntime.js` does not check an inhibitor at a beacon's activation (its only inhibitor use is in the field-lighting path), so this is a deviation from EveJS, taken from the wiki.
+- Decision, a covert beacon (59630) is not stopped (the wiki: "not covert cynos"; the covert field is not stopped in the simulation either, `modules/activation.rs`).
+- Decision, an existing lit beacon inside a new inhibitor's range stays lit: the wiki says the inhibitor "do not remove existing cynos". The inhibitor's own placement rule (no overlap with another inhibitor, track A5) is unchanged.
+- Decision, a beacon dropped inside an inhibitor's range is not refused at the drop (EveJS and the wiki give no drop refusal for a beacon); it simply never lights.
+- Tests: BeaconHostTests (the three above).
+- NOT RUN: the client.
+
+## Track A8c: wormhole space and Pochven (2026-10-10)
+
+Sources. The wiki: "Jump drive" (https://wiki.eveuniversity.org/Jump_drive, fetched 2026-10-10): "Cynos cannot be lit in high-sec"; "while they can be lit in wormhole space they serve no purpose as jump drives cannot jump to systems in wormhole space"; "Ships with a jump drive can only jump to cynosural fields or beacons". "Cynosural field" (https://wiki.eveuniversity.org/Cynosural_field, fetched 2026-10-10): the same wormhole sentence. "Pochven" (https://wiki.eveuniversity.org/Pochven, fetched 2026-10-10): "Region-wide cynosural field jammers stops anyone from lighting a cyno"; "capital ships cannot jump into the Pochven region"; "Jump drives cannot be used to enter Triglavian space, only to exit." The SDE (build 3396210, `sde."mapSolarSystems"`, `doc->>'regionID'`): Pochven is region 10000070 (27 systems); every wormhole system (31000001 to 31002604) lies in a region 11000000 to 11999999. EveJS v0.12.9 `server/src/services/chat/channelRules.js`: `isWormholeSolarSystemID` (line 104, the id range 31000000 to 31999999) and `isTriglavianSolarSystemID` (line 116, by the system's faction); EveJS `deployableCynoRuntime.js` lines 286 to 290 (the beacon's deployment texts: "Mobile Cynosural Beacons cannot be deployed in wormhole space.", "Mobile Cynosural Beacons cannot be deployed in Pochven."). eve-logic: no jump refusal text for a wormhole or Pochven destination was found (`stargate/client/jump_checks.py` covers gates; the labels are in the client's localization, not in the Python source).
+
+- Decision, the region as the Pochven check: the SDE in this build carries no `factionID` on the systems (EveJS's check is the faction, `worldData.getSolarSystemByID(...).factionID`), so the region 10000070 is used. The two are not compared against each other here (no faction data in the SDE to compare with).
+- Decision, the wormhole check: the region 11000000 to 11999999 (the SDE's J-space regions), not the EveJS id range; both name the same 2604 systems (the id range is 31000000 to 31999999).
+- Decision, jump drives into wormhole space: refused for the cynosural jump, a bridge's opening and a conduit, whatever the field (the wiki). Text: "Jump drives cannot jump to systems in wormhole space." (ours).
+- Decision, jump drives into Pochven: refused the same way (the wiki: "only to exit"). Text: "Jump drives cannot be used to enter Pochven." (ours). Leaving Pochven or wormhole space is not refused (the wiki says "only to exit"; no wiki rule restricts a jump out).
+- Decision, a beacon in Pochven: not dropped, with EveJS's text "Mobile Cynosural Beacons cannot be deployed in Pochven." (EveJS line 290; the wiki's region-wide jammer agrees).
+- Deviation from EveJS, a beacon in wormhole space: the wiki says cynos "can be lit in wormhole space", so a beacon may be dropped and lit there; EveJS refuses it (line 287). The wiki is the logic source at the higher rank, so the wiki is followed. No jump can target a wormhole beacon (the rule above), so the difference has no jump effect.
+- Pochven lighting: built, see "Track A8c: the cynosural field in Pochven" below. This line used to say the simulation holds no region fact; it does (the scene's `SolarSystem.region_id`, read from the SDE), so no wire field was needed.
+- Test change: the beacon tests' null-security system (30000021, Kuharah) is in Pochven by the SDE, so those tests now use RU-97T (30000377, security -1.0, region 10000004). The inhibitor and mobile warp disruptor tests keep 30000021: neither is refused in Pochven by the rules built.
+- Tests: CynoJumpHostTests (A_revelation_cannot_jump_into_wormhole_space_or_into_pochven_even_with_a_field_lit_there, A_titan_bridge_is_refused_into_pochven_and_nothing_is_opened); BeaconHostTests (A_beacon_cannot_be_dropped_in_pochven_but_it_may_be_lit_in_wormhole_space_as_the_wiki_says).
+- NOT RUN: the client.
+
+## Slice B: failing handlers, boot services and static configuration (2026-10-10)
+
+### Failing handlers (B1)
+
+- **A failing handler.** The reference answers a call whose handler throws or rejects with a None result (EVE.js
+  `server/src/network/packetDispatcher.js`; recorded in `oracle/fixtures/services/dispatch.json` as `errors:plain / throws`
+  and `results:async / rejects`). The V24.01 server answers the same failure with a wrapped exception: a user error is sent
+  as it is, and any other exception as a wrapped `RuntimeError` with an error ID and the release form's debug tuple,
+  `(1, stack, [], id, key, node, 'server')` (`carbon/common/script/net/ExceptionWrapperGPCS.py:46-93`). eve.rs now does the
+  same (`dotnet/src/Eve.Services/PacketDispatcher.cs`, `MachoErrors.UnexpectedFailure`). The client re-raises the error at
+  the call site and logs the debug tuple under the ID (`ExceptionWrapperGPCS.py:101-145`). Two differences, both deliberate:
+  (1) the class is always `exceptions.RuntimeError`, because a .NET exception has no Python class to name; (2) the text is
+  `Unhandled error <id> in <service>.<method>` and the debug tuple carries the release server's one-line stack key, so no
+  message or stack trace reaches the client. The host logs the exception and its stack trace under the same ID (the
+  `OnProblem` sink: stderr and Sentry). A deliberate user error (`MachoErrors.ThrowUserError`) reaches the client as it is
+  and is not logged as a problem. Strict mode (`EVE_STRICT_RPC=1`) is unchanged: a named `CustomNotify` error, with the call
+  summary and the stack trace in the log. Tests: `HostServerTests` (`A_handler_that_throws_is_answered_with_a_wrapped_runtime_error...`,
+  `A_deliberate_user_error_reaches_the_client...`), `StrictRpcTests` (flag off and strict), `DispatchGoldenTests` (the two
+  recorded None steps are answered with the error; their state checks still run). Status: done.
+
+### Boot-time services and the 23 names (B2)
+
+- **The 23 advertised names stay unadvertised.** Slice A left them out (section "Handshake, machoNet and the global config");
+  slice B checked whether any of them must exist at start-up. The shell services the client starts at boot
+  (`gameui._initialize_services`, `carbon/client/script/...`) and the services started at login, character selection
+  and station load make no server call on any of the 23 names during start-up. Where a start-up `Run` makes a call, the
+  name is registered (for example `infoGatheringMgr`, `securityMgr`, `subscriptionMgr`, `account`). Each of the 23 is
+  either not called by the V24.01 client, local to it, or needed only by a feature that is used later (nes_intro, the
+  bookmarks, blueprintSvc for industry, the station repair and reprocess services, the LP store, the corporation office
+  and item locking, the plex fast checkout). A name is advertised only with a real service behind it, so these stay
+  out until their feature is built; `TODO.md` section 37 lists the owner of each. Status: decided (B2).
+- **Start-up failures of a service.** The client treats a `Run` that fails as a failed service: the failure is logged
+  and the service is marked failed, and only a synchronous caller of that service sees the error (`serviceManager.py`
+  `StartServiceRun`, `WaitForServiceObjectState`). The boot therefore continues when a boot-time service's server call
+  is unknown. The eve.rs answers that matter at start-up are listed in `TODO.md` section 37.
+
+### Static configuration recordsets (B3)
+
+- **No placeholder rows.** `config.GetMultiOwnersEx` and `config.GetMultiCorpTickerNamesEx` answered an unknown id with an
+  invented row (`Item <id>` as the owner name, the ticker `CORP`), and `GetMultiLocationsEx` answered `Station <id>`,
+  `System <id>` and `Location <id>`. AGENTS.md forbids invented payloads, and the client reads a miss from the rows, not from
+  a name: `cfg._Prime` logs an id the reply does not carry (`carbon/common/script/sys/cfg.py:600-602`), and a later `Get` raises
+  `KeyError('RecordNotFound')` (`cfg.py:643-645`). eve.rs now leaves such an id out. EveJS still answers `Item <id>`
+  (`configService.js:463-469`); this is a deliberate difference. Tests: `ConfigServiceTests` (owners, tickers, locations),
+  `HostServerTests.The_owner_rows_reach_the_client_through_the_host...`.
+- **An empty reply keeps its (header, rows) shape.** `GetMultiAllianceShortNamesEx` answered an empty list when no id
+  matched. `cfg._Prime` unpacks a tuple and raises `RuntimeError` for any other type (`cfg.py:584-592`), so the answer is the
+  header with no rows, as the other recordsets already answer. EveJS has the same empty-list reply (`configService.js:774-776`).
+  Test: `ConfigServiceTests.Alliance_short_names_return_a_client_rowset...`.
+- **Alliances are owners.** `GetMultiOwnersEx` answers a live alliance with its name and the alliance type (16159,
+  `typeAlliance`), which the client's `cfg.EveOwners.IsAlliance` reads (`eveCfg.py:1226-1227`). A deleted alliance has no row.
+- **Station positions come from the static data.** `GetMultiLocationsEx` answers a station's `x`, `y`, `z` from the SDE
+  (`npcStations.position`). A solar system has no position in the static data and is answered with 0, as EveJS does
+  (`configService.js:128-145`). Structures are not answered (their catalogue is the structures track: no row).
+- **`GetOldStationData`** answers the empty list. The static data has no list of removed stations, and the client reads the
+  answer only when it is not empty (`eveCfg.py:749-752`), so the empty list is the answer for "none".
+- **Not added: `GetMapObjects` and `GetMultiGraphicsEx`.** EveJS answers both (`configService.js:838-840`, `:857-860`), but no
+  V24.01 caller exists in eve-logic (a search of the whole client tree finds neither name). A method without a caller cannot be
+  checked against the client, so it is not added; a call to it gets the unknown-method error. Status: open for a client that
+  calls them.
+- **`GetBlackListedPlanets`** answers the empty list. The static data and the server have no planet block list; no planet is
+  blocked. EveJS answers the same (`configService.js:862-865`).
+- **`GetAverageMarketPrices` comes from the market's fills.** The payload is each type with a recorded sale: the newest day's
+  volume-weighted average over the regions (`MarketStore.LatestAverageSalesAsync`, from `market.fills`). The adjusted price is
+  the same figure, because the market has none. A type with no sale has no entry, so the client's `GetAveragePrice` returns
+  None (`typeHelpers.py:101-109`) and its callers use their own fallback. EveJS answers the base price of every published
+  type (`configService.js:306-329`); eve.rs does not use the base price as an average, since no market data backs it. In a
+  database with no sales the payload is empty. Tests: `TradingTests.The_latest_average_sale_price...` (a real trade),
+  `ConfigServiceTests.Average_market_prices...`.
+- **Not served yet: agent owners and the agent names.** The client reads an agent's owner row through the same recordset
+  (`eveCfg.py:548-560`); EveJS builds it (`buildAgentOwnerRow`). Owned by the agents track (TODO section 39).
+## Track A8c: the cynosural field in Pochven (2026-10-10)
+
+Sources. The wiki: "Pochven" (https://wiki.eveuniversity.org/Pochven, fetched 2026-10-10): "Region-wide cynosural field jammers stops anyone from lighting a cyno, which means capital ships cannot jump into the Pochven region. Note that similar to how it works in high security space and in incursion constellations, this does not stop capital ships already in the region to jump out of the region." "Cynosural field" (https://wiki.eveuniversity.org/Cynosural_field, fetched 2026-10-10): "Cynos cannot be lit in high-sec, and while they can be lit in wormhole space they serve no purpose as jump drives cannot jump to systems in wormhole space"; "Solar systems as a whole can be cyno jammed either through the navigation structure Tenebrex Cyno Jammer or a Sansha Incursion". "Jump drive" (fetched 2026-10-10): "Unlike a normal cyno, a Covert Cynosural Field ... can be generated even in cyno jammed systems" (the system jammer's covert exemption, which EveJS also has). "Wormhole space" (fetched 2026-10-10): no cyno text. The SDE (build 3396210, `sde."mapSolarSystems"`, `doc->>'regionID'`): Pochven is region 10000070. EveJS v0.12.9 `server/src/services/dogma/dogmaService/moduleOperation.js` line 2271: `CYNOSURAL_FIELD_JAMMED` raises "A cynosural system jammer is preventing cynosural fields from forming in this solar system."; `server/src/space/runtime/activationSpaceRestrictions.js` lines 189 to 200: the system jammer's refusal exempts the covert field. eve-logic: `dogma/moduleRestrictions.py` raises only `CantInEmpireSpace` and `CantInHighSecSpace`; it has no Pochven or jammer error name, and the Python source holds no client string for either, so the wording is EveJS's.
+
+- Decision, the fact: the simulation already holds the region. `World::load` reads `mapSolarSystems.regionID` into `SolarSystem.region_id` (`crates/eve-space/src/world.rs`), and `Universe::system` builds the scene's system from it (`crates/eve-space/src/sim/mod.rs`). An earlier note said the scene lacked the region fact and needed a wire field (a protocol bump). That premise was wrong, so the wire is unchanged: protocol 58, ADR 0013 and `oracle/fixtures/simlink/messages.json` are not touched.
+- Decision, the rule: a cynosural field of every kind (standard, covert, industrial) is refused in Pochven. The Pochven page's region-wide rule says the jammer stops "anyone", and the Jump drive page's covert exemption is for system jammers ("cyno jammed systems"). The region rule is the more specific one, so the covert exemption of EveJS's system jammer is not carried over. EveJS has no Pochven lighting rule to compare with.
+- Decision, where it is checked: at the simulation's activation of a field (`modules/activation.rs`), beside the inhibitor's refusal, with the reason `CYNOSURAL_FIELD_JAMMED`. The host maps the reason to EveJS's text (`ModuleRefusals.cs`). The host's own checks (the fleet, high security) stay first.
+- Decision, restart: nothing of the refusal is stored. The region comes from the SDE with the system when the scene is made, so a restarted simulation refuses the same way. The test makes the scene anew.
+- Decision, wormhole space: no lighting refusal (the wiki: fields can be lit there). The jump refusals of track A8c (`JumpDriveRules.EntryRefusal`) already read the same SDE region, through the host's `RegionOfSystem`. They stay host-side, the lighting refusal stays sim-side, and both use the SDE region id, so there is nothing to unify. A shared constant would have to exist in C# and Rust for no gain.
+- NOT BUILT: lighting refused by a Sansha incursion or a Tenebrex Cyno Jammer in a constellation (the wiki's other jammers). They need the incursion and sovereignty state, which eve.rs does not have (track A5, `GetCynoJammerState`). Abyssal space is not named by the wiki's cyno rules and is not handled here.
+- Known gap, not from this track: `CYNOSURAL_FIELD_INHIBITED` (track A8c, inhibitor) has no line in `ModuleRefusals.cs`, so the client sees "Failed to activate ...". EveJS has no text for that reason to copy; a wording would be ours.
+- Tests: `deployable::tests::a_cynosural_field_is_not_lit_in_pochven_of_any_kind_and_is_lit_elsewhere` (the sim: the standard, covert and industrial field refused in region 10000070, the standard one lit in region 10000001); `TargetingTests.A_cynosural_field_refused_by_a_jammer_says_the_jammer_is_preventing_it` (the text). Mutation: the region constant set to 0 fails the sim test; restored.
+- NOT RUN: a host PostgreSQL test of the Pochven lighting through `ActivateAsync`. The rig places the pilot by the ship's location (a station in Manifest, high security), and the rig has no way to put a pilot in Pochven. The path from the simulation's reason to the text is the same as for the other simulation refusals (`SpaceSessions.Modules.cs`, `DogmaIMService.Modules.cs`). NOT RUN: the client.
+
+
+## Character selection and entry (slice C, 2026-10-10)
+
+- **Population cap (`populationCap`).** The reference (`server/src/services/populationCap/populationCapService.js`) answers one
+  entry for every character and has no `MoveCharacterToNewSystem`. eve.rs answers the live population: a system's load is the
+  number of characters in the game in it (the sessions that entered, docked or in space, from the session's `solarsystemid2`, or
+  `solarsystemid`). The cap is 300 characters per system (`SystemPopulation.DefaultCapacity`, or `EVE_SYSTEM_POPULATION_CAP`).
+  The reference's cap is not published, so 300 is eve.rs's own choice. Reason: the moniker must reflect real state, and a cap
+  that nothing reads would be a constant answer. Status: decided (slice C); tests `PopulationCapTests`.
+- **Alternative systems.** When the home system is full, the answer lists the nearest systems that have room (by the distance
+  in the static data, nearest first, at most 8), never wormhole space or Pochven. Reason: eve-logic's dialog takes any system id,
+  and no stargate table is loaded in eve.rs, so adjacency is not available; the distance is the nearest real measure it has.
+- **A docked character is refused, not moved.** A character with a station on record keeps that station, so moving it would
+  leave the station in the old system. A full system refuses such a character with a `CustomInfo` error. Reason: the persisted
+  station and solar system must agree. The consequence is that, in practice, a full system refuses most characters rather than
+  moving them.
+- **A single alternative is saved at once.** The client loads a single entry without calling `MoveCharacterToNewSystem`
+  (`characterSelection.py:751-758`), so `GetCharacterLoadSlot` saves that system on the character. Reason: otherwise the pilot
+  would enter the full system.
+- **`SelectCharacterID` refuses a full system before any change.** The cap is checked again at selection, because the answer on
+  the screen can be stale. Known gap: the check and the session's entry are not one atomic step, so two selections into the
+  same system that check at the same moment can both pass.
+- **`multiLoginBlocker.Login` checks the computer.** The reference answers True unless `EVE_ENFORCE_ALPHA_MULTILOGIN` is set
+  (`multiLoginBlockerService.js:87-90`, off by default). eve.rs enforces the Alpha rule without a switch: a session is refused when
+  another account on the same computer hash is logged in and either account is Alpha. Reason: the clone grades here are real
+  (`SubscriptionMgrService` reads each account's stored Omega end time), so the rule can apply, and the brief requires real behaviour
+  where the constant True was. The computer hash exists only on the SSO path (see "Single sign-on login"), so the client calls
+  `Login` only after SSO has been built. Status: decided (slice C); tests `MultiLoginBlockerTests`.
+- **`ToggleValidation` is per session and role-gated.** Same rule as the reference (`charService.js:1883-1902`): the content,
+  QA, programmer and GML roles may switch the flag; every other session stays on. The flag is not saved, and nothing reads it
+  (the reference does not read it either). Replaces a constant False, which a non-elevated client showed as "Validation Off" while
+  validation was on. The recording was made from a GM session, whose first toggle gives False; the live walk expects True for its
+  ordinary account, and `ValidationAndOmegaTests` pins both roles. Status: decided (slice C).
+- **`GetCharOmegaDowngradeStatus` answers from the stored end time.** True only when the account's stored subscription end time has
+  passed (`CharUnboundMgrService.GetCharOmegaDowngradeStatus`); otherwise False. It was missing before, so each character-screen open logged a
+  traceback. Status: done (slice D; `ValidationAndOmegaTests`).
+- **Omega state is the account's stored subscription end time (slice D, 2026-10-11).** Policy: every real-money item is free, so every
+  account is Omega until 2100-01-01T00:00:00Z. Storage: `identity.accounts.subscription_end_at` (migration `0002_subscription.sql`, NOT
+  NULL, default 2100). A new account is written with 2100 at creation (`PgAccountDirectory`, `InMemoryAccountDirectory`,
+  `SubscriptionPolicy`). The migration back-fills only rows with no end time and never shortens a stored one. Every answer reads this one
+  value through `OmegaLicenses` (one instance per host, `AccountOmegaStore`): `subscriptionMgr` (GetCloneGrade, GetSubscriptionStatus,
+  GetSubscriptionInfo, GetSubscriptionTime), `loginRewardFacilities.get_my_clone_grade`, `multiLoginBlocker`, the injector and skill
+  rules (`isAlphaClone`, `HasOmega`), the selection account row (`subscriptionEndTime`) and the lapsed-Omega check.
+  Removed: the `EVE_CLONE_GRADE` override, the `omegaLicenseEnabled` switch, and the constant floor at 2100 that the reference applies
+  (`subscriptionMgrService.js:61-68`, `storeState.js:612-622`). The floor would stop an operator's earlier end time from lapsing an
+  account. An account with no stored end time (unknown account) is Alpha.
+  Transitions: `SubscriptionTransitions.SetSubscriptionEnd` writes the end time, then announces the new grade to the account's open
+  sessions with `OnSubscriptionChangedServer(grade)` and `OnSubscriptionTimeUpdateServer(endOrNone)`. A lapse that happens while a
+  session is logged in is announced on that session's next subscription query (the session keeps the grade last told in the
+  `subscriptionCloneGrade` attribute, which the client never reads). It is not pushed on a timer; see TODO section 41.
+  Tests: `OmegaStateTests`, `SubscriptionTransitionsTests`, `ValidationAndOmegaTests`, `Wave1GoldenTests` (the recorded setups are read
+  as stored state), and the live walk `test_a_new_account_is_omega_until_2100_on_every_answer`.
+- **`GetCharacterLockType` answers None and `GetCohortsForUser` answers an empty list.** Kept: eve.rs has no transfer, sale,
+  lock or cohort state, and the reference answers the same constants (`charService.js:1458-1461`, `:1914-1916`). Status: kept.
+- **`charMgr.GetSettingsInfo` is the reference's blob, which the client cannot verify here.** The blob is byte-identical to the
+  reference's (`charMgrService.js:739-744`), unsigned. The V24.01 client verifies it with the native `Crypto.Verify`
+  (`carbonui/services/settingsSvc.py:148-150`), which needs CCP's key; eve.rs does not have it, so a signature the client
+  accepts cannot be made. A failed check is not fatal: `UpdateSettingsStatistics` runs in the session-change handler
+  (`settingsSvc.py:157-160`), the client logs the exception, and `LogSettings` is not sent. Status: open (needs the signing key).
+- **`OnCharacterSelected` takes zero positional arguments and is sent when the character changes.** The consumers take none
+  (`gameui.py:504`, `station/base.py:65`), and the V24.01 scatter calls the handler with the notification's arguments. The
+  reference sends the notification only when a plan flag is set, which defaults to off (`characterState.js:4193-4221`); eve.rs keeps
+  the owner-requested first-select notification (row 143). The client runs its window identification twice per select (the
+  scatter and the `charid` session change, `gameui.py:452-453`). Status: kept (owner-requested); the live walk expects zero arguments.
+- **`nes_intro` is not called on the character screen.** The controller is created when a player presses skip
+  (`storylines/client/nes_intro.py:32-45`, `jobboard/.../const.py:59`, `airnpetracker.py:26`). The name stays unadvertised (see
+  "Service table: the names left out"), so the skip button fails with the unknown-service error until the storyline slice exists.
+  Status: open (storylines).
+- **Survey checks answer None.** `survey.PerformSurveyChecks` answers None, as the reference does (`services/support/surveyService.js:55-58`):
+  no survey runs in this world. Status: same as the reference.
+- **Reward checks on the screen are answered in the client's shape.** `loginCampaignManager.get_client_campaign_state` (None or the
+  state), `seasonalLoginCampaignManager.get_active_campaign` (a 4-tuple, with None when no campaign runs) and
+  `loginRewardFacilities.get_my_clone_grade` (an int) are what `loginCampaignService.py` and `seasonalLoginCampaignService.py`
+  read. The screen's call at `characterSelection.py:155` has no try, so a wrong shape would abort the screen's open; the answers
+  are covered by `RewardsServiceTests`. Status: verified (slice C).
+
+## Station entry, account requests and the live suite (slice D, 2026-10-10)
+
+- **Logging off a character.** The reference's `userSvc.UserLogOffCharacter` disconnects the session's character
+  (`server/src/services/_shared/sessionDisconnect.js`, `disconnectCharacterSession`) and answers True. eve.rs did
+  the same with the wrong effect: it closed the whole connection, so the client lost its login instead of returning to
+  the selection screen (`eve/client/script/parklife/gameui.py:493-502`: `DoCharacterLogoff` activates the `charsel` view). The
+  character now leaves the game as it does on a change of character: every entry hook gives up its state (a pilot in
+  space, the guest entry, the dogma sync), `characters.last_logoff_at` is written, the character is no longer online,
+  and the session drops the attributes that selecting it set, in one session change. The connection stays open, and
+  the character can be selected again. The reference also persists the station and system from the session; eve.rs
+  does not rewrite them, because the ships code already writes them on every dock, undock and warp
+  (`CharacterShips.Space.cs`), so the stored state is the same. A session with no character is answered True, as the
+  reference answers. Status: decided (slice D). Tests: `CharacterLogoffTests` (PostgreSQL), live
+  `test_a_character_logs_off_to_the_selection_screen_and_selects_again`.
+- **Requests that nothing records answer False, not True.** `userSvc.CastUpvote`, `CastDownvote`, `ReportBot`,
+  `ReportISKSpammer` and `ActivateCharacterReSculpt` answered True without recording anything; `kiringMgr.ActivateRedeemingCode`
+  answered True for any code. eve.rs has no feedback, report, re-sculpt token or redeeming-code store, so none is
+  accepted: the answer is False. The client does not read the answer of the votes and reports (`customersatisficationcont.py:38`,
+  `infoContentBase.py:1690`, `chat_service.py:203`); the re-sculpt activation ignores it too (`menuFunctions.py:390-391`),
+  so a re-sculpt is not offered as done. Status: open until the stores exist (TODO section 41).
+- **The paperdoll state follows the stored appearance.** `charMgr.GetPaperdollState` answered 0 for every character. The
+  reference answers 2 (no existing customization) until a doll is stored, then 0 (`paperDollPayloads.js`,
+  `resolvePaperDollState`). The client reads the state at station entry to ask about a recustomization
+  (`gameui.py:785-808`), so the value now comes from `characters.AppearanceAsync`. States 1 (re-sculpting) and 3 (full
+  recustomizing) need the re-sculpt token and are not reported. Tests: `The_paperdoll_state_follows_the_stored_appearance_of_the_character`.
+- **In-game reports and EveGuard heartbeats are not kept.** `ingamereport.*` (eight report methods) and
+  `eveguard_report.heartbeat_*` answer None and keep nothing. The reference keeps both in an in-memory list that is lost at
+  restart (`ingamereportService.js:61-80`, `eveguardReportService.js:15-31`; the list is read only
+  by the reference's tests). The client ignores the answers (`eve/client/script/ui/shared/zhReport/reportSvc.py`,
+  `serenity/eveguard/client/eveguard_service.py:96-131`). Status: open (a report store; TODO section 41).
+- **Anti-cheat and region settings answer the state that exists.** `kiringMgr.ShouldKickCheater` is False and
+  `GetEveGuardServerAddress` is None: no EveGuard server runs, so nothing is kicked. `IsMonochromeStyleEnabled` is False
+  (the account's style setting is not stored; the reference's default). Status: decided; revisit with the EveGuard and
+  account-settings slices.
+- **Banned words.** `bannedwords.fetch_regexes` answers an empty list and the checks answer None. The reference checks
+  against a list of regular expressions that it configures in memory and that is empty by default
+  (`bannedwordsService.js:98-126`); with the empty list both answer the same. eve.rs has no source for the list, so no
+  word is refused. Status: open (a configured list is the owner's decision).
+- **Alpha injection, offers, localization and community tracks.** `alphaInjectorMgr.GetNextAvailableInjection` answers 0
+  (the next alpha injection is available now): the reference computes it from the account's injections
+  (`skillTradingRuntime.js`), which eve.rs does not record. `contextualOfferMgr.Track*` keeps its events in memory; no
+  offer is served by eve.rs, so no tracking call is made. `localizationServer.UpdateLocalizationQAWrap` and
+  `ReloadFSDPickle` change only in-process state. `communityTrackMgr` keeps its instances in memory (the community track
+  state is not persisted). Status: open, each with its owner in TODO section 41.
+- **Loyalty point store.** `LPStoreMgr` answers no offers and refuses every take (False). The reference's offers come from
+  the loyalty point data that eve.rs does not have yet. Status: open (the agents and loyalty track).
+- **Map reads without a data source.** `map.GetSolarSystemVisits`, `GetHistory`, `GetConstellationLPData`,
+  `GetAllRoamingWeatherSystems`, `GetMyExtraMapInfo`, `GetMyExtraMapInfoAgents`, `GetDeadspaceAgentsMap`,
+  `GetDeadspaceComplexMap` and `GetFacWarZoneInfo` answer the reference's empty shape (a rowset, a dict, None, or the
+  faction id asked for with no upgrade levels): eve.rs has no visit, statistics, loyalty, weather, deadspace or
+  factional-warfare state. The per-system edencom and triglavian lists (`GetEdencomFortressSystems`,
+  `GetEdencomMinorVictorySystems`, `GetTriglavianMinorVictorySystems`) are the reference's constant lists; the SDE does
+  not carry them and no state produces them. `map.GetBeaconCount` answers an empty dictionary, although the cynosural
+  beacons of track A9 exist: the count belongs to the ships track (the other agent). Status: each open (TODO section 41).
+- **Incursions and anomalies come from the content state.** `map.GetIncursionGlobalReport`, `map.GetSystemsInIncursions`,
+  `taleMgr.*` and `scanMgr.*` read the content instances of kind `incursion` and `anomaly` (`PersistenceIncursionAnomalyReadModel`).
+  With none seeded, the answers are the empty contract shapes (an empty list, an empty rowset, an empty tale list).
+  Incursions are not simulated yet; the content slice that seeds them feeds these answers.
+- **Live suite isolation.** The live run kept the game store (`gamestore`, which holds the mailboxes), and the corporation,
+  market, fleet, industry and asset-safety tables, in the shared default schemas. Each run now gets its own scratch
+  schema for each of them, and the script drops them at its end (`tools/dev/run-eve-live.sh`). `LiveScriptIsolationTests`
+  checks that every schema variable the host reads is scratch in the script and dropped in its cleanup. Status: done.
+
+## Market slice M1: the wire, the labels and the transaction tabs (2026-10-10)
+
+Sources: the V24.01 client (eve-logic) call sites named in each item; EVE.js v0.12.9 `server/src/services/market/marketProxyService.js` for the
+observable behaviour of the five RPCs it implements (not its bugs). Design: `market-design.md` section 4.3 M1, decisions `market-decisions.md`.
+
+- **BuyMultipleItems (immediate lines).** The reference (proxy 6915) executes one immediate buy per line at the line's price, range
+  station, with the line's minimum volume, and answers the empty list, because immediate orders rest nowhere. eve.rs does the same, one
+  transaction per line (keys `buy-multi:<line>`). An unfilled line is not an error, as in the reference (the client's own pre-check
+  already drops the lines it cannot price). Client: `marketsvc.py:270-273` (BuyMulti iterates the answer), `buyMultiFromBase.py:306`.
+  Status: done (M1). Tests: `MarketRpcTests.Buy_multi_fills...`, `MarketHostTests`, live `test_market.py`.
+- **PlacePlexSellOrder.** The reference (proxy 7009) refuses a corporation sell and any type other than PLEX (44992). eve.rs does the
+  same. The two texts are ours: "PLEX sell orders are placed on the personal market only." and "PLEX sell orders must use a PLEX
+  inventory item." (the reference's own wording is not in the client snapshot; the client shows the text it receives). The answer is a
+  boolean, true when the line traded or rests, as `executeSellEntry` (proxy 7034). Client: `marketsvc.py:278-279`, `sellMulti.py:464`.
+  Status: done (M1). Test: `MarketRpcTests.Plex_sell_is_refused...`.
+- **ModifyPlexCharOrder** delegates to the ModifyCharOrder path (proxy 7274 does the same). The stale-view precondition of Q15 is M2.
+  Client: `marketsvc.py:291-295`. Status: done (M1).
+- **CharGetTransactions and CorpGetTransactions (the read path, M1 scope).** Rows are the fills (`market.fills`) where the wallet bought or
+  sold, as the reference's transaction rows (proxy 6582-6642, `buildMarketTransactionEntry` at 559-586): transactionID, transactionDate
+  (FILETIME), typeID, quantity, price (per unit: the client multiplies), stationID, locationID, buyerID, sellerID, accountID (the viewer's
+  division), buyerAccountID, sellerAccountID, journalRefID (-1: no journal reference is kept by the market), keyID. Newest first; the
+  fromDate is a FILETIME, as the reference filters `transactionDate >= fromDate`. The viewer's division (accountID) is what the client
+  reads to tell a company trade from a personal one (`marketSvc.py:41-64`). The read rule of the corporation call is the reference's
+  (`corporationAuthority.js:134-147`): an Accountant or a Junior Accountant reads every division; any other member reads the division
+  whose Account Take it holds; a null division needs the accountant role. A refusal is `CrpAccessDenied` with reason `(101,
+  'UI/Corporations/AccessRestrictions/NoAccessToWalletDivision')`, as the reference sends it (proxy 6625-6630).
+  Deviation (rule source): the Director role is not a read right here, as in the reference (`corporationAuthority.js:138-143`).
+  Deviation (scope): the composite index and the division filter tests of M6 are not added in M1; the query uses the existing
+  `fills_buyer` and `fills_seller` indexes (002). Status: done (M1); M6 completes the tests and the index check.
+- **keyID is the order's account key (G1).** Owner-order rows (GetCharOrders, GetCorporationOrders, GetMarketOrderHistory) and the
+  OnOwnOrdersChanged rows carry the order's wallet division (`accountKey`, 1000 to 1006), not 1000. The reference keeps the order's account
+  key (`marketProxyService.js:579-582`), and the client names the division from it (`quote.py:442-443`). Test:
+  `MarketRpcTests.A_corporation_order_row_carries_its_wallet_division_as_keyID`. Status: done (M1).
+- **GetStationAsks and GetSystemAsks answer KeyVal rows (Q13, G10).** The client reads `.typeID` on each ask and passes the row to Buy
+  (`quote.py:97-100`; reached through the evelink endpoint `endpoints.py:160`). A positional tuple has no `.typeID`. eve.rs answers the
+  BestByOrder rows the regional best answers (price, volRemaining, typeID, stationID). The reference answers tuples
+  (`marketProxyService.js:6241`): the same defect in the reference is not copied. Tests: `MarketRpcTests.Station_and_system_asks...`,
+  `ProtocolTests.Ask_summary_rpcs...`. Status: done (M1).
+- **Client labels for market refusals (G6).** A MarketError is sent as the client's UserError label with its arguments where the client
+  source raises that label: `MktBrokersFeeUnexpected2` with `actualBrokerFeePerc` (100 x the server's rate) and
+  `expectedBrokerFeePercentage` (the client's quote as sent: the client itself passes the raw fraction here, `sellMulti.py:456`), and
+  `MktInvalidMinVolumeCannotExceedQuantity` with no arguments (`marketsvc.py:264-265`). Every other code is a CustomInfo sentence (ours),
+  not the raw code. Texts: `MarketErrorText` in `MarketProxyService.cs`. Labels the client raises that need a value we do not hold are not
+  used (`MktCantSellItem2` needs localized jump texts; `MARKET_REMOTE_SKILL_REQUIRED` stays a sentence). Tests: `MarketRpcTests` (fee,
+  minimum volume), `MarketHostTests` (the fee label on the wire). Status: done (M1); the full label table is open where the client names
+  no label.
+- **No fabricated immediate-fill notification (G8).** A fill that completes an immediate order sends no `OnOwnOrdersChanged`: the previous
+  row (order id 0, a fabricated order) is removed. The client's cache invalidation for the change is M4 (push invalidation). Reason: the
+  client reads each row as a real order. Tests: `ProtocolTests` (counts of notifications), `MarketRpcTests.Buy_multi_fills...` (none
+  sent). Status: done (M1).
+- **Host registration.** The market service is registered through the real composition (`HostComposition.BuildAsync`, the path eve-host
+  runs) in `MarketHostTests`, on scratch schemas, with `EVE_SIM=off` and `EVE_MARKET_SEED=skip`; the test project now sets
+  `InvariantGlobalization` false, as the other projects that need ICU. The session's notifications are not asserted there (the
+  composition attaches a session at character selection); the live walk covers them. Status: done (M1).
+
+## Market slice M2: the rules as data and the decisions (2026-10-10)
+
+Sources: the parent's binding decisions (`market-decisions.md`, Q1 to Q15); CCP-BR (EVE Development Team, "Broker Relations", 2020-02-24);
+CCP-PN22.02 (patch notes 2025-03-12.1: "Sales Tax has been increased from 4% to 7.5%"); EVE University "Tax"; the client's constants under
+`marketutil/`, `appConst.py:1485` and the feature-flag reader `featuremanagement/client/flag.py`; EVE.js `marketRules.js` for the formulas the
+reference keeps. The rules are named constants in `MarketRules` (one source for the server, the fixture and the tests); a runtime rules table
+was not built, because the client reads its flags elsewhere (Q1 below).
+
+- **Q1 sales tax 7.5%.** `MarketRules.SalesTaxPercent = 7.5` (CCP-PN22.02; EVE University "Tax": 7.5%; 3.375% at Accounting V). EVE.js hard-codes
+  8.0 (`marketRules.js:43`), as the client default does (`marketutil/const.py:30`); eve.rs does not copy it.
+  **Decision beyond market-decisions.md (the flag cannot be served):** the client reads `market-transaction-tax` through a LaunchDarkly client
+  that it starts with its own SDK key (`featuremanagement/client/flag.py:72-76`, `launchdarkly/loader.py:33-35`); the V24.01 client does not take
+  a flag value from the eve.rs server, so the server cannot serve 7.5 "through the flag". The server charges 7.5% (the official value, the rule
+  that binds the charge). The client previews with the value LaunchDarkly gives it, or its default 8.0 when LaunchDarkly gives none, so a
+  preview can differ from the charge. Status: open (client preview); the charge is correct.
+- **Q2 modification discount kept.** `MarketRules.ModificationDiscountPerLevel = 0.06` (the client's constant, `marketutil/skilllimits.py:35-36`;
+  EVE.js and eve.rs use the same). CCP-BR says +5 percentage points per level. The client previews with 0.06, so the server keeps 0.06 to agree
+  with it. Flip the one constant when the client changes. Status: decided (kept).
+- **Q3 modification delay.** Five minutes (`MarketRules.ModificationDelayMs = 300000`; CCP-BR "the five minute delay"; the client's
+  `mktModificationDelay = 300`, `appConst.py:1485`), counted from the later of the order's issue and its last modification. A modification that is
+  too early is refused with the sentence "That order was placed or modified less than five minutes ago; it can be modified in N seconds." (N is
+  the remaining seconds, carried in the refusal's argument). No client label exists for it. The time is stored in `orders.last_modified_ms`
+  (migration `006_order_modification.sql`; existing rows are 0, so their delay runs from the issue). EVE.js has no delay (its `state.rs:2707-2713`
+  updates the price only). Tests: `ModificationRulesTests.A_modification_inside_the_delay...`. Status: decided.
+- **Q4 duration reset.** A modification sets the order's issue time to the modification time (`orders.issued_ms`, and `last_modified_ms`), so the
+  expiry runs from it (CCP-BR: "Modifying an order will reset its duration back to the original."). The owner rows and the change notification
+  carry the new `issueDate`, which the client uses for the expiry it shows (`quote.py:484-490`). Test: `ModificationRulesTests.A_modification_restarts...`.
+  Status: decided.
+- **Q5 matching priority.** Price, then issue time (the older first), then order id. The station id is no longer a tie-break: no source gives
+  one, and the client sorts asks by price, issue time, jumps, then order id (`marketsvc.py:28-74`). Applied in the matching plan
+  (`MarketMatching.Plan`), in the book order, in the ask summaries and in the locking scan (`CounterOrders`). Test:
+  `ModificationRulesTests.Equal_prices_fill_the_order_issued_first...`. Status: decided. The priority is "confirm with a live match" (Q5) and is open for that.
+- **Q6 buy escrow, unchanged:** 100% of the price times the quantity up front (CCP-BR). Status: kept.
+- **Q9 minimum volume, kept.** The rule (a bid fills in full when its remainder is below its minimum) stays as it is. No CCP text was found for it:
+  not confirmed by a CCP source. Status: kept (open for confirmation).
+- **Q10 SCC surcharge, kept.** 0 at NPC stations; the structure surcharge is the structures track's. Status: kept.
+- **Q11 highsec security tax, not charged.** The client previews 5% on non-immediate orders in highsec (`security/common/const.py:6`); no official source
+  for a charge was found; neither reference server charges it; journal reference 194 is unused. The charge stays at zero. The client's preview can
+  therefore show a 5% line the server does not take. Status: open (client preview; revisit if a source appears).
+- **Q12 price ticks.** At most two decimals and at most four significant figures (`MarketRules.IsTick`; the client's `marketutil/ticks.py`
+  `is_tick`). Enforced on place and on modify; a price off the ticks is refused with "Order prices have at most four significant figures."
+  (`MARKET_PRICE_TICK`). Existing orders keep their price until modified (CCP-BR). Tests: `ModificationRulesTests.A_price_that_is_not_a_tick...`,
+  `RulesTests.Prices_have_at_most_four_significant_figures...`. Status: decided.
+- **Q14 duplicate placement.** An identical placement (the same request) from the same session within five seconds, after the first succeeded, is
+  refused with "An identical order was placed a moment ago, so it was not placed again." (`MARKET_DUPLICATE_PLACEMENT`). The client sends no
+  operation key, so this is a stop-gap: a deliberate repeat within five seconds is refused too. Test: `MarketRpcTests.An_identical_placement_within_five_seconds...`. Status: decided (stop-gap, documented).
+- **Q15 stale view.** A modification carries the client's `oldPrice` and `issueDate`; if either differs from the stored order, the modification is
+  refused with "That order has changed since it was shown. Reload the orders and try again." (`MARKET_ORDER_STALE`) and nothing moves. Source:
+  the client sends both (`marketsvc.py:288`). Tests: `ModificationRulesTests.A_modification_on_a_stale_view...`,
+  `MarketRpcTests.A_modification_on_a_stale_view_is_a_refusal...`. Status: decided.
+- **Rules fixture.** `oracle/fixtures/market/rules.json` is regenerated by `tools/dev/gen-market-rules-fixture.js`. The generator replaces the one
+  reference constant (`MARKET_TRANSACTION_TAX_DEFAULT_PERCENT = 8.0`) with 7.5 in memory before it compiles `marketRules.js`, and records every
+  other value from the reference; the fixture's `source` field says so. Before the change `RulesTests` failed on the 7.5 fixture (the 8% values),
+  and it passes after the change. Status: decided.
+
+## Market slice M3: expiry as a durable job (2026-10-10)
+
+Sources: the parent's decision Q7 (expire at issued + duration plus a small grace; refund at that moment; notify with reason 'Expiry');
+EVE.js `marketProxyService.js:248-253` (a one-second grace, a one-second sweep throttle, the durable job kinds) and `2170-2350` (a job per
+order at its expiry instant); CCP-BR (the order duration; "Modifying an order will reset its duration back to the original"); EVE University
+"Trading" ("If the order is taken down or expires the fee is not paid back"); the client's `marketsvc.py:113-124` (the Expiry reason) and
+`buyMultiFromBase.py:559`. The forum statement that expiry waits for daily downtime is not official and is not adopted (Q7).
+
+- **One job per resting order.** Kind `market.order.expire`, key `order:{id}`, due at issued + duration + 1 s. It is scheduled in the transaction that
+  places the order (immediate orders rest nowhere, so they get no job), replaced in the transaction that modifies it (the duration restarts, Q4)
+  and cancelled in the transaction that closes it (a fill, a cancel or an expiry). The job's handler re-reads the order: a closed order is left
+  alone; a duration that a modification has moved is waited for again. Code: `Eve.Market/MarketTrading.cs` (`ScheduleExpiryAsync`, `CancelExpiryAsync`, `ExpireOrderAsync`) keeps the job through the domain
+  interface `IMarketExpiryJobs` (`Eve.Market/MarketExpiry.cs` holds the grace and the tries); `Eve.Services.Market/DurableExpiryJobs.cs` is the
+  scheduler adapter and `Eve.Services.Market/MarketExpiryWorker.cs` runs the jobs. The domain module does not reference the scheduler (the
+  architecture test `ArchitectureTests` keeps domain modules on domain modules only).
+- **Safety sweep.** A recurring job `market.expiry.sweep` runs every 60 s and closes every due order. A read of the market (escrow, order history,
+  placement, modification) runs the same sweep at most once a second (EVE.js 1 s throttle). The sweep applies the same grace as the job, so the two
+  never disagree on when an order expires.
+- **One notice per expiry.** The job and the sweep can reach the same order at once (the scheduler runs jobs in parallel). The close is keyed
+  (`expiry:{id}:{issued}`), so the second call replays the stored receipt; an expiry replay returns no receipt, so only the call that performed the
+  expiry announces it. Test: `ExpiryTests.A_restart_gives_the_open_order...` and the other expiry tests, which failed before this rule (two notices).
+- **Restart.** `MarketExpiryWorker.StartAsync` registers the two kinds and gives every open resting order its job again (an existing job is kept). An
+  overdue job runs at once. Test: `ExpiryTests.A_restart_gives_the_open_order_its_job_back...`, `An_overdue_order_expires_at_once_after_a_restart`.
+- **Refund and items, once.** A buy returns its escrow; a sell returns its stack to its origin; the broker fee is not returned (EVE University
+  "Trading"). A refund over the wallet cap stays pending in escrow (`MoneyLimitException`): the job fails and is tried again with the scheduler's
+  back-off (up to 100 tries), and the sweep retries it too. Tests: `ExpiryTests` (buy, sell, lost job, cancel, modification, throttle).
+- **Notifications.** `OnOwnOrdersChanged` with reason 'Expiry' goes to the owner. For a corporation order it goes to every member who has the
+  corporation's market rights at the station: Accountant or Trader, the client's own test (`buyThisTypeWindow.py:324`,
+  `marketOrdersWnd.py:40-41`; `CorporationStore.MarketRightsHoldersAsync`). The notice is sent after the close commits, from
+  `MarketNotifier`, which is also the RPCs' notifier. Test: `ExpiryTests.A_corporate_order_that_expires...` (the founder and a second member
+  with the Trader role are notified; a member without a market role and a character outside the corporation are not).
+- **Host.** The host composition (`CorporationComposition.MarketSeed`) starts the expiry; the test `MarketHostTests.The_host_gives_each_resting...`
+  checks that the job exists with its due time and survives a host restart.
+- **Known gap (not closed in M3).** The notices are not durable: a process that stops between the committed close and the send loses that one
+  notice. The balances, the items and the order state are correct after the restart, and the client refreshes its own lists on its next read.
+  A durable notice outbox is not in M3.
+- **Test changes for the grace.** `TradingTests` (the over-cap refund that stays pending) and `ModificationRulesTests` (the restarted
+  duration) check the expiry one grace after the expiry instant; the expected values are unchanged.
+- Status: done (M3), tested with a fake clock (TradeRig.Now); the live headless walk cannot wait a day, so the expiry is not walked live.
+
+## Agents slice AG-1: LP wallet (LPSvc), the access rule and the bound agentMgr (2026-10-10)
+
+Sources. eve-logic (V24.01): `eve/client/script/ui/shared/neocom/wallet/loyaltyPointsWalletSvc.py:27-67` (the balances,
+`OnLPChange`, `OnCorpLPChange`); `eve/client/script/ui/station/loyaltyPointStore/lpStoreSvc.py:102-103` (`ExchangeConcordLP`);
+`eve/client/script/ui/shared/neocom/wallet/panels/corp/corpDonateLPPanel.py:47` and `.../personal/personalDonateLPPanel.py:46`
+(the two transfers). EveJS v0.12.9: `server/src/services/corporation/lpService.js:70-108` (service, rowset, corporation
+holder), `lpWalletState.js:348-390` (notifications), `lpWalletState.js:392-510` (the idempotency key), `lpWalletState.js:610-740`
+(the transfers). The client's agent rule: `eve/common/script/sys/eveCfg.py:112-143`, `standingUtil.py:15-43`,
+`eve/client/script/ui/services/standingsvc.py:100-104`. Skill type IDs: `inventorycommon/const.py:1441, 1456, 1474`.
+Faction lists: `eve/common/lib/appConst.py:618-632`.
+
+- **LPSvc is registered by the Host.** It was missing (eve.rs routed the name to the station node and had no class). It is
+  built on the wallet store and answers `GetAllMyCharacterWalletLPBalances` and `GetAllMyCorporationWalletLPBalances` with a
+  `Rowset` of `(issuerCorpID, loyaltyPoints)`, the shape EveJS answers (`lpService.js:32-44`). The character is the session's
+  `charid`; the corporation is `corporationID`, then `corpid` (EveJS `lpService.js:105-107`). A session with no character or
+  corporation gets an empty rowset. Status: decided (AG-1); tests `LoyaltyPointsServiceTests`.
+- **Balances persist in PostgreSQL, in the wallet schema.** Tables `lp_balances` (one row per holder and issuing corporation)
+  and `lp_journal` (one row per applied change), migration `006_loyalty_points.sql`. The reference keeps them in its JSON
+  `lpWallets` table; eve.rs does not use the JSON game store for new state, so the reference's table name is not reused. A
+  change is one balance update and one journal row in the caller's transaction, so a coupled change (a mission reward with its
+  ISK) commits as one. Status: decided (AG-1); tests `LoyaltyPointStoreTests` (PostgreSQL).
+- **A reference applies once.** The journal is unique per (reference, holder, issuer). A replay returns no change and
+  announces nothing. The reference refuses a reused idempotency key with a different amount (`lpWalletState.js:411-420`,
+  `IDEMPOTENCY_KEY_REUSED`); eve.rs answers the replay as already applied, because the caller's reference names the award
+  and a different amount is a different reference. Status: decided (AG-1).
+- **A debit below zero is refused** (`InsufficientLoyaltyPointsException`) and leaves no row changed. The reference refuses
+  it with `INSUFFICIENT_FUNDS` only when the caller asks (`requireSufficientFunds`, `lpWalletState.js:531, 592, 631, 728`);
+  eve.rs always requires the funds, because a balance cannot be negative. Status: tested.
+- **Notifications follow committed changes only.** `OnLPChange("set", issuer, before, after)` goes to the character's
+  session (`clientID`), `OnCorpLPChange(reason, issuer)` to every session of the corporation (`clientID`, each session).
+  The change type is the reference's default `"set"` (`lpWalletState.js:348`); the client ignores it
+  (`loyaltyPointsWalletSvc.py:59`, parameter `_changeType`). Status: tested (`LoyaltyPointsServiceTests`).
+- **`ExchangeConcordLP` and the two transfers are refused, not answered.** The reference's `ExchangeConcordLP` is a stub that
+  returns an empty dictionary (`lpService.js:166-168`), so an answer would be a fake success. The transfers (the donation
+  panels) follow rules eve.rs does not have yet: the destination corporation check, the Evermark exception, the director role
+  and the membership age (`lpWalletState.js:116-135`, `:136-236`, `:610-740`). Each is refused with
+  `CustomInfo` "This loyalty point operation is not available on this server yet." Status: open (TODO section 43).
+- **Not added: `GetLPsForCharacter`, `GetLPExchangeRates`, `GetLPForCharacterCorp`.** The reference answers them
+  (`lpService.js:83-91`, `:111`), but no V24.01 caller exists in eve-logic (a search of the client tree finds none). A method
+  without a caller cannot be checked against the client, so it is not added (the same rule as slice B3).
+- **No source credits loyalty points yet.** The store's `ApplyAsync` is ready for the first credit (missions, factional
+  warfare, insurgency). Until then every balance is empty; the tests credit through the store.
+- **LPStoreMgr is unchanged** (still answers no offers and refuses every take); it is slice A9.
+
+- **The access rule is a port of the client's rule** (`AgentAccessRule`): the level threshold `m = 2(level-1) - 1`, the
+  floor (the lowest of the three standings must exceed -2), the research rule (the corporation standing must reach `m - 2`),
+  the aura bypass, and the level-one rule (open to anyone except research agents). The three standings are the client's
+  `npccharstandings` values for the agent's faction, corporation and agent (`standingsvc.py:100-104`); a missing one is 0.
+  The skill bonus is 0.4 per trained level of Diplomacy (a negative standing), Criminal Connections (a positive standing toward
+  a pirate faction) or Connections (any other positive standing), none for the four factions without a bonus
+  (`standingUtil.py:26-37`). Decisions: (1) implants are not modelled, so the effective level is the trained level (the
+  client's `effectiveSkillLevel` includes implants); (2) the rule has no quality term, because the V24.01 client has none
+  (design document, section 4.1); (3) no server path calls the rule yet: the consumers are the agent dialogue (A4), offers
+  (A5) and the accept path (Mi3), so the rule is tested as a function (`AgentAccessRuleTests`). Status: built, not yet used by
+  a client-visible path.
+- **`MachoBindObject` on agentMgr.** `Moniker('agentMgr', agentID)` binds the agent (`agents.py:319-321`,
+  `eveMoniker.py:157`). The bound object is made for an agent the catalog holds; an unknown agent is refused with
+  `CustomInfo` "That agent is not known." (ours; the reference binds any id, `agentMgrService.js:777-786`). A nested call on the
+  bound object is refused as an `InvalidOperationException` (the host logs it and answers the wrapped unexpected error) while no
+  bound method exists: `DoAction` and the mission methods are slices A4 and A5. A release forgets the object. Status: tested
+  (`AgentMissionServiceTests`); the bound object answers no method yet.
+## Agents slice AG-2: web research and the rule check (2026-10-11)
+
+Sources read (2026-10-11). CCP's own pages were not reachable: `support.eveonline.com` answers 403 and
+`developers.eveonline.com/docs/services/esi/` answers 404, so the CCP facts below come from the ESI OpenAPI document and
+every other number comes from the EVE University wiki, a community source.
+- ESI OpenAPI, `https://esi.evetech.net/meta/openapi.json` (CCP): `GetLoyaltyStoresCorporationIdOffers` response
+  (`offer_id`, `type_id`, `quantity`, `lp_cost`, `isk_cost`, `ak_cost` optional, `required_items[type_id, quantity]`);
+  `GetCharactersCharacterIdLoyaltyPoints` (`corporation_id`, `loyalty_points`); `GetCharactersCharacterIdAgentsResearch`
+  (`agent_id`, `skill_type_id`, `started_at`, `points_per_day`, `remainder_points`).
+- EVE University wiki, `https://wiki.eveuniversity.org/Agent` (levels, standing table, access, divisions, locator wording),
+  `https://wiki.eveuniversity.org/Loyalty_Points` (LP sources, Connections bonus, LP store, CONCORD exchange),
+  `https://wiki.eveuniversity.org/Locator_Agents` (fee table, cooldowns, restrictions), `https://wiki.eveuniversity.org/Missions`
+  (read in the design phase). `https://wiki.eveuniversity.org/Research` is the blueprint research page, not agent research.
+
+Agreement with the access rule (`AgentAccessRule`, eveCfg.py:112-143): the level thresholds 1, 3, 5, 7 for levels 2 to 5
+(`m = 2(level-1) - 1`), the floor (all three standings above -2, "All three types of standing need to be above -2.00"), the
+research rule (corporation standing of at least `m - 2`, "no more than 2 below the required level"), the -10 to +10 range and
+the three standings (personal, corporation, faction). No code change.
+
+Disagreement, the client wins:
+- **Skill bonus targets.** The wiki says Connections, Diplomacy and Criminal Connections raise "effective corporation and
+  faction standing". The V24.01 client applies the bonus to all three standings, the personal one included
+  (`eveCfg.py:130-138`: `fac`, `coc` and `cac` each get `standingUtil.GetStandingBonus`). `AgentAccessRule` follows the
+  client, and `AgentAccessRuleTests` covers a personal standing that passes only with the bonus. No code change.
+- **Other-faction space.** The wiki says an agent in another faction's sovereign space is not unlocked by standings with
+  its own faction. The client rule has no location term (`eveCfg.py:112-143`), so none is added.
+- **COSMOS thresholds.** The wiki gives COSMOS -2, 2, 4 and 6 for levels 1 to 4. The client has no COSMOS rule (Q-AG-1); the
+  COSMOS numbers stay a note.
+- **R&D missions.** The wiki says R&D has "only two missions, a trade and a courier" and no LP; CCP's 2011 article says
+  research missions (Q-AG-7). Still open.
+
+Locator fees (A7). Source: the wiki's locator table (community, not CCP; the page says "for a fee" in the prose and gives
+the amounts in the table). Columns: required faction standing, the cooldown, then the fee for the same solar system, the
+same constellation, the same region and a different region.
+- level 1: any, 5 min, 1,000 / 5,000 / cannot / cannot
+- level 2: 1.0, 5 min, 5,000 / 10,000 / 25,000 / cannot
+- level 3: 3.0, 15 min, 10,000 / 25,000 / 50,000 / 100,000
+- level 4: 5.0, 30 min, 25,000 / 50,000 / 100,000 / 250,000
+- level 5: 7.0, 60 min, 50,000 / 100,000 / 250,000 / 500,000
+The wiki also says: wormholes are excluded; levels 4 and 5 need an Omega account (not modelled); the target is never notified;
+corporation standing qualifies as well as personal. The wiki does not say when the fee is charged.
+
+CONCORD LP exchange (`ExchangeConcordLP`, still refused). The wiki gives the rate for an empire faction corporation as 1:0.8
+(a 20% loss), for other non-pirate, non-empire corporations as 1:0.4, and none for Factional Warfare, pirate, Triglavian or
+some SoE corporations. It has no CCP source. It stays refused: the rate table, the corporation classification and the result
+shape of the client call are not in eve-logic, so no rule is implemented from the wiki alone.
+
+LP store (A9). The wiki gives no per-item LP cost and no standing requirement for a store. The ESI offer schema above is the
+shape to serve. The pinned SDE (build 3396210, `.cache/sde`) has no LP offer file (`npcCorporations.lpOfferTables` names the
+tables, but no table rows are in the export), so offer data is a source gap for A9.
+
+Research (A6). ESI gives the shape (`points_per_day`, `remainder_points`, `started_at`); no CCP or wiki text gives the points
+rate, the datacore price or the remainder rule that was read. A6 implements the stored state and the ESI arithmetic
+(`remainder_points + points_per_day * days`); the rates come from the data the server holds, and the datacore price is a gap.
+
+Status: the sources are recorded; the rule matches them; the open items are Q-AG-7 (R&D missions), the LP offer data (A9),
+the research rates (A6) and the locator fee timing (A7).
+
+## Agents slice AG-2, A5: offers and mission state (2026-10-11)
+
+Sources. EveJS `services/agent/missionRuntimeState.js:26-28` (decline replay 4 h, offer lifetime 7 d, epic arc replay
+90 d); the client's action strings and states (`eve-logic eve/common/lib/appConst.py:1601-1624`); the client's
+`OnAgentMissionChange(actionID, agentID)` (`eve/client/script/ui/station/agents/agents.py:688`). Wiki (Missions, read in
+the design phase): the offer lasts 6 to 7 days; design Q-AG-10 keeps 7 days.
+
+- **The store is PostgreSQL, in the `agents` schema (`EVE_AGENTS_SCHEMA`).** Tables `missions` (one row per character and
+  agent: state, the mission's content fields and the times of the state) and `journal` (one row per applied transition).
+  EveJS keeps this in its JSON game store (`missionRuntimeState`); eve.rs has no writer for that table, so the new state
+  is written to PostgreSQL. The game store's record is still read and the store's offers and accepted missions are laid
+  over it (`AgentMissionStoreRecords.Overlay`). Status: decided (AG-2); tests `AgentMissionStoreTests` (Eve.Agents.Tests,
+  PostgreSQL) and `AgentMissionStoreTests` (Eve.Services.Core.Tests).
+- **One transition path.** Offer, accept, decline, quit, complete, fail and the expiry sweep go through one function: the
+  row is locked, the state the transition leaves is checked, the row and a journal row are written in one transaction.
+  A transition is named by its reference: a reference already in the journal applies nothing and returns null, so a
+  replayed request changes nothing and announces nothing. A refused transition names its reason (`not_offered`,
+  `offer_expired`, `already_offered`, `already_accepted`, `replay_wait`, `not_accepted`) and writes nothing.
+- **Declined offers.** The agent does not offer again for four hours (EveJS `REPLAY_DELAY_MS`); the decline replay is refused
+  as `replay_wait` until then.
+- **Expiry is an explicit sweep (`ExpireOffersAsync`).** Each due offer returns to allocated once, with one journal row per
+  expiry instant. Gap: the durable scheduler job that calls it is not wired yet (the offers are not created by any live
+  path, see below), so no expiry runs on a live server yet.
+- **Notifications follow committed transitions only.** `OnAgentMissionChange(action, agentID)` goes to the character's session
+  with the client's action string (`offered`, `offer_declined`, `offer_expired`, `accepted`, `quit`, `completed`).
+  `OnMissionsUpdated` is not sent (gap: the mission tracker's list is not refreshed on a change yet).
+- **The journal shows offered, accepted and completed missions.** Declined, quit, failed and allocated records are left out
+  of the view, because the client's journal row treats any other status as an offer.
+- **No live path creates an offer yet (gap, not a fake).** An offer needs the mission's content (name id, title, type label),
+  which comes from the mission pool. The pool is not in the SDE build (`agentAuthority` says so) and the mission data
+  comes from the mission-data track (a second SDE pin, not this slice). `OfferAsync` is the only creator, and the tests
+  call it directly. So on a live server the journal stays empty and "request mission" has nothing to offer (A4).
+- **The title is the text when the name id is missing.** The client's journal row needs a name id or a title; a mission
+  with neither is left out of the view (the reference behaves the same, `missionNameID` or `missionTitle`).
+
+## ST-E: cloak proximity and forced decloak notices (2026-10-10)
+- **Proximity radius and refusal.** The cloak breaks, and activation refuses, for a ship or a non-belt body within 2 000 m of the surface of the cloaked ship. Source: EveJS `shipCloak.js:100` (`MIN_CLOAKING_DISTANCE_METERS = 2000`). It replaces the 2 km smartbomb-range check, so the activation refusal now also counts bodies, not only smartbomb targets. Belts are not counted.
+- **Notice order.** The proximity notice goes out before the module stops; the other reasons after (EveJS `forceDecloakEntity`).
+- **Custom reasons.** The CustomNotify payload (notify, decloakReason, itemID, distanceMeters rounded to mm) follows EveJS `notifyCloakModuleForceDeactivated`. No caller exists yet.
+
+## In-space compression (ST-C)
+
+- **Compression is a ship module, not a structure.** The compressor is group 4174 (industrialItemCompression, category 7, ship module) in the pinned SDE (build 3396210). The EVE University wiki (Compression) describes it as a ship module that makes its ship a facility for its fleet. EveJS agrees: server/src/services/mining/miningIndustry.js:811-870 takes the facility to be a ship with compression type lists in the same fleet. The earlier refusal text (needs a compressor structure, phase 3) was wrong and is removed. Tests: CompressionHostTests, OperationalRpcServiceTests. Status: decided.
+- **Refusals are named.** EveJS server/src/services/mining/inSpaceCompressionMgrService.js:36-72 answers null on every refusal. The port answers a named CustomNotify for each refusal (not in space, no facility, not in fleet, out of range, wrong kind, not compressible), because a silent None looks like success to the client (itemcompression/client/itemCompression.py). Status: tolerated. The client-side display of the notice is unverified (no graphical run).
+- **Range is the surface distance, measured by the host.** EveJS compares entity positions in its scene. The port takes the simulation positions of both ships, subtracts both radii, and allows one metre for positions that move between the client check and the host. The reach is the compressor maxRange after dogma (SDE attribute 54), capped at the client 250 000 m facility range. Status: decided.
+## Structure timeline (ST-0)
+
+The record owner and the timeline of Upwell structures (`dotnet/src/Eve.Structures`). Stats come from the SDE, mechanics from the EVE University wiki
+("Vulnerability", "Anchoring structures"), and where the wiki is silent from EveJS v0.12.9; the client's `structures/const.py` gives the state ids.
+
+- **D-1 size class, SDE first (`rigSize`, attribute 1547).** Checked in `sde."typeDogma"` (pinned SDE build 3396210): 2 Medium (Astrahus 35832, Raitaru 35825,
+  Athanor 35835), 3 Large (Fortizar 35833, Tatara 35836), 4 X-Large (Keepstar 35834). A type with no `rigSize` is Flex (Ansiblex 35841 has none). Source:
+  `StructureRules.SizeOfRigSize`. Status: decided. The Host rules source that maps a type to this is not written yet (ST-0 next step); until it is, no
+  structure is anchored through the module.
+- **D-2 change of reinforcement time, 30 days.** The wiki says the change takes effect after 30 days; EveJS `structureVulnerabilityService.js:30`
+  (`REINFORCE_CHANGE_DELAY_MS`) and `:183-260` (`buildReinforcementPatch`) use the same 30 days and clear a pending change that is asked again for the
+  current time. Both sources agree, so the module stores `pending_*` and `pending_effective_ms` as EveJS does, with no difference. Test:
+  `StateMachineTests.A_new_reinforcement_time_is_pending_for_thirty_days_then_takes_effect`. Status: decided.
+- **Armor and hull reinforcement durations.** Wiki and EveJS `structureConstants.js` agree for Medium, Large and X-Large (`ARMOR_REINFORCE_*`). The Flex hull
+  reinforcement is 30 minutes (wiki); EveJS has 3600 s with jitter 1800 s. The wiki value is used. Status: decided (wiki over EveJS, the rule of ST-0).
+- **Repair pause threshold.** A hit of at least 10 percent of the per-second damage cap pauses the repair countdown (wiki). The SDE attributes
+  `pause{Shield,Armor,Hull}RepairDpsThreshold` (3354-3356) are 500 each, which is that 10 percent of the caps 2034-2036. The simulation computes the
+  flag (ST-1); the state machine only takes `PausesRepair`. Status: decided.
+- **Abandonment after 7 days in Low Power.** The wiki gives two versions; the "7 days Low Power" version is used (EveJS `structureConstants.js` agrees
+  on 7 days). Status: decided.
+- **Import of the legacy table.** The GameStore `structures` rows are copied once into `structures.structures`, by id, with their services and the
+  fields the timeline does not own in `doc`. A structure without a state is imported as one that already works (`ShieldVulnerable`), and a Low Power
+  structure without an abandon day starts its clock at the import. Status: decided; the import call is not wired yet.
+- **`structure.state_changed` is published in the same transaction as the change**, with the timer of the structure. Status: decided.
+- **The band of a system (Host rules source, `StructureRulesSource`).** From SDE `mapSolarSystems`: Wormhole for ids 31000000 to 31999999 (J-space), Pochven for
+  region 10000070, otherwise the client's class (`Security.ClassFromLevel`, null below 0.0, low below 0.45, else high). The rigSize is read from SDE
+  `typeDogma` (attribute 1547) because `DogmaStatic` does not load the structure types. A type or system without static data is an error, not a guess
+  (the timer job is retried). Test: `StructureRulesSourceTests`. Status: decided.
+- **Imported deadlines run from start-up.** A structure whose imported record has a deadline (a repair, a reinforcement, an anchoring, an unanchoring)
+  is scheduled as a `structure.timer` job; the timeline then moves it on its own. The reference has no such timer for structures in the game store:
+  EveJS advances them on its own tick, so this follows the reference's behaviour. The state change is published (`structure.state_changed`), and the
+  client is told by the notification subscriber of ST-2, which is not written yet. Status: decided; the notice is open.
+- **The game store's `structures` table is frozen after the import.** The import copies by id and skips ids already in the schema; the readers and
+  the description and profile writes use the schema from then on. A game store row written later under a new id is not copied (a second import would
+  copy it), which is the migration path, not a runtime path. Status: decided; the freeze is the ADR 0003 rule 3 bridge.
+## Cosmic sites (ST-11)
+
+Sources: the wiki's probe-scanning and site rules first; EveJS `services/dungeon/dungeonUniverseRuntime.js` where the wiki is silent; the SDE for names and the sensor attributes.
+
+- **Placement distance.** Wiki: a site spawns in a sphere of 4 AU around a celestial. EveJS (`dungeonUniverseRuntime.js:961`, `baseDistanceAu` 4, `distanceJitterAu` 0.35) places it at 4 AU give or take 0.35 AU, so up to 4.35 AU. Chosen: the wiki's sphere, 0.5 to 4 AU from the anchor (the minimum keeps a site off the celestial; neither source gives one). Test: `CosmicSiteRulesTests.A_site_lies_between_half_an_au_and_four_au...`. Status: decided (wiki).
+- **Vertical spread.** EveJS shifts a site vertically by up to 0.14 AU (`verticalJitterAu` 0.14), which can leave the sphere. Here the direction's pitch is within 0.14 rad, which keeps the site in the sphere. Status: decided (wiki sphere).
+- **Anchors.** The celestials placed beside are the system's planets, asteroid belts, stations and stargates from the SDE, in their simulation positions; the sun and the moons are not anchors. The reference's anchor set is not compared yet. Status: open (compare with EveJS).
+- **Signature level and strength.** The level is the site's client difficulty clamped to 1 to 5 (wiki levels I to V). Strength: 42 for I to III, 72 for IV, 104 for V (wiki probe scanning; `ProbeScanMath.SignatureStrength`). Ten signature templates have a difficulty above 5 and count as level V. Status: open (the wiki gives the levels, not the difficulty values; confirm in game).
+- **Lifetime and count.** A site lasts 24 hours unless it is cleared (EveJS `siteLifetimeMinutes` 1440, `dungeonUniverseRuntime.js`), and a system holds one site per family and kind (EveJS `universeSiteCountDefault` 1).
+- **Respawn.** Wiki: a site respawns at once, somewhere else, after it is cleared, and not after downtime. Here the content subscriber replaces a site on `content.{anomaly,signature}.{completed,expired}` and a sweep every five minutes fills any empty slot. Downtime is not modelled. Status: decided, downtime open.
+- **Codes and seeds.** A signature's code is three letters, a dash and three digits (`ABC-123`, the client's listing form, not verified in the client). Its place and code come from an FNV-1a hash of the system, the slot, the family and the instance it replaces, so the same history gives the same place; the reference's random source is not used. A code that a system already has is re-seeded. Status: decided.
+- **Signatures and anomalies.** Only signatures are scan targets (`ContentCosmicSites`); an anomaly comes from the system scanner's overlay and is not a probe target, as the client expects. Scan rows carry the code as their id and the dungeon fields; a signature's item id is none (EveJS `buildScanResultEntry`, the item id left to the site source).
+- **Not yet built.** Containers of a data or relic site are not placed (their clear comes with the analyzer and hacking, ST-10). NPC waves are in the section below.
+
+## Mission static data: the official build, the EveJS source removed, the gaps (Mi1, 2026-10-11)
+
+Sources. CCP's static-data host: the schema change log (`schema-changelog.yaml`), the change files `changes/3402511.jsonl`
+and `changes/3405148.jsonl`, and the builds 3402511, 3405148 and 3586130 (the archives, inspected for this record).
+EVE University wiki, Agent page (last modified 28 April 2024) and Epic arc page (last modified 14 June 2026). The
+client's use of mission data: eve-logic `evemissions/client/data.py`, `eve/client/script/ui/shared/epicArcs/epicArcController.py:67-69`,
+`eve/client/script/ui/station/agents/agents.py:356-363`, `eve/client/script/ui/shared/neocom/journal.py:686-701`.
+
+- **The mission build is newer than the client build.** The client build is 3396210 (`sde/lock.json` `pinned`). Mission
+  data is pinned to build 3405148 (`sde/lock.json` `missionPinned`, record `builds."3405148"`), the first build whose
+  change file adds `missions` and `epicArcs` (`changes/3405148.jsonl`, `fileAdded: true`, `lastBuildNumber` 3402511).
+  Build 3402511 does not have the tables (its archive has the 60 tables of 3396210 and no others). An earlier survey said
+  3402511; that was wrong. Evidence that the IDs agree with the client's tables as far as they can be checked here: the
+  mission IDs 17179 to 17190 (the twelve EveJS ingests) and epic arc 132 are present in 3405148 with the names EveJS
+  used; the latest build 3586130 has the same 2,892 mission IDs and the same 21 arcs, with 2,845 mission rows identical
+  and 47 differing only in their `messages`. Not checked: the client's `missions.fsdbinary` and `epicArcs.fsdbinary`
+  (no client files here), so whether every mission of the client exists in 3405148 is open. Status: decided; the
+  deviation stands until a client check is done.
+- **Only two tables of the build are loaded**, `missions` and `epicArcs`, into schema `sde_mission`
+  (`eve-sde ensure --missions --pg ...`, `eve_sde::ensure::MISSION_TABLES`). The other 76 tables of 3405148 are not
+  loaded: the server reads the rest of the static data from the pinned build. Status: decided; tests
+  `crates/eve-sde/tests/missions.rs`.
+- **Epic arc count: 21 official, nine on the wiki, seven in the design file.** The official `epicArcs` table has 21 rows;
+  the wiki's Epic arc page (revision of 14 June 2026) describes nine; the design file (`ess-insurgency-agents-missions-design.md`)
+  says seven. The data is implemented from the official table, so 21 arcs are offered by the catalog. Not reconciled:
+  the official table may hold arcs the wiki does not list (for example arcs that are not epic arcs in the game).
+  Status: open, a question for the owner. Test: `MissionStaticCatalogTests`, the real-data test in `missions.rs`.
+- **The EveJS authority source is removed from the Host.** `EVEJS_GAMESTORE_DATA_DIR`, `EVEJS_SERVER_ROOT`,
+  `EVEJS_PRODUCTION_MISSION_POLICY_PATH` and the Windows launcher discovery are no longer read.
+  `EveJsMissionAuthorityDataSource` and `AgentMissionStaticAuthority` are deleted; `MissionStaticCatalog` replaces them
+  (`dotnet/src/Eve.Services.Core/MissionStaticCatalog.cs`). Before, a missing EveJS directory returned empty lists
+  without a message (`AgentMissionService.cs:180-182`, `216-218`); now the Host prints the catalog state at startup.
+  Status: decided.
+- **Plausible missions: only epic arc agents.** The build links an agent to a mission only through `epicArcs`
+  (59 agents). `GetPlausibleMissionIDs` answers the arc steps of that agent, and an empty list for every other agent.
+  The official data has no mission-to-agent pool for basic, storyline, research, factional-warfare, heraldry, career,
+  tutorial or event agents, and no level to choose among missions (reason text: `MissionDataGaps.BasicPools`). The EveJS
+  routing rules used `missionKind`, `missionFlavor`, `missionLevel` and template fields that the build does not have,
+  so they are not reproduced. Status: open, the reason is printed at startup; mission offers (Mi2) need the pools.
+- **Disabled missions: none.** `GetDisabledMissions` answers an empty list. The reference's one entry (mission 4743, a
+  template of its own content policy) is not carried: it is not a CCP fact. Status: decided (`MissionDataGaps.DisabledMissions`).
+- **Epic arc journal text: no IDs.** The reference answers `GetMessagesForEpicArcMissions` with localization message
+  IDs under `messages.epicMission.journalText.*`. The official build has no such keys and no message IDs (its texts are
+  English and other languages under CCP's own keys). Each message type maps to an empty object, so the client shows no
+  chapter titles on the epic arc screen. Status: open (`MissionDataGaps.EpicJournalText`). Before this change the server
+  gave the same empty answer on any install without the EveJS directory.
+- **Levels: 1,274 basic missions tagged, with provenance, committed by the owner's exception.** The official build has no
+  mission level. The repository owner's level tags (EveJS work of 2026-09-26) are committed in
+  `dotnet/src/Eve.Services.Core/Data/mission-level-tags.v1.json` (embedded resource): 1,274 rows, one per official mission
+  ID (every ID exists in build 3405148, table `missions`). Provenance classes: `client` 1,019 (client dungeon difficulty 790,
+  client dungeon name 229), `tq-log` 13 (the golden security missions, from captured TQ logs), `wiki` 191 (EVE University wiki
+  tables, transcribed by the owner), `rule` 51 (owner rules and defaults; 23 cargo-volume estimates, 22 related-chain, 4 default
+  level 1). Confidence: high 1,223, medium 24, low 27. Each row has exactly four fields: `missionID`, `level`, `provenance`,
+  `confidence`. Missions without a row answer `unknown` with the reason; they are never given a default level.
+  `MissionStaticCatalog.Level` returns the provenance with every level. Status: decided (exception below).
+- **Exception to the rule against committing client-derived and captured-log data (owner-approved, 2026-10-11).** The
+  repository owner approved committing the `client` and `tq-log` tag values above, and nothing else from the owner's
+  data. The rule this overrides: README.md:9-10 and :115-118, CLAUDE.md:14, AGENTS.md:18 (no CCP client data, no captured
+  logs, no guessed data in the repository). The approval is limited to: the official mission ID, the level (an integer 1 to 5),
+  the provenance class (`client`, `tq-log`, `wiki`, `rule`), and the owner's confidence flag. Not in the file: names, message
+  text, rewards, dungeon contents, rule IDs, source URLs or any other CCP string. Reason for the exception: the exporter that
+  generated the client-derived values (`client-mission-export.json`, the client's embedded-Python export) is not in any
+  repository available here, so the values cannot be regenerated from source; this file is the only record of them. The
+  loader refuses any row or top-level field outside the allowed set, and a test reads the committed file and fails if it ever
+  carries another field. The values come from the owner's EveJS table (`missionAuthority/data.json`, `missionLevel`,
+  `missionLevelSource`, `missionLevelConfidence`), extracted once with `python3 -I`; no EveJS script was run.
+  Status: decided by the owner; the policy statements above are unchanged for every other data set.
+- **The rule and default rows are the owner's guesses in part.** 23 cargo-volume estimates, 4 default level-1 values and 22
+  related-chain values are the owner's own heuristics (the owner's document, section 8.2, calls them heuristic; AGENTS.md:18
+  forbids guessed data). They are committed with their confidence flag so that the read side can show them as low or medium.
+  Status: open, the owner decides whether to keep them (TODO section 43a).
+- **Optional owner file.** `EVE_MISSION_LEVEL_TAGS` names a path to a further tag file (same schema; provenance `owner`). A
+  mission already tagged in the committed file is refused (no silent overwrite). Status: decided.
+- **Kill mission dungeon content: not answered.** A `killMission.dungeonID` refers to a client dungeon template. Only 3 of
+  the 1,460 distinct IDs in the build are rows of the SDE `dungeons` table (checked on 3405148 and on the pinned 3396210),
+  so the rooms and spawns cannot be taken from `dungeons`. `MissionStaticCatalog` returns the ID; `MissionDataGaps.DungeonContent`
+  gives the reason. Status: open, belongs to the dungeon owner.
+- **LP and standings: not answered by the mission data.** Mission LP rewards and LP store standing requirements are not in
+  the build (the official `missions` rows carry ISK and item rewards and standings in `extraStandings`). LP store offers
+  come from the agents track (its ESI source). Status: open (`MissionDataGaps.Standings`).
+- **Reward terms are official.** `missionRewards` (reward, bonus reward, bonus interval) is read for the 940 missions that
+  have it. The reward base per level is not in the build. Status: decided.
+- **Agent mission kind and importance: an eve.rs rule table** (`dotnet/src/Eve.Services.Core/AgentMissionKindRules.cs`).
+  The SDE has neither field. The rule keys on the agent type name (`agentTypes`) and the division name
+  (`npcCorporationDivisions`), both of build 3396210, and on the wiki's Agent page for the division kinds: Security
+  encounter, Distribution courier, Mining mining. Research agents (type 4) are research; epic arc agents (type 10) are
+  `epicArc`; factional-warfare agents (type 9) are encounter (wiki); heraldry agents (type 13) are `heraldry`. Event, aura,
+  CONCORD and career agents, non-agents, and R&D (division 18: the wiki gives it only a trade and a courier) get an empty
+  kind. Importance is true for the storyline and epic arc types (6, 7, 10). The EveJS rule is not copied: EveJS also maps
+  divisions 25, 27 and 37 (career and InterBus) to kinds that the wiki does not state; this rule leaves them empty.
+  Status: decided; the agent counts per kind are in the test notes below.
+- **The V24.01 client does not read the agent row's `missionKind` or `importantMission`** (checked: no reader in eve-logic;
+  the journal reads `importantMission` from the mission record). The values are sent because the rowset has the columns;
+  they have no client effect in V24.01. `missionTypeLabel` stays empty: the client reads a label from the mission record,
+  and the build has no label key for an agent. Status: decided.
+- **Counts that this rule gives on build 3396210** (the 10,966 agents with an agent object in `npcCharacters`, recounted for this record): basic (type 2) 8,775 agents: courier 3,729, encounter 3,671, mining 1,375; tutorial (3) 14: courier 12, encounter 2; storyline (6, 7) 658 and important: courier 275, encounter 279, mining 104; epic arc (10) 52 and important; research (4) 244; factional warfare (9) 260 encounter; heraldry (13) 12; empty kind: event (8) 696, CONCORD (5) 143, career (12) 100, aura (11) 12.
+
+- **Mission-to-dungeon mapping: the official `dungeonID` is kept, its content is not answered.** `killMission.dungeonID` is a client
+  dungeon ID (the key of the owner's `dungeonAuthority` client table). 1,460 distinct IDs; 3 of them are rows of the SDE `dungeons`
+  table (13341, 13342, 14100). `MissionStaticCatalog.KillDungeon` returns the official ID with `OfficialContent: false` and the
+  reason. No mapping to another dungeon is invented. Status: decided; belongs to the dungeon owner.
+- **Pool selection and dungeon-template selection are not ported (Mi2).** They are the owner's rules in EveJS. The list for the
+  hand-off is in TODO section 43.
+
+## Epic arc availability and the second SDE's discard (2026-10-11)
+
+- **The twelve Pilot Certification Course arcs are offered (owner-confirmed).** The official build 3405148 has 21 epic arcs; the server targets client build
+  3396210, whose data has no mission tables. The availability of each arc is an eve.rs table,
+  `dotnet/src/Eve.Services.Core/Data/epic-arc-availability.v1.json` (embedded resource): all 21 are `in-client-build`, none
+  `newer-than-client`, none `unknown`. Nine have evidence from the V24.01 client's own epic arc constants (eve-logic
+  `eve/client/script/ui/shared/epicArcs/epicArcConst.py:7-15`, which list nine arc IDs, the same nine the EVE University
+  Epic arc page describes). The twelve others (IDs 64 and 67 to 77, "Pilot Certification Course - <school>") are not in those
+  constants; their agents are aura agents (agent type 11, division 22) in the pinned build's `npcCharacters`, not epic arc agents
+  (type 10). The owner confirms that these arcs exist in the game, so each row records owner-confirmed evidence and the server
+  offers them like the in-client arcs. The owner's client export also holds them, but that export's client build is not recorded,
+  so it is not evidence of the build. The pinned build 3396210 has no mission table, so it gives no direct evidence for any arc.
+  Status: decided; the table is the eve.rs record.
+- **Per mission.** A step of an epic arc takes its arc's availability, so all 275 steps are offered (227 in the nine arcs from the
+  client constants, 48 in the twelve owner-confirmed arcs). The other 2,617 missions are not epic arc steps; this table has no
+  evidence for them, so they answer `unknown` with the reason. Heraldry (78) and factional warfare (160) missions are in that group.
+- **Default offer.** `MissionStaticCatalog.PlausibleMissionIds` and `OfferableEpicArcs` offer the `in-client-build` arcs, which is all
+  21 today. The explicit switch `EVE_MISSION_INCLUDE_UNAVAILABLE_ARCS=1` (or `true`) still offers every arc, including any future
+  `newer-than-client` row. The startup log prints the counts. Status: decided; tests `EpicArcAvailabilityTests`.
+- **The second SDE is discarded after loading** (owner's instruction, 2026-10-11). `eve-sde ensure --missions --pg` fetches the
+  archive, extracts only `_sde.jsonl`, `missions.jsonl` and `epicArcs.jsonl` to a scratch directory, loads those two tables into
+  `sde_mission`, then removes the scratch directory, any full extract of the build under the cache, and the downloaded
+  archive (a local archive named with `--archive` is never removed). The lock keeps the SHA-256, so a later run can verify the
+  build again. The loader needs `--pg`; without it `--missions` is an error, so no full copy is left behind. Tests:
+  `crates/eve-sde/tests/missions.rs` (a fake archive: only the named tables loaded; nothing left under the cache; a local
+  archive kept). Status: decided.
+- **Joins.** The server reads no table of build 3405148 other than `missions` and `epicArcs`. The agent and corporation
+  references in an arc (agent IDs) are checked against the pinned build at read time; no reference table is loaded from the
+  second build. Status: decided.
+
+## Dungeon NPC waves (A-W1, 2026-10-11)
+
+- Breeding Facility (dungeon 2158), wave 1: the owner data has it on load; the rule file starts it after 240 seconds, from the wiki
+  (https://wiki.eveuniversity.org/Breeding_Facility). The wave compositions are the owner data's (a deadspace pool), not the wiki's (transports
+  and battleships): only the trigger is taken from the wiki. Source of the owner data: family-derived (scratchpad elysiansde.md, section 2).
+- Timer waves with no delay in the owner data are refused, not guessed; a rule must give the delay.
+- Waves whose trigger the runtime does not implement (room, gate, hack, entity kill, object, visible countdown) refuse the dungeon. Counted over
+  the 1,460 kill-mission dungeons of the owner data (a re-implementation of the planner's checks, not a run of it): 1,404 plan; 56 do not
+  (on_room_active 6, timer without delay 3, no waves 38, numbering 2, no template 7). The first two kinds are the A-W2 and later cut.
+- A dungeon's lifetime is 30 minutes: a host choice, not an official value.
+- The pilot-leaving check is a 10-second sweep over the pilots in space, because the space sessions announce no event for a pilot leaving a
+  system; a dungeon ends at most 10 seconds after the pilot leaves.
+- NPCs taken out of space (abandoned or ended dungeons) are destroyed by the simulation, which explodes them and leaves an empty wreck; no
+  npc.killed is announced for them, so they are not counted as kills or paid bounties.
+- A wave's spawn that the simulation shortens fails the dungeon with the count; the NPCs made are taken out.
+## Structure services fuel (ST-7, increment a, 2026-10-11)
+
+Sources: SDE build 3396210 (`typeDogma` attributes 2108-2110 of the service modules; [S]); EveJS v0.12.9 `server/src/services/structure/structureServiceModules.js`
+(`consumeStructureServiceModuleOnlineFuel` 449, `consumeStructureServiceFuelQuantity` 380, `consumeStructureServiceModuleCycleFuel` 652),
+`structureConstants.js` (`STRUCTURE_SERVICE_ID` 105-138, `FLEX_SERVICE_IDS_BY_TYPE_ID` 508-512), `fuelBayInventory.js` (`STRUCTURE_FUEL_BAY_FLAG` 172) [J];
+EVE University wiki (three days of fuel to online, [W] per `structures_phase.md`).
+
+- Decided (D-4, SDE first): the hourly burn is attribute 2109 and the online charge is 2110 of the service module. For every service module in the
+  build 2110 = 72 x 2109, which is the wiki's three days. Module types: 35899 Standup Reprocessing Facility I (service 4), 35912 Standup Cynosural Field
+  Generator I (service 16, built into the Pharolux Cyno Beacon in EveJS), 35914 Standup Cynosural System Jammer I (service 17). [S][J]
+- Fuel is the structure's fuel bay: fuel-block items (group 1136) at the structure in flag 172, taken oldest stack first inside the transaction. [J][S]
+- Onlining consumes the online charge (EveJS does the same). Already online costs nothing. [J]
+- The hourly charge is paid at each full UTC hour for the services online then (EveJS burns per cycle; the hour boundary is the wiki's "beginning of each
+  hour"). A short hour takes every service offline and the structure into Low Power (`StructureTimers.FuelOutAsync`). [J][W]
+- Not applied: the rig and skill reductions of the online charge (EveJS `getEffectiveStructureServiceModuleOnlineFuelNeed`). Status: open, with the rigs.
+- Not sent: the owner's client does not get an `OnItemChange` for an hourly burn (no session at burn time). Status: open.
+- Spec correction: the ST-7 plan named the Standup Cynosural System Jammer I as group 2016. In the build, 35914 is group 1324 (Standup) and group 2016 is
+  the Tenebrex Cyno Jammer (37534, a sovereignty structure with the jammer service built in), group 2017 is the Pharolux Cyno Beacon (35840). The jammer
+  module's onlining needs the sovereignty hub's Cynosural Suppression upgrade (SDE description of 35914). [S]
+- No EveJS service id maps the Structure Compression Plant (35900, fuel 5/h, online 360). EveJS gates the structure compression by the Reprocessing
+  service (4) online (`miningIndustry.js` 281-288). Decided for increment (b): the same gate. [J]
+
+## Structure ball (ST-1)
+
+- **A structure is a body of the system, not a new entity (structures phase D-3).** `BodyKind::Structure` joins the system's bodies, so the ballpark (`SetState`), targeting, docking and the slim item already key on it. The alternative, an NPC-like entity, would duplicate those paths. Sources: the repository's `crates/eve-space/src/world.rs` and `payload.rs` (bodies are the balls of a system); `structures_phase.md` D-3 (body with health recommended).
+- **Ball kind: `Kind::Station`.** The structure ball is a rigid station ball. Unverified on the real client: the client's ball kind for an Upwell structure has not been observed (MITM). Revisit when the structure is seen in the graphical client.
+- **The host owns the state.** The sim stores the slim state the host sends and never advances a timer; the timers are the Eve.Structures machine's (ST-0). The sim-side damage cap and the reinforcement are ST-1 increments (b) and (d).
+
+## Structure compression (ST-7, increment b, 2026-10-11)
+
+Sources: EveJS `services/mining/structureCompressionMgrService.js` (the handlers), `mining/miningIndustry.js` (`resolveReprocessingContext` 262-304,
+`itemIsInStructureCompressionSource` 150, `compressInventoryItem` 628, `getStructureGasDecompressionEfficiency` 685, `decompressGasInStructure` 701,
+`getGasDecompressionCharacterEfficiency` 230); eve-logic `itemcompression/client/itemCompression.py` (`CompressItemInStructure` shows the six values and
+`ItemCompression_CompressedItemInStructure`), `gasDecompression.py` (`DecompressGasInStructure`, `GetMyGasDecompressionEfficiency` = a pair); SDE build
+3396210 ([S]: `compressibleTypes`, typeList 336, typeDogma 3260-3262, skill 62452, group "Harvestable Cloud").
+
+- Gates as EveJS: docked at a structure (`structureid`), the structure's Reprocessing service (4) online; the item is the pilot's in the structure's hangar
+  (flag 4) or in the ship it flies when that ship is at the structure; compression takes the list 336 (asteroid ores and ice); decompression takes a
+  compressed gas whose source is in a group named gas or cloud. [J][S]
+- Not built: EveJS also takes an item from a corporation office the pilot may take from (`itemIsInDockableCorpOfficeWithTakeAccess`); that path waits for the
+  corporation offices at structures (ST-5 deliveries). Status: open.
+- Named refusals (`CustomNotify`): EveJS answers None (the client then shows nothing). The client reports success on any reply, so each refusal names its
+  cause: not docked, reprocessing offline, not yours or not usable, not in the hangar or ship at the structure, not compressible here, not compressed gas.
+  Status: decided (visible refusal instead of a silent None).
+- Output item: a new item id, as the ship's compression makes it (`CharacterShips.CompressAsync`). EveJS rebuilds the same item id in place. The reply
+  carries the six values and the pilot is told the removed and the new stack with `OnItemChange` (`ShipNotifications.SendItemChange`); the client reads the
+  values, not the id. Status: decided.
+- Decompression output is the floor of the quantity times the total efficiency (capped at one) with EveJS's rounding (`floorAfterNormalizing`: the product is
+  rounded to nine decimals first, so 1000 x (0.80 + 0.03) is 830). A stack that gives nothing is removed and the reply carries output id 0 and quantity 0
+  (EveJS sends None for the id; the client tests the quantity). Status: decided.
+- Efficiency, SDE first: the structure's share is the Reprocessing facility's base (`gasDecompressionBaseEfficiency`, attribute 3262 on module 35899 =
+  0.8) plus the hull's bonus (`structureGasDecompressionEfficiencyBonus`, 3261: Athanor 0.04, Tatara 0.10, others none). EveJS uses a flat 0.79
+  (`DEFAULT_STRUCTURE_GAS_DECOMPRESSION_EFFICIENCY`, miningIndustry.js:86) for every structure. Conflict recorded: the SDE's values are taken. Status:
+  decided, the EveJS value is the fallback only where the SDE has none (not used).
+- The pilot's share: one percent per level of Gas Decompression Efficiency (skill 62452, attribute 3260 = 1.0 per level, divided by 100 as EveJS does:
+  `getGasDecompressionCharacterEfficiency`). [S][J]
+- `GetMyGasDecompressionEfficiency`: zero and zero when the gate is not open (EveJS answers 0 and 0 when the context fails).
+
+## Cyno jammer (ST-7, increment c, E-03 and E-15, 2026-10-11)
+
+Sources: EveJS `services/sovereignty/sovSuppressionState.js` 177-277 (`broadcastCynoJammerChangesForStructureRows`, `getCynoJammerActivationTimeMs`,
+`getCynoJammerOnlineSimTime`: no jammer = null, running = 0, pending = the FILETIME of the warm-up's end), `sovNotifications.js` 267-289
+(`OnCynoJammerChanged` with the args `[solarSystemID, onlineSimTime]`, addressed by `solarsystemid2`, to the sessions in the system); SDE 35914 description
+("a 5 minute warmup period", "may only be onlined in a system that contains a sovereignty hub with the Cynosural Suppression upgrade") [S].
+
+- Decided: the jammer is the Standup Cynosural System Jammer I service (17) online in a structure of the system. The state is the earliest online time among
+  them plus 5 minutes (`StructureJammer.WarmupMs`), the answer is the FILETIME of that end, 0 once it passed, null with no jammer online. EveJS reads the
+  Tenebrex structure's operational state instead; the Tenebrex structure cannot be anchored until ST-2, so the service is the source. [J][S]
+- Recorded: `structure_services.online_since_ms` (migration 0002); 0 for a service imported as online (its warm-up is long over). A service that goes
+  offline holds 0. [J]
+- Recorded: a structure in Low Power (fuel out) takes its services offline, so the jammer goes with it (`StructureTimers.FuelOutAsync`).
+- Not built: the sovereignty upgrade check (EveJS `isCynoSuppressionUpgradeOnline`; SDE: the module needs the hub's Cynosural Suppression upgrade). The
+  jammer runs in any system where the service is online until the sov read model answers the upgrade. Status: open (gap, named in the TODO).
+- E-15 `OnCynoJammerChanged` is sent when the service changes (online or offline, also a fuel-out). EveJS also re-sends when a structure row changes
+  its jammer state; the warm-up's end is not announced by either (the client asks `GetCynoJammerState`). Status: decided, same as EveJS.
+- The announcement is a subscriber to `structure.service_changed` (published in the change's transaction), so it is sent at least once: a replay sends the
+  same state twice (idempotent for the client). [J]
+- The refusal of a standard cynosural field in a jammed system (`CYNO_JAMMED`, `SpaceSessions.Modules.cs`, text in `ModuleRefusals.cs`): host side, since the
+  simulation has no jammer role; checked after the fleet rule and before the high-security rule, so both are reachable in the rig. The covert field (28650) is
+  immune (SDE 35914 description). The industrial field (52696) is treated as standard (the description says "standard" and names only the covert one as
+  immune); unverified against the client. The refusal's text is ours: EveJS's wording for this refusal was not located. Status: decided, the text open.
+
+## Structure cyno beacon (ST-7, increment d, 2026-10-11)
+
+Sources: EveJS `services/structure/structureCynoBeaconMgrService.js` (`resolveUsableBeacon` 417-455: the notices and their order; `Handle_CmdJumpToStructureBeacon`
+676, args `[structureID, solarSystemID]`); SDE 35840 Pharolux Cyno Beacon (group 2017; its built-in Standup Cynosural Field Generator I, service 16). [J][S]
+
+- Decided: the beacon is the Pharolux (type 35840) with the Cyno Beacon service (16) online; the spec's "group 2017 Upwell Cyno Beacon" names the group, the
+  checks use the type. [S]
+- Checks in the reference order: the beacon exists and is a Pharolux; the requested system (if any) is its system; the pilot is in space; it is not the
+  pilot's system; the service is online; the system is not jammed (E-03); the access check (`characterHasStructureService`, the structure's profile). Each
+  refusal is a named notice with EveJS's text. [J]
+- Not built: the access check and the jump drive's fuel and range, and the jump itself. A beacon that passes every built check is refused by name ("not wired
+  in the simulation yet"), not answered empty. The field is not placed in the simulation (a sim cynosural beacon at the structure's position with the
+  structure's id), so the jump has no target. Status: open; the named refusal is the state until then.
+## Cosmic site NPC waves (ST-11, increment 5)
+
+Sources: the wiki (a site's NPCs are its waves; a site is cleared by them); EveJS `services/dungeon/dungeonUniverseSiteService.js` (an encounter is spawned once per instance, `spawnedAtMs`, and its alive entities are kept as `remainingEntityIDs` and rematerialized when the scene is made again: `rematerializeStoredDungeonEncounterEntities`).
+
+- **Where the NPCs live.** In the scene of their system, which the simulation keeps only while a pilot is in the system. No new simulation message: the host spawns them with the existing `SimSpawn` and tags the host's record with the site (`NpcShip.SiteId`). A protocol bump is not needed. Status: decided.
+- **Which wave is alive.** The active objective of the site (`wave1` to `waveN`, in order), with the NPCs left to kill: its target less its progress, kept by the content runtime. A wave is made when a pilot is in the system and no NPC of the site is in the scene; a second pilot entering a system with the NPCs alive makes none. Status: decided.
+- **Re-entry and restart.** A scene made again (everybody left, then a pilot came back) brings back exactly the kills still to come. EveJS keeps the alive entities themselves (`remainingEntityIDs`) and places the same entities again; eve.rs keeps the count (the progress the content runtime holds) and spawns new NPCs at the site, with profiles rolled again from the wave's query. The kill count is the same; the identities and positions of the survivors are not. Status: decided (identities not kept; EveJS difference).
+- **Downtime.** The wiki: sites do not respawn during downtime. Implemented: a system nobody is in gets no site and no wave (the director's occupancy rule, `CosmicSiteDirector(occupied:)`), so a restart does not refill the slots of a system; the first pilot who enters brings them back. EveJS has no separate downtime rule for dungeons that this inspection found. Status: decided (wiki).
+- **Placement.** A wave comes into space around the site with the spawner's batch formation: 5 km, plus or minus 2 km, plus 1.25 km for each NPC of the batch (at most 12 km more). The reference's placement of dungeon NPCs is not compared yet. Status: open.
+- **Kill announcement.** `npc.killed` carries `site` (the instance id) for an NPC of a site, and `site` is null for any other NPC, so the existing consumers are not changed. Status: decided.
+- **Level above 5.** An SDE difficulty above 5 is level V (strength 104). Status: decided (coordinator).
+- **Waves without NPCs.** A data or relic site may start with its containers only (its first objective is not a wave): no NPC is made for it, and its completion waits for the containers. Status: decided.
+
+
+- **Per-second limit (ST-1 b).** A layer takes at most its SDE per-second limit (2034-2036) in one second: a hit is cut to what the layer it starts in has left that second, by scaling the whole hit. A hit that spills into the next layer is not cut there (a stated approximation; the layers are linear within one layer). A destroyed structure takes nothing more; the host decides what its destruction means.
+- **Repair pause is reported, not applied (ST-1 b).** A layer that takes its repair-pause damage (SDE 3354-3356) in one second is reported in `StructureDamaged`; the simulation does not pause anything. The host pauses the repair through its state machine (ST-0).
+- **Protocol split.** The ST-1 wire takes 59 (placement, removal and state, pushed with increment a) and 60 (the health in the placement and `StructureDamaged`), because 59 had shipped without health. The packages' single +1 is therefore two numbers.
+
+## Hacking minigame (ST-10)
+
+Engine: `dotnet/src/Eve.Hacking` (pure rules, no Host). Sources: EVE University wiki Hacking page (rules), client `eve-logic` `hackingcommon/hackingConstants.py` and `eve/client/script/ui/hacking/hackingUIConst.py` (wire ids, grid), EveJS `services/exploration/hackingMgrService.js` (event flow, attempt lifecycle).
+
+- **Board size.** Wiki silent. Taken from the client grid: 10 columns by 9 rows, odd rows shifted (`GRID_MAX_COLUMNS`/`GRID_MAX_ROWS`, `NEIGHBOR_OFFSETS1/2`). Start cell (0,4). Status: decided.
+- **Rule of 8.** Core at grid distance >= 8 from the start (BFS over the grid); random fallback when no cell qualifies (wiki). Status: decided.
+- **Rule of Six.** Read as: a complete node (six neighbours) holds no defensive subsystem unless the core is adjacent to it. Status: decided (wiki wording, our reading).
+- **Content counts per tier.** Wiki silent. Defensive subsystems = 2 + tier, utility elements 3, data caches 2. Status: decided.
+- **Tiers.** Difficulty 1 Very Easy, 2 Easy, 3 Medium, 4+ Hard (Hardest is structure-only, not generated). Natural defence and utility sets follow the wiki table; Anti-Virus and the Very Easy/Easy utility set come from data caches only (wiki note). Status: decided.
+- **Core coherence and strength.** 10 x difficulty for both (EveJS `buildSyntheticBoard`, the only source). Core subtype 11. Status: taken from EveJS.
+- **Defensive subsystem stats.** Wiki gives images only. Firewall 60/10, Anti-Virus 20/40, Restoration Node 30/10, Virus Suppressor 30/10 (coherence/strength). Status: decided, MITM to verify.
+- **Virus Suppressor timing.** Wiki: "reduces your Virus Strength by 15, but not below 10". Applied while a revealed suppressor is alive, cumulative, floor 10 and never above the base strength; event `EVENT_HONEYPOT_STRENGTH` on change. Status: decided.
+- **Restoration Node.** +20 coherence each turn end to a random alive defensive subsystem (may be itself, never the core). Status: wiki.
+- **Turn.** Every reveal click is one turn; utility use on the virus or a target is not a turn. Status: decided.
+- **Utility elements.** Self repair +5 to +10 per turn for 3 turns; polymorphic shield absorbs the next 2 retaliations; kernel rot halves the target's coherence once; secondary vector -20 per turn for 3 turns. Targets are core or defensive subsystems. Status: wiki for effects, decided for durations shape.
+- **Targets on hidden tiles.** A utility target on a hidden tile is accepted only when the tile is a core or a defensive subsystem; otherwise it is acknowledged and nothing happens. This reveals the type to the player through the outcome. Status: known gap.
+- **Hidden tiles on the wire.** EveJS sends the type of every tile, hidden ones too. eve.rs sends `type -1` and zero numbers until a tile is revealed. Status: decided (not leaking).
+- **Inventory element keys.** EveJS puts `index` in each inventory element; the client builds `UtilityElementData(index=i, **element)`, so the key would collide. eve.rs sends `id`, `subtype`, `info` only. Status: client-verified shape (eve-logic `hackingUtilityElementData.py`, `hackingUISvc.py`).
+- **Distance indicator.** Empty node shows steps to the nearest core, utility element or data cache, capped at 5 (wiki). Status: wiki.
+- **Start of an attempt.** EveJS starts the attempt when the analyzer activation is accepted (`moduleOperation.js` 3228). The ST-10 plan said "on cycle completion"; eve.rs follows EveJS (the working reference). Status: decided, not yet wired.
+- **Not yet covered.** The Host service, the analyzer body, container placement and the loot on success (D-5) are the next increments. Status: open.
+- **Analyzer window reach (ST-10 c).** EveJS closes a hack on a scene tick; eve.rs checks the reach on the next call of the client's hackingMgr and at each accepted warp. Status: decided (tick deferred).
+- **Attempt start (ST-10 c).** Opened after the simulation accepts the analyzer's start (EveJS moduleOperation.js 3228). Status: decided.
+- **Analyzer kind (ST-10 c).** Data and relic compatibility from the required skills (21718 / 13278). EveJS has an "integrated" kind for an analyzer that needs both; eve.rs accepts a container for either skill. Status: decided.
+
+## Moon extraction (ST-6a)
+
+- **Start gate (a stand-in).** EVE.js `validateMoonExtractionMutationAccess` needs the pilot to control the structure (`isControllingStructureSession`:
+  docked and `shipid` equal to the structure) and the profile's moon-mining access setting. Both wait for ST-3 (docking) and ST-5 (control, profiles).
+  Until then the start requires the pilot docked at the structure (`structureid`) and the structure owned by the pilot's corporation; a refusal is
+  `StructureDefenseDenied`. Source: EVE.js `moonExtractionsService.js:279-305`, `structureControlState.js` `isControllingStructureSession`.
+- **Duration.** EVE.js clamps the requested duration to 518 460 to 4 838 400 s and answers `None` for a duration that is not positive. We clamp the same
+  way; a duration that is not positive is refused by name (`MoonminingEventTooShort`, the client's own user error), because the client reports success on
+  any reply.
+- **Moon binding.** EVE.js binds a structure to its moon at read time (`moonMiningBindingRuntime.ensureMoonMiningReady`). We use the seeded resource profile
+  (`structure_moon_resources`, imported from the game store): a structure without one is refused with `This structure has no moon to mine.` (our wording;
+  EVE.js returned `None` and logged).
+- **Drill check.** The drill is the Moon Mining service (id 14) online; its module is Standup Moon Drill I, type 45009 (EVE.js `TYPE_STANDUP_MOON_DRILL`).
+  The check reads the structure's service state, as the reprocessing and jammer checks do.
+- **Chunk volume.** 720 000 m3 a day times the duration and the profile's yield multiplier, as the EVE.js planner (`moonExtractionRules.js:129`), which is
+  30 000 m3 an hour. The rig yield (SDE 2704 through the fitted rigs) is not applied yet (ST-6a open item).
+- **Decay and fracture delay (SDE first).** The auto-fracture delay is the refinery's SDE attribute 2698 (10 800 s for Athanor and Tatara), the field's
+  lifetime is 2728 hours times 2706 (48 h). EVE.js reads the profile's `autoFractureDelaySeconds`, which defaults to 10 800 s; the SDE value wins here, the
+  two agree for the refineries in the pinned build. The rig modifier 2707 is not applied yet.
+- **Calendar.** `calendarEventID` is stored as given and returned; the client owns the calendar entry (EVE.js does not create one either).
+- **Id width.** Structure, owner and moon ids are sent as `PyLong` when they exceed the 32-bit range (`PyInt` is 32-bit on the wire).
+- **Hacking stat re-check (ST-10).** Re-read on 2026-10-11: the wiki Hacking page gives no numeric firewall, anti-virus, restoration or core values in text; its difficulty table and stat icons are images without numbers, and the board size is not stated. The wiki's numbers used are the virus stats (40/20, T2 60/30), the restoration heal 20, suppressor 15 (floor 10), self repair 5-10, kernel rot 50%, secondary vector 20, shield 2 hits. The defensive subsystem stats (60/10, 20/40, 30/10, 30/10) and the content counts remain eve.rs decisions; the core is EveJS `buildSyntheticBoard` (10 x difficulty). Status: decided, MITM to verify.
+
+## Structure docking (ST-1 c)
+
+- **Docks take a structure as a station does, with two refusals the station does not have.** A structure in a state of `STRUCTURE_DISABLED_STATES` (EVE.js `structureConstants.js` 46-55: unknown, unanchored, anchoring, onlining, hull reinforce and vulnerable, anchor and deploy vulnerable) refuses `STRUCTURE_DISABLED`; a hull the structure's docks do not take refuses `SHIP_TOO_LARGE`. The size classes are the undock-point categories of `locators::category_of` (V24.01 client `ballparkCommon/docking.py`).
+- **Max docking by type (wiki "Max docking").** Astrahus takes subcapitals (up to large), Fortizar capitals, Keepstar supercapitals. Every other structure type is taken as subcapital only: its own limit is not in the sim yet. Source: the spec's wiki table for these three; the others are not verified.
+- **Undock from a structure** uses the station's undock placement; a structure has no undock-point table, so the fallback places the ship a third of the radius out, away from the star (stated in the first section of this file, for stations).
+
+## Structures in the simulation and the host (ST-1 d)
+
+- **The restore places every structure of the system that is not Unanchored (state 1), at its record's state.** Points restart full: the simulation keeps no damage between two placements, and the record holds no points. A restart therefore heals a damaged structure in the scene (stated limitation).
+- **Vitals and limits come from the static data.** Points: attributes 263, 265, 9. Resonances: the ship's own attribute sets (shield 271/274/273/272, armor 267/270/269/268, hull 113/110/109/111, as `SimShips`). Per-second limits: 2034, 2035, 2036. Repair pauses: 3354, 3355, 3356. Shield recharge: attribute 479 in milliseconds.
+- **The slim state is the record's state, upkeep and timer.** `repairing` and `unanchoring` are not sent yet: the record keeps no repair or unanchoring time in the state-changed event (ST-2 and the anchoring placement).
+- **A hit's layer.** A depleted layer is the layer the hit emptied. A hit that only pauses the repair lands on the layer named by the state (shield, armor or hull). Stated approximation.
+- **Structure placement on anchoring is not wired yet.** A structure anchored while a pilot is in its system is not placed until the next pilot enters it (ST-2 places it on anchoring); the simulation ignores the state change of a structure it does not have.
+- **The simulation's state change publishes through the bus.** The subscriber `structure.space` sends `SetStructureState` on every `structure.state_changed`, or `RemoveStructure` when the record says it was unanchored or destroyed. At-least-once delivery is safe: the simulation ignores a state it already has (FOUNDATIONS rule 2).
+- **Site container types (ST-10 d1).** The template names a container type (e.g. "High Security Containment Facility", "Research and Development Laboratories") that the SDE does not carry under that name in groups 306/314/1207; those are placed as the lowest type id of the kind's group (306 for data, 1207 for relic), and the name is logged. Status: decided, MITM to verify the model.
+- **Site container ids and spacing (ST-10 d1).** Container id = 7e15 + (site instance id mod 1e9) * 100 + index; containers lie 150 m apart along x from the site, radius 50 m. Status: decided.
+- **Failures and destruction (ST-10 d1).** Two failed attempts destroy a container (wiki); a win clears it (the row stays, the ball stays and is no longer hackable). Status: wiki; the clear's ball is not removed.
+- **Site loot (ST-10 d2).** The wiki gives no loot; the profiles are EveJS dungeonUniverseSiteService.js: `generic_data_loot` (datacore 1-4, decryptor 1, data_material 1-2) for a data container and `generic_relic_loot` (salvage 2-7, relic_component 1-3) for a relic container. The ST-11 data has no population tags, so each profile takes all its tags (decision). The candidate of a tag is chosen by a hash of the container id (EveJS uses its own seed; the values differ, the set does not). One candidate, "Engagement Plan Data Chip", is not in the SDE under that name and is skipped. The loot is owned by the character who won and sits in the container's cargo. Status: EveJS for the tables; the seed hash is ours.
+- **Site completion (ST-10 d2).** EveJS completes a site when its hacked containers are emptied. eve.rs publishes site.container.cleared on the win (the coordinator's sequence), so the site completes on the win; the emptying is not tracked. Status: deviation, open.
+- **Cleared container ball (ST-10 d2).** EveJS removes an emptied container; eve.rs keeps the ball and marks it cleared (not hackable). Status: deviation, open.
+- **Container items (ST-10 d2).** A site container is an inventory item of its own (ship-less, in the system, owner 0); its id is the container's id, so its cargo is the item's contents (locationID = container id), like a wreck's. Status: decided (follows the wreck path of CharacterShips.LeaveWreckAsync).
+- **Loot name without SDE type (ST-10 d2).** "Engagement Plan Data Chip" is not in the SDE under that name; the profile skips it. Status: decided.
+
+
+## Structure deployment and vulnerability RPCs (ST-2 a)
+
+- **Reinforcement change, 30 days.** A requested day and hour become pending and take effect after 30 days (`StructureTimes.ReinforceChangeDelayMs`). Sources agree: wiki "Vulnerability" (the wiki says the delay still needs verification) and EveJS `structureVulnerabilityService.js` `REINFORCE_CHANGE_DELAY_MS`. A request equal to the structure's own time withdraws the pending change (EveJS `buildReinforcementPatch`).
+- **Management role.** Station Manager, Director or CEO, and the structure's corporation (wiki "Anchoring structures"; the same set as EveJS `requireStructureManagementSession`). A corporation other than the owner is refused with `CrpAccessDenied` "Structure belongs to another corporation".
+- **Rename.** The name is trimmed, line breaks and runs of white space become one space, and it is cut to 256 characters (EveJS `normalizeStructureName`). Less than three characters is `CharNameTooShort` (EveJS `MIN_STRUCTURE_NAME_LENGTH`).
+- **No notice for a reinforcement change yet.** EveJS writes a persistent `STRUCTURES_REINFORCEMENT_CHANGED` notification to each corporation member's mailbox. The .NET notification box has readers only (`NotificationMgrService`), so this notice is not written; it is an open gap, not a substitute.
+
+## Structure docking and hangars (ST-3)
+
+- **Criminal timer checked at the request, not at the finish (ST-3 a).** EveJS refuses a criminal pilot in `dockSession`, when the docking is finished (`space/transitions.js` 2728). eve.rs checks the policy when the docking is asked for, as the station path does, so that the ship is never taken into space it cannot leave on a refusal. Status: decided; the finish-time check is not written.
+- **Access and service (ST-3 a).** EveJS `canCharacterDockAtStructure` (`services/structure/structureState.js` 2407): the Docking service (id 1) online, then the docking access policy. eve.rs reads the service from the structure store (`structure_services`) and the access with `StructureDirectoryService.CanDock`, the rule the directory already uses. Status: decided.
+- **Order of the size check (ST-3 a).** EveJS checks the hull size before the module and the range. The simulation checks the module overlay before the size, and the size before the range. Status: decided; the outcome is the same for one refusal at a time.
+- **Docked session (ST-3 a).** `stationid` is cleared and `structureid` set; `locationid` and `solarsystemid` are the solar system. EveJS `services/character/characterState.js` 4395-4417 gives this shape, with the solar system kept for the client's hangar bootstrap. Status: verified against EveJS; the client run is open (MITM).
+- **Notifications (ST-3 a).** `OnItemsChanged` places the ship at `("Structure", id, "StructureShipHangar")` (EveJS `buildDockedShipLocationContext`); `OnDockingFinished` carries the structure id. Status: verified against EveJS.
+## Structure anchoring, unanchoring and notices (ST-2 b, c, d)
+
+- **Anchoring gates.** Station Manager, Director or CEO (wiki "Anchoring structures"); EveJS `requireValidDeploymentSession` accepts the Station Manager role only. Corporation at least 7 days old (wiki "Upwell structures"; EveJS has no age check). 1000 km from stations, structures and belts, measured centre to centre (wiki; EveJS `DEPLOY_DIST_MAX` is 800 km and checks the scene's balls, which the Host does not see). Trade hubs by name (Jita, Amarr, Dodixie, Rens, Hek: wiki examples and EveJS `TRADE_HUB_SYSTEM_NAMES`); the SDE `hub` flag marks far more systems and is not used. Extra-large structures not in high-security space (wiki "Upwell structures").
+- **Distance from the ship.** The wiki gives 50 to 75 km by size without the per-size values; the upper bound of 75 km is applied to every size. The coordinate choice follows EveJS `resolvePositionFromClientRequest`.
+- **Refusals with our own words.** The corporation age and the extra-large refusal use a `CustomNotify` text of this package; the blocked placement is EveJS's `CantDeployBlocked` with the blocker's type. Other names are EveJS's (`ShipInWarp`, `DropNeedsPlayerCorp`, `CrpAccessDenied`, `TargetingAttemptCancelled`, `CharNameTooShort`).
+- **Not yet checked.** Starter and career systems and the Thera and shattered wormhole systems (wiki refuses them; no data is read yet). The sovereignty index on a null-sec system not owned by the anchoring alliance (wiki: 24 hours more per index level). The default profile when the request names none (EveJS resolves the corporation's usable profile; this package stores 0).
+- **Item and structure in one transaction.** The item is deleted and the structure created with `structure.anchored` in one transaction; the structure id is the item id (EveJS keeps the source item id when the item is consumed; the same rule). A structure already holding the id refuses with EveJS's `That inventory item ID is already in use by a live structure.`
+- **Unanchoring.** Director or CEO (EveJS `requireStructureDecommissionSession`). The timer is the timeline's: 7 days, 45 minutes for Flex (wiki; EveJS `UNANCHORING`, `FLEX_UNANCHORING`). The states that refuse it are EveJS's `STRUCTURE_UNANCHOR_CANCEL_STATES` (the timeline refuses the same states now; a fitting-invulnerable or fob structure keeps its EveJS answer). A repeated unanchor or a cancel with nothing running is answered without a change (EveJS).
+- **Not done: the drop at the end of an unanchoring.** EveJS hands the hull, the eject container, the fitting containers and the rigs over in `structureAssetSafetyState.js` (unanchor handoffs). That is the asset-safety service, not this package; the structure leaves the simulation and the directory, and its items stay where they were.
+- **Notices.** Shapes and recipients from EveJS `space/runtime/structureLifecycleFanout.js`: `OnStructureStateChanged` to the owner corporation when the state changed; `OnCorporationStructuresUpdated` when the state, the upkeep or the presence changed (the payload carries the previous state and upkeep only, so a change of services or cores alone is not announced); `OnCurrentStructureStateChanged` to sessions docked in the structure. Sessions whose ship id is the structure (the control seat, ST-5) are not reached yet.

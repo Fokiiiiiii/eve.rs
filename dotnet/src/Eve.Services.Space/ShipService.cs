@@ -1,6 +1,7 @@
 using Eve.Macho;
 using Eve.Marshal;
 using Eve.Services.Ships;
+using Eve.Ships;
 
 namespace Eve.Services.Space;
 
@@ -16,7 +17,9 @@ public sealed partial class ShipService(
     Func<long> nowUnixMs,
     ISpaceContainers? containers = null,
     ISpaceDrones? drones = null,
-    Func<long, CancellationToken, ValueTask<ShipFittingInfo?>>? getShipFittingInfo = null) : IBoundObjectReleaseHandler
+    Func<long, CancellationToken, ValueTask<ShipFittingInfo?>>? getShipFittingInfo = null,
+    CharacterShips? ships = null,
+    Func<Eve.Inventory.Item, ItemRow>? rowOf = null) : IBoundObjectReleaseHandler
 {
     private readonly Binding _binding = new(nowUnixMs);
 
@@ -55,6 +58,45 @@ public sealed partial class ShipService(
         PyLong number => number.Value,
         _ => null,
     };
+
+    /// <summary>
+    /// <c>AssembleShip(itemIDs, name=, subSystems=)</c> on the station's ship moniker (<c>invItemFunctions.AssembleShip</c>): the packaged ships of the hangar become
+    /// assembled, and a Strategic Cruiser takes the subsystems the client chose (the reference's rules: <see cref="CharacterShips.AssembleAsync"/>). Answers the id of
+    /// the ship assembled, a list of their ids for several, or None when none was. The name is given to a single ship only.
+    /// </summary>
+    [Method("AssembleShip")]
+    public async ValueTask<PyValue> AssembleShip(ServiceCall call)
+    {
+        if (ships is null || rowOf is null || !_binding.Owns(call) || call.Session.CharacterId is not { } character
+            || call.Session.GetInt("stationid") is not { } station)
+        {
+            return None;
+        }
+        var shipIds = SpaceDrones.IdsOf(call.Arg(0));
+        var subsystemIds = SpaceDrones.IdsOf(call.Kwarg("subSystems") ?? call.Arg(2));
+        var name = (call.Kwarg("name") ?? call.Arg(1)) switch
+        {
+            PyStr text => text.Value,
+            PyWString text => text.Value,
+            _ => null,
+        };
+        var changes = await ships.AssembleAsync(character, station, shipIds, subsystemIds, shipIds.Count == 1 ? name : null, call.Cancellation);
+        var fileTime = Py.FileTimeFromUnixMs(nowUnixMs());
+        foreach (var changed in changes)
+        {
+            ShipNotifications.Send(call.Session, character, changed, rowOf, fileTime);
+            foreach (var stack in changed.Stacks ?? [])
+            {
+                ShipNotifications.SendItemChange(call.Session, stack, rowOf);
+            }
+        }
+        return changes.Count switch
+        {
+            0 => None,
+            1 => InventoryWire.Id(changes[0].ItemId),
+            _ => new PyList([.. changes.Select(change => InventoryWire.Id(change.ItemId))]),
+        };
+    }
 
     /// <summary><c>GetShipFittingInfo(fittingID)</c> returns name, icon, hull type and insurance in the fitting UI's tuple shape.</summary>
     [Method("GetShipFittingInfo")]

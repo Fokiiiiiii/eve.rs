@@ -20,6 +20,9 @@ public sealed class SolarSystemCatalog
 
     public SolarSystemInfo? Get(int id) => _systems.GetValueOrDefault(id);
 
+    /// <summary>Every solar system of the static data.</summary>
+    public IEnumerable<SolarSystemInfo> Systems => _systems.Values;
+
     /// <summary>The straight-line distance between two systems in light years (the jump drive's range and fuel are measured so), or null when one is unknown.</summary>
     public double? LightYearsBetween(int from, int to)
     {

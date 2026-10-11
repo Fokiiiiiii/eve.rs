@@ -2374,6 +2374,74 @@ public class SpaceServiceTests
         Assert.Equal(PyBool.False, update.Args[1]);
     }
 
+    [PgFact]
+    public async Task The_target_lock_notices_and_the_damage_state_action_reach_the_pilot_as_the_simulation_sent_them()
+    {
+        var (rig, _, session) = await DockedAsync();
+        await using var _ = rig;
+        await InSpaceAsync(rig, session);
+        const long other = 9988400002187;
+        PyValue Targeted(params PyValue[] words) => Py.Tuple(new PyInt(0), Py.Tuple(new PyInt(1), new PyTuple(words)));
+        var targets = new[]
+        {
+            Targeted(new PyStr("lost"), new PyLong(other)),
+            Targeted(new PyStr("otherlost"), new PyLong(other)),
+            Targeted(new PyStr("clear")),
+        };
+        foreach (var args in targets)
+        {
+            var sent = ((PyTuple)args).Items;
+            rig.Sim.Say(new SimNotify((ulong)session.SessionId, "OnTarget", "shipid",
+                MarshalCodec.Encode(Py.Tuple(sent[0], sent[1]))));
+        }
+        var damage = Py.Tuple(
+            Py.Tuple(new PyReal(0.5), new PyReal(110000.0), new PyLong(134351527136350000)), new PyReal(1.0), new PyReal(0.25));
+        var action = Py.Tuple(new PyInt(1790679103), Py.Tuple(new PyStr("OnDamageStateChange"), Py.Tuple(new PyLong(other), damage)));
+        rig.Sim.Say(new SimNotify((ulong)session.SessionId, "DoDestinyUpdate", "clientID",
+            MarshalCodec.Encode(Py.Tuple(new PyList([action]), PyBool.False))));
+
+        var events = Events.Of(session);
+        Assert.Equal(["OnTarget", "OnTarget", "OnTarget", "DoDestinyUpdate"], events.Select(e => e.Name));
+        Assert.All(events.Take(3), e => Assert.Equal("shipid", e.IdType));
+        Assert.Equal(
+            ["lost", "otherlost", "clear"],
+            events.Take(3).Select(e => JsSemantics.StringValue(((PyTuple)((PyTuple)e.Args[1]).Items[1]).Items[0])));
+        Assert.Equal(other, Id(((PyTuple)((PyTuple)events[0].Args[1]).Items[1]).Items[1]));
+        var delivered = (PyTuple)((PyTuple)((PyList)events[3].Args[0]).Items.Single()).Items[1];
+        Assert.Equal("OnDamageStateChange", JsSemantics.StringValue(delivered.Items[0]));
+        Assert.Equal(damage, ((PyTuple)delivered.Items[1]).Items[1]);
+    }
+
+    [PgFact]
+    public async Task A_forced_decloak_notice_reaches_the_pilot_with_the_message_and_its_arguments()
+    {
+        var (rig, _, session) = await DockedAsync();
+        await using var _ = rig;
+        await InSpaceAsync(rig, session);
+        var proximity = Py.Tuple(new PyStr("CloakDeactivatedByProximityToType"), Py.Dict(("proximityTypeID", new PyInt(5))));
+        var custom = Py.Tuple(new PyStr("CustomNotify"), Py.Dict(
+            ("notify", new PyStr("Your cloak has been deactivated.")),
+            ("decloakReason", new PyStr("remoteDecloakPing")),
+            ("itemID", new PyLong(1_000_000_000_042)),
+            ("distanceMeters", new PyReal(1234.568))));
+        foreach (var notice in new[] { proximity, custom })
+            rig.Sim.Say(new SimNotify((ulong)session.SessionId, "OnCloakModuleForceDeactivated", "shipid", MarshalCodec.Encode(notice)));
+
+        var events = Events.Of(session);
+        Assert.Equal(2, events.Count);
+        Assert.All(events, e => Assert.Equal(("OnCloakModuleForceDeactivated", "shipid"), (e.Name, e.IdType)));
+        string Text(PyValue value) => JsSemantics.StringValue(value)!;
+        Assert.Equal(["CloakDeactivatedByProximityToType", "CustomNotify"], events.Select(e => Text(e.Args[0])));
+        var proximityArgs = Assert.IsType<PyDict>(events[0].Args[1]).Entries;
+        Assert.Equal(("proximityTypeID", 5L), (Text(proximityArgs.Single().Key), Id(proximityArgs.Single().Value)));
+        var customArgs = Assert.IsType<PyDict>(events[1].Args[1]).Entries.ToDictionary(e => Text(e.Key), e => e.Value);
+        Assert.Equal(
+            ["notify", "decloakReason", "itemID", "distanceMeters"], customArgs.Keys);
+        Assert.Equal("remoteDecloakPing", Text(customArgs["decloakReason"]));
+        Assert.Equal(1_000_000_000_042, Id(customArgs["itemID"]));
+        Assert.Equal(new PyReal(1234.568), customArgs["distanceMeters"]);
+    }
+
     // ── docking ──────────────────────────────────────────────────────────────
 
     [PgFact]
@@ -2437,6 +2505,8 @@ public class SpaceServiceTests
         sink.Sent.Clear();
 
         rig.Sim.Say(new SimDocked((ulong)session.SessionId, Rig.Station));
+        // the docking's notifications are finished by background work: they are all done before the sequence is asserted
+        await rig.Space.QuiesceAsync();
         await Rig.UntilAsync(() => session.GetInt("stationid") == Rig.Station);
 
         Assert.Equal(["OnInvulnCancelled", "OnMachoObjectDisconnect", "OnItemsChanged", "$sessionchange", "OnDockingFinished"], Sequence.Of(session, clear: false));
@@ -2471,6 +2541,8 @@ public class SpaceServiceTests
 
         rig.Sim.Say(new SimDocked((ulong)session.SessionId, Rig.Station));
         rig.Sim.Say(new SimDocked((ulong)session.SessionId, Rig.Station));
+        // the docking's notifications are finished by background work: they are all done before the sequence is asserted
+        await rig.Space.QuiesceAsync();
         await Rig.UntilAsync(() => session.GetInt("stationid") == Rig.Station);
         await Task.Delay(100);
 
@@ -2487,6 +2559,8 @@ public class SpaceServiceTests
         await using var _ = rig;
         await InSpaceAsync(rig, session);
         rig.Sim.Say(new SimDocked((ulong)session.SessionId, Rig.Station));
+        // the docking's notifications are finished by background work: they are all done before the sequence is asserted
+        await rig.Space.QuiesceAsync();
         await Rig.UntilAsync(() => session.GetInt("stationid") == Rig.Station);
 
         var (_, answer) = await UndockAsync(rig, session);

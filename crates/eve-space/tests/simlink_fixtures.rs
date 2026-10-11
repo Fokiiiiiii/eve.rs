@@ -5,13 +5,13 @@ use eve_space::death::Credit;
 use eve_space::drones::DroneEffect;
 use eve_space::health::{Condition, Layer, Resonances, Vitals};
 use eve_space::link::{
-    ChargeOp, ContainerPlacement, DecodeError, Enter, How, LaunchDrone, Message, ScanTarget, Spawn,
-    WreckPlacement,
+    ChargeOp, ContainerPlacement, DecodeError, DirectionalTarget, Enter, How, LaunchDrone, Message,
+    ScanTarget, Spawn, WreckPlacement,
 };
 use eve_space::missiles::{Blast, Missile};
 use eve_space::modules::{Action, Applies, Change, Effect, MiningFamily, Numbers, Reach, Remote, Rules};
 use eve_space::scene::{HeatModuleProfile, HeatProfile, HeatRack};
-use eve_space::ship::{ModuleSpec, NpcCombat, NpcIdentity, NpcWeapon, ShipSpec};
+use eve_space::ship::{ModuleSpec, NpcCombat, NpcIdentity, NpcWeapon, ShipSpec, ShipStance};
 use eve_space::weapons::{Aoe, Arc, Charge, Spool, Turret};
 use eve_space::wreck::WreckKind;
 use serde_json::Value;
@@ -68,6 +68,11 @@ fn ship_of(case: &Value) -> ShipSpec {
     let number = |field: &str| case[field].as_f64().unwrap_or_else(|| panic!("{field} in {case}"));
     let int = |field: &str| case[field].as_i64().unwrap_or_else(|| panic!("{field} in {case}")) as i32;
     ShipSpec {
+        stance: case["stance"].as_object().map(|_| ShipStance {
+            old_stance: case["stance"]["oldStance"].as_i64().unwrap_or_default() as i32,
+            switched_at: wide(&case["stance"], "switchedAt"),
+            stance: case["stance"]["stance"].as_i64().unwrap_or_default() as i32,
+        }),
         ship_id: wide(case, "shipId"),
         character_id: wide(case, "characterId"),
         type_id: int("typeId"),
@@ -971,6 +976,41 @@ fn message_of(case: &Value) -> Message {
             ship_id: wide(case, "shipId"),
         })),
         "RemoveProbe" => Message::RemoveProbe { probe_id: wide(case, "probeId") },
+        "PlaceStructure" => Message::PlaceStructure(Box::new(eve_space::link::StructurePlacement {
+            structure_id: wide(case, "structureId"),
+            solar_system_id: number("solarSystemId") as i32,
+            name: text(case, "typeName"),
+            type_id: number("typeId") as i32,
+            group_id: number("groupId") as i32,
+            position: vector_of(case, "position"),
+            radius: case["radius"].as_f64().unwrap(),
+            owner_id: wide(case, "ownerId"),
+            corporation_id: number("corporationId") as i32,
+            alliance_id: number("allianceId") as i32,
+            vitals: structure_vitals_of(case),
+            shield_recharge_ms: case["shieldRechargeMs"].as_f64().unwrap(),
+            limits: eve_space::health::StructureLimits {
+                per_second: std::array::from_fn(|i| case["perSecond"][i].as_f64().unwrap()),
+                repair_pause: std::array::from_fn(|i| case["repairPause"][i].as_f64().unwrap()),
+            },
+            status: status_of(&case["status"]),
+        })),
+        "StructureDamaged" => Message::StructureDamaged {
+            structure_id: wide(case, "structureId"),
+            depleted: match number("depleted") {
+                0 => None,
+                1 => Some(eve_space::health::Layer::Shield),
+                2 => Some(eve_space::health::Layer::Armor),
+                _ => Some(eve_space::health::Layer::Structure),
+            },
+            over_threshold: case["overThreshold"].as_bool().unwrap(),
+        },
+        "RemoveStructure" => Message::RemoveStructure { structure_id: wide(case, "structureId") },
+        "SetStructureState" => Message::SetStructureState {
+            solar_system_id: number("solarSystemId") as i32,
+            structure_id: wide(case, "structureId"),
+            status: status_of(&case["status"]),
+        },
         "PlaceDisruptor" => Message::PlaceDisruptor(Box::new(eve_space::link::DisruptorPlacement {
             deployable_id: wide(case, "deployableId"),
             solar_system_id: number("solarSystemId") as i32,
@@ -987,6 +1027,21 @@ fn message_of(case: &Value) -> Message {
             ship_id: wide(case, "shipId"),
         })),
         "PlaceInhibitor" => Message::PlaceInhibitor(Box::new(eve_space::link::DisruptorPlacement {
+            deployable_id: wide(case, "deployableId"),
+            solar_system_id: number("solarSystemId") as i32,
+            name: text(case, "typeName"),
+            type_id: number("typeId") as i32,
+            group_id: number("groupId") as i32,
+            position: vector_of(case, "position"),
+            radius: case["radius"].as_f64().unwrap(),
+            range: case["range"].as_f64().unwrap(),
+            active: case["active"].as_bool().unwrap(),
+            owner_id: wide(case, "ownerId"),
+            corporation_id: number("corporationId") as i32,
+            alliance_id: number("allianceId") as i32,
+            ship_id: wide(case, "shipId"),
+        })),
+        "PlaceCynoBeacon" => Message::PlaceCynoBeacon(Box::new(eve_space::link::DisruptorPlacement {
             deployable_id: wide(case, "deployableId"),
             solar_system_id: number("solarSystemId") as i32,
             name: text(case, "typeName"),
@@ -1068,6 +1123,24 @@ fn message_of(case: &Value) -> Message {
                 .unwrap()
                 .iter()
                 .map(|r| (wide(r, "droneId"), text(r, "reason")))
+                .collect(),
+        },
+        "DirectionalTargets" => Message::DirectionalTargets {
+            session_id: session_id(),
+            command: number("command") as u8,
+            targets: case["targets"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|t| DirectionalTarget {
+                    id: wide(t, "id"),
+                    kind: t["kind"].as_u64().unwrap() as u8,
+                    type_id: t["typeId"].as_i64().unwrap() as i32,
+                    position: [0, 1, 2].map(|i| t["position"][i].as_f64().unwrap()),
+                    radius: t["radius"].as_f64().unwrap(),
+                    cloaked: t["cloaked"].as_bool().unwrap(),
+                    warping: t["warping"].as_bool().unwrap(),
+                })
                 .collect(),
         },
         "ScanTargets" => Message::ScanTargets {
@@ -1359,5 +1432,29 @@ fn every_invalid_frame_is_refused_for_the_stated_reason() {
         let frame = hex(case["hex"].as_str().unwrap());
         let error = Message::decode(&frame[4..]).unwrap_err();
         assert_eq!(reason_of(error), text(case, "reason"), "{name}");
+    }
+}
+
+/// A structure's slim fields from its fixture: a timer is `[start, end, paused or null]`.
+fn status_of(value: &serde_json::Value) -> eve_space::world::StructureStatus {
+    eve_space::world::StructureStatus {
+        state: value["state"].as_i64().unwrap() as i32,
+        upkeep_state: value["upkeepState"].as_i64().unwrap() as i32,
+        timer: value["timer"].as_array().map(|t| (t[0].as_i64().unwrap(), t[1].as_i64().unwrap(), t[2].as_i64())),
+        unanchoring: value["unanchoring"].as_i64(),
+        repairing: value["repairing"].as_bool(),
+    }
+}
+
+/// A structure's vitals from its fixture: the points of its shield, armor and hull, and the resonances of each layer.
+fn structure_vitals_of(case: &serde_json::Value) -> eve_space::health::Vitals {
+    let v = &case["vitals"];
+    let layer = |name: &str| -> [f64; 4] { std::array::from_fn(|i| v["resonances"][name][i].as_f64().unwrap()) };
+    eve_space::health::Vitals {
+        shield_capacity: v["shieldCapacity"].as_f64().unwrap(),
+        armor_hp: v["armorHp"].as_f64().unwrap(),
+        structure_hp: v["structureHp"].as_f64().unwrap(),
+        resonances: eve_space::health::Resonances { shield: layer("shield"), armor: layer("armor"), structure: layer("structure") },
+        armor_pinned: false,
     }
 }

@@ -185,13 +185,15 @@ public static class FittingRules
             return missing;
         }
 
+        // the groups a module names and the single types it names are alternatives (a Command Burst names its groups and some types): a hull of either fits
         var groups = CanFitShipGroups.Where(type.Attributes.ContainsKey).Select(a => (int)type.Attributes[a]).Where(g => g > 0).ToList();
-        if (groups.Count > 0 && !groups.Contains(shipType.GroupId))
-        {
-            return FitFailure.Of(FitError.InvalidShipGroup);
-        }
         var types = CanFitShipTypes.Where(type.Attributes.ContainsKey).Select(a => (int)type.Attributes[a]).Where(t => t > 0).ToList();
-        if (types.Count > 0 && !types.Contains(ship.TypeId))
+        if ((groups.Count > 0 || types.Count > 0) && !groups.Contains(shipType.GroupId) && !types.Contains(ship.TypeId))
+        {
+            return FitFailure.Of(types.Count > 0 ? FitError.InvalidShipType : FitError.InvalidShipGroup);
+        }
+        // a subsystem fits one hull (SDE fitsToShipType): a Legion's defensive subsystem is no Tengu's
+        if (type.Attributes.TryGetValue(StrategicCruisers.FitsToShipTypeAttribute, out var fitsToShip) && (int)fitsToShip > 0 && (int)fitsToShip != ship.TypeId)
         {
             return FitFailure.Of(FitError.InvalidShipType);
         }

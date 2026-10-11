@@ -37,6 +37,9 @@ namespace Eve.Host;
 
 internal sealed partial class CharacterServicesComposition
 {
+    /// <summary>The hacking minigame's open attempts (the analyzer opens them, the hackingMgr service plays them).</summary>
+    private readonly Eve.Services.Space.HackingAttempts hackingAttempts = new();
+
     async ValueTask<Eve.Services.Space.SpaceRpcItem?> ReadTravelRpcItemAsync(long itemId, CancellationToken cancellationToken)
     {
         var item = await items.GetAsync(itemId, cancellationToken);
@@ -46,8 +49,23 @@ internal sealed partial class CharacterServicesComposition
     }
 
     /// <summary>Space services that run after the others: filaments, jumps, warp vectors, wormholes and structure guests.</summary>
-    private IReadOnlyList<IService> SpaceRpc() =>
+    private IReadOnlyList<IService> SpaceRpc()
+    {
+        // without a space simulation (EVE_SIM=off) there is no reach and no analyzer: the service is still registered
+        var hackingSite = new Eve.Services.Space.SpaceHackingSite(spaceSessions);
+        var hackingMgr = new Eve.Services.Space.HackingMgrService(hackingAttempts, hackingSite);
+        if (spaceSessions is not null)
+            spaceSessions.HackingService = hackingMgr;
+        // the containers of the sites are the site content's (the space's SiteContainerHacks, set by the space composition)
+        hackingSite.Find = (characterId, containerId, cancellationToken) => spaceSessions?.HackableContainers is { } hacks
+            ? hacks.FindAsync(containerId, cancellationToken)
+            : ValueTask.FromResult<HackableTarget?>(null);
+        hackingSite.Ended = (session, target, won, cancellationToken) => spaceSessions?.HackableContainers is { } hacks
+            ? hacks.EndedAsync(target, won, session.CharacterId ?? 0, cancellationToken)
+            : ValueTask.CompletedTask;
+        return
     [
+            hackingMgr,
             new Eve.Services.Space.PvpFilamentMgrService(),
             new Eve.Services.Space.RandomJumpMgrService(ReadTravelRpcItemAsync),
             new Eve.Services.Space.WarpVectorMgrService(ReadTravelRpcItemAsync),
@@ -67,4 +85,5 @@ internal sealed partial class CharacterServicesComposition
                 return ValueTask.FromResult<IReadOnlyList<Eve.Services.Core.StructureGuestSnapshot>>(guests);
             }, seedObserverGuestLedger: stationGuestLedger.SeedObserverGuestLedger),
     ];
+    }
 }

@@ -33,6 +33,9 @@ public sealed record CommandReply(bool Accepted, long At, string? Reason, double
     /// <summary>What the scene holds that a probe scan can find (command 27, protocol 52).</summary>
     public IReadOnlyList<SimScanTarget> ScanTargets { get; init; } = [];
 
+    /// <summary>What the scene has that a directional scan can see (command 28, protocol 54).</summary>
+    public IReadOnlyList<SimDirectionalTarget> DirectionalTargets { get; init; } = [];
+
     /// <summary>What each fighter squadron did with an order to fighters (<see cref="SimFighterResult.Reason"/> is empty for one that took it).</summary>
     public IReadOnlyList<SimFighterResult> Fighters { get; init; } = [];
 
@@ -147,12 +150,23 @@ public interface ISimulation
     void PlaceProbe(SimPlaceProbe probe);
     /// <summary>Takes a scanner probe out of space (protocol 45).</summary>
     void RemoveProbe(long probeId);
+
+    /// <summary>The host puts an Upwell structure in space (protocol 59).</summary>
+    void PlaceStructure(SimPlaceStructure structure);
+
+    /// <summary>The host takes a structure out of space (protocol 59).</summary>
+    void RemoveStructure(long structureId);
+
+    /// <summary>The host changes a structure's slim state (protocol 59).</summary>
+    void SetStructureState(SimSetStructureState state);
     /// <summary>Puts a mobile warp disruptor in space where its pilot dropped it, anchored or not (protocol 48).</summary>
     void PlaceDisruptor(SimPlaceDisruptor disruptor);
     /// <summary>Says a mobile warp disruptor is anchored or not (protocol 48).</summary>
     void SetDisruptorActive(long deployableId, bool active);
     /// <summary>Puts a Mobile Cynosural Inhibitor in space where its pilot dropped it, anchored or not (protocol 50).</summary>
     void PlaceInhibitor(SimPlaceInhibitor inhibitor);
+    /// <summary>Puts a Mobile Cynosural Beacon in space where its pilot dropped it, anchored or not (protocol 58).</summary>
+    void PlaceCynoBeacon(SimPlaceCynoBeacon beacon);
 
     /// <summary>Destroys a ship: the explosion, the wreck (for <paramref name="credit"/> to loot), and (for a player's ship) a <see cref="SimDestroyed"/> that comes back through <see cref="Received"/>.</summary>
     void Destroy(long shipId, SimCredit credit);

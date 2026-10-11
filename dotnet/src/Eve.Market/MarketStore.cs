@@ -7,6 +7,9 @@ namespace Eve.Market;
 public sealed record MarketNpcSeed(string Key,int TypeId,bool Bid,decimal Price,long Volume,int Range,MarketLocation Location,long IssuedMs,int Duration = 3650,long MinimumVolume = 1,long? VolumeRemaining = null);
 public sealed record MarketBook(IReadOnlyList<MarketOrder> Asks,IReadOnlyList<MarketOrder> Bids);
 public sealed record MarketOwnedOrder(MarketOrder Order,long ActorId,long WalletOwnerId,int AccountKey,decimal Escrow,int State,long LastStateChangeMs);
+/// <summary>One fill (a trade) as the transaction history reads it. Prices are per unit.</summary>
+public sealed record MarketFill(long Id,int TypeId,long BuyerId,long SellerId,long BuyerWallet,int BuyerAccount,
+    long SellerWallet,int SellerAccount,long StationId,long Quantity,decimal Price,long TimeMs);
 public sealed record MarketHistory(long UnixDay,decimal Low,decimal High,decimal Average,long Volume,long Orders);
 
 /// <summary>Typed authoritative order facts; wallet and custody settlement joins this module's PostgreSQL transaction.</summary>
@@ -269,7 +272,7 @@ public sealed partial class MarketStore
                 SELECT {BookColumns} FROM {_schema}.orders
                 WHERE region_id=$1 AND type_id=$2 AND bid=$3 AND state=0 AND vol_remaining>0
                     AND (is_npc OR issued_ms + duration_days::bigint*86400000 > $4)
-                ORDER BY price {(bid ? "DESC" : "ASC")},station_id,id
+                ORDER BY price {(bid ? "DESC" : "ASC")},issued_ms,id
                 """,connection,tx)
             {
                 Parameters = { new(){Value=region},new(){Value=type},new(){Value=bid},new(){Value=nowMs} },
@@ -320,7 +323,7 @@ public sealed partial class MarketStore
                 SELECT DISTINCT ON (type_id) *,
                     LEAST(SUM(vol_remaining) OVER (PARTITION BY type_id),9223372036854775807)::bigint AS total_ask_quantity
                 FROM scoped
-                ORDER BY type_id,price,station_id,id
+                ORDER BY type_id,price,issued_ms,id
             )
             SELECT {BookColumns},total_ask_quantity FROM summaries ORDER BY type_id
             """,connection)
@@ -353,6 +356,28 @@ public sealed partial class MarketStore
         command.Parameters.Add(new NpgsqlParameter { Value=walletOwner });
         command.Parameters.Add(new NpgsqlParameter { Value=includeHistory });
         return await ReadOwnersAsync(command,token);
+    }
+
+    /// <summary>The fills a wallet took part in, as buyer or seller, in one division (null: every division), from a Unix millisecond on, newest first.</summary>
+    public async Task<IReadOnlyList<MarketFill>> WalletFillsAsync(long walletOwnerId,int? accountKey,long fromMs,CancellationToken token = default)
+    {
+        await using var command=_source.CreateCommand($"""
+            SELECT id,type_id,buyer_id,seller_id,buyer_wallet,buyer_account,seller_wallet,seller_account,station_id,quantity,price,time_ms
+            FROM {_schema}.fills
+            WHERE time_ms>=$2 AND (
+                (buyer_wallet=$1 AND ($3::integer IS NULL OR buyer_account=$3))
+                OR (seller_wallet=$1 AND ($3::integer IS NULL OR seller_account=$3)))
+            ORDER BY time_ms DESC,id DESC
+            """);
+        command.Parameters.Add(new NpgsqlParameter { Value=walletOwnerId });
+        command.Parameters.Add(new NpgsqlParameter { Value=fromMs });
+        command.Parameters.Add(new NpgsqlParameter { Value=accountKey is { } key ? key : DBNull.Value });
+        var rows=new List<MarketFill>();
+        await using var r=await command.ExecuteReaderAsync(token);
+        while(await r.ReadAsync(token))
+            rows.Add(new(r.GetInt64(0),r.GetInt32(1),r.GetInt64(2),r.GetInt64(3),r.GetInt64(4),r.GetInt32(5),r.GetInt64(6),r.GetInt32(7),
+                r.GetInt64(8),r.GetInt64(9),r.GetDecimal(10),r.GetInt64(11)));
+        return rows;
     }
 
     public async Task<IReadOnlyList<MarketOwnedOrder>> ChangedOrdersAsync(IEnumerable<long> ids,CancellationToken token = default)
@@ -411,6 +436,29 @@ public sealed partial class MarketStore
         while(await r.ReadAsync(token))
             rows[r.GetInt32(0)].Add(new(r.GetInt64(1),r.GetDecimal(2),r.GetDecimal(3),r.GetDecimal(4),r.GetInt64(5),r.GetInt64(6)));
         return rows.ToDictionary(entry=>entry.Key,entry=>(IReadOnlyList<MarketHistory>)entry.Value);
+    }
+
+    /// <summary>
+    /// The average sale price of each type that has a sale: the newest day with sales, the volume-weighted average of its fills
+    /// over every region (<c>SUM(gross)/SUM(quantity)</c>, the figure <see cref="HistoryAsync"/> reports per region). A type with
+    /// no sale has no entry.
+    /// </summary>
+    public async Task<IReadOnlyDictionary<long,decimal>> LatestAverageSalesAsync(CancellationToken token = default)
+    {
+        await using var command=_source.CreateCommand($"""
+            WITH daily AS (
+                SELECT type_id,floor(time_ms/86400000.0)::bigint AS day,
+                       SUM(gross)/NULLIF(SUM(quantity),0) AS average,SUM(quantity) AS volume
+                FROM {_schema}.fills
+                GROUP BY type_id,day)
+            SELECT DISTINCT ON (type_id) type_id,average
+            FROM daily WHERE volume>0
+            ORDER BY type_id,day DESC
+            """);
+        var sales=new Dictionary<long,decimal>();
+        await using var r=await command.ExecuteReaderAsync(token);
+        while(await r.ReadAsync(token)) sales[r.GetInt32(0)]=r.GetDecimal(1);
+        return sales;
     }
 
     public async Task<IReadOnlyList<MarketOwnedOrder>> OwnOrdersAsync(long actor,long walletOwner,CancellationToken token = default)

@@ -416,13 +416,31 @@ public class CharMgrTests
     }
 
     [PgFact]
+    public async Task The_paperdoll_state_follows_the_stored_appearance_of_the_character()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var id = await rig.MakeAsync("Doll Ann");
+        var (session, _) = Rig.Session(id);
+        var (noCharacter, _) = Rig.Session(null);
+
+        Assert.Equal(new PyInt(2), await Rig.CallAsync(rig.CharMgr, session, "GetPaperdollState"));
+        Assert.Equal(new PyInt(2), await Rig.CallAsync(rig.CharMgr, noCharacter, "GetPaperdollState"));
+
+        await rig.Characters.SetAppearanceAsync(id, MarshalCodec.Encode(new PyDict([new(new PyStr("recorded"), new PyInt(1))])), true, null, false);
+
+        Assert.Equal(new PyInt(0), await Rig.CallAsync(rig.CharMgr, session, "GetPaperdollState"));
+        Assert.Equal(new PyInt(2), await Rig.CallAsync(rig.CharMgr, noCharacter, "GetPaperdollState"));
+    }
+
+    [PgFact]
     public async Task The_fixed_answers_are_the_recorded_ones()
     {
         await using var rig = await Rig.CreateAsync();
         var (session, _) = Rig.Session(await rig.MakeAsync("Ann Lee"));
         Task<PyValue> Ask(string method, params PyValue[] args) => Rig.CallAsync(rig.CharMgr, session, method, args);
 
-        Assert.Equal(Id(0), await Ask("GetPaperdollState"));
+        // a character made here has no stored doll: the reference answers "no existing customization" (2) for it
+        Assert.Equal(Id(2), await Ask("GetPaperdollState"));
         Assert.Equal(new PyList([]), await Ask("GetCohortsForCharacter"));
 
         var settings = (PyTuple)await Ask("GetSettingsInfo");

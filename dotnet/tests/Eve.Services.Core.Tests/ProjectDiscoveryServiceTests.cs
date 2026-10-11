@@ -10,7 +10,7 @@ public sealed class ProjectDiscoveryServiceTests
     [Fact]
     public void Core_catalog_registers_the_reference_project_discovery_rpcs()
     {
-        var service = CoreServices.Create(new SubscriptionSettings(), new NoAccounts(), () => 0)
+        var service = CoreServices.Create(new NoAccounts(), () => 0)
             .SingleOrDefault(candidate => candidate.Name == "ProjectDiscovery");
 
         Assert.NotNull(service);
@@ -29,7 +29,7 @@ public sealed class ProjectDiscoveryServiceTests
     [Fact]
     public async Task Unavailable_backend_uses_the_reference_default_wire_shapes()
     {
-        var service = CoreServices.Create(new SubscriptionSettings(), new NoAccounts(), () => 0)
+        var service = CoreServices.Create(new NoAccounts(), () => 0)
             .Single(candidate => candidate.Name == "ProjectDiscovery");
         var session = new ClientSession();
 
@@ -102,6 +102,6 @@ public sealed class ProjectDiscoveryServiceTests
 
     private sealed class NoAccounts : IOmegaAccountStore
     {
-        public string? GetOmegaExpiry(long accountId) => null;
+        public string? GetOmegaExpiry(long accountId) => OmegaLicenses.DefaultOmegaExpiryText;
     }
 }

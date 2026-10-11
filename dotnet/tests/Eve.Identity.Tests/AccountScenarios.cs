@@ -27,6 +27,23 @@ internal static class AccountScenarios
         Assert.Equal(2u, Assert.IsType<LoggedIn>(await Login(directory, "other", 4)).AccountId);
     }
 
+    public static async Task New_accounts_are_stored_until_2100_and_an_operator_can_set_an_earlier_end(Make make)
+    {
+        var directory = make(new AccountOptions { AutoCreate = true });
+        var subscriptions = Assert.IsAssignableFrom<IAccountSubscriptions>(directory);
+        var lookup = Assert.IsAssignableFrom<IAccountLookup>(directory);
+        var pilot = Assert.IsType<LoggedIn>(await Login(directory, "pilot", 1, 2, 3));
+
+        Assert.Equal(SubscriptionPolicy.NewAccountSubscriptionEnd, subscriptions.SubscriptionEndsAt(pilot.AccountId));
+        Assert.Equal(SubscriptionPolicy.NewAccountSubscriptionEnd, (await lookup.FindAsync(pilot.AccountId, CancellationToken.None))?.SubscriptionEndsAt);
+        Assert.Null(subscriptions.SubscriptionEndsAt(999));
+
+        var earlier = DateTimeOffset.FromUnixTimeMilliseconds(1_600_000_000_000L);
+        subscriptions.SetSubscriptionEndsAt(pilot.AccountId, earlier);
+        Assert.Equal(earlier, subscriptions.SubscriptionEndsAt(pilot.AccountId));
+        Assert.Equal(earlier, (await lookup.FindAsync(pilot.AccountId, CancellationToken.None))?.SubscriptionEndsAt);
+    }
+
     public static async Task An_account_can_be_looked_up_by_its_id(Make make)
     {
         var directory = make(new AccountOptions { AutoCreate = true });

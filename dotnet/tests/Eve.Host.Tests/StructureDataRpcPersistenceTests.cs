@@ -14,7 +14,7 @@ public sealed class StructureDataRpcPersistenceTests
     {
         var connectionString = Environment.GetEnvironmentVariable("EVE_PG_URL");
         Assert.False(string.IsNullOrWhiteSpace(connectionString));
-        await using var source = NpgsqlDataSource.Create(connectionString!);
+        await using var source = NpgsqlDataSource.Create(Eve.Data.PgConnection.ToConnectionString(connectionString!));
         var schema = "structure_rpc_" + Guid.NewGuid().ToString("N")[..12];
         try
         {
@@ -74,7 +74,7 @@ public sealed class StructureDataRpcPersistenceTests
 
             var session = new ClientSession();
             session.Set("structureid", new PyInt(structureId));
-            var moonService = new MoonExtractionsRpcService(() => ReadPersisted("moonExtractions"));
+            var moonService = new MoonExtractionsRpcService(() => Task.FromResult<JsonObject?>(ReadPersisted("moonExtractions")));
             var extractionPair = Assert.IsType<PyTuple>(await moonService.CallAsync(
                 Call("GetExtractionAndEventIDFromStructureID", session)));
             Assert.Equal(new PyInt(42), extractionPair.Items[1]);

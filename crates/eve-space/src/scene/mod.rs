@@ -2,15 +2,23 @@
 //!
 //! The scene has no clock of its own. Every call says what time it is (a FILETIME) and a ship's motion is worked out
 //! from the time it was last settled to that time, so the same calls at the same times give the same bytes.
+mod bridge;
+
+/// The most passengers one conduit jump takes (the Black Ops limit is 30; the array leaves room for the carriers).
+pub const MAX_CONDUIT_PASSENGERS: usize = 64;
 mod collision;
+mod decloak;
+mod directional;
 mod docking;
 mod heat;
 mod jump;
 mod movement;
 mod scan_targets;
 mod session;
+mod structures;
 mod warping;
 use self::collision::*;
+pub use self::decloak::{CLOAK_PROXIMITY_METERS, CloakTrigger, DecloakCause};
 #[cfg(test)]
 use self::heat::*;
 use self::movement::*;
@@ -87,6 +95,8 @@ pub const BELT_LANDING_RADIUS: f64 = 250_000.0;
 
 /// What a player can ask of their ship (the numbers of the client's `CmdXxx` calls).
 #[derive(Debug, Clone, Copy, PartialEq)]
+// the conduit's passenger array makes one variant large; boxing it would end the Copy that every command is passed by
+#[allow(clippy::large_enum_variant)]
 pub enum Command {
     SetSpeedFraction(f64),
     GotoDirection(Vec3),
@@ -134,17 +144,46 @@ pub enum Command {
     /// The scan targets of the scene for a probe scan (host query, code 27, protocol 52): the ships and companions the pilot can see, and the deployables a
     /// probe can scan. A cloaked ship is not one; the pilot's own ship is not.
     ScanTargets,
+    /// The things a directional scan can see in the scene (host query, code 28, protocol 54); the host takes the cone out of them.
+    DirectionalScan,
     /// Jump through a stargate; `destination_gate` is the gate the client says it leads to (0 when it does not say).
     Jump {
         gate_id: i64,
         destination_gate: i64,
     },
-    /// Jump to a cynosural field lit in another system (code 24): the ship's drive spools for `spool_ms`, then the ship leaves for
-    /// `destination_system` and appears at the field `field_id` there ([`Scene::arrive`]).
+    /// Jump to a cynosural field lit in another system (code 26): the ship's drive spools for `spool_ms`, then the ship leaves for
+    /// `destination_system` and appears at the field `field_id` there ([`Scene::arrive`]). The activation takes `capacitor` of the ship's full
+    /// capacitor (the host's fraction: the hull's 95 % less the pilot's Jump Drive Operation), and is refused when the charge is short.
     CynoJump {
         field_id: i64,
         destination_system: i32,
         spool_ms: f64,
+        capacitor: f64,
+    },
+    /// Opens a jump bridge where the ship is, to the field `field_id` lit in `destination_system` (code 30, protocol 55): the bridge lives `lifetime_ms`,
+    /// the ship holds still for `immobile_ms` (zero when it is not held), and the activation takes `capacitor` GJ.
+    OpenBridge {
+        field_id: i64,
+        destination_system: i32,
+        lifetime_ms: f64,
+        immobile_ms: f64,
+        range_meters: f64,
+        capacitor: f64,
+    },
+    /// The ship passes through the bridge of the ship `bridge_ship_id` to the field `field_id` in `destination_system` (code 31, protocol 55).
+    BridgeJump {
+        bridge_ship_id: i64,
+        field_id: i64,
+        destination_system: i32,
+    },
+    /// A Black Ops conduit jump (code 32, protocol 57): the ship and the `passenger_count` ships in `passengers` (ship ids) jump to the field `field_id` at once;
+    /// the conduit reaches `range_meters`.
+    ConduitJump {
+        field_id: i64,
+        destination_system: i32,
+        range_meters: f64,
+        passenger_count: u8,
+        passengers: [i64; MAX_CONDUIT_PASSENGERS],
     },
 }
 
@@ -162,11 +201,15 @@ impl Command {
             Self::WarpTo { .. } => 8,
             Self::Jump { .. } => 9,
             Self::CynoJump { .. } => 26,
+            Self::OpenBridge { .. } => 30,
+            Self::BridgeJump { .. } => 31,
+            Self::ConduitJump { .. } => 32,
             Self::WarpToPoint { .. } => 21,
             Self::ResolveWarpTarget { .. } => 22,
             Self::PositionOf { .. } => 23,
             Self::DropPoint { .. } => 25,
             Self::ScanTargets => 27,
+            Self::DirectionalScan => 28,
         }
     }
 }
@@ -193,6 +236,8 @@ pub enum Out {
     Position { session: SessionId, command: u8, position: Vec3 },
     /// The scan targets of the scene for the host's probe scan (command 27); it does not move anything.
     ScanTargets { session: SessionId, command: u8, targets: Vec<crate::link::ScanTarget> },
+    /// The things a directional scan can see (command 28); it does not move anything.
+    DirectionalTargets { session: SessionId, command: u8, targets: Vec<crate::link::DirectionalTarget> },
     /// A `Dock` could not be done from here: the ship now approaches the station, `distance` metres off its surface.
     Approaching { session: SessionId, command: u8, distance: f64 },
     /// A `Jump` was accepted: the ship's jump-out effect has begun and it will be in `destination_system` a few seconds on (the host is then told
@@ -207,6 +252,8 @@ pub enum Out {
     Condition { session: SessionId, command: u8, condition: Condition },
     /// A cynosural field was lit by the ship of `session`: the host keeps its record (`Message::Deployed`).
     DeployedLit { session: SessionId, placement: Box<crate::link::DeployedPlacement> },
+    /// A hit emptied a layer of a structure or paused its repair; the host decides what that means (protocol 60).
+    StructureDamaged { structure_id: i64, depleted: Option<crate::health::Layer>, over_threshold: bool },
     /// A command the scene cannot do.
     Refused { session: SessionId, command: u8, reason: &'static str },
     /// The answer to a targeting order: whether a lock is going, and the ships and bodies locked (or, to `GetTargeters`, the ships that lock this one).
@@ -346,7 +393,10 @@ impl Out {
             | Out::TargetRefused { session, .. }
             | Out::DeployedLit { session, .. }
             | Out::Position { session, .. }
-            | Out::ScanTargets { session, .. } => *session,
+            | Out::ScanTargets { session, .. }
+            | Out::DirectionalTargets { session, .. } => *session,
+            // a structure's notice is for the host, not a pilot: no pilot has this session
+            Out::StructureDamaged { .. } => 0,
         }
     }
 }
@@ -496,6 +546,9 @@ pub(crate) struct Pilot {
     pub(crate) modules: Modules,
     /// Until when the ship cannot be locked (the undocking protection; it ends sooner when the ship is flown or locks something).
     pub(crate) protected_until: i64,
+    /// The station the ship undocked from while it is still inside its sphere: the undock point lies in it, so the station does not bump the
+    /// ship until it is out (`collision::spares`).
+    pub(crate) leaving_station: Option<i64>,
     /// Until when the ship cannot move, warp or jump: a doomsday's immobility window (`Strike::immobile_ms`).
     pub(crate) immobile_until: i64,
     /// Until when the ship is disrupted by a disruptive lance: it cannot warp, jump or dock, and takes half the remote repair (`Strike::debuff_ms`).
@@ -531,6 +584,7 @@ impl Pilot {
             targeting: Targeting::default(),
             modules,
             protected_until,
+            leaving_station: None,
             immobile_until: 0,
             disrupted_until: 0,
             no_jump_until: 0,
@@ -628,6 +682,8 @@ pub struct Scene {
     pub(crate) widowed: BTreeMap<SessionId, Widow>,
     /// Unpiloted ships stay in the scene under synthetic sessions until someone boards or destroys them.
     pub(crate) unpiloted: BTreeMap<i64, SessionId>,
+    /// The health of each structure in space, by id (`crate::health::StructureHealth`).
+    pub(crate) structure_health: BTreeMap<i64, crate::health::StructureHealth>,
 }
 
 /// What the client of a destroyed ship still has of the ballpark: it keeps it when it is given a new ship.
@@ -674,6 +730,7 @@ impl Scene {
             destroyed: Vec::new(),
             widowed: BTreeMap::new(),
             unpiloted: BTreeMap::new(),
+            structure_health: BTreeMap::new(),
             wreck_catalog: None,
         }
     }

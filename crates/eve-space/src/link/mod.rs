@@ -18,7 +18,7 @@ use crate::death::Credit;
 
 use crate::deployable::{BombKind, Spec};
 
-use crate::health::{Condition, Layer, Resonances, Vitals};
+use crate::health::{Condition, Damage, Layer, Resonances, StructureLimits, Vitals};
 
 use crate::missiles::Missile;
 
@@ -30,13 +30,14 @@ use crate::scene::{HeatModuleProfile, HeatProfile, HeatRack};
 
 use crate::strike::{Strike, StrikeShape};
 
-use crate::ship::{ModuleSpec, NpcCombat, NpcIdentity, NpcWeapon, ShipSpec};
+use crate::ship::{ModuleSpec, NpcCombat, NpcIdentity, NpcWeapon, ShipSpec, ShipStance};
 
 use crate::weapons::{Aoe, Arc, Charge, Spool, Turret};
 
 use crate::wreck::WreckKind;
+use crate::world::StructureStatus;
 
-pub const PROTOCOL_VERSION: u16 = 52;
+pub const PROTOCOL_VERSION: u16 = 60;
 /// The message kinds.
 pub mod kind;
 
@@ -168,6 +169,39 @@ pub struct ScanTarget {
 
 /// A scanner probe the host launched and keeps the record of: its id, its type and group, where it is and the radius of its ball. The simulation puts it
 /// in space as a ball (`AddBalls2`) for those who see the place; it is never ended by the simulation (the host recalls it or its time is up).
+/// Something a directional scan can see (command 28, protocol 54): its item id, its kind (see `scene::directional`), its type, where it is, its radius, and whether it is
+/// cloaked or in warp (the host decides what the scan shows from these).
+#[derive(Debug, Clone, PartialEq)]
+pub struct DirectionalTarget {
+    pub id: i64,
+    pub kind: u8,
+    pub type_id: i32,
+    pub position: [f64; 3],
+    pub radius: f64,
+    pub cloaked: bool,
+    pub warping: bool,
+}
+
+/// An Upwell structure the host puts in space (protocol 59): its ball, its owner and the slim fields it has now. It stays until the host takes it out.
+#[derive(Debug, Clone, PartialEq)]
+pub struct StructurePlacement {
+    pub structure_id: i64,
+    pub solar_system_id: i32,
+    pub name: String,
+    pub type_id: i32,
+    pub group_id: i32,
+    pub position: [f64; 3],
+    pub radius: f64,
+    pub owner_id: i64,
+    pub corporation_id: i32,
+    pub alliance_id: i32,
+    /// The structure's health as the host has it: its layers, the shield's recharge, the limits a layer takes in a second and the repair pauses.
+    pub vitals: crate::health::Vitals,
+    pub shield_recharge_ms: f64,
+    pub limits: crate::health::StructureLimits,
+    pub status: crate::world::StructureStatus,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct ProbePlacement {
     pub probe_id: i64,
@@ -332,6 +366,12 @@ pub enum Message {
         session_id: u64,
         command: u8,
         targets: Vec<ScanTarget>,
+    },
+    /// What the scene has in a cone of space, for the host's directional scan (answers command 28, protocol 54).
+    DirectionalTargets {
+        session_id: u64,
+        command: u8,
+        targets: Vec<DirectionalTarget>,
     },
     Approaching {
         session_id: u64,
@@ -527,6 +567,17 @@ pub enum Message {
         deployable_id: i64,
     },
     /// The host puts a scanner probe in space where it was launched (protocol 45).
+    PlaceStructure(Box<StructurePlacement>),
+    RemoveStructure {
+        structure_id: i64,
+    },
+    SetStructureState {
+        solar_system_id: i32,
+        structure_id: i64,
+        status: crate::world::StructureStatus,
+    },
+    /// A structure's hit was told to the host (simulation to host, protocol 60): the layer it emptied, if any, and whether a layer's repair is paused.
+    StructureDamaged { structure_id: i64, depleted: Option<Layer>, over_threshold: bool },
     PlaceProbe(Box<ProbePlacement>),
     /// The host takes a scanner probe out of space (protocol 45); a deployable that is not a probe, or not in space, is left alone.
     RemoveProbe {
@@ -536,6 +587,8 @@ pub enum Message {
     PlaceDisruptor(Box<DisruptorPlacement>),
     /// The host puts a Mobile Cynosural Inhibitor in space where its pilot dropped it (protocol 50); the range is the inhibitor's.
     PlaceInhibitor(Box<DisruptorPlacement>),
+    /// The host puts a Mobile Cynosural Beacon in space where its pilot dropped it (protocol 58); the range is 0.
+    PlaceCynoBeacon(Box<DisruptorPlacement>),
     /// The host says a mobile warp disruptor is anchored (`active`) or not (protocol 48); one not in space is left alone.
     SetDisruptorActive {
         deployable_id: i64,
@@ -720,6 +773,7 @@ impl Message {
             Self::Accepted { .. } => kind::ACCEPTED,
             Self::Position { .. } => kind::POSITION,
             Self::ScanTargets { .. } => kind::SCAN_TARGETS,
+            Self::DirectionalTargets { .. } => kind::DIRECTIONAL_TARGETS,
             Self::Approaching { .. } => kind::APPROACHING,
             Self::Jumping { .. } => kind::JUMPING,
             Self::Jumped { .. } => kind::JUMPED,
@@ -766,10 +820,15 @@ impl Message {
             Self::FighterSize { .. } => kind::FIGHTER_SIZE,
             Self::Deployed(_) => kind::DEPLOYED,
             Self::RemoveDeployed { .. } => kind::REMOVE_DEPLOYED,
+            Self::PlaceStructure(_) => kind::PLACE_STRUCTURE,
+            Self::RemoveStructure { .. } => kind::REMOVE_STRUCTURE,
+            Self::SetStructureState { .. } => kind::SET_STRUCTURE_STATE,
+            Self::StructureDamaged { .. } => kind::STRUCTURE_DAMAGED,
             Self::PlaceProbe(_) => kind::PLACE_PROBE,
             Self::RemoveProbe { .. } => kind::REMOVE_PROBE,
             Self::PlaceDisruptor(_) => kind::PLACE_DISRUPTOR,
             Self::PlaceInhibitor(_) => kind::PLACE_INHIBITOR,
+            Self::PlaceCynoBeacon(_) => kind::PLACE_CYNO_BEACON,
             Self::SetDisruptorActive { .. } => kind::SET_DISRUPTOR_ACTIVE,
         }
     }

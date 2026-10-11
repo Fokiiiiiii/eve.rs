@@ -1,4 +1,5 @@
 using System.Text.Json.Nodes;
+using Eve.Macho;
 using Eve.Marshal;
 using Eve.Services;
 using Eve.Services.Core;
@@ -323,6 +324,42 @@ public sealed class AgentMissionServiceTests
         ];
 
         Assert.All(methods, method => Assert.True(service.HasMethod(method), method));
+    }
+
+    [Fact]
+    public async Task Binding_an_agent_gives_a_bound_object_for_that_agent_until_it_is_released()
+    {
+        var agent = new AgentMissionAgentData(
+            7004, 8, 24, 3, null, 1000036, false, true, 17, false, "", "",
+            18, 1531, 1, 30000165, 416, 4239, 20520);
+        var service = CreateAgentRpcService(rpcCallbacks: new AgentMissionRpcCallbacks(
+            ReadAgents: _ => ValueTask.FromResult<IReadOnlyList<AgentMissionAgentData>>([agent])));
+        var session = new ClientSession();
+
+        var answer = await service.CallAsync(RpcCall("MachoBindObject", session, new PyInt(7004), PyNone.Instance));
+
+        var registration = Assert.Single(Eve.Macho.BoundObjects.Registrations(answer));
+        Assert.Equal(7004, service.BoundAgentId(new ServiceCall { Method = "Bound", Args = [], BoundObjectId = registration.Oid, Session = session, CallId = new PyInt(1) }));
+        Assert.Equal(0, service.BoundAgentId(new ServiceCall { Method = "Bound", Args = [], BoundObjectId = "N=1:1", Session = session, CallId = new PyInt(1) }));
+        service.OnBoundObjectReleased(registration.Oid, session);
+        Assert.Equal(0, service.BoundAgentId(new ServiceCall { Method = "Bound", Args = [], BoundObjectId = registration.Oid, Session = session, CallId = new PyInt(1) }));
+    }
+
+    [Fact]
+    public async Task Binding_an_agent_the_catalog_does_not_hold_is_refused_and_a_nested_method_nobody_binds_is_not_answered()
+    {
+        var agent = new AgentMissionAgentData(
+            7004, 8, 24, 3, null, 1000036, false, true, 17, false, "", "",
+            18, 1531, 1, 30000165, 416, 4239, 20520);
+        var service = CreateAgentRpcService(rpcCallbacks: new AgentMissionRpcCallbacks(
+            ReadAgents: _ => ValueTask.FromResult<IReadOnlyList<AgentMissionAgentData>>([agent])));
+        var session = new ClientSession();
+
+        await Assert.ThrowsAsync<MachoWrappedException>(() =>
+            service.CallAsync(RpcCall("MachoBindObject", session, new PyInt(9999), PyNone.Instance)).AsTask());
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            service.CallAsync(RpcCall("MachoBindObject", session, new PyInt(7004),
+                new PyTuple([new PyStr("DoAction"), new PyTuple([new PyInt(3)]), PyNone.Instance]))).AsTask());
     }
 
     [Fact]

@@ -18,7 +18,8 @@ KINDS = {"Hello": 1, "HelloAck": 2, "Enter": 3, "Leave": 4, "Bind": 5, "UpdateSt
          "PlaceContainer": 28, "ContainerPlaced": 29, "ChangeWreck": 30, "RemoveWreck": 31, "Measured": 32,
          "AdjustCharge": 33, "ChargeAdjusted": 34, "Arrived": 35, "LaunchDrone": 36, "DroneCommand": 37, "DroneResults": 38,
          "DroneScooped": 39, "DroneReleased": 40, "ModuleWorkCycle": 51, "ModuleWorkResult": 52, "ModuleEnded": 53, "LaunchFighter": 54, "FighterOrder": 55, "FighterResults": 56, "FighterLanded": 57, "FighterReleased": 58, "FighterGotoPoint": 59, "FighterSize": 60, "UpdateEffect": 61, "BuffState": 62, "Deployed": 63, "RemoveDeployed": 64, "PlaceProbe": 65, "RemoveProbe": 66,
-         "EcmBurst": 67, "PlaceDisruptor": 68, "SetDisruptorActive": 69, "PlaceInhibitor": 70, "ScanTargets": 71}
+         "EcmBurst": 67, "PlaceDisruptor": 68, "SetDisruptorActive": 69, "PlaceInhibitor": 70, "ScanTargets": 71, "DirectionalTargets": 72,
+         "PlaceCynoBeacon": 73, "PlaceStructure": 74, "RemoveStructure": 75, "SetStructureState": 76, "StructureDamaged": 77}
 
 def s(text):  # u16 length + UTF-8
     data = text.encode("utf-8")
@@ -54,6 +55,12 @@ def ship(m):
     for module in m["modules"]:
         body += i64(module["itemId"]) + struct.pack("<ii", module["typeId"], module["flag"])
     body += struct.pack("<7d", *m["sensorStrength"], m["ecmResistance"], m["energyWarfareResistance"], m.get("droneDamageMultiplier", 1.0))
+    # the stance (protocol 55): a flag, then when there is one the old stance, the switch time (a FILETIME) and the new stance
+    stance = m.get("stance")
+    if stance is None:
+        body += b"\x00"
+    else:
+        body += b"\x01" + struct.pack("<i", stance["oldStance"]) + i64(stance["switchedAt"]) + struct.pack("<i", stance["stance"])
     return body
 
 
@@ -286,6 +293,27 @@ def wreck_kind(wreck):
     return bytes([0])
 
 
+def structure_status(d):  # protocol 59: state, upkeep, a flagged timer (start, end, a flagged pause), a flagged unanchoring time, repairing (0 none, 1 no, 2 yes)
+    out = struct.pack("<ii", d["state"], d["upkeepState"])
+    timer = d.get("timer")
+    if timer is None:
+        out += b"\0"
+    else:
+        out += b"\1" + i64(timer[0]) + i64(timer[1]) + (b"\0" if timer[2] is None else b"\1" + i64(timer[2]))
+    unanchoring = d.get("unanchoring")
+    out += b"\0" if unanchoring is None else b"\1" + i64(unanchoring)
+    repairing = d.get("repairing")
+    return out + bytes([0 if repairing is None else (2 if repairing else 1)])
+
+
+def structure_health(m):  # protocol 60: the vitals (points, then the resonances of the shield, armor and hull), the shield's recharge, the per-second limits and the repair pauses
+    v = m["vitals"]
+    out = struct.pack("<3d", v["shieldCapacity"], v["armorHp"], v["structureHp"])
+    for layer in ("shield", "armor", "structure"):
+        out += struct.pack("<4d", *v["resonances"][layer])
+    return out + struct.pack("<d", m["shieldRechargeMs"]) + struct.pack("<6d", *(m["perSecond"] + m["repairPause"]))
+
+
 def build(m):
     k = m["kind"]
     if k == "Hello":
@@ -397,7 +425,17 @@ def build(m):
                      + struct.pack("<ii", m["corporationId"], m["allianceId"]) + i64(m["shipId"]))
     if k == "RemoveProbe":
         return frame(k, i64(m["probeId"]))
-    if k in ("PlaceDisruptor", "PlaceInhibitor"):
+    if k == "PlaceStructure":
+        return frame(k, i64(m["structureId"]) + struct.pack("<i", m["solarSystemId"]) + s(m["typeName"]) + struct.pack("<ii", m["typeId"], m["groupId"])
+                     + struct.pack("<3d", *m["position"]) + struct.pack("<d", m["radius"]) + i64(m["ownerId"])
+                     + struct.pack("<ii", m["corporationId"], m["allianceId"]) + structure_health(m) + structure_status(m["status"]))
+    if k == "RemoveStructure":
+        return frame(k, i64(m["structureId"]))
+    if k == "StructureDamaged":  # sent by the simulation: the layer a hit emptied (0 none, 1 shield, 2 armor, 3 hull) and whether a repair is paused
+        return frame(k, i64(m["structureId"]) + bytes([m["depleted"]]) + bytes([1 if m["overThreshold"] else 0]))
+    if k == "SetStructureState":
+        return frame(k, struct.pack("<i", m["solarSystemId"]) + i64(m["structureId"]) + structure_status(m["status"]))
+    if k in ("PlaceDisruptor", "PlaceInhibitor", "PlaceCynoBeacon"):  # a beacon has no range: it goes as 0
         return frame(k, i64(m["deployableId"]) + struct.pack("<i", m["solarSystemId"]) + s(m["typeName"]) + struct.pack("<ii", m["typeId"], m["groupId"])
                      + struct.pack("<3d", *m["position"]) + struct.pack("<dd", m["radius"], m["range"]) + bytes([1 if m["active"] else 0])
                      + i64(m["ownerId"]) + struct.pack("<ii", m["corporationId"], m["allianceId"]) + i64(m["shipId"]))
@@ -429,6 +467,11 @@ def build(m):
     if k == "DroneResults":
         return frame(k, u64(m["sessionId"]) + bytes([m["command"]]) + struct.pack("<I", len(m["results"]))
                      + b"".join(i64(r["droneId"]) + s(r["reason"]) for r in m["results"]))
+    if k == "DirectionalTargets":  # protocol 53: what a directional scan can see in the scene, the answer to command 28
+        return frame(k, u64(m["sessionId"]) + bytes([m["command"]]) + struct.pack("<I", len(m["targets"]))
+                     + b"".join(i64(t["id"]) + bytes([t["kind"]]) + struct.pack("<i", t["typeId"]) + struct.pack("<3d", *t["position"])
+                                + struct.pack("<d", t["radius"]) + bytes([1 if t["cloaked"] else 0, 1 if t["warping"] else 0])
+                                for t in m["targets"]))
     if k == "ScanTargets":  # protocol 52: the scene's scan targets, the answer to command 27
         return frame(k, u64(m["sessionId"]) + bytes([m["command"]]) + struct.pack("<I", len(m["targets"]))
                      + b"".join(i64(t["id"]) + bytes([t["kind"]]) + struct.pack("<i", t["typeId"]) + struct.pack("<3d", *t["position"])
@@ -527,6 +570,8 @@ valid = [
     {"name": "deactivate command", "kind": "Command", "sessionId": "1790646377000015", "command": 16,
      "args": [9988400001941.0]},
     {"name": "new ship numbers", "kind": "ShipSpec", "sessionId": "1790646377000015", "ship": IBIS},
+    {"name": "new ship numbers with a tactical mode switched", "kind": "ShipSpec", "sessionId": "1790646377000015",
+     "ship": dict(IBIS, stance={"oldStance": 1, "switchedAt": "134000000000000000", "stance": 3})},
 {"name": "new ship whose drones deal no damage (a P.A.N.I.C. grant)", "kind": "ShipSpec", "sessionId": "1790646377000015",
  "ship": dict(IBIS, droneDamageMultiplier=0.0)},
     {"name": "notification", "kind": "Notify", "sessionId": "1790646377000015", "notification": "OnSetTimeDilation",
@@ -911,6 +956,7 @@ valid = [
     {"name": "order to go home", "kind": "DroneCommand", "sessionId": "1790646377000015", "command": 2, "targetId": "0", "droneIds": ["9988400003716"], "controlRange": 20_000.0},
     {"name": "what the drones did with an order", "kind": "DroneResults", "sessionId": "1790646377000015", "command": 1,
      "results": [{"droneId": "9988400003716", "reason": ""}, {"droneId": "9988400003717", "reason": "NOT_CONTROLLED"}]},
+    {"name": "what a directional scan can see in the cone", "kind": "DirectionalTargets", "sessionId": "1790646377000015", "command": 28, "targets": [{"id": "9988400003716", "kind": 1, "typeId": 586, "position": [1200.5, -300.0, 45000.25], "radius": 38.0, "cloaked": False, "warping": False}, {"id": "9988400003717", "kind": 7, "typeId": 3802, "position": [-5000.0, 0.0, 9000.0], "radius": 6000.0, "cloaked": False, "warping": True}]},
     {"name": "what a probe scan can find in the system", "kind": "ScanTargets", "sessionId": "1790646377000015", "command": 27, "targets": [{"id": "9988400003716", "kind": 1, "typeId": 586, "position": [1200.5, -300.0, 45000.25]}, {"id": "9988400003717", "kind": 4, "typeId": 12198, "position": [-5000.0, 0.0, 9000.0]}]},
     {"name": "a drone scooped into the bay", "kind": "DroneScooped", "sessionId": "1790646377000015", "droneId": "9988400003716"},
     {"name": "a drone let go", "kind": "DroneReleased", "sessionId": "1790646377000015", "droneId": "9988400003716",
@@ -970,6 +1016,19 @@ valid = [
      "position": [311989835983.1308, -13069154020.916222, 156646308895.76187], "radius": 40.0, "ownerId": "1790646377000015",
      "corporationId": 98000001, "allianceId": 0, "shipId": "9988400001943"},
     {"name": "scanner probe recalled by its pilot", "kind": "RemoveProbe", "probeId": "990000000000001"},
+    {"name": "structure put in space by the host with a running timer", "kind": "PlaceStructure", "structureId": "1040000000000001", "solarSystemId": 30100032,
+     "typeName": "Astrahus", "typeId": 35832, "groupId": 1657,
+     "position": [311989835983.1308, -13069154020.916222, 156646308895.76187], "radius": 60000.0, "ownerId": "98000001",
+     "corporationId": 98000001, "allianceId": 0,
+     "vitals": {"shieldCapacity": 200000000.0, "armorHp": 4000000.0, "structureHp": 6000000.0,
+                "resonances": {"shield": [1.0, 1.0, 1.0, 1.0], "armor": [1.0, 1.0, 1.0, 1.0], "structure": [1.0, 1.0, 1.0, 1.0]}},
+     "shieldRechargeMs": 110000.0, "perSecond": [14400000.0, 5000.0, 5000.0], "repairPause": [500.0, 500.0, 500.0],
+     "status": {"state": 110, "upkeepState": 3, "timer": [132000000000000000, 132000860000000000, None], "unanchoring": None, "repairing": None}},
+    {"name": "structure state set by the host: paused timer, unanchoring, repairing", "kind": "SetStructureState", "solarSystemId": 30100032,
+     "structureId": "1040000000000001",
+     "status": {"state": 111, "upkeepState": 3, "timer": [132000000000000000, 132000860000000000, 132000100000000000], "unanchoring": 132000900000000000, "repairing": True}},
+    {"name": "a hit empties a structure's shield and pauses its repair", "kind": "StructureDamaged", "structureId": "1040000000000001", "depleted": 1, "overThreshold": True},
+    {"name": "structure taken out of space by the host", "kind": "RemoveStructure", "structureId": "1040000000000001"},
     {"name": "mobile warp disruptor dropped from a ship and not yet anchored", "kind": "PlaceDisruptor", "deployableId": "4250000000000009",
      "solarSystemId": 30100032, "typeName": "Mobile Small Warp Disruptor I", "typeId": 12198, "groupId": 361,
      "position": [311989835983.1308, -13069154020.916222, 156646308895.76187], "radius": 50.0, "range": 5000.0, "active": False,
@@ -978,6 +1037,10 @@ valid = [
     {"name": "mobile cynosural inhibitor dropped and not yet anchored", "kind": "PlaceInhibitor", "deployableId": "4250000000000010",
      "solarSystemId": 30100032, "typeName": "Mobile Cynosural Inhibitor", "typeId": 33476, "groupId": 1249,
      "position": [311989835983.1308, -13069154020.916222, 156646308895.76187], "radius": 100.0, "range": 100000.0, "active": False,
+     "ownerId": "1790646377000015", "corporationId": 98000001, "allianceId": 0, "shipId": "9988400001943"},
+    {"name": "mobile cynosural beacon dropped and not yet anchored", "kind": "PlaceCynoBeacon", "deployableId": "4250000000000011",
+     "solarSystemId": 30100032, "typeName": "Mobile Cynosural Beacon", "typeId": 57319, "groupId": 4093,
+     "position": [311989835983.1308, -13069154020.916222, 156646308895.76187], "radius": 100.0, "range": 0.0, "active": False,
      "ownerId": "1790646377000015", "corporationId": 98000001, "allianceId": 0, "shipId": "9988400001943"},
     {"name": "how far a can is", "kind": "Measured", "sessionId": "1790646377000015", "command": 20, "distance": 261.0},
     {"name": "how far a can that is not there is", "kind": "Measured", "sessionId": "1790646377000015", "command": 20, "distance": None},

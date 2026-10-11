@@ -66,6 +66,8 @@ public sealed partial class MachoNetService(
     MachoNetGlobalConfigUpdateCallback? setGlobalConfigValue = null)
 {
     private const string ServerStatusLabel = "/Carbon/MachoNet/ServerStatus/OK";
+    private const long RoleAdmin = 1L << 56;   // ROLE_ADMIN (carbon/common/script/sys/serviceConst.py)
+    private const long RoleService = 1L << 60; // ROLE_SERVICE
 
     private PyValue ServiceInfo() => new PyDict([.. info.Services().Select(entry =>
         new KeyValuePair<PyValue, PyValue>(new PyStr(entry.Key), entry.Value is null ? PyNone.Instance : new PyStr(entry.Value)))]);
@@ -105,23 +107,42 @@ public sealed partial class MachoNetService(
         return empty;
     }
 
+    /// <summary>
+    /// Sets (or, with <c>isDelete</c> or a None value, removes) a global-config key. The reference allows this call to
+    /// ROLE_ADMIN and ROLE_SERVICE only (<c>machoNet.py</c>, the exported calls). It is saved and answered with None; a write
+    /// that cannot be kept is refused, never answered as done.
+    /// </summary>
     [Method("SetGlobalConfigValue")]
     public async ValueTask<PyValue> SetGlobalConfigValue(ServiceCall call)
     {
         call.Cancellation.ThrowIfCancellationRequested();
+        var roles = (call.Session.GetInt("accountRole") ?? 0) | (call.Session.GetInt("role") ?? 0);
+        if ((roles & (RoleAdmin | RoleService)) == 0)
+        {
+            throw new MachoWrappedException(MachoErrors.Wrapped("exceptions.RuntimeError", [
+                new PyStr("RoleNotAssigned"),
+                new PyStr("machoNet.SetGlobalConfigValue requires ROLE_ADMIN or ROLE_SERVICE"),
+            ]));
+        }
         var key = (JsSemantics.StringValue(Argument(call, "key", 0)) ?? "").Trim();
         if (key.Length == 0)
             return PyNone.Instance;
 
-        if (setGlobalConfigValue is { } callback)
-            await callback(new MachoNetGlobalConfigUpdate(
-                    key,
-                    Argument(call, "value", 1) ?? PyNone.Instance,
-                    BooleanArgument(call, "isDelete", 2, false),
-                    BooleanArgument(call, "isUpdate", 3, true),
-                    BooleanArgument(call, "isUpdateClients", 4, true)),
-                call.Session,
-                call.Cancellation);
+        if (setGlobalConfigValue is not { } callback)
+        {
+            throw new MachoWrappedException(MachoErrors.Wrapped("exceptions.RuntimeError", [
+                new PyStr("GlobalConfigNotWritable"),
+                new PyStr("this machoNet has no global-config store to keep the value in"),
+            ]));
+        }
+        await callback(new MachoNetGlobalConfigUpdate(
+                key,
+                Argument(call, "value", 1) ?? PyNone.Instance,
+                BooleanArgument(call, "isDelete", 2, false),
+                BooleanArgument(call, "isUpdate", 3, true),
+                BooleanArgument(call, "isUpdateClients", 4, true)),
+            call.Session,
+            call.Cancellation);
         return PyNone.Instance;
     }
 

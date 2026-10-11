@@ -28,6 +28,8 @@ pub struct ClientSession {
     pub handshake: Vec<(Value, Value)>,
     /// The `session_init` dictionary of the acknowledgement.
     pub session_init: Vec<(Value, Value)>,
+    /// The whole acknowledgement dictionary (session_init, sessionID, user_clientid, access_token, computer_hash, ...).
+    pub acknowledgement: Vec<(Value, Value)>,
     /// The Python the server asked the client to run.
     pub signed_func: Bytes,
 }
@@ -175,6 +177,7 @@ where
         server_version,
         handshake: details.clone(),
         session_init: session_init.clone(),
+        acknowledgement: ack.clone(),
         signed_func,
     })
 }

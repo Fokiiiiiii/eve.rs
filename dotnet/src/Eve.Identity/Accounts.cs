@@ -25,13 +25,33 @@ public interface IAccountDirectory
     ValueTask<LoginResult> LoginAsync(LoginAttempt attempt, CancellationToken cancellationToken);
 }
 
-/// <summary>What other modules may know about an account.</summary>
-public sealed record AccountInfo(uint Id, string UserName, DateTimeOffset CreatedAt);
+/// <summary>What other modules may know about an account: its stored subscription end time (null when it has none).</summary>
+public sealed record AccountInfo(uint Id, string UserName, DateTimeOffset CreatedAt, DateTimeOffset? SubscriptionEndsAt = null);
 
 /// <summary>Reads an account by its id (the character selection screen shows the user name and when it began).</summary>
 public interface IAccountLookup
 {
     ValueTask<AccountInfo?> FindAsync(uint accountId, CancellationToken cancellationToken);
+}
+
+/// <summary>
+/// The subscription policy of this server: every account is Omega (no real-money charge) until 2100-01-01T00:00:00Z.
+/// The end time is written to an account when it is created and back-filled for accounts that have none. Once stored,
+/// it is the authority: an operator may set an earlier end time, and the account lapses to Alpha.
+/// </summary>
+public static class SubscriptionPolicy
+{
+    public static readonly DateTimeOffset NewAccountSubscriptionEnd = new(2100, 1, 1, 0, 0, 0, TimeSpan.Zero);
+}
+
+/// <summary>An account's stored subscription end time: read by every path that answers Omega or Alpha, and set by an operator.</summary>
+public interface IAccountSubscriptions
+{
+    /// <summary>The stored end time, or null when the account has none (or does not exist).</summary>
+    DateTimeOffset? SubscriptionEndsAt(uint accountId);
+
+    /// <summary>Sets the stored end time. The next read, by any path, sees it.</summary>
+    void SetSubscriptionEndsAt(uint accountId, DateTimeOffset endsAt);
 }
 
 public sealed record AccountOptions
@@ -61,7 +81,7 @@ public static class AccountNames
 /// <summary>
 /// Accounts kept in memory: for tests and for running without a database. Nothing survives a restart.
 /// </summary>
-public sealed class InMemoryAccountDirectory : IAccountDirectory, IAccountLookup
+public sealed class InMemoryAccountDirectory : IAccountDirectory, IAccountLookup, IAccountSubscriptions
 {
     private sealed class Account(uint id, string userName, byte[] passwordHash, ulong role, DateTimeOffset createdAt)
     {
@@ -76,6 +96,8 @@ public sealed class InMemoryAccountDirectory : IAccountDirectory, IAccountLookup
         public ulong Role { get; } = role;
 
         public bool Banned { get; set; }
+
+        public DateTimeOffset SubscriptionEndsAt { get; set; } = SubscriptionPolicy.NewAccountSubscriptionEnd;
     }
 
     /// <summary>The accounts themselves, shared by the views <see cref="WithOptions"/> makes.</summary>
@@ -115,8 +137,19 @@ public sealed class InMemoryAccountDirectory : IAccountDirectory, IAccountLookup
 
     public ValueTask<AccountInfo?> FindAsync(uint accountId, CancellationToken cancellationToken) =>
         ValueTask.FromResult(_store.Accounts.Values.FirstOrDefault(a => a.Id == accountId) is { } account
-            ? new AccountInfo(account.Id, account.UserName, account.CreatedAt)
+            ? new AccountInfo(account.Id, account.UserName, account.CreatedAt, account.SubscriptionEndsAt)
             : null);
+
+    public DateTimeOffset? SubscriptionEndsAt(uint accountId) =>
+        _store.Accounts.Values.FirstOrDefault(a => a.Id == accountId)?.SubscriptionEndsAt;
+
+    public void SetSubscriptionEndsAt(uint accountId, DateTimeOffset endsAt)
+    {
+        if (_store.Accounts.Values.FirstOrDefault(a => a.Id == accountId) is { } account)
+        {
+            account.SubscriptionEndsAt = endsAt;
+        }
+    }
 
     public ValueTask<LoginResult> LoginAsync(LoginAttempt attempt, CancellationToken cancellationToken)
     {

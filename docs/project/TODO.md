@@ -1174,7 +1174,7 @@ Open:
 | WRITTEN, NOT RUN LIVE | (e) headless scenario `tools/headless-client/tests/test_structures.py`: a pilot in a system with an imported Astrahus sees it in the ballpark with its state and timer | ST-1 (e) | Collects and skips without `EVE_LIVE_HOST` and the structure's environment; no live server has run it. |
 | UNVERIFIED | Client behaviour of a structure's dock (`OnDockingAccepted` and the docked session), the damage the ball shows, the state label | MITM | Not verified on the graphical client. |
 
-## 48. Track D: CONCORD Rogue Analysis Beacon (CRAB), first cut (2026-10-11)
+## 49. Track D: CONCORD Rogue Analysis Beacon (CRAB), first cut (2026-10-11)
 
 Status: deploy, activation, link, scan, reward, expiry and restart are implemented in the host and the simulation (protocol 61) and covered by host tests with the simulation faked. Not verified in the graphical client. The figures CCP does not publish are eve.rs rule constants (owner decision D-C1, DEVIATIONS "CRAB").
 

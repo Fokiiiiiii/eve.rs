@@ -963,6 +963,29 @@ private static void WriteAction(Writer w, SimAction action)
                 WriteStructureHealth(w, m.Health);
                 WriteStructureStatus(w, m.Status);
                 break;
+            case SimTetherPolicy m:
+                w.U8(Kind.TetherPolicy);
+                w.U64(m.SessionId);
+                w.U64(m.BlockedForMs);
+                w.U64(m.LeaseMs);
+                w.U32(checked((uint)m.Candidates.Count));
+                foreach (var candidate in m.Candidates)
+                {
+                    if (candidate.StructureId <= 0 || !double.IsFinite(candidate.Range) || candidate.Range <= 0)
+                        throw new SimLinkException(SimLinkError.BadValue, "tether candidate");
+                    w.I64(candidate.StructureId);
+                    w.F64(candidate.Range);
+                }
+                break;
+            case SimTetherChanged m:
+                if (m.PreviousStructureId < 0 || m.StructureId < 0 || (m.StructureId == 0 && m.Repairing))
+                    throw new SimLinkException(SimLinkError.BadValue, "tether state");
+                w.U8(Kind.TetherChanged);
+                w.U64(m.SessionId);
+                w.I64(m.PreviousStructureId);
+                w.I64(m.StructureId);
+                w.U8(m.Repairing ? (byte)1 : (byte)0);
+                break;
             case SimStructureDamaged m:
                 w.U8(Kind.StructureDamaged);
                 w.I64(m.StructureId);

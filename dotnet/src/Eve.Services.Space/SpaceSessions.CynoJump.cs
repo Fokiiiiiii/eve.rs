@@ -76,15 +76,23 @@ public sealed partial class SpaceSessions
         CommandReply reply;
         try
         {
+            pilot.CynoJumpPending = true;
             reply = await _sim.CommandAsync((ulong)session.SessionId, SimCommands.BridgeJump, [bridgeShipId, fieldId, destinationSystem], cancellationToken);
         }
         catch (SimUnavailableException error)
         {
+            pilot.CynoJumpPending = false;
             _log?.Invoke($"bridge jump of session {session.SessionId}: {error.Message}");
             throw JumpRefused("SCENE_NOT_FOUND");
         }
+        catch
+        {
+            pilot.CynoJumpPending = false;
+            throw;
+        }
         if (!reply.Accepted || reply.DestinationSystem is not { } destination)
         {
+            pilot.CynoJumpPending = false;
             _log?.Invoke($"bridge jump of session {session.SessionId} through ship {bridgeShipId} refused: {reply.Reason}");
             throw BridgeRefusal(reply.Reason);
         }
@@ -111,20 +119,29 @@ public sealed partial class SpaceSessions
         {
             throw Notify("You cannot jump at this time.");
         }
+        var jumpingPilots = _pilots.Values.Where(p => ReferenceEquals(p, pilot) || passengers.Contains(p.ShipId)).ToArray();
         var args = new List<double> { fieldId, destinationSystem, JumpDriveRules.ConduitRangeMeters };
         args.AddRange(passengers.Select(ship => (double)ship));
         CommandReply reply;
         try
         {
+            foreach (var jumper in jumpingPilots) jumper.CynoJumpPending = true;
             reply = await _sim.CommandAsync((ulong)session.SessionId, SimCommands.ConduitJump, args.ToArray(), cancellationToken);
         }
         catch (SimUnavailableException error)
         {
+            foreach (var jumper in jumpingPilots) jumper.CynoJumpPending = false;
             _log?.Invoke($"conduit jump of session {session.SessionId}: {error.Message}");
             throw JumpRefused("SCENE_NOT_FOUND");
         }
+        catch
+        {
+            foreach (var jumper in jumpingPilots) jumper.CynoJumpPending = false;
+            throw;
+        }
         if (!reply.Accepted || reply.DestinationSystem is not { } destination)
         {
+            foreach (var jumper in jumpingPilots) jumper.CynoJumpPending = false;
             _log?.Invoke($"conduit jump of session {session.SessionId} to field {fieldId} refused: {reply.Reason}");
             throw BridgeRefusal(reply.Reason);
         }
@@ -177,15 +194,23 @@ public sealed partial class SpaceSessions
         CommandReply reply;
         try
         {
+            pilot.CynoJumpPending = true;
             reply = await _sim.CommandAsync((ulong)session.SessionId, SimCommands.CynoJump, [fieldId, destinationSystem, spoolMs, capacitorShare], cancellationToken);
         }
         catch (SimUnavailableException error)
         {
+            pilot.CynoJumpPending = false;
             _log?.Invoke($"cynosural jump of session {session.SessionId}: {error.Message}");
             throw JumpRefused("SCENE_NOT_FOUND");
         }
+        catch
+        {
+            pilot.CynoJumpPending = false;
+            throw;
+        }
         if (!reply.Accepted || reply.DestinationSystem is not { } destination)
         {
+            pilot.CynoJumpPending = false;
             _log?.Invoke($"cynosural jump of session {session.SessionId} to field {fieldId} refused: {reply.Reason}");
             // the wording is ours: the wiki gives no refusal text (DEVIATIONS, Track A8)
             if (reply.Reason == "NOT_ENOUGH_CAPACITOR")

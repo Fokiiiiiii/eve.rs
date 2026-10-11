@@ -1018,6 +1018,20 @@ fn message_of(case: &Value) -> Message {
             },
             over_threshold: case["overThreshold"].as_bool().unwrap(),
         },
+        "TetherPolicy" => Message::TetherPolicy {
+            session_id: wide(case, "sessionId") as u64,
+            blocked_for_ms: wide(case, "blockedForMs") as u64,
+            lease_ms: wide(case, "leaseMs") as u64,
+            candidates: case["candidates"].as_array().unwrap().iter().map(|candidate| eve_space::link::TetherCandidate {
+                structure_id: wide(candidate, "structureId"), range: candidate["range"].as_f64().unwrap(),
+            }).collect(),
+        },
+        "TetherChanged" => Message::TetherChanged {
+            session_id: wide(case, "sessionId") as u64,
+            previous_structure_id: wide(case, "previousStructureId"),
+            structure_id: wide(case, "structureId"),
+            repairing: case["repairing"].as_bool().unwrap(),
+        },
         "RemoveStructure" => Message::RemoveStructure { structure_id: wide(case, "structureId") },
         "SetStructureState" => Message::SetStructureState {
             solar_system_id: number("solarSystemId") as i32,

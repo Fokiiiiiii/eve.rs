@@ -154,6 +154,8 @@ public interface ISimulation
     /// <summary>The host puts an Upwell structure in space (protocol 59).</summary>
     void PlaceStructure(SimPlaceStructure structure);
 
+    void SetTetherPolicy(SimTetherPolicy policy);
+
     /// <summary>The host takes a structure out of space (protocol 59).</summary>
     void RemoveStructure(long structureId);
 

@@ -4,24 +4,6 @@ using Eve.Marshal;
 
 namespace Eve.Services.Core;
 
-[Service("LPStoreMgr")]
-public sealed partial class LPStoreMgrService
-{
-    public Func<ServiceCall, ValueTask<PyValue?>>? RpcHandler { get; set; }
-
-    [Method("GetAvailableOffersFromCorp")]
-    public ValueTask<PyValue> GetAvailableOffersFromCorp(ServiceCall call) =>
-        CompatibilityRpc.Invoke(call, RpcHandler, static () => new PyList([]));
-
-    [Method("TakeOfferForCharacter")]
-    public ValueTask<PyValue> TakeOfferForCharacter(ServiceCall call) =>
-        CompatibilityRpc.Invoke(call, RpcHandler, static () => PyBool.False);
-
-    [Method("TakeOfferForCorporation")]
-    public ValueTask<PyValue> TakeOfferForCorporation(ServiceCall call) =>
-        CompatibilityRpc.Invoke(call, RpcHandler, static () => PyBool.False);
-}
-
 [Service("bannedwords")]
 public sealed partial class BannedWordsService
 {

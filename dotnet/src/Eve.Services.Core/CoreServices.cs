@@ -71,7 +71,6 @@ public static class CoreServices
             new SolarSystemInterferenceMgrService(gameRpcCallbacks.ReadInterferenceTableAsync, nowUnixMs),
             new SurveyService(gameRpcCallbacks.ReadActiveSurveyIdAsync, gameRpcCallbacks.RecordSurveyEventAsync),
             new WarStatisticMgrService(gameRpcCallbacks.ReadKillmailAsync, nowUnixMs),
-            new LPStoreMgrService(),
             new BannedWordsService(),
             new AlphaInjectorMgrService(),
             new CacheService(),

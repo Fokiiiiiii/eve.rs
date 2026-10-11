@@ -315,11 +315,13 @@ public sealed partial class SpaceSessions
                     var moved = result.Moved!;
                     arrivalFileTime = FileTimeNow();
                     var arrived = new Pilot(session, pilot.CharacterId, pilot.ShipId, pilot.TypeId,
-                        jumped.ToSystem, arrivalFileTime + JumpCloakTicks, pilot.UndockedFrom, jumpCloak: true);
+                        jumped.ToSystem, arrivalFileTime + JumpCloakTicks, pilot.UndockedFrom, jumpCloak: true)
+                    { CynoArrival = pilot.CynoJumpPending };
                     if (!_pilots.TryUpdate((ulong)session.SessionId, arrived, pilot))
                         return Task.FromResult(false);
                     pilot.End();
                     ArmProtection(arrived, _jumpCloak);
+                    BeginCynoTetherProtection(arrived);
                     SystemEntered?.Invoke(jumped.ToSystem);
                     ReleaseBoundObjects(session);
                     var type = _statics.Type(moved.Ship.TypeId);
@@ -340,6 +342,7 @@ public sealed partial class SpaceSessions
                         ("constellationid", new PyInt(moved.Character.ConstellationId)),
                         ("regionid", new PyInt(moved.Character.RegionId)),
                         ("locationid", system));
+                    Background(() => RefreshTetherPolicyAsync(session));
                     return Task.FromResult(true);
                 },
                 null,

@@ -87,6 +87,7 @@ public sealed class DungeonWaveSpaceTests
         {
             var id = Guid.NewGuid().ToString("N")[..12];
             string[] schemas = ["wsp_sch_" + id, "wsp_cnt_" + id, "wsp_spc_" + id];
+            rig.KeepSchemas(schemas);
             await DurableScheduler.MigrateAsync(rig.Source, schemas[0]);
             await ContentRuntime.MigrateAsync(rig.Source, schemas[1]);
             await DungeonWaveDirector.MigrateAsync(rig.Source, schemas[2]);

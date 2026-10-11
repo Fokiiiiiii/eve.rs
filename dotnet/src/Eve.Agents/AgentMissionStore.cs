@@ -281,14 +281,38 @@ public sealed class AgentMissionStore
         CancellationToken cancellationToken,
         Func<AgentMissionRecord?, AgentMissionRecord> next)
     {
+        Validate(characterId, agentId, reference, action);
+        await using var connection = await _source.OpenConnectionAsync(cancellationToken);
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        var change = await ChangeInAsync(connection, transaction, characterId, agentId, reference, action, at, cancellationToken, next);
+        await transaction.CommitAsync(cancellationToken);
+        if (change is not null) Committed?.Invoke(change);
+        return change;
+    }
+
+    private static void Validate(long characterId, long agentId, string reference, string action)
+    {
         if (characterId <= 0) throw new ArgumentOutOfRangeException(nameof(characterId), "the character id must be positive");
         if (agentId <= 0) throw new ArgumentOutOfRangeException(nameof(agentId), "the agent id must be positive");
         if (string.IsNullOrWhiteSpace(reference) || reference.Length > 128) throw new ArgumentException("a reference has 1 to 128 characters", nameof(reference));
         if (string.IsNullOrWhiteSpace(action) || action.Length > 32) throw new ArgumentException("an action has 1 to 32 characters", nameof(action));
+    }
 
-        await using var connection = await _source.OpenConnectionAsync(cancellationToken);
-        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
-
+    /// <summary>
+    /// The change inside the caller's transaction (no commit and no notice): null when the reference is already in the journal. The caller commits,
+    /// and then raises the notice with <see cref="Announce"/> for a change it made.
+    /// </summary>
+    private async Task<AgentMissionChange?> ChangeInAsync(
+        NpgsqlConnection connection,
+        NpgsqlTransaction transaction,
+        long characterId,
+        long agentId,
+        string reference,
+        string action,
+        DateTimeOffset at,
+        CancellationToken cancellationToken,
+        Func<AgentMissionRecord?, AgentMissionRecord> next)
+    {
         await using (var create = new NpgsqlCommand(
             $"INSERT INTO {_schema}.missions (character_id, agent_id) VALUES ($1, $2) ON CONFLICT DO NOTHING", connection, transaction)
         {
@@ -318,7 +342,6 @@ public sealed class AgentMissionStore
         {
             if (await seen.ExecuteScalarAsync(cancellationToken) is not null)
             {
-                await transaction.CommitAsync(cancellationToken);
                 return null;
             }
         }
@@ -376,11 +399,27 @@ public sealed class AgentMissionStore
             await journal.ExecuteNonQueryAsync(cancellationToken);
         }
 
-        await transaction.CommitAsync(cancellationToken);
-        var change = new AgentMissionChange(characterId, agentId, from, to, action, reference, updated.Content.MissionId);
-        Committed?.Invoke(change);
-        return change;
+        return new AgentMissionChange(characterId, agentId, from, to, action, reference, updated.Content.MissionId);
     }
+
+    /// <summary>
+    /// The accepted mission is completed inside the caller's transaction (the caller's commit makes it, and then <see cref="Announce"/> tells the
+    /// session). Refused as <see cref="CompleteAsync"/> is.
+    /// </summary>
+    public async Task<AgentMissionChange?> CompleteInAsync(
+        NpgsqlConnection connection, NpgsqlTransaction transaction, long characterId, long agentId, DateTimeOffset now, string reference,
+        CancellationToken cancellationToken = default)
+    {
+        Validate(characterId, agentId, reference, "completed");
+        return await ChangeInAsync(connection, transaction, characterId, agentId, reference, "completed", now, cancellationToken, current =>
+        {
+            if (current?.State != AgentMissionState.Accepted) throw Refused("not_accepted", "there is no accepted mission to complete");
+            return current with { State = AgentMissionState.Completed, CompletedAt = now };
+        });
+    }
+
+    /// <summary>Tells the sessions of a change the caller committed (see <see cref="CompleteInAsync"/>).</summary>
+    public void Announce(AgentMissionChange change) => Committed?.Invoke(change);
 
     private const string Columns =
         "character_id, agent_id, state, mission_id, name_id, title, mission_type_label, important, offered_at, expires_at, accepted_at, completed_at, decline_until, quit_at";

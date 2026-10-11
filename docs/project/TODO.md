@@ -1381,3 +1381,18 @@ follow a completed step, with forks, the 90-day restart and the held-back sites 
 | OPEN | Fetch objectives (14119: item in cargo and turn-in at the agent) and courier objectives (`objectives` and `locations` lists are empty) | next slice; the EveJS builder is `buildMissionObjectivePayload` (agentMissionRuntime.js:5885) |
 | OPEN | The dungeon's enemy owner (`ownerID` is the mission's faction, a shortcut) and the dungeon location (0 placeholders) | next slice |
 | NOT FOUND | LP and text are the client's: the server sends IDs, and the client resolves the text in its own localization | none needed |
+
+## 55. Mission execution X4: live walk, completion transaction (2026-10-11)
+
+| Status | Item | Where / blocker |
+|---|---|---|
+| DONE (live, passed) | Basic level 4 kill mission, live: a pilot warps to the Manifest gate, jumps to 30005204, the level 4 security agent 3015920 offers mission 891 (request, accept), the accepted mission is in the journal, and the dungeon brings its NPCs into space | `tools/headless-client/tests/test_mission_walk.py` (run: `tools/dev/run-eve-live.sh` with `EVE_RUN`, see the file) |
+| FIXED (live finding) | The agent service's `DoAction` was refused at dispatch (`HasMethod` did not list it): no agent conversation worked on a live host. Unit tests call `CallAsync` directly and missed it | `AgentMissionService.HasMethod` |
+| FIXED (live finding) | Offers had an empty mission type label, so the journal dropped every offered or accepted mission | `MissionComposition` (offers carry the agent's kind) |
+| OPEN (live) | Killing the dungeon's NPCs and the completion and ISK in the live walk: after the first shot the dogma and ballpark calls answer `UnMachoDestination`; cause not found (possibly the pilot's ship lost to the site NPCs of the system). The completion is unit-tested only | next slice |
+| OPEN (live) | The arc 29 walk (Arnon is five gate jumps from Manifest, Tar four): not run | next slice; see the decision on arc 29 |
+| DONE (tests) | Standing and completion in one transaction: `AgentMissionStore.CompleteInAsync` joins the caller's transaction, the host's `CompleteMissionAsync` commits the completion and the relations standings together and announces after the commit | `AgentMissionStore.cs`, `MissionComposition.CompleteMissionAsync`, `MissionDungeonRuntime` |
+| OPEN | Atomicity is not tested (no test rolls the transaction back) | next slice |
+| CUT | Fetch and courier objectives (item 2): not built this slice | see DEVIATIONS "Mission execution X4" |
+| HELD | Arc 29 on by default (item 3): not flipped; the live walk through step 2 has not run | owner decision |
+| FOUND | `SiteLoot` divides by a candidate count that can be zero: "the sites of system X could not be made: Attempted to divide by zero" on pilots' entry to 30100032 and 30005204 (the sites track, not the mission path) | not fixed here |

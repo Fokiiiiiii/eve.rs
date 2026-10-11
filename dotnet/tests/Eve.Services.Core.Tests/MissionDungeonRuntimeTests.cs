@@ -51,10 +51,23 @@ public class MissionDungeonRuntimeTests
 
         public List<(long Character, long Faction, double Delta)> Standings { get; } = [];
 
-        public Task ApplyStandingAsync(long characterId, long factionId, double delta, CancellationToken cancellationToken)
+        /// <summary>The store the completion is made in (the production host makes it in the same transaction as the standings).</summary>
+        public AgentMissionStore? Store { get; set; }
+
+        public async Task<bool> CompleteMissionAsync(long characterId, long agentId, DateTimeOffset now, string reference,
+            IReadOnlyList<(long FactionId, double Delta)> standings, CancellationToken cancellationToken)
         {
-            Standings.Add((characterId, factionId, delta));
-            return Task.CompletedTask;
+            if (Store is null) return false;
+            try
+            {
+                if (await Store.CompleteAsync(characterId, agentId, now, reference, cancellationToken) is null) return false;
+            }
+            catch (AgentMissionRefusedException)
+            {
+                return false;
+            }
+            foreach (var (factionId, delta) in standings) Standings.Add((characterId, factionId, delta));
+            return true;
         }
     }
 
@@ -71,7 +84,7 @@ public class MissionDungeonRuntimeTests
         await using var cleanup = new Cleanup(source, schema);
         await AgentMissionStore.MigrateAsync(source, schema);
         var store = new AgentMissionStore(source, schema);
-        var host = new FakeHost();
+        var host = new FakeHost { Store = store };
         var runtime = new MissionDungeonRuntime(store, Catalog(), host, agent => agent == Agent ? new MissionAgentPlace(System, Corporation) : null, () => Start);
         await store.OfferAsync(Pilot, Agent, new AgentMissionContent(9101, 1234, "Kill Step", "", false), Start, "offer:1");
         await store.AcceptAsync(Pilot, Agent, Start, "accept:1");
@@ -101,7 +114,7 @@ public class MissionDungeonRuntimeTests
         await using var cleanup = new Cleanup(source, schema);
         await AgentMissionStore.MigrateAsync(source, schema);
         var store = new AgentMissionStore(source, schema);
-        var host = new FakeHost();
+        var host = new FakeHost { Store = store };
         var runtime = new MissionDungeonRuntime(store, Catalog(), host, _ => new MissionAgentPlace(System, Corporation), () => Start);
         await store.OfferAsync(Pilot, Agent, new AgentMissionContent(9101, 1234, "Kill Step", "", false), Start, "offer:2");
         await store.AcceptAsync(Pilot, Agent, Start, "accept:2");
@@ -120,7 +133,7 @@ public class MissionDungeonRuntimeTests
         await using var cleanup = new Cleanup(source, schema);
         await AgentMissionStore.MigrateAsync(source, schema);
         var store = new AgentMissionStore(source, schema);
-        var host = new FakeHost();
+        var host = new FakeHost { Store = store };
         var runtime = new MissionDungeonRuntime(store, Catalog(), host, _ => new MissionAgentPlace(System, Corporation), () => Start);
         await store.OfferAsync(Pilot, Agent, new AgentMissionContent(9102, 1235, "Talk Step", "", false), Start, "offer:3");
         await store.AcceptAsync(Pilot, Agent, Start, "accept:3");
@@ -147,7 +160,7 @@ public class MissionDungeonRuntimeTests
         await using var cleanup = new Cleanup(source, schema);
         await AgentMissionStore.MigrateAsync(source, schema);
         var store = new AgentMissionStore(source, schema);
-        var host = new FakeHost();
+        var host = new FakeHost { Store = store };
         var catalog = MissionStaticCatalog.FromRows(3405148, [new SdeRow(9201, JsonDocument.Parse(StandingMission).RootElement.Clone())], []);
         var runtime = new MissionDungeonRuntime(store, catalog, host, _ => new MissionAgentPlace(System, Corporation), () => Start);
         await store.OfferAsync(Pilot, Agent, new AgentMissionContent(9201, 1236, "Standing Step", "", false), Start, "offer:4");

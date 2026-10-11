@@ -2661,3 +2661,11 @@ The client's RPC names, notification names and fields, unlink reasons and link e
 4. Who spawns the ESS object in space (needed before a live link can be sent).
 5. Whether thefts and reserve payouts get their own journal reference (now 155 for all).
 6. Key consumption and the quadrant gate of keys; whether the weapon timer and the 10 km proximity check are wanted in this step.
+
+## Mission execution X4: live walk, completion transaction, held arcs (2026-10-11)
+
+- **Live walk.** The basic level 4 kill offer (mission 891 from agent 3015920 in 30005204), accept and the dungeon's NPCs is run on a live host (`tools/headless-client/tests/test_mission_walk.py`). The standing it needs (a level 4 agent asks for 5 toward the agent's corporation) is set by the test in the run's relations schema: a fixture, not a server path. Not verified live: killing the NPCs, the completion and the ISK (a basic level 4 mission has no ISK in the official data, D-R1).
+- **Arcs on and off by default.** All 21 arcs are held back by default: every arc kill step is generic (178) or missing (4), and no arc has been walked live through its kill steps. Arc 29 is not flipped on: its step 1 is the family-derived template 3509 (no Damsel content), its step 2 is in Tar, and the live walk through it has not run. Owner decision: turn on arc 29 (EVE_MISSION_INCLUDE_GENERIC_ARCS=1 is the switch for all generic arcs today).
+- **Completion and standings in one transaction.** `AgentMissionStore.CompleteInAsync` writes the completion inside the caller's transaction; the host adds the relations standing changes to the same transaction and commits; the commit notice is raised after the commit. Status: decided; the rollback path is not tested.
+- **Named errors and dispatch.** `DoAction`, `GetMissionBriefingInfo` and `GetMissionObjectiveInfo` are listed in the agent service's `HasMethod` (the dispatcher refuses an unlisted method before `CallAsync`). Status: fixed.
+- **Fetch and courier objectives (item 2).** Not built: a fetch objective needs the item in the pilot's cargo and a turn-in at the agent, a courier one needs a pickup and a drop-off; the objective payload still lists none. Status: OPEN.

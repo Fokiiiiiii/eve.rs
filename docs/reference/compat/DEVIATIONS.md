@@ -1500,6 +1500,43 @@ order at its expiry instant); CCP-BR (the order duration; "Modifying an order wi
   duration) check the expiry one grace after the expiry instant; the expected values are unchanged.
 - Status: done (M3), tested with a fake clock (TradeRig.Now); the live headless walk cannot wait a day, so the expiry is not walked live.
 
+## Market slice M4: cache coherence and corporate notices (2026-10-11)
+
+Sources: `market-design.md` section 4.3 M4 and decision Q8 (`market-decisions.md`); the V24.01 client's object cache
+(`carbon/common/script/net/objectCaching.py`: `InvalidateCachedMethodCall` adds the client's own session attribute to the key, 222-238;
+the cache details come from the server's wrapped result, 510-514); the client's own invalidation list (`marketsvc.py:113-124`); the
+push mechanism of the fittings (`FittingMgrServices.cs:241-253`).
+
+- **Book invalidation.** Every change to a region and type book sends `objectCaching.InvalidateCachedMethodCall` to the sessions of
+  that region: `GetOrders(typeID)`, `GetStationAsks`, `GetSystemAsks`, and for PLEX also `GetPlexOrders` and `GetPlexBest`. A change is
+  a placement that trades or rests, a fill, a modification, a cancel or an expiry; the receipt lists the books it touched
+  (`MarketReceipt.TouchedBooks`). A session whose known `regionid` differs is not asked. The client keeps these results for the run
+  (`versionCheck` "run"), so the push is what makes the next read fresh. Invalidations are sent before the notices.
+  Deviation (scope): the station and system asks are invalidated for every change in the region, not only the station's or
+  system's own; the client keys them by its own station or system, so a wider push is harmless and simpler.
+- **Owner-list invalidation.** For each character a change reaches, the client's `GetCharOrders` (a personal order) or
+  `GetCorporationOrders` (a corporate order) and `GetMarketOrderHistory` are dropped.
+- **Corporate notices (G11).** A corporate order's change (placement, fill of a corporate resting order, modification, cancel,
+  expiry) reaches every character with the corporation's market rights at the order's station (`CorporationStore.MarketRightsHoldersAsync`,
+  the Accountant or Trader test the client uses, `buyThisTypeWindow.py:324`), together with the acting character. A personal order's
+  notices are unchanged: its owner and the acting character. The recipients are computed inside the transaction (`NoticeRecipientsAsync`),
+  so a rolled-back change sends nothing.
+- **Not invalidated, with the reason.** `GetRegionBest` is not wrapped as a cached result by the server, and the client caches only
+  wrapped results (`objectCaching.py:510-514`), so there is nothing to drop. Seed import is not a runtime change: the NPC seed is imported
+  during host composition, before any session exists, so no cached result can hold the old book.
+- **Client-side price history is not reached.** The client keeps price histories in its own `ExpiringDict` (`marketsvc.py:103`, three
+  hours), not in objectCaching, so the server cannot drop them. A second trader's new fill can show in the history view up to three
+  hours late. Open: no server-side remedy exists within the V24.01 client.
+- **Outbox: not built (decision).** A notice goes to a live session only. After a stop no session survives, and the client's object cache
+  is per run, so a reconnecting client reads fresh state. An outbox would therefore have no recipient to deliver to. The M3 gap ("a stop
+  between the committed close and the send loses that notice") is recorded here as accepted: balances, items and order state are correct
+  after a restart, and the client's next read shows them.
+- **Open acceptance item (Q8).** The push is verified on the wire in-process (the test asserts the invalidation packet and the next read).
+  Two native clients observing each other's changes are not checked: no second native client runs in this environment.
+- **Tests.** `MarketCoherenceTests` (5): a placement, a cancel, a fill and an expiry, each seen by a second session in the region (the
+  invalidation is asserted on the wire, and the next read shows the change), with a session in another region not asked; and a corporate
+  placement, fill and cancel that reaches the trader with the market right and not the bystander. Status: done (M4).
+
 ## Agents slice AG-1: LP wallet (LPSvc), the access rule and the bound agentMgr (2026-10-10)
 
 Sources. eve-logic (V24.01): `eve/client/script/ui/shared/neocom/wallet/loyaltyPointsWalletSvc.py:27-67` (the balances,

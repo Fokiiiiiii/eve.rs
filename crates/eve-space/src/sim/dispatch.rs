@@ -396,7 +396,9 @@ impl Sim {
             | Message::PlaceDisruptor(..)
             | Message::PlaceInhibitor(..)
             | Message::PlaceCynoBeacon(..)
-            | Message::SetDisruptorActive { .. } => self.handle_world(message, now),
+            | Message::SetDisruptorActive { .. }
+            | Message::PlaceAnalysisBeacon(..)
+            | Message::SetAnalysisBeaconState { .. } => self.handle_world(message, now),
             other => Err(ProtocolError(format!(
                 "a message of kind {} is for the host, not the simulation",
                 other.kind()
@@ -983,6 +985,19 @@ impl Sim {
                     None => Vec::new(),
                 }
             }
+            Message::PlaceAnalysisBeacon(beacon) => {
+                let beacon = *beacon;
+                match self.scenes.get_mut(&beacon.solar_system_id) {
+                    Some(scene) => scene.place_analysis_beacon(beacon, now),
+                    None => Vec::new(),
+                }
+            }
+            Message::SetAnalysisBeaconState { deployable_id, state } => self
+                .scenes
+                .values_mut()
+                .find(|scene| scene.deployables.contains_key(&deployable_id))
+                .map(|scene| scene.set_analysis_beacon_state(deployable_id, state, now))
+                .unwrap_or_default(),
             Message::PlaceCynoBeacon(beacon) => {
                 let beacon = *beacon;
                 match self.scenes.get_mut(&beacon.solar_system_id) {

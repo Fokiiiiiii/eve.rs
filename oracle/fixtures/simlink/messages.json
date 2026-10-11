@@ -3777,6 +3777,50 @@
    "hex": "0a0000004509a04b3c5a190f0001"
   },
   {
+   "name": "CRAB dropped from a ship, not yet active (20 s wait), no link",
+   "kind": "PlaceAnalysisBeacon",
+   "deployableId": "4250000000000012",
+   "solarSystemId": 30100032,
+   "typeName": "CONCORD Rogue Analysis Beacon",
+   "typeId": 60244,
+   "groupId": 4137,
+   "position": [
+    311989835983.1308,
+    -13069154020.916222,
+    156646308895.76187
+   ],
+   "radius": 100.0,
+   "ownerId": "1790646377000015",
+   "corporationId": 98000001,
+   "allianceId": 0,
+   "shipId": "9988400001943",
+   "state": {
+    "active": false,
+    "activateAt": "133900000000000000",
+    "deployedAt": "133899999000000000",
+    "activationSeconds": 20,
+    "linkState": 1,
+    "linkCompleteAt": "0",
+    "linkedShipId": "0"
+   },
+   "hex": "950000004e0ca04b3c5a190f00404acb011d00434f4e434f524420526f67756520416e616c7973697320426561636f6e54eb0000291000005fc833c6022952426c5427b7db5708c285e10f7e6c3c424200000000000059404f2c3859955c0600815cd7050000000097b3089b150900000000c06c2f57b5db0100f6d1f356b5db01140000000100000000000000000000000000000000000000"
+  },
+  {
+   "name": "CRAB active with a carrier linked (running, complete later)",
+   "kind": "SetAnalysisBeaconState",
+   "deployableId": "4250000000000012",
+   "state": {
+    "active": true,
+    "activateAt": "0",
+    "deployedAt": "133899999000000000",
+    "activationSeconds": 20,
+    "linkState": 2,
+    "linkCompleteAt": "133900240000000000",
+    "linkedShipId": "9988400001944"
+   },
+   "hex": "320000004f0ca04b3c5a190f0001000000000000000000f6d1f356b5db01140000000200000000208a108fb5db0198b3089b15090000"
+  },
+  {
    "name": "mobile cynosural inhibitor dropped and not yet anchored",
    "kind": "PlaceInhibitor",
    "deployableId": "4250000000000010",

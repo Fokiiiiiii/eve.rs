@@ -605,6 +605,42 @@ impl Message {
                 let active = read_flag(&mut r, "disruptor")?;
                 Message::SetDisruptorActive { deployable_id, active }
             }
+            kind::PLACE_ANALYSIS_BEACON => {
+                let deployable_id = r.i64()?;
+                let solar_system_id = r.i32()?;
+                let name = r.text()?;
+                let type_id = r.i32()?;
+                let group_id = r.i32()?;
+                let position = read_vector(&mut r)?;
+                let radius = r.f64()?;
+                let owner_id = r.i64()?;
+                let corporation_id = r.i32()?;
+                let alliance_id = r.i32()?;
+                let ship_id = r.i64()?;
+                let state = read_analysis_beacon_state(&mut r)?;
+                if !(radius.is_finite() && radius >= 0.0) {
+                    return Err(DecodeError::BadValue("analysis beacon"));
+                }
+                Message::PlaceAnalysisBeacon(Box::new(AnalysisBeaconPlacement {
+                    deployable_id,
+                    solar_system_id,
+                    name,
+                    type_id,
+                    group_id,
+                    position,
+                    radius,
+                    owner_id,
+                    corporation_id,
+                    alliance_id,
+                    ship_id,
+                    state,
+                }))
+            }
+            kind::SET_ANALYSIS_BEACON_STATE => {
+                let deployable_id = r.i64()?;
+                let state = read_analysis_beacon_state(&mut r)?;
+                Message::SetAnalysisBeaconState { deployable_id, state }
+            }
             kind::DRONE_WORK_RESULT => {
                 let session_id = r.u64()?;
                 let drone_id = r.i64()?;
@@ -1138,4 +1174,27 @@ impl Message {
         r.finish()?;
         Ok(message)
     }
+}
+
+/// A CRAB's state (see `put_analysis_beacon_state`): the link state must be one the client knows (1 to 4).
+fn read_analysis_beacon_state(reader: &mut Reader) -> Result<AnalysisBeaconState, DecodeError> {
+    let active = read_flag(reader, "analysis beacon")?;
+    let activate_at = reader.i64()?;
+    let deployed_at = reader.i64()?;
+    let activation_seconds = reader.i32()?;
+    let link_state = reader.i32()?;
+    let link_complete_at = reader.i64()?;
+    let linked_ship_id = reader.i64()?;
+    if activation_seconds < 0 || !(1..=4).contains(&link_state) {
+        return Err(DecodeError::BadValue("analysis beacon"));
+    }
+    Ok(AnalysisBeaconState {
+        active,
+        activate_at,
+        deployed_at,
+        activation_seconds,
+        link_state,
+        link_complete_at,
+        linked_ship_id,
+    })
 }

@@ -1045,6 +1045,19 @@ public sealed record SimPlaceDisruptor(
 /// <summary>The host says a mobile warp disruptor is anchored (<see cref="Active"/>) or not (protocol 48); one not in space is left alone.</summary>
 public sealed record SimSetDisruptorActive(long DeployableId, bool Active) : SimMessage;
 
+/// <summary>The state of a CRAB the host sets (protocol 61), as its slim item keeps it for the client: whether it is active (and when it becomes active otherwise), the
+/// activation wait in seconds, when it was put in space, the link state (1 idle, 2 running, 3 completed, 4 disabled), when the link completes and the linked ship.
+/// The times are FILETIME ticks and 0 for none.</summary>
+public sealed record SimAnalysisBeaconState(bool Active, long ActivateAtFiletime, long DeployedAtFiletime, int ActivationSeconds, int LinkState, long LinkCompleteAtFiletime, long LinkedShipId);
+
+/// <summary>A CONCORD Rogue Analysis Beacon the host keeps a record of, put in space where its pilot dropped it (protocol 61).</summary>
+public sealed record SimPlaceAnalysisBeacon(
+    long DeployableId, int SolarSystemId, string Name, int TypeId, int GroupId, IReadOnlyList<double> Position, double Radius, long OwnerId, int CorporationId,
+    int AllianceId, long ShipId, SimAnalysisBeaconState State) : SimMessage;
+
+/// <summary>The host sets a CRAB's state (protocol 61); one not in space is left alone.</summary>
+public sealed record SimSetAnalysisBeaconState(long DeployableId, SimAnalysisBeaconState State) : SimMessage;
+
 /// <summary>A Mobile Cynosural Inhibitor the host keeps a record of, put in space where its pilot dropped it (protocol 50): the same placement as a disruptor's,
 /// with the inhibitor's range in metres (no cynosural field lights within it while it is anchored).</summary>
 public sealed record SimPlaceInhibitor(

@@ -476,6 +476,24 @@ impl Message {
                 out.extend_from_slice(&deployable_id.to_le_bytes());
                 out.push(u8::from(*active));
             }
+            Self::PlaceAnalysisBeacon(beacon) => {
+                out.extend_from_slice(&beacon.deployable_id.to_le_bytes());
+                out.extend_from_slice(&beacon.solar_system_id.to_le_bytes());
+                put_text(&mut out, &beacon.name);
+                out.extend_from_slice(&beacon.type_id.to_le_bytes());
+                out.extend_from_slice(&beacon.group_id.to_le_bytes());
+                put_vector(&mut out, &beacon.position);
+                out.extend_from_slice(&beacon.radius.to_le_bytes());
+                out.extend_from_slice(&beacon.owner_id.to_le_bytes());
+                out.extend_from_slice(&beacon.corporation_id.to_le_bytes());
+                out.extend_from_slice(&beacon.alliance_id.to_le_bytes());
+                out.extend_from_slice(&beacon.ship_id.to_le_bytes());
+                put_analysis_beacon_state(&mut out, &beacon.state);
+            }
+            Self::SetAnalysisBeaconState { deployable_id, state } => {
+                out.extend_from_slice(&deployable_id.to_le_bytes());
+                put_analysis_beacon_state(&mut out, state);
+            }
             Self::PlaceAsteroid(asteroid) => {
                 out.extend_from_slice(&asteroid.solar_system_id.to_le_bytes());
                 out.extend_from_slice(&asteroid.asteroid_id.to_le_bytes());
@@ -749,4 +767,15 @@ impl Message {
         frame.extend_from_slice(&payload);
         frame
     }
+}
+
+/// A CRAB's state as the host sends it (protocol 61): the activation flag, the two FILETIME times, the wait in seconds, the link state, the link's end and the ship.
+fn put_analysis_beacon_state(out: &mut Vec<u8>, state: &AnalysisBeaconState) {
+    out.push(u8::from(state.active));
+    out.extend_from_slice(&state.activate_at.to_le_bytes());
+    out.extend_from_slice(&state.deployed_at.to_le_bytes());
+    out.extend_from_slice(&state.activation_seconds.to_le_bytes());
+    out.extend_from_slice(&state.link_state.to_le_bytes());
+    out.extend_from_slice(&state.link_complete_at.to_le_bytes());
+    out.extend_from_slice(&state.linked_ship_id.to_le_bytes());
 }

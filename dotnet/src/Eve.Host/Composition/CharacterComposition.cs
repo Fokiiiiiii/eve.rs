@@ -48,6 +48,8 @@ internal sealed partial class CharacterServicesComposition
             {
                 Speed = double.Parse(Env("EVE_SKILL_TRAINING_SPEED", "1"), System.Globalization.CultureInfo.InvariantCulture),
                 HasOmega = account => omega.Resolve(new PyInt(account)).HasLicense,
+                // each running extra queue (Multiple Character Training) lets one more of the account's characters train
+                AdditionalTrainingSlots = account => accounts.ActiveTrainingSlotCount(checked((uint)account), DateTimeOffset.FromUnixTimeMilliseconds(now())),
                 Attribute = skills.LearningAttribute,
             },
             now);
@@ -137,7 +139,7 @@ internal sealed partial class CharacterServicesComposition
         insuranceService = new Eve.Services.Core.InsuranceService(insuranceReadModel, now, insuranceWriteModel);
         storeRuntime = new PersistenceNewEdenStoreRuntime(
             source, mailStore, mailStoreOwner.Fence, wallets, characters, items, itemTypes,
-            characterSessions, now, _ => Task.FromResult(Eve.Services.Core.NewEdenStoreCatalog.Default.Root));
+            characterSessions, now, _ => Task.FromResult(Eve.Services.Core.NewEdenStoreCatalog.Default.Root), accounts);
         return Task.CompletedTask;
     }
 

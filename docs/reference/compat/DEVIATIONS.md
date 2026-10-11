@@ -1591,6 +1591,28 @@ Sources: the decision Q16 (`market-decisions.md`); the client's reading of the t
   average; a type without fills and a region without trades; the region scope (a trader in another region sees none); PLEX as its own
   type; and a rolled-back fill. Status: done (M5).
 
+## Market slice M6: transactions by division (2026-10-11)
+
+Sources: the reference's transaction rows and rights (`marketProxyService.js:6582-6642`, `CrpAccessDenied` at 6625-6630;
+`corporationAuthority.js:134-147`); the client's reading of the rows (`marketsvc.py:41-64`: accountID and keyID are the viewer's
+division) and of the corporation's division (`corpMarketTransactionsPanel.py:14-17`, `quote.py:442-443`).
+
+- **Implemented in M1, completed here.** `CharGetTransactions` and `CorpGetTransactions` read the fills of the wallet that bought or
+  sold, newest first, from `fromDate`; a corporation read takes an optional division. M6 adds the tests the design asks for.
+- **Rights.** `CorporationStore.CanReadWalletDivisionAsync`: an Accountant or a Junior Accountant reads every division; any other member
+  reads only the division whose Account Take role it holds; a read of every division (null) needs the accountant role. A refusal is
+  `CrpAccessDenied` with the reason `(101, 'UI/Corporations/AccessRestrictions/NoAccessToWalletDivision')`, as the reference sends it.
+  This matches the design (M6) and the reference; the Director role is not a read right, as in the reference
+  (`corporationAuthority.js:138-143`).
+- **Tests.** `MarketTransactionReadTests` (3): an accountant reads every division newest first, with keyID as the division, a division
+  filter and a fromDate filter; a member with Account Take reads its division and is refused another division and every division with
+  reason 101; a junior accountant reads every division and a member with no take role reads none (refused).
+- **Not done (cheap check not run).** The EXPLAIN check of the buyer-or-seller query was not run, so no index was added. The query uses
+  the existing `fills_buyer` and `fills_seller` indexes (migration 002). Open: the cost at production volumes is not measured.
+- **Not tested directly.** A corporation as the seller of a fill (its office stock setup is heavy); the row is built by the same code
+  path as the buyer side, so the buyer side is the tested proof.
+- Status: done (M6).
+
 ## Agents slice AG-1: LP wallet (LPSvc), the access rule and the bound agentMgr (2026-10-10)
 
 Sources. eve-logic (V24.01): `eve/client/script/ui/shared/neocom/wallet/loyaltyPointsWalletSvc.py:27-67` (the balances,
@@ -1744,6 +1766,44 @@ the design phase): the offer lasts 6 to 7 days; design Q-AG-10 keeps 7 days.
   call it directly. So on a live server the journal stays empty and "request mission" has nothing to offer (A4).
 - **The title is the text when the name id is missing.** The client's journal row needs a name id or a title; a mission
   with neither is left out of the view (the reference behaves the same, `missionNameID` or `missionTitle`).
+
+## Agents slice AG-2, A4: the dialogue behind DoAction (2026-10-11)
+
+Sources. eve-logic `eve/client/script/ui/station/agents/agentDialogueWindow.py:324-428` (the button list, the
+`DoAction` call, the message resolution through `agents.py:640-660`); `eve/common/lib/appConst.py:146-164` (buttons). EveJS
+v0.12.9 `services/agent/agentMgrService.js:906-1120` (Handle_DoAction; the decline and quit confirmations at 366-449 are not
+ported, see below), `services/agent/agentMissionRuntime.js:118-142` (the action tokens and their buttons),
+`agentMissionRuntime.js:8038-8102` (the idle greeting and the idle conversation), `agentMgrService.js:97-115` (the reply
+shape).
+
+- **Reply shape.** `DoAction(actionID)` answers `((agentSays, actions), lastActionInfo)`: `agentSays` is `(message, contentID)`,
+  a message is a plain text or `(localization label, keyword dictionary)` (the client resolves labels, `agents.py:640`);
+  `actions` is a list of `(actionID, buttonType)`; `lastActionInfo` is the dictionary the window reads (`missionCompleted`,
+  `missionQuit`, `missionCantReplay`, `loyaltyPoints`, `missionDeclined`). Status: tested (`AgentDialogueTests`).
+- **The action tokens** (376 request, 377 accept, 378 decline, 381 quit, and the rest) are the reference's server-generated
+  slots; the window echoes them back, and each maps to a stable button. A button id is accepted as itself. Status: decided.
+- **Implemented:** the first contact (the greeting label `UI/Agents/DefaultMessages/RootAgentSays/GenericGreetings`, the
+  request button only when a mission can be offered); the standing refusal (the reference's text for a basic agent,
+  `UI/Agents/Research/TooLowStandings` for a research agent); request (the offer is written to the agents store, then
+  `OnAgentMissionChange("offered")`); view; accept (`accepted`); decline (`offer_declined`, four hours of replay); quit
+  (`quit`) at the agent's station only.
+- **Standings and skills are read, not invented.** The three standings are the `standing` relation rows of the character
+  toward the agent, its corporation and its faction (a missing row is 0, the reference's default). The skill levels are the
+  character's trained levels of Connections, Diplomacy and Criminal Connections (`PgSkillStore.LevelAsync`). The rule is
+  `AgentAccessRule.CanUse`, now called from the real path. The faction of an NPC corporation is the SDE `npcCorporations.factionID`.
+- **No mission is offered on this server (gap).** The offer needs the mission's content from the mission pool, which is not loaded
+  (see DEVIATIONS "Agents slice AG-2, A5"). The host answers `PickOffer` with null for every agent, so the greeting shows no
+  request button and no offer is made. The request path is tested with a picked mission (`AgentDialogueTests`).
+- **The confirmation windows are not ported (deviation).** The reference asks the player to confirm a decline and a quit
+  (`sendAgentDeclineConfirmation`, `sendAgentQuitConfirmation`) through a deferred `OnAgentProvisionalResponse` and a YesNo
+  call. This slice makes the transition when the button is pressed. Status: open; the confirmation needs the deferred response
+  path of the bound call.
+- **Not implemented, refused by name (CustomInfo "This agent service is not available on this server yet.")**: research
+  (buttons 12-14, A6) and the locator (15-17, A7). Complete (6), defer (10) and continue (8) answer the current conversation
+  and change nothing: the mission runtime (complete and the objectives) is outside this slice.
+- **The mission briefing and the offer text are not sent.** The reference builds them from mission content (`GetMissionBriefingInfo`,
+  `missionOfferText`). An offer shows the greeting with the accept and decline buttons; the briefing methods are not bound.
+- **Refusals are named.** An unknown agent is refused with CustomInfo "That agent is not known." (A3). No refusal changes state.
 
 ## ST-E: cloak proximity and forced decloak notices (2026-10-10)
 - **Proximity radius and refusal.** The cloak breaks, and activation refuses, for a ship or a non-belt body within 2 000 m of the surface of the cloaked ship. Source: EveJS `shipCloak.js:100` (`MIN_CLOAKING_DISTANCE_METERS = 2000`). It replaces the 2 km smartbomb-range check, so the activation refusal now also counts bodies, not only smartbomb targets. Belts are not counted.

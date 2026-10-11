@@ -42,10 +42,13 @@ public sealed class AgentMissionService(
     Func<long, IReadOnlyList<long>, CancellationToken, ValueTask<IReadOnlyDictionary<long, JsonObject>>> readBookmarks,
     Func<long, CancellationToken, ValueTask<JsonArray?>> readResearchRows,
     Func<long, long, ClientSession, bool>? isAtAgentLocation = null,
-    AgentMissionRpcCallbacks? rpcCallbacks = null) : IService, IBoundObjectReleaseHandler
+    AgentMissionRpcCallbacks? rpcCallbacks = null,
+    AgentDialogueSources? dialogue = null) : IService, IBoundObjectReleaseHandler
 {
-    /// <summary>Methods a bound agent answers. Empty until the dialogue slice (A4) and the journal slice (A5) add them.</summary>
-    private static readonly HashSet<string> BoundMethods = [];
+    /// <summary>Methods a bound agent answers: the dialogue (A4). The mission journal is read through the other methods.</summary>
+    private static readonly HashSet<string> BoundMethods = ["DoAction"];
+
+    private readonly AgentDialogueMachine? _dialogue = dialogue is null ? null : new AgentDialogueMachine(dialogue);
 
     // The agent each bound object was made for (MachoBindObject(agentID)). The moniker is Moniker('agentMgr', agentID).
     private readonly ConcurrentDictionary<string, long> _agentByBoundObject = new(StringComparer.Ordinal);
@@ -80,6 +83,7 @@ public sealed class AgentMissionService(
     public ValueTask<PyValue> CallAsync(ServiceCall call) => call.Method switch
     {
         "MachoBindObject" => BindAsync(call),
+        "DoAction" => DoActionAsync(call),
         "GetMyJournalDetails" => ReadAsync(call),
         "GetAgents" => ReadAgentsAsync(call),
         "GetCompletedCareerAgentIDs" => ReadCompletedCareerAgentIdsAsync(call),
@@ -137,6 +141,30 @@ public sealed class AgentMissionService(
             });
         }
         return Py.Tuple(bound, result);
+    }
+
+    /// <summary>
+    /// <c>DoAction(actionID)</c> on a bound agent: the dialogue's reply, <c>((agentSays, actions), lastActionInfo)</c>. Refused when the
+    /// agent is not known or the call is not on a bound agent (eve-logic agentDialogueWindow.py:427-428).
+    /// </summary>
+    private async ValueTask<PyValue> DoActionAsync(ServiceCall call)
+    {
+        call.Cancellation.ThrowIfCancellationRequested();
+        var agentId = BoundAgentId(call);
+        var characterId = Positive(call.Session.Get("charid"));
+        if (_dialogue is null || agentId == 0 || characterId == 0)
+        {
+            throw new InvalidOperationException("DoAction needs a bound agent, a character and the dialogue sources");
+        }
+        var agents = rpcCallbacks?.ReadAgents is { } readAgents
+            ? await readAgents(call.Cancellation)
+            : Array.Empty<AgentMissionAgentData>();
+        var agent = agents.FirstOrDefault(candidate => candidate.AgentId == agentId)
+            ?? throw MachoErrors.ThrowUserError("CustomInfo", ("info", new PyStr("That agent is not known.")));
+        var atLocation = isAtAgentLocation?.Invoke(characterId, agentId, call.Session) == true;
+        var reply = await _dialogue.DoActionAsync(
+            characterId, agent, call.Args.Count > 0 ? call.Args[0] : PyNone.Instance, atLocation, call.Cancellation);
+        return reply.ToWire();
     }
 
     private async ValueTask<PyValue> ReadAsync(ServiceCall call)

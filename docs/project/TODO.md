@@ -930,6 +930,19 @@ section 4.7: A8 done for balances and notifications; A2 done as a rule; A3 done 
 | OPEN | A1 check: the GetAgents rowset against the SDE counts (10966 agents, 360 in space, 1773 locators) is not yet a test that reads the SDE | `AgentComposition.NpcAgents`; the SDE is in PostgreSQL schema `sde` |
 | OPEN | Headless walk: the balances and the refused exchange are not yet in `tests/test_login_to_character.py` | the live run |
 | CLOSED | `LPSvc` is no longer in the list of names the core registry leaves out (the Host registers it; `ServiceAdvertisementTests`) | `ServiceAdvertisementTests.cs` |
+## Agents slice AG-2: research, the rule check and the locator (2026-10-11)
+
+Web research is recorded in DEVIATIONS.md, "Agents slice AG-2". Sources read: ESI OpenAPI (CCP), the EVE University wiki
+(Agent, Loyalty_Points, Locator_Agents). CCP's support and developer pages were not reachable (403, 404).
+
+| Status | Item | Where / blocker |
+|---|---|---|
+| DONE (research) | Sources read and compared with the access rule: thresholds, the -2 floor and the research rule agree; the wiki's skill bonus target is wrong and the client (all three standings) wins | DEVIATIONS "Agents slice AG-2" |
+| OPEN | R&D missions: wiki "only two missions, a trade and a courier" vs CCP 2011 research missions (Q-AG-7) | design 4.8 |
+| OPEN | LP store offer data: no LP offer rows in the pinned SDE build 3396210 and none in eve-logic (A9 source gap) | DEVIATIONS "Agents slice AG-2" |
+| OPEN | Research rates and datacore price: no source read (A6) | DEVIATIONS "Agents slice AG-2" |
+| OPEN | CONCORD LP exchange: wiki rates exist but no CCP source; stays refused | DEVIATIONS "Agents slice AG-2" |
+
 ## 43. Structures phase ST-E: remaining E wiring (2026-10-10)
 - DONE E-01: StartNewExtraction, FractureChunkWithStructure and CancelExtraction refuse by name (CustomNotify) with no backend, not PyNone (`StructureDataRpcServices.cs`, commit 59e9e89). The backend is ST-6a.
 - DONE E-04 proximity: the sim breaks a cloak that has a ship or a non-belt body within 2 km of its surface and sends `OnCloakModuleForceDeactivated` (`CloakDeactivatedByProximityToType`) before the module stops (`crates/eve-space/src/scene/decloak.rs`, polled in `scene/session.rs`). Activation refuses within the same 2 km (`modules/activation.rs`). Tests: `modules::tests` (ship, station, custom); host `SpaceServiceTests.A_forced_decloak_notice_reaches_the_pilot_with_the_message_and_its_arguments`. No protocol bump: the notice is an existing notify.

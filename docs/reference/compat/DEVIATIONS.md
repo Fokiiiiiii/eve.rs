@@ -1521,6 +1521,64 @@ Faction lists: `eve/common/lib/appConst.py:618-632`.
   bound object is refused as an `InvalidOperationException` (the host logs it and answers the wrapped unexpected error) while no
   bound method exists: `DoAction` and the mission methods are slices A4 and A5. A release forgets the object. Status: tested
   (`AgentMissionServiceTests`); the bound object answers no method yet.
+## Agents slice AG-2: web research and the rule check (2026-10-11)
+
+Sources read (2026-10-11). CCP's own pages were not reachable: `support.eveonline.com` answers 403 and
+`developers.eveonline.com/docs/services/esi/` answers 404, so the CCP facts below come from the ESI OpenAPI document and
+every other number comes from the EVE University wiki, a community source.
+- ESI OpenAPI, `https://esi.evetech.net/meta/openapi.json` (CCP): `GetLoyaltyStoresCorporationIdOffers` response
+  (`offer_id`, `type_id`, `quantity`, `lp_cost`, `isk_cost`, `ak_cost` optional, `required_items[type_id, quantity]`);
+  `GetCharactersCharacterIdLoyaltyPoints` (`corporation_id`, `loyalty_points`); `GetCharactersCharacterIdAgentsResearch`
+  (`agent_id`, `skill_type_id`, `started_at`, `points_per_day`, `remainder_points`).
+- EVE University wiki, `https://wiki.eveuniversity.org/Agent` (levels, standing table, access, divisions, locator wording),
+  `https://wiki.eveuniversity.org/Loyalty_Points` (LP sources, Connections bonus, LP store, CONCORD exchange),
+  `https://wiki.eveuniversity.org/Locator_Agents` (fee table, cooldowns, restrictions), `https://wiki.eveuniversity.org/Missions`
+  (read in the design phase). `https://wiki.eveuniversity.org/Research` is the blueprint research page, not agent research.
+
+Agreement with the access rule (`AgentAccessRule`, eveCfg.py:112-143): the level thresholds 1, 3, 5, 7 for levels 2 to 5
+(`m = 2(level-1) - 1`), the floor (all three standings above -2, "All three types of standing need to be above -2.00"), the
+research rule (corporation standing of at least `m - 2`, "no more than 2 below the required level"), the -10 to +10 range and
+the three standings (personal, corporation, faction). No code change.
+
+Disagreement, the client wins:
+- **Skill bonus targets.** The wiki says Connections, Diplomacy and Criminal Connections raise "effective corporation and
+  faction standing". The V24.01 client applies the bonus to all three standings, the personal one included
+  (`eveCfg.py:130-138`: `fac`, `coc` and `cac` each get `standingUtil.GetStandingBonus`). `AgentAccessRule` follows the
+  client, and `AgentAccessRuleTests` covers a personal standing that passes only with the bonus. No code change.
+- **Other-faction space.** The wiki says an agent in another faction's sovereign space is not unlocked by standings with
+  its own faction. The client rule has no location term (`eveCfg.py:112-143`), so none is added.
+- **COSMOS thresholds.** The wiki gives COSMOS -2, 2, 4 and 6 for levels 1 to 4. The client has no COSMOS rule (Q-AG-1); the
+  COSMOS numbers stay a note.
+- **R&D missions.** The wiki says R&D has "only two missions, a trade and a courier" and no LP; CCP's 2011 article says
+  research missions (Q-AG-7). Still open.
+
+Locator fees (A7). Source: the wiki's locator table (community, not CCP; the page says "for a fee" in the prose and gives
+the amounts in the table). Columns: required faction standing, the cooldown, then the fee for the same solar system, the
+same constellation, the same region and a different region.
+- level 1: any, 5 min, 1,000 / 5,000 / cannot / cannot
+- level 2: 1.0, 5 min, 5,000 / 10,000 / 25,000 / cannot
+- level 3: 3.0, 15 min, 10,000 / 25,000 / 50,000 / 100,000
+- level 4: 5.0, 30 min, 25,000 / 50,000 / 100,000 / 250,000
+- level 5: 7.0, 60 min, 50,000 / 100,000 / 250,000 / 500,000
+The wiki also says: wormholes are excluded; levels 4 and 5 need an Omega account (not modelled); the target is never notified;
+corporation standing qualifies as well as personal. The wiki does not say when the fee is charged.
+
+CONCORD LP exchange (`ExchangeConcordLP`, still refused). The wiki gives the rate for an empire faction corporation as 1:0.8
+(a 20% loss), for other non-pirate, non-empire corporations as 1:0.4, and none for Factional Warfare, pirate, Triglavian or
+some SoE corporations. It has no CCP source. It stays refused: the rate table, the corporation classification and the result
+shape of the client call are not in eve-logic, so no rule is implemented from the wiki alone.
+
+LP store (A9). The wiki gives no per-item LP cost and no standing requirement for a store. The ESI offer schema above is the
+shape to serve. The pinned SDE (build 3396210, `.cache/sde`) has no LP offer file (`npcCorporations.lpOfferTables` names the
+tables, but no table rows are in the export), so offer data is a source gap for A9.
+
+Research (A6). ESI gives the shape (`points_per_day`, `remainder_points`, `started_at`); no CCP or wiki text gives the points
+rate, the datacore price or the remainder rule that was read. A6 implements the stored state and the ESI arithmetic
+(`remainder_points + points_per_day * days`); the rates come from the data the server holds, and the datacore price is a gap.
+
+Status: the sources are recorded; the rule matches them; the open items are Q-AG-7 (R&D missions), the LP offer data (A9),
+the research rates (A6) and the locator fee timing (A7).
+
 ## ST-E: cloak proximity and forced decloak notices (2026-10-10)
 - **Proximity radius and refusal.** The cloak breaks, and activation refuses, for a ship or a non-belt body within 2 000 m of the surface of the cloaked ship. Source: EveJS `shipCloak.js:100` (`MIN_CLOAKING_DISTANCE_METERS = 2000`). It replaces the 2 km smartbomb-range check, so the activation refusal now also counts bodies, not only smartbomb targets. Belts are not counted.
 - **Notice order.** The proximity notice goes out before the module stops; the other reasons after (EveJS `forceDecloakEntity`).

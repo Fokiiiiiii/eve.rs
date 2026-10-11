@@ -47,7 +47,9 @@ internal sealed class BountyRig : IAsyncDisposable
 
     public static async Task<BountyRig> CreateAsync()
     {
-        var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(Url!));
+        // shortcut: a test rig keeps at most 4 connections, since the server allows 100 for all lanes and test classes run in parallel;
+        // the 24-way concurrent kill test queues on the pool instead of opening 24 connections at once
+        var source = NpgsqlDataSource.Create(new NpgsqlConnectionStringBuilder(PgConnection.ToConnectionString(Url!)) { MaxPoolSize = 4 }.ConnectionString);
         var rig = new BountyRig(source);
         await PgWalletStore.MigrateAsync(source, rig._walletSchema);
         await PgBountyStore.MigrateAsync(source, rig._npcSchema);

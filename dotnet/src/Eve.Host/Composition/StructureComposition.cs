@@ -43,6 +43,8 @@ internal sealed partial class CharacterServicesComposition
     private Eve.Structures.StructureFuel structureFuel = default!;
     private StructureCompressionAuthority structureCompression = default!;
     private StructureDeploymentAuthority structureDeployment = default!;
+    private StructureAnchorAuthority structureAnchor = default!;
+    private Eve.Services.Space.SpaceStructures? spaceStructures;
     private Eve.Structures.MoonExtractionStore moonExtractionStore = default!;
     private Eve.Structures.MoonExtractions moonExtractions = default!;
     private StructureMoonAuthority structureMoon = default!;
@@ -106,6 +108,13 @@ internal sealed partial class CharacterServicesComposition
         return snapshots.FirstOrDefault(snapshot => snapshot.StructureId == structureId) is { } access
             && Eve.Services.Core.StructureDirectoryService.CanDock(access, structureId, characterId, corporationId, allianceId);
     }
+    /// <summary>The ship's place in its system as the simulation has it (null without a simulation: the anchor is then refused as not in space).</summary>
+    private Task<Eve.Services.Space.WarpCoordinates?> ShipPositionForAnchorAsync(ClientSession session, long shipId, CancellationToken token) =>
+        spaceSessions is null ? Task.FromResult<Eve.Services.Space.WarpCoordinates?>(null) : spaceSessions.PositionOfAsync(session, shipId, token);
+
+    /// <summary>The corporation's creation time (Unix milliseconds) for the seven-day anchoring rule; null when the corporation is not in the store.</summary>
+    private async Task<long?> CorporationCreatedMsAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long corporationId, CancellationToken token) =>
+        await Sql.ScalarAsync(connection, transaction, $"SELECT created_ms FROM {corporationSchema}.corporations WHERE id = $1", token, corporationId) is long created ? created : null;
 
     private async Task StructureRecords()
     {
@@ -137,10 +146,12 @@ internal sealed partial class CharacterServicesComposition
         // ST-1 d: a system's structures are in the simulation once a pilot comes into it; the simulation's hits and the records' state changes meet here
         if (sim is not null && spaceSessions is not null)
         {
-            var spaceStructures = new Eve.Services.Space.SpaceStructures(sim, spaceSessions, source, structureStore, structureTimers, dogma,
+            spaceStructures = new Eve.Services.Space.SpaceStructures(sim, spaceSessions, source, structureStore, structureTimers, dogma,
                 message => Console.Error.WriteLine($"eve-host: space structures: {message}"));
             spaceStructures.Subscribe(foundations.Events);
         }
+        // ST-2 d: the client's structure notices (the owner corporation, the pilots docked in the structure), after each commit of a state change
+        Eve.Host.StructureNotifications.Subscribe(foundations.Events, structureStore, characterSessions);
         // ST-7: the service fuel is paid from the fuel bay (inventory) at each full hour; the rules are the SDE's service modules
         structureFuel = new Eve.Structures.StructureFuel(structureStore, foundations.Scheduler, structureTimers, ServiceFuelRulesSource.Load(dogma), new InventoryStructureFuelBay(items, dogma));
         structureFuel.Register();
@@ -177,6 +188,10 @@ internal sealed partial class CharacterServicesComposition
         structureCompression = new StructureCompressionAuthority(source, structureStore, items, dogma, sde, skills);
         // ST-2 a: the rename and the reinforcement times of a structure (the owner's Station Manager, Director or CEO)
         structureDeployment = new StructureDeploymentAuthority(source, structureStore, structureTimers, foundations.Scheduler);
+        // ST-2 b: Anchor, the item consumed and the structure created in one transaction; the simulation shows it once a pilot is in the system
+        structureAnchor = new StructureAnchorAuthority(source, structureStore, structureTimers, rules, foundations.Scheduler, foundations.Events, items, dogma,
+            CorporationCreatedMsAsync, ShipPositionForAnchorAsync, session => spaceSessions is not null && spaceSessions.IsWarping(session),
+            async structureId => { if (spaceStructures is not null) await spaceStructures.PlaceAsync(structureId); });
         // ST-6a: the moon drill starts a chunk (StartNewExtraction); the fracture and the cancel follow in (d)
         var moonRules = await MoonRulesSource.LoadAsync(sde);
         moonExtractions = new Eve.Structures.MoonExtractions(structureStore, moonExtractionStore, foundations.Scheduler, foundations.Events, moonRules);
@@ -227,6 +242,9 @@ internal sealed partial class CharacterServicesComposition
             DuplicateProfileAsync = (call, corporationId, profileId) =>
                 structureProfilesRpcBackend.DuplicateProfileAsync(corporationId, profileId, call.Cancellation),
             RenameStructureAsync = (call, structureId, name) => new ValueTask(structureDeployment.RenameAsync(call, structureId, name, call.Cancellation)),
+            AnchorAsync = (call, request) => new ValueTask(structureAnchor.AnchorAsync(call, request, call.Cancellation)),
+            UnanchorAsync = (call, structureId) => new ValueTask(structureDeployment.UnanchorAsync(call, structureId, call.Cancellation)),
+            CancelUnanchorAsync = (call, structureId) => new ValueTask(structureDeployment.CancelUnanchorAsync(call, structureId, call.Cancellation)),
             UpdateReinforceTimesFromClientAsync = (call, structureIds, weekday, hour) =>
                 new ValueTask(structureDeployment.UpdateReinforceTimesAsync(call, structureIds, weekday, hour, call.Cancellation)),
         };

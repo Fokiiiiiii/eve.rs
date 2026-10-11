@@ -41,6 +41,8 @@ public sealed class MoonExtractions
     public const long MaximumDurationSeconds = 4_838_400;
     /// <summary>EVE.js moonExtractionRules YIELD_PER_DAY_M3: 720 000 m3 a day of extraction, times the structure's yield multiplier.</summary>
     public const double YieldPerDayM3 = 720_000;
+    /// <summary>The time a fracture takes from the fire to the chunk's fracture (EVE.js FRACTURE_TOTAL_DURATION_SECONDS).</summary>
+    public const long FractureMs = 30_000;
 
     public const string Fractured = "fractured";
     public const string Cancelled = "cancelled";
@@ -127,6 +129,38 @@ public sealed class MoonExtractions
         await _store.InsertExtractionAsync(connection, transaction, extraction, cancellationToken);
         await ScheduleAsync(connection, transaction, extraction, cancellationToken);
         return new StartResult(StartOutcome.Started, extraction);
+    }
+
+    public enum FractureOutcome { Fired, Firing, NotReady, NoExtraction }
+
+    /// <summary>
+    /// FractureChunkWithStructure (EVE.js moonExtractionsService): a ready chunk is fired on. The fracture takes <see cref="FractureMs"/>; its deadline replaces the chunk's
+    /// fracture job, so the fracture completes at its time (<see cref="FractureDueAsync"/>). A fracture already running is left as it is, as EVE.js does.
+    /// </summary>
+    public async Task<FractureOutcome> FractureAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long structureId, CancellationToken cancellationToken = default)
+    {
+        if ((await _store.OpenAsync(connection, transaction, structureId, true, cancellationToken)).FirstOrDefault() is not { } e)
+            return FractureOutcome.NoExtraction;
+        if (e.State == "fracturing")
+            return FractureOutcome.Firing;
+        var now = _scheduler.Now;
+        if (e.ChunkAvailableMs > now)
+            return FractureOutcome.NotReady;
+        var fired = e with { State = "fracturing", FractureStartedMs = now, FractureCompleteMs = now + FractureMs };
+        await _store.UpdateAsync(connection, transaction, fired, cancellationToken);
+        await _scheduler.ScheduleAsync(connection, transaction, new JobSpec(FractureJobKind, fired.FractureCompleteMs) { Key = KeyOf(e.ExtractionId), Payload = new ExtractionJob(e.ExtractionId) }, cancellationToken);
+        return FractureOutcome.Fired;
+    }
+
+    /// <summary>
+    /// CancelExtraction: the open extraction of the structure ends as cancelled (its chunk leaves; no field). Returns false when there is none.
+    /// </summary>
+    public async Task<bool> CancelAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long structureId, CancellationToken cancellationToken = default)
+    {
+        if ((await _store.OpenAsync(connection, transaction, structureId, true, cancellationToken)).FirstOrDefault() is not { } e)
+            return false;
+        await CompleteAsync(connection, transaction, e, Cancelled, true, cancellationToken);
+        return true;
     }
 
     /// <summary>

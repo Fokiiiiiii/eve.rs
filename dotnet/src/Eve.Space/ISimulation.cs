@@ -150,6 +150,15 @@ public interface ISimulation
     void PlaceProbe(SimPlaceProbe probe);
     /// <summary>Takes a scanner probe out of space (protocol 45).</summary>
     void RemoveProbe(long probeId);
+
+    /// <summary>The host puts an Upwell structure in space (protocol 59).</summary>
+    void PlaceStructure(SimPlaceStructure structure);
+
+    /// <summary>The host takes a structure out of space (protocol 59).</summary>
+    void RemoveStructure(long structureId);
+
+    /// <summary>The host changes a structure's slim state (protocol 59).</summary>
+    void SetStructureState(SimSetStructureState state);
     /// <summary>Puts a mobile warp disruptor in space where its pilot dropped it, anchored or not (protocol 48).</summary>
     void PlaceDisruptor(SimPlaceDisruptor disruptor);
     /// <summary>Says a mobile warp disruptor is anchored or not (protocol 48).</summary>

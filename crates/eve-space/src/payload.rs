@@ -82,6 +82,22 @@ pub fn add_wreck(stamp: u32, wreck: &Wreck, now: i64) -> Result<Value, BallError
     Ok(action(stamp, "AddBalls2", [tuple([buffer, list([tuple([slim, wreck_damage_state(now)])])])]))
 }
 
+/// `AddBalls2` for a structure body of the system (the body at `index`): its ball, and its slim item with the damage state.
+pub fn add_structure(stamp: u32, system: &SolarSystem, index: usize, now: i64) -> Result<Value, BallError> {
+    let buffer = state_buffer(ADD_BALLS, stamp, &[rigid_ball(system, index)])?;
+    let slim = Value::Dict(
+        slim::body_entries(system, &system.bodies[index]).into_iter().map(|(k, v)| (word(k), v)).collect(),
+    );
+    let damage = damage_state(&DamageState::whole(STATION_SHIELD_TAU_MS), now);
+    Ok(action(stamp, "AddBalls2", [tuple([buffer, list([tuple([slim, damage])])])]))
+}
+
+/// `OnSlimItemChange` for a structure body: its slim item is told again, as an object, to whoever has it in view.
+pub fn structure_slim_change(stamp: u32, system: &SolarSystem, index: usize) -> Value {
+    let body = &system.bodies[index];
+    action(stamp, "OnSlimItemChange", [id(body.id), slim_object(slim::body_entries(system, body))])
+}
+
 /// `AddBalls2` for a mineable asteroid rock.
 pub fn add_asteroid(stamp: u32, asteroid: &crate::wreck::Asteroid, now: i64) -> Result<Value, BallError> {
     let buffer = state_buffer(ADD_BALLS, stamp, &[asteroid.ball()])?;
@@ -163,12 +179,13 @@ pub fn remove_ships_packaged(stamp: u32, ship_ids: impl IntoIterator<Item = i64>
     tuple([id(i64::from(stamp)), tuple([word("PackagedAction"), Value::Buffer(inner.into())])])
 }
 
-fn rigid_ball(system: &SolarSystem, index: usize) -> BallEntity {
+/// The ball of a body of the system: a structure is a station's ball (rigid, global, dockable).
+pub(crate) fn rigid_ball(system: &SolarSystem, index: usize) -> BallEntity {
     let body = &system.bodies[index];
     BallEntity {
         item_id: eve_destiny::IdRef::Valid(body.id),
         kind: match body.kind {
-            BodyKind::Station => eve_destiny::Kind::Station,
+            BodyKind::Station | BodyKind::Structure => eve_destiny::Kind::Station,
             BodyKind::Stargate => eve_destiny::Kind::Stargate,
             _ => eve_destiny::Kind::Other,
         },
@@ -202,7 +219,7 @@ pub fn set_state(
     let mut damage: Vec<(Value, Value)> = system
         .bodies
         .iter()
-        .filter(|b| b.kind == BodyKind::Station)
+        .filter(|b| matches!(b.kind, BodyKind::Station | BodyKind::Structure))
         .map(|b| (id(b.id), damage_state(&DamageState::whole(STATION_SHIELD_TAU_MS), now)))
         .collect();
     damage.extend(

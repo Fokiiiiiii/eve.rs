@@ -50,7 +50,7 @@ internal sealed partial class CharacterServicesComposition
                 jumpBridgeDestination: structureDirectoryReadModel.GetJbStructureDestinationAsync,
                 linkedStructure: structureDirectoryReadModel.GetLinkedStructureAsync),
             new Eve.Services.Core.StructureRpcService("structureCargoDelivery"),
-            new Eve.Services.Core.StructureRpcService("structureCompressionMgr"),
+            new Eve.Services.Core.StructureRpcService("structureCompressionMgr", structureRpcCallbacks),
             new Eve.Services.Core.StructureRpcService("structureControl"),
             new Eve.Services.Core.StructureRpcService("structureDeliveries"),
             new Eve.Services.Core.StructureRpcService("structureDeployment"),

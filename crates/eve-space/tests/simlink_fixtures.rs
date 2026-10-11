@@ -976,6 +976,25 @@ fn message_of(case: &Value) -> Message {
             ship_id: wide(case, "shipId"),
         })),
         "RemoveProbe" => Message::RemoveProbe { probe_id: wide(case, "probeId") },
+        "PlaceStructure" => Message::PlaceStructure(Box::new(eve_space::link::StructurePlacement {
+            structure_id: wide(case, "structureId"),
+            solar_system_id: number("solarSystemId") as i32,
+            name: text(case, "typeName"),
+            type_id: number("typeId") as i32,
+            group_id: number("groupId") as i32,
+            position: vector_of(case, "position"),
+            radius: case["radius"].as_f64().unwrap(),
+            owner_id: wide(case, "ownerId"),
+            corporation_id: number("corporationId") as i32,
+            alliance_id: number("allianceId") as i32,
+            status: status_of(&case["status"]),
+        })),
+        "RemoveStructure" => Message::RemoveStructure { structure_id: wide(case, "structureId") },
+        "SetStructureState" => Message::SetStructureState {
+            solar_system_id: number("solarSystemId") as i32,
+            structure_id: wide(case, "structureId"),
+            status: status_of(&case["status"]),
+        },
         "PlaceDisruptor" => Message::PlaceDisruptor(Box::new(eve_space::link::DisruptorPlacement {
             deployable_id: wide(case, "deployableId"),
             solar_system_id: number("solarSystemId") as i32,
@@ -1397,5 +1416,16 @@ fn every_invalid_frame_is_refused_for_the_stated_reason() {
         let frame = hex(case["hex"].as_str().unwrap());
         let error = Message::decode(&frame[4..]).unwrap_err();
         assert_eq!(reason_of(error), text(case, "reason"), "{name}");
+    }
+}
+
+/// A structure's slim fields from its fixture: a timer is `[start, end, paused or null]`.
+fn status_of(value: &serde_json::Value) -> eve_space::world::StructureStatus {
+    eve_space::world::StructureStatus {
+        state: value["state"].as_i64().unwrap() as i32,
+        upkeep_state: value["upkeepState"].as_i64().unwrap() as i32,
+        timer: value["timer"].as_array().map(|t| (t[0].as_i64().unwrap(), t[1].as_i64().unwrap(), t[2].as_i64())),
+        unanchoring: value["unanchoring"].as_i64(),
+        repairing: value["repairing"].as_bool(),
     }
 }

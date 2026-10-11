@@ -336,7 +336,8 @@ public sealed partial class SpaceSessions
         SpawnAnchor anchor,
         CancellationToken cancellationToken,
         long hostileResponseThreshold = NpcHostileThreshold,
-        double aggressionRangeOverride = 0)
+        double aggressionRangeOverride = 0,
+        List<long>? shipIds = null)
     {
         var composition = new List<(string Name, int Count)>();
         var unarmed = 0;
@@ -367,6 +368,7 @@ public sealed partial class SpaceSessions
                 break;
             }
             _npcShips[shipId] = new NpcShip(profile, type.TypeId, anchor.SolarSystemId, anchor.BeltId, anchor.Group);
+            shipIds?.Add(shipId);
             unarmed += weapon is null ? 1 : 0;
             var name = profile.Name.Length > 0 ? profile.Name : profile.Id;
             var at = composition.FindIndex(part => part.Name == name);

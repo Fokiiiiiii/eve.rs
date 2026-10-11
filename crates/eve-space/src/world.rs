@@ -18,6 +18,22 @@ pub enum BodyKind {
     Belt,
     Star,
     Stargate,
+    /// An Upwell structure the host put in space (protocol 59): a body of the system, shown with the state the host gives it.
+    Structure,
+}
+
+/// The category of a structure's item (`categoryID` 65 in the client).
+pub const STRUCTURE_CATEGORY: i32 = 65;
+
+/// The slim fields of a structure, as the host has them: the sim shows them and decides nothing about them (ADR 0012, rule 3). A timer is
+/// `(start, end, paused)` in filetime; `repairing` is `None` when the client should show no repair at all.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct StructureStatus {
+    pub state: i32,
+    pub upkeep_state: i32,
+    pub timer: Option<(i64, i64, Option<i64>)>,
+    pub unanchoring: Option<i64>,
+    pub repairing: Option<bool>,
 }
 
 /// What only some bodies have.
@@ -26,6 +42,11 @@ pub enum Detail {
     None,
     Station {
         corporation_id: i64,
+    },
+    Structure {
+        corporation_id: i64,
+        alliance_id: i64,
+        status: StructureStatus,
     },
     Stargate {
         destination_system: i32,

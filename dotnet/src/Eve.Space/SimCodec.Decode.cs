@@ -5,6 +5,31 @@ namespace Eve.Space;
 
 public static partial class SimCodec
 {
+    /// <summary>A structure's slim fields, in the order the simulation codec writes them (protocol 59): a flagged timer (start, end and a flagged pause),
+    /// a flagged unanchoring time and repairing (0 none, 1 not repairing, 2 repairing).</summary>
+    private static SimStructureStatus ReadStructureStatus(ref Reader r)
+    {
+        var state = r.I32();
+        var upkeep = r.I32();
+        (long Start, long End, long? Paused)? timer = null;
+        if (ReadFlag(ref r, "structure timer"))
+        {
+            var start = r.I64();
+            var end = r.I64();
+            long? paused = ReadFlag(ref r, "structure timer pause") ? r.I64() : null;
+            timer = (start, end, paused);
+        }
+        long? unanchoring = ReadFlag(ref r, "structure unanchoring") ? r.I64() : null;
+        bool? repairing = r.U8() switch
+        {
+            0 => null,
+            1 => false,
+            2 => true,
+            _ => throw new SimLinkException(SimLinkError.BadValue, "bad structure repairing"),
+        };
+        return new SimStructureStatus(state, upkeep, timer, unanchoring, repairing);
+    }
+
     private static double[] ReadVector(ref Reader r) => [r.F64(), r.F64(), r.F64()];
 
     /// <summary>A flag byte: 0 or 1; anything else is a bad value of <paramref name="what"/>.</summary>

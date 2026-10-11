@@ -83,6 +83,12 @@ public const byte UpdateEffect = 61;
         public const byte ScanTargets = 71;
         public const byte DirectionalTargets = 72;
         public const byte PlaceCynoBeacon = 73;
+        /// <summary>The host puts an Upwell structure in space with its slim state (protocol 59).</summary>
+        public const byte PlaceStructure = 74;
+        /// <summary>The host takes a structure out of space (protocol 59).</summary>
+        public const byte RemoveStructure = 75;
+        /// <summary>The host changes a structure's slim state (protocol 59).</summary>
+        public const byte SetStructureState = 76;
 
 
 /// <summary>Protocol 46 (FP-C7): an ECM burst reached ships; the ship that ran it and each ship reached, with whether its roll jammed it (simulation to host).</summary>

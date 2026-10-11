@@ -288,7 +288,7 @@ public class GlobalConfigPersistenceTests
     public async Task The_overrides_are_kept_in_their_own_schema_and_a_restarted_store_reads_them_back()
     {
         var schema = "gc_" + Guid.NewGuid().ToString("N")[..12];
-        await using var source = NpgsqlDataSource.Create(Environment.GetEnvironmentVariable("EVE_PG_URL")!);
+        await using var source = NpgsqlDataSource.Create(Eve.Data.PgConnection.ToConnectionString(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
         try
         {
             Assert.Contains("0001_global_config", await PgGlobalConfigPersistence.MigrateAsync(source, schema));

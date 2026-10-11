@@ -951,23 +951,20 @@ Web research is recorded in DEVIATIONS.md, "Agents slice AG-2". Sources read: ES
 - DONE E-02 assertion: OnTarget lost, otherlost and clear reach the pilot session in order (host test `The_target_lock_notices_and_the_damage_state_action_reach_the_pilot_as_the_simulation_sent_them`). The client reaction is MITM only.
 - DONE E-05 assertion: the OnDamageStateChange destiny action reaches the session in DoDestinyUpdate with its arguments (same test). The progression widget is MITM only.
 - E-07 stays blocked on RC-5 (weapon banks). E-15 is in ST-7. E-06 stays open for the result source (ST-11).
-## 44. Structures phase, ST-0: the structure record owner, the timeline and the timers (2026-10-10)
+## 44. Structures phase, ST-0: the structure record owner, the timeline and the timers (2026-10-10, closed)
 
-Package ST-0 of `structures_phase.md` (the scratchpad plan); decisions in DEVIATIONS.md "Structure timeline (ST-0)".
+Package ST-0 of `structures_phase.md` (the scratchpad plan); decisions in DEVIATIONS.md "Structure timeline (ST-0)". Handoff: `docs/project/handoff-ST-0.md` (its worktree is removed; the code is on main).
 
-Done (verified):
 | Status | Item | Evidence |
 |---|---|---|
-| VERIFIED (tests) | The pure timeline `StructureStateMachine`: anchor, anchoring, onlining, shield, armor and hull stages, reinforcements, Low Power, abandonment, unanchoring, reinforcement time change | `dotnet/tests/Eve.Structures.Tests/StateMachineTests.cs`: 47 passed, 0 skipped |
-| VERIFIED (tests) | Schema `structures` (migration 0001), `StructureStore` (read, write, legacy view, import) and `StructureTimers` (job `structure.timer`, event `structure.state_changed` in the change's transaction; refusal changes nothing; restart fires once; import once) | `StructureTimersTests`: 6 PostgreSQL tests (scratch schemas via `Rig`), 53 passed, 0 skipped with `EVE_PG_URL` |
-
-Open (next steps, in order):
-| Status | Item |
-|---|---|
-| VERIFIED (tests) | Host: the structures schema is the record owner. `StructureRecords()` (run right after the character stores migrate) copies the game store's `structures` table in once; `ReadGameStoreTableAsync("structures")` reads the store's legacy-shaped view; the description (`SetStructureDescriptionAsync`) and the profile change (`ChangeProfilesAsync`) write the store, and the game store's `structures` table is no longer written. Tests: Host suite 165 passed (`StructureDataRpcPersistenceTests`, `PersistenceStructureHangarViewRpcTests`); Services.Core structure tests 78 passed (`StructureDirectoryServiceTests`); `StructureTimersTests.A_description_and_a_profile_...` (54 in the Structures project) | `ArchitectureTests` lists `Eve.Structures`; `Eve.Scheduler` and `Eve.Events` are the allowed foundations; `LiveScriptIsolationTests` (`EVE_STRUCTURES_SCHEMA`) |
-| VERIFIED (tests) | Host timers: `StructureRulesSource` (SDE `rigSize` and `mapSolarSystems`: size and band; `StructureRulesSourceTests`, 2 tests with the pinned SDE); `StructureTimers` registered in `Structures()` before the foundations start; the deadlines of the imported structures are scheduled (`EnsureScheduledAsync`). Decisions in DEVIATIONS "Structure timeline (ST-0)" |
-| OPEN | A Host-level test (the RPC callbacks, not the store) that a description and a profile set through the composition are read back after a restart; a Host test that an imported structure with an elapsed deadline advances once after start |
-| OPEN | Switch the readers of the GameStore `structures` table (`PersistenceStructureDirectoryReadModel{,.Part2}`, `PersistenceStructureAssetSafetyReadModel{,.Part2}`, `PersistenceStructureProfilesRpcBackend` reads and writes, `StructureComposition.cs` `StructureExistsAsync`, `IndustryComposition.cs:68`, `CharacterRpc.cs:98`) to the store, one file at a time, with the existing structure tests green |
+| VERIFIED (tests) | The pure timeline `StructureStateMachine`: anchor, anchoring, onlining, shield, armor and hull stages, reinforcements, Low Power, abandonment, unanchoring, reinforcement time change | `dotnet/tests/Eve.Structures.Tests/StateMachineTests.cs` (47) |
+| VERIFIED (tests) | Schema `structures` (migration 0001), `StructureStore` (read, write, legacy view, import), `StructureTimers` (job `structure.timer`; event `structure.state_changed` in the change's transaction; refusal changes nothing; restart fires once; import once) | `StructureTimersTests` (6, PostgreSQL, scratch schemas) |
+| VERIFIED (tests) | SDE rules: size from `rigSize` (typeDogma 1547), band from `mapSolarSystems` (Wormhole, Pochven, null, low, high) | `StructureRulesSourceTests` (2, pinned SDE) |
+| VERIFIED (tests) | Host start-up: the schema is migrated and the GameStore `structures` table is copied once; the readers use the store's legacy view (`ReadGameStoreTableAsync`); the description and the profile change write the store, and the GameStore `structures` table is no longer written; the timers are registered before the foundations start and the imported deadlines are scheduled | `ArchitectureTests` (`Eve.Structures` listed), `LiveScriptIsolationTests` (`EVE_STRUCTURES_SCHEMA`), `StructureDataRpcPersistenceTests`, `PersistenceStructureHangarViewRpcTests`, Services.Core structure tests (78) |
+| VERIFIED (tests) | Through the real composition (`HostComposition.BuildAsync`, scratch schemas, restart): a description set through `structureDirectory.SetStructureDescription` is read back through `GetStructureDescription` after a restart, and the profile change is in the row (profile 7); an imported structure with an elapsed anchoring deadline advances exactly once after start (version 2, `StateEndsMs` = deadline + one day), and a restart replays nothing | `StructureCompositionTests` (2) |
+| VERIFIED (tests) | `EVE_PG_URL` form: the URL form (`postgres://postgres@127.0.0.1:5432/eve`, what `tools/dev/pg18.sh url` and the README print) is the form to use. `psql` (the live script's cleanup, `tools/dev/run-eve-live.sh`) accepts only the URL form and rejects the key=value form (`invalid connection option "Host"`); its cleanup error is hidden by `2>/dev/null || true`, so a key=value value would leave the scratch schemas behind. The host and the tests read the URL through `PgConnection.ToConnectionString`, which accepts both. Before this step 13 Host tests passed the URL straight to `NpgsqlDataSource.Create` and failed; they now convert it. The Host suite passes with the URL form (167) | `tools/dev/run-eve-live.sh` line 38; `dotnet/src/Eve.Data/PgConnection.cs`; `Eve.Host.Tests` |
+| OPEN (not in ST-0) | `structureProfiles` writes go through the GameStore cache, which refuses a write to a table it has not loaded (`TABLE_NOT_FOUND`). A corporation with no default profile yet (the root gets one created) cannot change its structures' profile on a fresh store; the write is `PersistenceStructureProfilesRpcBackend.WriteTableAsync`. Pre-existing: the same write was there before ST-0. The test seeds a default profile to avoid it. | `StructureCompositionTests` (the seed); owner: structure profiles |
+| OPEN (ST-1 and later) | The sim structure ball, the notification subscriber of `structure.state_changed` (client notices, ST-2), and the deadlines' client view: nothing sends the state change to a client yet. | `structures_phase.md` ST-1, ST-2 |
 ## 45. Track ST-11: cosmic sites as content, the director and the probe source (2026-10-10)
 
 Plan: scratchpad `specs/structures_phase.md`, ST-11. Handoff: `docs/project/handoff-ST-11.md`. Decisions: DEVIATIONS.md, "Cosmic sites (ST-11)".
@@ -1036,7 +1033,7 @@ Hand-off to Mi2 (not ported here; file:line checked against EveJS HEAD 828823a):
 
 ### 43b. Epic arc availability (owner's instruction, 2026-10-11)
 
-The server offers only the arcs the V24.01 client knows (`in-client-build`) unless `EVE_MISSION_INCLUDE_UNAVAILABLE_ARCS=1`.
+The server offers all 21 official arcs: the nine the V24.01 client knows (`in-client-build`) and the twelve Pilot Certification Course arcs (`in-client-build` by owner confirmation; the owner states they exist in the game). `EVE_MISSION_INCLUDE_UNAVAILABLE_ARCS=1` still offers any arc that is not `in-client-build` (none today).
 Mission availability follows the arc (a step takes its arc's status); a mission that is no arc step is `unknown`. DEVIATIONS
 "Epic arc availability" has the evidence and the method.
 
@@ -1049,24 +1046,50 @@ Mission availability follows the arc (a step takes its arc's status); a mission 
 | 53 | in-client-build | 19 | V24.01 client constant (eve-logic epicArcConst.py) |
 | 55 | in-client-build | 20 | V24.01 client constant (eve-logic epicArcConst.py) |
 | 56 | in-client-build | 22 | V24.01 client constant (eve-logic epicArcConst.py) |
-| 64 | newer-than-client | 4 | not in the V24.01 constants; aura agents (type 11) |
-| 67 | newer-than-client | 4 | not in the V24.01 constants; aura agents (type 11) |
-| 68 | newer-than-client | 4 | not in the V24.01 constants; aura agents (type 11) |
-| 69 | newer-than-client | 4 | not in the V24.01 constants; aura agents (type 11) |
-| 70 | newer-than-client | 4 | not in the V24.01 constants; aura agents (type 11) |
-| 71 | newer-than-client | 4 | not in the V24.01 constants; aura agents (type 11) |
-| 72 | newer-than-client | 4 | not in the V24.01 constants; aura agents (type 11) |
-| 73 | newer-than-client | 4 | not in the V24.01 constants; aura agents (type 11) |
-| 74 | newer-than-client | 4 | not in the V24.01 constants; aura agents (type 11) |
-| 75 | newer-than-client | 4 | not in the V24.01 constants; aura agents (type 11) |
-| 76 | newer-than-client | 4 | not in the V24.01 constants; aura agents (type 11) |
-| 77 | newer-than-client | 4 | not in the V24.01 constants; aura agents (type 11) |
+| 64 | in-client-build | 4 | owner-confirmed (the owner states the arc exists in the game); aura agents (type 11), not in the V24.01 constants |
+| 67 | in-client-build | 4 | owner-confirmed (the owner states the arc exists in the game); aura agents (type 11), not in the V24.01 constants |
+| 68 | in-client-build | 4 | owner-confirmed (the owner states the arc exists in the game); aura agents (type 11), not in the V24.01 constants |
+| 69 | in-client-build | 4 | owner-confirmed (the owner states the arc exists in the game); aura agents (type 11), not in the V24.01 constants |
+| 70 | in-client-build | 4 | owner-confirmed (the owner states the arc exists in the game); aura agents (type 11), not in the V24.01 constants |
+| 71 | in-client-build | 4 | owner-confirmed (the owner states the arc exists in the game); aura agents (type 11), not in the V24.01 constants |
+| 72 | in-client-build | 4 | owner-confirmed (the owner states the arc exists in the game); aura agents (type 11), not in the V24.01 constants |
+| 73 | in-client-build | 4 | owner-confirmed (the owner states the arc exists in the game); aura agents (type 11), not in the V24.01 constants |
+| 74 | in-client-build | 4 | owner-confirmed (the owner states the arc exists in the game); aura agents (type 11), not in the V24.01 constants |
+| 75 | in-client-build | 4 | owner-confirmed (the owner states the arc exists in the game); aura agents (type 11), not in the V24.01 constants |
+| 76 | in-client-build | 4 | owner-confirmed (the owner states the arc exists in the game); aura agents (type 11), not in the V24.01 constants |
+| 77 | in-client-build | 4 | owner-confirmed (the owner states the arc exists in the game); aura agents (type 11), not in the V24.01 constants |
 | 128 | in-client-build | 3 | V24.01 client constant (eve-logic epicArcConst.py) |
 | 132 | in-client-build | 8 | V24.01 client constant (eve-logic epicArcConst.py) |
 
 Hand-off to the next slice: offer missions through `MissionStaticCatalog.PlausibleMissionIds` (already filtered), and check
 `MissionAvailability(missionId)` for any mission that is not an arc step before using it (its `unknown` answer has the reason).
 
+## 46. Track A-W1: dungeon NPC waves on the content runtime (2026-10-11)
+
+Status: the wave runtime is implemented and tested at the host level (PostgreSQL, a fake clock, and the real space sessions with the simulation's
+kill reports). No client route starts a dungeon yet; the entry point is `DungeonWaveDirector.StartAsync` (Eve.Services.Space/Waves), for the
+L5 kill mission (A-X1) to call. Not verified with the graphical client.
+
+- Planner and rules: `Eve.Dungeons/Waves/WaveRules.cs` (`WavePlanner`, `WaveRules`) and `Data/waves/v1/trigger-rules.json` (embedded, keyed by
+  the official dungeon id, each rule with its source). Triggers implemented: `on_load`, `wave_cleared` (all NPCs of the wave killed), `timer`
+  (a delay from a rule or from `countdownSeconds`). Anything else (room, gate, hack, entity kill, object, visible countdown) refuses the dungeon
+  with the reason. Breeding Facility (2158) is the first rule: wave 1 after 240 s (wiki).
+- Composition: each wave's spawn query must be an exact pool or profile name of the NPC authority (aliases and derived standard pools count);
+  anything else refuses the start with the name. Only `parity_drifter_dungeon_family` (109 mission waves) is unresolved in the owner data.
+- Runtime: one content definition per plannable dungeon (`dungeon.{id}`), one sequential objective per wave (target = NPC count). A wave's
+  objective schedules its spawn job when it becomes the one to do. Kills come from `npc.killed` (ship id to wave in `dungeon_wave_npcs`), each
+  counted once. Tables: `dungeon_wave_spawns`, `dungeon_wave_npcs` (migration 001 in the space schema).
+- Sweep (every 10 s): ends a dungeon whose pilot is no longer in space in its system, and takes out the NPCs of every ended dungeon
+  (completed, failed, abandoned, expired).
+- Coverage (owner data, 1,460 kill-mission dungeons, planner checks re-implemented, not run): 1,404 plan; 56 are refused (on_room_active 6,
+  timer without delay 3, no waves 38, numbering 2, no template 7). The composition is not yet checked against the authority for all of them.
+- Open after A-W1: object_destroyed and proximity triggers (A-W2), entity_killed, room and hack triggers, reinforcements, the bonus window,
+  the L4/L5 composition table (D-D1), and a real-client run.
+- Known gaps: a crash between a wave's simulation spawn and its commit can spawn that wave twice (at-least-once); NPCs alive in the simulation
+  across a host restart are not re-attached (the dungeon's lifetime bounds the stall); the timer of a wave starts when the wave before it is
+  cleared.
+- Tests: Eve.Dungeons.Tests `WavePlannerTests` (17); Eve.Services.Space.Tests `DungeonWaveTests` (9 scenarios), `DungeonWaveSpaceTests` (1),
+  `WaveCompositionTests` (7).
 ## 46. Structures phase, ST-7: service fuel, compression plant, cyno jammer, cyno beacon (2026-10-11)
 
 Package ST-7 of `structures_phase.md`; handoff `docs/project/handoff-ST-7.md`; decisions in DEVIATIONS.md "Structure services fuel (ST-7, increment a)".
@@ -1079,8 +1102,10 @@ Done (verified):
 Open (next steps, in order):
 | Status | Item |
 |---|---|
-| OPEN | (b) `structureCompressionMgr` CompressItemInStructure / DecompressGasInStructure / GetMyGasDecompressionEfficiency: EveJS gate (docked at a structure with Reprocessing online), the 6-value tuple, named refusals |
-| OPEN | (c) E-03: `BeyonceService.CynoJammerOnlineSimTimeForSystem` from an online service 17 in the system; E-15 `OnCynoJammerChanged` from a subscriber on the service change; the non-covert cyno generator refused in a jammed system (host side, `SpaceSessions.Modules.cs`) |
+| VERIFIED (tests) | (b) `structureCompressionMgr` CompressItemInStructure / DecompressGasInStructure / GetMyGasDecompressionEfficiency on the real stores and SDE: the EveJS gate (docked at a structure with Reprocessing online), the item in the hangar or ship there, the six-value reply, the join with a stack of the output, gas decompression with the SDE efficiencies (structure 0.8 plus hull bonus, pilot 1 % a level), the removal of a stack that gives nothing, named refusals. Host route tests: `StructureCompressionTests` (6 pass) with the Host project 170 of 170. |
+| OPEN | (b) gaps: the corporation-office take path (EveJS `itemIsInDockableCorpOfficeWithTakeAccess`) waits for ST-5; no client run (docking is ST-3) |
+| VERIFIED (tests) | (c, part 1) E-03 jammer state: `structure_services.online_since_ms` (migration 0002), `StructureJammer.StateAt` (null, 0, or the warm-up FILETIME), `GetCynoJammerState` through `BeyonceService.CynoJammerOnlineSimTimeForSystem` (wired in `AgentRpc`/`StructureComposition`). E-15 `OnCynoJammerChanged` to the pilots in the system, from the subscriber `structure.cyno_jammer_notice` on `structure.service_changed`. Tests: `StructureJammerTests` (2), Structures 63 of 63, Host 173 of 173. The Host wiring has no RPC-level test yet (build and the Host suite only) |
+| OPEN | (c, part 2) the non-covert cyno generator refused in a jammed system (host side, `SpaceSessions.Modules.cs` next to the fleet check, named refusal `CYNO_JAMMED` in `ModuleRefusals.cs`); the sov Cynosural Suppression upgrade check for onlining the jammer |
 | OPEN | (d) `structureCynoBeaconMgr` backend in place of the user error (`StructureTravelRpcService.cs`): Pharolux beacon service 16 online, jump to it |
 | OPEN | Fuel burns send no `OnItemChange` to the owner's sessions (no session at burn time); rig and skill reductions of the online charge |
 
@@ -1098,3 +1123,16 @@ Open:
   a cache with invalidation would be the next step.
 - Not verified against the native V24.01 client: whether the fanfare on `OnSubscriptionChangedServer` is shown for a lapse (the client's
   `clone_grade_fanfare_ui_controller.py:59-85`).
+
+## 46. Structures phase ST-1: the structure ball in the simulation (protocol 59, 2026-10-11)
+
+| status | item | where | note |
+|---|---|---|---|
+| DONE | `BodyKind::Structure`, `StructureStatus`, `PlaceStructure` / `RemoveStructure` / `SetStructureState` (protocol 59) | `crates/eve-space/src/scene/structures.rs`, `link/*`, `sim/dispatch.rs` | Sim-side only; the host sends nothing yet (increment d). |
+| DONE | Slim item of a structure (state, upkeep, timer, unanchoring, repairing, category 65) | `crates/eve-space/src/slim.rs` `structure_fields` | Client field names read from eve-logic `structure.py`, `structureBracket.py`. |
+| DONE | C# codec, records, `ISimulation`, `SimClient`, fakes; fixtures regenerated | `dotnet/src/Eve.Space/*`, `oracle/fixtures/simlink/messages.json` | `Eve.Space.Tests` 276 pass; `Eve.Services.Space.Tests` 648 pass with PG. |
+| OPEN | Health layers, per-second damage cap, `Out::StructureDamaged` | ST-1 (b) | Not started. |
+| OPEN | Dockable body generalisation in `scene/docking.rs` | ST-1 (c) | Not started. |
+| OPEN | Host `SpaceStructures` (restore on first entry, `structure.state_changed` subscriber, damage to the ST-0 machine) | ST-1 (d) | Not started. |
+| OPEN | Headless test `tools/headless-client/tests/test_structures.py` | ST-1 (e) | Not started. |
+| UNVERIFIED | The client's ball kind and slim rendering of an Upwell structure | MITM | See DEVIATIONS "Structure ball (ST-1)". |

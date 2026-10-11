@@ -158,6 +158,7 @@ internal sealed partial class CharacterServicesComposition
     private WalletTransactions economyWallets = default!;
     private WalletAnnouncer economyAnnouncer = default!;
     private LoyaltyPointStore loyaltyPoints = default!;
+    private Eve.Services.Wallet.LpStorePurchases lpStorePurchases = default!;
     private Eve.Wallet.LpStoreOfferCache lpStoreCache = default!;
     private static readonly System.Net.Http.HttpClient lpStoreHttp = new();
     private LoyaltyPointAnnouncer loyaltyAnnouncer = default!;

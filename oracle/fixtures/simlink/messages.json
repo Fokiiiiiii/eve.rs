@@ -3666,6 +3666,42 @@
    "ownerId": "98000001",
    "corporationId": 98000001,
    "allianceId": 0,
+   "vitals": {
+    "shieldCapacity": 200000000.0,
+    "armorHp": 4000000.0,
+    "structureHp": 6000000.0,
+    "resonances": {
+     "shield": [
+      1.0,
+      1.0,
+      1.0,
+      1.0
+     ],
+     "armor": [
+      1.0,
+      1.0,
+      1.0,
+      1.0
+     ],
+     "structure": [
+      1.0,
+      1.0,
+      1.0,
+      1.0
+     ]
+    }
+   },
+   "shieldRechargeMs": 110000.0,
+   "perSecond": [
+    14400000.0,
+    5000.0,
+    5000.0
+   ],
+   "repairPause": [
+    500.0,
+    500.0,
+    500.0
+   ],
    "status": {
     "state": 110,
     "upkeepState": 3,
@@ -3677,7 +3713,7 @@
     "unanchoring": null,
     "repairing": null
    },
-   "hex": "6b0000004a010091dedfb10300404acb0108004173747261687573f88b0000790600005fc833c6022952426c5427b7db5708c285e10f7e6c3c424200000000004ced40815cd70500000000815cd705000000006e000000030000000100005af64cf5d4010098583215f6d401000000"
+   "hex": "1b0100004a010091dedfb10300404acb0108004173747261687573f88b0000790600005fc833c6022952426c5427b7db5708c285e10f7e6c3c424200000000004ced40815cd70500000000815cd705000000000000000084d7a7410000000080844e410000000060e35641000000000000f03f000000000000f03f000000000000f03f000000000000f03f000000000000f03f000000000000f03f000000000000f03f000000000000f03f000000000000f03f000000000000f03f000000000000f03f000000000000f03f0000000000dbfa400000000040776b41000000000088b340000000000088b3400000000000407f400000000000407f400000000000407f406e000000030000000100005af64cf5d4010098583215f6d401000000"
   },
   {
    "name": "structure state set by the host: paused timer, unanchoring, repairing",
@@ -3696,6 +3732,14 @@
     "repairing": true
    },
    "hex": "390000004c404acb01010091dedfb103006f000000030000000100005af64cf5d4010098583215f6d4010100e8d03e64f5d40101002888821ef6d40102"
+  },
+  {
+   "name": "a hit empties a structure's shield and pauses its repair",
+   "kind": "StructureDamaged",
+   "structureId": "1040000000000001",
+   "depleted": 1,
+   "overThreshold": true,
+   "hex": "0b0000004d010091dedfb103000101"
   },
   {
    "name": "structure taken out of space by the host",

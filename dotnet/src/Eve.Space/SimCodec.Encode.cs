@@ -50,6 +50,27 @@ public static partial class SimCodec
         foreach (var id in ids) w.I64(id);
     }
 
+    /// <summary>A structure's health, in the order <c>ReadStructureHealth</c> reads it (protocol 60).</summary>
+    private static void WriteStructureHealth(Writer w, SimStructureHealth health)
+    {
+        w.F64(health.ShieldCapacity);
+        w.F64(health.ArmorHp);
+        w.F64(health.StructureHp);
+        foreach (var value in health.Resonances)
+        {
+            w.F64(value);
+        }
+        w.F64(health.ShieldRechargeMs);
+        foreach (var value in health.PerSecondLimit)
+        {
+            w.F64(value);
+        }
+        foreach (var value in health.RepairPause)
+        {
+            w.F64(value);
+        }
+    }
+
     /// <summary>A structure's slim fields, in the order <c>ReadStructureStatus</c> reads them (protocol 59).</summary>
     private static void WriteStructureStatus(Writer w, SimStructureStatus status)
     {
@@ -927,7 +948,14 @@ private static void WriteAction(Writer w, SimAction action)
                 w.I64(m.OwnerId);
                 w.I32(m.CorporationId);
                 w.I32(m.AllianceId);
+                WriteStructureHealth(w, m.Health);
                 WriteStructureStatus(w, m.Status);
+                break;
+            case SimStructureDamaged m:
+                w.U8(Kind.StructureDamaged);
+                w.I64(m.StructureId);
+                w.U8((byte)m.Depleted);
+                w.U8(m.OverThreshold ? (byte)1 : (byte)0);
                 break;
             case SimRemoveStructure m:
                 w.U8(Kind.RemoveStructure);

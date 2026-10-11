@@ -1011,6 +1011,12 @@ public sealed record SimPlaceProbe(
 /// <summary>The host takes a scanner probe out of space (recalled, or its time is up); a deployable that is not a probe is left alone (protocol 45).</summary>
 public sealed record SimRemoveProbe(long ProbeId) : SimMessage;
 
+/// <summary>A structure's health as the host has it (protocol 60): the points of its shield, armor and hull, the resonances of each layer (shield, armor
+/// and hull, four kinds each), the shield's recharge in milliseconds, the limit each layer takes in a second and the repair pause of each layer.</summary>
+public sealed record SimStructureHealth(
+    double ShieldCapacity, double ArmorHp, double StructureHp, IReadOnlyList<double> Resonances, double ShieldRechargeMs,
+    IReadOnlyList<double> PerSecondLimit, IReadOnlyList<double> RepairPause);
+
 /// <summary>A structure's slim fields as the host has them (protocol 59): its state and upkeep, its timer (start, end and the time it was paused, when it is),
 /// its unanchoring time and whether it is repaired (none when the client should show no repair). The simulation shows them and decides nothing.</summary>
 public sealed record SimStructureStatus(int State, int UpkeepState, (long Start, long End, long? Paused)? Timer, long? Unanchoring, bool? Repairing);
@@ -1018,7 +1024,11 @@ public sealed record SimStructureStatus(int State, int UpkeepState, (long Start,
 /// <summary>An Upwell structure the host puts in space, as a body of the system with its slim state (protocol 59). It stays until <see cref="SimRemoveStructure"/>.</summary>
 public sealed record SimPlaceStructure(
     long StructureId, int SolarSystemId, string Name, int TypeId, int GroupId, IReadOnlyList<double> Position, double Radius, long OwnerId, int CorporationId,
-    int AllianceId, SimStructureStatus Status) : SimMessage;
+    int AllianceId, SimStructureHealth Health, SimStructureStatus Status) : SimMessage;
+
+/// <summary>The simulation says a hit emptied a layer of a structure (<c>Depleted</c>: 0 none, 1 shield, 2 armor, 3 hull) or paused its repair
+/// (<c>OverThreshold</c>), to the host (simulation to host, protocol 60).</summary>
+public sealed record SimStructureDamaged(long StructureId, int Depleted, bool OverThreshold) : SimMessage;
 
 /// <summary>The host takes a structure out of space (protocol 59); a body that is not a structure is left alone.</summary>
 public sealed record SimRemoveStructure(long StructureId) : SimMessage;

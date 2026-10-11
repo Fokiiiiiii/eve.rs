@@ -1935,3 +1935,7 @@ Sources: the wiki (a site's NPCs are its waves; a site is cleared by them); EveJ
 - **Level above 5.** An SDE difficulty above 5 is level V (strength 104). Status: decided (coordinator).
 - **Waves without NPCs.** A data or relic site may start with its containers only (its first objective is not a wave): no NPC is made for it, and its completion waits for the containers. Status: decided.
 
+
+- **Per-second limit (ST-1 b).** A layer takes at most its SDE per-second limit (2034-2036) in one second: a hit is cut to what the layer it starts in has left that second, by scaling the whole hit. A hit that spills into the next layer is not cut there (a stated approximation; the layers are linear within one layer). A destroyed structure takes nothing more; the host decides what its destruction means.
+- **Repair pause is reported, not applied (ST-1 b).** A layer that takes its repair-pause damage (SDE 3354-3356) in one second is reported in `StructureDamaged`; the simulation does not pause anything. The host pauses the repair through its state machine (ST-0).
+- **Protocol split.** The ST-1 wire takes 59 (placement, removal and state, pushed with increment a) and 60 (the health in the placement and `StructureDamaged`), because 59 had shipped without health. The packages' single +1 is therefore two numbers.

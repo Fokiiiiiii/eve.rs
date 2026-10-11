@@ -168,6 +168,27 @@ pub(super) fn put_vector(out: &mut Vec<u8>, vector: &[f64; 3]) {
     }
 }
 
+/// A structure's health, in the order `decode_message::read_structure_health` reads it.
+pub(super) fn put_structure_health(
+    out: &mut Vec<u8>,
+    vitals: &crate::health::Vitals,
+    shield_recharge_ms: f64,
+    limits: &crate::health::StructureLimits,
+) {
+    for value in [vitals.shield_capacity, vitals.armor_hp, vitals.structure_hp] {
+        out.extend_from_slice(&value.to_le_bytes());
+    }
+    for layer in [vitals.resonances.shield, vitals.resonances.armor, vitals.resonances.structure] {
+        for value in layer {
+            out.extend_from_slice(&value.to_le_bytes());
+        }
+    }
+    out.extend_from_slice(&shield_recharge_ms.to_le_bytes());
+    for value in limits.per_second.iter().chain(limits.repair_pause.iter()) {
+        out.extend_from_slice(&value.to_le_bytes());
+    }
+}
+
 /// A structure's slim fields, in the order `decode_message::read_structure_status` reads them.
 pub(super) fn put_structure_status(out: &mut Vec<u8>, status: &crate::world::StructureStatus) {
     out.extend_from_slice(&status.state.to_le_bytes());

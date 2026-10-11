@@ -435,9 +435,20 @@ impl Message {
                 out.extend_from_slice(&structure.owner_id.to_le_bytes());
                 out.extend_from_slice(&structure.corporation_id.to_le_bytes());
                 out.extend_from_slice(&structure.alliance_id.to_le_bytes());
+                put_structure_health(&mut out, &structure.vitals, structure.shield_recharge_ms, &structure.limits);
                 put_structure_status(&mut out, &structure.status);
             }
             Self::RemoveStructure { structure_id } => out.extend_from_slice(&structure_id.to_le_bytes()),
+            Self::StructureDamaged { structure_id, depleted, over_threshold } => {
+                out.extend_from_slice(&structure_id.to_le_bytes());
+                out.push(match depleted {
+                    None => 0,
+                    Some(Layer::Shield) => 1,
+                    Some(Layer::Armor) => 2,
+                    Some(Layer::Structure) => 3,
+                });
+                out.push(u8::from(*over_threshold));
+            }
             Self::SetStructureState { solar_system_id, structure_id, status } => {
                 out.extend_from_slice(&solar_system_id.to_le_bytes());
                 out.extend_from_slice(&structure_id.to_le_bytes());

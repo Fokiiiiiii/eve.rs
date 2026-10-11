@@ -27,7 +27,7 @@ public sealed class SimLinkException(SimLinkError error, string message) : Excep
 /// </summary>
 public static partial class SimCodec
 {
-    public const ushort ProtocolVersion = 59;
+    public const ushort ProtocolVersion = 60;
     /// <summary>The largest frame either side accepts (1 MiB).</summary>
     public const int MaxFrame = 1 << 20;
 
@@ -705,12 +705,24 @@ public static partial class SimCodec
                     var owner = r.I64();
                     var corporation = r.I32();
                     var alliance = r.I32();
+                    var health = ReadStructureHealth(ref r);
                     var status = ReadStructureStatus(ref r);
                     if (!(double.IsFinite(radius) && radius >= 0))
                     {
                         throw new SimLinkException(SimLinkError.BadValue, "bad structure");
                     }
-                    message = new SimPlaceStructure(structure, system, name, type, group, position, radius, owner, corporation, alliance, status);
+                    message = new SimPlaceStructure(structure, system, name, type, group, position, radius, owner, corporation, alliance, health, status);
+                    break;
+                }
+            case Kind.StructureDamaged:
+                {
+                    var structure = r.I64();
+                    var depleted = r.U8();
+                    if (depleted > 3)
+                    {
+                        throw new SimLinkException(SimLinkError.BadValue, "structure layer");
+                    }
+                    message = new SimStructureDamaged(structure, depleted, ReadFlag(ref r, "structure damage"));
                     break;
                 }
             case Kind.RemoveStructure:

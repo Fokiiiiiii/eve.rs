@@ -2485,6 +2485,9 @@ fn structure_placement(scene: &Scene, at: i64) -> crate::link::StructurePlacemen
         owner_id: 98_000_001,
         corporation_id: 98_000_001,
         alliance_id: 0,
+        vitals: crate::health::Vitals { shield_capacity: 1_000.0, armor_hp: 500.0, structure_hp: 300.0, ..Default::default() },
+        shield_recharge_ms: 1.0e15,
+        limits: crate::health::StructureLimits { per_second: [5.0e6, 5.0e3, 5.0e3], repair_pause: [500.0, 500.0, 500.0] },
         status: crate::world::StructureStatus {
             state: 110,
             upkeep_state: 3,
@@ -2551,5 +2554,37 @@ fn a_structure_placed_while_a_pilot_is_in_the_system_is_added_to_its_view_and_it
     assert_eq!(action_names(&removed[0]), ["RemoveBalls"]);
     assert!(scene.structure_index(STRUCTURE).is_none(), "the body is gone");
     assert!(scene.remove_structure(STRUCTURE, NOON + 3 * SECOND).is_empty(), "a structure already gone is left alone");
+}
+
+#[test]
+fn a_hit_on_a_structure_is_cut_to_its_layers_limit_each_second_and_an_emptied_shield_is_told_to_the_host_once() {
+    let mut scene = scene();
+    scene.bind(SESSION, NOON);
+    let mut placement = structure_placement(&scene, NOON);
+    placement.vitals = crate::health::Vitals { shield_capacity: 1_000.0, armor_hp: 500.0, structure_hp: 300.0, ..Default::default() };
+    placement.limits = crate::health::StructureLimits { per_second: [400.0, 200.0, 100.0], repair_pause: [300.0, 150.0, 80.0] };
+    scene.place_structure(placement, NOON);
+    let shield = |scene: &Scene, at: i64| scene.structure_health[&STRUCTURE].state_at(at).shield;
+
+    let told = scene.damage_structure(STRUCTURE, [1_000.0, 0.0, 0.0, 0.0], NOON);
+    assert!(
+        told.iter().any(|o| matches!(o, Out::StructureDamaged { structure_id, over_threshold: true, depleted: None } if *structure_id == STRUCTURE)),
+        "a shield that took 400 in a second is above its pause: {told:?}"
+    );
+    assert_eq!(shield(&scene, NOON), 0.6, "a hit of 1000 takes the shield's 400 of this second");
+    scene.damage_structure(STRUCTURE, [1_000.0, 0.0, 0.0, 0.0], NOON);
+    assert_eq!(shield(&scene, NOON), 0.6, "the second hit in the same second takes nothing from the shield");
+
+    let mut emptied = 0;
+    for second in 1..=3 {
+        let at = NOON + second * SECOND;
+        emptied += scene
+            .damage_structure(STRUCTURE, [400.0, 0.0, 0.0, 0.0], at)
+            .iter()
+            .filter(|o| matches!(o, Out::StructureDamaged { depleted: Some(crate::health::Layer::Shield), .. }))
+            .count();
+    }
+    assert_eq!(emptied, 1, "the shield is told it is empty once");
+    assert!(scene.damage_structure(STRUCTURE + 1, [1_000.0, 0.0, 0.0, 0.0], NOON).is_empty(), "a structure not in space is left alone");
 }
 

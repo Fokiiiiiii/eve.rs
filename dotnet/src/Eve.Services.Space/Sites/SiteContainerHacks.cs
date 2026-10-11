@@ -1,4 +1,5 @@
 using Eve.Events;
+using Eve.Inventory;
 using Npgsql;
 
 namespace Eve.Services.Space;
@@ -8,7 +9,7 @@ namespace Eve.Services.Space;
 /// (<c>site.container.cleared</c>, the objective of the site's data or relic content). A lost attempt counts toward two failures, which
 /// destroy the container (wiki: Data or Relic Site container, destroyed after two failures). The counts are in PostgreSQL, so a restart keeps them.
 /// </summary>
-public sealed class SiteContainerHacks(NpgsqlDataSource source, SiteContainerStore store, EventBus events, Func<long> nowMs, Action<long> removeFromScene)
+public sealed class SiteContainerHacks(NpgsqlDataSource source, SiteContainerStore store, PgItemStore items, EventBus events, Func<long> nowMs, Action<long> removeFromScene)
 {
     public const int DestroyAfterFailures = 2;
 
@@ -21,7 +22,11 @@ public sealed class SiteContainerHacks(NpgsqlDataSource source, SiteContainerSto
         return new HackableTarget(record.ContainerId, record.SolarSystemId, record.Difficulty, record.Relic);
     }
 
-    public async ValueTask EndedAsync(HackableTarget target, bool won, CancellationToken cancellationToken)
+    /// <summary>
+    /// An attempt ended. A win puts the loot in the container's cargo (owned by the character who won it), clears the container and announces it
+    /// (EveJS maybeCompleteMaterializedDataRelicSite: the loot is the container's contents).
+    /// </summary>
+    public async ValueTask EndedAsync(HackableTarget target, bool won, long characterId, CancellationToken cancellationToken)
     {
         if (await store.GetAsync(target.ItemId, cancellationToken) is not { } record)
         {
@@ -31,6 +36,12 @@ public sealed class SiteContainerHacks(NpgsqlDataSource source, SiteContainerSto
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
         if (won)
         {
+            var profile = SiteLoot.ProfileOf(record.Relic);
+            var typeIds = await SiteLoot.TypeIdsAsync(connection, transaction, SiteLoot.TagsOf(profile).SelectMany(tag => tag.Candidates), cancellationToken);
+            foreach (var (typeId, quantity) in SiteLoot.Roll(profile, record.ContainerId, typeIds))
+            {
+                await items.CreateAsync(connection, transaction, new NewItem(typeId, characterId, record.ContainerId, ItemFlags.Hangar, quantity), cancellationToken);
+            }
             await store.SetStateAsync(connection, transaction, record.ContainerId, "cleared", cancellationToken);
             await events.PublishAsync(connection, transaction, SiteContainerTopics.Cleared,
                 new { solarSystemId = record.SolarSystemId, site = record.SiteId, container = record.ContainerId }, key: $"system:{record.SolarSystemId}", cancellationToken: cancellationToken);

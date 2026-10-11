@@ -61,7 +61,7 @@ internal sealed partial class CharacterServicesComposition
             ? hacks.FindAsync(containerId, cancellationToken)
             : ValueTask.FromResult<HackableTarget?>(null);
         hackingSite.Ended = (session, target, won, cancellationToken) => spaceSessions?.HackableContainers is { } hacks
-            ? hacks.EndedAsync(target, won, cancellationToken)
+            ? hacks.EndedAsync(target, won, session.CharacterId ?? 0, cancellationToken)
             : ValueTask.CompletedTask;
         return
     [

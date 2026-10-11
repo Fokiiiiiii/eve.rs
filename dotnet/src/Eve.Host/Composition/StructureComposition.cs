@@ -43,6 +43,8 @@ internal sealed partial class CharacterServicesComposition
     private Eve.Structures.StructureFuel structureFuel = default!;
     private StructureCompressionAuthority structureCompression = default!;
     private Eve.Structures.MoonExtractionStore moonExtractionStore = default!;
+    private Eve.Structures.MoonExtractions moonExtractions = default!;
+    private StructureMoonAuthority structureMoon = default!;
 
     /// <summary>The structures as the directory and profile readers see them: the legacy shape of the structures schema.</summary>
     Task<JsonObject> ReadStructuresAsync(CancellationToken token) =>
@@ -111,6 +113,13 @@ internal sealed partial class CharacterServicesComposition
         var rules = await StructureRulesSource.LoadAsync(sde);
         structureTimers = new Eve.Structures.StructureTimers(structureStore, foundations.Scheduler, foundations.Events, rules);
         structureTimers.Register();
+        // ST-1 d: a system's structures are in the simulation once a pilot comes into it; the simulation's hits and the records' state changes meet here
+        if (sim is not null && spaceSessions is not null)
+        {
+            var spaceStructures = new Eve.Services.Space.SpaceStructures(sim, spaceSessions, source, structureStore, structureTimers, dogma,
+                message => Console.Error.WriteLine($"eve-host: space structures: {message}"));
+            spaceStructures.Subscribe(foundations.Events);
+        }
         // ST-7: the service fuel is paid from the fuel bay (inventory) at each full hour; the rules are the SDE's service modules
         structureFuel = new Eve.Structures.StructureFuel(structureStore, foundations.Scheduler, structureTimers, ServiceFuelRulesSource.Load(dogma), new InventoryStructureFuelBay(items, dogma));
         structureFuel.Register();
@@ -143,6 +152,29 @@ internal sealed partial class CharacterServicesComposition
         structureProfilesRpcBackend = new Eve.Host.PersistenceStructureProfilesRpcBackend(
             ReadGameStoreTableAsync, mailCache, characterSessions, SetStructureProfileAsync);
         structureCompression = new StructureCompressionAuthority(source, structureStore, items, dogma, sde, skills);
+        // ST-6a: the moon drill starts a chunk (StartNewExtraction); the fracture and the cancel follow in (d)
+        var moonRules = await MoonRulesSource.LoadAsync(sde);
+        moonExtractions = new Eve.Structures.MoonExtractions(structureStore, moonExtractionStore, foundations.Scheduler, foundations.Events, moonRules);
+        moonExtractions.Register();
+        moonExtractions.Subscribe();
+        // ST-6a (c, d): an extraction that ended (fractured, decayed, offlined or cancelled) is announced to the corporation and to the pilots docked at the structure
+        // (EVE.js sendMoonExtractionClearedToSessions)
+        foundations.Events.Subscribe("moon.session_notice", [Eve.Structures.MoonExtractions.EndedTopic], (context, cancellation) =>
+        {
+            var ended = context.Event.Payload<Eve.Structures.MoonExtractionEnded>()!;
+            foreach (var session in characterSessions.OfCorporation(ended.OwnerCorporationId).Concat(characterSessions.InStructure(ended.StructureId)).Distinct())
+                session.SendNotification("OnMoonExtractionUpdate", "clientID", PyNone.Instance);
+            return Task.CompletedTask;
+        });
+        structureMoon = new StructureMoonAuthority(source, structureStore, moonExtractions, moonRules);
+        await using (var connection = await source.OpenConnectionAsync())
+        await using (var transaction = await connection.BeginTransactionAsync())
+        {
+            var open = await moonExtractions.EnsureScheduledAsync(connection, transaction);
+            await transaction.CommitAsync();
+            if (open > 0)
+                Console.Error.WriteLine($"eve-host: {open} open moon extraction(s) have their deadlines");
+        }
         structureRpcCallbacks = new Eve.Services.Core.StructureRpcCallbacks
         {
             CompressItemInStructureAsync = async (call, itemId) => await structureCompression.CompressAsync(call, itemId),

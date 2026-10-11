@@ -1638,6 +1638,41 @@ rate, the datacore price or the remainder rule that was read. A6 implements the 
 Status: the sources are recorded; the rule matches them; the open items are Q-AG-7 (R&D missions), the LP offer data (A9),
 the research rates (A6) and the locator fee timing (A7).
 
+## Agents slice AG-2, A5: offers and mission state (2026-10-11)
+
+Sources. EveJS `services/agent/missionRuntimeState.js:26-28` (decline replay 4 h, offer lifetime 7 d, epic arc replay
+90 d); the client's action strings and states (`eve-logic eve/common/lib/appConst.py:1601-1624`); the client's
+`OnAgentMissionChange(actionID, agentID)` (`eve/client/script/ui/station/agents/agents.py:688`). Wiki (Missions, read in
+the design phase): the offer lasts 6 to 7 days; design Q-AG-10 keeps 7 days.
+
+- **The store is PostgreSQL, in the `agents` schema (`EVE_AGENTS_SCHEMA`).** Tables `missions` (one row per character and
+  agent: state, the mission's content fields and the times of the state) and `journal` (one row per applied transition).
+  EveJS keeps this in its JSON game store (`missionRuntimeState`); eve.rs has no writer for that table, so the new state
+  is written to PostgreSQL. The game store's record is still read and the store's offers and accepted missions are laid
+  over it (`AgentMissionStoreRecords.Overlay`). Status: decided (AG-2); tests `AgentMissionStoreTests` (Eve.Agents.Tests,
+  PostgreSQL) and `AgentMissionStoreTests` (Eve.Services.Core.Tests).
+- **One transition path.** Offer, accept, decline, quit, complete, fail and the expiry sweep go through one function: the
+  row is locked, the state the transition leaves is checked, the row and a journal row are written in one transaction.
+  A transition is named by its reference: a reference already in the journal applies nothing and returns null, so a
+  replayed request changes nothing and announces nothing. A refused transition names its reason (`not_offered`,
+  `offer_expired`, `already_offered`, `already_accepted`, `replay_wait`, `not_accepted`) and writes nothing.
+- **Declined offers.** The agent does not offer again for four hours (EveJS `REPLAY_DELAY_MS`); the decline replay is refused
+  as `replay_wait` until then.
+- **Expiry is an explicit sweep (`ExpireOffersAsync`).** Each due offer returns to allocated once, with one journal row per
+  expiry instant. Gap: the durable scheduler job that calls it is not wired yet (the offers are not created by any live
+  path, see below), so no expiry runs on a live server yet.
+- **Notifications follow committed transitions only.** `OnAgentMissionChange(action, agentID)` goes to the character's session
+  with the client's action string (`offered`, `offer_declined`, `offer_expired`, `accepted`, `quit`, `completed`).
+  `OnMissionsUpdated` is not sent (gap: the mission tracker's list is not refreshed on a change yet).
+- **The journal shows offered, accepted and completed missions.** Declined, quit, failed and allocated records are left out
+  of the view, because the client's journal row treats any other status as an offer.
+- **No live path creates an offer yet (gap, not a fake).** An offer needs the mission's content (name id, title, type label),
+  which comes from the mission pool. The pool is not in the SDE build (`agentAuthority` says so) and the mission data
+  comes from the mission-data track (a second SDE pin, not this slice). `OfferAsync` is the only creator, and the tests
+  call it directly. So on a live server the journal stays empty and "request mission" has nothing to offer (A4).
+- **The title is the text when the name id is missing.** The client's journal row needs a name id or a title; a mission
+  with neither is left out of the view (the reference behaves the same, `missionNameID` or `missionTitle`).
+
 ## ST-E: cloak proximity and forced decloak notices (2026-10-10)
 - **Proximity radius and refusal.** The cloak breaks, and activation refuses, for a ship or a non-belt body within 2 000 m of the surface of the cloaked ship. Source: EveJS `shipCloak.js:100` (`MIN_CLOAKING_DISTANCE_METERS = 2000`). It replaces the 2 km smartbomb-range check, so the activation refusal now also counts bodies, not only smartbomb targets. Belts are not counted.
 - **Notice order.** The proximity notice goes out before the module stops; the other reasons after (EveJS `forceDecloakEntity`).
@@ -1980,4 +2015,51 @@ Engine: `dotnet/src/Eve.Hacking` (pure rules, no Host). Sources: EVE University 
 - **Distance indicator.** Empty node shows steps to the nearest core, utility element or data cache, capped at 5 (wiki). Status: wiki.
 - **Start of an attempt.** EveJS starts the attempt when the analyzer activation is accepted (`moduleOperation.js` 3228). The ST-10 plan said "on cycle completion"; eve.rs follows EveJS (the working reference). Status: decided, not yet wired.
 - **Not yet covered.** The Host service, the analyzer body, container placement and the loot on success (D-5) are the next increments. Status: open.
+- **Analyzer window reach (ST-10 c).** EveJS closes a hack on a scene tick; eve.rs checks the reach on the next call of the client's hackingMgr and at each accepted warp. Status: decided (tick deferred).
+- **Attempt start (ST-10 c).** Opened after the simulation accepts the analyzer's start (EveJS moduleOperation.js 3228). Status: decided.
+- **Analyzer kind (ST-10 c).** Data and relic compatibility from the required skills (21718 / 13278). EveJS has an "integrated" kind for an analyzer that needs both; eve.rs accepts a container for either skill. Status: decided.
+
+## Moon extraction (ST-6a)
+
+- **Start gate (a stand-in).** EVE.js `validateMoonExtractionMutationAccess` needs the pilot to control the structure (`isControllingStructureSession`:
+  docked and `shipid` equal to the structure) and the profile's moon-mining access setting. Both wait for ST-3 (docking) and ST-5 (control, profiles).
+  Until then the start requires the pilot docked at the structure (`structureid`) and the structure owned by the pilot's corporation; a refusal is
+  `StructureDefenseDenied`. Source: EVE.js `moonExtractionsService.js:279-305`, `structureControlState.js` `isControllingStructureSession`.
+- **Duration.** EVE.js clamps the requested duration to 518 460 to 4 838 400 s and answers `None` for a duration that is not positive. We clamp the same
+  way; a duration that is not positive is refused by name (`MoonminingEventTooShort`, the client's own user error), because the client reports success on
+  any reply.
+- **Moon binding.** EVE.js binds a structure to its moon at read time (`moonMiningBindingRuntime.ensureMoonMiningReady`). We use the seeded resource profile
+  (`structure_moon_resources`, imported from the game store): a structure without one is refused with `This structure has no moon to mine.` (our wording;
+  EVE.js returned `None` and logged).
+- **Drill check.** The drill is the Moon Mining service (id 14) online; its module is Standup Moon Drill I, type 45009 (EVE.js `TYPE_STANDUP_MOON_DRILL`).
+  The check reads the structure's service state, as the reprocessing and jammer checks do.
+- **Chunk volume.** 720 000 m3 a day times the duration and the profile's yield multiplier, as the EVE.js planner (`moonExtractionRules.js:129`), which is
+  30 000 m3 an hour. The rig yield (SDE 2704 through the fitted rigs) is not applied yet (ST-6a open item).
+- **Decay and fracture delay (SDE first).** The auto-fracture delay is the refinery's SDE attribute 2698 (10 800 s for Athanor and Tatara), the field's
+  lifetime is 2728 hours times 2706 (48 h). EVE.js reads the profile's `autoFractureDelaySeconds`, which defaults to 10 800 s; the SDE value wins here, the
+  two agree for the refineries in the pinned build. The rig modifier 2707 is not applied yet.
+- **Calendar.** `calendarEventID` is stored as given and returned; the client owns the calendar entry (EVE.js does not create one either).
+- **Id width.** Structure, owner and moon ids are sent as `PyLong` when they exceed the 32-bit range (`PyInt` is 32-bit on the wire).
+- **Hacking stat re-check (ST-10).** Re-read on 2026-10-11: the wiki Hacking page gives no numeric firewall, anti-virus, restoration or core values in text; its difficulty table and stat icons are images without numbers, and the board size is not stated. The wiki's numbers used are the virus stats (40/20, T2 60/30), the restoration heal 20, suppressor 15 (floor 10), self repair 5-10, kernel rot 50%, secondary vector 20, shield 2 hits. The defensive subsystem stats (60/10, 20/40, 30/10, 30/10) and the content counts remain eve.rs decisions; the core is EveJS `buildSyntheticBoard` (10 x difficulty). Status: decided, MITM to verify.
+
+## Structure docking (ST-1 c)
+
+- **Docks take a structure as a station does, with two refusals the station does not have.** A structure in a state of `STRUCTURE_DISABLED_STATES` (EVE.js `structureConstants.js` 46-55: unknown, unanchored, anchoring, onlining, hull reinforce and vulnerable, anchor and deploy vulnerable) refuses `STRUCTURE_DISABLED`; a hull the structure's docks do not take refuses `SHIP_TOO_LARGE`. The size classes are the undock-point categories of `locators::category_of` (V24.01 client `ballparkCommon/docking.py`).
+- **Max docking by type (wiki "Max docking").** Astrahus takes subcapitals (up to large), Fortizar capitals, Keepstar supercapitals. Every other structure type is taken as subcapital only: its own limit is not in the sim yet. Source: the spec's wiki table for these three; the others are not verified.
+- **Undock from a structure** uses the station's undock placement; a structure has no undock-point table, so the fallback places the ship a third of the radius out, away from the star (stated in the first section of this file, for stations).
+
+## Structures in the simulation and the host (ST-1 d)
+
+- **The restore places every structure of the system that is not Unanchored (state 1), at its record's state.** Points restart full: the simulation keeps no damage between two placements, and the record holds no points. A restart therefore heals a damaged structure in the scene (stated limitation).
+- **Vitals and limits come from the static data.** Points: attributes 263, 265, 9. Resonances: the ship's own attribute sets (shield 271/274/273/272, armor 267/270/269/268, hull 113/110/109/111, as `SimShips`). Per-second limits: 2034, 2035, 2036. Repair pauses: 3354, 3355, 3356. Shield recharge: attribute 479 in milliseconds.
+- **The slim state is the record's state, upkeep and timer.** `repairing` and `unanchoring` are not sent yet: the record keeps no repair or unanchoring time in the state-changed event (ST-2 and the anchoring placement).
+- **A hit's layer.** A depleted layer is the layer the hit emptied. A hit that only pauses the repair lands on the layer named by the state (shield, armor or hull). Stated approximation.
+- **Structure placement on anchoring is not wired yet.** A structure anchored while a pilot is in its system is not placed until the next pilot enters it (ST-2 places it on anchoring); the simulation ignores the state change of a structure it does not have.
+- **The simulation's state change publishes through the bus.** The subscriber `structure.space` sends `SetStructureState` on every `structure.state_changed`, or `RemoveStructure` when the record says it was unanchored or destroyed. At-least-once delivery is safe: the simulation ignores a state it already has (FOUNDATIONS rule 2).
+- **Site container types (ST-10 d1).** The template names a container type (e.g. "High Security Containment Facility", "Research and Development Laboratories") that the SDE does not carry under that name in groups 306/314/1207; those are placed as the lowest type id of the kind's group (306 for data, 1207 for relic), and the name is logged. Status: decided, MITM to verify the model.
+- **Site container ids and spacing (ST-10 d1).** Container id = 7e15 + (site instance id mod 1e9) * 100 + index; containers lie 150 m apart along x from the site, radius 50 m. Status: decided.
+- **Failures and destruction (ST-10 d1).** Two failed attempts destroy a container (wiki); a win clears it (the row stays, the ball stays and is no longer hackable). Status: wiki; the clear's ball is not removed.
+- **Site loot (ST-10 d2).** The wiki gives no loot; the profiles are EveJS dungeonUniverseSiteService.js: `generic_data_loot` (datacore 1-4, decryptor 1, data_material 1-2) for a data container and `generic_relic_loot` (salvage 2-7, relic_component 1-3) for a relic container. The ST-11 data has no population tags, so each profile takes all its tags (decision). The candidate of a tag is chosen by a hash of the container id (EveJS uses its own seed; the values differ, the set does not). One candidate, "Engagement Plan Data Chip", is not in the SDE under that name and is skipped. The loot is owned by the character who won and sits in the container's cargo. Status: EveJS for the tables; the seed hash is ours.
+- **Site completion (ST-10 d2).** EveJS completes a site when its hacked containers are emptied. eve.rs publishes site.container.cleared on the win (the coordinator's sequence), so the site completes on the win; the emptying is not tracked. Status: deviation, open.
+- **Cleared container ball (ST-10 d2).** EveJS removes an emptied container; eve.rs keeps the ball and marks it cleared (not hackable). Status: deviation, open.
 

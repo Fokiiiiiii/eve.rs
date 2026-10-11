@@ -261,10 +261,9 @@ public class ModuleEffectsTests
         }
     }
 
-    // The exploration, hacking and scanner effects that are wired but have no body yet (ExplorationModuleEffects.cs): an online module is refused as pending,
+    // The Data Subverter and the projected ECCM are wired but have no body yet (ExplorationModuleEffects.cs; the analyzers have one): an online module is refused as pending,
     // never packaged (no cycle, no success), and never as UNSUPPORTED_EFFECT, which means there is no handler at all.
     [Theory]
-    [InlineData(1738, "doHacking", EffectDef.Target)]
     [InlineData(4773, "hackOrbital", EffectDef.Target)]
     [InlineData(2246, "scanStrengthTargetPercentBonus", EffectDef.Target)]
     public void A_scanner_or_hacking_effect_with_no_body_yet_is_refused_as_not_implemented_and_packages_nothing(int effectId, string effectName, int category)
@@ -311,7 +310,7 @@ public class ModuleEffectsTests
     }
 
     [PgFact]
-    public async Task The_scanner_and_hacking_effects_without_a_body_are_registered_listed_as_uncovered_and_assigned_to_module_types_in_the_current_sde()
+    public async Task The_effects_without_a_body_are_registered_listed_as_uncovered_and_assigned_to_module_types_in_the_current_sde()
     {
         await using var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
         var sde = new SdeReader(source);
@@ -319,7 +318,7 @@ public class ModuleEffectsTests
             ?? throw new InvalidOperationException("The test SDE schema must expose its actual build number.");
         var statics = await DogmaStatic.LoadAsync(sde);
         var registry = Eve.Services.Space.Effects.ModuleEffects.Default;
-        string[] pending = ["doHacking", "hackOrbital", "scanStrengthTargetPercentBonus"];
+        string[] pending = ["hackOrbital", "scanStrengthTargetPercentBonus"];
         var uncovered = registry.Uncovered(statics).Select(e => e.Name.Trim()).ToHashSet(StringComparer.OrdinalIgnoreCase);
         var moduleGroups = (await sde.ReadAsync("groups"))
             .Where(row => row.Doc.GetProperty("categoryID").GetInt32() == 7)
@@ -771,7 +770,7 @@ public class ModuleEffectsTests
         }
 
         // pending handlers (refusals) are not coverage, so their effects stay in currentSdeGaps; the built ones (the command bursts, P.A.N.I.C.,
-        // hackOrbital, scanStrength) have left the manifest
+        // the data and relic analyzers, hackOrbital, scanStrength) have left the manifest
         var handledNames = Eve.Services.Space.Effects.ModuleEffects.Default.ImplementedNames
             .Concat(["missileLaunching", "torpedoLaunching"])
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
@@ -780,7 +779,6 @@ public class ModuleEffectsTests
         [
             "barrage",
             "cloneRespawnBay",
-            "doHacking",
             "doomsdayAOEBubble",
             "doomsdayAOEDamp",
             "doomsdayAOEECM",

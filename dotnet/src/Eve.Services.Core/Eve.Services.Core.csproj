@@ -1,6 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <ItemGroup>
     <ProjectReference Include="../Eve.Services/Eve.Services.csproj" />
+    <ProjectReference Include="../Eve.Agents/Eve.Agents.csproj" />
     <ProjectReference Include="../Eve.Calendar/Eve.Calendar.csproj" />
     <ProjectReference Include="../Eve.ReadSide/Eve.ReadSide.csproj" />
     <ProjectReference Include="../Eve.Ships/Eve.Ships.csproj" />

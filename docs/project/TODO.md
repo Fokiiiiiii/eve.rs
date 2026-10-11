@@ -947,6 +947,16 @@ Web research is recorded in DEVIATIONS.md, "Agents slice AG-2". Sources read: ES
 | OPEN | Research rates and datacore price: no source read (A6) | DEVIATIONS "Agents slice AG-2" |
 | OPEN | CONCORD LP exchange: wiki rates exist but no CCP source; stays refused | DEVIATIONS "Agents slice AG-2" |
 
+Slice A5 (2026-10-11): DONE for the store and the journal: the `agents` schema (`Eve.Agents`, migration 0001), one state
+machine with idempotent references, the journal view overlaid on the game store, `OnAgentMissionChange` on commit.
+Tests: `Eve.Agents.Tests` (8, PostgreSQL), `Eve.Services.Core.Tests` (AgentMissionStoreTests, 3). Decisions: DEVIATIONS.md,
+"Agents slice AG-2, A5".
+
+| Status | Item | Where / blocker |
+|---|---|---|
+| OPEN | No live path creates an offer: the mission pool is not in the SDE build; `OfferAsync` is tested only | the mission-data track (second SDE pin) |
+| OPEN | The expiry sweep is not scheduled (durable job) and `OnMissionsUpdated` is not sent | DEVIATIONS "Agents slice AG-2, A5" |
+
 ## 43. Structures phase ST-E: remaining E wiring (2026-10-10)
 - DONE E-01: StartNewExtraction, FractureChunkWithStructure and CancelExtraction refuse by name (CustomNotify) with no backend, not PyNone (`StructureDataRpcServices.cs`, commit 59e9e89). The backend is ST-6a.
 - DONE E-04 proximity: the sim breaks a cloak that has a ship or a non-belt body within 2 km of its surface and sends `OnCloakModuleForceDeactivated` (`CloakDeactivatedByProximityToType`) before the module stops (`crates/eve-space/src/scene/decloak.rs`, polled in `scene/session.rs`). Activation refuses within the same 2 km (`modules/activation.rs`). Tests: `modules::tests` (ship, station, custom); host `SpaceServiceTests.A_forced_decloak_notice_reaches_the_pilot_with_the_message_and_its_arguments`. No protocol bump: the notice is an existing notify.
@@ -1148,8 +1158,18 @@ Open:
 |---|---|---|---|
 | DONE | `structure_moon_extractions` and `structure_moon_resources` (migration 0003), the one-time import of GameStore `moonExtractions` | `dotnet/src/Eve.Structures/MoonExtractionStore.cs`, `Migrations/0003_moon_extractions.sql`, `Composition/StructureComposition.cs` | Import keeps rows already there. Completed history is not read. |
 | DONE | Moon reads (`GetExtractionAndEventIDFromStructureID`, `GetExtractionsForCorp`, `GetMoonResourcesForStructure`) from the store | `Rpc/StructureRpc.cs`, `StructureDataRpcServices.cs` | Read shapes unchanged; tests `MoonExtractionStoreTests` (2 PostgreSQL tests), Host 180 of 180. |
-| OPEN | (b) `StartNewExtraction` validation, 30 000 m3/h chunk volume | ST-6a | Named refusals stay until (b) lands. |
-| OPEN | (c) jobs `moon.chunk_arrival`, `moon.auto_fracture`, `moon.field_decay` | ST-6a | |
-| OPEN | (d) `CancelExtraction`, `FractureChunkWithStructure`, `OnMoonExtractionUpdate` | ST-6a | |
+| VERIFIED (tests) | (b) `StartNewExtraction`: drill online, moon resources, duration clamped to 6 to 56 days, 30 000 m3/h chunk split by the moon, running extraction answered, calendar id, the named refusals, the caller's `OnMoonExtractionUpdate`. Tests: `MoonExtractionStartTests` (7), `MoonExtractionStartHostTests` (6). Gate stand-in: DEVIATIONS "Moon extraction (ST-6a)" | ST-6a | Control and profile access wait for ST-3/ST-5. |
+| VERIFIED (tests) | (c) jobs `moon.chunk_arrival`, `moon.auto_fracture`, `moon.field_decay` (48 h), the drill-offline and destroyed reactions (`offlined`), `OnMoonExtractionUpdate` broadcast on every completion, re-arm after import. Tests: `MoonExtractionJobTests` (6). The fracture start is (d) | ST-6a | |
+| VERIFIED (tests) | (d) `FractureChunkWithStructure` (fire on a ready chunk, `fractured` after 30 s, field decays after 48 h) and `CancelExtraction` (`cancelled`, Station Manager role); `OnMoonExtractionUpdate` to the corporation and the structure's sessions on every completion. Tests: `MoonExtractionFractureTests` (6), `MoonExtractionStartHostTests` | ST-6a | |
 | OPEN | Owner-corporation character notifications (STARTED, FINISHED, LASER_FIRED, CANCELLED, AUTOMATIC_FRACTURE) | ST-6a | No notification store in eve.rs yet. |
 | OPEN | Rig modifiers (2707 fracture delay, 2704 yield) | ST-6a | Not read yet. |
+
+### ST-1 status after increments c and d (2026-10-11)
+
+| status | item | where | note |
+|---|---|---|---|
+| DONE | Dockable body: `dock`, `accept_docking`, `undock`, `undock_place` take a structure; `STRUCTURE_DISABLED` and `SHIP_TOO_LARGE` refusals | `crates/eve-space/src/scene/docking.rs`, `scene/tests.rs` | Four scene tests; the eve-space unit suite passes. |
+| DONE | Host `SpaceStructures`: restore on system entry, `structure.state_changed` to `SetStructureState` and `RemoveStructure`, `StructureDamaged` to the state machine in one transaction | `dotnet/src/Eve.Services.Space/SpaceStructures.cs`, `dotnet/src/Eve.Host/Composition/StructureComposition.cs` | Three PG tests in `SpaceStructuresTests.cs`. |
+| OPEN | Structure placement on anchoring (ST-2) and the slim `repairing`/`unanchoring` fields | ST-2 | A structure anchored with a pilot in the system is not shown until the next entry. |
+| WRITTEN, NOT RUN LIVE | (e) headless scenario `tools/headless-client/tests/test_structures.py`: a pilot in a system with an imported Astrahus sees it in the ballpark with its state and timer | ST-1 (e) | Collects and skips without `EVE_LIVE_HOST` and the structure's environment; no live server has run it. |
+| UNVERIFIED | Client behaviour of a structure's dock (`OnDockingAccepted` and the docked session), the damage the ball shows, the state label | MITM | Not verified on the graphical client. |

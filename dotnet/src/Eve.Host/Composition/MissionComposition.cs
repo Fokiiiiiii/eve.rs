@@ -158,6 +158,7 @@ internal sealed partial class CharacterServicesComposition
 
     private async Task AgentMissions()
     {
+        agentMissionAnnouncer = new Eve.Services.Core.AgentMissionAnnouncer(agentMissionStore, characterSessions);
         agentMissionAgentById = agentMissionAgentRows.ToDictionary(agent => agent.AgentId);
         // The official mission build (sde_mission). Nothing is read from the EveJS authority tables.
         agentMissionStatic = await MissionStaticCatalog.LoadAsync(new SdeReader(source, MissionStaticCatalog.DefaultSchema));
@@ -186,8 +187,11 @@ internal sealed partial class CharacterServicesComposition
         agentMissionService = new AgentMissionService(
             async (characterId, ct) =>
             {
+                // the game store's record, with the agents store's offers and accepted missions laid over it (AG-2 / A5)
                 var state = await ReadGameStoreTableAsync("missionRuntimeState", ct);
-                return (state["charactersByID"] as JsonObject)?[characterId.ToString(System.Globalization.CultureInfo.InvariantCulture)] as JsonObject;
+                var character = (state["charactersByID"] as JsonObject)?[characterId.ToString(System.Globalization.CultureInfo.InvariantCulture)] as JsonObject;
+                var stored = await agentMissionStore.ReadAsync(characterId, ct);
+                return character is null && stored.Count == 0 ? null : Eve.Services.Core.AgentMissionStoreRecords.Overlay(character, stored);
             },
             async (characterId, bookmarkIds, ct) =>
             {

@@ -988,6 +988,8 @@ A1 done: the agent catalog is a pure function (`AgentCatalog.Build`, Eve.Host) t
 (3008416 basic, 3019369 in space). Open after it: the
 standing requirements of store offers and the structure stores (gaps), the idempotency key the client does not send.
 Offer cross-check (eve.starweb.cc): no rows changed; 1,104 calculator-only offers are an owner question (DEVIATIONS AG-3).
+A6 (research): rules and the PostgreSQL project store done (`ResearchRules`, `ResearchProjectStore`, migration 0003); the buttons 12 to 14 and the datacore grant and research missions are open (client dialog path; DEVIATIONS "Agents slice AG-3, A6 and A7").
+A7 (locator): fee, cooldown and standing rules done (`LocatorRules`); the locate flow stays refused (target location store and client dialogs; DEVIATIONS AG-3).
 
 ## 43. Structures phase ST-E: remaining E wiring (2026-10-10)
 - DONE E-01: StartNewExtraction, FractureChunkWithStructure and CancelExtraction refuse by name (CustomNotify) with no backend, not PyNone (`StructureDataRpcServices.cs`, commit 59e9e89). The backend is ST-6a.

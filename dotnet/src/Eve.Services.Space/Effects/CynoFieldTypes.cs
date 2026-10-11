@@ -16,6 +16,9 @@ internal static class CynoFieldTypes
     /// <summary>Cynosural Field (21094), Covert Cynosural Field I (28650) and Industrial Cynosural Field (52696): the fields the generators make.</summary>
     public static readonly IReadOnlyList<int> FieldTypes = [21094, 28650, 52696];
 
+    /// <summary>The covert field (28650): a jammer of standard fields does not stop it (SDE 35914: "Covert Cynosural Field Generators are immune").</summary>
+    public const int CovertFieldType = 28650;
+
     /// <summary>The group of the field generators (Cynosural Field Generator I 21096, Covert 28646, Industrial 52694).</summary>
     public const int GeneratorGroup = 658;
 

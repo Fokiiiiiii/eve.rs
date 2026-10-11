@@ -14,6 +14,10 @@ public class PgAccountTests
     public Task First_login_creates_the_account_and_then_needs_the_same_hash() => With((_, make) => AccountScenarios.First_login_creates_the_account_and_then_needs_the_same_hash(make));
 
     [PgFact]
+    public Task New_accounts_are_stored_until_2100_and_an_operator_can_set_an_earlier_end() =>
+        With((_, make) => AccountScenarios.New_accounts_are_stored_until_2100_and_an_operator_can_set_an_earlier_end(make));
+
+    [PgFact]
     public Task An_account_can_be_looked_up_by_its_id() => With((_, make) => AccountScenarios.An_account_can_be_looked_up_by_its_id(make));
 
     [PgFact]

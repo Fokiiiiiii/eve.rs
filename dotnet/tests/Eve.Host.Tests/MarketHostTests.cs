@@ -5,6 +5,7 @@ using Eve.Inventory;
 using Eve.Macho;
 using Eve.Marshal;
 using Eve.Market;
+using Eve.Services.Market;
 using Eve.Services;
 using Eve.Sde;
 using Eve.Universe;
@@ -39,7 +40,7 @@ public sealed class MarketHostTests : IAsyncLifetime
         "EVE_IDENTITY_SCHEMA", "EVE_GLOBAL_CONFIG_SCHEMA", "EVE_CHARACTERS_SCHEMA", "EVE_INVENTORY_SCHEMA", "EVE_SKILLS_SCHEMA", "EVE_WALLET_SCHEMA",
         "EVE_FITTING_SCHEMA", "EVE_NPC_SCHEMA", "EVE_SPACE_SCHEMA", "EVE_GAMESTORE_SCHEMA", "EVE_ASSET_SAFETY_SCHEMA", "EVE_CORPORATIONS_SCHEMA",
         "EVE_MARKET_SCHEMA", "EVE_FLEET_SCHEMA", "EVE_INDUSTRY_SCHEMA", "EVE_SCHEDULER_SCHEMA", "EVE_EVENTS_SCHEMA", "EVE_RELATIONS_SCHEMA",
-        "EVE_CONTENT_SCHEMA", "EVE_CRIMEWATCH_SCHEMA",
+        "EVE_CONTENT_SCHEMA", "EVE_CRIMEWATCH_SCHEMA", "EVE_STRUCTURES_SCHEMA",
     ];
 
     private readonly string _prefix = "mh" + Guid.NewGuid().ToString("N")[..10];
@@ -218,5 +219,38 @@ public sealed class MarketHostTests : IAsyncLifetime
         Assert.Equal(1234m, kept.Price);
         Assert.Equal(escrowed, (await wallet.GetAsync(actor))!.Isk);
         await host.ShutdownAsync();
+    }
+
+    [PgFact]
+    public async Task The_host_gives_each_resting_order_a_durable_expiry_job_that_survives_a_restart()
+    {
+        // M3 (Q7): the job is due at the expiry plus the grace, is kept in the scheduler's schema, and the minute sweep is scheduled
+        var url = Environment.GetEnvironmentVariable("EVE_PG_URL")!;
+        await using var source = NpgsqlDataSource.Create(Eve.Data.PgConnection.ToConnectionString(url));
+        var host = await HostComposition.BuildAsync(Settings());
+        var market = host.Registry.Lookup("marketProxy") ?? throw new InvalidOperationException("marketProxy is not registered");
+        var scheduler = host.Scheduler ?? throw new InvalidOperationException("the host has no durable scheduler");
+        Assert.Contains(MarketExpiryWorker.OrderKind, scheduler.Kinds);
+        Assert.Contains(MarketExpiryWorker.SweepKind, scheduler.Kinds);
+        Assert.NotNull(await scheduler.FindAsync(MarketExpiryWorker.SweepKind, "sweep"));
+        var station = (await StationCatalog.LoadAsync(new SdeReader(source))).All.First();
+        var actor = await CreateTraderAsync(source, station, "Expiry Host Trader");
+        var session = new ClientSession(new Sink()) { SessionId = 303 };
+        session.Set("charid", new PyInt(actor));
+        const int Pyerite = 35;
+        await market.CallAsync(Call(session, "PlaceBuyOrder", 1, new PyInt(station.Id), new PyInt(Pyerite), new PyReal(1234), new PyInt(1),
+            new PyInt(-1), new PyInt(1), new PyInt(1), PyBool.False, PyNone.Instance));
+        var order = Assert.Single(await new MarketStore(source, Schema("EVE_MARKET_SCHEMA")).OwnOrdersAsync(actor, actor, false)).Order;
+        var job = await scheduler.FindAsync(MarketExpiryWorker.OrderKind, MarketExpiryWorker.OrderKey(order.Id));
+        Assert.NotNull(job);
+        Assert.Equal(order.IssuedMs + 86_400_000L + MarketExpiry.GraceMs, job!.RunAtMs);
+        await host.ShutdownAsync();
+
+        var restarted = await HostComposition.BuildAsync(Settings());
+        var again = restarted.Scheduler ?? throw new InvalidOperationException("the host has no durable scheduler after the restart");
+        var resumed = await again.FindAsync(MarketExpiryWorker.OrderKind, MarketExpiryWorker.OrderKey(order.Id));
+        Assert.NotNull(resumed);
+        Assert.Equal(job.RunAtMs, resumed!.RunAtMs);
+        await restarted.ShutdownAsync();
     }
 }

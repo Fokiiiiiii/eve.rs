@@ -16,13 +16,27 @@ Updated at every push. Plan: scratchpad `specs/structures_phase.md`, section ST-
    director first, and `BeyonceService` warps to a scan result by its code (`ProbeScanWarpAuthority` keyed by text). Tests:
    `CosmicSitesTests` (warp by code, ship numbers unchanged, partial results refused). Not tested end to end: a scan through the
    Beyonce rig with a content-backed source (the rig builds its probe scans with `sites: null`).
-3. **NPC waves.** The director's objectives count `npc.killed { site, solarSystemId }`, but no NPC is spawned for a site yet and
-   no event carries `site`. Until this lands an anomaly is never cleared, only expired.
-4. **Containers.** Objectives `containers` count `site.container.cleared`; no container is placed yet (`SpaceContainers`).
+3. **Clear and respawn (built, test-only).** A site cleared by its NPC kills (`npc.killed { site, solarSystemId }` counted per wave)
+   and its containers completes, the respawn subscriber replaces it in its slot elsewhere, and a host restart in the middle keeps
+   the progress (`CosmicSiteDirectorTests.A_site_cleared_by_its_npcs...`). The kills are published by the test; no NPC is spawned yet.
+4. **Probe results (built, tests).** A signature's result follows the coverage rule at the wiki strengths (42, 72, 104):
+   `SignatureScanResultTests`. The full 100 % of four well-spread probes is the engine's existing rule, not re-derived here.
+5. **NPC waves (built, tests).** `SiteNpcs` (`Sites/SiteNpcs.cs`) makes a site's active wave in the scene of its system when a pilot
+   is there and no NPC of the site is alive: the wave's query rolled for the target less the progress (`SpaceSessions.SpawnSiteWaveAsync`,
+   `SpaceSessions.Npc.cs`). A site's NPC carries its site id in the host's record (`NpcShip.SiteId`), so `npc.killed` carries `site`.
+   Spawns on system entry (`SpaceComposition.EnsureSitesAsync`) and on each completed wave (subscriber `site.npc-waves`). No new
+   simulation message: no protocol bump. Tests: `SiteNpcTests` (4 PgFact, 1 pure). Decisions: DEVIATIONS "Cosmic site NPC waves".
+   Downtime: `CosmicSiteDirector(occupied:)` gives no site and no wave to a system nobody is in (the host passes `HasPilotsIn`).
+6. **Containers (blocked by ST-10).** Data and relic sites have containers (groups 306, 1207); combat sites have none. A container is
+   opened by the data or relic analyzer (`Effects/ExplorationModuleEffects.cs`, body pending) or by hacking (ST-10), and the containers'
+   contents are not in the static data. `site.container.cleared` has no producer until those exist. Next: ST-10, then place the
+   containers through `SpaceContainers` and publish the clear there.
 
 ## Next
 
-- NPC waves and containers (increments 3 and 4 below), then restart checks of a partly cleared site.
+- ST-10 (analyzer and hacking) unblocks item 6. Then close ST-11: delete `/home/user/wt-st11` and its branch.
+- Open for review: the placement of a wave (the spawner's formation) against EveJS dungeon placement; the anchor set against EveJS;
+  the level from difficulty (SDE above 5 is level V, decided).
 
 ## Gotchas
 

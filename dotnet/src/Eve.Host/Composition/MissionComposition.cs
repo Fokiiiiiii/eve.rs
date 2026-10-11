@@ -156,17 +156,32 @@ internal sealed partial class CharacterServicesComposition
         return record?.DeepClone() as JsonObject;
     }
 
-    private Task AgentMissions()
+    private async Task AgentMissions()
     {
         agentMissionAnnouncer = new Eve.Services.Core.AgentMissionAnnouncer(agentMissionStore, characterSessions);
         agentMissionAgentById = agentMissionAgentRows.ToDictionary(agent => agent.AgentId);
-        agentMissionStaticAuthority = EveJsMissionAuthorityDataSource.Shared;
+        // The official mission build (sde_mission). Nothing is read from the EveJS authority tables.
+        agentMissionStatic = await MissionStaticCatalog.LoadAsync(new SdeReader(source, MissionStaticCatalog.DefaultSchema));
+        if (agentMissionStatic.IsLoaded)
+        {
+            Console.Error.WriteLine($"eve-host: missions: build {agentMissionStatic.Build}, {agentMissionStatic.Missions.Count} missions, {agentMissionStatic.EpicArcs.Count} epic arcs");
+            var levelsByProvenance = string.Join(", ", agentMissionStatic.LevelTags.All.GroupBy(tag => tag.Provenance).OrderBy(group => group.Key).Select(group => $"{group.Key} {group.Count()}"));
+            Console.Error.WriteLine($"eve-host: missions: level tags {agentMissionStatic.LevelTags.Count} ({levelsByProvenance})");
+            var arcsByAvailability = string.Join(", ", agentMissionStatic.EpicArcs.GroupBy(arc => agentMissionStatic.ArcAvailability(arc.ArcId)).OrderBy(group => group.Key).Select(group => $"{group.Key} {group.Count()}"));
+            Console.Error.WriteLine($"eve-host: missions: epic arcs {agentMissionStatic.EpicArcs.Count} ({arcsByAvailability}); offered {agentMissionStatic.OfferableEpicArcs.Count}" + (agentMissionStatic.IncludesUnavailableArcs ? " (EVE_MISSION_INCLUDE_UNAVAILABLE_ARCS: every arc is offered)" : " (only in-client-build arcs; EVE_MISSION_INCLUDE_UNAVAILABLE_ARCS=1 offers the rest)"));
+            foreach (var (area, reason) in agentMissionStatic.Gaps())
+                Console.Error.WriteLine($"eve-host: missions: not answered, {area}: {reason}");
+        }
+        else
+        {
+            Console.Error.WriteLine($"eve-host: missions: {agentMissionStatic.UnavailableReason}");
+        }
         agentMissionRpcCallbacks = new AgentMissionRpcCallbacks(
             ReadAgents: _ => ValueTask.FromResult<IReadOnlyList<AgentMissionAgentData>>(agentMissionAgentRows),
-            ReadDisabledMissions: _ => ValueTask.FromResult(agentMissionStaticAuthority.DisabledMissionIds),
+            ReadDisabledMissions: _ => ValueTask.FromResult(agentMissionStatic.DisabledMissionIds),
             ReadPlausibleMissionIds: (agentId, _) => ValueTask.FromResult(
-                agentMissionStaticAuthority.PlausibleMissionIds(agentId)),
-            ReadEpicArcMessages: _ => ValueTask.FromResult<JsonObject?>(agentMissionStaticAuthority.EpicArcMessageMaps),
+                agentMissionStatic.PlausibleMissionIds(agentId)),
+            ReadEpicArcMessages: _ => ValueTask.FromResult<JsonObject?>(agentMissionStatic.EpicArcMessageMaps),
             ReadSolarSystemOfAgent: (agentId, _) => ValueTask.FromResult<long?>(
                 agentMissionAgentById.TryGetValue(agentId, out var agent) ? agent.SolarSystemId : null));
         agentMissionService = new AgentMissionService(
@@ -202,6 +217,5 @@ internal sealed partial class CharacterServicesComposition
                     (!agentLocationById.TryGetValue(agentId, out var agentStationId) || station == agentStationId);
             },
             rpcCallbacks: agentMissionRpcCallbacks);
-        return Task.CompletedTask;
     }
 }

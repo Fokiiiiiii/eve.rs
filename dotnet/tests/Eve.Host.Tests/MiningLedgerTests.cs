@@ -46,7 +46,7 @@ public sealed class MiningLedgerTests
     {
         var connectionString = Environment.GetEnvironmentVariable("EVE_PG_URL");
         Assert.False(string.IsNullOrWhiteSpace(connectionString));
-        await using var source = NpgsqlDataSource.Create(connectionString!);
+        await using var source = NpgsqlDataSource.Create(Eve.Data.PgConnection.ToConnectionString(connectionString!));
         var suffix = Guid.NewGuid().ToString("N")[..12];
         var spaceSchema = "ml_space_" + suffix;
         var eventsSchema = "ml_events_" + suffix;
@@ -104,7 +104,7 @@ public sealed class MiningLedgerTests
     {
         var connectionString = Environment.GetEnvironmentVariable("EVE_PG_URL");
         Assert.False(string.IsNullOrWhiteSpace(connectionString));
-        await using var source = NpgsqlDataSource.Create(connectionString!);
+        await using var source = NpgsqlDataSource.Create(Eve.Data.PgConnection.ToConnectionString(connectionString!));
         var spaceSchema = "ml_prune_" + Guid.NewGuid().ToString("N")[..12];
         try
         {

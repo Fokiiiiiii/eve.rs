@@ -14,21 +14,19 @@ Owner: the structures phase (plan in the scratchpad `specs/structures_phase.md`,
 - Readers: `ReadGameStoreTableAsync("structures")` returns `StructureStore.ReadLegacyTableAsync` (`Composition/GameStoreReaders.cs`).
 - Writers: the description (`PersistenceStructureDirectoryReadModel`) and the profile change (`PersistenceStructureProfilesRpcBackend`) write the store.
 
-## Next step
-1. A Host-level test through the composition: a description and a profile set through the RPC callbacks are read back after a restart; an
-   imported structure with an elapsed deadline advances once after start.
-2. ST-0 is then complete: remove this file's "next step" and close the TODO section 44 rows; start ST-1 (sim structure ball, protocol 59) from
-   `structures_phase.md` only after the ST-1 owner is free (the wire is shared).
+## Status
+ST-0 is closed: the module, the timeline, the timers, the store, the Host wiring and the readers and writers are on main, with the tests in TODO section 44.
+The open items there (the profile root write, the sim ball and the client notices) belong to other packages.
 
 ## Files
 - `dotnet/src/Eve.Structures/*`, `dotnet/tests/Eve.Structures.Tests/*`, `dotnet/EveRs.slnx`
 - `docs/reference/compat/DEVIATIONS.md` ("Structure timeline (ST-0)"), `docs/project/TODO.md` (section 44)
 
 ## Gotchas
-- `StructureStore.ToLegacy` gives the readers the legacy JSON shape of the GameStore table, so the readers switch with one delegate; the write paths
-  (`PersistenceStructureProfilesRpcBackend` `WriteTableAsync`, `PersistenceStructureDirectoryReadModel` `FlushTableAsync`) need store calls instead.
+- `StructureStore.ToLegacy` gives the readers the legacy JSON shape of the GameStore table, so the readers switch with one delegate. The
+  structure profile root (`structureProfiles`, GameStore) still has the TABLE_NOT_FOUND write gap, see TODO section 44.
 - The heavy build lock: `flock -o -w 1800 /tmp/eve-heavy.lock dotnet test ... -p:UseSharedCompilation=false` (the compiler server keeps the lock fd otherwise).
 - Postgres: `tools/dev/pg18.sh start` in `/home/user/eve.rs`; tests need `EVE_PG_URL=postgres://postgres@127.0.0.1:5432/eve`.
 - `Rig.Create` must pump the bus once after creating its subscriber, or the first events are skipped as history (fixed in `Rig.cs`).
-- `EVE_PG_URL` as the README's `postgres://` URL makes 13 Host tests fail in `NpgsqlDataSource.Create` ("Format of the initialization string"); the key=value form (`Host=127.0.0.1;Port=5432;Username=postgres;Database=eve`) passes all 163. Not changed here; see the report.
+- `EVE_PG_URL`: use the URL form (`postgres://postgres@127.0.0.1:5432/eve`). `psql` in `tools/dev/run-eve-live.sh` rejects the key=value form. The host and the tests convert the URL with `PgConnection.ToConnectionString`.
 - Serena MCP timed out this session; repository reads used python3 (allowed by AGENT_RULES.md).

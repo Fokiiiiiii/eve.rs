@@ -27,7 +27,7 @@ public sealed class SimLinkException(SimLinkError error, string message) : Excep
 /// </summary>
 public static partial class SimCodec
 {
-    public const ushort ProtocolVersion = 58;
+    public const ushort ProtocolVersion = 60;
     /// <summary>The largest frame either side accepts (1 MiB).</summary>
     public const int MaxFrame = 1 << 20;
 
@@ -691,6 +691,48 @@ public static partial class SimCodec
                         throw new SimLinkException(SimLinkError.BadValue, "bad probe");
                     }
                     message = new SimPlaceProbe(probe, system, name, type, group, position, radius, owner, corporation, alliance, ship);
+                    break;
+                }
+            case Kind.PlaceStructure:
+                {
+                    var structure = r.I64();
+                    var system = r.I32();
+                    var name = r.Text();
+                    var type = r.I32();
+                    var group = r.I32();
+                    var position = ReadVector(ref r);
+                    var radius = r.F64();
+                    var owner = r.I64();
+                    var corporation = r.I32();
+                    var alliance = r.I32();
+                    var health = ReadStructureHealth(ref r);
+                    var status = ReadStructureStatus(ref r);
+                    if (!(double.IsFinite(radius) && radius >= 0))
+                    {
+                        throw new SimLinkException(SimLinkError.BadValue, "bad structure");
+                    }
+                    message = new SimPlaceStructure(structure, system, name, type, group, position, radius, owner, corporation, alliance, health, status);
+                    break;
+                }
+            case Kind.StructureDamaged:
+                {
+                    var structure = r.I64();
+                    var depleted = r.U8();
+                    if (depleted > 3)
+                    {
+                        throw new SimLinkException(SimLinkError.BadValue, "structure layer");
+                    }
+                    message = new SimStructureDamaged(structure, depleted, ReadFlag(ref r, "structure damage"));
+                    break;
+                }
+            case Kind.RemoveStructure:
+                message = new SimRemoveStructure(r.I64());
+                break;
+            case Kind.SetStructureState:
+                {
+                    var system = r.I32();
+                    var structure = r.I64();
+                    message = new SimSetStructureState(system, structure, ReadStructureStatus(ref r));
                     break;
                 }
             case Kind.RemoveProbe:

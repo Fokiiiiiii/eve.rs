@@ -7,7 +7,7 @@ public sealed class LoginSupportRpcTests
     [Fact]
     public void Core_registers_all_client_authentication_and_support_Rpcs()
     {
-        var services = CoreServices.Create(new SubscriptionSettings(), new NoAccounts(), () => 0);
+        var services = CoreServices.Create(new NoAccounts(), () => 0);
 
         AssertRegistered("authentication", "AccruedTime", "AmUnderage", "SetLanguageID");
         AssertRegistered("infoGatheringMgr", "GetStateAndConfig", "LogInfoEventsFromClient");
@@ -134,7 +134,7 @@ public sealed class LoginSupportRpcTests
         var infoGathering = new InfoGatheringMgrService();
         var eveguard = new EveguardReportService();
         var services = CoreServices.Create(
-            new SubscriptionSettings(), new NoAccounts(), () => 0,
+            new NoAccounts(), () => 0,
             authentication: authentication,
             infoGatheringMgr: infoGathering,
             eveguardReport: eveguard);
@@ -159,6 +159,6 @@ public sealed class LoginSupportRpcTests
 
     private sealed class NoAccounts : IOmegaAccountStore
     {
-        public string? GetOmegaExpiry(long accountId) => null;
+        public string? GetOmegaExpiry(long accountId) => OmegaLicenses.DefaultOmegaExpiryText;
     }
 }

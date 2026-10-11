@@ -18,8 +18,6 @@ public sealed class StoreOffersService(
     private readonly Func<CancellationToken, ValueTask<JsonObject?>> readStoreState =
         readStoreState ?? throw new ArgumentNullException(nameof(readStoreState));
 
-private const long RealMoneyStoreId = 9;
-
     public string Name => "storeManager";
 
     public bool HasMethod(string method) => method is
@@ -63,7 +61,6 @@ private const long RealMoneyStoreId = 9;
         var offer = FindOffer(store?["offers"] as JsonArray, call.Arg(0));
         if (offer is null || !HasValidProducts(offer))
             throw new InvalidOperationException("Store offer or product data is unavailable.");
-        var skipPayment = IsPaidOffer(call.Arg(1), storeId);
 
         if (call.Session.UserId is not { } authenticatedUserId || authenticatedUserId <= 0)
             throw new UnauthorizedAccessException("An authenticated account is required to buy a store offer.");
@@ -85,7 +82,6 @@ private const long RealMoneyStoreId = 9;
         {
             AuthenticatedUserId = authenticatedUserId,
             OperationId = call.CallId,
-            SkipPayment = skipPayment,
             Products = OfferProducts(offer),
             ThirdPartyGoodsId = ToPyValue((offer["thirdpartyinfo"] as JsonObject)?["goodsid"]),
         };
@@ -94,15 +90,6 @@ private const long RealMoneyStoreId = 9;
             throw new InvalidOperationException("Store offer fulfillment was not committed.");
 
         return result;
-    }
-
-    private static bool IsPaidOffer(PyValue requestedCurrency, long storeId)
-    {
-        if (storeId != RealMoneyStoreId)
-            return false;
-
-        return JsString(requestedCurrency).Trim().ToUpperInvariant() is
-            "CNY" or "JPY" or "EUR" or "GBP" or "USD" or "RUB";
     }
 
     private static bool HasValidProducts(JsonObject offer) =>
@@ -267,9 +254,6 @@ public sealed record StoreOfferPurchaseRequest(
 
     /// <summary>Original ServiceCall.CallId; pair with AuthenticatedUserId for idempotent settlement.</summary>
     public required PyValue OperationId { get; init; }
-
-    /// <summary>When true, skip only the in-game currency debit; redeem fulfillment still must commit.</summary>
-    public bool SkipPayment { get; init; }
 
     /// <summary>The offer JSON products array, preserved with id, typeId, quantity and optional display fields.</summary>
     public PyValue Products { get; init; } = new PyList([]);

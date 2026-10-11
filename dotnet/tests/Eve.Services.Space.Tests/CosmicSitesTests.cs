@@ -75,6 +75,35 @@ public sealed class CosmicSiteRulesTests
         Assert.Equal(strength, ProbeScanMath.SignatureStrength(level));
 }
 
+/// <summary>The probe result of a cosmic signature by its level (the wiki: a probe that is weaker than the signature finds it only in part).</summary>
+public sealed class SignatureScanResultTests
+{
+    [Theory]
+    [InlineData(1, 1.0)]
+    [InlineData(3, 1.0)]
+    [InlineData(4, 42.0 / 72.0)]
+    [InlineData(5, 42.0 / 104.0)]
+    public void A_probe_of_strength_42_covers_a_signature_of_each_level_by_its_strength_over_the_level(int level, double expected) =>
+        Assert.Equal(expected, ProbeScanMath.Coverage(0, 1e6, 42, ProbeScanMath.SignatureStrength(level)), 9);
+
+    [Fact]
+    public void A_weaker_probe_finds_a_signature_in_part_and_a_probe_that_does_not_reach_it_leaves_it_alone()
+    {
+        var signature = new ScanTargetSite(77, 19728, 502, 3, [0, 0, 0], 42, true, Code: "ABC-123");
+
+        var partial = ProbeScanEngine.Compute([new ScanProbe(1, [0, 0, 0], 1e9, 21, 1e7, false)], [signature], new Random(7));
+        Assert.Empty(partial.AbsentTargets);
+        var row = Assert.Single(partial.Results);
+        Assert.False(row.Perfect);
+        Assert.InRange(row.Certainty, 0, 0.249);
+        Assert.Equal("ABC-123", row.Key);
+
+        var none = ProbeScanEngine.Compute([new ScanProbe(1, [5e9, 0, 0], 1e6, 42, 1e4, false)], [signature], new Random(7));
+        Assert.Empty(none.Results);
+        Assert.Empty(none.AbsentTargets);
+    }
+}
+
 /// <summary>A warp to a scan result: a cosmic site is named by its code (any case), a ship or other target by its number, and only in the system it was scanned in.</summary>
 public sealed class ScanResultWarpTests
 {
@@ -152,6 +181,23 @@ public sealed class CosmicSiteDirectorTests
     }
 
     [PgFact]
+    public async Task A_system_nobody_is_in_gets_no_site_and_the_first_pilot_brings_them()
+    {
+        await using var rig = await SiteRig.CreateAsync();
+        var empty = rig.NewDirector(_ => false);
+        await using (var connection = await rig.Source.OpenConnectionAsync())
+        await using (var transaction = await connection.BeginTransactionAsync())
+        {
+            await empty.FillAsync(connection, transaction, NullSystem);
+            await transaction.CommitAsync();
+        }
+        Assert.Empty(await empty.ActiveAsync(NullSystem));
+
+        await rig.FillAsync(NullSystem, rig.NewDirector(_ => true));
+        Assert.Equal(4, (await rig.Director.ActiveAsync(NullSystem)).Count);
+    }
+
+    [PgFact]
     public async Task The_probe_source_lists_each_signature_of_the_system_by_its_code_with_the_strength_of_its_level()
     {
         await using var rig = await SiteRig.CreateAsync();
@@ -165,6 +211,33 @@ public sealed class CosmicSiteDirectorTests
             Assert.True(target.IsSignature);
             Assert.Contains(target.RequiredStrength, new double[] { 42, 72, 104 });
         });
+    }
+
+    [PgFact]
+    public async Task A_site_cleared_by_its_npcs_is_replaced_at_once_elsewhere_and_a_restart_keeps_the_progress()
+    {
+        await using var rig = await SiteRig.CreateAsync();
+        await rig.FillAsync(NullSystem);
+        var before = await rig.Director.ActiveAsync(NullSystem);
+        var anomaly = before.Single(site => site.IsAnomaly);
+        var template = rig.Director.Templates.ById(anomaly.TemplateId)!;
+        var half = template.NpcCount / 2;
+
+        await rig.KillAsync(anomaly.InstanceId, NullSystem, half);
+        await rig.RestartAsync();
+        await rig.KillAsync(anomaly.InstanceId, NullSystem, template.NpcCount - half);
+        for (var i = 0; i < template.ContainerCount; i++)
+        {
+            await rig.Bus.PublishAsync(CosmicSiteDirector.ContainerClearedTopic, new { site = anomaly.InstanceId, solarSystemId = NullSystem });
+        }
+        await rig.RunDueAndDeliverAsync();
+
+        var after = await rig.Director.ActiveAsync(NullSystem);
+        Assert.DoesNotContain(after, site => site.InstanceId == anomaly.InstanceId);
+        Assert.Equal(new[] { 0, 1, 2, 3 }, after.Select(site => site.Slot).OrderBy(slot => slot).ToArray());
+        var replacement = after.Single(site => site.IsAnomaly);
+        Assert.NotEqual(anomaly.Code, replacement.Code);
+        Assert.Equal(4, after.Select(site => site.Code).Distinct().Count());
     }
 
     /// <summary>The site of the system test: a null-sec system with an anchor pair (the director takes the anchors from the static data, here from a fixture).</summary>
@@ -184,6 +257,7 @@ public sealed class CosmicSiteDirectorTests
         private SiteRig(NpgsqlDataSource source, string[] schemas)
         {
             Source = source;
+            _schemas = schemas;
             Scheduler = new DurableScheduler(source, () => _now, null, schemas[0]);
             Bus = new EventBus(source, Scheduler, null, schemas[1]);
             Content = new ContentRuntime(source, Scheduler, Bus, schemas[2]);
@@ -191,12 +265,14 @@ public sealed class CosmicSiteDirectorTests
             Director = NewDirector();
         }
 
+        private readonly string[] _schemas;
+
         public NpgsqlDataSource Source { get; }
-        public DurableScheduler Scheduler { get; }
-        public EventBus Bus { get; }
-        public ContentRuntime Content { get; }
+        public DurableScheduler Scheduler { get; private set; }
+        public EventBus Bus { get; private set; }
+        public ContentRuntime Content { get; private set; }
         public SolarSystemCatalog Systems { get; }
-        public CosmicSiteDirector Director { get; }
+        public CosmicSiteDirector Director { get; private set; }
 
         public static async Task<SiteRig> CreateAsync()
         {
@@ -215,15 +291,37 @@ public sealed class CosmicSiteDirectorTests
         }
 
         /// <summary>A director over the same stores (what a restarted host makes).</summary>
-        public CosmicSiteDirector NewDirector() => new(Source, Content, Scheduler, SiteTemplates.Load(), new FixedAnchors(), Systems);
+        public CosmicSiteDirector NewDirector(Func<int, bool>? occupied = null) => new(Source, Content, Scheduler, SiteTemplates.Load(), new FixedAnchors(), Systems, occupied: occupied);
 
         public void Advance(TimeSpan span) => _now += (long)span.TotalMilliseconds;
 
-        public async Task FillAsync(int solarSystemId)
+        /// <summary>A host restarted over the same schemas: new runtime objects, the same records.</summary>
+        public async Task RestartAsync()
+        {
+            Scheduler = new DurableScheduler(Source, () => _now, null, _schemas[0]);
+            Bus = new EventBus(Source, Scheduler, null, _schemas[1]);
+            Content = new ContentRuntime(Source, Scheduler, Bus, _schemas[2]);
+            Director = NewDirector();
+            Director.Attach(Content, Bus);
+            await Content.AttachAsync();
+            await Bus.PumpAsync();
+        }
+
+        /// <summary>A site's NPCs are killed: the kills are announced as the simulation announces them, with the site they belong to.</summary>
+        public async Task KillAsync(long site, int solarSystemId, int count)
+        {
+            for (var i = 0; i < count; i++)
+            {
+                await Bus.PublishAsync("npc.killed", new { site, solarSystemId, characterId = 1, typeId = 0 });
+            }
+            await RunDueAndDeliverAsync();
+        }
+
+        public async Task FillAsync(int solarSystemId, CosmicSiteDirector? director = null)
         {
             await using var connection = await Source.OpenConnectionAsync();
             await using var transaction = await connection.BeginTransactionAsync();
-            await Director.FillAsync(connection, transaction, solarSystemId);
+            await (director ?? Director).FillAsync(connection, transaction, solarSystemId);
             await transaction.CommitAsync();
         }
 

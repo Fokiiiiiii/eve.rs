@@ -30,14 +30,14 @@ public class ServiceAdvertisementTests
 
     private sealed class NoAccounts : IOmegaAccountStore
     {
-        public string? GetOmegaExpiry(long accountId) => null;
+        public string? GetOmegaExpiry(long accountId) => OmegaLicenses.DefaultOmegaExpiryText;
     }
 
     private static (ServiceRegistry Registry, GlobalConfigStore Config, IService MachoNet) Host()
     {
         Func<long> now = () => NowMs;
         var registry = new ServiceRegistry();
-        foreach (var service in CoreServices.Create(new SubscriptionSettings(), new NoAccounts(), now))
+        foreach (var service in CoreServices.Create(new NoAccounts(), now))
         {
             registry.Register(service);
         }

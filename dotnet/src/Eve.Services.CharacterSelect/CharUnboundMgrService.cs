@@ -37,9 +37,6 @@ public sealed partial class CharUnboundMgrService(
     /// <summary>The corporation account key every character starts with.</summary>
     private const int DefaultCorpAccountKey = 1000;
 
-    /// <summary>Until the subscription module exists everyone is subscribed far into the future, as on the reference (year 2400).</summary>
-    private const long SubscriptionEndFileTime = 157_469_184_000_000_000;
-
     /// <summary>Where account creation dates begin on the reference (2019), used when an account is unknown.</summary>
     private const long FallbackCreationFileTime = 132_000_000_000_000_000;
 
@@ -154,11 +151,19 @@ public sealed partial class CharUnboundMgrService(
     }
 
     /// <summary>
-    /// Whether the account's Omega time has lapsed (the lapsed-subscription warning of the selection screen). Every account
-    /// here has an open-ended subscription (<see cref="SubscriptionEndFileTime"/>), so no account has lapsed.
+    /// Whether the account's Omega time has lapsed: its stored end time has passed (the lapsed-subscription warning of the
+    /// selection screen). An account whose end time is in the future, or that has none, has not lapsed.
     /// </summary>
     [Method("GetCharOmegaDowngradeStatus")]
-    public PyValue GetCharOmegaDowngradeStatus(ServiceCall call) => PyBool.False;
+    public async ValueTask<PyValue> GetCharOmegaDowngradeStatus(ServiceCall call)
+    {
+        if (AccountOf(call) is not { } account)
+        {
+            return PyBool.False;
+        }
+        var info = await accounts.FindAsync(checked((uint)account), Token(call));
+        return info?.SubscriptionEndsAt is { } endsAt && endsAt <= DateTimeOffset.UtcNow ? PyBool.True : PyBool.False;
+    }
 
     [Method("GetValidRandomName")]
     public async ValueTask<PyValue> GetValidRandomName(ServiceCall call)
@@ -523,7 +528,7 @@ public sealed partial class CharUnboundMgrService(
         ("characterSlots", new PyInt(CharacterCreation.SlotsPerAccount)),
         ("userName", new PyStr(info.UserName)),
         ("creationDate", new PyLong(info.CreatedAt == default ? FallbackCreationFileTime : FileTime(info.CreatedAt))),
-        ("subscriptionEndTime", new PyLong(SubscriptionEndFileTime)),
+        ("subscriptionEndTime", info.SubscriptionEndsAt is { } endsAt ? new PyLong(FileTime(endsAt)) : None),
         ("maxCharacterSlots", new PyInt(CharacterCreation.SlotsPerAccount)));
 
     private async Task<PyValue> SelectionRow(Character c, Balance? balance, CancellationToken ct)

@@ -109,8 +109,14 @@ pub fn ensure_missions(client: &mut Client, options: &FetchOptions) -> Result<Ou
     ensure_tables_into(client, options, MISSION_SCHEMA, MISSION_TABLES)
 }
 
-/// [`ensure_loaded_into`] for `tables` only. The schema counts as holding the build only when
-/// it holds every one of those tables too, so a schema loaded with fewer is loaded again.
+/// Load `tables` of the build into `schema`, and leave nothing of the build on disk afterwards.
+///
+/// The archive is fetched (or read from `options.archive`), only the `_sde.jsonl` and the named tables are extracted to a
+/// scratch directory, those tables are loaded in one transaction, and then the scratch directory, any full extract of the
+/// build under the cache and the downloaded archive are removed, whatever the outcome. A local archive given by
+/// `options.archive` is never removed. `keep_archive` keeps the downloaded archive. The lock file keeps the hash, so a
+/// later run can fetch and verify the build again. The schema counts as holding the build only when it holds every one
+/// of `tables`; otherwise the build is fetched and loaded again.
 pub fn ensure_tables_into(
     client: &mut Client,
     options: &FetchOptions,
@@ -123,14 +129,39 @@ pub fn ensure_tables_into(
             return Ok(Outcome::AlreadyLoaded);
         }
     }
-    let extracted = fetch::ensure_extracted(options)?;
-    let manifest = SdeManifest::read(&extracted.dir)?;
+    let name = fetch::archive_name(options.build);
+    let scratch = options.cache_dir.join(format!("{name}.tables"));
+    let full_extract = options.cache_dir.join(&name);
+    let result = load_from_archive(client, options, schema, tables, &scratch);
+    discard(options, &name, &scratch, &full_extract);
+    result
+}
+
+fn load_from_archive(
+    client: &mut Client,
+    options: &FetchOptions,
+    schema: &str,
+    tables: &[&str],
+    scratch: &std::path::Path,
+) -> Result<Outcome, EnsureError> {
+    let (archive, origin) = fetch::fetch_archive(options)?;
+    fetch::extract_tables(&archive, scratch, tables)?;
+    let manifest = SdeManifest::read(scratch)?;
     if manifest.build_number != i64::try_from(options.build).ok() {
         return Err(EnsureError::BuildMismatch { wanted: options.build, found: manifest.build_number });
     }
     let report = load::load_tables_into(client, &manifest, schema, tables)?;
     let records = report.tables.iter().map(|(_, count)| count).sum();
-    Ok(Outcome::Loaded { origin: extracted.origin, tables: report.tables.len(), records })
+    Ok(Outcome::Loaded { origin, tables: report.tables.len(), records })
+}
+
+/// Remove what [`ensure_tables_into`] left on disk: the scratch extract, a full extract of the build and the cached archive.
+fn discard(options: &FetchOptions, name: &str, scratch: &std::path::Path, full_extract: &std::path::Path) {
+    let _ = std::fs::remove_dir_all(scratch);
+    let _ = std::fs::remove_dir_all(full_extract);
+    if options.archive.is_none() && !options.keep_archive {
+        let _ = std::fs::remove_file(options.cache_dir.join(format!("{name}.zip")));
+    }
 }
 
 /// [`ensure_loaded_into`] the default schema (`sde`).

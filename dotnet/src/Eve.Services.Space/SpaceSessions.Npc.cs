@@ -171,7 +171,7 @@ public sealed partial class SpaceSessions
     public NpcWrecks? NpcWrecks { get; init; }
 
     /// <summary>What the host knows of an NPC it made: what it was worth, what it was and where (the simulation tells it only that the ship is gone).</summary>
-    private sealed record NpcShip(NpcProfile Profile, int TypeId, int SolarSystemId, long BeltId = 0, long Group = 0);
+    private sealed record NpcShip(NpcProfile Profile, int TypeId, int SolarSystemId, long BeltId = 0, long Group = 0, long SiteId = 0);
 
     private readonly ConcurrentDictionary<long, NpcShip> _npcShips = new();
 
@@ -236,7 +236,7 @@ public sealed partial class SpaceSessions
             lock (_npcDestroyedGate)
             {
                 Raise(NpcDestroyed, kill, nameof(NpcDestroyed));
-                Announce("npc.killed", new { characterId = kill.FinalBlowCharacterId, typeId = kill.NpcTypeId, profile = kill.Profile.Id, solarSystemId = kill.SolarSystemId, shipId = kill.ShipId }, $"system:{kill.SolarSystemId}");
+                Announce("npc.killed", new { characterId = kill.FinalBlowCharacterId, typeId = kill.NpcTypeId, profile = kill.Profile.Id, solarSystemId = kill.SolarSystemId, shipId = kill.ShipId, site = npc.SiteId == 0 ? (long?)null : npc.SiteId }, $"system:{kill.SolarSystemId}");
             }
         }
     }
@@ -313,7 +313,7 @@ public sealed partial class SpaceSessions
     /// What a batch of NPCs comes into space around: a ship (the batch is placed from where it is), or a place of the system (a belt). A distance of 0 is the profile's own;
     /// a window of chance either way that is not given grows with the size of the batch.
     /// </summary>
-    private sealed record SpawnAnchor(int SolarSystemId, long ShipId, double[] Origin, double BaseDistance = 0, double? Window = null, long BeltId = 0, long Group = 0);
+    private sealed record SpawnAnchor(int SolarSystemId, long ShipId, double[] Origin, double BaseDistance = 0, double? Window = null, long BeltId = 0, long Group = 0, long SiteId = 0);
 
     /// <summary>The hulls of NPCs are known before they are armed, and the missiles the hulls launch with them.</summary>
     private async Task EnsureNpcTypesAsync(IEnumerable<int> shipTypes, CancellationToken cancellationToken)
@@ -336,7 +336,8 @@ public sealed partial class SpaceSessions
         SpawnAnchor anchor,
         CancellationToken cancellationToken,
         long hostileResponseThreshold = NpcHostileThreshold,
-        double aggressionRangeOverride = 0)
+        double aggressionRangeOverride = 0,
+        List<long>? shipIds = null)
     {
         var composition = new List<(string Name, int Count)>();
         var unarmed = 0;
@@ -366,7 +367,8 @@ public sealed partial class SpaceSessions
             {
                 break;
             }
-            _npcShips[shipId] = new NpcShip(profile, type.TypeId, anchor.SolarSystemId, anchor.BeltId, anchor.Group);
+            _npcShips[shipId] = new NpcShip(profile, type.TypeId, anchor.SolarSystemId, anchor.BeltId, anchor.Group, anchor.SiteId);
+            shipIds?.Add(shipId);
             unarmed += weapon is null ? 1 : 0;
             var name = profile.Name.Length > 0 ? profile.Name : profile.Id;
             var at = composition.FindIndex(part => part.Name == name);
@@ -430,8 +432,46 @@ public sealed partial class SpaceSessions
         }
     }
 
+    /// <summary>The distance and the spread of a cosmic site's wave around its place (the NPCs come into space around it, not around a ship).</summary>
+    private const double SiteNpcDistanceMeters = 5_000, SiteNpcSpreadMeters = 2_000;
+
+    /// <summary>
+    /// The NPCs of one wave of a cosmic site, made at the site's place: the wave's query rolled for <paramref name="amount"/> and placed as a batch is, around
+    /// the place. Returns how many came into space (the simulation may cut a batch short).
+    /// </summary>
+    internal async Task<int> SpawnSiteWaveAsync(int solarSystemId, long siteId, double[] position, string query, int amount, CancellationToken cancellationToken)
+    {
+        if (amount <= 0 || Npcs is not { } selector)
+        {
+            return 0;
+        }
+        var (selection, error, _) = selector.Select(query);
+        if (selection is null)
+        {
+            _log?.Invoke($"site {siteId}: the wave {query} names no NPC ({error})");
+            return 0;
+        }
+        await EnsureNpcTypesAsync(selection.ShipTypes, cancellationToken).ConfigureAwait(false);
+        var plan = selector.Roll(selection, amount, type => NpcHull.HasHitPoints(_statics.Type(type)), Random.Shared.NextDouble);
+        if (!plan.Succeeded)
+        {
+            _log?.Invoke($"site {siteId}: the wave {query} could not be rolled: {plan.Error}");
+            return 0;
+        }
+        await EnsureNpcTypesAsync(plan.Profiles.Select(profile => profile.ShipTypeId), cancellationToken).ConfigureAwait(false);
+        var anchor = new SpawnAnchor(solarSystemId, 0, position, SiteNpcDistanceMeters, SiteNpcSpreadMeters, SiteId: siteId);
+        var (composition, _) = await SpawnGroupAsync(plan.Profiles, anchor, cancellationToken).ConfigureAwait(false);
+        return composition.Sum(part => part.Count);
+    }
+
+    /// <summary>Whether the host holds an NPC of a cosmic site in the scene (the host forgets them when a scene is made again).</summary>
+    internal bool HasSiteNpcs(long siteId) => siteId != 0 && _npcShips.Values.Any(npc => npc.SiteId == siteId);
+
+    /// <summary>Whether a pilot is in the system: the simulation keeps a scene of a system only while one is.</summary>
+    public bool HasPilotsIn(int solarSystemId) => _pilots.Values.Any(pilot => pilot.SolarSystemId == solarSystemId);
+
     /// <summary>A scene has been made for a system (a ship has come into a system nobody was in): the NPCs the host has kept of it were in the one before, which is gone.</summary>
-    private void ForgetNpcsOf(int solarSystemId)
+    internal void ForgetNpcsOf(int solarSystemId)
     {
         foreach (var (id, npc) in _npcShips)
         {

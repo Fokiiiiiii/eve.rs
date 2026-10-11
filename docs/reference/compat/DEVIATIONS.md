@@ -1075,16 +1075,16 @@ Sources, in the order of the rule. SDE (sde.types and sde."typeDogma", the build
   (`objectCaching.py:222-225`). Building the remote service would answer calls nobody makes. The reference's proxy cache
   (`proxyCache: true` in `beyonceService.js:2482`, `mapService.js:755`, `corpService.js:590`, `agentMgrService.js:901`)
   would need it; a slice that returns such a reference must implement `GetCachableObject` first. Status: tolerated (A).
-- **Global-config keys: the store keys are not given yet.** The reference returns the 8 base keys and 7 keys from the New
-  Eden Store (`server/src/services/newEdenStore/storeState.js:503-527`). eve.rs gives the 8 base keys, each with a
-  consumer in the client (`globalConfig/getFunctions.py`, `ui/services/evePhotosvc.py`, `raffles/common/util.py`,
-  `expertSystems/feature_flag.py`). Of the 7, `fake_vgs_enabled` has a consumer (`eve/client/script/environment/vgsService.py:51,101`),
-  but the reference's value is derived from the store's state (`storeState.js:517`: enabled and has legacy offers), and
-  eve.rs has no store (S3, see "Store entries in the global config" above). Absent, the client reads its default (`False`,
-  `globalConfig/const.py:102`), which is the only value eve.rs can state. The other six have getters
-  (`globalConfig/getFunctions.py:233-258`) that no V24.01 caller uses, and their fast-checkout values come from the
-  FastCheckoutService (`fastcheckout/client/fastCheckoutClientService.py:76`), which eve.rs does not have. Status: deferred
-  to S3.
+- **Global-config store keys: given from the store catalog (done).** The seven keys of EVE.js `storeState.js:503-527` are in the base entries (`GlobalConfig.Build`), with values from `Data/new-eden-store.v1.json`: `fake_vgs_enabled` 1 (store enabled and has offers), `fake_fast_checkout_enabled` 1, `fake_fast_checkout_plex_offers`, `fake_fast_checkout_response` "OK", `fake_china_funnel_enabled` 0, `fake_buy_plex_offer_url` "", `use_shell_execute_to_buy_plex_offer` 1. Their consumers: `globalConfig/getFunctions.py:233-258`, `vgsService.py:51,101`, `fastCheckoutClientService.py:76`. The flags are 0/1 integers because `GetGlobalConfigBooleanValue` reads `bool(int(value))` (`getFunctions.py`). Tests: `NewEdenStoreHostTests.The_client_global_config_carries_the_store_keys...`.
+- **New Eden Store: real-money offers are granted free (owner policy).** Every offer purchasable with real money is free and really granted. The in-game ISK market is not touched. What this means in eve.rs:
+  - **Charge.** A purchase charges nothing, in PLX, AUR, or a fiat currency (CNY, JPY, EUR, GBP, USD, RUB). The listed price is display data. There is no balance gate. EVE.js charges PLEX for PLX offers (`storeFulfillment.js` `purchasePlexVaultOffer`); eve.rs does not.
+  - **Grants.** PLEX packs are credited to the recipient's vault. Items are created in the recipient's hangar at the station or structure the character is docked at, else its home station (EVE.js `storeFulfillment.js:490-528` grants items into the hangar; eve.rs no longer uses redeem tokens for purchases). Bundles grant each part. A quantity of 1 to 100 per purchase is a limit of this server.
+  - **Idempotency.** The receipt is keyed `account:operationId` (the call id), written in the same transaction as the grant. A repeated call answers True and grants nothing. FastCheckout keys its receipts `account:fast-checkout:<call id>`. The receipt row grows with every purchase (a known cost; EVE.js caps its log).
+  - **Notifications.** After commit, each new item is sent to the recipient's live session as `OnItemChange` (CrateService.cs:192 pattern; the client handles it at `eve/client/script/ui/shared/container.py:123`). The PLEX balance change reaches the client through the message bus, which eve.rs does not serve (TODO).
+  - **Refused, not granted.** Omega (`omega_30_days`, `cash_omega_*`) and MCT (`mct_slot_30_days`, `cash_mct_*`) are refused before any charge or receipt: Omega waits for the subscription end time of the Omega track, MCT for a training-slot state. Bundles with skill points (`cash_*_bundle`, `cash_level_*_mastery_pack`, `cash_omega_30_days`) are left out of the catalog (no skill-point grant yet).
+  - **Catalog.** The seed is EVE.js `tools/DatabaseCreator/staticTables/newEdenStore/data.json` (sha256 in the catalog meta), the owner-approved data source. Product type ids were checked against the pinned SDE build 3396210 (zip sha256 matches `sde/lock.json`): Omega 29143 "Clone Grade Omega", MCT 63188 "Multiple Pilot Training", PLEX 44992 "PLEX". The real-money cash offers have no price in the seed, so they carry no `offerPricings`.
+  - **FastCheckout.** `BuyOffer` does not check the account password (EVE.js does not either; the session is already authenticated). `ClearFastCheckoutCacheForUser` answers True because the server keeps no per-user cache.
+  - **Status.** Tests: `NewEdenStoreCatalogTests`, `StoreOffersServiceTests`, `FastCheckoutServiceTests`, `NewEdenStoreHostTests` (PostgreSQL). The live headless walk does not yet issue store calls.
 - **`machoNet.SetGlobalConfigValue` is saved, and its write is observed.** The reference keeps a runtime override in
   memory (`server/src/services/machoNet/globalConfig.js:99-117`, and `machoNetService.js:357-400`), so a restart drops it.
   eve.rs saves it in PostgreSQL (schema `zsystem`, table `global_config`, as the reference's own `zsystem.GlobalConfig`)
@@ -1253,7 +1253,7 @@ Sources. The wiki: "Pochven" (https://wiki.eveuniversity.org/Pochven, fetched 20
 - **`multiLoginBlocker.Login` checks the computer.** The reference answers True unless `EVE_ENFORCE_ALPHA_MULTILOGIN` is set
   (`multiLoginBlockerService.js:87-90`, off by default). eve.rs enforces the Alpha rule without a switch: a session is refused when
   another account on the same computer hash is logged in and either account is Alpha. Reason: the clone grades here are real
-  (`SubscriptionMgrService.ResolveCloneGrade` reads the Omega licence), so the rule can apply, and the brief requires real behaviour
+  (`SubscriptionMgrService` reads each account's stored Omega end time), so the rule can apply, and the brief requires real behaviour
   where the constant True was. The computer hash exists only on the SSO path (see "Single sign-on login"), so the client calls
   `Login` only after SSO has been built. Status: decided (slice C); tests `MultiLoginBlockerTests`.
 - **`ToggleValidation` is per session and role-gated.** Same rule as the reference (`charService.js:1883-1902`): the content,
@@ -1261,8 +1261,25 @@ Sources. The wiki: "Pochven" (https://wiki.eveuniversity.org/Pochven, fetched 20
   (the reference does not read it either). Replaces a constant False, which a non-elevated client showed as "Validation Off" while
   validation was on. The recording was made from a GM session, whose first toggle gives False; the live walk expects True for its
   ordinary account, and `ValidationAndOmegaTests` pins both roles. Status: decided (slice C).
-- **`GetCharOmegaDowngradeStatus` answers False.** It was missing, so each character-screen open logged a traceback. Every
-  account's subscription ends at the open-ended time (`SubscriptionEndFileTime`), so no account has lapsed. Status: done.
+- **`GetCharOmegaDowngradeStatus` answers from the stored end time.** True only when the account's stored subscription end time has
+  passed (`CharUnboundMgrService.GetCharOmegaDowngradeStatus`); otherwise False. It was missing before, so each character-screen open logged a
+  traceback. Status: done (slice D; `ValidationAndOmegaTests`).
+- **Omega state is the account's stored subscription end time (slice D, 2026-10-11).** Policy: every real-money item is free, so every
+  account is Omega until 2100-01-01T00:00:00Z. Storage: `identity.accounts.subscription_end_at` (migration `0002_subscription.sql`, NOT
+  NULL, default 2100). A new account is written with 2100 at creation (`PgAccountDirectory`, `InMemoryAccountDirectory`,
+  `SubscriptionPolicy`). The migration back-fills only rows with no end time and never shortens a stored one. Every answer reads this one
+  value through `OmegaLicenses` (one instance per host, `AccountOmegaStore`): `subscriptionMgr` (GetCloneGrade, GetSubscriptionStatus,
+  GetSubscriptionInfo, GetSubscriptionTime), `loginRewardFacilities.get_my_clone_grade`, `multiLoginBlocker`, the injector and skill
+  rules (`isAlphaClone`, `HasOmega`), the selection account row (`subscriptionEndTime`) and the lapsed-Omega check.
+  Removed: the `EVE_CLONE_GRADE` override, the `omegaLicenseEnabled` switch, and the constant floor at 2100 that the reference applies
+  (`subscriptionMgrService.js:61-68`, `storeState.js:612-622`). The floor would stop an operator's earlier end time from lapsing an
+  account. An account with no stored end time (unknown account) is Alpha.
+  Transitions: `SubscriptionTransitions.SetSubscriptionEnd` writes the end time, then announces the new grade to the account's open
+  sessions with `OnSubscriptionChangedServer(grade)` and `OnSubscriptionTimeUpdateServer(endOrNone)`. A lapse that happens while a
+  session is logged in is announced on that session's next subscription query (the session keeps the grade last told in the
+  `subscriptionCloneGrade` attribute, which the client never reads). It is not pushed on a timer; see TODO section 41.
+  Tests: `OmegaStateTests`, `SubscriptionTransitionsTests`, `ValidationAndOmegaTests`, `Wave1GoldenTests` (the recorded setups are read
+  as stored state), and the live walk `test_a_new_account_is_omega_until_2100_on_every_answer`.
 - **`GetCharacterLockType` answers None and `GetCohortsForUser` answers an empty list.** Kept: eve.rs has no transfer, sale,
   lock or cohort state, and the reference answers the same constants (`charService.js:1458-1461`, `:1914-1916`). Status: kept.
 - **`charMgr.GetSettingsInfo` is the reference's blob, which the client cannot verify here.** The blob is byte-identical to the
@@ -1459,6 +1476,46 @@ was not built, because the client reads its flags elsewhere (Q1 below).
   reference constant (`MARKET_TRANSACTION_TAX_DEFAULT_PERCENT = 8.0`) with 7.5 in memory before it compiles `marketRules.js`, and records every
   other value from the reference; the fixture's `source` field says so. Before the change `RulesTests` failed on the 7.5 fixture (the 8% values),
   and it passes after the change. Status: decided.
+
+## Market slice M3: expiry as a durable job (2026-10-10)
+
+Sources: the parent's decision Q7 (expire at issued + duration plus a small grace; refund at that moment; notify with reason 'Expiry');
+EVE.js `marketProxyService.js:248-253` (a one-second grace, a one-second sweep throttle, the durable job kinds) and `2170-2350` (a job per
+order at its expiry instant); CCP-BR (the order duration; "Modifying an order will reset its duration back to the original"); EVE University
+"Trading" ("If the order is taken down or expires the fee is not paid back"); the client's `marketsvc.py:113-124` (the Expiry reason) and
+`buyMultiFromBase.py:559`. The forum statement that expiry waits for daily downtime is not official and is not adopted (Q7).
+
+- **One job per resting order.** Kind `market.order.expire`, key `order:{id}`, due at issued + duration + 1 s. It is scheduled in the transaction that
+  places the order (immediate orders rest nowhere, so they get no job), replaced in the transaction that modifies it (the duration restarts, Q4)
+  and cancelled in the transaction that closes it (a fill, a cancel or an expiry). The job's handler re-reads the order: a closed order is left
+  alone; a duration that a modification has moved is waited for again. Code: `Eve.Market/MarketTrading.cs` (`ScheduleExpiryAsync`, `CancelExpiryAsync`, `ExpireOrderAsync`) keeps the job through the domain
+  interface `IMarketExpiryJobs` (`Eve.Market/MarketExpiry.cs` holds the grace and the tries); `Eve.Services.Market/DurableExpiryJobs.cs` is the
+  scheduler adapter and `Eve.Services.Market/MarketExpiryWorker.cs` runs the jobs. The domain module does not reference the scheduler (the
+  architecture test `ArchitectureTests` keeps domain modules on domain modules only).
+- **Safety sweep.** A recurring job `market.expiry.sweep` runs every 60 s and closes every due order. A read of the market (escrow, order history,
+  placement, modification) runs the same sweep at most once a second (EVE.js 1 s throttle). The sweep applies the same grace as the job, so the two
+  never disagree on when an order expires.
+- **One notice per expiry.** The job and the sweep can reach the same order at once (the scheduler runs jobs in parallel). The close is keyed
+  (`expiry:{id}:{issued}`), so the second call replays the stored receipt; an expiry replay returns no receipt, so only the call that performed the
+  expiry announces it. Test: `ExpiryTests.A_restart_gives_the_open_order...` and the other expiry tests, which failed before this rule (two notices).
+- **Restart.** `MarketExpiryWorker.StartAsync` registers the two kinds and gives every open resting order its job again (an existing job is kept). An
+  overdue job runs at once. Test: `ExpiryTests.A_restart_gives_the_open_order_its_job_back...`, `An_overdue_order_expires_at_once_after_a_restart`.
+- **Refund and items, once.** A buy returns its escrow; a sell returns its stack to its origin; the broker fee is not returned (EVE University
+  "Trading"). A refund over the wallet cap stays pending in escrow (`MoneyLimitException`): the job fails and is tried again with the scheduler's
+  back-off (up to 100 tries), and the sweep retries it too. Tests: `ExpiryTests` (buy, sell, lost job, cancel, modification, throttle).
+- **Notifications.** `OnOwnOrdersChanged` with reason 'Expiry' goes to the owner. For a corporation order it goes to every member who has the
+  corporation's market rights at the station: Accountant or Trader, the client's own test (`buyThisTypeWindow.py:324`,
+  `marketOrdersWnd.py:40-41`; `CorporationStore.MarketRightsHoldersAsync`). The notice is sent after the close commits, from
+  `MarketNotifier`, which is also the RPCs' notifier. Test: `ExpiryTests.A_corporate_order_that_expires...` (the founder and a second member
+  with the Trader role are notified; a member without a market role and a character outside the corporation are not).
+- **Host.** The host composition (`CorporationComposition.MarketSeed`) starts the expiry; the test `MarketHostTests.The_host_gives_each_resting...`
+  checks that the job exists with its due time and survives a host restart.
+- **Known gap (not closed in M3).** The notices are not durable: a process that stops between the committed close and the send loses that one
+  notice. The balances, the items and the order state are correct after the restart, and the client refreshes its own lists on its next read.
+  A durable notice outbox is not in M3.
+- **Test changes for the grace.** `TradingTests` (the over-cap refund that stays pending) and `ModificationRulesTests` (the restarted
+  duration) check the expiry one grace after the expiry instant; the expected values are unchanged.
+- Status: done (M3), tested with a fake clock (TradeRig.Now); the live headless walk cannot wait a day, so the expiry is not walked live.
 
 ## Agents slice AG-1: LP wallet (LPSvc), the access rule and the bound agentMgr (2026-10-10)
 
@@ -1671,4 +1728,289 @@ Sources: the wiki's probe-scanning and site rules first; EveJS `services/dungeon
 - **Respawn.** Wiki: a site respawns at once, somewhere else, after it is cleared, and not after downtime. Here the content subscriber replaces a site on `content.{anomaly,signature}.{completed,expired}` and a sweep every five minutes fills any empty slot. Downtime is not modelled. Status: decided, downtime open.
 - **Codes and seeds.** A signature's code is three letters, a dash and three digits (`ABC-123`, the client's listing form, not verified in the client). Its place and code come from an FNV-1a hash of the system, the slot, the family and the instance it replaces, so the same history gives the same place; the reference's random source is not used. A code that a system already has is re-seeded. Status: decided.
 - **Signatures and anomalies.** Only signatures are scan targets (`ContentCosmicSites`); an anomaly comes from the system scanner's overlay and is not a probe target, as the client expects. Scan rows carry the code as their id and the dungeon fields; a signature's item id is none (EveJS `buildScanResultEntry`, the item id left to the site source).
-- **Not yet built.** The NPCs of a site are not spawned, so no `npc.killed` carries the site and no site is cleared by its NPCs; containers are not placed, so `site.container.cleared` is never published. Until these land a site ends by expiry only.
+- **Not yet built.** Containers of a data or relic site are not placed (their clear comes with the analyzer and hacking, ST-10). NPC waves are in the section below.
+
+## Mission static data: the official build, the EveJS source removed, the gaps (Mi1, 2026-10-11)
+
+Sources. CCP's static-data host: the schema change log (`schema-changelog.yaml`), the change files `changes/3402511.jsonl`
+and `changes/3405148.jsonl`, and the builds 3402511, 3405148 and 3586130 (the archives, inspected for this record).
+EVE University wiki, Agent page (last modified 28 April 2024) and Epic arc page (last modified 14 June 2026). The
+client's use of mission data: eve-logic `evemissions/client/data.py`, `eve/client/script/ui/shared/epicArcs/epicArcController.py:67-69`,
+`eve/client/script/ui/station/agents/agents.py:356-363`, `eve/client/script/ui/shared/neocom/journal.py:686-701`.
+
+- **The mission build is newer than the client build.** The client build is 3396210 (`sde/lock.json` `pinned`). Mission
+  data is pinned to build 3405148 (`sde/lock.json` `missionPinned`, record `builds."3405148"`), the first build whose
+  change file adds `missions` and `epicArcs` (`changes/3405148.jsonl`, `fileAdded: true`, `lastBuildNumber` 3402511).
+  Build 3402511 does not have the tables (its archive has the 60 tables of 3396210 and no others). An earlier survey said
+  3402511; that was wrong. Evidence that the IDs agree with the client's tables as far as they can be checked here: the
+  mission IDs 17179 to 17190 (the twelve EveJS ingests) and epic arc 132 are present in 3405148 with the names EveJS
+  used; the latest build 3586130 has the same 2,892 mission IDs and the same 21 arcs, with 2,845 mission rows identical
+  and 47 differing only in their `messages`. Not checked: the client's `missions.fsdbinary` and `epicArcs.fsdbinary`
+  (no client files here), so whether every mission of the client exists in 3405148 is open. Status: decided; the
+  deviation stands until a client check is done.
+- **Only two tables of the build are loaded**, `missions` and `epicArcs`, into schema `sde_mission`
+  (`eve-sde ensure --missions --pg ...`, `eve_sde::ensure::MISSION_TABLES`). The other 76 tables of 3405148 are not
+  loaded: the server reads the rest of the static data from the pinned build. Status: decided; tests
+  `crates/eve-sde/tests/missions.rs`.
+- **Epic arc count: 21 official, nine on the wiki, seven in the design file.** The official `epicArcs` table has 21 rows;
+  the wiki's Epic arc page (revision of 14 June 2026) describes nine; the design file (`ess-insurgency-agents-missions-design.md`)
+  says seven. The data is implemented from the official table, so 21 arcs are offered by the catalog. Not reconciled:
+  the official table may hold arcs the wiki does not list (for example arcs that are not epic arcs in the game).
+  Status: open, a question for the owner. Test: `MissionStaticCatalogTests`, the real-data test in `missions.rs`.
+- **The EveJS authority source is removed from the Host.** `EVEJS_GAMESTORE_DATA_DIR`, `EVEJS_SERVER_ROOT`,
+  `EVEJS_PRODUCTION_MISSION_POLICY_PATH` and the Windows launcher discovery are no longer read.
+  `EveJsMissionAuthorityDataSource` and `AgentMissionStaticAuthority` are deleted; `MissionStaticCatalog` replaces them
+  (`dotnet/src/Eve.Services.Core/MissionStaticCatalog.cs`). Before, a missing EveJS directory returned empty lists
+  without a message (`AgentMissionService.cs:180-182`, `216-218`); now the Host prints the catalog state at startup.
+  Status: decided.
+- **Plausible missions: only epic arc agents.** The build links an agent to a mission only through `epicArcs`
+  (59 agents). `GetPlausibleMissionIDs` answers the arc steps of that agent, and an empty list for every other agent.
+  The official data has no mission-to-agent pool for basic, storyline, research, factional-warfare, heraldry, career,
+  tutorial or event agents, and no level to choose among missions (reason text: `MissionDataGaps.BasicPools`). The EveJS
+  routing rules used `missionKind`, `missionFlavor`, `missionLevel` and template fields that the build does not have,
+  so they are not reproduced. Status: open, the reason is printed at startup; mission offers (Mi2) need the pools.
+- **Disabled missions: none.** `GetDisabledMissions` answers an empty list. The reference's one entry (mission 4743, a
+  template of its own content policy) is not carried: it is not a CCP fact. Status: decided (`MissionDataGaps.DisabledMissions`).
+- **Epic arc journal text: no IDs.** The reference answers `GetMessagesForEpicArcMissions` with localization message
+  IDs under `messages.epicMission.journalText.*`. The official build has no such keys and no message IDs (its texts are
+  English and other languages under CCP's own keys). Each message type maps to an empty object, so the client shows no
+  chapter titles on the epic arc screen. Status: open (`MissionDataGaps.EpicJournalText`). Before this change the server
+  gave the same empty answer on any install without the EveJS directory.
+- **Levels: 1,274 basic missions tagged, with provenance, committed by the owner's exception.** The official build has no
+  mission level. The repository owner's level tags (EveJS work of 2026-09-26) are committed in
+  `dotnet/src/Eve.Services.Core/Data/mission-level-tags.v1.json` (embedded resource): 1,274 rows, one per official mission
+  ID (every ID exists in build 3405148, table `missions`). Provenance classes: `client` 1,019 (client dungeon difficulty 790,
+  client dungeon name 229), `tq-log` 13 (the golden security missions, from captured TQ logs), `wiki` 191 (EVE University wiki
+  tables, transcribed by the owner), `rule` 51 (owner rules and defaults; 23 cargo-volume estimates, 22 related-chain, 4 default
+  level 1). Confidence: high 1,223, medium 24, low 27. Each row has exactly four fields: `missionID`, `level`, `provenance`,
+  `confidence`. Missions without a row answer `unknown` with the reason; they are never given a default level.
+  `MissionStaticCatalog.Level` returns the provenance with every level. Status: decided (exception below).
+- **Exception to the rule against committing client-derived and captured-log data (owner-approved, 2026-10-11).** The
+  repository owner approved committing the `client` and `tq-log` tag values above, and nothing else from the owner's
+  data. The rule this overrides: README.md:9-10 and :115-118, CLAUDE.md:14, AGENTS.md:18 (no CCP client data, no captured
+  logs, no guessed data in the repository). The approval is limited to: the official mission ID, the level (an integer 1 to 5),
+  the provenance class (`client`, `tq-log`, `wiki`, `rule`), and the owner's confidence flag. Not in the file: names, message
+  text, rewards, dungeon contents, rule IDs, source URLs or any other CCP string. Reason for the exception: the exporter that
+  generated the client-derived values (`client-mission-export.json`, the client's embedded-Python export) is not in any
+  repository available here, so the values cannot be regenerated from source; this file is the only record of them. The
+  loader refuses any row or top-level field outside the allowed set, and a test reads the committed file and fails if it ever
+  carries another field. The values come from the owner's EveJS table (`missionAuthority/data.json`, `missionLevel`,
+  `missionLevelSource`, `missionLevelConfidence`), extracted once with `python3 -I`; no EveJS script was run.
+  Status: decided by the owner; the policy statements above are unchanged for every other data set.
+- **The rule and default rows are the owner's guesses in part.** 23 cargo-volume estimates, 4 default level-1 values and 22
+  related-chain values are the owner's own heuristics (the owner's document, section 8.2, calls them heuristic; AGENTS.md:18
+  forbids guessed data). They are committed with their confidence flag so that the read side can show them as low or medium.
+  Status: open, the owner decides whether to keep them (TODO section 43a).
+- **Optional owner file.** `EVE_MISSION_LEVEL_TAGS` names a path to a further tag file (same schema; provenance `owner`). A
+  mission already tagged in the committed file is refused (no silent overwrite). Status: decided.
+- **Kill mission dungeon content: not answered.** A `killMission.dungeonID` refers to a client dungeon template. Only 3 of
+  the 1,460 distinct IDs in the build are rows of the SDE `dungeons` table (checked on 3405148 and on the pinned 3396210),
+  so the rooms and spawns cannot be taken from `dungeons`. `MissionStaticCatalog` returns the ID; `MissionDataGaps.DungeonContent`
+  gives the reason. Status: open, belongs to the dungeon owner.
+- **LP and standings: not answered by the mission data.** Mission LP rewards and LP store standing requirements are not in
+  the build (the official `missions` rows carry ISK and item rewards and standings in `extraStandings`). LP store offers
+  come from the agents track (its ESI source). Status: open (`MissionDataGaps.Standings`).
+- **Reward terms are official.** `missionRewards` (reward, bonus reward, bonus interval) is read for the 940 missions that
+  have it. The reward base per level is not in the build. Status: decided.
+- **Agent mission kind and importance: an eve.rs rule table** (`dotnet/src/Eve.Services.Core/AgentMissionKindRules.cs`).
+  The SDE has neither field. The rule keys on the agent type name (`agentTypes`) and the division name
+  (`npcCorporationDivisions`), both of build 3396210, and on the wiki's Agent page for the division kinds: Security
+  encounter, Distribution courier, Mining mining. Research agents (type 4) are research; epic arc agents (type 10) are
+  `epicArc`; factional-warfare agents (type 9) are encounter (wiki); heraldry agents (type 13) are `heraldry`. Event, aura,
+  CONCORD and career agents, non-agents, and R&D (division 18: the wiki gives it only a trade and a courier) get an empty
+  kind. Importance is true for the storyline and epic arc types (6, 7, 10). The EveJS rule is not copied: EveJS also maps
+  divisions 25, 27 and 37 (career and InterBus) to kinds that the wiki does not state; this rule leaves them empty.
+  Status: decided; the agent counts per kind are in the test notes below.
+- **The V24.01 client does not read the agent row's `missionKind` or `importantMission`** (checked: no reader in eve-logic;
+  the journal reads `importantMission` from the mission record). The values are sent because the rowset has the columns;
+  they have no client effect in V24.01. `missionTypeLabel` stays empty: the client reads a label from the mission record,
+  and the build has no label key for an agent. Status: decided.
+- **Counts that this rule gives on build 3396210** (the 10,966 agents with an agent object in `npcCharacters`, recounted for this record): basic (type 2) 8,775 agents: courier 3,729, encounter 3,671, mining 1,375; tutorial (3) 14: courier 12, encounter 2; storyline (6, 7) 658 and important: courier 275, encounter 279, mining 104; epic arc (10) 52 and important; research (4) 244; factional warfare (9) 260 encounter; heraldry (13) 12; empty kind: event (8) 696, CONCORD (5) 143, career (12) 100, aura (11) 12.
+
+- **Mission-to-dungeon mapping: the official `dungeonID` is kept, its content is not answered.** `killMission.dungeonID` is a client
+  dungeon ID (the key of the owner's `dungeonAuthority` client table). 1,460 distinct IDs; 3 of them are rows of the SDE `dungeons`
+  table (13341, 13342, 14100). `MissionStaticCatalog.KillDungeon` returns the official ID with `OfficialContent: false` and the
+  reason. No mapping to another dungeon is invented. Status: decided; belongs to the dungeon owner.
+- **Pool selection and dungeon-template selection are not ported (Mi2).** They are the owner's rules in EveJS. The list for the
+  hand-off is in TODO section 43.
+
+## Epic arc availability and the second SDE's discard (2026-10-11)
+
+- **The twelve Pilot Certification Course arcs are offered (owner-confirmed).** The official build 3405148 has 21 epic arcs; the server targets client build
+  3396210, whose data has no mission tables. The availability of each arc is an eve.rs table,
+  `dotnet/src/Eve.Services.Core/Data/epic-arc-availability.v1.json` (embedded resource): all 21 are `in-client-build`, none
+  `newer-than-client`, none `unknown`. Nine have evidence from the V24.01 client's own epic arc constants (eve-logic
+  `eve/client/script/ui/shared/epicArcs/epicArcConst.py:7-15`, which list nine arc IDs, the same nine the EVE University
+  Epic arc page describes). The twelve others (IDs 64 and 67 to 77, "Pilot Certification Course - <school>") are not in those
+  constants; their agents are aura agents (agent type 11, division 22) in the pinned build's `npcCharacters`, not epic arc agents
+  (type 10). The owner confirms that these arcs exist in the game, so each row records owner-confirmed evidence and the server
+  offers them like the in-client arcs. The owner's client export also holds them, but that export's client build is not recorded,
+  so it is not evidence of the build. The pinned build 3396210 has no mission table, so it gives no direct evidence for any arc.
+  Status: decided; the table is the eve.rs record.
+- **Per mission.** A step of an epic arc takes its arc's availability, so all 275 steps are offered (227 in the nine arcs from the
+  client constants, 48 in the twelve owner-confirmed arcs). The other 2,617 missions are not epic arc steps; this table has no
+  evidence for them, so they answer `unknown` with the reason. Heraldry (78) and factional warfare (160) missions are in that group.
+- **Default offer.** `MissionStaticCatalog.PlausibleMissionIds` and `OfferableEpicArcs` offer the `in-client-build` arcs, which is all
+  21 today. The explicit switch `EVE_MISSION_INCLUDE_UNAVAILABLE_ARCS=1` (or `true`) still offers every arc, including any future
+  `newer-than-client` row. The startup log prints the counts. Status: decided; tests `EpicArcAvailabilityTests`.
+- **The second SDE is discarded after loading** (owner's instruction, 2026-10-11). `eve-sde ensure --missions --pg` fetches the
+  archive, extracts only `_sde.jsonl`, `missions.jsonl` and `epicArcs.jsonl` to a scratch directory, loads those two tables into
+  `sde_mission`, then removes the scratch directory, any full extract of the build under the cache, and the downloaded
+  archive (a local archive named with `--archive` is never removed). The lock keeps the SHA-256, so a later run can verify the
+  build again. The loader needs `--pg`; without it `--missions` is an error, so no full copy is left behind. Tests:
+  `crates/eve-sde/tests/missions.rs` (a fake archive: only the named tables loaded; nothing left under the cache; a local
+  archive kept). Status: decided.
+- **Joins.** The server reads no table of build 3405148 other than `missions` and `epicArcs`. The agent and corporation
+  references in an arc (agent IDs) are checked against the pinned build at read time; no reference table is loaded from the
+  second build. Status: decided.
+
+## Dungeon NPC waves (A-W1, 2026-10-11)
+
+- Breeding Facility (dungeon 2158), wave 1: the owner data has it on load; the rule file starts it after 240 seconds, from the wiki
+  (https://wiki.eveuniversity.org/Breeding_Facility). The wave compositions are the owner data's (a deadspace pool), not the wiki's (transports
+  and battleships): only the trigger is taken from the wiki. Source of the owner data: family-derived (scratchpad elysiansde.md, section 2).
+- Timer waves with no delay in the owner data are refused, not guessed; a rule must give the delay.
+- Waves whose trigger the runtime does not implement (room, gate, hack, entity kill, object, visible countdown) refuse the dungeon. Counted over
+  the 1,460 kill-mission dungeons of the owner data (a re-implementation of the planner's checks, not a run of it): 1,404 plan; 56 do not
+  (on_room_active 6, timer without delay 3, no waves 38, numbering 2, no template 7). The first two kinds are the A-W2 and later cut.
+- A dungeon's lifetime is 30 minutes: a host choice, not an official value.
+- The pilot-leaving check is a 10-second sweep over the pilots in space, because the space sessions announce no event for a pilot leaving a
+  system; a dungeon ends at most 10 seconds after the pilot leaves.
+- NPCs taken out of space (abandoned or ended dungeons) are destroyed by the simulation, which explodes them and leaves an empty wreck; no
+  npc.killed is announced for them, so they are not counted as kills or paid bounties.
+- A wave's spawn that the simulation shortens fails the dungeon with the count; the NPCs made are taken out.
+## Structure services fuel (ST-7, increment a, 2026-10-11)
+
+Sources: SDE build 3396210 (`typeDogma` attributes 2108-2110 of the service modules; [S]); EveJS v0.12.9 `server/src/services/structure/structureServiceModules.js`
+(`consumeStructureServiceModuleOnlineFuel` 449, `consumeStructureServiceFuelQuantity` 380, `consumeStructureServiceModuleCycleFuel` 652),
+`structureConstants.js` (`STRUCTURE_SERVICE_ID` 105-138, `FLEX_SERVICE_IDS_BY_TYPE_ID` 508-512), `fuelBayInventory.js` (`STRUCTURE_FUEL_BAY_FLAG` 172) [J];
+EVE University wiki (three days of fuel to online, [W] per `structures_phase.md`).
+
+- Decided (D-4, SDE first): the hourly burn is attribute 2109 and the online charge is 2110 of the service module. For every service module in the
+  build 2110 = 72 x 2109, which is the wiki's three days. Module types: 35899 Standup Reprocessing Facility I (service 4), 35912 Standup Cynosural Field
+  Generator I (service 16, built into the Pharolux Cyno Beacon in EveJS), 35914 Standup Cynosural System Jammer I (service 17). [S][J]
+- Fuel is the structure's fuel bay: fuel-block items (group 1136) at the structure in flag 172, taken oldest stack first inside the transaction. [J][S]
+- Onlining consumes the online charge (EveJS does the same). Already online costs nothing. [J]
+- The hourly charge is paid at each full UTC hour for the services online then (EveJS burns per cycle; the hour boundary is the wiki's "beginning of each
+  hour"). A short hour takes every service offline and the structure into Low Power (`StructureTimers.FuelOutAsync`). [J][W]
+- Not applied: the rig and skill reductions of the online charge (EveJS `getEffectiveStructureServiceModuleOnlineFuelNeed`). Status: open, with the rigs.
+- Not sent: the owner's client does not get an `OnItemChange` for an hourly burn (no session at burn time). Status: open.
+- Spec correction: the ST-7 plan named the Standup Cynosural System Jammer I as group 2016. In the build, 35914 is group 1324 (Standup) and group 2016 is
+  the Tenebrex Cyno Jammer (37534, a sovereignty structure with the jammer service built in), group 2017 is the Pharolux Cyno Beacon (35840). The jammer
+  module's onlining needs the sovereignty hub's Cynosural Suppression upgrade (SDE description of 35914). [S]
+- No EveJS service id maps the Structure Compression Plant (35900, fuel 5/h, online 360). EveJS gates the structure compression by the Reprocessing
+  service (4) online (`miningIndustry.js` 281-288). Decided for increment (b): the same gate. [J]
+
+## Structure ball (ST-1)
+
+- **A structure is a body of the system, not a new entity (structures phase D-3).** `BodyKind::Structure` joins the system's bodies, so the ballpark (`SetState`), targeting, docking and the slim item already key on it. The alternative, an NPC-like entity, would duplicate those paths. Sources: the repository's `crates/eve-space/src/world.rs` and `payload.rs` (bodies are the balls of a system); `structures_phase.md` D-3 (body with health recommended).
+- **Ball kind: `Kind::Station`.** The structure ball is a rigid station ball. Unverified on the real client: the client's ball kind for an Upwell structure has not been observed (MITM). Revisit when the structure is seen in the graphical client.
+- **The host owns the state.** The sim stores the slim state the host sends and never advances a timer; the timers are the Eve.Structures machine's (ST-0). The sim-side damage cap and the reinforcement are ST-1 increments (b) and (d).
+
+## Structure compression (ST-7, increment b, 2026-10-11)
+
+Sources: EveJS `services/mining/structureCompressionMgrService.js` (the handlers), `mining/miningIndustry.js` (`resolveReprocessingContext` 262-304,
+`itemIsInStructureCompressionSource` 150, `compressInventoryItem` 628, `getStructureGasDecompressionEfficiency` 685, `decompressGasInStructure` 701,
+`getGasDecompressionCharacterEfficiency` 230); eve-logic `itemcompression/client/itemCompression.py` (`CompressItemInStructure` shows the six values and
+`ItemCompression_CompressedItemInStructure`), `gasDecompression.py` (`DecompressGasInStructure`, `GetMyGasDecompressionEfficiency` = a pair); SDE build
+3396210 ([S]: `compressibleTypes`, typeList 336, typeDogma 3260-3262, skill 62452, group "Harvestable Cloud").
+
+- Gates as EveJS: docked at a structure (`structureid`), the structure's Reprocessing service (4) online; the item is the pilot's in the structure's hangar
+  (flag 4) or in the ship it flies when that ship is at the structure; compression takes the list 336 (asteroid ores and ice); decompression takes a
+  compressed gas whose source is in a group named gas or cloud. [J][S]
+- Not built: EveJS also takes an item from a corporation office the pilot may take from (`itemIsInDockableCorpOfficeWithTakeAccess`); that path waits for the
+  corporation offices at structures (ST-5 deliveries). Status: open.
+- Named refusals (`CustomNotify`): EveJS answers None (the client then shows nothing). The client reports success on any reply, so each refusal names its
+  cause: not docked, reprocessing offline, not yours or not usable, not in the hangar or ship at the structure, not compressible here, not compressed gas.
+  Status: decided (visible refusal instead of a silent None).
+- Output item: a new item id, as the ship's compression makes it (`CharacterShips.CompressAsync`). EveJS rebuilds the same item id in place. The reply
+  carries the six values and the pilot is told the removed and the new stack with `OnItemChange` (`ShipNotifications.SendItemChange`); the client reads the
+  values, not the id. Status: decided.
+- Decompression output is the floor of the quantity times the total efficiency (capped at one) with EveJS's rounding (`floorAfterNormalizing`: the product is
+  rounded to nine decimals first, so 1000 x (0.80 + 0.03) is 830). A stack that gives nothing is removed and the reply carries output id 0 and quantity 0
+  (EveJS sends None for the id; the client tests the quantity). Status: decided.
+- Efficiency, SDE first: the structure's share is the Reprocessing facility's base (`gasDecompressionBaseEfficiency`, attribute 3262 on module 35899 =
+  0.8) plus the hull's bonus (`structureGasDecompressionEfficiencyBonus`, 3261: Athanor 0.04, Tatara 0.10, others none). EveJS uses a flat 0.79
+  (`DEFAULT_STRUCTURE_GAS_DECOMPRESSION_EFFICIENCY`, miningIndustry.js:86) for every structure. Conflict recorded: the SDE's values are taken. Status:
+  decided, the EveJS value is the fallback only where the SDE has none (not used).
+- The pilot's share: one percent per level of Gas Decompression Efficiency (skill 62452, attribute 3260 = 1.0 per level, divided by 100 as EveJS does:
+  `getGasDecompressionCharacterEfficiency`). [S][J]
+- `GetMyGasDecompressionEfficiency`: zero and zero when the gate is not open (EveJS answers 0 and 0 when the context fails).
+
+## Cyno jammer (ST-7, increment c, E-03 and E-15, 2026-10-11)
+
+Sources: EveJS `services/sovereignty/sovSuppressionState.js` 177-277 (`broadcastCynoJammerChangesForStructureRows`, `getCynoJammerActivationTimeMs`,
+`getCynoJammerOnlineSimTime`: no jammer = null, running = 0, pending = the FILETIME of the warm-up's end), `sovNotifications.js` 267-289
+(`OnCynoJammerChanged` with the args `[solarSystemID, onlineSimTime]`, addressed by `solarsystemid2`, to the sessions in the system); SDE 35914 description
+("a 5 minute warmup period", "may only be onlined in a system that contains a sovereignty hub with the Cynosural Suppression upgrade") [S].
+
+- Decided: the jammer is the Standup Cynosural System Jammer I service (17) online in a structure of the system. The state is the earliest online time among
+  them plus 5 minutes (`StructureJammer.WarmupMs`), the answer is the FILETIME of that end, 0 once it passed, null with no jammer online. EveJS reads the
+  Tenebrex structure's operational state instead; the Tenebrex structure cannot be anchored until ST-2, so the service is the source. [J][S]
+- Recorded: `structure_services.online_since_ms` (migration 0002); 0 for a service imported as online (its warm-up is long over). A service that goes
+  offline holds 0. [J]
+- Recorded: a structure in Low Power (fuel out) takes its services offline, so the jammer goes with it (`StructureTimers.FuelOutAsync`).
+- Not built: the sovereignty upgrade check (EveJS `isCynoSuppressionUpgradeOnline`; SDE: the module needs the hub's Cynosural Suppression upgrade). The
+  jammer runs in any system where the service is online until the sov read model answers the upgrade. Status: open (gap, named in the TODO).
+- E-15 `OnCynoJammerChanged` is sent when the service changes (online or offline, also a fuel-out). EveJS also re-sends when a structure row changes
+  its jammer state; the warm-up's end is not announced by either (the client asks `GetCynoJammerState`). Status: decided, same as EveJS.
+- The announcement is a subscriber to `structure.service_changed` (published in the change's transaction), so it is sent at least once: a replay sends the
+  same state twice (idempotent for the client). [J]
+- The refusal of a standard cynosural field in a jammed system (`CYNO_JAMMED`, `SpaceSessions.Modules.cs`, text in `ModuleRefusals.cs`): host side, since the
+  simulation has no jammer role; checked after the fleet rule and before the high-security rule, so both are reachable in the rig. The covert field (28650) is
+  immune (SDE 35914 description). The industrial field (52696) is treated as standard (the description says "standard" and names only the covert one as
+  immune); unverified against the client. The refusal's text is ours: EveJS's wording for this refusal was not located. Status: decided, the text open.
+
+## Structure cyno beacon (ST-7, increment d, 2026-10-11)
+
+Sources: EveJS `services/structure/structureCynoBeaconMgrService.js` (`resolveUsableBeacon` 417-455: the notices and their order; `Handle_CmdJumpToStructureBeacon`
+676, args `[structureID, solarSystemID]`); SDE 35840 Pharolux Cyno Beacon (group 2017; its built-in Standup Cynosural Field Generator I, service 16). [J][S]
+
+- Decided: the beacon is the Pharolux (type 35840) with the Cyno Beacon service (16) online; the spec's "group 2017 Upwell Cyno Beacon" names the group, the
+  checks use the type. [S]
+- Checks in the reference order: the beacon exists and is a Pharolux; the requested system (if any) is its system; the pilot is in space; it is not the
+  pilot's system; the service is online; the system is not jammed (E-03); the access check (`characterHasStructureService`, the structure's profile). Each
+  refusal is a named notice with EveJS's text. [J]
+- Not built: the access check and the jump drive's fuel and range, and the jump itself. A beacon that passes every built check is refused by name ("not wired
+  in the simulation yet"), not answered empty. The field is not placed in the simulation (a sim cynosural beacon at the structure's position with the
+  structure's id), so the jump has no target. Status: open; the named refusal is the state until then.
+## Cosmic site NPC waves (ST-11, increment 5)
+
+Sources: the wiki (a site's NPCs are its waves; a site is cleared by them); EveJS `services/dungeon/dungeonUniverseSiteService.js` (an encounter is spawned once per instance, `spawnedAtMs`, and its alive entities are kept as `remainingEntityIDs` and rematerialized when the scene is made again: `rematerializeStoredDungeonEncounterEntities`).
+
+- **Where the NPCs live.** In the scene of their system, which the simulation keeps only while a pilot is in the system. No new simulation message: the host spawns them with the existing `SimSpawn` and tags the host's record with the site (`NpcShip.SiteId`). A protocol bump is not needed. Status: decided.
+- **Which wave is alive.** The active objective of the site (`wave1` to `waveN`, in order), with the NPCs left to kill: its target less its progress, kept by the content runtime. A wave is made when a pilot is in the system and no NPC of the site is in the scene; a second pilot entering a system with the NPCs alive makes none. Status: decided.
+- **Re-entry and restart.** A scene made again (everybody left, then a pilot came back) brings back exactly the kills still to come. EveJS keeps the alive entities themselves (`remainingEntityIDs`) and places the same entities again; eve.rs keeps the count (the progress the content runtime holds) and spawns new NPCs at the site, with profiles rolled again from the wave's query. The kill count is the same; the identities and positions of the survivors are not. Status: decided (identities not kept; EveJS difference).
+- **Downtime.** The wiki: sites do not respawn during downtime. Implemented: a system nobody is in gets no site and no wave (the director's occupancy rule, `CosmicSiteDirector(occupied:)`), so a restart does not refill the slots of a system; the first pilot who enters brings them back. EveJS has no separate downtime rule for dungeons that this inspection found. Status: decided (wiki).
+- **Placement.** A wave comes into space around the site with the spawner's batch formation: 5 km, plus or minus 2 km, plus 1.25 km for each NPC of the batch (at most 12 km more). The reference's placement of dungeon NPCs is not compared yet. Status: open.
+- **Kill announcement.** `npc.killed` carries `site` (the instance id) for an NPC of a site, and `site` is null for any other NPC, so the existing consumers are not changed. Status: decided.
+- **Level above 5.** An SDE difficulty above 5 is level V (strength 104). Status: decided (coordinator).
+- **Waves without NPCs.** A data or relic site may start with its containers only (its first objective is not a wave): no NPC is made for it, and its completion waits for the containers. Status: decided.
+
+
+- **Per-second limit (ST-1 b).** A layer takes at most its SDE per-second limit (2034-2036) in one second: a hit is cut to what the layer it starts in has left that second, by scaling the whole hit. A hit that spills into the next layer is not cut there (a stated approximation; the layers are linear within one layer). A destroyed structure takes nothing more; the host decides what its destruction means.
+- **Repair pause is reported, not applied (ST-1 b).** A layer that takes its repair-pause damage (SDE 3354-3356) in one second is reported in `StructureDamaged`; the simulation does not pause anything. The host pauses the repair through its state machine (ST-0).
+- **Protocol split.** The ST-1 wire takes 59 (placement, removal and state, pushed with increment a) and 60 (the health in the placement and `StructureDamaged`), because 59 had shipped without health. The packages' single +1 is therefore two numbers.
+
+## Hacking minigame (ST-10)
+
+Engine: `dotnet/src/Eve.Hacking` (pure rules, no Host). Sources: EVE University wiki Hacking page (rules), client `eve-logic` `hackingcommon/hackingConstants.py` and `eve/client/script/ui/hacking/hackingUIConst.py` (wire ids, grid), EveJS `services/exploration/hackingMgrService.js` (event flow, attempt lifecycle).
+
+- **Board size.** Wiki silent. Taken from the client grid: 10 columns by 9 rows, odd rows shifted (`GRID_MAX_COLUMNS`/`GRID_MAX_ROWS`, `NEIGHBOR_OFFSETS1/2`). Start cell (0,4). Status: decided.
+- **Rule of 8.** Core at grid distance >= 8 from the start (BFS over the grid); random fallback when no cell qualifies (wiki). Status: decided.
+- **Rule of Six.** Read as: a complete node (six neighbours) holds no defensive subsystem unless the core is adjacent to it. Status: decided (wiki wording, our reading).
+- **Content counts per tier.** Wiki silent. Defensive subsystems = 2 + tier, utility elements 3, data caches 2. Status: decided.
+- **Tiers.** Difficulty 1 Very Easy, 2 Easy, 3 Medium, 4+ Hard (Hardest is structure-only, not generated). Natural defence and utility sets follow the wiki table; Anti-Virus and the Very Easy/Easy utility set come from data caches only (wiki note). Status: decided.
+- **Core coherence and strength.** 10 x difficulty for both (EveJS `buildSyntheticBoard`, the only source). Core subtype 11. Status: taken from EveJS.
+- **Defensive subsystem stats.** Wiki gives images only. Firewall 60/10, Anti-Virus 20/40, Restoration Node 30/10, Virus Suppressor 30/10 (coherence/strength). Status: decided, MITM to verify.
+- **Virus Suppressor timing.** Wiki: "reduces your Virus Strength by 15, but not below 10". Applied while a revealed suppressor is alive, cumulative, floor 10 and never above the base strength; event `EVENT_HONEYPOT_STRENGTH` on change. Status: decided.
+- **Restoration Node.** +20 coherence each turn end to a random alive defensive subsystem (may be itself, never the core). Status: wiki.
+- **Turn.** Every reveal click is one turn; utility use on the virus or a target is not a turn. Status: decided.
+- **Utility elements.** Self repair +5 to +10 per turn for 3 turns; polymorphic shield absorbs the next 2 retaliations; kernel rot halves the target's coherence once; secondary vector -20 per turn for 3 turns. Targets are core or defensive subsystems. Status: wiki for effects, decided for durations shape.
+- **Targets on hidden tiles.** A utility target on a hidden tile is accepted only when the tile is a core or a defensive subsystem; otherwise it is acknowledged and nothing happens. This reveals the type to the player through the outcome. Status: known gap.
+- **Hidden tiles on the wire.** EveJS sends the type of every tile, hidden ones too. eve.rs sends `type -1` and zero numbers until a tile is revealed. Status: decided (not leaking).
+- **Inventory element keys.** EveJS puts `index` in each inventory element; the client builds `UtilityElementData(index=i, **element)`, so the key would collide. eve.rs sends `id`, `subtype`, `info` only. Status: client-verified shape (eve-logic `hackingUtilityElementData.py`, `hackingUISvc.py`).
+- **Distance indicator.** Empty node shows steps to the nearest core, utility element or data cache, capped at 5 (wiki). Status: wiki.
+- **Start of an attempt.** EveJS starts the attempt when the analyzer activation is accepted (`moduleOperation.js` 3228). The ST-10 plan said "on cycle completion"; eve.rs follows EveJS (the working reference). Status: decided, not yet wired.
+- **Not yet covered.** The Host service, the analyzer body, container placement and the loot on success (D-5) are the next increments. Status: open.
+

@@ -18,7 +18,7 @@ use crate::death::Credit;
 
 use crate::deployable::{BombKind, Spec};
 
-use crate::health::{Condition, Layer, Resonances, Vitals};
+use crate::health::{Condition, Damage, Layer, Resonances, StructureLimits, Vitals};
 
 use crate::missiles::Missile;
 
@@ -35,8 +35,9 @@ use crate::ship::{ModuleSpec, NpcCombat, NpcIdentity, NpcWeapon, ShipSpec, ShipS
 use crate::weapons::{Aoe, Arc, Charge, Spool, Turret};
 
 use crate::wreck::WreckKind;
+use crate::world::StructureStatus;
 
-pub const PROTOCOL_VERSION: u16 = 58;
+pub const PROTOCOL_VERSION: u16 = 60;
 /// The message kinds.
 pub mod kind;
 
@@ -179,6 +180,26 @@ pub struct DirectionalTarget {
     pub radius: f64,
     pub cloaked: bool,
     pub warping: bool,
+}
+
+/// An Upwell structure the host puts in space (protocol 59): its ball, its owner and the slim fields it has now. It stays until the host takes it out.
+#[derive(Debug, Clone, PartialEq)]
+pub struct StructurePlacement {
+    pub structure_id: i64,
+    pub solar_system_id: i32,
+    pub name: String,
+    pub type_id: i32,
+    pub group_id: i32,
+    pub position: [f64; 3],
+    pub radius: f64,
+    pub owner_id: i64,
+    pub corporation_id: i32,
+    pub alliance_id: i32,
+    /// The structure's health as the host has it: its layers, the shield's recharge, the limits a layer takes in a second and the repair pauses.
+    pub vitals: crate::health::Vitals,
+    pub shield_recharge_ms: f64,
+    pub limits: crate::health::StructureLimits,
+    pub status: crate::world::StructureStatus,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -546,6 +567,17 @@ pub enum Message {
         deployable_id: i64,
     },
     /// The host puts a scanner probe in space where it was launched (protocol 45).
+    PlaceStructure(Box<StructurePlacement>),
+    RemoveStructure {
+        structure_id: i64,
+    },
+    SetStructureState {
+        solar_system_id: i32,
+        structure_id: i64,
+        status: crate::world::StructureStatus,
+    },
+    /// A structure's hit was told to the host (simulation to host, protocol 60): the layer it emptied, if any, and whether a layer's repair is paused.
+    StructureDamaged { structure_id: i64, depleted: Option<Layer>, over_threshold: bool },
     PlaceProbe(Box<ProbePlacement>),
     /// The host takes a scanner probe out of space (protocol 45); a deployable that is not a probe, or not in space, is left alone.
     RemoveProbe {
@@ -788,6 +820,10 @@ impl Message {
             Self::FighterSize { .. } => kind::FIGHTER_SIZE,
             Self::Deployed(_) => kind::DEPLOYED,
             Self::RemoveDeployed { .. } => kind::REMOVE_DEPLOYED,
+            Self::PlaceStructure(_) => kind::PLACE_STRUCTURE,
+            Self::RemoveStructure { .. } => kind::REMOVE_STRUCTURE,
+            Self::SetStructureState { .. } => kind::SET_STRUCTURE_STATE,
+            Self::StructureDamaged { .. } => kind::STRUCTURE_DAMAGED,
             Self::PlaceProbe(_) => kind::PLACE_PROBE,
             Self::RemoveProbe { .. } => kind::REMOVE_PROBE,
             Self::PlaceDisruptor(_) => kind::PLACE_DISRUPTOR,

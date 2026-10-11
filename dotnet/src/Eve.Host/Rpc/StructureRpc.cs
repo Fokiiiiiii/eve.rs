@@ -38,19 +38,21 @@ namespace Eve.Host;
 internal sealed partial class CharacterServicesComposition
 {
     /// <summary>Structures: directory, moon extractions, travel, control, asset safety, settings and skyhooks.</summary>
+    private async Task<JsonObject?> ReadMoonExtractionsAsync() => await moonExtractionStore.ReadLegacyAsync();
+
     private IReadOnlyList<IService> StructureRpc() =>
     [
             new Eve.Services.Core.StructureDirectoryService(structureDirectoryReadModel),
             // Mutation needs structure-control/drill authority and the space timer/settlement backend.
             new Eve.Services.Core.MoonExtractionsRpcService(
-                readState: () => mailCache.Read("moonExtractions", "/").Data as JsonObject ?? new JsonObject(),
+                readState: ReadMoonExtractionsAsync,
                 mutationBackend: null),
             new Eve.Services.Space.StructureTravelRpcService(
                 "structureJumpBridgeMgr",
                 jumpBridgeDestination: structureDirectoryReadModel.GetJbStructureDestinationAsync,
                 linkedStructure: structureDirectoryReadModel.GetLinkedStructureAsync),
             new Eve.Services.Core.StructureRpcService("structureCargoDelivery"),
-            new Eve.Services.Core.StructureRpcService("structureCompressionMgr"),
+            new Eve.Services.Core.StructureRpcService("structureCompressionMgr", structureRpcCallbacks),
             new Eve.Services.Core.StructureRpcService("structureControl"),
             new Eve.Services.Core.StructureRpcService("structureDeliveries"),
             new Eve.Services.Core.StructureRpcService("structureDeployment"),

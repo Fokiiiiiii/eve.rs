@@ -148,6 +148,9 @@ impl Sim {
                 Message::Docked { session_id: session, station_id, condition }
             }
             Out::DeployedLit { placement, .. } => Message::Deployed(placement),
+            Out::StructureDamaged { structure_id, depleted, over_threshold } => {
+                Message::StructureDamaged { structure_id, depleted, over_threshold }
+            }
             Out::Arrived { session, belt_id, position } => Message::Arrived {
                 session_id: session,
                 belt_id,
@@ -385,6 +388,9 @@ impl Sim {
             | Message::RemoveWreck { .. }
             | Message::Deployed(..)
             | Message::RemoveDeployed { .. }
+            | Message::PlaceStructure(..)
+            | Message::RemoveStructure { .. }
+            | Message::SetStructureState { .. }
             | Message::PlaceProbe(..)
             | Message::RemoveProbe { .. }
             | Message::PlaceDisruptor(..)
@@ -935,6 +941,25 @@ impl Sim {
                 let placement = *placement;
                 match self.scenes.get_mut(&placement.solar_system_id) {
                     Some(scene) => scene.restore_field(placement, now),
+                    None => Vec::new(),
+                }
+            }
+            Message::PlaceStructure(structure) => {
+                let structure = *structure;
+                match self.scenes.get_mut(&structure.solar_system_id) {
+                    Some(scene) => scene.place_structure(structure, now),
+                    None => Vec::new(),
+                }
+            }
+            Message::RemoveStructure { structure_id } => self
+                .scenes
+                .values_mut()
+                .find(|scene| scene.structure_index(structure_id).is_some())
+                .map(|scene| scene.remove_structure(structure_id, now))
+                .unwrap_or_default(),
+            Message::SetStructureState { solar_system_id, structure_id, status } => {
+                match self.scenes.get_mut(&solar_system_id) {
+                    Some(scene) => scene.set_structure_state(structure_id, status, now),
                     None => Vec::new(),
                 }
             }

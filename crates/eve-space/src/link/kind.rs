@@ -75,6 +75,14 @@ pub const SET_DISRUPTOR_ACTIVE: u8 = 69;
 pub const PLACE_INHIBITOR: u8 = 70;
 /// The host puts a Mobile Cynosural Beacon in space (protocol 58); the placement is a disruptor's (range 0).
 pub const PLACE_CYNO_BEACON: u8 = 73;
+/// The host puts an Upwell structure in space, as a body of the system with its slim state (protocol 59).
+pub const PLACE_STRUCTURE: u8 = 74;
+/// The host takes a structure out of space (it was unanchored or destroyed; protocol 59).
+pub const REMOVE_STRUCTURE: u8 = 75;
+/// The host changes a structure's slim state (state, timer, upkeep, unanchoring, repairing; protocol 59).
+pub const SET_STRUCTURE_STATE: u8 = 76;
+/// The simulation says a hit emptied a layer of a structure or paused its repair (simulation to host, protocol 60).
+pub const STRUCTURE_DAMAGED: u8 = 77;
 /// The scan targets of a system, answered to the host's scan target query (command 27, protocol 52).
 pub const SCAN_TARGETS: u8 = 71;
 /// The things a directional scan can see in a cone of space, answered to command 28 (protocol 54).

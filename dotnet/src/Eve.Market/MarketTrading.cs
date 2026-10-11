@@ -30,7 +30,7 @@ public sealed record MarketReceipt(string OperationKey,long? OrderId,long Filled
 
 /// <summary>Orders, receipts, item custody and money share one transaction. No Node daemon or recovery Saga is required.</summary>
 public sealed class MarketTrading(NpgsqlDataSource source,MarketStore store,PgCharacterStore characters,CorporationStore corporations,
-    PgSkillStore skills,PgItemStore items,WalletTransactions wallets,StationCatalog stations,MarketTopology topology,Func<long> now)
+    PgSkillStore skills,PgItemStore items,WalletTransactions wallets,StationCatalog stations,MarketTopology topology,Func<long> now,IMarketExpiryJobs expiryJobs)
 {
     private string Schema => store.Schema;
     private const long EscrowBase = 9200000000;
@@ -274,6 +274,7 @@ public sealed class MarketTrading(NpgsqlDataSource source,MarketStore store,PgCh
                     actor.Id,account.OwnerId,account.AccountKey,request.Buying ? value : 0m,
                     stock?.OwnerId ?? actor.Id,stock?.LocationId ?? station.Id,stock?.Flag ?? ItemFlags.Hangar))
                     opened = (long)(await insert.ExecuteScalarAsync(token))!;
+                await ScheduleExpiryAsync(c,tx,opened.Value,time,request.Duration,token);
                 if (!request.Buying)
                 {
                     var rest = await items.LockAndGetAsync(c,tx,stock!.Id,token) ?? throw new MarketError("MARKET_ITEM_CUSTODY_INVALID");
@@ -323,8 +324,8 @@ public sealed class MarketTrading(NpgsqlDataSource source,MarketStore store,PgCh
             r.IsDBNull(21) ? 0 : r.GetInt64(21),r.IsDBNull(22) ? 4 : r.GetInt32(22)),r.GetInt32(23));
     }
 
-    public Task<MarketReceipt> CancelAsync(long actorId,long orderId,string operationKey,CancellationToken token = default) =>
-        CloseAsync(actorId,orderId,operationKey,false,token);
+    public async Task<MarketReceipt> CancelAsync(long actorId,long orderId,string operationKey,CancellationToken token = default) =>
+        (await CloseAsync(actorId,orderId,operationKey,false,token))!;
 
 public Task<MarketReceipt> ModifyAsync(long actorId,long orderId,decimal newPrice,string operationKey,CancellationToken token = default,
         decimal? expectedPrice = null,long? expectedIssuedMs = null)
@@ -546,6 +547,7 @@ public Task<MarketReceipt> ModifyAsync(long actorId,long orderId,decimal newPric
                 WHERE id=$1
                 """,orderId,newPrice,remaining,finalEscrow,time))
                 await update.ExecuteNonQueryAsync(token);
+            await ScheduleExpiryAsync(c,tx,orderId,time,order.Row.Duration,token);
             var changedOrder=new MarketOwnedOrder(changedRow,order.Actor,order.Wallet.OwnerId,order.Wallet.AccountKey,
                 finalEscrow,state,time);
             var reason=filled==0 ? "Modified" : remaining==0 ? "Filled" : "PartialFill";
@@ -596,7 +598,7 @@ public Task<MarketReceipt> ModifyAsync(long actorId,long orderId,decimal newPric
         return orders;
     }
 
-    private Task<MarketReceipt> CloseAsync(long actorId,long orderId,string operationKey,bool expired,CancellationToken token) =>
+    private Task<MarketReceipt?> CloseAsync(long actorId,long orderId,string operationKey,bool expired,CancellationToken token) =>
         Write(async (c,tx) =>
         {
             ArgumentException.ThrowIfNullOrWhiteSpace(operationKey);
@@ -609,7 +611,8 @@ public Task<MarketReceipt> ModifyAsync(long actorId,long orderId,decimal newPric
                 if (await r.ReadAsync(token))
                 {
                     if (JsonSerializer.Deserialize<ControlTerms>(r.GetString(0)) != terms) throw new MarketError("MARKET_OPERATION_CONFLICT");
-                    return JsonSerializer.Deserialize<MarketReceipt>(r.GetString(1))!;
+                    // an expiry is announced by the call that performed it; a replay has nothing new to announce (the sweep and the job may both reach it)
+                    return expired ? null : JsonSerializer.Deserialize<MarketReceipt>(r.GetString(1))!;
                 }
             }
             var actor = !expired ? await characters.LockAndGetAsync(c,tx,actorId,token) ?? throw new MarketError("CHARACTER_NOT_FOUND") : null;
@@ -647,10 +650,11 @@ public Task<MarketReceipt> ModifyAsync(long actorId,long orderId,decimal newPric
             await using (var close=Command(c,tx,$"UPDATE {Schema}.orders SET state=$2,escrow_isk=0,escrow_item_id=NULL,last_state_change_ms=$3 WHERE id=$1",
                 orderId,expired ? 2 : 3,nowMs))
                 await close.ExecuteNonQueryAsync(token);
+            await CancelExpiryAsync(c,tx,orderId,token);
             var state=expired ? 2 : 3;
             var reason=expired ? "Expired" : "Cancelled";
             var closedOrder=new MarketOwnedOrder(order.Row,order.Actor,order.Wallet.OwnerId,order.Wallet.AccountKey,0m,state,nowMs);
-            var recipients=expired ? new[] { order.Actor } : new[] { order.Actor,actorId }.Distinct().ToArray();
+            var recipients=expired ? await ExpiryRecipientsAsync(c,tx,order,station.Id,token) : new[] { order.Actor,actorId }.Distinct().ToArray();
             var result=new MarketReceipt(operationKey,orderId,0,0m,movedIds,[order.Wallet])
             {
                 ChangedOrders=[new(closedOrder,reason,recipients)],
@@ -663,11 +667,62 @@ public Task<MarketReceipt> ModifyAsync(long actorId,long orderId,decimal newPric
             return result;
         },token);
 
+    // ---- expiry jobs (M3; market-decisions Q7) ---------------------------------------------------------------------------------------------------
+
+    /// <summary>Schedules the expiry job of a resting order in the transaction that places or moves it; an immediate order rests nowhere.</summary>
+    private async Task ScheduleExpiryAsync(NpgsqlConnection c,NpgsqlTransaction tx,long orderId,long issuedMs,int durationDays,CancellationToken token)
+    {
+        if (durationDays <= 0) return;
+        await expiryJobs.ScheduleAsync(c,tx,orderId,issuedMs+durationDays*86400000L+MarketExpiry.GraceMs,token);
+    }
+
+    /// <summary>Cancels the expiry job of an order that is closed in the same transaction.</summary>
+    private async Task CancelExpiryAsync(NpgsqlConnection c,NpgsqlTransaction tx,long orderId,CancellationToken token)
+    {
+        await expiryJobs.CancelAsync(c,tx,orderId,token);
+    }
+
+    /// <summary>The issue time, expiry instant and state (0 active) of an order, or null when there is no such order.</summary>
+    public async Task<(long IssuedMs,long ExpiresMs,int State)?> ExpiryStateAsync(long orderId,CancellationToken token = default)
+    {
+        await using var command=source.CreateCommand($"SELECT issued_ms,issued_ms+duration_days::bigint*86400000,state FROM {Schema}.orders WHERE id=$1");
+        command.Parameters.Add(new NpgsqlParameter { Value=orderId });
+        await using var r=await command.ExecuteReaderAsync(token);
+        if (!await r.ReadAsync(token)) return null;
+        return (r.GetInt64(0),r.GetInt64(1),Convert.ToInt32(r.GetValue(2)));
+    }
+
+    /// <summary>Expires one resting order whose duration has run out (operation key expiry:{id}:{issued}); null when it is no longer active.</summary>
+    public async Task<MarketReceipt?> ExpireOrderAsync(long orderId,CancellationToken token = default)
+    {
+        var state=await ExpiryStateAsync(orderId,token) ?? throw new MarketError("MARKET_ORDER_NOT_FOUND");
+        try { return await CloseAsync(0,orderId,$"expiry:{orderId}:{state.IssuedMs}",true,token); }
+        catch (MarketError error) when (error.Code is "MARKET_ORDER_NOT_ACTIVE" or "MARKET_ORDER_NOT_EXPIRED") { return null; }
+    }
+
+    /// <summary>The resting orders still open (not NPC) with their expiry instants: a restart gives each one its job.</summary>
+    public async Task<IReadOnlyList<(long OrderId,long ExpiresMs)>> OpenRestingExpiriesAsync(CancellationToken token = default)
+    {
+        var result=new List<(long OrderId,long ExpiresMs)>();
+        await using var command=source.CreateCommand($"SELECT id,issued_ms+duration_days::bigint*86400000 FROM {Schema}.orders WHERE NOT is_npc AND state=0 AND duration_days>0 ORDER BY id");
+        await using var r=await command.ExecuteReaderAsync(token);
+        while (await r.ReadAsync(token)) result.Add((r.GetInt64(0),r.GetInt64(1)));
+        return result;
+    }
+
+    /// <summary>Who hears that an order expired: its owner and, for a corporation order, every member with the corporation's market rights at the station.</summary>
+    private async Task<long[]> ExpiryRecipientsAsync(NpgsqlConnection c,NpgsqlTransaction tx,HeldOrder order,long stationId,CancellationToken token)
+    {
+        if (order.Wallet.OwnerId == order.Actor) return [order.Actor];
+        var holders=await corporations.MarketRightsHoldersAsync(c,tx,order.Wallet.OwnerId,stationId,token);
+        return [.. holders.Append(order.Actor).Distinct()];
+    }
+
     /// <summary>An over-cap refund stays in escrow and can be retried after space is available; no credit is clipped.</summary>
     public async Task<IReadOnlyList<MarketReceipt>> ExpireDueAsync(CancellationToken token = default)
     {
         var ids=new List<(long Id,long Issued)>();
-        await using (var command=source.CreateCommand($"SELECT id,issued_ms FROM {Schema}.orders WHERE NOT is_npc AND state=0 AND issued_ms+duration_days::bigint*86400000 <= $1 ORDER BY id"))
+        await using (var command=source.CreateCommand($"SELECT id,issued_ms FROM {Schema}.orders WHERE NOT is_npc AND state=0 AND issued_ms+duration_days::bigint*86400000+{MarketExpiry.GraceMs} <= $1 ORDER BY id"))
         {
             command.Parameters.Add(new NpgsqlParameter { Value=now() });
             await using var r=await command.ExecuteReaderAsync(token);
@@ -676,7 +731,7 @@ public Task<MarketReceipt> ModifyAsync(long actorId,long orderId,decimal newPric
         var receipts=new List<MarketReceipt>();
         foreach (var (id,issued) in ids)
         {
-            try { receipts.Add(await CloseAsync(0,id,$"expiry:{id}:{issued}",true,token)); }
+            try { if (await CloseAsync(0,id,$"expiry:{id}:{issued}",true,token) is { } closed) receipts.Add(closed); }
             catch (MoneyLimitException) { } // The intact escrow remains the durable pending refund.
             catch (MarketError error) when (error.Code is "MARKET_ORDER_NOT_ACTIVE" or "MARKET_ORDER_NOT_EXPIRED") { }
         }

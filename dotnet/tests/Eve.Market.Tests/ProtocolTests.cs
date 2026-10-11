@@ -47,7 +47,7 @@ public class ProtocolTests
         var characterSessions=new CharacterSessions();
         characterSessions.Enter(actor,session);
         var catalog=await MarketCatalog.LoadAsync(new Eve.Sde.SdeReader(r.Source));
-        var proxy=new MarketProxyService(r.Book,r.Trading,r.Topology,r.Characters,r.Corporations,r.Wallets,catalog,() => r.Now,characterSessions);
+        var proxy=new MarketProxyService(r.Book,r.Trading,r.Topology,r.Characters,r.Corporations,r.Wallets,catalog,() => r.Now,r.Expiry,characterSessions);
         var events=new List<Eve.Wallet.WalletBalanceChange>();
         r.Wallets.BalanceCommitted+=events.Add;
         var groups=Fields(proxy.GetMarketGroups(Call(session,"GetMarketGroups",0)));
@@ -121,7 +121,7 @@ public class ProtocolTests
         var characterSessions=new CharacterSessions();
         characterSessions.Enter(actor,session);
         var catalog=await MarketCatalog.LoadAsync(new Eve.Sde.SdeReader(r.Source));
-        var proxy=new MarketProxyService(r.Book,r.Trading,r.Topology,r.Characters,r.Corporations,r.Wallets,catalog,() => r.Now,characterSessions);
+        var proxy=new MarketProxyService(r.Book,r.Trading,r.Topology,r.Characters,r.Corporations,r.Wallets,catalog,() => r.Now,r.Expiry,characterSessions);
         const int plex=44992;
         var location=MarketLocation.From(r.Station);
         await r.Book.SeedNpcAsync([new("ask",plex,false,1000,3,32767,location,r.Now)]);
@@ -218,7 +218,7 @@ public class ProtocolTests
         sessions.Enter(firstActor,firstSession);
         sessions.Enter(secondActor,secondSession);
         var catalog=await MarketCatalog.LoadAsync(new Eve.Sde.SdeReader(r.Source));
-        var proxy=new MarketProxyService(r.Book,r.Trading,r.Topology,r.Characters,r.Corporations,r.Wallets,catalog,() => r.Now,sessions);
+        var proxy=new MarketProxyService(r.Book,r.Trading,r.Topology,r.Characters,r.Corporations,r.Wallets,catalog,() => r.Now,r.Expiry,sessions);
         const int type=34;
         await r.Book.SeedNpcAsync([
             new("ask:origin",type,false,10,1,32767,MarketLocation.From(r.Station),r.Now),
@@ -255,7 +255,7 @@ public class ProtocolTests
         characterSessions.Enter(actor,session);
         var catalog=await MarketCatalog.LoadAsync(new Eve.Sde.SdeReader(r.Source));
         Assert.Contains(r.Station.Id,catalog.NpcStationIds);
-        var proxy=new MarketProxyService(r.Book,r.Trading,r.Topology,r.Characters,r.Corporations,r.Wallets,catalog,() => r.Now,characterSessions);
+        var proxy=new MarketProxyService(r.Book,r.Trading,r.Topology,r.Characters,r.Corporations,r.Wallets,catalog,() => r.Now,r.Expiry,characterSessions);
 
         var location=MarketLocation.From(r.Station);
         var remoteStation=Assert.Single(r.Stations.All.Where(s=>s.RegionId==r.Station.RegionId && s.SolarSystemId!=r.Station.SolarSystemId).Take(1));

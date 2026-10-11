@@ -40,6 +40,9 @@ internal sealed partial class CharacterServicesComposition
     private string structureSchema = "";
     private Eve.Structures.StructureStore structureStore = default!;
     private Eve.Structures.StructureTimers structureTimers = default!;
+    private Eve.Structures.StructureFuel structureFuel = default!;
+    private StructureCompressionAuthority structureCompression = default!;
+    private Eve.Structures.MoonExtractionStore moonExtractionStore = default!;
 
     /// <summary>The structures as the directory and profile readers see them: the legacy shape of the structures schema.</summary>
     Task<JsonObject> ReadStructuresAsync(CancellationToken token) =>
@@ -59,6 +62,28 @@ internal sealed partial class CharacterServicesComposition
         await work(connection, null);
     }
 
+    /// <summary>E-03: the cyno jammer state of a system for <c>GetCynoJammerState</c>: null without a jammer, 0 once it runs, else the FILETIME its warm-up ends at.</summary>
+    private async ValueTask<long?> CynoJammerOnlineSimTimeAsync(long solarSystemId, CancellationToken token)
+    {
+        await using var connection = await source.OpenConnectionAsync(token);
+        return Eve.Structures.StructureJammer.StateAt(
+            await structureStore.OnlineSinceAsync(connection, null, (int)solarSystemId, Eve.Structures.StructureServiceIds.CynoJammer, token), now());
+    }
+
+    /// <summary>Whether standard cynosural fields are refused in the system (its jammer runs: the state is 0).</summary>
+    private async ValueTask<bool> CynoJammedAsync(long solarSystemId, CancellationToken token) => await CynoJammerOnlineSimTimeAsync(solarSystemId, token) == 0;
+
+    /// <summary>The structure a cyno beacon jump names, as the beacon travel checks it: its type, its system and its Cyno Beacon service (null when it is gone).</summary>
+    private async ValueTask<Eve.Services.Space.StructureBeaconInfo?> StructureBeaconAsync(long structureId, CancellationToken token)
+    {
+        await using var connection = await source.OpenConnectionAsync(token);
+        if (await structureStore.GetAsync(connection, null, structureId, false, token) is not { } record || record.Snapshot.DestroyedMs > 0)
+            return null;
+        var services = await structureStore.ServicesAsync(connection, null, structureId, token);
+        return new Eve.Services.Space.StructureBeaconInfo(record.TypeId, record.SolarSystemId,
+            services.GetValueOrDefault(Eve.Structures.StructureServiceIds.CynoBeacon) == Eve.Structures.ServiceState.Online);
+    }
+
     private async Task StructureRecords()
     {
         // ST-0: the structures schema owns the records; the game store's table is copied in once (ADR 0003 rule 3: the bridge is the importer, not a read path)
@@ -66,12 +91,18 @@ internal sealed partial class CharacterServicesComposition
         await Eve.Structures.StructureStore.MigrateAsync(source, structureSchema);
         structureStore = new Eve.Structures.StructureStore(source, structureSchema);
         var legacy = await ReadGameStoreRawAsync("structures", CancellationToken.None);
+        var legacyMoon = await ReadGameStoreRawAsync("moonExtractions", CancellationToken.None);
         await using var connection = await source.OpenConnectionAsync();
         await using var transaction = await connection.BeginTransactionAsync();
         var copied = await structureStore.ImportAsync(connection, transaction, legacy, now());
+        // ST-6a: the moon extractions and resource profiles move over in the same transaction (the same importer pattern)
+        moonExtractionStore = new Eve.Structures.MoonExtractionStore(source, structureSchema);
+        var moonCopied = await moonExtractionStore.ImportAsync(connection, transaction, legacyMoon);
         await transaction.CommitAsync();
         if (copied.Count > 0)
             Console.Error.WriteLine($"eve-host: {copied.Count} structure(s) copied from the game store into the {structureSchema} schema");
+        if (moonCopied > 0)
+            Console.Error.WriteLine($"eve-host: {moonCopied} moon extraction row(s) copied from the game store into the {structureSchema} schema");
     }
 
     private async Task Structures()
@@ -80,6 +111,20 @@ internal sealed partial class CharacterServicesComposition
         var rules = await StructureRulesSource.LoadAsync(sde);
         structureTimers = new Eve.Structures.StructureTimers(structureStore, foundations.Scheduler, foundations.Events, rules);
         structureTimers.Register();
+        // ST-7: the service fuel is paid from the fuel bay (inventory) at each full hour; the rules are the SDE's service modules
+        structureFuel = new Eve.Structures.StructureFuel(structureStore, foundations.Scheduler, structureTimers, ServiceFuelRulesSource.Load(dogma), new InventoryStructureFuelBay(items, dogma));
+        structureFuel.Register();
+        // E-15: a change of the system's jammer is announced to the pilots in that system (EveJS sovNotifications broadcastCynoJammerChanged)
+        foundations.Events.Subscribe("structure.cyno_jammer_notice", [Eve.Structures.StructureTimers.ServiceChangedTopic], async (context, cancellation) =>
+        {
+            var change = context.Event.Payload<Eve.Structures.StructureServiceChanged>()!;
+            if (change.ServiceId != Eve.Structures.StructureServiceIds.CynoJammer)
+                return;
+            var since = await structureStore.OnlineSinceAsync(context.Connection, context.Transaction, change.SolarSystemId, Eve.Structures.StructureServiceIds.CynoJammer, cancellation);
+            var state = Eve.Structures.StructureJammer.StateAt(since, now());
+            foreach (var session in characterSessions.InSpace(change.SolarSystemId))
+                session.SendNotification("OnCynoJammerChanged", "solarsystemid2", new PyLong(change.SolarSystemId), state is { } value ? new PyLong(value) : PyNone.Instance);
+        });
         await using (var connection = await source.OpenConnectionAsync())
         await using (var transaction = await connection.BeginTransactionAsync())
         {
@@ -92,10 +137,17 @@ internal sealed partial class CharacterServicesComposition
         if (spaceSessions is not null)
             spaceSessions.StructureExistsAsync = async (structureId, cancellationToken) =>
                 await structureDirectoryReadModel.GetStructureInfoAsync(structureId, cancellationToken) is { PersistentlyDeployed: true };
+        // E-03: a cynosural field is refused in a system its jammer runs in (the state is 0 once the warm-up has passed)
+        if (spaceSessions is not null)
+            spaceSessions.CynoJammedAsync = CynoJammedAsync;
         structureProfilesRpcBackend = new Eve.Host.PersistenceStructureProfilesRpcBackend(
             ReadGameStoreTableAsync, mailCache, characterSessions, SetStructureProfileAsync);
+        structureCompression = new StructureCompressionAuthority(source, structureStore, items, dogma, sde, skills);
         structureRpcCallbacks = new Eve.Services.Core.StructureRpcCallbacks
         {
+            CompressItemInStructureAsync = async (call, itemId) => await structureCompression.CompressAsync(call, itemId),
+            DecompressGasInStructureAsync = async (call, itemId) => await structureCompression.DecompressAsync(call, itemId),
+            GetMyGasDecompressionEfficiencyAsync = async call => await structureCompression.EfficiencyAsync(call),
             GetProfilesAsync = structureProfilesRpcBackend.GetProfilesAsync,
             GetProfileSettingsAsync = structureProfilesRpcBackend.GetProfileSettingsAsync,
             GetMyHangarViewStateAsync = (call, structureId) =>

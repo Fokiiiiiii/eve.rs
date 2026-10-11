@@ -71,12 +71,16 @@ public sealed class CosmicSiteDirector
     private readonly ISiteAnchors _anchors;
     private readonly SolarSystemCatalog _systems;
     private readonly Action<string>? _log;
+    private readonly Func<int, bool>? _occupied;
     private readonly ConcurrentDictionary<int, Lazy<Task>> _ensured = new();
 
+    /// <param name="occupied">Whether a pilot is in a system. A system nobody is in gets no site (the wiki: sites do not respawn during downtime, and a
+    /// system nobody is in is not seen); null means every system is kept filled.</param>
     public CosmicSiteDirector(
-        NpgsqlDataSource source, ContentRuntime content, DurableScheduler scheduler, SiteTemplates templates, ISiteAnchors anchors, SolarSystemCatalog systems, Action<string>? log = null)
+        NpgsqlDataSource source, ContentRuntime content, DurableScheduler scheduler, SiteTemplates templates, ISiteAnchors anchors, SolarSystemCatalog systems,
+        Action<string>? log = null, Func<int, bool>? occupied = null)
     {
-        (_source, _content, _scheduler, _templates, _anchors, _systems, _log) = (source, content, scheduler, templates, anchors, systems, log);
+        (_source, _content, _scheduler, _templates, _anchors, _systems, _log, _occupied) = (source, content, scheduler, templates, anchors, systems, log, occupied);
     }
 
     public SiteTemplates Templates => _templates;
@@ -193,7 +197,7 @@ public sealed class CosmicSiteDirector
     /// </summary>
     public async Task FillAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, int solarSystemId, CancellationToken cancellationToken = default)
     {
-        if (BandOf(solarSystemId) is not { } band)
+        if (BandOf(solarSystemId) is not { } band || _occupied is { } occupied && !occupied(solarSystemId))
         {
             return;
         }

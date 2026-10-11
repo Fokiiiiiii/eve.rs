@@ -7,13 +7,13 @@
 //! are written here: tiny synthetic rows, not CCP data.
 
 use eve_sde::ensure::{self, EnsureError, MISSION_TABLES, Outcome};
-use eve_sde::fetch::{self, Expect, FetchError};
-use eve_sde::load::{self, LoadError};
+use eve_sde::fetch::{self, Expect, FetchError, Origin};
+use eve_sde::load;
 use eve_sde::manifest::SdeManifest;
 use postgres::{Client, NoTls};
 
 mod common;
-use common::{Scratch, file_url, make_zip, mini_archive, options, sde_meta};
+use common::{Scratch, file_url, make_zip, mini_archive, names_in, options, sde_meta};
 
 const MISSION_BUILD: u64 = 3405148;
 const PINNED_BUILD: u64 = 3396210;
@@ -137,7 +137,7 @@ fn a_named_table_the_archive_lacks_is_an_error_and_nothing_is_loaded() {
 
     let error = ensure::ensure_tables_into(&mut client, &wanted, &schema, MISSION_TABLES).unwrap_err();
     assert!(
-        matches!(error, EnsureError::Load(LoadError::MissingTable { ref table }) if table == "missions"),
+        matches!(error, EnsureError::Fetch(FetchError::BadArchive(ref detail)) if detail.contains("missions.jsonl")),
         "{error}"
     );
     assert_eq!(ensure::loaded_build(&mut client, &schema).unwrap(), None);
@@ -241,4 +241,69 @@ fn the_real_mission_build_has_the_tables_and_ids_the_server_reads() {
         .get(0);
     assert!(arc, "epic arc 132 is missing from build {MISSION_BUILD}");
     drop_schema(&mut client, &schema);
+}
+
+/// A fake build with the mission tables and tables the server must not keep: the rest of the build.
+fn fake_full_build(path: &std::path::Path, build: u64) -> String {
+    make_zip(
+        path,
+        &[
+            ("_sde.jsonl", &sde_meta(build)),
+            ("missions.jsonl", "{\"_key\":17179,\"name\":{\"en\":\"Fixture A\"}}\n"),
+            ("epicArcs.jsonl", "{\"_key\":132,\"missions\":[]}\n"),
+            ("types.jsonl", "{\"_key\":587,\"groupID\":25}\n"),
+            ("npcCharacters.jsonl", "{\"_key\":3020234}\n"),
+        ],
+    );
+    fetch::sha256_hex(path).unwrap()
+}
+
+#[test]
+fn the_loader_keeps_only_the_named_tables_and_leaves_no_copy_of_the_build_on_disk() {
+    let Some(mut client) = connect() else { return };
+    let schema = scratch_schema("discard");
+    drop_schema(&mut client, &schema);
+    let scratch = Scratch::new("missions-discard");
+    let source = scratch.path("source.zip");
+    let hash = fake_full_build(&source, MISSION_BUILD);
+    // A full extract left by an earlier run is removed too.
+    let cache = scratch.path("cache");
+    let earlier = cache.join(fetch::archive_name(MISSION_BUILD));
+    std::fs::create_dir_all(&earlier).unwrap();
+    std::fs::write(earlier.join("types.jsonl"), "{\"_key\":1}\n").unwrap();
+
+    let wanted = options(&scratch, MISSION_BUILD, vec![file_url(&source)], Expect::Sha256(hash));
+    let outcome = ensure::ensure_tables_into(&mut client, &wanted, &schema, MISSION_TABLES).unwrap();
+    assert!(
+        matches!(outcome, Outcome::Loaded { origin: Origin::Downloaded(_), tables: 2, records: 2 }),
+        "{outcome:?}"
+    );
+    assert_eq!(count(&mut client, &schema, "missions"), 1);
+    assert_eq!(count(&mut client, &schema, "epicArcs"), 1);
+    assert!(!table_exists(&mut client, &schema, "types"), "an unnamed table must not be loaded");
+    assert!(!table_exists(&mut client, &schema, "npcCharacters"), "an unnamed table must not be loaded");
+    assert_eq!(names_in(&cache), Vec::<String>::new(), "nothing of the build may remain under the cache");
+    drop_schema(&mut client, &schema);
+}
+
+#[test]
+fn a_local_archive_is_read_in_place_and_never_removed() {
+    let Some(mut client) = connect() else { return };
+    let schema = scratch_schema("local");
+    drop_schema(&mut client, &schema);
+    let scratch = Scratch::new("missions-local");
+    let archive = scratch.path("mine.zip");
+    let hash = fake_full_build(&archive, MISSION_BUILD);
+    let mut wanted = options(&scratch, MISSION_BUILD, vec![], Expect::Sha256(hash));
+    wanted.archive = Some(archive.clone());
+    ensure::ensure_tables_into(&mut client, &wanted, &schema, MISSION_TABLES).unwrap();
+    assert!(archive.is_file(), "the archive the caller named must stay");
+    assert_eq!(names_in(&scratch.path("cache")), Vec::<String>::new());
+    drop_schema(&mut client, &schema);
+}
+
+#[test]
+fn the_mission_pin_names_a_hash_so_a_later_run_can_verify_the_build() {
+    let mission = fetch::mission_pinned().unwrap();
+    assert!(mission.sha256.as_deref().is_some_and(|hash| hash.len() == 64));
 }

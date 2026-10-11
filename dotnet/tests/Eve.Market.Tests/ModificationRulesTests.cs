@@ -41,7 +41,7 @@ public class ModificationRulesTests
         Assert.Equal(modifiedAt, Assert.Single((await r.Book.BookAsync(r.Station.RegionId, 34, r.Now)).Bids).IssuedMs);
         r.Now = modifiedAt + 30 * Day - 1;
         Assert.Empty(await r.Trading.ExpireDueAsync());
-        r.Now = modifiedAt + 30 * Day;
+        r.Now = modifiedAt + 30 * Day + MarketExpiry.GraceMs;
         Assert.Single(await r.Trading.ExpireDueAsync());
     }
 

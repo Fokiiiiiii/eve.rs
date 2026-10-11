@@ -8,7 +8,6 @@ public static class CoreServices
 {
     /// <summary>Creates every core service. Register them with <see cref="ServiceRegistry.Register"/>.</summary>
     public static IReadOnlyList<IService> Create(
-        SubscriptionSettings settings,
         IOmegaAccountStore accounts,
         Func<long> nowUnixMs,
         Eve.Calendar.ICalendarStore? calendarStore = null,
@@ -32,8 +31,8 @@ public static class CoreServices
         Func<ClientSession, bool>? isShipInSpace = null)
     {
         gameRpcCallbacks ??= new GameRpcCallbacks();
-        var licenses = new OmegaLicenses(settings, accounts, nowUnixMs);
-        var subscriptionManager = new SubscriptionMgrService(settings, licenses);
+        var licenses = new OmegaLicenses(accounts, nowUnixMs);
+        var subscriptionManager = new SubscriptionMgrService(licenses);
         var calendarManager = calendarStore is null
             ? new CalendarMgrService()
             : new CalendarMgrService(calendarStore,

@@ -151,8 +151,6 @@ internal sealed partial class CharacterServicesComposition
             spaceStructures.Subscribe(foundations.Events);
             spaceSessions.PlaceStructuresAsync = spaceStructures.RestoreAsync;
         }
-        // ST-2 d: the client's structure notices (the owner corporation, the pilots docked in the structure), after each commit of a state change
-        Eve.Host.StructureNotifications.Subscribe(foundations.Events, structureStore, characterSessions);
         // ST-7: the service fuel is paid from the fuel bay (inventory) at each full hour; the rules are the SDE's service modules
         structureFuel = new Eve.Structures.StructureFuel(structureStore, foundations.Scheduler, structureTimers, ServiceFuelRulesSource.Load(dogma), new InventoryStructureFuelBay(items, dogma));
         structureFuel.Register();
@@ -186,6 +184,8 @@ internal sealed partial class CharacterServicesComposition
             spaceSessions.CynoJammedAsync = CynoJammedAsync;
         structureProfilesRpcBackend = new Eve.Host.PersistenceStructureProfilesRpcBackend(
             ReadGameStoreTableAsync, mailCache, characterSessions, SetStructureProfileAsync);
+        Eve.Host.StructureNotifications.Subscribe(foundations.Events, structureStore, characterSessions,
+            structureProfilesRpcBackend.GetMyHangarViewStateAsync);
         structureCompression = new StructureCompressionAuthority(source, structureStore, items, dogma, sde, skills);
         // ST-2 a: the rename and the reinforcement times of a structure (the owner's Station Manager, Director or CEO)
         structureDeployment = new StructureDeploymentAuthority(source, structureStore, structureTimers, foundations.Scheduler);
@@ -225,11 +225,11 @@ internal sealed partial class CharacterServicesComposition
             GetProfileSettingsAsync = structureProfilesRpcBackend.GetProfileSettingsAsync,
             GetMyHangarViewStateAsync = (call, structureId) =>
                 structureProfilesRpcBackend.GetMyHangarViewStateAsync(structureId, call.Cancellation),
-            UndockAsync = (call, structureId, shipId, _) => spaceSessions is null
-                ? default
-                : new ValueTask(spaceSessions.UndockStructureAsync(call.Session, structureId, shipId, call.Cancellation)),
+            UndockAsync = (call, structureId, shipId, ignoreContraband) => spaceSessions is null
+                ? throw MachoErrors.ThrowUserError("CustomInfo", ("info", new PyStr("Space is not available right now. Try again in a moment.")))
+                : new ValueTask(spaceSessions.UndockStructureAsync(call.Session, structureId, shipId, call.Cancellation, ignoreContraband)),
             DockAsync = (call, structureId, shipId) => spaceSessions is null
-                ? default
+                ? throw MachoErrors.ThrowUserError("CustomInfo", ("info", new PyStr("Space is not available right now. Try again in a moment.")))
                 : new ValueTask(spaceSessions.DockStructureAsync(call.Session, structureId, shipId, call.Cancellation)),
             CreateProfileAsync = (call, corporationId, name, description) =>
                 structureProfilesRpcBackend.CreateProfileAsync(corporationId, name, description, call.Cancellation),

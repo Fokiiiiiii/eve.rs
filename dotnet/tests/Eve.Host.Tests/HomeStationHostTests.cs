@@ -88,6 +88,16 @@ public sealed class HomeStationHostTests
         Assert.Equal(structureId, (await rig.Characters.GetAsync(character.Id))!.HomeStationId);
         Assert.Equal(new PyInt(structureId), HomeStationId(await CallAsync(service, "get_home_station", session)));
         AssertNotification(Notifications(sink)[2], structureId);
+
+        var docking = Assert.IsAssignableFrom<IService>(rig.Registry.Lookup("structureDocking"));
+        foreach (var method in new[] { "Dock", "Undock" })
+        {
+            var unavailable = await Assert.ThrowsAsync<MachoWrappedException>(() =>
+                CallAsync(docking, method, session, new PyLong(structureId), PyNone.Instance));
+            Assert.Equal("CustomInfo", unavailable.Error.UserErrorMessage);
+        }
+        Assert.Equal(structureId, session.GetInt("structureid"));
+        Assert.Equal(3, Notifications(sink).Count);
     }
 
     private static async Task<PyValue> CallAsync(IService service, string method, ClientSession session, params PyValue[] args) =>

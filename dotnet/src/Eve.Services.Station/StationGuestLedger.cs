@@ -76,34 +76,55 @@ public sealed class StationGuestLedger
 
 public sealed class GuestLoginHook(CharacterSessions sessions, StationGuestLedger ledger) : ICharacterEntryHook
 {
+    private sealed class CloseRegistration
+    {
+        public long CharacterId;
+        public Action? Handler;
+    }
+
+    private readonly ConditionalWeakTable<ClientSession, CloseRegistration> _closedSessions = new();
+
     public ValueTask OnCharacterLeavingAsync(ClientSession session, long characterId, CancellationToken cancellationToken)
     {
-        var stationId = session.GetInt("stationid") ?? session.GetInt("stationID") ?? 0;
-        var structureId = session.GetInt("structureid") ?? session.GetInt("structureID") ?? 0;
-        BroadcastLeft(session, characterId, stationId, structureId);
+        BroadcastLeft(session, characterId, CurrentStationId(session), CurrentStructureId(session));
+        ClearClosedHandler(session, characterId);
         return ValueTask.CompletedTask;
     }
 
     public ValueTask OnCharacterEnteredAsync(ClientSession session, long characterId, CancellationToken cancellationToken)
     {
-        var stationId = session.GetInt("stationid") ?? session.GetInt("stationID") ?? 0;
-        var structureId = session.GetInt("structureid") ?? session.GetInt("structureID") ?? 0;
+        var stationId = CurrentStationId(session);
+        var structureId = CurrentStructureId(session);
         if (stationId > 0)
-        {
             BroadcastStationJoined(session, characterId, stationId);
-            session.Closed += () => BroadcastLeft(session, characterId, stationId, 0);
-        }
         else if (structureId > 0)
-        {
             BroadcastStructureJoined(session, characterId, structureId);
-            session.Closed += () => BroadcastLeft(session, characterId, structureId: structureId);
-        }
+
+        TrackClosedHandler(session, characterId);
         return ValueTask.CompletedTask;
+    }
+
+    public void OnLocationChanged(ClientSession session, long previousStationId, long previousStructureId)
+    {
+        var stationId = CurrentStationId(session);
+        var structureId = CurrentStructureId(session);
+        var characterId = session.CharacterId ?? 0;
+        if (characterId <= 0)
+            return;
+
+        if (previousStationId > 0 && previousStationId != stationId)
+            BroadcastLeft(session, characterId, stationId: previousStationId);
+        if (previousStructureId > 0 && previousStructureId != structureId)
+            BroadcastLeft(session, characterId, structureId: previousStructureId);
+        if (stationId > 0 && stationId != previousStationId)
+            BroadcastStationJoined(session, characterId, stationId);
+        if (structureId > 0 && structureId != previousStructureId)
+            BroadcastStructureJoined(session, characterId, structureId);
     }
 
     private void BroadcastStationJoined(ClientSession session, long characterId, long stationId)
     {
-        var guest = GuestIdentity(session, characterId);
+        var guest = new Eve.Marshal.PyTuple(GuestIdentity(session, characterId));
         foreach (var observer in sessions.InStation(stationId))
             if (observer.CharacterId != characterId && ledger.TryRecordGuestJoined(observer, stationId, characterId))
                 observer.SendNotification("OnCharNowInStation", "stationid", guest);
@@ -121,7 +142,7 @@ public sealed class GuestLoginHook(CharacterSessions sessions, StationGuestLedge
     {
         if (stationId > 0)
         {
-            var guest = GuestIdentity(session, characterId);
+            var guest = new Eve.Marshal.PyTuple(GuestIdentity(session, characterId));
             foreach (var observer in sessions.InStation(stationId))
                 if (observer.CharacterId != characterId && ledger.TryRecordGuestLeft(observer, stationId, characterId))
                     observer.SendNotification("OnCharNoLongerInStation", "stationid", guest);
@@ -134,11 +155,76 @@ public sealed class GuestLoginHook(CharacterSessions sessions, StationGuestLedge
         }
     }
 
-    private static Eve.Marshal.PyTuple GuestIdentity(ClientSession session, long characterId) =>
-        new([
-            new Eve.Marshal.PyInt(characterId),
-            new Eve.Marshal.PyInt(Math.Max(0, session.GetInt("corpid") ?? 0)),
-            new Eve.Marshal.PyInt(Math.Max(0, session.GetInt("allianceid") ?? 0)),
-            new Eve.Marshal.PyInt(Math.Max(0, session.GetInt("warfactionid") ?? 0)),
-        ]);
+    private void TrackClosedHandler(ClientSession session, long characterId)
+    {
+        if (characterId <= 0)
+            return;
+
+        var registration = _closedSessions.GetValue(session, _ => new CloseRegistration());
+        lock (registration)
+        {
+            if (registration.CharacterId == characterId && registration.Handler is not null)
+                return;
+            if (registration.Handler is { } previous)
+                session.Closed -= previous;
+
+            registration.CharacterId = characterId;
+            Action? handler = null;
+            handler = () => OnSessionClosed(session, registration, characterId, handler!);
+            registration.Handler = handler;
+            session.Closed += handler;
+        }
+    }
+
+    private void ClearClosedHandler(ClientSession session, long characterId)
+    {
+        if (!_closedSessions.TryGetValue(session, out var registration))
+            return;
+
+        lock (registration)
+        {
+            if (registration.CharacterId != characterId)
+                return;
+            if (registration.Handler is { } handler)
+                session.Closed -= handler;
+            registration.Handler = null;
+            registration.CharacterId = 0;
+        }
+    }
+
+    private void OnSessionClosed(ClientSession session, CloseRegistration registration, long characterId, Action handler)
+    {
+        long currentCharacterId;
+        long stationId;
+        long structureId;
+        lock (registration)
+        {
+            if (registration.CharacterId != characterId || !ReferenceEquals(registration.Handler, handler))
+                return;
+
+            currentCharacterId = session.CharacterId ?? 0;
+            stationId = CurrentStationId(session);
+            structureId = CurrentStructureId(session);
+            registration.CharacterId = 0;
+            registration.Handler = null;
+            session.Closed -= handler;
+        }
+
+        if (currentCharacterId == characterId)
+            BroadcastLeft(session, characterId, stationId, structureId);
+    }
+
+    private static long CurrentStationId(ClientSession session) =>
+        session.GetInt("stationid") ?? session.GetInt("stationID") ?? 0;
+
+    private static long CurrentStructureId(ClientSession session) =>
+        session.GetInt("structureid") ?? session.GetInt("structureID") ?? 0;
+
+    private static Eve.Marshal.PyValue[] GuestIdentity(ClientSession session, long characterId) =>
+    [
+        new Eve.Marshal.PyInt(characterId),
+        new Eve.Marshal.PyInt(Math.Max(0, session.GetInt("corpid") ?? 0)),
+        new Eve.Marshal.PyInt(Math.Max(0, session.GetInt("allianceid") ?? 0)),
+        new Eve.Marshal.PyInt(Math.Max(0, session.GetInt("warfactionid") ?? 0)),
+    ];
 }

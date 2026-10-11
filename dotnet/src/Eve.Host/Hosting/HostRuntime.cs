@@ -37,9 +37,12 @@ namespace Eve.Host;
 
 /// <summary>What the host runs after composition: the server and the registry, and the disposables shut down in the original order.</summary>
 internal sealed class HostRuntime(HostServer server, ServiceRegistry registry, LegacyGameStore? legacy, Foundations? foundations,
-    SpaceSessions? space, Eve.Services.Crimewatch.CrimewatchRuntime? crimewatch, SimClient? simulation)
+    SpaceSessions? space, Eve.Services.Crimewatch.CrimewatchRuntime? crimewatch, SimClient? simulation, CharacterSessions? characterSessions = null)
 {
     internal HostServer Server { get; } = server;
+
+    /// <summary>The sessions that have a character in the game (null when no characters are served: no EVE_PG_URL).</summary>
+    internal CharacterSessions? CharacterSessions { get; } = characterSessions;
 
     internal ServiceRegistry Registry { get; } = registry;
 

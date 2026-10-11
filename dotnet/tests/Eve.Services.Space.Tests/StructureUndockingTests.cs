@@ -40,6 +40,9 @@ public sealed class StructureUndockingTests
         var (rig, character, session) = await DockedAtStructureAsync();
         await using var _ = rig;
         var system = session.GetInt("solarsystemid")!.Value;
+        var locationChanges = new List<(long OldStation, long OldStructure, long? NewStation, long? NewStructure)>();
+        rig.Space.DockedLocationChanged = (changedSession, oldStation, oldStructure) =>
+            locationChanges.Add((oldStation, oldStructure, changedSession.GetInt("stationid"), changedSession.GetInt("structureid")));
         var placed = new List<int>();
         rig.Space.PlaceStructuresAsync = (solarSystemId, _) =>
         {
@@ -54,6 +57,7 @@ public sealed class StructureUndockingTests
         var enter = rig.Sim.Heard.OfType<SimEnter>().Last();
         Assert.Equal(((ulong)session.SessionId, system, EnterHow.Undock, Structure), (enter.SessionId, enter.SolarSystemId, enter.How, enter.StationId));
         Assert.True(rig.Space.IsInSpace(session));
+        Assert.Equal((0L, Structure, (long?)null, (long?)null), Assert.Single(locationChanges));
 
         Assert.Null(session.GetInt("structureid"));
         Assert.Null(session.GetInt("stationid"));
@@ -70,6 +74,8 @@ public sealed class StructureUndockingTests
     {
         var (rig, character, session) = await DockedAtStructureAsync();
         await using var _ = rig;
+        var locationChanges = 0;
+        rig.Space.DockedLocationChanged = (_, _, _) => locationChanges++;
         var enters = rig.Sim.Heard.OfType<SimEnter>().Count();
 
         var other = await Assert.ThrowsAsync<MachoWrappedException>(() => rig.Space.UndockStructureAsync(session, Structure + 1, character.ShipId, CancellationToken.None));
@@ -79,9 +85,43 @@ public sealed class StructureUndockingTests
         Assert.Equal("DeniedShipChanged", otherShip.Error.UserErrorMessage);
 
         Assert.Equal(enters, rig.Sim.Heard.OfType<SimEnter>().Count());
+        Assert.Equal(0, locationChanges);
         Assert.Equal((long?)Structure, session.GetInt("structureid"));
         Assert.False(rig.Space.IsInSpace(session));
         var ship = (await rig.Items.GetAsync(character.ShipId))!;
         Assert.Equal((Structure, ItemFlags.Hangar), (ship.LocationId, ship.Flag));
+    }
+
+    [PgFact]
+    public async Task Contraband_warning_preserves_the_docked_ship_until_the_pilot_confirms()
+    {
+        var (rig, character, session) = await DockedAtStructureAsync();
+        await using var _ = rig;
+        var inspections = 0;
+        rig.Space.InspectUndockContrabandAsync = (owner, ship, system, _) =>
+        {
+            Assert.Equal(character.CharacterId, owner);
+            Assert.Equal(character.ShipId, ship);
+            inspections++;
+            return Task.FromResult<IReadOnlyList<int>>([3721]);
+        };
+        var enters = rig.Sim.Heard.OfType<SimEnter>().Count();
+        var locationChanges = 0;
+        rig.Space.DockedLocationChanged = (_, _, _) => locationChanges++;
+
+        var warning = await Assert.ThrowsAsync<MachoWrappedException>(() =>
+            rig.Space.UndockStructureAsync(session, Structure, character.ShipId, CancellationToken.None));
+        Assert.Equal("ShipContrabandWarningUndock", warning.Error.UserErrorMessage);
+        Assert.Equal(Structure, session.GetInt("structureid"));
+        var dockedShip = (await rig.Items.GetAsync(character.ShipId))!;
+        Assert.Equal((Structure, ItemFlags.Hangar), (dockedShip.LocationId, dockedShip.Flag));
+        Assert.Equal(enters, rig.Sim.Heard.OfType<SimEnter>().Count());
+        Assert.Equal(0, locationChanges);
+
+        await rig.Space.UndockStructureAsync(session, Structure, character.ShipId, CancellationToken.None, ignoreContraband: true);
+        Assert.True(rig.Space.IsInSpace(session));
+        Assert.Null(session.GetInt("structureid"));
+        Assert.Equal(1, inspections);
+        Assert.Equal(1, locationChanges);
     }
 }

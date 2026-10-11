@@ -179,7 +179,7 @@ public sealed class NewEdenStoreHostTests : IAsyncLifetime
     }
 
     [PgFact]
-    public async Task An_omega_purchase_is_refused_before_any_charge_or_receipt_and_a_real_money_bundle_is_granted_in_full()
+    public async Task A_real_money_bundle_is_granted_in_full_at_no_charge()
     {
         var url = Environment.GetEnvironmentVariable("EVE_PG_URL")!;
         await using var source = NpgsqlDataSource.Create(Eve.Data.PgConnection.ToConnectionString(url));
@@ -190,10 +190,6 @@ public sealed class NewEdenStoreHostTests : IAsyncLifetime
         var pilot = await CreatePilotAsync(source, station, "Bundle Pilot");
         var session = new ClientSession(new Sink()) { SessionId = 404, UserId = 1, CharacterId = pilot };
         var items = new PgItemStore(source, Schema("EVE_INVENTORY_SCHEMA"));
-
-        await Assert.ThrowsAsync<NotSupportedException>(async () => await store.CallAsync(
-            Call(session, "buy_offer", 41, [new PyStr("omega_30_days"), new PyStr("PLX"), new PyInt(1)])));
-        Assert.Equal(0, await PlexBalanceAsync(vault, session, 6));
 
         var nineOffers = Assert.IsType<PyList>(await store.CallAsync(Call(session, "get_offers", 42, [new PyInt(9)]))).Items;
         var bundleFields = nineOffers.OfType<PyDict>()

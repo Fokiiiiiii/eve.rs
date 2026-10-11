@@ -463,8 +463,20 @@ public class GuestTests
                 () => Data.ClockMs,
                 seedObserverGuestLedger: guestLedger.SeedObserverGuestLedger);
             var (session, _) = Data.Session(60015249, here1);
+            var (secondSession, _) = Data.Session(60015249, here2);
+            var observers = new[] { session, secondSession };
 
-            var guests = Assert.IsType<PyList>(await Data.CallAsync(service, session, "GetGuests"));
+            async Task<PyList> GetGuests(ClientSession observer) =>
+                Assert.IsType<PyList>(await service.GetGuests(new ServiceCall
+                {
+                    Method = "GetGuests",
+                    Args = [],
+                    Session = observer,
+                }));
+
+            var guests = await GetGuests(session);
+            var secondGuests = await GetGuests(secondSession);
+            Assert.Equal(guests.Items, secondGuests.Items);
             Assert.Equal(
                 [
                     new PyTuple([new PyInt(here1), new PyInt(1000006), new PyInt(0), new PyInt(0)]),
@@ -473,13 +485,20 @@ public class GuestTests
                 guests.Items);
             Assert.DoesNotContain(guests.Items, guest =>
                 Assert.IsType<PyTuple>(guest).Items[0] is PyInt { Value: var id } && (id == away || id == offline));
-            Assert.False(guestLedger.TryRecordGuestJoined(session, 60015249, here1));
-            Assert.False(guestLedger.TryRecordGuestJoined(session, 60015249, here2));
+            foreach (var observer in observers)
+            {
+                Assert.False(guestLedger.TryRecordGuestJoined(observer, 60015249, here1));
+                Assert.False(guestLedger.TryRecordGuestJoined(observer, 60015249, here2));
+            }
 
             online.Leave(2);
-            Assert.Single(Assert.IsType<PyList>(await Data.CallAsync(service, session, "GetGuests")).Items);
-            Assert.False(guestLedger.TryRecordGuestJoined(session, 60015249, here1));
-            Assert.True(guestLedger.TryRecordGuestJoined(session, 60015249, here2));
+            foreach (var observer in observers)
+            {
+                var refreshed = await GetGuests(observer);
+                Assert.Single(refreshed.Items);
+                Assert.False(guestLedger.TryRecordGuestJoined(observer, 60015249, here1));
+                Assert.True(guestLedger.TryRecordGuestJoined(observer, 60015249, here2));
+            }
         }
         finally
         {

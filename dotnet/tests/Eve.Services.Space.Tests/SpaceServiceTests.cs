@@ -868,6 +868,33 @@ public class SpaceServiceTests
         AssertUndockSimulationMessages(rig);
     }
 
+    [PgFact]
+    public async Task Station_undock_carries_the_contraband_confirmation_before_any_ship_moves()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var character = await rig.NewCharacterAsync();
+        var session = await rig.SessionAsync(character);
+        var stationId = session.GetInt("stationid");
+        var binding = await rig.BindShipAsync(session);
+        var inspections = 0;
+        rig.Space.InspectUndockContrabandAsync = (_, _, _, _) =>
+        {
+            inspections++;
+            return Task.FromResult<IReadOnlyList<int>>([3721]);
+        };
+        var enters = rig.Sim.Heard.OfType<SimEnter>().Count();
+        var warning = await Assert.ThrowsAsync<MachoWrappedException>(() =>
+            rig.ShipCallAsync(session, "Undock", binding, new PyLong(character.ShipId), PyBool.False));
+        Assert.Equal("ShipContrabandWarningUndock", warning.Error.UserErrorMessage);
+        Assert.Equal(stationId, session.GetInt("stationid"));
+        Assert.Equal(enters, rig.Sim.Heard.OfType<SimEnter>().Count());
+
+        await rig.ShipCallAsync(session, "Undock", binding, new PyLong(character.ShipId), PyBool.True);
+        Assert.True(rig.Space.IsInSpace(session));
+        Assert.Null(session.GetInt("stationid"));
+        Assert.Equal(1, inspections);
+    }
+
     // ── in space ─────────────────────────────────────────────────────────────
 
     [PgFact]

@@ -26,6 +26,7 @@ internal sealed class TrainingRig : IAsyncDisposable
         {
             Speed = settings.Speed,
             HasOmega = settings.HasOmega,
+            AdditionalTrainingSlots = settings.AdditionalTrainingSlots,
             Attribute = schema.Store.LearningAttribute,
         }, () => ClockMs);
         Training.Settled += update =>
@@ -331,5 +332,27 @@ public class CharacterTrainingTests
         Assert.Single(state.Entries); // whichever came last: never a mixture
         Assert.True(state.Active);
         Assert.True((await rig.Training.HistoryAsync(TrainingRig.Character)).Count(h => h.EventType == SkillEvents.TrainingStarted) >= 1);
+    }
+
+    [PgFact]
+    public async Task An_account_trains_one_character_at_a_time_and_each_running_extra_queue_lets_one_more_train()
+    {
+        var running = 0;
+        await using var rig = await TrainingRig.CreateAsync(new TrainingSettings { AdditionalTrainingSlots = _ => running });
+        const long second = 1002;
+        const long third = 1003;
+        await rig.GiveAsync(second);
+        await rig.GiveAsync(third);
+        IReadOnlyList<long> account = [TrainingRig.Character, second, third];
+
+        Assert.IsType<QueueSaved>(await rig.Training.StartAsync(TrainingRig.Character, TrainingRig.Account, 3301, 2, account));
+        Assert.IsType<TrainingBusy>(await rig.Training.StartAsync(second, TrainingRig.Account, 3327, 4, account));
+
+        running = 1;
+        Assert.IsType<QueueSaved>(await rig.Training.StartAsync(second, TrainingRig.Account, 3327, 4, account));
+        Assert.IsType<TrainingBusy>(await rig.Training.StartAsync(third, TrainingRig.Account, 3317, 2, account));
+
+        running = 2;
+        Assert.IsType<QueueSaved>(await rig.Training.StartAsync(third, TrainingRig.Account, 3317, 2, account));
     }
 }

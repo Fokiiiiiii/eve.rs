@@ -43,8 +43,6 @@ PG = os.environ.get("EVE_PG_URL", "")
 pytestmark = [
     pytest.mark.skipif(not (base.LIVE and PG), reason="set EVE_LIVE_HOST=host:port and EVE_PG_URL to test against a running server"),
     pytest.mark.skipif(os.environ.get("EVE_LIVE_SLOW") != "1", reason="a long walk: set EVE_LIVE_SLOW=1"),
-    pytest.mark.skipif(os.environ.get("EVE_MISSION_INCLUDE_GENERIC_ARCS") not in ("1", "true"),
-                       reason="the arc's kill sites are generic: the run needs EVE_MISSION_INCLUDE_GENERIC_ARCS=1"),
 ]
 
 COCKROACH = 11019

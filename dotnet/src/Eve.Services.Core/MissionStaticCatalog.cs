@@ -247,9 +247,16 @@ public sealed class MissionStaticCatalog
     public bool IsHeldBack(long missionId) => SiteStatusOf(missionId) switch
     {
         MissionSiteStatus.Missing => true,
-        MissionSiteStatus.Generic => !_includeGenericArcs,
+        MissionSiteStatus.Generic => !_includeGenericArcs && !(_arcByMission.TryGetValue(missionId, out var arcId) && ArcsOnByDefault.Contains(arcId)),
         _ => false,
     };
+
+    /// <summary>
+    /// The epic arcs whose generic kill sites are offered by default: the arcs whose whole offer path was walked live with the client's test ship
+    /// (tools/headless-client/tests/test_arc29_walk.py, DEVIATIONS "Mission execution X8"). Every other arc stays held back unless the
+    /// switch <see cref="IncludeGenericVariable"/> is set. Owner decision: an arc is added here only after its walk passes.
+    /// </summary>
+    public static readonly IReadOnlySet<long> ArcsOnByDefault = new HashSet<long> { 55, 56, 128 };
 
     /// <summary>
     /// The switch that offers the arcs not known to be in the client build. Off by default: only <c>in-client-build</c> arcs

@@ -89,7 +89,7 @@ public class MissionDungeonRuntimeTests
         }
 
         public async Task<bool> CompleteMissionAsync(long characterId, long agentId, DateTimeOffset now, string reference,
-            IReadOnlyList<MissionStandingGain> standings, IReadOnlyList<(int TypeId, long Quantity)> consume, CancellationToken cancellationToken)
+            IReadOnlyList<MissionStandingGain> standings, IReadOnlyList<(int TypeId, long Quantity, string? Tag)> consume, CancellationToken cancellationToken)
         {
             if (Store is null) return false;
             if (consume.Any(need => Held.GetValueOrDefault(need.TypeId) < need.Quantity)) return false;
@@ -101,7 +101,7 @@ public class MissionDungeonRuntimeTests
             {
                 return false;
             }
-            foreach (var (typeId, quantity) in consume)
+            foreach (var (typeId, quantity, _) in consume)
             {
                 Held[typeId] -= quantity;
                 Consumed.Add((characterId, typeId, quantity));
@@ -417,6 +417,28 @@ public class MissionDungeonRuntimeTests
         // the agent takes the cargo back (the mission's tagged stacks), and no standing changes
         Assert.Equal((9401L, Pilot), Assert.Single(host.TakenBack));
         Assert.Empty(host.Standings);
+    }
+
+    [AgentsPgFact]
+    public async Task A_courier_quit_takes_the_cargo_back_and_pays_nothing()
+    {
+        var source = NpgsqlDataSource.Create(PgConnection.ForTest(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
+        var schema = "mdr_" + Guid.NewGuid().ToString("N")[..12];
+        await using var cleanup = new Cleanup(source, schema);
+        await AgentMissionStore.MigrateAsync(source, schema);
+        var store = new AgentMissionStore(source, schema);
+        var host = new FakeHost { Store = store };
+        var runtime = CourierRuntime(store, host, null);
+        await store.OfferAsync(Pilot, Agent, new AgentMissionContent(9401, 1239, "Courier Step", "", false), Start, "offer:c4");
+        await store.AcceptAsync(Pilot, Agent, Start, "accept:c4");
+        await runtime.OnAcceptedAsync(Pilot, Agent);
+
+        await store.QuitAsync(Pilot, Agent, Start + TimeSpan.FromHours(1), "quit:c4");
+        await runtime.OnQuitAsync(Pilot, Agent);
+
+        Assert.Equal((9401L, Pilot), Assert.Single(host.TakenBack));
+        Assert.Empty(host.Credits);
+        Assert.Equal(AgentMissionState.Quit, (await store.ReadAsync(Pilot, Agent))!.State);
     }
 
     [Fact]

@@ -789,6 +789,26 @@ public class SpaceServiceTests
     }
 
     [PgFact]
+    public async Task A_dock_that_the_simulation_starts_on_its_own_reports_the_pilot_too()
+    {
+        var (rig, character, session) = await DockedAsync();
+        await using var _ = rig;
+        await InSpaceAsync(rig, session);
+        var docked = new List<(long Character, long Station)>();
+        rig.Space.PilotDocked = (characterId, stationId, _) =>
+        {
+            docked.Add((characterId, stationId));
+            return Task.CompletedTask;
+        };
+
+        // no client dock command: the simulation docks the ship after an approach and reports it
+        rig.Sim.Say(new SimDocked((ulong)session.SessionId, Rig.Station, SimCondition.Full));
+        await Rig.UntilAsync(() => docked.Count > 0);
+
+        Assert.Equal((character.CharacterId, Rig.Station), Assert.Single(docked));
+    }
+
+    [PgFact]
     public async Task The_condition_of_a_ship_in_space_is_asked_of_the_simulation_and_a_heal_is_ordered_of_it()
     {
         var (rig, _, session) = await DockedAsync();

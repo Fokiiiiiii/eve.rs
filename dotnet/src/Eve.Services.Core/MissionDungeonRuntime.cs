@@ -15,6 +15,9 @@ public static class MissionCourierRules
     /// <summary>The expiry of an accepted courier mission whose data gives no expirationTime.</summary>
     public static readonly TimeSpan DefaultExpiry = TimeSpan.FromDays(3);
 
+    /// <summary>The custom info that tags a courier cargo stack with its mission: consumption and take-back touch only the tagged stacks.</summary>
+    public static string CargoTag(long missionId) => $"courier:{missionId}";
+
     /// <summary>The jump range (min, max) of a level, or null for a level the rule does not state.</summary>
     public static (int Min, int Max)? JumpRange(long? level) => level switch
     {
@@ -70,7 +73,7 @@ public interface IMissionDungeonHost
     /// accepted (a replay): then nothing is written.
     /// </summary>
     Task<bool> CompleteMissionAsync(long characterId, long agentId, DateTimeOffset now, string reference,
-        IReadOnlyList<MissionStandingGain> standings, IReadOnlyList<(int TypeId, long Quantity)> consume, CancellationToken cancellationToken);
+        IReadOnlyList<MissionStandingGain> standings, IReadOnlyList<(int TypeId, long Quantity, string? Tag)> consume, CancellationToken cancellationToken);
 
     /// <summary>
     /// Creates into the hangar of the station the objective items of a fetch step, up to the quantity the character holds (idempotent: the
@@ -164,7 +167,7 @@ public sealed class MissionDungeonRuntime(
             if (CourierDestinationOf(record) is not { } destination || destination.Id != stationId) continue;
             if (await host.HeldQuantityAsync(owner, (int)typeId, cancellationToken) < courier.ObjectiveQuantity) continue;
             await CompleteWithRewardAsync(owner, record, $"delivery:{record.Content.MissionId}", $"delivery:{record.Content.MissionId}:{record.AgentId}",
-                cancellationToken, [((int)typeId, courier.ObjectiveQuantity)]);
+                cancellationToken, [((int)typeId, courier.ObjectiveQuantity, MissionCourierRules.CargoTag(record.Content.MissionId))]);
         }
     }
 
@@ -188,6 +191,17 @@ public sealed class MissionDungeonRuntime(
             failed++;
         }
         return failed;
+    }
+
+    /// <summary>
+    /// A courier mission was quit (the accepted mission is now Quit): the agent takes the cargo back, as on expiry. No standing change (DEVIATIONS X11).
+    /// </summary>
+    public async Task OnQuitAsync(long owner, long agentId, CancellationToken cancellationToken = default)
+    {
+        var record = await store.ReadAsync(owner, agentId, cancellationToken);
+        if (record is null || record.State != AgentMissionState.Quit) return;
+        if (catalog.Mission(record.Content.MissionId)?.Courier?.ObjectiveTypeId is not { } cargoType) return;
+        await host.TakeCargoAsync(owner, record.Content.MissionId, (int)cargoType, cancellationToken);
     }
 
     private Station? CourierDestinationOf(AgentMissionRecord record) =>
@@ -244,7 +258,7 @@ public sealed class MissionDungeonRuntime(
                 if (record.AgentId == agentId && await host.HeldQuantityAsync(characterId, (int)fetch.TypeId, cancellationToken) >= fetch.Quantity)
                 {
                     await CompleteWithRewardAsync(characterId, record, $"turnin:{missionId}", $"turnin:{missionId}:{agentId}", cancellationToken,
-                        [((int)fetch.TypeId, fetch.Quantity)]);
+                        [((int)fetch.TypeId, fetch.Quantity, (string?)null)]);
                 }
                 continue;
             }
@@ -274,7 +288,7 @@ public sealed class MissionDungeonRuntime(
         catalog.Mission(missionId)?.Kill is { ObjectiveTypeId: { } typeId, ObjectiveQuantity: > 0 } kill ? (typeId, kill.ObjectiveQuantity) : null;
 
     private async Task CompleteWithRewardAsync(long owner, AgentMissionRecord record, string rewardKey, string reference, CancellationToken cancellationToken,
-        IReadOnlyList<(int TypeId, long Quantity)>? consume = null)
+        IReadOnlyList<(int TypeId, long Quantity, string? Tag)>? consume = null)
     {
         var mission = catalog.Mission(record.Content.MissionId)!;
         var place = agentPlaceOf(record.AgentId);

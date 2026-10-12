@@ -292,7 +292,8 @@ internal sealed partial class CharacterServicesComposition
                         : atLocation;
                     await missionDungeons.OnConversationAsync(characterId, agent.AgentId, together, ct);
                 }, researchPort, locatorPort,
-                async (characterId, agentId, token) => { if (missionDungeons is { } dungeons) await dungeons.OnAcceptedAsync(characterId, agentId, token); }));
+                async (characterId, agentId, token) => { if (missionDungeons is { } dungeons) await dungeons.OnAcceptedAsync(characterId, agentId, token); },
+                async (characterId, agentId, token) => { if (missionDungeons is { } dungeons) await dungeons.OnQuitAsync(characterId, agentId, token); }));
         await AttachMissionDungeonsAsync();
     }
 
@@ -485,7 +486,7 @@ internal sealed partial class CharacterServicesComposition
     /// commit. False when the mission was not accepted or the items are short.
     /// </summary>
     private Task<bool> CompleteMissionAsync(long characterId, long agentId, DateTimeOffset now, string reference,
-        IReadOnlyList<MissionStandingGain> standings, IReadOnlyList<(int TypeId, long Quantity)> consume, CancellationToken cancellationToken) =>
+        IReadOnlyList<MissionStandingGain> standings, IReadOnlyList<(int TypeId, long Quantity, string? Tag)> consume, CancellationToken cancellationToken) =>
         CompleteInTransactionAsync(source, agentMissionStore, foundations.Relations, items, characterId, agentId, now, reference, standings, consume, cancellationToken);
 
     /// <summary>
@@ -494,16 +495,18 @@ internal sealed partial class CharacterServicesComposition
     /// </summary>
     internal static async Task<bool> CompleteInTransactionAsync(NpgsqlDataSource source, Eve.Agents.AgentMissionStore agentMissionStore,
         Eve.Relations.RelationStore relations, Eve.Inventory.PgItemStore items, long characterId, long agentId, DateTimeOffset now, string reference,
-        IReadOnlyList<MissionStandingGain> standings, IReadOnlyList<(int TypeId, long Quantity)> consume, CancellationToken cancellationToken)
+        IReadOnlyList<MissionStandingGain> standings, IReadOnlyList<(int TypeId, long Quantity, string? Tag)> consume, CancellationToken cancellationToken)
     {
         await using var connection = await source.OpenConnectionAsync(cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
         // the stacks are locked before anything is written: a second turn-in waits here and then finds them gone (or short)
         var takes = new List<(Eve.Inventory.Item Stack, long Taken)>();
-        foreach (var (typeId, quantity) in consume)
+        foreach (var (typeId, quantity, tag) in consume)
         {
             var left = quantity;
-            foreach (var stack in await items.LockOwnedOfTypeAsync(connection, transaction, characterId, typeId, cancellationToken))
+            // a courier cargo is consumed by its tag only: the other stacks of the type belong to the pilot and stay
+            foreach (var stack in (await items.LockOwnedOfTypeAsync(connection, transaction, characterId, typeId, cancellationToken))
+                         .Where(candidate => tag is null || candidate.CustomInfo == tag))
             {
                 if (left == 0) break;
                 var taken = Math.Min(left, stack.Quantity);
@@ -554,7 +557,7 @@ internal sealed partial class CharacterServicesComposition
     }
 
     /// <summary>The custom info that tags a courier's cargo with its mission, so the take-back removes only that cargo.</summary>
-    private static string CourierCargoTag(long missionId) => $"courier:{missionId}";
+    private static string CourierCargoTag(long missionId) => MissionCourierRules.CargoTag(missionId);
 
     /// <summary>A courier's cargo: the quantity (singletons when the data says so) created into the hangar of the station, tagged with the mission.</summary>
     private async Task GrantCargoAsync(long characterId, long missionId, int typeId, long quantity, bool singleton, long stationId, CancellationToken cancellationToken)
@@ -599,7 +602,7 @@ internal sealed class SpaceMissionDungeonHost(
     Func<long, int, bool> isPilotInSystem,
     Func<long, int, long, CancellationToken, Task<string?>> startDungeon,
     Func<long, long, long, int, string, string, CancellationToken, Task> creditIsk,
-    Func<long, long, DateTimeOffset, string, IReadOnlyList<MissionStandingGain>, IReadOnlyList<(int TypeId, long Quantity)>, CancellationToken, Task<bool>> completeMission,
+    Func<long, long, DateTimeOffset, string, IReadOnlyList<MissionStandingGain>, IReadOnlyList<(int TypeId, long Quantity, string? Tag)>, CancellationToken, Task<bool>> completeMission,
     Func<long, int, long, long, CancellationToken, Task> grantItem,
     Func<long, int, CancellationToken, Task<long>> heldQuantity,
     Func<long, long, int, long, bool, long, CancellationToken, Task> grantCargo,
@@ -614,7 +617,7 @@ internal sealed class SpaceMissionDungeonHost(
         creditIsk(characterId, amount, counterpartyId, refTypeId, reason, operationKey, cancellationToken);
 
     public Task<bool> CompleteMissionAsync(long characterId, long agentId, DateTimeOffset now, string reference,
-        IReadOnlyList<MissionStandingGain> standings, IReadOnlyList<(int TypeId, long Quantity)> consume, CancellationToken cancellationToken) =>
+        IReadOnlyList<MissionStandingGain> standings, IReadOnlyList<(int TypeId, long Quantity, string? Tag)> consume, CancellationToken cancellationToken) =>
         completeMission(characterId, agentId, now, reference, standings, consume, cancellationToken);
 
     public Task GrantObjectiveItemAsync(long characterId, int typeId, long quantity, long stationId, CancellationToken cancellationToken) =>

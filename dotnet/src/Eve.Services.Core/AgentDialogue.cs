@@ -88,7 +88,8 @@ public sealed record AgentDialogueSources(
     Func<long, AgentMissionAgentData, bool, CancellationToken, ValueTask>? OnConversation = null,
     IAgentResearchPort? Research = null,
     IAgentLocatorPort? Locator = null,
-    Func<long, long, CancellationToken, ValueTask>? OnAccepted = null);
+    Func<long, long, CancellationToken, ValueTask>? OnAccepted = null,
+    Func<long, long, CancellationToken, ValueTask>? OnQuit = null);
 
 /// <summary>The answer of DoAction: the agent's line, the buttons, and the last-action record the window reads.</summary>
 public sealed record AgentDialogueReply(PyValue AgentSays, IReadOnlyList<(long ActionId, int ButtonType)> Actions, PyDict LastActionInfo)
@@ -226,6 +227,7 @@ public sealed class AgentDialogueMachine(AgentDialogueSources sources)
                             {
                                 await sources.Store.QuitAsync(characterId, agent.AgentId, now,
                                     $"quit:{characterId}:{agent.AgentId}:{now.ToUnixTimeMilliseconds()}", cancellationToken);
+                                if (sources.OnQuit is { } onQuit) await onQuit(characterId, agent.AgentId, cancellationToken);
                                 return AgentDialogueStep.Of(await ConversationAsync(characterId, agent, standing, atAgentLocation, cancellationToken,
                                     LastInfo(quit: true)));
                             }
@@ -406,6 +408,7 @@ public sealed class AgentDialogueMachine(AgentDialogueSources sources)
                     {
                         await sources.Store.QuitAsync(characterId, agent.AgentId, now,
                             $"research-cancel:{characterId}:{agent.AgentId}:{now.ToUnixTimeMilliseconds()}", cancellationToken);
+                        if (sources.OnQuit is { } onQuitResearch) await onQuitResearch(characterId, agent.AgentId, cancellationToken);
                     }
                     catch (AgentMissionRefusedException)
                     {

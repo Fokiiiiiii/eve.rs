@@ -3006,3 +3006,36 @@ Differences and cuts:
 6. The fitted modules of a ship in the hangar are quoted with the ship (`CATEGORY_SHIP` in the hangar, fitted slots and the drone bay).
    The station-side contents are read outside the repair's transaction; a fitting changed during the repair is not seen by that repair.
 
+
+## Bookmarks: personal folders (accessGroupBookmarkMgr, 37a)
+
+Status: the personal folders, subfolders and bookmarks of a character are implemented and persisted. Shared folders and the
+bookmark of a place in space are not. Tests: `Eve.Bookmarks.Tests` (12, PostgreSQL: 9 store, 3 RPC shape).
+
+- **What is stored.** Schema `bookmarks` (`EVE_BOOKMARKS_SCHEMA`, migration `001_bookmarks.sql`): folders, subfolders and bookmarks, one
+  id sequence. A character with no folder gets the default personal folder, "Personal Locations", active (`ensureDefaultPersonalFolder`,
+  `bookmarkRuntimeState.js:398`). Limits are the reference's: 5 active personal folders, 30 known folders, 30 subfolders, 3 000
+  bookmarks per folder (`bookmarkConstants.js`). A folder over the active limit is made inactive; a known folder made active over the
+  limit is refused with a notice.
+- **Places.** A station and a solar system are bookmarkable from the static data (the station's type and solar system; a solar system
+  is its own location, type 5). Coordinates are null, as in the reference (`resolveStaticBookmarkTarget`, `bookmarkRuntimeState.js:882`).
+  Structures, stargates, belts, celestials, regions and constellations are refused with `BookmarkNotAvailable` (the reference's answer
+  for an id it cannot place). Not built: the structure and celestial places.
+- **Expiry.** A bookmark made with an expiry mode gets its expiry (4 hours, 2 days, 24 hours). The reference sweeps expired bookmarks on
+  a timer. Here they are removed when the active bookmarks are read, so a client that reads after the expiry sees them gone.
+- **Errors.** The reference's codes are sent as user errors (`BookmarkFolderNoLongerThere`, `FolderAccessDenied`,
+  `BookmarkNotAvailable`, `BookmarkSubfolderNoLongerThere`, `FolderCapacityExceeded`, `MAX_SUBFOLDERS`). The owner may delete any
+  bookmark of its folder, so `CouldNotDeleteBookmarksInSubfolder` cannot arise here. Where the reference throws a bare error (`TooManyActiveFolders`), the notice
+  is sent as CustomNotify.
+- **No push.** The reference sends `OnBookmarks*` notifications to the other sessions that know a shared folder. Personal folders are
+  known to their owner only, and the owner gets the result of the call, so no push is sent. A second session of the same character
+  does not see the change until it reads again.
+- **Not built.**
+  1. Shared folders (`isPersonal=false`, access groups). They depend on the access group store, the structure track's
+     `ownerGroupManager`, and are refused with `SharedFoldersNotBuilt` and a notice. Known-folder calls only accept a folder the character
+     owns, so no shared folder can be opened.
+  2. `BookmarkLocation`, the bookmark of the ship's place in space. It needs the space scene; refused with a notice.
+  3. The abyssal refusal of `BookmarkStaticLocation` (`assertAbyssalBookmarkCreationAllowed`): abyssal scenes are not read by the store.
+- **Where.** `Eve.Bookmarks` (`BookmarkStore`, rules in `BookmarkRules`, `BookmarkError`). The RPC is
+  `Eve.Services.Core/AccessGroupBookmarkMgrService.cs`, and `BookmarkRefusals` maps the store's error to the client's user error.
+  The host composition is `Eve.Host/Composition/BookmarkComposition.cs`.

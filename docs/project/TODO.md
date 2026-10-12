@@ -790,7 +790,7 @@ table: the names left out").
 | OPEN | `warRegistry` | `Moniker('warRegistry', ...)`, `eve/common/script/net/eveMoniker.py:198`, and the server-side check `sm.GetService('warRegistry').IsAllianceOrCorpLocal` at `eveMoniker.py:197` on alliance and corporation binds | Wars (corporations and alliances) |
 | OPEN | `planetOrbitalRegistryBroker` | `ConnectToRemoteService('planetOrbitalRegistryBroker', nodeID)`, `eveplanet/orbital.py:35`; `Moniker` at `eveMoniker.py:220` | Planetary interaction (not on the start-up path) |
 | OPEN | `nes_intro` | `sm.RemoteSvc('nes_intro')` in the controller's `__init__`, `storylines/client/nes_intro.py:45`; the controller is built on the first intro check (lazy) | Storylines (New Eden intro) |
-| OPEN | `accessGroupBookmarkMgr` | `sm.RemoteSvc('accessGroupBookmarkMgr')`, `eve/client/script/ui/shared/bookmarks/bookmarkSvc.py:41`; the first call is `GetMyActiveBookmarks` on the bookmark prime (`bookmarkSvc.py:163`), i.e. on use, not at boot | Bookmarks (needs persisted folders) |
+| DONE WITH CUTS (448ea6a) | `accessGroupBookmarkMgr` | `sm.RemoteSvc('accessGroupBookmarkMgr')`, `eve/client/script/ui/shared/bookmarks/bookmarkSvc.py:41`; the first call is `GetMyActiveBookmarks` on the bookmark prime (`bookmarkSvc.py:163`), i.e. on use, not at boot. Served: personal folders, subfolders, bookmarks of stations and systems (schema `bookmarks`, `Eve.Bookmarks`). Open: shared (access group) folders (needs `ownerGroupManager`, structure track), `BookmarkLocation` in space, structure and celestial places. Tests: `Eve.Bookmarks.Tests`. DEVIATIONS "Bookmarks: personal folders". | Bookmarks (personal done; shared open) |
 
 ### 37b. Advertised by eve.rs, not by EVE.js (49)
 

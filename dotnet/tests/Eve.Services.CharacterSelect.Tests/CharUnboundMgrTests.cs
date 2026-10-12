@@ -305,6 +305,19 @@ public class CharUnboundMgrTests
     // ── choosing a character ────────────────────────────────────────────────
 
     [PgFact]
+    public async Task Selecting_a_character_puts_its_active_ship_in_the_selection_session_change()
+    {
+        // the reference's selection notification carries shipid (EveJS capture evejs-nes_intro): the client reads it when it builds the hold tracker
+        await using var h = await Harness.CreateAsync();
+        var (session, _) = await h.LoginAsync("selection-shipid");
+        var character = await CreateAsync(h, session, "Ship Pilot");
+        var ship = (await h.Characters.GetAsync(character))!.ShipId!.Value;
+
+        Assert.Equal(PyNone.Instance, await h.CallAsync(session, "SelectCharacterID", new PyInt(character)));
+        Assert.Equal(new PyLong(ship), session.Get("shipid"));
+    }
+
+    [PgFact]
     public async Task Failed_character_entry_releases_new_reservation_and_restores_previous_session()
     {
         var hook = new FailingEntryHook();

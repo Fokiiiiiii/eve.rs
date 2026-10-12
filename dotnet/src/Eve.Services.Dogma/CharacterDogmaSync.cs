@@ -43,7 +43,7 @@ public sealed class CharacterDogmaSync(DogmaStatic statics, CharacterShips ships
 
     public ValueTask OnCharacterEnteredAsync(ClientSession session, long characterId, CancellationToken cancellationToken)
     {
-        var shipId = session.GetInt("deferredDockedShipId") ?? session.GetInt("shipid");
+        var shipId = session.GetInt("shipid");
         if (shipId is > 0)
             session.Set(FittingBootstrapShipId, new Eve.Marshal.PyLong(shipId.Value));
         else
@@ -58,15 +58,9 @@ public sealed class CharacterDogmaSync(DogmaStatic statics, CharacterShips ships
             session.Get(FittingBootstrapShipId) is not Eve.Marshal.PyLong pendingShip ||
             session.CharacterId is not { } characterId)
             return;
-        if (session.Get("deferredDockedShipId") is Eve.Marshal.PyLong)
-        {
-            if (!stationHangar || method != "List")
-                return;
-        }
-        else if (!activeSpaceShipInventoryList)
-        {
+        // docked: the fitting bootstrap runs on the hangar list, when the ship's items are listed; in space on the active ship's list
+        if (stationHangar ? method != "List" : !activeSpaceShipInventoryList)
             return;
-        }
 
         session.Set(FittingBootstrapShipId, Eve.Marshal.PyNone.Instance);
         if (await ships.LoadAsync(characterId, cancellationToken) is not { } snapshot ||

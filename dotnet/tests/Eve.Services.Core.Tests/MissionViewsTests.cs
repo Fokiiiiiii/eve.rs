@@ -88,16 +88,18 @@ public class MissionViewsTests
         Assert.Equal(0.1, ((PyReal)cargo.Entries.Single(entry => ((PyStr)entry.Key).Value == "volume").Value).Value, 10);
     }
 
-    /// <summary>Opt-in: reads the client export named by EVE_CLIENT_SDE_DIR (read only, nothing is copied). Skipped when it is not set.</summary>
+    /// <summary>The embedded client copy (build 3396210): the message IDs of 2,886 missions (6 rows carry none), the briefing of mission 14117 and the templates.</summary>
     [Fact]
-    public void The_client_export_gives_the_briefing_ID_of_mission_14117_when_it_is_configured()
+    public void The_embedded_client_data_gives_the_message_IDs_and_the_templates_of_the_build()
     {
-        var directory = Environment.GetEnvironmentVariable(ClientMissionMessages.DirectoryVariable);
-        if (string.IsNullOrWhiteSpace(directory)) return;
-        using var stream = File.OpenRead(Path.Combine(directory, "native", "missions.jsonl.gz"));
-        var (messages, skipped) = ClientMissionMessages.Parse(stream);
-        Assert.True(messages.Count > 2000);
+        var (messages, skipped) = ClientMissionMessages.Parse(ClientMissionMessages.Open(""));
+        Assert.Equal(2886, messages.Count);
+        Assert.Equal(6, skipped);
         Assert.Equal(140982, messages[14117][ClientMissionMessages.BriefingKey]);
-        Assert.True(skipped < 400);
+
+        var templates = ClientMissionTemplates.Parse(ClientMissionMessages.Open(""));
+        Assert.Equal(2892, templates.Count);
+        Assert.Equal(443, templates.Values.Count(template => template == ClientMissionTemplates.TradeTemplate));
+        Assert.Equal(42, templates.Values.Count(template => template == ClientMissionTemplates.MiningTemplate));
     }
 }

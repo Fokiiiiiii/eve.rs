@@ -6,7 +6,7 @@ is complete (eve.rs only: the mission content is the server's own; the reference
 The pilot starts in Manifest (30100032), one stargate jump from 30005204, where the level 4 security agent 3015920 sits. It warps to the gate,
 jumps, requests the mission (DoAction 376), accepts it (377) and waits for the wave director's dungeon (the sweep runs every ten seconds). The
 dungeon's NPCs are shot with the pilot's gun as test_npc does. A basic level 4 mission has no ISK in the official data, so the wallet is only
-checked to be unchanged (owner decision D-R1). Needs EVE_SDE_DIR and EVE_CLIENT_SDE_DIR (the mission texts) on the host.
+checked to be unchanged (owner decision D-R1). Needs EVE_SDE_DIR on the host; the mission texts come from the embedded client data.
 """
 
 from __future__ import annotations

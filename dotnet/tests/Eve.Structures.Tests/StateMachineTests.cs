@@ -440,4 +440,50 @@ public class StateMachineTests
     {
         Assert.Equal(size, StructureRules.SizeOfRigSize(rigSize));
     }
+
+    private static readonly StructureRules Fob = StructureRules.Of(StructureSize.Fob, SecurityBand.LowSec, canBeAbandoned: false);
+
+    [Fact]
+    public void A_fob_is_invulnerable_until_exposed_then_one_reinforcement_two_to_four_hours_and_no_repair_before_the_kill()
+    {
+        var s = Do(Fresh(), Fob, new FobDeployed(), T0);
+        Assert.Equal(StructureState.FobInvulnerable, s.State);
+        Assert.Equal(UpkeepState.FullPower, s.Upkeep);
+        Assert.Equal("NOT_VULNERABLE", StructureStateMachine.Apply(s, Fob, new Damaged(StructureLayer.Shield, true, false), T0).Refusal);
+
+        s = Do(s, Fob, new FobExposed(), T0 + Hour);
+        Assert.Equal(StructureState.ShieldVulnerable, s.State);
+
+        var earliest = StructureStateMachine.Apply(s, Fob, new Damaged(StructureLayer.Shield, true, false), T0 + 2 * Hour, roll: 0).Next;
+        Assert.Equal(StructureState.ArmorReinforce, earliest.State);
+        Assert.Equal(T0 + 4 * Hour, earliest.StateEndsMs);
+        var latest = StructureStateMachine.Apply(s, Fob, new Damaged(StructureLayer.Shield, true, false), T0 + 2 * Hour, roll: 0.999999).Next;
+        Assert.InRange(latest.StateEndsMs - (T0 + 2 * Hour), 3 * Hour, 4 * Hour - 1);
+
+        var armored = Do(earliest, Fob, new TimerDue(), earliest.StateEndsMs);
+        Assert.Equal(StructureState.ArmorVulnerable, armored.State);
+        Assert.Equal(0, armored.StateEndsMs);
+        Assert.False(StructureStateMachine.Apply(armored, Fob, new TimerDue(), T0 + 100 * Hour).Changed);
+
+        var hull = Do(armored, Fob, new Damaged(StructureLayer.Armor, true, false), T0 + 100 * Hour);
+        Assert.Equal(StructureState.HullVulnerable, hull.State);
+        Assert.Equal(0, hull.StateEndsMs);
+        var gone = StructureStateMachine.Apply(hull, Fob, new Damaged(StructureLayer.Hull, true, false), T0 + 101 * Hour);
+        Assert.Equal(StructureRemoval.Destroyed, gone.Removal);
+        Assert.True(gone.Next.DestroyedMs > 0);
+    }
+
+    [Fact]
+    public void A_fob_despawns_only_as_a_fob_and_a_structure_that_is_not_one_refuses_the_fob_events()
+    {
+        var s = Do(Fresh(), Fob, new FobDeployed(), T0);
+        var despawned = StructureStateMachine.Apply(s, Fob, new FobDespawned(), T0 + Hour);
+        Assert.Equal(StructureRemoval.Destroyed, despawned.Removal);
+        Assert.Equal(T0 + Hour, despawned.Next.DestroyedMs);
+
+        var medium = StructureStateMachine.Apply(Working(), Medium, new FobExposed(), T0);
+        Assert.Equal("NOT_INVULNERABLE", medium.Refusal);
+        Assert.Equal("NOT_A_FOB", StructureStateMachine.Apply(Fresh(), Medium, new FobDeployed(), T0).Refusal);
+        Assert.Equal("NOT_A_FOB", StructureStateMachine.Apply(Working(), Medium, new FobDespawned(), T0).Refusal);
+    }
 }

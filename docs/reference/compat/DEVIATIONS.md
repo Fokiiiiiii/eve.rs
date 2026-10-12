@@ -3327,6 +3327,20 @@ Protocol. The simulation's `Destroyed` message carries the destroyed ship's type
 
 Bounty. The host pays a kill of an NPC the simulation keeps (a session at or above 2^62 that the host has no profile for) the `entityKillBounty` of its type in the static data (SDE build 3396210, `typeDogma` attribute 481), paid to the pilot who dealt the last blow, through the same store and ESS split as a profiled NPC. Values from the SDE: Entropic Disintegrator Werpost 54577 pays 12,500,000 ISK; EDENCOM GunStar 54579 and Heavy GunStar 54580 pay 0; Liminal Damavik 52182, Interfering Phase-II Legionary 56493 pay 0; the Imperial Navy Sentinel 52923 and the Drifter hulls carry no bounty attribute and pay 0. Eleven Rogue Drone entity types carry non-zero SDE values and pay them.
 
+Sourced table (checked 2026-10-12 against the EVE Ref type pages, https://everef.net/type/{id}, which carry the static data's Bounty attribute; the SDE build 3396210 agrees):
+
+| Type id | Name | SDE entityKillBounty | EVE Ref Bounty |
+|---|---|---|---|
+| 54577 | Entropic Disintegrator Werpost | 12,500,000 | 12,500,000 |
+| 52182 | Liminal Damavik | 0 | 0 |
+| 56493 | Interfering Phase-II Legionary | 0 | 0 |
+| 54579 | EDENCOM GunStar | 0 | 0 |
+| 54580 | EDENCOM Heavy GunStar | 0 | 0 |
+| 52923 | Imperial Navy Sentinel | no attribute | not listed |
+| 56221 | Drifter Assault Cruiser | no attribute | not listed |
+
+Other Damavik variants have a bounty on EVE Ref under other type ids (Stoic 77562: 56,250 ISK; Stalker 77575: 62,500 ISK; Umbral 77608: 100,000 ISK; Blinding 52209: 0). None is adopted for the sim's Liminal Damavik (52182), which EVE Ref gives 0; mapping a value across type ids would be an invention. The owner can decide whether those variants should pay once the sim spawns them.
+
 Decision, no published bounty for the Triglavian and EDENCOM hulls. A search of the EVE University wiki (Triglavian Invasion, Triglavian Collective) and the wider web gave no per-ship ISK bounty for the Damavik, Vedmak, Leshak, Kikimora, Rodiva, Drekavac or the EDENCOM navy hulls. Those kills pay 0 until a source publishes a value; no number is invented.
 
 Loot. Unchanged: the sim-resident NPCs have no host profile and so no loot table (the loot rule is keyed on the profile). No published drop table exists for these types in the SDE.

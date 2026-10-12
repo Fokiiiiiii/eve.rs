@@ -119,9 +119,18 @@ pub fn body_entries(system: &SolarSystem, body: &Body) -> Entries {
         }
         BodyKind::Stargate => stargate_fields(system, body, &mut entries),
         BodyKind::Structure => structure_fields(body, &mut entries),
+        BodyKind::Wormhole => wormhole_fields(body, &mut entries),
         BodyKind::Planet | BodyKind::Moon | BodyKind::Belt | BodyKind::Star => {}
     }
     entries
+}
+
+/// A wormhole end's slim fields: the class of the system it leads to (the client's info window reads `otherSolarSystemClass`).
+fn wormhole_fields(body: &Body, entries: &mut Entries) {
+    let Detail::Wormhole { destination_class, .. } = &body.detail else {
+        return;
+    };
+    entries.push(("otherSolarSystemClass", int(i64::from(*destination_class))));
 }
 
 /// A structure's slim fields (the client's structure bracket and `structure.py` read them): its owner, its state and upkeep, its timer
@@ -135,7 +144,9 @@ fn structure_fields(body: &Body, entries: &mut Entries) {
     entries.push(("state", int(i64::from(status.state))));
     entries.push(("upkeepState", int(i64::from(status.upkeep_state))));
     let timer = match status.timer {
-        Some((start, end, paused)) => tuple([filetime(start), filetime(end), paused.map_or(Value::None, filetime)]),
+        Some((start, end, paused)) => {
+            tuple([filetime(start), filetime(end), paused.map_or(Value::None, filetime)])
+        }
         None => Value::None,
     };
     entries.push(("timer", timer));

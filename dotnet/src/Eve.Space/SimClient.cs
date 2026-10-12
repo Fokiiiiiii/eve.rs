@@ -455,6 +455,10 @@ public sealed class SimClient : ISimulation, IAsyncDisposable
 
     public void PlaceStructure(SimPlaceStructure structure) => Send(structure);
 
+    public void PlaceWormhole(SimPlaceWormhole wormhole) => Send(wormhole);
+
+    public void RemoveWormhole(long wormholeId) => Send(new SimRemoveWormhole(wormholeId));
+
     public void SetTetherPolicy(SimTetherPolicy policy) => Send(policy);
 
     public void RemoveStructure(long structureId) => Send(new SimRemoveStructure(structureId));

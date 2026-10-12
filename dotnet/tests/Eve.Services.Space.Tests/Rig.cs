@@ -256,7 +256,7 @@ private readonly Dictionary<long, ClientSession> _fleetSessions = new();
     public static async Task<Rig> CreateAsync(TimeSpan? protection = null, TimeSpan? jumpCloak = null, bool npcLoot = false, Eve.Npc.BeltRatConfig? beltRats = null, Eve.Scheduler.LocalTimers? localTimers = null, Eve.Npc.NpcAuthority? npcAuthority = null)
     {
         CharacterNames.EnsureUnicodeSupport();
-        var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(Url!));
+        var source = NpgsqlDataSource.Create(PgConnection.ForTest(Url!));
         var sde = new SdeReader(source);
         Assert.True(await sde.BuildAsync() is not null, "no SDE is loaded: run `cargo run -p eve-sde -- ensure --pg $EVE_PG_URL`");
         var suffix = Guid.NewGuid().ToString("N")[..12];

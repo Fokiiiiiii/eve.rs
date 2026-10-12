@@ -62,7 +62,7 @@ public sealed class NewEdenStoreHostTests : IAsyncLifetime
         var url = Environment.GetEnvironmentVariable("EVE_PG_URL");
         if (url is not null)
         {
-            await using var source = NpgsqlDataSource.Create(Eve.Data.PgConnection.ToConnectionString(url));
+            await using var source = NpgsqlDataSource.Create(Eve.Data.PgConnection.ForTest(url));
             foreach (var schema in _schemas)
             {
                 await using var command = source.CreateCommand($"DROP SCHEMA IF EXISTS {schema} CASCADE");
@@ -109,7 +109,7 @@ public sealed class NewEdenStoreHostTests : IAsyncLifetime
     public async Task A_certificate_bought_for_plx_is_granted_into_the_hangar_at_no_charge_and_a_replay_grants_nothing()
     {
         var url = Environment.GetEnvironmentVariable("EVE_PG_URL")!;
-        await using var source = NpgsqlDataSource.Create(Eve.Data.PgConnection.ToConnectionString(url));
+        await using var source = NpgsqlDataSource.Create(Eve.Data.PgConnection.ForTest(url));
         var host = await HostComposition.BuildAsync(Settings());
         var store = host.Registry.Lookup("storeManager") ?? throw new InvalidOperationException("storeManager is not registered");
         var vault = host.Registry.Lookup("vaultManager") ?? throw new InvalidOperationException("vaultManager is not registered");
@@ -136,7 +136,7 @@ public sealed class NewEdenStoreHostTests : IAsyncLifetime
     public async Task A_plex_pack_from_the_fast_checkout_is_credited_to_the_vault_and_its_ok_answer_is_the_client_s_confirmation()
     {
         var url = Environment.GetEnvironmentVariable("EVE_PG_URL")!;
-        await using var source = NpgsqlDataSource.Create(Eve.Data.PgConnection.ToConnectionString(url));
+        await using var source = NpgsqlDataSource.Create(Eve.Data.PgConnection.ForTest(url));
         var host = await HostComposition.BuildAsync(Settings());
         var checkout = host.Registry.Lookup("FastCheckoutService") ?? throw new InvalidOperationException("FastCheckoutService is not registered");
         var vault = host.Registry.Lookup("vaultManager") ?? throw new InvalidOperationException("vaultManager is not registered");
@@ -156,7 +156,7 @@ public sealed class NewEdenStoreHostTests : IAsyncLifetime
     public async Task Store_purchases_in_other_currencies_are_granted_free_and_quantity_and_currency_are_validated()
     {
         var url = Environment.GetEnvironmentVariable("EVE_PG_URL")!;
-        await using var source = NpgsqlDataSource.Create(Eve.Data.PgConnection.ToConnectionString(url));
+        await using var source = NpgsqlDataSource.Create(Eve.Data.PgConnection.ForTest(url));
         var host = await HostComposition.BuildAsync(Settings());
         var store = host.Registry.Lookup("storeManager") ?? throw new InvalidOperationException("storeManager is not registered");
         var vault = host.Registry.Lookup("vaultManager") ?? throw new InvalidOperationException("vaultManager is not registered");
@@ -182,7 +182,7 @@ public sealed class NewEdenStoreHostTests : IAsyncLifetime
     public async Task A_real_money_bundle_is_granted_in_full_at_no_charge()
     {
         var url = Environment.GetEnvironmentVariable("EVE_PG_URL")!;
-        await using var source = NpgsqlDataSource.Create(Eve.Data.PgConnection.ToConnectionString(url));
+        await using var source = NpgsqlDataSource.Create(Eve.Data.PgConnection.ForTest(url));
         var host = await HostComposition.BuildAsync(Settings());
         var store = host.Registry.Lookup("storeManager") ?? throw new InvalidOperationException("storeManager is not registered");
         var vault = host.Registry.Lookup("vaultManager") ?? throw new InvalidOperationException("vaultManager is not registered");

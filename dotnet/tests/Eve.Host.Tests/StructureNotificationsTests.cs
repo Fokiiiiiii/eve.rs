@@ -73,7 +73,7 @@ public sealed class StructureNotificationsTests
     public async Task The_owner_and_docked_pilots_receive_persisted_hangar_view_updates_in_order_and_unrelated_sessions_hear_nothing()
     {
         var url = Environment.GetEnvironmentVariable("EVE_PG_URL") ?? throw new InvalidOperationException("EVE_PG_URL is not set");
-        var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(url));
+        var source = NpgsqlDataSource.Create(PgConnection.ForTest(url));
         await using var _ = source;
         var id = Guid.NewGuid().ToString("N")[..12];
         var schemas = new[] { $"ntf_sch_{id}", $"ntf_evt_{id}", $"ntf_str_{id}" };

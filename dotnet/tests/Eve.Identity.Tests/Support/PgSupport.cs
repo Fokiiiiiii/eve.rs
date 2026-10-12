@@ -32,7 +32,7 @@ public sealed class PgSchema : IAsyncDisposable
 
     public static async Task<PgSchema> CreateAsync(bool migrate = true)
     {
-        var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(Url!));
+        var source = NpgsqlDataSource.Create(PgConnection.ForTest(Url!));
         var scope = new PgSchema(source, $"id_test_{Guid.NewGuid():N}"[..22]);
         if (migrate)
         {

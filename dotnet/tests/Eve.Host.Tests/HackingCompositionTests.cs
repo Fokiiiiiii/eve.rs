@@ -57,7 +57,7 @@ public sealed class HackingCompositionTests : IAsyncLifetime
         var url = Environment.GetEnvironmentVariable("EVE_PG_URL");
         if (url is not null)
         {
-            await using var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(url));
+            await using var source = NpgsqlDataSource.Create(PgConnection.ForTest(url));
             foreach (var schema in _schemas)
             {
                 await using var command = source.CreateCommand($"DROP SCHEMA IF EXISTS {schema} CASCADE");

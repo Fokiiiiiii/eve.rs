@@ -29,7 +29,7 @@ internal sealed class SiteContainerRig : IAsyncDisposable
 
     public static async Task<SiteContainerRig> CreateAsync()
     {
-        var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
+        var source = NpgsqlDataSource.Create(PgConnection.ForTest(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
         var rig = new SiteContainerRig(source);
         await DurableScheduler.MigrateAsync(source, "sch_" + rig._id);
         await EventBus.MigrateAsync(source, "evt_" + rig._id);

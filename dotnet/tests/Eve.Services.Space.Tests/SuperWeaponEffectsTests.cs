@@ -44,7 +44,7 @@ public class SuperWeaponEffectsTests
     [PgFact]
     public async Task Every_activation_of_every_group_588_type_is_refused_by_the_reason_its_family_names_and_builds_no_package()
     {
-        await using var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
+        await using var source = NpgsqlDataSource.Create(PgConnection.ForTest(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
         var statics = await DogmaStatic.LoadAsync(new SdeReader(source));
         // the group listing keeps published types only, and Catmageddon (37474, a reaper of the family) is not published: it is added by its id
         var typeIds = (await statics.TypesInGroupsAsync(["Super Weapon"])).Select(type => type.TypeId).Append(CatmageddonType).ToArray();
@@ -86,7 +86,7 @@ public class SuperWeaponEffectsTests
     [PgFact]
     public async Task A_reaper_is_a_sweep_of_its_two_points_on_the_fixed_arc_and_refused_off_it()
     {
-        await using var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
+        await using var source = NpgsqlDataSource.Create(PgConnection.ForTest(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
         var statics = await DogmaStatic.LoadAsync(new SdeReader(source));
         await statics.EnsureTypesAsync([Ship, 40632]);
 
@@ -117,7 +117,7 @@ public class SuperWeaponEffectsTests
     [PgFact]
     public async Task A_disruptive_lance_needs_an_active_siege_module_and_its_strike_carries_the_debuff()
     {
-        await using var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
+        await using var source = NpgsqlDataSource.Create(PgConnection.ForTest(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
         var statics = await DogmaStatic.LoadAsync(new SdeReader(source));
         await statics.EnsureTypesAsync([Ship, 77398, SiegeModuleI]);
 
@@ -142,7 +142,7 @@ public class SuperWeaponEffectsTests
     [PgFact]
     public async Task A_fitted_disruptive_lance_disallows_the_cloak_while_it_is_fitted()
     {
-        await using var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
+        await using var source = NpgsqlDataSource.Create(PgConnection.ForTest(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
         var statics = await DogmaStatic.LoadAsync(new SdeReader(source));
         await statics.EnsureTypesAsync([Ship, 77398]);
         var cloak = (await statics.TypesInGroupsAsync(["Cloaking Device"]))
@@ -164,7 +164,7 @@ public class SuperWeaponEffectsTests
     [PgFact]
     public async Task A_hog_builds_a_transport_field_from_its_static_data_when_aimed_and_a_cone_is_built_from_its_data()
     {
-        await using var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
+        await using var source = NpgsqlDataSource.Create(PgConnection.ForTest(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
         var statics = await DogmaStatic.LoadAsync(new SdeReader(source));
         await statics.EnsureTypesAsync([Ship, 40633, 40634]);
 
@@ -221,7 +221,7 @@ public class SuperWeaponEffectsTests
     [PgFact]
     public async Task A_lance_is_built_from_its_static_data_when_aimed_and_is_refused_without_a_point()
     {
-        await using var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
+        await using var source = NpgsqlDataSource.Create(PgConnection.ForTest(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
         var statics = await DogmaStatic.LoadAsync(new SdeReader(source));
         await statics.EnsureTypesAsync([Ship, 40631, 41439, 41440, 41441]);
 
@@ -254,7 +254,7 @@ public class SuperWeaponEffectsTests
     [PgFact]
     public async Task A_titan_doomsday_is_built_as_one_hit_on_its_target_after_its_delay_with_its_one_damage_kind()
     {
-        await using var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
+        await using var source = NpgsqlDataSource.Create(PgConnection.ForTest(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
         var statics = await DogmaStatic.LoadAsync(new SdeReader(source));
         // the Judgment (24550, EM 2 400 000, damageDelayDuration 9000, immobility 30 s, no jump or cloak 300 s) and the Gjallarhorn (23674, explosive, 7500 ms)
         await statics.EnsureTypesAsync([Ship, 24550, 23674]);

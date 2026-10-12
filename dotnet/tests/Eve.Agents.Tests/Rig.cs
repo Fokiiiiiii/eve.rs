@@ -30,7 +30,7 @@ internal sealed class Rig : IAsyncDisposable
     public static async Task<Rig> Create()
     {
         var url = Environment.GetEnvironmentVariable("EVE_PG_URL")!;
-        var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(url));
+        var source = NpgsqlDataSource.Create(PgConnection.ForTest(url));
         var schema = "agt_" + Guid.NewGuid().ToString("N")[..12];
         await AgentMissionStore.MigrateAsync(source, schema);
         return new Rig(source, schema);

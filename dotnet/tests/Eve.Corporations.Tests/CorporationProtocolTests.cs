@@ -219,7 +219,7 @@ public sealed class WarsInfoMgrServiceTests
 
         public static async Task<WarRig> CreateAsync()
         {
-            var source = Npgsql.NpgsqlDataSource.Create(Eve.Data.PgConnection.ToConnectionString(Eve.Corporations.Tests.Rig.Url!));
+            var source = Npgsql.NpgsqlDataSource.Create(Eve.Data.PgConnection.ForTest(Eve.Corporations.Tests.Rig.Url!));
             var id = Guid.NewGuid().ToString("N")[..12];
             string[] schemas = ["war_sched_" + id, "war_events_" + id, "war_rel_" + id];
             var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() + 10000;

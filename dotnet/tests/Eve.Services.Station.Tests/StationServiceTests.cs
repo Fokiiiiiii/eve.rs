@@ -133,7 +133,7 @@ public class StationRecordTests
     [PgFact]
     public async Task Every_recorded_station_record_is_reproduced_field_by_field_and_by_checksum()
     {
-        var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(PgFactAttribute.Url!));
+        var source = NpgsqlDataSource.Create(PgConnection.ForTest(PgFactAttribute.Url!));
         var catalog = await StationCatalog.LoadAsync(new SdeReader(source));
         var service = new StationService(catalog, new PgCharacterStore(source, "characters"), new OnlineCharacters(), () => Data.ClockMs);
         var (session, _) = Data.Session(null);
@@ -186,7 +186,7 @@ public class StationServiceTests
         PgCharacterStore? characters = null,
         Func<long, CancellationToken, ValueTask<IReadOnlyList<long>>>? sovereigntySystemsForAlliance = null) =>
         new(Data.Stations,
-            characters ?? new PgCharacterStore(NpgsqlDataSource.Create("Host=localhost"), "characters"),
+            characters ?? new PgCharacterStore(NpgsqlDataSource.Create(Eve.Data.PgConnection.ForTest("Host=localhost")), "characters"),
             online ?? new OnlineCharacters(),
             () => Data.ClockMs,
             sovereigntySystemsForAlliance);
@@ -318,7 +318,7 @@ public class StationServiceTests
     [PgFact]
     public async Task Map_station_info_is_a_cached_rowset()
     {
-        await using var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(PgFactAttribute.Url!));
+        await using var source = NpgsqlDataSource.Create(PgConnection.ForTest(PgFactAttribute.Url!));
         var reads = new Eve.ReadSide.ReadSide(source);
         var service = new MapService(reads, () => Data.ClockMs);
         Assert.Equal("map", ((IService)service).Name);
@@ -365,7 +365,7 @@ public class StationServiceTests
     [PgFact]
     public async Task Map_security_modified_systems_and_station_counts_use_read_side()
     {
-        await using var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(PgFactAttribute.Url!));
+        await using var source = NpgsqlDataSource.Create(PgConnection.ForTest(PgFactAttribute.Url!));
         var reads = new Eve.ReadSide.ReadSide(source);
         var service = new MapService(reads, () => Data.ClockMs);
         var (session, _) = Data.Session(null);
@@ -417,7 +417,7 @@ public class GuestTests
     private static async Task<(PgCharacterStore Characters, NpgsqlDataSource Source, string Schema)> StoreAsync()
     {
         CharacterNames.EnsureUnicodeSupport();
-        var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(PgFactAttribute.Url!));
+        var source = NpgsqlDataSource.Create(PgConnection.ForTest(PgFactAttribute.Url!));
         var schema = $"gst_{Guid.NewGuid():N}"[..20];
         await PgCharacterStore.MigrateAsync(source, schema);
         return (new PgCharacterStore(source, schema), source, schema);

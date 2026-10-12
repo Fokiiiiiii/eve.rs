@@ -88,7 +88,7 @@ public class AgentMissionStoreTests
     public async Task The_character_is_told_once_for_each_committed_change_and_never_for_a_refusal()
     {
         var url = Environment.GetEnvironmentVariable("EVE_PG_URL")!;
-        await using var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(url));
+        await using var source = NpgsqlDataSource.Create(PgConnection.ForTest(url));
         var schema = "agt_" + Guid.NewGuid().ToString("N")[..12];
         try
         {

@@ -108,7 +108,7 @@ public sealed class MiningLedgerServiceTests
     [Fact]
     public async Task Character_without_a_session_character_returns_empty_without_reading_the_table()
     {
-        var service = new CharacterMiningLedgerService(new Eve.ReadSide.ReadSide(NpgsqlDataSource.Create("Host=127.0.0.1;Port=1;Database=unused"),
+        var service = new CharacterMiningLedgerService(new Eve.ReadSide.ReadSide(NpgsqlDataSource.Create(Eve.Data.PgConnection.ForTest("Host=127.0.0.1;Port=1;Database=unused")),
             new Dictionary<string, string> { [MiningLedgerQueries.SpaceSchema] = "unused" }), () => 0);
         var request = Request("GetCharacterLogs", characterId: 0);
 
@@ -189,7 +189,7 @@ public sealed class MiningLedgerServiceTests
         {
             var connectionString = Environment.GetEnvironmentVariable("EVE_PG_URL");
             Assert.False(string.IsNullOrWhiteSpace(connectionString));
-            var ledger = new Ledger(NpgsqlDataSource.Create(connectionString!));
+            var ledger = new Ledger(NpgsqlDataSource.Create(Eve.Data.PgConnection.ForTest(connectionString!)));
             await PgSpaceItemStore.MigrateAsync(ledger.Source, ledger._schema);
             await using var connection = await ledger.Source.OpenConnectionAsync();
             await using var transaction = await connection.BeginTransactionAsync();

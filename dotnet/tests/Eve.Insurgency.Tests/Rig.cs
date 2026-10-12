@@ -45,7 +45,7 @@ public sealed class Rig : IAsyncDisposable
 
     public static async Task<Rig> CreateAsync()
     {
-        var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
+        var source = NpgsqlDataSource.Create(PgConnection.ForTest(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
         var id = Guid.NewGuid().ToString("N")[..12];
         await DurableScheduler.MigrateAsync(source, "sch_" + id);
         await EventBus.MigrateAsync(source, "evt_" + id);

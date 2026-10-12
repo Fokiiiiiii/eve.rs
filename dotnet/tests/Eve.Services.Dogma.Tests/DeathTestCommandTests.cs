@@ -48,7 +48,7 @@ public class DeathTestCommandTests
     [PgFact]
     public async Task A_ship_is_found_by_name_by_a_part_of_it_or_by_its_type_id_and_what_is_not_one_ship_says_why()
     {
-        await using var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(Rig.Url!));
+        await using var source = NpgsqlDataSource.Create(PgConnection.ForTest(Rig.Url!));
         var names = new ShipTypeNames(new SdeReader(source));
         Assert.Equal(601, (await names.FindAsync("Ibis")).TypeId);
         Assert.Equal(601, (await names.FindAsync("  ibis ")).TypeId);
@@ -96,7 +96,7 @@ public class DeathTestCommandTests
     [PgFact]
     public async Task A_named_ship_that_is_not_found_or_not_one_is_told_and_a_found_one_is_asked_for_by_type()
     {
-        await using var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(Rig.Url!));
+        await using var source = NpgsqlDataSource.Create(PgConnection.ForTest(Rig.Url!));
         var hulls = new Hulls(new HullField("Impairor", 3, 20_000, 2.0));
         var command = new DeathTestCommands(hulls, new ShipTypeNames(new SdeReader(source)));
         Assert.StartsWith("Ship type not found: zzzzqq.", await command.RunAsync(InSpace(), "zzzzqq", CancellationToken.None));

@@ -21,7 +21,7 @@ public class FocusScriptTests
     [PgFact]
     public async Task A_focus_script_loaded_in_a_field_generator_projects_its_scramble_over_its_own_range()
     {
-        await using var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
+        await using var source = NpgsqlDataSource.Create(PgConnection.ForTest(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
         var sde = new SdeReader(source);
         var statics = await DogmaStatic.LoadAsync(sde);
         await statics.EnsureTypesAsync([Ship, FieldGeneratorI, FocusedDisruptionScript, FocusedScramblingScript]);

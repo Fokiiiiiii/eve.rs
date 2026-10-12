@@ -17,7 +17,7 @@ public sealed class CrateServicePersistenceTests
     {
         var connectionString = Environment.GetEnvironmentVariable("EVE_PG_URL");
         Assert.False(string.IsNullOrWhiteSpace(connectionString));
-        await using var source = NpgsqlDataSource.Create(Eve.Data.PgConnection.ToConnectionString(connectionString!));
+        await using var source = NpgsqlDataSource.Create(Eve.Data.PgConnection.ForTest(connectionString!));
         var sde = new SdeReader(source);
         Assert.NotNull(await sde.BuildAsync());
 
@@ -95,7 +95,7 @@ public sealed class CrateServicePersistenceTests
     {
         var connectionString = Environment.GetEnvironmentVariable("EVE_PG_URL");
         Assert.False(string.IsNullOrWhiteSpace(connectionString));
-        await using var source = NpgsqlDataSource.Create(Eve.Data.PgConnection.ToConnectionString(connectionString!));
+        await using var source = NpgsqlDataSource.Create(Eve.Data.PgConnection.ForTest(connectionString!));
         var sde = new SdeReader(source);
         Assert.NotNull(await sde.BuildAsync());
 

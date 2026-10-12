@@ -15,7 +15,7 @@ public class ResearchProjectStoreTests
     [PgFact]
     public async Task A_project_accrues_its_remainder_and_the_rate_and_survives_a_restart()
     {
-        await using var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
+        await using var source = NpgsqlDataSource.Create(PgConnection.ForTest(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
         var schema = "rsp_" + Guid.NewGuid().ToString("N")[..12];
         try
         {
@@ -40,7 +40,7 @@ public class ResearchProjectStoreTests
     [PgFact]
     public async Task A_start_over_the_slot_limit_or_with_the_same_agent_is_refused_and_writes_nothing()
     {
-        await using var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
+        await using var source = NpgsqlDataSource.Create(PgConnection.ForTest(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
         var schema = "rsp_" + Guid.NewGuid().ToString("N")[..12];
         try
         {
@@ -70,7 +70,7 @@ public class ResearchProjectStoreTests
     [PgFact]
     public async Task Cancelling_deletes_the_project_and_its_points_are_gone()
     {
-        await using var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
+        await using var source = NpgsqlDataSource.Create(PgConnection.ForTest(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
         var schema = "rsp_" + Guid.NewGuid().ToString("N")[..12];
         try
         {

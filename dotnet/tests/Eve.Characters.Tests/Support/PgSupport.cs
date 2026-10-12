@@ -63,7 +63,7 @@ public sealed class PgSchemas : IAsyncDisposable
 
     public static async Task<PgSchemas> CreateAsync()
     {
-        var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(Url!));
+        var source = NpgsqlDataSource.Create(PgConnection.ForTest(Url!));
         var schemas = new PgSchemas(source, Guid.NewGuid().ToString("N")[..12]);
         await PgCharacterStore.MigrateAsync(source, schemas.CharactersSchema);
         await PgItemStore.MigrateAsync(source, schemas.InventorySchema);

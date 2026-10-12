@@ -35,7 +35,7 @@ public sealed class PgSchema : IAsyncDisposable
 
     public static async Task<PgSchema> CreateAsync()
     {
-        var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(Url!));
+        var source = NpgsqlDataSource.Create(PgConnection.ForTest(Url!));
         var schema = new PgSchema(source, $"sk_test_{Guid.NewGuid():N}"[..20]);
         await PgSkillStore.MigrateAsync(source, schema.Name);
         return schema;

@@ -15,7 +15,7 @@ public class CustodyTests
     [PgFact]
     public async Task Stack_split_moves_are_atomic_and_concurrent_custody_cannot_consume_one_stack_twice()
     {
-        await using var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
+        await using var source = NpgsqlDataSource.Create(PgConnection.ForTest(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
         var schema = "market_custody_" + Guid.NewGuid().ToString("N");
         await PgItemStore.MigrateAsync(source,schema);
         var items = new PgItemStore(source,schema);
@@ -88,7 +88,7 @@ public class CustodyTests
     [PgFact]
     public async Task Corporate_blueprint_lock_blocks_item_mutations_until_unlocked()
     {
-        await using var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
+        await using var source = NpgsqlDataSource.Create(PgConnection.ForTest(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
         var schema = "market_blueprint_lock_" + Guid.NewGuid().ToString("N");
         await PgItemStore.MigrateAsync(source, schema);
         var items = new PgItemStore(source, schema);
@@ -172,7 +172,7 @@ public class CustodyTests
     [PgFact]
     public async Task The_pinned_sde_stargates_load_as_market_routes()
     {
-        await using var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
+        await using var source = NpgsqlDataSource.Create(PgConnection.ForTest(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
         var sde = new SdeReader(source);
         var topology = await MarketTopology.LoadAsync(sde);
         var gate = (await sde.ReadAsync("mapStargates")).First(r => r.Doc.GetProperty("solarSystemID").GetInt32() != r.Doc.GetProperty("destination").GetProperty("solarSystemID").GetInt32());
@@ -186,7 +186,7 @@ public sealed class MarketSeedV4StoreTests
     [PgFact]
     public async Task V4_bulk_seed_preserves_tq_volume_baseline_and_retires_old_rows_atomically()
     {
-        await using var source=NpgsqlDataSource.Create(PgConnection.ToConnectionString(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
+        await using var source=NpgsqlDataSource.Create(PgConnection.ForTest(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
         var schema="market_seed_v4_"+Guid.NewGuid().ToString("N");
         await MarketStore.MigrateAsync(source,schema);
         var store=new MarketStore(source,schema);

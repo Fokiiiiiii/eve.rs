@@ -16,7 +16,7 @@ public sealed class UserSvcRedeemTokenPersistenceTests
     {
         var pgUrl = Environment.GetEnvironmentVariable("EVE_PG_URL");
         Assert.False(string.IsNullOrWhiteSpace(pgUrl));
-        await using var source = NpgsqlDataSource.Create(Eve.Data.PgConnection.ToConnectionString(pgUrl!));
+        await using var source = NpgsqlDataSource.Create(Eve.Data.PgConnection.ForTest(pgUrl!));
         var schema = "user_redeem_" + Guid.NewGuid().ToString("N");
         await using var store = new PersistenceStore(source, schema);
         try

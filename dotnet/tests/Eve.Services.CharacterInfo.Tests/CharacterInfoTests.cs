@@ -124,7 +124,7 @@ public static HomeStationResolver CreateHomeStationResolver(
     public static async Task<Rig> CreateAsync()
     {
         CharacterNames.EnsureUnicodeSupport();
-        var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(Url!));
+        var source = NpgsqlDataSource.Create(PgConnection.ForTest(Url!));
         var rig = new Rig(source);
         await PgCharacterStore.MigrateAsync(source, rig._characters);
         await PgWalletStore.MigrateAsync(source, rig._wallet);

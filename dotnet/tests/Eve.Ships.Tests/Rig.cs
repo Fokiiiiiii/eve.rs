@@ -236,7 +236,7 @@ internal sealed class Rig : IAsyncDisposable
         Func<DogmaStatic, DogmaStatic>? staticFixtures = null)
     {
         CharacterNames.EnsureUnicodeSupport();
-        var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(Url!));
+        var source = NpgsqlDataSource.Create(PgConnection.ForTest(Url!));
         var sde = new SdeReader(source);
         Assert.True(await sde.BuildAsync() is not null, "no SDE is loaded: run `cargo run -p eve-sde -- ensure --pg $EVE_PG_URL`");
         var suffix = Guid.NewGuid().ToString("N")[..12];

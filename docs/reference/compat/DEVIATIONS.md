@@ -2648,7 +2648,7 @@ Focused PostgreSQL verification: Station 28/28, selected Space docking/undocking
 ## Mission execution X3 step 4: rewards (2026-10-11)
 
 - **LP.** No LP reward for a mission in the official data (`fixedLpRewardAlpha` and `fixedLpRewardOmega` are 0 on all 2,892 mission records; no other record field holds LP). LP is therefore not paid by missions. Status: decided; revisit if a source appears.
-- **Standings.** The SDE `extraStandings` (real data) change the standing toward the faction key by the value / 10 (the wiki's "+0.7" for the SDE's 7.0), once per completion (the completion transition is the guard; a replay is refused). The two writes (completion and standing) are in separate transactions; a crash between them loses the standing and does not repeat it. Status: decided; the atomic version is OPEN.
+- **Standings.** The SDE `extraStandings` (real data) change the standing toward the faction key by the value / 10 (the wiki's "+0.7" for the SDE's 7.0), once per completion (the completion transition is the guard; a replay is refused). The two writes (completion and standing) are in separate transactions; a crash between them loses the standing and does not repeat it. Status: decided; atomic since X4 (the completion and the standing write share one transaction), with a store-level rollback test in X5.
 - **Bonus time window** (`bonusReward`, `bonusTimeInterval`): not paid. The interval's unit is not established (G-R2). Status: OPEN.
 
 ## Mission execution X3 step 2: client texts and held-mission views (2026-10-11)
@@ -2732,6 +2732,17 @@ The client's RPC names, notification names and fields, unlink reasons and link e
 - **Named errors and dispatch.** `DoAction`, `GetMissionBriefingInfo` and `GetMissionObjectiveInfo` are listed in the agent service's `HasMethod` (the dispatcher refuses an unlisted method before `CallAsync`). Status: fixed.
 - **Fetch and courier objectives (item 2).** Not built: a fetch objective needs the item in the pilot's cargo and a turn-in at the agent, a courier one needs a pickup and a drop-off; the objective payload still lists none. Status: OPEN.
 
+## Mission execution X5: basic reward, site table, test pool, live kill (2026-10-11)
+
+- **Basic level 4 and 5 ISK.** A basic security mission whose SDE record has no reward pays the ISK base of its level (level 4: 675,000; level 5: 1,470,000), from EveJS's security-scale table (`server/src/services/agent/agentMissionRuntime.js`, `REWARD_BY_SCALE_AND_LEVEL`), taken as the behaviour reference. The official build gives basic missions no reward (D-R1). The EVE University wiki says level 4 missions "offer large rewards" but gives no figures, so this is not a CCP table. Not paid: the timed bonus (EveJS pays 1.23x inside an interval; the interval's unit is OPEN, G-R2) and the Negotiation skill (the wiki says 5% per level; not applied). Status: ISK base decided; bonus and Negotiation OPEN.
+- **Standing.** Unchanged: the SDE's `extraStandings` value divided by 10 (the SDE stores tenths). This is a unit conversion, not a reward ratio. The wiki's standings page gives no numeric gain for a mission and no formula relating standing to reward, so a basic mission pays no standing (the SDE gives it none). The owner's "reward / 10" is therefore not kept as a rule. Status: decided.
+- **Live walk.** Offer, accept, the dungeon's NPCs in space and the journal pass live (`test_a_basic_level_4_kill_mission_is_offered_accepted_and_its_dungeon_comes_into_space`). Killing the dungeon does not pass: the walk's starter frigate has no fit and dies to the eight NPCs (seven alive after 90 s, 43 hits). The server then releases the pilot's bound objects (`SpaceSessions.Death`), which the walk saw as UnMachoDestination; that is the correct death path, not a dogma or ballpark bug. `test_the_pilot_clears_the_dungeon_and_is_paid` is a strict expected failure until a fitted hull is used. Status: OPEN.
+- **Site table.** 213 containers of `Sites/Data/site-templates.json` name no type (relics and graveyards). The director divided by the empty list, so every site of such a system failed with "Attempted to divide by zero". Such a container is now skipped and logged, and the site is still made; no type is invented. Live: no site failures in systems 30005204 or 30100032. Status: fixed.
+- **Test connection pool.** The Npc test rig's data source keeps at most 4 connections (`MaxPoolSize`). `PgBountyStoreTests` runs 24 records at once, and the server allows 100 connections for all four lanes together, so the pool queues the calls instead of failing. Other rigs keep the default pool. Status: fixed for the Npc rig; a rig-wide cap is OPEN.
+- **Wreck row.** The host saves a placed wreck in the background after telling the scene; `NpcLootHostTests` waited for the scene only. It now waits for the row. Status: fixed.
+- **Rollback.** A completion whose standing write fails is rolled back with the transaction: the mission stays accepted, the journal is unchanged and no notice is raised (`AgentMissionStoreTests.A_completion_rolled_back...`). Status: tested at the store; the composition-level path is not tested.
+- **Arcs on and off by default.** All 21 arcs stay held back. Arc 29 is not flipped on: its step 1 site is generic, and its live walk through steps 1 and 2 (Arnon, Tar) has not run. Owner decision: flip after that walk passes. Status: OPEN.
+- **Fetch and courier objectives.** Not built in X5. Mission 14119 needs a kill in dungeon 3660 and an item (`objectiveTypeID` 30755, quantity 1) in the pilot's hangar at the turn-in; a courier objective needs a pickup and a drop-off. `MissionViews` still lists no objective of either kind, and its reward line shows only the SDE's ISK, not the basic base. Status: OPEN.
 ## Encounter Surveillance System, slice ESS-2 (2026-10-11)
 
 ESS-2 closes the cut list of ESS-1. The numbers below replace the ESS-1 zeros; each states its source and how sure the source is.
@@ -2807,6 +2818,28 @@ Differences, each one a deliberate choice or a behaviour EveJS does not have:
 8. Owner and reserve payouts (wallet journal reference 155): EveJS pays nothing.
 
 A MITM capture of the same live scenario on both servers is still to do; this list is a hand reading of the two sources.
+
+## Encounter Surveillance System, slice ESS-3 (2026-10-11)
+
+- Key removal and the bank's opening are one transaction. The store passes its connection and transaction to the key callback; the composition finds a hangar stack of the key type, locks it in that transaction and removes one item. A failure after the removal rolls back both (`PgEssStoreTests`: the key is taken in the bank's transaction; a failure after the key is taken takes it back and the bank stays shut). Keys come from the hangar only (owner decision 4 of ESS-2: accepted).
+- The quadrant list is the article's own list. The article's NW list names 11 systems and its text says ten; the list is used as published (no change; owner decision 3 of ESS-2: accepted as is).
+- The 5% reserve share and the 150,000,000 ISK per-pulse cap are kept as sourced (owner decisions 1 and 2 of ESS-2: accepted).
+
+Not done in ESS-3, with reasons:
+
+- Live link, break, relink and theft walk. Three things are missing, and each is a change of scope rather than a seed step: (1) the station the walk undocks from is about 3.1 x 10^11 m from the system origin, where the ESS ball is placed by rule, so a pilot who undocks cannot be within the 10 km link range; the ESS would have to be placed near the station, which changes the placement rule; (2) the walk character holds a rookie hull, so a linkable hull must be seeded in the live database, and then undocking it needs a headless flow of its own (the existing undock test replays a recorded rookie-hull fixture); (3) the 360 s countdown would then be waited for live.
+- A short payout interval for the test environment: the server has no such override, and none was added (the coordinator's condition was that one already exists). The payout clock stays covered by `PgEssStoreTests`.
+- MITM comparison of the ESS walk: run on the part of the walk that exists (dock, read, refused link), with the recipe in `docs/project/MITM_COMPARE.md` (origin/main, 9fbd2fb) and `tools/mitm` `capture`, `diff --ignore-volatile`, `show --service essMgr`. The EveJS side ran `tests/test_ess.py` through `run-evejs-live.sh` (`EVE_RUN`) against the EveJS scratch copy with the ESS seeded at 30100032/900000001. Result:
+  - The client call sequence matches up to `AttemptLinkToMainBank` (both: `GetDataForClientSolarSystem`, the two theft lists, `AttemptLinkToMainBank` answered `null`).
+  - `diff` stops at event 1: the random character name in `CreateCharacterWithDoll` is not covered by `--ignore-volatile`, so the tool compares no later call. Later calls were compared by reading the `show` output.
+  - Real difference: after `AttemptLinkToMainBank`, EveJS reports a live `mainBankLink` (linkID, characterID, startedAt, completesAt) for a docked character; eve.rs keeps `mainBankLink` null. EveJS therefore fails the test's refused-link assertion. eve.rs refuses because the character is docked, outside the 10 km link range; this is the intended rule, kept, and EveJS's link acceptance is recorded as a difference of the reference, not a change to eve.rs. Owner to confirm.
+  - The eve.rs side also makes `RequestMainBankUnlink`, which the EveJS run did not reach because it failed first.
+  - The `GetDataForClientSolarSystem` payload keys match on both sides. The first connection to the EveJS port was refused before the server listened; that is a boot race in the script, not part of the scenario.
+  - Not captured: the live link, break and theft (see above).
+
+Affected gates on the merged tree: Services.Core 652/652, Host 223/223, Space host batch 256/256, Space non-host 516/516 (one run hit PostgreSQL's connection limit, `53300 too many clients`; the same test passed when re-run alone, and the batch then totals 516/516 with that re-run).
+
+>
 
 ## Direct trade (trademgr, 37a)
 

@@ -14,7 +14,7 @@ public sealed class StructureDataRpcPersistenceTests
     {
         var connectionString = Environment.GetEnvironmentVariable("EVE_PG_URL");
         Assert.False(string.IsNullOrWhiteSpace(connectionString));
-        await using var source = NpgsqlDataSource.Create(Eve.Data.PgConnection.ToConnectionString(connectionString!));
+        await using var source = NpgsqlDataSource.Create(Eve.Data.PgConnection.ForTest(connectionString!));
         var schema = "structure_rpc_" + Guid.NewGuid().ToString("N")[..12];
         try
         {

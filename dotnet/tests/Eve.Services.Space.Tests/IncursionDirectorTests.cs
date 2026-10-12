@@ -278,7 +278,7 @@ public sealed class IncursionDirectorTests
         public static async Task<IncursionRig> CreateAsync(double unit = 0.5)
         {
             var url = Environment.GetEnvironmentVariable("EVE_PG_URL")!;
-            var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(url));
+            var source = NpgsqlDataSource.Create(PgConnection.ForTest(url));
             var id = Guid.NewGuid().ToString("N")[..12];
             string[] schemas = ["inc_sch_" + id, "inc_evt_" + id, "inc_cnt_" + id, "inc_wav_" + id, "inc_inc_" + id];
             await DurableScheduler.MigrateAsync(source, schemas[0]);

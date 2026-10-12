@@ -3039,3 +3039,49 @@ bookmark of a place in space are not. Tests: `Eve.Bookmarks.Tests` (12, PostgreS
 - **Where.** `Eve.Bookmarks` (`BookmarkStore`, rules in `BookmarkRules`, `BookmarkError`). The RPC is
   `Eve.Services.Core/AccessGroupBookmarkMgrService.cs`, and `BookmarkRefusals` maps the store's error to the client's user error.
   The host composition is `Eve.Host/Composition/BookmarkComposition.cs`.
+
+## War registry, NES intro and blueprint manager (37a)
+
+Status: `warRegistry` is partly built (the wars are read and two of the owner's changes are made; negotiations are refused).
+`nes_intro` and `blueprintManager` are built. Tests: `Eve.Corporations.Tests` (`WarRegistryTests`, 3, PostgreSQL), `Eve.Characters.Tests`
+(`NesIntroStoreTests`, 2, PostgreSQL), `Eve.Services.Core.Tests` (`NesIntroServiceTests` 2, `BlueprintManagerServiceTests` 5).
+
+### warRegistry
+- **Reads.** `GetWars(ownerID)` lists the wars the owner (an argument, else the session's alliance or corporation) is in, keyed by war id,
+  read from the `war` relations with their allies (the reader is shared with `warsInfoMgr`). `IsAllianceOrCorpLocal()` answers 1, as
+  `warRegistry.IsAllianceOrCorpLocal` does in the reference (`warRegistryService.js:173`).
+- **Two changes an owner makes.** `SetOpenForAllies(warID, state)` changes the war when the session's entity is the one the war is against
+  (the defender), as the reference checks (`warRegistryService.js:372`). `RetractMutualWar(warID)` ends a mutual war at once when the entity is
+  one of its two sides; a war that is not mutual is left as it is (`warRegistryService.js:319-335`). The ending writes `retracted`,
+  `timeFinished` and `retractedBy` and sets the relation's end time, so the war is no longer active for crimewatch. Each change runs in one
+  transaction under the war's row lock and is announced to the war's sides after the commit (`OnWarChanged`).
+- **Not built: war negotiations.** Ally offers and surrender offers (`CreateWarAllyOffer`, `RetractWarAllyOffer`,
+  `CreateSurrenderNegotiation`, `AcceptAllyNegotiation`, `DeclineAllyOffer`, `AcceptSurrender`, `DeclineSurrender`) have no store here: they are
+  refused with the notice "War negotiations are not available on this server." `GetNegotiations` is an empty list and
+  `GetWarNegotiation` answers None, because no negotiation can be opened on this server. The reference keeps them in the corporation
+  runtime (`warNegotiations`) with ISK in escrow; that is the open part of the war track.
+
+### nes_intro
+- `get_nes_intro_state()` answers the stored state (`nes_intro_states`, migration `0005_nes_intro_state.sql`, in the characters
+  schema) when the character's tutorial entry is on, and unset (0) otherwise. This is `tutorialRuntime.js` `buildTutorialSnapshot`
+  (the effective state is the stored one only when the tutorial is enabled).
+- `skip_nes_intro()` moves an active introduction to skipped (3) and sends `OnNesIntroStateChanged(characterID, 3)` to the character's
+  session. It answers true for a character that exists, as the reference does, even when nothing changed.
+- **Not built.** Nothing sets an introduction to active, in the reference or here: `tutorialRuntime.js` only ever stores unset or the value a
+  skip writes. So every introduction is unset, and the New Eden store introduction (its checkpoints and crate, `nes_intro_constants.py`) is
+  not run. A skip therefore changes nothing today.
+
+### blueprintManager
+- `GetLimits()` answers `maxBlueprintResults` 500 (`blueprintManagerService.js:26-28`).
+- `GetBlueprintData(itemID)` and `GetBlueprintDataByOwner(ownerID, facilityID)` answer the blueprint instance the client reads
+  (`industryPayloads.js:92`). A blueprint is an item of group 9. The caller sees only what its character or corporation holds; another
+  owner's blueprint is the client's own `IndustryBlueprintNotFound`, and another owner's listing is empty.
+- **Quantity and runs.** The client takes a blueprint as an original unless its quantity is -2, and as singleton when negative
+  (`industryCommon.py:331-333`), so a copy has quantity -2 and an original -1. An original's runs are -1 (the EVE convention for an
+  unlimited original); a copy's runs are the stored count.
+- **Job.** `jobID` is the active industry job of the blueprint (a job whose status is below 100 and whose blueprint is the item), read from
+  the industry job record the job service reads.
+- **Counts.** The counts are per facility, with the key null for a blueprint in no facility. Every blueprint here is in no facility: no
+  industry facility is read by this service, so `facilityID` is null and a facility filter lists none.
+- **Location.** `locationTypeID` is the station's type when the blueprint is in a station, or the type of the item it is in. `solarSystemID`
+  is the solar system of the station, found by following the containers up to a few levels.

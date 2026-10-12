@@ -82,6 +82,7 @@ internal sealed partial class CharacterServicesComposition
         marketSchema = Env("EVE_MARKET_SCHEMA", Eve.Market.MarketStore.DefaultSchema);
         await Eve.Market.MarketStore.MigrateAsync(source, marketSchema);
         market = new Eve.Market.MarketStore(source, marketSchema);
+        AdjustedPriceCacheSetup();
         marketCatalog = await Eve.Market.MarketCatalog.LoadAsync(sde);
     }
 

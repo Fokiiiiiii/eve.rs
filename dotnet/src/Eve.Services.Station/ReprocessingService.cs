@@ -25,8 +25,8 @@ public interface IReprocessingData
     Task<double> StationEfficiencyAsync(long stationId, CancellationToken cancellationToken);
 }
 
-/// <summary>The reprocessing data read from the loaded static data (<c>typeMaterials</c>, <c>types</c>, <c>typeDogma</c>, <c>npcStations</c>, <c>marketPrices</c>).</summary>
-public sealed class SdeReprocessingData(SdeReader sde) : IReprocessingData
+/// <summary>The reprocessing data: the static data (<c>typeMaterials</c>, <c>types</c>, <c>typeDogma</c>, <c>npcStations</c>) and the ESI adjusted prices.</summary>
+public sealed class SdeReprocessingData(SdeReader sde, Eve.Market.AdjustedPriceCache prices) : IReprocessingData
 {
     public async Task<IReadOnlyDictionary<int, ReprocessingTypeInfo>> TypesAsync(IReadOnlyCollection<int> typeIds, CancellationToken cancellationToken)
     {
@@ -50,24 +50,8 @@ public sealed class SdeReprocessingData(SdeReader sde) : IReprocessingData
     public async Task<IReadOnlyDictionary<int, double>> PercentagePerLevelAsync(IReadOnlyCollection<int> skillTypeIds, CancellationToken cancellationToken) =>
         await DogmaValuesAsync(skillTypeIds.Distinct().Select(id => (long)id).ToList(), ReprocessingRules.RefiningYieldMutatorAttribute, cancellationToken);
 
-    public async Task<IReadOnlyDictionary<int, double>> AdjustedPricesAsync(IReadOnlyCollection<int> typeIds, CancellationToken cancellationToken)
-    {
-        var prices = new Dictionary<int, double>();
-        try
-        {
-            foreach (var row in await sde.ReadAsync("marketPrices", typeIds.Distinct().Select(id => (long)id).ToList(), cancellationToken))
-            {
-                var price = row.Doc.TryGetProperty("adjustedPrice", out var adjusted) && adjusted.ValueKind == System.Text.Json.JsonValueKind.Number ? adjusted.GetDouble() : 0;
-                if (price <= 0 && row.Doc.TryGetProperty("averagePrice", out var average) && average.ValueKind == System.Text.Json.JsonValueKind.Number) price = average.GetDouble();
-                if (price > 0) prices[(int)row.Key] = price;
-            }
-        }
-        catch (Npgsql.PostgresException error) when (error.SqlState == "42P01")
-        {
-            // no market price table in this static data: the tax on materials is then zero, as the static data gives no price
-        }
-        return prices;
-    }
+    public async Task<IReadOnlyDictionary<int, double>> AdjustedPricesAsync(IReadOnlyCollection<int> typeIds, CancellationToken cancellationToken) =>
+        await prices.GetAsync(typeIds, cancellationToken);
 
     public async Task<double> StationEfficiencyAsync(long stationId, CancellationToken cancellationToken)
     {

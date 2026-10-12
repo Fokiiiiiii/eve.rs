@@ -4,6 +4,7 @@
     <ProjectReference Include="../Eve.Services.Corporations/Eve.Services.Corporations.csproj" />
     <ProjectReference Include="../Eve.Trade/Eve.Trade.csproj" />
     <ProjectReference Include="../Eve.Sde/Eve.Sde.csproj" />
+    <ProjectReference Include="../Eve.Market/Eve.Market.csproj" />
     <ProjectReference Include="../Eve.Relations/Eve.Relations.csproj" />
     <ProjectReference Include="../Eve.Skills/Eve.Skills.csproj" />
     <ProjectReference Include="../Eve.Wallet/Eve.Wallet.csproj" />

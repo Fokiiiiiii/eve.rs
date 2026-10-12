@@ -1261,3 +1261,45 @@ fn mine_repeatedly_rejects_depleted_rocks_and_cancels_when_control_range_is_lost
     assert!(cancelled.iter().all(|out| !matches!(out, Out::DroneWorkCycle { .. })));
     assert_eq!(scene.drones[&drone].task, Task::Idle);
 }
+
+#[test]
+fn a_drone_sent_at_a_structure_in_its_reach_fires_at_its_layers_and_the_host_is_told_when_the_shield_is_gone()
+{
+    const STRUCTURE_ID: i64 = 98_100_020;
+    let (mut scene, drone, _) = launched();
+    let here = scene.pilots[&drone].ship.position;
+    let mut placement = crate::scene::tests::structure_placement(&scene, LATER);
+    placement.structure_id = STRUCTURE_ID;
+    placement.position = [here.x + 60_000.0 + 800.0, here.y, here.z];
+    placement.vitals = crate::health::Vitals {
+        shield_capacity: 1.0,
+        armor_hp: 500.0,
+        structure_hp: 300.0,
+        ..Default::default()
+    };
+    placement.limits = crate::health::StructureLimits { per_second: [1e9; 3], repair_pause: [0.0; 3] };
+    scene.place_structure(placement, LATER);
+
+    let mut told =
+        scene.drone_command(PLAYER, &[DRONE_SHIP], DroneCommand::Engage { target: STRUCTURE_ID }, LATER);
+    let results = told.iter().find_map(|out| match out {
+        Out::DroneResults { results, .. } => Some(results.clone()),
+        _ => None,
+    });
+    assert_eq!(results, Some(vec![(DRONE_SHIP, None)]), "the drone takes the structure as a target");
+    let mut now = LATER;
+    for _ in 0..80 {
+        now += SECOND / 4;
+        told.extend(scene.poll(now));
+        if told.iter().any(|o| matches!(o, Out::StructureDamaged { .. })) {
+            break;
+        }
+    }
+    assert!(
+        told.iter().any(|o| matches!(
+            o,
+            Out::StructureDamaged { structure_id, depleted: Some(crate::health::Layer::Shield), .. } if *structure_id == STRUCTURE_ID
+        )),
+        "{told:?}"
+    );
+}

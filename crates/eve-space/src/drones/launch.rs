@@ -363,6 +363,12 @@ impl Scene {
                     out.extend(self.engage(session, target, now));
                 }
                 DroneCommand::Engage { target } => {
+                    // a structure of the system is a target as a ship is (the drone shoots it where it is; it does not fly to it)
+                    if self.session_of(target).is_none() && self.struck_structure(target) {
+                        out.extend(self.engage(session, target, now));
+                        results.push((drone_id, None));
+                        continue;
+                    }
                     let Some(target_session) = self.session_of(target).filter(|t| *t != session) else {
                         results.push((drone_id, Some("NO_TARGET")));
                         continue;

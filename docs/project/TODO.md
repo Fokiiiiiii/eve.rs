@@ -1529,3 +1529,13 @@ Evidence and decisions: `docs/project/WORMHOLE_DESIGN.md` (sources, SDE numbers,
 | CUT | Connection generator, statics, spawn | No source for statics per class or probabilities (design 9.3, owner decision 2) |
 | OPEN | Jump, lifetime/mass jobs, collapse, signatures, effects on ships, Sleeper/Drifter sites, Thera/Turnur, MITM run | Design 9.6 |
 | OPEN | Local chat in J-space | Design 9.4 (owner decision 4) |
+
+### Slice 3 (2026-10-12)
+
+| Status | Item | Missing work |
+|---|---|---|
+| DONE (tests) | Committed J-space data (2,604 systems, 393 KB; shattered effects from the wiki): class, effect beacon, statics, sources and cross-checks (`Data/jspace-systems.json`, `JSpaceSystems`) | `JSpaceSystemsTests` (PgFact checks statics against the SDE) |
+| DONE (rule, data) | Local chat in J-space: the client's delayed local (members only when they speak) is recorded (design 10.3) | No eve.rs chat service exists: nothing to change yet |
+| OPEN | Class 4 statics: EveJS one static, wiki "usually two" | Design 10.5 (owner decision 7) |
+| CUT | Connection generator and static pairing | No published pairing (design 10.4, owner decision 8) |
+| OPEN | Setup loader into a PostgreSQL schema; jump; entities; sim jump (Rust build needs 9 to 11 GB free); signatures; effects on ships; sites; Thera/Turnur; MITM run | Design 10.4 |

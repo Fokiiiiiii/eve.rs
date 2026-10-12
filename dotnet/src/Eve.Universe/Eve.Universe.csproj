@@ -3,6 +3,9 @@
     <ProjectReference Include="../Eve.Sde/Eve.Sde.csproj" />
   </ItemGroup>
   <ItemGroup>
+    <EmbeddedResource Include="Wormholes/Data/jspace-systems.json" LogicalName="Eve.Universe.jspace-systems.json" />
+  </ItemGroup>
+  <ItemGroup>
     <InternalsVisibleTo Include="Eve.Universe.Tests" />
   </ItemGroup>
 </Project>

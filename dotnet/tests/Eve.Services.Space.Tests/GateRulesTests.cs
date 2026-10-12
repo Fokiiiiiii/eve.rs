@@ -60,6 +60,35 @@ public sealed class GateRulesTests
     }
 
     [Fact]
+    public void A_deploy_blocker_keeps_a_warp_bubble_within_its_range_of_the_gate_and_not_beyond()
+    {
+        var blocked = new DeployBlocker(BubbleRange: 100_000_000, StructureRange: 100_000_000);
+        var rules = new GateRules(
+            new Dictionary<long, int>(), new Dictionary<int, IReadOnlySet<int>>(), new Dictionary<long, long>(),
+            new Dictionary<long, int>(), new Dictionary<int, AlignmentToll>(),
+            new Dictionary<int, DeployBlocker> { [TollType] = blocked },
+            [new GateSite(TurnurGate, 30_002_086, TollType, 0, 0, 0)]);
+
+        Assert.NotNull(rules.GateBlocking(30_002_086, 60_000_000, 0, 0, AnchorKind.WarpBubble));
+        Assert.Null(rules.GateBlocking(30_002_086, 150_000_000, 0, 0, AnchorKind.WarpBubble));
+        Assert.NotNull(rules.GateBlocking(30_002_086, 1_000_000, 0, 0, AnchorKind.Structure));
+        Assert.Null(rules.GateBlocking(30_002_087, 1_000_000, 0, 0, AnchorKind.WarpBubble));
+    }
+
+    [Fact]
+    public void A_blocker_with_no_range_for_a_kind_does_not_block_that_kind()
+    {
+        var rules = new GateRules(
+            new Dictionary<long, int>(), new Dictionary<int, IReadOnlySet<int>>(), new Dictionary<long, long>(),
+            new Dictionary<long, int>(), new Dictionary<int, AlignmentToll>(),
+            new Dictionary<int, DeployBlocker> { [TollType] = new DeployBlocker(0, 100_000_000) },
+            [new GateSite(TurnurGate, 30_002_086, TollType, 0, 0, 0)]);
+
+        Assert.Null(rules.GateBlocking(30_002_086, 1_000, 0, 0, AnchorKind.WarpBubble));
+        Assert.NotNull(rules.GateBlocking(30_002_086, 1_000, 0, 0, AnchorKind.Structure));
+    }
+
+    [Fact]
     public void An_aligned_pilot_pays_the_aligned_multiplier_and_only_a_faction_of_the_list_is_aligned()
     {
         Assert.Equal(0, GateRules.TollAmount(Toll, 1e9, aligned: true));
@@ -99,6 +128,18 @@ public sealed class EmanationLocksTests
         locks.Entered(Character, Zarzakh, Arrival, Start);
 
         Assert.True(locks.MayLeave(Character, Zarzakh, Other, Start + EmanationLocks.DurationMs));
+    }
+
+    [Fact]
+    public void Leaving_the_restricted_system_removes_the_lock()
+    {
+        var locks = new EmanationLocks();
+        locks.Entered(Character, Zarzakh, Arrival, Start);
+
+        locks.Left(Character, Zarzakh);
+
+        Assert.True(locks.MayLeave(Character, Zarzakh, Other, Start + 1));
+        Assert.Null(locks.Active(Character, Zarzakh, Start + 1));
     }
 
     [Fact]

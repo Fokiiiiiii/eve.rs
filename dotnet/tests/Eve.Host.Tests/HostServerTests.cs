@@ -2133,8 +2133,7 @@ private sealed class InSpaceInventory : Eve.Services.Ships.ISpaceContainers
         {
             var suffix = Guid.NewGuid().ToString("N")[..8];
             var connectionBuilder = new Npgsql.NpgsqlConnectionStringBuilder(
-                Eve.Data.PgConnection.ForTest(Environment.GetEnvironmentVariable("EVE_PG_URL")!))
-            { Pooling = false };
+                Eve.Data.PgConnection.ForTest(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
             var source = new Npgsql.NpgsqlDataSourceBuilder(connectionBuilder.ConnectionString).Build();
             var inventorySchema = $"as_i_{suffix}";
             var walletSchema = $"as_w_{suffix}";

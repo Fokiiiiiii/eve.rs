@@ -131,6 +131,9 @@ impl Scene {
         if !self.pilots.contains_key(&session) {
             return vec![Out::Refused { session, command: code, reason: "NO_SHIP_IN_SPACE" }];
         }
+        if self.link_holds(session, &command, now) {
+            return vec![Out::Refused { session, command: code, reason: "LINK_HOLD" }];
+        }
         self.settle_pilot(session, now);
         let told = match command {
             Command::Dock { station_id } => self.dock(session, station_id, now),

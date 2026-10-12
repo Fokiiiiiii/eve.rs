@@ -1368,23 +1368,19 @@ fn a_missile_that_takes_long_to_get_there_spreads_and_its_ball_stays_for_the_war
 }
 
 #[test]
-fn a_target_further_off_than_the_missile_flies_refuses_the_launcher_with_how_far_it_goes() {
+fn a_launcher_fires_at_a_target_further_than_its_missile_flies_and_the_missile_does_not_reach_it() {
+    // 300 m of flight against the distance between the two ships: the launcher starts (no refusal in the client or EVE.js), the missile flies and is spent
     let (mut scene, npc, now) = duel();
-    // 300 m of flight against the distance between the two ships
     let apart = scene.apart(npc, PLAYER).unwrap();
     assert!(apart > 301.0);
-    let refused = scene.activate(npc, missile_effect(spec().ship_id, launcher(1_500.0, 200.0, 56.0)), now);
-    let Some(Out::TargetRefused { reason, desired_range, actual_distance, target_type, .. }) =
-        refused.first()
-    else {
-        panic!("{refused:?}")
-    };
-    assert_eq!(*reason, "TARGET_OUT_OF_RANGE");
-    assert_eq!(*desired_range, 300.0);
-    assert_eq!(*actual_distance, apart);
-    assert_eq!(*target_type, spec().type_id);
-    assert_eq!(scene.pilots[&npc].modules.running_count(), 0, "it never started");
-    assert!(scene.missiles.is_empty());
+    let started = scene.activate(npc, missile_effect(spec().ship_id, launcher(1_500.0, 200.0, 56.0)), now);
+    assert!(started.iter().any(|o| matches!(o, Out::Accepted { .. })), "{started:?}");
+    assert!(!scene.missiles.is_empty(), "a missile is in flight");
+    let mut told = Vec::new();
+    for step in 1..=100 {
+        told.extend(scene.poll(now + step * SECOND / 10));
+    }
+    assert!(messages(&told, PLAYER, "OnDamageMessage").is_empty(), "the missile runs out of flight before it reaches the ship");
 }
 
 #[test]

@@ -412,21 +412,8 @@ impl Scene {
             if effect.turret.as_ref().and_then(|t| t.charge).is_some_and(|c| c.rounds < c.per_cycle) {
                 return vec![Out::Refused { session, command: CODE, reason: "NO_AMMO" }];
             }
-            // a missile goes only as far as it flies: a target further off is out of reach (the client is told how far the missile goes and how far the target is)
-            if let Some(missile) = effect.turret.as_ref().and_then(|t| t.missile.as_ref())
-                && let Some(target) = self.session_of(effect.target_id)
-                && let Some(apart) = self.apart(session, target)
-                && apart > missile.effective_range() + crate::weapons::MISSILE_RANGE_GRACE
-            {
-                return vec![Out::TargetRefused {
-                    session,
-                    command: CODE,
-                    reason: "TARGET_OUT_OF_RANGE",
-                    target_type: self.pilots[&target].ship.spec.type_id,
-                    desired_range: missile.effective_range(),
-                    actual_distance: apart,
-                }];
-            }
+            // a launcher is not refused for a target beyond its missile's flight: the missile flies its flight time and is spent (the wiki, Missiles);
+            // no client or EVE.js text refuses the activation
         }
         // an effect that is projected at a ship needs it: there, locked and in reach (what is too far off is told with the range and how far it is)
         if let Some((what, reach, _)) = effect.remote() {

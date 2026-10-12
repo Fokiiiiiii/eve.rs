@@ -74,4 +74,3 @@ The MITM capture (`tools/mitm`, `docs/project/MITM_COMPARE.md`) listens on two p
 | `eve_p2` | 26111 | 26211 |
 | `eve_p3` | 26112 | 26212 |
 | `eve_p4` | 26113 | 26213 |
-

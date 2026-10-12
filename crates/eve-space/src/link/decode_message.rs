@@ -256,6 +256,22 @@ impl Message {
             kind::LEAVE => Message::Leave { session_id: r.u64()?, why: r.u8()? },
             kind::BIND => Message::Bind { session_id: r.u64()? },
             kind::UPDATE_STATE => Message::UpdateState { session_id: r.u64()? },
+            kind::CONTROL_STRUCTURE => {
+                let session_id = r.u64()?;
+                let solar_system_id = r.i32()?;
+                let structure_id = r.i64()?;
+                let character_id = r.i64()?;
+                let active = read_flag(&mut r, "control structure active")?;
+                if session_id == 0
+                    || solar_system_id <= 0
+                    || structure_id < 0
+                    || character_id < 0
+                    || (active && (structure_id == 0 || character_id == 0))
+                {
+                    return Err(DecodeError::BadValue("control structure IDs"));
+                }
+                Message::ControlStructure { session_id, solar_system_id, structure_id, character_id, active }
+            }
             kind::COMMAND => {
                 let session_id = r.u64()?;
                 let command = r.u8()?;

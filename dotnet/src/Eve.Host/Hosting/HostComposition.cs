@@ -56,6 +56,7 @@ internal static class HostComposition
         LegacyGameStore? legacy = null;
         IGlobalConfigPersistence globalConfigPersistence = new InMemoryGlobalConfigPersistence();
         var online = new OnlineCharacters();
+        var connected = new ConnectedSessions();
         CharacterSessions? characterSessions = null;
         if (Env("EVE_PG_URL", "") is { Length: > 0 } pgUrl)
         {
@@ -71,7 +72,7 @@ internal static class HostComposition
             Func<long> clock = () => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
             foundations = await Foundations.CreateAsync(source, clock, Env, message => Console.Error.WriteLine($"eve-host: {message}"));
             legacy = await LegacyGameStoreComposition.OpenAsync(source);
-            (characterServices, space, simulation, crimewatch, calendarStore, calendarAudience, gameRpcCallbacks, keeperRpcCallbacks, characterSessions) = await CharacterServicesComposition.CharacterServicesAsync(source, directory, online, clock, foundations, legacy.Store, legacy.Owner, legacy.Cache, options.NewCharacterExperienceMode, new AccountOmegaStore(directory));
+            (characterServices, space, simulation, crimewatch, calendarStore, calendarAudience, gameRpcCallbacks, keeperRpcCallbacks, characterSessions) = await CharacterServicesComposition.CharacterServicesAsync(source, directory, online, clock, foundations, legacy.Store, legacy.Owner, legacy.Cache, options.NewCharacterExperienceMode, new AccountOmegaStore(directory), connected);
             // every feature has registered its job handlers by now: the scheduler may start running jobs
             await foundations.StartAsync();
         }
@@ -140,7 +141,6 @@ internal static class HostComposition
         // machoNet's configuration: the settings, with the administrator's writes on top (saved in PostgreSQL when it is configured)
         var config = await GlobalConfigStore.OpenAsync(GlobalConfig.Build(options), globalConfigPersistence);
         HostServer? server = null;
-        var connected = new ConnectedSessions();
         var info = new HostMachoNetInfo(registry, config.Current);
         registry.Register(new MachoNetService(info, now, GlobalConfigWrites.Create(config, connected, () => server?.PublishClusterConfig())));
 

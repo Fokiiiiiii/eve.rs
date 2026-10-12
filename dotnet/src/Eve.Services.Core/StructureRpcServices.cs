@@ -107,6 +107,7 @@ public sealed class StructureRpcService : IService
         {
             case ("structureCargoDelivery", "DropOffItems"):
             {
+                if (_callbacks.DropOffItemsAsync is null) throwNotify("The structure service is unavailable.");
                 var ids = PositiveIds(call.Arg(0));
                 var moved = _callbacks.DropOffItemsAsync is { } callback
                     ? await callback(call, ids, PositiveId(call.Arg(1)), PositiveId(call.Arg(2))).ConfigureAwait(false)
@@ -129,26 +130,32 @@ public sealed class StructureRpcService : IService
                 return new PyList([new PyReal(efficiency.Structure), new PyReal(efficiency.Character)]);
             }
             case ("structureControl", "GetStructurePilot"):
+                if (_callbacks.GetStructurePilotAsync is null) throwNotify("The structure service is unavailable.");
                 return IdValue(_callbacks.GetStructurePilotAsync is { } getPilot
                     ? await getPilot(call, PositiveId(call.Arg(0))).ConfigureAwait(false)
                     : null);
             case ("structureControl", "TakeControl"):
+                if (_callbacks.TakeControlAsync is null) throwNotify("The structure service is unavailable.");
                 if (_callbacks.TakeControlAsync is { } takeControl)
                     await takeControl(call, PositiveId(call.Arg(0), SessionStructureId(call))).ConfigureAwait(false);
                 return PyNone.Instance;
             case ("structureControl", "BoardStructure"):
+                if (_callbacks.BoardStructureAsync is null) throwNotify("The structure service is unavailable.");
                 if (_callbacks.BoardStructureAsync is { } board)
                     await board(call, PositiveId(call.Arg(0))).ConfigureAwait(false);
                 return PyNone.Instance;
             case ("structureControl", "EjectFromStructure"):
+                if (_callbacks.EjectFromStructureAsync is null) throwNotify("The structure service is unavailable.");
                 if (_callbacks.EjectFromStructureAsync is { } eject)
                     await eject(call, PositiveId(call.Arg(0))).ConfigureAwait(false);
                 return PyNone.Instance;
             case ("structureControl", "ReleaseControl"):
+                if (_callbacks.ReleaseControlAsync is null) throwNotify("The structure service is unavailable.");
                 if (_callbacks.ReleaseControlAsync is { } release)
                     await release(call).ConfigureAwait(false);
                 return PyNone.Instance;
             case ("structureDeliveries", "Deliver"):
+                if (_callbacks.DeliverAsync is null) throwNotify("The structure service is unavailable.");
                 if (_callbacks.DeliverAsync is { } deliver)
                     await deliver(call, PositiveId(call.Arg(0)), PositiveId(call.Arg(1)), PositiveIds(call.Arg(2))).ConfigureAwait(false);
                 return PyNone.Instance;

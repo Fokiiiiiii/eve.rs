@@ -19,8 +19,9 @@ KINDS = {"Hello": 1, "HelloAck": 2, "Enter": 3, "Leave": 4, "Bind": 5, "UpdateSt
          "AdjustCharge": 33, "ChargeAdjusted": 34, "Arrived": 35, "LaunchDrone": 36, "DroneCommand": 37, "DroneResults": 38,
          "DroneScooped": 39, "DroneReleased": 40, "ModuleWorkCycle": 51, "ModuleWorkResult": 52, "ModuleEnded": 53, "LaunchFighter": 54, "FighterOrder": 55, "FighterResults": 56, "FighterLanded": 57, "FighterReleased": 58, "FighterGotoPoint": 59, "FighterSize": 60, "UpdateEffect": 61, "BuffState": 62, "Deployed": 63, "RemoveDeployed": 64, "PlaceProbe": 65, "RemoveProbe": 66,
          "EcmBurst": 67, "PlaceDisruptor": 68, "SetDisruptorActive": 69, "PlaceInhibitor": 70, "ScanTargets": 71, "DirectionalTargets": 72,
-         "PlaceCynoBeacon": 73, "PlaceStructure": 74, "RemoveStructure": 75, "SetStructureState": 76, "StructureDamaged": 77, "PlaceWormhole": 82, "RemoveWormhole": 83,
-         "PlaceAnalysisBeacon": 78, "SetAnalysisBeaconState": 79, "TetherPolicy": 80, "TetherChanged": 81}
+         "PlaceCynoBeacon": 73, "PlaceStructure": 74, "RemoveStructure": 75, "SetStructureState": 76, "StructureDamaged": 77,
+         "PlaceAnalysisBeacon": 78, "SetAnalysisBeaconState": 79, "TetherPolicy": 80, "TetherChanged": 81,
+         "PlaceWormhole": 82, "RemoveWormhole": 83, "ControlStructure": 84}
 
 def s(text):  # u16 length + UTF-8
     data = text.encode("utf-8")
@@ -452,6 +453,8 @@ def build(m):
         for candidate in candidates:
             payload += i64(candidate["structureId"]) + struct.pack("<d", candidate["range"])
         return frame(k, payload)
+    if k == "ControlStructure":
+        return frame(k, u64(m["sessionId"]) + struct.pack("<i", m["solarSystemId"]) + i64(m["structureId"]) + i64(m["characterId"]) + bytes([1 if m["active"] else 0]))
     if k == "TetherChanged":
         return frame(k, u64(m["sessionId"]) + i64(m["previousStructureId"]) + i64(m["structureId"]) + bytes([1 if m["repairing"] else 0]))
     if k == "StructureDamaged":  # sent by the simulation: the layer a hit emptied (0 none, 1 shield, 2 armor, 3 hull) and whether a repair is paused
@@ -555,8 +558,8 @@ BARE = dict(IBIS, name="", modules=[], allianceId=99000001, securityStatus=-2.5,
             condition={"damage": 0.0, "armorDamage": 0.0, "shieldCharge": 1.0, "charge": 1.0})
 
 valid = [
-    {"name": "hello", "kind": "Hello", "version": 64},
-    {"name": "hello ack", "kind": "HelloAck", "version": 64, "pollHz": 4},
+    {"name": "hello", "kind": "Hello", "version": 65},
+    {"name": "hello ack", "kind": "HelloAck", "version": 65, "pollHz": 4},
     {"name": "enter by undocking", "kind": "Enter", "sessionId": "1790646377000015", "solarSystemId": 30100032,
      "how": 0, "stationId": "60015249", "ship": IBIS},
     {"name": "enter already in space, no modules, non-ASCII name", "kind": "Enter", "sessionId": "1",
@@ -1061,6 +1064,8 @@ valid = [
      "structureId": "1040000000000001",
      "status": {"state": 111, "upkeepState": 3, "timer": [132000000000000000, 132000860000000000, 132000100000000000], "unanchoring": 132000900000000000, "repairing": True}},
     {"name": "a hit empties a structure's shield and pauses its repair", "kind": "StructureDamaged", "structureId": "1040000000000001", "depleted": 1, "overThreshold": True},
+    {"name": "bind a structure control observer", "kind": "ControlStructure", "sessionId": "77", "solarSystemId": 30000142, "structureId": "1040000000000001", "characterId": "90000001", "active": True},
+    {"name": "release a structure control observer", "kind": "ControlStructure", "sessionId": "77", "solarSystemId": 30000142, "structureId": "0", "characterId": "0", "active": False},
     {"name": "host tether policy grants a leased range", "kind": "TetherPolicy", "sessionId": "77", "blockedForMs": "1000", "leaseMs": "3000", "candidates": [{"structureId": "1040000000000001", "range": 10000.0}]},
     {"name": "host tether policy clears all rights", "kind": "TetherPolicy", "sessionId": "77", "blockedForMs": "0", "leaseMs": "0", "candidates": []},
     {"name": "tether engages and repairs the ship", "kind": "TetherChanged", "sessionId": "77", "previousStructureId": "0", "structureId": "1040000000000001", "repairing": True},
@@ -1276,6 +1281,9 @@ panic_negative = dict(panic, effect=dict(panic["effect"], action={"kind": "panic
 grant = named("module work cycle of the invulnerability core's grant, two ships in reach")
 buff_state = named("buff state of a ship: a shield resistance buff and a repair buff")
 invalid = [
+    {"name": "structure control active flag is not boolean", "reason": "bad-value", "hex": frame("ControlStructure", u64("77") + struct.pack("<i", 30000142) + i64("1040000000000001") + i64("90000001") + bytes([2])).hex()},
+    {"name": "structure control cannot bind a zero structure", "reason": "bad-value", "hex": frame("ControlStructure", u64("77") + struct.pack("<i", 30000142) + i64("0") + i64("90000001") + bytes([1])).hex()},
+    {"name": "structure control cannot use a negative character", "reason": "bad-value", "hex": frame("ControlStructure", u64("77") + struct.pack("<i", 30000142) + i64("1040000000000001") + i64("-1") + bytes([0])).hex()},
     {"name": "tether candidate count exceeds its frame", "reason": "truncated", "hex": frame("TetherPolicy", u64("77") + u64("0") + u64("3000") + struct.pack("<I", 0xffffffff)).hex()},
     {"name": "tether candidate has zero range", "reason": "bad-value", "hex": frame("TetherPolicy", u64("77") + u64("0") + u64("3000") + struct.pack("<I", 1) + i64("1040000000000001") + struct.pack("<d", 0.0)).hex()},
     {"name": "tether candidate has NaN range", "reason": "bad-value", "hex": frame("TetherPolicy", u64("77") + u64("0") + u64("3000") + struct.pack("<I", 1) + i64("1040000000000001") + struct.pack("<d", float("nan"))).hex()},

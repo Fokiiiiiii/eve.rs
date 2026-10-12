@@ -258,6 +258,15 @@ internal sealed class FakeSim : ISimulation
         return Task.FromResult(EnterAnswer);
     }
 
+    public string? ControlAnswer { get; set; }
+
+    public Task<string?> ControlStructureAsync(SimControlStructure control, CancellationToken cancellationToken = default)
+    {
+        if (!IsConnected) throw new SimUnavailableException("the simulation is not running");
+        Heard.Enqueue(control);
+        return Task.FromResult(ControlAnswer);
+    }
+
     /// <summary>What a targeting order is answered with.</summary>
     public CommandReply TargetAnswer { get; set; } = new(true, 0, null) { Pending = true };
 

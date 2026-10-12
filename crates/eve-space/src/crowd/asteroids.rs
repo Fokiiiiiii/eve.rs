@@ -1,12 +1,12 @@
 use super::*;
 
 impl Scene {
-    pub(super) fn sees_asteroid(&self, observer: SessionId, asteroid: &crate::wreck::Asteroid) -> bool {
+    pub(super) fn asteroid_visible_to(&self, observer: SessionId, asteroid: &crate::wreck::Asteroid) -> bool {
         self.presence(observer)
             .is_some_and(|o| can_see(o, Presence { position: asteroid.position, warping: false }))
     }
 
-    /// A host-created ore rock enters the scene independently of wreck/loot state.
+    /// A host-created ore rock enters independently of wreck/loot state.
     pub fn place_asteroid(&mut self, asteroid: crate::wreck::Asteroid, now: i64) -> Vec<Out> {
         let id = asteroid.id;
         self.asteroids.insert(id, asteroid);
@@ -14,16 +14,14 @@ impl Scene {
         let Some(asteroid) = self.asteroids.get(&id) else { return Vec::new() };
         let Ok(added) = payload::add_asteroid(stamp, asteroid, now) else { return Vec::new() };
         let watchers: Vec<SessionId> = self
-            .in_entry_order()
+            .view_sessions()
             .into_iter()
-            .filter(|s| self.pilots[s].bound && self.sees_asteroid(*s, asteroid))
+            .filter(|observer| self.asteroid_visible_to(*observer, asteroid))
             .collect();
         watchers
             .into_iter()
             .map(|watcher| {
-                if let Some(pilot) = self.pilots.get_mut(&watcher) {
-                    pilot.sees_asteroids.insert(id);
-                }
+                self.set_sees_asteroid(watcher, id, true);
                 Self::update(watcher, vec![added.clone()])
             })
             .collect()
@@ -39,9 +37,9 @@ impl Scene {
         let stamp = self.next_stamp(now);
         let Some(asteroid) = self.asteroids.get(&asteroid_id) else { return Vec::new() };
         let changed = payload::slim_asteroid_change(stamp, asteroid);
-        self.in_entry_order()
+        self.view_sessions()
             .into_iter()
-            .filter(|s| self.pilots[s].bound && self.pilots[s].sees_asteroids.contains(&asteroid_id))
+            .filter(|observer| self.sees_asteroid(*observer, asteroid_id))
             .map(|watcher| Self::update(watcher, vec![changed.clone()]))
             .collect()
     }
@@ -52,12 +50,18 @@ impl Scene {
             return Vec::new();
         }
         let watchers: Vec<SessionId> = self
-            .in_entry_order()
+            .view_sessions()
             .into_iter()
-            .filter(|s| self.pilots[s].bound && self.pilots[s].sees_asteroids.contains(&asteroid_id))
+            .filter(|observer| self.sees_asteroid(*observer, asteroid_id))
             .collect();
-        for pilot in self.pilots.values_mut() {
-            pilot.sees_asteroids.remove(&asteroid_id);
+        let viewers: Vec<_> = self
+            .pilots
+            .keys()
+            .chain(self.controlled_structures.keys())
+            .copied()
+            .collect();
+        for viewer in viewers {
+            self.set_sees_asteroid(viewer, asteroid_id, false);
         }
         if watchers.is_empty() {
             return Vec::new();
@@ -90,15 +94,17 @@ impl Scene {
             return Vec::new();
         }
         let mut out = Vec::new();
-        for observer in self.in_entry_order() {
-            if !self.pilots[&observer].bound {
-                continue;
-            }
-            let seen = self.pilots[&observer].sees_asteroids.clone();
+        for observer in self.view_sessions() {
+            let seen: std::collections::BTreeSet<i64> = self
+                .asteroids
+                .keys()
+                .copied()
+                .filter(|id| self.sees_asteroid(observer, *id))
+                .collect();
             let should: std::collections::BTreeSet<i64> = self
                 .asteroids
                 .values()
-                .filter(|asteroid| self.sees_asteroid(observer, asteroid))
+                .filter(|asteroid| self.asteroid_visible_to(observer, asteroid))
                 .map(|asteroid| asteroid.id)
                 .collect();
             let gone: Vec<i64> = seen.difference(&should).copied().collect();
@@ -106,17 +112,18 @@ impl Scene {
             if !gone.is_empty() {
                 let stamp = self.next_stamp(now);
                 out.push(Self::update(observer, vec![payload::remove_ships(stamp, gone.iter().copied())]));
+                for id in &gone {
+                    self.set_sees_asteroid(observer, *id, false);
+                }
             }
             for id in coming {
                 let stamp = self.next_stamp(now);
                 if let Some(asteroid) = self.asteroids.get(&id)
                     && let Ok(added) = payload::add_asteroid(stamp, asteroid, now)
                 {
+                    self.set_sees_asteroid(observer, id, true);
                     out.push(Self::update(observer, vec![added]));
                 }
-            }
-            if let Some(pilot) = self.pilots.get_mut(&observer) {
-                pilot.sees_asteroids = should;
             }
         }
         out

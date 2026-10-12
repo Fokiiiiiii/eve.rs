@@ -17,9 +17,76 @@ impl Scene {
         self.system.bodies.iter().position(|body| body.id == structure_id && body.kind == BodyKind::Structure)
     }
 
-    /// Every bound pilot of the scene: a structure is in view from anywhere in its system.
+    /// The authoritative structure body shared by scene observers and host range queries.
+    pub(crate) fn structure_body(&self, structure_id: i64) -> Option<&Body> {
+        self.structure_index(structure_id).map(|index| &self.system.bodies[index])
+    }
+
+    /// Measures cargo-deposit range using this session's physical ship and the local structure body.
+    pub(crate) fn measure_structure_deposit(
+        &mut self,
+        session: SessionId,
+        structure_id: i64,
+        ship_id: i64,
+        now: i64,
+    ) -> Vec<Out> {
+        let refused = |reason| Out::Refused {
+            session,
+            command: crate::link::COMMAND_MEASURE,
+            reason,
+        };
+        if session == 0 || structure_id <= 0 || ship_id <= 0 {
+            return vec![refused("INVALID_STRUCTURE_DEPOSIT_IDS")];
+        }
+        if self.controlled_structures.contains_key(&session) {
+            return vec![refused("NO_SHIP_IN_SPACE")];
+        }
+        let Some(pilot) = self.pilots.get(&session) else {
+            return vec![refused("NO_SHIP_IN_SPACE")];
+        };
+        if pilot.ship.spec.ship_id != ship_id || self.unpiloted.contains_key(&ship_id) {
+            return vec![refused("NOT_LOCAL_SHIP")];
+        }
+        self.settle_pilot(session, now);
+        let distance = (|| {
+            let pilot = self.pilots.get(&session).ok_or("NO_SHIP_IN_SPACE")?;
+            if matches!(pilot.cloak, crate::visibility::CloakState::Cloaking | crate::visibility::CloakState::Cloaked) {
+                return Err("CLOAKED");
+            }
+            if pilot.flight.is_some() {
+                return Err("IN_WARP");
+            }
+            let body = self.structure_body(structure_id).ok_or("STRUCTURE_NOT_FOUND")?;
+            let ship = &pilot.ship;
+            if ![body.position.x, body.position.y, body.position.z,
+                ship.position.x, ship.position.y, ship.position.z,
+                body.radius, ship.spec.radius].iter().all(|value| value.is_finite())
+                || body.radius <= 0.0 || ship.spec.radius <= 0.0
+            {
+                return Err("INVALID_STRUCTURE_DEPOSIT_STATE");
+            }
+            let centre = (ship.position.x - body.position.x)
+                .hypot(ship.position.y - body.position.y)
+                .hypot(ship.position.z - body.position.z);
+            if !centre.is_finite() {
+                return Err("INVALID_STRUCTURE_DEPOSIT_STATE");
+            }
+            Ok((centre - body.radius - ship.spec.radius).max(0.0))
+        })();
+        let out = match distance {
+            Ok(distance) => Out::Measured {
+                session,
+                command: crate::link::COMMAND_MEASURE,
+                distance: Some(distance),
+            },
+            Err(reason) => refused(reason),
+        };
+        self.with_backlog(vec![out])
+    }
+
+    /// Every bound view in this system: structures are visible from anywhere in their system.
     fn structure_audience(&self) -> Vec<SessionId> {
-        self.pilots.iter().filter(|(_, pilot)| pilot.bound).map(|(session, _)| *session).collect()
+        self.view_sessions()
     }
 
     /// Puts a structure in space where the host placed it (protocol 59): a body of the system, told to those who see it. Given once; one already
@@ -62,15 +129,21 @@ impl Scene {
         self.structure_audience().into_iter().map(|session| Self::update(session, vec![added.clone()])).collect()
     }
 
-    /// The host takes a structure out of space: its body goes and those who had it in view are told (`RemoveBalls`). Only a structure is taken so.
+    /// The host takes a structure out of space: its body goes and views that had it are told.
     pub(crate) fn remove_structure(&mut self, structure_id: i64, at: i64) -> Vec<Out> {
         let Some(index) = self.structure_index(structure_id) else { return Vec::new() };
+        let audience = self.structure_audience();
         let mut out = self.break_structure_tethers(structure_id, at);
+        if let Some(controller) = self.controller_of_structure(structure_id)
+            && let Some(released) = self.release_controlled_structure(controller, structure_id, at)
+        {
+            out.extend(released);
+        }
         Arc::make_mut(&mut self.system).bodies.remove(index);
         self.structure_health.remove(&structure_id);
         let stamp = self.next_stamp(at);
         let removed = payload::remove_ships(stamp, [structure_id]);
-        out.extend(self.structure_audience().into_iter().map(|session| Self::update(session, vec![removed.clone()])));
+        out.extend(audience.into_iter().map(|session| Self::update(session, vec![removed.clone()])));
         out
     }
 

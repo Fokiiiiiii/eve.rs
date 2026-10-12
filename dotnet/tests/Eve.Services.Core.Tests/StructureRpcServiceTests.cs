@@ -42,16 +42,17 @@ public sealed class StructureRpcServiceTests
     [Fact]
     public async Task Unwired_handlers_keep_reference_empty_and_none_shapes()
     {
-        var cargo = await Call(new StructureRpcService("structureCargoDelivery"), "DropOffItems",
-            [new PyList([]), new PyInt(10), new PyInt(20)]);
-        Assert.Empty(Assert.IsType<PyList>(cargo).Items);
+        await Assert.ThrowsAsync<MachoWrappedException>(async () =>
+            await Call(new StructureRpcService("structureCargoDelivery"), "DropOffItems",
+                [new PyList([]), new PyInt(10), new PyInt(20)]));
 
         var efficiency = Assert.IsType<PyList>(await Call(
             new StructureRpcService("structureCompressionMgr"), "GetMyGasDecompressionEfficiency"));
         Assert.Equal(new PyReal(0), efficiency.Items[0]);
         Assert.Equal(new PyReal(0), efficiency.Items[1]);
 
-        Assert.Same(PyNone.Instance, await Call(new StructureRpcService("structureControl"), "GetStructurePilot", [new PyInt(20)]));
+        await Assert.ThrowsAsync<MachoWrappedException>(async () =>
+            await Call(new StructureRpcService("structureControl"), "GetStructurePilot", [new PyInt(20)]));
         Assert.Same(PyNone.Instance, await Call(new StructureRpcService("structureHangarViewMgr"), "GetMyHangarViewState"));
 
         var session = new ClientSession();
@@ -60,8 +61,9 @@ public sealed class StructureRpcServiceTests
         var settings = Assert.IsType<PyDict>(await Call(
             new StructureRpcService("structureProfiles"), "GetProfileSettings", [new PyInt(1)], session));
         Assert.Empty(settings.Entries);
-        Assert.Same(PyNone.Instance, await Call(new StructureRpcService("structureDeliveries"), "Deliver",
-            [new PyInt(20), new PyInt(30), new PyList([])]));
+        await Assert.ThrowsAsync<MachoWrappedException>(async () =>
+            await Call(new StructureRpcService("structureDeliveries"), "Deliver",
+                [new PyInt(20), new PyInt(30), new PyList([])]));
     }
 
     [Fact]
@@ -159,6 +161,34 @@ public sealed class StructureRpcServiceTests
             });
             Assert.Equal(PyBool.True.Equals(keyword), observed);
         }
+    }
+
+    [Theory]
+    [InlineData("structureControl", "GetStructurePilot")]
+    [InlineData("structureControl", "TakeControl")]
+    [InlineData("structureControl", "BoardStructure")]
+    [InlineData("structureControl", "EjectFromStructure")]
+    [InlineData("structureControl", "ReleaseControl")]
+    [InlineData("structureDeliveries", "Deliver")]
+    [InlineData("structureCargoDelivery", "DropOffItems")]
+    public async Task Entry_and_delivery_without_a_backend_are_refused(string service, string method)
+    {
+        await Assert.ThrowsAsync<MachoWrappedException>(async () =>
+            await Call(new StructureRpcService(service), method, [new PyInt(20), new PyInt(30), new PyList([])]));
+    }
+
+    [Fact]
+    public async Task Eject_preserves_the_clients_capsule_sentinel()
+    {
+        long? requested = null;
+        var service = new StructureRpcService("structureControl", new()
+        {
+            EjectFromStructureAsync = (_, shipId) => { requested = shipId; return ValueTask.CompletedTask; },
+        });
+        Assert.Same(PyNone.Instance, await Call(service, "EjectFromStructure", [PyNone.Instance]));
+        Assert.Equal(0, requested);
+        await Call(service, "EjectFromStructure", [new PyLong(90000001)]);
+        Assert.Equal(90000001, requested);
     }
 
     private static ValueTask<PyValue> Call(

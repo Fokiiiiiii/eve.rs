@@ -39,6 +39,11 @@ internal sealed partial class CharacterServicesComposition
 {
     private string structureSchema = "";
     private Eve.Structures.StructureStore structureStore = default!;
+    private Eve.Structures.StructurePilotStore structurePilots = default!;
+    private StructureControlReadModel structureControlReadModel = default!;
+    private readonly ConnectedSessions connected;
+    private StructureControlBackend? structureControl;
+    private StructureDeliveryBackend structureDelivery = default!;
     private Eve.Structures.StructureTimers structureTimers = default!;
     private Eve.Structures.StructureFuel structureFuel = default!;
     private StructureCompressionAuthority structureCompression = default!;
@@ -108,6 +113,68 @@ internal sealed partial class CharacterServicesComposition
         return snapshots.FirstOrDefault(snapshot => snapshot.StructureId == structureId) is { } access
             && Eve.Services.Core.StructureDirectoryService.CanDock(access, structureId, characterId, corporationId, allianceId);
     }
+
+    private StructureControlBackend RequireStructureControl() => structureControl
+        ?? throw MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("Space is not available for structure control.")));
+
+    private async ValueTask<long?> ReadStructurePilotAsync(long structureId, CancellationToken token)
+    {
+        await using var connection = await source.OpenConnectionAsync(token);
+        return (await structurePilots.GetByStructureAsync(connection, null, structureId, token))?.CharacterId;
+    }
+
+    private async ValueTask DeliverStructureItemsAsync(ServiceCall call, long structureId, long recipientId, IReadOnlyList<long> itemIds)
+    {
+        await mailSendWriter.MutationGate.WaitAsync(call.Cancellation);
+        try
+        {
+            await mailCache.FlushTableAsync("notifications", call.Cancellation);
+            await structureDelivery.DeliverAsync(call, structureId, recipientId, itemIds);
+        }
+        finally { mailSendWriter.MutationGate.Release(); }
+    }
+
+    private async ValueTask<StructureDeliveryBackend.DeliveryInboxCommit> PersistStructureDeliveryInboxAsync(
+        NpgsqlConnection connection, NpgsqlTransaction transaction,
+        StructureDeliveryBackend.DeliveryInboxNotification notification, CancellationToken token)
+    {
+        var recipientKey = notification.RecipientCharacterID.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        var rowKey = RowCodec.Explode("notifications", new JsonObject
+        {
+            ["boxes"] = new JsonObject { [recipientKey] = new JsonObject() }
+        }).Keys.Single(key => key != "boxes");
+        var saved = await mailStore.ReadRowAsync(connection, transaction, "notifications", rowKey, token);
+        var box = saved is null ? new JsonObject() : JsonNode.Parse(saved)!.AsObject();
+        var rows = box["byID"] as JsonObject;
+        if (rows is null) box["byID"] = rows = new JsonObject();
+        var boxes = (mailCache.Read("notifications", null).Data as JsonObject)?["boxes"] as JsonObject;
+        var maximum = boxes?.SelectMany(pair => (pair.Value as JsonObject)?["byID"] is JsonObject entries
+            ? entries.Select(entry => long.TryParse(entry.Key, out var id) ? id : 0) : []).DefaultIfEmpty(0).Max() ?? 0;
+        var notificationId = checked(maximum + 1);
+        rows[notificationId.ToString(System.Globalization.CultureInfo.InvariantCulture)] = notification.ToRecord(notificationId);
+        await mailStore.ApplyChangesAsync(connection, transaction, "notifications",
+            [new RowUpsert(rowKey, box.ToJsonString())], [], mailStoreOwner.Fence, token);
+        return new StructureDeliveryBackend.DeliveryInboxCommit(notificationId, args =>
+        {
+            var updated = mailCache.Write("notifications", $"/boxes/{recipientKey}", box);
+            if (!updated.Success) throw new InvalidOperationException("The committed structure delivery inbox could not update its cache.");
+            characterSessions.Of(notification.RecipientCharacterID)?.SendNotification("OnNotificationReceived", "clientID", args);
+            return ValueTask.CompletedTask;
+        });
+    }
+
+    private async ValueTask<double?> CargoDepositSurfaceDistanceAsync(ServiceCall call, long shipId, long structureId, CancellationToken token)
+    {
+        if (spaceSessions is null || sim is null || !spaceSessions.IsInSpace(call.Session) ||
+            spaceSessions.IsStructureObserver(call.Session) || spaceSessions.IsWarping(call.Session) ||
+            spaceSessions.ShipIdOf(call.Session) != shipId || call.Session.CharacterId is not { } characterId)
+            return null;
+        var state = await crimewatchRuntime.StateOfAsync(characterId, token);
+        var nowMs = now();
+        if (state.HasWeaponsTimer(nowMs) || state.IsCriminal(nowMs)) return null;
+        var reply = await sim.CommandAsync((ulong)call.Session.SessionId, SimCommands.Measure, [structureId, shipId], token);
+        return reply.Accepted ? reply.Distance : null;
+    }
     /// <summary>The ship's place in its system as the simulation has it (null without a simulation: the anchor is then refused as not in space).</summary>
     private Task<Eve.Services.Space.WarpCoordinates?> ShipPositionForAnchorAsync(ClientSession session, long shipId, CancellationToken token) =>
         spaceSessions is null ? Task.FromResult<Eve.Services.Space.WarpCoordinates?>(null) : spaceSessions.PositionOfAsync(session, shipId, token);
@@ -122,11 +189,13 @@ internal sealed partial class CharacterServicesComposition
         structureSchema = Env("EVE_STRUCTURES_SCHEMA", Eve.Structures.StructureStore.DefaultSchema);
         await Eve.Structures.StructureStore.MigrateAsync(source, structureSchema);
         structureStore = new Eve.Structures.StructureStore(source, structureSchema);
+        structurePilots = new Eve.Structures.StructurePilotStore(structureStore);
         var legacy = await ReadGameStoreRawAsync("structures", CancellationToken.None);
         var legacyMoon = await ReadGameStoreRawAsync("moonExtractions", CancellationToken.None);
         await using var connection = await source.OpenConnectionAsync();
         await using var transaction = await connection.BeginTransactionAsync();
         var copied = await structureStore.ImportAsync(connection, transaction, legacy, now());
+        await structurePilots.ClearOnRestartAsync(connection, transaction);
         // ST-6a: the moon extractions and resource profiles move over in the same transaction (the same importer pattern)
         moonExtractionStore = new Eve.Structures.MoonExtractionStore(source, structureSchema);
         var moonCopied = await moonExtractionStore.ImportAsync(connection, transaction, legacyMoon);
@@ -140,6 +209,8 @@ internal sealed partial class CharacterServicesComposition
     private async Task Structures()
     {
         // ST-0: the deadlines of the structures are durable jobs; the handler is registered here, before the foundations start
+        structureControlReadModel = new StructureControlReadModel(source, structureStore, structurePilots, items, modules, dogma,
+            (characterId, structureId, setting, token) => structureDirectoryReadModel.CharacterHasSettingAsync(characterId, structureId, setting, token));
         var rules = await StructureRulesSource.LoadAsync(sde);
         structureTimers = new Eve.Structures.StructureTimers(structureStore, foundations.Scheduler, foundations.Events, rules);
         structureTimers.Register();
@@ -221,7 +292,9 @@ internal sealed partial class CharacterServicesComposition
                 session.SendNotification("OnMoonExtractionUpdate", "clientID", PyNone.Instance);
             return Task.CompletedTask;
         });
-        structureMoon = new StructureMoonAuthority(source, structureStore, moonExtractions, moonRules);
+        structureMoon = new StructureMoonAuthority(source, structureStore, moonExtractions, moonRules, structurePilots,
+            (characterId, structureId, token) => structureDirectoryReadModel.CharacterHasServiceAsync(
+                characterId, structureId, Eve.Structures.StructureServiceIds.MoonMining, token));
         await using (var connection = await source.OpenConnectionAsync())
         await using (var transaction = await connection.BeginTransactionAsync())
         {
@@ -230,8 +303,28 @@ internal sealed partial class CharacterServicesComposition
             if (open > 0)
                 Console.Error.WriteLine($"eve-host: {open} open moon extraction(s) have their deadlines");
         }
+        if (spaceSessions is not null)
+        {
+            structureControl = new StructureControlBackend(source, structureStore, structurePilots, items, dogma, spaceSessions,
+                structureDirectoryReadModel.CharacterHasSettingAsync, connected,
+                message => Console.Error.WriteLine($"eve-host: structure control: {message}"));
+            foundations.Events.Subscribe("structure.control_owner", [Eve.Structures.StructureTimers.StateChangedTopic],
+                (_, token) => structureControl.ReconcileAsync(token));
+        }
+        structureDelivery = new StructureDeliveryBackend(source, items, structureStore, rules, dogma, characters,
+            characterSessions, foundations.Events, structureDirectoryReadModel.GetStructureInfoAsync,
+            CargoDepositSurfaceDistanceAsync, PersistStructureDeliveryInboxAsync, now);
         structureRpcCallbacks = new Eve.Services.Core.StructureRpcCallbacks
         {
+            GetStructurePilotAsync = (call, structureId) => structureControl is not null
+                ? structureControl.GetStructurePilotAsync(call, structureId)
+                : ReadStructurePilotAsync(structureId, call.Cancellation),
+            TakeControlAsync = (call, structureId) => RequireStructureControl().TakeControlAsync(call, structureId),
+            BoardStructureAsync = (call, structureId) => RequireStructureControl().BoardStructureAsync(call, structureId),
+            EjectFromStructureAsync = (call, shipId) => RequireStructureControl().EjectFromStructureAsync(call, shipId),
+            ReleaseControlAsync = call => RequireStructureControl().ReleaseControlAsync(call),
+            DeliverAsync = DeliverStructureItemsAsync,
+            DropOffItemsAsync = structureDelivery.DropOffItemsAsync,
             CompressItemInStructureAsync = async (call, itemId) => await structureCompression.CompressAsync(call, itemId),
             DecompressGasInStructureAsync = async (call, itemId) => await structureCompression.DecompressAsync(call, itemId),
             GetMyGasDecompressionEfficiencyAsync = async call => await structureCompression.EfficiencyAsync(call),
@@ -253,21 +346,25 @@ internal sealed partial class CharacterServicesComposition
             {
                 await structureProfilesRpcBackend.SaveProfileSettingsAsync(corporationId, profileId, settings, call.Cancellation);
                 if (spaceSessions is not null) await spaceSessions.RefreshTetherPoliciesAsync(call.Cancellation);
+                if (structureControl is not null) await structureControl.ReconcileAsync(call.Cancellation);
             },
             SetDefaultProfileAsync = async (call, corporationId, profileId) =>
             {
                 await structureProfilesRpcBackend.SetDefaultProfileAsync(corporationId, profileId, call.Cancellation);
                 if (spaceSessions is not null) await spaceSessions.RefreshTetherPoliciesAsync(call.Cancellation);
+                if (structureControl is not null) await structureControl.ReconcileAsync(call.Cancellation);
             },
             ChangeProfilesAsync = async (call, corporationId, structureIds, profileId) =>
             {
                 await structureProfilesRpcBackend.ChangeProfilesAsync(corporationId, structureIds, profileId, call.Cancellation);
                 if (spaceSessions is not null) await spaceSessions.RefreshTetherPoliciesAsync(call.Cancellation);
+                if (structureControl is not null) await structureControl.ReconcileAsync(call.Cancellation);
             },
             DeleteProfileAsync = async (call, corporationId, profileId) =>
             {
                 await structureProfilesRpcBackend.DeleteProfileAsync(corporationId, profileId, call.Cancellation);
                 if (spaceSessions is not null) await spaceSessions.RefreshTetherPoliciesAsync(call.Cancellation);
+                if (structureControl is not null) await structureControl.ReconcileAsync(call.Cancellation);
             },
             DuplicateProfileAsync = (call, corporationId, profileId) =>
                 structureProfilesRpcBackend.DuplicateProfileAsync(corporationId, profileId, call.Cancellation),

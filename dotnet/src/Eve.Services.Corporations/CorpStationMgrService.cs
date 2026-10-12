@@ -23,7 +23,7 @@ public sealed partial class CorpStationMgrService(
     Func<long, long, CancellationToken, ValueTask<double>> readStanding,
     Func<long, CorporationStationPlace?> readStation,
     Func<long, CancellationToken, ValueTask<IReadOnlyDictionary<long, double>>> readStandingRules,
-    Func<long> now)
+    Func<long> now) : IBoundObjectReleaseHandler
 {
     /// <summary>The station each bound object was made for.</summary>
     private readonly ConcurrentDictionary<string, long> _bound = new(StringComparer.Ordinal);
@@ -31,6 +31,8 @@ public sealed partial class CorpStationMgrService(
     /// <summary><c>MachoBindObject(stationID, (method, args, kwargs))</c>: binds the station's corporation door, then makes the nested call.</summary>
     [Method("MachoResolveObject")]
     public PyValue MachoResolveObject(ServiceCall call) => new PyInt(MachoMessage.ProxyNodeId);
+
+    public void OnBoundObjectReleased(string oid, ClientSession? session) => _bound.TryRemove(oid, out _);
 
     [Method("MachoBindObject")]
     public async ValueTask<PyValue> MachoBindObject(ServiceCall call)

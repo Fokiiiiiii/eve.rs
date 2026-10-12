@@ -90,6 +90,10 @@ public sealed partial class AccessGroupBookmarkMgrService(BookmarkStore store, F
     {
         var itemId = Integral(call.Arg(0)) ?? 0;
         var target = resolveStaticTarget(itemId) ?? throw new BookmarkError("BookmarkNotAvailable");
+        if (BookmarkRules.DisabledSystems.Contains(target.LocationId))
+        {
+            throw new BookmarkError("BookmarkNotAvailable", "Bookmarks are disabled in this system.");
+        }
         var bookmark = await store.CreateBookmarkAsync(Character(call), Integral(call.Arg(1)) ?? 0, target, Text(call.Arg(2)), Text(call.Arg(3)),
             (int)(Integral(call.Arg(4)) ?? 0), Integral(call.Arg(5)), call.Cancellation);
         return ReplyTuple(bookmark);

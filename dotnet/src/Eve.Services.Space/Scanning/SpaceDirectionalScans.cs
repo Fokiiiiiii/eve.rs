@@ -61,7 +61,8 @@ public sealed class SpaceDirectionalScans
     /// </summary>
     public async Task<PyValue> ConeScanAsync(ClientSession session, PyValue angle, PyValue range, PyValue dx, PyValue dy, PyValue dz, CancellationToken cancellationToken)
     {
-        if (_space.ShipIdOf(session) is not { } shipId || _space.ShipTypeIdOf(session) is not { } shipType
+        // a system whose client flag disallows scanning (Zarzakh: D-Scan is disabled, the wiki) answers nothing
+        if (!_space.ScanningAllowedFor(session) || _space.ShipIdOf(session) is not { } shipId || _space.ShipTypeIdOf(session) is not { } shipType
             || await _space.PositionOfAsync(session, shipId, cancellationToken) is not { } ego)
         {
             return new PyList([]);

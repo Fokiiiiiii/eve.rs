@@ -614,6 +614,19 @@ public class ScanProbeHostTests
     ];
 
     [PgFact]
+    public async Task A_system_whose_client_flags_forbid_scanning_shows_no_directional_scan_result()
+    {
+        // the same cone as the narrow-cone test, in the rig's system with the client's disallowScanning flag set: D-Scan is disabled there
+        await using var rig = await Rig.CreateAsync(clientFlags: new Dictionary<int, Eve.Universe.ClientSystemFlags> { [30100032] = new(false, true) });
+        var (session, _, _) = await LauncherInSpaceAsync(rig, probes: 0);
+        rig.Sim.DirectionalAnswer = Scene();
+
+        var found = await ConeAsync(rig, session, Math.PI / 6, 14.3 * 149_597_870_700.0, 1, 0, 0);
+
+        Assert.Empty(found);
+    }
+
+    [PgFact]
     public async Task A_narrow_cone_shows_what_it_points_at_in_range_and_nothing_else_and_nearest_first()
     {
         await using var rig = await Rig.CreateAsync();

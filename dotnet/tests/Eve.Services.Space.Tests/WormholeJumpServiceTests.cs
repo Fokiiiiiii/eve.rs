@@ -1,4 +1,5 @@
 using Eve.Data;
+using Eve.Dogma;
 using Eve.Macho;
 using Npgsql;
 using Eve.Marshal;
@@ -119,6 +120,30 @@ public sealed class WormholeJumpServiceTests
 
         var refused = await Assert.ThrowsAsync<MachoWrappedException>(() => rig.Space.WormholeJumpAsync(session, end.BodyId, oid, CancellationToken.None));
         Assert.Equal("You are polarized to this wormhole: you cannot go into it from this side yet.", NotifyOf(refused));
+    }
+
+    [PgFact]
+    public async Task A_jump_into_a_system_with_an_environment_gives_the_simulation_the_ship_again_with_that_environment()
+    {
+        await using var rig = await Rig.CreateAsync();
+        await using var world = await JWorld.CreateAsync(rig, Type(1001, 1e9, 1e8));
+        var (session, _, oid) = await PilotInJSpaceAsync(rig);
+        var end = Assert.Single(await world.World.EndsInSystemAsync(JSystem));
+        // the destination's beacon raises the ship's maximum velocity by 30 percent (the attribute of the dogma layer)
+        var environment = SystemEnvironment.EffectOf(1, "Class 7 Test Effects", new Dictionary<string, double> { ["maxVelocityMultiplier"] = 1.3 }, name => name == "maxVelocity" ? 37 : null).Effect!;
+        rig.Space.SystemEnvironment = id => id == KSystem ? [environment] : [];
+        rig.Sim.JumpAnswer = new CommandReply(true, 0, null, null, KSystem, 0);
+        await rig.Space.WormholeJumpAsync(session, end.BodyId, oid, CancellationToken.None);
+
+        rig.Sim.Say(new SimJumped((ulong)session.SessionId, JSystem, end.BodyId, KSystem, end.BodyId + 1));
+        await Rig.UntilAsync(() => session.GetInt("solarsystemid") == KSystem);
+        await Rig.UntilAsync(() => rig.Sim.Heard.Any(message => message is SimShipChanged));
+
+        // the ship's maximum velocity as the simulation was given it on entering the J-system, and as it is given now
+        var entered = rig.Sim.Heard.OfType<SimEnter>().Single().Ship.MaxVelocity;
+        var changed = rig.Sim.Heard.OfType<SimShipChanged>().Last();
+        Assert.Equal((ulong)session.SessionId, changed.SessionId);
+        Assert.Equal(entered * 1.3, changed.Ship.MaxVelocity, 6);
     }
 
     [PgFact]

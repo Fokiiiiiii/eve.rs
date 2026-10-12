@@ -3581,6 +3581,13 @@ Owner decisions (X9, X10). The courier rules below are eve.rs's project rules, n
 - **Mining quota: handed in.** A basic mining step's dungeon completion grants nothing. The pilot hands in the ore of the objective type it holds, at the agent, and the full quantity completes the step (the turn-in consumes it). Test: `A_mining_step_is_not_granted_by_its_dungeon_and_completes_when_the_pilot_hands_in_the_full_ore_quantity`. Shortcut: the pilot supplies the ore (mined or bought); the site does not put ore loot into rocks or containers, and the mining code is not reused.
 - **Client data.** The embedded client-SDE subset has not landed on origin/main yet, so the kinds and texts are still read from `EVE_CLIENT_SDE_DIR`, which stays optional.
 
+## Mission execution X16: the storyline offer marked on accept, and tested as a path (2026-10-12)
+
+- **Marked on accept.** The storyline offer is counted as made when the pilot accepts the storyline trade (the accept hook of the agent dialogue), not when the offer is picked. A declined or abandoned offer keeps the pending count. `StorylineOffers.MarkAcceptedAsync` counts the lowest due level of the faction; it changes nothing for a declined or non-storyline record.
+- **Testable path.** The picker's storyline step is `StorylineOffers` (`PickAsync`, `MarkAcceptedAsync`), which the composition uses. Test: `The_sixteenth_completion_offers_the_storyline_trade_a_decline_keeps_it_due_and_the_acceptance_consumes_it` (the 15th completion offers nothing, the 16th offers the trade, a decline keeps the count, an acceptance consumes it).
+- **Embedded client data.** Not switched: no embedded client-data commit is on origin/main yet (the two matches for "client data" are wormhole and Zarzakh commits). The kinds and texts are still read from `EVE_CLIENT_SDE_DIR`, which stays optional.
+
+
 
 
 

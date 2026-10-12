@@ -270,7 +270,7 @@ internal sealed partial class CharacterServicesComposition
                 async ValueTask<Eve.Agents.AgentMissionContent?> (AgentMissionAgentData agent, long characterId, CancellationToken ct) =>
                 {
                     // a storyline agent with a pending storyline offer makes it first
-                    if (await StorylineOfferAsync(agent, characterId, ct) is { } storylineOffer) return storylineOffer;
+                    if (await StorylineOffersService.PickAsync(agent, characterId, ct) is { } storylineOffer) return storylineOffer;
                     var completed = await agentMissionStore.ReadCompletedAsync(characterId, ct);
                     var failed = await agentMissionStore.ReadFailedAsync(characterId, ct);
                     var now = DateTimeOffset.UtcNow;
@@ -296,7 +296,11 @@ internal sealed partial class CharacterServicesComposition
                         : atLocation;
                     await missionDungeons.OnConversationAsync(characterId, agent.AgentId, together, ct);
                 }, researchPort, locatorPort,
-                async (characterId, agentId, token) => { if (missionDungeons is { } dungeons) await dungeons.OnAcceptedAsync(characterId, agentId, token); },
+                async (characterId, agentId, token) =>
+                {
+                    if (missionDungeons is { } dungeons) await dungeons.OnAcceptedAsync(characterId, agentId, token);
+                    if (agentMissionAgentById.TryGetValue(agentId, out var acceptedAgent)) await StorylineOffersService.MarkAcceptedAsync(acceptedAgent, characterId, token);
+                },
                 async (characterId, agentId, token) => { if (missionDungeons is { } dungeons) await dungeons.OnQuitAsync(characterId, agentId, token); }));
         await AttachMissionDungeonsAsync();
     }
@@ -533,33 +537,9 @@ internal sealed partial class CharacterServicesComposition
         return (faction, level);
     }
 
-    /// <summary>
-    /// The storyline offer (EVE University, Storyline missions): at a storyline agent of a faction that has a pending offer for one of its levels,
-    /// the lowest storyline trade mission the pilot has not completed; the offer is marked made. The nearest storyline agent of the faction to the
-    /// pilot is the agent talked to here, the pilot being at its system; the wiki gives no range, so none is applied (DEVIATIONS X15).
-    /// </summary>
-    private async Task<Eve.Agents.AgentMissionContent?> StorylineOfferAsync(AgentMissionAgentData agent, long characterId, CancellationToken cancellationToken)
-    {
-        if (agent.AgentTypeId != Eve.Services.Core.AgentMissionKindRules.TypeGenericStorylineMissionAgent && agent.AgentTypeId != Eve.Services.Core.AgentMissionKindRules.TypeStorylineMissionAgent) return null;
-        var faction = npcFactions.GetValueOrDefault(agent.CorporationId);
-        if (faction <= 0) return null;
-        long? dueLevel = null;
-        for (long level = 1; level <= 5 && dueLevel is null; level++)
-        {
-            var (completed, offered) = await storylineCounters.ReadAsync(characterId, faction, level, cancellationToken);
-            if (Eve.Agents.StorylineCounters.PendingOffers(completed, offered) > 0) dueLevel = level;
-        }
-        if (dueLevel is not { } due) return null;
-        var done = (await agentMissionStore.ReadCompletedAsync(characterId, cancellationToken)).Select(item => item.MissionId).ToHashSet();
-        var mission = agentMissionStatic.Missions
-            .Where(candidate => candidate.Courier is not null && IsTradeMission(candidate.MissionId) && !done.Contains(candidate.MissionId)
-                && agentMissionStatic.MissionAvailability(candidate.MissionId).ArcId is null)
-            .OrderBy(candidate => candidate.MissionId)
-            .FirstOrDefault();
-        if (mission is null) return null;
-        await storylineCounters.MarkOfferedAsync(characterId, faction, due, cancellationToken);
-        return new Eve.Agents.AgentMissionContent(mission.MissionId, mission.NameId, mission.NameEn, agent.MissionKind, agent.ImportantMission);
-    }
+    /// <summary>The storyline offers of the composition (see StorylineOffers: the offer is marked made on accept).</summary>
+    private Eve.Services.Core.StorylineOffers StorylineOffersService =>
+        new(agentMissionStore, storylineCounters, agentMissionStatic, IsTradeMission, npcFactions);
 
     /// <summary>
     /// The completion, the consumption and the standing writes in one transaction: a write that fails rolls all of them back, so the mission stays

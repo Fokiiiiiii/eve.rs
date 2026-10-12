@@ -77,11 +77,15 @@ impl Scene {
     }
 
     pub(crate) fn drone_is_attacking(&self, session: SessionId) -> bool {
-        self.activity_of(session) == COMBAT && self.drones.get(&session).is_some_and(|ai| {
-            ai.landing.as_ref().is_some_and(|effect| effect.offensive())
-                || self.pilots.get(&session).and_then(|pilot| pilot.ship.npc.as_ref())
-                    .is_some_and(|npc| !npc.combat.weapons.is_empty())
-        })
+        self.activity_of(session) == COMBAT
+            && self.drones.get(&session).is_some_and(|ai| {
+                ai.landing.as_ref().is_some_and(|effect| effect.offensive())
+                    || self
+                        .pilots
+                        .get(&session)
+                        .and_then(|pilot| pilot.ship.npc.as_ref())
+                        .is_some_and(|npc| !npc.combat.weapons.is_empty())
+            })
     }
 
     /// The client is told that the drone's effect plays at its target (`OnSpecialFX`), to those who look on as to its pilot.
@@ -150,7 +154,8 @@ impl Scene {
             out.extend(self.land_remote(session, &ended, now));
         }
         if effect.offensive()
-            && let Some(controller) = self.controller_of_drone(session).filter(|id| *id != 0) {
+            && let Some(controller) = self.controller_of_drone(session).filter(|id| *id != 0)
+        {
             out.extend(self.clear_tether_policy(controller, now));
         }
         let landing = Effect { duration_ms: lasting_ms, ..effect.clone() };

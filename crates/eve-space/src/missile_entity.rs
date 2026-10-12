@@ -353,12 +353,20 @@ impl MissileEntity {
 struct TargetState {
     kinematics: Kinematics,
     hittable: bool,
-    session: SessionId,
+    /// The pilot of a ship; none for a structure, which takes the missile's damage in its layers.
+    session: Option<SessionId>,
 }
 
 impl Scene {
     fn missile_target(&self, ship_id: i64, now: i64) -> Option<TargetState> {
-        let session = self.session_of(ship_id)?;
+        let Some(session) = self.session_of(ship_id) else {
+            // a structure the host put in space is a target too: it does not move and is always hittable
+            return self
+                .struck_structure(ship_id)
+                .then(|| self.target_kinematics(ship_id))
+                .flatten()
+                .map(|kinematics| TargetState { kinematics, hittable: true, session: None });
+        };
         let kinematics = self.kinematics_of(session)?;
         let pilot = self.pilots.get(&session)?;
         Some(TargetState {
@@ -366,7 +374,7 @@ impl Scene {
             hittable: pilot.protected_until <= now
                 && !self.is_tethered_session(session, now)
                 && !pilot.flight.as_ref().is_some_and(|flight| flight.is_warping()),
-            session,
+            session: Some(session),
         })
     }
 
@@ -444,9 +452,10 @@ impl Scene {
         } else {
             effect.target_id
         };
-        let Some(target_session) = self.session_of(target_id) else { return Vec::new() };
-        let (Some(attacker), Some(target)) =
-            (self.kinematics_of(session), self.kinematics_of(target_session))
+        if !self.target_in_scene(target_id) {
+            return Vec::new();
+        }
+        let (Some(attacker), Some(target)) = (self.kinematics_of(session), self.target_kinematics(target_id))
         else {
             return Vec::new();
         };
@@ -464,7 +473,10 @@ impl Scene {
             corporation_id,
             alliance_id,
         };
-        let target_type_id = self.pilots.get(&target_session).map_or(0, |pilot| pilot.ship.spec.type_id);
+        let target_type_id = self
+            .session_of(target_id)
+            .and_then(|s| self.pilots.get(&s))
+            .map_or(0, |pilot| pilot.ship.spec.type_id);
         // a launch that does no damage (the festival launcher's snowballs, whose effect is not offensive) makes no aggression
         if turret.raw_damage.iter().any(|damage| *damage > 0.0) || spec.dot.is_some() {
             self.aggressions.push(Aggression {
@@ -559,6 +571,10 @@ impl Scene {
             kinematics.radius.max(1.0)
         };
         let applied = missile.spec.applied(missile.raw_damage, signature, length(vec(kinematics.velocity)));
+        // a structure takes the warhead in its layers (the host hears of an emptied one); no pilot is told, and no dot applies
+        let Some(target_session) = target.session else {
+            return self.damage_structure(missile.target, applied, at);
+        };
         let (mut out, hit) = self.damage(missile.target, applied, at);
         // a breacher pod's hit starts its damage over time on the ship it reached (`dot_weapons`)
         if let Some(dot) = missile.spec.dot {
@@ -573,7 +589,7 @@ impl Scene {
             .get(&missile.shooter.session)
             .is_some_and(|pilot| pilot.ship.spec.ship_id == missile.shooter.ship_id)
             .then_some(missile.shooter.session);
-        for (who, mine) in [(attacker, true), (Some(target.session), false)] {
+        for (who, mine) in [(attacker, true), (Some(target_session), false)] {
             if let Some(who) = who.filter(|who| !is_npc_session(*who)) {
                 out.push(Out::Notify {
                     session: who,
@@ -593,7 +609,7 @@ impl Scene {
             }
         }
         if destroyed {
-            out.extend(self.destroy(target.session, attacker, at));
+            out.extend(self.destroy(target_session, attacker, at));
         }
         out
     }
@@ -696,7 +712,7 @@ impl Scene {
     /// The threat a missile in flight is to a defender: where it is and how fast it flies, its radius and hit points, and how long until it reaches its target.
     fn missile_threat(&self, missile_id: i64) -> Option<crate::missiles::MissileThreat> {
         let missile = self.missiles.get(&missile_id)?;
-        let target = self.kinematics_of(self.session_of(missile.target)?)?;
+        let target = self.target_kinematics(missile.target)?;
         let (to, speed) = (target.position, missile.spec.max_velocity.max(0.0));
         let apart = ((to[0] - missile.position.x).powi(2)
             + (to[1] - missile.position.y).powi(2)

@@ -54,12 +54,7 @@ impl Scene {
             .into_iter()
             .filter(|observer| self.sees_asteroid(*observer, asteroid_id))
             .collect();
-        let viewers: Vec<_> = self
-            .pilots
-            .keys()
-            .chain(self.controlled_structures.keys())
-            .copied()
-            .collect();
+        let viewers: Vec<_> = self.pilots.keys().chain(self.controlled_structures.keys()).copied().collect();
         for viewer in viewers {
             self.set_sees_asteroid(viewer, asteroid_id, false);
         }
@@ -73,6 +68,10 @@ impl Scene {
             vec![payload::remove_ships(stamp, [asteroid_id])]
         };
         watchers.into_iter().map(|watcher| Self::update(watcher, actions.clone())).collect()
+    }
+
+    pub fn has_asteroid(&self, asteroid_id: i64) -> bool {
+        self.asteroids.contains_key(&asteroid_id)
     }
 
     /// The distance from the controller's ship to an ore rock's surface.
@@ -95,12 +94,8 @@ impl Scene {
         }
         let mut out = Vec::new();
         for observer in self.view_sessions() {
-            let seen: std::collections::BTreeSet<i64> = self
-                .asteroids
-                .keys()
-                .copied()
-                .filter(|id| self.sees_asteroid(observer, *id))
-                .collect();
+            let seen: std::collections::BTreeSet<i64> =
+                self.asteroids.keys().copied().filter(|id| self.sees_asteroid(observer, *id)).collect();
             let should: std::collections::BTreeSet<i64> = self
                 .asteroids
                 .values()

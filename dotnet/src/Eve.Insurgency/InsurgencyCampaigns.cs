@@ -14,6 +14,9 @@ public sealed record CampaignChanged(long CampaignId, int From, int To, long AtM
 /// <summary>An event of a point (<see cref="InsurgencyCampaigns.PointScoredTopic"/>): the side, the system and the campaign after the point.</summary>
 public sealed record PointScored(long CampaignId, Side Side, long SolarSystemId, Campaign Campaign);
 
+/// <summary>An event of the empire side's goal reached (<see cref="InsurgencyCampaigns.FobExposedTopic"/>): the campaign's FOB can now be attacked.</summary>
+public sealed record FobExposure(long CampaignId, long StructureId);
+
 public enum ScoreOutcome
 {
     Scored,
@@ -33,6 +36,7 @@ public sealed class InsurgencyCampaigns
     public const string JobKind = "insurgency.phase";
     public const string CampaignChangedTopic = "insurgency.campaign_changed";
     public const string PointScoredTopic = "insurgency.point_scored";
+    public const string FobExposedTopic = "insurgency.fob_exposed";
 
     private sealed record PhaseJob(long CampaignId);
 
@@ -40,14 +44,19 @@ public sealed class InsurgencyCampaigns
     private readonly DurableScheduler _scheduler;
     private readonly EventBus _events;
     private readonly LoyaltyPointStore? _loyalty;
+    private readonly Func<long, int>? _factionOfSystem;
 
-    /// <summary>The campaigns. With a loyalty store, a pirate victory pays each contributor in the win's transaction (<see cref="InsurgencyRules.VictoryLp"/>).</summary>
-    public InsurgencyCampaigns(InsurgencyStore store, DurableScheduler scheduler, EventBus events, LoyaltyPointStore? loyalty = null)
+    /// <summary>
+    /// The campaigns. With a loyalty store, a win pays each contributor in the win's transaction (<see cref="InsurgencyRules.VictoryLp"/>): a pirate win from the
+    /// pirate militia, an Empire win from the Empire militia of the faction that owns the FOB's system (<paramref name="factionOfSystem"/>; none: the warzone's fallback).
+    /// </summary>
+    public InsurgencyCampaigns(InsurgencyStore store, DurableScheduler scheduler, EventBus events, LoyaltyPointStore? loyalty = null, Func<long, int>? factionOfSystem = null)
     {
         _store = store;
         _scheduler = scheduler;
         _events = events;
         _loyalty = loyalty;
+        _factionOfSystem = factionOfSystem;
     }
 
     public InsurgencyStore Store => _store;
@@ -103,8 +112,30 @@ public sealed class InsurgencyCampaigns
         if (outcome == ScoreOutcome.Scored)
             await _events.PublishInTransactionAsync(connection, transaction, PointScoredTopic,
                 new PointScored(campaignId, side, solarSystemId, step.Campaign), KeyOf(campaignId), cancellationToken);
+        if (outcome == ScoreOutcome.Scored && side == Side.Antipirate && step.Campaign.AntipiratePointsScored == step.Campaign.AntipiratePointsRequired)
+            await _events.PublishInTransactionAsync(connection, transaction, FobExposedTopic,
+                new FobExposure(campaignId, step.Campaign.StructureId), KeyOf(campaignId), cancellationToken);
         await ScheduleAsync(connection, transaction, step.Campaign, cancellationToken);
         return outcome;
+    }
+
+    /// <summary>
+    /// The FOB of a campaign was destroyed (the structure timeline announced it): an active campaign of that FOB ends in the empire's win. Returns false
+    /// when no active campaign has the FOB.
+    /// </summary>
+    public async Task<bool> FobDestroyedAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long structureId, CancellationToken cancellationToken = default)
+    {
+        var open = (await _store.OpenAsync(connection, transaction, cancellationToken)).FirstOrDefault(c => c.StructureId == structureId);
+        if (open is null)
+            return false;
+        var current = await _store.GetAsync(connection, transaction, open.CampaignId, true, cancellationToken);
+        var step = CampaignMachine.FobDestroyed(current!, _scheduler.Now);
+        if (step.Transitions.Count == 0)
+            return false;
+        await _store.UpdateAsync(connection, transaction, step.Campaign, cancellationToken);
+        await ApplyTransitionsAsync(connection, transaction, step, cancellationToken);
+        await ScheduleAsync(connection, transaction, step.Campaign, cancellationToken);
+        return true;
     }
 
     /// <summary>Makes sure every open campaign has its deadline job (after a restart). Returns how many were scheduled.</summary>
@@ -147,23 +178,27 @@ public sealed class InsurgencyCampaigns
                     pirateWon ? InsurgencyRules.LoserModifier(antipirate) : InsurgencyRules.WinnerModifier(antipirate),
                     cancellationToken);
             }
-            if (transition.To == CampaignStates.PirateWin && _loyalty is not null)
-                await PayContributorsAsync(connection, transaction, step.Campaign, cancellationToken);
+            if (transition.To is CampaignStates.PirateWin or CampaignStates.AntipirateWin && _loyalty is not null)
+                await PayContributorsAsync(connection, transaction, step.Campaign, transition.To == CampaignStates.PirateWin, cancellationToken);
             await _events.PublishInTransactionAsync(connection, transaction, CampaignChangedTopic,
                 new CampaignChanged(step.Campaign.CampaignId, transition.From, transition.To, transition.AtMs, step.Campaign), KeyOf(step.Campaign.CampaignId), cancellationToken);
         }
     }
 
     /// <summary>
-    /// The victory payout (the wiki: a win pays every contributor 1,500,000 LP): one credit per contributor from the pirate corporation of the warzone, keyed by the
-    /// campaign and the character, so a replayed win credits nothing.
+    /// The victory payout (the wiki: a win pays every contributor 1,500,000 LP, the winning side's): one credit per contributor, issued by the winning side's militia
+    /// (a pirate win: the warzone's pirate militia; an Empire win: <see cref="InsurgencyWarzones.EmpireMilitiaOf"/>), keyed by the campaign and the character, so a
+    /// replayed win credits nothing.
     /// </summary>
-    private async Task PayContributorsAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, Campaign campaign, CancellationToken cancellationToken)
+    private async Task PayContributorsAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, Campaign campaign, bool pirateWon, CancellationToken cancellationToken)
     {
         var warzone = InsurgencyWarzones.All.Single(w => w.WarzoneId == campaign.WarzoneId);
+        var issuer = pirateWon
+            ? warzone.MilitiaCorporationId
+            : InsurgencyWarzones.EmpireMilitiaOf(warzone, _factionOfSystem?.Invoke(campaign.OriginSolarSystemId) ?? 0);
         foreach (var character in await _store.ContributorsAsync(connection, transaction, campaign.CampaignId, cancellationToken))
         {
-            await _loyalty!.ApplyAsync(connection, transaction, new LoyaltyHolder(LoyaltyHolderKind.Character, character), warzone.PirateCorporationId,
+            await _loyalty!.ApplyAsync(connection, transaction, new LoyaltyHolder(LoyaltyHolderKind.Character, character), issuer,
                 InsurgencyRules.VictoryLp, "insurgency_victory", $"insurgency:{campaign.CampaignId}:{character}", cancellationToken);
         }
     }

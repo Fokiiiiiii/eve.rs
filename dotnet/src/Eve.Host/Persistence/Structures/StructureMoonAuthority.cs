@@ -54,7 +54,7 @@ public sealed class StructureMoonAuthority
         await using var connection = await _source.OpenConnectionAsync();
         await using var transaction = await connection.BeginTransactionAsync(call.Cancellation);
         await GateAsync(call, connection, transaction, structureId);
-        var result = await _moons.StartAsync(connection, transaction, structureId, durationSeconds, addToCalendar);
+        var result = await _moons.StartAsync(connection, transaction, structureId, durationSeconds, addToCalendar, call.Cancellation, actorCharacterId: call.Session.CharacterId ?? 0);
         switch (result.Outcome)
         {
             case MoonExtractions.StartOutcome.NoStructure:
@@ -78,7 +78,7 @@ public sealed class StructureMoonAuthority
         await using var connection = await _source.OpenConnectionAsync();
         await using var transaction = await connection.BeginTransactionAsync(call.Cancellation);
         await GateAsync(call, connection, transaction, structureId);
-        if (await _moons.FractureAsync(connection, transaction, structureId) == MoonExtractions.FractureOutcome.NotReady)
+        if (await _moons.FractureAsync(connection, transaction, structureId, call.Cancellation, actorCharacterId: call.Session.CharacterId ?? 0) == MoonExtractions.FractureOutcome.NotReady)
             throw Refusal("The moon chunk is not ready to fracture.");
         await transaction.CommitAsync();
         return PyNone.Instance;
@@ -93,7 +93,7 @@ public sealed class StructureMoonAuthority
         var roles = call.Session.GetInt("corprole") ?? 0;
         if (call.Session.GetInt("corpid") != structure.OwnerCorporationId || (roles & (StationManagerRole | Eve.Corporations.CorporationRoles.Director)) == 0)
             throw Refusal("Station Manager role is required.");
-        await _moons.CancelAsync(connection, transaction, structureId);
+        await _moons.CancelAsync(connection, transaction, structureId, call.Cancellation, actorCharacterId: call.Session.CharacterId ?? 0);
         await transaction.CommitAsync();
         return PyNone.Instance;
     }

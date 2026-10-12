@@ -467,6 +467,9 @@ public async Task<bool?> MoveAllAsync(ClientSession session, IReadOnlyList<long>
     {
         foreach (var due in await _spaceItems.DueAsync(nowUnixMs))
         {
+            // The extraction's durable job removes the complete moon field and publishes its asteroid removal wire.
+            if (due.MoonExtractionId > 0)
+                continue;
             await _ships.RemoveContainerAsync(due.ItemId, withContents: true);
             await ForgetAsync(due.ItemId);
             _sim.RemoveWreck(due.ItemId, 0);
@@ -555,7 +558,16 @@ private void OnReceived(SimMessage message)
                 }
                 try
                 {
-                    if (item.ExpiresAtMs <= now || await _items.GetAsync(item.ItemId) is not { } stored)
+                    if (item.MoonExtractionId > 0 && item.ExpiresAtMs <= now)
+                    {
+                        continue;
+                    }
+                    var stored = await _items.GetAsync(item.ItemId);
+                    if (stored is null && item.MoonExtractionId > 0)
+                    {
+                        continue;
+                    }
+                    if (item.ExpiresAtMs <= now || stored is null)
                     {
                         // out of time, or the item is gone: the row goes (an expired one with what is in it)
                         if (item.ExpiresAtMs <= now)
@@ -575,7 +587,8 @@ private void OnReceived(SimMessage message)
                         }
                         _sim.PlaceAsteroid(new SimPlaceAsteroid(
                             system, item.ItemId, stored.TypeId, type.GroupId, type.CategoryId, stored.CustomName ?? type.Name ?? "",
-                            type.GraphicId, item.Position, item.Direction, item.Radius, stored.Quantity));
+                            item.MoonGraphicId > 0 ? item.MoonGraphicId : type.GraphicId,
+                            item.Position, item.Direction, item.Radius, stored.Quantity));
                         continue;
                     }
                     // Active ships persist here for login-in-space; the simulator owns their ball, not the container service.
@@ -601,6 +614,17 @@ private void OnReceived(SimMessage message)
         catch (Exception error)
         {
             _log?.Invoke($"what lies in space in system {system} was not put back: {error.Message}");
+        }
+    }
+
+
+    internal void RemoveMoonFieldRocks(IEnumerable<long> asteroidIds)
+    {
+        foreach (var asteroidId in asteroidIds)
+        {
+            if (asteroidId <= 0) continue;
+            _placed.TryRemove(asteroidId, out _);
+            _sim.RemoveWreck(asteroidId, 2);
         }
     }
 }

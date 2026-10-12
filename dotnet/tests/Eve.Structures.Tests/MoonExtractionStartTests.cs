@@ -1,3 +1,4 @@
+using Npgsql;
 using System.Text.Json.Nodes;
 using static Eve.Structures.MoonExtractions;
 
@@ -13,7 +14,12 @@ public class MoonExtractionStartTests
 
     private sealed class FakeMoonRules : IMoonRulesSource
     {
-        public MoonRules RulesOf(int typeId) => new(10_800_000, 172_800_000);
+        private readonly MoonRules _rules;
+
+        public FakeMoonRules(long autoFractureDelayMs = 10_800_000, long fieldDecayMs = 172_800_000) =>
+            _rules = new MoonRules(autoFractureDelayMs, fieldDecayMs);
+
+        public MoonRules RulesOf(int typeId) => _rules;
     }
 
     private static JsonObject Profile(params long[] structures) => new()
@@ -27,10 +33,11 @@ public class MoonExtractionStartTests
         }))),
     };
 
-    private static async Task<(MoonExtractionStore Store, MoonExtractions Moons)> Services(Rig rig)
+    private static async Task<(MoonExtractionStore Store, MoonExtractions Moons)> Services(
+        Rig rig, Func<NpgsqlConnection, NpgsqlTransaction, long, CancellationToken, Task<MoonRules>>? effectiveRules = null)
     {
         var store = new MoonExtractionStore(rig.Source, rig.StructuresSchema);
-        return (store, new MoonExtractions(rig.Store, store, rig.Scheduler, rig.Bus, new FakeMoonRules()));
+        return (store, new MoonExtractions(rig.Store, store, rig.Scheduler, rig.Bus, new FakeMoonRules(), effectiveRules));
     }
 
     /// <summary>A working structure whose moon drill is online (service 14, the Standup Moon Drill I).</summary>
@@ -41,8 +48,8 @@ public class MoonExtractionStartTests
         return id;
     }
 
-    private static async Task<StartResult> Start(Rig rig, MoonExtractions moons, long structureId, long durationSeconds, bool addToCalendar = false) =>
-        await rig.Commit((c, t) => moons.StartAsync(c, t, structureId, durationSeconds, addToCalendar));
+    private static async Task<StartResult> Start(Rig rig, MoonExtractions moons, long structureId, long durationSeconds, bool addToCalendar = false, long actorCharacterId = 0) =>
+        await rig.Commit((c, t) => moons.StartAsync(c, t, structureId, durationSeconds, addToCalendar, actorCharacterId: actorCharacterId));
 
     [PgFact]
     public async Task Without_an_online_drill_the_start_is_refused_and_writes_nothing()
@@ -149,5 +156,109 @@ public class MoonExtractionStartTests
         Assert.Equal(0, plain.CalendarEventId);
         Assert.Equal(1, booked.CalendarEventId);
         Assert.True(booked.ExtractionId > plain.ExtractionId);
+    }
+
+
+    [PgFact]
+    public async Task Start_uses_rig_rules_once_and_publishes_the_actor_with_the_extraction_snapshot()
+    {
+        await using var rig = await Rig.Create();
+        var calls = 0;
+        const long fieldDecayMs = 86_400_000;
+        var (store, moons) = await Services(rig, (_, _, structureId, _) =>
+        {
+            Assert.Equal(Refinery, structureId);
+            calls++;
+            return Task.FromResult(new MoonRules(7_200_000, fieldDecayMs, 1.25));
+        });
+        await Refinery_with_drill(rig, Refinery);
+        var profile = Profile(Refinery);
+        ((JsonObject)profile["resourcesByStructureID"]![Refinery.ToString()]!)["yieldMultiplier"] = 1.2;
+        await rig.Commit((c, t) => store.ImportAsync(c, t, profile));
+        var started = new List<MoonExtractionStarted>();
+        rig.Bus.Subscribe("test.moon.started.rig-rules", [MoonExtractions.StartedTopic], (context, _) =>
+        {
+            started.Add(context.Event.Payload<MoonExtractionStarted>()!);
+            return Task.CompletedTask;
+        });
+        await rig.Bus.PumpAsync();
+        const long duration = 518_460;
+
+        var first = await Start(rig, moons, Refinery, duration, actorCharacterId: 9_001);
+        await rig.Bus.PumpAsync();
+        var retry = await Start(rig, moons, Refinery, duration, actorCharacterId: 9_002);
+        await rig.Bus.PumpAsync();
+
+        Assert.Equal(StartOutcome.Started, first.Outcome);
+        Assert.Equal(StartOutcome.Existing, retry.Outcome);
+        Assert.Equal(1, calls);
+        Assert.Equal(1.5, first.Extraction!.YieldMultiplier, 6);
+        Assert.Equal(fieldDecayMs, first.Extraction.FieldDecayMs);
+        Assert.Equal(first.Extraction.ChunkAvailableMs + 7_200_000, first.Extraction.NaturalDecayMs);
+        Assert.Single(started);
+        Assert.Equal(9_001, started[0].ActorCharacterId);
+        Assert.Equal(first.Extraction.ExtractionId, started[0].ExtractionId);
+    }
+
+
+    [PgFact]
+    public async Task Concurrent_starts_on_one_structure_create_one_extraction_and_one_start_event()
+    {
+        await using var rig = await Rig.Create();
+        var (store, moons) = await Services(rig);
+        await Refinery_with_drill(rig, Refinery);
+        await rig.Commit((c, t) => store.ImportAsync(c, t, Profile(Refinery)));
+        var started = new List<MoonExtractionStarted>();
+        rig.Bus.Subscribe("test.moon.started.concurrent", [MoonExtractions.StartedTopic], (context, _) =>
+        {
+            started.Add(context.Event.Payload<MoonExtractionStarted>()!);
+            return Task.CompletedTask;
+        });
+        await rig.Bus.PumpAsync();
+
+        var results = await Task.WhenAll(
+            Start(rig, moons, Refinery, 518_460, actorCharacterId: 9_011),
+            Start(rig, moons, Refinery, 518_460, actorCharacterId: 9_012));
+        await rig.Bus.PumpAsync();
+
+        Assert.Equal(1, results.Count(result => result.Outcome == StartOutcome.Started));
+        Assert.Equal(1, results.Count(result => result.Outcome == StartOutcome.Existing));
+        Assert.NotNull(await rig.Commit((c, t) => store.ActiveForStructureAsync(c, t, Refinery)));
+        Assert.Single(started);
+    }
+
+
+    [PgFact]
+    public async Task Failed_effective_rules_leave_no_extraction()
+    {
+        await using var rig = await Rig.Create();
+        var (store, moons) = await Services(rig, (_, _, _, _) =>
+            Task.FromException<MoonRules>(new InvalidOperationException("rig rules unavailable")));
+        await Refinery_with_drill(rig, Refinery);
+        await rig.Commit((c, t) => store.ImportAsync(c, t, Profile(Refinery)));
+
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(() => Start(rig, moons, Refinery, 518_460));
+
+        Assert.Equal("rig rules unavailable", error.Message);
+        Assert.Null(await rig.Commit((c, t) => store.ActiveForStructureAsync(c, t, Refinery)));
+    }
+
+    [PgFact]
+    public async Task Rehydrating_extractions_reschedules_the_persisted_deadline_and_field_decay_after_rules_change()
+    {
+        await using var rig = await Rig.Create();
+        var (store, moons) = await Services(rig);
+        await Refinery_with_drill(rig, Refinery);
+        await rig.Commit((c, t) => store.ImportAsync(c, t, Profile(Refinery)));
+        var extraction = (await Start(rig, moons, Refinery, 518_460)).Extraction!;
+
+        await rig.Restart();
+        var restarted = new MoonExtractions(rig.Store, store, rig.Scheduler, rig.Bus, new FakeMoonRules(99_000_000, 999_000_000));
+        Assert.Equal(1, await rig.Commit((c, t) => restarted.EnsureScheduledAsync(c, t)));
+
+        var persisted = await rig.Commit((c, t) => store.GetAsync(c, t, extraction.ExtractionId, false));
+        var fracture = await rig.Scheduler.FindAsync(FractureJobKind, $"extraction:{extraction.ExtractionId}");
+        Assert.Equal(extraction.NaturalDecayMs, fracture!.RunAtMs);
+        Assert.Equal(extraction.FieldDecayMs, persisted!.FieldDecayMs);
     }
 }

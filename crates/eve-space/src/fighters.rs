@@ -93,7 +93,8 @@ impl Scene {
             work: DroneWorkProfile::default(),
             effect: None,
         };
-        let (session, launched) = self.launch_companion(CompanionKind::Fighter, controller, spec, flight, now)?;
+        let (session, launched) =
+            self.launch_companion(CompanionKind::Fighter, controller, spec, flight, now)?;
         if let Some(link) = self
             .pilots
             .get_mut(&session)

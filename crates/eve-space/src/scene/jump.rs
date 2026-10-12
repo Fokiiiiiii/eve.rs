@@ -139,12 +139,7 @@ impl Scene {
             payload::action(stamp, "Stop", [ship_id]),
         ];
         out.extend(self.tell_all(session, actions.into()));
-        out.push(Out::Jumping {
-            session,
-            command: code,
-            destination_system,
-            destination_gate: leads_to,
-        });
+        out.push(Out::Jumping { session, command: code, destination_system, destination_gate: leads_to });
         out
     }
 
@@ -304,6 +299,8 @@ impl Scene {
         } else if let Some((far_position, far_radius)) = traveller.to_far_end {
             let mut random =
                 PythonRandom::new(seed_of(traveller.pilot.ship.spec.ship_id, traveller.to_gate, now));
+            // the far end lies outside the bodies of this system as its own placement put it (wormholes::clear_of_bodies)
+            let far_position = wormholes::clear_of_bodies(&system.bodies, far_position, far_radius);
             wormholes::wormhole_arrival(
                 far_position,
                 far_radius,

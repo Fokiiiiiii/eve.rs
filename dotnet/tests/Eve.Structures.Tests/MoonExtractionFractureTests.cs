@@ -16,26 +16,36 @@ public class MoonExtractionFractureTests
 
     private sealed class FakeMoonRules : IMoonRulesSource
     {
-        public MoonRules RulesOf(int typeId) => new(10_800_000, FieldLifetimeMs);
+        public long FieldDecayMs { get; set; } = FieldLifetimeMs;
+
+        public MoonRules RulesOf(int typeId) => new(10_800_000, FieldDecayMs);
     }
 
     private sealed class Watch
     {
         public required MoonExtractionStore Store { get; init; }
         public required MoonExtractions Moons { get; init; }
+        public required FakeMoonRules Rules { get; init; }
         public List<MoonExtractionEnded> Ended { get; } = [];
+        public List<MoonFractureStarted> FractureStarted { get; } = [];
     }
 
     private static async Task<Watch> Wire(Rig rig, string name)
     {
         var store = new MoonExtractionStore(rig.Source, rig.StructuresSchema);
-        var moons = new MoonExtractions(rig.Store, store, rig.Scheduler, rig.Bus, new FakeMoonRules());
+        var rules = new FakeMoonRules();
+        var moons = new MoonExtractions(rig.Store, store, rig.Scheduler, rig.Bus, rules);
         moons.Register();
         moons.Subscribe();
-        var watch = new Watch { Store = store, Moons = moons };
+        var watch = new Watch { Store = store, Moons = moons, Rules = rules };
         rig.Bus.Subscribe($"test.fracture.ended.{name}", [EndedTopic], (context, _) =>
         {
             watch.Ended.Add(context.Event.Payload<MoonExtractionEnded>()!);
+            return Task.CompletedTask;
+        });
+        rig.Bus.Subscribe($"test.fracture.started.{name}", [MoonExtractions.FractureStartedTopic], (context, _) =>
+        {
+            watch.FractureStarted.Add(context.Event.Payload<MoonFractureStarted>()!);
             return Task.CompletedTask;
         });
         await rig.Bus.PumpAsync();
@@ -59,8 +69,8 @@ public class MoonExtractionFractureTests
         return (rig, watch, result.Extraction!);
     }
 
-    private static async Task<FractureOutcome> Fire(Rig rig, Watch watch) =>
-        await rig.Commit((c, t) => watch.Moons.FractureAsync(c, t, Refinery));
+    private static async Task<FractureOutcome> Fire(Rig rig, Watch watch, long actorCharacterId = 0) =>
+        await rig.Commit((c, t) => watch.Moons.FractureAsync(c, t, Refinery, actorCharacterId: actorCharacterId));
 
     private static async Task<MoonExtraction?> Row(Rig rig, Watch watch, long id) =>
         await rig.Commit((c, t) => watch.Store.GetAsync(c, t, id, false));
@@ -103,6 +113,27 @@ public class MoonExtractionFractureTests
         Assert.Equal(rig.Now + FieldLifetimeMs, field!.RunAtMs);
     }
 
+
+    [PgFact]
+    public async Task Field_decay_uses_the_start_snapshot_after_restart_and_rig_rules_change()
+    {
+        await using var rig = await Rig.Create();
+        var (_, watch, chunk) = await StartedChunk(rig, "field-snapshot");
+        Assert.Equal(FieldLifetimeMs, chunk.FieldDecayMs);
+        await rig.Restart();
+        watch = await Wire(rig, "field-snapshot-restarted");
+        watch.Rules.FieldDecayMs = FieldLifetimeMs * 2;
+        rig.Now = chunk.ChunkAvailableMs;
+        await rig.Tick();
+
+        Assert.Equal(FractureOutcome.Fired, await Fire(rig, watch));
+        rig.Now += FractureMs;
+        await rig.Tick();
+
+        var field = await rig.Scheduler.FindAsync(FieldDecayJobKind, $"extraction:{chunk.ExtractionId}");
+        Assert.Equal(rig.Now + chunk.FieldDecayMs, field!.RunAtMs);
+    }
+
     [PgFact]
     public async Task A_fire_on_a_fracture_in_progress_changes_nothing()
     {
@@ -110,14 +141,18 @@ public class MoonExtractionFractureTests
         var (_, watch, chunk) = await StartedChunk(rig, "twice");
         rig.Now = chunk.ChunkAvailableMs;
         await rig.Tick();
-        await Fire(rig, watch);
+        Assert.Equal(FractureOutcome.Fired, await Fire(rig, watch, 9_002));
+        await rig.Bus.PumpAsync();
+        Assert.Equal(9_002, Assert.Single(watch.FractureStarted).ActorCharacterId);
         var before = await Row(rig, watch, chunk.ExtractionId);
 
         rig.Now += 5_000;
-        Assert.Equal(FractureOutcome.Firing, await Fire(rig, watch));
+        Assert.Equal(FractureOutcome.Firing, await Fire(rig, watch, 9_003));
+        await rig.Bus.PumpAsync();
 
         var after = await Row(rig, watch, chunk.ExtractionId);
         Assert.Equal((before!.FractureStartedMs, before.FractureCompleteMs), (after!.FractureStartedMs, after.FractureCompleteMs));
+        Assert.Single(watch.FractureStarted);
     }
 
     [PgFact]
@@ -135,12 +170,13 @@ public class MoonExtractionFractureTests
         await using var rig = await Rig.Create();
         var (_, watch, chunk) = await StartedChunk(rig, "cancel");
 
-        Assert.True(await rig.Commit((c, t) => watch.Moons.CancelAsync(c, t, Refinery)));
+        Assert.True(await rig.Commit((c, t) => watch.Moons.CancelAsync(c, t, Refinery, actorCharacterId: 9_004)));
         await rig.Tick();
 
         var row = (await Row(rig, watch, chunk.ExtractionId))!;
         Assert.Equal(("completed", Cancelled), (row.State, row.CompletedReason));
         Assert.Equal(Cancelled, Assert.Single(watch.Ended).Reason);
+        Assert.Equal(9_004, watch.Ended[0].ActorCharacterId);
         Assert.Null(await rig.Scheduler.FindAsync(ArrivalJobKind, $"extraction:{chunk.ExtractionId}"));
         Assert.Null(await rig.Scheduler.FindAsync(FractureJobKind, $"extraction:{chunk.ExtractionId}"));
         Assert.Null(await rig.Scheduler.FindAsync(FieldDecayJobKind, $"extraction:{chunk.ExtractionId}"));

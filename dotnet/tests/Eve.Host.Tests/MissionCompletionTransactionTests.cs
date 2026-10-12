@@ -40,11 +40,11 @@ public class MissionCompletionTransactionTests
         public PgItemStore Items { get; set; } = default!;
 
         /// <summary>Puts items of the type into the pilot's hangar (a station of the agent).</summary>
-        public async Task GrantAsync(int typeId, long quantity)
+        public async Task GrantAsync(int typeId, long quantity, string? customInfo = null)
         {
             await using var connection = await Source.OpenConnectionAsync();
             await using var transaction = await connection.BeginTransactionAsync();
-            await Items.CreateAsync(connection, transaction, new NewItem(typeId, Pilot, 60015249, ItemFlags.Hangar, quantity));
+            await Items.CreateAsync(connection, transaction, new NewItem(typeId, Pilot, 60015249, ItemFlags.Hangar, quantity, CustomInfo: customInfo));
             await transaction.CommitAsync();
         }
         public RelationStore Relations { get; }
@@ -116,7 +116,7 @@ public class MissionCompletionTransactionTests
         await fixture.GrantAsync(Datacore, 1);
 
         var done = await CharacterServicesComposition.CompleteInTransactionAsync(fixture.Source, fixture.Store, fixture.Relations, fixture.Items,
-            Pilot, Agent, Start + TimeSpan.FromHours(1), "complete:x8", Gains, [(Datacore, 1L)], CancellationToken.None);
+            Pilot, Agent, Start + TimeSpan.FromHours(1), "complete:x8", Gains, [(Datacore, 1L, (string?)null)], CancellationToken.None);
 
         Assert.True(done);
         Assert.Equal(AgentMissionState.Completed, (await fixture.Store.ReadAsync(Pilot, Agent))!.State);
@@ -134,12 +134,41 @@ public class MissionCompletionTransactionTests
 
         var results = await Task.WhenAll(
             CharacterServicesComposition.CompleteInTransactionAsync(fixture.Source, fixture.Store, fixture.Relations, fixture.Items,
-                Pilot, Agent, Start + TimeSpan.FromHours(1), "complete:x9-a", Gains, [(Datacore, 1L)], CancellationToken.None),
+                Pilot, Agent, Start + TimeSpan.FromHours(1), "complete:x9-a", Gains, [(Datacore, 1L, (string?)null)], CancellationToken.None),
             CharacterServicesComposition.CompleteInTransactionAsync(fixture.Source, fixture.Store, fixture.Relations, fixture.Items,
-                Pilot, OtherAgent, Start + TimeSpan.FromHours(1), "complete:x9-b", Gains, [(Datacore, 1L)], CancellationToken.None));
+                Pilot, OtherAgent, Start + TimeSpan.FromHours(1), "complete:x9-b", Gains, [(Datacore, 1L, (string?)null)], CancellationToken.None));
 
         Assert.Equal(1, results.Count(done => done));
         Assert.Empty(await fixture.Items.OwnedByAsync(Pilot));
+    }
+
+    [PgFact]
+    public async Task A_courier_consumption_takes_only_the_tagged_stack_and_leaves_the_pilots_own_stacks()
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        await fixture.GrantAsync(Datacore, 1, "courier:9401");
+        await fixture.GrantAsync(Datacore, 1);
+
+        var done = await CharacterServicesComposition.CompleteInTransactionAsync(fixture.Source, fixture.Store, fixture.Relations, fixture.Items,
+            Pilot, Agent, Start + TimeSpan.FromHours(1), "complete:x12", Gains, [(Datacore, 1L, "courier:9401")], CancellationToken.None);
+
+        Assert.True(done);
+        var left = Assert.Single(await fixture.Items.OwnedByAsync(Pilot));
+        Assert.Null(left.CustomInfo);
+    }
+
+    [PgFact]
+    public async Task A_courier_consumption_with_only_the_pilots_own_stacks_is_refused_and_writes_nothing()
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        await fixture.GrantAsync(Datacore, 1);
+
+        var done = await CharacterServicesComposition.CompleteInTransactionAsync(fixture.Source, fixture.Store, fixture.Relations, fixture.Items,
+            Pilot, Agent, Start + TimeSpan.FromHours(1), "complete:x12-own", Gains, [(Datacore, 1L, "courier:9401")], CancellationToken.None);
+
+        Assert.False(done);
+        Assert.Equal(AgentMissionState.Accepted, (await fixture.Store.ReadAsync(Pilot, Agent))!.State);
+        Assert.Single(await fixture.Items.OwnedByAsync(Pilot));
     }
 
     [PgFact]
@@ -148,7 +177,7 @@ public class MissionCompletionTransactionTests
         await using var fixture = await Fixture.CreateAsync();
 
         var done = await CharacterServicesComposition.CompleteInTransactionAsync(fixture.Source, fixture.Store, fixture.Relations, fixture.Items,
-            Pilot, Agent, Start + TimeSpan.FromHours(1), "complete:x8-short", Gains, [(Datacore, 1L)], CancellationToken.None);
+            Pilot, Agent, Start + TimeSpan.FromHours(1), "complete:x8-short", Gains, [(Datacore, 1L, (string?)null)], CancellationToken.None);
 
         Assert.False(done);
         Assert.Equal(AgentMissionState.Accepted, (await fixture.Store.ReadAsync(Pilot, Agent))!.State);

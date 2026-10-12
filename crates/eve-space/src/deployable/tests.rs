@@ -1024,3 +1024,56 @@ fn a_linked_ship_is_held_until_its_link_is_complete_and_out_of_warp_for_a_minute
         "the warp is free after the status clear delay"
     );
 }
+
+#[test]
+fn a_bomb_takes_a_structure_in_its_blast_in_its_layers_and_one_out_of_it_is_left_alone() {
+    let (mut scene, t) = crowd();
+    let a = scene.pilots[&A].ship.position;
+    place(&mut scene, A, a);
+    // a structure whose surface is 100 m from the bomb (inside the 400 m blast) and one 10 km beyond it
+    let mut near = crate::scene::tests::structure_placement(&scene, t);
+    near.structure_id = 98_100_002;
+    near.position = [a.x + 60_000.0 + 100.0, a.y, a.z];
+    near.vitals = crate::health::Vitals {
+        shield_capacity: 1.0,
+        armor_hp: 500.0,
+        structure_hp: 300.0,
+        ..Default::default()
+    };
+    near.limits = crate::health::StructureLimits { per_second: [1e9; 3], repair_pause: [0.0; 3] };
+    scene.place_structure(near.clone(), t);
+    let mut far = near.clone();
+    far.structure_id = 98_100_003;
+    far.position = [a.x - 60_000.0 - 10_000.0, a.y, a.z];
+    scene.place_structure(far, t);
+    let bomb = Action::Bomb {
+        ball: Spec { charge_type_id: 27_920, group_id: 90, name: "Electron Bomb".to_string(), radius: 40.0 },
+        kind: BombKind::Damage,
+        lifetime_ms: 12_000.0,
+        blast_radius: 400.0,
+        damage: [5_800.0, 0.0, 0.0, 0.0],
+        ecm: [0.0; 4],
+        neutralize: 0.0,
+    };
+    assert!(accepted(&scene.activate(A, module(MODULE, bomb, 10_000.0), t)));
+    let (out, _) = poll_for(&mut scene, t, 14.0);
+    let told = |id: i64| {
+        out.iter().any(|o| matches!(
+            o,
+            Out::StructureDamaged { structure_id, depleted: Some(crate::health::Layer::Shield), .. } if *structure_id == id
+        ))
+    };
+    // one hit empties all three layers: each is told, from the shallowest, so the host's timeline sees the shield's depletion too
+    let layers: Vec<_> = out
+        .iter()
+        .filter_map(|o| match o {
+            Out::StructureDamaged { structure_id: 98_100_002, depleted: Some(layer), .. } => Some(*layer),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        layers,
+        [crate::health::Layer::Shield, crate::health::Layer::Armor, crate::health::Layer::Structure]
+    );
+    assert!(!told(98_100_003), "a structure beyond the blast is left alone");
+}

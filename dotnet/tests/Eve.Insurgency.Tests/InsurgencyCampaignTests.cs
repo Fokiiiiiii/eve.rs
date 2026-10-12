@@ -19,11 +19,11 @@ public sealed class InsurgencyCampaignTests
         return campaign;
     }
 
-    private static async Task<Campaign> StartCovering(Rig rig, long warzone, IReadOnlyList<long> covered)
+    private static async Task<Campaign> StartCovering(Rig rig, long warzone, IReadOnlyList<long> covered, long structureId = 0)
     {
         await using var connection = await rig.Source.OpenConnectionAsync();
         await using var transaction = await connection.BeginTransactionAsync();
-        var campaign = await rig.Campaigns.StartAsync(connection, transaction, new CampaignStart(500011, warzone, 30000001, covered));
+        var campaign = await rig.Campaigns.StartAsync(connection, transaction, new CampaignStart(500011, warzone, 30000001, covered, structureId));
         await transaction.CommitAsync();
         return campaign;
     }
@@ -107,6 +107,23 @@ public sealed class InsurgencyCampaignTests
         var second = await StartCampaign(rig, warzone: 7);
         Assert.Equal(6, second.PiratePointsRequired);
         Assert.Equal(5, second.AntipiratePointsRequired);
+    }
+
+    [PgFact]
+    public async Task The_empire_side_at_its_count_exposes_the_fob_and_destroying_it_wins_the_campaign_once()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var campaign = await StartCovering(rig, 8, [30000001, 30000002, 30000003, 30000004, 30000005], structureId: 5001);
+        await rig.RunAt(Rig.Epoch + 48 * Hour);
+        for (var i = 0; i < 5; i++)
+            Assert.Equal(ScoreOutcome.Scored, await Score(rig, campaign.CampaignId, Side.Antipirate, system: campaign.CoveredSolarSystemIds[i]));
+        // reaching the count exposes the FOB: the campaign is still active, and it is the destruction that ends it
+        Assert.Equal(CampaignStates.Active, (await rig.Get(campaign.CampaignId))!.State);
+
+        Assert.True(await rig.Commit((c, t) => rig.Campaigns.FobDestroyedAsync(c, t, campaign.StructureId)));
+        Assert.Equal(CampaignStates.AntipirateWin, (await rig.Get(campaign.CampaignId))!.State);
+        Assert.Equal((0, 1), await rig.Commit((c, t) => rig.Store.AmbitionAsync(c, t, 8)));
+        Assert.False(await rig.Commit((c, t) => rig.Campaigns.FobDestroyedAsync(c, t, campaign.StructureId)));
     }
 
     [PgFact]

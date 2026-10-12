@@ -38,6 +38,7 @@ public static class MiningLedgerQueries
         Column.Of("itemID", ColumnType.Long, "item_id"),
         Column.Of("solarSystemID", ColumnType.Long, "solar_system_id"),
         Column.Of("solarsystemID", ColumnType.Long, "solar_system_id"),
+        Column.Of("moonID", ColumnType.Long, "moon_id"),
         Column.Of("itemName", ColumnType.Text, "COALESCE(NULLIF(item_name, ''), 'Observer ' || item_id::text)"),
     ];
 

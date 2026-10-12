@@ -280,9 +280,14 @@ internal sealed partial class CharacterServicesComposition
             async structureId => { if (spaceStructures is not null) await spaceStructures.PlaceAsync(structureId); });
         // ST-6a: the moon drill starts a chunk (StartNewExtraction); the fracture and the cancel follow in (d)
         var moonRules = await MoonRulesSource.LoadAsync(sde);
-        moonExtractions = new Eve.Structures.MoonExtractions(structureStore, moonExtractionStore, foundations.Scheduler, foundations.Events, moonRules);
+        var moonRigRules = new MoonRigReadModel(items, dogma, moonRules);
+        moonExtractions = new Eve.Structures.MoonExtractions(structureStore, moonExtractionStore, foundations.Scheduler, foundations.Events, moonRules,
+            moonRigRules.ReadAsync);
         moonExtractions.Register();
         moonExtractions.Subscribe();
+        if (spaceContainers is not null)
+            new SpaceMoonFields(moonExtractionStore, structureStore, items, new PgSpaceItemStore(source, spaceSchema),
+                dogma, moonRules, spaceContainers).Subscribe(foundations.Events);
         // ST-6a (c, d): an extraction that ended (fractured, decayed, offlined or cancelled) is announced to the corporation and to the pilots docked at the structure
         // (EVE.js sendMoonExtractionClearedToSessions)
         foundations.Events.Subscribe("moon.session_notice", [Eve.Structures.MoonExtractions.EndedTopic], (context, cancellation) =>

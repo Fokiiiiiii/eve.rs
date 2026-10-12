@@ -781,10 +781,12 @@ impl Scene {
 
     /// Whether no player or persistent structure state keeps this scene; NPCs alone do not.
     pub fn is_empty(&self) -> bool {
+        // a scene with a wormhole end in it is kept: the host placed the end for a ship that is coming (the poll drops empty scenes)
         self.widowed.is_empty()
             && self.controlled_structures.is_empty()
             && self.structure_health.is_empty()
             && self.pilots.keys().all(|session| crate::npc::is_npc_session(*session))
+            && !self.system.bodies.iter().any(|body| body.kind == BodyKind::Wormhole)
     }
 
     /// The wreck with this item id, if it is in the scene.

@@ -29,6 +29,33 @@ fn enter(session: SessionId, station_id: i64, system: i32) -> Message {
     }))
 }
 
+#[test]
+fn a_wormhole_end_placed_in_a_system_nobody_is_in_is_still_there_after_a_poll() {
+    // the host places the ends of a system before a ship jumps into it; the poll must not drop their scene while the ship is on its way
+    let mut sim = sim();
+    let end = crate::link::WormholePlacement {
+        wormhole_id: 1_050_000_001,
+        solar_system_id: SYSTEM,
+        name: "Wormhole".to_string(),
+        type_id: 34_134,
+        group_id: 988,
+        position: [5_000.0, 0.0, 0.0],
+        radius: 3_000.0,
+        destination_system_id: 31_000_001,
+        destination_end: 1_050_000_002,
+        destination_class: 2,
+        destination_position: [0.0, 0.0, 5_000.0],
+        destination_radius: 3_000.0,
+        max_jump_mass: 1.0e8,
+    };
+    sim.handle(Message::PlaceWormhole(Box::new(end)), NOON).unwrap();
+    sim.poll(NOON + 5 * SECOND);
+    assert!(
+        sim.scenes.get(&SYSTEM).is_some_and(|scene| scene.wormhole_index(1_050_000_001).is_some()),
+        "the end was dropped with its scene"
+    );
+}
+
 fn undocked() -> Sim {
     let mut sim = sim();
     let reply = sim.handle(enter(SESSION, STATION, SYSTEM), NOON).unwrap();
@@ -326,6 +353,55 @@ fn a_wreck_the_host_made_is_put_in_space_with_its_id_for_whoever_can_see_it_and_
     // a system nobody is in has no scene to put a wreck in
     let none = sim.handle(wreck_placement(30_000_142, 9_988_400_002_418, at), NOON + 6 * SECOND).unwrap();
     assert_eq!(none, []);
+}
+
+
+#[test]
+fn the_remove_wreck_wire_also_removes_moon_asteroids() {
+    let mut sim = undocked();
+    sim.handle(Message::Bind { session_id: SESSION }, NOON).unwrap();
+    let asteroid_id = spec().ship_id + 1;
+    let ship = sim.scenes[&SYSTEM].pilots[&SESSION].ship.position;
+    let placed = sim
+        .handle(
+            Message::PlaceAsteroid(Box::new(crate::link::AsteroidPlacement {
+                solar_system_id: SYSTEM,
+                asteroid_id,
+                type_id: 45_490,
+                group_id: 1884,
+                category_id: 25,
+                name: "Zeolites".into(),
+                graphic_id: None,
+                position: [ship.x, ship.y, ship.z],
+                direction: [1.0, 0.0, 0.0],
+                radius: 100.0,
+                units_remaining: 100,
+            })),
+            NOON + SECOND,
+        )
+        .unwrap();
+    assert_eq!(names(&placed), ["DoDestinyUpdate"]);
+
+    let removed = sim
+        .handle(Message::RemoveWreck { wreck_id: asteroid_id, effect: 2 }, NOON + 2 * SECOND)
+        .unwrap();
+    assert_eq!(names(&removed), ["DoDestinyUpdate"]);
+    assert!(sim
+        .handle(Message::RemoveWreck { wreck_id: asteroid_id, effect: 2 }, NOON + 3 * SECOND)
+        .unwrap()
+        .is_empty());
+    assert_eq!(
+        sim.handle(
+            Message::Command {
+                session_id: SESSION,
+                command: crate::link::COMMAND_MEASURE,
+                args: vec![asteroid_id as f64],
+            },
+            NOON + 3 * SECOND,
+        )
+        .unwrap(),
+        [Message::Measured { session_id: SESSION, command: 20, distance: None }]
+    );
 }
 
 fn can_placement(id: i64) -> Message {

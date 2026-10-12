@@ -46,6 +46,54 @@ public static partial class MiningLedgerStore
         await prune.ExecuteNonQueryAsync(cancellationToken);
     }
 
+    public static async Task RecordObserverAsync(
+        NpgsqlConnection connection,
+        NpgsqlTransaction transaction,
+        string schema,
+        long entryId,
+        OreMinedEvent ore,
+        long eventDateFileTime,
+        CancellationToken cancellationToken = default)
+    {
+        if (ore.MoonExtractionId <= 0 || ore.MoonStructureId <= 0 || ore.MoonId <= 0 || ore.MoonOwnerCorporationId <= 0)
+        {
+            throw new InvalidDataException("moon mining observer metadata is incomplete");
+        }
+
+        var visibleAfter = eventDateFileTime + CharacterDelayFileTimeTicks;
+        await using (var observer = new NpgsqlCommand(
+            $"""
+            INSERT INTO {Table(schema, "mining_ledger_observers")}
+                (item_id, corporation_id, solar_system_id, item_name, first_visible_after, last_event_date, moon_id)
+            VALUES ($1, $2, $3, '', $4, $5, $6)
+            ON CONFLICT (item_id) DO UPDATE SET
+                corporation_id = EXCLUDED.corporation_id,
+                solar_system_id = EXCLUDED.solar_system_id,
+                first_visible_after = LEAST(mining_ledger_observers.first_visible_after, EXCLUDED.first_visible_after),
+                last_event_date = GREATEST(mining_ledger_observers.last_event_date, EXCLUDED.last_event_date),
+                moon_id = EXCLUDED.moon_id
+            """,
+            connection, transaction))
+        {
+            observer.Parameters.AddWithValue(ore.MoonStructureId);
+            observer.Parameters.AddWithValue(ore.MoonOwnerCorporationId);
+            observer.Parameters.AddWithValue(ore.SolarSystemId);
+            observer.Parameters.AddWithValue(visibleAfter);
+            observer.Parameters.AddWithValue(eventDateFileTime);
+            observer.Parameters.AddWithValue(ore.MoonId);
+            await observer.ExecuteNonQueryAsync(cancellationToken);
+        }
+
+        var entry = new Entry(entryId, "observer", ore.MoonStructureId, ore.CharacterId, ore.MoonOwnerCorporationId,
+            ore.SolarSystemId, eventDateFileTime, visibleAfter, ore.OreTypeId, ore.Quantity, ore.QuantityWasted, ore.QuantityCritical,
+            ore.ShipTypeId, ore.MinerTypeId, ore.MoonStructureId, ore.YieldKind);
+        await InsertAsync(connection, transaction, schema, entry, cancellationToken);
+        await using var prune = new NpgsqlCommand(
+            $"DELETE FROM {Table(schema, "mining_ledger_entries")} WHERE event_date < $1", connection, transaction);
+        prune.Parameters.AddWithValue(eventDateFileTime - RetentionFileTimeTicks);
+        await prune.ExecuteNonQueryAsync(cancellationToken);
+    }
+
     /// <summary>
     /// Copies the EVE.js ledger (the game store's <c>miningLedger</c> table, as <c>PersistenceStore.LoadTableAsync</c> returns it) into the table: the entries
     /// that are not there yet and within the retention as of <paramref name="nowFileTime"/>, and the observers that have one. Returns how many entries it added.

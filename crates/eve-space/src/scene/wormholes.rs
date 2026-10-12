@@ -35,6 +35,7 @@ impl Scene {
         }
         let [x, y, z] = placement.position;
         let [far_x, far_y, far_z] = placement.destination_position;
+        let position = clear_of_bodies(&self.system.bodies, Vec3::new(x, y, z), placement.radius);
         let body = Body {
             id: placement.wormhole_id,
             type_id: placement.type_id,
@@ -43,7 +44,7 @@ impl Scene {
             owner_id: 0,
             name: placement.name,
             kind: BodyKind::Wormhole,
-            position: Vec3::new(x, y, z),
+            position,
             radius: placement.radius,
             graphic_id: None,
             detail: Detail::Wormhole {
@@ -83,6 +84,40 @@ impl Scene {
             .map(|session| Self::update(session, vec![removed.clone()]))
             .collect()
     }
+}
+
+/// The distance a wormhole end keeps outside the body it would lie inside (metres).
+const CLEARANCE_OUTSIDE_BODY: f64 = 50_000.0;
+
+/// `position` moved out of every star and planet of the system it lies inside. A ship that warps to an end inside a star is bumped
+/// out to the star's surface, far from the end, and cannot jump. The end goes out along its bearing from that body, to the body's surface, the
+/// end's radius and the clearance. shortcut: the host places an end 50 km from its system's centre, which lies inside a star in some systems;
+/// the reference's placement is not in the sources, so the end is moved out here (DEVIATIONS).
+pub(crate) fn clear_of_bodies(bodies: &[Body], position: Vec3, radius: f64) -> Vec3 {
+    let mut at = position;
+    for body in bodies {
+        if !matches!(body.kind, BodyKind::Star | BodyKind::Planet) || body.radius <= 0.0 {
+            continue;
+        }
+        let (dx, dy, dz) = (at.x - body.position.x, at.y - body.position.y, at.z - body.position.z);
+        let distance = (dx * dx + dy * dy + dz * dz).sqrt();
+        let reach = body.radius + radius.max(0.0);
+        if !distance.is_finite() || distance >= reach {
+            continue;
+        }
+        let direction = if distance > 0.0 {
+            Vec3::new(dx / distance, dy / distance, dz / distance)
+        } else {
+            Vec3::new(1.0, 0.0, 0.0)
+        };
+        let target = reach + CLEARANCE_OUTSIDE_BODY;
+        at = Vec3::new(
+            body.position.x + direction.x * target,
+            body.position.y + direction.y * target,
+            body.position.z + direction.z * target,
+        );
+    }
+    at
 }
 
 /// Where a ship that came out of a wormhole appears: a uniform direction from the far end, at the far end's radius, the ship's radius and

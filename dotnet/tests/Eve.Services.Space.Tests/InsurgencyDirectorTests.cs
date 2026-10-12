@@ -134,17 +134,19 @@ public sealed class InsurgencyDirectorTests
 
     private static long InsurgencyWarzoneCorporation(long warzoneId) => warzoneId == Ins.InsurgencyWarzones.Angel.WarzoneId ? Ins.InsurgencyWarzones.Angel.PirateCorporationId : Ins.InsurgencyWarzones.Guristas.PirateCorporationId;
 
-    /// <summary>Two warzones of ten low-security systems each, in the regions of the warzones, linked as a chain: each warzone has the systems a campaign needs.</summary>
+    /// <summary>Ten low-security systems of each warzone on the client's map (the first ten by id), linked as a chain: each warzone has the systems a campaign needs.</summary>
+    private static readonly int[] Angels = [.. Ins.InsurgencyWarzones.SystemsOf(Ins.InsurgencyWarzones.Angel.WarzoneId).OrderBy(i => i).Take(10)];
+    private static readonly int[] Gurista = [.. Ins.InsurgencyWarzones.SystemsOf(Ins.InsurgencyWarzones.Guristas.WarzoneId).OrderBy(i => i).Take(10)];
+
     private static SolarSystemCatalog Universe() => new(
-        Enumerable.Range(0, 10).Select(i => new SolarSystemInfo(900_000 + i, $"Curse {i}", 1, 10000012, 0.3))
-            .Concat(Enumerable.Range(0, 10).Select(i => new SolarSystemInfo(910_000 + i, $"Venal {i}", 2, 10000015, 0.2)))
+        Angels.Select((id, i) => new SolarSystemInfo(id, $"Angel {i}", 1, 10000012, 0.3))
+            .Concat(Gurista.Select((id, i) => new SolarSystemInfo(id, $"Guristas {i}", 2, 10000015, 0.2)))
             .Concat([new SolarSystemInfo(950_000, "Highsec", 3, 10000002, 0.9)]));
 
     private static StargateGraph Stargates()
     {
-        var curse = Enumerable.Range(0, 9).Select(i => (900_000 + i, 900_001 + i));
-        var venal = Enumerable.Range(0, 9).Select(i => (910_000 + i, 910_001 + i));
-        return new StargateGraph(curse.Concat(venal));
+        static IEnumerable<(int From, int To)> Chain(int[] ids) => ids.Zip(ids.Skip(1), (from, to) => (from, to));
+        return new StargateGraph(Chain(Angels).Concat(Chain(Gurista)));
     }
 
     private sealed class InsurgencyRig : IAsyncDisposable

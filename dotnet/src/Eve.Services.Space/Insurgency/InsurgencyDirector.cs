@@ -77,8 +77,8 @@ public sealed class InsurgencyDirector
     }
 
     /// <summary>
-    /// Starts a campaign in each warzone that has none open. The hub is a low-security system of the warzone's regions, chosen in turn over the warzone's campaigns;
-    /// the covered systems are the hub and the nearest low-security systems of the regions by stargate jumps, as many as the victory needs (the ambition of the pirates).
+    /// Starts a campaign in each warzone that has none open. The hub is a low-security system of the warzone's map, chosen in turn over the warzone's campaigns;
+    /// the covered systems are the hub and the nearest low-security systems of the warzone by stargate jumps, as many as the victory needs (the ambition of the pirates).
     /// A warzone with too few such systems starts nothing and is looked at again on the next tick.
     /// </summary>
     private async Task StartAsync(JobContext context, CancellationToken cancellationToken)
@@ -88,8 +88,9 @@ public sealed class InsurgencyDirector
             var open = await _store.OpenAsync(context.Connection, context.Transaction, cancellationToken);
             if (open.Any(c => c.WarzoneId == warzone.WarzoneId))
                 continue;
+            var warzoneSystems = InsurgencyWarzones.SystemsOf(warzone.WarzoneId);
             var candidates = _systems.Systems
-                .Where(s => warzone.RegionIds.Contains(s.RegionId) && IncursionRules.BandOf(s.Security) == IncursionBand.LowSec)
+                .Where(s => warzoneSystems.Contains(s.Id) && IncursionRules.BandOf(s.Security) == IncursionBand.LowSec)
                 .OrderBy(s => s.Id)
                 .ToList();
             if (candidates.Count == 0)

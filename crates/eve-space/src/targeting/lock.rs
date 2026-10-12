@@ -34,7 +34,16 @@ impl Scene {
             .values()
             .find(|pilot| pilot.ship.spec.ship_id == target.id)
             .map_or(crate::visibility::CloakState::Uncloaked, |pilot| pilot.cloak);
-        if !crate::visibility::can_select_target(observer, subject, source.cloak, target_cloak) {
+        // the static bodies of a system are in view at any distance (visibility.rs): for them only the cloaks and the range decide
+        let selectable = if target.static_body {
+            matches!(
+                source.cloak,
+                crate::visibility::CloakState::Uncloaked | crate::visibility::CloakState::Decloaking
+            )
+        } else {
+            crate::visibility::can_select_target(observer, subject, source.cloak, target_cloak)
+        };
+        if !selectable {
             return Err(Refusal::of("TARGET_NOT_FOUND"));
         }
         let spec = &source.ship.spec;

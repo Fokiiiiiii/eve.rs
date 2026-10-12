@@ -8,7 +8,7 @@ public sealed class SystemEnvironmentTests
     private static int? Attribute(string name) => name switch
     {
         "maxTargetRange" => 1,
-        "armorEmDamageResistance" => 2,
+        "armorEmDamageResonance" => 2,
         "capacitorCapacity" => 3,
         _ => null,
     };
@@ -31,7 +31,8 @@ public sealed class SystemEnvironmentTests
         Assert.Empty(notApplied);
         var item = effect.Modifiers.Where(m => m.Func == ModifierFunc.Item).ToArray();
         Assert.Equal(
-            new[] { (2, Operation.PostPercent, 50.0), (3, Operation.PostMul, 1.3), (1, Operation.PostMul, 2.0) },
+            // a resistance bonus of 50 percent is a resonance 50 percent smaller (the SDE names the resonance)
+            new[] { (2, Operation.PostPercent, -50.0), (3, Operation.PostMul, 1.3), (1, Operation.PostMul, 2.0) },
             item.Select(m => (m.ModifiedAttributeId, m.Operation, m.Literal!.Value)).ToArray());
         // the ship and the items located in it (its modules) get the same modifiers
         Assert.Equal(item.Length, effect.Modifiers.Count(m => m.Func == ModifierFunc.Location));

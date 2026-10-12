@@ -2911,3 +2911,41 @@ Status: implemented. Tests: `Eve.Corporations.Tests` (`ItemLockTests`, 3, Postgr
   on items inside a secure container) belong to the inventory service, not to `itemLocking`. Not built in this slice.
 - **Existing locks at migration.** A blueprint locked by a vote before migration `013` has no row in `item_locks`, so it is not listed
   until the vote ends. The databases in use are development databases; no backfill was written.
+
+## Reprocessing (reprocessingSvc, 37a)
+
+Status: the server side is implemented for NPC stations. The client has not been driven through a reprocess.
+
+- **Rules (sources).** Base station efficiency is the SDE station row (`npcStations.reprocessingEfficiency`, 0.5 at the station used
+  here); the wiki gives 30%–50% by station equipment (EVE University, "Refining"). Skill bonuses are the SDE's `refiningYieldMutator`
+  (dogma attribute 379): Reprocessing (3385) 3% per level, Reprocessing Efficiency (3389), the ore skill named by the item's
+  `reprocessingSkillType` (attribute 790), and Scrapmetal Processing (12196) for items without one; the wiki gives 3%, 2% and 2% per
+  level. The tax is the station's `reprocessingStationsTake` (0.05), reduced by the standing toward the station's owner to zero at
+  6.67 (wiki). The reduced rate is rounded to two decimals, as `round2` in `reprocessingRuntime.js` does.
+- **Quotes and reprocess.** A quote processes whole portions (`types.portionSize`); the leftovers stay. Each material yields its
+  quantity times the portions times the efficiency, rounded down after removing binary noise (`floorAfterNormalizing` in
+  `reprocessingRuntime.js`). The tax is charged on the yield at the material's adjusted price. `Reprocess` consumes the portions in
+  one transaction with the output and the tax; the tax is a wallet entry with ref type 127 (`reprocessing_tax`, CCP eve-glue
+  `JournalRefTypeEnumV2`). The answer is `[processedItemIDs, {typeID: quantity}]`, as `reprocessingService.js` returns it.
+- **Client contract.** `GetQuotes(itemIDs, activeShipID)` answers `[tax, {typeID: efficiency, None: fallback}, {itemID: quote}]`
+  (`reprocessingService.js` `Handle_GetQuotes`; the client reads `quotes.py:19-21`). The quote fields are the reference's.
+
+Differences and cuts, all listed:
+1. Sources: only items in the caller's own hangar at this station. Containers, ship cargo, corporation hangars and other places are not
+   quoted (EVE.js reads more places). Not built.
+2. Outputs go to the caller's hangar at this station. Other outputs are refused with a named notice.
+3. Structures: refused with a named notice (`Reprocessing is available in the NPC station you are docked in.`). The structure rigs and
+   profiles of `reprocessingRuntime.js` are not built.
+4. Implants: the implant bonus to refining yield (`refiningYieldPercentage` on the character) is not applied. EVE.js applies it.
+5. Randomized outputs (`typeHasRandomizedMaterials`) are not produced; an item with only randomized materials yields nothing here.
+   EVE.js produces them. Not built.
+6. Oversized stacks (`REPROCESSING_SPLIT_REQUIRED`) are not split; a stack is processed as one.
+7. Adjusted prices: the `marketPrices` table is absent from the static data loaded on this host, so the tax on materials is zero
+   (`SdeReprocessingData.AdjustedPricesAsync`). The table is read when present. Real prices are needed for the tax to be real.
+8. The standing is the higher of the character's own and its corporation's standing toward the owner (the wiki's rule). EVE.js takes
+   the best of its standing sources in priority order (`standingRuntime.resolveBestStandingValue`); the values agree when only the two
+   sources exist.
+9. Notices: a consumed stack is announced as `OnItemChange` with quantity 0 (a removed row) or with its new size; an output is announced
+   as a new row. The same convention as the direct trade (DEVIATIONS "Direct trade"). Not checked against a client capture.
+10. `GetQuotes` skips items the station cannot reprocess (no materials, fewer than one portion) rather than answering a quote with an error.
+

@@ -31,12 +31,13 @@ PG_URL = os.environ.get("EVE_PG_URL", "")
 FOB_TYPE = 78260  # the Angel Cartel FOB (SDE types row 78260; the Angel warzone is the client's warzone 1)
 ARMOR_REINFORCE = 111  # the structure state of the armor reinforcement (StructureState.ArmorReinforce)
 SHIELD_VULNERABLE = 110  # the structure state of the shield stage (StructureState.ShieldVulnerable)
-BOMBS = 8  # the QA Smartbombs fitted: their cycles add up to the FOB's shield in about four minutes
+BOMBS = 1  # one QA Smartbomb runs at a time (the server refuses a second of the same effect, EffectAlreadyActive2): 5,333 damage a second
+# after the 0.8 resonances, so the FOB's 9.6 million shield takes about 30 minutes of cycles
 EGO_OFFSET = 150_000.0  # 150 km from the FOB's centre (its radius is 50 km): inside the bombs' 250 km fields
 COCKROACH_GROUP = 25
 COCKROACH = 11019
 FAR_FUTURE_MS = 4_102_444_800_000
-WALK_LIMIT_S = 1_200.0
+WALK_LIMIT_S = 2_100.0
 
 pytestmark = pytest.mark.skipif(
     not (LIVE and PG_URL and os.environ.get("EVE_LIVE_FOB_WALK") == "1"),
@@ -45,21 +46,8 @@ pytestmark = pytest.mark.skipif(
 
 
 def fit_bombs(ship_id: int, count: int) -> list[int]:
-    """The QA Smartbombs of the ship: the first from the mission walk's fixture, the rest the same way in the free mid slots (flags 19 to 26)."""
-    first = seed_cockroach(ship_id)
-    items = f"{schema('EVE_INVENTORY_SCHEMA')}.items"
-    used = {int(flag) for flag in psql(f"SELECT flag FROM {items} WHERE location_id = {ship_id}").split()}
-    modules = [first]
-    for slot in range(19, 27):
-        if len(modules) >= count:
-            break
-        if slot in used:
-            continue
-        modules.append(int(psql(
-            f"INSERT INTO {items} (type_id, owner_id, location_id, flag, quantity, singleton) "
-            f"SELECT {QA_SMARTBOMB}, owner_id, {ship_id}, {slot}, 1, true FROM {items} WHERE id = {ship_id} RETURNING id")))
-        used.add(slot)
-    return modules
+    """The QA Smartbomb of the ship: the mission walk's fixture (the Cockroach with the bomb in a mid slot)."""
+    return [seed_cockroach(ship_id)][:count]
 
 
 def seed_hub_pilot(character_id: int, ship: int, system: int) -> None:
@@ -113,6 +101,7 @@ def test_the_qa_smartbombs_take_the_fobs_shield_in_its_system():
         refusals = []
         state = SHIELD_VULNERABLE
         last_check = 0.0
+        cycles = 0
         while time.time() - started < WALK_LIMIT_S and state != ARMOR_REINFORCE:
             for bomb in bombs:
                 try:
@@ -120,11 +109,13 @@ def test_the_qa_smartbombs_take_the_fobs_shield_in_its_system():
                 except packet.MachoError as error:  # a refusal is kept for the report; the walk goes on with the others
                     refusals.append(repr(getattr(error, "payload", error))[:160])
             for event in timed_events(client, 3.0):
-                if re.search(r'\["typeID", %d\]' % FOB_TYPE, json.dumps(event, default=str)):
+                text = json.dumps(event, default=str)
+                cycles += text.count("EMPWave")  # each cycle of the bomb is one field of the effect on the pilot's scene
+                if re.search(r'\["typeID", %d\]' % FOB_TYPE, text):
                     fob_seen = True
             if time.time() - last_check >= 15.0:
                 last_check = time.time()
                 state = structure_state(fob)
-        print("FOB_SEEN", fob_seen, "STATE", state, "SECONDS", int(time.time() - started), "REFUSALS", len(refusals), refusals[:3])
+        print("FOB_SEEN", fob_seen, "STATE", state, "SECONDS", int(time.time() - started), "CYCLES", cycles, "REFUSALS", len(refusals), refusals[:3])
         assert fob_seen, "the FOB's ball was not added to the pilot's scene"
         assert state == ARMOR_REINFORCE, f"the FOB's shield is not down after {int(time.time() - started)} s (state {state}, refusals {refusals[:3]})"

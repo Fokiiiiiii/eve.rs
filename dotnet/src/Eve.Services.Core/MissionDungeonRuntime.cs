@@ -175,6 +175,9 @@ public sealed class MissionDungeonRuntime(
             if (catalog.Mission(record.Content.MissionId)?.Kill?.DungeonId is not { } dungeonId) continue;
             if (agentPlaceOf(record.AgentId) is not { } place) continue;
             if (!host.IsPilotInSystem(record.CharacterId, (int)place.SolarSystemId)) continue;
+            // a fetch step whose dungeon already gave the objective: its dungeon is done, a second one would fail the mission when the pilot leaves
+            if (FetchOf(record.Content.MissionId) is { } fetched && await host.HeldQuantityAsync(record.CharacterId, (int)fetched.TypeId, cancellationToken) >= fetched.Quantity)
+                continue;
             if (await host.StartDungeonAsync(record.CharacterId, (int)place.SolarSystemId, dungeonId, cancellationToken) is null) started++;
         }
         await ExpireCouriersAsync(now(), cancellationToken);

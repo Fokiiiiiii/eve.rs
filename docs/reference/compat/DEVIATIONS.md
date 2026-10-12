@@ -2889,6 +2889,29 @@ client handles both (`invCache.py:219` and `invCache.py:229`).
    that case was not read; the live walk records what the client receives.
 4. `OnPrimingNeededForTradeItems` is sent to each pilot after a stage, with the staged item ids (`pvptradesvc.py:109-110`).
 
+## Item locking (itemLocking, 37a)
+
+Status: implemented. Tests: `Eve.Corporations.Tests` (`ItemLockTests`, 3, PostgreSQL; the project is 114).
+
+- **What the client calls.** `itemLocking` has two reads: `GetItemsByLocation(locationID)` (a dict of item id to
+  `itemID`, `typeID`, `ownerID`, `locationID`) and `GetLockedItemLocations()` (a set of location ids), used by
+  `eve/client/script/ui/services/corporation/itemLocking.py:30-40`. The client sets no lock through this service.
+- **Where locks come from.** A lockdown vote (`VoteLockBlueprint`) locks a corporation blueprint from the moment the vote is
+  created. A failed lock vote, or a passed unlock vote (`VoteUnlockBlueprint`), releases it. EVE.js does the same
+  (`voteRuntimeState.js` `ensureLockedItemRecord` and `removeLockedItemRecord`).
+- **Where the lock is kept.** The item row's flag (`blueprint_locked`) is the guard that refuses moves, consumption and edits
+  (`PgItemStore`, `EnsureUnlocked`). The list the client reads is `corporations.item_locks` (migration `013_item_locks`), written in the
+  same transaction as that flag. Industry jobs also set the flag, so the list is kept apart from it: a blueprint in a job is not
+  reported as locked.
+- **The push.** A change is sent after its transaction commits, to the sessions of the corporation, as `OnLockedItemChange(itemID,
+  ownerID, locationID, isLocked)`. That is the name the client service registers (`__notifyevents__`), and it refreshes the service's
+  cache. EVE.js sends `OnLockedItemChangeUI` with three arguments to every session. The client UI reads that only through the
+  service's re-send, so EVE.js leaves the service cache stale until the location is read again. eve.rs does not.
+- **Not served here.** The ALSC audit container locks (`invBroker` `ALSCLockItems` and `ALSCUnlockItems`, which set the flag `LOCKED`
+  on items inside a secure container) belong to the inventory service, not to `itemLocking`. Not built in this slice.
+- **Existing locks at migration.** A blueprint locked by a vote before migration `013` has no row in `item_locks`, so it is not listed
+  until the vote ends. The databases in use are development databases; no backfill was written.
+
 ## Reprocessing (reprocessingSvc, 37a)
 
 Status: the server side is implemented for NPC stations. The client has not been driven through a reprocess.

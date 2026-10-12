@@ -70,6 +70,41 @@ def items_of(owner: int, type_id: int) -> list[int]:
     rows = sql(f"select id from {schema('INVENTORY')}.items where owner_id = {int(owner)} and type_id = {int(type_id)} order by id desc")
     return [int(row) for row in rows.split() if row]
 
+HIGH_SLOTS = range(27, 35)  # the client's flags for the high slots (HiSlot0 to HiSlot7); the SDE gives the smartbomb the hiPower effect
+POLARIS, POLARIS_LEVEL5_POINTS = 9955, 128000  # the skill the QA Smartbomb requires to be fitted, at level 5 (as test_mission_walk)
+
+
+def sde_type_id(name: str) -> int:
+    """The type id of an SDE type by its English name (sde.types); unpublished QA modules are found this way too."""
+    found = [int(row) for row in sql(f"select key from sde.types where doc->'name'->>'en' = '{name}'").split() if row]
+    if len(found) != 1:
+        raise SeedError(f"the SDE has {len(found)} types named {name!r}, expected one")
+    return found[0]
+
+
+def hi_slot_count(type_id: int) -> int:
+    """The high slots of a ship type (its hiSlots attribute, id 14, in sde.typeDogma)."""
+    rows = sql('select elem->>\'value\' from sde."typeDogma", jsonb_array_elements(doc->\'dogmaAttributes\') elem '
+               f"where key::text = '{int(type_id)}' and elem->>'attributeID' = '14'")
+    return int(float(rows))
+
+
+def seed_qa_arsenal(ship: int, *, names: tuple = ("QA Smartbomb",)) -> list:
+    """Fits the named SDE QA modules in every free high slot of the ship (a fixture: rows in inventory.items, plus the
+    Polaris skill that fitting needs). The server refuses a second activation of one effect at a time, so the walks
+    activate one module at a time. Returns the new module item ids."""
+    owner = owner_of(ship)
+    ship_type = int(sql(f"select type_id from {schema('INVENTORY')}.items where id = {int(ship)}"))
+    slots = list(HIGH_SLOTS)[:hi_slot_count(ship_type)]
+    sql(f"insert into {schema('SKILLS')}.character_skills (character_id, type_id, level, skill_points) "
+        f"values ({owner}, {POLARIS}, 5, {POLARIS_LEVEL5_POINTS}) on conflict (character_id, type_id) "
+        f"do update set level = 5, skill_points = {POLARIS_LEVEL5_POINTS}")
+    used = {int(flag) for flag in sql(f"select flag from {schema('INVENTORY')}.items where location_id = {int(ship)}").split()}
+    types = [sde_type_id(name) for name in names]
+    return [new_item(types[n % len(types)], owner=owner, location=ship, flag=flag, singleton=True)
+            for n, flag in enumerate(f for f in slots if f not in used)]
+
+
 def owner_of(item: int) -> int:
     """The owner of an item row (inventory.items)."""
     return int(sql(f"select owner_id from {schema('INVENTORY')}.items where id = {int(item)}"))

@@ -2,6 +2,12 @@ using Eve.Hacking;
 using Eve.Macho;
 using Eve.Marshal;
 using Eve.Services;
+using Eve.Data;
+using Eve.Dogma;
+using Eve.Sde;
+using Eve.Ships;
+using Eve.Space;
+using Npgsql;
 
 namespace Eve.Services.Space.Tests;
 
@@ -191,5 +197,93 @@ public sealed class HackingMgrServiceTests
         Assert.Null(await service.AnalyzerRefusalAsync(CharacterId, ContainerId, Analyzer(), CancellationToken.None));
         await service.OpenAnalyzerAttemptAsync(session, CharacterId, ContainerId, Analyzer(), CancellationToken.None);
         Assert.Equal("ANALYZER_TARGET_BUSY", await service.AnalyzerRefusalAsync(43, ContainerId, Analyzer(), CancellationToken.None));
+    }
+}
+
+/// <summary>
+/// The analyzer's virus stats after dogma, as the hacking service reads them (SpaceSessions.AnalyzerValuesOf). The base numbers are the module's own
+/// SDE attributes (1909 coherence, 1910 strength): Alpha Data Analyzer I has 50 coherence and needs Hacking, Relic Analyzer I has 40 and needs Archaeology.
+/// Each skill adds 10 coherence a level to the analyzer it trains (wiki Hacking); the other skill adds nothing to it.
+/// </summary>
+public sealed class AnalyzerSkillTests
+{
+    private const int DataAnalyzer = 22329, RelicAnalyzer = 22177, Hacking = 21718, Archaeology = 13278, Rorqual = 28352;
+    private const int VirusCoherence = 1909, VirusStrength = 1910;
+    private const long CharacterId = 80_201, ShipId = 80_202, AnalyzerId = 80_203;
+    private const int HighSlotFlag = 27;
+
+    private static async Task<DogmaStatic> LoadStaticsAsync()
+    {
+        await using var source = NpgsqlDataSource.Create(PgConnection.ForTest(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
+        var sde = new SdeReader(source);
+        Assert.NotNull(await sde.BuildAsync());
+        var statics = await DogmaStatic.LoadAsync(sde);
+        await statics.EnsureTypesAsync([DataAnalyzer, RelicAnalyzer, Rorqual, Hacking, Archaeology]);
+        return statics;
+    }
+
+    /// <summary>A Rorqual with the analyzer in a high slot, and the pilot trained to the given levels (skill type id to level).</summary>
+    private static ShipSnapshot Fitted(DogmaStatic statics, int analyzerType, IReadOnlyDictionary<int, int> levels)
+    {
+        var character = new Eve.Characters.Character(
+            CharacterId, 1, "Analyzer test", 1, 1, 1, 1, 1, 1, 1000001,
+            null, null, 60003760, 60003760, 30000142, 20000020, 10000001, ShipId,
+            DateTimeOffset.UnixEpoch, null, null);
+        var ship = new Eve.Inventory.Item(ShipId, Rorqual, CharacterId, 60003760, 0, 1, true, null);
+        var analyzer = new Eve.Inventory.Item(AnalyzerId, analyzerType, CharacterId, ShipId, HighSlotFlag, 1, true, null);
+        var world = new DogmaWorld(statics, CharacterId, ShipId);
+        world.Add(new DogmaItem(CharacterId, character.TypeId, CharacterId, ShipId, ShipSnapshot.PilotFlag, ItemState.Online));
+        world.Add(new DogmaItem(ShipId, Rorqual, CharacterId, 60003760, 0, ItemState.Online));
+        world.Add(new DogmaItem(AnalyzerId, analyzerType, CharacterId, ShipId, HighSlotFlag, ItemState.Online));
+        foreach (var (skill, level) in levels)
+        {
+            var skillId = CharacterId * 100_000 + skill;
+            world.Add(new DogmaItem(skillId, skill, CharacterId, CharacterId, 7));
+            world.SetValue(skillId, DogmaWorld.SkillLevel, level);
+        }
+        return new ShipSnapshot { Character = character, Ship = ship, Fitted = [analyzer], Charges = [], Skills = [], World = world };
+    }
+
+    [PgFact]
+    public async Task A_data_analyzer_untrained_has_its_sde_base()
+    {
+        var statics = await LoadStaticsAsync();
+        var snapshot = Fitted(statics, DataAnalyzer, new Dictionary<int, int>());
+
+        Assert.Equal(50d, snapshot.World.Get(AnalyzerId, VirusCoherence));
+        Assert.Equal(20d, snapshot.World.Get(AnalyzerId, VirusStrength));
+    }
+
+    [PgFact]
+    public async Task Hacking_adds_ten_coherence_a_level_to_a_data_analyzer_and_not_the_strength()
+    {
+        var statics = await LoadStaticsAsync();
+        var snapshot = Fitted(statics, DataAnalyzer, new Dictionary<int, int> { [Hacking] = 4 });
+
+        Assert.Equal(90d, snapshot.World.Get(AnalyzerId, VirusCoherence));
+        Assert.Equal(20d, snapshot.World.Get(AnalyzerId, VirusStrength));
+    }
+
+    [PgFact]
+    public async Task Archaeology_does_not_change_a_data_analyzer()
+    {
+        var statics = await LoadStaticsAsync();
+        var snapshot = Fitted(statics, DataAnalyzer, new Dictionary<int, int> { [Archaeology] = 5 });
+
+        Assert.Equal(50d, snapshot.World.Get(AnalyzerId, VirusCoherence));
+    }
+
+    [PgFact]
+    public async Task Archaeology_adds_ten_coherence_a_level_to_a_relic_analyzer()
+    {
+        var statics = await LoadStaticsAsync();
+        var untrained = Fitted(statics, RelicAnalyzer, new Dictionary<int, int>());
+        var trained = Fitted(statics, RelicAnalyzer, new Dictionary<int, int> { [Archaeology] = 3 });
+        var hackingOnly = Fitted(statics, RelicAnalyzer, new Dictionary<int, int> { [Hacking] = 5 });
+
+        Assert.Equal(40d, untrained.World.Get(AnalyzerId, VirusCoherence));
+        Assert.Equal(70d, trained.World.Get(AnalyzerId, VirusCoherence));
+        Assert.Equal(20d, trained.World.Get(AnalyzerId, VirusStrength));
+        Assert.Equal(40d, hackingOnly.World.Get(AnalyzerId, VirusCoherence));
     }
 }

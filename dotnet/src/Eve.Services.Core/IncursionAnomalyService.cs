@@ -217,7 +217,7 @@ public sealed class IncursionAnomalyService : IService
             ("aggressorFactionID", Py.Number(Positive(incursion["aggressorFactionID"], 500019))),
             ("state", Py.Number(IncursionState(incursion["state"]))),
             ("influence", Py.Number(Influence(incursion["influence"]))),
-            ("lastUpdated", Py.Number(Number(incursion["lastUpdated"]))),
+            ("lastUpdated", Py.FileTimeLong(Positive(incursion["lastUpdated"]))),  // a FILETIME is a long on the wire (Py.Number would write it as a real)
             ("decayRate", Py.Number(Math.Max(0, Number(incursion["decayRate"])))),
             ("graceTime", Py.Number(Math.Max(0, Number(incursion["graceTime"])))),
             ("hasFinalEncounter", PyValue.Of(Truthy(incursion["hasFinalEncounter"]))),

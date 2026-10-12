@@ -147,6 +147,9 @@ impl Scene {
                 let changed = if let Some(pilot) = self.pilots.get_mut(&session) {
                     let changed = pilot.cloak != crate::visibility::CloakState::Cloaked;
                     pilot.cloak = crate::visibility::CloakState::Cloaked;
+                    if changed {
+                        pilot.cloaked_at = at;
+                    }
                     changed
                 } else {
                     false

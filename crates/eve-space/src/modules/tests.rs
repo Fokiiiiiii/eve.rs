@@ -3900,6 +3900,38 @@ fn a_cloak_is_stopped_by_a_ship_that_targets_its_pilot_and_not_by_the_locks_the_
     assert_eq!(refusal_of(&scene.activate(A, cloaking_device(), t)), "CLOAK_TARGET_LOCKED");
 }
 
+fn other_module(mut effect: Effect) -> Effect {
+    effect.module_id = MODULE + 1;
+    effect
+}
+
+#[test]
+fn a_cloaked_ship_starts_a_module_that_is_not_offensive_only_in_the_first_five_seconds() {
+    // the wiki (Cloaking): non-offensive modules can be activated during the first 5 seconds of a cloak; an offensive one never can
+    let (mut scene, t) = crowd_off_the_station(10_000.0);
+    scene.target_order(A, crate::targeting::Order::Clear, t);
+    let mut cloak = cloaking_device();
+    cloak.repeat = 1000;
+    assert!(accepted(&scene.activate(A, cloak, t)));
+    let t = t + 2 * SECOND;
+    scene.poll(t);
+    assert!(accepted(&scene.activate(A, other_module(afterburner()), t)), "two seconds in: a propulsion module starts");
+    let mut bomb = smartbomb(3_000.0, [0.0, 40.0, 0.0, 40.0], true);
+    bomb.module_id = MODULE + 2;
+    let offensive = scene.activate(A, bomb, t);
+    assert_eq!(refusal_of(&offensive), "MODULE_CLOAKED");
+
+    let (mut scene, t) = crowd_off_the_station(10_000.0);
+    scene.target_order(A, crate::targeting::Order::Clear, t);
+    let mut cloak = cloaking_device();
+    cloak.repeat = 1000;
+    assert!(accepted(&scene.activate(A, cloak, t)));
+    let t = t + 6 * SECOND;
+    scene.poll(t);
+    assert_eq!(scene.pilots[&A].cloak, crate::visibility::CloakState::Cloaked);
+    assert_eq!(refusal_of(&scene.activate(A, other_module(afterburner()), t)), "MODULE_CLOAKED");
+}
+
 #[test]
 fn a_smartbomb_is_refused_while_its_pilot_warps() {
     // EVE.js refuses a smartbomb in warp (isEntityActiveWarpInFlight); the lance of the next test is not refused

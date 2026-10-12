@@ -276,7 +276,9 @@ internal sealed partial class CharacterServicesComposition
                     if ((Eve.Services.Core.EpicArcOffers.Pick(agentMissionStatic, agent.AgentId, completed, now, failed) ??
                             Eve.Services.Core.BasicKillOffers.Pick(agentMissionStatic, agent, completedAt, now,
                                 dungeon => dungeonWavesDirector?.StartRefusalOf(dungeon) is null) ??
-                            Eve.Services.Core.BasicKillOffers.PickCourier(agentMissionStatic, agent, completedAt, now)) is not { } missionId ||
+                            Eve.Services.Core.BasicKillOffers.PickCourier(agentMissionStatic, agent, completedAt, now) ??
+                            Eve.Services.Core.BasicKillOffers.PickMining(agentMissionStatic, agent, completedAt, now,
+                                dungeon => dungeonWavesDirector?.StartRefusalOf(dungeon) is null, IsMiningMission)) is not { } missionId ||
                         agentMissionStatic.Mission(missionId) is not { } mission)
                         return null;
                     // the mission type label is the agent's kind (encounter, epicArc): the journal shows no mission without one
@@ -292,7 +294,8 @@ internal sealed partial class CharacterServicesComposition
                         : atLocation;
                     await missionDungeons.OnConversationAsync(characterId, agent.AgentId, together, ct);
                 }, researchPort, locatorPort,
-                async (characterId, agentId, token) => { if (missionDungeons is { } dungeons) await dungeons.OnAcceptedAsync(characterId, agentId, token); }));
+                async (characterId, agentId, token) => { if (missionDungeons is { } dungeons) await dungeons.OnAcceptedAsync(characterId, agentId, token); },
+                async (characterId, agentId, token) => { if (missionDungeons is { } dungeons) await dungeons.OnQuitAsync(characterId, agentId, token); }));
         await AttachMissionDungeonsAsync();
     }
 
@@ -326,7 +329,8 @@ internal sealed partial class CharacterServicesComposition
             () => DateTimeOffset.UtcNow,
             (missionId, characterId, place, level) => stargateGraph is { } gates
                 ? MissionCourierRules.Destination(missionId, characterId, place.BaseStationId!.Value, (int)place.SolarSystemId, level, gates, stations.All)
-                : null);
+                : null,
+            IsTradeMission);
         var runtime = missionDungeons;
         if (spaceSessions is not null) spaceSessions.PilotDocked = (characterId, stationId, token) => runtime.OnDockedAsync(characterId, stationId, token);
         foundations.Scheduler.Register(MissionDungeonSweepJob, (context, token) => runtime.SweepAsync(token));
@@ -344,6 +348,15 @@ internal sealed partial class CharacterServicesComposition
 
     /// <summary>The localization IDs of the missions' texts from the client export (empty when not available; see LoadClientMissionMessagesAsync).</summary>
     private IReadOnlyDictionary<long, IReadOnlyDictionary<string, long>> clientMissionMessages = new Dictionary<long, IReadOnlyDictionary<string, long>>();
+
+    /// <summary>The client content template of each mission (see ClientMissionTemplates): empty when the client file is not configured.</summary>
+    private IReadOnlyDictionary<long, string> clientMissionTemplates = new Dictionary<long, string>();
+
+    /// <summary>Whether the mission is a storyline trade mission of the client: handed in at its agent like a fetch (DEVIATIONS X13).</summary>
+    private bool IsTradeMission(long missionId) => clientMissionTemplates.GetValueOrDefault(missionId) == ClientMissionTemplates.TradeTemplate;
+
+    /// <summary>Whether the mission is a basic mining mission of the client: a dungeon whose ore is handed in at its agent.</summary>
+    private bool IsMiningMission(long missionId) => clientMissionTemplates.GetValueOrDefault(missionId) == ClientMissionTemplates.MiningTemplate;
 
     /// <summary>
     /// Loads the client's mission text IDs from <c>EVE_CLIENT_SDE_DIR/native/missions.jsonl.gz</c> into the schema <c>client_sde</c> (replaced each
@@ -364,6 +377,7 @@ internal sealed partial class CharacterServicesComposition
             return;
         }
         var (messages, skipped) = ClientMissionMessages.Parse(File.OpenRead(file));
+        clientMissionTemplates = ClientMissionTemplates.Parse(File.OpenRead(file));
         var missionIds = new List<long>();
         var keys = new List<string>();
         var ids = new List<long>();
@@ -411,6 +425,7 @@ internal sealed partial class CharacterServicesComposition
     /// </summary>
     private async ValueTask<Eve.Services.Core.CourierObjectiveView?> CourierObjectiveAsync(long characterId, Eve.Agents.AgentMissionRecord record, CancellationToken cancellationToken)
     {
+        if (IsTradeMission(record.Content.MissionId)) return null;
         if (agentMissionStatic.Mission(record.Content.MissionId)?.Courier is not { ObjectiveTypeId: { } typeId, ObjectiveQuantity: > 0 } courier) return null;
         if (!agentMissionAgentById.TryGetValue(record.AgentId, out var agent) || agent.BaseLocationId is not { } pickup || agent.SolarSystemId is not { } system) return null;
         var level = agentMissionStatic.Level(record.Content.MissionId).Level;
@@ -427,12 +442,16 @@ internal sealed partial class CharacterServicesComposition
     /// </summary>
     private async ValueTask<Eve.Services.Core.FetchObjectiveView?> FetchObjectiveAsync(long characterId, Eve.Agents.AgentMissionRecord record, CancellationToken cancellationToken)
     {
-        if (agentMissionStatic.Mission(record.Content.MissionId)?.Kill is not { ObjectiveTypeId: { } typeId, ObjectiveQuantity: > 0 } kill) return null;
+        var fetched = IsTradeMission(record.Content.MissionId)
+            ? agentMissionStatic.Mission(record.Content.MissionId)?.Courier is { ObjectiveTypeId: { } tradeType, ObjectiveQuantity: > 0 } trade ? (tradeType, trade.ObjectiveQuantity) : ((long, long)?)null
+            : agentMissionStatic.Mission(record.Content.MissionId)?.Kill is { ObjectiveTypeId: { } killType, ObjectiveQuantity: > 0 } kill ? (killType, kill.ObjectiveQuantity) : ((long, long)?)null;
+        if (fetched is not { } item) return null;
+        var (typeId, quantity) = item;
         if (!agentMissionAgentById.TryGetValue(record.AgentId, out var agent) || agent.BaseLocationId is not { } station) return null;
         var type = dogma.Type((int)typeId);
         var volume = type is not null && dogma.AttributeId("volume") is { } attribute ? type.Attributes.GetValueOrDefault(attribute, 0) : 0;
         var held = await HeldQuantityAsync(characterId, (int)typeId, cancellationToken);
-        return new Eve.Services.Core.FetchObjectiveView((int)typeId, kill.ObjectiveQuantity, volume, held, station, agent.CorporationId);
+        return new Eve.Services.Core.FetchObjectiveView((int)typeId, quantity, volume, held, station, agent.CorporationId);
     }
 
     /// <summary>The SDE group of the agents in space (type 30887 "Tevis Jak's Epithal" is group 517).</summary>
@@ -485,7 +504,7 @@ internal sealed partial class CharacterServicesComposition
     /// commit. False when the mission was not accepted or the items are short.
     /// </summary>
     private Task<bool> CompleteMissionAsync(long characterId, long agentId, DateTimeOffset now, string reference,
-        IReadOnlyList<MissionStandingGain> standings, IReadOnlyList<(int TypeId, long Quantity)> consume, CancellationToken cancellationToken) =>
+        IReadOnlyList<MissionStandingGain> standings, IReadOnlyList<(int TypeId, long Quantity, string? Tag)> consume, CancellationToken cancellationToken) =>
         CompleteInTransactionAsync(source, agentMissionStore, foundations.Relations, items, characterId, agentId, now, reference, standings, consume, cancellationToken);
 
     /// <summary>
@@ -494,16 +513,18 @@ internal sealed partial class CharacterServicesComposition
     /// </summary>
     internal static async Task<bool> CompleteInTransactionAsync(NpgsqlDataSource source, Eve.Agents.AgentMissionStore agentMissionStore,
         Eve.Relations.RelationStore relations, Eve.Inventory.PgItemStore items, long characterId, long agentId, DateTimeOffset now, string reference,
-        IReadOnlyList<MissionStandingGain> standings, IReadOnlyList<(int TypeId, long Quantity)> consume, CancellationToken cancellationToken)
+        IReadOnlyList<MissionStandingGain> standings, IReadOnlyList<(int TypeId, long Quantity, string? Tag)> consume, CancellationToken cancellationToken)
     {
         await using var connection = await source.OpenConnectionAsync(cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
         // the stacks are locked before anything is written: a second turn-in waits here and then finds them gone (or short)
         var takes = new List<(Eve.Inventory.Item Stack, long Taken)>();
-        foreach (var (typeId, quantity) in consume)
+        foreach (var (typeId, quantity, tag) in consume)
         {
             var left = quantity;
-            foreach (var stack in await items.LockOwnedOfTypeAsync(connection, transaction, characterId, typeId, cancellationToken))
+            // a courier cargo is consumed by its tag only: the other stacks of the type belong to the pilot and stay
+            foreach (var stack in (await items.LockOwnedOfTypeAsync(connection, transaction, characterId, typeId, cancellationToken))
+                         .Where(candidate => tag is null || candidate.CustomInfo == tag))
             {
                 if (left == 0) break;
                 var taken = Math.Min(left, stack.Quantity);
@@ -554,7 +575,7 @@ internal sealed partial class CharacterServicesComposition
     }
 
     /// <summary>The custom info that tags a courier's cargo with its mission, so the take-back removes only that cargo.</summary>
-    private static string CourierCargoTag(long missionId) => $"courier:{missionId}";
+    private static string CourierCargoTag(long missionId) => MissionCourierRules.CargoTag(missionId);
 
     /// <summary>A courier's cargo: the quantity (singletons when the data says so) created into the hangar of the station, tagged with the mission.</summary>
     private async Task GrantCargoAsync(long characterId, long missionId, int typeId, long quantity, bool singleton, long stationId, CancellationToken cancellationToken)
@@ -599,7 +620,7 @@ internal sealed class SpaceMissionDungeonHost(
     Func<long, int, bool> isPilotInSystem,
     Func<long, int, long, CancellationToken, Task<string?>> startDungeon,
     Func<long, long, long, int, string, string, CancellationToken, Task> creditIsk,
-    Func<long, long, DateTimeOffset, string, IReadOnlyList<MissionStandingGain>, IReadOnlyList<(int TypeId, long Quantity)>, CancellationToken, Task<bool>> completeMission,
+    Func<long, long, DateTimeOffset, string, IReadOnlyList<MissionStandingGain>, IReadOnlyList<(int TypeId, long Quantity, string? Tag)>, CancellationToken, Task<bool>> completeMission,
     Func<long, int, long, long, CancellationToken, Task> grantItem,
     Func<long, int, CancellationToken, Task<long>> heldQuantity,
     Func<long, long, int, long, bool, long, CancellationToken, Task> grantCargo,
@@ -614,7 +635,7 @@ internal sealed class SpaceMissionDungeonHost(
         creditIsk(characterId, amount, counterpartyId, refTypeId, reason, operationKey, cancellationToken);
 
     public Task<bool> CompleteMissionAsync(long characterId, long agentId, DateTimeOffset now, string reference,
-        IReadOnlyList<MissionStandingGain> standings, IReadOnlyList<(int TypeId, long Quantity)> consume, CancellationToken cancellationToken) =>
+        IReadOnlyList<MissionStandingGain> standings, IReadOnlyList<(int TypeId, long Quantity, string? Tag)> consume, CancellationToken cancellationToken) =>
         completeMission(characterId, agentId, now, reference, standings, consume, cancellationToken);
 
     public Task GrantObjectiveItemAsync(long characterId, int typeId, long quantity, long stationId, CancellationToken cancellationToken) =>

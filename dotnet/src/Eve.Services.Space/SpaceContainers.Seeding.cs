@@ -228,4 +228,43 @@ public sealed partial class SpaceContainers
             _seedingBelts.TryRemove(belt, out _);
         }
     }
+
+
+    internal async Task RestoreMoonFieldAsync(int system, long extractionId, CancellationToken cancellationToken = default)
+    {
+        foreach (var item in await _spaceItems.MoonFieldAsync(extractionId, cancellationToken))
+        {
+            if (item.SolarSystemId != system)
+            {
+                throw new InvalidDataException($"moon field {extractionId} contains a rock from another system");
+            }
+            if (!_placed.TryAdd(item.ItemId, 0))
+            {
+                continue;
+            }
+            try
+            {
+                if (item.ExpiresAtMs <= _nowUnixMs()
+                    || await _items.GetAsync(item.ItemId, cancellationToken) is not { Quantity: > 0 } stored)
+                {
+                    continue;
+                }
+                await _statics.EnsureTypesAsync([stored.TypeId], cancellationToken);
+                var type = _statics.Type(stored.TypeId);
+                if (type is null || !MiningTargets.IsMineable(_statics, type))
+                {
+                    throw new InvalidDataException($"moon field asteroid {item.ItemId} has no mineable SDE type");
+                }
+                _sim.PlaceAsteroid(new SimPlaceAsteroid(
+                    system, item.ItemId, stored.TypeId, type.GroupId, type.CategoryId, stored.CustomName ?? type.Name ?? "",
+                    item.MoonGraphicId > 0 ? item.MoonGraphicId : type.GraphicId,
+                    item.Position, item.Direction, item.Radius, stored.Quantity));
+            }
+            catch
+            {
+                _placed.TryRemove(item.ItemId, out _);
+                throw;
+            }
+        }
+    }
 }

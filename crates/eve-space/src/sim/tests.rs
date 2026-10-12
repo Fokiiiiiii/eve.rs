@@ -328,6 +328,55 @@ fn a_wreck_the_host_made_is_put_in_space_with_its_id_for_whoever_can_see_it_and_
     assert_eq!(none, []);
 }
 
+
+#[test]
+fn the_remove_wreck_wire_also_removes_moon_asteroids() {
+    let mut sim = undocked();
+    sim.handle(Message::Bind { session_id: SESSION }, NOON).unwrap();
+    let asteroid_id = spec().ship_id + 1;
+    let ship = sim.scenes[&SYSTEM].pilots[&SESSION].ship.position;
+    let placed = sim
+        .handle(
+            Message::PlaceAsteroid(Box::new(crate::link::AsteroidPlacement {
+                solar_system_id: SYSTEM,
+                asteroid_id,
+                type_id: 45_490,
+                group_id: 1884,
+                category_id: 25,
+                name: "Zeolites".into(),
+                graphic_id: None,
+                position: [ship.x, ship.y, ship.z],
+                direction: [1.0, 0.0, 0.0],
+                radius: 100.0,
+                units_remaining: 100,
+            })),
+            NOON + SECOND,
+        )
+        .unwrap();
+    assert_eq!(names(&placed), ["DoDestinyUpdate"]);
+
+    let removed = sim
+        .handle(Message::RemoveWreck { wreck_id: asteroid_id, effect: 2 }, NOON + 2 * SECOND)
+        .unwrap();
+    assert_eq!(names(&removed), ["DoDestinyUpdate"]);
+    assert!(sim
+        .handle(Message::RemoveWreck { wreck_id: asteroid_id, effect: 2 }, NOON + 3 * SECOND)
+        .unwrap()
+        .is_empty());
+    assert_eq!(
+        sim.handle(
+            Message::Command {
+                session_id: SESSION,
+                command: crate::link::COMMAND_MEASURE,
+                args: vec![asteroid_id as f64],
+            },
+            NOON + 3 * SECOND,
+        )
+        .unwrap(),
+        [Message::Measured { session_id: SESSION, command: 20, distance: None }]
+    );
+}
+
 fn can_placement(id: i64) -> Message {
     Message::PlaceContainer(Box::new(crate::link::ContainerPlacement {
         session_id: SESSION,

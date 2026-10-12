@@ -4,8 +4,8 @@ using Npgsql;
 
 namespace Eve.Structures;
 
-/// <summary>What a refinery's moon rules are: the delay before a ready chunk fractures on its own, and how long the ore field lasts.</summary>
-public sealed record MoonRules(long AutoFractureDelayMs, long FieldDecayMs);
+/// <summary>Start-time refinery rules: automatic fracture delay, field lifetime and fitted-rig yield multiplier.</summary>
+public sealed record MoonRules(long AutoFractureDelayMs, long FieldDecayMs, double YieldMultiplier = 1);
 
 /// <summary>The moon rules of a structure type. The Host implements it over the static data (SDE attributes 2698, 2728, 2706).</summary>
 public interface IMoonRulesSource
@@ -16,8 +16,14 @@ public interface IMoonRulesSource
 /// <summary>The payload of <see cref="MoonExtractions.ChunkArrivedTopic"/>: the chunk is ready to fracture.</summary>
 public sealed record MoonChunkArrived(long ExtractionId, long StructureId, long SolarSystemId, long OwnerCorporationId);
 
+/// <summary>The payload of <see cref="MoonExtractions.StartedTopic"/>.</summary>
+public sealed record MoonExtractionStarted(long ExtractionId, long StructureId, long SolarSystemId, long OwnerCorporationId, long ActorCharacterId);
+
+/// <summary>The payload of <see cref="MoonExtractions.FractureStartedTopic"/>.</summary>
+public sealed record MoonFractureStarted(long ExtractionId, long StructureId, long SolarSystemId, long OwnerCorporationId, long ActorCharacterId);
+
 /// <summary>The payload of <see cref="MoonExtractions.EndedTopic"/>: the extraction is completed (<c>fractured</c>, <c>cancelled</c>, <c>decayed</c> or <c>offlined</c>).</summary>
-public sealed record MoonExtractionEnded(long ExtractionId, long StructureId, long SolarSystemId, long OwnerCorporationId, string Reason, long EndedMs);
+public sealed record MoonExtractionEnded(long ExtractionId, long StructureId, long SolarSystemId, long OwnerCorporationId, string Reason, long EndedMs, long ActorCharacterId = 0);
 
 /// <summary>The payload of <see cref="MoonExtractions.FieldDecayedTopic"/>: the ore field of a fractured or decayed chunk has decayed.</summary>
 public sealed record MoonFieldDecayed(long ExtractionId, long StructureId, long SolarSystemId);
@@ -34,6 +40,8 @@ public sealed class MoonExtractions
     public const string FractureJobKind = "moon.auto_fracture";
     public const string FieldDecayJobKind = "moon.field_decay";
     public const string ChunkArrivedTopic = "moon.chunk_arrived";
+    public const string StartedTopic = "moon.extraction_started";
+    public const string FractureStartedTopic = "moon.fracture_started";
     public const string EndedTopic = "moon.extraction_ended";
     public const string FieldDecayedTopic = "moon.field_decayed";
 
@@ -60,14 +68,17 @@ public sealed class MoonExtractions
     private readonly DurableScheduler _scheduler;
     private readonly EventBus _events;
     private readonly IMoonRulesSource _rules;
+    private readonly Func<NpgsqlConnection, NpgsqlTransaction, long, CancellationToken, Task<MoonRules>>? _effectiveRules;
 
-    public MoonExtractions(StructureStore structures, MoonExtractionStore store, DurableScheduler scheduler, EventBus events, IMoonRulesSource rules)
+    public MoonExtractions(StructureStore structures, MoonExtractionStore store, DurableScheduler scheduler, EventBus events, IMoonRulesSource rules,
+        Func<NpgsqlConnection, NpgsqlTransaction, long, CancellationToken, Task<MoonRules>>? effectiveRules = null)
     {
         _structures = structures;
         _store = store;
         _scheduler = scheduler;
         _events = events;
         _rules = rules;
+        _effectiveRules = effectiveRules;
     }
 
     private static string KeyOf(long extractionId) => $"extraction:{extractionId}";
@@ -104,7 +115,7 @@ public sealed class MoonExtractions
     /// StartNewExtraction. The order is EVE.js's: the structure and its moon drill, then the moon's resources, then an extraction already running (answered as it is).
     /// The duration is clamped to the 6 to 56 days of the client; the caller refuses a duration that is not positive.
     /// </summary>
-    public async Task<StartResult> StartAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long structureId, long durationSeconds, bool addToCalendar, CancellationToken cancellationToken = default)
+    public async Task<StartResult> StartAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long structureId, long durationSeconds, bool addToCalendar, CancellationToken cancellationToken = default, long actorCharacterId = 0)
     {
         var structure = await _structures.GetAsync(connection, transaction, structureId, true, cancellationToken);
         if (structure is null || structure.Snapshot.DestroyedMs > 0)
@@ -117,17 +128,22 @@ public sealed class MoonExtractions
         if (await _store.ActiveForStructureAsync(connection, transaction, structureId, cancellationToken) is { } running)
             return new StartResult(StartOutcome.Existing, running);
 
+        var rules = _effectiveRules is null
+            ? _rules.RulesOf(structure.TypeId)
+            : await _effectiveRules(connection, transaction, structureId, cancellationToken);
         var duration = Math.Clamp(durationSeconds, MinimumDurationSeconds, MaximumDurationSeconds);
         var now = _scheduler.Now;
         var chunkAvailable = now + duration * 1000;
-        var rules = _rules.RulesOf(structure.TypeId);
-        var volume = YieldPerDayM3 * duration / 86_400 * profile.YieldMultiplier;
+        var yieldMultiplier = profile.YieldMultiplier * rules.YieldMultiplier;
+        var volume = YieldPerDayM3 * duration / 86_400 * yieldMultiplier;
         var ore = profile.Resources.ToDictionary(share => share.Key, share => share.Value * volume);
         var (extractionId, eventId) = await _store.NextIdsAsync(connection, transaction, cancellationToken);
         var extraction = new MoonExtraction(extractionId, structureId, profile.MoonId, structure.SolarSystemId, structure.OwnerCorporationId, now, chunkAvailable,
-            chunkAvailable + rules.AutoFractureDelayMs, duration, profile.YieldMultiplier, addToCalendar ? eventId : 0, "active", 0, 0, 0, ore, now, 0, "", 0);
+            chunkAvailable + rules.AutoFractureDelayMs, duration, yieldMultiplier, addToCalendar ? eventId : 0, "active", 0, 0, 0, ore, now, 0, "", 0, rules.FieldDecayMs);
         await _store.InsertExtractionAsync(connection, transaction, extraction, cancellationToken);
         await ScheduleAsync(connection, transaction, extraction, cancellationToken);
+        await _events.PublishInTransactionAsync(connection, transaction, StartedTopic,
+            new MoonExtractionStarted(extractionId, structureId, extraction.SolarSystemId, extraction.OwnerCorporationId, actorCharacterId), $"structure:{structureId}", cancellationToken);
         return new StartResult(StartOutcome.Started, extraction);
     }
 
@@ -137,7 +153,7 @@ public sealed class MoonExtractions
     /// FractureChunkWithStructure (EVE.js moonExtractionsService): a ready chunk is fired on. The fracture takes <see cref="FractureMs"/>; its deadline replaces the chunk's
     /// fracture job, so the fracture completes at its time (<see cref="FractureDueAsync"/>). A fracture already running is left as it is, as EVE.js does.
     /// </summary>
-    public async Task<FractureOutcome> FractureAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long structureId, CancellationToken cancellationToken = default)
+    public async Task<FractureOutcome> FractureAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long structureId, CancellationToken cancellationToken = default, long actorCharacterId = 0)
     {
         if ((await _store.OpenAsync(connection, transaction, structureId, true, cancellationToken)).FirstOrDefault() is not { } e)
             return FractureOutcome.NoExtraction;
@@ -149,17 +165,19 @@ public sealed class MoonExtractions
         var fired = e with { State = "fracturing", FractureStartedMs = now, FractureCompleteMs = now + FractureMs };
         await _store.UpdateAsync(connection, transaction, fired, cancellationToken);
         await _scheduler.ScheduleAsync(connection, transaction, new JobSpec(FractureJobKind, fired.FractureCompleteMs) { Key = KeyOf(e.ExtractionId), Payload = new ExtractionJob(e.ExtractionId) }, cancellationToken);
+        await _events.PublishInTransactionAsync(connection, transaction, FractureStartedTopic,
+            new MoonFractureStarted(e.ExtractionId, e.StructureId, e.SolarSystemId, e.OwnerCorporationId, actorCharacterId), $"structure:{e.StructureId}", cancellationToken);
         return FractureOutcome.Fired;
     }
 
     /// <summary>
     /// CancelExtraction: the open extraction of the structure ends as cancelled (its chunk leaves; no field). Returns false when there is none.
     /// </summary>
-    public async Task<bool> CancelAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long structureId, CancellationToken cancellationToken = default)
+    public async Task<bool> CancelAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long structureId, CancellationToken cancellationToken = default, long actorCharacterId = 0)
     {
         if ((await _store.OpenAsync(connection, transaction, structureId, true, cancellationToken)).FirstOrDefault() is not { } e)
             return false;
-        await CompleteAsync(connection, transaction, e, Cancelled, true, cancellationToken);
+        await CompleteAsync(connection, transaction, e, Cancelled, true, cancellationToken, actorCharacterId);
         return true;
     }
 
@@ -252,7 +270,7 @@ public sealed class MoonExtractions
     /// Completes an open extraction: the record, the arrival job (and the fracture job when <paramref name="cancelFractureJob"/>), the field's decay job for a
     /// fractured or decayed chunk, and the <see cref="EndedTopic"/> event, all in the caller's transaction.
     /// </summary>
-    private async Task CompleteAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, MoonExtraction e, string reason, bool cancelFractureJob, CancellationToken cancellationToken)
+    private async Task CompleteAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, MoonExtraction e, string reason, bool cancelFractureJob, CancellationToken cancellationToken, long actorCharacterId = 0)
     {
         var now = _scheduler.Now;
         var key = KeyOf(e.ExtractionId);
@@ -262,12 +280,13 @@ public sealed class MoonExtractions
             await _scheduler.CancelAsync(connection, transaction, FractureJobKind, key, cancellationToken);
         if (reason is Fractured or Decayed)
         {
-            var structure = await _structures.GetAsync(connection, transaction, e.StructureId, false, cancellationToken);
-            var decayMs = _rules.RulesOf(structure?.TypeId ?? 0).FieldDecayMs;
+            var decayMs = e.FieldDecayMs >= 0
+                ? e.FieldDecayMs
+                : _rules.RulesOf((await _structures.GetAsync(connection, transaction, e.StructureId, false, cancellationToken))?.TypeId ?? 0).FieldDecayMs;
             await _scheduler.ScheduleAsync(connection, transaction, new JobSpec(FieldDecayJobKind, now + decayMs) { Key = key, Payload = new ExtractionJob(e.ExtractionId) }, cancellationToken);
         }
         await _events.PublishInTransactionAsync(connection, transaction, EndedTopic,
-            new MoonExtractionEnded(e.ExtractionId, e.StructureId, e.SolarSystemId, e.OwnerCorporationId, reason, now), $"structure:{e.StructureId}", cancellationToken);
+            new MoonExtractionEnded(e.ExtractionId, e.StructureId, e.SolarSystemId, e.OwnerCorporationId, reason, now, actorCharacterId), $"structure:{e.StructureId}", cancellationToken);
     }
 
     /// <summary>

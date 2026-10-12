@@ -1478,3 +1478,20 @@ follow a completed step, with forks, the 90-day restart and the held-back sites 
 | CUT | Fetch and courier objectives (item 2): not built this slice | see DEVIATIONS "Mission execution X4" |
 | HELD | Arc 29 on by default (item 3): not flipped; the live walk through step 2 has not run | owner decision |
 | FOUND | `SiteLoot` divides by a candidate count that can be zero: "the sites of system X could not be made: Attempted to divide by zero" on pilots' entry to 30100032 and 30005204 (the sites track, not the mission path) | not fixed here |
+
+## 12. Zarzakh rules and client-only system data (2026-10-12)
+
+Evidence and decisions: DEVIATIONS "Zarzakh (30100000) and the client's system flags".
+
+| Status | Item | Missing work |
+|---|---|---|
+| DONE (tests) | Client flags `disallowCyno` and `disallowScanning` read from `EVE_CLIENT_SDE_DIR/native/solarsystemcontent.jsonl.gz` at start-up; cyno lighting refused (`CannotLightCynoInSystem`) and probe launch refused in those systems | `ClientSystemFlags`, `SolarSystemCatalog.LoadAsync`, `SpaceSessions.Modules.cs`, `SpaceSessions.LaunchAsync`; tests `ClientSystemFlagsTests`, `ScanProbeHostTests`. Cyno refusal has no host test yet; no graphical-client run |
+| DONE (rule) | No sites in Zarzakh (`CosmicSiteDirector.NoSiteSystems`) | Owner decision: the real game may have sites there (see DEVIATIONS) |
+| OPEN | Zarzakh gate toll, capital gate restriction, Emanation Lock, gate guns, Deathless Shipcaster exit, gravity hazard hull damage | Stated by the wiki; not implemented |
+| OPEN | Sovereignty refusal in Zarzakh | No claim path in eve.rs yet (structures track) |
+| OPEN | Warp disruption bubbles and probes in Zarzakh | No CCP or wiki source; EveJS refuses them. Owner decision |
+| CUT | Heat, temperature, tidal forces, Point of No Return effect | No mechanic in the SDE, the client or the wiki |
+| KEPT | Pirate-faction market modifier (0.5, factions 500018 and 500019) | Already in eve.rs (`MarketRules`); EveJS-derived, not in the wiki. Owner decision |
+| CLIENT-LOCAL | Sun type and flare, system-wide cloud, warp tunnel overwrite, dscan range, anchor categories | Read by the client only; no server loader |
+| CUT | Landmarks placed by the server and the Black Monolith look-at challenge (2848) | EveJS and eve.rs both advertise `client_lookAtObject` 0; the client look-at path is not proven |
+| OPEN | Live check of the Zarzakh flags and the lane run without `EVE_CLIENT_SDE_DIR` | Needs a live run with the export set |

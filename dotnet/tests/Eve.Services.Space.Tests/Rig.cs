@@ -253,7 +253,8 @@ private readonly Dictionary<long, ClientSession> _fleetSessions = new();
             source.Bloodlines,
             CreationCatalog.Schools.Select(s => source.StarterFor(s.CorporationId)!));
 
-    public static async Task<Rig> CreateAsync(TimeSpan? protection = null, TimeSpan? jumpCloak = null, bool npcLoot = false, Eve.Npc.BeltRatConfig? beltRats = null, Eve.Scheduler.LocalTimers? localTimers = null, Eve.Npc.NpcAuthority? npcAuthority = null)
+    public static async Task<Rig> CreateAsync(TimeSpan? protection = null, TimeSpan? jumpCloak = null, bool npcLoot = false, Eve.Npc.BeltRatConfig? beltRats = null, Eve.Scheduler.LocalTimers? localTimers = null, Eve.Npc.NpcAuthority? npcAuthority = null,
+        IReadOnlyDictionary<int, Eve.Universe.ClientSystemFlags>? clientFlags = null)
     {
         CharacterNames.EnsureUnicodeSupport();
         var source = NpgsqlDataSource.Create(PgConnection.ForTest(Url!));
@@ -362,7 +363,7 @@ private readonly Dictionary<long, ClientSession> _fleetSessions = new();
         var catalog = CockroachCatalog(await CreationCatalog.LoadAsync(sde, Station));
         var creation = new CharacterCreation(
             source, characters, items, skills, await SkillCatalog.LoadAsync(sde), wallets, new StartingWallet(), catalog, modules);
-        return new Rig(source, suffix, await DogmaStatic.LoadAsync(sde), creation, catalog, await StationCatalog.LoadAsync(sde), await SolarSystemCatalog.LoadAsync(sde), modules, protection ?? Timeout.InfiniteTimeSpan, jumpCloak ?? Timeout.InfiniteTimeSpan, npcLoot, beltRats, localTimers, npcAuthority);
+        return new Rig(source, suffix, await DogmaStatic.LoadAsync(sde), creation, catalog, await StationCatalog.LoadAsync(sde), await SolarSystemCatalog.LoadAsync(sde, clientFlags), modules, protection ?? Timeout.InfiniteTimeSpan, jumpCloak ?? Timeout.InfiniteTimeSpan, npcLoot, beltRats, localTimers, npcAuthority);
     }
 
     /// <summary>A new character (Caldari), in its rookie ship in the station.</summary>

@@ -3467,3 +3467,11 @@ Owner decisions (X9, X10). The courier rules below are eve.rs's project rules, n
 - **Trade:** no SDE record is a trade objective (`killMission` and `courierMission` are the only objective records). Not implemented: no data. The client's trade kind is EveJS's mapping to a fetch, which is not a sourced rule.
 - **Encounter:** the basic pool offers dungeon kills only (`BasicKillOffers`), not the 560 item objectives. Not implemented for the basic pool; the 59 arc steps with item objectives work through the arc.
 
+### Gas and ore sites of wormhole space (slice 12)
+- The plan's gas and ore signatures are sites now: a reservoir is a signature (probe-scanned, scan strength 0.0), a deposit is an anomaly (warpable, in the scanner) — the wiki's rules.
+- Templates: from the EveJS content packs `evejs-gas-sites-1.0.0.json` (reservoirs: the `gasTypeIDs` are harvestable cloud types, group 711 in the SDE) and `evejs-ore-anomalies-1.1.0.json` (deposits: each rock's type, quantity and position, client build 3475087). The generator `tools/dev/extract-wormhole-site-templates.py` writes 68 templates.
+- Placement: a reservoir's cloud is one of its candidate cloud types (picked by the site's id) with 1,000 units (shortcut: the stock of a cloud is not in the SDE; the same figure as a belt's cloud). A deposit's rocks are at their recorded offsets from the site's origin, with the client's quantity. Both are items launched by the site, placed in the simulation's scene (`SpaceContainers.PlaceSiteResourcesAsync`).
+- Restore: a pilot's entry puts the live sites' resources back in the scene (`RestoreSiteResourcesAsync`); the simulation drops a scene nobody is in, so the resources are placed again on each entry.
+- shortcut: the resources are not removed when their site ends (a belt keeps its rocks the same way until mined). Not built: the mining of the ore and the gas cloud is the existing belt path (not tested on these sites).
+- Not run: a live check of a gas or ore site (the headless stack has no scenario that scans one).
+

@@ -1646,3 +1646,13 @@ Evidence and decisions: `docs/project/WORMHOLE_DESIGN.md` (sources, SDE numbers,
 | DONE (tests) | Service-layer `WormholeJumpAsync` tests: mass refusal, jump and destination end, polarization, collapse (own world in the space rig) | `WormholeJumpServiceTests` (PgFact). Polarization expiry and RPC path not covered |
 | NOT DONE | Headless MITM live check on 26110/26210 | Design 15 |
 
+### Slice 11 to 12 (2026-10-12)
+
+| Status | Item | Missing work |
+|---|---|---|
+| DONE (tests) | Live jump in and back through a static wormhole (headless, through the MITM proxy); the cause of the drift: a wormhole end inside a star; the scene dropped with its ends | `test_wormhole_live.py` (passed), `a_wormhole_end_inside_a_star_is_placed_outside_it_on_its_bearing`, `a_wormhole_end_placed_in_a_system_nobody_is_in_is_still_there_after_a_poll` |
+| DONE (tests) | Polarization expiry; the wormhole jump through the RPC service | `WormholeJumpServiceTests` (2 new) |
+| DONE (tests) | Gas and ore sites: 9 reservoirs (signatures, clouds), 11 deposits (anomalies, rocks), placed and restored | `WormholeSiteTemplatesTests`, `SiteResourceTests`, `CosmicSitesTests` |
+| NOT DONE | Live check of a gas or ore site | No headless scenario |
+| NOT DONE | Removal of a site's resources when the site ends | Shortcut in DEVIATIONS |
+

@@ -110,6 +110,9 @@ public static class WormholeSites
         return planned;
     }
 
+    /// <summary>The sites a signature of this category (combat, data, relic, gas or ore) can lead to in this class.</summary>
+    public static IReadOnlyList<Site> PoolOf(string category, int wormholeClass) => Pool(category, wormholeClass);
+
     private static bool IsPlanned(int wormholeClass) => wormholeClass is >= 1 and <= 6 || wormholeClass == ShatteredClass;
 
     private static PlannedSignature Draw(string category, int wormholeClass, SeededRandom random)

@@ -206,20 +206,19 @@ public sealed class CosmicSiteDirectorTests
         var director = rig.NewDirector(_ => true, id => id == system.Id ? 3 : null);
         await rig.FillAsync(system.Id, director);
 
+        // every planned signature is a site: the ores are anomalies (warpable), the combat sites are anomalies, the rest are signatures
         var plan = WormholeSites.Plan(3, drifter: false, (ulong)system.Id);
         var sites = await rig.Director.ActiveAsync(system.Id);
-        // the gas and ore of the plan are not placed (no site of their kinds yet); the combat, data and relic ones are
-        var placed = plan.Select((signature, index) => (signature, index)).Where(item => item.signature.Category is not ("gas" or "ore")).ToList();
-        Assert.Equal(placed.Count, sites.Count);
-        foreach (var (signature, index) in placed)
+        Assert.Equal(plan.Count, sites.Count);
+        for (var index = 0; index < plan.Count; index++)
         {
             var site = sites.Single(candidate => candidate.Slot == index);
-            Assert.Equal($"wormhole-{signature.DungeonKey}", site.TemplateId);
-            Assert.Equal(signature.Category == "combat", site.IsAnomaly);
+            Assert.Equal($"wormhole-{plan[index].DungeonKey}", site.TemplateId);
+            Assert.Equal(plan[index].Category is "combat" or "ore", site.IsAnomaly);
         }
 
         var targets = await new ContentCosmicSites(director).SitesInAsync(system.Id);
-        Assert.Equal(placed.Count(item => item.signature.Category != "combat"), targets.Count);
+        Assert.Equal(plan.Count(signature => signature.Category is not ("combat" or "ore")), targets.Count);
         Assert.All(targets, target => Assert.Equal(WormholeSites.ScanStrength, target.RequiredStrength));
     }
 

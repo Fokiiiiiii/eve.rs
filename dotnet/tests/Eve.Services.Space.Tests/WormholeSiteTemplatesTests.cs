@@ -6,17 +6,23 @@ namespace Eve.Services.Space.Tests;
 
 public sealed class WormholeSiteTemplatesTests
 {
+    /// <summary>The sites of a category in every class (C1 to C6 and C13).</summary>
+    private static IEnumerable<Site> AllOf(string category) =>
+        Enumerable.Range(1, 6).Append(WormholeSites.ShatteredClass).SelectMany(wormholeClass => WormholeSites.PoolOf(category, wormholeClass)).Distinct();
+
     [Fact]
-    public void Every_planned_combat_data_and_relic_site_has_its_template_by_dungeon_key_name_and_kind()
+    public void Every_planned_site_has_its_template_by_dungeon_key_name_kind_and_family()
     {
         var templates = SiteTemplates.Load();
         var planned = WormholeSites.CombatSites.Values.SelectMany(sites => sites).Select(site => (site, SiteTemplate.Anomaly, "combat"))
             .Concat(WormholeSites.DataSites.Values.SelectMany(sites => sites).Select(site => (site, SiteTemplate.Signature, "data")))
             .Concat(WormholeSites.RelicSites.Values.SelectMany(sites => sites).Select(site => (site, SiteTemplate.Signature, "relic")))
+            .Concat(AllOf("gas").Select(site => (site, SiteTemplate.Signature, "gas")))
+            .Concat(AllOf("ore").Select(site => (site, SiteTemplate.Anomaly, "ore")))
             .ToList();
 
-        Assert.Equal(48, planned.Count);
-        Assert.Equal(48, templates.All.Count(template => template.IsWormhole));
+        Assert.Equal(68, planned.Count);
+        Assert.Equal(68, templates.All.Count(template => template.IsWormhole));
         foreach (var (site, kind, family) in planned)
         {
             var template = templates.ById($"wormhole-{site.DungeonKey}");
@@ -24,8 +30,21 @@ public sealed class WormholeSiteTemplatesTests
             Assert.Equal(site.Name, template.Name);
             Assert.Equal(kind, template.Kind);
             Assert.Equal(family, template.Family);
-            Assert.NotEmpty(template.Waves);
             Assert.Equal(1908, template.StrengthAttribute);
+            if (family is "combat" or "data" or "relic")
+            {
+                Assert.NotEmpty(template.Waves);
+            }
+            if (family == "gas")
+            {
+                Assert.NotEmpty(template.Clouds!);
+                Assert.Empty(template.Rocks ?? []);
+            }
+            if (family == "ore")
+            {
+                Assert.NotEmpty(template.Rocks!);
+                Assert.Null(template.Clouds);
+            }
         }
     }
 

@@ -3289,6 +3289,29 @@ Not done (cut, with reasons): the bounty and loot of the Pochven NPCs (the bount
 Tests: `pochven_population` (16 in the Pochven filter, including the scene-level ones: the sentries and camps on first look, the 20 km placement and no movement, the skirmish schedule with the cap, determinism, a sentry locks a rogue drone and never a fellow triglavian); `brains::pochven_tests` (the NPC-vs-NPC attack, its absence within the faction and outside Pochven); `pochven` (faction and owner rules). The full `eve-space` (762) and `eve-behaviors` (548) suites pass; clippy `-D warnings` is clean for both crates.
 
 
+## Wormhole space: placement, the jump and the ends (slice 7, 2026-10-12)
+
+Sources: the owner's decisions of slice 7 (the host places both ends of a connection with the system's scene; the end position rule
+below). The wiki "Wormhole" (https://wiki.eveuniversity.org/Wormhole: polarization five minutes per pilot, no stargates, collapse
+rules), "Wormhole Types". The client's `wormholeMgr.WormholeJump(itemID)` (eve-logic `movementFunctions.py`).
+
+- End position (not published): an end is 50 km from its system's centre on a bearing chosen from the connection's seed (the far end
+  uses the same seed with another salt); radius 3,000 m. Shortcut: the reference places wormholes at positions the sources do not
+  give. An end at 50 km from the star's centre may lie inside the star for some systems (the owner accepted the rule; not checked).
+- Ends: body ID = connection ID times two (the near end) and times two plus one (the far end). The ends of every active connection
+  of a system are placed when the system's scene starts (the undock) and before a jump into the system; the simulation makes the
+  scene for a placed end when it has none (a scene with no ship stays until the next ship leaves it).
+- Texts (ours, the sources give none): "Your ship is too large for this wormhole." (the individual limit), "You are polarized to
+  this wormhole: you cannot go into it from this side yet." (the five-minute polarization, kept in memory per pilot and end).
+- Jump order: the mass is checked before the simulation is asked; the simulation takes the jump (a stargate-like jump of the wormhole
+  end, the ship leaves for the far end after the usual delay); then the mass is taken (`WormholeLifecycle.Transit`) and the
+  change is published (a collapse removes both ends; an opening places both). Shortcut: another ship that transits between the
+  check and the take can make the take refuse after the jump is taken; this is logged, not refunded.
+- The collapse of an end by the scheduler (the lifetime) publishes its removal to the simulation at the time the job runs; the job's
+  transaction may still fail after that, and the next scene start places the stored ends again.
+- Tests: `WormholeWorldTests` (ends, positions, generation once, a captured collapse), `WormholeLifecycleTests` and
+  `WormholePlannerTests` (eve.wormholes); the simulation's placement and jump (`eve-space` scene tests). The space service jump has no
+  test yet (NOT RUN at the service level).
 ## Slice 3, step 1: zones outside Pochven (2026-10-12)
 
 Sources. The EVE University wiki "Triglavian Invasion (Chapter 3)" (https://wiki.eveuniversity.org/Triglavian_Invasion_(Chapter_3), read 2026-10-12; the page was last edited 2023-08-28 and says it documents content no longer in the game): Arshat moved from Escalating Liminality to an EDENCOM Fortress at the end of Chapter 3 (2020-10-13). The wiki's "EDENCOM systems" page (last edited 2024-01-19) names no system and links an external "List of invasion systems" that returned 404 when fetched. The forum names of the 2020 renewed attacks (Abha, Inaya, Muttokon, Seiradih, Aldik, Iosantin) are not states and are not zones.
@@ -3296,3 +3319,16 @@ Sources. The EVE University wiki "Triglavian Invasion (Chapter 3)" (https://wiki
 Decision. The zones are the 27 Pochven systems (Triglavian) and Arshat (30002253, SDE region 10000043, EDENCOM). Arshat is the one zone outside Pochven that a source names with a state; its state is the end-of-Chapter-3 state, and no source confirms it today. The EDENCOM zone's sentries are GunStars at each gate (the data file's state 'edencom'), its camps are two Imperial Navy Sentinels at the first two gates, and its camp is a mobile tree that attacks the other factions' NPCs and no pilot (EDENCOM rats are hostile below 0.00 standing). The Triglavian zones keep the rule of step 2-4. Skirmishes stay Pochven's: a zone outside Pochven gets sentries and camps only.
 
 Not done: a dated list of EDENCOM Minor Victory and Stronghold systems, and more fortress systems: no source read names them.
+
+
+## Slice 3, step 2: the protocol bump for a kill, and the NPC bounty (2026-10-12)
+
+Protocol. The simulation's `Destroyed` message carries the destroyed ship's type id and corporation id (i32 each, after the wreck kind). The simulation's protocol version is 64 (the wormhole agent's 63 was pushed in 66b6b3c). The C# codec (`SimCodec.ProtocolVersion`, `SimDestroyed.ShipTypeId`, `CorporationId`) and the fixtures (`oracle/fixtures/simlink/messages.json`, from `tools/dev/gen-simlink-fixtures.py`) move with it. The host's own protocol (`HostCodec`, version 1) is unchanged.
+
+Bounty. The host pays a kill of an NPC the simulation keeps (a session at or above 2^62 that the host has no profile for) the `entityKillBounty` of its type in the static data (SDE build 3396210, `typeDogma` attribute 481), paid to the pilot who dealt the last blow, through the same store and ESS split as a profiled NPC. Values from the SDE: Entropic Disintegrator Werpost 54577 pays 12,500,000 ISK; EDENCOM GunStar 54579 and Heavy GunStar 54580 pay 0; Liminal Damavik 52182, Interfering Phase-II Legionary 56493 pay 0; the Imperial Navy Sentinel 52923 and the Drifter hulls carry no bounty attribute and pay 0. Eleven Rogue Drone entity types carry non-zero SDE values and pay them.
+
+Decision, no published bounty for the Triglavian and EDENCOM hulls. A search of the EVE University wiki (Triglavian Invasion, Triglavian Collective) and the wider web gave no per-ship ISK bounty for the Damavik, Vedmak, Leshak, Kikimora, Rodiva, Drekavac or the EDENCOM navy hulls. Those kills pay 0 until a source publishes a value; no number is invented.
+
+Loot. Unchanged: the sim-resident NPCs have no host profile and so no loot table (the loot rule is keyed on the profile). No published drop table exists for these types in the SDE.
+
+Tests: `NpcBountyHostTests` (a werpost kill pays 12,500,000 ISK to the killer with the type in the bucket; a Damavik kill pays nothing), `Eve.Space.Tests` (300, the codec and fixtures), `eve-space` (764), `eve-net` and `eve-sim` build clean under clippy -D warnings.

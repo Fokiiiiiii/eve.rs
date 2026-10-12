@@ -903,6 +903,8 @@ fn message_of(case: &Value) -> Message {
             radius: case["radius"].as_f64().unwrap(),
             killer_ship_id: wide(case, "killerShipId"),
             wreck_kind: wreck_kind_of(case.get("wreckKind")),
+            ship_type_id: case["shipTypeId"].as_i64().unwrap() as i32,
+            corporation_id: case["corporationId"].as_i64().unwrap() as i32,
         },
         "Respawn" => Message::Respawn {
             session_id: session_id(),

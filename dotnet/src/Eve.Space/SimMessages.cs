@@ -750,7 +750,7 @@ public sealed record SimActivate(ulong SessionId, SimEffect Effect) : SimMessage
 /// </summary>
 public sealed record SimDestroyed(
     ulong SessionId, long ShipId, long WreckId, IReadOnlyList<double> Position, IReadOnlyList<double> Direction, double Radius, long KillerShipId,
-    SimWreckKind? WreckKind = null) : SimMessage;
+    SimWreckKind? WreckKind = null, int ShipTypeId = 0, int CorporationId = 0) : SimMessage;
 
 /// <summary>A weapon of an NPC: an effect of the NPC's own ship, so the module is the ship. One that flies a <see cref="SimMissile"/> is a launcher (the NPC's own: no rounds to spend).</summary>
 public sealed record SimNpcWeapon(

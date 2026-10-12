@@ -280,33 +280,62 @@ public sealed partial class SpaceSessions
         }
     }
 
-    private async Task PayNpcBountyAsync(NpcShip npc, SimDestroyed destroyed, Pilot? killer)
+    private Task PayNpcBountyAsync(NpcShip npc, SimDestroyed destroyed, Pilot? killer) =>
+        PayBountyAsync(npc.SolarSystemId, npc.TypeId, destroyed.ShipId, killer, npc.Profile.Bounty);
+
+    /// <summary>
+    /// The bounty of an NPC the simulation keeps (a Pochven sentry or fighter, a kill the host has no record of): the <c>entityKillBounty</c> of its type in the
+    /// static data (0 for a type that has none, which pays nothing). Its kill pays the pilot who dealt the last blow, as a profiled NPC's does.
+    /// </summary>
+    private async Task PaySimNpcBountyAsync(SimDestroyed destroyed, Pilot? killer)
     {
-        if (_bounties is not { } store || killer is null || NpcBounty.AmountOf(npc.Profile.Bounty) is not { } amount)
+        if (killer is null)
+        {
+            return;
+        }
+        await _statics.EnsureTypesAsync([destroyed.ShipTypeId], CancellationToken.None);
+        if (_statics.Type(destroyed.ShipTypeId) is not { } type
+            || _statics.AttributeId(EntityKillBountyAttributeName) is not { } attribute || !type.Attributes.TryGetValue(attribute, out var bounty))
+        {
+            return;
+        }
+        await PayBountyAsync(killer.SolarSystemId, destroyed.ShipTypeId, destroyed.ShipId, killer, (long)bounty);
+    }
+
+    /// <summary>The name of the static data's attribute an NPC's kill is worth (<c>entityKillBounty</c>, ISK).</summary>
+    private const string EntityKillBountyAttributeName = "entityKillBounty";
+
+    /// <summary>The first session number of the NPCs the simulation keeps (<c>NPC_SESSION_BASE</c> of the simulation).</summary>
+    public const ulong SimNpcSessionBase = 1UL << 62;
+
+    /// <summary>Records a kill's bounty for the pilot who dealt the last blow, and tells the pilot of the payout (an ESS in the system takes its share).</summary>
+    private async Task PayBountyAsync(int solarSystemId, int typeId, long shipId, Pilot? killer, long bounty)
+    {
+        if (_bounties is not { } store || killer is null || NpcBounty.AmountOf(bounty) is not { } amount)
         {
             return;
         }
         // in a system with an ESS the Main Bank takes its share of the bounty; the share commits with the pilot's bucket or not at all
-        var essOnline = Ess is not null && await Ess.IsOnlineAsync(npc.SolarSystemId);
+        var essOnline = Ess is not null && await Ess.IsOnlineAsync(solarSystemId);
         var (pilotShare, mainShare, reserveShare) = EssRules.SplitBounty(amount, essOnline);
         var essShare = mainShare + reserveShare;
         var now = _nowUnixMs();
         if (pilotShare <= 0)
         {
-            await Ess!.CreditAsync(npc.SolarSystemId, mainShare, reserveShare);
+            await Ess!.CreditAsync(solarSystemId, mainShare, reserveShare);
             return;
         }
         BountyAdded added;
         try
         {
             added = await store.RecordAsync(
-                new BountyKill(killer.CharacterId, npc.SolarSystemId, npc.TypeId, destroyed.ShipId, pilotShare), now,
-                inTransaction: essShare > 0 && Ess is { } ess ? (connection, transaction, token) => ess.CreditBountyShareAsync(connection, transaction, npc.SolarSystemId, mainShare, reserveShare, token) : null);
+                new BountyKill(killer.CharacterId, solarSystemId, typeId, shipId, pilotShare), now,
+                inTransaction: essShare > 0 && Ess is { } ess ? (connection, transaction, token) => ess.CreditBountyShareAsync(connection, transaction, solarSystemId, mainShare, reserveShare, token) : null);
         }
         catch (InvalidOperationException) when (essShare > 0)
         {
             // the ESS went away between the check and the credit: the pilot takes the whole bounty, as in a system without one
-            added = await store.RecordAsync(new BountyKill(killer.CharacterId, npc.SolarSystemId, npc.TypeId, destroyed.ShipId, amount), now);
+            added = await store.RecordAsync(new BountyKill(killer.CharacterId, solarSystemId, typeId, shipId, amount), now);
         }
         if (!added.AlreadyRecorded)
         {

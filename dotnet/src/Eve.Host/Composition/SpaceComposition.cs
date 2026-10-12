@@ -175,6 +175,21 @@ internal sealed partial class CharacterServicesComposition
                 Console.Error.WriteLine($"eve-host: {Eve.Universe.ClientSystemFlags.DirectoryVariable} is not set: stargate lists and alignment tolls are disabled");
             }
             spaceSessions.GateRules = await Eve.Services.Space.Gates.GateRules.LoadAsync(sde, clientDirectory);
+            // the wormholes of J-space (slice 7): the world is generated once from the seed (EVE_WORMHOLE_SEED) out of the SDE and the client's system classes;
+            // no client directory, no wormholes. The ends of a system are placed with its scene (SpaceSessions); a collapse or an opening is published to it
+            if (Env("EVE_WORMHOLES", "on") is not ("off" or "0" or "false") && !string.IsNullOrWhiteSpace(clientDirectory))
+            {
+                var wormholeSchema = Eve.Wormholes.WormholeStore.DefaultSchema;
+                await Eve.Wormholes.WormholeWorld.MigrateAsync(source, wormholeSchema);
+                var wormholes = new Eve.Wormholes.WormholeWorld(source, foundations.Scheduler, wormholeSchema,
+                    await Eve.Universe.WormholeTypeCatalog.LoadAsync(sde),
+                    await Eve.Universe.WormholeSystemClasses.LoadAllAsync(clientDirectory),
+                    Eve.Universe.JSpaceSystems.Load());
+                await wormholes.EnsureWorldAsync(ulong.Parse(Env("EVE_WORMHOLE_SEED", "20261012"), System.Globalization.CultureInfo.InvariantCulture), now());
+                wormholes.RegisterJobs();
+                spaceSessions.Wormholes = wormholes;
+                wormholes.Changed += spaceSessions.PublishWormholeChange;
+            }
             // the gate toll is journaled as a sink: no source names a payee, so no wallet is credited (DEVIATIONS, slice 3)
             var tollWallets = new Eve.Wallet.WalletTransactions(source, walletSchema);
             spaceSessions.ChargeGateToll = async (character, amount, key, token) =>

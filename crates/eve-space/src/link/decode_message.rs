@@ -408,6 +408,8 @@ impl Message {
                 radius: r.f64()?,
                 killer_ship_id: r.i64()?,
                 wreck_kind: read_wreck_kind(&mut r)?,
+                ship_type_id: r.i32()?,
+                corporation_id: r.i32()?,
             },
             kind::CHARGE_SPENT => {
                 Message::ChargeSpent { session_id: r.u64()?, module_id: r.i64()?, rounds_left: r.i64()? }

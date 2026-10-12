@@ -2232,3 +2232,35 @@ fn a_smartbomb_takes_the_structures_in_its_range_in_their_layers() {
         "{out:?}"
     );
 }
+
+#[test]
+fn a_fob_sized_structure_takes_the_qa_smartbomb_cycles_until_its_shield_is_gone() {
+    let (mut scene, _npc, now) = duel();
+    let mut placement = crate::scene::tests::structure_placement(&scene, now);
+    placement.structure_id = SHIP_STRUCTURE;
+    placement.position = [1.0, 0.0, 0.0];
+    placement.radius = 50_000.0;
+    placement.vitals = crate::health::Vitals {
+        shield_capacity: 9_600_000.0,
+        armor_hp: 4_800_000.0,
+        structure_hp: 1_200_000.0,
+        resonances: crate::health::Resonances { shield: [0.8; 4], armor: [0.8; 4], structure: [0.8; 4] },
+        ..Default::default()
+    };
+    placement.limits = crate::health::StructureLimits { per_second: [9_600_000.0, 5_000.0, 5_000.0], repair_pause: [500.0, 500.0, 500.0] };
+    scene.place_structure(placement, now);
+    let bomb = smartbomb_effect(NPC_SHIP + 1, [5000.0, 5000.0, 5000.0, 5000.0]);
+    let mut at = now;
+    let mut told_at = None;
+    for cycle in 1..=800 {
+        let out = scene.damage_structure(SHIP_STRUCTURE, [5000.0, 5000.0, 5000.0, 5000.0], at);
+        if out.iter().any(|o| matches!(o, Out::StructureDamaged { depleted: Some(crate::health::Layer::Shield), .. })) {
+            told_at = Some(cycle);
+            break;
+        }
+        at += 3 * SECOND;
+    }
+    let _ = bomb;
+    assert!(told_at.is_some(), "the shield of a FOB is gone after the smartbomb's cycles: shield {:?}", scene.structure_health[&SHIP_STRUCTURE].state_at(at).shield);
+    eprintln!("FOB_SHIELD_CYCLE {:?}", told_at);
+}

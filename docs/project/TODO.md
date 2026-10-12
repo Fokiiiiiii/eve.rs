@@ -1620,3 +1620,13 @@ Evidence and decisions: `docs/project/WORMHOLE_DESIGN.md` (sources, SDE numbers,
 | BLOCKED | 7d signatures in probe scanning | Design 14: no wormhole rows in the probe path; scan-strength value not read from the wiki |
 | BLOCKED | 7e Sleeper and Drifter sites | Design 14: site content not published (owner decision needed) |
 | BLOCKED | 7f Thera exits | Design 14: Thera's connections are wandering (K-space), cut by owner decision |
+
+### Slice 8 (2026-10-12)
+
+| Status | Item | Missing work |
+|---|---|---|
+| DONE (tests) | Thera's seeded connections (12, documented types and endpoints), respawn after collapse | `TheraConnectionsTests`. Design 15 |
+| BLOCKED | Signature scan strength per type | No per-type value in the wiki pages or EveJS (design 15) |
+| PARTIAL | Sleeper/Drifter sites | Combat site names per class from the wiki; per-system counts and shares not published (design 15) |
+| NOT DONE | Environment effects in the Rust sim | Design 15 |
+| NOT DONE | Service-layer wormhole jump tests; headless live check | Design 15 |

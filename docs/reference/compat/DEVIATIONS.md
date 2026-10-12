@@ -3373,3 +3373,17 @@ Conflict. The wiki's Pochven page gives 60 s for the inbound filaments; the SDE 
 Not built. The filament destinations are not in the client extract (the location list ids 4510 to 4569 are absent), so no filament can be jumped and no destination is invented. The trace rules (outbound cooldown 210 s, trace lifetime 900 s, unlink distance 30 km) are constants with tests; nothing consumes them until the destinations are sourced.
 
 Tests: `eve-space` filament module, 5 tests (the 17 SDE rows, the family directions, the fleet cap and empty-fleet refusal, the trace numbers, the 2.5 ly reach), all passing; clippy -D warnings and rustfmt clean.
+
+
+### Wormhole signatures, sites and scan strength (slice 9, project rules)
+
+- Scan strength of every wormhole signature: 0.0, the SDE dogma default of `scanWormholeStrength` (attribute 1908). EveJS holds no
+  per-type value for wormhole types (its provider reads none), and the wiki pages read give none, so one uniform strength is the rule.
+- Signatures per J-space system: a count from 4 to 9 drawn from the system's seed (`WormholeSites.Plan`).
+- Shares of the categories: combat 40%, relic 15%, data 15%, gas 20%, ore 10%. The wiki names only combat sites per class, so a relic,
+  data, gas or ore signature has no template name and is planned with no name; those sites are not built (no template is named in
+  the sources). Ore is not limited to the classes that list ore: the share is the rule.
+- Combat site names: the wiki's list for the system's class (each name exists in the SDE's dungeon data, archetype 24, faction 500021).
+  C13 uses the class 6 list (no extra for C13 is documented).
+- A Drifter system (classes 14 to 18) has exactly five combat sites, named from the class 6 list (no Drifter name list is on the pages read).
+- Not built: the link of the plan to `CosmicSiteDirector` and to probe scanning; the site entities are not created in the world.

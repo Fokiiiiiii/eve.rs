@@ -94,7 +94,8 @@ regeneration is not used by any rule yet.
 
 ## 4. What is not in the SDE (not published here)
 
-- The class (C1 to C6, C12, C13) of each J-space system. The SDE has no such field; EveJS reads it from a generated static
+- (Corrected in slice 2: the class of each J-space system IS published, in the V24.01 client data, see section 9.)
+  Before slice 2 this was listed as missing. The EveJS reference reads it from a generated static
   table (`explorationAuthority.wormholeAuthority.systems[].wormholeClassID`, read in `server/src/services/exploration/wormholes/
   wormholeAuthority.js`). The generator of that table was not located in this session. Copying it would copy EveJS internals (AGENTS.md).
 - Statics per class and the destination of each static.
@@ -175,3 +176,67 @@ Not built, with the reason:
 3. The effect magnitudes per class: a documented table or none.
 4. Local chat in J-space: the wiki and the client say there is local chat, the brief said there is none. Confirm.
 5. The SDE mass values for the 7 disagreeing types: keep the SDE (current choice) or use the wiki.
+
+## 9. Slice 2 (2026-10-12): data found, what was built, what was cut
+
+### 9.1 J-space system classes (owner decision 1)
+
+- Source: the V24.01 client's static data, `EVE_CLIENT_SDE_DIR/native/systems.jsonl.gz` (`native/_sde.jsonl.gz`
+  `clientBuild` 3396210, the same build as the pinned SDE). Field `wormholeClassID`.
+- All 2,604 J-space systems carry a class: C1 358, C2 537, C3 506, C4 523, C5 531, C6 118, C13 25 (small-ship shattered),
+  Thera 31000005 = 12, and the five Drifter systems 14 to 18. Classes in K-space: 7 (high-sec, 1,194 systems), 8 (low-sec,
+  687), 9 (null-sec, 3,188), 10, 11, 19 to 23, 25 (Pochven, 27). 377 K-space systems have no class.
+- The Fuzzwork dump table `mapLocationWormholeClasses` (owner's first choice) was searched in the three repositories and
+  the client export; it is not in them. It was not fetched from Fuzzwork in this slice. The client table is the same mapping
+  from the same build, so it is used; the cross-check against Fuzzwork is open.
+- Loader: `WormholeSystemClasses.LoadAsync(directory)` (setup-time, nothing committed). A J-space system without a class is an
+  error. Tests: `WormholeClientDataTests` (synthetic rows always; the counts above when `EVE_CLIENT_SDE_DIR` is set).
+
+### 9.2 Effects (owner decision 3)
+
+- The EVE University page "Wormhole Effects" is not reachable (HTTP 404 under `Wormhole_effect`, `Wormhole_effects`,
+  `Wormhole_Effects`). A search found no page with per-class percentages; the forum-archive numbers were not used.
+- The SDE has the per-class effect beacons: group 920, 36 types named `Class N <Effect> Effects` (N 1 to 6; effects Black
+  Hole 30845 and 30850 to 30854, Cataclysmic Variable, Magnetar 30847 and 30860 to 30864, Pulsar, Red Giant, Wolf Rayet). Their
+  `typeDogma` attributes are the modifiers. Example from the SDE: Black Hole class 6 `maxTargetRangeMultiplier` 2.0 and
+  `stasisWebStrengthMultiplier` 0.5; Red Giant class 1 `heatDamageMultiplier` 1.15; Pulsar class 6 `armorEmDamageResistanceBonus` 50.
+- Loader: `WormholeEffects.LoadAsync(sde)`. Tests: `WormholeEffectsTests` (PgFact).
+- Not decided: which effect a J-space system has. No client or SDE field gives it for each system. The only link found is the
+  star: 101 systems have the `Sun K5 (Red Giant)` type 8 and 115 have type 45033 (the same name). The other effects have no
+  star type in the SDE. The wiki's shattered list (100 systems: 75 standard and 25 small-ship, matching the 100 SDE
+  `SHATTEREDWORMHOLE_OVERLAY` systems) gives an effect tag per shattered system; it was not turned into data (owner decision 6).
+- Effects as dogma modifiers on ships in the system: not built (needs the assignment above and the dogma path).
+
+### 9.3 Statics and random connections (owner decision 2)
+
+- The EVE University "Wormhole Connection Table" page (78 rows) gives, per type, the destination as "Leads to" and a
+  "Wormhole Classification" (the destination class). It has no source class, no statics per system class and no spawn
+  rule. So a static of a given system class cannot be derived from it.
+- The wiki "Wormhole" page: statics per class as in section 3.2 (Class 1 and 3 one static, 2 and 4 usually two), and no
+  probabilities. Anoik.is was not fetched in this slice.
+- The generator is not built. Without the statics and the spawn probabilities no connection can be created that a source
+  supports. The documented mechanic (statics replaced on collapse; non-static wormholes gone when they collapse; lifetime and
+  mass from SDE) is the part that can be built once the owner names the static list.
+
+### 9.4 Local chat (owner decision 4)
+
+- Not implemented (no wormhole channel exists in eve.rs). The client has the wormhole chat category
+  (`chatutil/const.py` `CATEGORY_WORMHOLE`, `chatutil/channelnames.py`), and the wiki says local keeps timestamps of jumps.
+  The "delayed local, list fills when pilots speak" rule was not read in the client source in this slice: open.
+
+### 9.5 CCP patch notes and devblogs (once)
+
+- One search. It found no official CCP article about shattered systems, Thera or Turnur wormhole rules. It found a fan site
+  note (July 2026) that the Rampant Drone Fabricator site was re-added to C1 to C6 systems (wave maximum 100), a 2025
+  Drifter note (Deepflow Rift sites in wormholes, less often outside Pochven) and a 2022 note (more Turnur connections in
+  version 20.09). These are secondary; none is used by the code.
+
+### 9.6 Cuts and what remains
+
+- Jump through a wormhole (`WormholeMgr.WormholeJump`): not built. The jump has no wormhole pair to use (no generator), and the
+  simulation's jump accepts stargates only (`SpaceSessions.Movement.cs` line 217 and the sim comment). A J-space jump needs a
+  simulation change in `crates/` and a callback in the composition.
+- Lifetime and mass jobs, collapse, signatures in the probe scanner, Sleeper and Drifter sites via `DungeonWaveDirector`,
+  Thera and Turnur connections, the headless MITM run against EveJS: not built. Reasons above; the MITM run needs a wormhole
+  to walk through.
+- Owner decision 5 (SDE over wiki for type attributes; the mismatch table in section 3.3) stays as it is.

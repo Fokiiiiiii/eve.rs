@@ -2931,25 +2931,25 @@ Status: the server side is implemented for NPC stations. The client has not been
   (`reprocessingService.js` `Handle_GetQuotes`; the client reads `quotes.py:19-21`). The quote fields are the reference's.
 
 Differences and cuts, all listed:
-1. Sources: only items in the caller's own hangar at this station. Containers, ship cargo, corporation hangars and other places are not
-   quoted (EVE.js reads more places). Not built.
-2. Outputs go to the caller's hangar at this station. Other outputs are refused with a named notice.
+1. Sources: the caller's items rooted at this station: its hangar, its containers and the cargo of its ships (`RootAtStationAsync`).
+   Corporation hangars are not quoted (their access rules are not built).
+2. Outputs: the sample item's place by default (EVE.js does the same); another place must be the caller's, in this station. Other owners are refused.
 3. Structures: refused with a named notice (`Reprocessing is available in the NPC station you are docked in.`). The structure rigs and
    profiles of `reprocessingRuntime.js` are not built.
-4. Implants: the implant bonus to refining yield (`refiningYieldPercentage` on the character) is not applied. EVE.js applies it.
-5. Randomized outputs (`typeHasRandomizedMaterials`) are not produced; an item with only randomized materials yields nothing here.
-   EVE.js produces them. Not built.
-6. Oversized stacks (`REPROCESSING_SPLIT_REQUIRED`) are not split; a stack is processed as one.
-7. Adjusted prices: from ESI `GET /markets/prices/` (the official `adjusted_price`), stored in the market schema
-   (`adjusted_prices`, migration 007) and refreshed at most once a day (`AdjustedPriceCache`). `EVE_ADJUSTED_PRICE_SEED=skip`
-   answers what is stored and calls nothing (the live script sets it). A type with no stored price has none, and no price is
-   invented. The industry job cost reads the same table (`PersistenceIndustryJobOperations`).
-8. The standing is the higher of the character's own and its corporation's standing toward the owner (the wiki's rule). EVE.js takes
-   the best of its standing sources in priority order (`standingRuntime.resolveBestStandingValue`); the values agree when only the two
-   sources exist.
-9. Notices: a consumed stack is announced as `OnItemChange` with quantity 0 (a removed row) or with its new size; an output is announced
+4. Implants: the implants plugged in the character (flags 89 to 98) add their refining yield mutator to the skill multiplier of the
+   ore types, as the reference's legacy path does (`getLegacyReprocessingImplantMultiplier`). The active implant modifiers of
+   `getActiveReprocessingImplantMultiplier` are not read.
+5. Large stacks: a stack whose yield is above the client's stack limit (2^31 - 1, `CLIENT_INVENTORY_STACK_LIMIT`) is split into chunks the
+   reference way (`buildOversizedReprocessingSplitPlan`): the root keeps the largest safe quantity aligned to whole portions, the other chunks
+   are aligned too; each chunk is reprocessed. A yield above the limit is held as several stacks. `GetQuotes` answers the sum of the chunks
+   for such a stack, not the per-chunk quotes of the reference.
+6. The active ship is refused on the server: the character's `ShipId` is checked (the reference checks it in `reprocessItems`).
+7. Randomized outputs (`typeHasRandomizedMaterials`) are not produced; an item with only randomized materials yields nothing here. Not built.
+8. Adjusted prices: from ESI (DEVIATIONS "Reprocessing", item 7). A type with no stored price has a tax of zero on its materials.
+9. The standing is the higher of the character's own and its corporation's standing toward the owner (the wiki's rule).
+10. Notices: a consumed stack is announced as `OnItemChange` with quantity 0 (a removed row) or with its new size; an output is announced
    as a new row. The same convention as the direct trade (DEVIATIONS "Direct trade"). Not checked against a client capture.
-10. `GetQuotes` skips items the station cannot reprocess (no materials, fewer than one portion) rather than answering a quote with an error.
+11. `GetQuotes` skips items the station cannot reprocess (no materials, fewer than one portion) rather than answering a quote with an error.
 
 
 ## Corporation station door (corpStationMgr, 37a)

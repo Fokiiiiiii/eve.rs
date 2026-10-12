@@ -7,6 +7,8 @@ using Eve.Sde;
 using Eve.Skills;
 using Eve.Universe;
 using Eve.Wallet;
+using Eve.Characters;
+using Eve.Dogma;
 using Npgsql;
 
 namespace Eve.Services.Station;
@@ -85,14 +87,19 @@ public sealed class SdeReprocessingData(SdeReader sde, Eve.Market.AdjustedPriceC
 
 /// <summary>
 /// The reprocessing plant of an NPC station (<c>reprocessingSvc</c>): the client binds it for the station it is docked in, asks for the
-/// quotes of the items it holds there, and reprocesses them. The yields and the tax are <see cref="ReprocessingRules"/>; the consumption,
-/// the outputs and the tax are one PostgreSQL transaction, and the notices go out after the commit.
+/// quotes of the items it holds there (in its hangar, its containers or its ship's cargo), and reprocesses them. The yields and the tax are
+/// <see cref="ReprocessingRules"/>. A stack too large for the client is split into chunks the reference way. The consumption, the outputs and
+/// the tax are one PostgreSQL transaction; the notices go out after the commit.
 /// </summary>
 [Service("reprocessingSvc")]
 public sealed partial class ReprocessingService(NpgsqlDataSource source, PgItemStore items, ItemTypeCatalog types, StationCatalog stations, IReprocessingData data,
-    RelationStore relations, PgSkillStore skills, WalletTransactions wallets, PgWalletStore balances, Func<long> nowUnixMs) : IBoundObjectReleaseHandler
+    RelationStore relations, PgSkillStore skills, WalletTransactions wallets, PgWalletStore balances, PgCharacterStore characters, DogmaStatic statics,
+    Func<long> nowUnixMs) : IBoundObjectReleaseHandler
 {
     private const int IskAccount = 1000;
+    private const int ImplantFirstFlag = 89;
+    private const int ImplantLastFlag = 98;
+    private const int MaxLocationDepth = 8;
 
     /// <summary>The ESI wallet ref type <c>reprocessing_tax</c> (CCP eve-glue, <c>JournalRefTypeEnumV2</c>).</summary>
     public const int ReprocessingTaxRefType = 127;
@@ -137,8 +144,8 @@ public sealed partial class ReprocessingService(NpgsqlDataSource source, PgItemS
     }
 
     /// <summary>
-    /// <c>GetQuotes(itemIDs, activeShipID)</c>: the station's tax, the station's efficiency per type, and the quote of each item. The
-    /// answer is the reference's: <c>[tax, {typeID: efficiency}, {itemID: quote}]</c>.
+    /// <c>GetQuotes(itemIDs, activeShipID)</c>: the station's tax, the station's efficiency per type, and the quote of each item. A stack too
+    /// large for the client is quoted as the sum of its chunks. The answer is <c>[tax, {typeID: efficiency}, {itemID: quote}]</c>.
     /// </summary>
     [Method("GetQuotes")]
     public async ValueTask<PyValue> GetQuotes(ServiceCall call)
@@ -146,7 +153,7 @@ public sealed partial class ReprocessingService(NpgsqlDataSource source, PgItemS
         var station = BoundStation(call);
         await using var connection = await source.OpenConnectionAsync(call.Cancellation).ConfigureAwait(false);
         await using var transaction = await connection.BeginTransactionAsync(call.Cancellation).ConfigureAwait(false);
-        var plan = await PlanAsync(connection, transaction, call.Session, station, ItemIdsOf(call.Arg(0)), IdOf(call.Arg(1)) ?? 0, call.Cancellation).ConfigureAwait(false);
+        var plan = await PlanAsync(connection, transaction, call.Session, station, ItemIdsOf(call.Arg(0)), call.Cancellation).ConfigureAwait(false);
         var efficiencies = new List<KeyValuePair<PyValue, PyValue>> { new(PyNone.Instance, new PyReal(plan.StationEfficiency)) };
         foreach (var typeId in plan.Lines.Select(l => l.Quote.TypeId).Distinct())
             efficiencies.Add(new(new PyInt(typeId), new PyReal(plan.StationEfficiency)));
@@ -155,25 +162,56 @@ public sealed partial class ReprocessingService(NpgsqlDataSource source, PgItemS
     }
 
     /// <summary>
-    /// <c>Reprocess(itemIDs, fromLocationID, ownerID, outputLocationID, outputFlagID)</c>: consumes the whole portions of each item (its leftovers stay),
-    /// creates the yields where the caller asked (its station hangar by default), charges the tax. Answers <c>[processedItemIDs, {typeID: quantity}]</c>.
+    /// <c>Reprocess(itemIDs, fromLocationID, ownerID, outputLocationID, outputFlagID)</c>: splits the stacks too large for the client, consumes the
+    /// whole portions of each item (its leftovers stay), creates the yields where the caller asked (the sample item's place by default), and
+    /// charges the tax. Answers <c>[processedItemIDs, {typeID: quantity}]</c>.
     /// </summary>
     [Method("Reprocess")]
     public async ValueTask<PyValue> Reprocess(ServiceCall call)
     {
         var station = BoundStation(call);
         var character = CharacterOf(call.Session);
-        var outputLocation = IdOf(call.Arg(3)) ?? station;
-        var outputFlag = (int)(IdOf(call.Arg(4)) ?? ItemFlags.Hangar);
-        var owner = IdOf(call.Arg(2)) is { } requestedOwner && requestedOwner != 0 ? requestedOwner : character;
-        if (outputLocation != station || owner != character)
-            throw Notify("Reprocessing outputs go to your hangar in this station.");
+        var requestedOwner = IdOf(call.Arg(2)) ?? 0;
+        if (requestedOwner != 0 && requestedOwner != character)
+            throw Notify("Reprocessing outputs go to your own items.");
+        var requestedLocation = IdOf(call.Arg(3));
+        var requestedFlag = IdOf(call.Arg(4));
 
         await using var connection = await source.OpenConnectionAsync(call.Cancellation).ConfigureAwait(false);
         await using var transaction = await connection.BeginTransactionAsync(call.Cancellation).ConfigureAwait(false);
-        var plan = await PlanAsync(connection, transaction, call.Session, station, ItemIdsOf(call.Arg(0)), IdOf(call.Arg(5)) ?? 0, call.Cancellation).ConfigureAwait(false);
+        var plan = await PlanAsync(connection, transaction, call.Session, station, ItemIdsOf(call.Arg(0)), call.Cancellation).ConfigureAwait(false);
+        var created = new List<Item>();
+        var splitRoots = new List<(Item Before, long Root)>();
+        if (plan.Oversized.Count > 0)
+        {
+            foreach (var (item, chunks) in plan.Oversized)
+            {
+                splitRoots.Add((item, chunks[0]));
+                await items.SetQuantityAsync(connection, transaction, item.Id, chunks[0], call.Cancellation).ConfigureAwait(false);
+                for (var k = 1; k < chunks.Count; k++)
+                {
+                    var id = await items.CreateAsync(connection, transaction, new NewItem(item.TypeId, item.OwnerId, item.LocationId, item.Flag, chunks[k]), call.Cancellation).ConfigureAwait(false);
+                    created.Add(new Item(id, item.TypeId, item.OwnerId, item.LocationId, item.Flag, chunks[k], false, null));
+                }
+            }
+            plan = await PlanAsync(connection, transaction, call.Session, station, ItemIdsOf(call.Arg(0)), call.Cancellation, extraIds: created.Select(c => c.Id)).ConfigureAwait(false);
+        }
         if (plan.Lines.Count == 0)
+        {
+            await transaction.CommitAsync(call.Cancellation).ConfigureAwait(false);
             return new PyList([new PyList([]), new PyDict([])]);
+        }
+
+        // where the yield goes: the sample item's place by default, else a place of the caller's in this station
+        var sample = plan.Lines[0].Item;
+        var outputLocation = requestedLocation ?? sample.LocationId;
+        var outputFlag = (int)(requestedFlag ?? (requestedLocation is null ? sample.Flag : ItemFlags.Hangar));
+        if (outputLocation != station)
+        {
+            if (await items.LockAndGetAsync(connection, transaction, outputLocation, call.Cancellation).ConfigureAwait(false) is not { } place
+                || !await RootAtStationAsync(connection, transaction, place, station, character, call.Cancellation).ConfigureAwait(false))
+                throw Notify("Choose an output place in this station.");
+        }
 
         var now = nowUnixMs();
         var operation = $"reprocess:{Guid.NewGuid():N}";
@@ -211,19 +249,29 @@ public sealed partial class ReprocessingService(NpgsqlDataSource source, PgItemS
         foreach (var (_, quote) in plan.Lines)
             foreach (var recoverable in quote.Recoverables.Where(r => r.Client > 0))
                 outputs[recoverable.TypeId] = outputs.GetValueOrDefault(recoverable.TypeId) + recoverable.Client;
-        var created = new List<Item>();
+        var yielded = new List<Item>();
         foreach (var (typeId, quantity) in outputs)
         {
-            var id = await items.CreateAsync(connection, transaction, new NewItem(typeId, owner, outputLocation, outputFlag, quantity), call.Cancellation).ConfigureAwait(false);
-            created.Add(new Item(id, typeId, owner, outputLocation, outputFlag, quantity, false, null));
+            // a yield above the client's stack limit is held as several stacks, each within it
+            for (var remaining = quantity; remaining > 0;)
+            {
+                var stack = Math.Min(remaining, ReprocessingRules.ClientInventoryStackLimit);
+                var id = await items.CreateAsync(connection, transaction, new NewItem(typeId, character, outputLocation, outputFlag, stack), call.Cancellation).ConfigureAwait(false);
+                yielded.Add(new Item(id, typeId, character, outputLocation, outputFlag, stack, false, null));
+                remaining -= stack;
+            }
         }
 
         await transaction.CommitAsync(call.Cancellation).ConfigureAwait(false);
         if (plan.TotalCost > 0 && await balances.GetAsync(character, call.Cancellation).ConfigureAwait(false) is { } balance)
             wallets.AnnounceCommitted(new WalletBalanceChange(character, IskAccount, balance.Isk));
-        foreach (var (before, after) in notices)
-            await NotifyItemAsync(call.Session, before, after, call.Cancellation).ConfigureAwait(false);
         foreach (var item in created)
+            await NotifyItemAsync(call.Session, item with { Quantity = 0 }, item, call.Cancellation).ConfigureAwait(false);
+        foreach (var (beforeRoot, root) in splitRoots)
+            await NotifyItemAsync(call.Session, beforeRoot, beforeRoot with { Quantity = root }, call.Cancellation).ConfigureAwait(false);
+        foreach (var (beforeItem, afterItem) in notices)
+            await NotifyItemAsync(call.Session, beforeItem, afterItem, call.Cancellation).ConfigureAwait(false);
+        foreach (var item in yielded)
             await NotifyItemAsync(call.Session, item with { Quantity = 0 }, item, call.Cancellation).ConfigureAwait(false);
 
         var outputByType = outputs.Select(pair => new KeyValuePair<PyValue, PyValue>(new PyInt(pair.Key), new PyLong(pair.Value)));
@@ -232,27 +280,31 @@ public sealed partial class ReprocessingService(NpgsqlDataSource source, PgItemS
 
     // ── planning ─────────────────────────────────────────────────────────────
 
-    private sealed record Plan(double StationTax, double StationEfficiency, long TaxRecipient, IReadOnlyList<(Item Item, ReprocessingRules.Quote Quote)> Lines)
+    private sealed record Plan(double StationTax, double StationEfficiency, long TaxRecipient, IReadOnlyList<(Item Item, ReprocessingRules.Quote Quote)> Lines,
+        IReadOnlyList<(Item Item, IReadOnlyList<long> Chunks)> Oversized)
     {
         public double TotalCost => Lines.Sum(l => l.Quote.TotalIskCost);
     }
 
     /// <summary>
-    /// The quotes of the items of the caller that the station can reprocess: items in its hangar, not the ship flown; each read under a lock
-    /// in the caller's transaction, so the quote and the reprocess see the same stacks.
+    /// The quotes of the caller's items that the station can reprocess: each item owned by the caller and rooted at this station (its hangar,
+    /// a container, the cargo of a ship), not the ship the caller flies. Read under locks in the caller's transaction, so a quote and the
+    /// reprocess that follows see the same stacks.
     /// </summary>
-    private async Task<Plan> PlanAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, ClientSession session, long stationId, IReadOnlyList<long> itemIds, long activeShipId, CancellationToken cancellationToken)
+    private async Task<Plan> PlanAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, ClientSession session, long stationId, IReadOnlyList<long> itemIds,
+        CancellationToken cancellationToken, IEnumerable<long>? extraIds = null)
     {
         var character = CharacterOf(session);
         if (character <= 0) throw Notify("Only a character can reprocess.");
         var station = stations.Get(stationId) ?? throw Notify("Reprocessing is available in NPC stations.");
+        var activeShip = (await characters.GetAsync(character, cancellationToken).ConfigureAwait(false))?.ShipId ?? 0;
 
         var locked = new List<Item>();
-        foreach (var id in itemIds.Distinct())
+        foreach (var id in itemIds.Concat(extraIds ?? []).Distinct())
         {
-            if (id == activeShipId) throw Notify("You cannot reprocess the ship you are flying.");
-            if (await items.LockAndGetAsync(connection, transaction, id, cancellationToken) is { } item
-                && item.OwnerId == character && item.LocationId == stationId && item.Flag == ItemFlags.Hangar)
+            if (activeShip > 0 && id == activeShip) throw Notify("You cannot reprocess the ship you are flying.");
+            if (await items.LockAndGetAsync(connection, transaction, id, cancellationToken).ConfigureAwait(false) is { } item
+                && await RootAtStationAsync(connection, transaction, item, stationId, character, cancellationToken).ConfigureAwait(false))
                 locked.Add(item);
         }
 
@@ -265,6 +317,7 @@ public sealed partial class ReprocessingService(NpgsqlDataSource source, PgItemS
         var levels = new Dictionary<int, int>();
         foreach (var skill in skillIds) levels[skill] = await skills.LevelAsync(connection, transaction, character, skill, cancellationToken).ConfigureAwait(false);
         double Multiplier(int skill) => ReprocessingRules.SkillMultiplier(levels[skill], percentages.GetValueOrDefault(skill));
+        var implantBonus = await ImplantMultiplierAsync(connection, transaction, character, cancellationToken).ConfigureAwait(false);
 
         var stationEfficiency = await data.StationEfficiencyAsync(stationId, cancellationToken).ConfigureAwait(false);
         var standing = await StandingTowardAsync(character, station.OwnerId, cancellationToken).ConfigureAwait(false);
@@ -272,17 +325,60 @@ public sealed partial class ReprocessingService(NpgsqlDataSource source, PgItemS
         var prices = await data.AdjustedPricesAsync(materialTypes, cancellationToken).ConfigureAwait(false);
 
         var lines = new List<(Item, ReprocessingRules.Quote)>();
+        var oversized = new List<(Item, IReadOnlyList<long>)>();
         foreach (var item in locked)
         {
             if (!typeInfo.TryGetValue(item.TypeId, out var info) || info.Materials.Count == 0) continue;
             var characterMultiplier = info.ReprocessingSkillType > 0
-                ? Multiplier(ReprocessingRules.ReprocessingSkill) * Multiplier(ReprocessingRules.ReprocessingEfficiencySkill) * Multiplier(info.ReprocessingSkillType)
+                ? Multiplier(ReprocessingRules.ReprocessingSkill) * Multiplier(ReprocessingRules.ReprocessingEfficiencySkill) * Multiplier(info.ReprocessingSkillType) * implantBonus
                 : Multiplier(ReprocessingRules.ScrapmetalProcessingSkill);
             var efficiency = ReprocessingRules.Efficiency(stationEfficiency, characterMultiplier);
             var quote = ReprocessingRules.Build(item.Id, item.TypeId, item.Quantity, info.PortionSize, efficiency, taxRate, info.Materials, prices);
-            if (quote.Portions > 0) lines.Add((item, quote));
+            if (quote.Portions <= 0) continue;
+            if (ReprocessingRules.IsClientSafe(quote))
+            {
+                lines.Add((item, quote));
+                continue;
+            }
+            var chunks = ReprocessingRules.SplitChunks(item.Quantity, info.PortionSize,
+                q => ReprocessingRules.IsClientSafe(ReprocessingRules.Build(item.Id, item.TypeId, q, info.PortionSize, efficiency, taxRate, info.Materials, prices)))
+                ?? throw Notify("That stack is too large to reprocess in one go.");
+            oversized.Add((item, chunks));
+            var parts = chunks.Select(q => ReprocessingRules.Build(item.Id, item.TypeId, q, info.PortionSize, efficiency, taxRate, info.Materials, prices)).ToList();
+            lines.Add((item, ReprocessingRules.Sum(item.Id, item.TypeId, parts)));
         }
-        return new Plan(taxRate, stationEfficiency, station.OwnerId, lines);
+        return new Plan(taxRate, stationEfficiency, station.OwnerId, lines, oversized);
+    }
+
+    /// <summary>The bonus of the implants plugged into the character (the reference's legacy path: each implant's refining yield mutator).</summary>
+    private async Task<double> ImplantMultiplierAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long character, CancellationToken cancellationToken)
+    {
+        var multiplier = 1.0;
+        var attribute = statics.AttributeId("refiningYieldMutator");
+        if (attribute is not { } attributeId) return multiplier;
+        foreach (var implant in await items.InLocationAsync(character, character, cancellationToken).ConfigureAwait(false))
+        {
+            if (implant.Flag < ImplantFirstFlag || implant.Flag > ImplantLastFlag) continue;
+            await statics.EnsureTypesAsync([implant.TypeId], cancellationToken).ConfigureAwait(false);
+            if (statics.Type(implant.TypeId)?.Attributes.TryGetValue(attributeId, out var bonus) == true && bonus > 0)
+                multiplier *= 1 + bonus / 100.0;
+        }
+        return multiplier;
+    }
+
+    /// <summary>True when the item is the caller's and sits, through its containers, at this station.</summary>
+    private async Task<bool> RootAtStationAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, Item item, long station, long character, CancellationToken cancellationToken)
+    {
+        if (item.OwnerId != character) return false;
+        var current = item;
+        for (var depth = 0; depth < MaxLocationDepth; depth++)
+        {
+            if (current.LocationId == station) return true;
+            var parent = await items.LockAndGetAsync(connection, transaction, current.LocationId, cancellationToken);
+            if (parent is null) return false;
+            current = parent;
+        }
+        return false;
     }
 
     /// <summary>The standing toward the owner: the higher of the character's own and its corporation's (the wiki's rule).</summary>

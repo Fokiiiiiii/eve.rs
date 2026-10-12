@@ -84,4 +84,45 @@ public sealed class ReprocessingRulesTests
         Assert.Equal(100, quote.Recoverables.Single().Client);
         Assert.Equal(0.0, quote.TotalIskCost);
     }
+
+    [Fact]
+    public void A_stack_is_split_into_aligned_chunks_that_add_up_to_the_stack()
+    {
+        // every unit yields one Tritanium at efficiency 1: a chunk is safe while it yields at most 2^31 - 1
+        var chunks = ReprocessingRules.SplitChunks(3_000_000_000, 100,
+            q => ReprocessingRules.IsClientSafe(ReprocessingRules.Build(1, 1, q, 100, 1.0, 0, [new ReprocessingRules.Material(34, 100)], new Dictionary<int, double>())));
+
+        Assert.NotNull(chunks);
+        Assert.Equal(3_000_000_000L, chunks!.Sum());
+        Assert.All(chunks.Take(chunks.Count - 1), c => Assert.Equal(0L, c % 100));
+        Assert.True(chunks[0] <= ReprocessingRules.ClientInventoryStackLimit);
+    }
+
+    [Fact]
+    public void The_root_of_a_split_keeps_the_leftovers_of_the_stack()
+    {
+        var chunks = ReprocessingRules.SplitChunks(3_000_000_037, 100,
+            q => ReprocessingRules.IsClientSafe(ReprocessingRules.Build(1, 1, q, 100, 1.0, 0, [new ReprocessingRules.Material(34, 100)], new Dictionary<int, double>())));
+
+        Assert.NotNull(chunks);
+        Assert.Equal(3_000_000_037L, chunks!.Sum());
+        Assert.Equal(37L, chunks[0] % 100);
+    }
+
+    [Fact]
+    public void A_stack_with_no_safe_quantity_has_no_split()
+    {
+        Assert.Null(ReprocessingRules.SplitChunks(100, 1, _ => false));
+    }
+
+    [Fact]
+    public void The_sum_of_quotes_adds_the_yields_and_the_taxes_of_the_chunks()
+    {
+        var one = ReprocessingRules.Build(7, 1, 100, 100, 0.5, 0.05, [new ReprocessingRules.Material(34, 415)], new Dictionary<int, double> { [34] = 5.0 });
+        var total = ReprocessingRules.Sum(7, 1, [one, one]);
+
+        Assert.Equal(200, total.QuantityToProcess);
+        Assert.Equal(2 * one.TotalIskCost, total.TotalIskCost, 6);
+        Assert.Equal(2 * one.Recoverables.Single().Client, total.Recoverables.Single().Client);
+    }
 }

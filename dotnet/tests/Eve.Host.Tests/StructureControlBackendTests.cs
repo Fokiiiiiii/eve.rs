@@ -164,7 +164,7 @@ public sealed class StructureControlBackendTests
         await f.Backend.TakeControlAsync(f.Call(first), Structure);
         f.Order.Clear();
         await f.Backend.TakeControlAsync(f.Call(second), Structure);
-        Assert.Equal(["sim:20:False", "sim:21:True", "session:20", "session:21"], f.Order);
+        Assert.Equal(["sim:20:False", "sim:21:True", "session:20", "session:20", "session:21", "session:21"], f.Order);
         var owner = (await f.OwnerAsync())!;
         Assert.Equal(21, owner.CharacterId);
         Assert.Equal(secondShip, owner.OriginalShipId);

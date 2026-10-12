@@ -59,6 +59,7 @@ public sealed partial class SpaceSessions
     public void ApplyStructureControlSession(ClientSession session, int system, long structureId,
         long originalShipId, long? originalLocationId, bool fromSpace)
     {
+        var previousShipId = session.GetInt("shipid");
         CancelSafeLogoff(session);
         session.Set(LoginInventoryBootstrapPending, None);
         session.Set("deferredDockedShipId", None);
@@ -74,11 +75,14 @@ public sealed partial class SpaceSessions
         }
         else
             session.Change(("shipid", new PyLong(structureId))); // V24.01 TakeControl preserves every other session attribute.
+        if (previousShipId is > 0 && previousShipId != structureId)
+            session.SendNotification("OnShipCosmeticsChanged", "charid", new PyLong(previousShipId.Value), new PyDict([]));
     }
 
     public void RestoreStructureControlSession(ClientSession session, long originalShipId,
         long? originalLocationId, bool fromSpace, int system)
     {
+        var previousShipId = session.GetInt("shipid");
         if (fromSpace)
         {
             var physicalShip = ShipIdOf(session) ?? originalShipId;
@@ -87,6 +91,8 @@ public sealed partial class SpaceSessions
             Background(() => RefreshTetherPolicyAsync(session));
         }
         else session.Change(("shipid", new PyLong(originalShipId)));
+        if (session.GetInt("shipid") is { } restoredShipId && restoredShipId > 0 && previousShipId != restoredShipId)
+            session.SendNotification("OnShipCosmeticsChanged", "charid", new PyLong(restoredShipId), new PyDict([]));
         session.Set("structureControlSystemId", None);
         session.Set("structureControlOriginalShipId", None);
         session.Set("structureControlOriginalLocationId", None);
@@ -128,6 +134,8 @@ public sealed partial class SpaceSessions
         }
         var result = await EjectPhysicalShipAsync(session, session.GetInt("shipid") ?? 0, true, token);
         if (result is not PyTuple) return false;
+        if (session.GetInt("shipid") is { } capsuleId && capsuleId > 0)
+            session.SendNotification("OnShipCosmeticsChanged", "charid", new PyLong(capsuleId), new PyDict([]));
         session.Set("structureControlSystemId", None);
         session.Set("structureControlOriginalShipId", None);
         session.Set("structureControlOriginalLocationId", None);

@@ -38,7 +38,7 @@ public sealed class StructureControlTests
         space.ApplyStructureControlSession(session, System, Structure, 501, System, false);
         Assert.Equal(Structure, session.GetInt("shipid"));
         foreach (var (name, value) in before.Where(pair => pair.Key != "shipid")) Assert.Equal(value, session.Get(name));
-        Assert.Equal(["$sessionchange"], Sequence.Of(session));
+        Assert.Equal(["$sessionchange", "OnShipCosmeticsChanged"], Sequence.Of(session));
 
         var count = sim.Heard.Count;
         space.Bind(session);
@@ -51,6 +51,7 @@ public sealed class StructureControlTests
         Assert.Equal(501, session.GetInt("shipid"));
         Assert.Equal(Structure, session.GetInt("structureid"));
         Assert.False(space.IsStructureObserver(session));
+        Assert.Equal(["$sessionchange", "OnShipCosmeticsChanged"], Sequence.Of(session));
     }
 
     [Fact]
@@ -110,7 +111,7 @@ public sealed class StructureControlTests
         Assert.Equal(ship, (await rig.Ships.LoadAsync(character.CharacterId))!.Ship.Id);
         Assert.IsType<PyNone>(await rig.Space.EjectAsync(session, CancellationToken.None));
         Assert.Equal(ship, rig.Space.ShipIdOf(session));
-        Assert.Equal(["$sessionchange"], Sequence.Of(session));
+        Assert.Equal(["$sessionchange", "OnShipCosmeticsChanged"], Sequence.Of(session));
         rig.Sim.Deliver(new SimNotify((ulong)session.SessionId, "OnDamageStateChange", "clientID",
             MarshalCodec.Encode(Py.Tuple(new PyLong(Structure), Py.Tuple(new PyReal(0.1), new PyReal(0.2), new PyReal(0.3))))));
         await rig.Space.QuiesceAsync();

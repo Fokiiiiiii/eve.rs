@@ -199,6 +199,10 @@ internal sealed class FakeSim : ISimulation
 
     public void PlaceStructure(SimPlaceStructure structure) => Heard.Enqueue(structure);
 
+    public void PlaceWormhole(SimPlaceWormhole wormhole) => Heard.Enqueue(wormhole);
+
+    public void RemoveWormhole(long wormholeId) => Heard.Enqueue(new SimRemoveWormhole(wormholeId));
+
     public void SetTetherPolicy(SimTetherPolicy policy) => Heard.Enqueue(policy);
 
     public void RemoveStructure(long structureId) => Heard.Enqueue(new SimRemoveStructure(structureId));

@@ -750,7 +750,7 @@ public sealed record SimActivate(ulong SessionId, SimEffect Effect) : SimMessage
 /// </summary>
 public sealed record SimDestroyed(
     ulong SessionId, long ShipId, long WreckId, IReadOnlyList<double> Position, IReadOnlyList<double> Direction, double Radius, long KillerShipId,
-    SimWreckKind? WreckKind = null) : SimMessage;
+    SimWreckKind? WreckKind = null, int ShipTypeId = 0, int CorporationId = 0) : SimMessage;
 
 /// <summary>A weapon of an NPC: an effect of the NPC's own ship, so the module is the ship. One that flies a <see cref="SimMissile"/> is a launcher (the NPC's own: no rounds to spend).</summary>
 public sealed record SimNpcWeapon(
@@ -1032,6 +1032,17 @@ public sealed record SimStructureDamaged(long StructureId, int Depleted, bool Ov
 
 /// <summary>The host takes a structure out of space (protocol 59); a body that is not a structure is left alone.</summary>
 public sealed record SimRemoveStructure(long StructureId) : SimMessage;
+
+/// <summary>A wormhole end the host puts in space (protocol 63): its body in the system, and the far end it leads to (the other system, the far end's
+/// body ID, that system's class, the far end's position and radius, and the largest ship the wormhole takes). A ship that comes out of this end
+/// appears by the far end. It stays until <see cref="SimRemoveWormhole"/>.</summary>
+public sealed record SimPlaceWormhole(
+    long WormholeId, int SolarSystemId, string Name, int TypeId, int GroupId, IReadOnlyList<double> Position, double Radius,
+    int DestinationSystemId, long DestinationEnd, int DestinationClass, IReadOnlyList<double> DestinationPosition, double DestinationRadius,
+    double MaxJumpMass) : SimMessage;
+
+/// <summary>The host takes a wormhole end out of space (protocol 63); a body that is not a wormhole end is left alone.</summary>
+public sealed record SimRemoveWormhole(long WormholeId) : SimMessage;
 
 /// <summary>The host changes a structure's slim state (protocol 59); a structure not in space is left alone.</summary>
 public sealed record SimSetStructureState(int SolarSystemId, long StructureId, SimStructureStatus Status) : SimMessage;

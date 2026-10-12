@@ -341,7 +341,7 @@ private async ValueTask<PyValue> MutateAsync(ServiceCall call)
         };
         if (dictionary is null) return null;
         foreach (var (key, value) in dictionary.Entries)
-            if (key is PyStr text && text.Value == name) return value;
+            if (Eve.Macho.JsSemantics.StringValue(key) == name) return value;
         return null;
     }
 

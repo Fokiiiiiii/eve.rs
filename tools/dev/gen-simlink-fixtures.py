@@ -19,7 +19,7 @@ KINDS = {"Hello": 1, "HelloAck": 2, "Enter": 3, "Leave": 4, "Bind": 5, "UpdateSt
          "AdjustCharge": 33, "ChargeAdjusted": 34, "Arrived": 35, "LaunchDrone": 36, "DroneCommand": 37, "DroneResults": 38,
          "DroneScooped": 39, "DroneReleased": 40, "ModuleWorkCycle": 51, "ModuleWorkResult": 52, "ModuleEnded": 53, "LaunchFighter": 54, "FighterOrder": 55, "FighterResults": 56, "FighterLanded": 57, "FighterReleased": 58, "FighterGotoPoint": 59, "FighterSize": 60, "UpdateEffect": 61, "BuffState": 62, "Deployed": 63, "RemoveDeployed": 64, "PlaceProbe": 65, "RemoveProbe": 66,
          "EcmBurst": 67, "PlaceDisruptor": 68, "SetDisruptorActive": 69, "PlaceInhibitor": 70, "ScanTargets": 71, "DirectionalTargets": 72,
-         "PlaceCynoBeacon": 73, "PlaceStructure": 74, "RemoveStructure": 75, "SetStructureState": 76, "StructureDamaged": 77,
+         "PlaceCynoBeacon": 73, "PlaceStructure": 74, "RemoveStructure": 75, "SetStructureState": 76, "StructureDamaged": 77, "PlaceWormhole": 82, "RemoveWormhole": 83,
          "PlaceAnalysisBeacon": 78, "SetAnalysisBeaconState": 79, "TetherPolicy": 80, "TetherChanged": 81}
 
 def s(text):  # u16 length + UTF-8
@@ -388,7 +388,8 @@ def build(m):
                      + struct.pack("<i", m["toSystem"]) + i64(m["toGate"]))
     if k == "Destroyed":
         return frame(k, u64(m["sessionId"]) + i64(m["shipId"]) + i64(m["wreckId"]) + struct.pack("<7d", *m["position"], *m["direction"], m["radius"])
-                     + i64(m["killerShipId"]) + wreck_kind(m.get("wreckKind")))
+                     + i64(m["killerShipId"]) + wreck_kind(m.get("wreckKind"))
+                     + struct.pack("<ii", m["shipTypeId"], m["corporationId"]))
     if k == "ChargeSpent":
         return frame(k, u64(m["sessionId"]) + i64(m["moduleId"]) + i64(m["roundsLeft"]))
     # protocol 38 (FP-C4b, FP-C5): a refresh of a running effect: the cycle, the capacitor a cycle costs, the turret (a flag, then the turret) and the changes
@@ -438,6 +439,13 @@ def build(m):
                      + struct.pack("<ii", m["corporationId"], m["allianceId"]) + structure_health(m) + structure_status(m["status"]))
     if k == "RemoveStructure":
         return frame(k, i64(m["structureId"]))
+    if k == "PlaceWormhole":  # protocol 63: the wormhole end, then the far end it leads to (its system, body ID, class, position, radius) and the largest ship
+        return frame(k, i64(m["wormholeId"]) + struct.pack("<i", m["solarSystemId"]) + s(m["typeName"]) + struct.pack("<ii", m["typeId"], m["groupId"])
+                     + struct.pack("<3d", *m["position"]) + struct.pack("<d", m["radius"])
+                     + struct.pack("<i", m["destinationSystemId"]) + i64(m["destinationEnd"]) + struct.pack("<i", m["destinationClass"])
+                     + struct.pack("<3d", *m["destinationPosition"]) + struct.pack("<dd", m["destinationRadius"], m["maxJumpMass"]))
+    if k == "RemoveWormhole":
+        return frame(k, i64(m["wormholeId"]))
     if k == "TetherPolicy":
         candidates = m["candidates"]
         payload = u64(m["sessionId"]) + u64(m["blockedForMs"]) + u64(m["leaseMs"]) + struct.pack("<I", len(candidates))
@@ -547,8 +555,8 @@ BARE = dict(IBIS, name="", modules=[], allianceId=99000001, securityStatus=-2.5,
             condition={"damage": 0.0, "armorDamage": 0.0, "shieldCharge": 1.0, "charge": 1.0})
 
 valid = [
-    {"name": "hello", "kind": "Hello", "version": 62},
-    {"name": "hello ack", "kind": "HelloAck", "version": 62, "pollHz": 4},
+    {"name": "hello", "kind": "Hello", "version": 64},
+    {"name": "hello ack", "kind": "HelloAck", "version": 64, "pollHz": 4},
     {"name": "enter by undocking", "kind": "Enter", "sessionId": "1790646377000015", "solarSystemId": 30100032,
      "how": 0, "stationId": "60015249", "ship": IBIS},
     {"name": "enter already in space, no modules, non-ASCII name", "kind": "Enter", "sessionId": "1",
@@ -921,7 +929,10 @@ valid = [
     {"name": "destroyed with a wreck of the scene's own", "kind": "Destroyed", "sessionId": "4611686018427387905",
      "shipId": "980050000077", "wreckId": "4300000000000001", "position": [311989835983.1308, -13069154020.916222, 156646308895.76187],
      "direction": [0.6159, 0.01306, 0.78769], "radius": 47.0, "killerShipId": "9988400001939",
-     "wreckKind": {"typeId": 26506, "name": "Caldari Frigate Wreck", "graphicId": 3117}},
+     "wreckKind": {"typeId": 26506, "name": "Caldari Frigate Wreck", "graphicId": 3117}, "shipTypeId": 601, "corporationId": 1000125},
+    {"name": "destroyed Triglavian NPC (a Liminal Damavik) in Pochven, no wreck", "kind": "Destroyed", "sessionId": "4611686018427387906",
+     "shipId": "980060000001", "wreckId": "0", "position": [3932160.0, 3932160.0, 3932160.0], "direction": [0.0, 0.0, 1.0],
+     "radius": 34.0, "killerShipId": "9988400001939", "shipTypeId": 52182, "corporationId": 1000298},
     {"name": "new ship numbers with the armor pinned by a polarized weapon", "kind": "ShipSpec", "sessionId": "1790646377000015",
      "ship": dict(IBIS, vitals=dict(IBIS["vitals"], armorPinned=True,
                                     resonances={"shield": [0.0, 0.8, 0.6, 0.5], "armor": [1.0, 1.0, 1.0, 1.0],
@@ -939,10 +950,11 @@ valid = [
                                {"itemId": "9988400002810", "attributeId": 73, "value": 10000.0}]}},
     {"name": "destroyed player's ship, nobody to blame, no wreck", "kind": "Destroyed", "sessionId": "1790646377000015",
      "shipId": "9988400001939", "wreckId": "0", "position": [0.0, 0.0, 0.0], "direction": [1.0, 0.0, 0.0],
-     "radius": 47.0, "killerShipId": "0", "wreckKind": {"typeId": 26506, "name": "Caldari Frigate Wreck", "graphicId": 0}},
+     "radius": 47.0, "killerShipId": "0", "wreckKind": {"typeId": 26506, "name": "Caldari Frigate Wreck", "graphicId": 0},
+     "shipTypeId": 601, "corporationId": 1000006},
     {"name": "destroyed with no kind of wreck to leave", "kind": "Destroyed", "sessionId": "1790646377000016",
      "shipId": "9988400001940", "wreckId": "0", "position": [1.0, 2.0, 3.0], "direction": [0.0, 1.0, 0.0],
-     "radius": 12.5, "killerShipId": "0"},
+     "radius": 12.5, "killerShipId": "0", "shipTypeId": 601, "corporationId": 1000006},
     {"name": "spawn of an NPC with a laser, a wreck and a tree", "kind": "Spawn", "requestId": "7", "solarSystemId": 30100032,
      "ship": dict(BARE, shipId="980050000077", characterId="0", ownerId="1000125", categoryId=11, groupId=25, typeId=597),
      "anchorShipId": "0", "position": [1000500.0, 100.0, 100.0], "velocity": [0.0, 0.0, 0.0], "direction": [1.0, 0.0, 0.0], "behavior": "belt rat",
@@ -1054,6 +1066,11 @@ valid = [
     {"name": "tether engages and repairs the ship", "kind": "TetherChanged", "sessionId": "77", "previousStructureId": "0", "structureId": "1040000000000001", "repairing": True},
     {"name": "tether breaks", "kind": "TetherChanged", "sessionId": "77", "previousStructureId": "1040000000000001", "structureId": "0", "repairing": False},
     {"name": "structure taken out of space by the host", "kind": "RemoveStructure", "structureId": "1040000000000001"},
+    {"name": "wormhole end put in space by the host (far end in another system)", "kind": "PlaceWormhole", "wormholeId": "1050000001", "solarSystemId": 30100032,
+     "typeName": "Wormhole E004", "typeId": 34134, "groupId": 988, "position": [311989835983.1308, -13069154020.916222, 156646308895.76187], "radius": 3000.0,
+     "destinationSystemId": 31000001, "destinationEnd": "1050000002", "destinationClass": 14,
+     "destinationPosition": [-5610823557120.0, 7676706201600.0, -2034779136000.0], "destinationRadius": 5000.0, "maxJumpMass": 5000000.0},
+    {"name": "wormhole end taken out of space by the host", "kind": "RemoveWormhole", "wormholeId": "1050000001"},
     {"name": "mobile warp disruptor dropped from a ship and not yet anchored", "kind": "PlaceDisruptor", "deployableId": "4250000000000009",
      "solarSystemId": 30100032, "typeName": "Mobile Small Warp Disruptor I", "typeId": 12198, "groupId": 361,
      "position": [311989835983.1308, -13069154020.916222, 156646308895.76187], "radius": 50.0, "range": 5000.0, "active": False,

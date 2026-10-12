@@ -853,7 +853,7 @@ public sealed partial class PersistenceNewEdenStoreRuntime(
 
     private static string Text(PyValue? value) => value switch
     {
-        PyStr text => text.Value,
+        var text when Eve.Macho.JsSemantics.StringValue(text) is not null => Eve.Macho.JsSemantics.StringValue(text)!,
         PyInt number => number.Value.ToString(System.Globalization.CultureInfo.InvariantCulture),
         PyLong number => number.Value.ToString(System.Globalization.CultureInfo.InvariantCulture),
         _ => string.Empty,

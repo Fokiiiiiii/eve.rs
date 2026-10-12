@@ -6,7 +6,8 @@ namespace Eve.Host;
 
 internal sealed partial class CharacterServicesComposition
 {
-    private const int BlueprintGroupId = 9;
+    // the SDE category "Blueprint" (categories key 9): blueprint items have a group of their own per kind, so the group does not identify them
+    private const int BlueprintCategoryId = 9;
     private const int IndustryJobCompleted = 100;
     private const int MaxLocationDepth = 8;
 
@@ -16,7 +17,7 @@ internal sealed partial class CharacterServicesComposition
         var item = await items.GetAsync(itemId, cancellationToken);
         if (item is null) return null;
         var type = await itemTypes.GetAsync(item.TypeId, cancellationToken);
-        if (type?.GroupId != BlueprintGroupId) return null;
+        if (type?.CategoryId != BlueprintCategoryId) return null;
         return await BlueprintRecordAsync(item, cancellationToken);
     }
 
@@ -27,7 +28,7 @@ internal sealed partial class CharacterServicesComposition
         foreach (var item in await items.OwnedByAsync(ownerId, cancellationToken))
         {
             var type = await itemTypes.GetAsync(item.TypeId, cancellationToken);
-            if (type?.GroupId == BlueprintGroupId)
+            if (type?.CategoryId == BlueprintCategoryId)
                 records.Add(await BlueprintRecordAsync(item, cancellationToken));
         }
         return records;

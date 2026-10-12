@@ -1507,6 +1507,23 @@ Evidence and decisions: DEVIATIONS "Zarzakh (30100000) and the client's system f
 
 | PARTIAL (live) | Turnur to Zarzakh jump, eve.rs only: `tools/headless-client/tests/test_zarzakh_jump.py` passes through `tools/mitm` on the eve_p2 lane (1 passed, 96.9 s); the toll journal row (ref 168) is counted | DEVIATIONS "Live check: Turnur to Zarzakh (slice 3)". OPEN: the EVE.js comparison (no reference data here); the Cockroach seeded through the database |
 
+
+## Pochven, Triglavian and EDENCOM space (2026-10-12)
+
+Research and what is cut: `docs/project/POCHVEN_DESIGN.md` (sources, SDE ids, the wiki's rules, what is not published).
+
+| Status | Item | Note |
+|---|---|---|
+| DONE (unit) | Region, faction and corporation ids of Pochven, capital group ids | `dotnet/src/Eve.Services.Space/Pochven/PochvenRules.cs`; `PochvenRulesTests` (4) |
+| DONE (unit; host path NOT RUN) | Capital ships refused a stargate in Pochven | `SpaceSessions.Movement.cs` `CheckGateRulesAsync` before the client gate list; the pilot cannot be placed in Pochven by the rig (see DEVIATIONS) |
+| DONE (pure rule, consumer pending) | Faction hostility between the four Pochven NPC factions; NPC standing rule (Triglavian at 0.00 and below, EDENCOM below 0.00, Rogue Drones and Drifters hostile to all pilots) | `PochvenRules.FactionsAreHostile`, `NpcHostileToPilot`. The simulation does not call them yet |
+| OPEN | NPC-vs-NPC targeting in the simulation (the four factions fight each other) | Needs target selection among NPCs in `crates/eve-space` brains; the rule input is above |
+| CUT (no published rule) | Gate sentries that shoot (EDENCOM GunStar 54579, Heavy GunStar 54580, Entropic Disintegrator Werpost 54577) | SDE gives the numbers only; no firing rule, targeting order or retribution timer published. EveJS places cosmetic sentries only |
+| CUT (no published spawn table) | Pochven skirmish spawning and per-site NPC composition | No SDE link from a dungeon to a system; no spawn tables; `npc_authority.json` has no Triglavian, EDENCOM or Drifter profile |
+| CUT (no published state data) | Invasion states (Redoubt, Bulwark, Fortress, Liminality, Minor Victory) and their system lists | Thresholds (75%, 76%, 96%) are on the wiki; per-system state is not. `map.GetEdencomFortressSystems` stays open (see the line above in this file) |
+| OPEN | Filament entry (Pochven filaments 56065 to 56081, 1/5/15 ships), the 6.0 standing for Home systems | Needs the filament item and jump rules; not in the SDE beyond the counts |
+| OPEN | Pochven standings for docking (-0.05), the LP store (-0.01), manufacturing and offices (3.00), local chat in delayed mode | Wiki rules; not built |
+
 ## 13. Wormhole space: research and the type catalog (2026-10-12)
 
 Evidence and decisions: `docs/project/WORMHOLE_DESIGN.md` (sources, SDE numbers, the SDE against the wiki, what is not published, owner decisions).
@@ -1530,3 +1547,87 @@ Evidence and decisions: `docs/project/WORMHOLE_DESIGN.md` (sources, SDE numbers,
 | CUT | Connection generator, statics, spawn | No source for statics per class or probabilities (design 9.3, owner decision 2) |
 | OPEN | Jump, lifetime/mass jobs, collapse, signatures, effects on ships, Sleeper/Drifter sites, Thera/Turnur, MITM run | Design 9.6 |
 | OPEN | Local chat in J-space | Design 9.4 (owner decision 4) |
+
+### Slice 3 (2026-10-12)
+
+| Status | Item | Missing work |
+|---|---|---|
+| DONE (tests) | Committed J-space data (2,604 systems, 393 KB; shattered effects from the wiki): class, effect beacon, statics, sources and cross-checks (`Data/jspace-systems.json`, `JSpaceSystems`) | `JSpaceSystemsTests` (PgFact checks statics against the SDE) |
+| DONE (rule, data) | Local chat in J-space: the client's delayed local (members only when they speak) is recorded (design 10.3) | No eve.rs chat service exists: nothing to change yet |
+| OPEN | Class 4 statics: EveJS one static, wiki "usually two" | Design 10.5 (owner decision 7) |
+| CUT | Connection generator and static pairing | No published pairing (design 10.4, owner decision 8) |
+| OPEN | Setup loader into a PostgreSQL schema; jump; entities; sim jump (Rust build needs 9 to 11 GB free); signatures; effects on ships; sites; Thera/Turnur; MITM run | Design 10.4 |
+
+### Slice 4 (2026-10-12)
+
+| Status | Item | Missing work |
+|---|---|---|
+| DONE (tests) | Connection generator for the statics (seeded, documented mechanic) and durable lifecycle jobs on Eve.Scheduler (expiry, static replacement, transit collapse, restart) | `dotnet/tests/Eve.Wormholes.Tests` (14). Not wired into the Host composition yet |
+| CUT | Wandering K-space connections (K162) | No published spawn rate (design 11) |
+| CUT | Region-neighbour exclusion for statics | The pages read do not state it (design 11) |
+| OPEN | Wormhole entities in space, sim jump, WormholeMgr.WormholeJump callback, signatures, effects on ships, sites, Thera/Turnur, delayed local (no chat service in eve.rs), MITM run | Design 11 |
+
+### Slice 5 (2026-10-12)
+
+| Status | Item | Missing work |
+|---|---|---|
+| OPEN | Wormhole jump path: simulation body kind, placement (protocol 60), jump and arrival in `crates/eve-space`, WormholeMgr callback in the composition | Design 12.3 (not started in slice 5; investigated) |
+| OPEN | Effects as dogma modifiers | No system-wide effect mechanism exists in eve.rs (design 12.4) |
+| OPEN | Signatures, sites, Thera/Turnur, headless MITM run | Design 12.4 |
+| CUT | Delayed local | No chat service in eve.rs (design 10.3) |
+
+### Slice 6 (2026-10-12)
+
+| Status | Item | Missing work |
+|---|---|---|
+| DONE (tests) | Protocol 63: wormhole body kind, `PlaceWormhole`/`RemoveWormhole` (Rust sim, codec on both sides, goldens), jump to a wormhole end and arrival by its far end | `eve-space` 747 + codec 299 tests. Design 13 |
+| OPEN | The far end as a body of its own scene (pilots must be able to jump back) | Design 13 |
+| OPEN | Host placement of the ends, `WormholeMgr.WormholeJump` through the lifecycle, composition wiring | Design 13 |
+| OPEN | Effects, signatures, sites, Thera exits, MITM run | Design 13 |
+
+
+## Pochven population (2026-10-12, after step 1)
+
+| Status | Item | Note |
+|---|---|---|
+| DONE (tests) | NPC-vs-NPC attack between the Pochven factions | `brains::pochven_tests` (attack, own faction, outside Pochven) |
+| DONE (tests) | Gate sentries: a werpost at each gate of a Pochven system, 20 km out, stationary; locks a rogue drone, never a fellow triglavian | `pochven_population.rs`; rules in DEVIATIONS |
+| DONE (tests) | Camps: two Damavik at the first two gates of a Triglavian system | `pochven_population.rs` |
+| DONE (tests) | Skirmish spawner: every 900 s, four factions in turn, deterministic, capped at 40 NPCs per scene | `pochven_population.rs` (`populate_pochven`) |
+| DONE (data) | System states: 27 Pochven systems held by the Triglavians; EDENCOM list empty | `data/pochven_states.json` (source and date in the file) |
+| CUT | Bounty and loot of the Pochven hulls | Host bounty code is keyed on profiles without these hulls; needs host work |
+| CUT | Fortress and Heavy GunStar placements in Pochven | No Pochven system is an EDENCOM fortress in the wiki; the path is tested through the data file |
+| OPEN | Live walk (Cockroach into Pochven, NPC fights through tools/mitm) | The headless client cannot place a pilot in Pochven; not run |
+| DONE (tests) | Step 3, filament rules and data (17 SDE types, caps, spool-ups, families, trace numbers) | `crates/eve-space/src/filament.rs`; jumps not built |
+| OPEN | Filament destinations (jump targets) | Not in the client extract (location list 4510 to 4569 absent); no invented destination |
+| OPEN | Home-system 6.0 standing | Skipped per owner |
+
+
+## Slice 3, step 1: zones outside Pochven
+
+| Status | Item | Note |
+|---|---|---|
+| DONE (tests) | Arshat (30002253) as an EDENCOM zone: GunStars at its gates, Sentinel camps at the first two | `pochven_population.rs`, `data/pochven_states.json` (source and date in the file) |
+| OPEN | More EDENCOM fortress, stronghold and minor-victory systems | No dated source names them (the wiki's list page 404s; the forum names are not states) |
+
+### Slice 7 (2026-10-12)
+
+| Status | Item | Missing work |
+|---|---|---|
+| DONE (tests) | 7b: placement of the ends with the system's scene, WormholeMgr.WormholeJump (mass, collapse, publication), polarization, world at start-up | Eve.Wormholes.Tests 17; the service jump has no test yet (DEVIATIONS) |
+| DONE (tests) | 7c: system environment as dogma modifiers on the ship and its modules (C# dogma) | Eve.Dogma.Tests `SystemEnvironmentTests` (3). Not in the Rust simulation |
+| OPEN | 7d signatures, 7e Sleeper/Drifter sites, 7f Thera exits | Not started |
+
+| BLOCKED | 7d signatures in probe scanning | Design 14: no wormhole rows in the probe path; scan-strength value not read from the wiki |
+| BLOCKED | 7e Sleeper and Drifter sites | Design 14: site content not published (owner decision needed) |
+| BLOCKED | 7f Thera exits | Design 14: Thera's connections are wandering (K-space), cut by owner decision |
+
+### Slice 8 (2026-10-12)
+
+| Status | Item | Missing work |
+|---|---|---|
+| DONE (tests) | Thera's seeded connections (12, documented types and endpoints), respawn after collapse | `TheraConnectionsTests`. Design 15 |
+| BLOCKED | Signature scan strength per type | No per-type value in the wiki pages or EveJS (design 15) |
+| PARTIAL | Sleeper/Drifter sites | Combat site names per class from the wiki; per-system counts and shares not published (design 15) |
+| NOT DONE | Environment effects in the Rust sim | Design 15 |
+| NOT DONE | Service-layer wormhole jump tests; headless live check | Design 15 |

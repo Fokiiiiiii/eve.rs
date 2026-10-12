@@ -809,6 +809,8 @@ private static void WriteAction(Writer w, SimAction action)
                 w.F64(m.Radius);
                 w.I64(m.KillerShipId);
                 WriteWreckKind(w, m.WreckKind);
+                w.I32(m.ShipTypeId);
+                w.I32(m.CorporationId);
                 break;
             case SimChargeSpent m:
                 w.U8(Kind.ChargeSpent);
@@ -991,6 +993,29 @@ private static void WriteAction(Writer w, SimAction action)
                 w.I64(m.StructureId);
                 w.U8((byte)m.Depleted);
                 w.U8(m.OverThreshold ? (byte)1 : (byte)0);
+                break;
+            case SimPlaceWormhole m:
+                if (!(double.IsFinite(m.Radius) && m.Radius >= 0 && double.IsFinite(m.DestinationRadius) && m.DestinationRadius >= 0
+                      && double.IsFinite(m.MaxJumpMass) && m.MaxJumpMass >= 0))
+                    throw new SimLinkException(SimLinkError.BadValue, "wormhole");
+                w.U8(Kind.PlaceWormhole);
+                w.I64(m.WormholeId);
+                w.I32(m.SolarSystemId);
+                w.Text(m.Name);
+                w.I32(m.TypeId);
+                w.I32(m.GroupId);
+                WriteVector(w, m.Position);
+                w.F64(m.Radius);
+                w.I32(m.DestinationSystemId);
+                w.I64(m.DestinationEnd);
+                w.I32(m.DestinationClass);
+                WriteVector(w, m.DestinationPosition);
+                w.F64(m.DestinationRadius);
+                w.F64(m.MaxJumpMass);
+                break;
+            case SimRemoveWormhole m:
+                w.U8(Kind.RemoveWormhole);
+                w.I64(m.WormholeId);
                 break;
             case SimRemoveStructure m:
                 w.U8(Kind.RemoveStructure);

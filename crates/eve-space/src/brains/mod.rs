@@ -9,6 +9,8 @@
 mod ballpark;
 mod dogma;
 #[cfg(test)]
+mod pochven_tests;
+#[cfg(test)]
 pub(crate) mod rat_tests;
 mod rats;
 mod world;
@@ -28,7 +30,7 @@ use crate::scene::{Out, Scene, SessionId, TICKS_PER_SECOND};
 use crate::ship::Ship;
 use crate::warp::PythonRandom;
 
-pub use rats::{BELT_RAT, RAT_TAG};
+pub use rats::{BELT_RAT, POCHVEN_NPC, POCHVEN_NPC_TAG, RAT_TAG};
 pub use world::SceneWorld;
 
 /// How often the trees are ticked, in FILETIME ticks.
@@ -202,9 +204,12 @@ impl Brains {
         solar_system_id: i64,
         behavior: &str,
         group_id: i64,
+        owners: crate::pochven_population::Owners,
     ) -> Result<(), GiveError> {
         let tree = if behavior == BELT_RAT {
             rats::create_belt_rat_behavior_tree()
+        } else if let Some(stationary) = rats::pochven_tree_kind(behavior) {
+            rats::create_pochven_behavior_tree(stationary, &owners)
         } else {
             self.loader.load(behavior, Some(ScopeType::Item)).map_err(|error| match error {
                 LoaderError::BehaviorDoesNotExist => GiveError::Unknown(behavior.to_string()),
@@ -232,7 +237,11 @@ impl Brains {
                 Sensor {
                     type_id: PROXIMITY_SENSOR_TYPE,
                     detection_range: npc.combat.aggression_range.max(MIN_ACQUISITION_RANGE),
-                    tags: vec![RAT_TAG.to_string()],
+                    // the tag the behavior's tree listens for (`rats.rs`): a Pochven NPC's tree listens for its own
+                    tags: vec![
+                        if rats::pochven_tree_kind(behavior).is_some() { POCHVEN_NPC_TAG } else { RAT_TAG }
+                            .to_string(),
+                    ],
                     in_range: BTreeSet::new(),
                 },
             );

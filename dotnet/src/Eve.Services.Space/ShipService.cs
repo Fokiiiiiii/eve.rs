@@ -76,8 +76,7 @@ public sealed partial class ShipService(
         var subsystemIds = SpaceDrones.IdsOf(call.Kwarg("subSystems") ?? call.Arg(2));
         var name = (call.Kwarg("name") ?? call.Arg(1)) switch
         {
-            PyStr text => text.Value,
-            PyWString text => text.Value,
+            var text when Eve.Macho.JsSemantics.StringValue(text) is not null => Eve.Macho.JsSemantics.StringValue(text)!,
             _ => null,
         };
         var changes = await ships.AssembleAsync(character, station, shipIds, subsystemIds, shipIds.Count == 1 ? name : null, call.Cancellation);

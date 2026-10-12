@@ -36,8 +36,7 @@ public sealed partial class AlertService
 
     private static string Text(PyValue? value) => value switch
     {
-        PyStr text => text.Value,
-        PyWString text => text.Value,
+        var text when Eve.Macho.JsSemantics.StringValue(text) is not null => Eve.Macho.JsSemantics.StringValue(text)!,
         PyToken text => text.Value,
         PyBytes text => Encoding.UTF8.GetString(text.Value.Span),
         _ => "",

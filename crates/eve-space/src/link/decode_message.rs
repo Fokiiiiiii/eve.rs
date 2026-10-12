@@ -408,6 +408,8 @@ impl Message {
                 radius: r.f64()?,
                 killer_ship_id: r.i64()?,
                 wreck_kind: read_wreck_kind(&mut r)?,
+                ship_type_id: r.i32()?,
+                corporation_id: r.i32()?,
             },
             kind::CHARGE_SPENT => {
                 Message::ChargeSpent { session_id: r.u64()?, module_id: r.i64()?, rounds_left: r.i64()? }
@@ -551,6 +553,40 @@ impl Message {
                 let over_threshold = read_flag(&mut r, "structure damage")?;
                 Message::StructureDamaged { structure_id, depleted, over_threshold }
             }
+            kind::PLACE_WORMHOLE => {
+                let wormhole_id = r.i64()?;
+                let solar_system_id = r.i32()?;
+                let name = r.text()?;
+                let type_id = r.i32()?;
+                let group_id = r.i32()?;
+                let position = read_vector(&mut r)?;
+                let radius = r.f64()?;
+                let destination_system_id = r.i32()?;
+                let destination_end = r.i64()?;
+                let destination_class = r.i32()?;
+                let destination_position = read_vector(&mut r)?;
+                let destination_radius = r.f64()?;
+                let max_jump_mass = r.f64()?;
+                if ![radius, destination_radius, max_jump_mass].iter().all(|v| v.is_finite() && *v >= 0.0) {
+                    return Err(DecodeError::BadValue("wormhole"));
+                }
+                Message::PlaceWormhole(Box::new(WormholePlacement {
+                    wormhole_id,
+                    solar_system_id,
+                    name,
+                    type_id,
+                    group_id,
+                    position,
+                    radius,
+                    destination_system_id,
+                    destination_end,
+                    destination_class,
+                    destination_position,
+                    destination_radius,
+                    max_jump_mass,
+                }))
+            }
+            kind::REMOVE_WORMHOLE => Message::RemoveWormhole { wormhole_id: r.i64()? },
             kind::REMOVE_STRUCTURE => Message::RemoveStructure { structure_id: r.i64()? },
             kind::SET_STRUCTURE_STATE => {
                 let solar_system_id = r.i32()?;
@@ -1191,7 +1227,7 @@ impl Message {
                     return Err(DecodeError::BadValue("tether state"));
                 }
                 Message::TetherChanged { session_id, previous_structure_id, structure_id, repairing }
-            },
+            }
             kind::DESTROY => Message::Destroy { ship_id: r.i64()?, credit: read_credit(&mut r)? },
             kind::TARGET_REFUSED => Message::TargetRefused {
                 session_id: r.u64()?,

@@ -94,11 +94,11 @@ public sealed partial class TradeMgrService(CharacterSessions sessions, TradeAut
         _bound[oid] = tradeId;
         var bound = new PySubStruct(new PySubStream(Py.Tuple(new PyStr(oid), new PyLong(Py.FileTimeFromUnixMs(Now())))));
         PyValue result = None;
-        if (call.Arg(1) is PyTuple { Items.Count: > 0 } nested && nested.Items[0] is PyStr method)
+        if (call.Arg(1) is PyTuple { Items.Count: > 0 } nested && Eve.Macho.JsSemantics.StringValue(nested.Items[0]) is { } method)
         {
             result = await ((IService)this).CallAsync(new ServiceCall
             {
-                Method = method.Value,
+                Method = method,
                 Args = [.. ArgsOf(nested.Items.Count > 1 ? nested.Items[1] : None)],
                 Kwargs = nested.Items.Count > 2 ? nested.Items[2] : None,
                 Session = call.Session,
@@ -400,7 +400,7 @@ public sealed partial class TradeMgrService(CharacterSessions sessions, TradeAut
         if (entries is null) return None;
         foreach (var (key, field) in entries)
         {
-            if (key is PyStr text && text.Value == name) return field;
+            if (Eve.Macho.JsSemantics.StringValue(key) == name) return field;
         }
         return None;
     }

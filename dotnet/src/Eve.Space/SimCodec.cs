@@ -27,7 +27,7 @@ public sealed class SimLinkException(SimLinkError error, string message) : Excep
 /// </summary>
 public static partial class SimCodec
 {
-    public const ushort ProtocolVersion = 62;
+    public const ushort ProtocolVersion = 64;
     /// <summary>The largest frame either side accepts (1 MiB).</summary>
     public const int MaxFrame = 1 << 20;
 
@@ -196,7 +196,7 @@ public static partial class SimCodec
                 message = new SimJumped(r.U64(), r.I32(), r.I64(), r.I32(), r.I64());
                 break;
             case Kind.Destroyed:
-                message = new SimDestroyed(r.U64(), r.I64(), r.I64(), ReadVector(ref r), ReadVector(ref r), r.F64(), r.I64(), ReadWreckKind(ref r));
+                message = new SimDestroyed(r.U64(), r.I64(), r.I64(), ReadVector(ref r), ReadVector(ref r), r.F64(), r.I64(), ReadWreckKind(ref r), r.I32(), r.I32());
                 break;
             case Kind.Respawn:
                 message = new SimRespawn(r.U64(), ReadShip(ref r), ReadVector(ref r), ReadVector(ref r));
@@ -693,6 +693,33 @@ public static partial class SimCodec
                     message = new SimPlaceProbe(probe, system, name, type, group, position, radius, owner, corporation, alliance, ship);
                     break;
                 }
+            case Kind.PlaceWormhole:
+                {
+                    var wormhole = r.I64();
+                    var system = r.I32();
+                    var name = r.Text();
+                    var type = r.I32();
+                    var group = r.I32();
+                    var position = ReadVector(ref r);
+                    var radius = r.F64();
+                    var destinationSystem = r.I32();
+                    var destinationEnd = r.I64();
+                    var destinationClass = r.I32();
+                    var destinationPosition = ReadVector(ref r);
+                    var destinationRadius = r.F64();
+                    var maxJumpMass = r.F64();
+                    if (!(double.IsFinite(radius) && radius >= 0 && double.IsFinite(destinationRadius) && destinationRadius >= 0
+                          && double.IsFinite(maxJumpMass) && maxJumpMass >= 0))
+                    {
+                        throw new SimLinkException(SimLinkError.BadValue, "bad wormhole");
+                    }
+                    message = new SimPlaceWormhole(wormhole, system, name, type, group, position, radius, destinationSystem, destinationEnd,
+                        destinationClass, destinationPosition, destinationRadius, maxJumpMass);
+                    break;
+                }
+            case Kind.RemoveWormhole:
+                message = new SimRemoveWormhole(r.I64());
+                break;
             case Kind.PlaceStructure:
                 {
                     var structure = r.I64();

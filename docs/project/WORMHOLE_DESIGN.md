@@ -240,3 +240,235 @@ Not built, with the reason:
   Thera and Turnur connections, the headless MITM run against EveJS: not built. Reasons above; the MITM run needs a wormhole
   to walk through.
 - Owner decision 5 (SDE over wiki for type attributes; the mismatch table in section 3.3) stays as it is.
+
+## 10. Slice 3 (2026-10-12): statics and effects per system, local chat
+
+### 10.1 The data file (committed, 393 KB)
+
+- `dotnet/src/Eve.Universe/Wormholes/Data/jspace-systems.json`, embedded in `Eve.Universe`, loaded by `JSpaceSystems.Load()`.
+  One row per J-space system (2,604): id, name (client localization), class (client `wormholeClassID`), effect (name, beacon
+  typeID, strength class), statics (code and type ID), and `staticsSource`. The header names every source and the cross-checks.
+- Classes: client `native/systems.jsonl.gz` (owner decision 1; Fuzzwork not used).
+- Statics and effects of the 2,504 normal systems: EveJS v0.12.9 `tools/DatabaseCreator/staticTables/explorationWormholeStatic/data.json`
+  (`staticSlots`, `environmentEffectTypeID`). The generator's spec file (`scripts\DataSync\spec`) is not in the repository, so the
+  generator is not read; the table itself is.
+- Statics of the 100 shattered systems: EVE University "List of shattered systems" (oldid 222738, fetched 2026-10-12). The
+  table has no IDs; the names (J015092 and so on) are matched to the client's localization names, so the mapping is by name.
+  EveJS has no statics for these 100 systems (0 of 100).
+- Effect beacons: SDE group 920 (36 types), by `effectTypeID` from EveJS.
+
+### 10.2 Cross-checks (two or more sources)
+
+| Check | Result |
+|---|---|
+| Shattered systems: class, client against the wiki (matched by name) | 98 of 100. J004686: wiki 3, client 2 (EveJS 2). J011376: wiki 3, client 4 (EveJS 4) |
+| Shattered systems: effect, EveJS against the wiki | 98 of 100. J005926: EveJS `environmentFamily` Pulsar, its beacon Red Giant, the wiki Red Giant. J010569: EveJS `environmentFamily` Red Giant, its beacon Wolf Rayet, the wiki Red Giant. The wiki is used for the 100 shattered systems |
+| Shattered systems: statics, EveJS against the wiki | 0 of 100 (EveJS has none). The wiki is used |
+| Static type codes against the SDE target class (1381) | Checked by `JSpaceSystemsTests` (PgFact): every static type is a wormhole type of the pinned SDE |
+| Statics per class, EveJS against the wiki's general rule (section 3.2) | Class 1: 1 static (348 systems); class 3: 1 (494 of 495); class 5, 6: 1; class 2: 2 (525). Class 4: 1 (498 of 505), against the wiki's "usually two". Open (owner decision 7) |
+| Effect strength class against the system class | Equal for 1,006 of 1,038 systems with an effect; 32 differ (30 Drifter systems, 2 C1 to C6). The wiki says the strength "depends on the system class, which the entry wormhole indicates" |
+
+The 1,038 systems with an effect: 1,036 agree by name between EveJS `environmentFamily` and its beacon typeID (after
+the `Wolf-Rayet` / `Wolf Rayet` spelling is normalised); the two others are the two shattered systems above, where EveJS disagrees
+with itself.
+
+### 10.3 Local chat (owner decision 5)
+
+- Client (V24.01, `chat/client/local_chat/channel_controller.py`): in a wormhole system (`IsWormholeSystem`, also Zarzakh and
+  Triglavian space) the local channel is "delayed": `is_local_chat_delayed` is true, so on joining a system no members are
+  added (line 254), members are added when they speak (`_update_member_activity`, line 200), inactive members are removed
+  (`_remove_inactive_members_routine`), and `member_count` is 0 (line 139). The member list fills only when pilots speak.
+- Server (EveJS `server/src/services/chat/channelRules.js`): `isDelayedLocalSolarSystemID` (line 126) and
+  `isWormholeSolarSystemID` (line 104). The rule is the same; the server sends messages, the client shows the list.
+- eve.rs has no chat service (`dotnet/src` has no local channel; `SessionStartupRpcServices.cs` mentions only the session
+  startup). So there is nothing to change for delayed local yet. Building the local channel is a chat-service task, not a
+  wormhole task. Not built.
+
+### 10.4 What is not done in slice 3, and why
+
+- Connection generator and the static pairing. A static gives its type and its target class (the SDE 1381 and the wiki
+  "Leads to"), but not the system it leads to. Nothing published (EVE University, Anoik.is not fetched, EveJS's wandering
+  profiles hold counts, not pairs) gives the pairing. The "random wandering connections" rule is not in the wiki pages read.
+  So no connection can be created from a source. Cut until owner decision 8.
+- The setup-time loader into a dedicated PostgreSQL schema: not built. The data file is loaded in memory; no runtime
+  consumer needs a table yet.
+- Lifetime and mass jobs, the jump, the entities, the sim changes, the signatures, the effects on ships, the sites, Thera and
+  Turnur connections, the headless MITM run: not built (section 9.6 still holds). The Rust workspace could not be built in
+  this session: the disk was 6.7 GB and a Rust build needs 9 to 11 GB of target output (BRIEF), so a sim change could not be
+  compiled or tested.
+
+### 10.5 Owner decisions open after slice 3
+
+7. Class 4 statics: EveJS gives one static for 498 of 505 normal class-4 systems; the wiki says "usually two". Which holds?
+8. Static pairing: the system a static leads to. No source found. Options: a documented rule, a data source the owner
+   names, or a cut (current).
+9. The shattered list's J004686 and J011376 classes (wiki 3, client 2 and 4): keep the client.
+10. Effects of J005926 and J010569 (EveJS disagrees with itself; the wiki says Red Giant for both): the wiki is used for the
+    100 shattered systems (current). Effects of the other 2,504 systems come from the EveJS beacon.
+
+## 11. Slice 4 (2026-10-12): connection generator and durable lifecycle
+
+Code: `dotnet/src/Eve.Wormholes/` (project `Eve.Wormholes`, migration `wormhole` 0001) and tests `dotnet/tests/Eve.Wormholes.Tests/` (14 tests).
+
+- Generator (`WormholePlanner.PlanStatics`): every static of every J-space system (the committed data, 3,015 statics) gets
+  an exit to a random eligible system of its type's target class (SDE 1381: 7, 8, 9 are high-, low- and null-sec systems
+  from the client's `wormholeClassID`; the other classes are J-space classes). Eligible = not the source and not already
+  holding a connection from the source. The choice uses SplitMix64 (`SeededRandom`, fixed algorithm, golden values in a test),
+  so the same world seed gives the same connections on every runtime. The mass is the SDE stable mass times a roll in 90% to
+  110% (wiki "Wormhole Types"). No probabilities: a static exists because the data says so.
+- Owner rule applied: "excluding the source's own region neighbours where the wiki says so". The wiki pages read do not say
+  this, so no region exclusion is applied (recorded as not implemented).
+- Lifecycle (`WormholeJobs`, `WormholeStore`): one durable `wormhole.expire` job per active connection (`DurableScheduler`,
+  key = connection id, payload = connection id and seed, due at the expiry: SDE `wormholeMaxStableTime` minutes after opening).
+  When it runs, the connection collapses. A static collapse opens one replacement of the same type from the same source to a
+  random eligible system, seeded from the job seed (wiki: a static collapse opens a replacement elsewhere in the system).
+  A non-static collapse is final. A transit that empties a connection collapses it the same way and cancels its job.
+- Transit (`WormholeJobs.TransitAsync`, `WormholeLifecycle.Transit`): refused over the individual limit (SDE 1385), otherwise
+  the ship's mass comes off the wormhole; zero or less collapses it.
+- Tests: SeededRandom golden values, determinism, eligibility (target class, no self-loop, no duplicate pair), the mass
+  range, the transit rules, expiry, replacement, a transit collapse without doubling the replacement, durability across a
+  scheduler restart, and the real world (PgFact plus client data): every static of the 2,604 J-space systems gets a
+  destination of its target class.
+- Not built: the wandering connections from K-space (the K162 exits). The wiki gives no spawn probability and the CCP notes
+  read did not state one; the owner's rule needs a rate that is not published. Cut.
+- Not built: the entity in space, the simulation jump, the WormholeMgr callback, signatures, effects, sites, Thera and Turnur
+  (sections 9.6 and 10.4 still hold for these; the generator and the lifecycle are now the data they need).
+
+## 12. Slice 5 (2026-10-12): the jump path, investigated and not built
+
+Status: not built in this slice. This section records what the code and the client require, so the next slice starts from facts.
+
+### 12.1 The client's call
+
+- `eve/client/script/ui/services/menuSvcExtras/movementFunctions.py` (lines 595 to 598): after the high-sec confirmation,
+  the client calls `sm.RemoteSvc('wormholeMgr').WormholeJump(itemID)` inside `PerformSessionChange('UI/Inflight/EnterWormhole')`.
+  `itemID` is the wormhole's item (the object the pilot picked), not a gate. `GetWormholePolarization` is the other method.
+- The session change is the client's; the server must send the session change and the jump effect as the stargate path does.
+- `eve/client/script/parklife/spaceMgr.py` (`OnWormholeJumpCancel`, line 94) and the jump indicator (lines 492 to 506) are
+  the client's answers to a cancelled or a running jump.
+
+### 12.2 The server path that exists
+
+- `dotnet/src/Eve.Services.Space/ActivityTravelRpcServices.cs`: `WormholeMgrService` answers `WormholeJump` through a
+  callback. The composition passes none (`dotnet/src/Eve.Host/Rpc/SpaceRpc.cs` line 72), so the call returns None.
+- The stargate jump is `SpaceSessions.JumpAsync` (`SpaceSessions.Movement.cs` line 217): checks, the toll, then the
+  simulation's `Jump` command with `[gateId, toGateId]`, then `FinishJumpAsync` (line 338) when the simulation reports the ship
+  has left (`SimJumped`), which moves the ship and the character to the destination system (`_ships.JumpAsync`).
+- The simulation side is `crates/eve-space/src/scene/jump.rs`: `jump()` (line 31) accepts only a body of kind
+  `BodyKind::Stargate` (line 60) with `Detail::Stargate`; `due_jumps()` (line 231) takes the ship out of this scene; `arrive()`
+  (line 266) places it at a stargate of the destination system (`system.body(traveller.to_gate)` of kind Stargate, line 281),
+  so the far end must be a body of that system.
+
+### 12.3 What a wormhole needs in the simulation
+
+1. A body kind: `BodyKind::Wormhole` and `Detail::Wormhole { destination_system, destination_end }` in `world.rs`.
+2. A placement: the host puts each end in space the way it puts a structure (`place_structure`, `scene/structures.rs`, protocol 59).
+   A new link message (protocol 60) and its C# codec and golden fixtures, as AGENTS.md requires. Both ends are needed: the
+   source end in the source scene, the far end in the destination scene. A scene exists only while a ship is in the system
+   (ADR 0007), so the far end must be placed when the destination scene is made or carried by the jump command.
+3. `jump()` accepts the wormhole body; the mass check (`WormholeJobs.TransitAsync`) is the host's and must run before the
+   simulation moves the ship. Its refusal must reach the client as the reference does.
+4. `arrive()` places the ship at the far end (a position in front of it, the random bearing as `gate::arrival` does).
+5. The C# side: `WormholeMgrService` callback in the composition that runs the transit and then the simulation command, with
+   the same toll-free path as the stargate; `FinishJumpAsync` reused.
+
+### 12.4 Other items, and what exists
+
+- Effects as dogma modifiers: no system-wide effect mechanism exists in eve.rs. `grep` of `crates/eve-space` and
+  `dotnet/src/Eve.Dogma`, `Eve.Services.Space` finds only deployable beacons (cyno, lance, CRAB), not environment effects. The
+  Abyssal, Pochven and Triglavian effects are not implemented either. A new modifier source (per system, applied to every
+  ship's attribute calculation) has to be built first; it is not a reuse.
+- Signatures: the probe scanner (`SpaceProbeScans`) exists. The signature rows of wormholes (scan group 3, `Cosmic Signature`,
+  strength attribute 1908) are in EveJS's `explorationAuthority` table; no type in the SDE carries attribute 1908.
+  Scan strength per wiki is not on the pages read.
+- Sleeper and Drifter sites: the dungeon machinery exists (`DungeonWaveDirector`, `Eve.Dungeons`), but no wormhole site
+  archetype is loaded; the site counts are not published (design 4).
+- Thera and Turnur: a static exit to Thera (class 12) has a pool of one system (31000005). Thera has no statics (data file).
+  Turnur (J377 leads there) needs the K-space side, which is cut with the wandering connections.
+- Delayed local: no chat service in eve.rs (section 10.3). Skipped.
+- Headless MITM run: needs a wormhole the client can enter, so it waits for 12.3.
+
+### 12.5 Decision for the next slice
+
+Build 12.3 in order (1, 2, 3, 4, 5) with tests at each step: a Rust unit test for the jump and the arrival, a PG test for the
+transit, and the golden fixture for the new link message. The effects (12.4) are a separate slice that needs an owner decision
+on where the modifier applies (the ship's attribute calculation in `eve-space`, or the dogma service in C#).
+
+## 13. Slice 6 step (a): the wormhole ends in the simulation (protocol 63)
+
+Done (code, goldens, tests):
+
+- `crates/eve-space`: `BodyKind::Wormhole` and `Detail::Wormhole { destination_system, destination_end, destination_class,
+  destination_position, destination_radius, max_jump_mass }` (`world.rs`); `WormholePlacement` and the messages
+  `PlaceWormhole` (kind 82) and `RemoveWormhole` (kind 83) (`link/`), decoded and encoded; `PROTOCOL_VERSION` 62 -> 63.
+- `scene/wormholes.rs`: a host-placed wormhole end is a body of its system, told to the bound pilots (`AddBalls2` with the
+  slim `otherSolarSystemClass`); `remove_wormhole` takes it out (`RemoveBalls`). `dispatch.rs` routes both messages.
+- `scene/jump.rs`: `jump()` accepts a wormhole end as well as a stargate (same range, 2.5 km from the surface, the same stop
+  and jump-out effect); the traveller carries the far end's position and radius (`to_far_end`); `arrive()` places the ship
+  by the far end (`wormhole_arrival`).
+- Tests: two scene tests (placement, jump to the far end, arrival clear of the far end and facing it; out of reach, removed).
+  Fixtures: `oracle/fixtures/simlink/messages.json` (generated by `tools/dev/gen-simlink-fixtures.py`, two cases each for
+  PlaceWormhole and RemoveWormhole; the Hello version is 63). The Rust replay (`simlink_fixtures`, 7 tests) and the C#
+  codec tests (`SimCodecTests`, 299 tests) both pass on the same bytes.
+- Verified: `cargo fmt -p eve-space`, `cargo clippy -p eve-space --all-targets -- -D warnings` (clean), `cargo test -p eve-space
+  -p eve-sim` (747 + 7 + 5 + ... all pass; the pinned protocol test is 63).
+- Formatting: `cargo fmt` also rewrote unrelated files in `crates/eve-space`; those were reverted so the diff holds only the
+  wormhole work.
+
+Not done (the rest of step (b) onward):
+
+- The far end's body in its own scene. `arrive()` places the ship by the far end's position, but the far end is not a body of
+  the destination scene, so a pilot who arrives cannot jump back out through it. The fix is a placement of both ends by the
+  host (both ends of one connection share it) or the far end inserted by the arrival; the placement needs the far end's type
+  and name, which the traveller does not carry yet.
+- The C# side that places the ends (both ends of every active connection, from the store, with deterministic positions) and
+  the `WormholeMgr.WormholeJump` callback (`SpaceSessions` jump through the lifecycle `TransitAsync`: mass, collapse,
+  notifications, `RemoveWormhole` for the two ends).
+- The composition: the world (the planner's connections opened once, `wormhole.expire` registered with the scheduler, the
+  client classes and the SDE types loaded at start-up).
+- The effects, signatures, sites and Thera exits (steps c to f).
+- The live check (tools/mitm against EveJS): needs the jump to exist.
+
+## 14. Slice 7 (2026-10-12): status of steps d to f
+
+- (d) Signatures in probe scanning: NOT BUILT. Sources read: EveJS `wormholeSignatureProvider.js` (signature rows: scan group 3,
+  inventory group 502 `Cosmic Signature`, strength attribute 1908 from `explorationAuthority.scanStrengthAttributes`; the per-signature
+  strength value is not read in the provider) and `explorationAuthority.signatureTypeDefinitions.wormhole`. The SDE carries attribute
+  1908 on no type. The eve.rs probe path (`SpaceProbeScans`, the dungeon signature count in `DungeonRpcServices`, which has a
+  `VisibleWormholeSignatureCountsBySystem` input that nothing fills) has no wormhole rows. The wiki's scan-strength value for a
+  wormhole was not read in this slice. Next: one row per wormhole end in the probe's result, with the strength the wiki gives.
+- (e) Sleeper and Drifter sites: BLOCKED. The sites' counts, NPC compositions per class and respawn are not published (design 4, 10.4);
+  the dungeon machinery exists, the content does not. Needs an owner decision on the content source.
+- (f) Thera exits: BLOCKED. The wiki says Thera has "a dozen or so wormholes to high-, low-, and null-sec at any given time", tracked
+  by EVE Scout (the Thera page read on 2026-10-12): those are not static, so they are the K-space wandering connections, which the
+  owner keeps cut (decision 1 of slice 5). Thera has no static in the data file (`jspace-systems.json`).
+
+## 15. Slice 8 (2026-10-12): Thera's connections; the signature strength, the sites, the sim
+
+- Thera's connections (DONE, tests): `TheraConnections` (`Eve.Wormholes`). Sources: EVE University "Thera" (https://wiki.eveuniversity.org/Thera,
+  fetched 2026-10-12: "a dozen or so wormholes to high-, low-, and null-sec at any given time", tracked by EVE Scout); EVE University
+  "Wormhole Types" (the endpoints of the eight types with an end in Thera: F135 class 2 or 3 to Thera, F353 class 1, L031 null, M164
+  low, T458 high; Q063 Thera to high, V898 Thera to low, E587 Thera to null). The rule: 12 connections, each of a type drawn with a
+  seed (SplitMix64), its free end drawn among the systems of the type's classes that are not Thera and not already connected to
+  Thera. A collapsed Thera connection is opened again the same way (owner rule: respawn). Count 12 is the page's "a dozen or so";
+  the counts per type are not published (DEVIATIONS). Tests: `TheraConnectionsTests` (4 incl. a PG respawn), 21 wormhole tests in all.
+- Signature scan strength (NOT DONE, blocker): the EVE University pages read give no per-type scan strength: "Wormholes" (the
+  level system is not on the page), "Cosmic signature" (the probe-scan page: sensor thresholds per level only), "Wormhole Space"
+  (no signature counts or scan values). A web search found only forum posts (a 10-point scale and Pathfinder's 2.5% and 6.67% numbers)
+  that are not official. EveJS carries the strength attribute id (1908) and no per-type value (its provider reads none). So no per-type
+  strength is available from the sources; the probe scanner cannot be given the values without an owner decision.
+- Sleeper and Drifter sites (PARTIAL, blocker on the numbers): the wiki "Wormhole Space" page gives the combat site names per class
+  (C1: Perimeter Ambush Point, Perimeter Camp, Phase Catalyst Node, The Line; C2: Perimeter Checkpoint, Perimeter Hangar, The Ruins of
+  Enclave Cohort 27, Sleeper Data Sanctuary; C3: Fortification Frontier Stronghold, Outpost Frontier Stronghold, Solar Cell, The Oruze
+  Construct; C4: Frontier Barracks, Frontier Command Post, Integrated Terminus, Sleeper Information Sanctum; C5: Core Garrison, Core
+  Stronghold, Oruze Osobnyk, Quarantine Area; C6: Core Citadel, Core Bastion, Strange Energy Readings, The Mirror). The same page: the
+  number of cosmic signatures per system and the shares of combat, relic, data, gas and ore sites are NOT stated; C13 is not described.
+  The Drifter wormholes: each has five multi-room combat sites, and six statics to C1 to C6 (Z647, D382, O477, Y683, N062, R474).
+  The SDE has the site templates (dungeons with the factions 500021 Sleeper and 500024 Drifter). Blocked on the per-system counts;
+  the names above can select templates once the owner gives the count rule.
+- Environment effects in the simulation (NOT DONE): the Rust sim owns the ship's speed, signature radius, shield, armor, capacitor and
+  the module numbers; the C# attribute sync to the sim is the ship spec at entry (`SimShips.Of`). Extending it means a per-attribute
+  list in the spec and in the sim's ship model. Not started in this slice.
+- The service-layer jump tests (NOT DONE): the harness exists (`SpaceServiceTests`, the gate jump tests) but a wormhole world needs a
+  store and a scheduler in the space test rig. Not started.
+- The live check (NOT DONE): needs the sim, a static wormhole in a K-space system, and the MITM capture against EveJS; not run.

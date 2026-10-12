@@ -18,6 +18,7 @@ mod session;
 mod structures;
 mod tether;
 mod warping;
+mod wormholes;
 use self::collision::*;
 pub use self::decloak::{CLOAK_PROXIMITY_METERS, CloakTrigger, DecloakCause};
 #[cfg(test)]
@@ -273,6 +274,9 @@ pub enum Out {
         direction: Vec3,
         radius: f64,
         killer_ship: Option<i64>,
+        /// The type and the corporation of the ship (the host prices an NPC's kill by its type, `NpcBounty`).
+        ship_type_id: i32,
+        corporation_id: i32,
     },
     /// A turret spent rounds: how many it has left (the host keeps the quantity of the charge item).
     ChargeSpent { session: SessionId, module_id: i64, rounds_left: i64 },
@@ -618,6 +622,8 @@ pub(crate) struct PendingJump {
     destination_gate: i64,
     /// The cynosural field a jump drive goes to (0 for a stargate jump); the arrival is at the field, not at a gate.
     field_id: Option<i64>,
+    /// The far end of a wormhole the ship came through: its position and radius (the arrival is by it, not by a gate).
+    far_end: Option<(Vec3, f64)>,
     leaves_at: i64,
 }
 
@@ -631,6 +637,8 @@ pub struct Traveller {
     pub to_gate: i64,
     /// The cynosural field the ship jumped to, when it did not go through a gate (the arrival is at the field).
     pub to_field: Option<i64>,
+    /// The far end of the wormhole the ship came through, when it did (the arrival is by the far end).
+    pub to_far_end: Option<(Vec3, f64)>,
     pilot: Pilot,
 }
 
@@ -690,6 +698,8 @@ pub struct Scene {
     pub(crate) unpiloted: BTreeMap<i64, SessionId>,
     /// The health of each structure in space, by id (`crate::health::StructureHealth`).
     pub(crate) structure_health: BTreeMap<i64, crate::health::StructureHealth>,
+    /// The Pochven population of the system (`crate::pochven_population`).
+    pub(crate) pochven: crate::pochven_population::Population,
 }
 
 /// What the client of a destroyed ship still has of the ballpark: it keeps it when it is given a new ship.
@@ -737,6 +747,7 @@ impl Scene {
             widowed: BTreeMap::new(),
             unpiloted: BTreeMap::new(),
             structure_health: BTreeMap::new(),
+            pochven: Default::default(),
             wreck_catalog: None,
         }
     }

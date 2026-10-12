@@ -97,3 +97,8 @@ pub const ECM_BURST: u8 = 67;
 pub const TETHER_POLICY: u8 = 80;
 /// Simulation tether transition sent to the host (protocol 62).
 pub const TETHER_CHANGED: u8 = 81;
+
+/// The host puts a wormhole end in space (protocol 63).
+pub const PLACE_WORMHOLE: u8 = 82;
+/// The host takes a wormhole end out of space (protocol 63).
+pub const REMOVE_WORMHOLE: u8 = 83;

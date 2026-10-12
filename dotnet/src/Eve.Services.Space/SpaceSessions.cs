@@ -542,8 +542,6 @@ private readonly TransitionRuntime _transitions;
                 ("locationid", new PyInt(character.StationId)),
                 ("worldspaceid", None),
             ]);
-            if (session.CharacterId != characterId && character.ShipId == ship.Id)
-                attributes.Add(("deferredDockedShipId", new PyLong(ship.Id)));
         }
         else if (StructureExistsAsync is not null &&
                  await StructureExistsAsync(character.StationId, cancellationToken))
@@ -559,8 +557,6 @@ private readonly TransitionRuntime _transitions;
                 ("locationid", new PyInt(character.SolarSystemId)),
                 ("worldspaceid", None),
             ]);
-            if (session.CharacterId != characterId && character.ShipId == ship.Id)
-                attributes.Add(("deferredDockedShipId", new PyLong(ship.Id)));
         }
         return attributes;
     }
@@ -569,7 +565,6 @@ private readonly TransitionRuntime _transitions;
         ClientSession session, long characterId, CancellationToken cancellationToken)
     {
         session.Set(LoginInventoryBootstrapPending, None);
-        session.Set("deferredDockedShipId", None);
         await OnSessionClosedAsync(session);
     }
 
@@ -683,17 +678,6 @@ private readonly TransitionRuntime _transitions;
         bool activeSpaceShipInventoryList,
         CancellationToken cancellationToken)
     {
-        if (stationHangar && method == "List" &&
-            session.Get("deferredDockedShipId") is PyLong pendingShip && pendingShip.Value > 0)
-        {
-            session.AfterResponse(() =>
-            {
-                session.Change(("shipid", new PyLong(pendingShip.Value)));
-                session.Set("deferredDockedShipId", None);
-            });
-            return;
-        }
-
         if (method != "List" || !activeSpaceShipInventoryList ||
             session.GetInt(LoginInventoryBootstrapPending) != 1)
             return;
@@ -831,6 +815,11 @@ private readonly TransitionRuntime _transitions;
                 case SimDestroyed destroyed when _npcShips.TryRemove(destroyed.ShipId, out var npc):
                     ForgetLockedTarget(destroyed.ShipId);
                     Background(() => FinishNpcDeathAsync(npc, destroyed));
+                    break;
+                // an NPC the simulation keeps (a Pochven sentry or fighter): no profile here, so its type's bounty in the static data pays the last blow
+                case SimDestroyed destroyed when destroyed.SessionId >= SimNpcSessionBase:
+                    ForgetLockedTarget(destroyed.ShipId);
+                    Background(() => PaySimNpcBountyAsync(destroyed, _pilots.Values.FirstOrDefault(pilot => pilot.ShipId == destroyed.KillerShipId)));
                     break;
                 case SimChargeSpent spent when _pilots.TryGetValue(spent.SessionId, out var shooter):
                     _charges.Enqueue(spent.SessionId, shooter.CharacterId, spent.ModuleId, spent.RoundsLeft);

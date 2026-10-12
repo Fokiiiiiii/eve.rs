@@ -154,6 +154,12 @@ public interface ISimulation
     /// <summary>The host puts an Upwell structure in space (protocol 59).</summary>
     void PlaceStructure(SimPlaceStructure structure);
 
+    /// <summary>The host puts a wormhole end in space (protocol 63).</summary>
+    void PlaceWormhole(SimPlaceWormhole wormhole);
+
+    /// <summary>The host takes a wormhole end out of space (protocol 63).</summary>
+    void RemoveWormhole(long wormholeId);
+
     void SetTetherPolicy(SimTetherPolicy policy);
 
     /// <summary>The host takes a structure out of space (protocol 59).</summary>

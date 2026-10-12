@@ -174,6 +174,8 @@ impl Sim {
                 direction,
                 radius,
                 killer_ship,
+                ship_type_id,
+                corporation_id,
             } => Message::Destroyed {
                 session_id: session,
                 ship_id,
@@ -183,6 +185,8 @@ impl Sim {
                 direction: [direction.x, direction.y, direction.z],
                 radius,
                 killer_ship_id: killer_ship.unwrap_or(0),
+                ship_type_id,
+                corporation_id,
             },
             Out::ChargeSpent { session, module_id, rounds_left } => {
                 Message::ChargeSpent { session_id: session, module_id, rounds_left }
@@ -393,6 +397,8 @@ impl Sim {
             | Message::RemoveDeployed { .. }
             | Message::PlaceStructure(..)
             | Message::RemoveStructure { .. }
+            | Message::PlaceWormhole(..)
+            | Message::RemoveWormhole { .. }
             | Message::SetStructureState { .. }
             | Message::PlaceProbe(..)
             | Message::RemoveProbe { .. }
@@ -885,11 +891,10 @@ impl Sim {
     /// Asteroids, wrecks and containers that the host places in a system or removes from it.
     fn handle_world(&mut self, message: Message, now: i64) -> Result<Vec<Message>, ProtocolError> {
         let outs = match message {
-            Message::TetherPolicy { session_id, blocked_for_ms, lease_ms, candidates } => {
-                self.scene_of(session_id).map(|scene| {
-                    scene.set_tether_policy(session_id, blocked_for_ms, lease_ms, candidates, now)
-                }).unwrap_or_default()
-            }
+            Message::TetherPolicy { session_id, blocked_for_ms, lease_ms, candidates } => self
+                .scene_of(session_id)
+                .map(|scene| scene.set_tether_policy(session_id, blocked_for_ms, lease_ms, candidates, now))
+                .unwrap_or_default(),
             Message::PlaceAsteroid(placement) => match self.scenes.get_mut(&placement.solar_system_id) {
                 Some(scene) => {
                     let p = *placement;
@@ -962,6 +967,27 @@ impl Sim {
                     None => Vec::new(),
                 }
             }
+            Message::PlaceWormhole(wormhole) => {
+                // a wormhole end is placed in its system whether or not a ship is there: the host places the ends of a system before a ship enters
+                // or arrives in it, and the scene of the system is made for them (a scene with no ship is left as the arrival leaves it)
+                let wormhole = *wormhole;
+                let system_id = wormhole.solar_system_id;
+                if !self.scenes.contains_key(&system_id) {
+                    let Ok(system) = self.universe.system(system_id) else { return Ok(Vec::new()) };
+                    let scene = self.universe.scene_of(system);
+                    self.scenes.insert(system_id, scene);
+                }
+                match self.scenes.get_mut(&system_id) {
+                    Some(scene) => scene.place_wormhole(wormhole, now),
+                    None => Vec::new(),
+                }
+            }
+            Message::RemoveWormhole { wormhole_id } => self
+                .scenes
+                .values_mut()
+                .find(|scene| scene.wormhole_index(wormhole_id).is_some())
+                .map(|scene| scene.remove_wormhole(wormhole_id, now))
+                .unwrap_or_default(),
             Message::RemoveStructure { structure_id } => self
                 .scenes
                 .values_mut()

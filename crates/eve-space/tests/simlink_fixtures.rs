@@ -903,6 +903,8 @@ fn message_of(case: &Value) -> Message {
             radius: case["radius"].as_f64().unwrap(),
             killer_ship_id: wide(case, "killerShipId"),
             wreck_kind: wreck_kind_of(case.get("wreckKind")),
+            ship_type_id: case["shipTypeId"].as_i64().unwrap() as i32,
+            corporation_id: case["corporationId"].as_i64().unwrap() as i32,
         },
         "Respawn" => Message::Respawn {
             session_id: session_id(),
@@ -1022,9 +1024,15 @@ fn message_of(case: &Value) -> Message {
             session_id: wide(case, "sessionId") as u64,
             blocked_for_ms: wide(case, "blockedForMs") as u64,
             lease_ms: wide(case, "leaseMs") as u64,
-            candidates: case["candidates"].as_array().unwrap().iter().map(|candidate| eve_space::link::TetherCandidate {
-                structure_id: wide(candidate, "structureId"), range: candidate["range"].as_f64().unwrap(),
-            }).collect(),
+            candidates: case["candidates"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|candidate| eve_space::link::TetherCandidate {
+                    structure_id: wide(candidate, "structureId"),
+                    range: candidate["range"].as_f64().unwrap(),
+                })
+                .collect(),
         },
         "TetherChanged" => Message::TetherChanged {
             session_id: wide(case, "sessionId") as u64,
@@ -1032,6 +1040,22 @@ fn message_of(case: &Value) -> Message {
             structure_id: wide(case, "structureId"),
             repairing: case["repairing"].as_bool().unwrap(),
         },
+        "PlaceWormhole" => Message::PlaceWormhole(Box::new(eve_space::link::WormholePlacement {
+            wormhole_id: wide(case, "wormholeId"),
+            solar_system_id: number("solarSystemId") as i32,
+            name: text(case, "typeName"),
+            type_id: number("typeId") as i32,
+            group_id: number("groupId") as i32,
+            position: vector_of(case, "position"),
+            radius: case["radius"].as_f64().unwrap(),
+            destination_system_id: case["destinationSystemId"].as_i64().unwrap() as i32,
+            destination_end: wide(case, "destinationEnd"),
+            destination_class: case["destinationClass"].as_i64().unwrap() as i32,
+            destination_position: vector_of(case, "destinationPosition"),
+            destination_radius: case["destinationRadius"].as_f64().unwrap(),
+            max_jump_mass: case["maxJumpMass"].as_f64().unwrap(),
+        })),
+        "RemoveWormhole" => Message::RemoveWormhole { wormhole_id: wide(case, "wormholeId") },
         "RemoveStructure" => Message::RemoveStructure { structure_id: wide(case, "structureId") },
         "SetStructureState" => Message::SetStructureState {
             solar_system_id: number("solarSystemId") as i32,
@@ -1488,7 +1512,9 @@ fn status_of(value: &serde_json::Value) -> eve_space::world::StructureStatus {
     eve_space::world::StructureStatus {
         state: value["state"].as_i64().unwrap() as i32,
         upkeep_state: value["upkeepState"].as_i64().unwrap() as i32,
-        timer: value["timer"].as_array().map(|t| (t[0].as_i64().unwrap(), t[1].as_i64().unwrap(), t[2].as_i64())),
+        timer: value["timer"]
+            .as_array()
+            .map(|t| (t[0].as_i64().unwrap(), t[1].as_i64().unwrap(), t[2].as_i64())),
         unanchoring: value["unanchoring"].as_i64(),
         repairing: value["repairing"].as_bool(),
     }
@@ -1497,12 +1523,17 @@ fn status_of(value: &serde_json::Value) -> eve_space::world::StructureStatus {
 /// A structure's vitals from its fixture: the points of its shield, armor and hull, and the resonances of each layer.
 fn structure_vitals_of(case: &serde_json::Value) -> eve_space::health::Vitals {
     let v = &case["vitals"];
-    let layer = |name: &str| -> [f64; 4] { std::array::from_fn(|i| v["resonances"][name][i].as_f64().unwrap()) };
+    let layer =
+        |name: &str| -> [f64; 4] { std::array::from_fn(|i| v["resonances"][name][i].as_f64().unwrap()) };
     eve_space::health::Vitals {
         shield_capacity: v["shieldCapacity"].as_f64().unwrap(),
         armor_hp: v["armorHp"].as_f64().unwrap(),
         structure_hp: v["structureHp"].as_f64().unwrap(),
-        resonances: eve_space::health::Resonances { shield: layer("shield"), armor: layer("armor"), structure: layer("structure") },
+        resonances: eve_space::health::Resonances {
+            shield: layer("shield"),
+            armor: layer("armor"),
+            structure: layer("structure"),
+        },
         armor_pinned: false,
     }
 }

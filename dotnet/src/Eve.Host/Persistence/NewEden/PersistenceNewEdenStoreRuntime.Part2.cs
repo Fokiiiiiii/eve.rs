@@ -190,8 +190,7 @@ public sealed partial class PersistenceNewEdenStoreRuntime
     private static string RedeemQaText(PyValue? value) => value switch
     {
         null or PyNone => string.Empty,
-        PyStr text => text.Value,
-        PyWString text => text.Value,
+        var text when Eve.Macho.JsSemantics.StringValue(text) is not null => Eve.Macho.JsSemantics.StringValue(text)!,
         PyBytes text => System.Text.Encoding.UTF8.GetString(text.Value.Span),
         PyBuffer buffer => System.Text.Encoding.UTF8.GetString(buffer.Value.Span),
         _ => Eve.Macho.JsSemantics.StringValue(value) ?? string.Empty,
@@ -205,8 +204,7 @@ public sealed partial class PersistenceNewEdenStoreRuntime
         PyLong number => JsonValue.Create(number.Value),
         PyReal number when double.IsFinite(number.Value) => JsonValue.Create(number.Value),
         PyReal => null,
-        PyStr text => JsonValue.Create(text.Value),
-        PyWString text => JsonValue.Create(text.Value),
+        var text when Eve.Macho.JsSemantics.StringValue(text) is not null => JsonValue.Create(Eve.Macho.JsSemantics.StringValue(text)!),
         PyToken text => JsonValue.Create(text.Value),
         PyBytes bytes => JsonValue.Create(System.Text.Encoding.UTF8.GetString(bytes.Value.Span)),
         PyBuffer buffer => JsonValue.Create(System.Text.Encoding.UTF8.GetString(buffer.Value.Span)),

@@ -786,10 +786,10 @@ table: the names left out").
 | OPEN | `repairSvc` | `Moniker('repairSvc', ...)`, `eve/common/script/net/eveMoniker.py:227`, `eve/client/script/ui/station/repairshop/base_repairshop.py:58`; repair cycles touch ships (OUT-SHIP) | Station services; the ship part belongs to the ships track |
 | DONE | `repairSvc` | NPC station repair: `MachoBindObject` binds the repair shop of the docked station; `GetRepairQuotes` quotes ships (with their fitted and drone-bay items) and modules by damage in HP and unit cost (adjusted price x 0.1 / max HP); `RepairItemsInStation` charges and repairs in one PostgreSQL transaction (module state store, ref type 15), a fitted module in full only, a partial payment in the reference order. Open (DEVIATIONS "Repair"): structures refused, no repair without a price, no durable settlement, fitted module ids not aliased. Tests: `RepairServiceTests` (Station project, PostgreSQL). |
 | DONE | `reprocessingSvc` | Station reprocessing: `MachoBindObject` binds the plant of the docked NPC station; `GetQuotes` and `Reprocess` quote and consume the caller's items rooted at the station (hangar, containers, ship cargo), in one PostgreSQL transaction, and charge the tax through `WalletTransactions` (ref type 127). Yields: SDE station efficiency, skills, implants (legacy path), the tax from the standing; stacks above the client limit are split. Active ship refused on the server. Open (DEVIATIONS "Reprocessing"): corporation hangars, structures, randomized outputs, per-chunk quotes, live-client walk not run. Tests: `ReprocessingServiceTests`, `ReprocessingRulesTests` (Station project). |
-| OPEN | `blueprintManager` | `sm.RemoteSvc('blueprintManager')`, `eve/client/script/industry/blueprintSvc.py:24`; `sm.GetService('blueprintManager').GetBlueprintType`, `eve/common/script/util/industryCommon.py:526` (lazy) | Industry; see the row in 37c |
-| OPEN | `warRegistry` | `Moniker('warRegistry', ...)`, `eve/common/script/net/eveMoniker.py:198`, and the server-side check `sm.GetService('warRegistry').IsAllianceOrCorpLocal` at `eveMoniker.py:197` on alliance and corporation binds | Wars (corporations and alliances) |
+| DONE (543f31e) | `blueprintManager` | `sm.RemoteSvc('blueprintManager')`, `eve/client/script/industry/blueprintSvc.py:24`; `sm.GetService('blueprintManager').GetBlueprintType`, `eve/common/script/util/industryCommon.py:526` (lazy) Served: `GetLimits`, `GetBlueprintData`, `GetBlueprintDataByOwner`; facilities not modelled. Tests: `Eve.Services.Core.Tests` (`BlueprintManagerServiceTests`). DEVIATIONS "War registry, NES intro and blueprint manager". | Industry (done) |
+| DONE WITH CUTS (55e26a1) | `warRegistry` | `Moniker('warRegistry', ...)`, `eve/common/script/net/eveMoniker.py:198`, and the server-side check `sm.GetService('warRegistry').IsAllianceOrCorpLocal` at `eveMoniker.py:197` on alliance and corporation binds Served: `GetWars`, `IsAllianceOrCorpLocal`, `SetOpenForAllies`, `RetractMutualWar`; negotiations refused (not built). Tests: `Eve.Corporations.Tests` (`WarRegistryTests`). DEVIATIONS "War registry, NES intro and blueprint manager". | Wars (negotiations open) |
 | OPEN | `planetOrbitalRegistryBroker` | `ConnectToRemoteService('planetOrbitalRegistryBroker', nodeID)`, `eveplanet/orbital.py:35`; `Moniker` at `eveMoniker.py:220` | Planetary interaction (not on the start-up path) |
-| OPEN | `nes_intro` | `sm.RemoteSvc('nes_intro')` in the controller's `__init__`, `storylines/client/nes_intro.py:45`; the controller is built on the first intro check (lazy) | Storylines (New Eden intro) |
+| DONE (543f31e) | `nes_intro` | `sm.RemoteSvc('nes_intro')` in the controller's `__init__`, `storylines/client/nes_intro.py:45`; the controller is built on the first intro check (lazy) Served: `get_nes_intro_state`, `skip_nes_intro` (state table `nes_intro_states`, migration 0005); nothing sets an introduction to active, so the storyline is not run. Tests: `Eve.Characters.Tests` (`NesIntroStoreTests`), `Eve.Services.Core.Tests` (`NesIntroServiceTests`). | Storylines (intro not run) |
 | DONE WITH CUTS (448ea6a) | `accessGroupBookmarkMgr` | `sm.RemoteSvc('accessGroupBookmarkMgr')`, `eve/client/script/ui/shared/bookmarks/bookmarkSvc.py:41`; the first call is `GetMyActiveBookmarks` on the bookmark prime (`bookmarkSvc.py:163`), i.e. on use, not at boot. Served: personal folders, subfolders, bookmarks of stations and systems (schema `bookmarks`, `Eve.Bookmarks`). Open: shared (access group) folders (needs `ownerGroupManager`, structure track), `BookmarkLocation` in space, structure and celestial places. Tests: `Eve.Bookmarks.Tests`. DEVIATIONS "Bookmarks: personal folders". | Bookmarks (personal done; shared open) |
 
 ### 37b. Advertised by eve.rs, not by EVE.js (49)
@@ -1067,7 +1067,9 @@ A6 research buttons 12 to 14 done: field choice, cancel, datacores from the SDE 
 "Agents slice AG-4, A6 ..."). Open: research missions.
 A7 locator 15 to 17 done: the name, the offer with the fee, accept (fee and cooldown in one transaction, result notification type 69
 after the commit, refund if it cannot be written), reject (DEVIATIONS "Agents slice AG-4, A7"). Open: the client's localized labels for
-the dialog, the locator's standing split (faction and corporation), Host tests for delivery and refund. Next: live coverage.
+the dialog, the locator's standing split (faction and corporation). Done in AG-5 (DEVIATIONS "Agents slice AG-5"): the result is an
+outbox event (no refund), the live walks for LP store, research, locator and decline, the dialog kwargs and string fixes. Open: the quit
+walk, flying the Cockroach, the EVE.js side of the MITM capture, the client's localized labels.
 
 ## Agents slice AG-3 (2026-10-11)
 
@@ -1476,3 +1478,20 @@ follow a completed step, with forks, the 90-day restart and the held-back sites 
 | CUT | Fetch and courier objectives (item 2): not built this slice | see DEVIATIONS "Mission execution X4" |
 | HELD | Arc 29 on by default (item 3): not flipped; the live walk through step 2 has not run | owner decision |
 | FOUND | `SiteLoot` divides by a candidate count that can be zero: "the sites of system X could not be made: Attempted to divide by zero" on pilots' entry to 30100032 and 30005204 (the sites track, not the mission path) | not fixed here |
+
+## 12. Zarzakh rules and client-only system data (2026-10-12)
+
+Evidence and decisions: DEVIATIONS "Zarzakh (30100000) and the client's system flags".
+
+| Status | Item | Missing work |
+|---|---|---|
+| DONE (tests) | Client flags `disallowCyno` and `disallowScanning` read from `EVE_CLIENT_SDE_DIR/native/solarsystemcontent.jsonl.gz` at start-up; cyno lighting refused (`CannotLightCynoInSystem`) and probe launch refused in those systems | `ClientSystemFlags`, `SolarSystemCatalog.LoadAsync`, `SpaceSessions.Modules.cs`, `SpaceSessions.LaunchAsync`; tests `ClientSystemFlagsTests`, `ScanProbeHostTests`. Cyno refusal has no host test yet; no graphical-client run |
+| DONE (rule) | No sites in Zarzakh (`CosmicSiteDirector.NoSiteSystems`) | Owner decision: the real game may have sites there (see DEVIATIONS) |
+| OPEN | Zarzakh gate toll, capital gate restriction, Emanation Lock, gate guns, Deathless Shipcaster exit, gravity hazard hull damage | Stated by the wiki; not implemented |
+| OPEN | Sovereignty refusal in Zarzakh | No claim path in eve.rs yet (structures track) |
+| OPEN | Warp disruption bubbles and probes in Zarzakh | No CCP or wiki source; EveJS refuses them. Owner decision |
+| CUT | Heat, temperature, tidal forces, Point of No Return effect | No mechanic in the SDE, the client or the wiki |
+| KEPT | Pirate-faction market modifier (0.5, factions 500018 and 500019) | Already in eve.rs (`MarketRules`); EveJS-derived, not in the wiki. Owner decision |
+| CLIENT-LOCAL | Sun type and flare, system-wide cloud, warp tunnel overwrite, dscan range, anchor categories | Read by the client only; no server loader |
+| CUT | Landmarks placed by the server and the Black Monolith look-at challenge (2848) | EveJS and eve.rs both advertise `client_lookAtObject` 0; the client look-at path is not proven |
+| OPEN | Live check of the Zarzakh flags and the lane run without `EVE_CLIENT_SDE_DIR` | Needs a live run with the export set |

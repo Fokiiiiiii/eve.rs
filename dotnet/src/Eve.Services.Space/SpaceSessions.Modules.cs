@@ -139,6 +139,11 @@ public sealed partial class SpaceSessions
             {
                 throw MachoErrors.ThrowUserError(ModuleRestrictions.CantInHighSecSpace);
             }
+            // the client's disallowCyno flag (its refusal is CannotLightCynoInSystem, eveuniverse/solar_systems.py), checked after the security rule as the client does
+            if (_systems.Get(pilot.SolarSystemId) is { DisallowCyno: true })
+            {
+                throw MachoErrors.ThrowUserError("CannotLightCynoInSystem");
+            }
         }
         // a module that may not be used on warp (disallowActivateOnWarp) is refused while the ship aligns to warp or is in it: the host's warp state
         if (snapshot.Fitted.FirstOrDefault(m => m.Id == moduleId) is { } warpModule

@@ -357,10 +357,10 @@ public class HostServerTests : IAsyncLifetime
         Assert.Equal("EN", T(initial["languageID"]));
         Assert.Equal("GB", T(initial["countryCode"]));
         Assert.Equal("127.0.0.1", T(initial["address"]));
-        // the client reads inDetention without a guard, so it is sent, unset
-        Assert.Equal(PyNone.Instance, initial["inDetention"]);
+        // the reference's notification omits None-valued keys: inDetention is not sent (the client reads an absent attribute as None)
+        Assert.False(initial.ContainsKey("inDetention"));
         Assert.Equal(
-            ["languageID", "countryCode", "userid", "userType", "role", "address", "inDetention"],
+            ["languageID", "countryCode", "userid", "userType", "role", "address"],
             ((PyDict)payload[2]).Entries.Select(e => T(e.Key)!));
         // the client's address: type 2 (client), its client id
         var destination = (PyTuple)((PyObject)state[2]).Args;

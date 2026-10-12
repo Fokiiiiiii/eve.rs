@@ -72,7 +72,8 @@ internal sealed partial class CharacterServicesComposition
         modules = new PgModuleStateStore(source, fittingSchema);
         savedFittings = new PgSavedFittingStore(source, fittingSchema);
         stations = await StationCatalog.LoadAsync(sde);
-        solarSystems = await SolarSystemCatalog.LoadAsync(sde);
+        // the client's disallowCyno and disallowScanning flags, read from its export (EVE_CLIENT_SDE_DIR; blank means none are loaded)
+        solarSystems = await SolarSystemCatalog.LoadAsync(sde, await ClientSystemFlags.ReadDirectoryAsync(Env(ClientSystemFlags.DirectoryVariable, "")));
         dogma = await DogmaStatic.LoadAsync(sde);
     }
 }

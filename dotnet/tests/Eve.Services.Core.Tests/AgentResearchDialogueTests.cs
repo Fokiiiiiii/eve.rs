@@ -91,7 +91,7 @@ public class AgentResearchDialogueTests
 
     private static PyValue Button(long id) => new PyInt(id);
 
-    private static PyValue Choice(long index) => new PyTuple([PyBool.True, new PyStr($"radioboxOption{index}Selected")]);
+    private static PyValue Choice(long index) => new PyTuple([PyBool.True, new PyBytes(System.Text.Encoding.ASCII.GetBytes($"radioboxOption{index}Selected"))]);
 
     private static PyValue Field(AgentDialogueStep step, string key) =>
         step.Prompt!.Kwargs.Entries.Single(entry => entry.Key is PyStr name && name.Value == key).Value;

@@ -205,8 +205,13 @@ internal sealed partial class CharacterServicesComposition
             await PersistenceAgentResearch.LoadFieldsAsync(sde, CancellationToken.None), () => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
         // the locator agents: the pilot by name, the place from the online session and the SDE, the fee and the result (AG-4 / A7)
         var locatorPort = new PersistenceAgentLocator(source, agentLocates, characters, characterSessions, solarSystems, economyWallets,
-            () => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
-            (characterId, agentId, data, key, ct) => mailSendWriter!.WriteLocateNotificationAsync(characterId, agentId, data, key, ct));
+            foundations.Events, () => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+        // the located notification: written by the subscriber, keyed by the event so a retry writes it once (the outbox row is the fee's)
+        foundations.Events.Subscribe("agents.locate-notice", [LocateDelivered.Topic], async (context, ct) =>
+        {
+            var located = context.Event.Payload<LocateDelivered>()!;
+            await mailSendWriter!.WriteLocateNotificationAsync(located.CharacterId, located.AgentId, located.Data, $"locate:{context.Event.Id}", ct);
+        });
         agentMissionService = new AgentMissionService(
             async (characterId, ct) =>
             {
@@ -437,7 +442,16 @@ internal sealed partial class CharacterServicesComposition
     /// A mission's completion and its standings in one transaction (the mission store and the relations store share the database): the
     /// completion is journalled, the standings change, and the session is told after the commit. False when the mission was not accepted.
     /// </summary>
-    private async Task<bool> CompleteMissionAsync(long characterId, long agentId, DateTimeOffset now, string reference,
+    private Task<bool> CompleteMissionAsync(long characterId, long agentId, DateTimeOffset now, string reference,
+        IReadOnlyList<MissionStandingGain> standings, CancellationToken cancellationToken) =>
+        CompleteInTransactionAsync(source, agentMissionStore, foundations.Relations, characterId, agentId, now, reference, standings, cancellationToken);
+
+    /// <summary>
+    /// The completion and its standing writes in one transaction: a standing write that fails rolls the completion back, so the mission stays
+    /// accepted. The commit notice follows the commit.
+    /// </summary>
+    internal static async Task<bool> CompleteInTransactionAsync(NpgsqlDataSource source, Eve.Agents.AgentMissionStore agentMissionStore,
+        Eve.Relations.RelationStore relations, long characterId, long agentId, DateTimeOffset now, string reference,
         IReadOnlyList<MissionStandingGain> standings, CancellationToken cancellationToken)
     {
         await using var connection = await source.OpenConnectionAsync(cancellationToken);
@@ -456,8 +470,8 @@ internal sealed partial class CharacterServicesComposition
         foreach (var gain in standings)
         {
             var kind = Eve.Relations.RelationKinds.Standing.Name;
-            var current = await foundations.Relations.ValueAsync(kind, gain.EntityId, characterId, 0, connection, transaction, cancellationToken);
-            await foundations.Relations.AdjustAsync(connection, transaction, kind, gain.EntityId, characterId, gain.DeltaFrom(current),
+            var current = await relations.ValueAsync(kind, gain.EntityId, characterId, 0, connection, transaction, cancellationToken);
+            await relations.AdjustAsync(connection, transaction, kind, gain.EntityId, characterId, gain.DeltaFrom(current),
                 "Agent mission standing", cancellationToken: cancellationToken);
         }
         await transaction.CommitAsync(cancellationToken);

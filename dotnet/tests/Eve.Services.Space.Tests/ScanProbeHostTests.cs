@@ -91,6 +91,18 @@ public class ScanProbeHostTests
         ((PyDict)((PyObject)keyVal).Args).Entries.Single(e => JsSemantics.StringValue(e.Key) == name).Value;
 
     [PgFact]
+    public async Task A_system_whose_client_flags_forbid_scanning_refuses_the_launch_and_places_no_probe()
+    {
+        // the rig's station (60015249) is in system 30100032; the client's disallowScanning flag is set for that system here
+        await using var rig = await Rig.CreateAsync(clientFlags: new Dictionary<int, Eve.Universe.ClientSystemFlags> { [30100032] = new(false, true) });
+        var (session, _, launcher) = await LauncherInSpaceAsync(rig, probes: 8);
+
+        await Assert.ThrowsAsync<MachoWrappedException>(() => rig.Space.LaunchAsync(session, launcher, 1, CancellationToken.None));
+
+        Assert.Empty(Placed(rig));
+    }
+
+    [PgFact]
     public async Task A_launcher_puts_its_probes_in_space_on_a_ring_around_the_ship_and_the_pilot_is_told_each_one()
     {
         await using var rig = await Rig.CreateAsync();

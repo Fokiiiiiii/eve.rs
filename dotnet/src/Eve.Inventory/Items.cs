@@ -1,4 +1,5 @@
 using Eve.Data;
+using Eve.Events;
 using Eve.Inventory.Mutation;
 using Npgsql;
 
@@ -74,6 +75,14 @@ public sealed class PgItemStore
     private readonly string _schema;
 
     public IShipInsuranceInvalidator? ShipInsuranceInvalidator { get; set; }
+
+    /// <summary>
+    /// The bus that announces a move (<see cref="ItemMovedTopic"/>), written in the move's own transaction. Null: moves are not announced.
+    /// A container's loot leaving it is what a site waits for (<c>site.container.cleared</c>).
+    /// </summary>
+    public EventBus? Events { get; set; }
+
+    public const string ItemMovedTopic = "inventory.item_moved";
 
     /// <summary>The provenance of the mutated items (<c>item_mutations</c>, in this store's schema): the one way an item's mutation is read.</summary>
     public ItemMutationStore Mutations { get; }
@@ -155,6 +164,7 @@ public sealed class PgItemStore
             Parameters = { new() { Value = id }, new() { Value = locationId }, new() { Value = flag } },
         };
         await command.ExecuteNonQueryAsync(cancellationToken);
+        await AnnounceMoveAsync(connection, transaction, item, locationId, flag, cancellationToken);
         if (ItemFlags.IsCorporationHangar(flag) && ShipInsuranceInvalidator is { } invalidator)
             await invalidator.InvalidateAsync(connection, transaction, id, ShipContractInvalidationReason.CorporationHangar, cancellationToken);
     }
@@ -172,6 +182,7 @@ public sealed class PgItemStore
             Parameters = { new() { Value = id }, new() { Value = ownerId }, new() { Value = locationId }, new() { Value = flag } },
         };
         await command.ExecuteNonQueryAsync(cancellationToken);
+        await AnnounceMoveAsync(connection, transaction, item, locationId, flag, cancellationToken);
         if (item.OwnerId != ownerId && ShipInsuranceInvalidator is { } invalidator)
             await invalidator.InvalidateAsync(connection, transaction, id, ShipContractInvalidationReason.OwnerChanged, cancellationToken);
     }
@@ -247,6 +258,24 @@ public sealed class PgItemStore
             owners.Add(reader.GetInt64(0));
         }
         return owners;
+    }
+
+    /// <summary>The number of items in a place (what a container still holds), inside the caller's transaction.</summary>
+    public async Task<long> CountInLocationAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long locationId, CancellationToken cancellationToken = default)
+    {
+        await using var command = new NpgsqlCommand($"SELECT count(*) FROM {_schema}.items WHERE location_id = $1", connection, transaction)
+        {
+            Parameters = { new() { Value = locationId } },
+        };
+        return (long)(await command.ExecuteScalarAsync(cancellationToken))!;
+    }
+
+    /// <summary>Announces that an item left its place (in the move's transaction, so it commits with the move). Nothing when no bus is attached or the place did not change.</summary>
+    private async Task AnnounceMoveAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, Item before, long locationId, int flag, CancellationToken cancellationToken)
+    {
+        if (Events is null || before.LocationId == locationId) return;
+        await Events.PublishInTransactionAsync(connection, transaction, ItemMovedTopic,
+            new { itemId = before.Id, ownerId = before.OwnerId, previousLocationId = before.LocationId, locationId, flag }, key: $"item:{before.Id}", cancellationToken: cancellationToken);
     }
 
     /// <summary>Lock an inventory fact in the caller's transaction before deciding custody or quantity.</summary>
@@ -396,6 +425,7 @@ private static void EnsureUnlocked(Item? item)
             if (!await reader.ReadAsync(cancellationToken)) throw new InvalidOperationException("ITEM_CHANGED");
             moved = Read(reader);
         }
+        await AnnounceMoveAsync(connection, transaction, item, locationId, flag, cancellationToken);
         var reason = item.OwnerId != ownerId
             ? ShipContractInvalidationReason.OwnerChanged
             : ItemFlags.IsCorporationHangar(flag) ? ShipContractInvalidationReason.CorporationHangar : (ShipContractInvalidationReason?)null;

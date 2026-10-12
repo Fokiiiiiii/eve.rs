@@ -268,6 +268,28 @@ public class MissionDungeonRuntimeTests
     }
 
     [AgentsPgFact]
+    public async Task A_fetch_step_whose_objective_is_held_starts_no_second_dungeon_so_leaving_does_not_fail_it()
+    {
+        var source = NpgsqlDataSource.Create(PgConnection.ForTest(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
+        var schema = "mdr_" + Guid.NewGuid().ToString("N")[..12];
+        await using var cleanup = new Cleanup(source, schema);
+        await AgentMissionStore.MigrateAsync(source, schema);
+        var store = new AgentMissionStore(source, schema);
+        var host = new FakeHost { Store = store };
+        var catalog = MissionStaticCatalog.FromRows(3405148, [new SdeRow(9301, JsonDocument.Parse(FetchMission).RootElement.Clone())], []);
+        var runtime = new MissionDungeonRuntime(store, catalog, host, _ => new MissionAgentPlace(System, Corporation, AgentStation), () => Start);
+        await store.OfferAsync(Pilot, Agent, new AgentMissionContent(9301, 1238, "Fetch Step", "", false), Start, "offer:f3");
+        await store.AcceptAsync(Pilot, Agent, Start, "accept:f3");
+        Assert.Equal(1, await runtime.SweepAsync());
+        await runtime.OnDungeonOutcomeAsync("completed", Pilot, "dungeon.3509", 83, default);
+
+        // the next sweep, with the pilot still in the system, starts no dungeon again
+        Assert.Equal(0, await runtime.SweepAsync());
+        Assert.Single(host.Starts);
+        Assert.Equal(AgentMissionState.Accepted, (await store.ReadAsync(Pilot, Agent))!.State);
+    }
+
+    [AgentsPgFact]
     public async Task A_turn_in_at_the_agent_consumes_the_item_and_completes_the_step_with_its_reward()
     {
         var source = NpgsqlDataSource.Create(PgConnection.ForTest(Environment.GetEnvironmentVariable("EVE_PG_URL")!));

@@ -569,6 +569,25 @@ private static void EnsureUnlocked(Item? item)
         return items;
     }
 
+    /// <summary>Locks the stacks an owner holds of a type, for a consumption in the caller's transaction (ordered by id, so a second taker waits and then sees them gone).</summary>
+    public async Task<IReadOnlyList<Item>> LockOwnedOfTypeAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long ownerId, int typeId, CancellationToken cancellationToken = default)
+    {
+        await using var command = new NpgsqlCommand(
+            $"SELECT {Columns} FROM {_schema}.items WHERE owner_id=$1 AND type_id=$2 ORDER BY id FOR UPDATE",
+            connection, transaction)
+        {
+            Parameters =
+            {
+                new() { Value = ownerId },
+                new() { Value = typeId },
+            },
+        };
+        var items = new List<Item>();
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken)) items.Add(Read(reader));
+        return items;
+    }
+
     /// <summary>Locks every item inside a container for an atomic custody change.</summary>
     public async Task<IReadOnlyList<Item>> LockContainerAsync(
         NpgsqlConnection connection,

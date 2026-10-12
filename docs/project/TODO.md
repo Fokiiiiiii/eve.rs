@@ -1583,3 +1583,18 @@ Evidence and decisions: `docs/project/WORMHOLE_DESIGN.md` (sources, SDE numbers,
 | OPEN | The far end as a body of its own scene (pilots must be able to jump back) | Design 13 |
 | OPEN | Host placement of the ends, `WormholeMgr.WormholeJump` through the lifecycle, composition wiring | Design 13 |
 | OPEN | Effects, signatures, sites, Thera exits, MITM run | Design 13 |
+
+
+## Pochven population (2026-10-12, after step 1)
+
+| Status | Item | Note |
+|---|---|---|
+| DONE (tests) | NPC-vs-NPC attack between the Pochven factions | `brains::pochven_tests` (attack, own faction, outside Pochven) |
+| DONE (tests) | Gate sentries: a werpost at each gate of a Pochven system, 20 km out, stationary; locks a rogue drone, never a fellow triglavian | `pochven_population.rs`; rules in DEVIATIONS |
+| DONE (tests) | Camps: two Damavik at the first two gates of a Triglavian system | `pochven_population.rs` |
+| DONE (tests) | Skirmish spawner: every 900 s, four factions in turn, deterministic, capped at 40 NPCs per scene | `pochven_population.rs` (`populate_pochven`) |
+| DONE (data) | System states: 27 Pochven systems held by the Triglavians; EDENCOM list empty | `data/pochven_states.json` (source and date in the file) |
+| CUT | Bounty and loot of the Pochven hulls | Host bounty code is keyed on profiles without these hulls; needs host work |
+| CUT | Fortress and Heavy GunStar placements in Pochven | No Pochven system is an EDENCOM fortress in the wiki; the path is tested through the data file |
+| OPEN | Live walk (Cockroach into Pochven, NPC fights through tools/mitm) | The headless client cannot place a pilot in Pochven; not run |
+| OPEN | Step 5: filaments and the Home-system 6.0 standing | Needs the filament item and jump rules; not started |

@@ -695,6 +695,8 @@ pub struct Scene {
     pub(crate) unpiloted: BTreeMap<i64, SessionId>,
     /// The health of each structure in space, by id (`crate::health::StructureHealth`).
     pub(crate) structure_health: BTreeMap<i64, crate::health::StructureHealth>,
+    /// The Pochven population of the system (`crate::pochven_population`).
+    pub(crate) pochven: crate::pochven_population::Population,
 }
 
 /// What the client of a destroyed ship still has of the ballpark: it keeps it when it is given a new ship.
@@ -742,6 +744,7 @@ impl Scene {
             widowed: BTreeMap::new(),
             unpiloted: BTreeMap::new(),
             structure_health: BTreeMap::new(),
+            pochven: Default::default(),
             wreck_catalog: None,
         }
     }

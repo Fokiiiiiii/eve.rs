@@ -46,5 +46,10 @@ done
 (exec 3<>"/dev/tcp/127.0.0.1/$PORT") 2>/dev/null || { echo "the server never listened on $PORT:"; tail -30 "$LOG"; exit 1; }
 
 # EVE_LIVE_HOST set by the caller points the tests at a proxy in front of the server (tools/mitm)
-cd "$HERE/tools/headless-client"
-EVE_LIVE_HOST="${EVE_LIVE_HOST:-127.0.0.1:$PORT}" .venv/bin/python -m pytest -q tests/test_live.py
+if [ -n "${EVE_RUN:-}" ]; then
+  # any other selection against the running reference, the same as run-eve-live.sh takes it (EVE_RUN is run from the repository root)
+  cd "$HERE" && EVE_LIVE_HOST="${EVE_LIVE_HOST:-127.0.0.1:$PORT}" bash -c "$EVE_RUN"
+else
+  cd "$HERE/tools/headless-client"
+  EVE_LIVE_HOST="${EVE_LIVE_HOST:-127.0.0.1:$PORT}" .venv/bin/python -m pytest -q tests/test_live.py
+fi

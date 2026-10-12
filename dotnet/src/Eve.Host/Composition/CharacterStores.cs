@@ -72,8 +72,13 @@ internal sealed partial class CharacterServicesComposition
         modules = new PgModuleStateStore(source, fittingSchema);
         savedFittings = new PgSavedFittingStore(source, fittingSchema);
         stations = await StationCatalog.LoadAsync(sde);
-        // the client's disallowCyno and disallowScanning flags, read from its export (EVE_CLIENT_SDE_DIR; blank means none are loaded)
-        solarSystems = await SolarSystemCatalog.LoadAsync(sde, await ClientSystemFlags.ReadDirectoryAsync(Env(ClientSystemFlags.DirectoryVariable, "")));
+        // the client's disallowCyno and disallowScanning flags, read from its export (EVE_CLIENT_SDE_DIR); unset means none are loaded
+        var clientDirectory = Env(ClientSystemFlags.DirectoryVariable, "");
+        if (string.IsNullOrWhiteSpace(clientDirectory))
+        {
+            Console.Error.WriteLine($"eve-host: {ClientSystemFlags.DirectoryVariable} is not set: client system flags (cyno and scan bans) are disabled");
+        }
+        solarSystems = await SolarSystemCatalog.LoadAsync(sde, await ClientSystemFlags.ReadDirectoryAsync(clientDirectory));
         dogma = await DogmaStatic.LoadAsync(sde);
     }
 }

@@ -174,6 +174,8 @@ impl Sim {
                 direction,
                 radius,
                 killer_ship,
+                ship_type_id,
+                corporation_id,
             } => Message::Destroyed {
                 session_id: session,
                 ship_id,
@@ -183,6 +185,8 @@ impl Sim {
                 direction: [direction.x, direction.y, direction.z],
                 radius,
                 killer_ship_id: killer_ship.unwrap_or(0),
+                ship_type_id,
+                corporation_id,
             },
             Out::ChargeSpent { session, module_id, rounds_left } => {
                 Message::ChargeSpent { session_id: session, module_id, rounds_left }

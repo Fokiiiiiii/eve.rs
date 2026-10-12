@@ -809,6 +809,8 @@ private static void WriteAction(Writer w, SimAction action)
                 w.F64(m.Radius);
                 w.I64(m.KillerShipId);
                 WriteWreckKind(w, m.WreckKind);
+                w.I32(m.ShipTypeId);
+                w.I32(m.CorporationId);
                 break;
             case SimChargeSpent m:
                 w.U8(Kind.ChargeSpent);

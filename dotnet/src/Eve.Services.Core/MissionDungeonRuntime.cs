@@ -22,11 +22,21 @@ public interface IMissionDungeonHost
     /// accepted (a replay): then nothing is written.
     /// </summary>
     Task<bool> CompleteMissionAsync(long characterId, long agentId, DateTimeOffset now, string reference,
-        IReadOnlyList<MissionStandingGain> standings, CancellationToken cancellationToken);
+        IReadOnlyList<MissionStandingGain> standings, IReadOnlyList<(int TypeId, long Quantity)> consume, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Creates into the hangar of the station the objective items of a fetch step, up to the quantity the character holds (idempotent: the
+    /// items held are counted, so a replayed dungeon outcome grants nothing).
+    /// </summary>
+    Task GrantObjectiveItemAsync(long characterId, int typeId, long quantity, long stationId, CancellationToken cancellationToken);
+
+    /// <summary>How many of an item type the character holds, in any location.</summary>
+    Task<long> HeldQuantityAsync(long characterId, int typeId, CancellationToken cancellationToken);
 }
 
 /// <summary>Where an agent is: its solar system (the mission dungeon's system) and its corporation (the counterparty of the reward).</summary>
-public sealed record MissionAgentPlace(long SolarSystemId, long CorporationId);
+/// <summary>The base station of the agent (its SDE location, where the objective items of a fetch step are delivered), when it has one.</summary>
+public sealed record MissionAgentPlace(long SolarSystemId, long CorporationId, long? BaseStationId = null);
 
 /// <summary>
 /// One standing change of a completed mission toward an entity (an agent, a corporation or a faction). An SDE gain is added as it is. A basic
@@ -92,6 +102,15 @@ public sealed class MissionDungeonRuntime(
 
         if (outcome == "completed")
         {
+            if (FetchOf(record.Content.MissionId) is { } fetch)
+            {
+                // a fetch step: the dungeon yields the objective items into the hangar of the agent's station. Only the turn-in completes the step
+                if (agentPlaceOf(record.AgentId)?.BaseStationId is { } station)
+                {
+                    await host.GrantObjectiveItemAsync(owner, (int)fetch.TypeId, fetch.Quantity, station, cancellationToken);
+                }
+                return;
+            }
             await CompleteWithRewardAsync(owner, record, $"dungeon:{instanceId}", $"complete:{instanceId}", cancellationToken);
         }
         else
@@ -110,6 +129,16 @@ public sealed class MissionDungeonRuntime(
         foreach (var record in (await store.ReadAsync(characterId, cancellationToken)).Where(item => item.State == AgentMissionState.Accepted))
         {
             var missionId = record.Content.MissionId;
+            if (FetchOf(missionId) is { } fetch)
+            {
+                // the turn-in: the objective items are consumed at the mission's agent and the step completes; with fewer held, nothing happens
+                if (record.AgentId == agentId && await host.HeldQuantityAsync(characterId, (int)fetch.TypeId, cancellationToken) >= fetch.Quantity)
+                {
+                    await CompleteWithRewardAsync(characterId, record, $"turnin:{missionId}", $"turnin:{missionId}:{agentId}", cancellationToken,
+                        [((int)fetch.TypeId, fetch.Quantity)]);
+                }
+                continue;
+            }
             if (!catalog.IsTalkStep(missionId) || !catalog.NextAgentsOf(missionId).Contains(agentId)) continue;
             await CompleteWithRewardAsync(characterId, record, $"talk:{missionId}", $"talk:{missionId}:{agentId}", cancellationToken);
         }
@@ -128,7 +157,15 @@ public sealed class MissionDungeonRuntime(
         [5] = new(1_470_000, 0.036, 0.072),
     };
 
-    private async Task CompleteWithRewardAsync(long owner, AgentMissionRecord record, string rewardKey, string reference, CancellationToken cancellationToken)
+    /// <summary>
+    /// The objective item of a fetch step: a kill mission's objective type and quantity (the SDE's <c>killMission</c>). The mining records of the SDE
+    /// use the same field; eve.rs offers no mining mission, so it is read here as a fetch.
+    /// </summary>
+    private (long TypeId, long Quantity)? FetchOf(long missionId) =>
+        catalog.Mission(missionId)?.Kill is { ObjectiveTypeId: { } typeId, ObjectiveQuantity: > 0 } kill ? (typeId, kill.ObjectiveQuantity) : null;
+
+    private async Task CompleteWithRewardAsync(long owner, AgentMissionRecord record, string rewardKey, string reference, CancellationToken cancellationToken,
+        IReadOnlyList<(int TypeId, long Quantity)>? consume = null)
     {
         var mission = catalog.Mission(record.Content.MissionId)!;
         var place = agentPlaceOf(record.AgentId);
@@ -149,7 +186,7 @@ public sealed class MissionDungeonRuntime(
             gains.Add(new MissionStandingGain(record.AgentId, basic.AgentIncrease, true));
             gains.Add(new MissionStandingGain(place.CorporationId, basic.CorporationIncrease, true));
         }
-        await host.CompleteMissionAsync(owner, record.AgentId, now(), reference, gains, cancellationToken);
+        await host.CompleteMissionAsync(owner, record.AgentId, now(), reference, gains, consume ?? [], cancellationToken);
     }
 
     private static async Task<AgentMissionChange?> TransitionAsync(Func<Task<AgentMissionChange?>> transition)

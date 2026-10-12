@@ -69,6 +69,25 @@ public class MissionViewsTests
         Assert.Equal(2, ((PyInt)fields["missionState"]).Value);
     }
 
+    [Fact]
+    public void The_objective_of_a_held_fetch_step_is_the_client_fetch_entry_with_the_drop_off_and_the_cargo()
+    {
+        var view = new HeldMissionView(Kill(), new AgentMissionRecord(1, 2, AgentMissionState.Accepted,
+            new AgentMissionContent(9301, 57289, "Kill Step", "", false), null, null, null, null, null, null), null,
+            new FetchObjectiveView(30755, 1, 0.1, 0, 60015249, 1000035));
+        var fields = MissionViews.Objective(view).Entries.ToDictionary(entry => ((PyStr)entry.Key).Value, entry => entry.Value);
+        var fetch = Assert.IsType<PyTuple>(Assert.Single(Assert.IsType<PyList>(fields["objectives"]).Items));
+        Assert.Equal("fetch", ((PyStr)fetch.Items[0]).Value);
+        var target = Assert.IsType<PyTuple>(fetch.Items[1]);
+        Assert.Equal(1000035, ((PyInt)target.Items[0]).Value);
+        var location = Assert.IsType<PyDict>(target.Items[1]);
+        Assert.Equal(60015249, ((PyInt)location.Entries.Single(entry => ((PyStr)entry.Key).Value == "locationID").Value).Value);
+        var cargo = Assert.IsType<PyDict>(target.Items[2]);
+        Assert.Equal(1, ((PyInt)cargo.Entries.Single(entry => ((PyStr)entry.Key).Value == "quantity").Value).Value);
+        Assert.False(((PyBool)cargo.Entries.Single(entry => ((PyStr)entry.Key).Value == "hasCargo").Value).Value);
+        Assert.Equal(0.1, ((PyReal)cargo.Entries.Single(entry => ((PyStr)entry.Key).Value == "volume").Value).Value, 10);
+    }
+
     /// <summary>Opt-in: reads the client export named by EVE_CLIENT_SDE_DIR (read only, nothing is copied). Skipped when it is not set.</summary>
     [Fact]
     public void The_client_export_gives_the_briefing_ID_of_mission_14117_when_it_is_configured()

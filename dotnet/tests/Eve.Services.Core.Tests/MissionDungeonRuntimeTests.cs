@@ -54,10 +54,26 @@ public class MissionDungeonRuntimeTests
         /// <summary>The store the completion is made in (the production host makes it in the same transaction as the standings).</summary>
         public AgentMissionStore? Store { get; set; }
 
+        /// <summary>The pilot's items by type (the production host keeps them in the items store).</summary>
+        public Dictionary<int, long> Held { get; } = [];
+        public List<(long Character, int TypeId, long Quantity, long Station)> Grants { get; } = [];
+        public List<(long Character, int TypeId, long Quantity)> Consumed { get; } = [];
+
+        public Task GrantObjectiveItemAsync(long characterId, int typeId, long quantity, long stationId, CancellationToken cancellationToken)
+        {
+            Grants.Add((characterId, typeId, quantity, stationId));
+            Held[typeId] = Math.Max(Held.GetValueOrDefault(typeId), quantity);
+            return Task.CompletedTask;
+        }
+
+        public Task<long> HeldQuantityAsync(long characterId, int typeId, CancellationToken cancellationToken) =>
+            Task.FromResult(Held.GetValueOrDefault(typeId));
+
         public async Task<bool> CompleteMissionAsync(long characterId, long agentId, DateTimeOffset now, string reference,
-            IReadOnlyList<MissionStandingGain> standings, CancellationToken cancellationToken)
+            IReadOnlyList<MissionStandingGain> standings, IReadOnlyList<(int TypeId, long Quantity)> consume, CancellationToken cancellationToken)
         {
             if (Store is null) return false;
+            if (consume.Any(need => Held.GetValueOrDefault(need.TypeId) < need.Quantity)) return false;
             try
             {
                 if (await Store.CompleteAsync(characterId, agentId, now, reference, cancellationToken) is null) return false;
@@ -65,6 +81,11 @@ public class MissionDungeonRuntimeTests
             catch (AgentMissionRefusedException)
             {
                 return false;
+            }
+            foreach (var (typeId, quantity) in consume)
+            {
+                Held[typeId] -= quantity;
+                Consumed.Add((characterId, typeId, quantity));
             }
             foreach (var gain in standings) Standings.Add((characterId, gain.EntityId, gain.Amount));
             return true;
@@ -212,6 +233,87 @@ public class MissionDungeonRuntimeTests
         var standing = Assert.Single(host.Standings);
         Assert.Equal((Pilot, 500003L), (standing.Character, standing.Faction));
         Assert.Equal(0.7, standing.Delta, 6);
+    }
+
+    // A fetch step: the dungeon yields one Strange Datacore (30755, the SDE's objective of arc 29 step 14119), handed in at the agent.
+    private const string FetchMission = """
+        {"_key": 9301, "name": {"en": "Fetch Step"}, "nameID": 1238, "hasStandingRewards": false,
+         "killMission": {"dungeonID": 3509, "objectiveTypeID": 30755, "objectiveQuantity": 1},
+         "missionRewards": {"reward": {"rewardTypeID": 29, "rewardQuantity": 100000}}}
+        """;
+
+    private const int Datacore = 30755;
+    private const long AgentStation = 60015249;
+
+    [AgentsPgFact]
+    public async Task A_dungeon_completion_of_a_fetch_step_grants_the_item_at_the_agents_station_and_completes_nothing()
+    {
+        var source = NpgsqlDataSource.Create(PgConnection.ForTest(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
+        var schema = "mdr_" + Guid.NewGuid().ToString("N")[..12];
+        await using var cleanup = new Cleanup(source, schema);
+        await AgentMissionStore.MigrateAsync(source, schema);
+        var store = new AgentMissionStore(source, schema);
+        var host = new FakeHost { Store = store };
+        var catalog = MissionStaticCatalog.FromRows(3405148, [new SdeRow(9301, JsonDocument.Parse(FetchMission).RootElement.Clone())], []);
+        var runtime = new MissionDungeonRuntime(store, catalog, host, _ => new MissionAgentPlace(System, Corporation, AgentStation), () => Start);
+        await store.OfferAsync(Pilot, Agent, new AgentMissionContent(9301, 1238, "Fetch Step", "", false), Start, "offer:f1");
+        await store.AcceptAsync(Pilot, Agent, Start, "accept:f1");
+
+        await runtime.OnDungeonOutcomeAsync("completed", Pilot, "dungeon.3509", 81, default);
+
+        Assert.Equal((Pilot, Datacore, 1L, AgentStation), Assert.Single(host.Grants));
+        Assert.Empty(host.Credits);
+        Assert.Empty(host.Standings);
+        Assert.Equal(AgentMissionState.Accepted, (await store.ReadAsync(Pilot, Agent))!.State);
+    }
+
+    [AgentsPgFact]
+    public async Task A_turn_in_at_the_agent_consumes_the_item_and_completes_the_step_with_its_reward()
+    {
+        var source = NpgsqlDataSource.Create(PgConnection.ForTest(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
+        var schema = "mdr_" + Guid.NewGuid().ToString("N")[..12];
+        await using var cleanup = new Cleanup(source, schema);
+        await AgentMissionStore.MigrateAsync(source, schema);
+        var store = new AgentMissionStore(source, schema);
+        var host = new FakeHost { Store = store };
+        var catalog = MissionStaticCatalog.FromRows(3405148, [new SdeRow(9301, JsonDocument.Parse(FetchMission).RootElement.Clone())], []);
+        var runtime = new MissionDungeonRuntime(store, catalog, host, _ => new MissionAgentPlace(System, Corporation, AgentStation), () => Start);
+        await store.OfferAsync(Pilot, Agent, new AgentMissionContent(9301, 1238, "Fetch Step", "", false), Start, "offer:f2");
+        await store.AcceptAsync(Pilot, Agent, Start, "accept:f2");
+        await runtime.OnDungeonOutcomeAsync("completed", Pilot, "dungeon.3509", 82, default);
+
+        await runtime.OnConversationAsync(Pilot, Agent, together: true);
+
+        Assert.Equal(AgentMissionState.Completed, (await store.ReadAsync(Pilot, Agent))!.State);
+        Assert.Equal((Pilot, Datacore, 1L), Assert.Single(host.Consumed));
+        Assert.Equal(0, host.Held.GetValueOrDefault(Datacore));
+        Assert.Equal(100000L, Assert.Single(host.Credits).Amount);
+    }
+
+    [AgentsPgFact]
+    public async Task A_turn_in_with_nothing_held_or_at_another_agent_completes_nothing()
+    {
+        var source = NpgsqlDataSource.Create(PgConnection.ForTest(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
+        var schema = "mdr_" + Guid.NewGuid().ToString("N")[..12];
+        await using var cleanup = new Cleanup(source, schema);
+        await AgentMissionStore.MigrateAsync(source, schema);
+        var store = new AgentMissionStore(source, schema);
+        var host = new FakeHost { Store = store };
+        var catalog = MissionStaticCatalog.FromRows(3405148, [new SdeRow(9301, JsonDocument.Parse(FetchMission).RootElement.Clone())], []);
+        var runtime = new MissionDungeonRuntime(store, catalog, host, _ => new MissionAgentPlace(System, Corporation, AgentStation), () => Start);
+        await store.OfferAsync(Pilot, Agent, new AgentMissionContent(9301, 1238, "Fetch Step", "", false), Start, "offer:f3");
+        await store.AcceptAsync(Pilot, Agent, Start, "accept:f3");
+
+        await runtime.OnConversationAsync(Pilot, Agent, together: true);
+        await runtime.OnDungeonOutcomeAsync("completed", Pilot, "dungeon.3509", 83, default);
+        await runtime.OnConversationAsync(Pilot, Agent + 1, together: true);
+
+        Assert.Equal(AgentMissionState.Accepted, (await store.ReadAsync(Pilot, Agent))!.State);
+        Assert.Empty(host.Consumed);
+        Assert.Empty(host.Credits);
+        // the replay of the dungeon's outcome grants nothing more (the holding is already one)
+        await runtime.OnDungeonOutcomeAsync("completed", Pilot, "dungeon.3509", 83, default);
+        Assert.Equal(1, host.Held.GetValueOrDefault(Datacore));
     }
 
     private sealed class Cleanup(NpgsqlDataSource source, string schema) : IAsyncDisposable

@@ -2,6 +2,7 @@ using Eve.Agents;
 using Eve.Data;
 using Eve.Events;
 using Eve.Host;
+using Eve.Inventory;
 using Eve.Relations;
 using Eve.Scheduler;
 using Eve.Services.Core;
@@ -15,6 +16,7 @@ public class MissionCompletionTransactionTests
     private const long Pilot = 90000101;
     private const long Agent = 3008416;
     private const long Corporation = 1000002;
+    private const int Datacore = 30755;
     private static readonly DateTimeOffset Start = new(2026, 10, 11, 12, 0, 0, TimeSpan.Zero);
     private static readonly AgentMissionContent Kill = new(MissionId: 5101, NameId: 9100, Title: "", MissionTypeLabel: "kill", Important: false);
     private static readonly MissionStandingGain[] Gains = [new(Agent, 0.028, true), new(Corporation, 0.055, true)];
@@ -35,6 +37,16 @@ public class MissionCompletionTransactionTests
 
         public NpgsqlDataSource Source { get; }
         public AgentMissionStore Store { get; }
+        public PgItemStore Items { get; set; } = default!;
+
+        /// <summary>Puts items of the type into the pilot's hangar (a station of the agent).</summary>
+        public async Task GrantAsync(int typeId, long quantity)
+        {
+            await using var connection = await Source.OpenConnectionAsync();
+            await using var transaction = await connection.BeginTransactionAsync();
+            await Items.CreateAsync(connection, transaction, new NewItem(typeId, Pilot, 60015249, ItemFlags.Hangar, quantity));
+            await transaction.CommitAsync();
+        }
         public RelationStore Relations { get; }
         /// <summary>A relation store on a schema that does not exist: its first standing read fails inside the completion's transaction.</summary>
         public RelationStore MissingRelations { get; }
@@ -43,17 +55,18 @@ public class MissionCompletionTransactionTests
         {
             var source = NpgsqlDataSource.Create(PgConnection.ForTest(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
             var id = Guid.NewGuid().ToString("N")[..12];
-            string[] schemas = ["msch_" + id, "mevt_" + id, "mrel_" + id, "magt_" + id];
+            string[] schemas = ["msch_" + id, "mevt_" + id, "mrel_" + id, "magt_" + id, "mitm_" + id];
             await DurableScheduler.MigrateAsync(source, schemas[0]);
             await EventBus.MigrateAsync(source, schemas[1]);
             await RelationStore.MigrateAsync(source, schemas[2]);
             await AgentMissionStore.MigrateAsync(source, schemas[3]);
+            await PgItemStore.MigrateAsync(source, schemas[4]);
             var scheduler = new DurableScheduler(source, () => Start.ToUnixTimeMilliseconds(), new SchedulerOptions { Concurrency = 1 }, schemas[0]);
             var bus = new EventBus(source, scheduler, null, schemas[1]);
             // a relation store registers its jobs on its scheduler, so the store on the missing schema has a scheduler and a bus of its own
             var otherScheduler = new DurableScheduler(source, () => Start.ToUnixTimeMilliseconds(), new SchedulerOptions { Concurrency = 1 }, "mo_" + id);
             var otherBus = new EventBus(source, otherScheduler, null, "mob_" + id);
-            var fixture = new Fixture(source, schemas, scheduler, bus, otherScheduler, otherBus, "mis_" + id);
+            var fixture = new Fixture(source, schemas, scheduler, bus, otherScheduler, otherBus, "mis_" + id) { Items = new PgItemStore(source, schemas[4]) };
             await fixture.Store.OfferAsync(Pilot, Agent, Kill, Start, "offer:x6");
             await fixture.Store.AcceptAsync(Pilot, Agent, Start, "accept:x6");
             return fixture;
@@ -75,8 +88,8 @@ public class MissionCompletionTransactionTests
     {
         await using var fixture = await Fixture.CreateAsync();
 
-        var done = await CharacterServicesComposition.CompleteInTransactionAsync(fixture.Source, fixture.Store, fixture.Relations,
-            Pilot, Agent, Start + TimeSpan.FromHours(1), "complete:x6", Gains, CancellationToken.None);
+        var done = await CharacterServicesComposition.CompleteInTransactionAsync(fixture.Source, fixture.Store, fixture.Relations, fixture.Items,
+            Pilot, Agent, Start + TimeSpan.FromHours(1), "complete:x6", Gains, [], CancellationToken.None);
 
         Assert.True(done);
         Assert.Equal(AgentMissionState.Completed, (await fixture.Store.ReadAsync(Pilot, Agent))!.State);
@@ -90,9 +103,36 @@ public class MissionCompletionTransactionTests
         await using var fixture = await Fixture.CreateAsync();
 
         await Assert.ThrowsAnyAsync<Exception>(() => CharacterServicesComposition.CompleteInTransactionAsync(fixture.Source, fixture.Store,
-            fixture.MissingRelations, Pilot, Agent, Start + TimeSpan.FromHours(1), "complete:x6-fail", Gains, CancellationToken.None));
+            fixture.MissingRelations, fixture.Items, Pilot, Agent, Start + TimeSpan.FromHours(1), "complete:x6-fail", Gains, [], CancellationToken.None));
 
         Assert.Equal(AgentMissionState.Accepted, (await fixture.Store.ReadAsync(Pilot, Agent))!.State);
         Assert.Empty(await fixture.Store.ReadCompletedAsync(Pilot));
+    }
+
+    [PgFact]
+    public async Task A_completion_that_consumes_the_objective_item_takes_it_with_the_completion()
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        await fixture.GrantAsync(Datacore, 1);
+
+        var done = await CharacterServicesComposition.CompleteInTransactionAsync(fixture.Source, fixture.Store, fixture.Relations, fixture.Items,
+            Pilot, Agent, Start + TimeSpan.FromHours(1), "complete:x8", Gains, [(Datacore, 1L)], CancellationToken.None);
+
+        Assert.True(done);
+        Assert.Equal(AgentMissionState.Completed, (await fixture.Store.ReadAsync(Pilot, Agent))!.State);
+        Assert.Empty(await fixture.Items.OwnedByAsync(Pilot));
+    }
+
+    [PgFact]
+    public async Task A_completion_with_the_objective_item_short_is_refused_and_writes_nothing()
+    {
+        await using var fixture = await Fixture.CreateAsync();
+
+        var done = await CharacterServicesComposition.CompleteInTransactionAsync(fixture.Source, fixture.Store, fixture.Relations, fixture.Items,
+            Pilot, Agent, Start + TimeSpan.FromHours(1), "complete:x8-short", Gains, [(Datacore, 1L)], CancellationToken.None);
+
+        Assert.False(done);
+        Assert.Equal(AgentMissionState.Accepted, (await fixture.Store.ReadAsync(Pilot, Agent))!.State);
+        Assert.Equal(0.0, await fixture.Relations.ValueAsync(RelationKinds.Standing.Name, Agent, Pilot, 0), 10);
     }
 }

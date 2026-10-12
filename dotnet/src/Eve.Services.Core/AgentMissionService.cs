@@ -26,7 +26,8 @@ public sealed record AgentMissionAgentData(
     long? SolarSystemId,
     long? DungeonId,
     long? SpawnPointId,
-    long? TypeId);
+    long? TypeId,
+    long? BaseLocationId = null);
 
 public sealed record AgentMissionRpcCallbacks(
     Func<CancellationToken, ValueTask<IReadOnlyList<AgentMissionAgentData>>>? ReadAgents = null,

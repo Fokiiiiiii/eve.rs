@@ -78,7 +78,8 @@ public static class AgentCatalog
                     solarSystemId,
                     isInSpace && inSpace is { } spaceDungeon ? AgentSdeOptionalInteger(spaceDungeon, "dungeonID") : null,
                     isInSpace && inSpace is { } spaceSpawn ? AgentSdeOptionalInteger(spaceSpawn, "spawnPointID") : null,
-                    isInSpace && inSpace is { } spaceType ? AgentSdeOptionalInteger(spaceType, "typeID") : null);
+                    isInSpace && inSpace is { } spaceType ? AgentSdeOptionalInteger(spaceType, "typeID") : null,
+                    AgentSdeOptionalInteger(row.Doc, "locationID"));
             })
             .OrderBy(agent => agent.AgentId)
             .ToArray();

@@ -4,11 +4,17 @@ using Eve.Marshal;
 namespace Eve.Services.Core;
 
 /// <summary>A mission the character holds with an agent: the official record, the held state and the briefing text ID (null when not loaded).</summary>
-public sealed record HeldMissionView(MissionStatic Mission, AgentMissionRecord Record, long? BriefingMessageId);
+public sealed record HeldMissionView(MissionStatic Mission, AgentMissionRecord Record, long? BriefingMessageId, FetchObjectiveView? Fetch = null);
+
+/// <summary>
+/// The objective item of a fetch step: the type and quantity from the SDE, the item's volume of one unit, the quantity the pilot holds, and the agent's
+/// station and corporation (the drop-off, where the item is handed in).
+/// </summary>
+public sealed record FetchObjectiveView(int TypeId, long Quantity, double Volume, long HeldQuantity, long StationId, long CorporationId);
 
 /// <summary>
 /// The briefing and objective answers of a held mission (EveJS <c>buildMissionBriefingInfo</c>, <c>buildMissionObjectivePayload</c>), for the kill
-/// missions: the dungeon objective and the ISK reward. The fetch and courier objectives are not built (DEVIATIONS "Mission execution X3 step 2").
+/// missions: the dungeon objective, the fetch objective of an item and the ISK reward. The courier objective is not built yet.
 /// </summary>
 public static class MissionViews
 {
@@ -46,6 +52,24 @@ public static class MissionViews
                 Field("optional", PyBool.False),
             ]));
         }
+        var objectives = new List<PyValue>();
+        if (view.Fetch is { } fetch)
+        {
+            // the client's fetch objective (eve-logic evemissions/client/mission.py): the owner, the drop-off location and the cargo
+            // shortcut: solarsystemID is 0 (the client reads only locationID of a fetch's drop-off)
+            objectives.Add(new PyTuple([new PyStr("fetch"), new PyTuple(
+            [
+                new PyInt(fetch.CorporationId),
+                new PyDict([Field("typeID", new PyInt(1531)), Field("solarsystemID", new PyInt(0)), Field("locationID", new PyInt(fetch.StationId))]),
+                new PyDict(
+                [
+                    Field("volume", new PyReal(fetch.Volume * fetch.Quantity)),
+                    Field("typeID", new PyInt(fetch.TypeId)),
+                    Field("hasCargo", fetch.HeldQuantity >= fetch.Quantity ? PyBool.True : PyBool.False),
+                    Field("quantity", new PyInt(fetch.Quantity)),
+                ]),
+            ])]));
+        }
         var rewards = new List<PyValue>();
         if (mission.Reward?.RewardTypeId == 29 && mission.Reward.RewardQuantity > 0)
             rewards.Add(new PyTuple([new PyInt(29), new PyInt(mission.Reward.RewardQuantity), PyNone.Instance]));
@@ -54,7 +78,7 @@ public static class MissionViews
             Field("completionStatus", new PyInt(completed ? 1 : 0)),
             Field("collateral", new PyList([])),
             Field("dungeons", new PyList(dungeons)),
-            Field("objectives", new PyList([])),
+            Field("objectives", new PyList(objectives)),
             Field("locations", new PyList([])),
             Field("importantStandings", new PyInt(0)),
             Field("missionExtra", PyNone.Instance),

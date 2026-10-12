@@ -309,13 +309,15 @@ internal sealed partial class CharacterServicesComposition
             (characterId, systemId) => spaceSessions is not null && spaceSessions.IsPilotInSystem(characterId, systemId),
             StartMissionDungeonAsync,
             CreditMissionIskAsync,
-            CompleteMissionAsync);
+            CompleteMissionAsync,
+            GrantObjectiveItemAsync,
+            HeldQuantityAsync);
         missionDungeons = new MissionDungeonRuntime(
             agentMissionStore,
             agentMissionStatic,
             host,
             agentId => agentMissionAgentById.TryGetValue(agentId, out var agent) && agent.SolarSystemId is { } system
-                ? new MissionAgentPlace(system, agent.CorporationId)
+                ? new MissionAgentPlace(system, agent.CorporationId, agent.BaseLocationId)
                 : null,
             () => DateTimeOffset.UtcNow);
         var runtime = missionDungeons;
@@ -391,7 +393,21 @@ internal sealed partial class CharacterServicesComposition
         if (record is null || record.State is not (Eve.Agents.AgentMissionState.Offered or Eve.Agents.AgentMissionState.Accepted or Eve.Agents.AgentMissionState.Completed)) return null;
         if (agentMissionStatic.Mission(record.Content.MissionId) is not { } mission) return null;
         long? briefing = clientMissionMessages.TryGetValue(mission.MissionId, out var texts) && texts.TryGetValue(ClientMissionMessages.BriefingKey, out var id) ? id : null;
-        return new Eve.Services.Core.HeldMissionView(mission, record, briefing);
+        return new Eve.Services.Core.HeldMissionView(mission, record, briefing, await FetchObjectiveAsync(characterId, record, cancellationToken));
+    }
+
+    /// <summary>
+    /// The objective item of a fetch step: the SDE's type and volume, the pilot's holding, and the agent's station and corporation (where the item is
+    /// handed in). Null when the mission fetches nothing or the agent has no station.
+    /// </summary>
+    private async ValueTask<Eve.Services.Core.FetchObjectiveView?> FetchObjectiveAsync(long characterId, Eve.Agents.AgentMissionRecord record, CancellationToken cancellationToken)
+    {
+        if (agentMissionStatic.Mission(record.Content.MissionId)?.Kill is not { ObjectiveTypeId: { } typeId, ObjectiveQuantity: > 0 } kill) return null;
+        if (!agentMissionAgentById.TryGetValue(record.AgentId, out var agent) || agent.BaseLocationId is not { } station) return null;
+        var type = dogma.Type((int)typeId);
+        var volume = type is not null && dogma.AttributeId("volume") is { } attribute ? type.Attributes.GetValueOrDefault(attribute, 0) : 0;
+        var held = await HeldQuantityAsync(characterId, (int)typeId, cancellationToken);
+        return new Eve.Services.Core.FetchObjectiveView((int)typeId, kill.ObjectiveQuantity, volume, held, station, agent.CorporationId);
     }
 
     /// <summary>The SDE group of the agents in space (type 30887 "Tevis Jak's Epithal" is group 517).</summary>
@@ -439,21 +455,25 @@ internal sealed partial class CharacterServicesComposition
     }
 
     /// <summary>
-    /// A mission's completion and its standings in one transaction (the mission store and the relations store share the database): the
-    /// completion is journalled, the standings change, and the session is told after the commit. False when the mission was not accepted.
+    /// A mission's completion, its consumed objective items and its standings in one transaction (the mission store, the items and the relations
+    /// store share the database): the completion is journalled, the items leave the pilot, the standings change, and the session is told after the
+    /// commit. False when the mission was not accepted or the items are short.
     /// </summary>
     private Task<bool> CompleteMissionAsync(long characterId, long agentId, DateTimeOffset now, string reference,
-        IReadOnlyList<MissionStandingGain> standings, CancellationToken cancellationToken) =>
-        CompleteInTransactionAsync(source, agentMissionStore, foundations.Relations, characterId, agentId, now, reference, standings, cancellationToken);
+        IReadOnlyList<MissionStandingGain> standings, IReadOnlyList<(int TypeId, long Quantity)> consume, CancellationToken cancellationToken) =>
+        CompleteInTransactionAsync(source, agentMissionStore, foundations.Relations, items, characterId, agentId, now, reference, standings, consume, cancellationToken);
 
     /// <summary>
-    /// The completion and its standing writes in one transaction: a standing write that fails rolls the completion back, so the mission stays
+    /// The completion, the consumption and the standing writes in one transaction: a write that fails rolls all of them back, so the mission stays
     /// accepted. The commit notice follows the commit.
     /// </summary>
     internal static async Task<bool> CompleteInTransactionAsync(NpgsqlDataSource source, Eve.Agents.AgentMissionStore agentMissionStore,
-        Eve.Relations.RelationStore relations, long characterId, long agentId, DateTimeOffset now, string reference,
-        IReadOnlyList<MissionStandingGain> standings, CancellationToken cancellationToken)
+        Eve.Relations.RelationStore relations, Eve.Inventory.PgItemStore items, long characterId, long agentId, DateTimeOffset now, string reference,
+        IReadOnlyList<MissionStandingGain> standings, IReadOnlyList<(int TypeId, long Quantity)> consume, CancellationToken cancellationToken)
     {
+        // the holdings are read before the transaction: a short holding refuses the completion without writing anything
+        IReadOnlyList<Eve.Inventory.Item> owned = consume.Count == 0 ? [] : await items.OwnedByAsync(characterId, cancellationToken);
+        if (consume.Any(need => owned.Where(item => item.TypeId == need.TypeId).Sum(item => item.Quantity) < need.Quantity)) return false;
         await using var connection = await source.OpenConnectionAsync(cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
         Eve.Agents.AgentMissionChange? change;
@@ -466,6 +486,19 @@ internal sealed partial class CharacterServicesComposition
             return false;
         }
         if (change is null) return false;
+        // the objective items leave with the completion, the oldest stacks first
+        foreach (var (typeId, quantity) in consume)
+        {
+            var left = quantity;
+            foreach (var stack in owned.Where(item => item.TypeId == typeId).OrderBy(item => item.Id))
+            {
+                if (left == 0) break;
+                var taken = Math.Min(left, stack.Quantity);
+                if (taken == stack.Quantity) await items.DeleteAsync(connection, transaction, stack.Id, cancellationToken);
+                else await items.SetQuantityAsync(connection, transaction, stack.Id, stack.Quantity - taken, cancellationToken);
+                left -= taken;
+            }
+        }
         // read in the transaction: a diminishing gain depends on the standing the pilot has when the completion is written
         foreach (var gain in standings)
         {
@@ -478,6 +511,22 @@ internal sealed partial class CharacterServicesComposition
         agentMissionStore.Announce(change);
         return true;
     }
+
+    /// <summary>The objective items of a fetch step: the pilot's holding of the type is topped up to the quantity in the hangar of the station.</summary>
+    private async Task GrantObjectiveItemAsync(long characterId, int typeId, long quantity, long stationId, CancellationToken cancellationToken)
+    {
+        await using var connection = await source.OpenConnectionAsync(cancellationToken);
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        var held = await HeldQuantityAsync(characterId, typeId, cancellationToken);
+        if (held < quantity)
+            await items.CreateAsync(connection, transaction,
+                new Eve.Inventory.NewItem(typeId, characterId, stationId, Eve.Inventory.ItemFlags.Hangar, quantity - held), cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+    }
+
+    /// <summary>The quantity of the type the pilot holds (all owned stacks).</summary>
+    private async Task<long> HeldQuantityAsync(long characterId, int typeId, CancellationToken cancellationToken) =>
+        (await items.OwnedByAsync(characterId, cancellationToken)).Where(item => item.TypeId == typeId).Sum(item => item.Quantity);
 
     /// <summary>The ISK of a mission reward: one idempotent wallet adjustment, in its own transaction.</summary>
     private async Task CreditMissionIskAsync(long characterId, long amount, long counterpartyId, int refTypeId, string reason, string operationKey, CancellationToken cancellationToken)
@@ -495,7 +544,9 @@ internal sealed class SpaceMissionDungeonHost(
     Func<long, int, bool> isPilotInSystem,
     Func<long, int, long, CancellationToken, Task<string?>> startDungeon,
     Func<long, long, long, int, string, string, CancellationToken, Task> creditIsk,
-    Func<long, long, DateTimeOffset, string, IReadOnlyList<MissionStandingGain>, CancellationToken, Task<bool>> completeMission) : IMissionDungeonHost
+    Func<long, long, DateTimeOffset, string, IReadOnlyList<MissionStandingGain>, IReadOnlyList<(int TypeId, long Quantity)>, CancellationToken, Task<bool>> completeMission,
+    Func<long, int, long, long, CancellationToken, Task> grantItem,
+    Func<long, int, CancellationToken, Task<long>> heldQuantity) : IMissionDungeonHost
 {
     public bool IsPilotInSystem(long characterId, int solarSystemId) => isPilotInSystem(characterId, solarSystemId);
 
@@ -506,6 +557,12 @@ internal sealed class SpaceMissionDungeonHost(
         creditIsk(characterId, amount, counterpartyId, refTypeId, reason, operationKey, cancellationToken);
 
     public Task<bool> CompleteMissionAsync(long characterId, long agentId, DateTimeOffset now, string reference,
-        IReadOnlyList<MissionStandingGain> standings, CancellationToken cancellationToken) =>
-        completeMission(characterId, agentId, now, reference, standings, cancellationToken);
+        IReadOnlyList<MissionStandingGain> standings, IReadOnlyList<(int TypeId, long Quantity)> consume, CancellationToken cancellationToken) =>
+        completeMission(characterId, agentId, now, reference, standings, consume, cancellationToken);
+
+    public Task GrantObjectiveItemAsync(long characterId, int typeId, long quantity, long stationId, CancellationToken cancellationToken) =>
+        grantItem(characterId, typeId, quantity, stationId, cancellationToken);
+
+    public Task<long> HeldQuantityAsync(long characterId, int typeId, CancellationToken cancellationToken) =>
+        heldQuantity(characterId, typeId, cancellationToken);
 }

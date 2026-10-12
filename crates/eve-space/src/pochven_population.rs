@@ -284,6 +284,7 @@ pub const HEAVY_GUNSTAR: NpcType = NpcType {
 pub const CAMP: &str = "pochven camp";
 pub const SENTRY_TRIGLAVIAN: &str = "pochven sentry triglavian";
 pub const SENTRY_EDENCOM: &str = "pochven sentry edencom";
+pub const CAMP_EDENCOM: &str = "pochven camp edencom";
 
 /// The owners (corporations) a Pochven NPC's sensor reports to its tree: the tree attacks an NPC of an owner in `valid` (every owner when empty) that is
 /// not in `invalid`. `[NO_OWNER]` in `valid` is nothing.
@@ -297,21 +298,21 @@ pub struct Owners {
 /// attacks every ship that is not Triglavian, pilots included (the wiki: Triglavian rats are hostile at 0.00 and below, and a pilot starts at 0.00); an
 /// EDENCOM sentry attacks the other Pochven factions' NPCs and no pilot (EDENCOM rats are hostile below 0.00, and nothing here lowers a pilot's standing).
 /// Outside Pochven nothing is attacked.
-pub fn owners_for(behavior: &str, corporation_id: i64, in_pochven: bool) -> Owners {
+pub fn owners_for(behavior: &str, corporation_id: i64, in_zone: bool) -> Owners {
     match behavior {
         b if b == crate::brains::POCHVEN_NPC => {
-            Owners { valid: pochven::hostile_corporations(corporation_id, in_pochven), invalid: Vec::new() }
+            Owners { valid: pochven::hostile_corporations(corporation_id, in_zone), invalid: Vec::new() }
         }
-        CAMP | SENTRY_TRIGLAVIAN if in_pochven => Owners { valid: Vec::new(), invalid: vec![TRIGLAVIAN] },
+        CAMP | SENTRY_TRIGLAVIAN if in_zone => Owners { valid: Vec::new(), invalid: vec![TRIGLAVIAN] },
         CAMP | SENTRY_TRIGLAVIAN => Owners { valid: vec![pochven::NO_OWNER], invalid: Vec::new() },
-        SENTRY_EDENCOM => {
-            Owners { valid: pochven::hostile_corporations(EDENCOM, in_pochven), invalid: Vec::new() }
+        SENTRY_EDENCOM | CAMP_EDENCOM => {
+            Owners { valid: pochven::hostile_corporations(EDENCOM, in_zone), invalid: Vec::new() }
         }
         _ => Owners::default(),
     }
 }
 
-/// The states of the Pochven systems (`data/pochven_states.json`): which faction holds each system.
+/// The zones (`data/pochven_states.json`): each system with a state ('triglavian' or 'edencom'). Pochven's 27 systems are among them.
 fn states() -> &'static HashMap<i32, String> {
     static STATES: OnceLock<HashMap<i32, String>> = OnceLock::new();
     STATES.get_or_init(|| {
@@ -327,7 +328,11 @@ fn states() -> &'static HashMap<i32, String> {
     })
 }
 
-/// Whether the EDENCOM hold the system (its state in the data file; an unlisted system is the Triglavians').
+pub fn is_zone(system_id: i32) -> bool {
+    states().contains_key(&system_id)
+}
+
+/// Whether the EDENCOM hold a zone (its state in the data file).
 pub fn held_by_edencom(system_id: i32) -> bool {
     states().get(&system_id).is_some_and(|state| state == "edencom")
 }
@@ -442,7 +447,7 @@ impl Scene {
     /// The Pochven population: the first look at a Pochven system places its sentries and camps, and every look runs the skirmish schedule within the
     /// caps. A system outside Pochven is left alone.
     pub(crate) fn populate_pochven(&mut self, now: i64) -> Vec<Out> {
-        if self.system().region_id != pochven::POCHVEN_REGION_ID {
+        if !is_zone(self.system().id) {
             return Vec::new();
         }
         let mut out = Vec::new();
@@ -451,7 +456,9 @@ impl Scene {
             self.pochven.next_skirmish_at = now + SKIRMISH_INTERVAL_SECONDS * TICKS_PER_SECOND;
             out.extend(self.place_gate_defences(now));
         }
-        if now >= self.pochven.next_skirmish_at
+        let pochven_system = self.system().region_id == pochven::POCHVEN_REGION_ID;
+        if pochven_system
+            && now >= self.pochven.next_skirmish_at
             && self.pochven_npc_count() + SKIRMISH_SIZE <= MAX_POCHVEN_NPCS
         {
             self.pochven.next_skirmish_at = now + SKIRMISH_INTERVAL_SECONDS * TICKS_PER_SECOND;
@@ -488,9 +495,10 @@ impl Scene {
                 if edencom { (GUNSTAR, SENTRY_EDENCOM) } else { (WERPOST, SENTRY_TRIGLAVIAN) };
             let at = towards_centre(*gate, SENTRY_OFFSET_METRES);
             out.extend(self.spawn_pochven(&sentry, behavior, at, sentry.max_target_range, now));
-            if !edencom && index < 2 {
+            if index < 2 {
+                let (camp, camp_behavior) = if edencom { (SENTINEL, CAMP_EDENCOM) } else { (DAMAVIK, CAMP) };
                 let at = towards_centre(*gate, SENTRY_OFFSET_METRES / 4.0);
-                out.extend(self.spawn_pochven(&DAMAVIK, CAMP, at, DAMAVIK.max_target_range, now));
+                out.extend(self.spawn_pochven(&camp, camp_behavior, at, camp.max_target_range, now));
             }
         }
         out
@@ -573,13 +581,15 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_data_file_names_the_27_pochven_systems_and_their_holders() {
+    fn the_data_file_names_the_27_pochven_systems_as_triglavian_and_arshat_as_edencom() {
         let mut ids: Vec<i32> = states().keys().copied().collect();
         ids.sort_unstable();
-        assert_eq!(ids.len(), 27);
-        assert!(ids.contains(&30_000_021) && ids.contains(&30_045_329));
-        assert!(states().values().all(|state| state == "triglavian"));
+        assert_eq!(ids.len(), 28);
+        assert!(ids.contains(&30_000_021) && ids.contains(&30_045_329) && ids.contains(&ARSHAT));
+        assert_eq!(states().values().filter(|state| *state == "triglavian").count(), 27);
         assert!(!held_by_edencom(30_000_021));
+        assert!(held_by_edencom(ARSHAT) && is_zone(ARSHAT));
+        assert!(!is_zone(30_000_062), "Iosantin is a 2020 target, not a zone");
     }
 
     #[test]
@@ -621,9 +631,16 @@ mod tests {
     use crate::world::{Body, Detail, SolarSystem};
 
     const POCHVEN_SYSTEM: i32 = 30_000_021;
+    const ARSHAT: i32 = 30_002_253;
+    const ARSHAT_REGION: i32 = 10_000_043;
 
     /// A Pochven system with `gates` stargates in a row (each leads out of the region) and a station.
     fn pochven_scene(gates: usize) -> Scene {
+        zone_scene(POCHVEN_SYSTEM, pochven::POCHVEN_REGION_ID, gates)
+    }
+
+    /// A zone of the data file, in `region`, with `gates` stargates in a row.
+    fn zone_scene(system_id: i32, region: i32, gates: usize) -> Scene {
         let mut bodies = Vec::new();
         for index in 0..gates {
             bodies.push(Body {
@@ -650,10 +667,10 @@ mod tests {
             });
         }
         let system = SolarSystem {
-            id: POCHVEN_SYSTEM,
-            name: "Kuharah".to_string(),
+            id: system_id,
+            name: "Zone".to_string(),
             constellation_id: 20_000_788,
-            region_id: pochven::POCHVEN_REGION_ID,
+            region_id: region,
             faction_id: Some(500_026),
             security: -1.0,
             bodies,
@@ -688,6 +705,24 @@ mod tests {
         assert_eq!(count_of(&scene, WERPOST.type_id), 3, "a werpost at each of the three gates");
         assert_eq!(count_of(&scene, DAMAVIK.type_id), 2, "a camp of one hull at each of the first two gates");
         assert_eq!(count_of(&scene, GUNSTAR.type_id), 0);
+    }
+
+    #[test]
+    fn an_edencom_zone_gets_gunstars_and_sentinel_camps_and_no_skirmish() {
+        let mut scene = zone_scene(ARSHAT, ARSHAT_REGION, 2);
+        run(&mut scene, T0, SKIRMISH_INTERVAL_SECONDS + 5);
+        assert_eq!(count_of(&scene, GUNSTAR.type_id), 2, "a GunStar at each gate");
+        assert_eq!(count_of(&scene, SENTINEL.type_id), 2, "an EDENCOM camp at each of the two gates");
+        assert_eq!(count_of(&scene, WERPOST.type_id), 0);
+        assert_eq!(count_of(&scene, DAMAVIK.type_id), 0);
+        assert_eq!(scene.pochven_npc_count(), 4, "no skirmish outside Pochven: only the sentries and camps");
+    }
+
+    #[test]
+    fn a_system_that_is_not_a_zone_gets_nothing() {
+        let mut scene = zone_scene(30_000_062, 10_000_001, 2);
+        run(&mut scene, T0, 1);
+        assert!(scene.pilots.values().all(|p| p.ship.npc.is_none()));
     }
 
     #[test]

@@ -1158,19 +1158,19 @@ graphical client.
   answer. Session notifications are applied as they arrive (`ProcessSessionChange`, `OnSessionChanged`, `sessions.py:577-590`,
   `OnCharacterSessionChanged` on a `charid` change). Verdict: the client does not require a notification before the answer.
   eve.rs sends the selection's session change after the answer and the client accepts it. No change.
-- **`shipid` in the selection notification (cut).** EveJS's selection session change carries `shipid` (capture `evejs-nes_intro`,
-  seq 18). eve.rs leaves it out when the active ship is deferred (`SpaceSessions.cs:545-546`, `CharUnboundMgrService.cs:354-355`)
-  and sends a single-key `shipid` change after the hangar list answer (`eve-rs-nes_intro`, seq 28). The client reads
-  `session.shipid` when it builds the hold tracker (`inventorycommon/holdTracker.py:60-61`) and the hangar badges
-  (`neocomInventoryBadging.py`), and it handles a single-key `shipid` change (`invWindow.py:1142`). Verdict: the client needs
-  `shipid` when the inventory is built, which in eve.rs is after the list answer. Not aligned in this slice: the fix provisions the
-  active ship before selection and changes the deferral design (`SpaceSessions.cs`). Follow-up: provision the starter ship at
-  selection and send `shipid` in the selection change, as the reference does.
-- **The handshake's `2`.** The reference writes the `2` after it reads the client's encrypted authentication blob; eve.rs writes it
-  before (captures `evejs-login` and `eve-rs-login`, handshake records 7 and 8). The client's side of the handshake
-  (`carbon/common/script/net/GPS.py:400-434`) writes `OK CC`, reads the client's encrypted challenge, then writes the server
-  challenge. None of those writes is the `2`. Verdict: the order of the `2` relative to the client's blob is not set by the code
-  that this section reads. Not changed; follow-up: find what writes the `2` in the reference.
+- **`shipid` in the selection notification: aligned (slice 6).** The selection session change carries `shipid` with the
+  character's starter ship, the same as the reference's (capture `evejs-nes`, seq 18; `eve-rs-nes`, seq 19: both 22 keys, the
+  same set). The starter ship exists from character creation (`dotnet/src/Eve.Characters/CharacterCreation.cs`), so the value is
+  real. The deferred docked ship (`deferredDockedShipId`) was removed; the fitting bootstrap for a docked ship runs on the hangar
+  list (`CharacterDogmaSync.cs`). The unit test `Selecting_a_character_puts_its_active_ship_in_the_selection_session_change`
+  checks the announced change. The earlier "cut" text was wrong: it came from reading a stale capture file.
+- **The handshake's `2`: aligned (slice 6).** The reference writes `PyInt(2)` after it reads the client's challenge
+  (`server/src/network/tcp/handshake.js`, the CryptoChallengePacket step). eve.rs writes it after the same read
+  (`crates/eve-net/src/handshake.rs`). The `nes` walk captures of both servers match from the version exchange through
+  `GetServiceInfo`, so the handshake lines in the MITM diff are equal.
+- **Still different, not changed.** The reference sends `OnCharacterSelected` then the session change, and eve.rs sends the
+  session change first in one place; the walk's dogma and ping ordering differs by one packet; character ids and names differ per
+  run (volatile). These are order details the client code in `eve-logic` does not fix in the paths read so far.
 
 ## Track A8c: the mobile beacon as a jump target (2026-10-10)
 

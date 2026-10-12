@@ -78,3 +78,14 @@ def owner_of(item: int) -> int:
 def isk_of(character: int) -> float:
     """The ISK balance of a character (wallet.balances)."""
     return float(sql(f"select isk from {schema('WALLET')}.balances where owner_id = {int(character)}") or 0)
+
+
+def corporation_of(character: int) -> int:
+    """The corporation a character belongs to (characters.corporation_id)."""
+    return int(sql(f"select corporation_id from {schema('CHARACTERS')}.characters where id = {int(character)}"))
+
+
+def lock_item(item: int, *, corporation: int, type_id: int, location: int) -> None:
+    """A corporation's item lock (corporations.item_locks), as a director's vote to lock a blueprint writes it."""
+    sql(f"insert into {schema('CORPORATIONS')}.item_locks (item_id, corporation_id, type_id, location_id, locked_filetime) "
+        f"values ({int(item)}, {int(corporation)}, {int(type_id)}, {int(location)}, 133000000000000000)")

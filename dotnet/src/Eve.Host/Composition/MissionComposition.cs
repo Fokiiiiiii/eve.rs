@@ -171,7 +171,7 @@ internal sealed partial class CharacterServicesComposition
         agentMissionAnnouncer = new Eve.Services.Core.AgentMissionAnnouncer(agentMissionStore, characterSessions);
         await LoadClientMissionMessagesAsync();
         // the faction of each NPC corporation (SDE npcCorporations.factionID): the access rule reads the faction standing
-        var npcFactions = (await sde.ReadAsync("npcCorporations", cancellationToken: CancellationToken.None))
+        npcFactions = (await sde.ReadAsync("npcCorporations", cancellationToken: CancellationToken.None))
             .Where(row => row.Doc.TryGetProperty("factionID", out var faction) && faction.ValueKind == System.Text.Json.JsonValueKind.Number)
             .ToDictionary(row => row.Key, row => row.Doc.GetProperty("factionID").GetInt64());
         agentMissionAgentById = agentMissionAgentRows.ToDictionary(agent => agent.AgentId);
@@ -269,6 +269,8 @@ internal sealed partial class CharacterServicesComposition
                 // agents have no official mission link and offer nothing.
                 async ValueTask<Eve.Agents.AgentMissionContent?> (AgentMissionAgentData agent, long characterId, CancellationToken ct) =>
                 {
+                    // a storyline agent with a pending storyline offer makes it first
+                    if (await StorylineOfferAsync(agent, characterId, ct) is { } storylineOffer) return storylineOffer;
                     var completed = await agentMissionStore.ReadCompletedAsync(characterId, ct);
                     var failed = await agentMissionStore.ReadFailedAsync(characterId, ct);
                     var now = DateTimeOffset.UtcNow;
@@ -330,7 +332,7 @@ internal sealed partial class CharacterServicesComposition
             (missionId, characterId, place, level) => stargateGraph is { } gates
                 ? MissionCourierRules.Destination(missionId, characterId, place.BaseStationId!.Value, (int)place.SolarSystemId, level, gates, stations.All)
                 : null,
-            IsTradeMission);
+            IsTradeMission, IsMiningMission);
         var runtime = missionDungeons;
         if (spaceSessions is not null) spaceSessions.PilotDocked = (characterId, stationId, token) => runtime.OnDockedAsync(characterId, stationId, token);
         foundations.Scheduler.Register(MissionDungeonSweepJob, (context, token) => runtime.SweepAsync(token));
@@ -351,6 +353,12 @@ internal sealed partial class CharacterServicesComposition
 
     /// <summary>The client content template of each mission (see ClientMissionTemplates): empty when the client file is not configured.</summary>
     private IReadOnlyDictionary<long, string> clientMissionTemplates = new Dictionary<long, string>();
+
+    /// <summary>The storyline offer counter of the agents schema (set with the mission store).</summary>
+    private Eve.Agents.StorylineCounters storylineCounters = default!;
+
+    /// <summary>The faction of each NPC corporation (npcCorporations.factionID), read at start (the storyline counter and the offers use it).</summary>
+    private IReadOnlyDictionary<long, long> npcFactions = new Dictionary<long, long>();
 
     /// <summary>Whether the mission is a storyline trade mission of the client: handed in at its agent like a fetch (DEVIATIONS X13).</summary>
     private bool IsTradeMission(long missionId) => clientMissionTemplates.GetValueOrDefault(missionId) == ClientMissionTemplates.TradeTemplate;
@@ -503,9 +511,55 @@ internal sealed partial class CharacterServicesComposition
     /// store share the database): the completion is journalled, the items leave the pilot, the standings change, and the session is told after the
     /// commit. False when the mission was not accepted or the items are short.
     /// </summary>
-    private Task<bool> CompleteMissionAsync(long characterId, long agentId, DateTimeOffset now, string reference,
+    private async Task<bool> CompleteMissionAsync(long characterId, long agentId, DateTimeOffset now, string reference,
         IReadOnlyList<MissionStandingGain> standings, IReadOnlyList<(int TypeId, long Quantity, string? Tag)> consume, CancellationToken cancellationToken) =>
-        CompleteInTransactionAsync(source, agentMissionStore, foundations.Relations, items, characterId, agentId, now, reference, standings, consume, cancellationToken);
+        await CompleteInTransactionAsync(source, agentMissionStore, foundations.Relations, items, characterId, agentId, now, reference, standings, consume,
+            cancellationToken, storylineCounters, await CountedFactionOfAsync(characterId, agentId, cancellationToken));
+
+    /// <summary>
+    /// The faction and level a completion counts toward the storyline offers: a basic mission of a basic agent (not an arc step, not a trade
+    /// mission, not Faction Warfare or storyline agents, which are other agent types). Null when it does not count.
+    /// </summary>
+    private async Task<(long FactionId, long Level)?> CountedFactionOfAsync(long characterId, long agentId, CancellationToken cancellationToken)
+    {
+        if (!agentMissionAgentById.TryGetValue(agentId, out var agent) || agent.AgentTypeId != Eve.Services.Core.AgentMissionKindRules.TypeBasicAgent) return null;
+        var level = agent.Level;
+        var faction = npcFactions.GetValueOrDefault(agent.CorporationId);
+        if (faction <= 0) return null;
+        var record = await agentMissionStore.ReadAsync(characterId, agentId, cancellationToken);
+        if (record is null) return null;
+        var missionId = record.Content.MissionId;
+        if (agentMissionStatic.MissionAvailability(missionId).ArcId is not null || IsTradeMission(missionId)) return null;
+        return (faction, level);
+    }
+
+    /// <summary>
+    /// The storyline offer (EVE University, Storyline missions): at a storyline agent of a faction that has a pending offer for one of its levels,
+    /// the lowest storyline trade mission the pilot has not completed; the offer is marked made. The nearest storyline agent of the faction to the
+    /// pilot is the agent talked to here, the pilot being at its system; the wiki gives no range, so none is applied (DEVIATIONS X15).
+    /// </summary>
+    private async Task<Eve.Agents.AgentMissionContent?> StorylineOfferAsync(AgentMissionAgentData agent, long characterId, CancellationToken cancellationToken)
+    {
+        if (agent.AgentTypeId != Eve.Services.Core.AgentMissionKindRules.TypeGenericStorylineMissionAgent && agent.AgentTypeId != Eve.Services.Core.AgentMissionKindRules.TypeStorylineMissionAgent) return null;
+        var faction = npcFactions.GetValueOrDefault(agent.CorporationId);
+        if (faction <= 0) return null;
+        long? dueLevel = null;
+        for (long level = 1; level <= 5 && dueLevel is null; level++)
+        {
+            var (completed, offered) = await storylineCounters.ReadAsync(characterId, faction, level, cancellationToken);
+            if (Eve.Agents.StorylineCounters.PendingOffers(completed, offered) > 0) dueLevel = level;
+        }
+        if (dueLevel is not { } due) return null;
+        var done = (await agentMissionStore.ReadCompletedAsync(characterId, cancellationToken)).Select(item => item.MissionId).ToHashSet();
+        var mission = agentMissionStatic.Missions
+            .Where(candidate => candidate.Courier is not null && IsTradeMission(candidate.MissionId) && !done.Contains(candidate.MissionId)
+                && agentMissionStatic.MissionAvailability(candidate.MissionId).ArcId is null)
+            .OrderBy(candidate => candidate.MissionId)
+            .FirstOrDefault();
+        if (mission is null) return null;
+        await storylineCounters.MarkOfferedAsync(characterId, faction, due, cancellationToken);
+        return new Eve.Agents.AgentMissionContent(mission.MissionId, mission.NameId, mission.NameEn, agent.MissionKind, agent.ImportantMission);
+    }
 
     /// <summary>
     /// The completion, the consumption and the standing writes in one transaction: a write that fails rolls all of them back, so the mission stays
@@ -513,7 +567,8 @@ internal sealed partial class CharacterServicesComposition
     /// </summary>
     internal static async Task<bool> CompleteInTransactionAsync(NpgsqlDataSource source, Eve.Agents.AgentMissionStore agentMissionStore,
         Eve.Relations.RelationStore relations, Eve.Inventory.PgItemStore items, long characterId, long agentId, DateTimeOffset now, string reference,
-        IReadOnlyList<MissionStandingGain> standings, IReadOnlyList<(int TypeId, long Quantity, string? Tag)> consume, CancellationToken cancellationToken)
+        IReadOnlyList<MissionStandingGain> standings, IReadOnlyList<(int TypeId, long Quantity, string? Tag)> consume, CancellationToken cancellationToken,
+        Eve.Agents.StorylineCounters? counters = null, (long FactionId, long Level)? counted = null)
     {
         await using var connection = await source.OpenConnectionAsync(cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
@@ -543,6 +598,9 @@ internal sealed partial class CharacterServicesComposition
             return false;
         }
         if (change is null) return false;
+        // a counted completion (a basic mission of a basic agent) adds one to its faction and level toward the storyline offers
+        if (counters is not null && counted is { } countedAs)
+            await counters.IncrementAsync(connection, transaction, characterId, countedAs.FactionId, countedAs.Level, cancellationToken);
         // the objective items leave with the completion
         foreach (var (stack, taken) in takes)
         {

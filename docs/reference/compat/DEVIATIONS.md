@@ -3573,6 +3573,15 @@ Owner decisions (X9, X10). The courier rules below are eve.rs's project rules, n
 - **Not wired.** The completion does not yet increment the counter, the offer picker does not yet offer a storyline mission, and the nearest storyline agent is not chosen. The wiki gives no jump range for the nearest agent, so none is applied when it is wired. Until then no storyline mission is offered and the counter stays empty.
 - **Mining quota.** Not made an actual quota: the ore quota is still granted in full at the dungeon's completion (X13b shortcut); the mining code is not reused.
 
+## Mission execution X15: the storyline counter wired, the mining quota handed in (2026-10-12)
+
+- **Counting.** A completion counts toward its faction and level when it is a basic mission of a basic agent (agent type 2), not an arc step, not a trade mission, with a known faction (npcCorporations.factionID). Faction Warfare and storyline agents are other agent types and never count. The increment is in the completion's transaction (`CompleteInTransactionAsync`, counted argument). Test: `A_counted_completion_adds_one_to_its_faction_and_level_and_an_uncounted_one_adds_nothing`.
+- **The offer.** At a storyline agent (types 6 and 7) whose faction has a pending offer for a level 1 to 5 (`StorylineCounters.PendingOffers`), the picker offers the lowest storyline trade mission the pilot has not completed, and marks the offer made. Shortcut: the offer is marked when it is picked, not when it is accepted. The nearest storyline agent is the agent talked to, since the pilot is at its system; the wiki gives no range, so none is applied. The storyline trade is a fetch at that agent (its turn-in is the fetch of X13b).
+- **Not tested directly:** the picker itself (it is a composition lambda). The counter's 16-completion boundary is tested in `Sixteen_completions_of_one_faction_and_level_are_one_pending_storyline_offer_until_it_is_made`; the offer path is compile-checked only.
+- **Mining quota: handed in.** A basic mining step's dungeon completion grants nothing. The pilot hands in the ore of the objective type it holds, at the agent, and the full quantity completes the step (the turn-in consumes it). Test: `A_mining_step_is_not_granted_by_its_dungeon_and_completes_when_the_pilot_hands_in_the_full_ore_quantity`. Shortcut: the pilot supplies the ore (mined or bought); the site does not put ore loot into rocks or containers, and the mining code is not reused.
+- **Client data.** The embedded client-SDE subset has not landed on origin/main yet, so the kinds and texts are still read from `EVE_CLIENT_SDE_DIR`, which stays optional.
+
+
 
 
 

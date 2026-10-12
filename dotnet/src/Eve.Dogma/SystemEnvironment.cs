@@ -19,10 +19,19 @@ public static class SystemEnvironment
         {
             Operation operation;
             string attribute;
+            var amount = value;
             if (name.EndsWith("Multiplier", StringComparison.Ordinal))
             {
                 attribute = name[..^"Multiplier".Length];
                 operation = Operation.PostMul;
+            }
+            else if (name.EndsWith("ResistanceBonus", StringComparison.Ordinal))
+            {
+                // the dogma keeps a resistance as a resonance (the damage taken is the resonance times the damage): a resistance that grows by
+                // the bonus makes the resonance smaller by it, so the percentage is negated
+                attribute = name[..^"ResistanceBonus".Length] + "Resonance";
+                operation = Operation.PostPercent;
+                amount = -value;
             }
             else if (name.EndsWith("Bonus", StringComparison.Ordinal))
             {
@@ -39,8 +48,8 @@ public static class SystemEnvironment
                 notApplied.Add(name);
                 continue;
             }
-            modifiers.Add(new Modifier(ModifierFunc.Item, "itemID", operation, id, 0, Literal: value));
-            modifiers.Add(new Modifier(ModifierFunc.Location, "itemID", operation, id, 0, Literal: value));
+            modifiers.Add(new Modifier(ModifierFunc.Item, "itemID", operation, id, 0, Literal: amount));
+            modifiers.Add(new Modifier(ModifierFunc.Location, "itemID", operation, id, 0, Literal: amount));
         }
         var effect = modifiers.Count == 0 ? null : new EffectDef(beaconTypeId, "environment:" + beaconName, EffectDef.Passive, modifiers);
         return (effect, notApplied);

@@ -415,6 +415,9 @@ public sealed partial class SpaceSessions
                         ("regionid", new PyInt(moved.Character.RegionId)),
                         ("locationid", system));
                     Background(() => RefreshTetherPolicyAsync(session));
+                    // a system with an environment (a wormhole's effects) changes what the ship flies with: the simulation is given it again
+                    if (SystemEnvironment is { } environmentOf && (environmentOf(jumped.ToSystem).Count > 0 || environmentOf(pilot.SolarSystemId).Count > 0))
+                        Background(() => RefreshEnvironmentAsync(session, pilot.CharacterId, pilot.ShipId));
                     return Task.FromResult(true);
                 },
                 null,

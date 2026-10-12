@@ -1420,6 +1420,7 @@ Sources. The wiki: "Pochven" (https://wiki.eveuniversity.org/Pochven, fetched 20
   `GetEdencomMinorVictorySystems`, `GetTriglavianMinorVictorySystems`) are the reference's constant lists; the SDE does
   not carry them and no state produces them. `map.GetBeaconCount` answers an empty dictionary, although the cynosural
   beacons of track A9 exist: the count belongs to the ships track (the other agent). Status: each open (TODO section 41).
+- **Report row types (slice 2, 2026-10-12).** `lastUpdated` is a long (a FILETIME), as EVE.js's answer has it; the field was a real. The key sets of `GetIncursionGlobalReport` and `GetSystemsInIncursions` equal EVE.js's in the live walk (`test_incursion_walk.py`). Status: verified against EVE.js.
 - **Incursions and anomalies come from the content state.** `map.GetIncursionGlobalReport`, `map.GetSystemsInIncursions`,
   `taleMgr.*` and `scanMgr.*` read the content instances of kind `incursion` and `anomaly` (`PersistenceIncursionAnomalyReadModel`).
   With none seeded, the answers are the empty contract shapes (an empty list, an empty rowset, an empty tale list).
@@ -2579,6 +2580,7 @@ Engine: `dotnet/src/Eve.Hacking` (pure rules, no Host). Sources: EVE University 
 - **At-least-once spawn.** The simulation spawns a wave before the commit of its drone rows. A crash between the two can make the drones twice (as for dungeon waves).
 - **Wave 2 (D-S2, 2026-10-12).** The second wave at scan progress 0.5 has the same pool and amount as the first (EVE.js `crabWaveAuthority.js`, `INFERRED_WAVE_SCHEDULE`). The CCP guide (support article 4408566646162) says Rogue Drone waves block the scan until cleared, which is what the scan does. The figures stay owner-decided (D-C1) and are not CCP data. Status: decided.
 - **Link lock (D-L2, 2026-10-12).** EVE.js `applyLinkRestrictionsToShip`: immobile until the link completes; warp, jump, cyno jump and dock held until one minute after (`MOBILE_ANALYSIS_BEACON_LINK_STATUS_CLEAR_DELAY_MS`). The CCP text for the four minutes gives no lock list, so the lock list is EVE.js's. A held command is refused as `LINK_HOLD`; the client sees the command's usual refusal text. Cloak and tether are not held yet. Status: decided; cloak and tether OPEN.
+- **Live walk (slice 2, 2026-10-12).** `tools/headless-client/tests/test_crab_walk.py` runs on eve.rs only: the walk's CRAB and anchoring skill are database fixtures, and EVE.js keeps its characters outside PostgreSQL, so the same fixture cannot be written there. Status: decided; the EVE.js comparison is not run.
 - **Not built.** The interference and energy costs, four links per character per day, the 10,000 km asteroid rule, bounties, beacon damage and drone attacks (see TODO section 48).
 - **Client ball.** A beacon is released as a container ball (as the lance beacon is), with category 22. Not verified in the graphical client.
 ## Incursions (B-L1, B-S1, B-M1, 2026-10-11)
@@ -3325,8 +3327,9 @@ rules), "Wormhole Types". The client's `wormholeMgr.WormholeJump(itemID)` (eve-l
 - The collapse of an end by the scheduler (the lifetime) publishes its removal to the simulation at the time the job runs; the job's
   transaction may still fail after that, and the next scene start places the stored ends again.
 - Tests: `WormholeWorldTests` (ends, positions, generation once, a captured collapse), `WormholeLifecycleTests` and
-  `WormholePlannerTests` (eve.wormholes); the simulation's placement and jump (`eve-space` scene tests). The space service jump has no
-  test yet (NOT RUN at the service level).
+  `WormholePlannerTests` (eve.wormholes); the simulation's placement and jump (`eve-space` scene tests). The space service jump:
+  `WormholeJumpServiceTests` (eve.services.space, PostgreSQL): the mass refusal with its text and no jump heard, the jump taken with the
+  destination's end placed and the polarization with its text, and a collapse that removes both ends in the simulation. Not run: the client.
 ## Slice 3, step 1: zones outside Pochven (2026-10-12)
 
 Sources. The EVE University wiki "Triglavian Invasion (Chapter 3)" (https://wiki.eveuniversity.org/Triglavian_Invasion_(Chapter_3), read 2026-10-12; the page was last edited 2023-08-28 and says it documents content no longer in the game): Arshat moved from Escalating Liminality to an EDENCOM Fortress at the end of Chapter 3 (2020-10-13). The wiki's "EDENCOM systems" page (last edited 2024-01-19) names no system and links an external "List of invasion systems" that returned 404 when fetched. The forum names of the 2020 renewed attacks (Abha, Inaya, Muttokon, Seiradih, Aldik, Iosantin) are not states and are not zones.
@@ -3414,3 +3417,17 @@ Superseded in part by "Wormhole sites: real names and client dungeon keys (slice
 - Scan strength: a J signature needs `WormholeSites.ScanStrength` (0.0, SDE attribute 1908), and `ProbeScanMath.Coverage` now treats a target that needs no strength as reached by its geometry alone (a probe in range covers it fully). Before, such a target covered nothing. A ship's required strength is never 0, so no ship changes.
 - Lifetime: 24 hours as the K-space sites (`CosmicSiteDirector.Lifetime`); a collapsed wormhole does not remove its system's sites (no rule published).
 - Not built: the signatures of gas and ore; the hacking and the analysis of a J-space container are the existing K-space path, not tested in a J-system; the live run in a J-system (the headless check) is not done.
+
+### Wormhole service jump tests (slice 10, service layer)
+- `WormholeJumpServiceTests` (PostgreSQL, under the heavy lock): a pilot undocked in a J-system (its location set before the undock), a world of one static of the test's types, and the space service's `WormholeJumpAsync`. Covered: the individual mass refusal with its text and no jump given to the simulation; a jump taken, the destination's end placed, the polarization and the second try's text; a connection of 10 tonnes that collapses on the first transit, with both of its ends removed from the simulation.
+- Not covered: the polarization's expiry after five minutes (the rig's clock is fixed), the RPC `WormholeMgr` path with its notifications, and a second ship's race between the check and the take (logged, shortcut above). The client is not driven (NOT RUN).
+
+### Wormhole environment in the simulation (slice 10)
+- Route: the simulation has no environment of its own. The host applies a system's beacon as dogma modifiers on the ship (`SystemEnvironment`, slice 7c), and gives the simulation the ship's spec from those values (`SimShips.Of` reads the dogma world). The Rust sim is unchanged for this slice.
+- Gap found and closed: a ship that jumped into a wormhole system kept the spec of the system it undocked in, until its next undock or login. Now a jump into or out of a system with an environment syncs the buffs and gives the simulation the ship again (`RefreshEnvironmentAsync`, after the arrival). A test: `A_jump_into_a_system_with_an_environment_gives_the_simulation_the_ship_again_with_that_environment`. Gate jumps into systems with no environment are not changed.
+- Resistances: the beacons name resistance bonuses (`shieldEmDamageResistanceBonus` and the other 15 of the four layers). The SDE names the dogma attribute a resonance (`shieldEmDamageResonance`, 271 and the rest), a resonance is 1 minus the resistance, so a bonus of p percent is applied to the resonance as minus p percent (PostPercent). Before this, these bonuses were listed as not applied. The spec reads the shield, armor and hull resonances, so they reach the simulation.
+- Applied, and read by the spec's ship fields: `maxVelocity`, `agility`, `signatureRadius`, `maxTargetRange`, `rechargeRate` (the capacitor's recharge), `shieldCapacity`, `armorHP`, the shield, armor and hull resonances.
+- Applied in the dogma layer, not read by the spec's ship fields: `damageMultiplier`, `heatDamage`, `empFieldRange`, `aoeCloudSize`, `aoeVelocity`, `armorDamageAmount`, `shieldBonus`, `trackingSpeed`. Whether a module spec carries them to the simulation was not checked; the simulation's module model is not changed in this slice.
+- Not applied (the name has no dogma attribute or is not a bonus): `energyWarfareStrengthMultiplier`, `energyTransferAmountBonus`, `missileVelocityMultiplier`, `overloadBonusMultiplier`, `smallWeaponDamageMultiplier`, `smartbombDamageMultiplier`, `stasisWebStrengthMultiplier`, `targetPainterStrengthMultiplier`, `capacitorCapacityMultiplierSystem`, `armorDamageAmountMultiplierRemote`, `shieldBonusMultiplierRemote`. These are left out of the environment and listed in `NotApplied` of `SystemEnvironment.EffectOf`.
+- Not in the client's attributes: the dogma world's values change on a system change, but the client's ship attributes are not sent again (the client reads them at its next change).
+

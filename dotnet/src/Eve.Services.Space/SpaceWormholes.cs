@@ -38,6 +38,25 @@ public sealed partial class SpaceSessions
         return SystemEnvironment(flown.SolarSystemId);
     }
 
+    /// <summary>
+    /// The ship is given to the simulation again after it changes system: its buffs are synced to the system it is in now (the environment of its
+    /// wormhole), and the simulation flies it with the ship's attributes from then on (its spec is kept from when it entered).
+    /// </summary>
+    private async Task RefreshEnvironmentAsync(ClientSession session, long characterId, long shipId)
+    {
+        try
+        {
+            if (await _ships.LoadAsync(characterId, CancellationToken.None) is not { } flown || flown.Ship.Id != shipId)
+                return;
+            await SyncBuffsAsync(flown.World, shipId, CancellationToken.None);
+            _sim.ShipChanged((ulong)session.SessionId, SimShips.Of(flown, _statics, await SecurityStatusAsync(characterId, CancellationToken.None)));
+        }
+        catch (Exception error) when (error is not OperationCanceledException)
+        {
+            _log?.Invoke($"the environment of ship {shipId} could not be given to the simulation: {error.Message}");
+        }
+    }
+
     /// <summary>The polarization of a wormhole end in one direction (wiki "Wormhole": five minutes per pilot).</summary>
     private static readonly long PolarizationMs = (long)WormholeRules.Polarization.TotalMilliseconds;
 

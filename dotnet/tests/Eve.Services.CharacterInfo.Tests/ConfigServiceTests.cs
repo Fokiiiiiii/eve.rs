@@ -221,10 +221,13 @@ public sealed class ConfigServiceTests
         CharacterNames.EnsureUnicodeSupport();
         var charactersSchema = $"cc_{Guid.NewGuid():N}"[..20];
         var corporationsSchema = $"cc_corp_{Guid.NewGuid():N}"[..20];
+        var inventorySchema = $"cc_inv_{Guid.NewGuid():N}"[..20];
         try
         {
             await PgCharacterStore.MigrateAsync(source, charactersSchema);
             await CorporationStore.MigrateAsync(source, corporationsSchema);
+            await Eve.Inventory.PgItemStore.MigrateAsync(source, inventorySchema);
+            var items = new Eve.Inventory.PgItemStore(source, inventorySchema);
             var characters = new PgCharacterStore(source, charactersSchema);
             long characterId;
             await using (var connection = await source.OpenConnectionAsync())
@@ -242,8 +245,25 @@ public sealed class ConfigServiceTests
             await corporations.SeedNpcAsync(sde);
             var stations = await StationCatalog.LoadAsync(sde);
             var solarSystems = await SolarSystemCatalog.LoadAsync(sde);
-            var service = new ConfigService(characters, corporations, stations, solarSystems);
-            var session = new ClientSession { SessionId = 1, ClientId = 2 };
+            var dogma = await Eve.Dogma.DogmaStatic.LoadAsync(sde);
+            var service = new ConfigService(characters, corporations, stations, solarSystems, items: items, dogma: dogma);
+            var session = new ClientSession { SessionId = 1, ClientId = 2, CharacterId = characterId };
+            long ownedShipId, foreignShipId;
+            await using (var itemConnection = await source.OpenConnectionAsync())
+            await using (var itemTransaction = await itemConnection.BeginTransactionAsync())
+            {
+                ownedShipId = await items.CreateAsync(itemConnection, itemTransaction,
+                    new Eve.Inventory.NewItem(596, characterId, 60015249, 4, 1, true, "Cache Ship"));
+                foreignShipId = await items.CreateAsync(itemConnection, itemTransaction,
+                    new Eve.Inventory.NewItem(596, characterId + 1, 60015249, 4, 1, true, "Private Ship"));
+                await itemTransaction.CommitAsync();
+            }
+            var dynamicRows = Rows(await service.GetMultiLocationsEx(Call("GetMultiLocationsEx", [ownedShipId, foreignShipId], session)),
+                ["locationID", "locationName", "solarSystemID", "x", "y", "z", "locationNameID"]);
+            var dynamicRow = Assert.Single(dynamicRows);
+            Assert.Equal(ownedShipId, Integer(dynamicRow[0]));
+            Assert.Equal("Cache Ship", Text(dynamicRow[1]));
+            Assert.Equal(30100032, Integer(dynamicRow[2]));
 
             long[] corporationIds = [1000002, 1000006, 1000046, 1000063, 1000094];
             var ownerResult = await service.GetMultiOwnersEx(Call("GetMultiOwnersEx", [characterId, .. corporationIds], session));
@@ -287,7 +307,7 @@ public sealed class ConfigServiceTests
         }
         finally
         {
-            await using var cleanup = source.CreateCommand($"DROP SCHEMA IF EXISTS {charactersSchema} CASCADE; DROP SCHEMA IF EXISTS {corporationsSchema} CASCADE");
+            await using var cleanup = source.CreateCommand($"DROP SCHEMA IF EXISTS {charactersSchema} CASCADE; DROP SCHEMA IF EXISTS {corporationsSchema} CASCADE; DROP SCHEMA IF EXISTS {inventorySchema} CASCADE");
             await cleanup.ExecuteNonQueryAsync();
         }
     }

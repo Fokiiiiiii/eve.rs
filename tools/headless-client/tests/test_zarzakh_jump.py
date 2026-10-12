@@ -2,8 +2,8 @@
 
     EVE_LIVE_SLOW=1 EVE_LIVE_HOST=host:port EVE_START_STATION=60004723 pytest tests/test_zarzakh_jump.py
 
-The host must start new characters in a station of Turnur (EVE_START_STATION=60004723) and have EVE_CLIENT_SDE_DIR set: the
-gate lists, the toll and the deploy blockers of Zarzakh come from the client export. The character and its ship come from the
+The host must start new characters in a station of Turnur (EVE_START_STATION=60004723). The gate lists, the toll and the deploy
+blockers of Zarzakh come from the embedded client data (tools/dev/extract-client-sde.py). The character and its ship come from the
 recorded jump walk (`oracle/fixtures/scenarios/jump.json`); the station and the system are Turnur's. No EveJS recording of this route
 exists, so the test checks the outcome the client can see (the jump answer, a session change into Zarzakh) and the toll journal when the
 database is named (EVE_PG_URL): the comparison with EVE.js is a separate run (DEVIATIONS, slice 3).

@@ -446,7 +446,7 @@ public sealed class AgentMissionService(
         return solarSystemId is > 0 and var id ? new PyInt(id) : PyNone.Instance;
     }
 
-    private static PyTuple AgentRow(AgentMissionAgentData agent) => new(
+    private static PyList AgentRow(AgentMissionAgentData agent) => new(
     [
         new PyInt(agent.AgentId),
         new PyInt(agent.AgentTypeId),

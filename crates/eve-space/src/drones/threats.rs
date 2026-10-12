@@ -170,7 +170,12 @@ impl Scene {
         if self.drones.get(&session).is_some_and(|ai| !ai.can_combat) {
             return Vec::new();
         }
-        let Some(target_session) = self.session_of(target) else { return Vec::new() };
+        let Some(target_session) = self.session_of(target) else {
+            if !self.struck_structure(target) {
+                return Vec::new();
+            }
+            return self.engage_structure(session, target, now);
+        };
         let Some((engagement, movement, chase)) =
             self.drones.get(&session).map(|ai| (ai.engagement_range, ai.movement_range, ai.chase_range))
         else {
@@ -196,6 +201,26 @@ impl Scene {
     }
 
     /// The drone is left in this scene under nobody's control; the host keeps it as the pilot's item and may reconnect it later.
+    /// A drone is set on a structure of the system: it fights it while the structure is in its engagement range, else it is approaching (see `fight_structure`).
+    fn engage_structure(&mut self, session: SessionId, target: i64, now: i64) -> Vec<Out> {
+        let (Some(attacker), Some(structure), Some(engagement)) = (
+            self.kinematics_of(session),
+            self.target_kinematics(target),
+            self.drones.get(&session).map(|ai| ai.engagement_range),
+        ) else {
+            return Vec::new();
+        };
+        let apart = crate::weapons::surface_distance(&attacker, &structure);
+        if let Some(ai) = self.drones.get_mut(&session) {
+            ai.task = Task::Engage { target };
+            ai.next_shot = now;
+            ai.next_remote = now;
+        }
+        let activity = if apart > engagement + 1.0 { APPROACHING } else { COMBAT };
+        self.set_activity(session, activity);
+        self.told_state(session)
+    }
+
     pub(crate) fn abandon(&mut self, session: SessionId, now: i64) -> Vec<Out> {
         let mut out = self.stop_remote(session, now);
         out.extend(self.let_go(session, now));

@@ -45,6 +45,9 @@ public sealed partial class InvBrokerService(
 
         /// <summary>The current pilot's structure inventory; this binding never grants mutation access.</summary>
         Structure,
+
+        /// <summary>The selected character's learned skills, primed by godma as a location.</summary>
+        Character,
     }
 
     /// <summary>What a bound inventory is: which kind, whose item it is, and the session that opened it.</summary>
@@ -95,6 +98,8 @@ public sealed partial class InvBrokerService(
 
     private void RequireMutableInventory(ServiceCall call)
     {
+        if (ContextOf(call)?.Kind == Kind.Character)
+            throw MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("The character skill inventory is read-only.")));
         if (ContextOf(call)?.Kind == Kind.Structure)
             throw MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("The controlled structure inventory is read-only.")));
     }
@@ -219,6 +224,14 @@ public sealed partial class InvBrokerService(
             return await HangarAsync(session, cancellationToken);
         if (context.Kind == Kind.Space || session.CharacterId is not { } character)
             return [];
+        if (context.Kind == Kind.Character)
+        {
+            if (context.ItemId != character || await ships.LoadAsync(character, cancellationToken) is not { } snapshot)
+                return [];
+            return await RowsAsync(snapshot.Skills.Select(skill => new Item(
+                ShipSnapshot.SkillItemId(character, skill.TypeId), skill.TypeId, character, character,
+                ShipSnapshot.SkillFlag, 1, true, null)), cancellationToken);
+        }
         if (context.Kind is not (Kind.Container or Kind.Ship))
             return [];
 
@@ -258,6 +271,13 @@ public sealed partial class InvBrokerService(
         if (context.Kind == Kind.Hangar)
         {
             return await StationRowAsync(session, cancellationToken);
+        }
+        if (context.Kind == Kind.Character)
+        {
+            if (session.CharacterId != context.ItemId || await ships.LoadAsync(context.ItemId, cancellationToken) is not { } snapshot)
+                return null;
+            return (await RowsAsync([new Item(snapshot.Character.Id, snapshot.Character.TypeId, snapshot.Character.Id,
+                snapshot.Ship.Id, ShipSnapshot.PilotFlag, 1, true, null)], cancellationToken)).FirstOrDefault();
         }
         if (context.Kind == Kind.Space)
         {
@@ -315,6 +335,10 @@ public sealed partial class InvBrokerService(
         {
             result = None;
         }
+        else if (call.Session.CharacterId == id)
+        {
+            result = Bind(new Context(Kind.Character, id, 0), call.Session);
+        }
         else if (call.Session.GetInt("structureid") == id && call.Session.GetInt("shipid") == id)
         {
             result = await ControlledStructureAsync(call.Session, id, call.Cancellation) is not null
@@ -356,6 +380,8 @@ public sealed partial class InvBrokerService(
         {
             result = None;
         }
+        if (result is PyNone)
+            throw MachoErrors.ThrowUserError("FakeItemNotFound");
         return await CompleteInventoryRpcAsync(call, result);
     }
 
@@ -664,6 +690,7 @@ public sealed partial class InvBrokerService(
 [Method("MultiMerge")]
     public async ValueTask<PyValue> MultiMerge(ServiceCall call)
     {
+        RequireMutableInventory(call);
         if (ContextOf(call) is not { } context || call.Session.CharacterId is not { } character
             || StationOf(call.Session) is not { } station || IdOf(call.Arg(1)) is not { } sourceContainer)
             return None;

@@ -42,9 +42,12 @@ public sealed class ClientSystemFlagsTests
     }
 
     [Fact]
-    public async Task A_blank_directory_loads_nothing()
+    public async Task Without_a_directory_the_embedded_copy_gives_the_zarzakh_flags_only()
     {
-        Assert.Empty(await ClientSystemFlags.ReadDirectoryAsync(""));
+        var flags = await ClientSystemFlags.LoadAsync("");
+
+        Assert.Equal(new ClientSystemFlags(DisallowCyno: true, DisallowScanning: true), Assert.Single(flags).Value);
+        Assert.Equal(new ClientSystemFlags(DisallowCyno: true, DisallowScanning: true), flags[30100000]);
     }
 
     [Fact]

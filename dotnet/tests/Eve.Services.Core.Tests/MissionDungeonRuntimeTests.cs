@@ -513,6 +513,37 @@ public class MissionDungeonRuntimeTests
         Assert.Equal(100000L, Assert.Single(host.Credits).Amount);
     }
 
+    [AgentsPgFact]
+    public async Task A_mining_step_is_not_granted_by_its_dungeon_and_completes_when_the_pilot_hands_in_the_full_ore_quantity()
+    {
+        var source = NpgsqlDataSource.Create(PgConnection.ForTest(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
+        var schema = "mdr_" + Guid.NewGuid().ToString("N")[..12];
+        await using var cleanup = new Cleanup(source, schema);
+        await AgentMissionStore.MigrateAsync(source, schema);
+        var store = new AgentMissionStore(source, schema);
+        var host = new FakeHost { Store = store };
+        var catalog = MissionStaticCatalog.FromRows(3405148, [new SdeRow(9511, JsonDocument.Parse(BasicMining).RootElement.Clone())], []);
+        var runtime = new MissionDungeonRuntime(store, catalog, host, _ => new MissionAgentPlace(System, Corporation, AgentStation), () => Start,
+            isMining: id => id == 9511);
+        await store.OfferAsync(Pilot, Agent, new AgentMissionContent(9511, 1246, "Mining Step", "", false), Start, "offer:m1");
+        await store.AcceptAsync(Pilot, Agent, Start, "accept:m1");
+
+        // the site grants no ore: the dungeon's completion changes nothing
+        await runtime.OnDungeonOutcomeAsync("completed", Pilot, "dungeon.2457", 91, default);
+        Assert.Empty(host.Grants);
+        Assert.Equal(AgentMissionState.Accepted, (await store.ReadAsync(Pilot, Agent))!.State);
+
+        // the pilot hands in the ore it holds: one unit short changes nothing, the full quantity completes the step
+        host.Held[Datacore] = 17999;
+        await runtime.OnConversationAsync(Pilot, Agent, together: true);
+        Assert.Equal(AgentMissionState.Accepted, (await store.ReadAsync(Pilot, Agent))!.State);
+        Assert.Empty(host.Consumed);
+        host.Held[Datacore] = 18000;
+        await runtime.OnConversationAsync(Pilot, Agent, together: true);
+        Assert.Equal(AgentMissionState.Completed, (await store.ReadAsync(Pilot, Agent))!.State);
+        Assert.Equal((Pilot, Datacore, 18000L), Assert.Single(host.Consumed));
+    }
+
     [Fact]
     public void A_basic_mining_agent_offers_the_lowest_mining_mission_of_its_level_that_the_dungeon_can_start()
     {

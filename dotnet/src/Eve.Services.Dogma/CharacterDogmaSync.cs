@@ -69,6 +69,7 @@ public sealed class CharacterDogmaSync(DogmaStatic statics, CharacterShips ships
 
         var fileTime = Py.FileTimeFromUnixMs(nowUnixMs());
         var changes = Info.ShipAttributes(snapshot)
+            .Where(attribute => attribute.Key != DogmaInfo.Quantity)
             .Select(attribute => ShipNotifications.AttributeChange(
                 characterId,
                 new Eve.Marshal.PyLong(snapshot.Ship.Id),
@@ -77,7 +78,9 @@ public sealed class CharacterDogmaSync(DogmaStatic statics, CharacterShips ships
                 null,
                 attribute.Value))
             .Concat(snapshot.Fitted.SelectMany(module =>
-                Info.ModuleAttributes(snapshot, module.Id).Select(attribute =>
+                Info.ModuleAttributes(snapshot, module.Id)
+                    .Where(attribute => attribute.Key != DogmaInfo.Quantity)
+                    .Select(attribute =>
                     ShipNotifications.AttributeChange(
                         characterId,
                         new Eve.Marshal.PyLong(module.Id),

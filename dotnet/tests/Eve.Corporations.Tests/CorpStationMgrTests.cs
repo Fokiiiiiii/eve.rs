@@ -24,6 +24,11 @@ public sealed class CorpStationMgrTests
         var character = await rig.CharacterAsync("Standing Pilot");
         var session = Session(character);
         var service = CreateService(rig, standing: 0.0);
+        Assert.True(((IService)service).HasMethod("MachoResolveObject"));
+        Assert.Equal(new PyInt(Eve.Macho.MachoMessage.ProxyNodeId), await ((IService)service).CallAsync(new ServiceCall
+        {
+            Method = "MachoResolveObject", Args = [new PyLong(StationId)], Session = session,
+        }));
 
         // service 5 needs 3.0: a standing of 0 is refused, with the reference's notice
         var refused = await Assert.ThrowsAsync<MachoWrappedException>(() => Nested(service, session, "DoStandingCheckForStationService", new PyInt(5)));
@@ -48,6 +53,34 @@ public sealed class CorpStationMgrTests
             Method = "MachoBindObject", Args = [new PyLong(OtherStationId + 9)], Session = Session(character),
         }));
         Assert.Equal("CustomNotify", error.Error.UserErrorMessage);
+    }
+
+    [PgFact]
+    public async Task Releasing_a_station_moniker_removes_its_service_context()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var character = await rig.CharacterAsync("Release Pilot");
+        var session = Session(character);
+        IService service = CreateService(rig, standing: 10.0);
+        var bind = Assert.IsType<PyTuple>(await service.CallAsync(new ServiceCall
+        {
+            Method = "MachoBindObject", Args = [new PyLong(StationId), PyNone.Instance], Session = session,
+        }));
+        var stream = Assert.IsType<PySubStream>(Assert.IsType<PySubStruct>(bind.Items[0]).Value);
+        var oid = Assert.IsType<PyStr>(Assert.IsType<PyTuple>(stream.Decoded).Items[0]).Value;
+        var registry = new ServiceRegistry();
+        registry.Register(service);
+        registry.RegisterBoundObject(oid, service);
+        var call = new ServiceCall
+        {
+            Method = "DoStandingCheckForStationService", Args = [new PyInt(5)], Session = session, BoundObjectId = oid,
+        };
+        Assert.Equal(PyNone.Instance, await service.CallAsync(call));
+        Assert.True(registry.UnregisterBoundObject(oid, session));
+        Assert.Null(registry.Lookup(oid));
+        var refused = await Assert.ThrowsAsync<MachoWrappedException>(async () => await service.CallAsync(call));
+        Assert.Equal("CustomNotify", refused.Error.UserErrorMessage);
+        Assert.False(registry.UnregisterBoundObject(oid, session));
     }
 
     [PgFact]

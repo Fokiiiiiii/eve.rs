@@ -171,7 +171,7 @@ internal sealed partial class CharacterServicesComposition
         agentMissionAnnouncer = new Eve.Services.Core.AgentMissionAnnouncer(agentMissionStore, characterSessions);
         await LoadClientMissionMessagesAsync();
         // the faction of each NPC corporation (SDE npcCorporations.factionID): the access rule reads the faction standing
-        var npcFactions = (await sde.ReadAsync("npcCorporations", cancellationToken: CancellationToken.None))
+        npcFactions = (await sde.ReadAsync("npcCorporations", cancellationToken: CancellationToken.None))
             .Where(row => row.Doc.TryGetProperty("factionID", out var faction) && faction.ValueKind == System.Text.Json.JsonValueKind.Number)
             .ToDictionary(row => row.Key, row => row.Doc.GetProperty("factionID").GetInt64());
         agentMissionAgentById = agentMissionAgentRows.ToDictionary(agent => agent.AgentId);
@@ -269,6 +269,8 @@ internal sealed partial class CharacterServicesComposition
                 // agents have no official mission link and offer nothing.
                 async ValueTask<Eve.Agents.AgentMissionContent?> (AgentMissionAgentData agent, long characterId, CancellationToken ct) =>
                 {
+                    // a storyline agent with a pending storyline offer makes it first
+                    if (await StorylineOffersService.PickAsync(agent, characterId, ct) is { } storylineOffer) return storylineOffer;
                     var completed = await agentMissionStore.ReadCompletedAsync(characterId, ct);
                     var failed = await agentMissionStore.ReadFailedAsync(characterId, ct);
                     var now = DateTimeOffset.UtcNow;
@@ -294,7 +296,11 @@ internal sealed partial class CharacterServicesComposition
                         : atLocation;
                     await missionDungeons.OnConversationAsync(characterId, agent.AgentId, together, ct);
                 }, researchPort, locatorPort,
-                async (characterId, agentId, token) => { if (missionDungeons is { } dungeons) await dungeons.OnAcceptedAsync(characterId, agentId, token); },
+                async (characterId, agentId, token) =>
+                {
+                    if (missionDungeons is { } dungeons) await dungeons.OnAcceptedAsync(characterId, agentId, token);
+                    if (agentMissionAgentById.TryGetValue(agentId, out var acceptedAgent)) await StorylineOffersService.MarkAcceptedAsync(acceptedAgent, characterId, token);
+                },
                 async (characterId, agentId, token) => { if (missionDungeons is { } dungeons) await dungeons.OnQuitAsync(characterId, agentId, token); }));
         await AttachMissionDungeonsAsync();
     }
@@ -330,7 +336,7 @@ internal sealed partial class CharacterServicesComposition
             (missionId, characterId, place, level) => stargateGraph is { } gates
                 ? MissionCourierRules.Destination(missionId, characterId, place.BaseStationId!.Value, (int)place.SolarSystemId, level, gates, stations.All)
                 : null,
-            IsTradeMission);
+            IsTradeMission, IsMiningMission);
         var runtime = missionDungeons;
         if (spaceSessions is not null) spaceSessions.PilotDocked = (characterId, stationId, token) => runtime.OnDockedAsync(characterId, stationId, token);
         foundations.Scheduler.Register(MissionDungeonSweepJob, (context, token) => runtime.SweepAsync(token));
@@ -346,11 +352,17 @@ internal sealed partial class CharacterServicesComposition
 
     private const string MissionDungeonSweepJob = "mission.dungeons.sweep";
 
-    /// <summary>The localization IDs of the missions' texts from the client export (empty when not available; see LoadClientMissionMessagesAsync).</summary>
+    /// <summary>The localization IDs of the missions' texts from the client data (see LoadClientMissionMessagesAsync).</summary>
     private IReadOnlyDictionary<long, IReadOnlyDictionary<string, long>> clientMissionMessages = new Dictionary<long, IReadOnlyDictionary<string, long>>();
 
-    /// <summary>The client content template of each mission (see ClientMissionTemplates): empty when the client file is not configured.</summary>
+    /// <summary>The client content template of each mission (see ClientMissionTemplates).</summary>
     private IReadOnlyDictionary<long, string> clientMissionTemplates = new Dictionary<long, string>();
+
+    /// <summary>The storyline offer counter of the agents schema (set with the mission store).</summary>
+    private Eve.Agents.StorylineCounters storylineCounters = default!;
+
+    /// <summary>The faction of each NPC corporation (npcCorporations.factionID), read at start (the storyline counter and the offers use it).</summary>
+    private IReadOnlyDictionary<long, long> npcFactions = new Dictionary<long, long>();
 
     /// <summary>Whether the mission is a storyline trade mission of the client: handed in at its agent like a fetch (DEVIATIONS X13).</summary>
     private bool IsTradeMission(long missionId) => clientMissionTemplates.GetValueOrDefault(missionId) == ClientMissionTemplates.TradeTemplate;
@@ -359,25 +371,14 @@ internal sealed partial class CharacterServicesComposition
     private bool IsMiningMission(long missionId) => clientMissionTemplates.GetValueOrDefault(missionId) == ClientMissionTemplates.MiningTemplate;
 
     /// <summary>
-    /// Loads the client's mission text IDs from <c>EVE_CLIENT_SDE_DIR/native/missions.jsonl.gz</c> into the schema <c>client_sde</c> (replaced each
-    /// start). Without the directory, or without the file, nothing is loaded and the log says why; the briefing then carries no text ID.
+    /// Loads the client's mission text IDs and content templates (the embedded client data, or the export named by EVE_CLIENT_SDE_DIR where it holds
+    /// the file) into the schema <c>client_sde</c> (replaced each start). The briefing then carries its text ID.
     /// </summary>
     private async Task LoadClientMissionMessagesAsync()
     {
-        var directory = Environment.GetEnvironmentVariable(ClientMissionMessages.DirectoryVariable);
-        if (string.IsNullOrWhiteSpace(directory))
-        {
-            Console.Error.WriteLine($"eve-host: missions: client texts are not available: {ClientMissionMessages.DirectoryVariable} is not set");
-            return;
-        }
-        var file = Path.Combine(directory, "native", "missions.jsonl.gz");
-        if (!File.Exists(file))
-        {
-            Console.Error.WriteLine($"eve-host: missions: client texts are not available: {file} is missing");
-            return;
-        }
-        var (messages, skipped) = ClientMissionMessages.Parse(File.OpenRead(file));
-        clientMissionTemplates = ClientMissionTemplates.Parse(File.OpenRead(file));
+        var directory = Environment.GetEnvironmentVariable(ClientStaticData.DirectoryVariable);
+        var (messages, skipped) = ClientMissionMessages.Parse(ClientMissionMessages.Open(directory));
+        clientMissionTemplates = ClientMissionTemplates.Parse(ClientMissionMessages.Open(directory));
         var missionIds = new List<long>();
         var keys = new List<string>();
         var ids = new List<long>();
@@ -503,9 +504,31 @@ internal sealed partial class CharacterServicesComposition
     /// store share the database): the completion is journalled, the items leave the pilot, the standings change, and the session is told after the
     /// commit. False when the mission was not accepted or the items are short.
     /// </summary>
-    private Task<bool> CompleteMissionAsync(long characterId, long agentId, DateTimeOffset now, string reference,
+    private async Task<bool> CompleteMissionAsync(long characterId, long agentId, DateTimeOffset now, string reference,
         IReadOnlyList<MissionStandingGain> standings, IReadOnlyList<(int TypeId, long Quantity, string? Tag)> consume, CancellationToken cancellationToken) =>
-        CompleteInTransactionAsync(source, agentMissionStore, foundations.Relations, items, characterId, agentId, now, reference, standings, consume, cancellationToken);
+        await CompleteInTransactionAsync(source, agentMissionStore, foundations.Relations, items, characterId, agentId, now, reference, standings, consume,
+            cancellationToken, storylineCounters, await CountedFactionOfAsync(characterId, agentId, cancellationToken));
+
+    /// <summary>
+    /// The faction and level a completion counts toward the storyline offers: a basic mission of a basic agent (not an arc step, not a trade
+    /// mission, not Faction Warfare or storyline agents, which are other agent types). Null when it does not count.
+    /// </summary>
+    private async Task<(long FactionId, long Level)?> CountedFactionOfAsync(long characterId, long agentId, CancellationToken cancellationToken)
+    {
+        if (!agentMissionAgentById.TryGetValue(agentId, out var agent) || agent.AgentTypeId != Eve.Services.Core.AgentMissionKindRules.TypeBasicAgent) return null;
+        var level = agent.Level;
+        var faction = npcFactions.GetValueOrDefault(agent.CorporationId);
+        if (faction <= 0) return null;
+        var record = await agentMissionStore.ReadAsync(characterId, agentId, cancellationToken);
+        if (record is null) return null;
+        var missionId = record.Content.MissionId;
+        if (agentMissionStatic.MissionAvailability(missionId).ArcId is not null || IsTradeMission(missionId)) return null;
+        return (faction, level);
+    }
+
+    /// <summary>The storyline offers of the composition (see StorylineOffers: the offer is marked made on accept).</summary>
+    private Eve.Services.Core.StorylineOffers StorylineOffersService =>
+        new(agentMissionStore, storylineCounters, agentMissionStatic, IsTradeMission, npcFactions);
 
     /// <summary>
     /// The completion, the consumption and the standing writes in one transaction: a write that fails rolls all of them back, so the mission stays
@@ -513,7 +536,8 @@ internal sealed partial class CharacterServicesComposition
     /// </summary>
     internal static async Task<bool> CompleteInTransactionAsync(NpgsqlDataSource source, Eve.Agents.AgentMissionStore agentMissionStore,
         Eve.Relations.RelationStore relations, Eve.Inventory.PgItemStore items, long characterId, long agentId, DateTimeOffset now, string reference,
-        IReadOnlyList<MissionStandingGain> standings, IReadOnlyList<(int TypeId, long Quantity, string? Tag)> consume, CancellationToken cancellationToken)
+        IReadOnlyList<MissionStandingGain> standings, IReadOnlyList<(int TypeId, long Quantity, string? Tag)> consume, CancellationToken cancellationToken,
+        Eve.Agents.StorylineCounters? counters = null, (long FactionId, long Level)? counted = null)
     {
         await using var connection = await source.OpenConnectionAsync(cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
@@ -543,6 +567,9 @@ internal sealed partial class CharacterServicesComposition
             return false;
         }
         if (change is null) return false;
+        // a counted completion (a basic mission of a basic agent) adds one to its faction and level toward the storyline offers
+        if (counters is not null && counted is { } countedAs)
+            await counters.IncrementAsync(connection, transaction, characterId, countedAs.FactionId, countedAs.Level, cancellationToken);
         // the objective items leave with the completion
         foreach (var (stack, taken) in takes)
         {

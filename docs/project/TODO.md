@@ -1,5 +1,16 @@
 # Current TODOs
 
+## Native Windows character-entry regression (2026-10-12)
+
+- Observed in the real client/MITM: `godma.ProcessAllInfo -> PrimeLocation -> invCache.GetInventoryFromId(characterID, 1)` received None, then failed at `SetSessionCheck`. The server bound only ships and containers. Character inventory now binds the selected character and projects the existing skill store through ShipSnapshot skill item IDs; self rows use the saved character/active ship and SDE type data. Foreign character access and inventory mutations are refused.
+- Recorded `CannotAddFieldsToATupleRowset` in agent initialization: GetAgents now supplies mutable list rows. Recorded `RecordNotFound` for the active ship: Config.GetMultiLocationsEx now reads owned item labels/SDE names and the containing station/system, wired from Host.
+- Recorded missing moniker resolution: warRegistry/corpStationMgr expose MachoResolveObject; officeManager resolves/binds and dispatches its nested real office methods with station validation.
+- Recorded `TypeError: must be tuple, not list` at Michelle.LoadFormations: GetFormations now returns nested tuples, including the point collection; integer coordinates match EveJS marshal encodeValue. Recorded `OnModuleAttributeChanges` quantity 805 with a normal module ID: fitting bootstrap excludes that sublocation-only notification. GetCommunityFittings now returns a fitting-ID dictionary inside the existing 15-minute cached-method result, not a list.
+- Unknown/refused GetInventoryFromId targets now raise FakeItemNotFound instead of returning None to invCache.SetSessionCheck. Character, ship, station and authorized container bindings remain backed by their existing state owners.
+- Verification: Inventory 47, Dogma 134, Core 677, Config 8, War/Station/Office 15 and the formations regression pass, zero failures/skips. The first character-inventory/config/agent/moniker fixes were deployed; the later response-shape fixes require the next Host rebuild. Native Undock acceptance and the remaining recorded RPC/protobuf gaps are still open.
+- Sources: real Windows client trace/capture on 2026-10-12; EveJS 828823a server/src/services/inventory/invBrokerService.js Handle_GetInventoryFromId/_getCharacterContainerItems; V24.01 eve/client/script/environment/invCache.py GetInventoryFromId and native godma traceback. Initial character selection shipid timing matches the current EveJS plan; no speculative deferral change was made.
+
+
 **Updated:** 2026-10-10
 **Baseline:** main source commit `7379a70fdeee0e93d2ac38c1b7a7bd9ecd29da60`
 
@@ -1135,7 +1146,7 @@ rule table (`AgentMissionKindRules`), not from EveJS. DEVIATIONS "Mission static
 | OPEN | Client check of the mission build against the client's `missions.fsdbinary` (not in this environment) | DEVIATIONS "Mission static data" (build newer than client) |
 | OPEN | Epic arc count: 21 official, nine on the wiki, seven in the design file | owner decision; DEVIATIONS |
 | OPEN | Basic, storyline, research, FW, heraldry pools: no official agent-to-mission link | `MissionDataGaps.BasicPools`; Mi2 cannot offer missions until a source exists |
-| DONE (exception) | Levels: 1,274 tagged missions committed with provenance (client 1,019, tq-log 13, wiki 191, rule 51) under the owner's approval for four fields; 1,618 official missions have no tag and answer unknown | `MissionStaticCatalog.Level`, `Data/mission-level-tags.v1.json`; DEVIATIONS "Mission static data" | `MissionStaticCatalog.Level`, `Data/mission-level-tags.v1.json`; DEVIATIONS "Mission static data" |
+| DONE (exception) | Levels: 1,429 tagged missions committed with provenance (client 1,019, tq-log 13, wiki 346, rule 51) under the owner's approval for four fields; 1,463 official missions have no tag and answer unknown | `MissionStaticCatalog.Level`, `Data/mission-level-tags.v1.json`; DEVIATIONS "Mission static data" | `MissionStaticCatalog.Level`, `Data/mission-level-tags.v1.json`; DEVIATIONS "Mission static data" |
 | OPEN | Kill mission dungeon content: `dungeonID` is not a row of `dungeons` (3 of 1,460) | `MissionDataGaps.KillDungeonContent`; dungeon owner |
 | OPEN | Epic arc journal text IDs | `MissionDataGaps.EpicJournalText`; the client shows no chapter titles |
 | OPEN | LP reward per mission and the LP store standing requirement | `MissionDataGaps.Standings`; the LP store track owns the offers |
@@ -1144,7 +1155,7 @@ rule table (`AgentMissionKindRules`), not from EveJS. DEVIATIONS "Mission static
 
 Recorded:
 - **Exception, client and TQ-log level tags committed (owner-approved 2026-10-11).** 1,019 `client` and 13 `tq-log` values are in
-  `Data/mission-level-tags.v1.json` with the wiki and rule rows (1,274 rows). Limit: mission ID, level, provenance class, confidence
+  `Data/mission-level-tags.v1.json` with the wiki and rule rows (1,429 rows). Limit: mission ID, level, provenance class, confidence
   only. The exporter that made the client values is not available, so the file is the only record. DEVIATIONS "Mission static data"
   has the full entry. Not decided: whether any other derived data may be committed on the same ground (the owner's decision each time).
 - **Owner's heuristic rows.** 23 cargo-volume, 4 default level-1 and 22 related-chain values are committed as `rule` rows with low or
@@ -1401,7 +1412,7 @@ Plan: scratchpad `work/missions-hard-first-plan.md` track C; decisions in DEVIAT
 | DONE (tests) | `GetAllVisibleCampaigns` and `GetLocalCampaignClientSnapshot` read the store through the real Host composition (structure of the snapshot, `structureID` None, `[systemID, None]` outside covered systems) | `dotnet/src/Eve.Host/Composition/InsurgencyComposition.cs`, `CoreRpc.cs`; `Eve.Host.Tests/InsurgencyCompositionTests` | |
 | DONE (code, tests pending live) | Campaign notices after commit: started, updated, ending for covered systems; state changed and system fully corrupted or suppressed for every pilot | `InsurgencyComposition.cs` (`NotifyCampaignChanged`, `NotifyPointScored`) | Client text and handling not checked in the graphical client |
 | PARTLY (tests, 2026-10-12) | Start of campaigns: `InsurgencyDirector` (`Eve.Services.Space/Insurgency/InsurgencyDirector.cs`, job `insurgency.start`, at once then hourly) starts a campaign in each warzone with none open: hub = a low-security system of the warzone's map (the client's Faction Warfare warzone map: warzone 1 Angel, 2 Guristas; `InsurgencyWarzones`, `Data/warzone-systems.json`), covered = the hub and the nearest low-security systems by stargate jumps, as many as the pirates' victory needs. The CCP trigger is the FOB spawn of the structures owner (Q-INS-4 answered by the wiki and the Havoc notes; the interval and the hub choice are shortcuts, DEVIATIONS) |
-| DONE (tests, slice 3) | FOB structure and its signals: the warzone's FOB type (78260, 79172) is a structure record in the hub system, deployed invulnerable by the spawn that starts the campaign (`InsurgencyDirector.StartAsync`); exposed at the empire side's count; one reinforcement of 2 to 4 h after the shield; destruction ends an active campaign in the empire's win; pirate win and tie despawn it. Open: damage by players (no weapon path to a structure body, ST-8a), the FOB position (origin), respawn | `Eve.Structures` (`StructureStateMachine`, `Migrations/0006_fob_ids.sql`), `StructureRulesSource`, `InsurgencyDirector`; DEVIATIONS "Pirate FOB (slice 3)" | `StateMachineTests` (Fob), `InsurgencyDirectorTests` (FOB exposed and destroyed), `CampaignMachineTests`, `InsurgencyCampaignTests`. Live (eve.rs, 2026-10-12): `tools/headless-client/tests/test_fob_walk.py` passed: two campaigns at boot, their FOB ids in the map's answer (the warzones were found empty before the client's warzone map replaced the pirate regions) |
+| DONE (tests, slice 3) | FOB structure and its signals: the warzone's FOB type (78260, 79172) is a structure record in the hub system, deployed invulnerable by the spawn that starts the campaign (`InsurgencyDirector.StartAsync`); exposed at the empire side's count; one reinforcement of 2 to 4 h after the shield; destruction ends an active campaign in the empire's win; pirate win and tie despawn it. Open: damage by players (no weapon path to a structure body, ST-8a), the FOB position (origin), respawn | `Eve.Structures` (`StructureStateMachine`, `Migrations/0006_fob_ids.sql`), `StructureRulesSource`, `InsurgencyDirector`; DEVIATIONS "Pirate FOB (slice 3)" | `StateMachineTests` (Fob), `InsurgencyDirectorTests` (FOB exposed and destroyed), `CampaignMachineTests`, `InsurgencyCampaignTests`. Live (eve.rs, 2026-10-12): `tools/headless-client/tests/test_fob_walk.py` passed: two campaigns at boot, their FOB ids in the map's answer (the warzones were found empty before the client's warzone map replaced the pirate regions). Slice 4: the same walk through `tools/mitm` on eve.rs passed; the captured `GetAllVisibleCampaigns` answer names both FOBs (structure ids 1100000000000 and 1100000000001, state 2, forecasting). `tools/dev/run-eve-live.sh` takes `EVE_LIVE_START_TENTHS` for a slow start (default 600 = 60 s) |
 | PARTLY (tests) | Point producers (C-P1): a pirate campaign site (archetypes 72 to 79 of the owner catalog, the warzone's pool) starts in each covered system when the campaign is active; its completion scores the system once for the pirates (`insurgency_points`, `ScorePointAsync`). Kills in a covered system are contributions (`insurgency_contributors`). Slice 4: the empire (Suppression) sites are the owner catalog's archetypes 73 and 75 to 79, one per covered system, and their completion scores the empire side's point (DEVIATIONS "Insurgency sites"). Open: the spread at corruption level 3 (wiki), the per-stage contribution percentages, the Ice Refinery Heist and the Counter-Insurgency Outposts |
 | BLOCKED | Public gateway for corruption and suppression (C-G1) | spike | Native transport absent from the snapshot; see the spike file |
 | DONE (tests) | Victory payouts (C-V1): a pirate win credits each contributor 1,500,000 LP from the warzone's pirate corporation (1000127 Guristas, 1000138 Angel), in the win's transaction, keyed by campaign and character (the wiki's Insurgency page). Not paid: the losing side (the wiki and the Havoc notes publish no amount; EVE.js's 0.4 factor is not CCP data) and the ISK bonus (no amount published) |
@@ -1462,7 +1473,7 @@ follow a completed step, with forks, the 90-day restart and the held-back sites 
 
 | Status | Item | Where / blocker |
 |---|---|---|
-| DONE (tests, opt-in real data) | Loader of the client's mission text IDs from `EVE_CLIENT_SDE_DIR/native/missions.jsonl.gz` into schema `client_sde` (replaced at each start); without the directory the log says why; nothing is committed | `Eve.Services.Core/ClientMissionMessages.cs`; `MissionComposition.LoadClientMissionMessagesAsync`; `MissionViewsTests` (synthetic, and the real export when configured: 2,886 rows with messages, 6 without) |
+| DONE (tests) | Loader of the client's mission text IDs (embedded copy `client-missions.jsonl.gz`, build 3396210, IDs only) into schema `client_sde` (replaced at each start); `EVE_CLIENT_SDE_DIR` overrides | `Eve.Services.Core/ClientMissionMessages.cs`; `MissionComposition.LoadClientMissionMessagesAsync`; `MissionViewsTests` (synthetic, and the real export when configured: 2,886 rows with messages, 6 without) |
 | DONE (tests) | `GetMissionBriefingInfo` and `GetMissionObjectiveInfo` on the bound agent for a held (offered, accepted or completed) mission: the briefing and title IDs; the kill dungeon objective and the ISK reward; None when no mission is held | `Eve.Services.Core/MissionViews.cs`; `AgentMissionService.ReadHeldMissionAsync`; host `ReadHeldMissionAsync` |
 | OPEN | Fetch objectives (14119: item in cargo and turn-in at the agent) and courier objectives (`objectives` and `locations` lists are empty) | next slice; the EveJS builder is `buildMissionObjectivePayload` (agentMissionRuntime.js:5885) |
 | OPEN | The dungeon's enemy owner (`ownerID` is the mission's faction, a shortcut) and the dungeon location (0 placeholders) | next slice |
@@ -1489,7 +1500,7 @@ Evidence and decisions: DEVIATIONS "Zarzakh (30100000) and the client's system f
 
 | Status | Item | Missing work |
 |---|---|---|
-| DONE (tests) | Client flags `disallowCyno` and `disallowScanning` read from `EVE_CLIENT_SDE_DIR/native/solarsystemcontent.jsonl.gz` at start-up; cyno lighting refused (`CannotLightCynoInSystem`) and probe launch refused in those systems | `ClientSystemFlags`, `SolarSystemCatalog.LoadAsync`, `SpaceSessions.Modules.cs`, `SpaceSessions.LaunchAsync`; tests `ClientSystemFlagsTests`, `ScanProbeHostTests`. Cyno refusal has no host test yet; no graphical-client run |
+| DONE (tests) | Client flags `disallowCyno` and `disallowScanning` read from the embedded copy `client-solarsystemcontent.jsonl.gz` at start-up; cyno lighting refused (`CannotLightCynoInSystem`) and probe launch refused in those systems | `ClientSystemFlags`, `SolarSystemCatalog.LoadAsync`, `SpaceSessions.Modules.cs`, `SpaceSessions.LaunchAsync`; tests `ClientSystemFlagsTests`, `ScanProbeHostTests`. Cyno refusal has no host test yet; no graphical-client run |
 | DONE (rule) | No sites in Zarzakh (`CosmicSiteDirector.NoSiteSystems`) | Owner decision: the real game may have sites there (see DEVIATIONS) |
 | DONE (tests) | Capital-ship gate lists (the eight gates of list 579, from client data and the SDE type list) | `GateRules`, `CheckGateRulesAsync`; `GateRulesTests`, host jump test. Refusal text is ours |
 | PARTIAL (tests) | Emanation Lock: server-side refusal of exits through another gate for 6 h after entry, reset on re-entry, ended by leaving Zarzakh (the client text) | `EmanationLocks`; `EmanationLocksTests`. Not built: the client notices (the public gateway, owner decision 1); the lock is in memory |
@@ -1504,7 +1515,7 @@ Evidence and decisions: DEVIATIONS "Zarzakh (30100000) and the client's system f
 | KEPT | Pirate-faction market modifier (0.5, factions 500018 and 500019) | Already in eve.rs (`MarketRules`); EveJS-derived, not in the wiki. Owner decision |
 | CLIENT-LOCAL | Sun type and flare, system-wide cloud, warp tunnel overwrite, dscan range, anchor categories | Read by the client only; no server loader |
 | CUT | Landmarks placed by the server and the Black Monolith look-at challenge (2848) | EveJS and eve.rs both advertise `client_lookAtObject` 0; the client look-at path is not proven |
-| OPEN | Live check of the Zarzakh flags and the lane run without `EVE_CLIENT_SDE_DIR` | Needs a live run with the export set |
+| OPEN | Live check of the Zarzakh flags and the lane run on the embedded client data (no client directory) | Needs a live run |
 
 | PARTIAL (live) | Turnur to Zarzakh jump, eve.rs only: `tools/headless-client/tests/test_zarzakh_jump.py` passes through `tools/mitm` on the eve_p2 lane (1 passed, 96.9 s); the toll journal row (ref 168) is counted | DEVIATIONS "Live check: Turnur to Zarzakh (slice 3)". OPEN: the EVE.js comparison (no reference data here); the Cockroach seeded through the database |
 
@@ -1542,7 +1553,7 @@ Evidence and decisions: `docs/project/WORMHOLE_DESIGN.md` (sources, SDE numbers,
 
 | Status | Item | Missing work |
 |---|---|---|
-| DONE (tests) | J-space system classes from the V24.01 client data (`WormholeSystemClasses`, `EVE_CLIENT_SDE_DIR/native/systems.jsonl.gz`): 2,604 systems | `WormholeClientDataTests`. Fuzzwork `mapLocationWormholeClasses` cross-check not done |
+| DONE (tests) | J-space system classes from the V24.01 client data (`WormholeSystemClasses`, embedded copy `client-systems.jsonl.gz`): 2,604 systems | `WormholeClientDataTests`. Fuzzwork `mapLocationWormholeClasses` cross-check not done |
 | DONE (tests) | Per-class effect beacons from the SDE (group 920, 36 types) with their dogma modifiers (`WormholeEffects`) | `WormholeEffectsTests`. The wiki effects page is not reachable |
 | SUPERSEDED (see "Wormhole space: final status")| Which effect each J-space system has | Design 9.2 (owner decision 6) |
 | CUT | Connection generator, statics, spawn | No source for statics per class or probabilities (design 9.3, owner decision 2) |
@@ -1687,3 +1698,16 @@ The design is in `docs/project/WORMHOLE_DESIGN.md`; the deviations and project r
 | NOT DONE | Trace logging behind an environment variable | not built (the destiny data sufficed) | — |
 | NOT DONE | Mining of wormhole ore and gas | the belt mining path is not tested on these sites | DEVIATIONS "Gas and ore sites of wormhole space" |
 
+
+## Client static data embedded (2026-10-12)
+
+The server runs without `EVE_CLIENT_SDE_DIR`: the rows and fields it reads from the V24.01 client export are committed as embedded copies, built by `tools/dev/extract-client-sde.py` (build 3396210).
+
+| Status | Item | Where / blocker |
+|---|---|---|
+| DONE (tests) | Consumers inventoried: `solarsystemcontent` (flags, stargate lists), `spacecomponentsbytype` (tolls, deploy blockers), `systems` (wormhole classes), `missions` (text IDs, templates) | `ClientStaticData`; DEVIATIONS "Client-side data read by the server" |
+| DONE (tests) | Embedded copies: 5, 9, 8,113 and 2,892 rows (94 KB in all); each header records the build, the source and the generator | `dotnet/src/Eve.Universe/Data/`, `dotnet/src/Eve.Services.Core/Data/` |
+| DONE (tests) | Loaders read the embedded copies by default; `EVE_CLIENT_SDE_DIR` overrides them where the export holds the file; no warning when it is unset | `ClientStaticData.Open`; `CharacterStores`, `SpaceComposition`, `MissionComposition` |
+| DONE (tests) | Wormholes are on without the variable (their classes are embedded); `EVE_WORMHOLES=off` turns them off | `SpaceComposition`; `ClientStaticDataHostTests` |
+| DONE (tests) | Not consumers of the client directory: the epic arcs, agents in space and mission dungeons come from the pinned SDE in the database; the warzone map is embedded already (`warzone-systems.json`) | DEVIATIONS "Client-side data read by the server" |
+| OPEN | Live run of `tools/dev/run-eve-live.sh` without the variable | Needs a live run |

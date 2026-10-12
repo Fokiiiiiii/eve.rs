@@ -133,6 +133,8 @@ internal static class HostComposition
             // names the client also uses for the same service
             registry.RegisterAlias("station", "stationSvc");
             registry.RegisterAlias("skillMgr", "skillHandler");
+            registry.RegisterAlias("tradeMgr", "trademgr");
+            registry.RegisterAlias("standing2", "standingMgr");
         }
         if (space is not null)
         {

@@ -41,7 +41,7 @@ public sealed class GateRules
             .GroupBy(site => site.SolarSystemId).ToDictionary(group => group.Key, group => (IReadOnlyList<GateSite>)group.ToList());
     }
 
-    /// <summary>Reads the lists and tolls of the client export named by <paramref name="clientDirectory"/> (blank: none) and the SDE's type lists and stargates.</summary>
+    /// <summary>Reads the lists and tolls of the client data (the embedded copy, or the export named by <paramref name="clientDirectory"/> where it holds the file) and the SDE's type lists and stargates.</summary>
     public static async Task<GateRules> LoadAsync(SdeReader sde, string clientDirectory, CancellationToken cancellationToken = default)
     {
         var lists = await ClientGateRules.AllowedShipListsAsync(clientDirectory, cancellationToken);

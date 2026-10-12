@@ -110,17 +110,34 @@ public sealed class WormholeJobs
             return;
         }
         var type = _types[stored.TypeId];
-        var existing = await _store.ActiveFromAsync(connection, transaction, stored.SourceSystemId, cancellationToken);
-        var pairs = new HashSet<(int Source, int Destination)>(existing.Select(c => (c.SourceSystemId, c.DestinationSystemId)));
         var random = new SeededRandom(WormholeLifecycle.ReplacementSeed(seed));
-        var destination = WormholePlanner.PickDestination(stored.SourceSystemId, type.TargetSystemClass, pairs, _byClass, random);
-        if (destination is null)
+        PlannedConnection? replacement;
+        if (TheraConnections.TypeOf(stored.Code) is { } theraType
+            && (stored.SourceSystemId == TheraConnections.SystemId || stored.DestinationSystemId == TheraConnections.SystemId))
         {
-            return;
+            // a Thera connection: the free end is drawn among the systems of its classes, not connected to Thera yet
+            var touching = await _store.ActiveAtAsync(connection, transaction, TheraConnections.SystemId, cancellationToken);
+            var connected = new HashSet<int>(touching.Select(c => c.SourceSystemId == TheraConnections.SystemId ? c.DestinationSystemId : c.SourceSystemId));
+            var ends = TheraConnections.PickEnds(theraType, _byClass, connected, random);
+            if (ends is null)
+            {
+                return;
+            }
+            var mass = WormholePlanner.RollMass(type, random);
+            replacement = new PlannedConnection(ends.Value.Source, ends.Value.Destination, stored.Code, stored.TypeId, mass, random.NextUInt64());
         }
-        var mass = WormholePlanner.RollMass(type, random);
-        var replacementSeed = random.NextUInt64();
-        await OpenAsync(connection, transaction,
-            new PlannedConnection(stored.SourceSystemId, destination.Value, stored.Code, stored.TypeId, mass, replacementSeed), isStatic: true, nowMs, cancellationToken, sink);
+        else
+        {
+            var existing = await _store.ActiveFromAsync(connection, transaction, stored.SourceSystemId, cancellationToken);
+            var pairs = new HashSet<(int Source, int Destination)>(existing.Select(c => (c.SourceSystemId, c.DestinationSystemId)));
+            var destination = WormholePlanner.PickDestination(stored.SourceSystemId, type.TargetSystemClass, pairs, _byClass, random);
+            if (destination is null)
+            {
+                return;
+            }
+            var mass = WormholePlanner.RollMass(type, random);
+            replacement = new PlannedConnection(stored.SourceSystemId, destination.Value, stored.Code, stored.TypeId, mass, random.NextUInt64());
+        }
+        await OpenAsync(connection, transaction, replacement, isStatic: true, nowMs, cancellationToken, sink);
     }
 }

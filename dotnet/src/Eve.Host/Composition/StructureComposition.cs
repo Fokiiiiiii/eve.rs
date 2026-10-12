@@ -292,7 +292,9 @@ internal sealed partial class CharacterServicesComposition
                 session.SendNotification("OnMoonExtractionUpdate", "clientID", PyNone.Instance);
             return Task.CompletedTask;
         });
-        structureMoon = new StructureMoonAuthority(source, structureStore, moonExtractions, moonRules);
+        structureMoon = new StructureMoonAuthority(source, structureStore, moonExtractions, moonRules, structurePilots,
+            (characterId, structureId, token) => structureDirectoryReadModel.CharacterHasServiceAsync(
+                characterId, structureId, Eve.Structures.StructureServiceIds.MoonMining, token));
         await using (var connection = await source.OpenConnectionAsync())
         await using (var transaction = await connection.BeginTransactionAsync())
         {

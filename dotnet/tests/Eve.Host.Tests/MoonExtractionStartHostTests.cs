@@ -36,10 +36,7 @@ public sealed class MoonExtractionStartHostTests
             Store = store;
             Moon = moon;
             Packets = packets;
-            Session = new ClientSession(packets);
-            Session.Set("charid", new PyInt(Character));
-            Session.Set("corpid", new PyInt(Corporation));
-            Session.Set("structureid", new PyLong(Structure));
+            Session = DockedAt(Structure);
         }
 
         public NpgsqlDataSource Source { get; }
@@ -50,6 +47,8 @@ public sealed class MoonExtractionStartHostTests
         public MoonExtractionsRpcService Moon { get; }
         public Sink Packets { get; }
         public ClientSession Session { get; }
+        public bool MoonAccessAllowed { get; set; } = true;
+        public Func<ValueTask>? BeforeMoonAccess { get; set; }
 
         public static async Task<Route> CreateAsync(string pgUrl)
         {
@@ -68,9 +67,15 @@ public sealed class MoonExtractionStartHostTests
             var bus = new EventBus(source, scheduler, new EventBusOptions(), schema + "_evt", _ => { });
             var moons = new MoonExtractions(structures, store, scheduler, bus, rules);
             moons.Register();
-            var authority = new StructureMoonAuthority(source, structures, moons, rules);
+            Route? route = null;
+            var authority = new StructureMoonAuthority(source, structures, moons, rules, new StructurePilotStore(structures),
+                async (_, _, _) =>
+                {
+                    if (route?.BeforeMoonAccess is { } before) await before();
+                    return route?.MoonAccessAllowed == true;
+                });
             var sink = new Sink();
-            var route = new Route(schema, source, structures, store, new MoonExtractionsRpcService(mutationBackend: authority.CallAsync), sink, scheduler, clock);
+            route = new Route(schema, source, structures, store, new MoonExtractionsRpcService(mutationBackend: authority.CallAsync), sink, scheduler, clock);
             return route;
         }
 
@@ -87,6 +92,10 @@ public sealed class MoonExtractionStartHostTests
             await using var transaction = await connection.BeginTransactionAsync();
             await Structures.CreateAsync(connection, transaction, new NewStructure(structure, Athanor, (int)solarSystem, 0, 0, 0, 0, owner, 0, "Refinery", ""));
             await Structures.SetServiceAsync(connection, transaction, structure, StructureServiceIds.MoonMining, drillOnline ? ServiceState.Online : ServiceState.Offline, 0);
+            var pilot = await new StructurePilotStore(Structures).AcquireAsync(connection, transaction,
+                new StructurePilotRequest(structure, Character + structure - Structure, 100 + structure - Structure,
+                    500 + structure - Structure, structure, false), false);
+            Assert.Equal(StructurePilotAcquireStatus.Acquired, pilot.Status);
             if (withMoon)
             {
                 await Store.ImportAsync(connection, transaction, new JsonObject
@@ -103,8 +112,10 @@ public sealed class MoonExtractionStartHostTests
         /// <summary>A pilot of the corporation docked at the structure (the gate of the start).</summary>
         public ClientSession DockedAt(long structure)
         {
-            var session = new ClientSession(Packets);
-            session.Set("charid", new PyInt(Character));
+            var offset = structure - Structure;
+            var session = new ClientSession(Packets) { SessionId = 100 + offset };
+            session.Set("charid", new PyInt(Character + offset));
+            session.Set("shipid", new PyLong(structure));
             session.Set("corpid", new PyInt(Corporation));
             session.Set("structureid", new PyLong(structure));
             return session;
@@ -174,6 +185,56 @@ public sealed class MoonExtractionStartHostTests
         Assert.Equal(new PyLong(Structure), Field(payload, "structureID"));
         Assert.Equal(new PyInt(Corporation), Field(payload, "ownerID"));
         Assert.Equal(new[] { "OnMoonExtractionUpdate" }, NotificationNames(route.Packets));
+    }
+
+    [PgFact]
+    public async Task A_forged_control_session_and_a_revoked_moon_profile_change_nothing()
+    {
+        await using var route = await Route.CreateAsync(PgUrl());
+        await route.RefineryAsync();
+        route.MoonAccessAllowed = false;
+        Assert.Equal("StructureDefenseDenied", (await Assert.ThrowsAsync<MachoWrappedException>(() =>
+            route.Moon.CallAsync(route.Start()).AsTask())).Error.UserErrorMessage);
+        route.MoonAccessAllowed = true;
+        var forged = new ClientSession(route.Packets) { SessionId = route.Session.SessionId + 1 };
+        foreach (var (key, value) in route.Session.SnapshotAttributes()) forged.Set(key, value);
+        Assert.Equal("StructureDefenseDenied", (await Assert.ThrowsAsync<MachoWrappedException>(() =>
+            route.Moon.CallAsync(route.Start(forged)).AsTask())).Error.UserErrorMessage);
+        var pilots = new StructurePilotStore(route.Structures);
+        await using var connection = await route.Source.OpenConnectionAsync();
+        var pilot = (await pilots.GetBySessionAsync(connection, null, route.Session.SessionId))!;
+        Assert.True(await pilots.ReleaseAsync(connection, null, pilot));
+        Assert.Equal("StructureDefenseDenied", (await Assert.ThrowsAsync<MachoWrappedException>(() =>
+            route.Moon.CallAsync(route.Start()).AsTask())).Error.UserErrorMessage);
+        Assert.Empty((await route.Store.ReadLegacyAsync())["extractions"]!.AsObject());
+        Assert.Empty(NotificationNames(route.Packets));
+    }
+
+    [PgFact]
+    public async Task A_controller_release_cannot_pass_the_moon_mutations_transaction_lock()
+    {
+        await using var route = await Route.CreateAsync(PgUrl());
+        await route.RefineryAsync();
+        var checkedOwner = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var resume = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        route.BeforeMoonAccess = () => { checkedOwner.TrySetResult(); return new ValueTask(resume.Task); };
+        var mutation = route.Moon.CallAsync(route.Start()).AsTask();
+        try
+        {
+            await checkedOwner.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            await using var connection = await route.Source.OpenConnectionAsync();
+            var pilots = new StructurePilotStore(route.Structures);
+            var owner = (await pilots.GetBySessionAsync(connection, null, route.Session.SessionId))!;
+            await using var transaction = await connection.BeginTransactionAsync();
+            await using var timeout = new NpgsqlCommand("SET LOCAL lock_timeout = '100ms'", connection, transaction);
+            await timeout.ExecuteNonQueryAsync();
+            var blocked = await Assert.ThrowsAsync<PostgresException>(() => pilots.ReleaseAsync(connection, transaction, owner));
+            Assert.Equal(PostgresErrorCodes.LockNotAvailable, blocked.SqlState);
+            await transaction.RollbackAsync();
+        }
+        finally { resume.TrySetResult(); }
+        Assert.NotNull(await mutation);
+        Assert.Single((await route.Store.ReadLegacyAsync())["extractions"]!.AsObject());
     }
 
     [PgFact]

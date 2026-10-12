@@ -67,10 +67,12 @@ public sealed class StructurePilotStore
         NpgsqlConnection connection,
         NpgsqlTransaction? transaction,
         long sessionId,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        bool forUpdate = false)
     {
         RequirePositive(sessionId, nameof(sessionId));
-        return ReadAsync(connection, transaction, "WHERE session_id = $1", cancellationToken, sessionId);
+        if (forUpdate && transaction is null) throw new ArgumentException("A locking pilot read requires a transaction.", nameof(transaction));
+        return ReadAsync(connection, transaction, "WHERE session_id = $1" + (forUpdate ? " FOR UPDATE" : ""), cancellationToken, sessionId);
     }
 
     /// <summary>The caller must authorize control first. A permitted takeover returns the displaced pilot.</summary>

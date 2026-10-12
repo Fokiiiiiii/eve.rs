@@ -87,14 +87,23 @@ public sealed class DungeonWaveDirector
     private readonly IDungeonNpcSpawner _spawner;
     private readonly string _schema;
     private readonly Action<string>? _log;
+    private readonly Func<DateTimeOffset> _clock;
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<long, DateTimeOffset> _absentSince = new();
+
+    /// <summary>
+    /// How long a pilot may be out of the system before the dungeon ends. A logoff in space is an absence of the pilot's session, and a pilot
+    /// who logs back in within this time is still in the system: the dungeon goes on (project rule, DEVIATIONS "Mission execution X13").
+    /// </summary>
+    public static readonly TimeSpan PilotAbsenceGrace = TimeSpan.FromSeconds(60);
     private readonly System.Collections.Concurrent.ConcurrentDictionary<string, bool> _refusalsLogged = new();
 
     public DungeonWaveDirector(
         NpgsqlDataSource source, ContentRuntime content, DurableScheduler scheduler, EventBus bus, DungeonCatalog catalog, WaveRules rules, NpcSelector selector,
-        IDungeonNpcSpawner spawner, string schema, Action<string>? log = null)
+        IDungeonNpcSpawner spawner, string schema, Action<string>? log = null, Func<DateTimeOffset>? clock = null)
     {
         (_source, _content, _scheduler, _bus, _catalog, _rules, _selector, _spawner) = (source, content, scheduler, bus, catalog, rules, selector, spawner);
         _log = log;
+        _clock = clock ?? (() => DateTimeOffset.UtcNow);
         _schema = Sql.CheckSchema(schema);
     }
 
@@ -325,11 +334,20 @@ public sealed class DungeonWaveDirector
         var abandoned = new List<long>();
         foreach (ContentInstance instance in await _content.ActiveByKindAsync(Kind, cancellationToken))
         {
-            if (instance.Owner != NoPilotOwner && instance.Data<DungeonInstanceData>() is { } data && !_spawner.IsPilotInSystem(instance.Owner, data.SolarSystemId)
-                && await _content.AbandonAsync(context.Connection, context.Transaction, instance.Id, AbandonReason, cancellationToken))
+            if (instance.Owner == NoPilotOwner || instance.Data<DungeonInstanceData>() is not { } data) continue;
+            if (_spawner.IsPilotInSystem(instance.Owner, data.SolarSystemId))
+            {
+                _absentSince.TryRemove(instance.Id, out _);
+                continue;
+            }
+            var now = _clock();
+            var since = _absentSince.GetOrAdd(instance.Id, now);
+            if (now - since < PilotAbsenceGrace) continue;
+            if (await _content.AbandonAsync(context.Connection, context.Transaction, instance.Id, AbandonReason, cancellationToken))
             {
                 abandoned.Add(instance.Id);
-                _log?.Invoke($"dungeon {instance.Definition} (instance {instance.Id}) of pilot {instance.Owner} abandoned: the pilot is not in system {data.SolarSystemId}");
+                _absentSince.TryRemove(instance.Id, out _);
+                _log?.Invoke($"dungeon {instance.Definition} (instance {instance.Id}) of pilot {instance.Owner} abandoned: the pilot has been out of system {data.SolarSystemId} for {(now - since).TotalSeconds:0} s");
             }
         }
         var withNpcs = new List<long>();

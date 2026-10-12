@@ -144,6 +144,7 @@ public sealed class HackingGame
         if (Outcome != HackingOutcome.Active || item is null || item.InUse
             || item.Subtype is not (HackingWire.SubtypeUeKernelRot or HackingWire.SubtypeUeSecondaryVector)
             || !Board.Tiles.TryGetValue(coord, out var target)
+            || target.Hidden
             || target.Type is not (HackingWire.TypeCore or HackingWire.TypeDefenseSoftware)
             || target.Coherence <= 0)
             return Ack();

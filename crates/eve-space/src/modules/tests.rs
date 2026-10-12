@@ -3864,6 +3864,28 @@ fn a_station_within_two_kilometres_refuses_a_cloak_and_breaks_one_that_runs() {
 }
 
 #[test]
+fn a_cloak_is_stopped_by_a_ship_that_targets_its_pilot_and_not_by_the_locks_the_pilot_holds() {
+    // the wiki (Cloaking): being targeted prevents a cloak; the cloak drops the ship's own locks, so holding a lock does not
+    let (mut scene, t) = crowd();
+    let b_ship = scene.pilots[&B].ship.spec.ship_id;
+    let t = lock_for_tractor(&mut scene, b_ship, t);
+    assert!(
+        accepted(&scene.activate(A, cloaking_device(), t)),
+        "the pilot's own lock does not stop the cloak"
+    );
+
+    let (mut scene, mut t) = crowd();
+    let a_ship = scene.pilots[&A].ship.spec.ship_id;
+    scene.target_order(B, Order::Lock(a_ship), t);
+    for _ in 0..40 {
+        t += TICKS_PER_SECOND / 4;
+        scene.poll(t);
+    }
+    assert!(scene.locked_by(B).contains(&a_ship), "B holds its lock on A");
+    assert_eq!(refusal_of(&scene.activate(A, cloaking_device(), t)), "CLOAK_TARGET_LOCKED");
+}
+
+#[test]
 fn a_lance_is_activated_while_its_pilot_warps() {
     // no SDE attribute (disallowActivateOnWarp) and no EVE.js rule stops a strike in warp; a locked target cannot be held through warp anyway, so a
     // doomsday is refused by its lock, not by the warp

@@ -376,10 +376,7 @@ impl Scene {
             if pilot.flight.as_ref().is_some_and(|flight| flight.is_warping()) {
                 return vec![Out::Refused { session, command: CODE, reason: "CLOAK_WARP_BLOCKED" }];
             }
-            if !pilot.targeting.pending_targets().is_empty()
-                || !pilot.targeting.targets().is_empty()
-                || !self.targeters_of(pilot.ship.spec.ship_id).is_empty()
-            {
+            if !self.targeters_of(pilot.ship.spec.ship_id).is_empty() {
                 return vec![Out::Refused { session, command: CODE, reason: "CLOAK_TARGET_LOCKED" }];
             }
             if self.cloak_trigger(session, crate::scene::CLOAK_PROXIMITY_METERS).is_some() {

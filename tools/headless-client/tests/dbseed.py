@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+import time
 
 HANGAR = 4  # the client's inventory flag for a station hangar (the rows the server lists as flagID 4)
 COCKROACH = 11019  # Cockroach, the frigate the trade walk flies
@@ -53,15 +54,30 @@ def new_item(type_id: int, *, owner: int, location: int, flag: int = HANGAR, sin
 
 
 QA_SMARTBOMB = 18642  # QA Smartbomb (SDE types row 18642): 5,000 of each damage type every 3 s, a 250 km field
-MID_SLOTS = range(19, 27)  # the client's flags for the medium slots (the walks fit modules here)
+HIGH_SLOTS = range(27, 35)  # the client's flags for the high slots (HiSlot0 to HiSlot7); the SDE gives the smartbomb the hiPower effect (12)
+POLARIS, POLARIS_LEVEL5_POINTS = 9955, 128000  # the skill the QA Smartbomb requires to be fitted, at level 5 (as test_mission_walk)
+SAFETY_NONE = 0  # the client's red safety (crimewatch.safety: 0 none, 1 partial, 2 full): a smartbomb in low, high or safe space is lit only here
 
 
-def seed_qa_arsenal(ship: int, type_id: int = QA_SMARTBOMB) -> list[int]:
-    """A QA module in every free mid slot of the ship (flags 19 to 26); returns their item ids. Each one is its own module: the server
-    runs them together (the QA Smartbomb has no maxGroupActive in the SDE), and it refuses only the same module twice."""
-    owner = int(sql(f"select owner_id from {schema('INVENTORY')}.items where id = {int(ship)}"))
+def set_safety(character: int, level: int = SAFETY_NONE) -> None:
+    """The character's ship safety level (crimewatch.safety, one row per character)."""
+    sql(f"insert into {schema('CRIMEWATCH')}.safety (character_id, level, updated_ms) values ({int(character)}, {int(level)}, {int(time.time() * 1000)}) "
+        f"on conflict (character_id) do update set level = excluded.level, updated_ms = excluded.updated_ms")
+
+
+def seed_qa_arsenal(ship: int, type_id: int = QA_SMARTBOMB) -> list:
+    """A QA module in every free high slot of the ship (as many as its hiSlots attribute); returns their item ids. Each one is its own module:
+    the server runs them together (the QA Smartbomb has no maxGroupActive in the SDE) and refuses only the same module twice. The pilot's safety
+    is set to none and the Polaris skill that fitting needs is given (both fixtures; the walks need them, not the server)."""
+    owner = owner_of(ship)
+    set_safety(owner)
+    sql(f"insert into {schema('SKILLS')}.character_skills (character_id, type_id, level, skill_points) "
+        f"values ({owner}, {POLARIS}, 5, {POLARIS_LEVEL5_POINTS}) on conflict (character_id, type_id) "
+        f"do update set level = 5, skill_points = {POLARIS_LEVEL5_POINTS}")
+    ship_type = int(sql(f"select type_id from {schema('INVENTORY')}.items where id = {int(ship)}"))
+    slots = list(HIGH_SLOTS)[:hi_slot_count(ship_type)]
     used = {int(flag) for flag in sql(f"select flag from {schema('INVENTORY')}.items where location_id = {int(ship)}").split()}
-    return [new_item(type_id, owner=owner, location=ship, flag=slot, singleton=True) for slot in MID_SLOTS if slot not in used]
+    return [new_item(type_id, owner=owner, location=ship, flag=slot, singleton=True) for slot in slots if slot not in used]
 
 
 def set_ship(character: int, ship: int) -> None:
@@ -82,16 +98,6 @@ def items_of(owner: int, type_id: int) -> list[int]:
     rows = sql(f"select id from {schema('INVENTORY')}.items where owner_id = {int(owner)} and type_id = {int(type_id)} order by id desc")
     return [int(row) for row in rows.split() if row]
 
-HIGH_SLOTS = range(27, 35)  # the client's flags for the high slots (HiSlot0 to HiSlot7); the SDE gives the smartbomb the hiPower effect
-POLARIS, POLARIS_LEVEL5_POINTS = 9955, 128000  # the skill the QA Smartbomb requires to be fitted, at level 5 (as test_mission_walk)
-
-
-def sde_type_id(name: str) -> int:
-    """The type id of an SDE type by its English name (sde.types); unpublished QA modules are found this way too."""
-    found = [int(row) for row in sql(f"select key from sde.types where doc->'name'->>'en' = '{name}'").split() if row]
-    if len(found) != 1:
-        raise SeedError(f"the SDE has {len(found)} types named {name!r}, expected one")
-    return found[0]
 
 
 def hi_slot_count(type_id: int) -> int:
@@ -99,22 +105,6 @@ def hi_slot_count(type_id: int) -> int:
     rows = sql('select elem->>\'value\' from sde."typeDogma", jsonb_array_elements(doc->\'dogmaAttributes\') elem '
                f"where key::text = '{int(type_id)}' and elem->>'attributeID' = '14'")
     return int(float(rows))
-
-
-def seed_qa_arsenal(ship: int, *, names: tuple = ("QA Smartbomb",)) -> list:
-    """Fits the named SDE QA modules in every free high slot of the ship (a fixture: rows in inventory.items, plus the
-    Polaris skill that fitting needs). The server refuses a second activation of one effect at a time, so the walks
-    activate one module at a time. Returns the new module item ids."""
-    owner = owner_of(ship)
-    ship_type = int(sql(f"select type_id from {schema('INVENTORY')}.items where id = {int(ship)}"))
-    slots = list(HIGH_SLOTS)[:hi_slot_count(ship_type)]
-    sql(f"insert into {schema('SKILLS')}.character_skills (character_id, type_id, level, skill_points) "
-        f"values ({owner}, {POLARIS}, 5, {POLARIS_LEVEL5_POINTS}) on conflict (character_id, type_id) "
-        f"do update set level = 5, skill_points = {POLARIS_LEVEL5_POINTS}")
-    used = {int(flag) for flag in sql(f"select flag from {schema('INVENTORY')}.items where location_id = {int(ship)}").split()}
-    types = [sde_type_id(name) for name in names]
-    return [new_item(types[n % len(types)], owner=owner, location=ship, flag=flag, singleton=True)
-            for n, flag in enumerate(f for f in slots if f not in used)]
 
 
 def owner_of(item: int) -> int:

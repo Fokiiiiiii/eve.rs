@@ -115,6 +115,9 @@ def seed_cockroach(ship_id: int) -> int:
 
     # the QA Smartbomb needs Polaris at level 5 to be fitted (its required-skill attributes): the character is given that skill
     owner = sql(f"SELECT owner_id FROM {schema}.items WHERE id = {ship_id}").split()[0]
+    # the smartbomb lights only at the red safety in low, high and safe space (the client's GetRequiredSafetyLevelForEffect): 0 is none
+    sql(f"INSERT INTO {os.environ['EVE_CRIMEWATCH_SCHEMA']}.safety (character_id, level, updated_ms) VALUES ({owner}, 0, {int(time.time() * 1000)}) "
+        f"ON CONFLICT (character_id) DO UPDATE SET level = 0, updated_ms = EXCLUDED.updated_ms")
     sql(f"INSERT INTO {os.environ['EVE_SKILLS_SCHEMA']}.character_skills (character_id, type_id, level, skill_points) "
         f"VALUES ({owner}, {POLARIS}, 5, {POLARIS_LEVEL5_POINTS}) ON CONFLICT (character_id, type_id) DO UPDATE SET level = 5, skill_points = {POLARIS_LEVEL5_POINTS}")
     # psql -c prints the rows and then the command tag ("UPDATE 1"): the first token is the answer

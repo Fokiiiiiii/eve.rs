@@ -5,7 +5,7 @@ down and the FOB is in its armor reinforcement.
 
 The campaign and the FOB are set through the database, the way the walks seed their state: the Angel campaign (warzone 1) is made active with its
 empire side at its count, and its FOB structure is made vulnerable at its shield (state 110, the structures table). The pilot is seeded in space in
-that system, 150 km from the FOB's centre, with a QA Smartbomb in every free mid slot (250 km fields, 5,000 of each damage type a cycle, against the FOB's
+that system, 150 km from the FOB's centre, with a QA Smartbomb in every free high slot at the red safety (250 km fields, 5,000 of each damage type a cycle, against the FOB's
 9.6 million shield; the bombs run together, the QA Smartbomb has no maxGroupActive). The walk watches the ballpark for the FOB's ball (typeID 78260, its Angel Cartel FOB) and polls the structure's state until the
 shield is depleted (state 111, the armor reinforcement). Run it through tools/mitm to keep the capture.
 """
@@ -47,7 +47,7 @@ pytestmark = pytest.mark.skipif(
 
 
 def fit_bombs(ship_id: int) -> list[int]:
-    """The Cockroach (the mission walk's fixture: its type and the Polaris skill) with a QA Smartbomb in each mid slot."""
+    """The Cockroach (the mission walk's fixture: its type and the Polaris skill) with a QA Smartbomb in each free high slot (dbseed)."""
     return [seed_cockroach(ship_id)] + dbseed.seed_qa_arsenal(ship_id)
 
 

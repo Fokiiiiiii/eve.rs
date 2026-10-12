@@ -172,6 +172,9 @@ def fit_smartbomb(character: int, ship: int) -> int:
     """The Cockroach's QA Smartbomb in a free mid slot, and the Polaris skill that fitting needs (the walk's fixture, as test_mission_walk)."""
     items = f"{schema('INVENTORY')}.items"
     owner = int(sql(f"SELECT owner_id FROM {items} WHERE id = {ship}"))
+    # the red safety: a smartbomb lights only there in low, high and safe space (crimewatch.safety, 0 is none)
+    sql(f"INSERT INTO {schema('CRIMEWATCH')}.safety (character_id, level, updated_ms) VALUES ({owner}, 0, {int(time.time() * 1000)}) "
+        f"ON CONFLICT (character_id) DO UPDATE SET level = 0, updated_ms = EXCLUDED.updated_ms")
     sql(f"INSERT INTO {schema('SKILLS')}.character_skills (character_id, type_id, level, skill_points) VALUES ({owner}, {POLARIS}, 5, {POLARIS_LEVEL5_POINTS}) "
         f"ON CONFLICT (character_id, type_id) DO UPDATE SET level = 5, skill_points = {POLARIS_LEVEL5_POINTS}")
     used = {int(flag) for flag in sql(f"SELECT flag FROM {items} WHERE location_id = {ship}").split() if flag}

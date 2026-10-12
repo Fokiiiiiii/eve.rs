@@ -95,6 +95,8 @@ public const byte UpdateEffect = 61;
         public const byte StructureDamaged = 77;
         public const byte TetherPolicy = 80;
         public const byte TetherChanged = 81;
+        public const byte PlaceWormhole = 82;
+        public const byte RemoveWormhole = 83;
 
 
 /// <summary>Protocol 46 (FP-C7): an ECM burst reached ships; the ship that ran it and each ship reached, with whether its roll jammed it (simulation to host).</summary>

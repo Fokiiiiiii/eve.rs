@@ -237,6 +237,7 @@ impl Scene {
             destination_system,
             destination_gate: 0,
             field_id: Some(field_id),
+            far_end: None,
             leaves_at: now,
         });
         let ship_id = id(ship.spec.ship_id);

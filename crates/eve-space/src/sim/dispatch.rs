@@ -393,6 +393,8 @@ impl Sim {
             | Message::RemoveDeployed { .. }
             | Message::PlaceStructure(..)
             | Message::RemoveStructure { .. }
+            | Message::PlaceWormhole(..)
+            | Message::RemoveWormhole { .. }
             | Message::SetStructureState { .. }
             | Message::PlaceProbe(..)
             | Message::RemoveProbe { .. }
@@ -885,11 +887,10 @@ impl Sim {
     /// Asteroids, wrecks and containers that the host places in a system or removes from it.
     fn handle_world(&mut self, message: Message, now: i64) -> Result<Vec<Message>, ProtocolError> {
         let outs = match message {
-            Message::TetherPolicy { session_id, blocked_for_ms, lease_ms, candidates } => {
-                self.scene_of(session_id).map(|scene| {
-                    scene.set_tether_policy(session_id, blocked_for_ms, lease_ms, candidates, now)
-                }).unwrap_or_default()
-            }
+            Message::TetherPolicy { session_id, blocked_for_ms, lease_ms, candidates } => self
+                .scene_of(session_id)
+                .map(|scene| scene.set_tether_policy(session_id, blocked_for_ms, lease_ms, candidates, now))
+                .unwrap_or_default(),
             Message::PlaceAsteroid(placement) => match self.scenes.get_mut(&placement.solar_system_id) {
                 Some(scene) => {
                     let p = *placement;
@@ -962,6 +963,19 @@ impl Sim {
                     None => Vec::new(),
                 }
             }
+            Message::PlaceWormhole(wormhole) => {
+                let wormhole = *wormhole;
+                match self.scenes.get_mut(&wormhole.solar_system_id) {
+                    Some(scene) => scene.place_wormhole(wormhole, now),
+                    None => Vec::new(),
+                }
+            }
+            Message::RemoveWormhole { wormhole_id } => self
+                .scenes
+                .values_mut()
+                .find(|scene| scene.wormhole_index(wormhole_id).is_some())
+                .map(|scene| scene.remove_wormhole(wormhole_id, now))
+                .unwrap_or_default(),
             Message::RemoveStructure { structure_id } => self
                 .scenes
                 .values_mut()

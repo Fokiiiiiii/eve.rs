@@ -34,10 +34,10 @@ use crate::ship::{ModuleSpec, NpcCombat, NpcIdentity, NpcWeapon, ShipSpec, ShipS
 
 use crate::weapons::{Aoe, Arc, Charge, Spool, Turret};
 
-use crate::wreck::WreckKind;
 use crate::world::StructureStatus;
+use crate::wreck::WreckKind;
 
-pub const PROTOCOL_VERSION: u16 = 62;
+pub const PROTOCOL_VERSION: u16 = 63;
 /// The message kinds.
 pub mod kind;
 
@@ -231,6 +231,25 @@ pub struct StructurePlacement {
     pub shield_recharge_ms: f64,
     pub limits: crate::health::StructureLimits,
     pub status: crate::world::StructureStatus,
+}
+
+/// A wormhole end the host puts in space (protocol 63): its body in `solar_system_id`, and the far end it leads to (the other system, the far end's body ID,
+/// that system's class, the far end's position and radius, and the largest ship the wormhole takes).
+#[derive(Debug, Clone, PartialEq)]
+pub struct WormholePlacement {
+    pub wormhole_id: i64,
+    pub solar_system_id: i32,
+    pub name: String,
+    pub type_id: i32,
+    pub group_id: i32,
+    pub position: [f64; 3],
+    pub radius: f64,
+    pub destination_system_id: i32,
+    pub destination_end: i64,
+    pub destination_class: i32,
+    pub destination_position: [f64; 3],
+    pub destination_radius: f64,
+    pub max_jump_mass: f64,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -606,6 +625,12 @@ pub enum Message {
     },
     /// The host puts a scanner probe in space where it was launched (protocol 45).
     PlaceStructure(Box<StructurePlacement>),
+    /// The host puts a wormhole end in space (protocol 63).
+    PlaceWormhole(Box<WormholePlacement>),
+    /// The host takes a wormhole end out of space (protocol 63).
+    RemoveWormhole {
+        wormhole_id: i64,
+    },
     RemoveStructure {
         structure_id: i64,
     },
@@ -615,7 +640,11 @@ pub enum Message {
         status: crate::world::StructureStatus,
     },
     /// A structure's hit was told to the host (simulation to host, protocol 60): the layer it emptied, if any, and whether a layer's repair is paused.
-    StructureDamaged { structure_id: i64, depleted: Option<Layer>, over_threshold: bool },
+    StructureDamaged {
+        structure_id: i64,
+        depleted: Option<Layer>,
+        over_threshold: bool,
+    },
     PlaceProbe(Box<ProbePlacement>),
     /// The host takes a scanner probe out of space (protocol 45); a deployable that is not a probe, or not in space, is left alone.
     RemoveProbe {
@@ -880,6 +909,8 @@ impl Message {
             Self::Deployed(_) => kind::DEPLOYED,
             Self::RemoveDeployed { .. } => kind::REMOVE_DEPLOYED,
             Self::PlaceStructure(_) => kind::PLACE_STRUCTURE,
+            Self::PlaceWormhole(_) => kind::PLACE_WORMHOLE,
+            Self::RemoveWormhole { .. } => kind::REMOVE_WORMHOLE,
             Self::RemoveStructure { .. } => kind::REMOVE_STRUCTURE,
             Self::SetStructureState { .. } => kind::SET_STRUCTURE_STATE,
             Self::StructureDamaged { .. } => kind::STRUCTURE_DAMAGED,

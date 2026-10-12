@@ -380,7 +380,7 @@ internal sealed partial class CharacterServicesComposition
             await Eve.Services.Space.Waves.DungeonWaveDirector.MigrateAsync(source, spaceSchema);
             var dungeonWaves = new Eve.Services.Space.Waves.DungeonWaveDirector(source, foundations.Content, foundations.Scheduler, foundations.Events,
                 Eve.Dungeons.DungeonCatalog.LoadEmbedded(), Eve.Dungeons.WaveRules.LoadEmbedded(), new NpcSelector(npcAuthority),
-                new Eve.Services.Space.SpaceDungeonNpcs(spaceSessions), spaceSchema);
+                new Eve.Services.Space.SpaceDungeonNpcs(spaceSessions), spaceSchema, message => Console.Error.WriteLine($"eve-host: space: {message}"));
             await dungeonWaves.AttachAsync();
             dungeonWavesDirector = dungeonWaves;
             // the CONCORD Rogue Analysis Beacon (CRAB, D-L1 and D-S1): deployed from the hold, linked, scanned, expired by its own record kind

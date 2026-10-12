@@ -63,6 +63,12 @@ public static class MissionCourierRules
     };
 
     /// <summary>
+    /// The level that sets a courier's jump range (owner decision, X13). An epic arc step has no mission level in the official data, so it takes the
+    /// level of its agent (the SDE agent's level, 1 for most arc agents); any other courier takes its level tag. Null when neither is known.
+    /// </summary>
+    public static long? CourierLevel(bool epicArcStep, long? agentLevel, long? taggedLevel) => epicArcStep ? agentLevel : taggedLevel;
+
+    /// <summary>
     /// The destination station: the stations (other than the origin's) whose system lies within the level's range of jumps from the origin's system,
     /// in station ID order, indexed by the seed. Null when no station is in range.
     /// </summary>
@@ -128,7 +134,7 @@ public interface IMissionDungeonHost
 
 /// <summary>Where an agent is: its solar system (the mission dungeon's system) and its corporation (the counterparty of the reward).</summary>
 /// <summary>The base station of the agent (its SDE location, where the objective items of a fetch step are delivered), when it has one.</summary>
-public sealed record MissionAgentPlace(long SolarSystemId, long CorporationId, long? BaseStationId = null);
+public sealed record MissionAgentPlace(long SolarSystemId, long CorporationId, long? BaseStationId = null, long? AgentLevel = null);
 
 /// <summary>
 /// One standing change of a completed mission toward an entity (an agent, a corporation or a faction). An SDE gain is added as it is. A basic
@@ -249,7 +255,8 @@ public sealed class MissionDungeonRuntime(
 
     private Station? CourierDestinationOf(AgentMissionRecord record) =>
         agentPlaceOf(record.AgentId) is { BaseStationId: not null } place && courierDestination is not null
-            ? courierDestination(record.Content.MissionId, record.CharacterId, place, catalog.Level(record.Content.MissionId).Level)
+            ? courierDestination(record.Content.MissionId, record.CharacterId, place,
+                MissionCourierRules.CourierLevel(catalog.IsEpicArcStep(record.Content.MissionId), place.AgentLevel, catalog.Level(record.Content.MissionId).Level))
             : null;
 
     /// <summary>

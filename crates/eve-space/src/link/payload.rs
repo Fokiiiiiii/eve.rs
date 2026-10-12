@@ -175,6 +175,8 @@ impl Message {
                 radius,
                 killer_ship_id,
                 wreck_kind,
+                ship_type_id,
+                corporation_id,
             } => {
                 out.extend_from_slice(&session_id.to_le_bytes());
                 out.extend_from_slice(&ship_id.to_le_bytes());
@@ -184,6 +186,8 @@ impl Message {
                 }
                 out.extend_from_slice(&killer_ship_id.to_le_bytes());
                 put_wreck_kind(&mut out, wreck_kind.as_ref());
+                out.extend_from_slice(&ship_type_id.to_le_bytes());
+                out.extend_from_slice(&corporation_id.to_le_bytes());
             }
             Self::ChargeSpent { session_id, module_id, rounds_left } => {
                 out.extend_from_slice(&session_id.to_le_bytes());

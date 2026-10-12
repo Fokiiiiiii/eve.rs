@@ -1,0 +1,69 @@
+"""Seeding rows for live walks, straight into the scratch schemas that tools/dev/run-eve-live.sh creates (live_<pid>_<module>).
+
+The runner exports EVE_<MODULE>_SCHEMA for each module and EVE_PG_URL. Rows go in with psql before the walk asks the server about them, so the
+server answers from the database the way it does for any character; there is no server backdoor. A walk creates its characters through the
+client's own calls first, then seeds (the character's ship, items, ISK), then selects the character.
+
+    from tests import dbseed
+    ship = dbseed.new_item(11019, owner=character, location=STATION, flag=HANGAR, singleton=True)
+    dbseed.set_ship(character, ship)
+    dbseed.set_isk(character, 5_000_000)
+"""
+
+from __future__ import annotations
+
+import os
+import subprocess
+
+HANGAR = 4  # the client's inventory flag for a station hangar (the rows the server lists as flagID 4)
+COCKROACH = 11019  # Cockroach, the frigate the trade walk flies
+
+
+class SeedError(RuntimeError):
+    pass
+
+
+def _url() -> str:
+    url = os.environ.get("EVE_PG_URL")
+    if not url:
+        raise SeedError("EVE_PG_URL is not set: run the walk through tools/dev/run-eve-live.sh")
+    return url
+
+
+def schema(module: str) -> str:
+    name = os.environ.get(f"EVE_{module}_SCHEMA")
+    if not name:
+        raise SeedError(f"EVE_{module}_SCHEMA is not set: the run exports one schema per module")
+    return name
+
+
+def sql(statement: str) -> str:
+    done = subprocess.run(["psql", _url(), "-At", "-v", "ON_ERROR_STOP=1", "-c", statement], capture_output=True, text=True, check=False)
+    if done.returncode != 0:
+        raise SeedError(f"seeding failed: {done.stderr.strip()}")
+    # psql adds the command tag ("INSERT 0 1") after the rows; the rows are the answer
+    return chr(10).join(line for line in done.stdout.splitlines() if not line.startswith(("INSERT ", "UPDATE ", "DELETE ")))
+
+
+def new_item(type_id: int, *, owner: int, location: int, flag: int = HANGAR, singleton: bool = False, quantity: int = 1) -> int:
+    """An item row (inventory.items) in a location; returns its id."""
+    return int(sql(
+        f"insert into {schema('INVENTORY')}.items (type_id, owner_id, location_id, flag, quantity, singleton) "
+        f"values ({int(type_id)}, {int(owner)}, {int(location)}, {int(flag)}, {int(quantity)}, {'true' if singleton else 'false'}) returning id"))
+
+
+def set_ship(character: int, ship: int) -> None:
+    """The character's active ship (characters.ship_id)."""
+    sql(f"update {schema('CHARACTERS')}.characters set ship_id = {int(ship)} where id = {int(character)}")
+
+
+def set_isk(character: int, isk: int) -> None:
+    """The character's ISK balance (wallet.balances)."""
+    sql(f"insert into {schema('WALLET')}.balances (owner_id, isk, plex) values ({int(character)}, {int(isk)}, 0) "
+        f"on conflict (owner_id) do update set isk = excluded.isk")
+
+
+def items_of(owner: int, type_id: int) -> list[int]:
+    """The ids of an owner's items of a type, newest first."""
+    rows = sql(f"select id from {schema('INVENTORY')}.items where owner_id = {int(owner)} and type_id = {int(type_id)} order by id desc")
+    return [int(row) for row in rows.split() if row]

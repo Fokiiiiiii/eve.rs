@@ -163,6 +163,8 @@ impl Scene {
             direction: ship.direction,
             radius: ship.spec.radius,
             killer_ship,
+            ship_type_id: ship.spec.type_id,
+            corporation_id: ship.spec.corporation_id,
         });
         out
     }

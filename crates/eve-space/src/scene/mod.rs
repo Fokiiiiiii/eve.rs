@@ -274,6 +274,9 @@ pub enum Out {
         direction: Vec3,
         radius: f64,
         killer_ship: Option<i64>,
+        /// The type and the corporation of the ship (the host prices an NPC's kill by its type, `NpcBounty`).
+        ship_type_id: i32,
+        corporation_id: i32,
     },
     /// A turret spent rounds: how many it has left (the host keeps the quantity of the charge item).
     ChargeSpent { session: SessionId, module_id: i64, rounds_left: i64 },

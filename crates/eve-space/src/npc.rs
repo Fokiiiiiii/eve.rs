@@ -118,9 +118,9 @@ impl Scene {
         let system_id = i64::from(self.system().id);
         let group = group.unwrap_or_else(|| self.new_entity_group());
         // the owners a Pochven NPC attacks, by its behavior (`pochven_population::owners_for`)
-        let in_pochven = self.system().region_id == crate::pochven::POCHVEN_REGION_ID;
+        let in_zone = crate::pochven_population::is_zone(self.system().id);
         let owners =
-            crate::pochven_population::owners_for(behavior, i64::from(ship.spec.corporation_id), in_pochven);
+            crate::pochven_population::owners_for(behavior, i64::from(ship.spec.corporation_id), in_zone);
         self.brains
             .get_or_insert_with(Brains::default)
             .give(session, &ship, system_id, behavior, group, owners)

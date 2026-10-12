@@ -1139,5 +1139,5 @@ fn tether_host_policy_dispatches_to_the_real_scene_and_transitions_return_to_the
         Message::TetherChanged { session_id: SESSION, previous_structure_id: 0, structure_id, repairing: false }, NOON,
     ).unwrap_err();
     assert!(wrong_direction.0.contains("kind 81"));
-    assert_eq!(crate::link::PROTOCOL_VERSION, 63);
+    assert_eq!(crate::link::PROTOCOL_VERSION, 64);
 }

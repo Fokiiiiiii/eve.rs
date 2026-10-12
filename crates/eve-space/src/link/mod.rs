@@ -37,7 +37,7 @@ use crate::weapons::{Aoe, Arc, Charge, Spool, Turret};
 use crate::world::StructureStatus;
 use crate::wreck::WreckKind;
 
-pub const PROTOCOL_VERSION: u16 = 63;
+pub const PROTOCOL_VERSION: u16 = 64;
 /// The message kinds.
 pub mod kind;
 
@@ -476,6 +476,9 @@ pub enum Message {
         killer_ship_id: i64,
         /// The wreck the ship's type leaves (a wreck the host makes is made from it).
         wreck_kind: Option<WreckKind>,
+        /// The type of the ship and its corporation (protocol 64: the host prices an NPC's kill by its type).
+        ship_type_id: i32,
+        corporation_id: i32,
     },
     /// A turret of this session's ship spent rounds: how many it has left (the host keeps the quantity of the charge item).
     ChargeSpent {

@@ -253,7 +253,7 @@ impl Universe for SceneWorld<'_> {
     /// `get_standings_from_npc_to_item`, with the Pochven rule: an NPC of one of the four Pochven factions is hostile to an NPC of another (both ids are
     /// the corporations the NPCs fly for). Every other standing is the default, and so is every standing outside Pochven (`pochven.rs`).
     fn standings_from_npc_to_item(&self, npc_owner_id: i64, to_id: i64) -> f64 {
-        if self.scene.system().region_id != pochven::POCHVEN_REGION_ID {
+        if !crate::pochven_population::is_zone(self.scene.system().id) {
             return 0.0;
         }
         match (pochven::faction_of_corporation(npc_owner_id), pochven::faction_of_corporation(to_id)) {

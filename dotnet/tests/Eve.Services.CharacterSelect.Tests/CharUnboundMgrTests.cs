@@ -309,12 +309,14 @@ public class CharUnboundMgrTests
     {
         // the reference's selection notification carries shipid (EveJS capture evejs-nes_intro): the client reads it when it builds the hold tracker
         await using var h = await Harness.CreateAsync();
-        var (session, _) = await h.LoginAsync("selection-shipid");
+        var (session, sink) = await h.LoginAsync("selection-shipid");
         var character = await CreateAsync(h, session, "Ship Pilot");
         var ship = (await h.Characters.GetAsync(character))!.ShipId!.Value;
+        sink.Sent.Clear();
 
         Assert.Equal(PyNone.Instance, await h.CallAsync(session, "SelectCharacterID", new PyInt(character)));
         Assert.Equal(new PyLong(ship), session.Get("shipid"));
+        Assert.Contains(ChangesOf(sink.Sent[1]), change => change.Name == "shipid" && change.New == new PyLong(ship));
     }
 
     [PgFact]

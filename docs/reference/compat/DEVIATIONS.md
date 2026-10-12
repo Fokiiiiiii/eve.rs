@@ -1158,19 +1158,19 @@ graphical client.
   answer. Session notifications are applied as they arrive (`ProcessSessionChange`, `OnSessionChanged`, `sessions.py:577-590`,
   `OnCharacterSessionChanged` on a `charid` change). Verdict: the client does not require a notification before the answer.
   eve.rs sends the selection's session change after the answer and the client accepts it. No change.
-- **`shipid` in the selection notification (cut).** EveJS's selection session change carries `shipid` (capture `evejs-nes_intro`,
-  seq 18). eve.rs leaves it out when the active ship is deferred (`SpaceSessions.cs:545-546`, `CharUnboundMgrService.cs:354-355`)
-  and sends a single-key `shipid` change after the hangar list answer (`eve-rs-nes_intro`, seq 28). The client reads
-  `session.shipid` when it builds the hold tracker (`inventorycommon/holdTracker.py:60-61`) and the hangar badges
-  (`neocomInventoryBadging.py`), and it handles a single-key `shipid` change (`invWindow.py:1142`). Verdict: the client needs
-  `shipid` when the inventory is built, which in eve.rs is after the list answer. Not aligned in this slice: the fix provisions the
-  active ship before selection and changes the deferral design (`SpaceSessions.cs`). Follow-up: provision the starter ship at
-  selection and send `shipid` in the selection change, as the reference does.
-- **The handshake's `2`.** The reference writes the `2` after it reads the client's encrypted authentication blob; eve.rs writes it
-  before (captures `evejs-login` and `eve-rs-login`, handshake records 7 and 8). The client's side of the handshake
-  (`carbon/common/script/net/GPS.py:400-434`) writes `OK CC`, reads the client's encrypted challenge, then writes the server
-  challenge. None of those writes is the `2`. Verdict: the order of the `2` relative to the client's blob is not set by the code
-  that this section reads. Not changed; follow-up: find what writes the `2` in the reference.
+- **`shipid` in the selection notification: aligned (slice 6).** The selection session change carries `shipid` with the
+  character's starter ship, the same as the reference's (capture `evejs-nes`, seq 18; `eve-rs-nes`, seq 19: both 22 keys, the
+  same set). The starter ship exists from character creation (`dotnet/src/Eve.Characters/CharacterCreation.cs`), so the value is
+  real. The deferred docked ship (`deferredDockedShipId`) was removed; the fitting bootstrap for a docked ship runs on the hangar
+  list (`CharacterDogmaSync.cs`). The unit test `Selecting_a_character_puts_its_active_ship_in_the_selection_session_change`
+  checks the announced change. The earlier "cut" text was wrong: it came from reading a stale capture file.
+- **The handshake's `2`: aligned (slice 6).** The reference writes `PyInt(2)` after it reads the client's challenge
+  (`server/src/network/tcp/handshake.js`, the CryptoChallengePacket step). eve.rs writes it after the same read
+  (`crates/eve-net/src/handshake.rs`). The `nes` walk captures of both servers match from the version exchange through
+  `GetServiceInfo`, so the handshake lines in the MITM diff are equal.
+- **Still different, not changed.** The reference sends `OnCharacterSelected` then the session change, and eve.rs sends the
+  session change first in one place; the walk's dogma and ping ordering differs by one packet; character ids and names differ per
+  run (volatile). These are order details the client code in `eve-logic` does not fix in the paths read so far.
 
 ## Track A8c: the mobile beacon as a jump target (2026-10-10)
 
@@ -3312,3 +3312,23 @@ rules), "Wormhole Types". The client's `wormholeMgr.WormholeJump(itemID)` (eve-l
 - Tests: `WormholeWorldTests` (ends, positions, generation once, a captured collapse), `WormholeLifecycleTests` and
   `WormholePlannerTests` (eve.wormholes); the simulation's placement and jump (`eve-space` scene tests). The space service jump has no
   test yet (NOT RUN at the service level).
+## Slice 3, step 1: zones outside Pochven (2026-10-12)
+
+Sources. The EVE University wiki "Triglavian Invasion (Chapter 3)" (https://wiki.eveuniversity.org/Triglavian_Invasion_(Chapter_3), read 2026-10-12; the page was last edited 2023-08-28 and says it documents content no longer in the game): Arshat moved from Escalating Liminality to an EDENCOM Fortress at the end of Chapter 3 (2020-10-13). The wiki's "EDENCOM systems" page (last edited 2024-01-19) names no system and links an external "List of invasion systems" that returned 404 when fetched. The forum names of the 2020 renewed attacks (Abha, Inaya, Muttokon, Seiradih, Aldik, Iosantin) are not states and are not zones.
+
+Decision. The zones are the 27 Pochven systems (Triglavian) and Arshat (30002253, SDE region 10000043, EDENCOM). Arshat is the one zone outside Pochven that a source names with a state; its state is the end-of-Chapter-3 state, and no source confirms it today. The EDENCOM zone's sentries are GunStars at each gate (the data file's state 'edencom'), its camps are two Imperial Navy Sentinels at the first two gates, and its camp is a mobile tree that attacks the other factions' NPCs and no pilot (EDENCOM rats are hostile below 0.00 standing). The Triglavian zones keep the rule of step 2-4. Skirmishes stay Pochven's: a zone outside Pochven gets sentries and camps only.
+
+Not done: a dated list of EDENCOM Minor Victory and Stronghold systems, and more fortress systems: no source read names them.
+
+
+## Slice 3, step 2: the protocol bump for a kill, and the NPC bounty (2026-10-12)
+
+Protocol. The simulation's `Destroyed` message carries the destroyed ship's type id and corporation id (i32 each, after the wreck kind). The simulation's protocol version is 64 (the wormhole agent's 63 was pushed in 66b6b3c). The C# codec (`SimCodec.ProtocolVersion`, `SimDestroyed.ShipTypeId`, `CorporationId`) and the fixtures (`oracle/fixtures/simlink/messages.json`, from `tools/dev/gen-simlink-fixtures.py`) move with it. The host's own protocol (`HostCodec`, version 1) is unchanged.
+
+Bounty. The host pays a kill of an NPC the simulation keeps (a session at or above 2^62 that the host has no profile for) the `entityKillBounty` of its type in the static data (SDE build 3396210, `typeDogma` attribute 481), paid to the pilot who dealt the last blow, through the same store and ESS split as a profiled NPC. Values from the SDE: Entropic Disintegrator Werpost 54577 pays 12,500,000 ISK; EDENCOM GunStar 54579 and Heavy GunStar 54580 pay 0; Liminal Damavik 52182, Interfering Phase-II Legionary 56493 pay 0; the Imperial Navy Sentinel 52923 and the Drifter hulls carry no bounty attribute and pay 0. Eleven Rogue Drone entity types carry non-zero SDE values and pay them.
+
+Decision, no published bounty for the Triglavian and EDENCOM hulls. A search of the EVE University wiki (Triglavian Invasion, Triglavian Collective) and the wider web gave no per-ship ISK bounty for the Damavik, Vedmak, Leshak, Kikimora, Rodiva, Drekavac or the EDENCOM navy hulls. Those kills pay 0 until a source publishes a value; no number is invented.
+
+Loot. Unchanged: the sim-resident NPCs have no host profile and so no loot table (the loot rule is keyed on the profile). No published drop table exists for these types in the SDE.
+
+Tests: `NpcBountyHostTests` (a werpost kill pays 12,500,000 ISK to the killer with the type in the bucket; a Damavik kill pays nothing), `Eve.Space.Tests` (300, the codec and fixtures), `eve-space` (764), `eve-net` and `eve-sim` build clean under clippy -D warnings.

@@ -276,6 +276,12 @@ impl Scene {
         {
             return vec![Out::Refused { session, command: CODE, reason: "SMARTBOMB_NEAR_STATION" }];
         }
+        // a smartbomb does not start while its ship is in warp (EVE.js refuses it so; no SDE attribute names it: disallowActivateOnWarp 1245 is not on the bomb types)
+        if matches!(effect.action.as_ref(), Some(Action::Smartbomb { .. }))
+            && pilot.flight.as_ref().is_some_and(|flight| flight.is_warping())
+        {
+            return vec![Out::Refused { session, command: CODE, reason: "CANNOT_ACTIVATE_IN_WARP" }];
+        }
         // a warp scrambler that blocks a microwarpdrive keeps one from being started
         // a module burnt out by its own effect (an emergency hull energizer) does not start again (MODULE_INCAPACITATED)
         if pilot.modules.burnt_out.contains(&effect.module_id) {

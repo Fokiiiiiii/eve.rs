@@ -3901,6 +3901,17 @@ fn a_cloak_is_stopped_by_a_ship_that_targets_its_pilot_and_not_by_the_locks_the_
 }
 
 #[test]
+fn a_smartbomb_is_refused_while_its_pilot_warps() {
+    // EVE.js refuses a smartbomb in warp (isEntityActiveWarpInFlight); the lance of the next test is not refused
+    let (mut scene, t) = reaching_in(crowd_with_a_planet(), 3_000.0);
+    scene.command(A, Command::WarpTo { target_id: PLANET, range: 0.0 }, t);
+    let (_, t) = poll_until(&mut scene, t, 10.0);
+    assert!(scene.pilots[&A].flight.as_ref().is_some_and(|f| f.is_warping()), "the ship is in warp");
+    let refused = scene.activate(A, smartbomb(3_000.0, [0.0, 40.0, 0.0, 40.0], true), t);
+    assert_eq!(refusal_of(&refused), "CANNOT_ACTIVATE_IN_WARP");
+}
+
+#[test]
 fn a_lance_is_activated_while_its_pilot_warps() {
     // no SDE attribute (disallowActivateOnWarp) and no EVE.js rule stops a strike in warp; a locked target cannot be held through warp anyway, so a
     // doomsday is refused by its lock, not by the warp

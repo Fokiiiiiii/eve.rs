@@ -2099,6 +2099,37 @@ the wiki's ("Locator Agents") and the client's, not EveJS's.
   the notification (the fee stays charged; visible in the bus status). The dialogue tests (`AgentLocatorDialogueTests`, PostgreSQL,
   fake port) cover the ask, offer, accept, reject, refusals, cooldown and the unpaid case; the live walk covers the delivery.
 
+## Agents slice AG-5: live walks for the dialogs, and what they found (2026-10-12)
+
+Sources. EveJS `researchDialogue.js:152-209, 264-336, 372-392` (SingleChoiceBox, YesNo and GetQuantity: the argument shapes, the
+answer readers), `agentMgrService.js:381-397` (the decline YesNo: five arguments and `machoVersion` as kwargs),
+`network/clientSession.js:1112-1150` (`consumeClientCallResponse`: a plain or a substream answer).
+
+- **Dialog kwargs were dropped (fixed).** `SendClientCall` built every call with empty kwargs, so the decline YesNo lost
+  `machoVersion` and the datacore GetQuantity lost its `maxvalue`, `label` and the rest. Both now go on the wire. Found by the
+  MITM capture of the walks against the EVE.js argument lists above.
+- **Typed answers were read as nothing (fixed).** The server decodes an ordinary string as `PyBytes` (only string-table items
+  are `PyStr`), so the locator's name and the radio-button answer did not match. The dialogue reads text through
+  `JsSemantics.StringValue`, as the slash commands do. Tests: `AgentLocatorDialogueTests`, `AgentResearchDialogueTests`
+  (byte-string answers).
+- **Locator result is an outbox event (AG-4 A7 revised).** The fee, the cooldown and the result are one transaction, the result
+  is an `agents.locate_delivered` event on the repo's `EventBus`; the subscriber writes the notification keyed by the event id.
+  The refund path is gone (no crash window between a charge and its notification).
+- **The Cockroach (typeID 11019, from the pinned SDE).** The live walks seed it through the database: a singleton in the pilot's
+  station hangar (flag 4) and the characters row's `ship_id`. The session does not carry `shipid` at selection: the server defers a
+  docked ship until the client's dogma bootstrap (`deferredDockedShipId`, not client-visible), so the walks check the database.
+  Flying it is not exercised by these walks (gap).
+- **Live walks (headless client, `tools/headless-client/tests/test_agents_live.py`, run through `run-eve-live.sh`).** LP store purchase
+  (ISK and LP debited, item granted), research start, datacores and cancel (the answers come from `client.answer`), locator to a second
+  pilot (fee taken on accept, the located notification delivered through the outbox), agent decline (a no keeps the offer, a yes
+  declines it). Quit is not walked: it needs the pilot at the agent's station with an accepted mission.
+- **MITM and EVE.js.** The four walks were captured through `tools/mitm` against eve.rs. The EVE.js side was not run: the walks
+  seed PostgreSQL state (ISK, standings, LP, the offer, the ship) that EVE.js does not read from a database, and without that state
+  its agents refuse before the dialogs. So the dialog shapes are compared by reading EVE.js (above), not by `mitm diff`. Gap.
+- **Owner decisions in this slice.** Locator fee on accept (unchanged). Starweb offers stay out. Structures untouched.
+- **Gaps.** Quit walk; flying the Cockroach; the EVE.js side of the capture (needs a seeded EVE.js data root); the client-side
+  display of the locator result (no graphical run).
+
 ## ST-E: cloak proximity and forced decloak notices (2026-10-10)
 - **Proximity radius and refusal.** The cloak breaks, and activation refuses, for a ship or a non-belt body within 2 000 m of the surface of the cloaked ship. Source: EveJS `shipCloak.js:100` (`MIN_CLOAKING_DISTANCE_METERS = 2000`). It replaces the 2 km smartbomb-range check, so the activation refusal now also counts bodies, not only smartbomb targets. Belts are not counted.
 - **Notice order.** The proximity notice goes out before the module stops; the other reasons after (EveJS `forceDecloakEntity`).

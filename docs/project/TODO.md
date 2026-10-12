@@ -990,7 +990,9 @@ A6 research buttons 12 to 14 done: field choice, cancel, datacores from the SDE 
 "Agents slice AG-4, A6 ..."). Open: research missions.
 A7 locator 15 to 17 done: the name, the offer with the fee, accept (fee and cooldown in one transaction, result notification type 69
 after the commit, refund if it cannot be written), reject (DEVIATIONS "Agents slice AG-4, A7"). Open: the client's localized labels for
-the dialog, the locator's standing split (faction and corporation), Host tests for delivery and refund. Next: live coverage.
+the dialog, the locator's standing split (faction and corporation). Done in AG-5 (DEVIATIONS "Agents slice AG-5"): the result is an
+outbox event (no refund), the live walks for LP store, research, locator and decline, the dialog kwargs and string fixes. Open: the quit
+walk, flying the Cockroach, the EVE.js side of the MITM capture, the client's localized labels.
 
 ## Agents slice AG-3 (2026-10-11)
 

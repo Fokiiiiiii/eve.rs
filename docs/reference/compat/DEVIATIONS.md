@@ -2808,3 +2808,24 @@ Differences, each one a deliberate choice or a behaviour EveJS does not have:
 
 A MITM capture of the same live scenario on both servers is still to do; this list is a hand reading of the two sources.
 
+## Direct trade (trademgr, 37a)
+
+Status: done in the server; NOT RUN in the graphical client (two pilots docked together were not driven on this host).
+
+- **What the server does.** `InitiateTrade` checks both pilots (docked, online, in the same place, not yourself, not already in another trade) and returns the trade as a moniker. The target gets `OnTradeInitiate`. The bound trade serves `List`, `Add` (with `qty` for a part of a stack), `MultiAdd`, `GetSelfInvItem`, `OfferMoney`, `MakeOffer` and `Abort`. The client's names and argument shapes are the V24.01 ones (`pvptradesvc.py`, `pvptradewnd.py`, `invControllers.py` `invCtrl.PlayerTrade`).
+- **Custody.** A staged item is moved into the trade container (its `locationID` is the trade id), as EveJS does, and the origin (location and flag) is stored. An abort puts it back; a part of a stack is merged back into the stack it came from, so the original item id returns.
+- **Completion.** When both pilots accept the same manifest (their ISK and the set of item ids), the items go to the other pilot's docked hangar and the ISK moves in one PostgreSQL transaction, with one wallet journal entry per direction (`player_trading`, ESI ref type 1, from CCP's eve-glue `JournalRefTypeEnumV2`). A pilot who no longer has the ISK refuses the completion: the trade stays open, both acceptances are cleared and the items stay in custody.
+- **Restart.** A host that stops with trades open ends them at start-up and returns the items (`TradeAuthority.RecoverOpenAsync`). EveJS recovers durable trades instead; eve.rs has no pilot connected to continue one, so the items go back.
+- **Disconnect.** A pilot who disconnects ends the trade for both (the items go back).
+- **Ids.** A trade id is a container id drawn from `trade.trade_ids`, which starts at 9 000 000 000 000 000, away from item ids. The id is a location for the items, so it must not collide with an item or a station.
+- **Where the rules are.** `Eve.Trade` (`TradeAuthority`, schema `trade`, migration `001_trade_sessions.sql`). `Eve.Services.Station/TradeMgrService.cs` is the RPC layer only.
+
+Differences from EveJS:
+1. `OnTradeOffer` carries the acceptances as 0/1 per trader, not the manifest objects. The client's `OnStateToggle` reads only the truth of each entry, so the window behaves the same; the manifest is not sent back.
+2. Notifications after a change: `OnItemChange` for each moved item (with the differences that matter: owner 2, location 3, flag 4, size 9), `OnPrimingNeededForTradeItems` for the staged ids, `OnTradeMoneyOffer` and `OnTradeOffer` to both pilots. EveJS sends the money and the acceptances only when they change; eve.rs sends both after each change, so the windows are never behind.
+3. A staged item from a ship's cargo or from a can is refused (`Only items in your hangar here can be offered.`). EveJS also accepts those sources. Not built.
+4. No item tradability check. The client refuses non-tradable types (`is_tradable`); the server does not yet, so a hand-made `Add` of such an item is accepted. Open.
+5. A removed merged stack is announced as an `OnItemChange` with size 0 (what the client needs to drop the row). That is an assumption about the client's handling, not an observed capture.
+
+Open verification: the item ids the client puts in the manifest set (`tradeItems`) are read from the item rows (`itemID`, plain or packed). If the live client sends another shape, every offer is a mismatch and no trade completes. Check with a graphical walk before calling the trade live.
+

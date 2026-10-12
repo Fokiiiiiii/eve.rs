@@ -76,6 +76,7 @@ internal sealed partial class CharacterServicesComposition
         await TrainingSkillsAndCreation();
         await CorporationMigrations();
         await EconomyAndInsurance();
+        await TradeAuthorityStore();
         await CorporationStores();
         await MarketSeed();
         await SpaceSimulation();

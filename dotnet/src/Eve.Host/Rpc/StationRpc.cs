@@ -41,7 +41,7 @@ internal sealed partial class CharacterServicesComposition
     private IReadOnlyList<IService> StationRpc() =>
     [
             new StationService(stations, characters, online, now, sovereigntyReadModel.ReadAllianceSystemsAsync, officeManager: officeManager, seedObserverGuestLedger: stationGuestLedger.SeedObserverGuestLedger, characterSessions: characterSessions),
-            new Eve.Services.Station.TradeMgrService(characterSessions),
+            new Eve.Services.Station.TradeMgrService(characterSessions, tradeAuthority, itemTypes, stations, now),
             new Eve.Host.DevIndexManagerRpcService(sovereigntyReadModel.ReadAllDevelopmentIndicesAsync),
             new Eve.Host.EjectRpcService(),
     ];

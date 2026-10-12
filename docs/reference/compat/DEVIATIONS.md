@@ -3325,8 +3325,9 @@ rules), "Wormhole Types". The client's `wormholeMgr.WormholeJump(itemID)` (eve-l
 - The collapse of an end by the scheduler (the lifetime) publishes its removal to the simulation at the time the job runs; the job's
   transaction may still fail after that, and the next scene start places the stored ends again.
 - Tests: `WormholeWorldTests` (ends, positions, generation once, a captured collapse), `WormholeLifecycleTests` and
-  `WormholePlannerTests` (eve.wormholes); the simulation's placement and jump (`eve-space` scene tests). The space service jump has no
-  test yet (NOT RUN at the service level).
+  `WormholePlannerTests` (eve.wormholes); the simulation's placement and jump (`eve-space` scene tests). The space service jump:
+  `WormholeJumpServiceTests` (eve.services.space, PostgreSQL): the mass refusal with its text and no jump heard, the jump taken with the
+  destination's end placed and the polarization with its text, and a collapse that removes both ends in the simulation. Not run: the client.
 ## Slice 3, step 1: zones outside Pochven (2026-10-12)
 
 Sources. The EVE University wiki "Triglavian Invasion (Chapter 3)" (https://wiki.eveuniversity.org/Triglavian_Invasion_(Chapter_3), read 2026-10-12; the page was last edited 2023-08-28 and says it documents content no longer in the game): Arshat moved from Escalating Liminality to an EDENCOM Fortress at the end of Chapter 3 (2020-10-13). The wiki's "EDENCOM systems" page (last edited 2024-01-19) names no system and links an external "List of invasion systems" that returned 404 when fetched. The forum names of the 2020 renewed attacks (Abha, Inaya, Muttokon, Seiradih, Aldik, Iosantin) are not states and are not zones.
@@ -3414,3 +3415,7 @@ Superseded in part by "Wormhole sites: real names and client dungeon keys (slice
 - Scan strength: a J signature needs `WormholeSites.ScanStrength` (0.0, SDE attribute 1908), and `ProbeScanMath.Coverage` now treats a target that needs no strength as reached by its geometry alone (a probe in range covers it fully). Before, such a target covered nothing. A ship's required strength is never 0, so no ship changes.
 - Lifetime: 24 hours as the K-space sites (`CosmicSiteDirector.Lifetime`); a collapsed wormhole does not remove its system's sites (no rule published).
 - Not built: the signatures of gas and ore; the hacking and the analysis of a J-space container are the existing K-space path, not tested in a J-system; the live run in a J-system (the headless check) is not done.
+
+### Wormhole service jump tests (slice 10, service layer)
+- `WormholeJumpServiceTests` (PostgreSQL, under the heavy lock): a pilot undocked in a J-system (its location set before the undock), a world of one static of the test's types, and the space service's `WormholeJumpAsync`. Covered: the individual mass refusal with its text and no jump given to the simulation; a jump taken, the destination's end placed, the polarization and the second try's text; a connection of 10 tonnes that collapses on the first transit, with both of its ends removed from the simulation.
+- Not covered: the polarization's expiry after five minutes (the rig's clock is fixed), the RPC `WormholeMgr` path with its notifications, and a second ship's race between the check and the take (logged, shortcut above). The client is not driven (NOT RUN).

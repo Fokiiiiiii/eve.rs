@@ -1641,6 +1641,6 @@ Evidence and decisions: `docs/project/WORMHOLE_DESIGN.md` (sources, SDE numbers,
 | DONE (tests) | Probe scan of a J signature: strength 0.0 (SDE 1908); a probe in range finds it by its geometry | `ProbeScanMathTests` |
 | NOT DONE | Gas and ore signatures placed as sites (no site kind) | Mining site generation |
 | NOT DONE | Rust sim environment effects (the attributes the sim models) | Design 15 |
-| NOT DONE | Service-layer `WormholeJumpAsync` tests (store and scheduler in the rig) | Design 15 |
+| DONE (tests) | Service-layer `WormholeJumpAsync` tests: mass refusal, jump and destination end, polarization, collapse (own world in the space rig) | `WormholeJumpServiceTests` (PgFact). Polarization expiry and RPC path not covered |
 | NOT DONE | Headless MITM live check on 26110/26210 | Design 15 |
 

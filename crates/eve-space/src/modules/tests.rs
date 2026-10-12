@@ -3289,6 +3289,27 @@ fn a_group_with_a_limit_runs_that_many_modules_at_once_and_the_next_one_waits_fo
 }
 
 #[test]
+fn two_smartbombs_run_at_once_and_only_the_same_module_twice_is_refused() {
+    // the QA Smartbomb has no maxGroupActive in the SDE, so the bombs of a ship run together; the refusal is per module (ALREADY_ACTIVE)
+    let (mut scene, t) = crowd();
+    let bomb = |module_id| Effect {
+        module_id,
+        effect_id: 9,
+        fx: "effects.EMPWave".to_string(),
+        action: None,
+        duration_ms: 3_000.0,
+        capacitor_need: 1.0,
+        ..afterburner()
+    };
+    assert!(accepted(&scene.activate(A, bomb(MODULE + 300), t)));
+    assert!(accepted(&scene.activate(A, bomb(MODULE + 301), t)), "a second bomb runs with the first");
+    assert_eq!(
+        scene.activate(A, bomb(MODULE + 300), t),
+        [Out::Refused { session: A, command: 17, reason: "ALREADY_ACTIVE" }]
+    );
+}
+
+#[test]
 fn a_cloak_is_refused_while_a_module_that_cannot_be_deactivated_early_runs() {
     // disallowEarlyDeactivation 906 on a running module: the ship cannot cloak (EveJS CLOAK_MODULE_ACTIVE)
     let (mut scene, t) = crowd();

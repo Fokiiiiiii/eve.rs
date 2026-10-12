@@ -21,6 +21,8 @@ public sealed record DomainEvent(long Id, string Topic, string? Key, string Payl
 public sealed class EventContext
 {
     private readonly EventBus _bus;
+    private readonly List<Func<CancellationToken, Task>> _afterCommit = [];
+    private readonly List<Action> _afterCompletion = [];
 
     internal EventContext(EventBus bus, DomainEvent @event, NpgsqlConnection connection, NpgsqlTransaction transaction)
     {
@@ -36,6 +38,39 @@ public sealed class EventContext
 
     public Task<long> PublishAsync(string topic, object? payload, string? key = null, CancellationToken cancellationToken = default) =>
         _bus.PublishAsync(Connection, Transaction, topic, payload, key, cancellationToken);
+
+    public void AfterCommit(Func<CancellationToken, Task> callback)
+    {
+        ArgumentNullException.ThrowIfNull(callback);
+        _afterCommit.Add(callback);
+    }
+
+    public void AfterCompletion(Action callback)
+    {
+        ArgumentNullException.ThrowIfNull(callback);
+        _afterCompletion.Add(callback);
+    }
+
+    internal async Task CompleteAsync(bool committed, Action<Exception> onError)
+    {
+        try
+        {
+            if (committed)
+                foreach (var callback in _afterCommit)
+                {
+                    try { await callback(CancellationToken.None); }
+                    catch (Exception error) { onError(error); }
+                }
+        }
+        finally
+        {
+            foreach (var cleanup in _afterCompletion)
+            {
+                try { cleanup(); }
+                catch (Exception error) { onError(error); }
+            }
+        }
+    }
 }
 
 /// <summary>A subscriber's handler. Throwing means "not handled": the event is tried again later and, after the last attempt, set aside as a dead letter.</summary>

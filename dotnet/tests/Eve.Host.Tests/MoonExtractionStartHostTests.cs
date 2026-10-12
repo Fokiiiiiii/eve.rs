@@ -385,4 +385,20 @@ public sealed class MoonExtractionStartHostTests
         var legacy = await route.Store.ReadLegacyAsync();
         Assert.Empty(legacy["extractions"]!.AsObject());
     }
+
+    [PgFact]
+    public async Task An_owner_director_can_cancel_but_another_corporations_manager_cannot()
+    {
+        await using var route = await Route.CreateAsync(PgUrl());
+        await route.RefineryAsync();
+        await route.Moon.CallAsync(route.Start());
+        route.Session.Set("corpid", new PyLong(OtherCorporation));
+        route.Session.Set("corprole", new PyLong(2048));
+        await Assert.ThrowsAsync<MachoWrappedException>(() => route.Moon.CallAsync(Mutation("CancelExtraction", route.Session)).AsTask());
+        Assert.Single((await route.Store.ReadLegacyAsync())["extractions"]!.AsObject());
+        route.Session.Set("corpid", new PyLong(Corporation));
+        route.Session.Set("corprole", new PyLong(1));
+        Assert.Equal(PyNone.Instance, await route.Moon.CallAsync(Mutation("CancelExtraction", route.Session)));
+        Assert.Empty((await route.Store.ReadLegacyAsync())["extractions"]!.AsObject());
+    }
 }

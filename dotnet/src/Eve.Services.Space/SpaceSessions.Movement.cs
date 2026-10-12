@@ -11,6 +11,7 @@ using Eve.Npc;
 using Eve.Services.Ships;
 using Eve.Ships;
 using Eve.Space;
+using Eve.Services.Space.Pochven;
 using Eve.Universe;
 using ModuleAttributes = Eve.Services.Space.Effects.ModuleAttributes;
 
@@ -300,15 +301,20 @@ public sealed partial class SpaceSessions
     private async Task<double> ShipMassAsync(Pilot pilot, CancellationToken cancellationToken) =>
         await FlownShipAsync(pilot, cancellationToken) is { } flown ? flown.World.Get(flown.Ship.Id, Eve.Services.Space.Effects.ModuleAttributes.Mass) : 0;
 
-    /// <summary>The stargate rules of the client data: the pilot's ship group against the gate's list, and the emanation lock of the system it is in.</summary>
+    /// <summary>The stargate rules: the Pochven refusal of capital ships (the wiki, "Pochven"), then the client data's rules of the gate: the pilot's ship group
+    /// against the gate's list, and the emanation lock of the system it is in.</summary>
     private async Task CheckGateRulesAsync(Pilot pilot, long gateId, CancellationToken cancellationToken)
     {
+        await _statics.EnsureTypesAsync([pilot.TypeId], cancellationToken);
+        var group = _statics.Type(pilot.TypeId)?.GroupId ?? 0;
+        if (RegionOfSystem(pilot.SolarSystemId) is { } region && PochvenRules.StargateRefusal(region, group) is { } refusal)
+        {
+            throw Notify(refusal);
+        }
         if (GateRules is null)
         {
             return;
         }
-        await _statics.EnsureTypesAsync([pilot.TypeId], cancellationToken);
-        var group = _statics.Type(pilot.TypeId)?.GroupId ?? 0;
         if (!GateRules.ShipAllowed(gateId, group))
         {
             throw Notify("Capital ships cannot use this stargate.");

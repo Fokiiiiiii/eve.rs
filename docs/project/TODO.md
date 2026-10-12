@@ -1505,3 +1505,20 @@ Evidence and decisions: DEVIATIONS "Zarzakh (30100000) and the client's system f
 | OPEN | Live check of the Zarzakh flags and the lane run without `EVE_CLIENT_SDE_DIR` | Needs a live run with the export set |
 
 | PARTIAL (live) | Turnur to Zarzakh jump, eve.rs only: `tools/headless-client/tests/test_zarzakh_jump.py` passes through `tools/mitm` on the eve_p2 lane (1 passed, 96.9 s); the toll journal row (ref 168) is counted | DEVIATIONS "Live check: Turnur to Zarzakh (slice 3)". OPEN: the EVE.js comparison (no reference data here); the Cockroach seeded through the database |
+
+
+## Pochven, Triglavian and EDENCOM space (2026-10-12)
+
+Research and what is cut: `docs/project/POCHVEN_DESIGN.md` (sources, SDE ids, the wiki's rules, what is not published).
+
+| Status | Item | Note |
+|---|---|---|
+| DONE (unit) | Region, faction and corporation ids of Pochven, capital group ids | `dotnet/src/Eve.Services.Space/Pochven/PochvenRules.cs`; `PochvenRulesTests` (4) |
+| DONE (unit; host path NOT RUN) | Capital ships refused a stargate in Pochven | `SpaceSessions.Movement.cs` `CheckGateRulesAsync` before the client gate list; the pilot cannot be placed in Pochven by the rig (see DEVIATIONS) |
+| DONE (pure rule, consumer pending) | Faction hostility between the four Pochven NPC factions; NPC standing rule (Triglavian at 0.00 and below, EDENCOM below 0.00, Rogue Drones and Drifters hostile to all pilots) | `PochvenRules.FactionsAreHostile`, `NpcHostileToPilot`. The simulation does not call them yet |
+| OPEN | NPC-vs-NPC targeting in the simulation (the four factions fight each other) | Needs target selection among NPCs in `crates/eve-space` brains; the rule input is above |
+| CUT (no published rule) | Gate sentries that shoot (EDENCOM GunStar 54579, Heavy GunStar 54580, Entropic Disintegrator Werpost 54577) | SDE gives the numbers only; no firing rule, targeting order or retribution timer published. EveJS places cosmetic sentries only |
+| CUT (no published spawn table) | Pochven skirmish spawning and per-site NPC composition | No SDE link from a dungeon to a system; no spawn tables; `npc_authority.json` has no Triglavian, EDENCOM or Drifter profile |
+| CUT (no published state data) | Invasion states (Redoubt, Bulwark, Fortress, Liminality, Minor Victory) and their system lists | Thresholds (75%, 76%, 96%) are on the wiki; per-system state is not. `map.GetEdencomFortressSystems` stays open (see the line above in this file) |
+| OPEN | Filament entry (Pochven filaments 56065 to 56081, 1/5/15 ships), the 6.0 standing for Home systems | Needs the filament item and jump rules; not in the SDE beyond the counts |
+| OPEN | Pochven standings for docking (-0.05), the LP store (-0.01), manufacturing and offices (3.00), local chat in delayed mode | Wiki rules; not built |

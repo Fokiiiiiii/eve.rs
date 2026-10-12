@@ -16,6 +16,8 @@
 set -euo pipefail
 # the live run calls no ESI for the loyalty store (EVE_LP_STORE_SEED=skip answers what is stored); set EVE_LP_STORE_SEED=auto to refresh
 export EVE_LP_STORE_SEED="${EVE_LP_STORE_SEED:-skip}"
+# the live run calls no ESI for the adjusted prices either (EVE_ADJUSTED_PRICE_SEED=skip answers what is stored); set auto to refresh
+export EVE_ADJUSTED_PRICE_SEED="${EVE_ADJUSTED_PRICE_SEED:-skip}"
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 TARGET="${CARGO_TARGET_DIR:-$HERE/target}"

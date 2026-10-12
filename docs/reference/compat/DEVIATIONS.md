@@ -2917,8 +2917,10 @@ Differences and cuts, all listed:
 5. Randomized outputs (`typeHasRandomizedMaterials`) are not produced; an item with only randomized materials yields nothing here.
    EVE.js produces them. Not built.
 6. Oversized stacks (`REPROCESSING_SPLIT_REQUIRED`) are not split; a stack is processed as one.
-7. Adjusted prices: the `marketPrices` table is absent from the static data loaded on this host, so the tax on materials is zero
-   (`SdeReprocessingData.AdjustedPricesAsync`). The table is read when present. Real prices are needed for the tax to be real.
+7. Adjusted prices: from ESI `GET /markets/prices/` (the official `adjusted_price`), stored in the market schema
+   (`adjusted_prices`, migration 007) and refreshed at most once a day (`AdjustedPriceCache`). `EVE_ADJUSTED_PRICE_SEED=skip`
+   answers what is stored and calls nothing (the live script sets it). A type with no stored price has none, and no price is
+   invented. The industry job cost reads the same table (`PersistenceIndustryJobOperations`).
 8. The standing is the higher of the character's own and its corporation's standing toward the owner (the wiki's rule). EVE.js takes
    the best of its standing sources in priority order (`standingRuntime.resolveBestStandingValue`); the values agree when only the two
    sources exist.

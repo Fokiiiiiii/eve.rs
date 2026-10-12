@@ -3303,6 +3303,59 @@ Completable in a walk without seeded steps: arcs 128, 52, 55 and 56. Not complet
 The four completable arcs are held back by the owner's rule on generic sites (decision 2); turning them on is an owner decision, not made
 here. Arc 29 stays off until its courier steps can be delivered and walked without seeding. Status: decided.
 
+## Mission execution X13: courier jump range, arc walks to completion, the arcs on by default (2026-10-12)
+
+Owner decisions (coordinator, this slice). (1) An epic arc courier step takes the level of its arc step's agent (SDE agent data) for the
+jump-range rule. (2) An arc is on by default when its whole offer path passes live; 132 stays off. (3) The walk test and its seeding stay in
+the repository (the earlier note about keeping them out is withdrawn).
+
+- **Courier jump range, a project rule.** The epic arc steps have no mission level in the official build, so their couriers had no range and
+  no drop-off (the transport objective was empty). `MissionCourierRules.CourierLevel`: an epic arc courier takes its agent's SDE level (the
+  SDE level of the agent in `npcCharacters`: 1 for the arc 29 agents, 4 for the arc 52 agent 3019412); any other courier keeps its level tag. The rule is used by the runtime's destination and by
+  the client's transport objective. Tests: `An_epic_arc_courier_takes_its_agents_level_for_the_jump_range`,
+  `The_courier_level_of_an_epic_arc_step_is_its_agents_and_any_other_courier_keeps_its_tag`.
+- **Courier steps delivered for real.** The walk hands the cargo over at the accept (checked at the pickup), reads the drop-off from the
+  transport objective, and docks there: the ship is seeded in space 20 km from the drop-off station (the station's SDE position), the dock is
+  asked (`CmdDock`) and asked again while the ship approaches (`DockingApproach`). Docking completes the step and takes the cargo; the reward
+  is checked. No courier is seeded in the runs below.
+- **Arc 52: intermittent failure at step 14819, root cause and fix.** The first full run of this arc failed at step 14819 (its dungeon 3884
+  was abandoned; the kill mission failed; the walk waited 900 s). The server log of that run was not kept: the logging of pilots and dungeons
+  was added after it. The cause the failure fits: the walk starts a kill dungeon in an in-space offer session (the sweep runs during it), then
+  the walk logs out and logs in again for the fight. The pilot is out of the system between the two sessions, and the 10-second sweep ends the
+  dungeon when the pilot is out (X1), which fails the accepted kill mission. A logoff in space is a short absence of the pilot's session, so
+  the rule changes: `DungeonWaveDirector.PilotAbsenceGrace` (60 s, a project rule with no official value): a pilot who is out of the system for
+  less than the grace keeps the dungeon; the dungeon ends when the absence reaches the grace. Test:
+  `A_pilot_who_returns_within_the_absence_grace_keeps_the_dungeon_running`; the abandonment tests now advance past the grace. Three full runs
+  after the change passed (19 of 19 each); five attempts that repeat steps 1 and 2 with the same server, before the grace rule, passed as well. Not captured: the server
+  log of the one failure (see the logs below for the next).
+- **Arc 48: dungeon 3957 never started.** Its record has no waves (`waves: []`, `siteFamily: unknown`), so the planner refuses it, and the
+  refusal was dropped by the sweep (no log). Fix: the combat family's dominant on-load wave, the same rule as dungeon 3533 (X7): archetype 20,
+  difficulty 4, signature templates: `npc_deadspace_hostiles`, amount 7 (227 of 403 templates' wave entries). The catalog total in
+  `DungeonCatalogTests` is 7085. Not a CCP composition: the wave count is the family's rule, as for 3533.
+- **Server logs added.** The space log says when a pilot enters a system, when it leaves (and whether the position was saved), and when a ship
+  is recovered to its station after a session ended without a saved position. The dungeon director logs a refused start (once per pilot and
+  dungeon, with the reason) and each abandonment (with the absence in seconds).
+- **Walk-side (not server behaviour).** The dock is asked again while the ship approaches; a repeating smartbomb is stopped at each fight's end.
+
+Arc on and off list. The default offers are `MissionStaticCatalog.ArcsOnByDefault` (the generic kill sites of an arc on the list are offered
+without `EVE_MISSION_INCLUDE_GENERIC_ARCS`). Every other arc stays held back unless that switch is set. Each arc below was walked live from its
+first step to its last with the walk test, the walk offers the server's path, and no step was seeded except as stated.
+
+| Arc | Name (SDE) | Path | Live result (this slice) | Default |
+|---|---|---|---|---|
+| 29 | The Blood-Stained Stars | 52 (33 kill, 15 talk, 4 courier) | 52 of 52, one full run; the 4 couriers delivered at their drop-offs | on |
+| 40 | Penumbra | 21 (7 kill, 9 talk, 5 courier) | 21 of 21, one run | on |
+| 48 | Right to Rule | 19 (15 kill, 4 talk) | 19 of 19, one run after the 3957 rule | on |
+| 52 | Syndication | 19 (12 kill, 7 talk) | 19 of 19, three consecutive full runs after the grace rule | on |
+| 53 | Wildfire | 18 (14 kill, 3 talk, 1 courier) | 18 of 18, one run | on |
+| 55 | Smash and Grab | 15 (8 kill, 7 talk) | 15 of 15, two runs (before the grace rule) | on |
+| 56 | Angel Sound | 14 (8 kill, 6 talk) | 14 of 14, two runs (before the grace rule) | on |
+| 128 | Fractured Legacy | 3 (3 kill) | 3 of 3, two runs (before the grace rule) | on |
+| 64, 67 to 77 | Pilot Certification Course (12 schools) | 4 each (3 kill, 1 courier) | 4 of 4 each, one run each (arc 72 after the dock retry) | on |
+| 132 | Visions of Greatness | 8 (4 kill with missing sites) | not walked: the server never offers the kill steps | off |
+
+Earlier results that the rules above replaced are kept in X8. Status: decided; the list is the record.
+
 ## Zarzakh gate, station and scanning rules (slice 2, 2026-10-12)
 
 Sources. The EVE University wiki "Zarzakh" (fetched 2026-10-12). The client export (`/home/user/eve-client-sde/native/`): `spacecomponentsbytype.jsonl.gz` (the `alignmentBasedToll` rows of stargate types 77918 and 78264 to 78266) and `solarsystemcontent.jsonl.gz` (each stargate's `allowedShipsTypeListID`; 8 gates name 579). The SDE: `typeLists` 579 "Zarzakh Allowed Ships" (`includedGroupIDs`, "All Subcapital Ships, up to and Including the Orca"); `mapStargates` (type and destination). The client code (eve-logic): `stargate/client/gateJumpSvc.py`, `spacecomponents/client/components/alignmentBasedToll.py`, `spacecomponents/common/components/alignmentBasedToll.py` (the toll formula), `stargate/client/gateLockController.py`, `stargate/common/lock_details.py`. EveJS v0.12.9 has no emanation lock, no capital-ship list and no gate toll (no code found), so it is not a behaviour reference for these rules.

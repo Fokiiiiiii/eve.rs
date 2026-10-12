@@ -13,6 +13,7 @@ pub mod destruction;
 pub mod dot_weapons;
 pub mod drones;
 pub mod ewar;
+pub mod filament;
 pub mod fighters;
 pub mod flight;
 pub mod gate;

@@ -59,11 +59,22 @@ def set_ship(character: int, ship: int) -> None:
 
 def set_isk(character: int, isk: int) -> None:
     """The character's ISK balance (wallet.balances)."""
-    sql(f"insert into {schema('WALLET')}.balances (owner_id, isk, plex) values ({int(character)}, {int(isk)}, 0) "
-        f"on conflict (owner_id) do update set isk = excluded.isk")
+    wallet = schema('WALLET')
+    sql(f"insert into {wallet}.balances (owner_id, isk, plex) select {int(character)}, 0, 0 "
+        f"where not exists (select 1 from {wallet}.balances where owner_id = {int(character)})")
+    sql(f"update {wallet}.balances set isk = {int(isk)} where owner_id = {int(character)}")
 
 
 def items_of(owner: int, type_id: int) -> list[int]:
     """The ids of an owner's items of a type, newest first."""
     rows = sql(f"select id from {schema('INVENTORY')}.items where owner_id = {int(owner)} and type_id = {int(type_id)} order by id desc")
     return [int(row) for row in rows.split() if row]
+
+def owner_of(item: int) -> int:
+    """The owner of an item row (inventory.items)."""
+    return int(sql(f"select owner_id from {schema('INVENTORY')}.items where id = {int(item)}"))
+
+
+def isk_of(character: int) -> float:
+    """The ISK balance of a character (wallet.balances)."""
+    return float(sql(f"select isk from {schema('WALLET')}.balances where owner_id = {int(character)}") or 0)

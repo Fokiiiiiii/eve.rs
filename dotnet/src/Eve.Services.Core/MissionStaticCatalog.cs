@@ -256,7 +256,11 @@ public sealed class MissionStaticCatalog
     /// (tools/headless-client/tests/test_arc29_walk.py, DEVIATIONS "Mission execution X8"). Every other arc stays held back unless the
     /// switch <see cref="IncludeGenericVariable"/> is set. Owner decision: an arc is added here only after its walk passes.
     /// </summary>
-    public static readonly IReadOnlySet<long> ArcsOnByDefault = new HashSet<long> { 55, 56, 128 };
+    public static readonly IReadOnlySet<long> ArcsOnByDefault = new HashSet<long>
+    {
+        29, 40, 48, 52, 53, 55, 56, 128,
+        64, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77,
+    };
 
     /// <summary>
     /// The switch that offers the arcs not known to be in the client build. Off by default: only <c>in-client-build</c> arcs

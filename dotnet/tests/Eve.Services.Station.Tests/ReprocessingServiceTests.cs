@@ -1,4 +1,6 @@
+using Eve.Characters;
 using Eve.Data;
+using Eve.Dogma;
 using Eve.Events;
 using Eve.Inventory;
 using Eve.Marshal;
@@ -46,6 +48,8 @@ internal sealed class ReprocessingRig : IAsyncDisposable
     private readonly string _walletSchema;
 
     public string ItemSchema { get; private init; } = "";
+    public PgCharacterStore Characters { get; private init; } = null!;
+    public DogmaStatic Statics { get; private init; } = null!;
 
     private ReprocessingRig(NpgsqlDataSource source, string walletSchema, PgItemStore items, PgWalletStore wallets, WalletTransactions transactions,
         PgSkillStore skills, RelationStore relations, ItemTypeCatalog types, StationCatalog stations, FixedReprocessingData data, DateTimeOffset start)
@@ -90,13 +94,20 @@ internal sealed class ReprocessingRig : IAsyncDisposable
             new Eve.Universe.Station(OtherStation, 1531, "Other Station", StationOwner, "Owner", null, "", 0, 0, 30000142, "Jita", 20000020, "Kimotoro", 10000002, "The Forge", 0.9, 0.05, 4),
         ]);
         var wallets = new PgWalletStore(source, walletSchema);
+        var characterSchema = "rc_" + id;
+        await PgCharacterStore.MigrateAsync(source, characterSchema);
+        var sde = new SdeReader(source);
         return new ReprocessingRig(source, walletSchema, new PgItemStore(source, itemSchema), wallets,
             new WalletTransactions(source, walletSchema), new PgSkillStore(source, skillSchema),
-            new RelationStore(source, durable, bus, relations), new ItemTypeCatalog(new SdeReader(source)), stations, new FixedReprocessingData(), start)
-        { ItemSchema = itemSchema };
+            new RelationStore(source, durable, bus, relations), new ItemTypeCatalog(sde), stations, new FixedReprocessingData(), start)
+        {
+            ItemSchema = itemSchema,
+            Characters = new PgCharacterStore(source, characterSchema),
+            Statics = await DogmaStatic.LoadAsync(sde),
+        };
     }
 
-    public ReprocessingService Service() => new(Source, Items, Types, Stations, Data, Relations, Skills, Transactions, Wallets, () => Start.ToUnixTimeMilliseconds());
+    public ReprocessingService Service() => new(Source, Items, Types, Stations, Data, Relations, Skills, Transactions, Wallets, Characters, Statics, () => Start.ToUnixTimeMilliseconds());
 
     public async Task OpenWalletAsync(long owner, decimal isk)
     {
@@ -242,6 +253,44 @@ public sealed class ReprocessingServiceTests
             await CallPlant(rig.Service(), session, ReprocessingRig.OtherStation, "GetQuotes", Ids1(), new PyInt(0)));
 
         Assert.Equal("CustomNotify", refused.Error.UserErrorMessage);
+    }
+
+    [ReprocessingPgFact]
+    public async Task A_stack_in_a_container_at_the_station_is_quoted_and_reprocessed_from_there()
+    {
+        await using var rig = await ReprocessingRig.CreateAsync();
+        await rig.OpenWalletAsync(Character, 1000m);
+        var container = await rig.CreateAsync(Character, ReprocessingRig.Station, ItemFlags.Hangar, FixedReprocessingData.Tritanium, 1);
+        var inside = await rig.CreateAsync(Character, container, ItemFlags.Cargo, FixedReprocessingData.Veldspar, 100);
+        var session = Session(Character, ReprocessingRig.Station);
+
+        var quotes = (PyList)await CallPlant(rig.Service(), session, ReprocessingRig.Station, "GetQuotes", Ids1(inside), new PyInt(0));
+        Assert.Single(((PyDict)quotes.Items[2]).Entries);
+
+        var answer = (PyList)await CallPlant(rig.Service(), session, ReprocessingRig.Station, "Reprocess", Ids1(inside), new PyInt(ReprocessingRig.Station), new PyInt(0), PyNone.Instance, PyNone.Instance);
+        Assert.Equal(new long[] { inside }, ((PyList)answer.Items[0]).Items.Select(v => ((PyLong)v).Value).ToArray());
+        Assert.Null(await rig.Items.GetAsync(inside));
+        // the yield goes where the sample stood: inside the container
+        Assert.Equal(207, await rig.TritaniumAsync(Character, container, ItemFlags.Cargo));
+    }
+
+    [ReprocessingPgFact]
+    public async Task A_stack_too_large_for_the_client_is_split_into_chunks_and_all_of_it_is_reprocessed()
+    {
+        await using var rig = await ReprocessingRig.CreateAsync();
+        // 3 billion Veldspar: 30 million portions, 415 Tritanium each at 50% = about 6.2 billion, which is above 2^31 - 1
+        await rig.OpenWalletAsync(Character, 5_000_000_000m);
+        var stack = await rig.CreateAsync(Character, ReprocessingRig.Station, ItemFlags.Hangar, FixedReprocessingData.Veldspar, 3_000_000_000);
+        var session = Session(Character, ReprocessingRig.Station);
+
+        var answer = (PyList)await CallPlant(rig.Service(), session, ReprocessingRig.Station, "Reprocess", Ids1(stack), new PyInt(ReprocessingRig.Station), new PyInt(0), PyNone.Instance, PyNone.Instance);
+
+        var processed = ((PyList)answer.Items[0]).Items.Select(v => ((PyLong)v).Value).ToList();
+        Assert.True(processed.Count >= 2, "the stack was split and every chunk was reprocessed");
+        Assert.Null(await rig.Items.GetAsync(stack));
+        var yielded = (await rig.TritaniumAsync(Character, ReprocessingRig.Station, ItemFlags.Hangar));
+        // half of 415 per 100 units, over 30 million portions: 6,225,000,000 Tritanium, each chunk rounded down (at most one unit per chunk)
+        Assert.InRange(yielded, 6_225_000_000L - processed.Count, 6_225_000_000L);
     }
 
     private static long FieldLong(PyValue row, string name)

@@ -52,6 +52,55 @@ public static class ReprocessingRules
     /// <summary>The efficiency a stack is processed at: the station's, times the character's skills, never above 1.</summary>
     public static double Efficiency(double stationEfficiency, double characterMultiplier) => Math.Clamp(stationEfficiency * characterMultiplier, 0, 1);
 
+    /// <summary>The largest quantity a client can hold in one stack (EVE.js <c>CLIENT_INVENTORY_STACK_LIMIT</c>, 2^31 - 1).</summary>
+    public const long ClientInventoryStackLimit = 2147483647;
+
+    /// <summary>A quote the client can show and hold: every recoverable and every unrecoverable quantity is within the stack limit.</summary>
+    public static bool IsClientSafe(Quote quote) =>
+        quote.Recoverables.All(r => r.Client <= ClientInventoryStackLimit && r.Unrecoverable <= ClientInventoryStackLimit);
+
+    /// <summary>
+    /// The stacks a stack too large for the client is split into (EVE.js <c>buildOversizedReprocessingSplitPlan</c>): the root keeps the largest
+    /// safe quantity aligned to whole portions, and each further chunk is the largest aligned quantity that is safe. Null when no quantity is safe.
+    /// </summary>
+    public static IReadOnlyList<long>? SplitChunks(long total, int portionSize, Func<long, bool> isSafe)
+    {
+        var portion = Math.Max(1, portionSize);
+        long low = 1, high = total, best = 0;
+        while (low <= high)
+        {
+            var middle = low + (high - low) / 2;
+            if (isSafe(middle)) { best = middle; low = middle + 1; }
+            else high = middle - 1;
+        }
+        if (best <= 0) return null;
+        var leftovers = total % portion;
+        var root = leftovers + (best - leftovers) / portion * portion;
+        var chunk = best / portion * portion;
+        if (root <= 0 || chunk <= 0 || root > best) return null;
+        var chunks = new List<long> { root };
+        var remaining = Math.Max(0, total - root);
+        while (remaining > 0)
+        {
+            var piece = Math.Min(remaining, chunk);
+            if (piece <= 0) return null;
+            chunks.Add(piece);
+            remaining -= piece;
+        }
+        return chunks;
+    }
+
+    /// <summary>The quote of several stacks taken as one (the sums of their quantities, yields and taxes); the stack's own efficiency.</summary>
+    public static Quote Sum(long itemId, int typeId, IReadOnlyList<Quote> parts)
+    {
+        var yields = parts.SelectMany(p => p.Recoverables)
+            .GroupBy(r => r.TypeId)
+            .Select(g => new Recoverable(g.Key, g.Sum(r => r.Client), g.Sum(r => r.Unrecoverable), Round2(g.Sum(r => r.IskCost))))
+            .ToList();
+        return new Quote(itemId, typeId, parts.Sum(p => p.QuantityToProcess), parts.Sum(p => p.LeftOvers), parts.Sum(p => p.Portions),
+            parts.Count > 0 ? parts[0].Efficiency : 0, yields, Round2(parts.Sum(p => p.TotalIskCost)));
+    }
+
     /// <summary>Rounds down to whole units after removing the binary noise of a chain of multiplications (the reference does the same).</summary>
     public static long FloorUnits(double value) => (long)Math.Floor(value + 1e-9);
 

@@ -275,7 +275,8 @@ internal sealed partial class CharacterServicesComposition
                     var completedAt = completed.GroupBy(item => item.MissionId).ToDictionary(group => group.Key, group => group.Max(item => item.CompletedAt));
                     if ((Eve.Services.Core.EpicArcOffers.Pick(agentMissionStatic, agent.AgentId, completed, now, failed) ??
                             Eve.Services.Core.BasicKillOffers.Pick(agentMissionStatic, agent, completedAt, now,
-                                dungeon => dungeonWavesDirector?.StartRefusalOf(dungeon) is null)) is not { } missionId ||
+                                dungeon => dungeonWavesDirector?.StartRefusalOf(dungeon) is null) ??
+                            Eve.Services.Core.BasicKillOffers.PickCourier(agentMissionStatic, agent, completedAt, now)) is not { } missionId ||
                         agentMissionStatic.Mission(missionId) is not { } mission)
                         return null;
                     // the mission type label is the agent's kind (encounter, epicArc): the journal shows no mission without one
@@ -313,7 +314,8 @@ internal sealed partial class CharacterServicesComposition
             CompleteMissionAsync,
             GrantObjectiveItemAsync,
             HeldQuantityAsync,
-            GrantCargoAsync);
+            GrantCargoAsync,
+            TakeCargoAsync);
         missionDungeons = new MissionDungeonRuntime(
             agentMissionStore,
             agentMissionStatic,
@@ -551,13 +553,29 @@ internal sealed partial class CharacterServicesComposition
         await transaction.CommitAsync(cancellationToken);
     }
 
-    /// <summary>A courier's cargo: the quantity (singletons when the data says so) created into the hangar of the station.</summary>
-    private async Task GrantCargoAsync(long characterId, int typeId, long quantity, bool singleton, long stationId, CancellationToken cancellationToken)
+    /// <summary>The custom info that tags a courier's cargo with its mission, so the take-back removes only that cargo.</summary>
+    private static string CourierCargoTag(long missionId) => $"courier:{missionId}";
+
+    /// <summary>A courier's cargo: the quantity (singletons when the data says so) created into the hangar of the station, tagged with the mission.</summary>
+    private async Task GrantCargoAsync(long characterId, long missionId, int typeId, long quantity, bool singleton, long stationId, CancellationToken cancellationToken)
     {
         await using var connection = await source.OpenConnectionAsync(cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
         await items.CreateAsync(connection, transaction,
-            new Eve.Inventory.NewItem(typeId, characterId, stationId, Eve.Inventory.ItemFlags.Hangar, quantity, Singleton: singleton), cancellationToken);
+            new Eve.Inventory.NewItem(typeId, characterId, stationId, Eve.Inventory.ItemFlags.Hangar, quantity, Singleton: singleton,
+                CustomInfo: CourierCargoTag(missionId)), cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+    }
+
+    /// <summary>Takes a courier's cargo back: the stacks of the type tagged with the mission are removed, in one transaction (the agent takes it back).</summary>
+    private async Task TakeCargoAsync(long characterId, long missionId, int typeId, CancellationToken cancellationToken)
+    {
+        await using var connection = await source.OpenConnectionAsync(cancellationToken);
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        foreach (var stack in await items.LockOwnedOfTypeAsync(connection, transaction, characterId, typeId, cancellationToken))
+        {
+            if (stack.CustomInfo == CourierCargoTag(missionId)) await items.DeleteAsync(connection, transaction, stack.Id, cancellationToken);
+        }
         await transaction.CommitAsync(cancellationToken);
     }
 
@@ -584,7 +602,8 @@ internal sealed class SpaceMissionDungeonHost(
     Func<long, long, DateTimeOffset, string, IReadOnlyList<MissionStandingGain>, IReadOnlyList<(int TypeId, long Quantity)>, CancellationToken, Task<bool>> completeMission,
     Func<long, int, long, long, CancellationToken, Task> grantItem,
     Func<long, int, CancellationToken, Task<long>> heldQuantity,
-    Func<long, int, long, bool, long, CancellationToken, Task> grantCargo) : IMissionDungeonHost
+    Func<long, long, int, long, bool, long, CancellationToken, Task> grantCargo,
+    Func<long, long, int, CancellationToken, Task> takeCargo) : IMissionDungeonHost
 {
     public bool IsPilotInSystem(long characterId, int solarSystemId) => isPilotInSystem(characterId, solarSystemId);
 
@@ -604,6 +623,9 @@ internal sealed class SpaceMissionDungeonHost(
     public Task<long> HeldQuantityAsync(long characterId, int typeId, CancellationToken cancellationToken) =>
         heldQuantity(characterId, typeId, cancellationToken);
 
-    public Task GrantCargoAsync(long characterId, int typeId, long quantity, bool singleton, long stationId, CancellationToken cancellationToken) =>
-        grantCargo(characterId, typeId, quantity, singleton, stationId, cancellationToken);
+    public Task GrantCargoAsync(long characterId, long missionId, int typeId, long quantity, bool singleton, long stationId, CancellationToken cancellationToken) =>
+        grantCargo(characterId, missionId, typeId, quantity, singleton, stationId, cancellationToken);
+
+    public Task TakeCargoAsync(long characterId, long missionId, int typeId, CancellationToken cancellationToken) =>
+        takeCargo(characterId, missionId, typeId, cancellationToken);
 }

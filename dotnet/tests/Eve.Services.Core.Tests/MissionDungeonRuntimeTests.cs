@@ -72,10 +72,19 @@ public class MissionDungeonRuntimeTests
 
         public List<(long Character, int TypeId, long Quantity, bool Singleton, long Station)> Cargo { get; } = [];
 
-        public Task GrantCargoAsync(long characterId, int typeId, long quantity, bool singleton, long stationId, CancellationToken cancellationToken)
+        public Task GrantCargoAsync(long characterId, long missionId, int typeId, long quantity, bool singleton, long stationId, CancellationToken cancellationToken)
         {
             Cargo.Add((characterId, typeId, quantity, singleton, stationId));
             Held[typeId] = Held.GetValueOrDefault(typeId) + quantity;
+            return Task.CompletedTask;
+        }
+
+        public List<(long Mission, long Character)> TakenBack { get; } = [];
+
+        public Task TakeCargoAsync(long characterId, long missionId, int typeId, CancellationToken cancellationToken)
+        {
+            TakenBack.Add((missionId, characterId));
+            Held[typeId] = 0;
             return Task.CompletedTask;
         }
 
@@ -397,12 +406,17 @@ public class MissionDungeonRuntimeTests
         var runtime = CourierRuntime(store, host, null);
         await store.OfferAsync(Pilot, Agent, new AgentMissionContent(9401, 1239, "Courier Step", "", false), Start, "offer:c3");
         await store.AcceptAsync(Pilot, Agent, Start, "accept:c3");
+        await runtime.OnAcceptedAsync(Pilot, Agent);
 
         Assert.Equal(0, await runtime.ExpireCouriersAsync(Start + TimeSpan.FromDays(6)));
         Assert.Equal(AgentMissionState.Accepted, (await store.ReadAsync(Pilot, Agent))!.State);
+        Assert.Empty(host.TakenBack);
 
         Assert.Equal(1, await runtime.ExpireCouriersAsync(Start + TimeSpan.FromDays(8)));
         Assert.Equal(AgentMissionState.Failed, (await store.ReadAsync(Pilot, Agent))!.State);
+        // the agent takes the cargo back (the mission's tagged stacks), and no standing changes
+        Assert.Equal((9401L, Pilot), Assert.Single(host.TakenBack));
+        Assert.Empty(host.Standings);
     }
 
     [Fact]
@@ -424,6 +438,55 @@ public class MissionDungeonRuntimeTests
         // level 1 (0 to 5 jumps): the other station of the origin system counts, the unreachable one does not
         var level1 = MissionCourierRules.Destination(9401, Pilot, 10, 1, 1, gates, stations);
         Assert.Contains(level1!.Id, new long[] { 11, 20, 30 });
+    }
+
+    // A basic courier (level 4, Distribution) and a basic item kill (level 4, a dungeon whose objective is an item), both untagged by arcs.
+    private const string BasicCourierStep = """
+        {"_key": 9411, "name": {"en": "Basic Courier"}, "nameID": 1240, "hasStandingRewards": false,
+         "courierMission": {"objectiveTypeID": 30755, "objectiveQuantity": 1, "objectiveSingleton": 0}}
+        """;
+
+    private const string BasicItemKill = """
+        {"_key": 9412, "name": {"en": "Basic Item Kill"}, "nameID": 1241, "hasStandingRewards": false,
+         "killMission": {"dungeonID": 3509, "objectiveTypeID": 30755, "objectiveQuantity": 1}}
+        """;
+
+    private const string BasicLevel4 = """
+        {"schema": "eve.rs.mission-level-tags.v1", "tags": [
+          {"missionID": 9411, "level": 4, "provenance": "client", "confidence": "high"},
+          {"missionID": 9412, "level": 4, "provenance": "client", "confidence": "high"}]}
+        """;
+
+    private static AgentMissionAgentData BasicAgent(string kind, long level = 4) => new(
+        AgentId: Agent, AgentTypeId: 2, DivisionId: 22, Level: level, StationId: 60012607, CorporationId: Corporation,
+        IsLocatorAgent: false, IsInSpace: false, CareerId: null, ImportantMission: false, MissionKind: kind,
+        MissionTypeLabel: "", SpecialityId: null, StationTypeId: 1531, BloodlineId: null, SolarSystemId: System,
+        DungeonId: null, SpawnPointId: null, TypeId: null, BaseLocationId: 60015249);
+
+    [Fact]
+    public void A_basic_distribution_agent_offers_the_lowest_courier_mission_of_its_level_and_only_while_not_replayed()
+    {
+        var catalog = MissionStaticCatalog.FromRows(3405148,
+            [new SdeRow(9411, JsonDocument.Parse(BasicCourierStep).RootElement.Clone()), new SdeRow(9412, JsonDocument.Parse(BasicItemKill).RootElement.Clone())],
+            [], levels: MissionLevelTags.FromJson(BasicLevel4, "test"));
+        var none = new Dictionary<long, DateTimeOffset>();
+
+        Assert.Equal<long?>(9411L, BasicKillOffers.PickCourier(catalog, BasicAgent("courier"), none, Start));
+        // another level, another kind, and a replay inside the delay are not offered
+        Assert.Null(BasicKillOffers.PickCourier(catalog, BasicAgent("courier", level: 3), none, Start));
+        Assert.Null(BasicKillOffers.PickCourier(catalog, BasicAgent("encounter"), none, Start));
+        Assert.Null(BasicKillOffers.PickCourier(catalog, BasicAgent("courier"), new Dictionary<long, DateTimeOffset> { [9411] = Start }, Start + TimeSpan.FromHours(1)));
+        Assert.Equal<long?>(9411L, BasicKillOffers.PickCourier(catalog, BasicAgent("courier"), new Dictionary<long, DateTimeOffset> { [9411] = Start }, Start + BasicKillOffers.ReplayDelay + TimeSpan.FromMinutes(1)));
+    }
+
+    [Fact]
+    public void A_basic_encounter_agent_offers_the_item_kill_mission_of_its_level_through_the_dungeon_offer()
+    {
+        var catalog = MissionStaticCatalog.FromRows(3405148,
+            [new SdeRow(9412, JsonDocument.Parse(BasicItemKill).RootElement.Clone())], [], levels: MissionLevelTags.FromJson(BasicLevel4, "test"));
+
+        Assert.Equal<long?>(9412L, BasicKillOffers.Pick(catalog, BasicAgent("encounter"), new Dictionary<long, DateTimeOffset>(), Start, _ => true));
+        Assert.Null(BasicKillOffers.Pick(catalog, BasicAgent("encounter"), new Dictionary<long, DateTimeOffset>(), Start, _ => false));
     }
 
     private sealed class Cleanup(NpgsqlDataSource source, string schema) : IAsyncDisposable

@@ -82,7 +82,10 @@ public interface IMissionDungeonHost
     Task<long> HeldQuantityAsync(long characterId, int typeId, CancellationToken cancellationToken);
 
     /// <summary>Creates a courier's cargo into the hangar of the station (the pickup at acceptance): the quantity, as singletons when the data says so.</summary>
-    Task GrantCargoAsync(long characterId, int typeId, long quantity, bool singleton, long stationId, CancellationToken cancellationToken);
+    Task GrantCargoAsync(long characterId, long missionId, int typeId, long quantity, bool singleton, long stationId, CancellationToken cancellationToken);
+
+    /// <summary>Takes back the cargo a courier mission was handed over (the stacks tagged with the mission, not other items of the type).</summary>
+    Task TakeCargoAsync(long characterId, long missionId, int typeId, CancellationToken cancellationToken);
 }
 
 /// <summary>Where an agent is: its solar system (the mission dungeon's system) and its corporation (the counterparty of the reward).</summary>
@@ -146,7 +149,7 @@ public sealed class MissionDungeonRuntime(
         if (record is null || record.State != AgentMissionState.Accepted) return;
         if (catalog.Mission(record.Content.MissionId)?.Courier is not { ObjectiveTypeId: { } typeId, ObjectiveQuantity: > 0 } courier) return;
         if (agentPlaceOf(agentId)?.BaseStationId is not { } station) return;
-        await host.GrantCargoAsync(owner, (int)typeId, courier.ObjectiveQuantity, courier.Singleton, station, cancellationToken);
+        await host.GrantCargoAsync(owner, record.Content.MissionId, (int)typeId, courier.ObjectiveQuantity, courier.Singleton, station, cancellationToken);
     }
 
     /// <summary>
@@ -179,6 +182,9 @@ public sealed class MissionDungeonRuntime(
             if (accepted + expiry > at) continue;
             await TransitionAsync(() => store.FailAsync(record.CharacterId, record.AgentId, at,
                 $"courier-expired:{record.Content.MissionId}:{accepted.ToUnixTimeMilliseconds()}", cancellationToken));
+            // the agent takes the cargo back; the failure's standing loss is not applied (no amount is published, DEVIATIONS X11)
+            if (mission.Courier!.ObjectiveTypeId is { } cargoType)
+                await host.TakeCargoAsync(record.CharacterId, record.Content.MissionId, (int)cargoType, cancellationToken);
             failed++;
         }
         return failed;

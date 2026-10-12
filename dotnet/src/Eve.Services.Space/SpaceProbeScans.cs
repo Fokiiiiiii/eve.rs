@@ -385,7 +385,7 @@ public sealed class SpaceProbeScans
             {
                 continue;
             }
-            var field = fields.Entries.ToDictionary(entry => entry.Key is PyStr name ? name.Value : "", entry => entry.Value);
+            var field = fields.Entries.ToDictionary(entry => Eve.Macho.JsSemantics.StringValue(entry.Key) ?? "", entry => entry.Value);
             asked[(long)id] = new ProbeRequest(
                 field.TryGetValue("destination", out var destination) ? Vector3(destination) : null,
                 field.TryGetValue("rangeStep", out var step) && Number(step) is { } number ? (int)number : null);

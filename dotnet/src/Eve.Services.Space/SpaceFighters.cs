@@ -515,7 +515,7 @@ public sealed class SpaceFighters : ISpaceFighters, IDisposable
         {
             throw MachoErrors.ThrowUserError("None of the selected fighters is in space.");
         }
-        var command = call.Arg(1) is PyStr text ? text.Value : "";
+        var command = Eve.Macho.JsSemantics.StringValue(call.Arg(1)) ?? "";
         if (command == "GOTO_POINT")
         {
             return await GotoPointAsync(session, inSpace, call.Arg(2), call.Cancellation);

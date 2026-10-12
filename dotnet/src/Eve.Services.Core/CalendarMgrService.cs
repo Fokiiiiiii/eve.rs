@@ -247,7 +247,7 @@ internal static class CalendarWire
 
     private static string StringValue(PyValue value) => value switch
     {
-        PyStr text => text.Value,
+        var text when Eve.Macho.JsSemantics.StringValue(text) is not null => Eve.Macho.JsSemantics.StringValue(text)!,
         PyNone => string.Empty,
         _ => throw new ArgumentException("Calendar RPC expected text."),
     };

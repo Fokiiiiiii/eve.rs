@@ -526,8 +526,7 @@ public sealed class PersistenceStructureProfilesRpcBackend(
         PyInt integer => JsonValue.Create(integer.Value)!,
         PyLong integer => JsonValue.Create(integer.Value)!,
         PyReal number when double.IsFinite(number.Value) => JsonValue.Create(number.Value)!,
-        PyStr text => NormalizeTextSetting(text.Value),
-        PyWString text => NormalizeTextSetting(text.Value),
+        var text when Eve.Macho.JsSemantics.StringValue(text) is not null => NormalizeTextSetting(Eve.Macho.JsSemantics.StringValue(text)!),
         _ => JsonValue.Create(0)!,
     };
 
@@ -576,8 +575,7 @@ public sealed class PersistenceStructureProfilesRpcBackend(
 
     private static string Text(PyValue value) => value switch
     {
-        PyStr text => text.Value,
-        PyWString text => text.Value,
+        var text when Eve.Macho.JsSemantics.StringValue(text) is not null => Eve.Macho.JsSemantics.StringValue(text)!,
         PyInt integer => integer.Value.ToString(CultureInfo.InvariantCulture),
         PyLong integer => integer.Value.ToString(CultureInfo.InvariantCulture),
         PyReal number => number.Value.ToString("G", CultureInfo.InvariantCulture),

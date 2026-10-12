@@ -51,7 +51,7 @@ public sealed partial class MultiLoginBlockerService(Func<ClientSession, long>? 
     /// <summary>The computer hash as the reference compares it: trimmed and lower case; empty when none was sent.</summary>
     private static string ComputerHash(PyValue? value) => value switch
     {
-        PyStr text => text.Value.Trim().ToLowerInvariant(),
+        var text when Eve.Macho.JsSemantics.StringValue(text) is not null => Eve.Macho.JsSemantics.StringValue(text)!.Trim().ToLowerInvariant(),
         PyBuffer bytes => System.Text.Encoding.UTF8.GetString(bytes.Value.Span).Trim().ToLowerInvariant(),
         _ => string.Empty,
     };

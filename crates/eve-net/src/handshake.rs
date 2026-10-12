@@ -375,7 +375,7 @@ where
                     // The login session's role: the account's bits plus the base bits every session has.
                     ("role", Value::Long((role | SESSION_BASE_ROLE) as i64)),
                     ("address", Value::string(address.to_owned())),
-                    // The client reads inDetention unguarded (mailSvc.SendMsgDlg), so the key is always present.
+                    // The reference's acknowledgement carries inDetention (EveJS handshake.js session_init), so it is sent here too.
                     ("inDetention", Value::None),
                 ]),
             ),

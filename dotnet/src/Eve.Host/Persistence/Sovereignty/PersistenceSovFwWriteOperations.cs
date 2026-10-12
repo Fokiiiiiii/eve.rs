@@ -1165,8 +1165,7 @@ private async ValueTask<IReadOnlyList<long>> ReadCommittedAcquisitionsAsync(
         Eve.Marshal.PyInt integer => JsonValue.Create(integer.Value),
         Eve.Marshal.PyLong integer => JsonValue.Create(integer.Value),
         Eve.Marshal.PyReal number when double.IsFinite(number.Value) => JsonValue.Create(number.Value),
-        Eve.Marshal.PyStr text => JsonValue.Create(text.Value),
-        Eve.Marshal.PyWString text => JsonValue.Create(text.Value),
+        var text when Eve.Macho.JsSemantics.StringValue(text) is not null => JsonValue.Create(Eve.Macho.JsSemantics.StringValue(text)!),
         Eve.Marshal.PyList list => new JsonArray(list.Items.Select(ToJson).ToArray()),
         Eve.Marshal.PyTuple tuple => new JsonArray(tuple.Items.Select(ToJson).ToArray()),
         Eve.Marshal.PyDict dict => ToJsonObject(dict),
@@ -1180,8 +1179,7 @@ private async ValueTask<IReadOnlyList<long>> ReadCommittedAcquisitionsAsync(
         {
             var key = entry.Key switch
             {
-                Eve.Marshal.PyStr text => text.Value,
-                Eve.Marshal.PyWString text => text.Value,
+                var text when Eve.Macho.JsSemantics.StringValue(text) is not null => Eve.Macho.JsSemantics.StringValue(text)!,
                 Eve.Marshal.PyInt integer => integer.Value.ToString(System.Globalization.CultureInfo.InvariantCulture),
                 Eve.Marshal.PyLong integer => integer.Value.ToString(System.Globalization.CultureInfo.InvariantCulture),
                 _ => throw new InvalidOperationException("Workforce configuration keys must be scalar."),

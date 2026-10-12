@@ -69,6 +69,25 @@ public sealed class CorpStationMgrTests
     }
 
     [PgFact]
+    public async Task A_bound_method_sent_as_a_byte_string_is_dispatched_as_the_method()
+    {
+        // the client sends the method name as ASCII text, which the decoder reads as PyBytes (LongString), not PyStr
+        await using var rig = await Rig.CreateAsync();
+        var (ceo, corporation) = await CreateCorporationAsync(rig);
+        await SetHeadquartersAsync(rig, corporation.Id, OtherStationId);
+        var service = CreateService(rig, standing: 0.0);
+
+        var bind = await ((IService)service).CallAsync(new ServiceCall
+        {
+            Method = "MachoBindObject",
+            Args = [new PyLong(StationId), new PyTuple([new PyBytes("MoveCorpHQHere"u8.ToArray()), new PyTuple([]), PyNone.Instance])],
+            Session = Session(ceo, stationId: StationId, corporationId: corporation.Id),
+        });
+        Assert.Equal(PyNone.Instance, Assert.IsType<PyTuple>(bind).Items[1]);
+        Assert.Equal(StationId, (await rig.Store.GetAsync(corporation.Id))!.StationId);
+    }
+
+    [PgFact]
     public async Task A_headquarters_move_is_refused_outside_the_station_for_a_non_director_and_for_a_station_that_is_not_the_current_one()
     {
         await using var rig = await Rig.CreateAsync();

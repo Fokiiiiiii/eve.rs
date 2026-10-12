@@ -2037,8 +2037,7 @@ public sealed partial class CorpRecruitmentProxyService(
         PyInt integer => integer.Value != 0,
         PyLong integer => integer.Value != 0,
         PyReal real => real.Value != 0,
-        PyStr text => text.Value.Length != 0,
-        PyWString text => text.Value.Length != 0,
+        var text when Eve.Macho.JsSemantics.StringValue(text) is not null => Eve.Macho.JsSemantics.StringValue(text)!.Length != 0,
         _ => true
     };
 

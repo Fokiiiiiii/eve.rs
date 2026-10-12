@@ -147,24 +147,24 @@ public sealed class InsurgencyStore
     }
 
     /// <summary>Records a site a campaign started in one of its systems.</summary>
-    public async Task RecordSiteAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long campaignId, long solarSystemId, long dungeonId, long instanceId, CancellationToken cancellationToken = default)
+    public async Task RecordSiteAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long campaignId, long solarSystemId, long dungeonId, long instanceId, Side side, CancellationToken cancellationToken = default)
     {
         await using var command = Sql.Command(connection, transaction, Q(
-            "INSERT INTO {schema}.insurgency_sites (campaign_id, solar_system_id, dungeon_id, instance_id) VALUES ($1, $2, $3, $4)"),
-            campaignId, solarSystemId, dungeonId, instanceId);
+            "INSERT INTO {schema}.insurgency_sites (campaign_id, solar_system_id, dungeon_id, instance_id, side) VALUES ($1, $2, $3, $4, $5)"),
+            campaignId, solarSystemId, dungeonId, instanceId, side == Side.Antipirate ? "antipirate" : "pirate");
         await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
     /// <summary>Marks a campaign site completed and returns its campaign and system, or null when the dungeon is not one of the campaigns' sites (or was already completed).</summary>
-    public async Task<(long CampaignId, long SolarSystemId)?> CompleteSiteAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long instanceId, long nowMs, CancellationToken cancellationToken = default)
+    public async Task<(long CampaignId, long SolarSystemId, Side Side)?> CompleteSiteAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long instanceId, long nowMs, CancellationToken cancellationToken = default)
     {
         await using var command = Sql.Command(connection, transaction, Q(
-            "UPDATE {schema}.insurgency_sites SET completed_ms = $2 WHERE instance_id = $1 AND completed_ms IS NULL RETURNING campaign_id, solar_system_id"),
+            "UPDATE {schema}.insurgency_sites SET completed_ms = $2 WHERE instance_id = $1 AND completed_ms IS NULL RETURNING campaign_id, solar_system_id, side"),
             instanceId, nowMs);
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         if (!await reader.ReadAsync(cancellationToken))
             return null;
-        return (reader.GetInt64(0), reader.GetInt64(1));
+        return (reader.GetInt64(0), reader.GetInt64(1), reader.GetString(2) == "antipirate" ? Side.Antipirate : Side.Pirate);
     }
 
     /// <summary>The instances of a campaign's sites that have not completed (they end with the campaign).</summary>

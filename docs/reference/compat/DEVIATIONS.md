@@ -3450,3 +3450,12 @@ Owner decisions (X9, X10). The courier rules below are eve.rs's project rules, n
 - **Reach.** The 25 courier missions that are epic-arc steps are offered through the arc. The other 1130 courier missions need a basic courier offer (the Distribution agents' missions), which is not built yet: those missions are held back.
 - Tests: `MissionDungeonRuntimeTests` (`A_courier_accepted_hands_the_cargo_over_at_the_agents_station`, `A_courier_delivered_at_its_destination_completes_consumes_the_cargo_and_pays`, `A_courier_past_its_data_expiry_fails_and_one_before_it_does_not`, `The_courier_destination_is_a_station_in_the_level_jump_range_reached_by_stargates_and_is_seeded`).
 
+## Mission execution X10 C: the kinds of the objective data (2026-10-12)
+
+- **The 560 kill objectives.** Every `killMission` with an `objectiveTypeID` (560 missions, 253 item types) also carries a `dungeonID` and an `objectiveQuantity` above zero. Each is a dungeon whose objective is an item: the shape of arc 29 step 14119 (the Strange Datacore). The item groups are commodities (the largest share), asteroid ores (Veldspar, Pyroxeres, Omber, Kernite and others), harvestable gas clouds, datacores, ship logs, criminal tags, drugs, identification cards and gate keys.
+- **Implemented:** the fetch from a dungeon (X8 A): `FetchOf` reads all 560 rows; the item is granted at the agent's station when the dungeon completes and handed in at the agent. The agent's kind decides which missions are offered (`AgentMissionKindRules`): Security agents give encounter missions, Mining agents mining, Distribution agents courier.
+- **Mining:** the ore objectives are the same shape (a dungeon with ore loot), because the SDE has no mining record without a dungeon. Mining is therefore the fetch from a dungeon; no separate mining mission is built. Mining agents offer no mission yet (no basic mining offer exists).
+- **Courier:** the 1155 `courierMission` records (X10 B above). Built: the lifecycle; the 25 that are arc steps are offered; the 1130 others need a basic courier offer, not built.
+- **Trade:** no SDE record is a trade objective (`killMission` and `courierMission` are the only objective records). Not implemented: no data. The client's trade kind is EveJS's mapping to a fetch, which is not a sourced rule.
+- **Encounter:** the basic pool offers dungeon kills only (`BasicKillOffers`), not the 560 item objectives. Not implemented for the basic pool; the 59 arc steps with item objectives work through the arc.
+

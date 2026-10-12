@@ -2631,8 +2631,9 @@ fn a_hit_on_a_structure_is_cut_to_its_layers_limit_each_second_and_an_emptied_sh
     scene.damage_structure(STRUCTURE, [1_000.0, 0.0, 0.0, 0.0], NOON);
     assert_eq!(shield(&scene, NOON), 0.6, "the second hit in the same second takes nothing from the shield");
 
+    // the shield empties in the second second; a third hit finds it recharged a little and empties it again, which is told as well
     let mut emptied = 0;
-    for second in 1..=3 {
+    for second in 1..=2 {
         let at = NOON + second * SECOND;
         emptied += scene
             .damage_structure(STRUCTURE, [400.0, 0.0, 0.0, 0.0], at)

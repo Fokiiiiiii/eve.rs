@@ -129,7 +129,8 @@ public class AgentLocatorDialogueTests
 
         var asked = await machine.StepAsync(Pilot, LocatorAgent(1), Button(AgentDialogueButton.LocateCharacter), false, default, 60000001);
         Assert.Equal("RemoteNamePopup", asked.Prompt!.Method);
-        var offer = Assert.IsType<AgentDialogueStep>(await asked.Prompt.Then(new PyStr("Ada Pilot"))).Reply!;
+        // the client's string answer arrives as a byte string (the server's decoder reads an ordinary string as PyBytes)
+        var offer = Assert.IsType<AgentDialogueStep>(await asked.Prompt.Then(new PyBytes("Ada Pilot"u8.ToArray()))).Reply!;
         Assert.Contains("5,000 ISK", Says(offer));
         Assert.Equal(new (long, int)[] { (AgentDialogueButton.LocateAccept, AgentDialogueButton.LocateAccept), (AgentDialogueButton.LocateReject, AgentDialogueButton.LocateReject) },
             offer.Actions.ToArray());

@@ -487,7 +487,7 @@ public sealed class AgentDialogueMachine(AgentDialogueSources sources)
             EmptyDict(),
             async answer =>
             {
-                var name = answer is PyStr { Value: var text } ? text.Trim() : "";
+                var name = (JsSemantics.StringValue(answer) ?? "").Trim();
                 var idle = await IdleActionsAsync(characterId, agent, standing, now, cancellationToken);
                 if (name.Length == 0 || await locator.FindCharacterAsync(name, cancellationToken) is not { } target)
                     return Say(LocateNotFoundText, idle);
@@ -602,7 +602,7 @@ public sealed class AgentDialogueMachine(AgentDialogueSources sources)
     /// <summary>The index of a SingleChoiceBox answer: (true, "radioboxOption&lt;n&gt;Selected"), n counted from one (EveJS readChoiceIndex).</summary>
     private static int? ChoiceIndex(PyValue? answer) => answer is PyTuple { Items.Count: >= 2 } tuple &&
         tuple.Items[0] is PyBool { Value: true } &&
-        tuple.Items[1] is PyStr { Value: var selection } &&
+        JsSemantics.StringValue(tuple.Items[1]) is { } selection &&
         System.Text.RegularExpressions.Regex.Match(selection, "^radioboxOption(\\d+)Selected$") is { Success: true } match
             ? int.Parse(match.Groups[1].Value, System.Globalization.CultureInfo.InvariantCulture) - 1
             : null;

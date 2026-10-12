@@ -1,6 +1,7 @@
 using System.Text.Json.Nodes;
 using Eve.Agents;
 using Eve.Characters;
+using Eve.Events;
 using Eve.Services;
 using Eve.Services.Core;
 using Eve.Universe;
@@ -10,9 +11,17 @@ using Npgsql;
 namespace Eve.Host;
 
 /// <summary>
+/// The located result as an event: the transactional outbox row of the fee. The subscriber writes the notification (type 69).
+/// </summary>
+public sealed record LocateDelivered(long CharacterId, long AgentId, JsonObject Data)
+{
+    public const string Topic = "agents.locate_delivered";
+}
+
+/// <summary>
 /// The locator agents' server side (AG-4 / A7): the pilot by name, the pilot's place from the session that is online, the place of a
-/// system from the SDE, and the delivery of a located result. The fee and the located time are one transaction, and the result is sent
-/// after the commit. A result that cannot be written refunds the fee, so a pilot pays only for a result it gets.
+/// system from the SDE, and the delivery of a located result. The fee, the cooldown and the result event are one transaction: the result
+/// is an outbox row, so a located pilot is always told once the fee is taken (the subscriber retries until the notification is written).
 /// </summary>
 internal sealed class PersistenceAgentLocator(
     NpgsqlDataSource source,
@@ -21,8 +30,8 @@ internal sealed class PersistenceAgentLocator(
     CharacterSessions sessions,
     SolarSystemCatalog systems,
     WalletTransactions wallets,
-    Func<long> nowMs,
-    Func<long, long, JsonObject, string, CancellationToken, Task> sendResult) : IAgentLocatorPort
+    EventBus events,
+    Func<long> nowMs) : IAgentLocatorPort
 {
     /// <summary>The journal reference type of the locate fee (eve-logic appConst.py refAgentLocationServices).</summary>
     public const int LocateFeeRefType = 27;
@@ -60,31 +69,12 @@ internal sealed class PersistenceAgentLocator(
                 return false;
             }
             await locates.MarkLocatedAsync(connection, transaction, characterId, agentId, DateTimeOffset.FromUnixTimeMilliseconds(now), cancellationToken);
+            await events.PublishAsync(connection, transaction, LocateDelivered.Topic, new LocateDelivered(characterId, agentId, result),
+                characterId.ToString(System.Globalization.CultureInfo.InvariantCulture), cancellationToken);
             await transaction.CommitAsync(cancellationToken);
         }
         Announce(settlement);
-
-        try
-        {
-            await sendResult(characterId, agentId, result, reference, cancellationToken);
-        }
-        catch
-        {
-            await RefundAsync(characterId, fee, now, reference, cancellationToken);
-            throw;
-        }
         return true;
-    }
-
-    private async Task RefundAsync(long characterId, long fee, long now, string reference, CancellationToken cancellationToken)
-    {
-        var refund = $"{reference}:refund";
-        await using var connection = await source.OpenConnectionAsync(cancellationToken);
-        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
-        var settlement = await wallets.AdjustAsync(connection, transaction, new WalletAccount(characterId), fee, 0,
-            LocateFeeRefType, "Locate refund", now, refund, refund, cancellationToken);
-        await transaction.CommitAsync(cancellationToken);
-        Announce(settlement);
     }
 
     private void Announce(WalletSettlement settlement)

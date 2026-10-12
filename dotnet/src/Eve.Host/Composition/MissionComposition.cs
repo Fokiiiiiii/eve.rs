@@ -205,8 +205,13 @@ internal sealed partial class CharacterServicesComposition
             await PersistenceAgentResearch.LoadFieldsAsync(sde, CancellationToken.None), () => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
         // the locator agents: the pilot by name, the place from the online session and the SDE, the fee and the result (AG-4 / A7)
         var locatorPort = new PersistenceAgentLocator(source, agentLocates, characters, characterSessions, solarSystems, economyWallets,
-            () => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
-            (characterId, agentId, data, key, ct) => mailSendWriter!.WriteLocateNotificationAsync(characterId, agentId, data, key, ct));
+            foundations.Events, () => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+        // the located notification: written by the subscriber, keyed by the event so a retry writes it once (the outbox row is the fee's)
+        foundations.Events.Subscribe("agents.locate-notice", [LocateDelivered.Topic], async (context, ct) =>
+        {
+            var located = context.Event.Payload<LocateDelivered>()!;
+            await mailSendWriter!.WriteLocateNotificationAsync(located.CharacterId, located.AgentId, located.Data, $"locate:{context.Event.Id}", ct);
+        });
         agentMissionService = new AgentMissionService(
             async (characterId, ct) =>
             {

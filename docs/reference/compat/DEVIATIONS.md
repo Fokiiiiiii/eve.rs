@@ -2088,15 +2088,16 @@ the wiki's ("Locator Agents") and the client's, not EveJS's.
 - **Standing.** The required standing per level (`LocatorRules.RequiredStandingFor`) is compared with the pilot's effective
   standing toward the agent (the Connections bonus applied, as the research start does). The wiki names this as faction standing;
   the corporation and faction standings are not split out here. Status: a gap.
-- **Result.** The located notification: type 69, group agents, sent by the agent, with `characterID`, `messageIndex` (0),
-  `agentLocation` and `targetLocation` keyed by group id (3 region, 4 constellation, 5 system, 15 station; the station only when
-  docked). It is written after the commit. If the notification cannot be written, the fee is refunded (journal reference type 27,
-  "Locate refund") and the error is returned to the pilot. Status: decided; the payload is read from the client formatter, not
-  shown in a client run.
+- **Result (outbox, AG-5).** The fee, the cooldown and the result are one PostgreSQL transaction: the result is an event
+  (`agents.locate_delivered`, the repo's transactional outbox, `EventBus`). A subscriber writes the located notification (type 69,
+  group agents, sent by the agent) with `characterID`, `messageIndex` (0), `agentLocation` and `targetLocation` keyed by group id
+  (3 region, 4 constellation, 5 system, 15 station; the station only when docked), keyed by the event id so a retry writes it once.
+  So a pilot who paid is always told: a crash between the commit and the write is replayed by the bus. No refund path.
+  Status: decided; the payload is read from the client formatter. Covered by the live locator walk.
 - **Gaps.** The prompt caption, its label and the lines the agent says are plain English: the client's `UI/Agents/Locator/*` labels
-  are not mapped to the dialog yet. `messageIndex` is always 0 (the first intro line). A refund that fails after a failed
-  notification leaves the cooldown started. No Host test covers the delivery, the refund or the name lookup; the dialogue tests
-  (`AgentLocatorDialogueTests`, PostgreSQL, fake port) cover the ask, offer, accept, reject, refusals, cooldown and the unpaid case.
+  are not mapped to the dialog yet. `messageIndex` is always 0 (the first intro line). A subscriber that keeps failing dead-letters
+  the notification (the fee stays charged; visible in the bus status). The dialogue tests (`AgentLocatorDialogueTests`, PostgreSQL,
+  fake port) cover the ask, offer, accept, reject, refusals, cooldown and the unpaid case; the live walk covers the delivery.
 
 ## ST-E: cloak proximity and forced decloak notices (2026-10-10)
 - **Proximity radius and refusal.** The cloak breaks, and activation refuses, for a ship or a non-belt body within 2 000 m of the surface of the cloaked ship. Source: EveJS `shipCloak.js:100` (`MIN_CLOAKING_DISTANCE_METERS = 2000`). It replaces the 2 km smartbomb-range check, so the activation refusal now also counts bodies, not only smartbomb targets. Belts are not counted.

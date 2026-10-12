@@ -1556,3 +1556,12 @@ Evidence and decisions: `docs/project/WORMHOLE_DESIGN.md` (sources, SDE numbers,
 | OPEN | Class 4 statics: EveJS one static, wiki "usually two" | Design 10.5 (owner decision 7) |
 | CUT | Connection generator and static pairing | No published pairing (design 10.4, owner decision 8) |
 | OPEN | Setup loader into a PostgreSQL schema; jump; entities; sim jump (Rust build needs 9 to 11 GB free); signatures; effects on ships; sites; Thera/Turnur; MITM run | Design 10.4 |
+
+### Slice 4 (2026-10-12)
+
+| Status | Item | Missing work |
+|---|---|---|
+| DONE (tests) | Connection generator for the statics (seeded, documented mechanic) and durable lifecycle jobs on Eve.Scheduler (expiry, static replacement, transit collapse, restart) | `dotnet/tests/Eve.Wormholes.Tests` (14). Not wired into the Host composition yet |
+| CUT | Wandering K-space connections (K162) | No published spawn rate (design 11) |
+| CUT | Region-neighbour exclusion for statics | The pages read do not state it (design 11) |
+| OPEN | Wormhole entities in space, sim jump, WormholeMgr.WormholeJump callback, signatures, effects on ships, sites, Thera/Turnur, delayed local (no chat service in eve.rs), MITM run | Design 11 |

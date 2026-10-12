@@ -1115,14 +1115,15 @@ Sources, in the order of the rule. SDE (sde.types and sde."typeDogma", the build
 
 ## Login session shape and the service table (parity pass, 2026-10-11)
 
-- **Session initial state: `maxSessionTime` is not sent; `inDetention` is.** The reference sends neither key. The client reads
-  `session.maxSessionTime` only behind a guard (`eve/client/script/parklife/gameui.py:297`, inside `try/except StandardError`;
-  `carbon/common/script/net/machoNet.py:2467`, inside `try/except Exception`), so an absent key and None behave the same and the
-  key is dropped. The client reads `session.inDetention` without a guard (`eve/client/script/ui/services/mail/mailSvc.py:995`,
-  `SendMsgDlg`), and no session default exists for it (`carbon/common/script/sys/basesession.py`, the persisted and default
-  attribute lists), so an absent key would raise when the new-mail window opens. eve.rs keeps the key, unset (not detained).
-  This is a deliberate difference from EVE.js, which sends neither key. Tests: `HostServerTests.Opening_a_session_sends_the_initial_state_before_anything_else`,
-  `crates/eve-net/tests/handshake.rs::a_login_completes_and_the_client_sees_what_the_evecli_tests_expect`.
+- **Session initial state: neither `maxSessionTime` nor `inDetention` is sent.** The reference's `SessionInitialStateNotification`
+  omits None-valued keys (oracle capture `evejs-login`), so an absent key and None are the same here. The client reads
+  `session.maxSessionTime` only behind a guard (`eve/client/script/parklife/gameui.py:297`, `carbon/common/script/net/machoNet.py:2467`).
+  The client reads `session.inDetention` unguarded in `mailSvc.py:995` (`SendMsgDlg`), but an attribute the session does not hold
+  reads as None (`carbon/common/script/sys/basesession.py` `GetDefaultValueOfAttribute`, the `return` after the default list), so
+  the absent key does not raise. eve.rs follows the reference in the notification. The handshake acknowledgement's `session_init`
+  keeps `inDetention`, as EveJS's acknowledgement does (`server/src/network/tcp/handshake.js`). Earlier revisions sent `inDetention` on the reading that the
+  attribute had no default; that reading was wrong. Tests: `HostServerTests.Opening_a_session_sends_the_initial_state_before_anything_else`
+  (asserts the key is absent), `tools/headless-client/tests/test_login_to_character.py` (`not_sent`).
 - **The login session's role carries the base bits.** The reference composes a session's role as the account's role plus
   `0x6000000080000000` (ROLE_LOGIN, ROLE_PLAYER, ROLE_IGB): EveJS `server/src/services/account/accountRoleProfiles.js`
   (`SESSION_BASE_ROLE_MASK`, `composeSessionRoleMask`). eve.rs sent the bare account role in the handshake acknowledgement
@@ -1146,6 +1147,30 @@ Sources, in the order of the rule. SDE (sde.types and sde."typeDogma", the build
   Python class of the service object in that text, and eve.rs names the advertised service, because eve.rs has no table from
   service name to Python class. Nothing else reaches the client: no path, no stack, no host name. The client takes the error
   as a failed call; it is not a `UserError`. Not changed.
+
+## Login flow order: what the client requires (slice 4, 2026-10-12)
+
+The client code in `eve-logic` decides these, not EveJS. Each verdict names the code it rests on; none was checked in a
+graphical client.
+
+- **Selection answer and session notifications.** `SelectCharacterID` is run through `PerformSessionChange`
+  (`carbon/common/script/sys/sessions.py:418-500`), which runs the call and does not wait for session notifications before the
+  answer. Session notifications are applied as they arrive (`ProcessSessionChange`, `OnSessionChanged`, `sessions.py:577-590`,
+  `OnCharacterSessionChanged` on a `charid` change). Verdict: the client does not require a notification before the answer.
+  eve.rs sends the selection's session change after the answer and the client accepts it. No change.
+- **`shipid` in the selection notification (cut).** EveJS's selection session change carries `shipid` (capture `evejs-nes_intro`,
+  seq 18). eve.rs leaves it out when the active ship is deferred (`SpaceSessions.cs:545-546`, `CharUnboundMgrService.cs:354-355`)
+  and sends a single-key `shipid` change after the hangar list answer (`eve-rs-nes_intro`, seq 28). The client reads
+  `session.shipid` when it builds the hold tracker (`inventorycommon/holdTracker.py:60-61`) and the hangar badges
+  (`neocomInventoryBadging.py`), and it handles a single-key `shipid` change (`invWindow.py:1142`). Verdict: the client needs
+  `shipid` when the inventory is built, which in eve.rs is after the list answer. Not aligned in this slice: the fix provisions the
+  active ship before selection and changes the deferral design (`SpaceSessions.cs`). Follow-up: provision the starter ship at
+  selection and send `shipid` in the selection change, as the reference does.
+- **The handshake's `2`.** The reference writes the `2` after it reads the client's encrypted authentication blob; eve.rs writes it
+  before (captures `evejs-login` and `eve-rs-login`, handshake records 7 and 8). The client's side of the handshake
+  (`carbon/common/script/net/GPS.py:400-434`) writes `OK CC`, reads the client's encrypted challenge, then writes the server
+  challenge. None of those writes is the `2`. Verdict: the order of the `2` relative to the client's blob is not set by the code
+  that this section reads. Not changed; follow-up: find what writes the `2` in the reference.
 
 ## Track A8c: the mobile beacon as a jump target (2026-10-10)
 

@@ -224,8 +224,7 @@ public sealed class PaperDollServerRpcService : IService
 
     private static string? PaperDollName(PyValue value) => value switch
     {
-        PyStr text => text.Value,
-        PyWString text => text.Value,
+        var text when Eve.Macho.JsSemantics.StringValue(text) is not null => Eve.Macho.JsSemantics.StringValue(text)!,
         PyToken token => token.Value,
         _ => null,
     };

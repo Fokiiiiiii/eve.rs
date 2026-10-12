@@ -230,8 +230,7 @@ public sealed partial class CorporationService(CorporationStore store,PgCharacte
         PyLong number => number.Value,
         PyBool boolean => boolean.Value ? 1 : 0,
         PyReal number => Integral(number.Value),
-        PyStr text => ParseInteger(text.Value),
-        PyWString text => ParseInteger(text.Value),
+        var text when Eve.Macho.JsSemantics.StringValue(text) is not null => ParseInteger(Eve.Macho.JsSemantics.StringValue(text)!),
         PyTuple { Items.Count: > 0 } tuple => MedalInteger(tuple.Items[0]),
         PyList { Items.Count: > 0 } list => MedalInteger(list.Items[0]),
         _ => 0

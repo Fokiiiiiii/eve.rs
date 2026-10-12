@@ -305,3 +305,31 @@ with itself.
 9. The shattered list's J004686 and J011376 classes (wiki 3, client 2 and 4): keep the client.
 10. Effects of J005926 and J010569 (EveJS disagrees with itself; the wiki says Red Giant for both): the wiki is used for the
     100 shattered systems (current). Effects of the other 2,504 systems come from the EveJS beacon.
+
+## 11. Slice 4 (2026-10-12): connection generator and durable lifecycle
+
+Code: `dotnet/src/Eve.Wormholes/` (project `Eve.Wormholes`, migration `wormhole` 0001) and tests `dotnet/tests/Eve.Wormholes.Tests/` (14 tests).
+
+- Generator (`WormholePlanner.PlanStatics`): every static of every J-space system (the committed data, 3,015 statics) gets
+  an exit to a random eligible system of its type's target class (SDE 1381: 7, 8, 9 are high-, low- and null-sec systems
+  from the client's `wormholeClassID`; the other classes are J-space classes). Eligible = not the source and not already
+  holding a connection from the source. The choice uses SplitMix64 (`SeededRandom`, fixed algorithm, golden values in a test),
+  so the same world seed gives the same connections on every runtime. The mass is the SDE stable mass times a roll in 90% to
+  110% (wiki "Wormhole Types"). No probabilities: a static exists because the data says so.
+- Owner rule applied: "excluding the source's own region neighbours where the wiki says so". The wiki pages read do not say
+  this, so no region exclusion is applied (recorded as not implemented).
+- Lifecycle (`WormholeJobs`, `WormholeStore`): one durable `wormhole.expire` job per active connection (`DurableScheduler`,
+  key = connection id, payload = connection id and seed, due at the expiry: SDE `wormholeMaxStableTime` minutes after opening).
+  When it runs, the connection collapses. A static collapse opens one replacement of the same type from the same source to a
+  random eligible system, seeded from the job seed (wiki: a static collapse opens a replacement elsewhere in the system).
+  A non-static collapse is final. A transit that empties a connection collapses it the same way and cancels its job.
+- Transit (`WormholeJobs.TransitAsync`, `WormholeLifecycle.Transit`): refused over the individual limit (SDE 1385), otherwise
+  the ship's mass comes off the wormhole; zero or less collapses it.
+- Tests: SeededRandom golden values, determinism, eligibility (target class, no self-loop, no duplicate pair), the mass
+  range, the transit rules, expiry, replacement, a transit collapse without doubling the replacement, durability across a
+  scheduler restart, and the real world (PgFact plus client data): every static of the 2,604 J-space systems gets a
+  destination of its target class.
+- Not built: the wandering connections from K-space (the K162 exits). The wiki gives no spawn probability and the CCP notes
+  read did not state one; the owner's rule needs a rate that is not published. Cut.
+- Not built: the entity in space, the simulation jump, the WormholeMgr callback, signatures, effects, sites, Thera and Turnur
+  (sections 9.6 and 10.4 still hold for these; the generator and the lifecycle are now the data they need).

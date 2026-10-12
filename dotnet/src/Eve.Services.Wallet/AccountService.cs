@@ -152,7 +152,7 @@ public sealed partial class AccountService(PgWalletStore wallets, Eve.Corporatio
         var text = value switch
         {
             PyReal real when double.IsFinite(real.Value) => real.Value.ToString("R", System.Globalization.CultureInfo.InvariantCulture),
-            PyStr stringValue => stringValue.Value,
+            var stringValue when Eve.Macho.JsSemantics.StringValue(stringValue) is not null => Eve.Macho.JsSemantics.StringValue(stringValue)!,
             PyBool boolean => boolean.Value ? "1" : "0",
             _ => string.Empty,
         };
@@ -177,7 +177,7 @@ public sealed partial class AccountService(PgWalletStore wallets, Eve.Corporatio
         if (value is null or PyNone) value = call.Arg(positionalIndex);
         var text = value switch
         {
-            PyStr stringValue => stringValue.Value,
+            var stringValue when Eve.Macho.JsSemantics.StringValue(stringValue) is not null => Eve.Macho.JsSemantics.StringValue(stringValue)!,
             PyNone => string.Empty,
             _ => JsSemantics.PlainText(value),
         };

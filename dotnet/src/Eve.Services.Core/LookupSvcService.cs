@@ -383,7 +383,7 @@ public sealed class LookupSvcService : IService
         PyBool boolean => boolean.Value,
         PyInt number => number.Value != 0,
         PyReal number => number.Value != 0 && !double.IsNaN(number.Value),
-        PyStr text => text.Value.Length > 0,
+        var text when Eve.Macho.JsSemantics.StringValue(text) is not null => Eve.Macho.JsSemantics.StringValue(text)!.Length > 0,
         _ => true,
     };
 

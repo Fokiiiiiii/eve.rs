@@ -267,8 +267,7 @@ internal static class UserSvcCompatibility
 
     private static string Text(PyValue? value) => value switch
     {
-        PyStr text => text.Value,
-        PyWString text => text.Value,
+        var text when Eve.Macho.JsSemantics.StringValue(text) is not null => Eve.Macho.JsSemantics.StringValue(text)!,
         PyBytes text => Encoding.UTF8.GetString(text.Value.Span),
         _ => "",
     };

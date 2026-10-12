@@ -247,7 +247,7 @@ public sealed class BillMgrService(
 
     private static string KeyText(PyValue value) => value switch
     {
-        PyStr text => text.Value,
+        var text when Eve.Macho.JsSemantics.StringValue(text) is not null => Eve.Macho.JsSemantics.StringValue(text)!,
         PyInt integer => integer.Value.ToString(CultureInfo.InvariantCulture),
         PyLong integer => integer.Value.ToString(CultureInfo.InvariantCulture),
         PyReal real => real.Value.ToString(CultureInfo.InvariantCulture),
@@ -269,7 +269,7 @@ public sealed class BillMgrService(
                                   real.Value >= long.MinValue && real.Value <= long.MaxValue:
                 result = (long)real.Value;
                 return true;
-            case PyStr text when long.TryParse(text.Value, NumberStyles.Integer, CultureInfo.InvariantCulture, out result):
+            case var text when Eve.Macho.JsSemantics.StringValue(text) is { } plain && long.TryParse(plain, NumberStyles.Integer, CultureInfo.InvariantCulture, out result):
                 return true;
             default:
                 result = 0;
@@ -283,7 +283,7 @@ public sealed class BillMgrService(
         PyInt integer => integer.Value != 0,
         PyLong integer => integer.Value != 0,
         PyReal real => real.Value != 0 && !double.IsNaN(real.Value),
-        PyStr text => text.Value is "1" or "true" or "True",
+        var text when Eve.Macho.JsSemantics.StringValue(text) is not null => Eve.Macho.JsSemantics.StringValue(text)! is "1" or "true" or "True",
         _ => false,
     };
 

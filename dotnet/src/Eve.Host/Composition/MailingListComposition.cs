@@ -53,8 +53,7 @@ internal sealed partial class CharacterServicesComposition
 
     static string? MailingListPyText(Eve.Marshal.PyValue? value) => value switch
     {
-        Eve.Marshal.PyStr text => text.Value,
-        Eve.Marshal.PyWString text => text.Value,
+        var text when Eve.Macho.JsSemantics.StringValue(text) is not null => Eve.Macho.JsSemantics.StringValue(text)!,
         _ => null,
     };
 

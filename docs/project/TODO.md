@@ -1501,3 +1501,5 @@ Evidence and decisions: DEVIATIONS "Zarzakh (30100000) and the client's system f
 | CLIENT-LOCAL | Sun type and flare, system-wide cloud, warp tunnel overwrite, dscan range, anchor categories | Read by the client only; no server loader |
 | CUT | Landmarks placed by the server and the Black Monolith look-at challenge (2848) | EveJS and eve.rs both advertise `client_lookAtObject` 0; the client look-at path is not proven |
 | OPEN | Live check of the Zarzakh flags and the lane run without `EVE_CLIENT_SDE_DIR` | Needs a live run with the export set |
+
+| PARTIAL (live) | Turnur to Zarzakh jump, eve.rs only: `tools/headless-client/tests/test_zarzakh_jump.py` passes through `tools/mitm` on the eve_p2 lane (1 passed, 96.9 s); the toll journal row (ref 168) is counted | DEVIATIONS "Live check: Turnur to Zarzakh (slice 3)". OPEN: the EVE.js comparison (no reference data here); the Cockroach seeded through the database |

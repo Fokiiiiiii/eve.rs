@@ -9,6 +9,7 @@ using Eve.Macho;
 using Eve.Marshal;
 using Eve.Services;
 using Eve.Services.Core;
+using Eve.Services.CharacterSelect;
 using Eve.Services.CharacterInfo;
 
 namespace Eve.Host.Tests;
@@ -351,20 +352,32 @@ public class HostServerTests : IAsyncLifetime
         var initial = ((PyDict)payload[2]).Entries.ToDictionary(e => T(e.Key)!, e => e.Value);
         Assert.Equal(new PyInt(42), initial["userid"]);
         Assert.Equal(new PyInt(30), initial["userType"]);
-        Assert.Equal(new PyLong(0x0100_0000_0000_0001), initial["role"]);
+        // the account's role plus the base bits (ROLE_LOGIN, ROLE_PLAYER, ROLE_IGB) every login session has
+        Assert.Equal(new PyLong(0x0100_0000_0000_0001 | CharUnboundMgrService.SessionBaseRole), initial["role"]);
         Assert.Equal("EN", T(initial["languageID"]));
         Assert.Equal("GB", T(initial["countryCode"]));
         Assert.Equal("127.0.0.1", T(initial["address"]));
-        // the reference names these two as well, unset
-        Assert.Equal(PyNone.Instance, initial["maxSessionTime"]);
+        // the client reads inDetention without a guard, so it is sent, unset
         Assert.Equal(PyNone.Instance, initial["inDetention"]);
         Assert.Equal(
-            ["languageID", "countryCode", "userid", "maxSessionTime", "userType", "role", "address", "inDetention"],
+            ["languageID", "countryCode", "userid", "userType", "role", "address", "inDetention"],
             ((PyDict)payload[2]).Entries.Select(e => T(e.Key)!));
         // the client's address: type 2 (client), its client id
         var destination = (PyTuple)((PyObject)state[2]).Args;
         Assert.Equal(new PyInt(2), destination.Items[0]);
         Assert.Equal(new PyLong((long)open.ClientId), destination.Items[1]);
+    }
+
+    [Fact]
+    public void An_ordinary_account_is_sent_the_base_role_bits_and_no_staff_bits()
+    {
+        // role 0 is an ordinary player: the login session still carries ROLE_LOGIN, ROLE_PLAYER and ROLE_IGB (EveJS
+        // composeSessionRoleMask with no account role), and no ROLE_ADMIN (bit 56)
+        var packet = Assert.IsType<PyObject>(SessionInitialState.Build(1, 2, 42, 0, "127.0.0.1", "EN", "GB"));
+        var state = ((PyDict)((PyTuple)((PyTuple)packet.Args).Items[4]).Items[2]).Entries.ToDictionary(e => T(e.Key)!, e => e.Value);
+        var role = ((PyLong)state["role"]).Value;
+        Assert.Equal(0x6000_0000_8000_0000, role);
+        Assert.Equal(0L, role & (1L << 56));
     }
 
     [Fact]

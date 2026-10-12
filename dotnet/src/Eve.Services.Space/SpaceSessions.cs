@@ -419,6 +419,12 @@ private readonly TransitionRuntime _transitions;
     /// <summary>The directional scan (set by the composition root): the scanMgr's ConeScan answers through it.</summary>
     public Scanning.SpaceDirectionalScans? DirectionalScans { get; set; }
 
+    /// <summary>The stargate rules of the client data and the SDE (set by the composition root): the ship lists of the gates, the tolls and the destinations.</summary>
+    public Gates.GateRules? GateRules { get; set; }
+
+    /// <summary>The emanation locks of the restricted systems (Zarzakh), in memory.</summary>
+    private readonly Gates.EmanationLocks _emanationLocks = new();
+
     /// <summary>Whether the session's system allows scanning (the client's disallowScanning flag is not set; no system is false for nothing).</summary>
     public bool ScanningAllowedFor(ClientSession session) =>
         SolarSystemOf(session) is not int system || _systems.Get(system) is not { DisallowScanning: true };

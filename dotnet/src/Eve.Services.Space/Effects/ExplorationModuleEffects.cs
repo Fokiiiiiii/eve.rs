@@ -41,7 +41,7 @@ internal sealed class DataAnalyzerEffect : ShipEffect
 /// <summary>
 /// <c>hackOrbital</c> (effect 4773, guid <c>effects.TargetScan</c>, category 2): the Data Subverter I (type 3793, unpublished, group 538 Data Miners). It has no
 /// rangeAttributeID of its own; its type carries <c>maxRange</c> 54 (5000 m) and <c>accessDifficultyBonus</c> 902 (15). No EveJS reference was found for this
-/// effect name; the body is unverified and must be specified from the client before it is written.
+/// effect name; the body is not written yet and needs the client's specification first.
 /// </summary>
 internal sealed class DataSubverterEffect : PendingModuleEffect
 {

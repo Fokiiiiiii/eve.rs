@@ -2172,6 +2172,32 @@ public class SpaceServiceTests
     }
 
     [PgFact]
+    public async Task A_gate_whose_client_list_leaves_out_the_pilot_ship_group_refuses_the_jump_before_the_simulation_hears_it()
+    {
+        // the pilot flies a frigate (group 25, the Cockroach); the gate's list names only group 1022 (the Zarzakh rule, subcapitals only)
+        var (rig, character, session) = await DockedAsync();
+        await using var _ = rig;
+        await InSpaceAsync(rig, session);
+        var oid = await rig.BindBeyonceAsync(session);
+        Events.Of(session);
+        rig.Space.GateRules = new Eve.Services.Space.Gates.GateRules(
+            new Dictionary<long, int> { [Gate] = 579 }, new Dictionary<int, IReadOnlySet<int>> { [579] = new HashSet<int> { 1022 } },
+            new Dictionary<long, long>(), new Dictionary<long, int>(), new Dictionary<int, Eve.Universe.AlignmentToll>());
+
+        var error = await Assert.ThrowsAsync<MachoWrappedException>(() => JumpAsync(rig, session, oid, character.ShipId));
+
+        Assert.Equal("CustomNotify", error.Error.UserErrorMessage);
+        Assert.DoesNotContain(rig.Sim.Heard, m => m is SimCommand { Code: SimCommands.Jump });
+
+        // a list that names the pilot's group admits the jump
+        rig.Space.GateRules = new Eve.Services.Space.Gates.GateRules(
+            new Dictionary<long, int> { [Gate] = 579 }, new Dictionary<int, IReadOnlySet<int>> { [579] = new HashSet<int> { 25 } },
+            new Dictionary<long, long>(), new Dictionary<long, int>(), new Dictionary<int, Eve.Universe.AlignmentToll>());
+        Assert.IsType<PyTuple>(await JumpAsync(rig, session, oid, character.ShipId));
+        Assert.Contains(rig.Sim.Heard, m => m is SimCommand { Code: SimCommands.Jump });
+    }
+
+    [PgFact]
     public async Task A_jump_that_cannot_be_done_is_the_message_the_reference_tells()
     {
         var (rig, character, session) = await DockedAsync();

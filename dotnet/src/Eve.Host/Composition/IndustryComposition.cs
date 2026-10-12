@@ -206,7 +206,7 @@ internal sealed partial class CharacterServicesComposition
     private Task IndustryFacilities()
     {
         industryJobOperations = new PersistenceIndustryJobOperations(
-            source, industrySchema, items, economyWallets, skills, sde, corporations,
+            source, industrySchema, items, economyWallets, skills, sde, adjustedPrices, corporations,
             foundations.Events, stations, ResolveIndustryFacilityAsync, now);
         return Task.CompletedTask;
     }

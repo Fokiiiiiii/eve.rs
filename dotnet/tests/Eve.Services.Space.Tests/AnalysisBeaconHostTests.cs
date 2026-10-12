@@ -258,9 +258,17 @@ public sealed class AnalysisBeaconHostTests
             rig.Sim.Report(new SimDestroyed((ulong)session.SessionId, ship, 0, [0, 0, 0], [1, 0, 0], 1, 0));
         }
         await RunAsync(rig);
+        // the scan reaches half from here and makes its second wave, which holds the scan until it is dead
         await AdvanceAsync(rig, TenMinutes - 10_000);
         Assert.Equal(0, await AddedToCargoAsync(rig, session, shipId, RewardAnalysisData));
+        var second = rig.Sim.Heard.OfType<SimSpawn>().Select(spawn => spawn.Ship.ShipId).Except(drones).ToList();
+        Assert.Equal(4, second.Count);
+        Kill(rig, session, second);
+        await RunAsync(rig);
 
+        // the scan was at half when the second wave died, so five more minutes complete it
+        await AdvanceAsync(rig, 5 * 60_000 - 10_000);
+        Assert.Equal(0, await AddedToCargoAsync(rig, session, shipId, RewardAnalysisData));
         await AdvanceAsync(rig, 10_000);
         Assert.Equal(1441, await AddedToCargoAsync(rig, session, shipId, RewardAnalysisData));
         Assert.Equal(1, await AddedToCargoAsync(rig, session, shipId, RewardHeavyFirepower));
@@ -269,6 +277,49 @@ public sealed class AnalysisBeaconHostTests
         // a finished scan pays once: a later tick does not grant it again
         await AdvanceAsync(rig, TenMinutes);
         Assert.Equal(1441, await AddedToCargoAsync(rig, session, shipId, RewardAnalysisData));
+    }
+
+    [PgFact]
+    public async Task A_scan_makes_its_second_wave_when_it_reaches_half_and_completes_only_after_both_waves_are_dead()
+    {
+        await using var rig = await Rig.CreateAsync();
+        await rig.UseBusAsync();
+        await DirectorAsync(rig);
+        var (session, shipId, beacon) = await PilotWithBeaconAsync(rig);
+        await rig.Containers.LaunchFromShipAsync(session, beacon, CancellationToken.None);
+        rig.Sim.Heard.Clear();
+        await AdvanceAsync(rig, TwentySeconds);
+        var first = rig.Sim.Heard.OfType<SimSpawn>().Select(spawn => spawn.Ship.ShipId).ToList();
+        Assert.Equal(4, first.Count);
+        Kill(rig, session, first);
+        await RunAsync(rig);
+
+        // the scan reaches half (five minutes) at 320 seconds after the launch: the second wave comes then, and not before
+        await AdvanceAsync(rig, 290_000);
+        Assert.Equal(4, rig.Sim.Heard.OfType<SimSpawn>().Count());
+        await AdvanceAsync(rig, 10_000);
+        var second = rig.Sim.Heard.OfType<SimSpawn>().Select(spawn => spawn.Ship.ShipId).Except(first).ToList();
+        Assert.Equal(4, second.Count);
+
+        // the second wave blocks the scan until its drones are dead: half the scan is held, nothing pays
+        await AdvanceAsync(rig, 5 * 60_000);
+        Assert.Equal(0, await AddedToCargoAsync(rig, session, shipId, RewardAnalysisData));
+        Kill(rig, session, second);
+        await RunAsync(rig);
+
+        // the scan goes on from the death of the second wave: 300 more seconds, then the reward
+        await AdvanceAsync(rig, 290_000);
+        Assert.Equal(0, await AddedToCargoAsync(rig, session, shipId, RewardAnalysisData));
+        await AdvanceAsync(rig, 10_000);
+        Assert.Equal(1441, await AddedToCargoAsync(rig, session, shipId, RewardAnalysisData));
+    }
+
+    private static void Kill(Rig rig, ClientSession session, IEnumerable<long> ships)
+    {
+        foreach (var ship in ships)
+        {
+            rig.Sim.Report(new SimDestroyed((ulong)session.SessionId, ship, 0, [0, 0, 0], [1, 0, 0], 1, 0));
+        }
     }
 
     [PgFact]

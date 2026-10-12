@@ -71,7 +71,7 @@ public sealed class MarketHostTests : IAsyncLifetime
         var url = Environment.GetEnvironmentVariable("EVE_PG_URL");
         if (url is not null)
         {
-            await using var source = NpgsqlDataSource.Create(Eve.Data.PgConnection.ToConnectionString(url));
+            await using var source = NpgsqlDataSource.Create(Eve.Data.PgConnection.ForTest(url));
             foreach (var schema in _schemas)
             {
                 await using var command = source.CreateCommand($"DROP SCHEMA IF EXISTS {schema} CASCADE");
@@ -123,7 +123,7 @@ public sealed class MarketHostTests : IAsyncLifetime
     public async Task The_host_registers_the_marketStoreservice_and_keeps_its_trades_across_a_restart()
     {
         var url = Environment.GetEnvironmentVariable("EVE_PG_URL")!;
-        await using var source = NpgsqlDataSource.Create(Eve.Data.PgConnection.ToConnectionString(url));
+        await using var source = NpgsqlDataSource.Create(Eve.Data.PgConnection.ForTest(url));
 
         var host = await HostComposition.BuildAsync(Settings());
         var market = host.Registry.Lookup("marketProxy") ?? throw new InvalidOperationException("marketProxy is not registered");
@@ -174,7 +174,7 @@ public sealed class MarketHostTests : IAsyncLifetime
     {
         // M2 (Q12, Q3, Q15, Q14): each refusal is the labelled CustomInfo the client shows, and a refused call changes nothing.
         var url = Environment.GetEnvironmentVariable("EVE_PG_URL")!;
-        await using var source = NpgsqlDataSource.Create(Eve.Data.PgConnection.ToConnectionString(url));
+        await using var source = NpgsqlDataSource.Create(Eve.Data.PgConnection.ForTest(url));
         var host = await HostComposition.BuildAsync(Settings());
         var market = host.Registry.Lookup("marketProxy") ?? throw new InvalidOperationException("marketProxy is not registered");
         var station = (await StationCatalog.LoadAsync(new SdeReader(source))).All.First();
@@ -226,7 +226,7 @@ public sealed class MarketHostTests : IAsyncLifetime
     {
         // M3 (Q7): the job is due at the expiry plus the grace, is kept in the scheduler's schema, and the minute sweep is scheduled
         var url = Environment.GetEnvironmentVariable("EVE_PG_URL")!;
-        await using var source = NpgsqlDataSource.Create(Eve.Data.PgConnection.ToConnectionString(url));
+        await using var source = NpgsqlDataSource.Create(Eve.Data.PgConnection.ForTest(url));
         var host = await HostComposition.BuildAsync(Settings());
         var market = host.Registry.Lookup("marketProxy") ?? throw new InvalidOperationException("marketProxy is not registered");
         var scheduler = host.Scheduler ?? throw new InvalidOperationException("the host has no durable scheduler");

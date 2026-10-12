@@ -108,6 +108,35 @@ public sealed class AgentMissionStore
         return rows;
     }
 
+    /// <summary>
+    /// The missions the character has completed, with the time of each completion, from the journal (the transitions into
+    /// <see cref="AgentMissionState.Completed"/>). The store keeps one row per agent, so the history is read here.
+    /// </summary>
+    public Task<IReadOnlyList<(long MissionId, DateTimeOffset CompletedAt)>> ReadCompletedAsync(long characterId, CancellationToken cancellationToken = default) =>
+        ReadJournalAsync(characterId, [(int)AgentMissionState.Completed], cancellationToken);
+
+    /// <summary>The missions the character failed or quit (the transitions into Failed or Quit), with their times, from the journal.</summary>
+    public Task<IReadOnlyList<(long MissionId, DateTimeOffset At)>> ReadFailedAsync(long characterId, CancellationToken cancellationToken = default) =>
+        ReadJournalAsync(characterId, [(int)AgentMissionState.Failed, (int)AgentMissionState.Quit], cancellationToken);
+
+    private async Task<IReadOnlyList<(long MissionId, DateTimeOffset At)>> ReadJournalAsync(long characterId, int[] toStates, CancellationToken cancellationToken)
+    {
+        if (characterId <= 0) return [];
+        await using var connection = await _source.OpenConnectionAsync(cancellationToken);
+        await using var command = new NpgsqlCommand(
+            $"SELECT mission_id, COALESCE(transition_at, created_at) FROM {_schema}.journal WHERE character_id = $1 AND to_state = ANY($2) ORDER BY id", connection)
+        {
+            Parameters = { new() { Value = characterId }, new() { Value = toStates } },
+        };
+        var rows = new List<(long MissionId, DateTimeOffset At)>();
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            rows.Add((reader.GetInt64(0), reader.GetFieldValue<DateTimeOffset>(1)));
+        }
+        return rows;
+    }
+
     /// <summary>The character's mission with one agent, or null when there is none.</summary>
     public async Task<AgentMissionRecord?> ReadAsync(long characterId, long agentId, CancellationToken cancellationToken = default)
     {
@@ -128,7 +157,7 @@ public sealed class AgentMissionStore
     /// </summary>
     public Task<AgentMissionChange?> OfferAsync(
         long characterId, long agentId, AgentMissionContent content, DateTimeOffset now, string reference, CancellationToken cancellationToken = default) =>
-        ChangeAsync(characterId, agentId, reference, "offered", cancellationToken, current =>
+        ChangeAsync(characterId, agentId, reference, "offered", now, cancellationToken, current =>
         {
             if (current?.State == AgentMissionState.Offered) throw Refused("already_offered", "the agent has already offered a mission");
             if (current?.State == AgentMissionState.Accepted) throw Refused("already_accepted", "the mission is already accepted");
@@ -144,7 +173,7 @@ public sealed class AgentMissionStore
     /// <summary>The character accepts the offer. An offer past its expiry is refused; <see cref="ExpireOffersAsync"/> removes it.</summary>
     public Task<AgentMissionChange?> AcceptAsync(
         long characterId, long agentId, DateTimeOffset now, string reference, CancellationToken cancellationToken = default) =>
-        ChangeAsync(characterId, agentId, reference, "accepted", cancellationToken, current =>
+        ChangeAsync(characterId, agentId, reference, "accepted", now, cancellationToken, current =>
         {
             if (current?.State != AgentMissionState.Offered) throw Refused("not_offered", "there is no offer to accept");
             if (current.ExpiresAt is { } expires && expires <= now) throw Refused("offer_expired", "the offer has expired");
@@ -154,7 +183,7 @@ public sealed class AgentMissionStore
     /// <summary>The character declines the offer; the agent does not offer again for <see cref="DeclineReplayDelay"/>.</summary>
     public Task<AgentMissionChange?> DeclineAsync(
         long characterId, long agentId, DateTimeOffset now, string reference, CancellationToken cancellationToken = default) =>
-        ChangeAsync(characterId, agentId, reference, "offer_declined", cancellationToken, current =>
+        ChangeAsync(characterId, agentId, reference, "offer_declined", now, cancellationToken, current =>
         {
             if (current?.State != AgentMissionState.Offered) throw Refused("not_offered", "there is no offer to decline");
             return current with { State = AgentMissionState.Declined, ExpiresAt = null, DeclineUntil = now + DeclineReplayDelay };
@@ -163,16 +192,40 @@ public sealed class AgentMissionStore
     /// <summary>The character quits the accepted mission.</summary>
     public Task<AgentMissionChange?> QuitAsync(
         long characterId, long agentId, DateTimeOffset now, string reference, CancellationToken cancellationToken = default) =>
-        ChangeAsync(characterId, agentId, reference, "quit", cancellationToken, current =>
+        ChangeAsync(characterId, agentId, reference, "quit", now, cancellationToken, current =>
         {
             if (current?.State != AgentMissionState.Accepted) throw Refused("not_accepted", "there is no accepted mission to quit");
             return current with { State = AgentMissionState.Quit, QuitAt = now };
         });
 
+    /// <summary>The accepted mission fails (its dungeon failed, was abandoned or expired); the agent offers it again later and no reward is paid.</summary>
+    public Task<AgentMissionChange?> FailAsync(
+        long characterId, long agentId, DateTimeOffset now, string reference, CancellationToken cancellationToken = default) =>
+        ChangeAsync(characterId, agentId, reference, "failed", now, cancellationToken, current =>
+        {
+            if (current?.State != AgentMissionState.Accepted) throw Refused("not_accepted", "there is no accepted mission to fail");
+            return current with { State = AgentMissionState.Failed };
+        });
+
+    /// <summary>Every accepted mission of every character, for the mission runtime's sweep (one row per character and agent).</summary>
+    public async Task<IReadOnlyList<AgentMissionRecord>> ReadAcceptedAsync(CancellationToken cancellationToken = default)
+    {
+        await using var connection = await _source.OpenConnectionAsync(cancellationToken);
+        await using var command = new NpgsqlCommand(
+            $"SELECT {Columns} FROM {_schema}.missions WHERE state = {(int)AgentMissionState.Accepted} ORDER BY character_id, agent_id", connection);
+        var rows = new List<AgentMissionRecord>();
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            rows.Add(ReadRecord(reader));
+        }
+        return rows;
+    }
+
     /// <summary>The accepted mission is completed (the mission runtime calls this when its objectives are done).</summary>
     public Task<AgentMissionChange?> CompleteAsync(
         long characterId, long agentId, DateTimeOffset now, string reference, CancellationToken cancellationToken = default) =>
-        ChangeAsync(characterId, agentId, reference, "completed", cancellationToken, current =>
+        ChangeAsync(characterId, agentId, reference, "completed", now, cancellationToken, current =>
         {
             if (current?.State != AgentMissionState.Accepted) throw Refused("not_accepted", "there is no accepted mission to complete");
             return current with { State = AgentMissionState.Completed, CompletedAt = now };
@@ -200,7 +253,7 @@ public sealed class AgentMissionStore
         foreach (var offer in due)
         {
             var reference = $"offer-expired:{offer.CharacterId}:{offer.AgentId}:{offer.ExpiresAt.ToUnixTimeMilliseconds()}";
-            var change = await ChangeAsync(offer.CharacterId, offer.AgentId, reference, "offer_expired", cancellationToken, current =>
+            var change = await ChangeAsync(offer.CharacterId, offer.AgentId, reference, "offer_expired", now, cancellationToken, current =>
             {
                 if (current?.State != AgentMissionState.Offered || current.ExpiresAt is not { } expires || expires > now)
                 {
@@ -224,17 +277,42 @@ public sealed class AgentMissionStore
         long agentId,
         string reference,
         string action,
+        DateTimeOffset at,
         CancellationToken cancellationToken,
         Func<AgentMissionRecord?, AgentMissionRecord> next)
+    {
+        Validate(characterId, agentId, reference, action);
+        await using var connection = await _source.OpenConnectionAsync(cancellationToken);
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        var change = await ChangeInAsync(connection, transaction, characterId, agentId, reference, action, at, cancellationToken, next);
+        await transaction.CommitAsync(cancellationToken);
+        if (change is not null) Committed?.Invoke(change);
+        return change;
+    }
+
+    private static void Validate(long characterId, long agentId, string reference, string action)
     {
         if (characterId <= 0) throw new ArgumentOutOfRangeException(nameof(characterId), "the character id must be positive");
         if (agentId <= 0) throw new ArgumentOutOfRangeException(nameof(agentId), "the agent id must be positive");
         if (string.IsNullOrWhiteSpace(reference) || reference.Length > 128) throw new ArgumentException("a reference has 1 to 128 characters", nameof(reference));
         if (string.IsNullOrWhiteSpace(action) || action.Length > 32) throw new ArgumentException("an action has 1 to 32 characters", nameof(action));
+    }
 
-        await using var connection = await _source.OpenConnectionAsync(cancellationToken);
-        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
-
+    /// <summary>
+    /// The change inside the caller's transaction (no commit and no notice): null when the reference is already in the journal. The caller commits,
+    /// and then raises the notice with <see cref="Announce"/> for a change it made.
+    /// </summary>
+    private async Task<AgentMissionChange?> ChangeInAsync(
+        NpgsqlConnection connection,
+        NpgsqlTransaction transaction,
+        long characterId,
+        long agentId,
+        string reference,
+        string action,
+        DateTimeOffset at,
+        CancellationToken cancellationToken,
+        Func<AgentMissionRecord?, AgentMissionRecord> next)
+    {
         await using (var create = new NpgsqlCommand(
             $"INSERT INTO {_schema}.missions (character_id, agent_id) VALUES ($1, $2) ON CONFLICT DO NOTHING", connection, transaction)
         {
@@ -264,7 +342,6 @@ public sealed class AgentMissionStore
         {
             if (await seen.ExecuteScalarAsync(cancellationToken) is not null)
             {
-                await transaction.CommitAsync(cancellationToken);
                 return null;
             }
         }
@@ -306,8 +383,8 @@ public sealed class AgentMissionStore
 
         await using (var journal = new NpgsqlCommand(
             $"""
-            INSERT INTO {_schema}.journal (character_id, agent_id, mission_id, from_state, to_state, action, reference)
-            VALUES ($1, $2, $3, $4, $5, $6, $7)
+            INSERT INTO {_schema}.journal (character_id, agent_id, mission_id, from_state, to_state, action, reference, transition_at)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
             """,
             connection, transaction)
         {
@@ -315,17 +392,34 @@ public sealed class AgentMissionStore
             {
                 new() { Value = characterId }, new() { Value = agentId }, new() { Value = updated.Content.MissionId },
                 new() { Value = (short)from }, new() { Value = (short)to }, new() { Value = action }, new() { Value = reference },
+                new() { Value = at },
             },
         })
         {
             await journal.ExecuteNonQueryAsync(cancellationToken);
         }
 
-        await transaction.CommitAsync(cancellationToken);
-        var change = new AgentMissionChange(characterId, agentId, from, to, action, reference, updated.Content.MissionId);
-        Committed?.Invoke(change);
-        return change;
+        return new AgentMissionChange(characterId, agentId, from, to, action, reference, updated.Content.MissionId);
     }
+
+    /// <summary>
+    /// The accepted mission is completed inside the caller's transaction (the caller's commit makes it, and then <see cref="Announce"/> tells the
+    /// session). Refused as <see cref="CompleteAsync"/> is.
+    /// </summary>
+    public async Task<AgentMissionChange?> CompleteInAsync(
+        NpgsqlConnection connection, NpgsqlTransaction transaction, long characterId, long agentId, DateTimeOffset now, string reference,
+        CancellationToken cancellationToken = default)
+    {
+        Validate(characterId, agentId, reference, "completed");
+        return await ChangeInAsync(connection, transaction, characterId, agentId, reference, "completed", now, cancellationToken, current =>
+        {
+            if (current?.State != AgentMissionState.Accepted) throw Refused("not_accepted", "there is no accepted mission to complete");
+            return current with { State = AgentMissionState.Completed, CompletedAt = now };
+        });
+    }
+
+    /// <summary>Tells the sessions of a change the caller committed (see <see cref="CompleteInAsync"/>).</summary>
+    public void Announce(AgentMissionChange change) => Committed?.Invoke(change);
 
     private const string Columns =
         "character_id, agent_id, state, mission_id, name_id, title, mission_type_label, important, offered_at, expires_at, accepted_at, completed_at, decline_until, quit_at";

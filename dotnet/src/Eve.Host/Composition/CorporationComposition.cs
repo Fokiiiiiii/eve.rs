@@ -72,6 +72,7 @@ internal sealed partial class CharacterServicesComposition
     {
         corporations = new Eve.Corporations.CorporationStore(source, characters, wallets, economyWallets, skills, now, corporationSchema,
             setBlueprintLock: SetCorporationBlueprintLockAsync);
+        corporations.ItemLockChanged += change => Eve.Services.Corporations.ItemLockingService.NotifyChanged(characterSessions, change);
         await corporations.SeedNpcAsync(sde);
         foundations.Scheduler.Register("corporation.votes.resolve",
             async (_, token) => await corporations.ResolveAllExpiredVotesAsync(token));
@@ -81,6 +82,7 @@ internal sealed partial class CharacterServicesComposition
         marketSchema = Env("EVE_MARKET_SCHEMA", Eve.Market.MarketStore.DefaultSchema);
         await Eve.Market.MarketStore.MigrateAsync(source, marketSchema);
         market = new Eve.Market.MarketStore(source, marketSchema);
+        AdjustedPriceCacheSetup();
         marketCatalog = await Eve.Market.MarketCatalog.LoadAsync(sde);
     }
 
@@ -137,7 +139,10 @@ internal sealed partial class CharacterServicesComposition
         marketTrading = new Eve.Market.MarketTrading(source, market, characters, corporations, skills, items, economyWallets, stations, marketTopology, now, new Eve.Services.Market.DurableExpiryJobs(foundations.Scheduler));
         // M3: resting orders expire as durable jobs; the minute sweep and the restart reschedule are started with the market
         var marketNotifier = new Eve.Services.Market.MarketNotifier(economyWallets, characterSessions);
-        marketExpiry = new Eve.Services.Market.MarketExpiryWorker(foundations.Scheduler, marketTrading, now, (receipt, _) => marketNotifier.PublishAsync(receipt));
+        // M8: the minute sweep runs the market's invariants (escrow, item custody, fill journal) and logs any mismatch
+        marketExpiry = new Eve.Services.Market.MarketExpiryWorker(foundations.Scheduler, marketTrading, now, (receipt, _) => marketNotifier.PublishAsync(receipt),
+            new Eve.Market.MarketReconciliation(source, marketSchema, walletSchema, inventorySchema),
+            message => Console.Error.WriteLine($"eve-host: {message}"));
         await marketExpiry.StartAsync();
     }
 

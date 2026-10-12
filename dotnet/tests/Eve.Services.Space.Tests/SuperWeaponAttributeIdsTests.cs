@@ -42,7 +42,7 @@ public class SuperWeaponAttributeIdsTests
     [PgFact]
     public async Task Every_superweapon_attribute_constant_is_the_sde_attribute_of_its_name()
     {
-        await using var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
+        await using var source = NpgsqlDataSource.Create(PgConnection.ForTest(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
         var statics = await DogmaStatic.LoadAsync(new SdeReader(source));
 
         foreach (var (id, name) in Attributes)

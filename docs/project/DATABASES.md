@@ -63,3 +63,14 @@ It copies the `sde` and `sde_mission` schemas from `eve` with `psql` (about a mi
 
 `tools/dev/pg18.sh start` runs the development cluster with `fsync`, `full_page_writes` and `synchronous_commit` off:
 the tests do not need durability. A crash can then corrupt the cluster; recover by `initdb`ing a new one.
+
+## MITM listen ports per lane
+
+The MITM capture (`tools/mitm`, `docs/project/MITM_COMPARE.md`) listens on two ports per lane. Lanes share the host, so each lane uses its own pair; take the pair from this table and do not use another lane's.
+
+| Lane (`EVE_PG_URL` database) | MITM port A | MITM port B |
+|---|---|---|
+| `eve` | 26110 | 26210 |
+| `eve_p2` | 26111 | 26211 |
+| `eve_p3` | 26112 | 26212 |
+| `eve_p4` | 26113 | 26213 |

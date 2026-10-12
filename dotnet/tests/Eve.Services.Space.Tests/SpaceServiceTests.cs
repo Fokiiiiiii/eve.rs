@@ -1604,6 +1604,12 @@ public class SpaceServiceTests
         rig.Sim.ActivateGate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var first = rig.Space.ActivateAsync(session, afterburner, "moduleBonusAfterburner", 0, 1000, CancellationToken.None);
         var second = rig.Space.ActivateAsync(session, afterburner, "moduleBonusAfterburner", 0, 1, CancellationToken.None);
+        // the first order reaches the simulation after awaits of its own, which a loaded machine can stretch past any fixed delay: wait for it
+        for (var attempt = 0; attempt < 400 && !rig.Sim.Heard.OfType<SimActivate>().Any(); attempt++)
+        {
+            await Task.Delay(25);
+        }
+        // a second send would show within this window (the negative check has no completion signal to wait for)
         await Task.Delay(100);
         Assert.Single(rig.Sim.Heard.OfType<SimActivate>());
         rig.Sim.ActivateGate.SetResult();
@@ -2163,6 +2169,76 @@ public class SpaceServiceTests
         await JumpAsync(rig, session, oid, character.ShipId);
         var again = Events.Of(session).Single(e => e.Name == "OnJumpQueueUpdate");
         Assert.Equal([character.CharacterId], ((PyTuple)again.Args[2]).Items.Select(Id));
+    }
+
+    [PgFact]
+    public async Task A_gate_whose_client_list_leaves_out_the_pilot_ship_group_refuses_the_jump_before_the_simulation_hears_it()
+    {
+        // the pilot flies a frigate (group 25, the Cockroach); the gate's list names only group 1022 (the Zarzakh rule, subcapitals only)
+        var (rig, character, session) = await DockedAsync();
+        await using var _ = rig;
+        await InSpaceAsync(rig, session);
+        var oid = await rig.BindBeyonceAsync(session);
+        Events.Of(session);
+        rig.Space.GateRules = new Eve.Services.Space.Gates.GateRules(
+            new Dictionary<long, int> { [Gate] = 579 }, new Dictionary<int, IReadOnlySet<int>> { [579] = new HashSet<int> { 1022 } },
+            new Dictionary<long, long>(), new Dictionary<long, int>(), new Dictionary<int, Eve.Universe.AlignmentToll>());
+
+        var error = await Assert.ThrowsAsync<MachoWrappedException>(() => JumpAsync(rig, session, oid, character.ShipId));
+
+        Assert.Equal("CustomNotify", error.Error.UserErrorMessage);
+        Assert.DoesNotContain(rig.Sim.Heard, m => m is SimCommand { Code: SimCommands.Jump });
+
+        // a list that names the pilot's group admits the jump
+        rig.Space.GateRules = new Eve.Services.Space.Gates.GateRules(
+            new Dictionary<long, int> { [Gate] = 579 }, new Dictionary<int, IReadOnlySet<int>> { [579] = new HashSet<int> { 25 } },
+            new Dictionary<long, long>(), new Dictionary<long, int>(), new Dictionary<int, Eve.Universe.AlignmentToll>());
+        Assert.IsType<PyTuple>(await JumpAsync(rig, session, oid, character.ShipId));
+        Assert.Contains(rig.Sim.Heard, m => m is SimCommand { Code: SimCommands.Jump });
+    }
+
+    [PgFact]
+    public async Task A_gate_toll_is_charged_once_when_the_jump_is_taken_and_refused_when_the_wallet_cannot_pay_or_the_simulation_refuses()
+    {
+        var (rig, character, session) = await DockedAsync();
+        await using var _ = rig;
+        await InSpaceAsync(rig, session);
+        var oid = await rig.BindBeyonceAsync(session);
+        Events.Of(session);
+        // the gate of the rig's jump has a toll: the minimum for a small ship, 10000 ISK (client alignmentBasedToll, the wiki's "starts at 10k")
+        var toll = new Eve.Universe.AlignmentToll(0.015, 1.1, -100_000, 10_000, 0.0, [500011, 500010]);
+        rig.Space.GateRules = new Eve.Services.Space.Gates.GateRules(
+            new Dictionary<long, int>(), new Dictionary<int, IReadOnlySet<int>>(), new Dictionary<long, long>(),
+            new Dictionary<long, int> { [Gate] = 77918 }, new Dictionary<int, Eve.Universe.AlignmentToll> { [77918] = toll });
+        var charges = new List<(long Character, decimal Amount, string Key)>();
+        var refunds = new List<(long Character, decimal Amount, string Key)>();
+        var payable = true;
+        rig.Space.ChargeGateToll = (characterId, amount, key, _) => { charges.Add((characterId, amount, key)); return Task.FromResult(payable); };
+        rig.Space.RefundGateToll = (characterId, amount, key, _) => { refunds.Add((characterId, amount, key)); return Task.CompletedTask; };
+
+        // a jump the wallet cannot pay is refused, and the simulation hears nothing
+        payable = false;
+        var unpaid = await Assert.ThrowsAsync<MachoWrappedException>(() => JumpAsync(rig, session, oid, character.ShipId));
+        Assert.Equal("CustomNotify", unpaid.Error.UserErrorMessage);
+        Assert.DoesNotContain(rig.Sim.Heard, m => m is SimCommand { Code: SimCommands.Jump });
+        Assert.Empty(refunds);
+        charges.Clear();
+
+        // a paid jump is charged once and taken
+        payable = true;
+        Assert.IsType<PyTuple>(await JumpAsync(rig, session, oid, character.ShipId));
+        Assert.Single(charges);
+        Assert.Equal((character.CharacterId, 10_000m), (charges[0].Character, charges[0].Amount));
+        Assert.StartsWith("gate-toll:", charges[0].Key);
+        Assert.Contains(rig.Sim.Heard, m => m is SimCommand { Code: SimCommands.Jump });
+
+        // a jump the simulation refuses gets the toll back under its refund key
+        charges.Clear();
+        rig.Sim.JumpAnswer = new CommandReply(false, 0, "TOO_FAR_FROM_STARGATE");
+        await Assert.ThrowsAsync<MachoWrappedException>(() => JumpAsync(rig, session, oid, character.ShipId));
+        Assert.Single(charges);
+        Assert.Single(refunds);
+        Assert.Equal((character.CharacterId, 10_000m, charges[0].Key + ":refund"), refunds[0]);
     }
 
     [PgFact]
@@ -3132,7 +3208,7 @@ public class SpaceServiceTests
     [Fact]
     public void Fleet_added_bound_manager_and_proxy_rpcs_are_registered_for_dispatch()
     {
-        using var source = Npgsql.NpgsqlDataSource.Create("Host=127.0.0.1;Database=unused;Username=unused;Password=unused");
+        using var source = Npgsql.NpgsqlDataSource.Create(Eve.Data.PgConnection.ForTest("Host=127.0.0.1;Database=unused;Username=unused;Password=unused"));
         var store = new Eve.Services.Space.FleetStore(source);
         Eve.Services.IService bound = new Eve.Services.Space.FleetObjectService(store, () => Rig.ClockMs);
         Eve.Services.IService manager = new Eve.Services.Space.FleetManagerService(store);

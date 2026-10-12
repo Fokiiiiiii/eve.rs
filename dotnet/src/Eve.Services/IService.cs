@@ -36,7 +36,7 @@ public interface IReusableBoundObject
 public sealed record PyDeferred(Func<DeferredContext, Task> Start) : PyValue;
 
 /// <summary>What a deferred response needs to reply once its work is done.</summary>
-public sealed class DeferredContext(Eve.Macho.MachoPacket packet, ClientSession session, string? responseServiceName, Action<PyValue> reply)
+public sealed class DeferredContext(Eve.Macho.MachoPacket packet, ClientSession session, string? responseServiceName, Action<PyValue> reply, Action provisional)
 {
     public Eve.Macho.MachoPacket Packet { get; } = packet;
 
@@ -46,6 +46,9 @@ public sealed class DeferredContext(Eve.Macho.MachoPacket packet, ClientSession 
 
     /// <summary>Sends the call response.</summary>
     public void Reply(PyValue result) => reply(result);
+
+    /// <summary>Tells the client the call is still in progress and the answer follows (the reference's OnAgentProvisionalResponse).</summary>
+    public void Provisional() => provisional();
 }
 
 /// <summary>

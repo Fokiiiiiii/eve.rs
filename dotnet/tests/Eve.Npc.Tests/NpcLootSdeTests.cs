@@ -9,7 +9,7 @@ public sealed class NpcLootSdeTests
 {
     private static async Task<NpcLoot> LoadAsync()
     {
-        await using var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(BountyRig.Url!));
+        await using var source = NpgsqlDataSource.Create(PgConnection.ForTest(BountyRig.Url!));
         var sde = new SdeReader(source);
         Assert.True(await sde.BuildAsync() is not null, "no SDE is loaded: run `cargo run -p eve-sde -- ensure --pg $EVE_PG_URL`");
         return await NpcLoot.LoadAsync(sde);

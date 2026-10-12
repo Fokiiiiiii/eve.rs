@@ -21,6 +21,7 @@ public sealed class ClientSession
 {
     private readonly Dictionary<string, PyValue> _attributes = new(StringComparer.Ordinal);
     private readonly object _gate = new();
+    private readonly Dictionary<long, Action<PyValue?>> _clientCalls = new();
 
     public ClientSession(IPacketSink? sink = null) => Sink = sink;
 
@@ -192,6 +193,30 @@ public sealed class ClientSession
     /// Sends the client a named event (<c>OnServerSkillsChanged</c>, ...) addressed by <paramref name="idType"/> (<c>charid</c>,
     /// <c>clientID</c>, ...). The session numbers its notifications from 0.
     /// </summary>
+    /// <summary>
+    /// Calls a client service and runs <paramref name="onResponse"/> with the client's answer (null when the client
+    /// cancels it). False when there is no sink to send to (EveJS sendClientCallRequest returns null then).
+    /// </summary>
+    public bool SendClientCall(string service, string method, IReadOnlyList<PyValue> args, Action<PyValue?> onResponse, PyDict? kwargs = null)
+    {
+        if (Sink is null) return false;
+        var callId = ClientCallRequest.NextCallId();
+        lock (_gate) _clientCalls[callId] = onResponse;
+        Send(ClientCallRequest.Build(ClientId, UserId ?? 0, service, method, args, callId, kwargs));
+        return true;
+    }
+
+    /// <summary>The client's CallRsp to a call of <see cref="SendClientCall"/>: its answer, unwrapped, goes to the callback once.</summary>
+    public void CompleteClientCall(long callId, PyValue? answer)
+    {
+        Action<PyValue?>? onResponse;
+        lock (_gate)
+        {
+            if (!_clientCalls.Remove(callId, out onResponse)) return;
+        }
+        onResponse(answer);
+    }
+
     public void SendNotification(string name, string idType, params PyValue[] args)
     {
         lock (_gate)

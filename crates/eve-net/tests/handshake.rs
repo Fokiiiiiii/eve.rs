@@ -104,8 +104,17 @@ async fn a_login_completes_and_the_client_sees_what_the_evecli_tests_expect() {
     assert_eq!(dict_get(&session.session_init, "languageID").and_then(text_of).as_deref(), Some("EN"));
     assert_eq!(dict_get(&session.session_init, "countryCode").and_then(text_of).as_deref(), Some("GB"));
     assert_eq!(dict_get(&session.session_init, "userType").and_then(int_of), Some(30));
-    assert_eq!(dict_get(&session.session_init, "role").and_then(int_of), Some(0x1_0000_0000_0000));
+    // the account's role plus the base bits every login session has
+    let account_role: u64 = 0x1_0000_0000_0000;
+    assert_eq!(
+        dict_get(&session.session_init, "role").and_then(int_of),
+        Some((account_role | handshake::SESSION_BASE_ROLE) as i64)
+    );
     assert_eq!(dict_get(&session.session_init, "address").and_then(text_of).as_deref(), Some("127.0.0.1"));
+    // the reference's keys, in its order; maxSessionTime is not sent (the client reads it only behind a guard)
+    let keys: Vec<String> = session.session_init.iter().filter_map(|(key, _)| text_of(key)).collect();
+    assert_eq!(keys, ["languageID", "countryCode", "userid", "userType", "role", "address", "inDetention"]);
+    assert_eq!(dict_get(&session.session_init, "inDetention"), Some(&Value::None));
 
     // the authentication result the client reads after its login (connectionService.LoginSso, GPS.py merge): both keys are
     // present, None for a password login
@@ -123,6 +132,39 @@ async fn a_login_completes_and_the_client_sees_what_the_evecli_tests_expect() {
         dict_get(config, "imageserverurl").and_then(text_of).as_deref(),
         Some("http://127.0.0.1:26001/")
     );
+}
+
+#[tokio::test]
+async fn a_normal_account_logs_in_with_the_base_role_bits_only() {
+    // Recording grants the account role 0, an ordinary player (EveJS isGM:false, eve.rs NewAccountRole default)
+    let (_, session) = run(Recording(Mutex::new(Vec::new())), "pilot").await;
+    let session = session.unwrap();
+    assert_eq!(dict_get(&session.session_init, "role").and_then(int_of), Some(0x6000_0000_8000_0000));
+    // ROLE_LOGIN (bit 62), ROLE_PLAYER (bit 61) and ROLE_IGB (bit 31)
+    let role = dict_get(&session.session_init, "role").and_then(int_of).unwrap() as u64;
+    assert!(role & (1 << 62) != 0 && role & (1 << 61) != 0 && role & (1 << 31) != 0);
+    assert_eq!(role & (1 << 56), 0, "no ROLE_ADMIN for an ordinary account");
+}
+
+#[tokio::test]
+async fn the_cluster_user_count_is_at_least_one_while_the_first_login_is_made() {
+    // no session is open yet: the reference still reports one user (EveJS getClusterUserCount)
+    let (client_end, server_end) = duplex(1 << 16);
+    let mut empty = environment();
+    empty.user_count = 0;
+    let server = tokio::spawn(async move {
+        let (read, mut write) = split(server_end);
+        let mut reader = FrameReader::new(read, MAX_FRAME);
+        handshake::perform(&mut reader, &mut write, &Accept(7), &empty, "127.0.0.1", 1_790_646_377_000).await
+    });
+    let (read, mut write) = split(client_end);
+    let mut reader = FrameReader::new(read, MAX_FRAME);
+    let session = client::login(&mut reader, &mut write, "pilot", &[0xAB; 20], "EN").await.unwrap();
+    drop(reader);
+    drop(write);
+    server.await.unwrap().unwrap();
+    assert_eq!(int_of(&session.server_version[2]), Some(1), "the version tuple's cluster user count");
+    assert_eq!(dict_get(&session.handshake, "cluster_usercount").and_then(int_of), Some(1));
 }
 
 #[test]

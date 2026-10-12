@@ -137,6 +137,8 @@ internal sealed partial class CharacterServicesComposition
             Env("EVE_LP_STORE_SEED", "auto") == "skip" ? null : new Eve.Wallet.EsiLpStoreOffers(lpStoreHttp, Eve.Wallet.EsiLpStoreOffers.DefaultBase),
             () => DateTimeOffset.UtcNow,
             message => Console.Error.WriteLine($"eve-host: lp store: {message}"));
+        lpStorePurchases = new Eve.Services.Wallet.LpStorePurchases(source, walletSchema, economyWallets, loyaltyPoints, items,
+            (typeId, token) => itemTypes.GetAsync(typeId, token), lpStoreCache);
         loyaltyAnnouncer = new LoyaltyPointAnnouncer(loyaltyPoints, characterSessions);
         insuranceReadModel = new PersistenceInsuranceReadModel(mailStore);
         insuranceWriteModel = new PersistenceInsuranceWriteModel(

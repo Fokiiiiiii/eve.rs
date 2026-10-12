@@ -34,7 +34,8 @@ public sealed record MissionStatic(
     long? InitialAgentGiftTypeId,
     long InitialAgentGiftQuantity,
     IReadOnlyList<(long Id, double Value)> ExtraStandings,
-    IReadOnlyDictionary<string, string> EnglishMessages);
+    IReadOnlyDictionary<string, string> EnglishMessages,
+    long NameId);
 
 /// <summary>The dungeon answer of a kill mission: its official dungeon ID, and the content (never available here) with its reason.</summary>
 public sealed record MissionDungeonAnswer(long MissionId, long? DungeonId, bool OfficialContent, string Reason);
@@ -45,8 +46,10 @@ public sealed record MissionAvailabilityAnswer(long MissionId, long? ArcId, stri
 /// <summary>One step of an epic arc: the mission, the agent who gives it and the steps that follow it.</summary>
 public sealed record EpicArcStep(long MissionId, long AgentId, IReadOnlyList<long> NextMissionIds, long? FailMissionId);
 
-/// <summary>One record of CCP's <c>epicArcs</c> table.</summary>
-public sealed record EpicArcStatic(long ArcId, string NameEn, long RestartIntervalSeconds, long? FactionId, long? IconId, IReadOnlyList<EpicArcStep> Steps);
+/// <summary>
+/// One record of CCP's <c>epicArcs</c> table. <c>arcRestartInterval</c> is in minutes (129600 is the wiki's ninety days).
+/// </summary>
+public sealed record EpicArcStatic(long ArcId, string NameEn, long RestartIntervalMinutes, long? FactionId, long? IconId, IReadOnlyList<EpicArcStep> Steps);
 
 /// <summary>
 /// The official mission data (CCP SDE build 3405148, schema <c>sde_mission</c>): the mission records and the epic arcs.
@@ -64,8 +67,11 @@ public sealed class MissionStaticCatalog
     private readonly IReadOnlyList<EpicArcStatic> _arcs;
     private readonly Dictionary<long, List<(long ArcId, EpicArcStep Step)>> _stepsByAgent;
     private readonly Dictionary<long, long> _arcByMission;
+    private readonly Dictionary<long, EpicArcStep> _stepByMission = new();
     private readonly EpicArcAvailability _availability;
     private readonly bool _includeUnavailableArcs;
+    private readonly IReadOnlyDictionary<long, string> _siteStatus;
+    private readonly bool _includeGenericArcs;
 
     private readonly MissionLevelTags _levels;
 
@@ -76,13 +82,17 @@ public sealed class MissionStaticCatalog
         IEnumerable<EpicArcStatic> arcs,
         MissionLevelTags levels,
         EpicArcAvailability availability,
-        bool includeUnavailableArcs)
+        bool includeUnavailableArcs,
+        IReadOnlyDictionary<long, string> siteStatus,
+        bool includeGenericArcs)
     {
         Build = build;
         UnavailableReason = unavailableReason;
         _levels = levels;
         _availability = availability;
         _includeUnavailableArcs = includeUnavailableArcs;
+        _siteStatus = siteStatus;
+        _includeGenericArcs = includeGenericArcs;
         _missions = missions.ToDictionary(mission => mission.MissionId);
         _arcs = arcs.OrderBy(arc => arc.ArcId).ToArray();
         _stepsByAgent = new Dictionary<long, List<(long ArcId, EpicArcStep Step)>>();
@@ -95,6 +105,7 @@ public sealed class MissionStaticCatalog
                     _stepsByAgent[step.AgentId] = steps = [];
                 steps.Add((arc.ArcId, step));
                 _arcByMission.TryAdd(step.MissionId, arc.ArcId);
+                _stepByMission.TryAdd(step.MissionId, step);
             }
         }
     }
@@ -124,6 +135,18 @@ public sealed class MissionStaticCatalog
         !IsLoaded || !_stepsByAgent.TryGetValue(agentId, out var steps)
             ? NoIds
             : steps.Where(step => IsOfferable(step.ArcId)).Select(step => step.Step.MissionId).Distinct().Order().ToArray();
+
+    /// <summary>
+    /// A talk step: an epic arc step with neither a kill nor a courier objective, completed by talking to the agent of the step that follows it.
+    /// </summary>
+    public bool IsTalkStep(long missionId) =>
+        _stepByMission.ContainsKey(missionId) && Mission(missionId) is { Kill: null, Courier: null };
+
+    /// <summary>The agents of the steps that follow an arc step (the agent a talk step is completed with).</summary>
+    public IReadOnlyList<long> NextAgentsOf(long missionId) =>
+        _stepByMission.TryGetValue(missionId, out var step)
+            ? step.NextMissionIds.Where(_stepByMission.ContainsKey).Select(next => _stepByMission[next].AgentId).Distinct().ToArray()
+            : NoIds;
 
     /// <summary>
     /// The mission IDs the server disables. eve.rs disables none; see <see cref="MissionDataGaps.DisabledMissions"/>.
@@ -168,12 +191,14 @@ public sealed class MissionStaticCatalog
         }
         var missionRows = await reader.ReadAsync("missions", cancellationToken: cancellationToken);
         var arcRows = await reader.ReadAsync("epicArcs", cancellationToken: cancellationToken);
-        return FromRows(build, missionRows, arcRows, levels ?? MissionLevelTags.LoadDefault(), EpicArcAvailability.Committed, IncludeUnavailableFromEnvironment());
+        return FromRows(build, missionRows, arcRows, levels ?? MissionLevelTags.LoadDefault(), EpicArcAvailability.Committed, IncludeUnavailableFromEnvironment(),
+            MissionSiteStatus.Committed, IncludeGenericFromEnvironment());
     }
 
     /// <summary>A catalog that holds no mission and says why. Its level tags are still answered.</summary>
     public static MissionStaticCatalog Unavailable(string reason, MissionLevelTags? levels = null) =>
-        new(null, reason, [], [], levels ?? MissionLevelTags.Committed, EpicArcAvailability.Committed, IncludeUnavailableFromEnvironment());
+        new(null, reason, [], [], levels ?? MissionLevelTags.Committed, EpicArcAvailability.Committed, IncludeUnavailableFromEnvironment(),
+            new Dictionary<long, string>(), IncludeGenericFromEnvironment());
 
     /// <summary>The catalog of already-read rows of the two tables (the tests build their fixtures this way).</summary>
     public static MissionStaticCatalog FromRows(
@@ -182,7 +207,9 @@ public sealed class MissionStaticCatalog
         IReadOnlyList<SdeRow> arcs,
         MissionLevelTags? levels = null,
         EpicArcAvailability? availability = null,
-        bool includeUnavailableArcs = false) =>
+        bool includeUnavailableArcs = false,
+        IReadOnlyDictionary<long, string>? siteStatus = null,
+        bool includeGenericArcs = false) =>
         new(
             build,
             null,
@@ -190,7 +217,36 @@ public sealed class MissionStaticCatalog
             arcs.Select(row => ParseArc(row.Key, row.Doc)),
             levels ?? MissionLevelTags.Committed,
             availability ?? EpicArcAvailability.Committed,
-            includeUnavailableArcs);
+            includeUnavailableArcs,
+            siteStatus ?? new Dictionary<long, string>(),
+            includeGenericArcs);
+
+    /// <summary>
+    /// The switch that offers the epic arc steps whose kill sites are generic (a family rule, not client data). Off by default
+    /// (owner decision: held back until the content is complete). It is read from <c>EVE_MISSION_INCLUDE_GENERIC_ARCS</c> (<c>1</c> or <c>true</c>).
+    /// A step whose site is missing is never offered.
+    /// </summary>
+    public const string IncludeGenericVariable = "EVE_MISSION_INCLUDE_GENERIC_ARCS";
+
+    public static bool IncludeGenericFromEnvironment() =>
+        Environment.GetEnvironmentVariable(IncludeGenericVariable) is "1" or "true";
+
+    /// <summary>True when the switch offers the arc steps with generic sites.</summary>
+    public bool IncludesGenericArcs => _includeGenericArcs;
+
+    /// <summary>The site status of a step with a kill objective (<see cref="MissionSiteStatus"/>), or null when the step has none recorded.</summary>
+    public string? SiteStatusOf(long missionId) => _siteStatus.GetValueOrDefault(missionId);
+
+    /// <summary>
+    /// Whether an arc step is held back from offers: a missing site always; a generic site unless the switch is on.
+    /// A step with no recorded site status is not held back.
+    /// </summary>
+    public bool IsHeldBack(long missionId) => SiteStatusOf(missionId) switch
+    {
+        MissionSiteStatus.Missing => true,
+        MissionSiteStatus.Generic => !_includeGenericArcs,
+        _ => false,
+    };
 
     /// <summary>
     /// The switch that offers the arcs not known to be in the client build. Off by default: only <c>in-client-build</c> arcs
@@ -307,7 +363,8 @@ public sealed class MissionStaticCatalog
             Optional(doc, "initialAgentGiftTypeID"),
             Integer(doc, "initialAgentGiftQuantity"),
             extra,
-            messages.AsReadOnly());
+            messages.AsReadOnly(),
+            Integer(doc, "nameID"));
     }
 
     private static EpicArcStatic ParseArc(long arcId, JsonElement doc)

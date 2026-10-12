@@ -419,8 +419,31 @@ private readonly TransitionRuntime _transitions;
     /// <summary>The directional scan (set by the composition root): the scanMgr's ConeScan answers through it.</summary>
     public Scanning.SpaceDirectionalScans? DirectionalScans { get; set; }
 
-    public Task LaunchAsync(ClientSession session, long moduleId, int count, CancellationToken cancellationToken) =>
-        (Probes ?? throw Notify("Scanner probes are not wired on this server.")).LaunchAsync(session, moduleId, count, cancellationToken);
+    /// <summary>The stargate rules of the client data and the SDE (set by the composition root): the ship lists of the gates, the tolls and the destinations.</summary>
+    public Gates.GateRules? GateRules { get; set; }
+
+    /// <summary>Charges a gate toll to a character's wallet (set by the composition root): false when the wallet cannot pay.</summary>
+    public Func<long, decimal, string, CancellationToken, Task<bool>>? ChargeGateToll { get; set; }
+
+    /// <summary>Refunds a gate toll whose jump the simulation did not take (set by the composition root).</summary>
+    public Func<long, decimal, string, CancellationToken, Task>? RefundGateToll { get; set; }
+
+    /// <summary>The emanation locks of the restricted systems (Zarzakh), in memory.</summary>
+    private readonly Gates.EmanationLocks _emanationLocks = new();
+
+    /// <summary>Whether the session's system allows scanning (the client's disallowScanning flag is not set; no system is false for nothing).</summary>
+    public bool ScanningAllowedFor(ClientSession session) =>
+        SolarSystemOf(session) is not int system || _systems.Get(system) is not { DisallowScanning: true };
+
+    public Task LaunchAsync(ClientSession session, long moduleId, int count, CancellationToken cancellationToken)
+    {
+        // the client's disallowScanning flag: its probe window closes in such a system and it names no refusal, so the wording is ours
+        if (!ScanningAllowedFor(session))
+        {
+            throw Notify("Scanner probes cannot be launched in this system.");
+        }
+        return (Probes ?? throw Notify("Scanner probes are not wired on this server.")).LaunchAsync(session, moduleId, count, cancellationToken);
+    }
 
     public Task RecallAsync(ClientSession session, long probeId, CancellationToken cancellationToken) =>
         (Probes ?? throw Notify("Scanner probes are not wired on this server.")).RecallAsync(session, probeId, cancellationToken);

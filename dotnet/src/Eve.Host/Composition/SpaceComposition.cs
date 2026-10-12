@@ -41,6 +41,7 @@ internal sealed partial class CharacterServicesComposition
     {
         try
         {
+            PutInSpaceAgents(solarSystemId);
             if (cosmicSites is { } director)
                 await director.EnsureAsync(solarSystemId);
             // the containers the fill has just placed go into the scene at once (a pilot's entry restores the rest)
@@ -167,11 +168,46 @@ internal sealed partial class CharacterServicesComposition
                 });
             var npcWrecks = new NpcWrecks(npcAuthority, () => NpcLoot.LoadAsync(sde), ships);
             spaceSessions = new SpaceSessions(sim, ships, dogma, stations, solarSystems, now, message => Console.Error.WriteLine($"eve-host: space: {message}"), localTimers: foundations.LocalTimers, spaceItems: spaceItemStore) { RookieShipOfRace = race => catalog.Race(race)?.ShipTypeId, Npcs = new NpcSelector(npcAuthority), NpcWrecks = npcWrecks, BeltRats = new BeltRats(npcAuthority, BeltRatConfig.FromEnvironment(Environment.GetEnvironmentVariable), type => NpcHull.HasHitPoints(dogma.Type(type))), AutoReloadUsers = AutoReloadUserIds(Env("EVE_AUTO_RELOAD_ACCOUNTS", "")) };
+            // the stargate lists and tolls of the client export (EVE_CLIENT_SDE_DIR); unset means none are loaded
+            var clientDirectory = Env(Eve.Universe.ClientSystemFlags.DirectoryVariable, "");
+            if (string.IsNullOrWhiteSpace(clientDirectory))
+            {
+                Console.Error.WriteLine($"eve-host: {Eve.Universe.ClientSystemFlags.DirectoryVariable} is not set: stargate lists and alignment tolls are disabled");
+            }
+            spaceSessions.GateRules = await Eve.Services.Space.Gates.GateRules.LoadAsync(sde, clientDirectory);
+            // the gate toll is journaled as a sink: no source names a payee, so no wallet is credited (DEVIATIONS, slice 3)
+            var tollWallets = new Eve.Wallet.WalletTransactions(source, walletSchema);
+            spaceSessions.ChargeGateToll = async (character, amount, key, token) =>
+            {
+                await using var connection = await source.OpenConnectionAsync(token);
+                await using var transaction = await connection.BeginTransactionAsync(token);
+                try
+                {
+                    await tollWallets.AdjustAsync(connection, transaction, character, -amount, 0, Eve.Services.Space.Gates.GateRules.AlignmentBasedGateTollRefType,
+                        "Gate toll", now(), key, token);
+                }
+                catch (Eve.Wallet.InsufficientFundsException)
+                {
+                    return false;
+                }
+                await transaction.CommitAsync(token);
+                return true;
+            };
+            spaceSessions.RefundGateToll = async (character, amount, key, token) =>
+            {
+                await using var connection = await source.OpenConnectionAsync(token);
+                await using var transaction = await connection.BeginTransactionAsync(token);
+                await tollWallets.AdjustAsync(connection, transaction, character, amount, 0, Eve.Services.Space.Gates.GateRules.AlignmentBasedGateTollRefType,
+                    "Gate toll refund", now(), key, token);
+                await transaction.CommitAsync(token);
+            };
             var undockContraband = await UndockContraband.LoadAsync(sde, items, solarSystems);
             spaceSessions.InspectUndockContrabandAsync = undockContraband.InspectAsync;
             npcWrecks.Warm();
             // the periodic work of the space features is jobs of the shared scheduler, not timers of their own
             spaceSessions.UseBounties(new PgBountyStore(source, new WalletTransactions(source, walletSchema), npcSchema, message => Console.Error.WriteLine($"eve-host: bounty: {message}")));
+            spaceSessions.Ess = Ess;   // the Main Bank share of a bounty earned in an ESS system
+            await PlaceEssBallsAsync(sim);   // each ESS is a ball in space, so a pilot in its system can link to it
             spaceSessions.Events = foundations.Events;   // what happens in space is announced on the bus as well
             spaceSessions.BuffStore = new Eve.Ships.PgShipBuffStore(source, spaceSchema);   // the buffs a restart keeps (track C8)
             ships.TransitionEventWriter = spaceSessions.Transitions.WriteEventAsync;
@@ -282,10 +318,21 @@ internal sealed partial class CharacterServicesComposition
             var bounties = spaceSessions;
             foundations.Scheduler.Register("space.bounty.pay", async (_, token) => await bounties.PayBountiesAsync(token));
             await foundations.Scheduler.EnsureRecurringAsync("space.bounty.pay", "pay", TimeSpan.FromSeconds(10));
+            foundations.Scheduler.Register("space.ess.tick", async (_, token) => await TickEssAsync(token));
+            await foundations.Scheduler.EnsureRecurringAsync("space.ess.tick", "tick", TimeSpan.FromSeconds(10));
             spaceContainers = new SpaceContainers(sim, ships, items, new PgSpaceItemStore(source, spaceSchema), new PgWorkCycleLedger(source, spaceSchema), new Eve.Services.Space.EventBusFacts(foundations.Events), dogma, spaceSessions, now, message => Console.Error.WriteLine($"eve-host: cans: {message}"), deployed: new PgDeployedStore(source, spaceSchema), scheduler: foundations.Scheduler);
 
             spaceContainers.SiteContainers = siteContainers;
-            spaceSessions.HackableContainers = new Eve.Services.Space.SiteContainerHacks(source, siteContainers, items, foundations.Events, () => foundations.Scheduler.Now, id => spaceContainers.RemoveSiteContainer(id));            foundations.Scheduler.Register(Eve.Services.Space.SpaceContainers.AnchorJob, async (context, token) =>
+            // a container clears when its loot is taken: every move is announced in its transaction, and the container's hacks hear the moves it loses
+            items.Events = foundations.Events;
+            var siteContainerHacks = new Eve.Services.Space.SiteContainerHacks(source, siteContainers, items, foundations.Events, () => foundations.Scheduler.Now, id => spaceContainers.RemoveSiteContainer(id));
+            spaceSessions.HackableContainers = siteContainerHacks;
+            foundations.Events.Subscribe("site.container.emptied", [Eve.Inventory.PgItemStore.ItemMovedTopic], async (context, token) =>
+            {
+                if (context.Event.Json().TryGetProperty("previousLocationId", out var previous) && previous.TryGetInt64(out var previousLocationId))
+                    await siteContainerHacks.OnItemLeftAsync(context.Connection, context.Transaction, previousLocationId, token);
+            });
+            foundations.Scheduler.Register(Eve.Services.Space.SpaceContainers.AnchorJob, async (context, token) =>
                 await spaceContainers.AnchorAsync(context.Payload<Eve.Services.Space.SpaceContainers.DisruptorAnchorDue>()!.DeployableId, token));
             var containers = spaceContainers;
             var probes = new Eve.Services.Space.SpaceProbes(ships, dogma, new Eve.Ships.PgProbeStore(source, spaceSchema), spaceSessions, sim, now, message => Console.Error.WriteLine($"eve-host: probes: {message}"));
@@ -300,6 +347,7 @@ internal sealed partial class CharacterServicesComposition
                 Eve.Dungeons.DungeonCatalog.LoadEmbedded(), Eve.Dungeons.WaveRules.LoadEmbedded(), new NpcSelector(npcAuthority),
                 new Eve.Services.Space.SpaceDungeonNpcs(spaceSessions), spaceSchema);
             await dungeonWaves.AttachAsync();
+            dungeonWavesDirector = dungeonWaves;
             // the CONCORD Rogue Analysis Beacon (CRAB, D-L1 and D-S1): deployed from the hold, linked, scanned, expired by its own record kind
             await Eve.Services.Space.Beacons.AnalysisBeaconDirector.MigrateAsync(source, spaceSchema);
             var beacons = new Eve.Services.Space.Beacons.AnalysisBeaconDirector(
@@ -312,7 +360,9 @@ internal sealed partial class CharacterServicesComposition
             analysisBeacons = beacons;
             // the Sansha incursions (B-L1): their lifecycle, and their staging sites on the dungeon waves (B-S1); the map and the rewards read them
             await Eve.Services.Space.Incursions.IncursionDirector.MigrateAsync(source, spaceSchema);
-            var incursions = new Eve.Services.Space.Incursions.IncursionDirector(source, foundations.Content, foundations.Scheduler, dungeonWaves, solarSystems, spaceSchema);
+            stargateGraph = await Eve.Universe.StargateGraph.LoadAsync(sde);
+            var incursions = new Eve.Services.Space.Incursions.IncursionDirector(source, foundations.Content, foundations.Scheduler, dungeonWaves, foundations.Events, solarSystems,
+                stargateGraph, spaceSchema);
             await incursions.AttachAsync();
             incursionDirector = incursions;
             if (cosmicSites is { } sitesOfWaves)

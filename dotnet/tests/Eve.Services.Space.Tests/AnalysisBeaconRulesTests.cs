@@ -19,8 +19,8 @@ public class AnalysisBeaconRulesTests
         {
           "schema": "eve.rs/analysis-beacon-rules/v1",
           "beacons": [
-            { "typeId": 60244, "wave": { "atScanProgress": 0, "spawnPool": "rogue_drones", "amount": 4 }, "rewards": [ { "typeId": 60459, "quantity": 1441 } ] },
-            { "typeId": 92183, "wave": { "atScanProgress": 0, "spawnPool": "rogue_drones_deadspace_pve", "amount": 6 }, "rewards": [ { "typeId": 60473, "quantity": 1 } ] }
+            { "typeId": 60244, "waves": [ { "atScanProgress": 0, "spawnPool": "rogue_drones", "amount": 4 } ], "rewards": [ { "typeId": 60459, "quantity": 1441 } ] },
+            { "typeId": 92183, "waves": [ { "atScanProgress": 0, "spawnPool": "rogue_drones_deadspace_pve", "amount": 6 } ], "rewards": [ { "typeId": 60473, "quantity": 1 } ] }
           ]
         }
         """;
@@ -31,8 +31,8 @@ public class AnalysisBeaconRulesTests
         var rules = AnalysisBeaconRules.LoadEmbedded();
 
         Assert.Equal(2, rules.Types.Count);
-        Assert.Equal(new BeaconWaveRule("rogue_drones", 4), rules.For(60244)!.Wave);
-        Assert.Equal(new BeaconWaveRule("rogue_drones_deadspace_pve", 6), rules.For(92183)!.Wave);
+        Assert.Equal([new BeaconWaveRule(0, "rogue_drones", 4), new BeaconWaveRule(0.5, "rogue_drones", 4)], rules.For(60244)!.Waves);
+        Assert.Equal([new BeaconWaveRule(0, "rogue_drones_deadspace_pve", 6), new BeaconWaveRule(0.5, "rogue_drones_deadspace_pve", 6)], rules.For(92183)!.Waves);
         Assert.Equal([new BeaconRewardRule(60459, 1441), new BeaconRewardRule(60466, 1), new BeaconRewardRule(60464, 1)], rules.For(60244)!.Rewards);
         Assert.Equal([new BeaconRewardRule(60459, 2270), new BeaconRewardRule(60473, 1)], rules.For(92183)!.Rewards);
     }
@@ -60,7 +60,7 @@ public class AnalysisBeaconRulesTests
     }
 
     [Fact]
-    public void A_wave_at_another_scan_progress_is_refused_because_the_first_cut_does_not_build_it()
+    public void A_first_wave_not_at_scan_progress_zero_is_refused()
     {
         var error = Assert.Throws<InvalidDataException>(() => Parse(Valid.Replace("\"atScanProgress\": 0, \"spawnPool\": \"rogue_drones\"", "\"atScanProgress\": 0.5, \"spawnPool\": \"rogue_drones\"")));
 
@@ -72,7 +72,7 @@ public class AnalysisBeaconRulesTests
     {
         const string standardOnly = """
             { "schema": "eve.rs/analysis-beacon-rules/v1", "beacons": [
-              { "typeId": 60244, "wave": { "atScanProgress": 0, "spawnPool": "rogue_drones", "amount": 4 }, "rewards": [] } ] }
+              { "typeId": 60244, "waves": [ { "atScanProgress": 0, "spawnPool": "rogue_drones", "amount": 4 } ], "rewards": [] } ] }
             """;
 
         var error = Assert.Throws<InvalidDataException>(() => Parse(standardOnly));
@@ -96,7 +96,7 @@ public class AnalysisBeaconRulesTests
     [PgFact]
     public async Task The_beacon_types_and_their_reward_types_are_the_pinned_sde_records()
     {
-        await using var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
+        await using var source = NpgsqlDataSource.Create(PgConnection.ForTest(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
         var statics = await DogmaStatic.LoadAsync(new SdeReader(source));
         var rules = AnalysisBeaconRules.LoadEmbedded();
         var needed = rules.Types.Values.SelectMany(rule => rule.Rewards.Select(reward => reward.TypeId))
@@ -127,7 +127,7 @@ public class AnalysisBeaconRulesTests
     [PgFact]
     public async Task A_carrier_links_in_both_lists_and_a_titan_only_in_the_standard_one()
     {
-        await using var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
+        await using var source = NpgsqlDataSource.Create(PgConnection.ForTest(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
         var statics = await DogmaStatic.LoadAsync(new SdeReader(source));
         await statics.EnsureTypesAsync([23757, 11567]);
 

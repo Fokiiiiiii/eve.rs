@@ -137,9 +137,14 @@ public sealed class CosmicSiteDirector
             });
     }
 
-    /// <summary>The band of security a system's sites are chosen for, or null when it has none (a wormhole system, a system the static data does not have).</summary>
+    /// <summary>
+    /// Systems that get no sites: Zarzakh (30100000). The wiki names no site of it, and EveJS's site policy refuses them there, so none are placed.
+    /// </summary>
+    public static readonly IReadOnlySet<int> NoSiteSystems = new HashSet<int> { 30_100_000 };
+
+    /// <summary>The band of security a system's sites are chosen for, or null when it has none (a wormhole system, a system the static data does not have, a system in <see cref="NoSiteSystems"/>).</summary>
     public string? BandOf(int solarSystemId) =>
-        _systems.Get(solarSystemId) is not { } system || solarSystemId is >= 31_000_000 and <= 31_999_999
+        _systems.Get(solarSystemId) is not { } system || solarSystemId is >= 31_000_000 and <= 31_999_999 || NoSiteSystems.Contains(solarSystemId)
             ? null
             : Security.ClassFromLevel(system.Security) switch
             {
@@ -262,6 +267,13 @@ public sealed class CosmicSiteDirector
         var expires = _scheduler.Now + (long)Lifetime.TotalMilliseconds;
         foreach (var container in template.Containers)
         {
+            // the site table names no type for 213 of its containers (relics and graveyards): none is made up, and the site goes on
+            if (container.Types.Count == 0)
+            {
+                _log?.Invoke($"site {siteId}: the {container.Role} container of {template.Name} names no type and is not placed");
+                index += container.Count;
+                continue;
+            }
             for (var copy = 0; copy < container.Count; copy++, index++)
             {
                 var name = container.Types[(int)(SiteSeed.Hash($"{seed}:container:{index}") % (uint)container.Types.Count)];

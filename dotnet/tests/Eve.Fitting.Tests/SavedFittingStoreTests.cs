@@ -4,8 +4,11 @@ using Npgsql;
 namespace Eve.Fitting.Tests;
 
 /// <summary>The saved fittings: the rules of a draft (no database), and the store in PostgreSQL (a fresh schema per test, migrations applied).</summary>
-public class SavedFittingStoreTests
+public class SavedFittingStoreTests : IAsyncLifetime
 {
+    private readonly List<NpgsqlDataSource> _sources = [];
+    private readonly List<string> _schemas = [];
+
     private const long Character = 140_200_001, OtherCharacter = 140_200_002, Corporation = 98_200_001;
     private const int Tengu = 29984, Ibis = 601, Afterburner = 21857, DamageControl = 2046;
     private const long Now = 133_000_000_000_000_000L;
@@ -142,11 +145,36 @@ public class SavedFittingStoreTests
         Assert.Equal(expected.FitData, actual.FitData);
     }
 
-    private static async Task<(NpgsqlDataSource Source, string Schema)> FreshAsync()
+    private async Task<(NpgsqlDataSource Source, string Schema)> FreshAsync()
     {
-        var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(PgFactAttribute.Url!));
+        var source = NpgsqlDataSource.Create(PgConnection.ForTest(PgFactAttribute.Url!));
+        _sources.Add(source);
         var schema = "sfit_" + Guid.NewGuid().ToString("N")[..12];
+        _schemas.Add(schema);
         await PgModuleStateStore.MigrateAsync(source, schema);
         return (source, schema);
+    }
+
+    /// <summary>Drops this test's scratch schemas (a failed drop does not fail the test), then closes its sources.</summary>
+    public Task InitializeAsync() => Task.CompletedTask;
+
+    public async Task DisposeAsync()
+    {
+        foreach (var schema in _schemas)
+        {
+            try
+            {
+                await using var drop = _sources[0].CreateCommand($"DROP SCHEMA IF EXISTS \"{schema}\" CASCADE");
+                await drop.ExecuteNonQueryAsync();
+            }
+            catch (NpgsqlException)
+            {
+                // Leaving a scratch schema behind is better than failing the test.
+            }
+        }
+        foreach (var source in _sources)
+        {
+            await source.DisposeAsync();
+        }
     }
 }

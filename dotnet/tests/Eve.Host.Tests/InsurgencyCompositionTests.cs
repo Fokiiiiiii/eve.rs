@@ -59,7 +59,7 @@ public sealed class InsurgencyCompositionTests : IAsyncLifetime
         var url = Environment.GetEnvironmentVariable("EVE_PG_URL");
         if (url is not null)
         {
-            await using var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(url));
+            await using var source = NpgsqlDataSource.Create(PgConnection.ForTest(url));
             foreach (var schema in _schemas)
             {
                 await using var command = source.CreateCommand($"DROP SCHEMA IF EXISTS {schema} CASCADE");
@@ -96,7 +96,7 @@ public sealed class InsurgencyCompositionTests : IAsyncLifetime
     public async Task A_host_with_no_campaign_answers_the_empty_list_and_a_started_campaign_is_read_through_the_real_composition()
     {
         var url = Environment.GetEnvironmentVariable("EVE_PG_URL")!;
-        await using var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(url));
+        await using var source = NpgsqlDataSource.Create(PgConnection.ForTest(url));
         var host = await HostComposition.BuildAsync(Settings());
         var campaigns = host.Registry.Lookup("insurgencySolarsystem") ?? throw new InvalidOperationException("insurgencySolarsystem is not registered");
         var pilot = PilotIn(Jita, 501);

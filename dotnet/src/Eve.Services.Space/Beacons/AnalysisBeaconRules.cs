@@ -3,14 +3,14 @@ using System.Text.Json.Serialization;
 
 namespace Eve.Services.Space.Beacons;
 
-/// <summary>One Rogue Drone wave of a beacon: the NPC pool (an exact name of the NPC authority) and how many NPCs it makes.</summary>
-public sealed record BeaconWaveRule(string SpawnPool, int Amount);
+/// <summary>One Rogue Drone wave of a beacon: the scan progress (a fraction of the scan) it comes at, the NPC pool (an exact name of the NPC authority) and how many NPCs it makes.</summary>
+public sealed record BeaconWaveRule(double AtScanProgress, string SpawnPool, int Amount);
 
 /// <summary>One reward of a completed scan: an SDE item type and its quantity (owner decision D-C1).</summary>
 public sealed record BeaconRewardRule(int TypeId, int Quantity);
 
-/// <summary>The owner-decided figures of one beacon type: its one wave and its rewards.</summary>
-public sealed record BeaconTypeRule(int BeaconTypeId, BeaconWaveRule Wave, IReadOnlyList<BeaconRewardRule> Rewards);
+/// <summary>The owner-decided figures of one beacon type: its waves, in scan order (the first at progress 0), and its rewards.</summary>
+public sealed record BeaconTypeRule(int BeaconTypeId, IReadOnlyList<BeaconWaveRule> Waves, IReadOnlyList<BeaconRewardRule> Rewards);
 
 /// <summary>
 /// The CONCORD Rogue Analysis Beacon (CRAB) rules of eve.rs. CCP's figures are constants: the two beacon types (60244 standard, 92183 Carrier, group 4137), the activation
@@ -85,8 +85,8 @@ public sealed class AnalysisBeaconRules
         ?? throw new InvalidDataException($"the analysis beacon rules resource '{name}' is not embedded"));
 
     /// <summary>
-    /// Reads the rules: the schema, exactly the two beacon types, one wave each at scan progress 0 (the only trigger the first cut builds), a pool and an amount, and
-    /// rewards with a positive quantity. Anything else refuses the file.
+    /// Reads the rules: the schema, exactly the two beacon types, their waves (the first at scan progress 0, then later ones in order, each before the scan ends), a pool
+    /// and an amount for each, and rewards with a positive quantity. Anything else refuses the file.
     /// </summary>
     public static AnalysisBeaconRules Load(Func<string, Stream> open)
     {
@@ -104,18 +104,27 @@ public sealed class AnalysisBeaconRules
             {
                 throw new InvalidDataException($"the analysis beacon rules name type {entry.TypeId}, which is not a CRAB type once");
             }
-            if (entry.Wave is not { } wave || wave.AtScanProgress != 0)
+            if (entry.Waves is not { Count: > 0 } entries || entries[0].AtScanProgress != 0)
             {
-                throw new InvalidDataException($"beacon {entry.TypeId}: its wave must be the one at scan progress 0 (the other triggers are outside the first cut)");
+                throw new InvalidDataException($"beacon {entry.TypeId}: its first wave must be at scan progress 0");
             }
-            if (string.IsNullOrWhiteSpace(wave.SpawnPool) || wave.Amount < 1)
+            var waves = new List<BeaconWaveRule>();
+            foreach (var wave in entries)
             {
-                throw new InvalidDataException($"beacon {entry.TypeId}: the wave needs a spawn pool and an amount of one or more");
+                if (string.IsNullOrWhiteSpace(wave.SpawnPool) || wave.Amount < 1)
+                {
+                    throw new InvalidDataException($"beacon {entry.TypeId}: a wave needs a spawn pool and an amount of one or more");
+                }
+                if (wave.AtScanProgress < 0 || wave.AtScanProgress >= 1 || (waves.Count > 0 && wave.AtScanProgress <= waves[^1].AtScanProgress))
+                {
+                    throw new InvalidDataException($"beacon {entry.TypeId}: the waves must come at rising scan progress below the end of the scan");
+                }
+                waves.Add(new BeaconWaveRule(wave.AtScanProgress, wave.SpawnPool, wave.Amount));
             }
             var rewards = (entry.Rewards ?? []).Select(reward => reward.TypeId > 0 && reward.Quantity > 0
                 ? new BeaconRewardRule(reward.TypeId, reward.Quantity)
                 : throw new InvalidDataException($"beacon {entry.TypeId}: a reward needs a type and a quantity above zero")).ToList();
-            types[entry.TypeId] = new BeaconTypeRule(entry.TypeId, new BeaconWaveRule(wave.SpawnPool, wave.Amount), rewards);
+            types[entry.TypeId] = new BeaconTypeRule(entry.TypeId, waves, rewards);
         }
         if (!types.ContainsKey(StandardType) || !types.ContainsKey(CarrierType))
         {
@@ -134,7 +143,7 @@ public sealed class AnalysisBeaconRules
     private sealed class BeaconEntry
     {
         [JsonPropertyName("typeId")] public int TypeId { get; init; }
-        [JsonPropertyName("wave")] public WaveEntry? Wave { get; init; }
+        [JsonPropertyName("waves")] public List<WaveEntry>? Waves { get; init; }
         [JsonPropertyName("rewards")] public List<RewardEntry>? Rewards { get; init; }
     }
 

@@ -21,7 +21,7 @@ public class MissileFamilyDataTests
     [PgFact]
     public async Task The_missile_family_derived_from_the_static_data_is_exactly_the_eleven_missile_launcher_groups()
     {
-        await using var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
+        await using var source = NpgsqlDataSource.Create(PgConnection.ForTest(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
         var statics = await DogmaStatic.LoadAsync(new SdeReader(source));
 
         Assert.Equal(MissileFamilyGroups.Order(), statics.MissileLauncherGroups.Order());
@@ -39,7 +39,7 @@ public class MissileFamilyDataTests
     [PgFact]
     public async Task A_served_launcher_asked_for_its_fof_missile_is_refused_by_name_before_a_target_is_asked_for()
     {
-        await using var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
+        await using var source = NpgsqlDataSource.Create(PgConnection.ForTest(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
         var sde = new SdeReader(source);
         var statics = await DogmaStatic.LoadAsync(sde);
         var shipGroupIds = (await sde.ReadAsync("groups")).Where(row => row.Doc.GetProperty("categoryID").GetInt32() == 6).Select(row => row.Key).ToArray();

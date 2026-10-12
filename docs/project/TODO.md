@@ -18,8 +18,8 @@ Do not fabricate successful state or fake backends to close these items.
 | Status | Service/method | Missing work |
 |---|---|---|
 | FUTURE | machoNet single sign-on login (`connection.LoginSso`, the `user_sso_token` of `machoNet.Authenticate`) | The acknowledgement now carries `access_token` and `computer_hash` (None), so the client no longer fails on the keys. The token is not read: EveJS records it only (`authenticationService.js:281`), and no token-to-account rule exists. Needs a decision on how a CCP SSO token maps to an account. |
-| PARTLY | `insurgencySolarsystem.GetAllVisibleCampaigns`; `GetLocalCampaignClientSnapshot`; campaign notices | The campaign state machine, store and deadline jobs exist (section 49, `Eve.Insurgency`); the snapshot reads them through the Host and the notices go to covered systems. Open: a start trigger (no client or operator path starts a campaign, Q-INS-4), the FOB structure (structures owner; `structureID` is None until then), point producers (C-P1: corruption and suppression sites, spread), and the public gateway for per-system bars (C-G1, not built; see section 49). |
-| OPEN | `essMgr.GetDataForClientSolarSystem`; `GetMainBankTheftsForClientSolarSystem`; `GetReserveBankTheftsForClientSolarSystem`; `RequestMainBankUnlink`; `RequestReserveBankUnlink` | Connect the real ESS state and operation backend to `ReadSystemStateAsync` and `ExecuteAsync`. Do not synthesize thefts or unlink success. |
+| PARTLY | `insurgencySolarsystem.GetAllVisibleCampaigns`; `GetLocalCampaignClientSnapshot`; campaign notices | The campaign state machine, store and deadline jobs exist (section 49, `Eve.Insurgency`); the snapshot reads them through the Host and the notices go to covered systems. The start driver (hourly, SDE warzone regions) and the pirate site points are in (section 49). Open: the FOB structure (structures owner; `structureID` is None until then), the suppression producers and the spread at level 3, and the public gateway for per-system bars (C-G1, not built; see section 49). |
+| PARTLY | `essMgr.GetDataForClientSolarSystem`; `GetMainBankTheftsForClientSolarSystem`; `GetReserveBankTheftsForClientSolarSystem`; `RequestMainBankUnlink`; `RequestReserveBankUnlink`; `AttemptLinkToMainBank`; `AttemptLinkToReserveBank`; `RequestUnlockReserveBank` | The ESS store, the rules, the clock, the ESS ball, the link checks (in system, linkable hull, 10 km, ship change), the weapon timer, the quadrant gate and key consumption are real (`PgEssStore`, `EssRules`, `EssComposition`, `space.ess.tick`). Open: the live walk (no linkable hull can be granted to a test character), the single-transaction key consumption, and the owner decisions in DEVIATIONS "Encounter Surveillance System, slice ESS-2". |
 | OPEN | `abyssalMgr.ClientIsReady` | Connect the runtime client-ready path and automatic trace activation. No Abyssal runtime provider was found in the current C# source. |
 | OPEN | `scanMgr.SignalTrackerRegister` | The Host can record the character/session/system registration and has a full-state publish hook. The live signal snapshot producer and the code that calls the publisher are still absent. |
 | OPEN | `posMgr.GetControlTowers` | Connect rows from a real starbase/tower data source to `ReadControlTowerRowsCallback`. The route is present; no current tower provider was found. |
@@ -756,26 +756,103 @@ Open, each with its blocker:
 - NOT TESTED: a host jump to an anchored beacon and the simulation's arrival at it (the code path exists; no test drives it).
 - NOT RUN: the client.
 
-## 37. Services the client calls on demand, not yet advertised (slice A, 2026-10-10)
+## 37. Service table against the reference: the names eve.rs lacks and the names it adds (MITM parity, 2026-10-11)
 
-The reference advertises these 23 names; eve.rs does not register them, so it does not advertise them (DEVIATIONS.md, "Handshake, machoNet and the global config"). Each is listed with the slice that builds it. Advertise a name only with a real service behind it.
+The MITM run of `tests/test_live.py` (EVE.js 143 advertised names, eve.rs 171) gives 21 names the reference advertises that eve.rs
+does not, and 49 names eve.rs advertises that the reference does not. A name matters only if the V24.01 client calls it through a
+MachoNet route (`RemoteSvc`, `ProxySvc`, `ConnectToRemoteService`, `Moniker`) or a route table (`eveMachoNet.py`). Call sites are the
+first match in `/home/user/eve-logic`. Statuses: **OPEN** = the client calls it and eve.rs has no provider; **NOT NEEDED** = no
+remote call from the V24.01 client (reason given). Advertised names stay limited to registered services (DEVIATIONS.md, "Service
+table: the names left out").
 
-| Status | Name | Owner | Client call (eve-logic) |
+### 37a. Advertised by EVE.js, not by eve.rs (21)
+
+| Status | Name | Client evidence (eve-logic) | Owner / next step |
 |---|---|---|---|
-| OPEN | `corpStationMgr`, `itemLocking`, `ownerGroupManager`, `standing2`, `contractMgr`, `certificateMgr`, `tutorialSvc`, `bookmarkMgr` | Slice D / corporations / contracts | eveMoniker.py:111; corporation/itemLocking.py:27; not called in eve-logic (certificateMgr, tutorialSvc, bookmarkMgr, ownerGroupManager, standing2, contractMgr) |
-| OPEN | `accessGroupBookmarkMgr` | bookmarks: a handle at `bookmarkSvc.Initialize`, called on use (address book, bookmark menus); not at start-up (slice B2) | bookmarks/bookmarkSvc.py:40-41 |
-| OPEN | `blueprintManager` | industry, lazy: `blueprintSvc.Run` calls `GetLimits()` and reads `maxBlueprintResults`, so a window that starts it fails at once (slice B2: not at start-up; no source for the limit yet) | industry/blueprintSvc.py:22-25 |
-| OPEN | `repairSvc`, `reprocessingSvc` (`LPSvc` is registered since agents slice AG-1) | Slice D (station services) | eveMoniker.py:101, 227; station/repairshop/base_repairshop.py:58; loyaltyPointStore/lpStoreSvc.py:63 |
-| OPEN | `nes_intro` | storylines, lazy: the controller is built on the user's skip action only (slice B2) | storylines/client/nes_intro.py:45; airnpetracker.py:26 |
-| OPEN | `hackingMgr` | hacking minigame, lazy: the handle is made in `hackingUISvc.Run`, calls on use (slice B2) | eve/client/script/ui/hacking/hackingUISvc.py (Run) |
-| DONE (tests) | `FastCheckoutService` | plex store (fast checkout) | fastcheckout/client/fastCheckoutClientService.py:26, 76, 230-232 (`Message` == "OK"). `Eve.Services.Core/FastCheckoutService.cs`: flags, testing configuration, the nine PLEX packs, `BuyOffer` granted at no charge; `NewEdenStoreHostTests` |
-| DONE (tests) | Free real-money store: catalog and grants | storeManager.get_offers/can_purchase_offer/buy_offer, FastCheckoutService, store global-config keys | Owner policy: every real-money offer is granted at no charge; see DEVIATIONS "New Eden Store: real-money offers are granted free". Catalog `Data/new-eden-store.v1.json` (generated by `tools/dev/gen-new-eden-store-catalog.py` from EVE.js newEdenStore data). Tests: `NewEdenStoreCatalogTests`, `StoreOffersServiceTests`, `FastCheckoutServiceTests`, `NewEdenStoreHostTests` (PostgreSQL) |
-| DONE (tests) | Free real-money store: Omega and MCT grants | storeManager.buy_offer for `omega_30_days`, `cash_omega_*`, `mct_slot_30_days`, `cash_mct_*` | Granted at no charge. Omega extends the stored end time (`identity.accounts.subscription_end_at`) in the purchase transaction; MCT adds 30-day units to the training slots. Notifications after commit: OnSubscriptionChangedServer, OnSubscriptionTimeUpdateServer, OnMultipleCharactersTrainingUpdated. Tests: `NewEdenEntitlementHostTests`, `EntitlementRulesTests`, `CharacterTrainingTests` (PostgreSQL), `tools/headless-client/tests/test_store_entitlements_live.py` (live). Open: item-based MCT activation (see the userSvc row above). |
-| OPEN | Free real-money store: PLEX balance notice | client `on_balance_changed` after a purchase | The client refreshes PLEX from the eveProto message bus `BalanceChangedNotice` (plex/client/message_bus/notice_listener.py:21-24), which eve.rs does not serve. The balance is read on demand. |
-| OPEN | `loadService`, `tradeMgr`, `warRegistry`, `LSC`, `publicGatewaySvc`, `planetOrbitalRegistryBroker`, `structure` | cluster tool / local services / structures track (other Claude) | loadService.py:70-321; eveMachoNet.py:253; eveMoniker.py:197 (local); devtools only; gateway (client-local); eveplanet/orbital.py:35 |
-| OPEN | `objectCaching` (remote `GetCachableObject`) | required before any result is returned as a `CachedObject` reference (the proxy cache of EVE.js) | objectCaching.py:299-332 |
+| NOT NEEDED | `objectCaching` | Client-local service: `sm.GetService('objectCaching')` (`eve/client/script/ui/shared/bountySvc.py:236`) resolves to `eveObjectCaching` (`__replaceservice__`). A remote `GetCachableObject` is reached only for a `CachedObject` reference (`carbon/common/script/net/objectCaching.py:299-332`), which eve.rs never returns | DEVIATIONS "objectCaching is not a service here". Reopen with the proxy cache (section 37c) |
+| NOT NEEDED | `loadService` | Cluster load tool: `carbon/common/script/sys/loadService.py:70-321` (`ConnectToRemoteService`), no player path | none |
+| NOT NEEDED | `tutorialSvc` | No reference in the V24.01 client (only the marshal string table) | none |
+| NOT NEEDED | `bookmarkMgr` | No reference in the client; bookmarks call `accessGroupBookmarkMgr` (37a row below) | none |
+| NOT NEEDED | `certificateMgr` | No reference in the client | none |
+| NOT NEEDED | `contractMgr` | No reference in the client | none |
+| NOT NEEDED | `standing2` | No service reference (`standing2to1` is a field name). The client uses `standingMgr` (eve.rs serves it) | none |
+| NOT NEEDED | `LSC` | Developer tools only (`eve/devtools/script/tournamentRefereeTools.py:1422-1424`); player chat is XMPP | none |
+| NOT NEEDED | `publicGatewaySvc` | Client-local service (`publicGateway/publicGatewaySvc.py:25`, `svc.publicGatewaySvc`) that talks to the public gateway over gRPC, not MachoNet. The gateway itself is not built (owner decision 4, Insurgency) | DEVIATIONS (owner decision 4). Its start-up use is in `gameui.py:709-718` |
+| DONE | `trademgr` (`tradeMgr` routes here) | Direct trade end to end: `InitiateTrade` returns the trade moniker and notifies the target; the bound trade serves `List`, `Add`, `MultiAdd`, `GetSelfInvItem`, `OfferMoney`, `MakeOffer` and `Abort`; items are staged in the trade container and go back on abort; completion moves the items and the ISK in one transaction (Eve.Trade, schema `trade`, migration 001). Open: the graphical-client walk; ship-cargo staging and the item tradability check are not in the server rules (DEVIATIONS "Direct trade"). Tests: Eve.Trade.Tests (9, PostgreSQL), Eve.Services.Station.Tests (29). |
+| OPEN | `structure` | `Moniker('structure', ...)`, `eve/client/script/ui/services/menuSvcExtras/invItemFunctions.py:79` | Structures track (other Claude) |
+| OPEN | `ownerGroupManager` | `REMOTE_SERVICE_NAME`, `eve/client/script/ui/structure/accessGroups/accessGroupsController.py:14, 22` (structure access groups) | Structures track |
+| DONE (3a6d509) | `corpStationMgr` | `Moniker('corpStationMgr', stationID)`, `eve/common/script/net/eveMoniker.py:111`; routed to the station (`eveMachoNet.py:249`). Served: `DoStandingCheckForStationService` (SDE `stationStandingsRestrictions`), `MoveCorpHQHere`. Tests: `Eve.Corporations.Tests` (`CorpStationMgrTests`). DEVIATIONS "Corporation station door". | Corporation offices (done) |
+| DONE (3dc9b9b) | `itemLocking` | `sm.RemoteSvc('itemLocking')`, `eve/client/script/ui/services/corporation/itemLocking.py:27` (service `svc.lockedItems`, `Run`), lazy. Served: `GetItemsByLocation`, `GetLockedItemLocations`; locks from blueprint votes (migration 013, `item_locks`); push `OnLockedItemChange` after commit. Tests: `Eve.Corporations.Tests` (`ItemLockTests`). DEVIATIONS "Item locking". Open: ALSC container locks (inventory). | Corporation hangar locks (done) |
+| OPEN | `repairSvc` | `Moniker('repairSvc', ...)`, `eve/common/script/net/eveMoniker.py:227`, `eve/client/script/ui/station/repairshop/base_repairshop.py:58`; repair cycles touch ships (OUT-SHIP) | Station services; the ship part belongs to the ships track |
+| DONE | `repairSvc` | NPC station repair: `MachoBindObject` binds the repair shop of the docked station; `GetRepairQuotes` quotes ships (with their fitted and drone-bay items) and modules by damage in HP and unit cost (adjusted price x 0.1 / max HP); `RepairItemsInStation` charges and repairs in one PostgreSQL transaction (module state store, ref type 15), a fitted module in full only, a partial payment in the reference order. Open (DEVIATIONS "Repair"): structures refused, no repair without a price, no durable settlement, fitted module ids not aliased. Tests: `RepairServiceTests` (Station project, PostgreSQL). |
+| DONE | `reprocessingSvc` | Station reprocessing: `MachoBindObject` binds the plant of the docked NPC station; `GetQuotes` and `Reprocess` quote and consume the caller's items rooted at the station (hangar, containers, ship cargo), in one PostgreSQL transaction, and charge the tax through `WalletTransactions` (ref type 127). Yields: SDE station efficiency, skills, implants (legacy path), the tax from the standing; stacks above the client limit are split. Active ship refused on the server. Open (DEVIATIONS "Reprocessing"): corporation hangars, structures, randomized outputs, per-chunk quotes, live-client walk not run. Tests: `ReprocessingServiceTests`, `ReprocessingRulesTests` (Station project). |
+| DONE (543f31e) | `blueprintManager` | `sm.RemoteSvc('blueprintManager')`, `eve/client/script/industry/blueprintSvc.py:24`; `sm.GetService('blueprintManager').GetBlueprintType`, `eve/common/script/util/industryCommon.py:526` (lazy) Served: `GetLimits`, `GetBlueprintData`, `GetBlueprintDataByOwner`; facilities not modelled. Tests: `Eve.Services.Core.Tests` (`BlueprintManagerServiceTests`). DEVIATIONS "War registry, NES intro and blueprint manager". | Industry (done) |
+| DONE WITH CUTS (55e26a1) | `warRegistry` | `Moniker('warRegistry', ...)`, `eve/common/script/net/eveMoniker.py:198`, and the server-side check `sm.GetService('warRegistry').IsAllianceOrCorpLocal` at `eveMoniker.py:197` on alliance and corporation binds Served: `GetWars`, `IsAllianceOrCorpLocal`, `SetOpenForAllies`, `RetractMutualWar`; negotiations refused (not built). Tests: `Eve.Corporations.Tests` (`WarRegistryTests`). DEVIATIONS "War registry, NES intro and blueprint manager". | Wars (negotiations open) |
+| OPEN | `planetOrbitalRegistryBroker` | `ConnectToRemoteService('planetOrbitalRegistryBroker', nodeID)`, `eveplanet/orbital.py:35`; `Moniker` at `eveMoniker.py:220` | Planetary interaction (not on the start-up path) |
+| DONE (543f31e) | `nes_intro` | `sm.RemoteSvc('nes_intro')` in the controller's `__init__`, `storylines/client/nes_intro.py:45`; the controller is built on the first intro check (lazy) Served: `get_nes_intro_state`, `skip_nes_intro` (state table `nes_intro_states`, migration 0005); nothing sets an introduction to active, so the storyline is not run. Tests: `Eve.Characters.Tests` (`NesIntroStoreTests`), `Eve.Services.Core.Tests` (`NesIntroServiceTests`). | Storylines (intro not run) |
+| DONE WITH CUTS (448ea6a) | `accessGroupBookmarkMgr` | `sm.RemoteSvc('accessGroupBookmarkMgr')`, `eve/client/script/ui/shared/bookmarks/bookmarkSvc.py:41`; the first call is `GetMyActiveBookmarks` on the bookmark prime (`bookmarkSvc.py:163`), i.e. on use, not at boot. Served: personal folders, subfolders, bookmarks of stations and systems (schema `bookmarks`, `Eve.Bookmarks`). Open: shared (access group) folders (needs `ownerGroupManager`, structure track), `BookmarkLocation` in space, structure and celestial places. Tests: `Eve.Bookmarks.Tests`. DEVIATIONS "Bookmarks: personal folders". | Bookmarks (personal done; shared open) |
 
-Slice B (B2, 2026-10-10): no name on this list is needed during start-up (boot, login, character selection, station load). Every remote name a start-up path calls is registered, except the four lazy names above (`blueprintManager`, `accessGroupBookmarkMgr`, `hackingMgr`, `nes_intro`), and none of those is reached before a player acts. The start-up calls that are answered: `securityMgr.get_modified_systems` (an empty dictionary: no modified-security source yet), `loginCampaignManager`, `seasonalLoginCampaignManager`, `loginRewardFacilities` (character screen), `subscriptionMgr.GetCloneGrade`, `achievementTrackerMgr` (charid session change), `infoGatheringMgr.GetStateAndConfig` (gathering off), `mailMgr`, `account.GetCashBalance`.
+### 37b. Advertised by eve.rs, not by EVE.js (49)
+
+Every name below has a V24.01 client call site, except `abyssal_content_manager`, which only the developer tools call. `standingMgr` is
+also missing from EVE.js (its advertisement is `standing2`), so the gap is on the reference's side.
+
+| Name | First client call site (eve-logic) | Verdict |
+|---|---|---|
+| `ProjectDiscovery` | RemoteSvc at `eve/client/script/ui/station/loyaltyPointStore/lpStoreSvc.py:348` | real client service name |
+| `abyssalMgr` | RemoteSvc at `eve/client/script/ui/services/menuSvcExtras/movementFunctions.py:569` | real client service name |
+| `abyssal_content_manager` | RemoteSvc at `eve/devtools/script/abyssal_npc_spawn_tool.py:78` | devtools only (no player call) |
+| `achievementTrackerMgr` | RemoteSvc at `eve/client/script/ui/camera/enterSpaceCamera.py:40` | real client service name |
+| `bountyProxy` | ProxySvc at `eve/client/script/ui/shared/bountySvc.py:83` | real client service name |
+| `browserLockdownSvc` | RemoteSvc at `carbonui/control/browser/sites.py:327` | real client service name |
+| `colonyResourcesMgr` | RemoteSvc at `eve/client/script/ui/services/sovereigntyResourceSvc.py:272` | real client service name |
+| `communityTrackMgr` | RemoteSvc at `communitytracks/client/repository.py:84` | real client service name |
+| `crimewatch` | Moniker at `eve/common/script/net/eveMoniker.py:136` | real client service name |
+| `custom_agency_provider` | RemoteSvc at `agency/client/custom_content.py:10` | real client service name |
+| `devIndexManager` | RemoteSvc at `eve/client/script/ui/services/sovSvc.py:182` | real client service name |
+| `dungeon` | RemoteSvc at `eve/client/script/ui/inflight/dungeoneditor.py:142` | real client service name |
+| `dynamicItemService` | RemoteSvc at `eve/client/script/dogma/dynamicItemSvc.py:24` | real client service name |
+| `entity` | Moniker at `eve/common/script/net/eveMoniker.py:60` | real client service name |
+| `expertSystemMgr` | RemoteSvc at `expertSystems/client/service.py:34` | real client service name |
+| `fighterMgr` | RemoteSvc at `eve/client/script/parklife/fightersSvc.py:95` | real client service name |
+| `fleetMgr` | RemoteSvc at `eve/client/script/parklife/fleetSvc.py:367` | real client service name |
+| `fleetObjectHandler` | Moniker at `eve/common/script/net/eveMoniker.py:207` | real client service name |
+| `fleetProxy` | ProxySvc at `eve/client/script/parklife/fleetSvc.py:1891` | real client service name |
+| `fwVictoryPointMgr` | RemoteSvc at `eve/client/script/ui/services/fwVictoryPointSvc.py:36` | real client service name |
+| `hackingMgr` | RemoteSvc at `eve/client/script/ui/hacking/hackingUISvc.py:26` | real client service name |
+| `home_station` | RemoteSvc at `homestation/client/service.py:46` | real client service name |
+| `insurgencySolarsystem` | RemoteSvc at `eve/client/script/ui/services/insurgencyCampaignSvc.py:52` | real client service name |
+| `jumpTimers` | RemoteSvc at `eve/client/script/ui/services/crimewatchSvc.py:607` | real client service name |
+| `keeper` | RemoteSvc at `eve/client/script/ui/services/menuSvcExtras/movementFunctions.py:553` | real client service name |
+| `killRightMgr` | RemoteSvc at `eve/client/script/ui/shared/bountySvc.py:327` | real client service name |
+| `mailMgr` | RemoteSvc at `eve/client/script/ui/services/mail/mailSvc.py:79` | real client service name |
+| `mailingListsMgr` | RemoteSvc at `eve/client/script/ui/services/mail/mailingListsSvc.py:42` | real client service name |
+| `milestoneMgr` | RemoteSvc at `milestones/client/milestoneSvc.py:22` | real client service name |
+| `moonExtractions` | RemoteSvc at `eve/client/script/ui/moonmining/schedulingSvc.py:34` | real client service name |
+| `node_graph` | RemoteSvc at `nodegraph/client/service.py:144` | real client service name |
+| `notificationMgr` | RemoteSvc at `eve/client/script/ui/services/mail/notificationSvc.py:30` | real client service name |
+| `overviewPresetMgr` | RemoteSvc at `eve/client/script/ui/control/eveEditPlainText.py:157` | real client service name |
+| `paperDollServer` | RemoteSvc at `eve/client/script/ui/shared/preview.py:134` | real client service name |
+| `pingService` | ProxySvc at `carbon/client/script/remote/connectionService.py:189` | real client service name |
+| `populationCap` | Moniker at `eve/client/script/ui/login/charSelection/characterSelection.py:749` | real client service name |
+| `pvpFilamentMgr` | RemoteSvc at `pvpFilaments/client/pvpFilamentSvc.py:30` | real client service name |
+| `seasonManager` | RemoteSvc at `seasons/client/seasonservice.py:75` | real client service name |
+| `securityMgr` | RemoteSvc at `security/client/securitySvc.py:40` | real client service name |
+| `sharedSettingsMgr` | RemoteSvc at `eve/client/script/ui/shared/inventory/filterSvc.py:449` | real client service name |
+| `shipCosmeticsMgr` | RemoteSvc at `eve/client/script/ui/shared/skins/devMenuFunctions.py:15` | real client service name |
+| `shipKillCounter` | RemoteSvc at `eve/client/script/ui/shared/info/shipInfoPanels/panelOverview.py:276` | real client service name |
+| `solarsystemInterferenceMgr` | RemoteSvc at `eve/client/script/ui/services/solarsystemInterferenceSvc.py:41` | real client service name |
+| `sovMgr` | RemoteSvc at `eve/client/script/ui/services/sovSvc.py:80` | real client service name |
+| `standingMgr` | RemoteSvc at `eve/client/script/ui/shared/neocom/corporation/corp_dlg_edit_member.py:139` | real client service name |
+| `structureAssetSafety` | RemoteSvc at `eve/client/script/ui/shared/assets/assetSafetySvc.py:26` | real client service name |
+| `structureSettings` | RemoteSvc at `eve/client/script/ui/services/marketsvc.py:239` | real client service name |
+| `taleMgr` | RemoteSvc at `taleclient/tale_service.py:129` | real client service name |
+| `voidSpaceMgr` | RemoteSvc at `voidspace/client/void_space_service.py:46` | real client service name |
+
+### 37c. Still open (from the table above; the start-up path needs none of them)
+
+Slice B (2026-10-10) found no advertised name on the start-up path that is missing. The names above are needed when a player opens the
+feature (the lazy column). Each OPEN row needs its own slice: the owner is the track named in the table.
 
 ## 38. Non-strict host: a failing handler (slice A finding, closed in slice B, 2026-10-10)
 
@@ -908,10 +985,12 @@ Open after M1:
 | OPEN | Matching priority (price, issue time, id) and the duplicate window are to be confirmed with a live match (Q5, Q14) | the live acceptance (M9) |
 | DONE (M3) | Expiry as durable jobs: one job per resting order at its expiry plus 1 s (placed, moved, cancelled in the same transaction), a 60 s safety sweep, a read sweep at most once a second, the restart reschedule, notices to the owner and the corporation members with market rights (Accountant or Trader) | DEVIATIONS.md, "Market slice M3" |
 | DECIDED (M4) | M3 notices are not durable: no outbox, a notice goes to a live session only and the client's cache is per run (balances and state stay right) | DEVIATIONS.md, "Market slice M4" |
-| DONE (M4): the affected-project gate is green on `2f80397`; the live run waits for the Secure Depot start-up fix on origin/main. Push invalidation and corporate notices (G9, G11); the client's 3-hour price history cache is out of the server's reach | DEVIATIONS.md, "Market slice M4"; `MarketCoherenceTests` (5) |
+| DONE (M4): the affected-project gate is green on `2f80397`; the live run passed at `f046112` (70 passed, 8 skipped by the slow-mode gates, 0 failed). Push invalidation and corporate notices (G9, G11); the client's 3-hour price history cache is out of the server's reach | DEVIATIONS.md, "Market slice M4"; `MarketCoherenceTests` (5) |
 | DONE (M5) | Price history: one row per UTC day (low, high, volume-weighted average, volume, fills), the day in progress as "new" (the reference's last-row split put a past day there; corrected), `HistoriesAsync` removed (no caller) | DEVIATIONS.md, "Market slice M5"; `MarketHistoryTests` (6) |
 | DONE (M6) | Transactions by division: rights (accountant, junior accountant, Account Take, CrpAccessDenied 101), newest first, fromDate and division filters, keyID; the EXPLAIN check is not run (no index added) | DEVIATIONS.md, "Market slice M6"; `MarketTransactionReadTests` (3) |
-| OPEN | M7 bounded scan and locking, M8 money invariants, M9 live acceptance | market agents 2 and 3 |
+| DONE (M7) | Bounded order-book read: batches of 50 in book order, stop when filled; 10000-order benchmark (before 9999 rows locked per placement, after 50); no index added (EXPLAIN) | DEVIATIONS.md, "Market slice M7"; `OrderBookMatchTests`, opt-in `OrderBookBenchmarkTests` |
+| DONE (M8) | Invariants (escrow per wallet, escrowed items per sell, fill legs, order sanity) as a reconciliation the expiry job runs every 10 minutes and logs on mismatch; concurrency tests (modify and cancel racing a fill); documented lock order, with the two entry points that broke it moved; Q14 checked | DEVIATIONS.md, "Market slice M8"; `MarketInvariantTests`, `MarketConcurrencyTests`, `MarketLockOrderTests` |
+| DONE (M9) | Live walk: place, match, transactions, modify (refusal, and the change after the delay under EVE_LIVE_SLOW=1), cancel, escrow, corporation orders and refusal; the NPC seed import path has a test | DEVIATIONS.md, "Market slice M9"; `test_market.py`; `MarketSeedImportTests` |
 | OPEN | The client label table is partial: `MktCantSellItem2`, `MktCantSellItemOutsideStation` and `MktInvalidRegion` need values the server does not hold (localized jump texts) | the client's localization |
 | OPEN | The corporation read rule has a test for a character outside the corporation; a member holding Account Take and not an accountant is covered by M6 | M6 |
 
@@ -977,8 +1056,31 @@ Slice A9, part 1 (2026-10-11): DONE for the offers: ESI's official offers cached
 
 | Status | Item | Where / blocker |
 |---|---|---|
-| OPEN | Take an offer (LP, ISK, required items, the granted item): refused by name; blocked on the ISK journal reference type (no source), the item-change announcement and the corporation rules | DEVIATIONS "Agents slice AG-2, A9 (part 1)" |
+| DONE (AG-3) | Take an offer for the character and for a corporation (Director): LP, ISK, required items, the granted item, one transaction, journal, notifications. ISK reference type 26 from the client constant | DEVIATIONS "Agents slice AG-3, A9 (part 2)"; `LpStoreMgrServiceTests` |
 | OPEN | Standing requirements of LP store offers: ESI returns none, so none is shown | DEVIATIONS "Agents slice AG-2, A9 (part 1)" |
+
+## Agents slice AG-4 (2026-10-11)
+
+A4 client dialog path done: deferred `DoAction` with the client's YesNo (`SendClientCall`, `Provisional`); decline and quit
+confirmations use it (DEVIATIONS "Agents slice AG-4, A4").
+A6 research buttons 12 to 14 done: field choice, cancel, datacores from the SDE link, the purchase in one transaction (DEVIATIONS
+"Agents slice AG-4, A6 ..."). Open: research missions.
+A7 locator 15 to 17 done: the name, the offer with the fee, accept (fee and cooldown in one transaction, result notification type 69
+after the commit, refund if it cannot be written), reject (DEVIATIONS "Agents slice AG-4, A7"). Open: the client's localized labels for
+the dialog, the locator's standing split (faction and corporation). Done in AG-5 (DEVIATIONS "Agents slice AG-5"): the result is an
+outbox event (no refund), the live walks for LP store, research, locator and decline, the dialog kwargs and string fixes. Open: the quit
+walk, flying the Cockroach, the EVE.js side of the MITM capture, the client's localized labels.
+
+## Agents slice AG-3 (2026-10-11)
+
+Continues AG-2 on the same branch. A9 part 2 is done (DEVIATIONS "Agents slice AG-3, A9 (part 2)").
+A1 done: the agent catalog is a pure function (`AgentCatalog.Build`, Eve.Host) that the composition calls; `AgentCatalogSdeTests`
+(2, PostgreSQL, the pinned SDE): 10,966 agents by agentTypeID, 1,773 locators, 360 in space, and two concrete agents
+(3008416 basic, 3019369 in space). Open after it: the
+standing requirements of store offers and the structure stores (gaps), the idempotency key the client does not send.
+Offer cross-check (eve.starweb.cc): no rows changed; 1,104 calculator-only offers are an owner question (DEVIATIONS AG-3).
+A6 (research): rules and the PostgreSQL project store done (`ResearchRules`, `ResearchProjectStore`, migration 0003); the buttons 12 to 14 and the datacore grant and research missions are open (client dialog path; DEVIATIONS "Agents slice AG-3, A6 and A7").
+A7 (locator): fee, cooldown and standing rules done (`LocatorRules`); the locate flow stays refused (target location store and client dialogs; DEVIATIONS AG-3).
 
 ## 43. Structures phase ST-E: remaining E wiring (2026-10-10)
 - DONE E-01: StartNewExtraction, FractureChunkWithStructure and CancelExtraction refuse by name (CustomNotify) with no backend, not PyNone (`StructureDataRpcServices.cs`, commit 59e9e89). The backend is ST-6a.
@@ -1215,8 +1317,8 @@ Open (cut line, or not built):
 
 | Status | Item |
 |---|---|
-| OPEN (cut) | Wave 2 at scan progress 0.5 (EveJS). The rule file refuses any trigger other than progress 0 |
-| OPEN | Four-minute ship lock (immobile, warp, cloak, tether while linked): needs the ships owner |
+| VERIFIED (tests) | D-S2 wave 2 at scan progress 0.5 (EveJS `crabWaveAuthority.js`, same pool and amount; CCP guide: waves block the scan until cleared). The rule file holds both waves; the second is made when the scan reaches half (`AnalysisBeaconDirector.ScanTickAsync`, `waves_made` in migration `002_analysis_beacon_waves`) and the scan waits for its drones. Host test `A_scan_makes_its_second_wave_when_it_reaches_half...` |
+| PARTLY (tests) | D-L2 link lock: from the link start the ship cannot move (GotoDirection, AlignTo, FollowBall, Orbit) until the link completes, and cannot warp, jump, cyno-jump or dock until a minute later (EveJS status clear delay). Refused in the simulation as `LINK_HOLD` (`Scene::link_holds`, `crates/eve-space/src/deployable.rs`; test `a_linked_ship_is_held_until_...`). Open: cloak and tether are not held; the refusal text is the generic one of each command |
 | OPEN (D-I1) | Interference cost of a link, and the character energy cost (EveJS checks both): not built |
 | OPEN | Four links per character per day (patch 2026-03-18.1): not built |
 | OPEN | No deployment within 10,000 km of an asteroid (patch 2026-03-26.1): not built, needs belt positions |
@@ -1231,13 +1333,15 @@ Data: `dotnet/src/Eve.Services.Space/Beacons/Data/analysis-beacon-rules.json` (o
 Runs (database eve_p3, merged head): Eve.Services.Space.Tests 737 of 737 passed (173 + 564, PostgreSQL included); Eve.Space.Tests 279 of 279; the Rust workspace 1,395 of 1,395 against a baseline of 1,394 (the one added test is the CRAB state test); the live headless suite 70 passed, 8 skipped by its slow-mode gates, 0 failed. The live suite has no CRAB flow: the beacon is verified only through the host tests.
 ## 48. Track B: Incursions, lifecycle, staging sites and the map (B-M1, B-L1, B-S1, 2026-10-11)
 
-Status: implemented and tested at the host level on PostgreSQL (`IncursionDirectorTests`, 8 scenarios; `IncursionRulesTests`, 18 cases). Not run with the graphical client; no live run of the incursion path.
+Status: implemented and tested at the host level on PostgreSQL (`IncursionDirectorTests`, 11 scenarios; `IncursionRulesTests`, 23 cases). Not run with the graphical client; no live run of the incursion path.
 
 - Lifecycle (`Eve.Services.Space/Incursions/IncursionDirector.cs`): capacity highsec 1, lowsec 1, nullsec 3; Mobilized 48 h, Established 1 day (fixed), Withdrawing 24 h; a band's next incursion spawns 12 to 36 h after the one it replaces ended. Durable jobs `incursion.spawn`, `incursion.phase`, `incursion.sites`; state in `incursions` and `incursion_sites` (migration `001_incursions` in the space schema). Restart keeps the phases and the respawn gaps.
 - Map: `map.GetIncursionGlobalReport` and `map.GetSystemsInIncursions` now read the live incursions (`PersistenceIncursionAnomalyReadModel` through `IncursionDirector.ReadActiveAsync`), replacing the read of content kind `incursion`, which nothing produced.
 - Rewards: `rewardMgr.GetDelayedRewardsByGroupIDs` answers the loyalty points pending on the groups of the live incursions. The pending value is 0 until the final-boss pipeline exists (B-R1).
 - Staging sites (B-S1): five sites per incursion, dungeons 5188, 5190, 5191 and 5193 (archetype 60), started with `DungeonWaveDirector.StartForSystemAsync` (owner 0, lifetime of the incursion, ended with it). Their waves are the owner data's (`sanshas_deadspace_pve`). All four plan on the owner data's `on_load` and `wave_cleared` triggers, so `Data/waves/v1/trigger-rules.json` needed no entry and is unchanged.
-- Not built (cut line): vanguard, assault and headquarters sites (B-S2), the mothership (B-F1), influence change by site completion, influence decay, final-boss loyalty points (B-R1). Decisions and sources: DEVIATIONS.md, "Incursions (B-L1, B-S1, B-M1)".
+- Sites by role (B-S2, 2026-10-12): the staging system's five sites, one headquarters (the system farthest from staging), one vanguard site and one assault site per nearer system (the layout of EVE.js `buildIncursionSystemLayout`, by stargate jumps from the staging system: `StargateGraph`, `mapStargates`). Each role site is a dungeon of the owner catalog (vanguard 5164 to 5166, archetype 61; assault 5167, 5168, 5172, archetype 62; headquarters 5114, 5171, 5175, archetype 63) with its owner waves. The site rows carry role, system and completion (migration `002_incursion_roles`). Constellations under three systems take no incursion.
+- Influence and mothership (B-F1, 2026-10-12): the influence is 1 minus the completed share of the non-mothership sites (EVE.js: every seeded site an equal share), updated by the subscriber `incursion.sites.completed` on `content.dungeon.completed`. When the influence is 0 and the headquarters is done, the mothership (5158; 5201 in lowsec) starts in the headquarters system, after the band's protection (three days highsec, one lowsec, none nullsec). Its completion ends the incursion (`mothership_defeated`) and the band's next one is scheduled. Not completed before the withdrawal ends: `withdrawn`, as before.
+- Not built: final-boss loyalty points (B-R1: CCP pays the fleet with the most damage on the site and publishes no amount, so the pending value stays 0), standings effects, the Sansha influence penalties on resistances and damage (10%, 25%, 50% at full influence; a dogma path), influence decay (no published rate), site counts tied to influence (no source), the stargate jump cache is capped at 64 sources (shortcut). Decisions and sources: DEVIATIONS.md, "Incursions (B-S2, B-F1)".
 - Not verified: the simulation spawns site NPCs with no pilot in the system (the path is covered with the fake simulation only); templateNameID is 0 because the owner catalog gives no name id for these dungeons.
 ## 48. Track ST-10: hacking minigame, analyzer, site containers and loot (2026-10-11, package closed; two rows open)
 
@@ -1245,8 +1349,8 @@ Built on main: the minigame engine (`dotnet/src/Eve.Hacking`), the `hackingMgr` 
 
 | Status | Item | Next step (exact) | Source |
 |---|---|---|---|
-| OPEN | Site completion when the hacked containers are empty. Today a site completes on the win (`SiteContainerHacks.EndedAsync` publishes `site.container.cleared`), so the loot may still be in the container. | There is no inventory move event on the Event Bus today. The move is `PgItemStore.MoveAsync` (`dotnet/src/Eve.Inventory/Items.cs`, line 146), which writes the row and publishes nothing; the client only sees `OnItemChange` (`ItemChanged`, `dotnet/src/Eve.Services.Inventory/InvBrokerService.cs`, line 621). Step 1: publish `inventory.item_moved` {itemId, previousLocationId, locationId, flag} inside `MoveAsync`'s transaction (`PublishAsync(connection, transaction, ...)`, the same pattern as `SiteContainerHacks`). Step 2: subscribe to `inventory.item_moved` in `SiteContainerHacks` (subscriber name `site.container.emptied`). When `previousLocationId` is a `secure`-or-`cleared` container with zero items left (`PgItemStore.InLocationAsync(id, owner)` is empty), publish `site.container.emptied` {solarSystemId, site, container}. Step 3: make the site's `containers` objective count `site.container.emptied` instead of `site.container.cleared` (`CosmicSiteDirector.Definition`). | EveJS `server/src/services/dungeon/dungeonUniverseSiteService.js` 5729-5800 (`maybeCompleteMaterializedDataRelicSite`: a container with loot is `containers_unfinished`; the site completes when none remains) |
-| OPEN | Removing an emptied container ball. The cleared container stays in the scene as an empty ball (not hackable, since its row is `cleared`). | On `site.container.emptied` (step 2 above), call `SpaceContainers.RemoveSiteContainer(containerId)` (`dotnet/src/Eve.Services.Space/SpaceContainers.Sites.cs`) and mark the row `destroyed` in the same transaction. The subscriber is registered in the space composition (`dotnet/src/Eve.Host/Composition/SpaceComposition.cs`), next to the `removeFromScene` already wired there. Test: extend `ContainerSiteEndToEndTests` so the last loot taken removes the ball and completes the site. | EveJS `dungeonUniverseSiteService.js` 5726-5746 (`removedEmptyContainers`) |
+| DONE (tests) | Site completion when the hacked containers are empty. Built: the move announces `inventory.item_moved` in its own transaction (`Eve.Inventory` `Items.cs`, `ItemMovedTopic`), the `site.container.emptied` subscriber (`SpaceComposition.cs`) calls `SiteContainerHacks.OnItemLeftAsync`, which clears a `looted` container with zero items in the same transaction and publishes `site.container.cleared`. Deviation from step 3 below: the director's count is unchanged; the container itself publishes the cleared topic, at the moment it empties. Tests: `SiteContainerTests` (the last loot clears it), `ContainerSiteEndToEndTests` (the site completes on the last emptying). Migration `0002_container_looted.sql`. Still open: headless live run and MITM compare (not run). | Today a site completes on the win (`SiteContainerHacks.EndedAsync` publishes `site.container.cleared`), so the loot may still be in the container. | There is no inventory move event on the Event Bus today. The move is `PgItemStore.MoveAsync` (`dotnet/src/Eve.Inventory/Items.cs`, line 146), which writes the row and publishes nothing; the client only sees `OnItemChange` (`ItemChanged`, `dotnet/src/Eve.Services.Inventory/InvBrokerService.cs`, line 621). Step 1: publish `inventory.item_moved` {itemId, previousLocationId, locationId, flag} inside `MoveAsync`'s transaction (`PublishAsync(connection, transaction, ...)`, the same pattern as `SiteContainerHacks`). Step 2: subscribe to `inventory.item_moved` in `SiteContainerHacks` (subscriber name `site.container.emptied`). When `previousLocationId` is a `secure`-or-`cleared` container with zero items left (`PgItemStore.InLocationAsync(id, owner)` is empty), publish `site.container.emptied` {solarSystemId, site, container}. Step 3: make the site's `containers` objective count `site.container.emptied` instead of `site.container.cleared` (`CosmicSiteDirector.Definition`). | EveJS `server/src/services/dungeon/dungeonUniverseSiteService.js` 5729-5800 (`maybeCompleteMaterializedDataRelicSite`: a container with loot is `containers_unfinished`; the site completes when none remains) |
+| DONE (tests) | Removing an emptied container ball. Built: `OnItemLeftAsync` calls `removeFromScene` (`SpaceContainers.RemoveSiteContainer`) after the clear. Deviation from the plan: the row stays `cleared`, not `destroyed` (`destroyed` is only the two-failure end; DEVIATIONS "Loot and completion of a container"). Test: `SiteContainerTests` (the rig records the removed container id). Open: the live scene check. The cleared container stays in the scene as an empty ball (not hackable, since its row is `cleared`). | On `site.container.emptied` (step 2 above), call `SpaceContainers.RemoveSiteContainer(containerId)` (`dotnet/src/Eve.Services.Space/SpaceContainers.Sites.cs`) and mark the row `destroyed` in the same transaction. The subscriber is registered in the space composition (`dotnet/src/Eve.Host/Composition/SpaceComposition.cs`), next to the `removeFromScene` already wired there. Test: extend `ContainerSiteEndToEndTests` so the last loot taken removes the ball and completes the site. | EveJS `dungeonUniverseSiteService.js` 5726-5746 (`removedEmptyContainers`) |
 
 ## 48. Structures phase ST-2: deployment, vulnerability and notices (2026-10-11, partly closed)
 
@@ -1294,11 +1398,179 @@ Plan: scratchpad `work/missions-hard-first-plan.md` track C; decisions in DEVIAT
 | DONE (tests) | Store, deadline jobs (one durable job per campaign), restart keeps the expiry, points refused unless active and covered, win updates the ambition in the same transaction | `Eve.Insurgency/InsurgencyStore.cs`, `InsurgencyCampaigns.cs`, `Migrations/0001_insurgency.sql` (schema `insurgency`) | Scheduler and events are the Host's |
 | DONE (tests) | `GetAllVisibleCampaigns` and `GetLocalCampaignClientSnapshot` read the store through the real Host composition (structure of the snapshot, `structureID` None, `[systemID, None]` outside covered systems) | `dotnet/src/Eve.Host/Composition/InsurgencyComposition.cs`, `CoreRpc.cs`; `Eve.Host.Tests/InsurgencyCompositionTests` | |
 | DONE (code, tests pending live) | Campaign notices after commit: started, updated, ending for covered systems; state changed and system fully corrupted or suppressed for every pilot | `InsurgencyComposition.cs` (`NotifyCampaignChanged`, `NotifyPointScored`) | Client text and handling not checked in the graphical client |
-| OPEN | Start trigger for a campaign | none | Q-INS-4: no source names it. `InsurgencyCampaigns.StartAsync` exists; no client or operator path calls it |
-| OPEN | FOB structure and its signals | structures owner | `structureID` is None; the campaign does not yet react to the FOB's destruction or reinforcement |
-| OPEN | Point producers (C-P1): site completions, spread at level 3, top stage | next slice | `ScorePointAsync` exists and is tested; no caller in the server |
+| PARTLY (tests, 2026-10-12) | Start of campaigns: `InsurgencyDirector` (`Eve.Services.Space/Insurgency/InsurgencyDirector.cs`, job `insurgency.start`, at once then hourly) starts a campaign in each warzone with none open: hub = a low-security system of the warzone's SDE regions (Angel: Curse 10000012, Fountain 10000058; Guristas: Venal 10000015, `InsurgencyWarzones`), covered = the hub and the nearest low-security systems by stargate jumps, as many as the pirates' victory needs. The CCP trigger is the FOB spawn of the structures owner (Q-INS-4 answered by the wiki and the Havoc notes; the interval and the hub choice are shortcuts, DEVIATIONS) |
+| OPEN | FOB structure and its signals | structures owner | `structureID` is None: the FOB is the hub system only (no structure is created). Not built: the FOB's reinforcement (3 h with 1 h jitter, wiki) and its destruction as a suppression win |
+| PARTLY (tests) | Point producers (C-P1): a pirate campaign site (archetypes 72 to 79 of the owner catalog, the warzone's pool) starts in each covered system when the campaign is active; its completion scores the system once for the pirates (`insurgency_points`, `ScorePointAsync`). Kills in a covered system are contributions (`insurgency_contributors`). Open: the Suppression (antipirate) producers (the owner catalog has no empire-side campaign site), the spread at corruption level 3 (wiki), and the per-stage contribution percentages |
 | BLOCKED | Public gateway for corruption and suppression (C-G1) | spike | Native transport absent from the snapshot; see the spike file |
-| OPEN | Victory payouts (C-V1) | next slice | Constants only (1,500,000 LP cap, 1x and 0.4x); no LP is credited |
+| DONE (tests) | Victory payouts (C-V1): a pirate win credits each contributor 1,500,000 LP from the warzone's pirate corporation (1000127 Guristas, 1000138 Angel), in the win's transaction, keyed by campaign and character (the wiki's Insurgency page). Not paid: the losing side (the wiki and the Havoc notes publish no amount; EVE.js's 0.4 factor is not CCP data) and the ISK bonus (no amount published) |
 
 ## 49. Host start-up: shared container type names (2026-10-11)
 | DONE (tests, live run) | Host start-up no longer throws on a container type name that several SDE types share (Secure Depot and about 40 more in groups 306, 314, 1207): the published type, then the lowest type id, is kept and each skipped type is logged. Tests: `SiteContainerTypesTests`. |
+
+## 50. Mission execution X1a: epic arc offers (2026-10-11)
+
+Done: `PickOffer` is wired to the official arc sequence. The offer is the agent's next step: entries first, then the steps that
+follow a completed step, with forks, the 90-day restart and the held-back sites (DEVIATIONS "Mission execution X1: epic arc offers").
+
+| Status | Item | Where / blocker |
+|---|---|---|
+| DONE (tests) | Offer of the current arc step (entry, nextMissions progression, fork exclusion, one step at a time, lowest ID among offerable steps) | `Eve.Services.Core/EpicArcOffers.cs`; `EpicArcOffersTests` (9), `EpicArcDialogueTests` (PostgreSQL, the dialogue on the real store) |
+| DONE (tests) | Completed history from the journal with the game time (journal column `transition_at`, migration 0002) | `Eve.Agents/AgentMissionStore.cs` `ReadCompletedAsync`; `AgentMissionStoreTests` |
+| DONE (data) | Site status of the 182 arc kill steps: 178 generic, 4 missing, 0 specific; held back unless `EVE_MISSION_INCLUDE_GENERIC_ARCS=1` | `Data/mission-site-status.v1.json`; `MissionSiteStatus.cs`; `MissionStaticCatalog.IsHeldBack` |
+| DONE | The restart interval is minutes (`RestartIntervalMinutes`; was misnamed `RestartIntervalSeconds`) | `MissionStaticCatalog.cs` |
+| DONE | Mission content of an offer: the official English name and `nameID` | `MissionStatic.NameId`; `MissionComposition.cs` |
+| DONE (tests) | An accepted kill mission starts its dungeon through `DungeonWaveDirector.StartAsync` when the pilot is in space in the agent's system (durable sweep, 10 s); the origin is the pilot's position plus 20 km along x | `Eve.Services.Core/MissionDungeonRuntime.cs`; `Eve.Host/Composition/MissionComposition.cs` (`AttachMissionDungeonsAsync`); `MissionDungeonRuntimeTests` (PostgreSQL) |
+| DONE (tests) | The dungeon's outcome decides the mission: completed credits the SDE base ISK once (wallet journal type 33, key per instance) and completes; failed, abandoned or expired fails and pays nothing; a replayed outcome pays nothing | `MissionDungeonRuntime.OnDungeonOutcomeAsync`; `content.dungeon.{completed,failed,abandoned,expired}` subscribers; `AgentMissionStore.FailAsync` |
+| OPEN | Live check of the dungeon start on the client (no client route tested) and the dungeon of arc 29 14117 (generic; held back by default) | live walk after the owner decides the switch |
+| OPEN | Bonus window and LP for kill missions | DEVIATIONS "Mission execution X1"; LP base not in official data |
+| OPEN | Talk steps (`isTalkToAgent`) complete when the pilot talks to the next agent | next slice (X1b) |
+| DONE (tests) | Basic L4 and L5 kill missions of the security agents: the lowest level-matching kill mission not completed by the pilot, whose dungeon can start (the wave director's check); 191 level-4 and 133 level-5 candidates | `Eve.Services.Core/BasicKillOffers.cs`; `BasicKillOffersTests` (5); `StartRefusalOf` in `DungeonWaveDirector` |
+| OPEN | Basic kill missions: replay after the official replay delay (missions are offered once per pilot), and the bonus and LP | DEVIATIONS "Mission execution X2" |
+| DONE (tests) | `GetAgentLocationWrap` on the bound agent (station, in space with the agentsInSpace spawn data, solar system); unknown agentMgr methods answer a named error instead of None | `AgentMissionService.cs` (`AgentLocationWrap`); `AgentLocationWrapTests` (3); the 631 Services.Core tests pass on eve_p3 |
+| OPEN | Journal text (`GetMissionBriefingInfo`, objectives), `GetMissionObjectiveInfo`, `GetReplayTimestamp`, the warp calls | next slice; they answer the named error until built |
+| OPEN | In-space agents: placement rule, the agent as a space entity, warp to the agent, talk steps (arc 29 step 2) | next slice (owner decision 1: the rule position) |
+
+## 51. Mission execution X3 step 1: in-space agents and arc 29 steps 1-2 (2026-10-11)
+
+| Status | Item | Where / blocker |
+|---|---|---|
+| DONE (tests) | In-space agents are put into the scene when a pilot enters their system: ball = agent ID, ship type and group from agentsInSpace, owner corporation; position 20 km from the system centre at the agent-ID angle (owner rule, not CCP data) | `Eve.Services.Core/InSpaceAgentPlacement.cs`; `Eve.Services.Space/SpaceContainers.Agents.cs`; `MissionComposition.cs` (`PutInSpaceAgents`); `InSpaceAgentPlacementTests` |
+| DONE (tests) | A talk step completes when the pilot talks to the next step's agent, in the station or in space in the agent's system; the reward is paid once under the step's key | `MissionDungeonRuntime.OnConversationAsync`; `AgentDialogueSources.OnConversation`; `Arc29StepsTests` (PostgreSQL) |
+| DONE (tests) | Arc 29 steps 1-2 through the store, the dialogue and the runtime: offer 14117, accept, dungeon in Arnon, completion (100,000 ISK once), talk 14118 with Tevis Jak in Tar, completion, offer 14119 | `Arc29StepsTests` (with the generic switch on) |
+| OPEN | Warp and approach to the in-space agent in the live client (the client uses its own ballpark commands; the server-side warp calls `WarpToLocation` and `WarpToAgentInSpace` still answer the named error) | next slice |
+| OPEN | Mission objective window (`GetMissionObjectiveInfo`, `GetMissionBriefingInfo`) | next slice (X3 step 2) |
+| HELD | Arc 29 on by default | kept held back: step 1's site is the family-derived template 3509 and its Damsel content is missing (owner decision 2); `EVE_MISSION_INCLUDE_GENERIC_ARCS=1` runs it |
+
+## 52. Mission execution X3 step 3: failure branches and basic re-offer (2026-10-11)
+
+| Status | Item | Where / blocker |
+|---|---|---|
+| DONE (tests) | A failure (failed or quit) whose failMissionID names another step restarts the arc run there; a self-naming failure only retries the step (arc 29) | `EpicArcOffers.cs`; `EpicArcOffersTests.A_failure_whose...`; `AgentMissionStore.ReadFailedAsync` (journal, PostgreSQL test) |
+| DONE (tests) | A basic kill mission completed is offered again after the replay delay (4 h, EveJS value, shortcut) | `BasicKillOffers.cs`; `BasicKillOffersTests` |
+
+## 53. Mission execution X3 step 4: rewards (2026-10-11)
+
+| Status | Item | Where / blocker |
+|---|---|---|
+| CHECKED | LP: the SDE holds no LP reward for missions (`fixedLpRewardAlpha` and `fixedLpRewardOmega` are 0 on all 2,892 records; no other field carries LP). No LP is paid. AG-3 LP wallet is not wired to missions | nothing to wire until a source exists (DEVIATIONS "Mission execution X3 step 4") |
+| DONE (tests) | Standings: the SDE `extraStandings` of a completion change the character's standing toward the faction (tenths: 7.0 = +0.7), once per completion | `MissionDungeonRuntime.CompleteWithRewardAsync`; `MissionComposition.ApplyMissionStandingAsync` (relations `AdjustAsync`); `MissionDungeonRuntimeTests.A_completion_moves_the_standing_once...` |
+| OPEN | Bonus time window (`bonusReward`, `bonusTimeInterval`): unit not established | DEVIATIONS |
+
+## 54. Mission execution X3 step 2: client texts and the held-mission views (2026-10-11)
+
+| Status | Item | Where / blocker |
+|---|---|---|
+| DONE (tests, opt-in real data) | Loader of the client's mission text IDs from `EVE_CLIENT_SDE_DIR/native/missions.jsonl.gz` into schema `client_sde` (replaced at each start); without the directory the log says why; nothing is committed | `Eve.Services.Core/ClientMissionMessages.cs`; `MissionComposition.LoadClientMissionMessagesAsync`; `MissionViewsTests` (synthetic, and the real export when configured: 2,886 rows with messages, 6 without) |
+| DONE (tests) | `GetMissionBriefingInfo` and `GetMissionObjectiveInfo` on the bound agent for a held (offered, accepted or completed) mission: the briefing and title IDs; the kill dungeon objective and the ISK reward; None when no mission is held | `Eve.Services.Core/MissionViews.cs`; `AgentMissionService.ReadHeldMissionAsync`; host `ReadHeldMissionAsync` |
+| OPEN | Fetch objectives (14119: item in cargo and turn-in at the agent) and courier objectives (`objectives` and `locations` lists are empty) | next slice; the EveJS builder is `buildMissionObjectivePayload` (agentMissionRuntime.js:5885) |
+| OPEN | The dungeon's enemy owner (`ownerID` is the mission's faction, a shortcut) and the dungeon location (0 placeholders) | next slice |
+| NOT FOUND | LP and text are the client's: the server sends IDs, and the client resolves the text in its own localization | none needed |
+
+## 55. Mission execution X4: live walk, completion transaction (2026-10-11)
+
+| Status | Item | Where / blocker |
+|---|---|---|
+| DONE (live, passed) | Basic level 4 kill mission, live: a pilot warps to the Manifest gate, jumps to 30005204, the level 4 security agent 3015920 offers mission 891 (request, accept), the accepted mission is in the journal, and the dungeon brings its NPCs into space | `tools/headless-client/tests/test_mission_walk.py` (run: `tools/dev/run-eve-live.sh` with `EVE_RUN`, see the file) |
+| FIXED (live finding) | The agent service's `DoAction` was refused at dispatch (`HasMethod` did not list it): no agent conversation worked on a live host. Unit tests call `CallAsync` directly and missed it | `AgentMissionService.HasMethod` |
+| FIXED (live finding) | Offers had an empty mission type label, so the journal dropped every offered or accepted mission | `MissionComposition` (offers carry the agent's kind) |
+| OPEN (live) | Killing the dungeon's NPCs and the completion and ISK in the live walk: after the first shot the dogma and ballpark calls answer `UnMachoDestination`; cause not found (possibly the pilot's ship lost to the site NPCs of the system). The completion is unit-tested only | next slice |
+| OPEN (live) | The arc 29 walk (Arnon is five gate jumps from Manifest, Tar four): not run | next slice; see the decision on arc 29 |
+| DONE (tests) | Standing and completion in one transaction: `AgentMissionStore.CompleteInAsync` joins the caller's transaction, the host's `CompleteMissionAsync` commits the completion and the relations standings together and announces after the commit | `AgentMissionStore.cs`, `MissionComposition.CompleteMissionAsync`, `MissionDungeonRuntime` |
+| OPEN | Atomicity is not tested (no test rolls the transaction back) | next slice |
+| CUT | Fetch and courier objectives (item 2): not built this slice | see DEVIATIONS "Mission execution X4" |
+| HELD | Arc 29 on by default (item 3): not flipped; the live walk through step 2 has not run | owner decision |
+| FOUND | `SiteLoot` divides by a candidate count that can be zero: "the sites of system X could not be made: Attempted to divide by zero" on pilots' entry to 30100032 and 30005204 (the sites track, not the mission path) | not fixed here |
+
+## 12. Zarzakh rules and client-only system data (2026-10-12)
+
+Evidence and decisions: DEVIATIONS "Zarzakh (30100000) and the client's system flags".
+
+| Status | Item | Missing work |
+|---|---|---|
+| DONE (tests) | Client flags `disallowCyno` and `disallowScanning` read from `EVE_CLIENT_SDE_DIR/native/solarsystemcontent.jsonl.gz` at start-up; cyno lighting refused (`CannotLightCynoInSystem`) and probe launch refused in those systems | `ClientSystemFlags`, `SolarSystemCatalog.LoadAsync`, `SpaceSessions.Modules.cs`, `SpaceSessions.LaunchAsync`; tests `ClientSystemFlagsTests`, `ScanProbeHostTests`. Cyno refusal has no host test yet; no graphical-client run |
+| DONE (rule) | No sites in Zarzakh (`CosmicSiteDirector.NoSiteSystems`) | Owner decision: the real game may have sites there (see DEVIATIONS) |
+| DONE (tests) | Capital-ship gate lists (the eight gates of list 579, from client data and the SDE type list) | `GateRules`, `CheckGateRulesAsync`; `GateRulesTests`, host jump test. Refusal text is ours |
+| PARTIAL (tests) | Emanation Lock: server-side refusal of exits through another gate for 6 h after entry, reset on re-entry, ended by leaving Zarzakh (the client text) | `EmanationLocks`; `EmanationLocksTests`. Not built: the client notices (the public gateway, owner decision 1); the lock is in memory |
+| DONE (tests) | Alignment toll: charged at the jump as a sink (journal ref 168, no counterparty), refused when unpaid, refunded when the simulation refuses | `SpaceSessions.ChargeTollAsync`, `RefundTollAsync`, composition `ChargeGateToll`; jump test. OPEN: a payee if one is published (owner decision); mass from dogma attribute 4, not the client ball |
+| DONE (tests) | D-Scan and bookmarks disabled in Zarzakh | `ScanningAllowedFor`, `BookmarkRules.DisabledSystems`; `ScanProbeHostTests`, `AccessGroupBookmarkMgrTests` |
+| CUT (no published numbers) | Gate guns (retribution timer), gravity hull damage | DEVIATIONS "Zarzakh gate, station and scanning rules (slice 2)" |
+| CUT (needs Insurgency FOB data) | Deathless Shipcaster jump | DEVIATIONS, same section |
+| PARTIAL (tests) | Client `deployBlocker` on the Zarzakh gate types: warp bubbles blocked within 100000000 m | Done for the warp disruption field generator (`GateBlocking`). OPEN: the mobile warp disruptor and the interdiction sphere launcher; structures have a check with no route yet |
+| OPEN | Sovereignty refusal in Zarzakh | No claim path in eve.rs yet (structures track) |
+| OPEN | Warp disruption bubbles and probes in Zarzakh | No CCP or wiki source; EveJS refuses them. Owner decision |
+| CUT | Heat, temperature, tidal forces, Point of No Return effect | No mechanic in the SDE, the client or the wiki |
+| KEPT | Pirate-faction market modifier (0.5, factions 500018 and 500019) | Already in eve.rs (`MarketRules`); EveJS-derived, not in the wiki. Owner decision |
+| CLIENT-LOCAL | Sun type and flare, system-wide cloud, warp tunnel overwrite, dscan range, anchor categories | Read by the client only; no server loader |
+| CUT | Landmarks placed by the server and the Black Monolith look-at challenge (2848) | EveJS and eve.rs both advertise `client_lookAtObject` 0; the client look-at path is not proven |
+| OPEN | Live check of the Zarzakh flags and the lane run without `EVE_CLIENT_SDE_DIR` | Needs a live run with the export set |
+
+| PARTIAL (live) | Turnur to Zarzakh jump, eve.rs only: `tools/headless-client/tests/test_zarzakh_jump.py` passes through `tools/mitm` on the eve_p2 lane (1 passed, 96.9 s); the toll journal row (ref 168) is counted | DEVIATIONS "Live check: Turnur to Zarzakh (slice 3)". OPEN: the EVE.js comparison (no reference data here); the Cockroach seeded through the database |
+
+
+## Pochven, Triglavian and EDENCOM space (2026-10-12)
+
+Research and what is cut: `docs/project/POCHVEN_DESIGN.md` (sources, SDE ids, the wiki's rules, what is not published).
+
+| Status | Item | Note |
+|---|---|---|
+| DONE (unit) | Region, faction and corporation ids of Pochven, capital group ids | `dotnet/src/Eve.Services.Space/Pochven/PochvenRules.cs`; `PochvenRulesTests` (4) |
+| DONE (unit; host path NOT RUN) | Capital ships refused a stargate in Pochven | `SpaceSessions.Movement.cs` `CheckGateRulesAsync` before the client gate list; the pilot cannot be placed in Pochven by the rig (see DEVIATIONS) |
+| DONE (pure rule, consumer pending) | Faction hostility between the four Pochven NPC factions; NPC standing rule (Triglavian at 0.00 and below, EDENCOM below 0.00, Rogue Drones and Drifters hostile to all pilots) | `PochvenRules.FactionsAreHostile`, `NpcHostileToPilot`. The simulation does not call them yet |
+| OPEN | NPC-vs-NPC targeting in the simulation (the four factions fight each other) | Needs target selection among NPCs in `crates/eve-space` brains; the rule input is above |
+| CUT (no published rule) | Gate sentries that shoot (EDENCOM GunStar 54579, Heavy GunStar 54580, Entropic Disintegrator Werpost 54577) | SDE gives the numbers only; no firing rule, targeting order or retribution timer published. EveJS places cosmetic sentries only |
+| CUT (no published spawn table) | Pochven skirmish spawning and per-site NPC composition | No SDE link from a dungeon to a system; no spawn tables; `npc_authority.json` has no Triglavian, EDENCOM or Drifter profile |
+| CUT (no published state data) | Invasion states (Redoubt, Bulwark, Fortress, Liminality, Minor Victory) and their system lists | Thresholds (75%, 76%, 96%) are on the wiki; per-system state is not. `map.GetEdencomFortressSystems` stays open (see the line above in this file) |
+| OPEN | Filament entry (Pochven filaments 56065 to 56081, 1/5/15 ships), the 6.0 standing for Home systems | Needs the filament item and jump rules; not in the SDE beyond the counts |
+| OPEN | Pochven standings for docking (-0.05), the LP store (-0.01), manufacturing and offices (3.00), local chat in delayed mode | Wiki rules; not built |
+
+## 13. Wormhole space: research and the type catalog (2026-10-12)
+
+Evidence and decisions: `docs/project/WORMHOLE_DESIGN.md` (sources, SDE numbers, the SDE against the wiki, what is not published, owner decisions).
+
+| Status | Item | Missing work |
+|---|---|---|
+| DONE (tests) | The 129 wormhole types from the pinned SDE: lifetime, mass, per-jump mass, target class, distribution (`WormholeTypeCatalog`) | `WormholeTypeCatalogTests` (PgFact, real SDE). K162 is not a type of the catalog (no mass attribute) |
+| DONE (tests) | Rules on the numbers: J-space ids, the per-ship limit, the mass after a transit, the mass and lifetime states (wiki thresholds), the 5-minute polarization time (`WormholeRules`) | `WormholeRulesTests` (synthetic numbers, the state boundaries) |
+| OPEN | Jump through a wormhole (`wormholeMgr.WormholeJump`) | Needs a wormhole entity in the simulation and a jump callback in the composition (`SpaceRpc.cs` line 72 passes none; the call returns None). Owner decision 1 (the class of each J-space system) comes first |
+| OPEN | Connection generator (statics, k-space connections, spawn) and the lifetime and mass jobs | Statics per class and the spawn chances are not published (design section 4); owner decision 2 |
+| OPEN | Signatures, system effects, Sleeper and Drifter sites, Thera and Turnur connections | Design sections 4, 5 and 7. Effect magnitudes per class are not published (owner decision 3) |
+| OPEN | Local chat in J-space | The brief said there is none; the wiki and the client say there is one (owner decision 4) |
+
+### Slice 2 (2026-10-12)
+
+| Status | Item | Missing work |
+|---|---|---|
+| DONE (tests) | J-space system classes from the V24.01 client data (`WormholeSystemClasses`, `EVE_CLIENT_SDE_DIR/native/systems.jsonl.gz`): 2,604 systems | `WormholeClientDataTests`. Fuzzwork `mapLocationWormholeClasses` cross-check not done |
+| DONE (tests) | Per-class effect beacons from the SDE (group 920, 36 types) with their dogma modifiers (`WormholeEffects`) | `WormholeEffectsTests`. The wiki effects page is not reachable |
+| OPEN | Which effect each J-space system has | Design 9.2 (owner decision 6) |
+| CUT | Connection generator, statics, spawn | No source for statics per class or probabilities (design 9.3, owner decision 2) |
+| OPEN | Jump, lifetime/mass jobs, collapse, signatures, effects on ships, Sleeper/Drifter sites, Thera/Turnur, MITM run | Design 9.6 |
+| OPEN | Local chat in J-space | Design 9.4 (owner decision 4) |
+
+### Slice 3 (2026-10-12)
+
+| Status | Item | Missing work |
+|---|---|---|
+| DONE (tests) | Committed J-space data (2,604 systems, 393 KB; shattered effects from the wiki): class, effect beacon, statics, sources and cross-checks (`Data/jspace-systems.json`, `JSpaceSystems`) | `JSpaceSystemsTests` (PgFact checks statics against the SDE) |
+| DONE (rule, data) | Local chat in J-space: the client's delayed local (members only when they speak) is recorded (design 10.3) | No eve.rs chat service exists: nothing to change yet |
+| OPEN | Class 4 statics: EveJS one static, wiki "usually two" | Design 10.5 (owner decision 7) |
+| CUT | Connection generator and static pairing | No published pairing (design 10.4, owner decision 8) |
+| OPEN | Setup loader into a PostgreSQL schema; jump; entities; sim jump (Rust build needs 9 to 11 GB free); signatures; effects on ships; sites; Thera/Turnur; MITM run | Design 10.4 |
+
+### Slice 4 (2026-10-12)
+
+| Status | Item | Missing work |
+|---|---|---|
+| DONE (tests) | Connection generator for the statics (seeded, documented mechanic) and durable lifecycle jobs on Eve.Scheduler (expiry, static replacement, transit collapse, restart) | `dotnet/tests/Eve.Wormholes.Tests` (14). Not wired into the Host composition yet |
+| CUT | Wandering K-space connections (K162) | No published spawn rate (design 11) |
+| CUT | Region-neighbour exclusion for statics | The pages read do not state it (design 11) |
+| OPEN | Wormhole entities in space, sim jump, WormholeMgr.WormholeJump callback, signatures, effects on ships, sites, Thera/Turnur, delayed local (no chat service in eve.rs), MITM run | Design 11 |
+
+### Slice 5 (2026-10-12)
+
+| Status | Item | Missing work |
+|---|---|---|
+| OPEN | Wormhole jump path: simulation body kind, placement (protocol 60), jump and arrival in `crates/eve-space`, WormholeMgr callback in the composition | Design 12.3 (not started in slice 5; investigated) |
+| OPEN | Effects as dogma modifiers | No system-wide effect mechanism exists in eve.rs (design 12.4) |
+| OPEN | Signatures, sites, Thera/Turnur, headless MITM run | Design 12.4 |
+| CUT | Delayed local | No chat service in eve.rs (design 10.3) |

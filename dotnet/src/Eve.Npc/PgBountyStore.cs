@@ -59,7 +59,8 @@ public sealed class PgBountyStore
     /// Adds a kill to the killer's bucket (<c>recordNpcBountyKill</c>): the bucket of the solar system that comes due first, a new one a window from now when
     /// there is none. A victim that is in a bucket already is not counted again.
     /// </summary>
-    public async Task<BountyAdded> RecordAsync(BountyKill kill, long nowMs, CancellationToken cancellationToken = default)
+    public async Task<BountyAdded> RecordAsync(
+        BountyKill kill, long nowMs, CancellationToken cancellationToken = default, Func<NpgsqlConnection, NpgsqlTransaction, CancellationToken, Task>? inTransaction = null)
     {
         await using var connection = await _source.OpenConnectionAsync(cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
@@ -107,6 +108,11 @@ public sealed class PgBountyStore
         {
             save.Parameters[7].NpgsqlDbType = NpgsqlDbType.Jsonb;
             await save.ExecuteNonQueryAsync(cancellationToken);
+        }
+        // what belongs with this kill (the ESS share of it) commits or fails with the bucket, never one without the other
+        if (inTransaction is not null)
+        {
+            await inTransaction(connection, transaction, cancellationToken);
         }
         await transaction.CommitAsync(cancellationToken);
         return new BountyAdded(kill.EnemyTypeId, kill.Amount, bucket.PayoutTime, kill.IsModified, AlreadyRecorded: false);

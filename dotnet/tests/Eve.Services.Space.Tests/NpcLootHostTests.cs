@@ -75,7 +75,9 @@ public class NpcLootHostTests
         Assert.Equal(Place, placed.Position);
         Assert.Equal(Facing, placed.Direction);
         Assert.Equal(47.0, placed.Radius);
-        // it is kept where it lies, to be put back with the scene and to go when its time is up
+        // it is kept where it lies, to be put back with the scene and to go when its time is up: the host saves it in the background after
+        // telling the scene, so the test waits for the row rather than racing the save
+        await Rig.UntilAsync(() => rig.SpaceItems.GetAsync(placed.WreckId).Result is not null);
         Assert.NotNull(await rig.SpaceItems.GetAsync(placed.WreckId));
     }
 

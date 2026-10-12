@@ -356,8 +356,7 @@ public sealed class StructureRpcService : IService
 
     private static string Text(PyValue? value) => value switch
     {
-        PyStr text => text.Value,
-        PyWString text => text.Value,
+        var text when Eve.Macho.JsSemantics.StringValue(text) is not null => Eve.Macho.JsSemantics.StringValue(text)!,
         PyBytes bytes => System.Text.Encoding.UTF8.GetString(bytes.Value.Span),
         PyBool boolean => boolean.Value ? "true" : "false",
         PyInt integer => integer.Value.ToString(System.Globalization.CultureInfo.InvariantCulture),

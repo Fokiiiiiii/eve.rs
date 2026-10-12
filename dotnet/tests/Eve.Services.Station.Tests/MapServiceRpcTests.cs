@@ -11,7 +11,7 @@ public sealed class MapServiceRpcTests
     [PgFact]
     public async Task Missing_map_rpcs_are_registered_and_keep_the_reference_wire_shapes()
     {
-        await using var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(PgFactAttribute.Url!));
+        await using var source = NpgsqlDataSource.Create(PgConnection.ForTest(PgFactAttribute.Url!));
         var service = new MapService(new Eve.ReadSide.ReadSide(source), () => Data.ClockMs);
         var (session, _) = Data.Session(null, 42);
 
@@ -78,7 +78,7 @@ public sealed class MapServiceRpcTests
     [PgFact]
     public async Task Map_rpc_read_hook_can_supply_future_data()
     {
-        await using var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(PgFactAttribute.Url!));
+        await using var source = NpgsqlDataSource.Create(PgConnection.ForTest(PgFactAttribute.Url!));
         var service = new MapService(new Eve.ReadSide.ReadSide(source), () => Data.ClockMs)
         {
             ReadDataHook = call => ValueTask.FromResult<PyValue?>(

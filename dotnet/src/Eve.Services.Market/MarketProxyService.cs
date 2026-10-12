@@ -33,6 +33,8 @@ public sealed partial class MarketProxyService(MarketStore store,MarketTrading t
         MoneyLimitException => MachoErrors.ThrowUserError("CustomInfo",("info",new PyStr("BALANCE_LIMIT_EXCEEDED"))),
         InsufficientFundsException => MachoErrors.ThrowUserError("CustomInfo",("info",new PyStr("Not enough ISK."))),
         MarketError market => MarketErrorPayload(market),
+        Eve.Corporations.CorporationError { Message: "CORPORATION_ACCESS_DENIED" } => MachoErrors.ThrowUserError("CustomInfo",
+            ("info",new PyStr("Your character does not hold the market rights of that corporation."))),
         _ => MachoErrors.ThrowUserError("CustomInfo",("info",new PyStr(e.Message))),
     };
 

@@ -31,7 +31,7 @@ internal sealed class Rig : IAsyncDisposable
 
     public static async Task<Rig> Create(SchedulerOptions? options = null)
     {
-        var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
+        var source = NpgsqlDataSource.Create(PgConnection.ForTest(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
         var schema = "sched_" + Guid.NewGuid().ToString("N")[..12];
         await DurableScheduler.MigrateAsync(source, schema);
         return new Rig(source, schema, options ?? new SchedulerOptions { Concurrency = 1, BatchSize = 8 });

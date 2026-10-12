@@ -10,7 +10,7 @@ public sealed class StructureRulesSourceTests
     [PgFact]
     public async Task The_size_comes_from_the_type_and_the_band_from_the_system()
     {
-        await using var source = NpgsqlDataSource.Create(Eve.Data.PgConnection.ToConnectionString(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
+        await using var source = NpgsqlDataSource.Create(Eve.Data.PgConnection.ForTest(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
         var sde = new SdeReader(source);
         Assert.NotNull(await sde.BuildAsync());
         var rules = await StructureRulesSource.LoadAsync(sde);
@@ -25,7 +25,7 @@ public sealed class StructureRulesSourceTests
     [PgFact]
     public async Task A_type_or_a_system_without_static_data_is_an_error_and_not_a_guess()
     {
-        await using var source = NpgsqlDataSource.Create(Eve.Data.PgConnection.ToConnectionString(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
+        await using var source = NpgsqlDataSource.Create(Eve.Data.PgConnection.ForTest(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
         var sde = new SdeReader(source);
         Assert.NotNull(await sde.BuildAsync());
         var rules = await StructureRulesSource.LoadAsync(sde);

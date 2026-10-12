@@ -501,8 +501,7 @@ public sealed class OverviewPresetMgrService : IService
             PyLong integer => JsonValue.Create(integer.Value),
             PyReal real when double.IsFinite(real.Value) => JsonValue.Create(real.Value),
             PyReal => null,
-            PyStr text => JsonValue.Create(text.Value),
-            PyWString text => JsonValue.Create(text.Value),
+            var text when Eve.Macho.JsSemantics.StringValue(text) is not null => JsonValue.Create(Eve.Macho.JsSemantics.StringValue(text)!),
             PyBytes text => JsonValue.Create(Encoding.UTF8.GetString(text.Value.Span)),
             PyBuffer buffer => JsonValue.Create(Encoding.UTF8.GetString(buffer.Value.Span)),
             PyToken token => JsonValue.Create(token.Value),
@@ -559,8 +558,7 @@ public sealed class OverviewPresetMgrService : IService
 
     private static string StringValue(PyValue? value) => value switch
     {
-        PyStr text => text.Value,
-        PyWString text => text.Value,
+        var text when Eve.Macho.JsSemantics.StringValue(text) is not null => Eve.Macho.JsSemantics.StringValue(text)!,
         PyBytes text => Encoding.UTF8.GetString(text.Value.Span),
         PyToken token => token.Value,
         PyInt integer => integer.Value.ToString(CultureInfo.InvariantCulture),

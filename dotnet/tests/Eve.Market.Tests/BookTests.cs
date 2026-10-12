@@ -8,7 +8,7 @@ public class BookTests
     [PgFact]
     public async Task Npc_book_configuration_replays_stably_and_invalid_batches_roll_back_completely()
     {
-        await using var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
+        await using var source = NpgsqlDataSource.Create(PgConnection.ForTest(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
         var schema = "market_book_" + Guid.NewGuid().ToString("N");
         await MarketStore.MigrateAsync(source,schema);
         var store = new MarketStore(source,schema);

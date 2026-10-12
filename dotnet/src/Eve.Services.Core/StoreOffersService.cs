@@ -167,7 +167,7 @@ public sealed class StoreOffersService(
 
     private static string JsString(PyValue value) => value switch
     {
-        PyStr text => text.Value,
+        var text when Eve.Macho.JsSemantics.StringValue(text) is not null => Eve.Macho.JsSemantics.StringValue(text)!,
         PyInt number => number.Value.ToString(CultureInfo.InvariantCulture),
         PyLong number => number.Value.ToString(CultureInfo.InvariantCulture),
         PyReal number => number.Value.ToString("G", CultureInfo.InvariantCulture),

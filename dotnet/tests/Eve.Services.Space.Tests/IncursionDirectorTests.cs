@@ -50,13 +50,13 @@ public sealed class IncursionDirectorTests
         });
 
         var sites = await rig.Content.ActiveByKindAsync(DungeonWaveDirector.Kind);
-        Assert.Equal(25, sites.Count);
+        Assert.Equal(ExpectedSites(rows), sites.Count);
         Assert.All(sites, site => Assert.Equal(DungeonWaveDirector.NoPilotOwner, site.Owner));
-        Assert.All(sites, site => Assert.Contains(site.Definition.Replace("dungeon.", ""), IncursionRules.StagingDungeonIds.Select(id => id.ToString())));
-        // the on-load wave of every staging site is handed to the simulation (one batch per site, all from the pool of the owner data)
-        Assert.Equal(25, rig.Spawner.Batches.Count);
-        // the selection the simulation was asked for is the authority pool the owner data names (sanshas_deadspace_pve)
-        Assert.All(rig.Spawner.Batches, batch => Assert.Equal("Sansha PVE Deadspace Hostiles", batch.Query));
+        Assert.All(sites, site => Assert.Contains(site.Definition.Replace("dungeon.", ""), AllSiteTemplates().Select(id => id.ToString())));
+        // the on-load wave of every site is handed to the simulation (one batch per site, from the pool of its owner data)
+        Assert.Equal(sites.Count, rig.Spawner.Batches.Count);
+        // the staging sites draw from the pool the owner data names (sanshas_deadspace_pve)
+        Assert.Contains(rig.Spawner.Batches, batch => batch.Query == "Sansha PVE Deadspace Hostiles");
     }
 
     [PgFact]
@@ -147,7 +147,7 @@ public sealed class IncursionDirectorTests
         Assert.All(rows, row => Assert.Equal((long)IncursionRules.StateEstablished, row["state"]!.GetValue<long>()));
         Assert.Equal(1, rows.Count(row => rig.BandOf(row) == IncursionBand.HighSec));
         Assert.Equal(3, rows.Count(row => rig.BandOf(row) == IncursionBand.NullSec));
-        Assert.Equal(25, await rig.CountSitesAsync());
+        Assert.Equal(ExpectedSites(rows), await rig.CountSitesAsync());
     }
 
     [PgFact]
@@ -217,6 +217,84 @@ public sealed class IncursionDirectorTests
         Assert.Empty(Assert.IsType<PyList>(FieldsOf(await map.CallAsync(WireCall("GetSystemsInIncursions")))["lines"]).Items);
     }
 
+    /// <summary>Every incursion has its five staging sites, one headquarters, and one site per other system of its constellation (the layout gives each one a role).</summary>
+    private static int ExpectedSites(IEnumerable<JsonObject> rows) => rows.Sum(row => row["incursedSystems"]!.AsArray().Count + 4);
+
+    private static IEnumerable<long> AllSiteTemplates() =>
+        IncursionRules.StagingDungeonIds.Concat(IncursionRules.VanguardDungeonIds).Concat(IncursionRules.AssaultDungeonIds).Concat(IncursionRules.HeadquartersDungeonIds);
+
+    [PgFact]
+    public async Task Completing_a_site_lowers_the_influence_by_its_share_and_a_site_is_counted_once()
+    {
+        await using var rig = await IncursionRig.CreateAsync();
+        await rig.RunDueAsync();
+        var row = (await rig.ReadActiveAsync()).First();
+        long tale = row["taleID"]!.GetValue<long>();
+        var sites = await rig.SitesOfAsync(tale);
+        int total = sites.Count(site => site.Role != "mothership");
+        Assert.Equal(ExpectedSites([row]), total);
+
+        var staging = sites.First(site => site.Role == "staging").Instance;
+        await rig.CompleteAsync(staging);
+        await rig.CompleteAsync(staging);
+        var after = (await rig.ReadActiveAsync()).Single(r => r["taleID"]!.GetValue<long>() == tale);
+        Assert.Equal(1.0 - 1.0 / total, after["influence"]!.GetValue<double>(), 9);
+        Assert.Equal((long)IncursionRules.StateMobilizing, after["state"]!.GetValue<long>());
+    }
+
+    [PgFact]
+    public async Task A_null_incursion_s_mothership_starts_in_its_headquarters_when_all_its_sites_are_done_and_its_completion_ends_the_incursion()
+    {
+        await using var rig = await IncursionRig.CreateAsync(unit: 0.5);
+        await rig.RunDueAsync();
+        var row = (await rig.ReadActiveAsync()).First(r => rig.BandOf(r) == IncursionBand.NullSec);
+        long tale = row["taleID"]!.GetValue<long>();
+        var sites = await rig.SitesOfAsync(tale);
+        var headquarters = sites.Single(site => site.Role == "headquarters");
+        Assert.DoesNotContain(sites, site => site.Role == "mothership");
+
+        foreach (var site in sites.Where(site => site.Role != "mothership"))
+        {
+            await rig.CompleteAsync(site.Instance);
+        }
+        var mothership = (await rig.SitesOfAsync(tale)).Single(site => site.Role == "mothership");
+        Assert.Equal(headquarters.System, mothership.System);
+        Assert.Equal(0.0, (await rig.ReadActiveAsync()).Single(r => r["taleID"]!.GetValue<long>() == tale)["influence"]!.GetValue<double>());
+
+        await rig.CompleteAsync(mothership.Instance);
+        Assert.DoesNotContain(await rig.ReadActiveAsync(), r => r["taleID"]!.GetValue<long>() == tale);
+        Assert.Equal("mothership_defeated", await rig.EndReasonAsync(tale));
+        // no loyalty point is owed: CCP pays by fleet damage and gives no amount, so the pending value stays zero
+        Assert.Equal(0L, await rig.CountLivePendingLpAsync());
+
+        // the band's next incursion comes 12 to 36 hours later, as after any end
+        rig.Advance(TimeSpan.FromHours(36) + TimeSpan.FromMinutes(1));
+        await rig.RunDueAsync();
+        Assert.Equal(3, (await rig.ReadActiveAsync()).Count(r => rig.BandOf(r) == IncursionBand.NullSec));
+    }
+
+    [PgFact]
+    public async Task A_highsec_mothership_waits_three_days_after_the_start_even_when_the_influence_is_gone()
+    {
+        await using var rig = await IncursionRig.CreateAsync(unit: 0.5);
+        await rig.RunDueAsync();
+        var row = (await rig.ReadActiveAsync()).First(r => rig.BandOf(r) == IncursionBand.HighSec);
+        long tale = row["taleID"]!.GetValue<long>();
+        foreach (var site in (await rig.SitesOfAsync(tale)).Where(site => site.Role != "mothership"))
+        {
+            await rig.CompleteAsync(site.Instance);
+        }
+        Assert.DoesNotContain(await rig.SitesOfAsync(tale), site => site.Role == "mothership");
+
+        rig.Advance(TimeSpan.FromDays(3) - TimeSpan.FromMinutes(1));
+        await rig.RunDueAsync();
+        Assert.DoesNotContain(await rig.SitesOfAsync(tale), site => site.Role == "mothership");
+
+        rig.Advance(TimeSpan.FromMinutes(1));
+        await rig.RunDueAsync();
+        Assert.Single(await rig.SitesOfAsync(tale), site => site.Role == "mothership");
+    }
+
     private static ServiceCall WireCall(string method) => new() { Method = method, Args = [], Session = new ClientSession(new DiscardingSink()) };
 
     private static Dictionary<string, PyValue> FieldsOf(PyValue entry) =>
@@ -236,14 +314,30 @@ public sealed class IncursionDirectorTests
     [
         new SolarSystemInfo(1000, "High A", 100, 10, 0.9),
         new SolarSystemInfo(1001, "High B", 100, 10, 0.6),
+        new SolarSystemInfo(1002, "High C", 100, 10, 0.7),
         new SolarSystemInfo(2000, "Low A", 200, 10, 0.3),
         new SolarSystemInfo(2001, "Low B", 200, 10, 0.1),
+        new SolarSystemInfo(2002, "Low C", 200, 10, 0.2),
         new SolarSystemInfo(3010, "Null A", 301, 11, -0.4),
         new SolarSystemInfo(3011, "Null B", 301, 11, -0.2),
+        new SolarSystemInfo(3012, "Null B2", 301, 11, -0.5),
         new SolarSystemInfo(3020, "Null C", 302, 11, -0.9),
+        new SolarSystemInfo(3021, "Null C2", 302, 11, -0.3),
+        new SolarSystemInfo(3022, "Null C3", 302, 11, -0.6),
         new SolarSystemInfo(3030, "Null D", 303, 11, -0.1),
+        new SolarSystemInfo(3031, "Null D2", 303, 11, -0.2),
+        new SolarSystemInfo(3032, "Null D3", 303, 11, -0.7),
         new SolarSystemInfo(3040, "Null E", 304, 11, 0.0),
+        new SolarSystemInfo(3041, "Null E2", 304, 11, -0.3),
+        new SolarSystemInfo(3042, "Null E3", 304, 11, -0.8),
     ]);
+
+    /// <summary>A synthetic gate chain through every system of the universe, in id order: each system is some jumps from every other.</summary>
+    private static StargateGraph Stargates(SolarSystemCatalog systems)
+    {
+        var ids = systems.Systems.Select(s => s.Id).OrderBy(id => id).ToList();
+        return new StargateGraph(ids.Zip(ids.Skip(1), (a, b) => (a, b)));
+    }
 
     /// <summary>The incursion runtime over its own schemas, the director attached, a clock the test moves; a restart makes new runtime objects over the same records.</summary>
     private sealed class IncursionRig : IAsyncDisposable
@@ -278,7 +372,7 @@ public sealed class IncursionDirectorTests
         public static async Task<IncursionRig> CreateAsync(double unit = 0.5)
         {
             var url = Environment.GetEnvironmentVariable("EVE_PG_URL")!;
-            var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(url));
+            var source = NpgsqlDataSource.Create(PgConnection.ForTest(url));
             var id = Guid.NewGuid().ToString("N")[..12];
             string[] schemas = ["inc_sch_" + id, "inc_evt_" + id, "inc_cnt_" + id, "inc_wav_" + id, "inc_inc_" + id];
             await DurableScheduler.MigrateAsync(source, schemas[0]);
@@ -294,7 +388,7 @@ public sealed class IncursionDirectorTests
         private IncursionDirector NewDirector()
         {
             Waves = new DungeonWaveDirector(_source, Content, Scheduler, Bus, DungeonCatalog.LoadEmbedded(), WaveRules.LoadEmbedded(), new NpcSelector(NpcAuthority.Load()), Spawner, _schemas[3]);
-            return new IncursionDirector(_source, Content, Scheduler, Waves, Systems, _schemas[4], () => _unit < 0 ? _random.NextDouble() : _unit);
+            return new IncursionDirector(_source, Content, Scheduler, Waves, Bus, Systems, Stargates(Systems), _schemas[4], () => _unit < 0 ? _random.NextDouble() : _unit);
         }
 
         private async Task AttachAsync()
@@ -351,12 +445,79 @@ public sealed class IncursionDirectorTests
 
         public async Task<int> CountSitesAsync() => (await Content.ActiveByKindAsync(DungeonWaveDirector.Kind)).Count;
 
+        /// <summary>The sites of an incursion as the director recorded them: their role, their dungeon instance and their system.</summary>
+        public async Task<List<SiteRow>> SitesOfAsync(long incursionId)
+        {
+            var rows = new List<SiteRow>();
+            await using var connection = await _source.OpenConnectionAsync();
+            await using var command = connection.CreateCommand();
+            command.CommandText = $"SELECT role, instance_id, solar_system_id FROM \"{_schemas[4]}\".incursion_sites WHERE incursion_id = $1 ORDER BY site_index";
+            command.Parameters.AddWithValue(incursionId);
+            await using var reader = await command.ExecuteReaderAsync();
+            while (await reader.ReadAsync())
+            {
+                rows.Add(new SiteRow(reader.GetString(0), reader.GetInt64(1), reader.GetInt32(2)));
+            }
+            return rows;
+        }
+
+        /// <summary>The reason an incursion ended with, as the director stored it.</summary>
+        public async Task<string?> EndReasonAsync(long incursionId)
+        {
+            await using var connection = await _source.OpenConnectionAsync();
+            await using var command = connection.CreateCommand();
+            command.CommandText = $"SELECT end_reason FROM \"{_schemas[4]}\".incursions WHERE id = $1";
+            command.Parameters.AddWithValue(incursionId);
+            return (string?)await command.ExecuteScalarAsync();
+        }
+
+        /// <summary>The loyalty points the live incursions still owe (the director's pending value; it stays zero until the payout has a source).</summary>
+        public async Task<long> CountLivePendingLpAsync() => (await Director.PendingLoyaltyPointsAsync([IncursionRules.StagingRewardGroupId])).Values.Sum();
+
+        /// <summary>Completes a dungeon the way its waves would: each active objective gets the progress it still needs, and the due jobs and events run after each step.</summary>
+        public async Task CompleteAsync(long instanceId)
+        {
+            for (var round = 0; round < 20; round++)
+            {
+                var active = (await Content.ObjectivesOfAsync(instanceId)).Where(o => o.State == "active").ToList();
+                if (active.Count == 0)
+                {
+                    break;
+                }
+                // the connection is closed before the due jobs run: the pool of a test is small
+                await using (var connection = await _source.OpenConnectionAsync())
+                await using (var transaction = await connection.BeginTransactionAsync())
+                {
+                    foreach (var objective in active)
+                    {
+                        await Content.ProgressAsync(connection, transaction, instanceId, objective.Id, objective.Target - objective.Progress);
+                    }
+                    await transaction.CommitAsync();
+                }
+                await RunDueAsync();
+            }
+        }
+
+        public sealed record SiteRow(string Role, long Instance, int System);
+
         /// <summary>The band of a report row, from its staging system.</summary>
         public IncursionBand BandOf(JsonObject row) =>
             IncursionRules.BandOf(Systems.Get((int)row["stagingSolarSystemID"]!.GetValue<long>())!.Security);
 
         public async ValueTask DisposeAsync()
         {
+            foreach (var schema in _schemas)
+            {
+                try
+                {
+                    await using var drop = _source.CreateCommand($"DROP SCHEMA IF EXISTS \"{schema}\" CASCADE");
+                    await drop.ExecuteNonQueryAsync();
+                }
+                catch (NpgsqlException)
+                {
+                    // Leaving a scratch schema behind is better than failing the test.
+                }
+            }
             await _source.DisposeAsync();
         }
     }

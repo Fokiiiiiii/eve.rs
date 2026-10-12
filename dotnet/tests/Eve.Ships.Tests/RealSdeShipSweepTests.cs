@@ -37,7 +37,7 @@ public sealed class RealSdeShipSweepTests
 
     private static async Task<(SdeReader Sde, DogmaStatic Statics, IReadOnlyList<TypeDef> Ships, IReadOnlyList<TypeDef> Subsystems)> LoadAsync()
     {
-        var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(Rig.Url!));
+        var source = NpgsqlDataSource.Create(PgConnection.ForTest(Rig.Url!));
         var sde = new SdeReader(source);
         Assert.True(await sde.BuildAsync() is not null, "no SDE is loaded: run `cargo run -p eve-sde -- ensure --pg $EVE_PG_URL`");
         var statics = await DogmaStatic.LoadAsync(sde);

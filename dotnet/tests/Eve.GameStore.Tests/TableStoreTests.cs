@@ -28,7 +28,7 @@ public class TableStoreTests
         await using var pg = await PgScope.CreateAsync();
         var fence = await World(pg);
         await pg.Store.RowCountAsync("characters"); // create the table before the caller-owned transaction
-        await using var source = Npgsql.NpgsqlDataSource.Create(pg.ConnectionString);
+        await using var source = Npgsql.NpgsqlDataSource.Create(Eve.Data.PgConnection.ForTest(pg.ConnectionString));
         await using var connection = await source.OpenConnectionAsync();
 
         await using (var transaction = await connection.BeginTransactionAsync())

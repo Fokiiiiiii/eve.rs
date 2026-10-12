@@ -122,7 +122,7 @@ public sealed class MoonExtractionStoreTests
         {
             var connectionString = Environment.GetEnvironmentVariable("EVE_PG_URL");
             Assert.False(string.IsNullOrWhiteSpace(connectionString));
-            var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(connectionString!));
+            var source = NpgsqlDataSource.Create(PgConnection.ForTest(connectionString!));
             var schema = "moon_store_" + Guid.NewGuid().ToString("N")[..12];
             await StructureStore.MigrateAsync(source, schema);
             return new Fixture(source, schema, new MoonExtractionStore(source, schema));

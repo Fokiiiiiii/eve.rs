@@ -22,7 +22,7 @@ public class InterdictionNullifierTests
     [PgFact]
     public async Task A_ship_with_warpBubbleImmune_is_not_held_by_a_bubble()
     {
-        await using var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
+        await using var source = NpgsqlDataSource.Create(PgConnection.ForTest(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
         var sde = new SdeReader(source);
         var statics = await DogmaStatic.LoadAsync(sde);
         await statics.EnsureTypesAsync([InterdictionNullifierI]);
@@ -37,7 +37,7 @@ public class InterdictionNullifierTests
     [PgFact]
     public async Task A_warp_core_stabilizer_takes_two_points_off_the_scramble_status_and_a_field_generator_is_a_bubble_with_its_penalties()
     {
-        await using var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
+        await using var source = NpgsqlDataSource.Create(PgConnection.ForTest(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
         var sde = new SdeReader(source);
         var statics = await DogmaStatic.LoadAsync(sde);
         await statics.EnsureTypesAsync([WarpCoreStabilizerI, WarpDisruptFieldGeneratorI]);

@@ -53,6 +53,9 @@ public sealed class PacketDispatcher
             case MachoMessage.CallReq:
                 return await HandleCallRequestAsync(packet, session, ct);
             case MachoMessage.CallRsp:
+                // The client's answer to a call the server made (SendClientCall); any other answer has no waiter.
+                session.CompleteClientCall(JsSemantics.IsNumber(packet.CallId) ? (long)JsSemantics.NumberValue(packet.CallId) : 0, ClientAnswer(packet));
+                return true;
             case MachoMessage.PingRsp:
             case MachoMessage.SessionChangeNotification:
             case MachoMessage.ErrorResponse:
@@ -190,7 +193,7 @@ public sealed class PacketDispatcher
                         if (traceRpc)
                             Console.Error.WriteLine($"[rpc-trace] deferred-response session={session.SessionId} service={service.Name} method={call.Method} result={reply.GetType().Name}");
                         SendCallResponse(packet, reply, session, service.Name);
-                    }));
+                    }, () => SendProvisional(packet, session, service.Name)));
                 return true;
             }
 
@@ -259,6 +262,22 @@ public sealed class PacketDispatcher
 
     private static void SendCallResponse(MachoPacket packet, PyValue result, ClientSession session, string? serviceName) =>
         session.Send(ResponseBuilder.CallResponse(packet, result, session.Get("userid"), serviceName));
+
+    /// <summary>The provisional answer of a deferred call: an empty result with the OnAgentProvisionalResponse named payload, not wrapped (EveJS agentMgrService.js:932-946).</summary>
+    private static void SendProvisional(MachoPacket packet, ClientSession session, string? serviceName) =>
+        session.Send(ResponseBuilder.CallResponse(packet, new PyTuple([]), session.Get("userid"), serviceName, new CallResponseOptions
+        {
+            WrapResultInSubstream = false,
+            NamedPayloadEntries = [new(new PyStr("provisional"), Py.Tuple(new PyInt(86400), new PyStr("OnAgentProvisionalResponse"), new PyTuple([])))],
+        }));
+
+    /// <summary>The client's answer to a server call: the body without its wire layers (EveJS consumeClientCallResponse, clientSession.js:1131-1144); null when cancelled.</summary>
+    private static PyValue? ClientAnswer(MachoPacket packet)
+    {
+        var body = packet.Payload is PyTuple { Items.Count: 1 } tuple ? tuple.Items[0] : packet.Payload;
+        var value = body is PySubStream stream ? stream.Decoded : body;
+        return value is PyNone ? null : value;
+    }
 
     private static void SendError(MachoPacket packet, MachoError error, ClientSession session, string? serviceName) =>
         session.Send(ResponseBuilder.ErrorResponse(packet, error.ErrorCode, error.Payload, session.Get("userid"), serviceName, error.Detail));

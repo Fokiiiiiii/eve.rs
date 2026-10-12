@@ -71,7 +71,7 @@ public class LpStoreOffersTests
     public async Task Replacing_a_corporations_offers_keeps_only_the_new_ones_and_records_the_fetch_time()
     {
         var url = Environment.GetEnvironmentVariable("EVE_PG_URL")!;
-        await using var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(url));
+        await using var source = NpgsqlDataSource.Create(PgConnection.ForTest(url));
         var schema = "lps_" + Guid.NewGuid().ToString("N")[..12];
         try
         {
@@ -100,7 +100,7 @@ public class LpStoreOffersTests
     public async Task The_cache_refreshes_once_a_day_and_answers_what_it_holds_when_the_refresh_fails_or_is_switched_off()
     {
         var url = Environment.GetEnvironmentVariable("EVE_PG_URL")!;
-        await using var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(url));
+        await using var source = NpgsqlDataSource.Create(PgConnection.ForTest(url));
         var schema = "lps_" + Guid.NewGuid().ToString("N")[..12];
         try
         {

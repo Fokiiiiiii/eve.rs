@@ -45,6 +45,7 @@ internal sealed class Rig : IAsyncDisposable
     public const int Afterburner = 21857, Railgun = 3638, Miner = 3651, DamageControlI = 2046, DamageControlII = 2048;
 
     private readonly string[] _schemas;
+    private readonly List<string> _kept = [];
 
     private Rig(NpgsqlDataSource source, string suffix, DogmaStatic statics, CharacterCreation creation, IShipInsuranceInvalidator? shipInsuranceInvalidator)
     {
@@ -235,7 +236,7 @@ internal sealed class Rig : IAsyncDisposable
         Func<DogmaStatic, DogmaStatic>? staticFixtures = null)
     {
         CharacterNames.EnsureUnicodeSupport();
-        var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(Url!));
+        var source = NpgsqlDataSource.Create(PgConnection.ForTest(Url!));
         var sde = new SdeReader(source);
         Assert.True(await sde.BuildAsync() is not null, "no SDE is loaded: run `cargo run -p eve-sde -- ensure --pg $EVE_PG_URL`");
         var suffix = Guid.NewGuid().ToString("N")[..12];
@@ -316,12 +317,22 @@ internal sealed class Rig : IAsyncDisposable
         return [.. contents.OrderBy(i => i.Flag).Select(i => (i.TypeId, i.Flag, states[i.Id]))];
     }
 
+    /// <summary>Makes a test's own scratch schemas on this rig's source: they are dropped with the rig.</summary>
+    public void KeepSchemas(params string[] schemas) => _kept.AddRange(schemas);
+
     public async ValueTask DisposeAsync()
     {
-        foreach (var schema in _schemas)
+        foreach (var schema in _schemas.Concat(_kept))
         {
-            await using var command = Source.CreateCommand($"DROP SCHEMA IF EXISTS {schema} CASCADE");
-            await command.ExecuteNonQueryAsync();
+            try
+            {
+                await using var command = Source.CreateCommand($"DROP SCHEMA IF EXISTS \"{schema}\" CASCADE");
+                await command.ExecuteNonQueryAsync();
+            }
+            catch (NpgsqlException)
+            {
+                // Leaving a scratch schema behind is better than failing the test.
+            }
         }
         await Source.DisposeAsync();
     }

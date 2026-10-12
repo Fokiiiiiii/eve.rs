@@ -104,6 +104,10 @@ internal sealed partial class CharacterServicesComposition
         await PgWalletStore.MigrateAsync(source, walletSchema);
         npcSchema = Env("EVE_NPC_SCHEMA", PgBountyStore.DefaultSchema);
         await PgBountyStore.MigrateAsync(source, npcSchema);
+
+        essSchema = Env("EVE_ESS_SCHEMA", PgEssStore.DefaultSchema);
+        await PgEssStore.MigrateAsync(source, essSchema);
+        await RegisterEssSystemsAsync();
         await PgModuleStateStore.MigrateAsync(source, fittingSchema);
         spaceSchema = Env("EVE_SPACE_SCHEMA", PgSpaceItemStore.DefaultSchema);
         await PgSpaceItemStore.MigrateAsync(source, spaceSchema);

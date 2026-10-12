@@ -49,7 +49,7 @@ public sealed class TetherAuthorityTests
     [PgFact]
     public async Task Candidates_use_persisted_state_sde_geometry_actual_docking_acl_and_fw_occupation()
     {
-        await using var source = NpgsqlDataSource.Create(Eve.Data.PgConnection.ToConnectionString(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
+        await using var source = NpgsqlDataSource.Create(Eve.Data.PgConnection.ForTest(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
         var schema = $"tether_s_{Guid.NewGuid():N}";
         await StructureStore.MigrateAsync(source, schema);
         try
@@ -124,7 +124,7 @@ public sealed class TetherAuthorityTests
     [PgFact]
     public async Task Free_repairs_persist_fitted_and_drone_bay_condition_keep_burned_modules_offline_and_leave_cargo_alone()
     {
-        await using var source = NpgsqlDataSource.Create(Eve.Data.PgConnection.ToConnectionString(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
+        await using var source = NpgsqlDataSource.Create(Eve.Data.PgConnection.ForTest(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
         var suffix = Guid.NewGuid().ToString("N");
         string[] schemas = [$"tether_c_{suffix}", $"tether_i_{suffix}", $"tether_k_{suffix}", $"tether_f_{suffix}"];
         await PgCharacterStore.MigrateAsync(source, schemas[0]);

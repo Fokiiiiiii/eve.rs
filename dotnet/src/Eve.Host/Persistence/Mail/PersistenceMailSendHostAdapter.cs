@@ -362,6 +362,10 @@ public sealed class PersistenceMailSendHostAdapter(
     // Structure delivery holds the same gate until its SQL commit and cache publication finish.
     public SemaphoreSlim MutationGate => _sendGate;
 
+    /// <summary>The located notification (type 69, group agents), sent by the agent; the key keeps one locate to one notification.</summary>
+    public Task WriteLocateNotificationAsync(long recipientId, long agentId, JsonObject data, string idempotencyKey, CancellationToken cancellationToken) =>
+        WriteNotificationAsync(recipientId, agentId, 69, 1, data, idempotencyKey, cancellationToken);
+
     private async Task WriteNotificationAsync(
         long recipientId, long senderId, int typeId, int groupId, JsonObject data,
         string? idempotencyKey, CancellationToken cancellationToken)
@@ -494,6 +498,15 @@ public sealed class PersistenceMailSendHostAdapter(
 
     private static Eve.Marshal.PyValue NotificationWireValue(JsonNode? value)
     {
+        // a nested object keyed by group ids (the located notification's places) is a dict with integer keys
+        if (value is JsonObject nested)
+        {
+            return new Eve.Marshal.PyDict([.. nested.Select(pair => new KeyValuePair<Eve.Marshal.PyValue, Eve.Marshal.PyValue>(
+                long.TryParse(pair.Key, System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out var key)
+                    ? new Eve.Marshal.PyLong(key)
+                    : new Eve.Marshal.PyStr(pair.Key),
+                NotificationWireValue(pair.Value)))]);
+        }
         if (value is not JsonValue scalar)
             return Eve.Marshal.PyNone.Instance;
         if (scalar.TryGetValue<long>(out var integer))

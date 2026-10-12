@@ -277,7 +277,7 @@ public sealed class CosmicSiteDirectorTests
         public static async Task<SiteRig> CreateAsync()
         {
             var url = Environment.GetEnvironmentVariable("EVE_PG_URL")!;
-            var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(url));
+            var source = NpgsqlDataSource.Create(PgConnection.ForTest(url));
             var id = Guid.NewGuid().ToString("N")[..12];
             string[] schemas = ["sit_sch_" + id, "sit_evt_" + id, "sit_cnt_" + id];
             await DurableScheduler.MigrateAsync(source, schemas[0]);
@@ -347,6 +347,21 @@ public sealed class CosmicSiteDirectorTests
             return distance >= SitePlacement.MinimumAu * ProbeScanMath.AuMeters - 1 && distance <= SitePlacement.MaximumAu * ProbeScanMath.AuMeters + 1;
         });
 
-        public async ValueTask DisposeAsync() => await Source.DisposeAsync();
+        public async ValueTask DisposeAsync()
+        {
+            foreach (var schema in _schemas)
+            {
+                try
+                {
+                    await using var drop = Source.CreateCommand($"DROP SCHEMA IF EXISTS \"{schema}\" CASCADE");
+                    await drop.ExecuteNonQueryAsync();
+                }
+                catch (NpgsqlException)
+                {
+                    // Leaving a scratch schema behind is better than failing the test.
+                }
+            }
+            await Source.DisposeAsync();
+        }
     }
 }

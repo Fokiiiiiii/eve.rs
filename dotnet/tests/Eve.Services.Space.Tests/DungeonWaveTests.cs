@@ -316,7 +316,7 @@ public sealed class DungeonWaveTests
         public static async Task<WaveRig> CreateAsync()
         {
             var url = Environment.GetEnvironmentVariable("EVE_PG_URL")!;
-            var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(url));
+            var source = NpgsqlDataSource.Create(PgConnection.ForTest(url));
             var id = Guid.NewGuid().ToString("N")[..12];
             string[] schemas = ["wav_sch_" + id, "wav_evt_" + id, "wav_cnt_" + id, "wav_spc_" + id];
             await DurableScheduler.MigrateAsync(source, schemas[0]);

@@ -32,7 +32,7 @@ public sealed class DailyGoalTests
     {
         var connectionString = Environment.GetEnvironmentVariable("EVE_PG_URL");
         Assert.False(string.IsNullOrWhiteSpace(connectionString));
-        await using var source = NpgsqlDataSource.Create(Eve.Data.PgConnection.ToConnectionString(connectionString!));
+        await using var source = NpgsqlDataSource.Create(Eve.Data.PgConnection.ForTest(connectionString!));
         var suffix = Guid.NewGuid().ToString("N")[..12];
         var schedulerSchema = "dg_sched_" + suffix;
         var eventsSchema = "dg_events_" + suffix;

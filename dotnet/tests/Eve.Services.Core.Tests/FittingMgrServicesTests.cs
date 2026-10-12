@@ -24,8 +24,11 @@ public sealed class FittingPgFactAttribute : FactAttribute
 /// The fitting managers end to end on the real saved-fitting store: the client's calls and their KeyVal shapes, the refusals the client shows, the
 /// access rules of the owner scopes, and the notifications each change sends to the owner's sessions.
 /// </summary>
-public sealed class FittingMgrServicesTests
+public sealed class FittingMgrServicesTests : IAsyncLifetime
 {
+    private readonly List<NpgsqlDataSource> _sources = [];
+    private readonly List<string> _schemas = [];
+
     private const long Character = 140_300_001, OtherCharacter = 140_300_002, Corporation = 98_300_001, Alliance = 99_300_001, Executor = 98_300_002;
     private const int Tengu = 29984, Ibis = 601, DamageControl = 2046;
 
@@ -52,14 +55,39 @@ public sealed class FittingMgrServicesTests
         public int IndexOf(string name) => Packets.FindIndex(bytes => System.Text.Encoding.ASCII.GetString(bytes).Contains(name, StringComparison.Ordinal));
     }
 
-    private static async Task<(PgSavedFittingStore Store, Host Host, FittingMgrCalls Calls)> SetUpAsync()
+    private async Task<(PgSavedFittingStore Store, Host Host, FittingMgrCalls Calls)> SetUpAsync()
     {
-        var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
+        var source = NpgsqlDataSource.Create(PgConnection.ForTest(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
+        _sources.Add(source);
         var schema = "sfsvc_" + Guid.NewGuid().ToString("N")[..12];
+        _schemas.Add(schema);
         await PgModuleStateStore.MigrateAsync(source, schema);
         var store = new PgSavedFittingStore(source, schema);
         var host = new Host();
         return (store, host, new FittingMgrCalls(store, host, () => 1_700_000_000_000));
+    }
+
+    /// <summary>Drops this test's scratch schemas (a failed drop does not fail the test), then closes its sources.</summary>
+    public Task InitializeAsync() => Task.CompletedTask;
+
+    public async Task DisposeAsync()
+    {
+        foreach (var schema in _schemas)
+        {
+            try
+            {
+                await using var drop = _sources[0].CreateCommand($"DROP SCHEMA IF EXISTS \"{schema}\" CASCADE");
+                await drop.ExecuteNonQueryAsync();
+            }
+            catch (NpgsqlException)
+            {
+                // Leaving a scratch schema behind is better than failing the test.
+            }
+        }
+        foreach (var source in _sources)
+        {
+            await source.DisposeAsync();
+        }
     }
 
     private static ClientSession SessionOf(Sink sink, long character, long corporation = 0, long alliance = 0)

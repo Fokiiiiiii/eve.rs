@@ -5,6 +5,7 @@ using Eve.Data;
 using Eve.Host;
 using Eve.Identity;
 using Eve.Dogma;
+using Eve.Events;
 using Eve.Fitting;
 using Eve.GameStore;
 using System.Text.Json;
@@ -37,6 +38,15 @@ namespace Eve.Host;
 
 internal sealed partial class CharacterServicesComposition
 {
+    /// <summary>The offset of a mission dungeon from the pilot's position when it starts (metres): the rule of the eve.rs mission runtime.</summary>
+    public const double MissionDungeonOffsetMetres = 20_000;
+
+    /// <summary>The wave director of the dungeons (set by the space composition, which runs first).</summary>
+    private Eve.Services.Space.Waves.DungeonWaveDirector? dungeonWavesDirector;
+
+    /// <summary>The kill missions' runtime (A-X1), built with the agent missions.</summary>
+    private MissionDungeonRuntime? missionDungeons;
+
     async Task<JsonObject?> ReadCharacterGameStoreRowAsync(long characterId, CancellationToken cancellationToken)
     {
         if (characterId <= 0) return null;
@@ -159,6 +169,7 @@ internal sealed partial class CharacterServicesComposition
     private async Task AgentMissions()
     {
         agentMissionAnnouncer = new Eve.Services.Core.AgentMissionAnnouncer(agentMissionStore, characterSessions);
+        await LoadClientMissionMessagesAsync();
         // the faction of each NPC corporation (SDE npcCorporations.factionID): the access rule reads the faction standing
         var npcFactions = (await sde.ReadAsync("npcCorporations", cancellationToken: CancellationToken.None))
             .Where(row => row.Doc.TryGetProperty("factionID", out var faction) && faction.ValueKind == System.Text.Json.JsonValueKind.Number)
@@ -187,7 +198,20 @@ internal sealed partial class CharacterServicesComposition
                 agentMissionStatic.PlausibleMissionIds(agentId)),
             ReadEpicArcMessages: _ => ValueTask.FromResult<JsonObject?>(agentMissionStatic.EpicArcMessageMaps),
             ReadSolarSystemOfAgent: (agentId, _) => ValueTask.FromResult<long?>(
-                agentMissionAgentById.TryGetValue(agentId, out var agent) ? agent.SolarSystemId : null));
+                agentMissionAgentById.TryGetValue(agentId, out var agent) ? agent.SolarSystemId : null),
+            ReadHeldMission: ReadHeldMissionAsync);
+        // the R&D agents: the science fields from the SDE, and the datacore purchase in the store's transaction (AG-4 / A6)
+        var researchPort = new PersistenceAgentResearch(source, agentResearchProjects, economyWallets, items, itemTypes, characterSessions,
+            await PersistenceAgentResearch.LoadFieldsAsync(sde, CancellationToken.None), () => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+        // the locator agents: the pilot by name, the place from the online session and the SDE, the fee and the result (AG-4 / A7)
+        var locatorPort = new PersistenceAgentLocator(source, agentLocates, characters, characterSessions, solarSystems, economyWallets,
+            foundations.Events, () => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+        // the located notification: written by the subscriber, keyed by the event so a retry writes it once (the outbox row is the fee's)
+        foundations.Events.Subscribe("agents.locate-notice", [LocateDelivered.Topic], async (context, ct) =>
+        {
+            var located = context.Event.Payload<LocateDelivered>()!;
+            await mailSendWriter!.WriteLocateNotificationAsync(located.CharacterId, located.AgentId, located.Data, $"locate:{context.Event.Id}", ct);
+        });
         agentMissionService = new AgentMissionService(
             async (characterId, ct) =>
             {
@@ -240,8 +264,248 @@ internal sealed partial class CharacterServicesComposition
                     return level;
                 },
                 corporationId => npcFactions.GetValueOrDefault(corporationId),
-                // the mission pool is not loaded on this server yet, so no agent has a mission to offer (DEVIATIONS, Agents slice AG-2, A5)
-                (_, _, _) => ValueTask.FromResult<Eve.Agents.AgentMissionContent?>(null),
-                () => DateTimeOffset.UtcNow));
+                // the offer is the next step of the agent's epic arc (EpicArcOffers: the official arc sequence, the held-back sites kept
+                // out by owner decision), else the basic kill mission of a level 4 or 5 security agent (BasicKillOffers). Other basic
+                // agents have no official mission link and offer nothing.
+                async ValueTask<Eve.Agents.AgentMissionContent?> (AgentMissionAgentData agent, long characterId, CancellationToken ct) =>
+                {
+                    var completed = await agentMissionStore.ReadCompletedAsync(characterId, ct);
+                    var failed = await agentMissionStore.ReadFailedAsync(characterId, ct);
+                    var now = DateTimeOffset.UtcNow;
+                    var completedAt = completed.GroupBy(item => item.MissionId).ToDictionary(group => group.Key, group => group.Max(item => item.CompletedAt));
+                    if ((Eve.Services.Core.EpicArcOffers.Pick(agentMissionStatic, agent.AgentId, completed, now, failed) ??
+                            Eve.Services.Core.BasicKillOffers.Pick(agentMissionStatic, agent, completedAt, now,
+                                dungeon => dungeonWavesDirector?.StartRefusalOf(dungeon) is null)) is not { } missionId ||
+                        agentMissionStatic.Mission(missionId) is not { } mission)
+                        return null;
+                    // the mission type label is the agent's kind (encounter, epicArc): the journal shows no mission without one
+                    return new Eve.Agents.AgentMissionContent(mission.MissionId, mission.NameId, mission.NameEn, agent.MissionKind, agent.ImportantMission);
+                },
+                () => DateTimeOffset.UtcNow,
+                // a talk step completes when the pilot talks to the next agent, in the station or in space in the agent's system (A-X3)
+                async (characterId, agent, atLocation, ct) =>
+                {
+                    if (missionDungeons is null) return;
+                    var together = agent.IsInSpace
+                        ? agent.SolarSystemId is { } system && spaceSessions is not null && spaceSessions.IsPilotInSystem(characterId, (int)system)
+                        : atLocation;
+                    await missionDungeons.OnConversationAsync(characterId, agent.AgentId, together, ct);
+                }, researchPort, locatorPort));
+        await AttachMissionDungeonsAsync();
     }
+
+    /// <summary>
+    /// The kill missions run their dungeons: a durable sweep starts the dungeon of an accepted kill mission when the pilot is in space in the
+    /// agent's system, and the dungeon's outcome (content.dungeon.*) decides the mission. Registered before the bus starts.
+    /// </summary>
+    private async Task AttachMissionDungeonsAsync()
+    {
+        if (dungeonWavesDirector is null)
+        {
+            Console.Error.WriteLine("eve-host: missions: kill missions cannot run dungeons: the wave director is not composed");
+            return;
+        }
+        var host = new SpaceMissionDungeonHost(
+            (characterId, systemId) => spaceSessions is not null && spaceSessions.IsPilotInSystem(characterId, systemId),
+            StartMissionDungeonAsync,
+            CreditMissionIskAsync,
+            CompleteMissionAsync);
+        missionDungeons = new MissionDungeonRuntime(
+            agentMissionStore,
+            agentMissionStatic,
+            host,
+            agentId => agentMissionAgentById.TryGetValue(agentId, out var agent) && agent.SolarSystemId is { } system
+                ? new MissionAgentPlace(system, agent.CorporationId)
+                : null,
+            () => DateTimeOffset.UtcNow);
+        var runtime = missionDungeons;
+        foundations.Scheduler.Register(MissionDungeonSweepJob, (context, token) => runtime.SweepAsync(token));
+        await foundations.Scheduler.EnsureRecurringAsync(MissionDungeonSweepJob, "sweep", TimeSpan.FromSeconds(10));
+        foreach (var (topic, outcome) in new[] { ("content.dungeon.completed", "completed"), ("content.dungeon.failed", "failed"),
+                     ("content.dungeon.abandoned", "abandoned"), ("content.dungeon.expired", "expired") })
+        {
+            var subscriber = "mission.dungeons." + outcome;
+            foundations.Events.Subscribe(subscriber, [topic],
+                (EventContext context, CancellationToken token) => MissionDungeonOutcomeAsync(runtime, outcome, context, token));
+        }
+    }
+
+    private const string MissionDungeonSweepJob = "mission.dungeons.sweep";
+
+    /// <summary>The localization IDs of the missions' texts from the client export (empty when not available; see LoadClientMissionMessagesAsync).</summary>
+    private IReadOnlyDictionary<long, IReadOnlyDictionary<string, long>> clientMissionMessages = new Dictionary<long, IReadOnlyDictionary<string, long>>();
+
+    /// <summary>
+    /// Loads the client's mission text IDs from <c>EVE_CLIENT_SDE_DIR/native/missions.jsonl.gz</c> into the schema <c>client_sde</c> (replaced each
+    /// start). Without the directory, or without the file, nothing is loaded and the log says why; the briefing then carries no text ID.
+    /// </summary>
+    private async Task LoadClientMissionMessagesAsync()
+    {
+        var directory = Environment.GetEnvironmentVariable(ClientMissionMessages.DirectoryVariable);
+        if (string.IsNullOrWhiteSpace(directory))
+        {
+            Console.Error.WriteLine($"eve-host: missions: client texts are not available: {ClientMissionMessages.DirectoryVariable} is not set");
+            return;
+        }
+        var file = Path.Combine(directory, "native", "missions.jsonl.gz");
+        if (!File.Exists(file))
+        {
+            Console.Error.WriteLine($"eve-host: missions: client texts are not available: {file} is missing");
+            return;
+        }
+        var (messages, skipped) = ClientMissionMessages.Parse(File.OpenRead(file));
+        var missionIds = new List<long>();
+        var keys = new List<string>();
+        var ids = new List<long>();
+        foreach (var (missionId, texts) in messages)
+            foreach (var (key, id) in texts)
+            {
+                missionIds.Add(missionId);
+                keys.Add(key);
+                ids.Add(id);
+            }
+        await using var connection = await source.OpenConnectionAsync(CancellationToken.None);
+        await using var transaction = await connection.BeginTransactionAsync(CancellationToken.None);
+        await using (var setup = new NpgsqlCommand("""
+            CREATE SCHEMA IF NOT EXISTS client_sde;
+            CREATE TABLE IF NOT EXISTS client_sde.mission_messages (
+                mission_id bigint NOT NULL, message_key text NOT NULL, message_id bigint NOT NULL, PRIMARY KEY (mission_id, message_key));
+            DELETE FROM client_sde.mission_messages;
+            INSERT INTO client_sde.mission_messages SELECT * FROM unnest(@m::bigint[], @k::text[], @v::bigint[]);
+            """, connection, transaction))
+        {
+            setup.Parameters.Add(new NpgsqlParameter("m", missionIds.ToArray()));
+            setup.Parameters.Add(new NpgsqlParameter("k", keys.ToArray()));
+            setup.Parameters.Add(new NpgsqlParameter("v", ids.ToArray()));
+            await setup.ExecuteNonQueryAsync();
+        }
+        await transaction.CommitAsync();
+        clientMissionMessages = messages;
+        Console.Error.WriteLine($"eve-host: missions: client texts {messages.Count} missions, {ids.Count} message IDs ({skipped} rows not read)");
+    }
+
+    /// <summary>The held mission of the character with the bound agent (offered or accepted), with its briefing text ID.</summary>
+    private async ValueTask<Eve.Services.Core.HeldMissionView?> ReadHeldMissionAsync(long characterId, long agentId, CancellationToken cancellationToken)
+    {
+        var record = await agentMissionStore.ReadAsync(characterId, agentId, cancellationToken);
+        if (record is null || record.State is not (Eve.Agents.AgentMissionState.Offered or Eve.Agents.AgentMissionState.Accepted or Eve.Agents.AgentMissionState.Completed)) return null;
+        if (agentMissionStatic.Mission(record.Content.MissionId) is not { } mission) return null;
+        long? briefing = clientMissionMessages.TryGetValue(mission.MissionId, out var texts) && texts.TryGetValue(ClientMissionMessages.BriefingKey, out var id) ? id : null;
+        return new Eve.Services.Core.HeldMissionView(mission, record, briefing);
+    }
+
+    /// <summary>The SDE group of the agents in space (type 30887 "Tevis Jak's Epithal" is group 517).</summary>
+    private const int AgentInSpaceGroupId = 517;
+
+    /// <summary>The agents in space of a system go into the scene when a pilot enters it (placement: InSpaceAgentPlacement).</summary>
+    private void PutInSpaceAgents(int solarSystemId)
+    {
+        if (spaceContainers is null || solarSystems.Get(solarSystemId) is not { } system) return;
+        foreach (var agent in agentMissionAgentRows)
+        {
+            if (!agent.IsInSpace || agent.SolarSystemId != solarSystemId || agent.TypeId is not { } typeId) continue;
+            var position = Eve.Services.Core.InSpaceAgentPlacement.Position(agent.AgentId, system.X, system.Y, system.Z);
+            spaceContainers.PutAgentInSpace(solarSystemId, agent.AgentId, (int)typeId, AgentInSpaceGroupId, (int)agent.CorporationId, position);
+        }
+    }
+
+    private static async Task MissionDungeonOutcomeAsync(MissionDungeonRuntime runtime, string outcome, EventContext context, CancellationToken token)
+    {
+        using var document = JsonDocument.Parse(context.Event.PayloadJson);
+        var root = document.RootElement;
+        if (!root.TryGetProperty("owner", out var ownerElement) || !ownerElement.TryGetInt64(out var owner) ||
+            !root.TryGetProperty("instanceId", out var instanceElement) || !instanceElement.TryGetInt64(out var instanceId) ||
+            !root.TryGetProperty("definition", out var definitionElement) || definitionElement.ValueKind != JsonValueKind.String)
+            return;
+        await runtime.OnDungeonOutcomeAsync(outcome, owner, definitionElement.GetString()!, instanceId, token);
+    }
+
+    /// <summary>
+    /// Starts the mission dungeon in front of the pilot: the origin is the pilot's position offset by <see cref="MissionDungeonOffsetMetres"/> along x.
+    /// A pilot without a known position is refused by name.
+    /// </summary>
+    private async Task<string?> StartMissionDungeonAsync(long characterId, int solarSystemId, long dungeonId, CancellationToken cancellationToken)
+    {
+        if (dungeonWavesDirector is null || spaceSessions is null) return "the space is not running";
+        var session = FleetSessionForCharacter(characterId);
+        if (session is null) return "the pilot is not logged in";
+        var shipId = spaceSessions.ShipIdOf(session);
+        if (shipId is not > 0) return "the pilot has no ship in space";
+        var position = await spaceSessions.PositionOfAsync(session, shipId.Value, cancellationToken);
+        if (position is not { } at) return "the pilot's position is not known";
+        var origin = new[] { at.X + MissionDungeonOffsetMetres, at.Y, at.Z };
+        var start = await dungeonWavesDirector.StartAsync(characterId, solarSystemId, origin, dungeonId, cancellationToken);
+        return start.Started ? null : start.Refusal ?? "the dungeon did not start";
+    }
+
+    /// <summary>
+    /// A mission's completion and its standings in one transaction (the mission store and the relations store share the database): the
+    /// completion is journalled, the standings change, and the session is told after the commit. False when the mission was not accepted.
+    /// </summary>
+    private Task<bool> CompleteMissionAsync(long characterId, long agentId, DateTimeOffset now, string reference,
+        IReadOnlyList<MissionStandingGain> standings, CancellationToken cancellationToken) =>
+        CompleteInTransactionAsync(source, agentMissionStore, foundations.Relations, characterId, agentId, now, reference, standings, cancellationToken);
+
+    /// <summary>
+    /// The completion and its standing writes in one transaction: a standing write that fails rolls the completion back, so the mission stays
+    /// accepted. The commit notice follows the commit.
+    /// </summary>
+    internal static async Task<bool> CompleteInTransactionAsync(NpgsqlDataSource source, Eve.Agents.AgentMissionStore agentMissionStore,
+        Eve.Relations.RelationStore relations, long characterId, long agentId, DateTimeOffset now, string reference,
+        IReadOnlyList<MissionStandingGain> standings, CancellationToken cancellationToken)
+    {
+        await using var connection = await source.OpenConnectionAsync(cancellationToken);
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        Eve.Agents.AgentMissionChange? change;
+        try
+        {
+            change = await agentMissionStore.CompleteInAsync(connection, transaction, characterId, agentId, now, reference, cancellationToken);
+        }
+        catch (Eve.Agents.AgentMissionRefusedException)
+        {
+            return false;
+        }
+        if (change is null) return false;
+        // read in the transaction: a diminishing gain depends on the standing the pilot has when the completion is written
+        foreach (var gain in standings)
+        {
+            var kind = Eve.Relations.RelationKinds.Standing.Name;
+            var current = await relations.ValueAsync(kind, gain.EntityId, characterId, 0, connection, transaction, cancellationToken);
+            await relations.AdjustAsync(connection, transaction, kind, gain.EntityId, characterId, gain.DeltaFrom(current),
+                "Agent mission standing", cancellationToken: cancellationToken);
+        }
+        await transaction.CommitAsync(cancellationToken);
+        agentMissionStore.Announce(change);
+        return true;
+    }
+
+    /// <summary>The ISK of a mission reward: one idempotent wallet adjustment, in its own transaction.</summary>
+    private async Task CreditMissionIskAsync(long characterId, long amount, long counterpartyId, int refTypeId, string reason, string operationKey, CancellationToken cancellationToken)
+    {
+        await using var connection = await source.OpenConnectionAsync(cancellationToken);
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        await economyWallets.AdjustAsync(connection, transaction, characterId, amount, counterpartyId, refTypeId, reason,
+            now(), operationKey, cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+    }
+}
+
+/// <summary>The host's side of <see cref="IMissionDungeonHost"/>: the space's pilot presence, the wave director's start and the wallet.</summary>
+internal sealed class SpaceMissionDungeonHost(
+    Func<long, int, bool> isPilotInSystem,
+    Func<long, int, long, CancellationToken, Task<string?>> startDungeon,
+    Func<long, long, long, int, string, string, CancellationToken, Task> creditIsk,
+    Func<long, long, DateTimeOffset, string, IReadOnlyList<MissionStandingGain>, CancellationToken, Task<bool>> completeMission) : IMissionDungeonHost
+{
+    public bool IsPilotInSystem(long characterId, int solarSystemId) => isPilotInSystem(characterId, solarSystemId);
+
+    public Task<string?> StartDungeonAsync(long characterId, int solarSystemId, long dungeonId, CancellationToken cancellationToken) =>
+        startDungeon(characterId, solarSystemId, dungeonId, cancellationToken);
+
+    public Task CreditIskAsync(long characterId, long amount, long counterpartyId, int refTypeId, string reason, string operationKey, CancellationToken cancellationToken) =>
+        creditIsk(characterId, amount, counterpartyId, refTypeId, reason, operationKey, cancellationToken);
+
+    public Task<bool> CompleteMissionAsync(long characterId, long agentId, DateTimeOffset now, string reference,
+        IReadOnlyList<MissionStandingGain> standings, CancellationToken cancellationToken) =>
+        completeMission(characterId, agentId, now, reference, standings, cancellationToken);
 }

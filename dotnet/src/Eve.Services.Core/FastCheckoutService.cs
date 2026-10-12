@@ -81,7 +81,7 @@ public sealed partial class FastCheckoutService(NewEdenStoreCatalog catalog, IFa
     {
         PyInt number => number.Value.ToString(CultureInfo.InvariantCulture),
         PyLong number => number.Value.ToString(CultureInfo.InvariantCulture),
-        PyStr text => text.Value,
+        var text when Eve.Macho.JsSemantics.StringValue(text) is not null => Eve.Macho.JsSemantics.StringValue(text)!,
         _ => string.Empty,
     };
 

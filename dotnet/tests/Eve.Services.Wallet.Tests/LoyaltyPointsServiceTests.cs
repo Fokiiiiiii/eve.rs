@@ -35,7 +35,7 @@ public class LoyaltyPointsServiceTests
     private sealed class Db : IAsyncDisposable
     {
         private readonly string _schema = $"lps_{Guid.NewGuid():N}"[..20];
-        public NpgsqlDataSource Source { get; } = NpgsqlDataSource.Create(Eve.Data.PgConnection.ToConnectionString(Url!));
+        public NpgsqlDataSource Source { get; } = NpgsqlDataSource.Create(Eve.Data.PgConnection.ForTest(Url!));
 
         public async Task<LoyaltyPointStore> StoreAsync()
         {

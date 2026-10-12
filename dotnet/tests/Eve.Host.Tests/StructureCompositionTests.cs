@@ -64,7 +64,7 @@ public sealed class StructureCompositionTests : IAsyncLifetime
         var url = Environment.GetEnvironmentVariable("EVE_PG_URL");
         if (url is not null)
         {
-            await using var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(url));
+            await using var source = NpgsqlDataSource.Create(PgConnection.ForTest(url));
             foreach (var schema in _schemas)
             {
                 await using var command = source.CreateCommand($"DROP SCHEMA IF EXISTS {schema} CASCADE");
@@ -146,7 +146,7 @@ public sealed class StructureCompositionTests : IAsyncLifetime
     private async Task<long> SeedManagerAsync(string name = "Structure Manager")
     {
         var url = Environment.GetEnvironmentVariable("EVE_PG_URL")!;
-        await using var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(url));
+        await using var source = NpgsqlDataSource.Create(PgConnection.ForTest(url));
         await PgCharacterStore.MigrateAsync(source, Schema("EVE_CHARACTERS_SCHEMA"));
         var station = (await StationCatalog.LoadAsync(new SdeReader(source))).All.First();
         await using var connection = await source.OpenConnectionAsync();
@@ -172,7 +172,7 @@ public sealed class StructureCompositionTests : IAsyncLifetime
     public async Task A_description_and_a_profile_set_through_the_composition_are_read_back_after_a_restart()
     {
         var url = Environment.GetEnvironmentVariable("EVE_PG_URL")!;
-        await using var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(url));
+        await using var source = NpgsqlDataSource.Create(PgConnection.ForTest(url));
         await SeedGameStoreAsync(source, SeededRow(StructureId, StructureState.ShieldVulnerable, 0, 0, UpkeepState.FullPower));
         var session = ManagerSession(await SeedManagerAsync());
 
@@ -272,7 +272,7 @@ public sealed class StructureCompositionTests : IAsyncLifetime
     public async Task An_imported_structure_with_an_elapsed_deadline_advances_once_after_start_and_a_replay_changes_nothing()
     {
         var url = Environment.GetEnvironmentVariable("EVE_PG_URL")!;
-        await using var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(url));
+        await using var source = NpgsqlDataSource.Create(PgConnection.ForTest(url));
         var deadline = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() - StructureTimes.Hour;
         // the anchoring repair ended an hour ago: the timeline's next step is the anchoring, a day from that deadline
         await SeedGameStoreAsync(source, SeededRow(StructureId, StructureState.AnchorVulnerable, deadline - StructureTimes.RepairMs, deadline, UpkeepState.LowPower));
@@ -322,7 +322,7 @@ public sealed class StructureCompositionTests : IAsyncLifetime
     public async Task A_reinforcement_time_is_pending_for_thirty_days_and_a_request_for_the_current_time_clears_it()
     {
         var url = Environment.GetEnvironmentVariable("EVE_PG_URL")!;
-        await using var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(url));
+        await using var source = NpgsqlDataSource.Create(PgConnection.ForTest(url));
         await SeedGameStoreAsync(source, SeededRow(StructureId, StructureState.ShieldVulnerable, 0, 0, UpkeepState.FullPower));
         var session = ManagerSession(await SeedManagerAsync());
         var store = new StructureStore(source, Schema("EVE_STRUCTURES_SCHEMA"));
@@ -350,7 +350,7 @@ public sealed class StructureCompositionTests : IAsyncLifetime
     public async Task A_reinforcement_request_is_refused_for_another_corporation_a_pilot_without_a_role_or_an_unknown_structure_and_changes_nothing()
     {
         var url = Environment.GetEnvironmentVariable("EVE_PG_URL")!;
-        await using var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(url));
+        await using var source = NpgsqlDataSource.Create(PgConnection.ForTest(url));
         await SeedGameStoreAsync(source, SeededRow(StructureId, StructureState.ShieldVulnerable, 0, 0, UpkeepState.FullPower));
         var characterId = await SeedManagerAsync();
         var store = new StructureStore(source, Schema("EVE_STRUCTURES_SCHEMA"));
@@ -380,7 +380,7 @@ public sealed class StructureCompositionTests : IAsyncLifetime
     public async Task Anchor_outside_space_is_refused_by_name_through_the_registered_service()
     {
         var url = Environment.GetEnvironmentVariable("EVE_PG_URL")!;
-        await using var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(url));
+        await using var source = NpgsqlDataSource.Create(PgConnection.ForTest(url));
         await SeedGameStoreAsync(source, SeededRow(StructureId, StructureState.ShieldVulnerable, 0, 0, UpkeepState.FullPower));
         var characterId = await SeedManagerAsync();
         var session = ManagerSession(characterId);
@@ -400,7 +400,7 @@ public sealed class StructureCompositionTests : IAsyncLifetime
     public async Task Unanchor_starts_a_seven_day_timer_for_a_director_and_cancelling_stops_it()
     {
         var url = Environment.GetEnvironmentVariable("EVE_PG_URL")!;
-        await using var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(url));
+        await using var source = NpgsqlDataSource.Create(PgConnection.ForTest(url));
         await SeedGameStoreAsync(source, SeededRow(StructureId, StructureState.ShieldVulnerable, 0, 0, UpkeepState.FullPower));
         var characterId = await SeedManagerAsync();
         var store = new StructureStore(source, Schema("EVE_STRUCTURES_SCHEMA"));
@@ -433,7 +433,7 @@ public sealed class StructureCompositionTests : IAsyncLifetime
     public async Task Unanchor_is_refused_by_name_in_a_state_that_cancels_it_and_changes_nothing()
     {
         var url = Environment.GetEnvironmentVariable("EVE_PG_URL")!;
-        await using var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(url));
+        await using var source = NpgsqlDataSource.Create(PgConnection.ForTest(url));
         await SeedGameStoreAsync(source, SeededRow(StructureId, StructureState.ArmorReinforce, 0, 0, UpkeepState.FullPower));
         var characterId = await SeedManagerAsync();
         var store = new StructureStore(source, Schema("EVE_STRUCTURES_SCHEMA"));
@@ -450,7 +450,7 @@ public sealed class StructureCompositionTests : IAsyncLifetime
     public async Task Rename_normalizes_the_name_the_directory_shows_refuses_a_short_name_and_survives_a_restart()
     {
         var url = Environment.GetEnvironmentVariable("EVE_PG_URL")!;
-        await using var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(url));
+        await using var source = NpgsqlDataSource.Create(PgConnection.ForTest(url));
         await SeedGameStoreAsync(source, SeededRow(StructureId, StructureState.ShieldVulnerable, 0, 0, UpkeepState.FullPower));
         var characterId = await SeedManagerAsync();
         var session = ManagerSession(characterId);

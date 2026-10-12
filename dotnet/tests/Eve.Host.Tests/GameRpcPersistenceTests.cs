@@ -17,7 +17,7 @@ public sealed class GameRpcPersistenceTests
     {
         var pgUrl = Environment.GetEnvironmentVariable("EVE_PG_URL");
         Assert.False(string.IsNullOrWhiteSpace(pgUrl));
-        await using var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(pgUrl!));
+        await using var source = NpgsqlDataSource.Create(PgConnection.ForTest(pgUrl!));
         var schema = "rpc_game_" + Guid.NewGuid().ToString("N");
         var store = new PersistenceStore(source, schema);
         try

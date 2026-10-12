@@ -17,6 +17,16 @@ public enum IncursionPhase
     Ended,
 }
 
+/// <summary>The site roles of a classic incursion (EveJS <c>SITE_TYPE_AUTHORITY</c>; each template is in the owner catalog with its waves).</summary>
+public enum IncursionSiteRole
+{
+    Staging,
+    Vanguard,
+    Assault,
+    Headquarters,
+    Mothership,
+}
+
 /// <summary>
 /// The rules of the Sansha incursions that the lifecycle and the staging sites follow. Every value names its source. Where CCP publishes no number the value is an eve.rs choice and
 /// is named as one (see docs/reference/compat/DEVIATIONS.md, Incursions).
@@ -67,6 +77,51 @@ public static class IncursionRules
     /// <summary>How long a staging site lives at the most: the whole life of an incursion (the site is ended with its incursion before then).</summary>
     public static TimeSpan MaximumLifetime => MobilizedLength + EstablishedLength + WithdrawingLength;
 
+    /// <summary>The dungeon templates of the Vanguard, Assault and Headquarters sites (EveJS <c>SITE_TYPE_AUTHORITY</c>, archetypes 61, 62, 63).</summary>
+    public static readonly IReadOnlyList<long> VanguardDungeonIds = [5164, 5165, 5166];
+    public static readonly IReadOnlyList<long> AssaultDungeonIds = [5167, 5168, 5172];
+    public static readonly IReadOnlyList<long> HeadquartersDungeonIds = [5114, 5171, 5175];
+
+    /// <summary>The mothership's template (archetype 64): 5201 in lowsec, 5158 elsewhere (EveJS <c>FINAL_TEMPLATE_BY_BAND</c>).</summary>
+    public static long MothershipDungeonId(IncursionBand band) => band == IncursionBand.LowSec ? 5201 : 5158;
+
+    /// <summary>
+    /// The mothership cannot spawn for this long after an incursion starts: three days in highsec, one in lowsec, none in nullsec (wiki, Incursions).
+    /// </summary>
+    public static TimeSpan MothershipProtection(IncursionBand band) => band switch
+    {
+        IncursionBand.HighSec => TimeSpan.FromDays(3),
+        IncursionBand.LowSec => TimeSpan.FromDays(1),
+        _ => TimeSpan.Zero,
+    };
+
+    /// <summary>A constellation needs this many systems for the layout: a staging, a headquarters and at least one other system (EveJS eligibility).</summary>
+    public const int MinimumLayoutSystems = 3;
+
+    /// <summary>
+    /// The layout of an incursion's systems (EveJS <c>buildIncursionSystemLayout</c>): the headquarters is the farthest system from the staging one (ties go to the lower
+    /// id); the vanguard and assault systems are the nearest of the rest, in counts that grow with the constellation's size. <paramref name="others"/> carries each
+    /// system other than the staging one with its distance from it.
+    /// </summary>
+    public static (int Headquarters, IReadOnlyList<int> Vanguard, IReadOnlyList<int> Assault) LayoutOf(IReadOnlyList<(int Id, double Distance)> others)
+    {
+        var byFarthest = others.OrderByDescending(o => o.Distance).ThenBy(o => o.Id).ToList();
+        int headquarters = byFarthest[0].Id;
+        var nearest = others.Where(o => o.Id != headquarters).OrderBy(o => o.Distance).ThenBy(o => o.Id).Select(o => o.Id).ToList();
+        int vanguards = 1, assaults = 1;
+        for (var index = 0; index < nearest.Count - 2; index++)
+        {
+            if (vanguards < 3) vanguards++;
+            else if (assaults < 2) assaults++;
+            else if (vanguards < 4) vanguards++;
+            else if (assaults < 3) assaults++;
+            else vanguards++;
+        }
+        var vanguard = nearest.Take(vanguards).ToList();
+        var assault = nearest.Skip(vanguard.Count).Take(assaults).ToList();
+        return (headquarters, vanguard, assault);
+    }
+
     /// <summary>The concurrent incursions of a band (wiki: one highsec, one lowsec, three nullsec).</summary>
     public static int Capacity(IncursionBand band) => band == IncursionBand.NullSec ? 3 : 1;
 
@@ -107,6 +162,16 @@ public static class IncursionRules
         IncursionBand.HighSec => "highsec",
         IncursionBand.LowSec => "lowsec",
         _ => "nullsec",
+    };
+
+    /// <summary>The stable name of a site role, as it is stored.</summary>
+    public static string NameOf(IncursionSiteRole role) => role switch
+    {
+        IncursionSiteRole.Staging => "staging",
+        IncursionSiteRole.Vanguard => "vanguard",
+        IncursionSiteRole.Assault => "assault",
+        IncursionSiteRole.Headquarters => "headquarters",
+        _ => "mothership",
     };
 
     /// <summary>The band of a stored name, or null.</summary>

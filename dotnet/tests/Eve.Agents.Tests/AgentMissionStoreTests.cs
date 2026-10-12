@@ -46,6 +46,52 @@ public class AgentMissionStoreTests
     }
 
     [PgFact]
+    public async Task The_completed_missions_of_a_character_come_from_the_journal_with_their_time()
+    {
+        await using var rig = await Rig.Create();
+        await rig.Store.OfferAsync(Character, Agent, Courier, Rig.Start, "offer:1");
+        await rig.Store.AcceptAsync(Character, Agent, Rig.Start + Hour, "accept:1");
+        await rig.Store.CompleteAsync(Character, Agent, Rig.Start + Hour * 2, "complete:1");
+
+        var completed = await rig.Store.ReadCompletedAsync(Character);
+        Assert.Equal((Courier.MissionId, Rig.Start + Hour * 2), Assert.Single(completed));
+        Assert.Empty(await rig.Store.ReadCompletedAsync(Character + 1));
+    }
+
+    [PgFact]
+    public async Task A_failed_mission_comes_back_from_the_journal_with_its_time()
+    {
+        await using var rig = await Rig.Create();
+        await rig.Store.OfferAsync(Character, Agent, Courier, Rig.Start, "offer:f");
+        await rig.Store.AcceptAsync(Character, Agent, Rig.Start + Hour, "accept:f");
+        await rig.Store.FailAsync(Character, Agent, Rig.Start + Hour * 2, "fail:f");
+
+        Assert.Equal((Courier.MissionId, Rig.Start + Hour * 2), Assert.Single(await rig.Store.ReadFailedAsync(Character)));
+        Assert.Empty(await rig.Store.ReadCompletedAsync(Character));
+    }
+
+    [PgFact]
+    public async Task A_completion_rolled_back_with_its_standing_write_leaves_the_mission_accepted_and_announces_nothing()
+    {
+        await using var rig = await Rig.Create();
+        await rig.Store.OfferAsync(Character, Agent, Courier, Rig.Start, "offer:r");
+        await rig.Store.AcceptAsync(Character, Agent, Rig.Start + Hour, "accept:r");
+
+        // the completion and the standing write share one transaction: when the standing write fails, the transaction is rolled back
+        await using (var connection = await rig.Source.OpenConnectionAsync())
+        await using (var transaction = await connection.BeginTransactionAsync())
+        {
+            Assert.NotNull(await rig.Store.CompleteInAsync(connection, transaction, Character, Agent, Rig.Start + Hour * 2, "complete:r", CancellationToken.None));
+            await transaction.RollbackAsync();
+        }
+
+        Assert.Equal(AgentMissionState.Accepted, (await rig.Store.ReadAsync(Character, Agent))!.State);
+        Assert.Equal(["offered:0>1", "accepted:1>2"], await rig.JournalAsync(Character, Agent));
+        Assert.Equal(2, rig.Changes.Count);
+        Assert.Empty(await rig.Store.ReadCompletedAsync(Character));
+    }
+
+    [PgFact]
     public async Task A_refused_transition_names_its_reason_and_writes_nothing()
     {
         await using var rig = await Rig.Create();

@@ -77,6 +77,9 @@ internal sealed partial class CharacterServicesComposition
         await TrainingSkillsAndCreation();
         await CorporationMigrations();
         await EconomyAndInsurance();
+        await TradeAuthorityStore();
+        await BookmarkStores();
+        NesIntroStoreSetup();
         await CorporationStores();
         await MarketSeed();
         await SpaceSimulation();
@@ -159,6 +162,7 @@ internal sealed partial class CharacterServicesComposition
     private WalletTransactions economyWallets = default!;
     private WalletAnnouncer economyAnnouncer = default!;
     private LoyaltyPointStore loyaltyPoints = default!;
+    private Eve.Services.Wallet.LpStorePurchases lpStorePurchases = default!;
     private Eve.Wallet.LpStoreOfferCache lpStoreCache = default!;
     private static readonly System.Net.Http.HttpClient lpStoreHttp = new();
     private LoyaltyPointAnnouncer loyaltyAnnouncer = default!;
@@ -222,6 +226,8 @@ internal sealed partial class CharacterServicesComposition
     private AgentMissionRpcCallbacks agentMissionRpcCallbacks = default!;
     private AgentMissionService agentMissionService = default!;
     private Eve.Agents.AgentMissionStore agentMissionStore = default!;
+    private Eve.Agents.ResearchProjectStore agentResearchProjects = default!;
+    private Eve.Agents.LocateStore agentLocates = default!;
     private Eve.Services.Core.AgentMissionAnnouncer agentMissionAnnouncer = default!;
     private SlashService? publicQaSlashService;
     private GameRpcCallbacks gameRpcCallbacks = default!;

@@ -41,6 +41,11 @@ public static class AgentDialogueToken
     public const int QuitReady = 383;
     public const int RequestAfterCompletion = 384;
 
+    /// <summary>The research action tokens (EveJS researchDialogue.js:29-31); they name the buttons 12 to 14.</summary>
+    public const int StartResearch = 830;
+    public const int CancelResearch = 831;
+    public const int BuyDatacores = 832;
+
     private static readonly Dictionary<long, int> ButtonByToken = new()
     {
         [Request] = AgentDialogueButton.RequestMission,
@@ -52,6 +57,9 @@ public static class AgentDialogueToken
         [CompleteReady] = AgentDialogueButton.Complete,
         [QuitReady] = AgentDialogueButton.Quit,
         [RequestAfterCompletion] = AgentDialogueButton.RequestMission,
+        [StartResearch] = AgentDialogueButton.StartResearch,
+        [CancelResearch] = AgentDialogueButton.CancelResearch,
+        [BuyDatacores] = AgentDialogueButton.BuyDatacores,
     };
 
     /// <summary>The button an action names: a slot maps to its button, a button id is itself; null for anything else.</summary>
@@ -69,13 +77,17 @@ public static class AgentDialogueToken
 /// server yet (DEVIATIONS "Agents slice AG-2, A5"); the host answers null for every agent until a pool is loaded.
 /// </param>
 /// <param name="Now">The clock.</param>
+/// <param name="OnConversation">Called when the character talks to the agent (a DoAction), with whether the character is with the agent (in the station, or in space in its system). Talk steps complete here; null: nothing.</param>
 public sealed record AgentDialogueSources(
     AgentMissionStore Store,
     Func<long, long, long, long, CancellationToken, ValueTask<AgentStandings>> ReadStandings,
     Func<long, int, CancellationToken, ValueTask<int>> ReadSkillLevel,
     Func<long, long> FactionOfCorporation,
     Func<AgentMissionAgentData, long, CancellationToken, ValueTask<AgentMissionContent?>> PickOffer,
-    Func<DateTimeOffset> Now);
+    Func<DateTimeOffset> Now,
+    Func<long, AgentMissionAgentData, bool, CancellationToken, ValueTask>? OnConversation = null,
+    IAgentResearchPort? Research = null,
+    IAgentLocatorPort? Locator = null);
 
 /// <summary>The answer of DoAction: the agent's line, the buttons, and the last-action record the window reads.</summary>
 public sealed record AgentDialogueReply(PyValue AgentSays, IReadOnlyList<(long ActionId, int ButtonType)> Actions, PyDict LastActionInfo)
@@ -91,11 +103,20 @@ public sealed record AgentDialogueReply(PyValue AgentSays, IReadOnlyList<(long A
     ]);
 }
 
+/// <summary>A client dialog the server raises before it answers (agents.YesNo, SingleChoiceBox or GetQuantity), with the continuation that takes the client's answer.</summary>
+public sealed record AgentDialoguePrompt(string Method, IReadOnlyList<PyValue> Args, PyDict Kwargs, Func<PyValue?, ValueTask<AgentDialogueStep>> Then);
+
+/// <summary>One step of the dialogue: the reply to send, or the prompt to raise first (its answer then leads to the next step).</summary>
+public sealed record AgentDialogueStep(AgentDialogueReply? Reply, AgentDialoguePrompt? Prompt)
+{
+    public static AgentDialogueStep Of(AgentDialogueReply reply) => new(reply, null);
+}
+
 /// <summary>
 /// The agent dialogue behind DoAction (A4, narrowed). It answers the conversation the client asks for and makes the mission
 /// transitions it names through the agents store. Implemented: the greeting, the standing refusal, request (an offer from
 /// <see cref="AgentDialogueSources.PickOffer"/>), view, accept, decline (the four-hour replay), quit at the agent's station, and
-/// the states that show them. Not implemented, and refused by name: research (A6) and the locator (A7). The reference's
+/// the states that show them, research (A6) and the locator (A7) when their ports are given (refused by name otherwise). The reference's
 /// confirmation windows for decline and quit are not part of this slice: the transition is made when the button is pressed
 /// (DEVIATIONS "Agents slice AG-2, A4").
 /// </summary>
@@ -112,15 +133,26 @@ public sealed class AgentDialogueMachine(AgentDialogueSources sources)
 
     private static readonly int[] AccessSkills = [AgentAccessRule.ConnectionsSkill, AgentAccessRule.DiplomacySkill, AgentAccessRule.CriminalConnectionsSkill];
 
-    /// <summary>One DoAction. <paramref name="action"/> is the argument the window sent (PyNone for the first contact).</summary>
+    /// <summary>One DoAction, as a reply. Refused when the step needs the client to answer a question first (use <see cref="StepAsync"/>).</summary>
     public async ValueTask<AgentDialogueReply> DoActionAsync(
+        long characterId, AgentMissionAgentData agent, PyValue? action, bool atAgentLocation, CancellationToken cancellationToken) =>
+        (await StepAsync(characterId, agent, action, atAgentLocation, cancellationToken)).Reply
+            ?? throw new InvalidOperationException("the dialogue asks the client first: use StepAsync");
+
+    /// <summary>One DoAction. <paramref name="action"/> is the argument the window sent (PyNone for the first contact).</summary>
+    public async ValueTask<AgentDialogueStep> StepAsync(
         long characterId,
         AgentMissionAgentData agent,
         PyValue? action,
         bool atAgentLocation,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        long stationId = 0)
     {
         var now = sources.Now();
+        if (sources.OnConversation is { } onConversation)
+        {
+            await onConversation(characterId, agent, atAgentLocation, cancellationToken);
+        }
         var button = ButtonOfArgument(action);
         var standing = await ReadAccessAsync(characterId, agent, cancellationToken);
         var mission = await sources.Store.ReadAsync(characterId, agent.AgentId, cancellationToken);
@@ -155,31 +187,71 @@ public sealed class AgentDialogueMachine(AgentDialogueSources sources)
                 }
                 break;
 
+            // The reference asks before it declines or quits (sendAgentDeclineConfirmation, sendAgentQuitConfirmation): the
+            // transition runs only on a yes, and a no shows the conversation as it was.
             case AgentDialogueButton.Decline when mission?.State == AgentMissionState.Offered:
-                try
-                {
-                    await sources.Store.DeclineAsync(characterId, agent.AgentId, now,
-                        $"decline:{characterId}:{agent.AgentId}:{now.ToUnixTimeMilliseconds()}", cancellationToken);
-                    return await ConversationAsync(characterId, agent, standing, atAgentLocation, cancellationToken,
-                        LastInfo(declined: true));
-                }
-                catch (AgentMissionRefusedException)
-                {
-                }
-                break;
+                return new AgentDialogueStep(null, YesNo(
+                    "UI/Agents/StandardMission/DeclineMissionTitle", "UI/Agents/StandardMission/DeclineMessage",
+                    new PyDict([new KeyValuePair<PyValue, PyValue>(new PyStr("when"), new PyLong(Py.FileTimeFromUnixMs(now.ToUnixTimeMilliseconds())))]),
+                    agent.AgentId, DeclineContentId, "AgtDeclineMission",
+                    async yes =>
+                    {
+                        if (yes)
+                        {
+                            try
+                            {
+                                await sources.Store.DeclineAsync(characterId, agent.AgentId, now,
+                                    $"decline:{characterId}:{agent.AgentId}:{now.ToUnixTimeMilliseconds()}", cancellationToken);
+                                return AgentDialogueStep.Of(await ConversationAsync(characterId, agent, standing, atAgentLocation, cancellationToken,
+                                    LastInfo(declined: true)));
+                            }
+                            catch (AgentMissionRefusedException)
+                            {
+                            }
+                        }
+                        return AgentDialogueStep.Of(await ConversationAsync(characterId, agent, standing, atAgentLocation, cancellationToken, LastInfo()));
+                    }));
 
             case AgentDialogueButton.Quit when mission?.State == AgentMissionState.Accepted && atAgentLocation:
-                try
-                {
-                    await sources.Store.QuitAsync(characterId, agent.AgentId, now,
-                        $"quit:{characterId}:{agent.AgentId}:{now.ToUnixTimeMilliseconds()}", cancellationToken);
-                    return await ConversationAsync(characterId, agent, standing, atAgentLocation, cancellationToken,
-                        LastInfo(quit: true));
-                }
-                catch (AgentMissionRefusedException)
-                {
-                }
+                return new AgentDialogueStep(null, YesNo(
+                    "UI/Agents/StandardMission/QuitMissionTitle", "UI/Agents/StandardMission/QuitMissionMessage",
+                    EmptyDict(), agent.AgentId, mission.Content.MissionId, "AgtQuitMission",
+                    async yes =>
+                    {
+                        if (yes)
+                        {
+                            try
+                            {
+                                await sources.Store.QuitAsync(characterId, agent.AgentId, now,
+                                    $"quit:{characterId}:{agent.AgentId}:{now.ToUnixTimeMilliseconds()}", cancellationToken);
+                                return AgentDialogueStep.Of(await ConversationAsync(characterId, agent, standing, atAgentLocation, cancellationToken,
+                                    LastInfo(quit: true)));
+                            }
+                            catch (AgentMissionRefusedException)
+                            {
+                            }
+                        }
+                        return AgentDialogueStep.Of(await ConversationAsync(characterId, agent, standing, atAgentLocation, cancellationToken, LastInfo()));
+                    }));
+
+            case AgentDialogueButton.LocateCharacter when agent.IsLocatorAgent && sources.Locator is not null:
+                return await LocateAskAsync(characterId, agent, standing, now, cancellationToken);
+
+            case AgentDialogueButton.LocateAccept when agent.IsLocatorAgent && sources.Locator is not null:
+                return await LocateAcceptAsync(characterId, agent, standing, now, cancellationToken);
+
+            case AgentDialogueButton.LocateReject when agent.IsLocatorAgent && sources.Locator is not null:
+                await sources.Locator.Locates.SetTargetAsync(characterId, agent.AgentId, null, cancellationToken);
                 break;
+
+            case AgentDialogueButton.StartResearch when sources.Research is not null:
+                return await StartResearchAsync(characterId, agent, standing, now, cancellationToken);
+
+            case AgentDialogueButton.CancelResearch when sources.Research is not null:
+                return await CancelResearchAsync(characterId, agent, mission, now, cancellationToken);
+
+            case AgentDialogueButton.BuyDatacores when sources.Research is not null:
+                return await BuyDatacoresAsync(characterId, agent, now, stationId, cancellationToken);
 
             case AgentDialogueButton.StartResearch or AgentDialogueButton.CancelResearch or AgentDialogueButton.BuyDatacores
                 or AgentDialogueButton.LocateCharacter or AgentDialogueButton.LocateAccept or AgentDialogueButton.LocateReject:
@@ -187,8 +259,28 @@ public sealed class AgentDialogueMachine(AgentDialogueSources sources)
                     ("info", new PyStr("This agent service is not available on this server yet.")));
         }
 
-        return await ConversationAsync(characterId, agent, standing, atAgentLocation, cancellationToken, LastInfo());
+        return AgentDialogueStep.Of(await ConversationAsync(characterId, agent, standing, atAgentLocation, cancellationToken, LastInfo()));
     }
+
+    /// <summary>What the window is told when a prompt could not be answered (a client call that failed or raised).</summary>
+    public static AgentDialogueReply FailureReply() => new(PlainText("The agent could not answer that request."), [], LastInfo());
+
+    /// <summary>The contentID the client's decline confirmation carries (EveJS agentMgrService.js:391-396).</summary>
+    private const long DeclineContentId = 4802;
+
+    /// <summary>A YesNo prompt with the reference's arguments: the title and body labels, the agent, the content and the suppression id.</summary>
+    private static AgentDialoguePrompt YesNo(string titleLabel, string bodyLabel, PyDict bodyKwargs, long agentId, long contentId, string suppressId,
+        Func<bool, ValueTask<AgentDialogueStep>> then) => new(
+            "YesNo",
+            [
+                new PyTuple([new PyStr(titleLabel), EmptyDict()]),
+                new PyTuple([new PyStr(bodyLabel), bodyKwargs]),
+                new PyInt(agentId),
+                new PyInt(contentId),
+                new PyStr(suppressId),
+            ],
+            new PyDict([new KeyValuePair<PyValue, PyValue>(new PyStr("machoVersion"), new PyInt(1))]),
+            answer => then(answer is PyBool { Value: true }));
 
     /// <summary>The conversation the window shows after an action: the held mission's, or the greeting and what can be asked.</summary>
     private async ValueTask<AgentDialogueReply> ConversationAsync(
@@ -218,11 +310,311 @@ public sealed class AgentDialogueMachine(AgentDialogueSources sources)
         }
         var canRequest = mission?.DeclineUntil is not { } until || until <= now;
         var offerable = canRequest && await sources.PickOffer(agent, characterId, cancellationToken) is not null;
+        IReadOnlyList<(long ActionId, int ButtonType)> actions = offerable ? [(AgentDialogueToken.Request, AgentDialogueButton.RequestMission)] : [];
         return new AgentDialogueReply(
             Greeting(null),
-            offerable ? [(AgentDialogueToken.Request, AgentDialogueButton.RequestMission)] : [],
+            [.. actions, .. await IdleActionsAsync(characterId, agent, standing, now, cancellationToken)],
             lastInfo);
     }
+
+    // The R&D labels (EveJS researchRuntime.js:69-88), resolved by the client's localization.
+    private const string SkillsNotSufficientLabel = "UI/Agents/Research/CharacterSkillsNotSufficient";
+    private const string TooLowRpmLabel = "UI/Agents/Research/TooLowRpm";
+    private const string ResearchStartedLabel = "UI/Agents/Research/ResearchStarted";
+    private const string ResearchCancelledLabel = "UI/Agents/Research/ResearchCancelled";
+    private const string BoughtDatacoresLabel = "UI/Agents/Research/BoughtDatacores";
+    private const string NotEnoughRpLabel = "UI/Agents/Research/NotEnoughRPForDatacores";
+    private const string NotEnoughIskLabel = "UI/Agents/Research/NotEnoughISKForDatacores";
+    private const string InvalidInputLabel = "UI/Agents/Research/DatacoreInvalidInput";
+    private const string DatacorePriceLabel = "UI/Agents/Research/DatacorePrice";
+    private const string DatacoresCaptionLabel = "UI/Agents/Research/Datacores";
+    private const string SelectTypeTitleLabel = "UI/Agents/Research/SelectResearchTypeTitle";
+    private const string SelectTypeMessageLabel = "UI/Agents/Research/SelectResearchTypeMessage";
+    private const string SkillListingLabel = "UI/Agents/Research/SkillListing";
+    private const string CancelQuestionLabel = "UI/Agents/Research/CancelResearchQuestion";
+    private const string SureToCancelLabel = "UI/Agents/Research/SureToCancelResearch";
+    private const string SureToCancelAndMissionLabel = "UI/Agents/Research/SureToCancelResearchAndMission";
+
+    /// <summary>Start research (button 12): the refusals in the reference's order, then the field choice; the answer starts the project.</summary>
+    private async ValueTask<AgentDialogueStep> StartResearchAsync(
+        long characterId, AgentMissionAgentData agent, AccessReading standing, DateTimeOffset now, CancellationToken cancellationToken)
+    {
+        var research = sources.Research!;
+        if (!standing.CanUse) return Refusal(ResearchTooLowLabel);
+        var science = await SkillAsync(characterId, ResearchRules.ScienceSkillTypeId, cancellationToken);
+        if (science < ResearchRules.ScienceRequiredLevel) return Refusal(SkillsNotSufficientLabel);
+        var fields = new List<AgentResearchField>();
+        foreach (var field in research.Fields)
+        {
+            if (ResearchRules.Qualifies(science, await SkillAsync(characterId, (int)field.SkillTypeId, cancellationToken), (int)agent.Level))
+                fields.Add(field);
+        }
+        if (fields.Count == 0) return Refusal(SkillsNotSufficientLabel);
+        var slots = ResearchRules.MaxConcurrentProjects(await SkillAsync(characterId, ResearchRules.ResearchProjectManagementSkillTypeId, cancellationToken));
+        if ((await research.Projects.ReadAllAsync(characterId, cancellationToken)).Count >= slots) return Refusal(TooLowRpmLabel);
+
+        var choices = fields.Select(field => (PyValue)new PyTuple(
+            [new PyStr(SkillListingLabel), Dict(("skillID", new PyInt(field.SkillTypeId)), ("skillLevel", new PyInt(agent.Level)))])).ToArray();
+        return new AgentDialogueStep(null, new AgentDialoguePrompt("SingleChoiceBox",
+            [Label(SelectTypeTitleLabel), Label(SelectTypeMessageLabel), new PyList(choices), new PyInt(agent.AgentId)],
+            EmptyDict(),
+            async answer =>
+            {
+                var index = ChoiceIndex(answer);
+                if (index is not { } chosen || chosen < 0 || chosen >= fields.Count)
+                    return await AnswerAsync(characterId, agent, InvalidInputLabel, null, idle: true, cancellationToken);
+                var field = fields[chosen];
+                var negotiation = await SkillAsync(characterId, ResearchRules.NegotiationSkillTypeId, cancellationToken);
+                var specialty = await SkillAsync(characterId, (int)field.SkillTypeId, cancellationToken);
+                var effective = AgentAccessRule.EffectiveStanding(standing.Standings.Character, standing.FactionId,
+                    skill => standing.Levels.GetValueOrDefault(skill));
+                var perDay = ResearchRules.PointsPerDay(negotiation, effective, specialty, (int)agent.Level);
+                try
+                {
+                    await research.Projects.StartAsync(new ResearchProject(characterId, agent.AgentId, field.SkillTypeId, sources.Now(), perDay, 0),
+                        slots, cancellationToken);
+                }
+                catch (ResearchRefusedException)
+                {
+                    return await AnswerAsync(characterId, agent, TooLowRpmLabel, null, idle: true, cancellationToken);
+                }
+                return await AnswerAsync(characterId, agent, ResearchStartedLabel, null, idle: true, cancellationToken);
+            }));
+    }
+
+    /// <summary>Cancel research (button 13): a YesNo, and a yes deletes the project (its points are lost) and quits an accepted mission.</summary>
+    private async ValueTask<AgentDialogueStep> CancelResearchAsync(
+        long characterId, AgentMissionAgentData agent, AgentMissionRecord? mission, DateTimeOffset now, CancellationToken cancellationToken)
+    {
+        var research = sources.Research!;
+        if (await research.Projects.ReadAsync(characterId, agent.AgentId, cancellationToken) is null)
+            return await AnswerAsync(characterId, agent, InvalidInputLabel, null, idle: true, cancellationToken);
+        var accepted = mission?.State == AgentMissionState.Accepted;
+        return new AgentDialogueStep(null, new AgentDialoguePrompt("YesNo",
+            [Label(CancelQuestionLabel), Label(accepted ? SureToCancelAndMissionLabel : SureToCancelLabel), new PyInt(agent.AgentId)],
+            EmptyDict(),
+            async answer =>
+            {
+                // The reference answers a no with the invalid-input line (researchDialogue.js planCancelResearch).
+                if (answer is not PyBool { Value: true })
+                    return await AnswerAsync(characterId, agent, InvalidInputLabel, null, idle: true, cancellationToken);
+                if (accepted)
+                {
+                    try
+                    {
+                        await sources.Store.QuitAsync(characterId, agent.AgentId, now,
+                            $"research-cancel:{characterId}:{agent.AgentId}:{now.ToUnixTimeMilliseconds()}", cancellationToken);
+                    }
+                    catch (AgentMissionRefusedException)
+                    {
+                        // the mission changed since it was read: the project is cancelled all the same
+                    }
+                }
+                await research.Projects.CancelAsync(characterId, agent.AgentId, cancellationToken);
+                return await AnswerAsync(characterId, agent, ResearchCancelledLabel, null, idle: true, cancellationToken);
+            }));
+    }
+
+    /// <summary>Buy datacores (button 14): the affordable quantity is asked; the purchase is the port's (RP, ISK and the item in one transaction).</summary>
+    private async ValueTask<AgentDialogueStep> BuyDatacoresAsync(
+        long characterId, AgentMissionAgentData agent, DateTimeOffset now, long stationId, CancellationToken cancellationToken)
+    {
+        var research = sources.Research!;
+        var project = await research.Projects.ReadAsync(characterId, agent.AgentId, cancellationToken);
+        var field = project is null ? null : research.Fields.FirstOrDefault(candidate => candidate.SkillTypeId == project.SkillTypeId);
+        if (project is null || field is null)
+            return await AnswerAsync(characterId, agent, InvalidInputLabel, null, idle: true, cancellationToken);
+        var affordable = (long)Math.Floor(ResearchProjectStore.AccruedPoints(project, now) / ResearchRules.DatacoreResearchPoints);
+        if (affordable < 1)
+            return Refusal(NotEnoughRpLabel, Dict(("datacoreTypeID", new PyInt(field.DatacoreTypeId)), ("rpAmount", new PyInt(ResearchRules.DatacoreResearchPoints))));
+
+        return new AgentDialogueStep(null, new AgentDialoguePrompt("GetQuantity", [],
+            Dict(
+                ("maxvalue", new PyInt(affordable)),
+                ("minvalue", new PyInt(1)),
+                ("setvalue", new PyInt(affordable)),
+                ("caption", Label(DatacoresCaptionLabel)),
+                ("label", new PyTuple([new PyStr(DatacorePriceLabel), Dict(
+                    ("datacoreTypeID", new PyInt(field.DatacoreTypeId)),
+                    ("rpAmount", new PyInt(ResearchRules.DatacoreResearchPoints)),
+                    ("iskAmount", new PyInt(ResearchRules.DatacoreIsk)))])),
+                ("digits", new PyInt(0))),
+            async answer =>
+            {
+                var quantity = Quantity(answer);
+                if (quantity <= 0 || stationId <= 0)
+                    return await AnswerAsync(characterId, agent, InvalidInputLabel, null, idle: true, cancellationToken);
+                var purchase = await research.BuyDatacoresAsync(characterId, agent.AgentId, field.SkillTypeId, quantity, stationId, cancellationToken);
+                var kwargs = Dict(("datacoreTypeID", new PyInt(field.DatacoreTypeId)), ("rpAmount", new PyInt(ResearchRules.DatacoreResearchPoints)),
+                    ("iskAmount", new PyInt(ResearchRules.DatacoreIsk)));
+                return purchase.Refusal switch
+                {
+                    AgentDatacoreRefusal.None => await AnswerAsync(characterId, agent, BoughtDatacoresLabel, null, idle: true, cancellationToken),
+                    AgentDatacoreRefusal.NotEnoughRp => await AnswerAsync(characterId, agent, NotEnoughRpLabel, kwargs, idle: true, cancellationToken),
+                    AgentDatacoreRefusal.NotEnoughIsk => await AnswerAsync(characterId, agent, NotEnoughIskLabel, kwargs, idle: true, cancellationToken),
+                    _ => await AnswerAsync(characterId, agent, InvalidInputLabel, null, idle: true, cancellationToken),
+                };
+            }));
+    }
+
+    /// <summary>The buttons an R&amp;D agent shows: start with no project; datacores and cancel with one (EveJS buildResearchIdleActions).</summary>
+    private async ValueTask<IReadOnlyList<(long ActionId, int ButtonType)>> ResearchIdleActionsAsync(
+        long characterId, AgentMissionAgentData agent, CancellationToken cancellationToken)
+    {
+        if (agent.AgentTypeId != AgentAccessRule.ResearchAgentType || sources.Research is not { } research) return [];
+        return await research.Projects.ReadAsync(characterId, agent.AgentId, cancellationToken) is null
+            ? [(AgentDialogueToken.StartResearch, AgentDialogueButton.StartResearch)]
+            : [(AgentDialogueToken.BuyDatacores, AgentDialogueButton.BuyDatacores), (AgentDialogueToken.CancelResearch, AgentDialogueButton.CancelResearch)];
+    }
+
+    // The locator (EveJS has no locate dialogue; the lines are plain text, see DEVIATIONS "Agents slice AG-4, A7").
+    private const string LocateCaption = "Locate a pilot";
+    private const string LocateLabel = "Enter the name of the pilot to locate.";
+    private const string LocateUnavailableText = "This locator cannot find that pilot right now.";
+    private const string LocateNotFoundText = "No pilot by that name could be found.";
+    private const string LocateDoneText = "The result has been sent to you.";
+    private const string LocateNoFundsText = "You cannot pay the locate fee.";
+
+    /// <summary>Locate (button 15): the name is asked; a found, online, reachable pilot is offered with the fee (accept 16, reject 17).</summary>
+    private async ValueTask<AgentDialogueStep> LocateAskAsync(
+        long characterId, AgentMissionAgentData agent, AccessReading standing, DateTimeOffset now, CancellationToken cancellationToken)
+    {
+        var locator = sources.Locator!;
+        if (!LocatorUsable(agent, standing) || await LocatorCoolingAsync(characterId, agent, now, cancellationToken))
+            return Say(LocateUnavailableText, await IdleActionsAsync(characterId, agent, standing, now, cancellationToken));
+        return new AgentDialogueStep(null, new AgentDialoguePrompt("RemoteNamePopup",
+            [new PyStr(LocateCaption), new PyStr(LocateLabel), new PyInt(agent.AgentId)],
+            EmptyDict(),
+            async answer =>
+            {
+                var name = (JsSemantics.StringValue(answer) ?? "").Trim();
+                var idle = await IdleActionsAsync(characterId, agent, standing, now, cancellationToken);
+                if (name.Length == 0 || await locator.FindCharacterAsync(name, cancellationToken) is not { } target)
+                    return Say(LocateNotFoundText, idle);
+                if (await LocateQuoteAsync(agent, target, cancellationToken) is not { } quote)
+                    return Say(LocateUnavailableText, idle);
+                await locator.Locates.SetTargetAsync(characterId, agent.AgentId, target, cancellationToken);
+                return Say($"Locate {name} for {quote.Fee:N0} ISK?",
+                    [(AgentDialogueButton.LocateAccept, AgentDialogueButton.LocateAccept), (AgentDialogueButton.LocateReject, AgentDialogueButton.LocateReject)]);
+            }));
+    }
+
+    /// <summary>Accept (button 16): the fee is charged and the result sent in one transaction; a pilot who cannot pay gets nothing.</summary>
+    private async ValueTask<AgentDialogueStep> LocateAcceptAsync(
+        long characterId, AgentMissionAgentData agent, AccessReading standing, DateTimeOffset now, CancellationToken cancellationToken)
+    {
+        var locator = sources.Locator!;
+        var idle = await IdleActionsAsync(characterId, agent, standing, now, cancellationToken);
+        var open = await locator.Locates.ReadAsync(characterId, agent.AgentId, cancellationToken);
+        if (open?.TargetCharacterId is not { } target || !LocatorUsable(agent, standing) || await LocatorCoolingAsync(characterId, agent, now, cancellationToken))
+            return Say(LocateUnavailableText, idle);
+        if (await LocateQuoteAsync(agent, target, cancellationToken) is not { } quote)
+        {
+            await locator.Locates.SetTargetAsync(characterId, agent.AgentId, null, cancellationToken);
+            return Say(LocateUnavailableText, idle);
+        }
+        if (!await locator.DeliverAsync(characterId, agent.AgentId, quote.Fee, LocateResult(target, agent, quote), cancellationToken))
+            return Say(LocateNoFundsText, idle);
+        return Say(LocateDoneText, await IdleActionsAsync(characterId, agent, standing, now, cancellationToken));
+    }
+
+    /// <summary>
+    /// The located notification's data (EveJS-client FormatLocateCharNotification, eve-logic notificationUtil.py:540): the pilot, the
+    /// intro variant, and the agent's and the pilot's places keyed by group id (3 region, 4 constellation, 5 system, 15 station).
+    /// </summary>
+    private static System.Text.Json.Nodes.JsonObject LocateResult(long targetCharacterId, AgentMissionAgentData agent, LocateQuote quote)
+    {
+        var agentLocation = new System.Text.Json.Nodes.JsonObject { ["5"] = agent.SolarSystemId };
+        if (agent.StationId is > 0) agentLocation["15"] = agent.StationId;
+        var targetLocation = new System.Text.Json.Nodes.JsonObject
+        {
+            ["3"] = quote.Place.RegionId, ["4"] = quote.Place.ConstellationId, ["5"] = quote.Location.SolarSystemId,
+        };
+        if (quote.Location.StationId > 0) targetLocation["15"] = quote.Location.StationId;
+        return new System.Text.Json.Nodes.JsonObject
+        {
+            ["characterID"] = targetCharacterId,
+            ["messageIndex"] = 0,
+            ["agentLocation"] = agentLocation,
+            ["targetLocation"] = targetLocation,
+        };
+    }
+
+    /// <summary>The fee for locating a pilot from the agent's system, or null when the locator cannot (offline, wormhole, or too far for its level).</summary>
+    private async ValueTask<LocateQuote?> LocateQuoteAsync(AgentMissionAgentData agent, long targetCharacterId, CancellationToken cancellationToken)
+    {
+        var locator = sources.Locator!;
+        if (await locator.TargetAsync(targetCharacterId, cancellationToken) is not { } location || LocatorRules.IsWormhole(location.SolarSystemId)) return null;
+        if (agent.SolarSystemId is not { } agentSystem || await locator.PlaceAsync(agentSystem, cancellationToken) is not { } agentPlace) return null;
+        if (await locator.PlaceAsync(location.SolarSystemId, cancellationToken) is not { } targetPlace) return null;
+        var distance = LocatorRules.Classify(agentSystem, agentPlace.ConstellationId, agentPlace.RegionId,
+            location.SolarSystemId, targetPlace.ConstellationId, targetPlace.RegionId);
+        return LocatorRules.Fee((int)agent.Level, distance) is { } fee ? new LocateQuote(fee, location, targetPlace) : null;
+    }
+
+    private sealed record LocateQuote(long Fee, LocateTarget Location, LocatePlace Place);
+
+    private static bool LocatorUsable(AgentMissionAgentData agent, AccessReading standing) =>
+        standing.CanUse && (LocatorRules.RequiredStandingFor((int)agent.Level) is not { } required ||
+            AgentAccessRule.EffectiveStanding(standing.Standings.Character, standing.FactionId, skill => standing.Levels.GetValueOrDefault(skill)) >= required);
+
+    private async ValueTask<bool> LocatorCoolingAsync(long characterId, AgentMissionAgentData agent, DateTimeOffset now, CancellationToken cancellationToken) =>
+        await sources.Locator!.Locates.ReadAsync(characterId, agent.AgentId, cancellationToken) is { LocatedAt: { } last } &&
+        now < last.AddMinutes(LocatorRules.CooldownMinutesFor((int)agent.Level));
+
+    /// <summary>The buttons an agent shows when idle: the research ones, and the locator's (ask; or accept and reject while a request is open).</summary>
+    private async ValueTask<IReadOnlyList<(long ActionId, int ButtonType)>> IdleActionsAsync(
+        long characterId, AgentMissionAgentData agent, AccessReading standing, DateTimeOffset now, CancellationToken cancellationToken)
+    {
+        var research = await ResearchIdleActionsAsync(characterId, agent, cancellationToken);
+        if (!agent.IsLocatorAgent || sources.Locator is null) return research;
+        var open = await sources.Locator.Locates.ReadAsync(characterId, agent.AgentId, cancellationToken);
+        if (open?.TargetCharacterId is not null)
+            return [.. research, (AgentDialogueButton.LocateAccept, AgentDialogueButton.LocateAccept), (AgentDialogueButton.LocateReject, AgentDialogueButton.LocateReject)];
+        return LocatorUsable(agent, standing) && !await LocatorCoolingAsync(characterId, agent, now, cancellationToken)
+            ? [.. research, (AgentDialogueButton.LocateCharacter, AgentDialogueButton.LocateCharacter)]
+            : research;
+    }
+
+    private static AgentDialogueStep Say(string text, IReadOnlyList<(long ActionId, int ButtonType)> actions) =>
+        AgentDialogueStep.Of(new AgentDialogueReply(PlainText(text), actions, LastInfo()));
+
+    /// <summary>The agent's line after a research action, with the idle buttons (EveJS buildPostActionConversation).</summary>
+    private async ValueTask<AgentDialogueStep> AnswerAsync(
+        long characterId, AgentMissionAgentData agent, string label, PyDict? kwargs, bool idle, CancellationToken cancellationToken) =>
+        AgentDialogueStep.Of(new AgentDialogueReply(
+            new PyTuple([new PyTuple([new PyStr(label), kwargs ?? EmptyDict()]), PyNone.Instance]),
+            idle ? await ResearchIdleActionsAsync(characterId, agent, cancellationToken) : [],
+            LastInfo()));
+
+    /// <summary>A refusal by name: the agent's line with no buttons (EveJS saysConversation for a refusal).</summary>
+    private static AgentDialogueStep Refusal(string label, PyDict? kwargs = null) => AgentDialogueStep.Of(new AgentDialogueReply(
+        new PyTuple([new PyTuple([new PyStr(label), kwargs ?? EmptyDict()]), PyNone.Instance]), [], LastInfo()));
+
+    private static PyTuple Label(string label) => new([new PyStr(label), EmptyDict()]);
+
+    private static PyDict Dict(params (string Key, PyValue Value)[] entries) => new(entries
+        .Select(entry => new KeyValuePair<PyValue, PyValue>(new PyStr(entry.Key), entry.Value)).ToList());
+
+    private async ValueTask<int> SkillAsync(long characterId, int skillTypeId, CancellationToken cancellationToken) =>
+        await sources.ReadSkillLevel(characterId, skillTypeId, cancellationToken);
+
+    /// <summary>The index of a SingleChoiceBox answer: (true, "radioboxOption&lt;n&gt;Selected"), n counted from one (EveJS readChoiceIndex).</summary>
+    private static int? ChoiceIndex(PyValue? answer) => answer is PyTuple { Items.Count: >= 2 } tuple &&
+        tuple.Items[0] is PyBool { Value: true } &&
+        JsSemantics.StringValue(tuple.Items[1]) is { } selection &&
+        System.Text.RegularExpressions.Regex.Match(selection, "^radioboxOption(\\d+)Selected$") is { Success: true } match
+            ? int.Parse(match.Groups[1].Value, System.Globalization.CultureInfo.InvariantCulture) - 1
+            : null;
+
+    /// <summary>The quantity a GetQuantity answer carries, or 0 when it was cancelled.</summary>
+    private static long Quantity(PyValue? answer) => answer switch
+    {
+        PyInt integer => integer.Value,
+        PyLong integer => integer.Value,
+        PyReal real => (long)real.Value,
+        _ => 0,
+    };
 
     private static int? ButtonOfArgument(PyValue? action) => action switch
     {
@@ -242,10 +634,10 @@ public sealed class AgentDialogueMachine(AgentDialogueSources sources)
             levels[skill] = await sources.ReadSkillLevel(characterId, skill, cancellationToken);
         }
         var canUse = AgentAccessRule.CanUse(agent.Level, agent.AgentTypeId, standings, factionId, skill => levels.GetValueOrDefault(skill));
-        return new AccessReading(canUse);
+        return new AccessReading(canUse, standings, factionId, levels);
     }
 
-    private sealed record AccessReading(bool CanUse);
+    private sealed record AccessReading(bool CanUse, AgentStandings Standings, long FactionId, IReadOnlyDictionary<int, int> Levels);
 
     private static PyValue Greeting(long? contentId) => new PyTuple(
     [

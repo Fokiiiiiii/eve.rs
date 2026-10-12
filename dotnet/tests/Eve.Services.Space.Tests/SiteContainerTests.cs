@@ -29,7 +29,7 @@ internal sealed class SiteContainerRig : IAsyncDisposable
 
     public static async Task<SiteContainerRig> CreateAsync()
     {
-        var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
+        var source = NpgsqlDataSource.Create(PgConnection.ForTest(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
         var rig = new SiteContainerRig(source);
         await DurableScheduler.MigrateAsync(source, "sch_" + rig._id);
         await EventBus.MigrateAsync(source, "evt_" + rig._id);
@@ -46,12 +46,26 @@ internal sealed class SiteContainerRig : IAsyncDisposable
     {
         Scheduler = new DurableScheduler(Source, () => Now, new SchedulerOptions { Concurrency = 1 }, "sch_" + _id, _ => { });
         Bus = new EventBus(Source, Scheduler, new EventBusOptions { MaxAttempts = 3 }, "evt_" + _id, _ => { });
+        // the container clears when its loot is taken: the move is announced in its transaction, and the container's hacks hear it
+        Bus.Subscribe("test.site-container.emptied", [Eve.Inventory.PgItemStore.ItemMovedTopic], async (context, token) =>
+        {
+            if (context.Event.Json().TryGetProperty("previousLocationId", out var previous) && previous.TryGetInt64(out var previousLocationId))
+                await Hacks().OnItemLeftAsync(context.Connection, context.Transaction, previousLocationId, token);
+        });
         Bus.Subscribe("test.site-container", [SiteContainerTopics.Cleared], (context, _) =>
         {
             var payload = context.Event.Json();
             Cleared.Add((payload.GetProperty("solarSystemId").GetInt64(), payload.GetProperty("site").GetInt64(), payload.GetProperty("container").GetInt64()));
             return Task.CompletedTask;
         });
+    }
+
+    /// <summary>Pumps until nothing is delivered: an event a handler publishes is past the pump's horizon, so it is delivered by the next pump.</summary>
+    public async Task DrainAsync()
+    {
+        while ((await Bus.PumpAsync()).Delivered > 0)
+        {
+        }
     }
 
     public SiteContainerStore Store => new(Source, SitesSchema);
@@ -66,7 +80,22 @@ internal sealed class SiteContainerRig : IAsyncDisposable
         await transaction.CommitAsync();
     }
 
-    public async ValueTask DisposeAsync() => await Source.DisposeAsync();
+    public async ValueTask DisposeAsync()
+    {
+        foreach (var schema in new[] { "sch_" + _id, "evt_" + _id, SitesSchema, ItemsSchema })
+        {
+            try
+            {
+                await using var drop = Source.CreateCommand($"DROP SCHEMA IF EXISTS \"{schema}\" CASCADE");
+                await drop.ExecuteNonQueryAsync();
+            }
+            catch (NpgsqlException)
+            {
+                // Leaving a scratch schema behind is better than failing the test.
+            }
+        }
+        await Source.DisposeAsync();
+    }
 }
 
 public sealed class SiteContainerTests
@@ -119,7 +148,7 @@ public sealed class SiteContainerTests
     }
 
     [PgFact]
-    public async Task A_win_clears_the_container_and_announces_it_with_its_site_for_the_site_objective()
+    public async Task A_win_leaves_the_loot_in_the_container_and_the_container_is_not_yet_cleared()
     {
         await using var rig = await SiteContainerRig.CreateAsync();
         await rig.InsertAsync(Secure(rig.Now + 86_400_000, relic: true));
@@ -129,14 +158,40 @@ public sealed class SiteContainerTests
         await rig.Hacks().EndedAsync(target, won: true, Character, CancellationToken.None);
         await rig.Bus.PumpAsync();
 
-        Assert.Equal("cleared", (await rig.Store.GetAsync(Container))!.State);
-        Assert.Equal([(SiteContainerRig.SolarSystemId, Site, Container)], rig.Cleared);
-
+        Assert.Equal("looted", (await rig.Store.GetAsync(Container))!.State);
+        Assert.Empty(rig.Cleared);
+        Assert.Null(await rig.Hacks().FindAsync(Container, CancellationToken.None));
         // the relic container's loot (EveJS generic_relic_loot) is in its cargo, owned by the character who won it
         var loot = await new PgItemStore(rig.Source, rig.ItemsSchema).InLocationAsync(Container, Character);
         Assert.NotEmpty(loot);
         Assert.All(loot, item => Assert.True(item.Quantity >= 1 && item.Flag == ItemFlags.Hangar));
-        Assert.Null(await rig.Hacks().FindAsync(Container, CancellationToken.None));
+    }
+
+    [PgFact]
+    public async Task The_last_loot_taken_clears_the_container_announces_it_with_its_site_and_removes_its_ball()
+    {
+        await using var rig = await SiteContainerRig.CreateAsync();
+        await rig.InsertAsync(Secure(rig.Now + 86_400_000, relic: true));
+        await rig.Hacks().EndedAsync((await rig.Hacks().FindAsync(Container, CancellationToken.None))!, won: true, Character, CancellationToken.None);
+        await rig.Bus.PumpAsync();
+        var items = new PgItemStore(rig.Source, rig.ItemsSchema) { Events = rig.Bus };
+        var loot = (await items.InLocationAsync(Container, Character)).ToList();
+        Assert.True(loot.Count >= 2, "the loot has more than one piece, so the first taking does not clear it");
+        const long Station = 60_000_001;
+
+        foreach (var (piece, index) in loot.Select((piece, index) => (piece, index)))
+        {
+            await using var connection = await rig.Source.OpenConnectionAsync();
+            await using var transaction = await connection.BeginTransactionAsync();
+            await items.MoveAsync(connection, transaction, piece.Id, Station, ItemFlags.Hangar);
+            await transaction.CommitAsync();
+            await rig.DrainAsync();
+            var last = index == loot.Count - 1;
+            Assert.Equal(last ? "cleared" : "looted", (await rig.Store.GetAsync(Container))!.State);
+        }
+
+        Assert.Equal([(SiteContainerRig.SolarSystemId, Site, Container)], rig.Cleared);
+        Assert.Equal([Container], rig.Removed);
     }
 
     [PgFact]

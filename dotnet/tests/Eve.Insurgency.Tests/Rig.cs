@@ -45,7 +45,7 @@ public sealed class Rig : IAsyncDisposable
 
     public static async Task<Rig> CreateAsync()
     {
-        var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
+        var source = NpgsqlDataSource.Create(PgConnection.ForTest(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
         var id = Guid.NewGuid().ToString("N")[..12];
         await DurableScheduler.MigrateAsync(source, "sch_" + id);
         await EventBus.MigrateAsync(source, "evt_" + id);
@@ -90,6 +90,18 @@ public sealed class Rig : IAsyncDisposable
     public async ValueTask DisposeAsync()
     {
         await Scheduler.StopAsync();
+        foreach (var schema in new[] { SchedulerSchema, EventsSchema, InsurgencySchema })
+        {
+            try
+            {
+                await using var drop = Source.CreateCommand($"DROP SCHEMA IF EXISTS \"{schema}\" CASCADE");
+                await drop.ExecuteNonQueryAsync();
+            }
+            catch (NpgsqlException)
+            {
+                // Leaving a scratch schema behind is better than failing the test.
+            }
+        }
         await Source.DisposeAsync();
     }
 }

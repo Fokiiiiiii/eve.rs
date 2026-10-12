@@ -128,7 +128,7 @@ public class AggressionTests
     [PgFact]
     public async Task What_is_kept_survives_the_process_is_read_back_by_system_and_a_change_is_one_step()
     {
-        await using var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
+        await using var source = NpgsqlDataSource.Create(PgConnection.ForTest(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
         var schema = "cw_" + Guid.NewGuid().ToString("N")[..12];
         await PgCrimewatchStore.MigrateAsync(source, schema);
         try
@@ -161,7 +161,7 @@ public class AggressionTests
     [PgFact]
     public async Task Kill_rights_persist_once_per_pair_and_can_be_consumed()
     {
-        await using var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
+        await using var source = NpgsqlDataSource.Create(PgConnection.ForTest(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
         var schema = "cw_" + Guid.NewGuid().ToString("N")[..12];
         await PgCrimewatchStore.MigrateAsync(source, schema);
         try
@@ -196,7 +196,7 @@ public class AggressionTests
     [PgFact]
     public async Task Two_changes_of_one_character_at_once_both_count()
     {
-        await using var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
+        await using var source = NpgsqlDataSource.Create(PgConnection.ForTest(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
         var schema = "cw_" + Guid.NewGuid().ToString("N")[..12];
         await PgCrimewatchStore.MigrateAsync(source, schema);
         try

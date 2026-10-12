@@ -155,7 +155,7 @@ public class StoreTests
     [Fact]
     public void A_schema_name_that_could_carry_sql_is_refused()
     {
-        using var source = NpgsqlDataSource.Create("Host=127.0.0.1");
+        using var source = NpgsqlDataSource.Create(Eve.Data.PgConnection.ForTest("Host=127.0.0.1"));
         Assert.Throws<ArgumentException>(() => new PgCharacterStore(source, "characters; DROP SCHEMA x"));
         Assert.Throws<ArgumentException>(() => new Eve.Inventory.PgItemStore(source, "Inventory"));
     }
@@ -196,7 +196,7 @@ public class StoreTests
             await Eve.Data.Migrations.ApplyAsync(s.Source, s.CharactersSchema, legacyMigrations));
         var id = await Insert(s, Pilot("Legacy Home"));
         Assert.Equal(
-            new[] { "0004_remote_home_station_cooldown" },
+            new[] { "0004_remote_home_station_cooldown", "0005_nes_intro_state" },
             await PgCharacterStore.MigrateAsync(s.Source, s.CharactersSchema));
 
         var migrated = (await s.Characters.GetAsync(id))!;

@@ -525,8 +525,7 @@ public async ValueTask<Eve.Services.Core.PersistedStructureInfo?> GetStructureIn
 
         var text = call.Arg(1) switch
         {
-            PyStr value => value.Value,
-            PyWString value => value.Value,
+            var value when Eve.Macho.JsSemantics.StringValue(value) is not null => Eve.Macho.JsSemantics.StringValue(value)!,
             PyBytes value => System.Text.Encoding.UTF8.GetString(value.Value.Span),
             PyInt value => value.Value.ToString(System.Globalization.CultureInfo.InvariantCulture),
             PyLong value => value.Value.ToString(System.Globalization.CultureInfo.InvariantCulture),

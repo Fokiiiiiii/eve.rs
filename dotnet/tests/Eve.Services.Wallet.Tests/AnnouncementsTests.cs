@@ -15,7 +15,7 @@ public class AnnouncementsTests
     [Fact]
     public void The_character_is_told_the_reference_account_change_shape()
     {
-        using var source=NpgsqlDataSource.Create("Host=127.0.0.1;Username=postgres");
+        using var source=NpgsqlDataSource.Create(Eve.Data.PgConnection.ForTest("Host=127.0.0.1;Username=postgres"));
         var transactions=new WalletTransactions(source);
         var sessions=new CharacterSessions();
         var sink=new Sink();
@@ -30,7 +30,7 @@ public class AnnouncementsTests
     [Fact]
     public void Corporation_changes_reach_its_members_with_the_correct_division_key()
     {
-        using var source=NpgsqlDataSource.Create("Host=127.0.0.1;Username=postgres");
+        using var source=NpgsqlDataSource.Create(Eve.Data.PgConnection.ForTest("Host=127.0.0.1;Username=postgres"));
         var transactions=new WalletTransactions(source);
         var sessions=new CharacterSessions();
         var memberSink=new Sink();

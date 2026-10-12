@@ -419,10 +419,14 @@ private readonly TransitionRuntime _transitions;
     /// <summary>The directional scan (set by the composition root): the scanMgr's ConeScan answers through it.</summary>
     public Scanning.SpaceDirectionalScans? DirectionalScans { get; set; }
 
+    /// <summary>Whether the session's system allows scanning (the client's disallowScanning flag is not set; no system is false for nothing).</summary>
+    public bool ScanningAllowedFor(ClientSession session) =>
+        SolarSystemOf(session) is not int system || _systems.Get(system) is not { DisallowScanning: true };
+
     public Task LaunchAsync(ClientSession session, long moduleId, int count, CancellationToken cancellationToken)
     {
         // the client's disallowScanning flag: its probe window closes in such a system and it names no refusal, so the wording is ours
-        if (SolarSystemOf(session) is int system && _systems.Get(system) is { DisallowScanning: true })
+        if (!ScanningAllowedFor(session))
         {
             throw Notify("Scanner probes cannot be launched in this system.");
         }

@@ -542,8 +542,6 @@ private readonly TransitionRuntime _transitions;
                 ("locationid", new PyInt(character.StationId)),
                 ("worldspaceid", None),
             ]);
-            if (session.CharacterId != characterId && character.ShipId == ship.Id)
-                attributes.Add(("deferredDockedShipId", new PyLong(ship.Id)));
         }
         else if (StructureExistsAsync is not null &&
                  await StructureExistsAsync(character.StationId, cancellationToken))
@@ -559,8 +557,6 @@ private readonly TransitionRuntime _transitions;
                 ("locationid", new PyInt(character.SolarSystemId)),
                 ("worldspaceid", None),
             ]);
-            if (session.CharacterId != characterId && character.ShipId == ship.Id)
-                attributes.Add(("deferredDockedShipId", new PyLong(ship.Id)));
         }
         return attributes;
     }
@@ -569,7 +565,6 @@ private readonly TransitionRuntime _transitions;
         ClientSession session, long characterId, CancellationToken cancellationToken)
     {
         session.Set(LoginInventoryBootstrapPending, None);
-        session.Set("deferredDockedShipId", None);
         await OnSessionClosedAsync(session);
     }
 
@@ -683,17 +678,6 @@ private readonly TransitionRuntime _transitions;
         bool activeSpaceShipInventoryList,
         CancellationToken cancellationToken)
     {
-        if (stationHangar && method == "List" &&
-            session.Get("deferredDockedShipId") is PyLong pendingShip && pendingShip.Value > 0)
-        {
-            session.AfterResponse(() =>
-            {
-                session.Change(("shipid", new PyLong(pendingShip.Value)));
-                session.Set("deferredDockedShipId", None);
-            });
-            return;
-        }
-
         if (method != "List" || !activeSpaceShipInventoryList ||
             session.GetInt(LoginInventoryBootstrapPending) != 1)
             return;

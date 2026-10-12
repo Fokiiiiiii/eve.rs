@@ -55,18 +55,17 @@ public sealed class CharacterEntryInventoryBootstrapTests
     }
 
     [Fact]
-    public async Task Docked_shipid_is_changed_only_after_the_hangar_list_response()
+    public async Task A_docked_hangar_list_leaves_the_shipid_the_selection_gave()
     {
+        // the active ship is in the selection's session change (no deferral): the hangar list does not change it again
         using var space = new SpaceSessions(new FakeSim(), null!, null!, null!, null!, () => 1_700_000_000_000);
         var session = new Eve.Services.ClientSession();
-        session.Set("deferredDockedShipId", new Eve.Marshal.PyLong(9_998_400_000_001));
+        session.Set("shipid", new Eve.Marshal.PyLong(9_998_400_000_001));
 
         await space.OnInventoryRpcAsync(session, "List", stationHangar: true, activeSpaceShipInventoryList: false, CancellationToken.None);
 
-        Assert.Null(session.GetInt("shipid"));
         session.RunAfterResponse();
         Assert.Equal(9_998_400_000_001, session.GetInt("shipid"));
-        Assert.Equal(Eve.Marshal.PyNone.Instance, session.Get("deferredDockedShipId"));
     }
 }
 

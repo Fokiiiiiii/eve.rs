@@ -106,6 +106,37 @@ public class MissionDungeonRuntimeTests
         Assert.Single(host.Credits);
     }
 
+    private const string BasicKillMission = """
+        {"_key": 9103, "name": {"en": "Basic Kill Step"}, "nameID": 1237, "hasStandingRewards": false,
+         "killMission": {"dungeonID": 3509, "objectiveQuantity": 0}}
+        """;
+
+    private const string BasicLevel4Tag = """
+        {"schema": "eve.rs.mission-level-tags.v1", "tags": [{"missionID": 9103, "level": 4, "provenance": "client", "confidence": "high"}]}
+        """;
+
+    [AgentsPgFact]
+    public async Task A_basic_level_4_kill_mission_with_no_reward_in_the_static_data_pays_the_level_4_isk_base_once()
+    {
+        var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
+        var schema = "mdr_" + Guid.NewGuid().ToString("N")[..12];
+        await using var cleanup = new Cleanup(source, schema);
+        await AgentMissionStore.MigrateAsync(source, schema);
+        var store = new AgentMissionStore(source, schema);
+        var host = new FakeHost { Store = store };
+        var catalog = MissionStaticCatalog.FromRows(3405148, [new SdeRow(9103, JsonDocument.Parse(BasicKillMission).RootElement.Clone())], [],
+            levels: MissionLevelTags.FromJson(BasicLevel4Tag, "test"));
+        var runtime = new MissionDungeonRuntime(store, catalog, host, agent => new MissionAgentPlace(System, Corporation), () => Start);
+        await store.OfferAsync(Pilot, Agent, new AgentMissionContent(9103, 1237, "Basic Kill Step", "", false), Start, "offer:b");
+        await store.AcceptAsync(Pilot, Agent, Start, "accept:b");
+        Assert.Equal(1, await runtime.SweepAsync());
+
+        await runtime.OnDungeonOutcomeAsync("completed", Pilot, "dungeon.3509", 78, default);
+        var credit = Assert.Single(host.Credits);
+        Assert.Equal((Pilot, 675_000L, Corporation), (credit.Character, credit.Amount, credit.Counterparty));
+        Assert.Equal(AgentMissionState.Completed, (await store.ReadAsync(Pilot, Agent))!.State);
+    }
+
     [AgentsPgFact]
     public async Task A_failed_dungeon_fails_the_mission_and_pays_nothing()
     {

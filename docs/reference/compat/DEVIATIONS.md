@@ -1061,20 +1061,12 @@ Sources, in the order of the rule. SDE (sde.types and sde."typeDogma", the build
   (`An_unknown_method_gets_a_wrapped_attribute_error...`, `A_ping_is_answered_and_an_unknown_service_gets_a_service_not_found_error`),
   `StrictRpcTests` (flag off), and `DispatchGoldenTests` where five recorded None steps (`ErrorAnswers`) are replayed for the error answer
   only; their state checks still run. Status: tolerated (A).
-- **Service table: the names left out.** The reference advertises 143 service names in `machoNet.GetServiceInfo`
-  (`server/src/services/machoNet/machoNetService.js:175-322`). eve.rs advertises the names it registers, and leaves out
-  23 that it does not implement: `objectCaching`, `FastCheckoutService`, `corpStationMgr`, `itemLocking`, `structure`,
-  `loadService`, `planetOrbitalRegistryBroker`, `tradeMgr`, `LSC`, `warRegistry`, `certificateMgr`, `tutorialSvc`,
-  `nes_intro`, `bookmarkMgr`, `accessGroupBookmarkMgr`, `ownerGroupManager`, `standing2`, `contractMgr`,
-  `blueprintManager`, `repairSvc`, `reprocessingSvc`, `LPSvc`, `publicGatewaySvc`. The V24.01 client calls a name it is
-  advertised only through `RemoteSvc`/`ProxySvc` or a route table (`carbon/common/script/net/ServiceCallGPCS.py:194-213`);
-  for the names above the client's calls are on demand (station, corporation, industry, LP store), local
-  (`sm.GetService`, `publicGatewaySvc`, `LSC`, `warRegistry`), or not found in eve-logic (`certificateMgr`, `tutorialSvc`,
-  `bookmarkMgr`, `ownerGroupManager`, `standing2`, `contractMgr`, `tradeMgr`). `structure` and
-  `planetOrbitalRegistryBroker` belong to the structures track. An advertised name with no service would be called and
-  answered with the unknown-service error, so a name is advertised only with a real service. Each is added when its
-  service is built (its own slice). Test: `ServiceAdvertisementTests`. Status: tolerated (A); the on-demand names are
-  listed as open in TODO.md.
+- **Service table: the names left out (parity pass, 2026-10-11).** The reference advertises 143 names in `machoNet.GetServiceInfo`
+  (`server/src/services/machoNet/machoNetService.js`); eve.rs advertises the names it registers (171 at the MITM run). Against the
+  reference, 21 names are not advertised by eve.rs and 49 are advertised by eve.rs only. Each of the 70 names, with the V24.01
+  client call that decides it, is in TODO.md section 37. An advertised name with no service would be answered with the
+  unknown-service error, so a name is advertised only with a real service behind it. Status: tolerated; the open names are
+  listed in TODO.md.
 - **objectCaching is not a service here.** The reference registers it (`server/src/services/cache/objCacheService.js:38`)
   and advertises it. In V24.01, the cache check that a call makes is local: `ServiceCallGPCS.py:185-193` asks the client's
   own `objectCaching` (`sm.GetService`). The remote `objectCaching.GetCachableObject` is reached only when a server result
@@ -1120,6 +1112,40 @@ Sources, in the order of the rule. SDE (sde.types and sde."typeDogma", the build
   no computer hash, `authenticationService.js:288-292`). The SSO token itself is not read: the reference only records it
   (`authenticationService.js:281`), and no token-to-account rule exists in either implementation. A real SSO token therefore
   does not sign a pilot in; the login is the ordinary account check. Status: open (FUTURE, see TODO.md).
+
+## Login session shape and the service table (parity pass, 2026-10-11)
+
+- **Session initial state: `maxSessionTime` is not sent; `inDetention` is.** The reference sends neither key. The client reads
+  `session.maxSessionTime` only behind a guard (`eve/client/script/parklife/gameui.py:297`, inside `try/except StandardError`;
+  `carbon/common/script/net/machoNet.py:2467`, inside `try/except Exception`), so an absent key and None behave the same and the
+  key is dropped. The client reads `session.inDetention` without a guard (`eve/client/script/ui/services/mail/mailSvc.py:995`,
+  `SendMsgDlg`), and no session default exists for it (`carbon/common/script/sys/basesession.py`, the persisted and default
+  attribute lists), so an absent key would raise when the new-mail window opens. eve.rs keeps the key, unset (not detained).
+  This is a deliberate difference from EVE.js, which sends neither key. Tests: `HostServerTests.Opening_a_session_sends_the_initial_state_before_anything_else`,
+  `crates/eve-net/tests/handshake.rs::a_login_completes_and_the_client_sees_what_the_evecli_tests_expect`.
+- **The login session's role carries the base bits.** The reference composes a session's role as the account's role plus
+  `0x6000000080000000` (ROLE_LOGIN, ROLE_PLAYER, ROLE_IGB): EveJS `server/src/services/account/accountRoleProfiles.js`
+  (`SESSION_BASE_ROLE_MASK`, `composeSessionRoleMask`). eve.rs sent the bare account role in the handshake acknowledgement
+  (`session_init.role`) and in the Host's `SessionInitialStateNotification`. For an ordinary account (role 0) the session had
+  neither ROLE_LOGIN nor ROLE_PLAYER until a character was selected; the client logs that case as an error
+  (`basesession.py`, `ApplyRemoteAttributeChanges`). Both now send `account | 0x6000000080000000`. Character selection already
+  added the same bits (`CharUnboundMgrService.SessionBaseRole`). The EVE.js capture carries 7348784299939993600
+  (`0x65fc2062a0e41800`, the staff bits included): EveJS treats an account without an `isGM` flag as a GM
+  (`buildPersistedAccountRoleRecord`), while the eve.rs test account is an ordinary player (`NewAccountRole` 0). The two values
+  therefore differ by design. Tests: `crates/eve-net/tests/handshake.rs::a_normal_account_logs_in_with_the_base_role_bits_only`,
+  `HostServerTests.An_ordinary_account_is_sent_the_base_role_bits_and_no_staff_bits`.
+- **Cluster user count is at least one.** The third element of the version exchange (`cluster_usercount`, read by the client at
+  `carbon/common/script/net/GPS.py:424` and `:505`) and the `cluster_usercount` of the handshake dictionary are `max(1, sessions)`:
+  EveJS `getClusterUserCount` (`server/src/services/machoNet/globalConfig.js:173-178`) and eve.rs `GetServerStatus` already did.
+  Before, the first login was told 0. Tests: `crates/eve-net/tests/handshake.rs::the_cluster_user_count_is_at_least_one_while_the_first_login_is_made`,
+  `crates/eve-net/tests/front.rs::the_second_client_is_told_how_many_users_are_on`.
+- **Unknown service and unknown method: the text.** The wrapped V24.01 error stays (see "Unknown service and unknown method"
+  above). Its text is `'<service> object has no attribute '<method>'`, in the shape the reference sends for an exception raised
+  while it serves a call (`carbon/common/script/net/ExceptionWrapperGPCS.py:93` sends `DumpsSanitized(e)` with a stack
+  placeholder for a non-developer session; `ObjectCallGPCS.py:100` is the `getattr` that raises). The reference names the
+  Python class of the service object in that text, and eve.rs names the advertised service, because eve.rs has no table from
+  service name to Python class. Nothing else reaches the client: no path, no stack, no host name. The client takes the error
+  as a failed call; it is not a `UserError`. Not changed.
 
 ## Track A8c: the mobile beacon as a jump target (2026-10-10)
 
@@ -2622,7 +2648,7 @@ Focused PostgreSQL verification: Station 28/28, selected Space docking/undocking
 ## Mission execution X3 step 4: rewards (2026-10-11)
 
 - **LP.** No LP reward for a mission in the official data (`fixedLpRewardAlpha` and `fixedLpRewardOmega` are 0 on all 2,892 mission records; no other record field holds LP). LP is therefore not paid by missions. Status: decided; revisit if a source appears.
-- **Standings.** The SDE `extraStandings` (real data) change the standing toward the faction key by the value / 10 (the wiki's "+0.7" for the SDE's 7.0), once per completion (the completion transition is the guard; a replay is refused). The two writes (completion and standing) are in separate transactions; a crash between them loses the standing and does not repeat it. Status: decided; the atomic version is OPEN.
+- **Standings.** The SDE `extraStandings` (real data) change the standing toward the faction key by the value / 10 (the wiki's "+0.7" for the SDE's 7.0), once per completion (the completion transition is the guard; a replay is refused). The two writes (completion and standing) are in separate transactions; a crash between them loses the standing and does not repeat it. Status: decided; atomic since X4 (the completion and the standing write share one transaction), with a store-level rollback test in X5.
 - **Bonus time window** (`bonusReward`, `bonusTimeInterval`): not paid. The interval's unit is not established (G-R2). Status: OPEN.
 
 ## Mission execution X3 step 2: client texts and held-mission views (2026-10-11)
@@ -2706,6 +2732,17 @@ The client's RPC names, notification names and fields, unlink reasons and link e
 - **Named errors and dispatch.** `DoAction`, `GetMissionBriefingInfo` and `GetMissionObjectiveInfo` are listed in the agent service's `HasMethod` (the dispatcher refuses an unlisted method before `CallAsync`). Status: fixed.
 - **Fetch and courier objectives (item 2).** Not built: a fetch objective needs the item in the pilot's cargo and a turn-in at the agent, a courier one needs a pickup and a drop-off; the objective payload still lists none. Status: OPEN.
 
+## Mission execution X5: basic reward, site table, test pool, live kill (2026-10-11)
+
+- **Basic level 4 and 5 ISK.** A basic security mission whose SDE record has no reward pays the ISK base of its level (level 4: 675,000; level 5: 1,470,000), from EveJS's security-scale table (`server/src/services/agent/agentMissionRuntime.js`, `REWARD_BY_SCALE_AND_LEVEL`), taken as the behaviour reference. The official build gives basic missions no reward (D-R1). The EVE University wiki says level 4 missions "offer large rewards" but gives no figures, so this is not a CCP table. Not paid: the timed bonus (EveJS pays 1.23x inside an interval; the interval's unit is OPEN, G-R2) and the Negotiation skill (the wiki says 5% per level; not applied). Status: ISK base decided; bonus and Negotiation OPEN.
+- **Standing.** Unchanged: the SDE's `extraStandings` value divided by 10 (the SDE stores tenths). This is a unit conversion, not a reward ratio. The wiki's standings page gives no numeric gain for a mission and no formula relating standing to reward, so a basic mission pays no standing (the SDE gives it none). The owner's "reward / 10" is therefore not kept as a rule. Status: decided.
+- **Live walk.** Offer, accept, the dungeon's NPCs in space and the journal pass live (`test_a_basic_level_4_kill_mission_is_offered_accepted_and_its_dungeon_comes_into_space`). Killing the dungeon does not pass: the walk's starter frigate has no fit and dies to the eight NPCs (seven alive after 90 s, 43 hits). The server then releases the pilot's bound objects (`SpaceSessions.Death`), which the walk saw as UnMachoDestination; that is the correct death path, not a dogma or ballpark bug. `test_the_pilot_clears_the_dungeon_and_is_paid` is a strict expected failure until a fitted hull is used. Status: OPEN.
+- **Site table.** 213 containers of `Sites/Data/site-templates.json` name no type (relics and graveyards). The director divided by the empty list, so every site of such a system failed with "Attempted to divide by zero". Such a container is now skipped and logged, and the site is still made; no type is invented. Live: no site failures in systems 30005204 or 30100032. Status: fixed.
+- **Test connection pool.** The Npc test rig's data source keeps at most 4 connections (`MaxPoolSize`). `PgBountyStoreTests` runs 24 records at once, and the server allows 100 connections for all four lanes together, so the pool queues the calls instead of failing. Other rigs keep the default pool. Status: fixed for the Npc rig; a rig-wide cap is OPEN.
+- **Wreck row.** The host saves a placed wreck in the background after telling the scene; `NpcLootHostTests` waited for the scene only. It now waits for the row. Status: fixed.
+- **Rollback.** A completion whose standing write fails is rolled back with the transaction: the mission stays accepted, the journal is unchanged and no notice is raised (`AgentMissionStoreTests.A_completion_rolled_back...`). Status: tested at the store; the composition-level path is not tested.
+- **Arcs on and off by default.** All 21 arcs stay held back. Arc 29 is not flipped on: its step 1 site is generic, and its live walk through steps 1 and 2 (Arnon, Tar) has not run. Owner decision: flip after that walk passes. Status: OPEN.
+- **Fetch and courier objectives.** Not built in X5. Mission 14119 needs a kill in dungeon 3660 and an item (`objectiveTypeID` 30755, quantity 1) in the pilot's hangar at the turn-in; a courier objective needs a pickup and a drop-off. `MissionViews` still lists no objective of either kind, and its reward line shows only the SDE's ISK, not the basic base. Status: OPEN.
 ## Encounter Surveillance System, slice ESS-2 (2026-10-11)
 
 ESS-2 closes the cut list of ESS-1. The numbers below replace the ESS-1 zeros; each states its source and how sure the source is.
@@ -2802,3 +2839,4 @@ Not done in ESS-3, with reasons:
 
 Affected gates on the merged tree: Services.Core 652/652, Host 223/223, Space host batch 256/256, Space non-host 516/516 (one run hit PostgreSQL's connection limit, `53300 too many clients`; the same test passed when re-run alone, and the batch then totals 516/516 with that re-run).
 
+>

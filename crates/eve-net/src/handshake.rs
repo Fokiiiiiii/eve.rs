@@ -28,6 +28,11 @@ use crate::frame::FrameReader;
 use crate::hostlink::AuthOutcome;
 use crate::profile;
 
+/// The role bits every login session gets on top of the account's role: ROLE_LOGIN, ROLE_PLAYER and ROLE_IGB. The
+/// reference composes it the same way (EveJS `accountRoleProfiles.js` SESSION_BASE_ROLE_MASK; eve.rs
+/// `CharUnboundMgrService.SessionBaseRole`), so a normal account (role 0) logs in with these bits.
+pub const SESSION_BASE_ROLE: u64 = 0x6000_0000_8000_0000;
+
 /// What the front knows about the login attempt.
 #[derive(Debug, Clone)]
 pub struct AuthRequest {
@@ -202,11 +207,17 @@ async fn receive<R: AsyncRead + Unpin>(reader: &mut FrameReader<R>) -> Result<Va
     Ok(decode_bytes(&frame)?)
 }
 
+/// The cluster user count the client shows on the server list. The reference reports at least one (EveJS
+/// `getClusterUserCount`, and eve.rs `GetServerStatus`), including while the first login is still being made.
+fn online_users(env: &Environment) -> u32 {
+    env.user_count.max(1)
+}
+
 fn version_exchange(env: &Environment) -> Value {
     Value::Tuple(vec![
         Value::Int(profile::BIRTHDAY),
         Value::Int(profile::MACHO_VERSION),
-        Value::Int(i64::from(env.user_count)),
+        Value::Int(i64::from(online_users(env))),
         Value::Real(profile::BOOT_VERSION),
         Value::Int(profile::BOOT_BUILD),
         Value::str(profile::PROJECT_VERSION),
@@ -334,7 +345,7 @@ where
                 ("boot_build", Value::Int(profile::BOOT_BUILD)),
                 ("boot_codename", Value::str(profile::PROJECT_CODENAME)),
                 ("boot_region", Value::str(profile::PROJECT_REGION)),
-                ("cluster_usercount", Value::Int(i64::from(env.user_count))),
+                ("cluster_usercount", Value::Int(i64::from(online_users(env)))),
                 ("proxy_nodeid", Value::Int(i64::from(env.node_id))),
                 ("user_logonqueueposition", Value::Int(1)),
                 ("config_vals", env.config_vals.clone()),
@@ -360,10 +371,11 @@ where
                     ("languageID", Value::string(language.clone())),
                     ("countryCode", Value::string(country_code.clone())),
                     ("userid", Value::Int(i64::from(user_id))),
-                    ("maxSessionTime", Value::None),
                     ("userType", Value::Int(30)),
-                    ("role", Value::Long(role as i64)),
+                    // The login session's role: the account's bits plus the base bits every session has.
+                    ("role", Value::Long((role | SESSION_BASE_ROLE) as i64)),
                     ("address", Value::string(address.to_owned())),
+                    // The client reads inDetention unguarded (mailSvc.SendMsgDlg), so the key is always present.
                     ("inDetention", Value::None),
                 ]),
             ),

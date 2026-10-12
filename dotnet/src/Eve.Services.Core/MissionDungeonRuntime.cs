@@ -106,15 +106,24 @@ public sealed class MissionDungeonRuntime(
         }
     }
 
+    // The ISK base of a basic level 4 or 5 security mission, which the official build does not give (its reward is null): the security scale of
+    // EveJS (server/src/services/agent/agentMissionRuntime.js, REWARD_BY_SCALE_AND_LEVEL). The wiki gives "large rewards" without figures, so these
+    // are the behaviour reference's numbers. shortcut: no timed bonus (EveJS pays 1.23x in time) and no Negotiation (wiki: 5% per level); upgrade with a sourced rule.
+    private static readonly IReadOnlyDictionary<int, long> BasicIskBase = new Dictionary<int, long> { [4] = 675_000, [5] = 1_470_000 };
+
     private async Task CompleteWithRewardAsync(long owner, AgentMissionRecord record, string rewardKey, string reference, CancellationToken cancellationToken)
     {
         var mission = catalog.Mission(record.Content.MissionId)!;
-        if (mission.Reward?.RewardTypeId == IskTypeId && mission.Reward.RewardQuantity > 0 && agentPlaceOf(record.AgentId) is { } place)
+        var sdeIsk = mission.Reward?.RewardTypeId == IskTypeId ? mission.Reward.RewardQuantity : 0;
+        var level = catalog.Level(record.Content.MissionId).Level;
+        var isk = sdeIsk > 0 ? sdeIsk : mission.Reward is null && level is { } tagged && BasicIskBase.TryGetValue(tagged, out var basic) ? basic : 0;
+        if (isk > 0 && agentPlaceOf(record.AgentId) is { } place)
         {
-            await host.CreditIskAsync(owner, mission.Reward.RewardQuantity, place.CorporationId, AgentMissionRewardRefType,
+            await host.CreditIskAsync(owner, isk, place.CorporationId, AgentMissionRewardRefType,
                 $"Agent mission reward: {mission.NameEn}", $"agent-mission:{owner}:{record.Content.MissionId}:{rewardKey}", cancellationToken);
         }
-        // the SDE gives standings in tenths (7.0 is the wiki's +0.7); the completion and the standings are one transaction
+        // the SDE's standings are in tenths (7.0 is +0.7); the wiki gives no numeric standing gain for basic missions, so only these are paid, once,
+        // in the same transaction as the completion
         var standings = mission.ExtraStandings.Select(item => (item.Id, item.Value / 10)).ToArray();
         await host.CompleteMissionAsync(owner, record.AgentId, now(), reference, standings, cancellationToken);
     }

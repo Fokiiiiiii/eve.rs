@@ -22,6 +22,7 @@ python3 -m venv tools/headless-client/.venv && tools/headless-client/.venv/bin/p
 cp -r /home/user/evejs-v0.12.9 "$EVEJS" && rm -rf "$EVEJS/.git"
 ( cd "$EVEJS" && npm ci --no-audit --no-fund ) && ( cd "$EVEJS/server" && npm ci --no-audit --no-fund )
 
+# (both proxies are stopped with kill -TERM: SIGINT does not work in a non-interactive background job, see below)
 # 2. the reference server, through the proxy (proxy 26200 -> EVE.js 26000); the default scenario is tests/test_live.py
 flock -o -w 7200 /tmp/eve-heavy.lock timeout 1800 bash -c 'tools/mitm/mitm capture --upstream 127.0.0.1:26000 --listen 127.0.0.1:26200 --out captures/evejs-$NAME.jsonl --quiet & p=$!; sleep 1; EVE_LIVE_HOST=127.0.0.1:26200 tools/dev/run-evejs-live.sh "$EVEJS" "$SDE"; s=$?; kill -TERM $p; wait $p; exit $s'
 

@@ -3166,8 +3166,15 @@ Status: `warRegistry` is partly built (the wars are read and two of the owner's 
 ### blueprintManager
 - `GetLimits()` answers `maxBlueprintResults` 500 (`blueprintManagerService.js:26-28`).
 - `GetBlueprintData(itemID)` and `GetBlueprintDataByOwner(ownerID, facilityID)` answer the blueprint instance the client reads
-  (`industryPayloads.js:92`). A blueprint is an item of group 9. The caller sees only what its character or corporation holds; another
-  owner's blueprint is the client's own `IndustryBlueprintNotFound`, and another owner's listing is empty.
+  (`industryPayloads.js:92`). A blueprint is an item of category 9, the SDE category "Blueprint" (EveJS checks `categoryID === 9`,
+  `industryRuntimeState.js:714`); eve.rs first checked the group, which is the item's kind, and recognised no blueprint (corrected in
+  slice 6). The caller sees only what its character or corporation holds, and another owner's listing is empty.
+  **Difference, not aligned (cut):** for a blueprint the caller does not hold, EveJS answers an empty instance payload
+  (`blueprintManagerService.js:34`, `getBlueprintByItemID(...) || {}`), and eve.rs refuses with the user error
+  `IndustryBlueprintNotFound`. eve-logic does not require the refusal: the client raises `IndustryBlueprintNotFound` itself only when
+  its own static table lacks the blueprint type (`eve/client/script/industry/blueprintSvc.py:73-79`). Aligning needs the empty payload
+  with the reference's `buildBlueprintInstancePayload` defaults, which this slice did not port. The walk `test_walk_blueprints.py`
+  asserts the refusal, the eve.rs behaviour.
 - **Quantity and runs.** The client takes a blueprint as an original unless its quantity is -2, and as singleton when negative
   (`industryCommon.py:331-333`), so a copy has quantity -2 and an original -1. An original's runs are -1 (the EVE convention for an
   unlimited original); a copy's runs are the stored count.

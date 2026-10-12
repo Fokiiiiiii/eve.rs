@@ -1462,7 +1462,7 @@ follow a completed step, with forks, the 90-day restart and the held-back sites 
 
 | Status | Item | Where / blocker |
 |---|---|---|
-| DONE (tests, opt-in real data) | Loader of the client's mission text IDs from `EVE_CLIENT_SDE_DIR/native/missions.jsonl.gz` into schema `client_sde` (replaced at each start); without the directory the log says why; nothing is committed | `Eve.Services.Core/ClientMissionMessages.cs`; `MissionComposition.LoadClientMissionMessagesAsync`; `MissionViewsTests` (synthetic, and the real export when configured: 2,886 rows with messages, 6 without) |
+| DONE (tests) | Loader of the client's mission text IDs (embedded copy `client-missions.jsonl.gz`, build 3396210, IDs only) into schema `client_sde` (replaced at each start); `EVE_CLIENT_SDE_DIR` overrides | `Eve.Services.Core/ClientMissionMessages.cs`; `MissionComposition.LoadClientMissionMessagesAsync`; `MissionViewsTests` (synthetic, and the real export when configured: 2,886 rows with messages, 6 without) |
 | DONE (tests) | `GetMissionBriefingInfo` and `GetMissionObjectiveInfo` on the bound agent for a held (offered, accepted or completed) mission: the briefing and title IDs; the kill dungeon objective and the ISK reward; None when no mission is held | `Eve.Services.Core/MissionViews.cs`; `AgentMissionService.ReadHeldMissionAsync`; host `ReadHeldMissionAsync` |
 | OPEN | Fetch objectives (14119: item in cargo and turn-in at the agent) and courier objectives (`objectives` and `locations` lists are empty) | next slice; the EveJS builder is `buildMissionObjectivePayload` (agentMissionRuntime.js:5885) |
 | OPEN | The dungeon's enemy owner (`ownerID` is the mission's faction, a shortcut) and the dungeon location (0 placeholders) | next slice |
@@ -1489,7 +1489,7 @@ Evidence and decisions: DEVIATIONS "Zarzakh (30100000) and the client's system f
 
 | Status | Item | Missing work |
 |---|---|---|
-| DONE (tests) | Client flags `disallowCyno` and `disallowScanning` read from `EVE_CLIENT_SDE_DIR/native/solarsystemcontent.jsonl.gz` at start-up; cyno lighting refused (`CannotLightCynoInSystem`) and probe launch refused in those systems | `ClientSystemFlags`, `SolarSystemCatalog.LoadAsync`, `SpaceSessions.Modules.cs`, `SpaceSessions.LaunchAsync`; tests `ClientSystemFlagsTests`, `ScanProbeHostTests`. Cyno refusal has no host test yet; no graphical-client run |
+| DONE (tests) | Client flags `disallowCyno` and `disallowScanning` read from the embedded copy `client-solarsystemcontent.jsonl.gz` at start-up; cyno lighting refused (`CannotLightCynoInSystem`) and probe launch refused in those systems | `ClientSystemFlags`, `SolarSystemCatalog.LoadAsync`, `SpaceSessions.Modules.cs`, `SpaceSessions.LaunchAsync`; tests `ClientSystemFlagsTests`, `ScanProbeHostTests`. Cyno refusal has no host test yet; no graphical-client run |
 | DONE (rule) | No sites in Zarzakh (`CosmicSiteDirector.NoSiteSystems`) | Owner decision: the real game may have sites there (see DEVIATIONS) |
 | DONE (tests) | Capital-ship gate lists (the eight gates of list 579, from client data and the SDE type list) | `GateRules`, `CheckGateRulesAsync`; `GateRulesTests`, host jump test. Refusal text is ours |
 | PARTIAL (tests) | Emanation Lock: server-side refusal of exits through another gate for 6 h after entry, reset on re-entry, ended by leaving Zarzakh (the client text) | `EmanationLocks`; `EmanationLocksTests`. Not built: the client notices (the public gateway, owner decision 1); the lock is in memory |
@@ -1504,7 +1504,7 @@ Evidence and decisions: DEVIATIONS "Zarzakh (30100000) and the client's system f
 | KEPT | Pirate-faction market modifier (0.5, factions 500018 and 500019) | Already in eve.rs (`MarketRules`); EveJS-derived, not in the wiki. Owner decision |
 | CLIENT-LOCAL | Sun type and flare, system-wide cloud, warp tunnel overwrite, dscan range, anchor categories | Read by the client only; no server loader |
 | CUT | Landmarks placed by the server and the Black Monolith look-at challenge (2848) | EveJS and eve.rs both advertise `client_lookAtObject` 0; the client look-at path is not proven |
-| OPEN | Live check of the Zarzakh flags and the lane run without `EVE_CLIENT_SDE_DIR` | Needs a live run with the export set |
+| OPEN | Live check of the Zarzakh flags and the lane run on the embedded client data (no client directory) | Needs a live run |
 
 | PARTIAL (live) | Turnur to Zarzakh jump, eve.rs only: `tools/headless-client/tests/test_zarzakh_jump.py` passes through `tools/mitm` on the eve_p2 lane (1 passed, 96.9 s); the toll journal row (ref 168) is counted | DEVIATIONS "Live check: Turnur to Zarzakh (slice 3)". OPEN: the EVE.js comparison (no reference data here); the Cockroach seeded through the database |
 
@@ -1542,7 +1542,7 @@ Evidence and decisions: `docs/project/WORMHOLE_DESIGN.md` (sources, SDE numbers,
 
 | Status | Item | Missing work |
 |---|---|---|
-| DONE (tests) | J-space system classes from the V24.01 client data (`WormholeSystemClasses`, `EVE_CLIENT_SDE_DIR/native/systems.jsonl.gz`): 2,604 systems | `WormholeClientDataTests`. Fuzzwork `mapLocationWormholeClasses` cross-check not done |
+| DONE (tests) | J-space system classes from the V24.01 client data (`WormholeSystemClasses`, embedded copy `client-systems.jsonl.gz`): 2,604 systems | `WormholeClientDataTests`. Fuzzwork `mapLocationWormholeClasses` cross-check not done |
 | DONE (tests) | Per-class effect beacons from the SDE (group 920, 36 types) with their dogma modifiers (`WormholeEffects`) | `WormholeEffectsTests`. The wiki effects page is not reachable |
 | SUPERSEDED (see "Wormhole space: final status")| Which effect each J-space system has | Design 9.2 (owner decision 6) |
 | CUT | Connection generator, statics, spawn | No source for statics per class or probabilities (design 9.3, owner decision 2) |
@@ -1687,3 +1687,16 @@ The design is in `docs/project/WORMHOLE_DESIGN.md`; the deviations and project r
 | NOT DONE | Trace logging behind an environment variable | not built (the destiny data sufficed) | — |
 | NOT DONE | Mining of wormhole ore and gas | the belt mining path is not tested on these sites | DEVIATIONS "Gas and ore sites of wormhole space" |
 
+
+## Client static data embedded (2026-10-12)
+
+The server runs without `EVE_CLIENT_SDE_DIR`: the rows and fields it reads from the V24.01 client export are committed as embedded copies, built by `tools/dev/extract-client-sde.py` (build 3396210).
+
+| Status | Item | Where / blocker |
+|---|---|---|
+| DONE (tests) | Consumers inventoried: `solarsystemcontent` (flags, stargate lists), `spacecomponentsbytype` (tolls, deploy blockers), `systems` (wormhole classes), `missions` (text IDs, templates) | `ClientStaticData`; DEVIATIONS "Client-side data read by the server" |
+| DONE (tests) | Embedded copies: 5, 9, 8,113 and 2,892 rows (94 KB in all); each header records the build, the source and the generator | `dotnet/src/Eve.Universe/Data/`, `dotnet/src/Eve.Services.Core/Data/` |
+| DONE (tests) | Loaders read the embedded copies by default; `EVE_CLIENT_SDE_DIR` overrides them where the export holds the file; no warning when it is unset | `ClientStaticData.Open`; `CharacterStores`, `SpaceComposition`, `MissionComposition` |
+| DONE (tests) | Wormholes are on without the variable (their classes are embedded); `EVE_WORMHOLES=off` turns them off | `SpaceComposition`; `ClientStaticDataHostTests` |
+| DONE (tests) | Not consumers of the client directory: the epic arcs, agents in space and mission dungeons come from the pinned SDE in the database; the warzone map is embedded already (`warzone-systems.json`) | DEVIATIONS "Client-side data read by the server" |
+| OPEN | Live run of `tools/dev/run-eve-live.sh` without the variable | Needs a live run |

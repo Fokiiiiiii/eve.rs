@@ -3840,7 +3840,7 @@ fn a_cloak_ended_for_another_reason_tells_the_custom_notice_after_the_module_has
     let cause = DecloakCause::Custom {
         reason: "remoteDecloakPing".to_string(),
         notice: "Your cloak has been deactivated by a Mobile Observatory decloaking ping.".to_string(),
-        trigger: CloakTrigger { item_id: 1_000_000_000_042, type_id: 56_173, distance: 1_234.56789 },
+        trigger: CloakTrigger { item_id: 1_000_000_000_042, type_id: 56_173, distance: 1_234.567_89 },
     };
     let told = scene.force_decloak(A, cause.clone(), t + SECOND);
     let order = labels(&told);

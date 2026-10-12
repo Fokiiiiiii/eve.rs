@@ -318,7 +318,7 @@ internal sealed partial class CharacterServicesComposition
             analysisBeacons = beacons;
             // the Sansha incursions (B-L1): their lifecycle, and their staging sites on the dungeon waves (B-S1); the map and the rewards read them
             await Eve.Services.Space.Incursions.IncursionDirector.MigrateAsync(source, spaceSchema);
-            var incursions = new Eve.Services.Space.Incursions.IncursionDirector(source, foundations.Content, foundations.Scheduler, dungeonWaves, solarSystems, spaceSchema);
+            var incursions = new Eve.Services.Space.Incursions.IncursionDirector(source, foundations.Content, foundations.Scheduler, dungeonWaves, foundations.Events, solarSystems, spaceSchema);
             await incursions.AttachAsync();
             incursionDirector = incursions;
             if (cosmicSites is { } sitesOfWaves)

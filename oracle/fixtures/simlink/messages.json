@@ -4,15 +4,15 @@
   {
    "name": "hello",
    "kind": "Hello",
-   "version": 63,
-   "hex": "03000000013f00"
+   "version": 64,
+   "hex": "03000000014000"
   },
   {
    "name": "hello ack",
    "kind": "HelloAck",
-   "version": 63,
+   "version": 64,
    "pollHz": 4,
-   "hex": "07000000023f0004000000"
+   "hex": "0700000002400004000000"
   },
   {
    "name": "enter by undocking",
@@ -3749,7 +3749,7 @@
    "structureId": "1040000000000001",
    "characterId": "90000001",
    "active": true,
-   "hex": "1e000000524d000000000000000ec4c901010091dedfb10300814a5d050000000001"
+   "hex": "1e000000544d000000000000000ec4c901010091dedfb10300814a5d050000000001"
   },
   {
    "name": "release a structure control observer",
@@ -3759,7 +3759,7 @@
    "structureId": "0",
    "characterId": "0",
    "active": false,
-   "hex": "1e000000524d000000000000000ec4c9010000000000000000000000000000000000"
+   "hex": "1e000000544d000000000000000ec4c9010000000000000000000000000000000000"
   },
   {
    "name": "host tether policy grants a leased range",
@@ -3807,6 +3807,38 @@
    "kind": "RemoveStructure",
    "structureId": "1040000000000001",
    "hex": "090000004b010091dedfb10300"
+  },
+  {
+   "name": "wormhole end put in space by the host (far end in another system)",
+   "kind": "PlaceWormhole",
+   "wormholeId": "1050000001",
+   "solarSystemId": 30100032,
+   "typeName": "Wormhole E004",
+   "typeId": 34134,
+   "groupId": 988,
+   "position": [
+    311989835983.1308,
+    -13069154020.916222,
+    156646308895.76187
+   ],
+   "radius": 3000.0,
+   "destinationSystemId": 31000001,
+   "destinationEnd": "1050000002",
+   "destinationClass": 14,
+   "destinationPosition": [
+    -5610823557120.0,
+    7676706201600.0,
+    -2034779136000.0
+   ],
+   "destinationRadius": 5000.0,
+   "maxJumpMass": 5000000.0,
+   "hex": "7c0000005281ba953e00000000404acb010d00576f726d686f6c65204530303456850000dc0300005fc833c6022952426c5427b7db5708c285e10f7e6c3c4242000000000070a740c105d90182ba953e000000000e000000000080947c6994c2000080627ded9b420000009a249c7dc2000000000088b34000000000d0125341"
+  },
+  {
+   "name": "wormhole end taken out of space by the host",
+   "kind": "RemoveWormhole",
+   "wormholeId": "1050000001",
+   "hex": "090000005381ba953e00000000"
   },
   {
    "name": "mobile warp disruptor dropped from a ship and not yet anchored",
@@ -4710,17 +4742,17 @@
   {
    "name": "structure control active flag is not boolean",
    "reason": "bad-value",
-   "hex": "1e000000524d000000000000000ec4c901010091dedfb10300814a5d050000000002"
+   "hex": "1e000000544d000000000000000ec4c901010091dedfb10300814a5d050000000002"
   },
   {
    "name": "structure control cannot bind a zero structure",
    "reason": "bad-value",
-   "hex": "1e000000524d000000000000000ec4c9010000000000000000814a5d050000000001"
+   "hex": "1e000000544d000000000000000ec4c9010000000000000000814a5d050000000001"
   },
   {
    "name": "structure control cannot use a negative character",
    "reason": "bad-value",
-   "hex": "1e000000524d000000000000000ec4c901010091dedfb10300ffffffffffffffff00"
+   "hex": "1e000000544d000000000000000ec4c901010091dedfb10300ffffffffffffffff00"
   },
   {
    "name": "tether candidate count exceeds its frame",

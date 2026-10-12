@@ -442,9 +442,30 @@ impl Message {
                 out.extend_from_slice(&structure.owner_id.to_le_bytes());
                 out.extend_from_slice(&structure.corporation_id.to_le_bytes());
                 out.extend_from_slice(&structure.alliance_id.to_le_bytes());
-                put_structure_health(&mut out, &structure.vitals, structure.shield_recharge_ms, &structure.limits);
+                put_structure_health(
+                    &mut out,
+                    &structure.vitals,
+                    structure.shield_recharge_ms,
+                    &structure.limits,
+                );
                 put_structure_status(&mut out, &structure.status);
             }
+            Self::PlaceWormhole(wormhole) => {
+                out.extend_from_slice(&wormhole.wormhole_id.to_le_bytes());
+                out.extend_from_slice(&wormhole.solar_system_id.to_le_bytes());
+                put_text(&mut out, &wormhole.name);
+                out.extend_from_slice(&wormhole.type_id.to_le_bytes());
+                out.extend_from_slice(&wormhole.group_id.to_le_bytes());
+                put_vector(&mut out, &wormhole.position);
+                out.extend_from_slice(&wormhole.radius.to_le_bytes());
+                out.extend_from_slice(&wormhole.destination_system_id.to_le_bytes());
+                out.extend_from_slice(&wormhole.destination_end.to_le_bytes());
+                out.extend_from_slice(&wormhole.destination_class.to_le_bytes());
+                put_vector(&mut out, &wormhole.destination_position);
+                out.extend_from_slice(&wormhole.destination_radius.to_le_bytes());
+                out.extend_from_slice(&wormhole.max_jump_mass.to_le_bytes());
+            }
+            Self::RemoveWormhole { wormhole_id } => out.extend_from_slice(&wormhole_id.to_le_bytes()),
             Self::RemoveStructure { structure_id } => out.extend_from_slice(&structure_id.to_le_bytes()),
             Self::StructureDamaged { structure_id, depleted, over_threshold } => {
                 out.extend_from_slice(&structure_id.to_le_bytes());

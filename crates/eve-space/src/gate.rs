@@ -16,7 +16,7 @@ pub const JUMP_RANGE: f64 = 2_500.0;
 /// How far the landing point of a warp to a gate may be from the gate's sphere.
 const LANDING_SCATTER: f64 = 2_500.0;
 /// How far off the gate's surface a ship that has jumped appears.
-const ARRIVAL_CLEARANCE: f64 = 12_000.0;
+pub(crate) const ARRIVAL_CLEARANCE: f64 = 12_000.0;
 /// The half angle of the cone in front of a gate that ships appear in.
 const ARRIVAL_CONE: f64 = PI / 4.0;
 /// The radius given to a gate whose type has none.

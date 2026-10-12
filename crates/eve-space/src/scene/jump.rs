@@ -57,12 +57,33 @@ impl Scene {
         if pilot.flight.is_some() {
             return refused("IN_WARP");
         }
-        let Some((gate, Detail::Stargate { destination_system, destination_gate: leads_to, .. })) =
-            system.body(gate_id).filter(|b| b.kind == BodyKind::Stargate).map(|b| (b, &b.detail))
+        // a stargate, or a wormhole end: the far end is the destination (a wormhole's far end is not a gate of the system it leads to)
+        let Some((gate, destination_system, leads_to, far_end)) =
+            system.body(gate_id).and_then(|b| match (b.kind, &b.detail) {
+                (BodyKind::Stargate, Detail::Stargate { destination_system, destination_gate, .. }) => {
+                    Some((b, *destination_system, *destination_gate, None))
+                }
+                (
+                    BodyKind::Wormhole,
+                    Detail::Wormhole {
+                        destination_system,
+                        destination_end,
+                        destination_position,
+                        destination_radius,
+                        ..
+                    },
+                ) => Some((
+                    b,
+                    *destination_system,
+                    *destination_end,
+                    Some((*destination_position, *destination_radius)),
+                )),
+                _ => None,
+            })
         else {
             return refused("STARGATE_NOT_FOUND");
         };
-        if destination_gate != 0 && destination_gate != *leads_to {
+        if destination_gate != 0 && destination_gate != leads_to {
             return refused("STARGATE_DESTINATION_MISMATCH");
         }
         if gate::surface_distance(gate, pilot.ship.position, pilot.ship.spec.radius) > gate::JUMP_RANGE {
@@ -87,9 +108,10 @@ impl Scene {
         }
         pilot.jump = Some(PendingJump {
             gate_id,
-            destination_system: *destination_system,
-            destination_gate: *leads_to,
+            destination_system,
+            destination_gate: leads_to,
             field_id: None,
+            far_end,
             leaves_at,
         });
         let ship_id = id(ship.spec.ship_id);
@@ -111,7 +133,7 @@ impl Scene {
                     Value::None,
                     Value::None,
                     int(0),
-                    tuple([int(i64::from(*destination_system)), Value::None]),
+                    tuple([int(i64::from(destination_system)), Value::None]),
                 ],
             ),
             payload::action(stamp, "Stop", [ship_id]),
@@ -120,8 +142,8 @@ impl Scene {
         out.push(Out::Jumping {
             session,
             command: code,
-            destination_system: *destination_system,
-            destination_gate: *leads_to,
+            destination_system,
+            destination_gate: leads_to,
         });
         out
     }
@@ -194,6 +216,7 @@ impl Scene {
             destination_system,
             destination_gate: 0,
             field_id: Some(field_id),
+            far_end: None,
             leaves_at,
         });
         let ship_id = id(ship.spec.ship_id);
@@ -255,6 +278,7 @@ impl Scene {
                 to_system: jump.destination_system,
                 to_gate: jump.destination_gate,
                 to_field: jump.field_id,
+                to_far_end: jump.far_end,
                 pilot,
             });
         }
@@ -277,6 +301,15 @@ impl Scene {
             };
             let mut random = PythonRandom::new(seed_of(traveller.pilot.ship.spec.ship_id, field_id, now));
             cyno_arrival(field.position, &mut random)
+        } else if let Some((far_position, far_radius)) = traveller.to_far_end {
+            let mut random =
+                PythonRandom::new(seed_of(traveller.pilot.ship.spec.ship_id, traveller.to_gate, now));
+            wormholes::wormhole_arrival(
+                far_position,
+                far_radius,
+                traveller.pilot.ship.spec.radius,
+                &mut random,
+            )
         } else {
             let Some(gate) = system.body(traveller.to_gate).filter(|b| b.kind == BodyKind::Stargate) else {
                 return Err(Box::new(traveller));

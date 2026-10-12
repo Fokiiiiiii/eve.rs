@@ -92,6 +92,15 @@ pub fn add_structure(stamp: u32, system: &SolarSystem, index: usize, now: i64) -
     Ok(action(stamp, "AddBalls2", [tuple([buffer, list([tuple([slim, damage])])])]))
 }
 
+/// `AddBalls2` for a wormhole end of the system (the body at `index`): its ball, and its slim item with an empty damage state (a wormhole has no hit points).
+pub fn add_wormhole(stamp: u32, system: &SolarSystem, index: usize, now: i64) -> Result<Value, BallError> {
+    let buffer = state_buffer(ADD_BALLS, stamp, &[rigid_ball(system, index)])?;
+    let slim = Value::Dict(
+        slim::body_entries(system, &system.bodies[index]).into_iter().map(|(k, v)| (word(k), v)).collect(),
+    );
+    Ok(action(stamp, "AddBalls2", [tuple([buffer, list([tuple([slim, wreck_damage_state(now)])])])]))
+}
+
 /// `OnSlimItemChange` for a structure body: its slim item is told again, as an object, to whoever has it in view.
 pub fn structure_slim_change(stamp: u32, system: &SolarSystem, index: usize) -> Value {
     let body = &system.bodies[index];

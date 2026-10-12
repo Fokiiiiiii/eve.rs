@@ -1574,3 +1574,12 @@ Evidence and decisions: `docs/project/WORMHOLE_DESIGN.md` (sources, SDE numbers,
 | OPEN | Effects as dogma modifiers | No system-wide effect mechanism exists in eve.rs (design 12.4) |
 | OPEN | Signatures, sites, Thera/Turnur, headless MITM run | Design 12.4 |
 | CUT | Delayed local | No chat service in eve.rs (design 10.3) |
+
+### Slice 6 (2026-10-12)
+
+| Status | Item | Missing work |
+|---|---|---|
+| DONE (tests) | Protocol 63: wormhole body kind, `PlaceWormhole`/`RemoveWormhole` (Rust sim, codec on both sides, goldens), jump to a wormhole end and arrival by its far end | `eve-space` 747 + codec 299 tests. Design 13 |
+| OPEN | The far end as a body of its own scene (pilots must be able to jump back) | Design 13 |
+| OPEN | Host placement of the ends, `WormholeMgr.WormholeJump` through the lifecycle, composition wiring | Design 13 |
+| OPEN | Effects, signatures, sites, Thera exits, MITM run | Design 13 |

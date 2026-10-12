@@ -373,6 +373,10 @@ public class SimCodecTests
                 Wide(c, "previousStructureId"), Wide(c, "structureId"), (bool)c["repairing"]!),
             "StructureDamaged" => new SimStructureDamaged(Wide(c, "structureId"), (int)c["depleted"]!, (bool)c["overThreshold"]!),
             "RemoveStructure" => new SimRemoveStructure(Wide(c, "structureId")),
+            "PlaceWormhole" => new SimPlaceWormhole(Wide(c, "wormholeId"), (int)c["solarSystemId"]!, (string)c["typeName"]!, (int)c["typeId"]!,
+                (int)c["groupId"]!, VectorOf(c["position"]!), (double)c["radius"]!, (int)c["destinationSystemId"]!, Wide(c, "destinationEnd"),
+                (int)c["destinationClass"]!, VectorOf(c["destinationPosition"]!), (double)c["destinationRadius"]!, (double)c["maxJumpMass"]!),
+            "RemoveWormhole" => new SimRemoveWormhole(Wide(c, "wormholeId")),
             "SetStructureState" => new SimSetStructureState((int)c["solarSystemId"]!, Wide(c, "structureId"), StatusOf(c["status"]!)),
             "PlaceDisruptor" => new SimPlaceDisruptor(Wide(c, "deployableId"), (int)c["solarSystemId"]!, (string)c["typeName"]!, (int)c["typeId"]!, (int)c["groupId"]!,
                 VectorOf(c["position"]!), (double)c["radius"]!, (double)c["range"]!, (bool)c["active"]!, Wide(c, "ownerId"), (int)c["corporationId"]!,
@@ -418,7 +422,7 @@ public class SimCodecTests
     public void The_fixtures_cover_every_message_kind()
     {
         var kinds = ((JsonArray)Fixtures["valid"]!).Select(c => (string)c!["kind"]!).Distinct().Order().ToArray();
-                Assert.Equal(["Accepted", "Activate", "AdjustCharge", "Approaching", "Arrived", "Bind", "BuffState", "ChangeWreck", "ChargeAdjusted", "ChargeSpent", "Command", "Condition", "ContainerPlaced", "ControlStructure", "Deployed", "Destroy", "Destroyed", "DirectionalTargets", "Docked", "DroneCommand", "DroneReleased", "DroneResults", "DroneScooped", "EcmBurst", "Enter", "EnterReply", "FighterGotoPoint", "FighterLanded", "FighterOrder", "FighterReleased", "FighterResults", "FighterSize", "Hello", "HelloAck", "Jumped", "Jumping", "LaunchDrone", "LaunchFighter", "Leave", "Measured", "ModuleEnded", "ModuleWorkCycle", "ModuleWorkResult", "Notify", "PlaceAnalysisBeacon", "PlaceContainer", "PlaceCynoBeacon", "PlaceDisruptor", "PlaceInhibitor", "PlaceProbe", "PlaceStructure", "PlaceWreck", "Refused", "RemoveDeployed", "RemoveProbe", "RemoveStructure", "RemoveWreck", "Respawn", "ScanTargets", "SetAnalysisBeaconState", "SetDisruptorActive", "SetStructureState", "ShipSpec", "Spawn", "SpawnReply", "StructureDamaged", "TargetRefused", "Targets", "TetherChanged", "TetherPolicy", "UpdateEffect", "UpdateState"], kinds);
+                Assert.Equal(["Accepted", "Activate", "AdjustCharge", "Approaching", "Arrived", "Bind", "BuffState", "ChangeWreck", "ChargeAdjusted", "ChargeSpent", "Command", "Condition", "ContainerPlaced", "ControlStructure", "Deployed", "Destroy", "Destroyed", "DirectionalTargets", "Docked", "DroneCommand", "DroneReleased", "DroneResults", "DroneScooped", "EcmBurst", "Enter", "EnterReply", "FighterGotoPoint", "FighterLanded", "FighterOrder", "FighterReleased", "FighterResults", "FighterSize", "Hello", "HelloAck", "Jumped", "Jumping", "LaunchDrone", "LaunchFighter", "Leave", "Measured", "ModuleEnded", "ModuleWorkCycle", "ModuleWorkResult", "Notify", "PlaceAnalysisBeacon", "PlaceContainer", "PlaceCynoBeacon", "PlaceDisruptor", "PlaceInhibitor", "PlaceProbe", "PlaceStructure", "PlaceWormhole", "PlaceWreck", "Refused", "RemoveDeployed", "RemoveProbe", "RemoveStructure", "RemoveWormhole", "RemoveWreck", "Respawn", "ScanTargets", "SetAnalysisBeaconState", "SetDisruptorActive", "SetStructureState", "ShipSpec", "Spawn", "SpawnReply", "StructureDamaged", "TargetRefused", "Targets", "TetherChanged", "TetherPolicy", "UpdateEffect", "UpdateState"], kinds);
         Assert.True(((JsonArray)Fixtures["invalid"]!).Count >= 10);    }
 
     [Theory]
@@ -449,7 +453,7 @@ public class SimCodecTests
     {
         var message = new SimControlStructure(77, 30000142, active ? 1_040_000_000_001 : 0, active ? 90000001 : 0, active);
         var frame = SimCodec.Encode(message);
-        Assert.Equal(82, frame[4]);
+        Assert.Equal(84, frame[4]);
         Assert.Equal(message, SimCodec.Decode(frame.AsMemory(4)));
     }
 

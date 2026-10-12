@@ -18,6 +18,7 @@ mod session;
 mod structures;
 mod tether;
 mod warping;
+mod wormholes;
 use self::collision::*;
 pub use self::decloak::{CLOAK_PROXIMITY_METERS, CloakTrigger, DecloakCause};
 #[cfg(test)]
@@ -618,6 +619,8 @@ pub(crate) struct PendingJump {
     destination_gate: i64,
     /// The cynosural field a jump drive goes to (0 for a stargate jump); the arrival is at the field, not at a gate.
     field_id: Option<i64>,
+    /// The far end of a wormhole the ship came through: its position and radius (the arrival is by it, not by a gate).
+    far_end: Option<(Vec3, f64)>,
     leaves_at: i64,
 }
 
@@ -631,6 +634,8 @@ pub struct Traveller {
     pub to_gate: i64,
     /// The cynosural field the ship jumped to, when it did not go through a gate (the arrival is at the field).
     pub to_field: Option<i64>,
+    /// The far end of the wormhole the ship came through, when it did (the arrival is by the far end).
+    pub to_far_end: Option<(Vec3, f64)>,
     pilot: Pilot,
 }
 

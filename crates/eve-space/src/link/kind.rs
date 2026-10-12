@@ -87,8 +87,8 @@ pub const STRUCTURE_DAMAGED: u8 = 77;
 pub const PLACE_ANALYSIS_BEACON: u8 = 78;
 /// The host sets a CRAB's state (protocol 61).
 pub const SET_ANALYSIS_BEACON_STATE: u8 = 79;
-/// The host attaches or releases a controlled-structure observer (protocol 63).
-pub const CONTROL_STRUCTURE: u8 = 82;
+/// The host attaches or releases a controlled-structure observer (protocol 64).
+pub const CONTROL_STRUCTURE: u8 = 84;
 /// The scan targets of a system, answered to the host's scan target query (command 27, protocol 52).
 pub const SCAN_TARGETS: u8 = 71;
 /// The things a directional scan can see in a cone of space, answered to command 28 (protocol 54).
@@ -99,3 +99,8 @@ pub const ECM_BURST: u8 = 67;
 pub const TETHER_POLICY: u8 = 80;
 /// Simulation tether transition sent to the host (protocol 62).
 pub const TETHER_CHANGED: u8 = 81;
+
+/// The host puts a wormhole end in space (protocol 63).
+pub const PLACE_WORMHOLE: u8 = 82;
+/// The host takes a wormhole end out of space (protocol 63).
+pub const REMOVE_WORMHOLE: u8 = 83;

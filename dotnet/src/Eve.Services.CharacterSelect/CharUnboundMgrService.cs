@@ -351,8 +351,6 @@ public sealed partial class CharUnboundMgrService(
                 foreach (var (name, value) in await hook.GetSessionAttributesAsync(call.Session, character.Id, Token(call)))
                     attributes[name] = value;
             }
-            if (attributes.GetValueOrDefault("deferredDockedShipId") is PyLong deferredShipId && deferredShipId.Value > 0)
-                attributes["shipid"] = None;
 
             int? airNpeStateChanged = null;
             if (skipTutorial)

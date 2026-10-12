@@ -27,7 +27,7 @@ public sealed class SimLinkException(SimLinkError error, string message) : Excep
 /// </summary>
 public static partial class SimCodec
 {
-    public const ushort ProtocolVersion = 63;
+    public const ushort ProtocolVersion = 64;
     /// <summary>The largest frame either side accepts (1 MiB).</summary>
     public const int MaxFrame = 1 << 20;
 
@@ -693,6 +693,33 @@ public static partial class SimCodec
                     message = new SimPlaceProbe(probe, system, name, type, group, position, radius, owner, corporation, alliance, ship);
                     break;
                 }
+            case Kind.PlaceWormhole:
+                {
+                    var wormhole = r.I64();
+                    var system = r.I32();
+                    var name = r.Text();
+                    var type = r.I32();
+                    var group = r.I32();
+                    var position = ReadVector(ref r);
+                    var radius = r.F64();
+                    var destinationSystem = r.I32();
+                    var destinationEnd = r.I64();
+                    var destinationClass = r.I32();
+                    var destinationPosition = ReadVector(ref r);
+                    var destinationRadius = r.F64();
+                    var maxJumpMass = r.F64();
+                    if (!(double.IsFinite(radius) && radius >= 0 && double.IsFinite(destinationRadius) && destinationRadius >= 0
+                          && double.IsFinite(maxJumpMass) && maxJumpMass >= 0))
+                    {
+                        throw new SimLinkException(SimLinkError.BadValue, "bad wormhole");
+                    }
+                    message = new SimPlaceWormhole(wormhole, system, name, type, group, position, radius, destinationSystem, destinationEnd,
+                        destinationClass, destinationPosition, destinationRadius, maxJumpMass);
+                    break;
+                }
+            case Kind.RemoveWormhole:
+                message = new SimRemoveWormhole(r.I64());
+                break;
             case Kind.PlaceStructure:
                 {
                     var structure = r.I64();

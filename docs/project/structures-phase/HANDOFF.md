@@ -15,7 +15,7 @@ Current source priority: gameplay rules and numbers use CCP official documentati
 | ST-2 deployment / vulnerability RPCs | partly | rename, reinforce times, Anchor, Unanchor/Cancel, 3 notices done; unanchor-completion drop, some Anchor refusals, reinforcement-change mail are open (see its handoff) |
 | ST-3 structure docking / hangars | PG verified | Dock, Undock, hangar listing, guest lifecycle, OnHangarViewStateUpdated and SDE/cargo confirmation gate pass PG tests. Customs fines/confiscation are a separate flow; graphical and live headless acceptance remain open (see its handoff) |
 | ST-4 tether | PG and Rust verified | protocol 62; leased core/ACL/FW permissions, immunity, engage-only repair, cyno/ship/disconnect lifecycle, FX replay and fleet-compression refusal. Rust 773 and Space PG 735 checks pass; native graphical/grid acceptance remains open. |
-| ST-5 control / boarding / deliveries | PG and Rust verified | protocol 63 observer, safe takeover/release, structure inventory/dogma reads, same-transaction delivery inbox, authoritative cargo range; native acceptance and ST-8 execution remain open. |
+| ST-5 control / boarding / deliveries | PG and Rust verified | protocol 64 observer, safe takeover/release, structure inventory/dogma reads, same-transaction delivery inbox, authoritative cargo range; native acceptance and ST-8 execution remain open. |
 | ST-6a moon extraction (host) | partly | notices to owner corp characters and rig modifiers (2704, 2707) open; moon mutation control/profile gate still needs pilot-store wiring. |
 | ST-7 structure services | partly | fuel, compression plant, cyno jammer E-03/E-15 done; cyno beacon jump open |
 | ST-10 hacking | closed with 2 open rows | site completion on emptying and removal of an emptied ball need an `inventory.item_moved` event |
@@ -23,13 +23,13 @@ Current source priority: gameplay rules and numbers use CCP official documentati
 | ST-C in-space compression | done | ship module, not a structure |
 | ST-E (E-01, E-04, E-02/E-05 assertions) | done | custom cloak notice needs Mobile Observatory |
 
-ST-5 control/boarding/deliveries is implemented and verified by PG/Rust regression tests (protocol 63); native graphical acceptance remains open. Not started: ST-6b moon rocks in space, ST-8a/8b structure modules and doomsdays, ST-9 entosis
+ST-5 control/boarding/deliveries is implemented and verified by PG/Rust regression tests (protocol 64); native graphical acceptance remains open. Not started: ST-6b moon rocks in space, ST-8a/8b structure modules and doomsdays, ST-9 entosis
 (depends on a Sovereignty Hub ball). Order and dependencies: `plan.md` section 5.
 
 ## ST-5 implementation (2026-10-12)
 
 - `StructurePilotStore` owns exclusive controller records and sequence-backed takeover generations. Host startup clears stale controllers. Failed simulation transitions compensate SQL ownership; undock/disconnect and profile/state changes release control.
-- Protocol 63 / kind 82 (`ControlStructure`, command 33) attaches a real structure observer. The original physical ship remains in the scene; Board/Eject session changes, capsule creation, bind/updateState and visibility share existing owners. Command 19 reads `StructureHealth`, not the retained ship. `OnShipCosmeticsChanged` follows successful session changes to clear the former/restored ship's client fitting cache, matching the V24.01 consumer.
+- Protocol 64 / kind 84 (wormhole placement/removal retain 82/83) (`ControlStructure`, command 33) attaches a real structure observer. The original physical ship remains in the scene; Board/Eject session changes, capsule creation, bind/updateState and visibility share existing owners. Command 19 reads `StructureHealth`, not the retained ship. `OnShipCosmeticsChanged` follows successful session changes to clear the former/restored ship's client fitting cache, matching the V24.01 consumer.
 - Inventory/dogma initialization projects actual structure items, SDE attributes and module online state. Every read checks the current controller and profile setting 17; structure inventory mutations are explicitly refused. Personal active-ship persistence is retained.
 - Deliver moves the owned hangar subset and stores type 199 / group 4 `StructureItemsDelivered` in the existing mailbox within the same inventory/outbox transaction. The existing mail mutation gate protects cache publication; retry creates no duplicate notification. Commit precedes `OnItemChange` and inbox publication.
 - Cargo Deposit uses Measure 20 `[structureId, shipId]`: real scene surface distance, cloak/warp/observer refusal, plus Host weapon/criminal checks. The 10 km gate grants no docking rights; dockable deliveries remain personal, FLEX fuel is restricted by SDE and belongs to the structure corporation.

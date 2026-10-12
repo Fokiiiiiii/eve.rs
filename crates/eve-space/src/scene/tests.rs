@@ -2485,9 +2485,17 @@ pub(crate) fn structure_placement(scene: &Scene, at: i64) -> crate::link::Struct
         owner_id: 98_000_001,
         corporation_id: 98_000_001,
         alliance_id: 0,
-        vitals: crate::health::Vitals { shield_capacity: 1_000.0, armor_hp: 500.0, structure_hp: 300.0, ..Default::default() },
+        vitals: crate::health::Vitals {
+            shield_capacity: 1_000.0,
+            armor_hp: 500.0,
+            structure_hp: 300.0,
+            ..Default::default()
+        },
         shield_recharge_ms: 1.0e15,
-        limits: crate::health::StructureLimits { per_second: [5.0e6, 5.0e3, 5.0e3], repair_pause: [500.0, 500.0, 500.0] },
+        limits: crate::health::StructureLimits {
+            per_second: [5.0e6, 5.0e3, 5.0e3],
+            repair_pause: [500.0, 500.0, 500.0],
+        },
         status: crate::world::StructureStatus {
             state: 110,
             upkeep_state: 3,
@@ -2549,11 +2557,15 @@ fn a_structure_put_in_space_is_a_body_with_its_slim_item_and_is_in_the_bind_of_a
     assert_eq!(category, Some(crate::wire::int(65)), "a structure is category 65");
     let state = entries.iter().find(|(k, _)| *k == "state").map(|(_, v)| v.clone());
     assert_eq!(state, Some(crate::wire::int(110)), "the state is the host's");
-    assert!(scene.place_structure(placement, NOON).is_empty(), "a structure already in space is not put in twice");
+    assert!(
+        scene.place_structure(placement, NOON).is_empty(),
+        "a structure already in space is not put in twice"
+    );
 }
 
 #[test]
-fn a_structure_placed_while_a_pilot_is_in_the_system_is_added_to_its_view_and_its_state_change_and_removal_are_told() {
+fn a_structure_placed_while_a_pilot_is_in_the_system_is_added_to_its_view_and_its_state_change_and_removal_are_told()
+ {
     let mut scene = scene();
     scene.bind(SESSION, NOON);
     let placement = structure_placement(&scene, NOON);
@@ -2585,16 +2597,28 @@ fn a_structure_placed_while_a_pilot_is_in_the_system_is_added_to_its_view_and_it
     assert_eq!(removed.len(), 1);
     assert_eq!(action_names(&removed[0]), ["RemoveBalls"]);
     assert!(scene.structure_index(STRUCTURE).is_none(), "the body is gone");
-    assert!(scene.remove_structure(STRUCTURE, NOON + 3 * SECOND).is_empty(), "a structure already gone is left alone");
+    assert!(
+        scene.remove_structure(STRUCTURE, NOON + 3 * SECOND).is_empty(),
+        "a structure already gone is left alone"
+    );
 }
 
 #[test]
-fn a_hit_on_a_structure_is_cut_to_its_layers_limit_each_second_and_an_emptied_shield_is_told_to_the_host_once() {
+fn a_hit_on_a_structure_is_cut_to_its_layers_limit_each_second_and_an_emptied_shield_is_told_to_the_host_once()
+ {
     let mut scene = scene();
     scene.bind(SESSION, NOON);
     let mut placement = structure_placement(&scene, NOON);
-    placement.vitals = crate::health::Vitals { shield_capacity: 1_000.0, armor_hp: 500.0, structure_hp: 300.0, ..Default::default() };
-    placement.limits = crate::health::StructureLimits { per_second: [400.0, 200.0, 100.0], repair_pause: [300.0, 150.0, 80.0] };
+    placement.vitals = crate::health::Vitals {
+        shield_capacity: 1_000.0,
+        armor_hp: 500.0,
+        structure_hp: 300.0,
+        ..Default::default()
+    };
+    placement.limits = crate::health::StructureLimits {
+        per_second: [400.0, 200.0, 100.0],
+        repair_pause: [300.0, 150.0, 80.0],
+    };
     scene.place_structure(placement, NOON);
     let shield = |scene: &Scene, at: i64| scene.structure_health[&STRUCTURE].state_at(at).shield;
 
@@ -2613,11 +2637,16 @@ fn a_hit_on_a_structure_is_cut_to_its_layers_limit_each_second_and_an_emptied_sh
         emptied += scene
             .damage_structure(STRUCTURE, [400.0, 0.0, 0.0, 0.0], at)
             .iter()
-            .filter(|o| matches!(o, Out::StructureDamaged { depleted: Some(crate::health::Layer::Shield), .. }))
+            .filter(|o| {
+                matches!(o, Out::StructureDamaged { depleted: Some(crate::health::Layer::Shield), .. })
+            })
             .count();
     }
     assert_eq!(emptied, 1, "the shield is told it is empty once");
-    assert!(scene.damage_structure(STRUCTURE + 1, [1_000.0, 0.0, 0.0, 0.0], NOON).is_empty(), "a structure not in space is left alone");
+    assert!(
+        scene.damage_structure(STRUCTURE + 1, [1_000.0, 0.0, 0.0, 0.0], NOON).is_empty(),
+        "a structure not in space is left alone"
+    );
 }
 
 /// A scene with a structure of `type_id` in the given state, 5 000 km out, and a ship of `group` in its docking range.
@@ -2631,7 +2660,15 @@ fn near_the_structure(type_id: i32, group: i32, state: i32) -> Scene {
     let mut near = spec();
     near.max_velocity = 0.0;
     near.group_id = group;
-    scene.enter_in_space(SESSION, near, [5_000_000.0 + 60_000.0 + 47.0 + 500.0, 0.0, 0.0], [0.0, 0.0, 1.0], NOON).unwrap();
+    scene
+        .enter_in_space(
+            SESSION,
+            near,
+            [5_000_000.0 + 60_000.0 + 47.0 + 500.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0],
+            NOON,
+        )
+        .unwrap();
     scene
 }
 
@@ -2654,7 +2691,11 @@ fn a_structure_in_a_state_that_disables_docking_refuses_the_ship() {
     for state in [0, 1, 2, 102, 113, 114, 115, 116] {
         let mut scene = near_the_structure(35_832, 27, state);
         let out = scene.command(SESSION, Command::Dock { station_id: STRUCTURE }, NOON);
-        assert_eq!(out, [Out::Refused { session: SESSION, command: 4, reason: "STRUCTURE_DISABLED" }], "state {state}");
+        assert_eq!(
+            out,
+            [Out::Refused { session: SESSION, command: 4, reason: "STRUCTURE_DISABLED" }],
+            "state {state}"
+        );
     }
 }
 
@@ -2800,12 +2841,14 @@ fn tether_candidates(range: f64) -> Vec<crate::link::TetherCandidate> {
 }
 
 fn tether_changes(out: &[Out]) -> Vec<(SessionId, i64, i64, bool)> {
-    out.iter().filter_map(|out| match out {
-        Out::TetherChanged { session, previous_structure_id, structure_id, repairing } => {
-            Some((*session, *previous_structure_id, *structure_id, *repairing))
-        }
-        _ => None,
-    }).collect()
+    out.iter()
+        .filter_map(|out| match out {
+            Out::TetherChanged { session, previous_structure_id, structure_id, repairing } => {
+                Some((*session, *previous_structure_id, *structure_id, *repairing))
+            }
+            _ => None,
+        })
+        .collect()
 }
 
 fn grant_tether(scene: &mut Scene, now: i64) -> Vec<Out> {
@@ -2868,10 +2911,16 @@ fn tether_requires_host_permission_uses_surface_range_and_replaces_the_whole_lis
     nearer.structure_id += 1;
     nearer.position = [5_000_200.0, 0.0, 0.0];
     scene.place_structure(nearer, NOON);
-    let switched = scene.set_tether_policy(SESSION, 0, 60_000, vec![
-        crate::link::TetherCandidate { structure_id: STRUCTURE, range: 1_000.0 },
-        crate::link::TetherCandidate { structure_id: STRUCTURE + 1, range: 1_000.0 },
-    ], NOON);
+    let switched = scene.set_tether_policy(
+        SESSION,
+        0,
+        60_000,
+        vec![
+            crate::link::TetherCandidate { structure_id: STRUCTURE, range: 1_000.0 },
+            crate::link::TetherCandidate { structure_id: STRUCTURE + 1, range: 1_000.0 },
+        ],
+        NOON,
+    );
     assert_eq!(tether_changes(&switched), [(SESSION, STRUCTURE, STRUCTURE + 1, false)]);
     let revoked = scene.set_tether_policy(SESSION, 0, 60_000, Vec::new(), NOON);
     assert_eq!(tether_changes(&revoked), [(SESSION, STRUCTURE + 1, 0, false)]);
@@ -2904,7 +2953,9 @@ fn tether_prevents_locking_and_a_valid_lock_start_breaks_its_own_tether_once() {
     let (other, other_ship) = tether_other(&mut scene, 1_000.0);
     grant_tether(&mut scene, NOON);
     let refused = scene.target_order(other, Order::Lock(spec().ship_id), NOON);
-    assert!(refused.iter().any(|out| matches!(out, Out::TargetRefused { reason: "TARGET_INVULNERABLE", .. })));
+    assert!(
+        refused.iter().any(|out| matches!(out, Out::TargetRefused { reason: "TARGET_INVULNERABLE", .. }))
+    );
     assert!(scene.pilots[&other].targeting.pending_targets().is_empty());
     let started = scene.target_order(SESSION, Order::Lock(other_ship), NOON);
     assert_eq!(tether_changes(&started), [(SESSION, STRUCTURE, 0, false)]);
@@ -2976,7 +3027,11 @@ fn tether_repairs_ship_capacitor_and_fitted_heat_damage_only_on_engage() {
     scene.set_heat_profile(SESSION, profile, NOON).unwrap();
     let engaged = grant_tether(&mut scene, NOON);
     assert_eq!(tether_changes(&engaged), [(SESSION, 0, STRUCTURE, true)]);
-    assert!(engaged.iter().any(|out| matches!(out, Out::Condition { condition, .. } if *condition == Condition::FULL)));
+    assert!(
+        engaged
+            .iter()
+            .any(|out| matches!(out, Out::Condition { condition, .. } if *condition == Condition::FULL))
+    );
     assert_eq!(Scene::condition_of(&scene.pilots[&SESSION], NOON), Condition::FULL);
     let module_id = spec().modules[0].item_id;
     assert_eq!(scene.pilots[&SESSION].heat.modules[&module_id].profile.damage_hp, 0.0);
@@ -3001,9 +3056,13 @@ fn tether_refuses_smartbomb_and_bomb_activation_without_spending_or_fake_damage(
     let actions = [
         Action::Smartbomb { range: 5_000.0, damage: [100.0; 4], hurts_pilots: true },
         Action::Bomb {
-            ball: tether_test_ball(), kind: crate::deployable::BombKind::Damage,
-            lifetime_ms: 10_000.0, blast_radius: 15_000.0,
-            damage: [100.0; 4], ecm: [0.0; 4], neutralize: 0.0,
+            ball: tether_test_ball(),
+            kind: crate::deployable::BombKind::Damage,
+            lifetime_ms: 10_000.0,
+            blast_radius: 15_000.0,
+            damage: [100.0; 4],
+            ecm: [0.0; 4],
+            neutralize: 0.0,
         },
     ];
     for action in actions {
@@ -3050,10 +3109,15 @@ fn tether_nonoffensive_modules_keep_the_link_and_restricted_families_break_and_b
         grant_tether(&mut scene, NOON);
         let mut effect = tether_effect(None);
         effect.on_changes.push(crate::modules::Change {
-            item_id: spec().ship_id, attribute_id: crate::modules::WARP_SCRAMBLE_STATUS, value: 1.0,
+            item_id: spec().ship_id,
+            attribute_id: crate::modules::WARP_SCRAMBLE_STATUS,
+            value: 1.0,
         });
-        assert_eq!(tether_changes(&scene.activate(SESSION, effect, NOON)),
-            [(SESSION, STRUCTURE, 0, false)], "{mode}");
+        assert_eq!(
+            tether_changes(&scene.activate(SESSION, effect, NOON)),
+            [(SESSION, STRUCTURE, 0, false)],
+            "{mode}"
+        );
         assert!(grant_tether(&mut scene, NOON).is_empty(), "{mode} cannot retether while running");
     }
 }
@@ -3081,10 +3145,24 @@ fn tether_scram_breaks_only_when_incoming_points_overcome_the_active_core_stabil
     let (other, _) = tether_other(&mut scene, 2_000.0);
     scene.activate(SESSION, tether_effect(Some(Action::ScrambleStatus { delta: -2.0 })), NOON);
     grant_tether(&mut scene, NOON);
-    let resisted = scene.hold_for(other, SESSION, 999, Lasting::Scramble { strength: 1.0, blocks_mwd: false }, 1_000.0, NOON);
+    let resisted = scene.hold_for(
+        other,
+        SESSION,
+        999,
+        Lasting::Scramble { strength: 1.0, blocks_mwd: false },
+        1_000.0,
+        NOON,
+    );
     assert!(tether_changes(&resisted).is_empty());
     assert!(scene.is_tethered(spec().ship_id, NOON));
-    let scrambled = scene.hold_for(other, SESSION, 999, Lasting::Scramble { strength: 3.0, blocks_mwd: true }, 1_000.0, NOON);
+    let scrambled = scene.hold_for(
+        other,
+        SESSION,
+        999,
+        Lasting::Scramble { strength: 3.0, blocks_mwd: true },
+        1_000.0,
+        NOON,
+    );
     assert_eq!(tether_changes(&scrambled), [(SESSION, STRUCTURE, 0, false)]);
     assert!(grant_tether(&mut scene, NOON).is_empty());
     assert_eq!(tether_changes(&scene.poll(NOON + 2 * SECOND)), [(SESSION, 0, STRUCTURE, false)]);
@@ -3133,7 +3211,11 @@ fn tether_jump_departure_clears_permission_before_the_ship_enters_another_scene(
     let mut origin = scene_by_a_gate();
     let gate = origin.system().body(NEAR_GATE).unwrap().clone();
     let pilot = origin.pilots.get_mut(&SESSION).unwrap();
-    pilot.ship.position = Vec3::new(gate.position.x + gate.radius + pilot.ship.spec.radius + 500.0, gate.position.y, gate.position.z);
+    pilot.ship.position = Vec3::new(
+        gate.position.x + gate.radius + pilot.ship.spec.radius + 500.0,
+        gate.position.y,
+        gate.position.z,
+    );
     pilot.ship.velocity = Vec3::ZERO;
     pilot.ship.speed_fraction = 0.0;
     pilot.ship.course = Course::Stop;
@@ -3163,10 +3245,14 @@ fn tether_docking_reports_disengage_before_the_docked_condition() {
     let mut scene = tether_scene();
     grant_tether(&mut scene, NOON);
     scene.command(SESSION, Command::Dock { station_id: STRUCTURE }, NOON);
-    assert!(scene.is_tethered(spec().ship_id, NOON + SECOND), "docking keeps tether until the ship leaves space");
+    assert!(
+        scene.is_tethered(spec().ship_id, NOON + SECOND),
+        "docking keeps tether until the ship leaves space"
+    );
     let docked = scene.poll(NOON + 4 * SECOND);
     assert_eq!(tether_changes(&docked), [(SESSION, STRUCTURE, 0, false)]);
-    let off = docked.iter().position(|out| matches!(out, Out::TetherChanged { structure_id: 0, .. })).unwrap();
+    let off =
+        docked.iter().position(|out| matches!(out, Out::TetherChanged { structure_id: 0, .. })).unwrap();
     let dock = docked.iter().position(|out| matches!(out, Out::Docked { .. })).unwrap();
     assert!(off < dock);
 }
@@ -3183,4 +3269,76 @@ fn tether_offensive_start_revokes_cached_permission_until_the_host_refreshes_it(
     assert!(scene.tick_tethers(NOON).is_empty(), "the old grant cannot race the host's weapons timer");
     assert!(!scene.is_tethered(spec().ship_id, NOON));
     assert_eq!(tether_changes(&grant_tether(&mut scene, NOON)), [(SESSION, 0, STRUCTURE, false)]);
+}
+
+// ── wormhole ends (protocol 63) ─────────────────────────────────────────────
+
+const WORMHOLE_END: i64 = 1_050_000_001;
+const FAR_END: i64 = 1_050_000_002;
+
+fn wormhole_placement(at: Vec3, far: Vec3, far_radius: f64) -> crate::link::WormholePlacement {
+    crate::link::WormholePlacement {
+        wormhole_id: WORMHOLE_END,
+        solar_system_id: 30_000_001,
+        name: "Wormhole E004".to_string(),
+        type_id: 34_134,
+        group_id: 988,
+        position: [at.x, at.y, at.z],
+        radius: 3_000.0,
+        destination_system_id: OTHER_SYSTEM,
+        destination_end: FAR_END,
+        destination_class: 2,
+        destination_position: [far.x, far.y, far.z],
+        destination_radius: far_radius,
+        max_jump_mass: 62_000_000.0,
+    }
+}
+
+#[test]
+fn a_wormhole_end_the_host_places_takes_a_ship_through_to_its_far_end_and_places_it_there() {
+    let mut scene = scene_by_a_gate();
+    let out = scene.ship(SESSION, NOON).unwrap().position;
+    let far = Vec3::new(2.0e9, 1.0e8, 5.0e8);
+    scene.place_wormhole(wormhole_placement(Vec3::new(out.x + 5_000.0, out.y, out.z), far, 5_000.0), NOON);
+    assert!(scene.wormhole_index(WORMHOLE_END).is_some());
+
+    let answer = scene.command(SESSION, jump(WORMHOLE_END, FAR_END), NOON);
+    match &answer[1] {
+        Out::Jumping { destination_system, destination_gate, .. } => {
+            assert_eq!((*destination_system, *destination_gate), (OTHER_SYSTEM, FAR_END));
+        }
+        other => panic!("expected a jump, got {other:?}"),
+    }
+
+    let later = NOON + seconds(6);
+    let traveller = scene.due_jumps(later).0.pop().unwrap();
+    assert_eq!(traveller.to_far_end, Some((far, 5_000.0)));
+
+    let mut there = Scene::new(Arc::new(gated_systems().1));
+    there.arrive(traveller, later).unwrap();
+    let ship = there.ship(SESSION, later).unwrap();
+    let (dx, dy, dz) = (ship.position.x - far.x, ship.position.y - far.y, ship.position.z - far.z);
+    let distance = (dx * dx + dy * dy + dz * dz).sqrt();
+    assert!(
+        (distance - (5_000.0 + spec().radius + 12_000.0)).abs() < 1e-6,
+        "the ship lands clear of the far end: {distance}"
+    );
+    // it faces the far end
+    let facing = (-dx * ship.direction.x) + (-dy * ship.direction.y) + (-dz * ship.direction.z);
+    assert!(facing > 0.0, "the ship faces the far end");
+}
+
+#[test]
+fn a_wormhole_end_out_of_reach_refuses_the_jump_and_a_removed_one_is_not_found() {
+    let mut scene = scene_by_a_gate();
+    let out = scene.ship(SESSION, NOON).unwrap().position;
+    scene.place_wormhole(
+        wormhole_placement(Vec3::new(out.x + 60_000.0, out.y, out.z), Vec3::ZERO, 5_000.0),
+        NOON,
+    );
+    assert_eq!(refusal(&scene.command(SESSION, jump(WORMHOLE_END, FAR_END), NOON)), "TOO_FAR_FROM_STARGATE");
+
+    scene.remove_wormhole(WORMHOLE_END, NOON);
+    assert!(scene.wormhole_index(WORMHOLE_END).is_none());
+    assert_eq!(refusal(&scene.command(SESSION, jump(WORMHOLE_END, FAR_END), NOON)), "STARGATE_NOT_FOUND");
 }

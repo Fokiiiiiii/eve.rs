@@ -24,6 +24,11 @@ public sealed class CorpStationMgrTests
         var character = await rig.CharacterAsync("Standing Pilot");
         var session = Session(character);
         var service = CreateService(rig, standing: 0.0);
+        Assert.True(((IService)service).HasMethod("MachoResolveObject"));
+        Assert.Equal(new PyInt(Eve.Macho.MachoMessage.ProxyNodeId), await ((IService)service).CallAsync(new ServiceCall
+        {
+            Method = "MachoResolveObject", Args = [new PyLong(StationId)], Session = session,
+        }));
 
         // service 5 needs 3.0: a standing of 0 is refused, with the reference's notice
         var refused = await Assert.ThrowsAsync<MachoWrappedException>(() => Nested(service, session, "DoStandingCheckForStationService", new PyInt(5)));

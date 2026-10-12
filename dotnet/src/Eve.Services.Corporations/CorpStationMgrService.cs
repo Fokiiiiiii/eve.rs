@@ -29,6 +29,9 @@ public sealed partial class CorpStationMgrService(
     private readonly ConcurrentDictionary<string, long> _bound = new(StringComparer.Ordinal);
 
     /// <summary><c>MachoBindObject(stationID, (method, args, kwargs))</c>: binds the station's corporation door, then makes the nested call.</summary>
+    [Method("MachoResolveObject")]
+    public PyValue MachoResolveObject(ServiceCall call) => new PyInt(MachoMessage.ProxyNodeId);
+
     [Method("MachoBindObject")]
     public async ValueTask<PyValue> MachoBindObject(ServiceCall call)
     {

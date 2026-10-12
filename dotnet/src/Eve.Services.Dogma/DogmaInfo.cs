@@ -30,7 +30,7 @@ public sealed class DogmaInfo(DogmaStatic statics)
     private const int ShieldCapacity = 263;
     private const int ArmorHitPoints = 265;
     private const int CapacitorCapacity = 482;
-    private const int Quantity = 805;
+    internal const int Quantity = 805;
     private const int PilotSecurityStatus = 2610;
 
     /// <summary>Every item is told about these, with these values when its type has none of its own.</summary>

@@ -2451,7 +2451,14 @@ public class SpaceServiceTests
         await using var _ = rig;
         var answer = Assert.IsType<PyObject>(await rig.BeyonceCallAsync(session, "GetFormations"));
         Assert.Equal(ObjectCaching.ResultClass, JsSemantics.StringValue(answer.Name));
-        var formations = (PyList)((PySubStream)((PyTuple)answer.Args).Items[1]).Decoded!;
+        var formations = Assert.IsType<PyTuple>(((PySubStream)((PyTuple)answer.Args).Items[1]).Decoded);
+        Assert.All(formations.Items, formation =>
+        {
+            var points = Assert.IsType<PyTuple>(Assert.IsType<PyTuple>(formation).Items[1]);
+            Assert.Equal(4, points.Items.Count);
+            Assert.All(points.Items, point => Assert.All(Assert.IsType<PyTuple>(point).Items,
+                coordinate => Assert.IsType<PyInt>(coordinate)));
+        });
         Assert.Equal(["Diamond", "Arrow"], formations.Items.Select(f => JsSemantics.StringValue(((PyTuple)f).Items[0])));
     }
 

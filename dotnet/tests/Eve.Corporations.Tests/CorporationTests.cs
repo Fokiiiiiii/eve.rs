@@ -297,6 +297,12 @@ public sealed class CorporationOfficeTests
         await SetOfficeRoleAsync(rig, actor, CorporationRoles.RentOffice);
         var service = CreateService(rig);
         var quote = await QuoteAsync(service, actor, corporation.Id);
+        Assert.Equal(new Eve.Marshal.PyInt(Eve.Macho.MachoMessage.ProxyNodeId),
+            service.MachoResolveObject(Call("MachoResolveObject", actor, corporation.Id, new Eve.Marshal.PyLong(Station.Id))));
+        var bound = Assert.IsType<Eve.Marshal.PyTuple>(await service.MachoBindObject(Call("MachoBindObject", actor, corporation.Id,
+            new Eve.Marshal.PyLong(Station.Id), Eve.Services.Py.Tuple(new Eve.Marshal.PyStr("GetMyCorporationsOffices"), Eve.Services.Py.Tuple(), Eve.Marshal.PyNone.Instance))));
+        Assert.IsType<Eve.Marshal.PySubStruct>(bound.Items[0]);
+        Assert.Equal(await service.GetMyCorporationsOffices(Call("GetMyCorporationsOffices", actor, corporation.Id)), bound.Items[1]);
         var before = (await rig.Wallets.GetAsync(corporation.Id))!.Isk;
         var call = Call("RentOffice", actor, corporation.Id, new Eve.Marshal.PyReal((double)quote));
 

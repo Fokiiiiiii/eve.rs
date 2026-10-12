@@ -1,5 +1,16 @@
 # Current TODOs
 
+## Native Windows character-entry regression (2026-10-12)
+
+- Observed in the real client/MITM: `godma.ProcessAllInfo -> PrimeLocation -> invCache.GetInventoryFromId(characterID, 1)` received None, then failed at `SetSessionCheck`. The server bound only ships and containers. Character inventory now binds the selected character and projects the existing skill store through ShipSnapshot skill item IDs; self rows use the saved character/active ship and SDE type data. Foreign character access and inventory mutations are refused.
+- Recorded `CannotAddFieldsToATupleRowset` in agent initialization: GetAgents now supplies mutable list rows. Recorded `RecordNotFound` for the active ship: Config.GetMultiLocationsEx now reads owned item labels/SDE names and the containing station/system, wired from Host.
+- Recorded missing moniker resolution: warRegistry/corpStationMgr expose MachoResolveObject; officeManager resolves/binds and dispatches its nested real office methods with station validation.
+- Recorded `TypeError: must be tuple, not list` at Michelle.LoadFormations: GetFormations now returns nested tuples, including the point collection; integer coordinates match EveJS marshal encodeValue. Recorded `OnModuleAttributeChanges` quantity 805 with a normal module ID: fitting bootstrap excludes that sublocation-only notification. GetCommunityFittings now returns a fitting-ID dictionary inside the existing 15-minute cached-method result, not a list.
+- Unknown/refused GetInventoryFromId targets now raise FakeItemNotFound instead of returning None to invCache.SetSessionCheck. Character, ship, station and authorized container bindings remain backed by their existing state owners.
+- Verification: Inventory 47, Dogma 134, Core 677, Config 8, War/Station/Office 15 and the formations regression pass, zero failures/skips. The first character-inventory/config/agent/moniker fixes were deployed; the later response-shape fixes require the next Host rebuild. Native Undock acceptance and the remaining recorded RPC/protobuf gaps are still open.
+- Sources: real Windows client trace/capture on 2026-10-12; EveJS 828823a server/src/services/inventory/invBrokerService.js Handle_GetInventoryFromId/_getCharacterContainerItems; V24.01 eve/client/script/environment/invCache.py GetInventoryFromId and native godma traceback. Initial character selection shipid timing matches the current EveJS plan; no speculative deferral change was made.
+
+
 **Updated:** 2026-10-10
 **Baseline:** main source commit `7379a70fdeee0e93d2ac38c1b7a7bd9ecd29da60`
 

@@ -383,7 +383,7 @@ public sealed class AgentMissionServiceTests
             "dungeonID", "spawnPointID", "typeID",
         ],
         [
-            new PyTuple([
+            new PyList([
                 new PyInt(7004), new PyInt(8), new PyInt(24), new PyInt(3), PyNone.Instance,
                 new PyInt(1000036), PyBool.False, PyBool.True, new PyInt(17), PyBool.False,
                 new PyStr(""), new PyStr(""), new PyInt(18), new PyInt(1531), new PyInt(1),

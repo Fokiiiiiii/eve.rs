@@ -49,6 +49,13 @@ public sealed class StructureStore
 
     public string Schema => _schema;
 
+    /// <summary>A new id for a structure that has no inventory item (a pirate FOB). shortcut: the sequence starts far above the item ids (item_ids from 1990000000), so the two never meet.</summary>
+    public async Task<long> NextFobIdAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, CancellationToken cancellationToken = default)
+    {
+        await using var command = Sql.Command(connection, transaction, Q("SELECT nextval('{schema}.fob_ids')"));
+        return (long)(await command.ExecuteScalarAsync(cancellationToken))!;
+    }
+
     public static IReadOnlyList<Migration> MigrationSet() => Migrations.Embedded(typeof(StructureStore).Assembly, "Migrations");
 
     public static Task<IReadOnlyList<string>> MigrateAsync(NpgsqlDataSource source, string schema = DefaultSchema, CancellationToken cancellationToken = default) =>

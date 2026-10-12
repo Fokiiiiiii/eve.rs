@@ -29,7 +29,7 @@ internal sealed partial class CharacterServicesComposition
         if (dungeonWavesDirector is not null && stargateGraph is not null)
         {
             var sites = new Eve.Services.Space.Insurgency.InsurgencyDirector(insurgencyStore, insurgencyCampaigns, foundations.Scheduler, foundations.Events,
-                foundations.Content, dungeonWavesDirector, solarSystems, stargateGraph, Eve.Dungeons.DungeonCatalog.LoadEmbedded());
+                foundations.Content, dungeonWavesDirector, solarSystems, stargateGraph, Eve.Dungeons.DungeonCatalog.LoadEmbedded(), structureTimers, structureStore);
             await sites.AttachAsync();
         }
         foundations.Events.Subscribe("insurgency.campaign-notices", [Ins.InsurgencyCampaigns.CampaignChangedTopic],

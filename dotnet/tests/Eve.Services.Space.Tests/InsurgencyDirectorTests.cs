@@ -7,6 +7,7 @@ using Eve.Npc;
 using Eve.Scheduler;
 using Eve.Services.Space.Insurgency;
 using Eve.Services.Space.Waves;
+using Eve.Structures;
 using Eve.Universe;
 using Eve.Wallet;
 using Npgsql;
@@ -68,6 +69,39 @@ public sealed class InsurgencyDirectorTests
     }
 
     [PgFact]
+    public async Task A_campaign_starts_with_its_fob_invulnerable_and_the_empire_side_at_its_count_exposes_it_and_destroying_it_ends_the_campaign()
+    {
+        await using var rig = await InsurgencyRig.CreateAsync();
+        await rig.RunDueAsync();
+        var campaign = (await rig.CampaignsAsync()).First();
+        var fob = await rig.FobAsync(campaign.StructureId);
+        Assert.Equal(StructureState.FobInvulnerable, fob.Snapshot.State);
+        Assert.Equal(campaign.OriginSolarSystemId, fob.SolarSystemId);
+        Assert.Equal(campaign.WarzoneId == Ins.InsurgencyWarzones.Angel.WarzoneId ? 78260 : 79172, fob.TypeId);
+
+        rig.Advance(Forecast + TimeSpan.FromMinutes(1));
+        await rig.RunDueAsync();
+        for (var i = 0; i < 5; i++)
+            await rig.ScoreAsync(campaign.CampaignId, Ins.Side.Antipirate, campaign.CoveredSolarSystemIds[i]);
+        await rig.RunDueAsync();
+        Assert.Equal(StructureState.ShieldVulnerable, (await rig.FobAsync(campaign.StructureId)).Snapshot.State);
+        Assert.Equal(Ins.CampaignStates.Active, (await rig.CampaignAsync(campaign.CampaignId)).State);
+
+        // the shield, then the one reinforcement (3 hours at the middle roll), the armor and the hull: the FOB is destroyed
+        await rig.HitAsync(campaign.StructureId, new Damaged(StructureLayer.Shield, true, false));
+        rig.Advance(TimeSpan.FromHours(3) + TimeSpan.FromMinutes(1));
+        await rig.RunDueAsync();
+        await rig.HitAsync(campaign.StructureId, new Damaged(StructureLayer.Armor, true, false));
+        await rig.HitAsync(campaign.StructureId, new Damaged(StructureLayer.Hull, true, false));
+
+        Assert.True((await rig.FobAsync(campaign.StructureId)).Snapshot.DestroyedMs > 0);
+        var ended = await rig.CampaignAsync(campaign.CampaignId);
+        Assert.Equal(Ins.CampaignStates.AntipirateWin, ended.State);
+        foreach (var site in (await rig.SitesAsync()).Where(site => site.CampaignId == campaign.CampaignId))
+            Assert.Equal("abandoned", (await rig.Content.GetAsync(site.Instance))!.State);
+    }
+
+    [PgFact]
     public async Task A_pirate_win_pays_each_contributor_the_victory_points_and_ends_the_other_sites()
     {
         await using var rig = await InsurgencyRig.CreateAsync();
@@ -91,6 +125,7 @@ public sealed class InsurgencyDirectorTests
         Assert.Equal(Ins.InsurgencyRules.VictoryLp, balance.Amount);
         Assert.Equal(InsurgencyWarzoneCorporation(campaign.WarzoneId), balance.IssuerCorpId);
         Assert.Empty(await rig.OpenSitesAsync(campaign.CampaignId));
+        Assert.True((await rig.FobAsync(campaign.StructureId)).Snapshot.DestroyedMs > 0); // the FOB leaves space with the pirates' win
     }
 
     /// <summary>The campaign site templates of the owner catalog: archetypes 72 to 79 (the sites the start driver may use).</summary>
@@ -131,9 +166,13 @@ public sealed class InsurgencyDirectorTests
             Store = new Ins.InsurgencyStore(source, schemas[4]);
             Loyalty = new LoyaltyPointStore(source, schemas[5]);
             Campaigns = new Ins.InsurgencyCampaigns(Store, Scheduler, Bus, Loyalty);
+            StructureStore = new StructureStore(source, schemas[6]);
+            Structures = new StructureTimers(StructureStore, Scheduler, Bus, new FobRules(), () => 0.5);
         }
 
         public FakeSpawner Spawner { get; }
+        public StructureTimers Structures { get; private set; } = null!;
+        public StructureStore StructureStore { get; private set; } = null!;
         public DurableScheduler Scheduler { get; private set; }
         public EventBus Bus { get; private set; }
         public ContentRuntime Content { get; private set; }
@@ -147,18 +186,21 @@ public sealed class InsurgencyDirectorTests
             var url = Environment.GetEnvironmentVariable("EVE_PG_URL")!;
             var source = NpgsqlDataSource.Create(PgConnection.ForTest(url));
             var id = Guid.NewGuid().ToString("N")[..12];
-            string[] schemas = ["ins_sch_" + id, "ins_evt_" + id, "ins_cnt_" + id, "ins_wav_" + id, "ins_camp_" + id, "ins_wal_" + id];
+            string[] schemas = ["ins_sch_" + id, "ins_evt_" + id, "ins_cnt_" + id, "ins_wav_" + id, "ins_camp_" + id, "ins_wal_" + id, "ins_str_" + id];
             await DurableScheduler.MigrateAsync(source, schemas[0]);
             await EventBus.MigrateAsync(source, schemas[1]);
             await ContentRuntime.MigrateAsync(source, schemas[2]);
             await DungeonWaveDirector.MigrateAsync(source, schemas[3]);
             await Ins.InsurgencyStore.MigrateAsync(source, schemas[4]);
             await PgWalletStore.MigrateAsync(source, schemas[5]);
+            await StructureStore.MigrateAsync(source, schemas[6]);
             var rig = new InsurgencyRig(source, schemas);
             var catalog = DungeonCatalog.LoadEmbedded();
             await rig.Waves.AttachAsync();
             rig.Campaigns.Register();
-            await new InsurgencyDirector(rig.Store, rig.Campaigns, rig.Scheduler, rig.Bus, rig.Content, rig.Waves, Universe(), Stargates(), catalog).AttachAsync();
+            rig.Structures.Register();
+            await new InsurgencyDirector(rig.Store, rig.Campaigns, rig.Scheduler, rig.Bus, rig.Content, rig.Waves, Universe(), Stargates(), catalog,
+                rig.Structures, rig.StructureStore).AttachAsync();
             await rig.Content.AttachAsync();
             await rig.Bus.PumpAsync();
             return rig;
@@ -183,6 +225,32 @@ public sealed class InsurgencyDirectorTests
                 if (ran == 0 && delivered == 0)
                     break;
             }
+        }
+
+        public async Task<StructureRecord> FobAsync(long structureId)
+        {
+            await using var connection = await _source.OpenConnectionAsync();
+            return (await StructureStore.GetAsync(connection, null, structureId, false))!;
+        }
+
+        /// <summary>A point for a side, as the space scores it (the campaign's own transaction), then the announcements.</summary>
+        public async Task ScoreAsync(long campaignId, Ins.Side side, long system)
+        {
+            await using var connection = await _source.OpenConnectionAsync();
+            await using var transaction = await connection.BeginTransactionAsync();
+            await Campaigns.ScorePointAsync(connection, transaction, campaignId, side, system);
+            await transaction.CommitAsync();
+            await RunDueAsync();
+        }
+
+        /// <summary>A hit on a FOB, as the space's damage notice applies it, then the timers and the announcements.</summary>
+        public async Task HitAsync(long structureId, StructureEvent hit)
+        {
+            await using var connection = await _source.OpenConnectionAsync();
+            await using var transaction = await connection.BeginTransactionAsync();
+            await Structures.ApplyAsync(connection, transaction, structureId, hit);
+            await transaction.CommitAsync();
+            await RunDueAsync();
         }
 
         public async Task<IReadOnlyList<Ins.Campaign>> CampaignsAsync()
@@ -264,6 +332,12 @@ public sealed class InsurgencyDirectorTests
     }
 
     public sealed record SiteRow(long CampaignId, long SolarSystemId, long Dungeon, long Instance);
+
+    /// <summary>Every structure is a pirate FOB here: the timeline's rules of a low-security FOB.</summary>
+    private sealed class FobRules : IStructureRulesSource
+    {
+        public StructureRules RulesOf(int typeId, int solarSystemId) => StructureRules.Of(StructureSize.Fob, SecurityBand.LowSec, canBeAbandoned: false);
+    }
 
     private sealed class FakeSpawner : IDungeonNpcSpawner
     {

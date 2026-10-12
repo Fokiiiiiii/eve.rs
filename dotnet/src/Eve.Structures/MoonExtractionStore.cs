@@ -5,11 +5,11 @@ using Npgsql;
 
 namespace Eve.Structures;
 
-/// <summary>A moon extraction as the table holds it (EVE.js <c>moonExtractions.extractions</c>). Times are milliseconds since 1970.</summary>
+/// <summary>A persisted moon extraction. Times are Unix milliseconds; FieldDecayMs is the start-time lifetime snapshot (-1 for legacy rows).</summary>
 public sealed record MoonExtraction(
     long ExtractionId, long StructureId, long MoonId, long SolarSystemId, long OwnerCorporationId, long StartMs, long ChunkAvailableMs, long NaturalDecayMs,
     long DurationSeconds, double YieldMultiplier, long CalendarEventId, string State, long ReadyNotifiedMs, long FractureStartedMs, long FractureCompleteMs,
-    IReadOnlyDictionary<long, double> OreVolumeM3, long CreatedMs, long CompletedMs, string CompletedReason, long FieldDecayedMs);
+    IReadOnlyDictionary<long, double> OreVolumeM3, long CreatedMs, long CompletedMs, string CompletedReason, long FieldDecayedMs, long FieldDecayMs = -1);
 
 /// <summary>The resource profile of a structure that mines a moon: the moon, its owner, its yield and the share of each ore type (EVE.js <c>resourcesByStructureID</c>).</summary>
 public sealed record MoonResourceProfile(long StructureId, long MoonId, long SolarSystemId, long OwnerCorporationId, double YieldMultiplier, IReadOnlyDictionary<long, double> Resources);
@@ -27,7 +27,7 @@ public sealed class MoonExtractionStore
     private const string ExtractionColumns =
         "extraction_id, structure_id, moon_id, solar_system_id, owner_corporation_id, start_ms, chunk_available_ms, natural_decay_ms, duration_seconds, " +
         "yield_multiplier, calendar_event_id, state, ready_notified_ms, fracture_started_ms, fracture_complete_ms, ore_volume::text, created_ms, completed_ms, completed_reason, " +
-        "field_decayed_ms";
+        "field_decayed_ms, field_decay_ms";
 
     private readonly NpgsqlDataSource _source;
     private readonly string _schema;
@@ -170,12 +170,12 @@ public sealed class MoonExtractionStore
         await Sql.ExecuteAsync(connection, transaction, Q("""
             INSERT INTO {schema}.structure_moon_extractions (extraction_id, structure_id, moon_id, solar_system_id, owner_corporation_id, start_ms, chunk_available_ms,
                 natural_decay_ms, duration_seconds, yield_multiplier, calendar_event_id, state, ready_notified_ms, fracture_started_ms, fracture_complete_ms, ore_volume,
-                created_ms, completed_ms, completed_reason)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16::text::jsonb, $17, $18, $19)
+                created_ms, completed_ms, completed_reason, field_decay_ms)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16::text::jsonb, $17, $18, $19, $20)
             ON CONFLICT (extraction_id) DO NOTHING
             """), cancellationToken, e.ExtractionId, e.StructureId, e.MoonId, e.SolarSystemId, e.OwnerCorporationId, e.StartMs, e.ChunkAvailableMs, e.NaturalDecayMs,
             e.DurationSeconds, e.YieldMultiplier, e.CalendarEventId, e.State, e.ReadyNotifiedMs, e.FractureStartedMs, e.FractureCompleteMs, OreJson(e.OreVolumeM3),
-            e.CreatedMs, e.CompletedMs, e.CompletedReason);
+            e.CreatedMs, e.CompletedMs, e.CompletedReason, e.FieldDecayMs);
 
     private async Task<int> InsertProfileAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, MoonResourceProfile p, CancellationToken cancellationToken) =>
         await Sql.ExecuteAsync(connection, transaction, Q("""
@@ -188,7 +188,8 @@ public sealed class MoonExtractionStore
 
     private static MoonExtraction ReadExtraction(NpgsqlDataReader r) => new(
         r.GetInt64(0), r.GetInt64(1), r.GetInt64(2), r.GetInt64(3), r.GetInt64(4), r.GetInt64(5), r.GetInt64(6), r.GetInt64(7), r.GetInt64(8), r.GetDouble(9),
-        r.GetInt64(10), r.GetString(11), r.GetInt64(12), r.GetInt64(13), r.GetInt64(14), OreOf(r.GetString(15)), r.GetInt64(16), r.GetInt64(17), r.GetString(18), r.GetInt64(19));
+        r.GetInt64(10), r.GetString(11), r.GetInt64(12), r.GetInt64(13), r.GetInt64(14), OreOf(r.GetString(15)), r.GetInt64(16), r.GetInt64(17), r.GetString(18),
+        r.GetInt64(19), r.GetInt64(20));
 
     public static JsonObject ToLegacy(MoonExtraction e) => new()
     {
@@ -202,6 +203,7 @@ public sealed class MoonExtractionStore
         ["naturalDecayTimeMs"] = e.NaturalDecayMs,
         ["durationSeconds"] = e.DurationSeconds,
         ["yieldMultiplier"] = e.YieldMultiplier,
+        ["fieldDecayMs"] = e.FieldDecayMs,
         ["calendarEventID"] = e.CalendarEventId,
         ["state"] = e.State,
     };
@@ -248,7 +250,8 @@ public sealed class MoonExtractionStore
             startMove, chunkAvailable, decay > 0 ? decay : chunkAvailable + LegacyAutoFractureDelayMs, Positive(row["durationSeconds"]),
             yield > 0 ? yield : 1, Positive(row["calendarEventID"]), string.IsNullOrEmpty(state) ? "active" : state,
             Positive(row["readyNotificationSentAtMs"] ?? row["readyNotifiedAtMs"]), Positive(row["fractureStartedAtMs"]), Positive(row["fractureCompleteAtMs"]),
-            Volumes(row["oreVolumeByType"]), Positive(row["createdAt"]), Positive(row["completedAt"]), row["completedReason"]?.ToString() ?? "", 0);
+            Volumes(row["oreVolumeByType"]), Positive(row["createdAt"]), Positive(row["completedAt"]), row["completedReason"]?.ToString() ?? "", 0,
+            SnapshotMilliseconds(row["fieldDecayMs"]));
     }
 
     /// <summary>EVE.js <c>normalizeResourceEntry</c>: the shares are under <c>resources</c>, or the entry itself holds them.</summary>
@@ -292,4 +295,7 @@ public sealed class MoonExtractionStore
 
     private static double Real(JsonNode? node) =>
         double.TryParse(node?.ToString(), NumberStyles.Float, CultureInfo.InvariantCulture, out var number) && double.IsFinite(number) ? number : 0;
+
+    private static long SnapshotMilliseconds(JsonNode? node) =>
+        long.TryParse(node?.ToString(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var value) && value >= 0 ? value : -1;
 }

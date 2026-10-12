@@ -6,6 +6,7 @@ using Eve.Events;
 using Eve.Insurgency;
 using Eve.Scheduler;
 using Eve.Services.Space.Waves;
+using Eve.Structures;
 using Eve.Universe;
 using Npgsql;
 
@@ -22,6 +23,8 @@ public sealed class InsurgencyDirector
     public const string SpawnSubscriber = "insurgency.sites.spawn";
     public const string CompletedSubscriber = "insurgency.sites.completed";
     public const string ContributorSubscriber = "insurgency.contributors";
+    public const string FobExposedSubscriber = "insurgency.fob.exposed";
+    public const string FobStateSubscriber = "insurgency.fob.state";
 
     /// <summary>How often a warzone without an open campaign is looked at again. shortcut: CCP publishes no start interval; EVE.js starts at once when none is open.</summary>
     public static readonly TimeSpan StartTick = TimeSpan.FromHours(1);
@@ -39,12 +42,15 @@ public sealed class InsurgencyDirector
     private readonly SolarSystemCatalog _systems;
     private readonly StargateGraph _stargates;
     private readonly IReadOnlyDictionary<string, IReadOnlyList<long>> _templatesOfPool;
+    private readonly StructureTimers _structures;
+    private readonly StructureStore _fobIds;
 
     public InsurgencyDirector(
         InsurgencyStore store, InsurgencyCampaigns campaigns, DurableScheduler scheduler, EventBus bus, ContentRuntime content, DungeonWaveDirector sites,
-        SolarSystemCatalog systems, StargateGraph stargates, DungeonCatalog catalog)
+        SolarSystemCatalog systems, StargateGraph stargates, DungeonCatalog catalog, StructureTimers structures, StructureStore fobIds)
     {
         (_store, _campaigns, _scheduler, _bus, _content, _sites, _systems, _stargates) = (store, campaigns, scheduler, bus, content, sites, systems, stargates);
+        (_structures, _fobIds) = (structures, fobIds);
         // the templates of each NPC pool: a site is started from the templates whose first wave draws from that pool and whose waves the simulation can make
         _templatesOfPool = catalog.Dungeons
             .Where(d => d.ArchetypeID is >= FirstSiteArchetype and <= LastSiteArchetype && d.Waves.Count > 0 && sites.StartRefusalOf(d.DungeonID) is null)
@@ -59,6 +65,8 @@ public sealed class InsurgencyDirector
         _bus.Subscribe(SpawnSubscriber, [InsurgencyCampaigns.CampaignChangedTopic], (context, token) => OnCampaignChangedAsync(context, token));
         _bus.Subscribe(CompletedSubscriber, ["content." + DungeonWaveDirector.Kind + ".completed"], (context, token) => OnSiteCompletedAsync(context, token));
         _bus.Subscribe(ContributorSubscriber, [DungeonWaveDirector.NpcKilledTopic], (context, token) => OnKilledAsync(context, token));
+        _bus.Subscribe(FobExposedSubscriber, [InsurgencyCampaigns.FobExposedTopic], (context, token) => OnFobExposedAsync(context, token));
+        _bus.Subscribe(FobStateSubscriber, [StructureTimers.StateChangedTopic], (context, token) => OnFobStateChangedAsync(context, token));
         // the first look is now (a warzone with no campaign gets one at once); the job then repeats every tick
         await _scheduler.ScheduleAsync(new JobSpec(StartJob, _scheduler.Now)
         {
@@ -99,8 +107,15 @@ public sealed class InsurgencyDirector
                 .ToList();
             if (covered.Count < required)
                 continue;
+            // the spawn of the FOB starts the campaign: put in space at the hub, invulnerable until the empire side exposes it.
+            // shortcut: the FOB sits at the system's origin; the owner data and the wiki give no place for it.
+            long fob = await _fobIds.NextFobIdAsync(context.Connection, context.Transaction, cancellationToken);
+            if (await _structures.DeployFobAsync(context.Connection, context.Transaction,
+                    new NewStructure(fob, warzone.FobTypeId, hub.Id, 0, 0, 0, 0, warzone.PirateCorporationId, 0, "Pirate FOB", "", 0, StructureTimes.NoReinforceWeekday, 0),
+                    cancellationToken) is null)
+                throw new InvalidOperationException($"the FOB id {fob} of warzone {warzone.WarzoneId} is taken");
             await _campaigns.StartAsync(context.Connection, context.Transaction,
-                new CampaignStart(warzone.PirateFactionId, warzone.WarzoneId, hub.Id, covered), cancellationToken);
+                new CampaignStart(warzone.PirateFactionId, warzone.WarzoneId, hub.Id, covered, fob), cancellationToken);
         }
     }
 
@@ -121,7 +136,24 @@ public sealed class InsurgencyDirector
             {
                 await _content.AbandonAsync(context.Connection, context.Transaction, instance, $"insurgency {change.CampaignId} ended", cancellationToken);
             }
+            // the FOB leaves space with its campaign (a destroyed one is already gone: the timeline refuses the event)
+            await _structures.ApplyAsync(context.Connection, context.Transaction, change.Campaign.StructureId, new FobDespawned(), cancellationToken);
         }
+    }
+
+    /// <summary>The campaign's goal for the empire side is reached: the FOB is exposed (its shield stage, the attackable one).</summary>
+    private async Task OnFobExposedAsync(EventContext context, CancellationToken cancellationToken)
+    {
+        var exposure = context.Event.Payload<FobExposure>()!;
+        await _structures.ApplyAsync(context.Connection, context.Transaction, exposure.StructureId, new FobExposed(), cancellationToken);
+    }
+
+    /// <summary>A structure was destroyed: when it is the FOB of an active campaign, the empire side wins.</summary>
+    private async Task OnFobStateChangedAsync(EventContext context, CancellationToken cancellationToken)
+    {
+        var change = context.Event.Payload<StructureStateChanged>()!;
+        if (change.Removal == "destroyed")
+            await _campaigns.FobDestroyedAsync(context.Connection, context.Transaction, change.StructureId, cancellationToken);
     }
 
     private async Task SpawnSitesAsync(EventContext context, Campaign campaign, CancellationToken cancellationToken)

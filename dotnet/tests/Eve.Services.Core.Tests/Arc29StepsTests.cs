@@ -85,8 +85,10 @@ public class Arc29StepsTests
 
         public Task<long> HeldQuantityAsync(long characterId, int typeId, CancellationToken cancellationToken) => Task.FromResult(0L);
 
-        public Task GrantCargoAsync(long characterId, int typeId, long quantity, bool singleton, long stationId, CancellationToken cancellationToken) =>
+        public Task GrantCargoAsync(long characterId, long missionId, int typeId, long quantity, bool singleton, long stationId, CancellationToken cancellationToken) =>
             Task.CompletedTask;
+
+        public Task TakeCargoAsync(long characterId, long missionId, int typeId, CancellationToken cancellationToken) => Task.CompletedTask;
     }
 
     private static AgentMissionAgentData Agent(long id, bool inSpace, long? system, long? dungeon) => new(

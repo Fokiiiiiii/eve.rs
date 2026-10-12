@@ -122,7 +122,7 @@ internal sealed partial class CharacterServicesComposition
                 await ledgerTransaction.CommitAsync();
             }
             var miningLedger = new MiningLedgerRecorder(spaceSchema);
-            foundations.Events.Subscribe("mining.ledger", [Eve.Ships.OreMinedEvent.Topic], (context, token) => miningLedger.RecordAsync(context, token));
+            foundations.Events.Subscribe("mining.ledger", [Eve.Ships.OreMinedEvent.Topic, Eve.Ships.MoonMiningObserverEvent.Topic], (context, token) => miningLedger.RecordAsync(context, token));
             // the daily goals of mining and salvage: content defined before the foundations attach, advanced by one subscriber (DailyGoalRecorder)
             var dailyGoals = new DailyGoalRecorder(foundations.Content, foundations.Scheduler);
             foreach (var definition in DailyGoalRecorder.Definitions)

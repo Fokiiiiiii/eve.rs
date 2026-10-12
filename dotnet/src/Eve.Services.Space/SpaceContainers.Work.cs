@@ -301,7 +301,8 @@ public sealed partial class SpaceContainers
                 cycle.IsModule
                     ? MiningRolls.ForModule(cycle.Roll, cycle.RoundingRoll, cycle.CritRoll, cycle.WasteProbability, cycle.CritProbability)
                     : new MiningRolls(cycle.Roll, 0, 0, 1, 0),
-                (long)cycle.CycleId, _cycles, _spaceItems, _events, (int)(session.GetInt("corporationID") ?? session.GetInt("corpid") ?? 0));
+                (long)cycle.CycleId, _cycles, _spaceItems, _events, (int)(session.GetInt("corporationID") ?? session.GetInt("corpid") ?? 0),
+                nowUnixMs: _nowUnixMs());
             if (mined.Accepted && mined.Depleted)
             {
                 _placed.TryRemove(cycle.TargetId, out _);

@@ -1533,10 +1533,10 @@ Evidence and decisions: `docs/project/WORMHOLE_DESIGN.md` (sources, SDE numbers,
 |---|---|---|
 | DONE (tests) | The 129 wormhole types from the pinned SDE: lifetime, mass, per-jump mass, target class, distribution (`WormholeTypeCatalog`) | `WormholeTypeCatalogTests` (PgFact, real SDE). K162 is not a type of the catalog (no mass attribute) |
 | DONE (tests) | Rules on the numbers: J-space ids, the per-ship limit, the mass after a transit, the mass and lifetime states (wiki thresholds), the 5-minute polarization time (`WormholeRules`) | `WormholeRulesTests` (synthetic numbers, the state boundaries) |
-| OPEN | Jump through a wormhole (`wormholeMgr.WormholeJump`) | Needs a wormhole entity in the simulation and a jump callback in the composition (`SpaceRpc.cs` line 72 passes none; the call returns None). Owner decision 1 (the class of each J-space system) comes first |
+| SUPERSEDED (see "Wormhole space: final status")| Jump through a wormhole (`wormholeMgr.WormholeJump`) | Needs a wormhole entity in the simulation and a jump callback in the composition (`SpaceRpc.cs` line 72 passes none; the call returns None). Owner decision 1 (the class of each J-space system) comes first |
 | OPEN | Connection generator (statics, k-space connections, spawn) and the lifetime and mass jobs | Statics per class and the spawn chances are not published (design section 4); owner decision 2 |
-| OPEN | Signatures, system effects, Sleeper and Drifter sites, Thera and Turnur connections | Design sections 4, 5 and 7. Effect magnitudes per class are not published (owner decision 3) |
-| OPEN | Local chat in J-space | The brief said there is none; the wiki and the client say there is one (owner decision 4) |
+| SUPERSEDED (see "Wormhole space: final status")| Signatures, system effects, Sleeper and Drifter sites, Thera and Turnur connections | Design sections 4, 5 and 7. Effect magnitudes per class are not published (owner decision 3) |
+| SUPERSEDED (see "Wormhole space: final status")| Local chat in J-space | The brief said there is none; the wiki and the client say there is one (owner decision 4) |
 
 ### Slice 2 (2026-10-12)
 
@@ -1544,10 +1544,10 @@ Evidence and decisions: `docs/project/WORMHOLE_DESIGN.md` (sources, SDE numbers,
 |---|---|---|
 | DONE (tests) | J-space system classes from the V24.01 client data (`WormholeSystemClasses`, `EVE_CLIENT_SDE_DIR/native/systems.jsonl.gz`): 2,604 systems | `WormholeClientDataTests`. Fuzzwork `mapLocationWormholeClasses` cross-check not done |
 | DONE (tests) | Per-class effect beacons from the SDE (group 920, 36 types) with their dogma modifiers (`WormholeEffects`) | `WormholeEffectsTests`. The wiki effects page is not reachable |
-| OPEN | Which effect each J-space system has | Design 9.2 (owner decision 6) |
+| SUPERSEDED (see "Wormhole space: final status")| Which effect each J-space system has | Design 9.2 (owner decision 6) |
 | CUT | Connection generator, statics, spawn | No source for statics per class or probabilities (design 9.3, owner decision 2) |
-| OPEN | Jump, lifetime/mass jobs, collapse, signatures, effects on ships, Sleeper/Drifter sites, Thera/Turnur, MITM run | Design 9.6 |
-| OPEN | Local chat in J-space | Design 9.4 (owner decision 4) |
+| SUPERSEDED (see "Wormhole space: final status")| Jump, lifetime/mass jobs, collapse, signatures, effects on ships, Sleeper/Drifter sites, Thera/Turnur, MITM run | Design 9.6 |
+| SUPERSEDED (see "Wormhole space: final status")| Local chat in J-space | Design 9.4 (owner decision 4) |
 
 ### Slice 3 (2026-10-12)
 
@@ -1557,7 +1557,7 @@ Evidence and decisions: `docs/project/WORMHOLE_DESIGN.md` (sources, SDE numbers,
 | DONE (rule, data) | Local chat in J-space: the client's delayed local (members only when they speak) is recorded (design 10.3) | No eve.rs chat service exists: nothing to change yet |
 | OPEN | Class 4 statics: EveJS one static, wiki "usually two" | Design 10.5 (owner decision 7) |
 | CUT | Connection generator and static pairing | No published pairing (design 10.4, owner decision 8) |
-| OPEN | Setup loader into a PostgreSQL schema; jump; entities; sim jump (Rust build needs 9 to 11 GB free); signatures; effects on ships; sites; Thera/Turnur; MITM run | Design 10.4 |
+| SUPERSEDED (see "Wormhole space: final status")| Setup loader into a PostgreSQL schema; jump; entities; sim jump (Rust build needs 9 to 11 GB free); signatures; effects on ships; sites; Thera/Turnur; MITM run | Design 10.4 |
 
 ### Slice 4 (2026-10-12)
 
@@ -1566,15 +1566,15 @@ Evidence and decisions: `docs/project/WORMHOLE_DESIGN.md` (sources, SDE numbers,
 | DONE (tests) | Connection generator for the statics (seeded, documented mechanic) and durable lifecycle jobs on Eve.Scheduler (expiry, static replacement, transit collapse, restart) | `dotnet/tests/Eve.Wormholes.Tests` (14). Not wired into the Host composition yet |
 | CUT | Wandering K-space connections (K162) | No published spawn rate (design 11) |
 | CUT | Region-neighbour exclusion for statics | The pages read do not state it (design 11) |
-| OPEN | Wormhole entities in space, sim jump, WormholeMgr.WormholeJump callback, signatures, effects on ships, sites, Thera/Turnur, delayed local (no chat service in eve.rs), MITM run | Design 11 |
+| SUPERSEDED (see "Wormhole space: final status")| Wormhole entities in space, sim jump, WormholeMgr.WormholeJump callback, signatures, effects on ships, sites, Thera/Turnur, delayed local (no chat service in eve.rs), MITM run | Design 11 |
 
 ### Slice 5 (2026-10-12)
 
 | Status | Item | Missing work |
 |---|---|---|
-| OPEN | Wormhole jump path: simulation body kind, placement (protocol 60), jump and arrival in `crates/eve-space`, WormholeMgr callback in the composition | Design 12.3 (not started in slice 5; investigated) |
+| SUPERSEDED (see "Wormhole space: final status")| Wormhole jump path: simulation body kind, placement (protocol 60), jump and arrival in `crates/eve-space`, WormholeMgr callback in the composition | Design 12.3 (not started in slice 5; investigated) |
 | OPEN | Effects as dogma modifiers | No system-wide effect mechanism exists in eve.rs (design 12.4) |
-| OPEN | Signatures, sites, Thera/Turnur, headless MITM run | Design 12.4 |
+| SUPERSEDED (see "Wormhole space: final status")| Signatures, sites, Thera/Turnur, headless MITM run | Design 12.4 |
 | CUT | Delayed local | No chat service in eve.rs (design 10.3) |
 
 ### Slice 6 (2026-10-12)
@@ -1583,8 +1583,8 @@ Evidence and decisions: `docs/project/WORMHOLE_DESIGN.md` (sources, SDE numbers,
 |---|---|---|
 | DONE (tests) | Protocol 63: wormhole body kind, `PlaceWormhole`/`RemoveWormhole` (Rust sim, codec on both sides, goldens), jump to a wormhole end and arrival by its far end | `eve-space` 747 + codec 299 tests. Design 13 |
 | OPEN | The far end as a body of its own scene (pilots must be able to jump back) | Design 13 |
-| OPEN | Host placement of the ends, `WormholeMgr.WormholeJump` through the lifecycle, composition wiring | Design 13 |
-| OPEN | Effects, signatures, sites, Thera exits, MITM run | Design 13 |
+| SUPERSEDED (see "Wormhole space: final status")| Host placement of the ends, `WormholeMgr.WormholeJump` through the lifecycle, composition wiring | Design 13 |
+| SUPERSEDED (see "Wormhole space: final status")| Effects, signatures, sites, Thera exits, MITM run | Design 13 |
 
 
 ## Pochven population (2026-10-12, after step 1)
@@ -1618,21 +1618,21 @@ Evidence and decisions: `docs/project/WORMHOLE_DESIGN.md` (sources, SDE numbers,
 |---|---|---|
 | DONE (tests) | 7b: placement of the ends with the system's scene, WormholeMgr.WormholeJump (mass, collapse, publication), polarization, world at start-up | Eve.Wormholes.Tests 17; the service jump has no test yet (DEVIATIONS) |
 | DONE (tests) | 7c: system environment as dogma modifiers on the ship and its modules (C# dogma) | Eve.Dogma.Tests `SystemEnvironmentTests` (3). Not in the Rust simulation |
-| OPEN | 7d signatures, 7e Sleeper/Drifter sites, 7f Thera exits | Not started |
+| SUPERSEDED (see "Wormhole space: final status")| 7d signatures, 7e Sleeper/Drifter sites, 7f Thera exits | Not started |
 
-| BLOCKED | 7d signatures in probe scanning | Design 14: no wormhole rows in the probe path; scan-strength value not read from the wiki |
-| BLOCKED | 7e Sleeper and Drifter sites | Design 14: site content not published (owner decision needed) |
-| BLOCKED | 7f Thera exits | Design 14: Thera's connections are wandering (K-space), cut by owner decision |
+| SUPERSEDED (see "Wormhole space: final status")| 7d signatures in probe scanning | Design 14: no wormhole rows in the probe path; scan-strength value not read from the wiki |
+| SUPERSEDED (see "Wormhole space: final status")| 7e Sleeper and Drifter sites | Design 14: site content not published (owner decision needed) |
+| SUPERSEDED (see "Wormhole space: final status")| 7f Thera exits | Design 14: Thera's connections are wandering (K-space), cut by owner decision |
 
 ### Slice 8 (2026-10-12)
 
 | Status | Item | Missing work |
 |---|---|---|
 | DONE (tests) | Thera's seeded connections (12, documented types and endpoints), respawn after collapse | `TheraConnectionsTests`. Design 15 |
-| BLOCKED | Signature scan strength per type | No per-type value in the wiki pages or EveJS (design 15) |
-| PARTIAL | Sleeper/Drifter sites | Combat site names per class from the wiki; per-system counts and shares not published (design 15) |
+| SUPERSEDED (see "Wormhole space: final status")| Signature scan strength per type | No per-type value in the wiki pages or EveJS (design 15) |
+| SUPERSEDED (see "Wormhole space: final status")| Sleeper/Drifter sites | Combat site names per class from the wiki; per-system counts and shares not published (design 15) |
 | NOT DONE | Environment effects in the Rust sim | Design 15 |
-| NOT DONE | Service-layer wormhole jump tests; headless live check | Design 15 |
+| SUPERSEDED (see "Wormhole space: final status")| Service-layer wormhole jump tests; headless live check | Design 15 |
 
 ### Slice 9 and slice 10 (2026-10-12)
 
@@ -1642,7 +1642,7 @@ Evidence and decisions: `docs/project/WORMHOLE_DESIGN.md` (sources, SDE numbers,
 | DONE (tests) | Real site names and client dungeon keys per class, zones of gas and ore, C13 rule (slice 10) | `WormholeSitesTests`, DEVIATIONS |
 | DONE (tests) | Plan connected to `CosmicSiteDirector`: a J-system's planned combat, data and relic sites are placed in their slots, with containers and Sleeper waves (48 templates) | `A_wormhole_system_gets_the_sites_of_its_plan...` (PgFact), `WormholeSiteTemplatesTests` |
 | DONE (tests) | Probe scan of a J signature: strength 0.0 (SDE 1908); a probe in range finds it by its geometry | `ProbeScanMathTests` |
-| NOT DONE | Gas and ore signatures placed as sites (no site kind) | Mining site generation |
+| SUPERSEDED (see "Wormhole space: final status")| Gas and ore signatures placed as sites (no site kind) | Mining site generation |
 | NOT DONE | Rust sim environment effects (the attributes the sim models) | Design 15 |
 | DONE (tests) | Service-layer `WormholeJumpAsync` tests: mass refusal, jump and destination end, polarization, collapse (own world in the space rig) | `WormholeJumpServiceTests` (PgFact). Polarization expiry and RPC path not covered |
 | NOT DONE | Headless MITM live check on 26110/26210 | Design 15 |
@@ -1654,6 +1654,36 @@ Evidence and decisions: `docs/project/WORMHOLE_DESIGN.md` (sources, SDE numbers,
 | DONE (tests) | Live jump in and back through a static wormhole (headless, through the MITM proxy); the cause of the drift: a wormhole end inside a star; the scene dropped with its ends | `test_wormhole_live.py` (passed), `a_wormhole_end_inside_a_star_is_placed_outside_it_on_its_bearing`, `a_wormhole_end_placed_in_a_system_nobody_is_in_is_still_there_after_a_poll` |
 | DONE (tests) | Polarization expiry; the wormhole jump through the RPC service | `WormholeJumpServiceTests` (2 new) |
 | DONE (tests) | Gas and ore sites: 9 reservoirs (signatures, clouds), 11 deposits (anomalies, rocks), placed and restored | `WormholeSiteTemplatesTests`, `SiteResourceTests`, `CosmicSitesTests` |
-| NOT DONE | Live check of a gas or ore site | No headless scenario |
-| NOT DONE | Removal of a site's resources when the site ends | Shortcut in DEVIATIONS |
+| SUPERSEDED (see "Wormhole space: final status")| Live check of a gas or ore site | No headless scenario |
+| SUPERSEDED (see "Wormhole space: final status")| Removal of a site's resources when the site ends | Shortcut in DEVIATIONS |
+
+## Wormhole space: final status (2026-10-12)
+
+The design is in `docs/project/WORMHOLE_DESIGN.md`; the deviations and project rules are in `docs/reference/compat/DEVIATIONS.md` (the sections named "Wormhole ..."). Earlier wormhole rows above are superseded by this section.
+
+| Status | Area | What is there | Evidence |
+|---|---|---|---|
+| DONE (tests) | Wormhole types, rules, J-space classes, effect beacons | 129 types from the SDE; mass and lifetime rules; 2,604 systems with their class; 36 beacons | `WormholeTypeCatalogTests`, `WormholeRulesTests`, `WormholeClientDataTests`, `WormholeEffectsTests` |
+| DONE (tests) | Statics, lifecycle, collapse, respawn | seeded connections; expiry, static replacement, transit collapse, restart; durable jobs | `Eve.Wormholes.Tests` (PostgreSQL where marked) |
+| DONE (tests) | Thera connections | 12 connections, 8 types, respawn after collapse | `TheraConnectionsTests` |
+| DONE (tests) | Protocol 63 wormhole ends in the simulation | PlaceWormhole and RemoveWormhole (Rust, codec, goldens); jump to the far end; arrival clear of the end | `eve-space` tests, `SimCodecTests` |
+| DONE (tests) | Ends in space and the jump | host places both ends with the scene; mass pre-check; jump; collapse removes both ends; polarization 5 min; RPC answers | `WormholeJumpServiceTests`, `WormholeMgr` RPC tests |
+| DONE (tests) | System environment | beacon modifiers as dogma on the ship (C#); the ship's spec to the simulation after each system change; resistance bonuses on the resonance attributes | `SystemEnvironmentTests`; DEVIATIONS "Wormhole environment in the simulation" |
+| DONE (tests) | Signatures, sites and the probe scan | plan of 4 to 9 signatures per J-system; 68 site templates (combat, data, relic from the EveJS wormhole pack; gas and ore from the EveJS gas and ore packs); probe targets with strength 0.0 | `WormholeSitesTests`, `WormholeSiteTemplatesTests`, `CosmicSitesTests`, `ProbeScanMathTests` |
+| DONE (tests) | Gas and ore resources | a reservoir's cloud and a deposit's rocks placed at the site, put back on entry, removed when the site ends | `SiteResourceTests`, `CosmicSitesTests` (expiry) |
+| DONE (live) | Jump in and back through a static wormhole | headless, through the MITM proxy: undock, warp to the home end, jump, fly back to the junction end, jump | `tools/headless-client/tests/test_wormhole_live.py` (passed) |
+| RULE (project) | Signature counts and shares | 4 to 9 per system; combat 40%, relic 15%, data 15%, gas 20%, ore 10%; Drifter systems have 5 combat sites | DEVIATIONS "Wormhole signatures, sites and scan strength" |
+| RULE (project) | Plan seed | the system id (not the world seed) | DEVIATIONS "Wormhole sites in the director" |
+| RULE (project) | End position and star clearance | ends 50 km from the system centre, pushed out of any star or planet | DEVIATIONS "The live drift and the star under a wormhole end" |
+| RULE (project) | Minimum warp, arrival, return | 150 km minimum warp (game rule); arrival 12 km from the far end; the return flies in | DEVIATIONS "Warp to a wormhole end ..." |
+| RULE (project) | Resource stock | a cloud holds 1,000 units; rock quantities from the client | DEVIATIONS "Gas and ore sites of wormhole space" |
+| CUT (owner) | K-space wandering connections | not built | owner decision, slice 5 |
+| CUT (owner) | Region-adjacency exclusion of statics | not applied | owner decision, slice 5 |
+| NOT DONE | Shattered Ice Field (ice belt) | in the data, not planned (no ice category) | DEVIATIONS "Wormhole sites ..." |
+| NOT DONE | Local chat in J-space | no chat service in eve.rs | owner decision 4 (pending) |
+| NOT DONE | Live check of a gas or ore site | no headless scenario scans or mines one | — |
+| NOT DONE | Capture comparison with a stargate jump | not compared | — |
+| NOT DONE | Client attribute refresh after a system change | the client reads its ship attributes at its next change | DEVIATIONS "Wormhole environment in the simulation" |
+| NOT DONE | Trace logging behind an environment variable | not built (the destiny data sufficed) | — |
+| NOT DONE | Mining of wormhole ore and gas | the belt mining path is not tested on these sites | DEVIATIONS "Gas and ore sites of wormhole space" |
 

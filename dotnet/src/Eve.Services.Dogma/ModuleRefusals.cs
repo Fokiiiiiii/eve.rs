@@ -50,6 +50,8 @@ public static class ModuleRefusals
                 ("targetName", refusal.TargetType > 0 ? new PyTuple([new PyInt(TypeReference), new PyInt(refusal.TargetType)]) : new PyStr("That target")),
                 ("shipType", refusal.ShipType > 0 ? new PyTuple([new PyInt(TypeReference), new PyInt(refusal.ShipType)]) : new PyInt(0)),
                 ("actualDistance", Py.Number(Math.Max(0, refusal.ActualDistance)))),
+            // a smartbomb started in warp (EVE.js: DeniedActivateInWarp, the reference's UserError)
+            "CANNOT_ACTIVATE_IN_WARP" => MachoErrors.ThrowUserError("DeniedActivateInWarp"),
             "NO_AMMO" => MachoErrors.ThrowUserError("NoCharges", ("launcher", new PyTuple([new PyInt(TypeReference), new PyInt(refusal.ModuleType)]))),
             "MODULE_NOT_ONLINE" => Notify($"{name} is offline."),
             // the reference's wording for a module that cannot start (moduleOperation.js MODULE_INCAPACITATED: "is too damaged to activate.")

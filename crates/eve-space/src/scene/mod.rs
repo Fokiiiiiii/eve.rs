@@ -569,6 +569,8 @@ pub(crate) struct Pilot {
     pub(crate) incoming: crate::ewar::Incoming,
     /// Cloak state used by target selection and public visibility.
     pub(crate) cloak: crate::visibility::CloakState,
+    /// When the ship last became cloaked (the window in which a module that is not offensive may still start).
+    pub(crate) cloaked_at: i64,
     /// The overload state, per-rack heat and module heat damage carried by this ship.
     heat: HeatState,
     tether: tether::TetherState,
@@ -600,6 +602,7 @@ impl Pilot {
             warp_blocked_until: 0,
             incoming: crate::ewar::Incoming::default(),
             cloak: crate::visibility::CloakState::Uncloaked,
+            cloaked_at: 0,
             heat: HeatState::default(),
             tether: tether::TetherState::default(),
         }

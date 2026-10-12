@@ -52,6 +52,18 @@ def new_item(type_id: int, *, owner: int, location: int, flag: int = HANGAR, sin
         f"values ({int(type_id)}, {int(owner)}, {int(location)}, {int(flag)}, {int(quantity)}, {'true' if singleton else 'false'}) returning id"))
 
 
+QA_SMARTBOMB = 18642  # QA Smartbomb (SDE types row 18642): 5,000 of each damage type every 3 s, a 250 km field
+MID_SLOTS = range(19, 27)  # the client's flags for the medium slots (the walks fit modules here)
+
+
+def seed_qa_arsenal(ship: int, type_id: int = QA_SMARTBOMB) -> list[int]:
+    """A QA module in every free mid slot of the ship (flags 19 to 26); returns their item ids. Each one is its own module: the server
+    runs them together (the QA Smartbomb has no maxGroupActive in the SDE), and it refuses only the same module twice."""
+    owner = int(sql(f"select owner_id from {schema('INVENTORY')}.items where id = {int(ship)}"))
+    used = {int(flag) for flag in sql(f"select flag from {schema('INVENTORY')}.items where location_id = {int(ship)}").split()}
+    return [new_item(type_id, owner=owner, location=ship, flag=slot, singleton=True) for slot in MID_SLOTS if slot not in used]
+
+
 def set_ship(character: int, ship: int) -> None:
     """The character's active ship (characters.ship_id)."""
     sql(f"update {schema('CHARACTERS')}.characters set ship_id = {int(ship)} where id = {int(character)}")

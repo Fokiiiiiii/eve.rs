@@ -1487,7 +1487,13 @@ Evidence and decisions: DEVIATIONS "Zarzakh (30100000) and the client's system f
 |---|---|---|
 | DONE (tests) | Client flags `disallowCyno` and `disallowScanning` read from `EVE_CLIENT_SDE_DIR/native/solarsystemcontent.jsonl.gz` at start-up; cyno lighting refused (`CannotLightCynoInSystem`) and probe launch refused in those systems | `ClientSystemFlags`, `SolarSystemCatalog.LoadAsync`, `SpaceSessions.Modules.cs`, `SpaceSessions.LaunchAsync`; tests `ClientSystemFlagsTests`, `ScanProbeHostTests`. Cyno refusal has no host test yet; no graphical-client run |
 | DONE (rule) | No sites in Zarzakh (`CosmicSiteDirector.NoSiteSystems`) | Owner decision: the real game may have sites there (see DEVIATIONS) |
-| OPEN | Zarzakh gate toll, capital gate restriction, Emanation Lock, gate guns, Deathless Shipcaster exit, gravity hazard hull damage | Stated by the wiki; not implemented |
+| DONE (tests) | Capital-ship gate lists (the eight gates of list 579, from client data and the SDE type list) | `GateRules`, `CheckGateRulesAsync`; `GateRulesTests`, host jump test. Refusal text is ours |
+| PARTIAL (tests) | Emanation Lock: server-side refusal of exits through another gate for 6 h after entry, reset on re-entry | `EmanationLocks`; `EmanationLocksTests`. OPEN: the client notices need the public gateway (`eve_public.stargate.lock.api`), which eve.rs does not have (owner decision); the lock is in memory |
+| PARTIAL (tests) | Alignment toll: formula and aligned exemption from client data | `GateRules.TollAmount`, `IsAligned`. OPEN: no charge; the payee is not published (owner decision); the ship mass the client uses is not read by the server |
+| DONE (tests) | D-Scan and bookmarks disabled in Zarzakh | `ScanningAllowedFor`, `BookmarkRules.DisabledSystems`; `ScanProbeHostTests`, `AccessGroupBookmarkMgrTests` |
+| CUT (no published numbers) | Gate guns (retribution timer), gravity hull damage | DEVIATIONS "Zarzakh gate, station and scanning rules (slice 2)" |
+| CUT (needs Insurgency FOB data) | Deathless Shipcaster jump | DEVIATIONS, same section |
+| OPEN (owner decision) | Client `deployBlocker` on the Zarzakh gate types: warp bubbles and structures blocked within 100000000 m | Client data only; the wiki does not state it. See DEVIATIONS slice 2 |
 | OPEN | Sovereignty refusal in Zarzakh | No claim path in eve.rs yet (structures track) |
 | OPEN | Warp disruption bubbles and probes in Zarzakh | No CCP or wiki source; EveJS refuses them. Owner decision |
 | CUT | Heat, temperature, tidal forces, Point of No Return effect | No mechanic in the SDE, the client or the wiki |

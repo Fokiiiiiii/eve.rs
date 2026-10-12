@@ -14,6 +14,9 @@ public sealed record CampaignChanged(long CampaignId, int From, int To, long AtM
 /// <summary>An event of a point (<see cref="InsurgencyCampaigns.PointScoredTopic"/>): the side, the system and the campaign after the point.</summary>
 public sealed record PointScored(long CampaignId, Side Side, long SolarSystemId, Campaign Campaign);
 
+/// <summary>An event of the empire side's goal reached (<see cref="InsurgencyCampaigns.FobExposedTopic"/>): the campaign's FOB can now be attacked.</summary>
+public sealed record FobExposure(long CampaignId, long StructureId);
+
 public enum ScoreOutcome
 {
     Scored,
@@ -33,6 +36,7 @@ public sealed class InsurgencyCampaigns
     public const string JobKind = "insurgency.phase";
     public const string CampaignChangedTopic = "insurgency.campaign_changed";
     public const string PointScoredTopic = "insurgency.point_scored";
+    public const string FobExposedTopic = "insurgency.fob_exposed";
 
     private sealed record PhaseJob(long CampaignId);
 
@@ -103,8 +107,30 @@ public sealed class InsurgencyCampaigns
         if (outcome == ScoreOutcome.Scored)
             await _events.PublishInTransactionAsync(connection, transaction, PointScoredTopic,
                 new PointScored(campaignId, side, solarSystemId, step.Campaign), KeyOf(campaignId), cancellationToken);
+        if (outcome == ScoreOutcome.Scored && side == Side.Antipirate && step.Campaign.AntipiratePointsScored == step.Campaign.AntipiratePointsRequired)
+            await _events.PublishInTransactionAsync(connection, transaction, FobExposedTopic,
+                new FobExposure(campaignId, step.Campaign.StructureId), KeyOf(campaignId), cancellationToken);
         await ScheduleAsync(connection, transaction, step.Campaign, cancellationToken);
         return outcome;
+    }
+
+    /// <summary>
+    /// The FOB of a campaign was destroyed (the structure timeline announced it): an active campaign of that FOB ends in the empire's win. Returns false
+    /// when no active campaign has the FOB.
+    /// </summary>
+    public async Task<bool> FobDestroyedAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long structureId, CancellationToken cancellationToken = default)
+    {
+        var open = (await _store.OpenAsync(connection, transaction, cancellationToken)).FirstOrDefault(c => c.StructureId == structureId);
+        if (open is null)
+            return false;
+        var current = await _store.GetAsync(connection, transaction, open.CampaignId, true, cancellationToken);
+        var step = CampaignMachine.FobDestroyed(current!, _scheduler.Now);
+        if (step.Transitions.Count == 0)
+            return false;
+        await _store.UpdateAsync(connection, transaction, step.Campaign, cancellationToken);
+        await ApplyTransitionsAsync(connection, transaction, step, cancellationToken);
+        await ScheduleAsync(connection, transaction, step.Campaign, cancellationToken);
+        return true;
     }
 
     /// <summary>Makes sure every open campaign has its deadline job (after a restart). Returns how many were scheduled.</summary>

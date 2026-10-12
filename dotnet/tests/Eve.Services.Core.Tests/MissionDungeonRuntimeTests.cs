@@ -2,6 +2,7 @@ using System.Text.Json;
 using Eve.Agents;
 using Eve.Data;
 using Eve.Sde;
+using Eve.Universe;
 using Npgsql;
 
 namespace Eve.Services.Core.Tests;
@@ -68,6 +69,15 @@ public class MissionDungeonRuntimeTests
 
         public Task<long> HeldQuantityAsync(long characterId, int typeId, CancellationToken cancellationToken) =>
             Task.FromResult(Held.GetValueOrDefault(typeId));
+
+        public List<(long Character, int TypeId, long Quantity, bool Singleton, long Station)> Cargo { get; } = [];
+
+        public Task GrantCargoAsync(long characterId, int typeId, long quantity, bool singleton, long stationId, CancellationToken cancellationToken)
+        {
+            Cargo.Add((characterId, typeId, quantity, singleton, stationId));
+            Held[typeId] = Held.GetValueOrDefault(typeId) + quantity;
+            return Task.CompletedTask;
+        }
 
         public async Task<bool> CompleteMissionAsync(long characterId, long agentId, DateTimeOffset now, string reference,
             IReadOnlyList<MissionStandingGain> standings, IReadOnlyList<(int TypeId, long Quantity)> consume, CancellationToken cancellationToken)
@@ -314,6 +324,106 @@ public class MissionDungeonRuntimeTests
         // the replay of the dungeon's outcome grants nothing more (the holding is already one)
         await runtime.OnDungeonOutcomeAsync("completed", Pilot, "dungeon.3509", 83, default);
         Assert.Equal(1, host.Held.GetValueOrDefault(Datacore));
+    }
+
+    // A courier step: two Strange Datacores (30755, not singletons), paid 100000 ISK; the expiry of the data is 10080 minutes (seven days).
+    private const string CourierMission = """
+        {"_key": 9401, "name": {"en": "Courier Step"}, "nameID": 1239, "hasStandingRewards": false,
+         "courierMission": {"objectiveTypeID": 30755, "objectiveQuantity": 2, "objectiveSingleton": 0},
+         "expirationTime": 10080,
+         "missionRewards": {"reward": {"rewardTypeID": 29, "rewardQuantity": 100000}}}
+        """;
+
+    private const long DestinationStation = 60000100;
+
+    private static Station Dest(long id, int system) => new(id, 1531, "Dest", 1000002, "", null, "", 0, 0, system, "", 0, "", 0, "", 0.5, 0, 0);
+
+    private static MissionDungeonRuntime CourierRuntime(AgentMissionStore store, FakeHost host, Station? destination) => new(store,
+        MissionStaticCatalog.FromRows(3405148, [new SdeRow(9401, JsonDocument.Parse(CourierMission).RootElement.Clone())], []),
+        host, _ => new MissionAgentPlace(System, Corporation, AgentStation), () => Start, (missionId, characterId, place, level) => destination);
+
+    [AgentsPgFact]
+    public async Task A_courier_accepted_hands_the_cargo_over_at_the_agents_station()
+    {
+        var source = NpgsqlDataSource.Create(PgConnection.ForTest(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
+        var schema = "mdr_" + Guid.NewGuid().ToString("N")[..12];
+        await using var cleanup = new Cleanup(source, schema);
+        await AgentMissionStore.MigrateAsync(source, schema);
+        var store = new AgentMissionStore(source, schema);
+        var host = new FakeHost { Store = store };
+        var runtime = CourierRuntime(store, host, null);
+        await store.OfferAsync(Pilot, Agent, new AgentMissionContent(9401, 1239, "Courier Step", "", false), Start, "offer:c1");
+        await store.AcceptAsync(Pilot, Agent, Start, "accept:c1");
+
+        await runtime.OnAcceptedAsync(Pilot, Agent);
+
+        Assert.Equal((Pilot, Datacore, 2L, false, AgentStation), Assert.Single(host.Cargo));
+    }
+
+    [AgentsPgFact]
+    public async Task A_courier_delivered_at_its_destination_completes_consumes_the_cargo_and_pays()
+    {
+        var source = NpgsqlDataSource.Create(PgConnection.ForTest(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
+        var schema = "mdr_" + Guid.NewGuid().ToString("N")[..12];
+        await using var cleanup = new Cleanup(source, schema);
+        await AgentMissionStore.MigrateAsync(source, schema);
+        var store = new AgentMissionStore(source, schema);
+        var host = new FakeHost { Store = store };
+        var runtime = CourierRuntime(store, host, Dest(DestinationStation, (int)System));
+        await store.OfferAsync(Pilot, Agent, new AgentMissionContent(9401, 1239, "Courier Step", "", false), Start, "offer:c2");
+        await store.AcceptAsync(Pilot, Agent, Start, "accept:c2");
+        await runtime.OnAcceptedAsync(Pilot, Agent);
+
+        await runtime.OnDockedAsync(Pilot, 60000200);
+        Assert.Equal(AgentMissionState.Accepted, (await store.ReadAsync(Pilot, Agent))!.State);
+        Assert.Empty(host.Consumed);
+
+        await runtime.OnDockedAsync(Pilot, DestinationStation);
+
+        Assert.Equal(AgentMissionState.Completed, (await store.ReadAsync(Pilot, Agent))!.State);
+        Assert.Equal((Pilot, Datacore, 2L), Assert.Single(host.Consumed));
+        Assert.Equal(100000L, Assert.Single(host.Credits).Amount);
+    }
+
+    [AgentsPgFact]
+    public async Task A_courier_past_its_data_expiry_fails_and_one_before_it_does_not()
+    {
+        var source = NpgsqlDataSource.Create(PgConnection.ForTest(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
+        var schema = "mdr_" + Guid.NewGuid().ToString("N")[..12];
+        await using var cleanup = new Cleanup(source, schema);
+        await AgentMissionStore.MigrateAsync(source, schema);
+        var store = new AgentMissionStore(source, schema);
+        var host = new FakeHost { Store = store };
+        var runtime = CourierRuntime(store, host, null);
+        await store.OfferAsync(Pilot, Agent, new AgentMissionContent(9401, 1239, "Courier Step", "", false), Start, "offer:c3");
+        await store.AcceptAsync(Pilot, Agent, Start, "accept:c3");
+
+        Assert.Equal(0, await runtime.ExpireCouriersAsync(Start + TimeSpan.FromDays(6)));
+        Assert.Equal(AgentMissionState.Accepted, (await store.ReadAsync(Pilot, Agent))!.State);
+
+        Assert.Equal(1, await runtime.ExpireCouriersAsync(Start + TimeSpan.FromDays(8)));
+        Assert.Equal(AgentMissionState.Failed, (await store.ReadAsync(Pilot, Agent))!.State);
+    }
+
+    [Fact]
+    public void The_courier_destination_is_a_station_in_the_level_jump_range_reached_by_stargates_and_is_seeded()
+    {
+        // systems 1-2-3-4 in a chain; system 9 has no gate. Origin: station 10 in system 1.
+        var gates = new StargateGraph([(1, 2), (2, 1), (2, 3), (3, 2), (3, 4), (4, 3)]);
+        var stations = new[] { Dest(10, 1), Dest(11, 1), Dest(20, 2), Dest(30, 4), Dest(40, 9) };
+
+        Assert.Equal((1, 12), MissionCourierRules.JumpRange(4)!.Value);
+        Assert.Equal((0, 5), MissionCourierRules.JumpRange(2)!.Value);
+        Assert.Null(MissionCourierRules.JumpRange(6));
+
+        // level 4 (1 to 12 jumps): the origin system's other station (0 jumps) and the unreachable station are out
+        var level4 = MissionCourierRules.Destination(9401, Pilot, 10, 1, 4, gates, stations);
+        Assert.Contains(level4!.Id, new long[] { 20, 30 });
+        Assert.Equal(level4.Id, MissionCourierRules.Destination(9401, Pilot, 10, 1, 4, gates, stations)!.Id);
+
+        // level 1 (0 to 5 jumps): the other station of the origin system counts, the unreachable one does not
+        var level1 = MissionCourierRules.Destination(9401, Pilot, 10, 1, 1, gates, stations);
+        Assert.Contains(level1!.Id, new long[] { 11, 20, 30 });
     }
 
     private sealed class Cleanup(NpgsqlDataSource source, string schema) : IAsyncDisposable

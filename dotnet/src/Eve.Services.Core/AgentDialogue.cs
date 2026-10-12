@@ -87,7 +87,8 @@ public sealed record AgentDialogueSources(
     Func<DateTimeOffset> Now,
     Func<long, AgentMissionAgentData, bool, CancellationToken, ValueTask>? OnConversation = null,
     IAgentResearchPort? Research = null,
-    IAgentLocatorPort? Locator = null);
+    IAgentLocatorPort? Locator = null,
+    Func<long, long, CancellationToken, ValueTask>? OnAccepted = null);
 
 /// <summary>The answer of DoAction: the agent's line, the buttons, and the last-action record the window reads.</summary>
 public sealed record AgentDialogueReply(PyValue AgentSays, IReadOnlyList<(long ActionId, int ButtonType)> Actions, PyDict LastActionInfo)
@@ -180,6 +181,7 @@ public sealed class AgentDialogueMachine(AgentDialogueSources sources)
                 {
                     await sources.Store.AcceptAsync(characterId, agent.AgentId, now,
                         $"accept:{characterId}:{agent.AgentId}:{now.ToUnixTimeMilliseconds()}", cancellationToken);
+                    if (sources.OnAccepted is { } onAccepted) await onAccepted(characterId, agent.AgentId, cancellationToken);
                 }
                 catch (AgentMissionRefusedException)
                 {

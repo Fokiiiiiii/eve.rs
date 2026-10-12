@@ -289,7 +289,7 @@ def fight(character: int, ship: int, step: Step, bomb: int) -> None:
         else:
             alive = sql(f"SELECT count(*) FROM {schema('SPACE')}.dungeon_wave_npcs") if _has_table("SPACE", "dungeon_wave_npcs") else "n/a"
             contents = sql(f"SELECT kind, state, count(*) FROM {schema('CONTENT')}.instances GROUP BY kind, state") if _has_table("CONTENT", "instances") else "n/a"
-            sample = sql(f"SELECT definition, owner, result FROM {schema('CONTENT')}.instances WHERE kind = 'dungeon' AND state = 'failed' ORDER BY id DESC LIMIT 2")
+            sample = sql(f"SELECT definition, state, result FROM {schema('CONTENT')}.instances WHERE kind = 'dungeon' AND owner = {character} ORDER BY id")
             raise AssertionError(f"mission {step.mission}: the dungeon {step.dungeon} was not cleared in 900 s; NPC rows {alive!r}; content {contents!r}; "
                                  f"failed sample {sample!r}; character {character}")
         stop(who, dogma, bomb)  # the repeating bomb is left off, so the next session can start it

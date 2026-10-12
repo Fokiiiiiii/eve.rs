@@ -346,10 +346,10 @@ internal sealed partial class CharacterServicesComposition
 
     private const string MissionDungeonSweepJob = "mission.dungeons.sweep";
 
-    /// <summary>The localization IDs of the missions' texts from the client export (empty when not available; see LoadClientMissionMessagesAsync).</summary>
+    /// <summary>The localization IDs of the missions' texts from the client data (see LoadClientMissionMessagesAsync).</summary>
     private IReadOnlyDictionary<long, IReadOnlyDictionary<string, long>> clientMissionMessages = new Dictionary<long, IReadOnlyDictionary<string, long>>();
 
-    /// <summary>The client content template of each mission (see ClientMissionTemplates): empty when the client file is not configured.</summary>
+    /// <summary>The client content template of each mission (see ClientMissionTemplates).</summary>
     private IReadOnlyDictionary<long, string> clientMissionTemplates = new Dictionary<long, string>();
 
     /// <summary>Whether the mission is a storyline trade mission of the client: handed in at its agent like a fetch (DEVIATIONS X13).</summary>
@@ -359,25 +359,14 @@ internal sealed partial class CharacterServicesComposition
     private bool IsMiningMission(long missionId) => clientMissionTemplates.GetValueOrDefault(missionId) == ClientMissionTemplates.MiningTemplate;
 
     /// <summary>
-    /// Loads the client's mission text IDs from <c>EVE_CLIENT_SDE_DIR/native/missions.jsonl.gz</c> into the schema <c>client_sde</c> (replaced each
-    /// start). Without the directory, or without the file, nothing is loaded and the log says why; the briefing then carries no text ID.
+    /// Loads the client's mission text IDs and content templates (the embedded client data, or the export named by EVE_CLIENT_SDE_DIR where it holds
+    /// the file) into the schema <c>client_sde</c> (replaced each start). The briefing then carries its text ID.
     /// </summary>
     private async Task LoadClientMissionMessagesAsync()
     {
-        var directory = Environment.GetEnvironmentVariable(ClientMissionMessages.DirectoryVariable);
-        if (string.IsNullOrWhiteSpace(directory))
-        {
-            Console.Error.WriteLine($"eve-host: missions: client texts are not available: {ClientMissionMessages.DirectoryVariable} is not set");
-            return;
-        }
-        var file = Path.Combine(directory, "native", "missions.jsonl.gz");
-        if (!File.Exists(file))
-        {
-            Console.Error.WriteLine($"eve-host: missions: client texts are not available: {file} is missing");
-            return;
-        }
-        var (messages, skipped) = ClientMissionMessages.Parse(File.OpenRead(file));
-        clientMissionTemplates = ClientMissionTemplates.Parse(File.OpenRead(file));
+        var directory = Environment.GetEnvironmentVariable(ClientStaticData.DirectoryVariable);
+        var (messages, skipped) = ClientMissionMessages.Parse(ClientMissionMessages.Open(directory));
+        clientMissionTemplates = ClientMissionTemplates.Parse(ClientMissionMessages.Open(directory));
         var missionIds = new List<long>();
         var keys = new List<string>();
         var ids = new List<long>();

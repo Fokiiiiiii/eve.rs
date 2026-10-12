@@ -6,7 +6,7 @@ using Eve.Universe;
 namespace Eve.Services.Core;
 
 /// <summary>
-/// The content template of each mission, read from the client records (contentTemplate, in the client file of EVE_CLIENT_SDE_DIR): the SDE carries
+/// The content template of each mission, read from the client records (contentTemplate, in the client data: <see cref="ClientMissionMessages.Open"/>): the SDE carries
 /// no template, and the trade and mining kinds are told apart by it. Rows without a template or with an unreadable line are skipped.
 /// </summary>
 public static class ClientMissionTemplates

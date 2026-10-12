@@ -66,10 +66,17 @@ public sealed class ClientGateRulesTests
     }
 
     [Fact]
-    public async Task A_blank_directory_loads_nothing()
+    public async Task Without_a_directory_the_embedded_copy_gives_the_gate_lists_tolls_and_blockers_of_the_build()
     {
-        Assert.Empty(await ClientGateRules.AllowedShipListsAsync(""));
-        Assert.Empty(await ClientGateRules.TollsAsync(""));
+        var lists = await ClientGateRules.AllowedShipListsAsync("");
+        var tolls = await ClientGateRules.TollsAsync("");
+        var blockers = await ClientGateRules.DeployBlockersAsync("");
+
+        Assert.Equal(8, lists.Count);
+        Assert.All(lists.Values, list => Assert.Equal(579, list));
+        Assert.Equal(new[] { 77918, 78264, 78265, 78266 }, tolls.Keys.OrderBy(type => type));
+        Assert.Equal(new[] { 77876, 77918, 77953, 77954, 77955, 78264, 78265, 78266, 90666 }, blockers.Keys.OrderBy(type => type));
+        Assert.Equal(new DeployBlocker(100_000_000, 100_000_000), blockers[77876]);
     }
 
     /// <summary>Writes the stream as <c>native/solarsystemcontent.jsonl.gz</c> and <c>native/spacecomponentsbytype.jsonl.gz</c> of a new directory.</summary>

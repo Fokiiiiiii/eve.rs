@@ -6,15 +6,11 @@ namespace Eve.Universe;
 /// <summary>
 /// The per-system flags the V24.01 client keeps in its own static data (<c>solarSystemContent</c>): <c>disallowCyno</c> and
 /// <c>disallowScanning</c>. The client reads them locally (<c>cfg.mapSolarSystemContentCache</c>, loaded from its own
-/// <c>res:/staticdata/solarSystemContent.static</c>), so the server cannot send them; it reads the same export at start-up
-/// from <c>EVE_CLIENT_SDE_DIR/native/solarsystemcontent.jsonl.gz</c> and enforces them itself. Only the two flags are kept;
-/// nothing is copied into the repository.
+/// <c>res:/staticdata/solarSystemContent.static</c>), so the server cannot send them; it reads its embedded copy of the export
+/// (<see cref="ClientStaticData"/>) and enforces them itself. Only the two flags are kept.
 /// </summary>
 public sealed record ClientSystemFlags(bool DisallowCyno, bool DisallowScanning)
 {
-    /// <summary>The environment variable that names the client export directory.</summary>
-    public const string DirectoryVariable = "EVE_CLIENT_SDE_DIR";
-
     /// <summary>Reads the flags of a gzipped JSONL export. A system with neither flag set is not in the result.</summary>
     public static async Task<IReadOnlyDictionary<int, ClientSystemFlags>> ReadAsync(Stream gzipped, CancellationToken cancellationToken = default)
     {
@@ -42,15 +38,10 @@ public sealed record ClientSystemFlags(bool DisallowCyno, bool DisallowScanning)
         return flags;
     }
 
-    /// <summary>The flags of the directory named by <see cref="DirectoryVariable"/>; empty when the value is blank.</summary>
-    public static async Task<IReadOnlyDictionary<int, ClientSystemFlags>> ReadDirectoryAsync(string directory, CancellationToken cancellationToken = default)
+    /// <summary>The flags of the client data: the export in <paramref name="directory"/> when it holds the file, else the embedded copy.</summary>
+    public static async Task<IReadOnlyDictionary<int, ClientSystemFlags>> LoadAsync(string? directory, CancellationToken cancellationToken = default)
     {
-        if (string.IsNullOrWhiteSpace(directory))
-        {
-            return new Dictionary<int, ClientSystemFlags>();
-        }
-        var path = Path.Combine(directory, "native", "solarsystemcontent.jsonl.gz");
-        await using var file = File.OpenRead(path);
+        await using var file = ClientStaticData.OpenSolarSystemContent(directory);
         return await ReadAsync(file, cancellationToken);
     }
 

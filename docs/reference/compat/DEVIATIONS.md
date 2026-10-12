@@ -3236,66 +3236,71 @@ Landmarks (not done, with evidence). The SDE landmarks (45) and the client landm
 ## Mission execution X8: live walks of the epic arcs, and the arcs on and off (2026-10-12)
 
 - **The walk.** `tools/headless-client/tests/test_arc29_walk.py` walks an epic arc (`EVE_WALK_ARC`, default 29) along the offer path the
-  server computes: at each point the lowest offerable step (`EpicArcOffers.Pick`), stopping at the first terminal step (a terminal step
-  ends the run; the arc then cools down for its restart interval). The path is read from the SDE mission build 3405148 (`epicArcs`,
-  `missions`) at run time. Per step: the agent offers it (request and accept; the journal and the mission row are checked in the database);
-  the pilot is seeded where the step needs it (docked at the agent's station, or in space in the agent's system for an in-space agent; the
-  seeding is database state, which the server answers from); a kill dungeon is cleared with the Cockroach (type 11019) and the QA Smartbomb
-  (type 18642), fitted by a database insert with the Polaris skill it needs; a fetch kill's objective item is checked in the hangar at the
-  agent's station, and the turn-in at the agent completes the step; a talk step completes at the first talk with one of its next agents.
-  Checks: the agent journal, the wallet's agent-reward rows (reference type 33) against the SDE ISK reward (type 29 only), the standing rows
-  against the SDE `extraStandings` (tenths, divided by 10), the objective items held and consumed.
-- **Fixtures, named.** (a) The seeded state of a pilot (location, ship in space or in the hangar, the smartbomb and its skill). (b) A standing:
-  the client's `CanUseAgent` rule asks a level 4 agent for a standing ("Your current standings are not high enough", arc 52), so the walk
-  seeds the agent's corporation at 10 from earlier work. Arc 29's agents are level 1 and need none. (c) The courier steps of arc 29 (below),
-  recorded as completed in the journal when `ARC29_SEED_COURIER=1`; the run says so for each step. (d) `ARC29_FROM` seeds the completed steps
-  before a start index, because a live run's scratch schemas are dropped at its end; only the full runs below are evidence of a whole arc.
-- **Arc 29: 52 steps on the path, 48 walked and checked, 4 courier steps seeded, the run passed.** The full single run is the final run with
-  this code (the walk's last change to its fixtures was before it). It is not an arc 29 pass in the sense of the owner rule (below).
-- **Courier steps are not built (the blocker for arc 29, and for every arc with a courier step).** Steps 14134, 14140, 14386 and 14413 are
-  courier objectives. The server answers an objective with empty `objectives` and `locations` lists (X3, X7), and the build gives no pickup
-  or drop-off location, so there is no official place to send the pilot. The walk seeds those steps and the output says so. Owner decision
-  needed: the courier rule (the pickup at the agent's station and a drop-off in the same system, or another). The courier work of the
-  mission track (X10) is not on main.
-- **Arc 29 is NOT turned on by default.** The owner rule is that all steps are completable; four are not (the courier steps). The switch is
+  server computes: at each point the lowest offerable step (`EpicArcOffers.Pick`), stopping at the first terminal step (a terminal step ends
+  the run; the arc then cools down for its restart interval). The path is read from the SDE mission build 3405148 (`epicArcs`, `missions`) at
+  run time. Per step: the agent offers it (request and accept; the journal and the mission row are checked in the database); the pilot is
+  seeded where the step needs it (docked at the agent's station, or in space in the agent's system for an in-space agent; the seeding is
+  database state, which the server then answers from); a kill dungeon is cleared with the Cockroach (type 11019) and the QA Smartbomb (type
+  18642), fitted by a database insert with the Polaris skill it needs; a fetch kill's objective item is checked in the hangar at the agent's
+  station, and the turn-in at the agent completes the step; a talk step completes at the first talk with one of its next agents; a courier
+  step's cargo is checked at the pickup, its drop-off is read from the transport objective, and the pilot docks there (seeded in space 20 km
+  from the station), which completes the step and takes the cargo. Checks: the agent journal, the wallet's agent-reward rows (reference type 33)
+  against the SDE ISK reward (type 29 only), the standing rows against the SDE `extraStandings` (tenths, divided by 10), the objective items.
+- **Fixtures, named.** (a) The pilot's seeded location (docked, or in space) and the seeded ship's space pose. (b) The smartbomb and the Polaris
+  skill it needs, by database insert. (c) A standing: the client's `CanUseAgent` rule asks a level 4 agent for a standing ("Your current
+  standings are not high enough", arc 52), so the walk seeds the agent's corporation at 10 from earlier work. Arc 29's agents are level 1.
+  (d) `ARC29_SEED_COURIER=1` records a courier step as completed in the journal instead of walking it; the output says so for each step.
+  (e) `ARC29_FROM` seeds the completed steps before a start index, because a live run's scratch schemas are dropped at its end; only the full
+  runs below are evidence of a whole arc.
+- **Arc 29: 48 of 52 steps walked and checked, 4 courier steps seeded; the run passed.** Full runs: once before the merge with the courier work
+  (X10 to X12), and once after it. The courier steps are the blocker (next item).
+- **Courier steps of epic arcs cannot be delivered (blocker, owner decision).** The courier rule (X10) needs a jump range, and the range comes
+  from the mission level. The official build gives no level for an epic arc step, and none of the courier steps of the arcs has a level tag
+  (checked: arc 29 steps 14134, 14140, 14386, 14413; arc 40 steps 14490 to 14973 (seven); arc 53 step 14851; Pilot Certification steps 15621 and
+  15625). With no level there is no destination (`MissionCourierRules.Destination` returns null): the offer is made, the transport objective is
+  empty, and the cargo cannot be delivered. The walk therefore cannot complete them and seeds them. Owner decision needed: the level (or the
+  jump range) for an epic arc courier step. The agents of the arc 29 courier steps are level 1 in the SDE (npcCharacters), which would give a
+  range of 0 to 5 jumps under the X10 table; that choice is the owner's, not made here.
+- **Arc 29 is NOT turned on by default.** The owner rule is that all steps are completable; four are not (the courier steps above). The switch is
   unchanged: arc 29 is held back by its generic kill sites unless `EVE_MISSION_INCLUDE_GENERIC_ARCS=1`.
-- **Other arcs walked (one live run each unless stated).** Arc 128 (Fractured Legacy): 3 of 3 steps. Arc 56 (Angel Sound): 14 of 14. Arc 55
-  (Smash and Grab): 15 of 15 (its path ends at the terminal step 15066). Arc 52 (Syndication): 19 of 19 in two of its three full runs; the
-  first full run failed at step 14819 (dungeon 3884 was not cleared in 900 s; the dungeon was abandoned; the cause was not found, and the
-  next run passed). Arc 48 (Right to Rule): 18 of 19; step 14864 cannot start: its dungeon 3957 never got an instance (the sweep asked every
-  10 s for the whole run; the start was refused, and the host does not log the refusal). Not walked: arc 132 (its four kill sites are missing,
-  so the server never offers those steps), arc 40 and arc 53 (courier steps), and the twelve Pilot Certification arcs (one courier step each).
+- **Other arcs walked (live, with this code).** Arc 128 (Fractured Legacy): 3 of 3, on two runs. Arc 56 (Angel Sound): 14 of 14, on two runs.
+  Arc 55 (Smash and Grab): 15 of 15, on two runs (its path ends at the terminal step 15066). Arc 52 (Syndication): 19 of 19 in three of its four
+  full runs; the failed run stopped at step 14819 (dungeon 3884 not cleared in 900 s; the dungeon was abandoned; the cause is not found, and the
+  next runs passed). Arc 48 (Right to Rule): 18 of 19 on two runs; step 14864 cannot start: the pilot never gets an instance of its dungeon
+  3957 (the sweep asks every 10 s for the whole run, and the owner's other dungeons do exist as instances; the refusal is not logged by the
+  host). Not walked: arc 132 (its four kill sites are missing, so the server never offers those steps), arc 40 and arc 53 and the twelve Pilot
+  Certification arcs (courier steps, above).
 - **Fixed on the way (server).** A fetch step stays accepted after its dungeon completes (the objective is handed in later). The sweep started
-  a new dungeon for it while the pilot stayed in the system; when the pilot then left, that second dungeon was abandoned and failed the mission.
-  `MissionDungeonRuntime.SweepAsync` now starts no dungeon for a fetch step whose objective is held. Test:
+  a new dungeon for it while the pilot stayed in the system; when the pilot then left, that second dungeon was abandoned and failed the
+  mission. `MissionDungeonRuntime.SweepAsync` now starts no dungeon for a fetch step whose objective is held. Test:
   `MissionDungeonRuntimeTests.A_fetch_step_whose_objective_is_held_starts_no_second_dungeon_so_leaving_does_not_fail_it`.
 - **Walk-side findings (not server behaviour).** A seeded pilot in space starts its dungeon only after the walk binds the system's ballpark
   (`beyonce.MachoBindObject`), as the Pochven walk does. A smartbomb left repeating (repeat 1000) keeps its effect active into the next
-  session (`EffectAlreadyActive2`); the walk asks it to stop (`dogmaIM.Deactivate`) at the end of each fight. A talk step is completed by the
-  next agent that the pilot talks to, not only by the next step's agent (arc 55).
+  session (`EffectAlreadyActive2`); the walk asks it to stop (`dogmaIM.Deactivate`) at the end of each fight. A talk step completes when the
+  pilot talks to any next agent of it (arc 55).
 - **Not covered.** The EVE.js comparison of these walks (no reference run was made). The graphical client. The smartbomb's 250 km reach rule
-  (X6): a seeded pilot is placed at the system's origin. The bonus window, Negotiation, and the dungeon contents (generic sites, owner decision 2).
-  The intermittent failure of arc 52 (above) is not diagnosed.
+  (X6): a seeded pilot is placed at the system's origin. The bonus window, Negotiation, and the dungeon contents (generic sites, owner decision
+  2). The intermittent failure of arc 52 (above) is not diagnosed.
 
 Arc on and off list (default offers; the generic sites need `EVE_MISSION_INCLUDE_GENERIC_ARCS=1`). Every kill step of the 21 arcs is a generic
 site (`mission-site-status.v1.json`) or missing; none is specific. Off means: not offered by default.
 
 | Arc | Name (SDE) | Steps | Kill / fetch / courier / talk | Default | Walk result |
 |---|---|---|---|---|---|
-| 29 | The Blood-Stained Stars | 64 (path 52) | 41 / 17 / 5 / 18 | off (courier steps not built) | 48 of 52 walked; 4 courier seeded |
-| 128 | Fractured Legacy | 3 (path 3) | 3 / 0 / 0 / 0 | off (completable in the walk; owner decision 2) | 3 of 3 |
+| 29 | The Blood-Stained Stars | 64 (path 52) | 41 / 17 / 5 / 18 | off (courier steps have no drop-off) | 48 of 52 walked; 4 courier seeded |
+| 128 | Fractured Legacy | 3 | 3 / 0 / 0 / 0 | off (completable in the walk; owner decision 2) | 3 of 3, two runs |
 | 132 | Visions of Greatness | 8 | 4 / 0 / 0 / 4 | off (4 kill sites missing: never offered) | not walked |
-| 40 | Penumbra | 40 | 19 / 7 / 7 / 14 | off (courier steps not built) | not walked |
-| 48 | Right to Rule | 24 (path 19) | 19 / 5 / 0 / 5 | off (dungeon 3957 cannot start) | 18 of 19 |
-| 52 | Syndication | 27 (path 19) | 18 / 3 / 0 / 9 | off (completable in the walk, 2 of 3 full runs; owner decision 2) | 19 of 19 in 2 of 3 full runs |
-| 53 | Wildfire | 19 | 15 / 7 / 1 / 3 | off (courier steps not built) | not walked |
-| 55 | Smash and Grab | 20 (path 15) | 13 / 8 / 0 / 7 | off (completable in the walk; owner decision 2) | 15 of 15 |
-| 56 | Angel Sound | 22 (path 14) | 14 / 0 / 0 / 8 | off (completable in the walk; owner decision 2) | 14 of 14 |
-| 64, 67 to 77 | Pilot Certification Course (12 arcs, one per school) | 4 each | 3 / 1 / 1 / 0 each | off (courier steps not built) | not walked |
+| 40 | Penumbra | 40 | 19 / 7 / 7 / 14 | off (courier steps have no drop-off) | not walked |
+| 48 | Right to Rule | 24 (path 19) | 19 / 5 / 0 / 5 | off (dungeon 3957 never starts) | 18 of 19, two runs |
+| 52 | Syndication | 27 (path 19) | 18 / 3 / 0 / 9 | off (completable in the walk; owner decision 2) | 19 of 19 in three of four full runs |
+| 53 | Wildfire | 19 | 15 / 7 / 1 / 3 | off (courier steps have no drop-off) | not walked |
+| 55 | Smash and Grab | 20 (path 15) | 13 / 8 / 0 / 7 | off (completable in the walk; owner decision 2) | 15 of 15, two runs |
+| 56 | Angel Sound | 22 (path 14) | 14 / 0 / 0 / 8 | off (completable in the walk; owner decision 2) | 14 of 14, two runs |
+| 64, 67 to 77 | Pilot Certification Course (12 arcs, one per school) | 4 each | 3 / 1 / 1 / 0 each | off (courier steps have no drop-off) | not walked |
 
-Fully completable in a walk without seeded steps: arcs 128, 52, 55 and 56. Not completable: 29 (courier), 48 (dungeon 3957), and the arcs with
-courier steps or missing sites. The four completable arcs are held back by the owner's rule on generic sites (decision 2); turning them on is an
-owner decision, not made here. Arc 29 stays off until its courier steps pass in a walk without seeding. Status: decided.
+Completable in a walk without seeded steps: arcs 128, 52, 55 and 56. Not completable: 29 and the courier arcs (no drop-off), 48 (dungeon 3957).
+The four completable arcs are held back by the owner's rule on generic sites (decision 2); turning them on is an owner decision, not made
+here. Arc 29 stays off until its courier steps can be delivered and walked without seeding. Status: decided.
 
 ## Zarzakh gate, station and scanning rules (slice 2, 2026-10-12)
 

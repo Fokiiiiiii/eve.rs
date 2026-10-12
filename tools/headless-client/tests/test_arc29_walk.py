@@ -21,6 +21,7 @@ from __future__ import annotations
 import collections
 import json
 import os
+import re
 import subprocess
 import time
 import uuid
@@ -54,7 +55,7 @@ FAR_FUTURE_MS = 4_102_444_800_000
 REWARD_REF_TYPE = 33  # the wallet journal reference type of an agent mission reward (MissionDungeonRuntime.AgentMissionRewardRefType)
 COMPLETED, ACCEPTED = 4, 2  # AgentMissionState
 
-Step = namedtuple("Step", "mission agent system in_space station kind dungeon objective quantity reward next_agents", defaults=((),))
+Step = namedtuple("Step", "mission agent system in_space station kind dungeon objective quantity reward next_agents drop_off", defaults=((), None))
 # the arc on the offer path: mission, agent, the system the agent is in (its in-space system when it is in space), whether it is in space,
 # its station, the kind (kill, talk or courier), the kill's dungeon, the objective item and quantity (fetch), the ISK reward (SDE)
 ARC = int(os.environ.get("EVE_WALK_ARC", "29"))  # the epic arc walked (29: The Blood-Stained Stars)
@@ -98,13 +99,16 @@ def arc_path(arc: int) -> list:
         station = int(character["locationID"])
         system = int(places[0]) if in_space else int(json.loads(sql(f"SELECT doc::text FROM sde.\"npcStations\" WHERE key = '{station}'"))["solarSystemID"])
         kill = mission.get("killMission", {})
-        kind = "courier" if "courierMission" in mission else ("kill" if kill else "talk")
+        courier = mission.get("courierMission", {})
+        kind = "courier" if courier else ("kill" if kill else "talk")
         reward_row = mission.get("missionRewards", {}).get("reward", {})
         reward = int(reward_row.get("rewardQuantity", 0) or 0) if reward_row.get("rewardTypeID") == 29 else 0  # ISK only (type 29)
-        if kill and "objectiveTypeID" not in kill:
-            objective, quantity = None, None
-        else:
+        if courier:  # the cargo of a courier: picked up at the agent, delivered to the drop-off station
+            objective, quantity = courier.get("objectiveTypeID"), courier.get("objectiveQuantity")
+        elif kill and "objectiveTypeID" in kill:
             objective, quantity = kill.get("objectiveTypeID"), kill.get("objectiveQuantity")
+        else:
+            objective, quantity = None, None
         next_agents = tuple(sorted({steps[nxt]["agentID"] for nxt in steps[key].get("nextMissions", []) if nxt in steps}))
         path.append(Step(key, agent, system, in_space, station, kind, kill.get("dungeonID"), objective, quantity, reward, next_agents))
     return path
@@ -318,6 +322,43 @@ def extra_standings_of(mission: int) -> list:
     return [(int(item["_key"]), float(item["_value"])) for item in json.loads(raw)]
 
 
+def drop_off_of(who, agent: int, cargo: int, quantity: int) -> int:
+    """The courier's drop-off station, from the mission's transport objective (the client's contract: pickup, then drop-off, each with its
+    locationID). The pickup is checked to be the agent's station, and the cargo to be held at the pickup."""
+    handle = who.call("agentMgr", "MachoBindObject", agent, None)[0]
+    text = reply_text(who.call_bound(handle, "GetMissionObjectiveInfo"))
+    start = text.find("transport")
+    assert start >= 0, f"no transport objective in the objective: {text[:300]}"
+    found = [int(x) for x in re.findall(r"locationID[^0-9]{0,40}(\d+)", text[start:])]
+    assert len(found) >= 2, f"the transport objective names no pickup and drop-off: {text[start:start + 300]}"
+    return found[1]
+
+
+def deliver(character: int, ship: int, step: Step, pickup_check: bool) -> None:
+    """A courier: the cargo is held (taken at the agent's station when the mission was accepted), the pilot flies to the drop-off station's
+    system (seeded in space 20 km from the station) and docks there; docking completes the mission and takes the cargo."""
+    assert held(character, step.objective) >= step.quantity, f"mission {step.mission}: the cargo was not handed over at the pickup"
+    drop = step.drop_off
+    system, x, y, z = sql(f"SELECT doc->>'solarSystemID', doc->'position'->>'x', doc->'position'->>'y', doc->'position'->>'z' "
+                          f"FROM sde.\"npcStations\" WHERE key = '{drop}'").split("|")
+    reward_before = reward_total(character)
+    seed_place(character, ship, step._replace(system=int(system), in_space=True))
+    poses = f"{schema('SPACE')}.space_items"
+    sql(f"UPDATE {poses} SET x = {float(x) + 20_000.0}, y = {float(y)}, z = {float(z)} WHERE item_id = {ship}")
+    with base.connect(ACCOUNT) as who:
+        who.call("charUnboundMgr", "SelectCharacterID", charID=character, secondChoiceID=None, skipTutorial=False)
+        ballpark = who.call("beyonce", "MachoBindObject", int(system), None)
+        wait_quietly(who, 2.0)
+        _, error = outcome(lambda: who.call_bound(ballpark[0], "CmdDock", drop))
+        assert error is None, f"mission {step.mission}: the dock at {drop}: {error}"
+        deadline = time.time() + 240
+        while completed(character, step.mission) == 0 and time.time() < deadline:
+            timed_events(who, 3.0)
+    assert completed(character, step.mission) == 1, f"mission {step.mission}: the delivery at {drop} did not complete the courier mission"
+    assert held(character, step.objective) == 0, f"mission {step.mission}: the cargo was not taken at the drop-off"
+    assert reward_total(character) - reward_before == step.reward, (step.mission, step.reward, reward_total(character) - reward_before)
+
+
 def turn_in(character: int, ship: int, step: Step) -> None:
     """The fetch step's turn-in: the pilot talks to the step's agent with the objective items held; the step completes and the items go."""
     with session(character, ship, step, "turn-in") as who:
@@ -361,9 +402,7 @@ def test_arc_is_walked_step_by_step_in_the_order_the_server_offers_it():
     for index in range(FROM, TO):
         step = PATH[index]
         started = time.time()
-        if step.kind == "courier":
-            if not seed_courier:
-                pytest.fail(f"step {index} (mission {step.mission}) is a courier step: courier steps are not built on this branch")
+        if step.kind == "courier" and seed_courier:
             seed_completed(character, step)
             print(f"ARC29 step {index} mission {step.mission} courier: SEEDED completion (not walked)")
             continue
@@ -377,8 +416,12 @@ def test_arc_is_walked_step_by_step_in_the_order_the_server_offers_it():
                 check_talk_done(character, talk)
                 pending_talks.remove(talk)
             offer(who, character, step)
+            if step.kind == "courier":
+                step = step._replace(drop_off=drop_off_of(who, step.agent, step.objective, step.quantity))
         if step.kind == "talk":
             pending_talks.append(step)
         if step.kind == "kill":
             fight(character, ship, step, bomb)
+        if step.kind == "courier":
+            deliver(character, ship, step, pickup_check=True)
         print(f"ARC29 step {index} mission {step.mission} {step.kind} ok in {time.time() - started:.0f} s")

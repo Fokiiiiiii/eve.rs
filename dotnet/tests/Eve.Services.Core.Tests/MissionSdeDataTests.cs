@@ -77,6 +77,31 @@ public sealed class MissionSdeDataTests
         Assert.Empty(missing);
     }
 
+    [PgFact]
+    public async Task The_committed_tags_by_kind_and_level_are_the_counted_ones_and_none_is_an_epic_arc_step()
+    {
+        await using var source = Source();
+        var catalog = await MissionStaticCatalog.LoadAsync(new SdeReader(source, MissionStaticCatalog.DefaultSchema), MissionLevelTags.Committed);
+        Assert.True(catalog.IsLoaded, catalog.UnavailableReason);
+        var tagged = MissionLevelTags.Committed.All.Select(tag => (Mission: catalog.Mission(tag.MissionId)!, tag.Level)).ToArray();
+        Assert.All(tagged, item => Assert.NotNull(item.Mission));
+        Assert.All(tagged, item => Assert.Null(catalog.MissionAvailability(item.Mission.MissionId).ArcId));
+        var byKind = tagged
+            .GroupBy(item => (Kind: item.Mission.Courier is not null ? "courier" : item.Mission.Kill is not null ? "kill" : "other", item.Level))
+            .ToDictionary(group => group.Key, group => group.Count());
+        Assert.Equal(124, byKind[("courier", 1)]);
+        Assert.Equal(53, byKind[("courier", 2)]);
+        Assert.Equal(73, byKind[("courier", 3)]);
+        Assert.Equal(64, byKind[("courier", 4)]);
+        Assert.Equal(1, byKind[("courier", 5)]);
+        Assert.Equal(275, byKind[("kill", 1)]);
+        Assert.Equal(207, byKind[("kill", 2)]);
+        Assert.Equal(264, byKind[("kill", 3)]);
+        Assert.Equal(234, byKind[("kill", 4)]);
+        Assert.Equal(134, byKind[("kill", 5)]);
+        Assert.DoesNotContain(byKind.Keys, key => key.Kind == "other");
+    }
+
     private static long Read(System.Text.Json.JsonElement agent, string name) =>
         agent.TryGetProperty(name, out var value) && value.TryGetInt64(out var number) ? number : 0;
 }

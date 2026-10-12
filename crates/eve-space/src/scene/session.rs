@@ -78,10 +78,10 @@ impl Scene {
         }
 
         let mut out = Vec::new();
-        if let Some(current) = self.controlled_structure_id(session) {
-            if let Some(released) = self.release_controlled_structure(session, current, now) {
-                out.extend(released);
-            }
+        if let Some(current) = self.controlled_structure_id(session)
+            && let Some(released) = self.release_controlled_structure(session, current, now)
+        {
+            out.extend(released);
         }
         if let Some(previous) = self.controller_of_structure(structure_id)
             && previous != session
@@ -134,29 +134,29 @@ impl Scene {
         let previous_ship_id = observer.previous_ship_id;
         self.controlled_structures.remove(&session);
         let mut out = Vec::new();
-        if let Some(ship_id) = previous_ship_id {
-            if let Some(fake_session) = self.unpiloted.get(&ship_id).copied() {
-                if self.pilots.contains_key(&fake_session) {
-                    self.settle_pilot(fake_session, now);
-                    out.extend(self.announce_departure(fake_session, ship_id, now));
-                    self.unpiloted.remove(&ship_id);
-                    let mut pilot = self.pilots.remove(&fake_session)?;
-                    if let Some(widow) = self.widowed.remove(&session) {
-                        pilot.bound = widow.bound;
-                        pilot.sees = widow.sees;
-                        pilot.sees_wrecks = widow.sees_wrecks;
-                        pilot.sees_asteroids = widow.sees_asteroids;
-                    }
-                    let bound = pilot.bound;
-                    self.pilots.insert(session, pilot);
-                    if bound {
-                        self.take_in_view(session);
-                    }
-                    out.extend(self.announce_arrival(session, now));
-                    return Some(out);
-                }
+        if let Some(ship_id) = previous_ship_id
+            && let Some(fake_session) = self.unpiloted.get(&ship_id).copied()
+        {
+            if self.pilots.contains_key(&fake_session) {
+                self.settle_pilot(fake_session, now);
+                out.extend(self.announce_departure(fake_session, ship_id, now));
                 self.unpiloted.remove(&ship_id);
+                let mut pilot = self.pilots.remove(&fake_session)?;
+                if let Some(widow) = self.widowed.remove(&session) {
+                    pilot.bound = widow.bound;
+                    pilot.sees = widow.sees;
+                    pilot.sees_wrecks = widow.sees_wrecks;
+                    pilot.sees_asteroids = widow.sees_asteroids;
+                }
+                let bound = pilot.bound;
+                self.pilots.insert(session, pilot);
+                if bound {
+                    self.take_in_view(session);
+                }
+                out.extend(self.announce_arrival(session, now));
+                return Some(out);
             }
+            self.unpiloted.remove(&ship_id);
         }
         // A lost retained hull keeps its respawn context across control restoration and retry.
         Some(out)

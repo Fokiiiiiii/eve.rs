@@ -1395,6 +1395,7 @@ Sources. The wiki: "Pochven" (https://wiki.eveuniversity.org/Pochven, fetched 20
   `GetEdencomMinorVictorySystems`, `GetTriglavianMinorVictorySystems`) are the reference's constant lists; the SDE does
   not carry them and no state produces them. `map.GetBeaconCount` answers an empty dictionary, although the cynosural
   beacons of track A9 exist: the count belongs to the ships track (the other agent). Status: each open (TODO section 41).
+- **Report row types (slice 2, 2026-10-12).** `lastUpdated` is a long (a FILETIME), as EVE.js's answer has it; the field was a real. The key sets of `GetIncursionGlobalReport` and `GetSystemsInIncursions` equal EVE.js's in the live walk (`test_incursion_walk.py`). Status: verified against EVE.js.
 - **Incursions and anomalies come from the content state.** `map.GetIncursionGlobalReport`, `map.GetSystemsInIncursions`,
   `taleMgr.*` and `scanMgr.*` read the content instances of kind `incursion` and `anomaly` (`PersistenceIncursionAnomalyReadModel`).
   With none seeded, the answers are the empty contract shapes (an empty list, an empty rowset, an empty tale list).
@@ -2557,6 +2558,7 @@ Engine: `dotnet/src/Eve.Hacking` (pure rules, no Host). Sources: EVE University 
 - **At-least-once spawn.** The simulation spawns a wave before the commit of its drone rows. A crash between the two can make the drones twice (as for dungeon waves).
 - **Wave 2 (D-S2, 2026-10-12).** The second wave at scan progress 0.5 has the same pool and amount as the first (EVE.js `crabWaveAuthority.js`, `INFERRED_WAVE_SCHEDULE`). The CCP guide (support article 4408566646162) says Rogue Drone waves block the scan until cleared, which is what the scan does. The figures stay owner-decided (D-C1) and are not CCP data. Status: decided.
 - **Link lock (D-L2, 2026-10-12).** EVE.js `applyLinkRestrictionsToShip`: immobile until the link completes; warp, jump, cyno jump and dock held until one minute after (`MOBILE_ANALYSIS_BEACON_LINK_STATUS_CLEAR_DELAY_MS`). The CCP text for the four minutes gives no lock list, so the lock list is EVE.js's. A held command is refused as `LINK_HOLD`; the client sees the command's usual refusal text. Cloak and tether are not held yet. Status: decided; cloak and tether OPEN.
+- **Live walk (slice 2, 2026-10-12).** `tools/headless-client/tests/test_crab_walk.py` runs on eve.rs only: the walk's CRAB and anchoring skill are database fixtures, and EVE.js keeps its characters outside PostgreSQL, so the same fixture cannot be written there. Status: decided; the EVE.js comparison is not run.
 - **Not built.** The interference and energy costs, four links per character per day, the 10,000 km asteroid rule, bounties, beacon damage and drone attacks (see TODO section 48).
 - **Client ball.** A beacon is released as a container ball (as the lance beacon is), with category 22. Not verified in the graphical client.
 ## Incursions (B-L1, B-S1, B-M1, 2026-10-11)

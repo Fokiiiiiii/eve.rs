@@ -9,6 +9,65 @@ public class EventBusTests
 
     private static DomainEventHandler Collect(List<string> into) => (ctx, _) => { into.Add(ctx.Event.Topic + ":" + ctx.Event.Key); return Task.CompletedTask; };
 
+    [Fact]
+    public void Transaction_completion_registration_is_available_to_moon_subscribers()
+    {
+        Assert.NotNull(typeof(Eve.Events.EventContext).GetMethod("AfterCommit"));
+        Assert.NotNull(typeof(Eve.Events.EventContext).GetMethod("AfterCompletion"));
+    }
+
+    [PgFact]
+    public async Task Commit_callbacks_see_committed_rows_and_cleanup_runs_after_commit_or_rollback()
+    {
+        await using var rig = await Rig.Create();
+        var fail = true;
+        var published = 0;
+        var released = 0;
+        rig.Bus.Subscribe("completion", ["moon.test"], async (ctx, token) =>
+        {
+            ctx.AfterCompletion(() => released++);
+            ctx.AfterCommit(async _ =>
+            {
+                Assert.Equal(["saved"], await rig.Effects());
+                published++;
+            });
+            await Sql.ExecuteAsync(ctx.Connection, ctx.Transaction, $"INSERT INTO {rig.EventsSchema}.effects VALUES ('saved')", token);
+            if (fail) throw new InvalidOperationException("before commit");
+        });
+        await rig.Bus.PumpAsync();
+        await rig.Publish("moon.test");
+        Assert.Equal(0, (await rig.Bus.PumpAsync()).Delivered);
+        Assert.Empty(await rig.Effects());
+        Assert.Equal((0, 1), (published, released));
+        fail = false;
+        rig.Now += 1000;
+        Assert.Equal(1, (await rig.Bus.PumpAsync()).Delivered);
+        Assert.Equal((1, 2), (published, released));
+        Assert.Equal(0, (await rig.Bus.PumpAsync()).Delivered);
+        Assert.Equal((1, 2), (published, released));
+    }
+
+    [PgFact]
+    public async Task A_failed_live_callback_preserves_committed_state_cursor_and_cleanup()
+    {
+        await using var rig = await Rig.Create();
+        var completed = 0;
+        rig.Bus.Subscribe("live", ["moon.test"], async (ctx, token) =>
+        {
+            ctx.AfterCommit(_ => throw new IOException("client disconnected"));
+            ctx.AfterCompletion(() => completed++);
+            await Sql.ExecuteAsync(ctx.Connection, ctx.Transaction, $"INSERT INTO {rig.EventsSchema}.effects VALUES ('saved')", token);
+        });
+        await rig.Bus.PumpAsync();
+        await rig.Publish("moon.test");
+        Assert.Equal(1, (await rig.Bus.PumpAsync()).Delivered);
+        Assert.Equal(["saved"], await rig.Effects());
+        Assert.Equal(1, completed);
+        Assert.Contains(rig.Log, message => message.Contains("client disconnected", StringComparison.Ordinal));
+        Assert.Equal(0, (await rig.Bus.PumpAsync()).Delivered);
+        Assert.Equal(1, completed);
+    }
+
     [PgFact]
     public async Task An_event_is_delivered_in_order_to_a_subscriber_with_its_payload()
     {

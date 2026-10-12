@@ -89,8 +89,9 @@ public sealed class StructureMoonAuthority
         var structureId = call.Session.GetInt("structureid") ?? 0;
         await using var connection = await _source.OpenConnectionAsync();
         await using var transaction = await connection.BeginTransactionAsync(call.Cancellation);
-        await GateAsync(call, connection, transaction, structureId);
-        if (((call.Session.GetInt("corprole") ?? 0) & StationManagerRole) != StationManagerRole)
+        var structure = await GateAsync(call, connection, transaction, structureId);
+        var roles = call.Session.GetInt("corprole") ?? 0;
+        if (call.Session.GetInt("corpid") != structure.OwnerCorporationId || (roles & (StationManagerRole | Eve.Corporations.CorporationRoles.Director)) == 0)
             throw Refusal("Station Manager role is required.");
         await _moons.CancelAsync(connection, transaction, structureId);
         await transaction.CommitAsync();
@@ -98,7 +99,7 @@ public sealed class StructureMoonAuthority
     }
 
     /// <summary>Every mutation requires the current controller and moon service access, as in validateMoonExtractionMutationAccess.</summary>
-    private async Task GateAsync(ServiceCall call, NpgsqlConnection connection, NpgsqlTransaction transaction, long structureId)
+    private async Task<StructureRecord> GateAsync(ServiceCall call, NpgsqlConnection connection, NpgsqlTransaction transaction, long structureId)
     {
         var record = structureId > 0 ? await _structures.GetAsync(connection, transaction, structureId, true, call.Cancellation) : null;
         if (record is null || record.Snapshot.DestroyedMs > 0 || call.Session.GetInt("structureid") != structureId ||
@@ -114,6 +115,7 @@ public sealed class StructureMoonAuthority
         var services = await _structures.ServicesAsync(connection, transaction, structureId, call.Cancellation);
         if (services.GetValueOrDefault(Eve.Structures.StructureServiceIds.MoonMining) != ServiceState.Online)
             throw DrillRequired();
+        return record;
     }
 
     private static Exception StructureDefenseDenied() => MachoErrors.ThrowUserError("StructureDefenseDenied");

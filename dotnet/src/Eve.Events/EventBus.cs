@@ -317,13 +317,16 @@ public sealed class EventBus
                 return (delivered, null);
             }
 
+            var context = new EventContext(this, next, connection, transaction);
+            var committed = false;
             try
             {
-                await subscription.Handler(new EventContext(this, next, connection, transaction), cancellationToken);
+                await subscription.Handler(context, cancellationToken);
                 await Sql.ExecuteAsync(connection, transaction, Q("""
                     UPDATE {schema}.subscribers SET cursor_id = $2, failures = 0, retry_at_ms = NULL, last_error = NULL, updated_ms = $3 WHERE name = $1
                     """), cancellationToken, subscription.Name, next.Id, Now);
                 await transaction.CommitAsync(cancellationToken);
+                committed = true;
                 delivered++;
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -340,6 +343,11 @@ public sealed class EventBus
                     return (delivered, outcome);
                 }
                 // dead-lettered: the subscriber goes on with the next event
+            }
+            finally
+            {
+                await context.CompleteAsync(committed,
+                    error => _log?.Invoke($"events: {subscription.Name} completion of event {next.Id} failed: {error.Message}"));
             }
         }
         return (delivered, null);

@@ -108,6 +108,11 @@ it concerns a live object of this process only → `LocalTimers`. Either way, no
 An event is a row in the outbox, written in the publisher's transaction. The bus's *pump loop* (started with the foundations) delivers
 each event, in order, to every subscriber whose topics match, within a quarter of a second. Each subscriber has its own cursor.
 
+Handlers can register `ctx.AfterCommit(Func<CancellationToken, Task>)` for publishing committed state to a client or simulation, and
+`ctx.AfterCompletion(Action)` to release a shared gate after either commit or rollback. Commit callbacks run in registration order with
+`CancellationToken.None`, then completion cleanup runs. A post-commit callback error is logged; committed state and the subscriber cursor
+stay committed. Durable delivery that must retry should publish another outbox event/job rather than depend on a live callback.
+
 **Publish** in the same transaction as the change:
 
 ```csharp

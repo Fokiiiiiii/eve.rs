@@ -58,7 +58,7 @@ public sealed class MarketHostTests : IAsyncLifetime
             _schemas.Add(schema);
             Environment.SetEnvironmentVariable(variable, schema);
         }
-        foreach (var (name, value) in new[] { ("EVE_SIM", "off"), ("EVE_MARKET_SEED", "skip") })
+        foreach (var (name, value) in new[] { ("EVE_SIM", "off"), ("EVE_MARKET_SEED", "skip"), ("EVE_WORMHOLES", "off") })
         {
             _saved[name] = Environment.GetEnvironmentVariable(name);
             Environment.SetEnvironmentVariable(name, value);

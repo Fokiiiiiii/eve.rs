@@ -44,7 +44,7 @@ public sealed class HackingCompositionTests : IAsyncLifetime
             Environment.SetEnvironmentVariable(variable, schema);
         }
         // no simulation, and no market seed from ESI (as StructureCompositionTests)
-        foreach (var (name, value) in new[] { ("EVE_SIM", "off"), ("EVE_MARKET_SEED", "skip") })
+        foreach (var (name, value) in new[] { ("EVE_SIM", "off"), ("EVE_MARKET_SEED", "skip"), ("EVE_WORMHOLES", "off") })
         {
             _saved[name] = Environment.GetEnvironmentVariable(name);
             Environment.SetEnvironmentVariable(name, value);

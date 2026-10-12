@@ -1778,6 +1778,21 @@ fn a_smartbomb_does_not_start_within_five_kilometres_of_a_station_or_its_range_w
 }
 
 #[test]
+fn a_smartbomb_of_a_range_beyond_the_wiki_data_is_held_to_the_largest_restriction_it_gives() {
+    // the wiki's largest value is 6 km: a 250 km field (the QA bomb) is held to 6 km, not to its own range
+    let (mut scene, t) = crowd_off_the_station(5_500.0);
+    let refused = scene.activate(A, smartbomb(250_000.0, [0.0, 40.0, 0.0, 40.0], true), t);
+    assert!(
+        refused.iter().any(|o| matches!(o, Out::Refused { reason: "SMARTBOMB_NEAR_STATION", .. })),
+        "{:?}",
+        labels(&refused)
+    );
+    let (mut scene, t) = crowd_off_the_station(6_500.0);
+    let started = scene.activate(A, smartbomb(250_000.0, [0.0, 40.0, 0.0, 40.0], true), t);
+    assert!(started.iter().any(|o| matches!(o, Out::Accepted { .. })), "{:?}", labels(&started));
+}
+
+#[test]
 fn a_smartbomb_hurts_every_ship_in_its_range_each_cycle_and_nothing_beyond_it() {
     // B stands two kilometres off A's surface: inside a three kilometre field, with no lock between them
     let (mut scene, t) = reaching(2_000.0);

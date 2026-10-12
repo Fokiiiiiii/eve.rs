@@ -267,9 +267,12 @@ impl Scene {
         {
             return vec![Out::Refused { session, command: CODE, reason: "CYNOSURAL_FIELD_INHIBITED" }];
         }
-        // a smartbomb does not start close to a station or a stargate: the larger of 5 km and its own range (wiki "Smartbombs", see DEVIATIONS)
+        // a smartbomb does not start close to a station or a stargate: the larger of 5 km and its range, held to the wiki's largest value (wiki "Smartbombs", see DEVIATIONS)
         if let Some(Action::Smartbomb { range, .. }) = effect.action.as_ref()
-            && self.station_or_gate_within(pilot.ship.position, range.max(SMARTBOMB_NEAR_METERS))
+            && self.station_or_gate_within(
+                pilot.ship.position,
+                SMARTBOMB_NEAR_METERS.max(range.min(SMARTBOMB_NEAR_SOURCED_MAX_METERS)),
+            )
         {
             return vec![Out::Refused { session, command: CODE, reason: "SMARTBOMB_NEAR_STATION" }];
         }
@@ -1098,8 +1101,10 @@ impl Scene {
     }
 }
 
-/// The distance from a station or a stargate, short of which a smartbomb does not start (5 km, the least of the wiki's restrictions).
+/// The distance from a station or a stargate, short of which a smartbomb does not start: the larger of 5 km and its range, where the wiki gives values (3 km
+/// range held to 5 km, 6 km to 6 km). A range beyond the wiki's largest value takes that value: no source gives more.
 const SMARTBOMB_NEAR_METERS: f64 = 5_000.0;
+const SMARTBOMB_NEAR_SOURCED_MAX_METERS: f64 = 6_000.0;
 /// The covert cynosural field's type (EVE.js `TYPE_COVERT_CYNOSURAL_FIELD`): a Mobile Cynosural Inhibitor does not stop it.
 const COVERT_CYNOSURAL_FIELD_TYPE: i32 = 28_650;
 

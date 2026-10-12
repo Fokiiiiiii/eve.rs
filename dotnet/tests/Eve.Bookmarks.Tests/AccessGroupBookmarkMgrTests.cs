@@ -26,6 +26,21 @@ public sealed class AccessGroupBookmarkMgrTests
     }
 
     [PgFact]
+    public async Task A_folder_named_with_a_byte_string_keeps_its_name_as_the_client_sends_it()
+    {
+        // the client sends ASCII text as a byte string, which the decoder reads as PyBytes (LongString), not PyStr
+        await using var rig = await Rig.CreateAsync();
+        var service = Service(rig, resolve: _ => null);
+        var session = Session();
+
+        var folder = Assert.IsType<PyObject>(await Call(service, session, "AddFolder", PyValue.Of(true),
+            new PyBytes("Walk folder"u8.ToArray()), new PyBytes("a personal folder"u8.ToArray())));
+        var fields = ((PyDict)folder.Args).Entries.ToDictionary(e => Eve.Macho.JsSemantics.StringValue(e.Key)!, e => e.Value);
+        Assert.Equal("Walk folder", Eve.Macho.JsSemantics.StringValue(fields["folderName"]));
+        Assert.Equal("a personal folder", Eve.Macho.JsSemantics.StringValue(fields["description"]));
+    }
+
+    [PgFact]
     public async Task A_station_bookmark_answers_the_eight_part_tuple_and_an_unknown_place_is_refused_by_its_code()
     {
         await using var rig = await Rig.CreateAsync();

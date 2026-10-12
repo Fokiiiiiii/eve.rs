@@ -26,7 +26,7 @@ internal sealed class Rig : IAsyncDisposable
 
     public static async Task<Rig> CreateAsync()
     {
-        var rig = new Rig(NpgsqlDataSource.Create(Url!));
+        var rig = new Rig(NpgsqlDataSource.Create(Eve.Data.PgConnection.ForTest(Url!)));
         await BookmarkStore.MigrateAsync(rig.Source, rig._schema);
         return rig;
     }

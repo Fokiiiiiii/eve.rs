@@ -64,6 +64,7 @@ internal sealed partial class CharacterServicesComposition
             new Eve.Services.Corporations.ItemLockingService(corporations),
             new Eve.Services.Corporations.CorpStationMgrService(corporations, characterSessions, StandingTowardAsync, StationPlace,
                 StationStandingRulesAsync, now),
+            new Eve.Services.Corporations.WarRegistryService(source, foundations.Relations, characterSessions, now),
     ];
 
       private async ValueTask<Eve.Services.Corporations.CorpWarDeclarationResult> CreateWarDeclarationAsync(

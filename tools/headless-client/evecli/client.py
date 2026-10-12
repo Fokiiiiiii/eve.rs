@@ -16,6 +16,11 @@ def filetime_to_unix(filetime: int) -> float:
     return (int(filetime) - _FILETIME_EPOCH_OFFSET) / 1e7
 
 
+def _is_provisional(received: packet.Packet) -> bool:
+    named = m.plain(received.named_payload)
+    return isinstance(named, dict) and "provisional" in named
+
+
 class Client:
     def __init__(self, host: str = "127.0.0.1", port: int = 26000, timeout: float = 10.0):
         self.host, self.port, self.timeout = host, port, timeout
@@ -26,6 +31,9 @@ class Client:
         self.service_info: dict[str, Any] = {}
         self.global_config: dict[str, Any] = {}
         self._service_nodes: dict[str, Any] = {}
+        # the client's dialogs: scripted answers per method (queued in order), and every server call it was asked
+        self.scripted: dict[str, list] = {}
+        self.dialogs: list[tuple[str, tuple]] = []
 
     # ── connection ──
 
@@ -130,6 +138,9 @@ class Client:
             if time.monotonic() > deadline:
                 raise TimeoutError(f"no response to call {call_id}")
             received = packet.Packet.parse(self.conn.recv())
+            if received.command == packet.CALL_REQ:
+                self._answer_server_call(received)
+                continue
             if received.command in (packet.SESSIONCHANGENOTIFICATION, packet.SESSIONINITIALSTATENOTIFICATION):
                 self._apply_server_notification(received)
                 self.notifications.append(received)
@@ -137,8 +148,30 @@ class Client:
             if received.command == packet.ERRORRESPONSE:
                 raise packet.MachoError.from_packet(received)
             if received.command == command and received.destination.call_id in (call_id, None):
+                # a provisional answer (the server's deferred call) is not the result: the dialog it raised is answered, then the result comes
+                if _is_provisional(received):
+                    continue
                 return received
             self.notifications.append(received)
+
+    def answer(self, method: str, value: Any) -> None:
+        """Queue the answer to the next server call of `method`: a dialog the server raises (YesNo, SingleChoiceBox,
+        GetQuantity, RemoteNamePopup). A call with no queued answer is cancelled (the client answers None)."""
+        self.scripted.setdefault(method, []).append(value)
+
+    def _answer_server_call(self, received: packet.Packet) -> None:
+        """Answer a CallReq the server made (EveJS sendClientCallRequest): the answer is a CallRsp to the server's call id, its
+        value as the one body item (EveJS consumeClientCallResponse takes a plain or a substream value)."""
+        assert self.conn is not None and self.session is not None
+        body = m.plain(packet._substream_value(received.payload[0][1]))
+        method, args = body[1], tuple(body[2])
+        self.dialogs.append((method, args))
+        queue = self.scripted.get(method) or []
+        value = queue.pop(0) if queue else None
+        self.conn.send(packet.build_packet(
+            packet.CALL_RSP, self._source(received.source.call_id), received.source, self.session.user_id,
+            (value,),
+        ))
 
     def call(self, service: str, method: str, *args: Any, **kwargs: Any) -> Any:
         """Call `service.method(*args, **kwargs)` and return its result."""

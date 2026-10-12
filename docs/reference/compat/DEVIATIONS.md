@@ -1169,7 +1169,7 @@ Sources, in the order of the rule. The wiki (https://wiki.eveuniversity.org/Jump
 
 Sources. The wiki: "Jump drive" (https://wiki.eveuniversity.org/Jump_drive, fetched 2026-10-10): "Cynos cannot be lit in high-sec"; "while they can be lit in wormhole space they serve no purpose as jump drives cannot jump to systems in wormhole space"; "Ships with a jump drive can only jump to cynosural fields or beacons". "Cynosural field" (https://wiki.eveuniversity.org/Cynosural_field, fetched 2026-10-10): the same wormhole sentence. "Pochven" (https://wiki.eveuniversity.org/Pochven, fetched 2026-10-10): "Region-wide cynosural field jammers stops anyone from lighting a cyno"; "capital ships cannot jump into the Pochven region"; "Jump drives cannot be used to enter Triglavian space, only to exit." The SDE (build 3396210, `sde."mapSolarSystems"`, `doc->>'regionID'`): Pochven is region 10000070 (27 systems); every wormhole system (31000001 to 31002604) lies in a region 11000000 to 11999999. EveJS v0.12.9 `server/src/services/chat/channelRules.js`: `isWormholeSolarSystemID` (line 104, the id range 31000000 to 31999999) and `isTriglavianSolarSystemID` (line 116, by the system's faction); EveJS `deployableCynoRuntime.js` lines 286 to 290 (the beacon's deployment texts: "Mobile Cynosural Beacons cannot be deployed in wormhole space.", "Mobile Cynosural Beacons cannot be deployed in Pochven."). eve-logic: no jump refusal text for a wormhole or Pochven destination was found (`stargate/client/jump_checks.py` covers gates; the labels are in the client's localization, not in the Python source).
 
-- Decision, the region as the Pochven check: the SDE in this build carries no `factionID` on the systems (EveJS's check is the faction, `worldData.getSolarSystemByID(...).factionID`), so the region 10000070 is used. The two are not compared against each other here (no faction data in the SDE to compare with).
+- Decision, the region as the Pochven check: the pinned SDE (build 3396210, `mapSolarSystems`) carries a `factionID` on 70 of 8,490 systems (factions 500001 to 500006, 500013, 500026, 500027, 500029; regions 10001004, 10000041, 11000033 and a few others), and none of the 27 Pochven systems (region 10000070) has one. EveJS's check is the faction (`worldData.getSolarSystemByID(...).factionID`), which therefore cannot name Pochven from this SDE, so the region 10000070 is used. eve.rs reads the system `factionID` where it exists (`TetherAuthority`, `PersistenceSovFwReadModel`).
 - Decision, the wormhole check: the region 11000000 to 11999999 (the SDE's J-space regions), not the EveJS id range; both name the same 2604 systems (the id range is 31000000 to 31999999).
 - Decision, jump drives into wormhole space: refused for the cynosural jump, a bridge's opening and a conduit, whatever the field (the wiki). Text: "Jump drives cannot jump to systems in wormhole space." (ours).
 - Decision, jump drives into Pochven: refused the same way (the wiki: "only to exit"). Text: "Jump drives cannot be used to enter Pochven." (ours). Leaving Pochven or wormhole space is not refused (the wiki says "only to exit"; no wiki rule restricts a jump out).
@@ -2114,15 +2114,47 @@ the wiki's ("Locator Agents") and the client's, not EveJS's.
 - **Standing.** The required standing per level (`LocatorRules.RequiredStandingFor`) is compared with the pilot's effective
   standing toward the agent (the Connections bonus applied, as the research start does). The wiki names this as faction standing;
   the corporation and faction standings are not split out here. Status: a gap.
-- **Result.** The located notification: type 69, group agents, sent by the agent, with `characterID`, `messageIndex` (0),
-  `agentLocation` and `targetLocation` keyed by group id (3 region, 4 constellation, 5 system, 15 station; the station only when
-  docked). It is written after the commit. If the notification cannot be written, the fee is refunded (journal reference type 27,
-  "Locate refund") and the error is returned to the pilot. Status: decided; the payload is read from the client formatter, not
-  shown in a client run.
+- **Result (outbox, AG-5).** The fee, the cooldown and the result are one PostgreSQL transaction: the result is an event
+  (`agents.locate_delivered`, the repo's transactional outbox, `EventBus`). A subscriber writes the located notification (type 69,
+  group agents, sent by the agent) with `characterID`, `messageIndex` (0), `agentLocation` and `targetLocation` keyed by group id
+  (3 region, 4 constellation, 5 system, 15 station; the station only when docked), keyed by the event id so a retry writes it once.
+  So a pilot who paid is always told: a crash between the commit and the write is replayed by the bus. No refund path.
+  Status: decided; the payload is read from the client formatter. Covered by the live locator walk.
 - **Gaps.** The prompt caption, its label and the lines the agent says are plain English: the client's `UI/Agents/Locator/*` labels
-  are not mapped to the dialog yet. `messageIndex` is always 0 (the first intro line). A refund that fails after a failed
-  notification leaves the cooldown started. No Host test covers the delivery, the refund or the name lookup; the dialogue tests
-  (`AgentLocatorDialogueTests`, PostgreSQL, fake port) cover the ask, offer, accept, reject, refusals, cooldown and the unpaid case.
+  are not mapped to the dialog yet. `messageIndex` is always 0 (the first intro line). A subscriber that keeps failing dead-letters
+  the notification (the fee stays charged; visible in the bus status). The dialogue tests (`AgentLocatorDialogueTests`, PostgreSQL,
+  fake port) cover the ask, offer, accept, reject, refusals, cooldown and the unpaid case; the live walk covers the delivery.
+
+## Agents slice AG-5: live walks for the dialogs, and what they found (2026-10-12)
+
+Sources. EveJS `researchDialogue.js:152-209, 264-336, 372-392` (SingleChoiceBox, YesNo and GetQuantity: the argument shapes, the
+answer readers), `agentMgrService.js:381-397` (the decline YesNo: five arguments and `machoVersion` as kwargs),
+`network/clientSession.js:1112-1150` (`consumeClientCallResponse`: a plain or a substream answer).
+
+- **Dialog kwargs were dropped (fixed).** `SendClientCall` built every call with empty kwargs, so the decline YesNo lost
+  `machoVersion` and the datacore GetQuantity lost its `maxvalue`, `label` and the rest. Both now go on the wire. Found by the
+  MITM capture of the walks against the EVE.js argument lists above.
+- **Typed answers were read as nothing (fixed).** The server decodes an ordinary string as `PyBytes` (only string-table items
+  are `PyStr`), so the locator's name and the radio-button answer did not match. The dialogue reads text through
+  `JsSemantics.StringValue`, as the slash commands do. Tests: `AgentLocatorDialogueTests`, `AgentResearchDialogueTests`
+  (byte-string answers).
+- **Locator result is an outbox event (AG-4 A7 revised).** The fee, the cooldown and the result are one transaction, the result
+  is an `agents.locate_delivered` event on the repo's `EventBus`; the subscriber writes the notification keyed by the event id.
+  The refund path is gone (no crash window between a charge and its notification).
+- **The Cockroach (typeID 11019, from the pinned SDE).** The live walks seed it through the database: a singleton in the pilot's
+  station hangar (flag 4) and the characters row's `ship_id`. The session does not carry `shipid` at selection: the server defers a
+  docked ship until the client's dogma bootstrap (`deferredDockedShipId`, not client-visible), so the walks check the database.
+  Flying it is not exercised by these walks (gap).
+- **Live walks (headless client, `tools/headless-client/tests/test_agents_live.py`, run through `run-eve-live.sh`).** LP store purchase
+  (ISK and LP debited, item granted), research start, datacores and cancel (the answers come from `client.answer`), locator to a second
+  pilot (fee taken on accept, the located notification delivered through the outbox), agent decline (a no keeps the offer, a yes
+  declines it). Quit is not walked: it needs the pilot at the agent's station with an accepted mission.
+- **MITM and EVE.js.** The four walks were captured through `tools/mitm` against eve.rs. The EVE.js side was not run: the walks
+  seed PostgreSQL state (ISK, standings, LP, the offer, the ship) that EVE.js does not read from a database, and without that state
+  its agents refuse before the dialogs. So the dialog shapes are compared by reading EVE.js (above), not by `mitm diff`. Gap.
+- **Owner decisions in this slice.** Locator fee on accept (unchanged). Starweb offers stay out. Structures untouched.
+- **Gaps.** Quit walk; flying the Cockroach; the EVE.js side of the capture (needs a seeded EVE.js data root); the client-side
+  display of the locator result (no graphical run).
 
 ## ST-E: cloak proximity and forced decloak notices (2026-10-10)
 - **Proximity radius and refusal.** The cloak breaks, and activation refuses, for a ship or a non-belt body within 2 000 m of the surface of the cloaked ship. Source: EveJS `shipCloak.js:100` (`MIN_CLOAKING_DISTANCE_METERS = 2000`). It replaces the 2 km smartbomb-range check, so the activation refusal now also counts bodies, not only smartbomb targets. Belts are not counted.
@@ -2260,6 +2292,7 @@ client's use of mission data: eve-logic `evemissions/client/data.py`, `eve/clien
   the 1,460 distinct IDs in the build are rows of the SDE `dungeons` table (checked on 3405148 and on the pinned 3396210),
   so the rooms and spawns cannot be taken from `dungeons`. `MissionStaticCatalog` returns the ID; `MissionDataGaps.DungeonContent`
   gives the reason. Status: open, belongs to the dungeon owner.
+- **Dungeon catalog manifest `sdeBuild` is 3405148, not the runtime pin 3396210.** `dotnet/src/Eve.Dungeons/Data/catalog/v1/manifest.json` is written by `tools/dev/extract-dungeon-catalog.py` run on the 3405148 JSONL directory: that script needs `missions.jsonl` and `epicArcs.jsonl`, which only build 3405148 has, and takes `sdeBuild` from that directory's `_sde.jsonl`. The type, archetype and dungeon checks in the manifest (0 mismatches) ran against that same build. The runtime static data stays the pinned 3396210 (`sde/lock.json`); the mission tables are the second pin (`missionPinned`). Status: explained; the manifest is unchanged because `DungeonCatalogTests` asserts 3405148.
 - **LP and standings: not answered by the mission data.** Mission LP rewards and LP store standing requirements are not in
   the build (the official `missions` rows carry ISK and item rewards and standings in `extraStandings`). LP store offers
   come from the agents track (its ESI source). Status: open (`MissionDataGaps.Standings`).
@@ -2460,12 +2493,12 @@ Engine: `dotnet/src/Eve.Hacking` (pure rules, no Host). Sources: EVE University 
 - **Restoration Node.** +20 coherence each turn end to a random alive defensive subsystem (may be itself, never the core). Status: wiki.
 - **Turn.** Every reveal click is one turn; utility use on the virus or a target is not a turn. Status: decided.
 - **Utility elements.** Self repair +5 to +10 per turn for 3 turns; polymorphic shield absorbs the next 2 retaliations; kernel rot halves the target's coherence once; secondary vector -20 per turn for 3 turns. Targets are core or defensive subsystems. Status: wiki for effects, decided for durations shape.
-- **Targets on hidden tiles.** A utility target on a hidden tile is accepted only when the tile is a core or a defensive subsystem; otherwise it is acknowledged and nothing happens. This reveals the type to the player through the outcome. Status: known gap.
+- **Targets on hidden tiles.** A kernel rot or a secondary vector targets a revealed core or defensive subsystem only. A hidden tile is acknowledged and nothing happens, whatever it hides, so the reply does not reveal its type (it did before this change). Status: decided (closes the leak).
 - **Hidden tiles on the wire.** EveJS sends the type of every tile, hidden ones too. eve.rs sends `type -1` and zero numbers until a tile is revealed. Status: decided (not leaking).
 - **Inventory element keys.** EveJS puts `index` in each inventory element; the client builds `UtilityElementData(index=i, **element)`, so the key would collide. eve.rs sends `id`, `subtype`, `info` only. Status: client-verified shape (eve-logic `hackingUtilityElementData.py`, `hackingUISvc.py`).
 - **Distance indicator.** Empty node shows steps to the nearest core, utility element or data cache, capped at 5 (wiki). Status: wiki.
 - **Start of an attempt.** EveJS starts the attempt when the analyzer activation is accepted (`moduleOperation.js` 3228). The ST-10 plan said "on cycle completion"; eve.rs follows EveJS (the working reference). Status: decided, not yet wired.
-- **Not yet covered.** The Host service, the analyzer body, container placement and the loot on success (D-5) are the next increments. Status: open.
+- **Loot and completion of a container (ST-10 d).** A win puts the loot in the container's cargo, owned by the winner: the relic profile (generic relic loot) or the data profile (generic data loot), rolled from the site's loot tables at the container's id. The container is `looted` until its last item leaves it (EveJS `maybeCompleteMaterializedDataRelicSite`: the loot is the container's contents); then it is `cleared`, announced with its site, and its ball leaves the scene. The state stays `cleared`, not `destroyed`: `destroyed` is only the two-failure end. The site completes after its last container clears (cosmic site director). Taking an item is seen through the move announcement in the move's transaction. A win with nothing to roll clears at once. Status: decided; EveJS read, MITM not run.
 - **Analyzer window reach (ST-10 c).** EveJS closes a hack on a scene tick; eve.rs checks the reach on the next call of the client's hackingMgr and at each accepted warp. Status: decided (tick deferred).
 - **Attempt start (ST-10 c).** Opened after the simulation accepts the analyzer's start (EveJS moduleOperation.js 3228). Status: decided.
 - **Analyzer kind (ST-10 c).** Data and relic compatibility from the required skills (21718 / 13278). EveJS has an "integrated" kind for an analyzer that needs both; eve.rs accepts a container for either skill. Status: decided.
@@ -3053,3 +3086,68 @@ bookmark of a place in space are not. Tests: `Eve.Bookmarks.Tests` (12, PostgreS
 - **Where.** `Eve.Bookmarks` (`BookmarkStore`, rules in `BookmarkRules`, `BookmarkError`). The RPC is
   `Eve.Services.Core/AccessGroupBookmarkMgrService.cs`, and `BookmarkRefusals` maps the store's error to the client's user error.
   The host composition is `Eve.Host/Composition/BookmarkComposition.cs`.
+
+## War registry, NES intro and blueprint manager (37a)
+
+Status: `warRegistry` is partly built (the wars are read and two of the owner's changes are made; negotiations are refused).
+`nes_intro` and `blueprintManager` are built. Tests: `Eve.Corporations.Tests` (`WarRegistryTests`, 3, PostgreSQL), `Eve.Characters.Tests`
+(`NesIntroStoreTests`, 2, PostgreSQL), `Eve.Services.Core.Tests` (`NesIntroServiceTests` 2, `BlueprintManagerServiceTests` 5).
+
+### warRegistry
+- **Reads.** `GetWars(ownerID)` lists the wars the owner (an argument, else the session's alliance or corporation) is in, keyed by war id,
+  read from the `war` relations with their allies (the reader is shared with `warsInfoMgr`). `IsAllianceOrCorpLocal()` answers 1, as
+  `warRegistry.IsAllianceOrCorpLocal` does in the reference (`warRegistryService.js:173`).
+- **Two changes an owner makes.** `SetOpenForAllies(warID, state)` changes the war when the session's entity is the one the war is against
+  (the defender), as the reference checks (`warRegistryService.js:372`). `RetractMutualWar(warID)` ends a mutual war at once when the entity is
+  one of its two sides; a war that is not mutual is left as it is (`warRegistryService.js:319-335`). The ending writes `retracted`,
+  `timeFinished` and `retractedBy` and sets the relation's end time, so the war is no longer active for crimewatch. Each change runs in one
+  transaction under the war's row lock and is announced to the war's sides after the commit (`OnWarChanged`).
+- **Not built: war negotiations.** Ally offers and surrender offers (`CreateWarAllyOffer`, `RetractWarAllyOffer`,
+  `CreateSurrenderNegotiation`, `AcceptAllyNegotiation`, `DeclineAllyOffer`, `AcceptSurrender`, `DeclineSurrender`) have no store here: they are
+  refused with the notice "War negotiations are not available on this server." `GetNegotiations` is an empty list and
+  `GetWarNegotiation` answers None, because no negotiation can be opened on this server. The reference keeps them in the corporation
+  runtime (`warNegotiations`) with ISK in escrow; that is the open part of the war track.
+
+### nes_intro
+- `get_nes_intro_state()` answers the stored state (`nes_intro_states`, migration `0005_nes_intro_state.sql`, in the characters
+  schema) when the character's tutorial entry is on, and unset (0) otherwise. This is `tutorialRuntime.js` `buildTutorialSnapshot`
+  (the effective state is the stored one only when the tutorial is enabled).
+- `skip_nes_intro()` moves an active introduction to skipped (3) and sends `OnNesIntroStateChanged(characterID, 3)` to the character's
+  session. It answers true for a character that exists, as the reference does, even when nothing changed.
+- **Not built.** Nothing sets an introduction to active, in the reference or here: `tutorialRuntime.js` only ever stores unset or the value a
+  skip writes. So every introduction is unset, and the New Eden store introduction (its checkpoints and crate, `nes_intro_constants.py`) is
+  not run. A skip therefore changes nothing today.
+
+### blueprintManager
+- `GetLimits()` answers `maxBlueprintResults` 500 (`blueprintManagerService.js:26-28`).
+- `GetBlueprintData(itemID)` and `GetBlueprintDataByOwner(ownerID, facilityID)` answer the blueprint instance the client reads
+  (`industryPayloads.js:92`). A blueprint is an item of group 9. The caller sees only what its character or corporation holds; another
+  owner's blueprint is the client's own `IndustryBlueprintNotFound`, and another owner's listing is empty.
+- **Quantity and runs.** The client takes a blueprint as an original unless its quantity is -2, and as singleton when negative
+  (`industryCommon.py:331-333`), so a copy has quantity -2 and an original -1. An original's runs are -1 (the EVE convention for an
+  unlimited original); a copy's runs are the stored count.
+- **Job.** `jobID` is the active industry job of the blueprint (a job whose status is below 100 and whose blueprint is the item), read from
+  the industry job record the job service reads.
+- **Counts.** The counts are per facility, with the key null for a blueprint in no facility. Every blueprint here is in no facility: no
+  industry facility is read by this service, so `facilityID` is null and a facility filter lists none.
+- **Location.** `locationTypeID` is the station's type when the blueprint is in a station, or the type of the item it is in. `solarSystemID`
+  is the solar system of the station, found by following the containers up to a few levels.
+
+## Zarzakh (30100000) and the client's system flags (2026-10-12)
+
+Sources. The EVE University wiki "Zarzakh" (https://wiki.eveuniversity.org/Zarzakh, fetched 2026-10-12) states: "D-Scan is disabled in system."; "Bookmarks are disabled in system."; a gate toll with a confirmation prompt (pirate-enlisted players exempt); "Capital sized ships, including freighters but not the Orca, cannot use stargates into Zarzakh."; an Emanation Lock of six hours to the entry gate, reset by entering through another gate, with exits always possible by the Deathless Shipcaster and clone jumping; "Zarzakh is affected by gravity hazards, which damage ship hull when exiting the safe zone."; gate guns that attack a capsuleer with a retribution timer; "the black hole known as "Point of No Return"" (lore only, no gameplay effect stated). The wiki says nothing on sovereignty, cynosural fields, warp disruption, sites, anomalies or signatures, markets, heat, temperature or tidal effects. Search results (CCP patch notes) gave no current Zarzakh rule. The SDE (build 3396210) has no typeDogma rows for the Zarzakh star (78350), station (78334), stargate (77921) or environment (78187), so no dogma heat or temperature mechanic exists in the static data. The client data (`/home/user/eve-client-sde/native/solarsystemcontent.jsonl.gz`) sets `disallowCyno` on 2 systems and `disallowScanning` on 1 (Zarzakh). The client reads these flags from its own `res:/staticdata/solarSystemContent.static` (`eve/common/script/sys/eveCfg.py`, `mapSolarSystemContentCache`), not from the server, so the server enforces them itself. The client also hard-codes `IsZarzakh` for its map and hazard rules (`eve/common/script/sys/idCheckers.py`).
+
+- Done, the client flags: `ClientSystemFlags` (`dotnet/src/Eve.Universe/ClientSystemFlags.cs`) reads only `disallowCyno` and `disallowScanning` from `EVE_CLIENT_SDE_DIR/native/solarsystemcontent.jsonl.gz` at start-up (`CharacterStores`), into `SolarSystemInfo.DisallowCyno` and `DisallowScanning`. Nothing is copied into the repository. A blank `EVE_CLIENT_SDE_DIR` loads no flags, so a live run without the client export does not refuse cynos or probes in those two systems. Status: decided; a lane run without the variable is a gap.
+- Done, cyno: lighting a cynosural field in a `DisallowCyno` system is refused with the client's own key `CannotLightCynoInSystem` (`SpaceSessions.Modules.cs`, after the high-security rule, as the client's `get_cyno_suppressed_error` orders them). Test: none at host level yet (the cyno activation needs a fleet and a fitted generator); the branch is compile-checked only.
+- Done, scanning: a probe launch in a `DisallowScanning` system is refused (`SpaceSessions.LaunchAsync`). The wording "Scanner probes cannot be launched in this system." is ours: the client has no refusal text for it (it closes its probe window and hides the overlay instead, `probeScannerWindow.py`). Test: `ScanProbeHostTests.A_system_whose_client_flags_forbid_scanning_refuses_the_launch_and_places_no_probe` (PostgreSQL, eve_p2).
+- Done, sites: `CosmicSiteDirector.NoSiteSystems` = {30100000}; `BandOf` returns null there, so no site is placed. Basis: the EveJS site policy (`dungeonSiteSpawnPolicy`) and the wiki's silence; the real game may have sites here, which nothing in the sources shows. Status: owner decision open (see below).
+- Not done, sovereignty: no sovereignty claim path exists in eve.rs (the claim and sovereignty-structure work belongs to the structures track), so there is nothing to refuse yet. Status: open, to be checked when a claim path exists.
+- Not done, warp disruption bubbles and probes: the wiki and the sources above do not state it. EveJS refuses them; eve.rs does not. Not implemented without a source. Status: open, owner decision.
+- Not done, gate toll, capital gate restriction, Emanation Lock, gate guns with retribution timers, Deathless Shipcaster exit, gravity hazard hull damage outside the safe zone: all stated by the wiki, none implemented in eve.rs. Status: open; the gate and hazard work is the next Zarzakh slice.
+- Not done, heat, temperature, tidal forces, the Point of No Return: no source gives a mechanic (SDE, client or wiki). Nothing implemented.
+- Kept, pirate-faction market modifier (`MarketRules.Context`: 0.5 on sales tax for factions 500018 and 500019 in 30100000): already in eve.rs; it matches EveJS, and the wiki does not state it. Status: kept as EveJS-derived; owner decision open.
+- Not done, bookmarks disabled: the client suppresses bookmarking itself (`is_bookmarking_suppressed`); the server does not refuse it. Status: open.
+
+Client-local data (the server does not send it). From the client code: `sunTypeID` and `sunFlareGraphicID` are read only by the client map and star code (`starMapSvc.py`, `mapViewData.py`); `systemWideCloud` and `warpTunnelOverwrite` only by the client's warp and scene code (`Warp.py`, `sceneManager.py`); `dscanRange` and `disallowedAnchorCategories` only by client helpers (`eveuniverse/solar_systems.py`). None of them is in a server message. The server's star record carries its own typeID (78350 for Zarzakh); whether the client's 3D star uses that typeID or the client's sunTypeID 3796 is not checked in the graphical client. Status: client-local, no server loader for them; the flags above are the only client data the server reads.
+
+Landmarks (not done, with evidence). The SDE landmarks (45) and the client landmark skybox effects are client-local presentation data. EveJS and eve.rs both advertise `client_lookAtObject` as 0 at login (`achievementTrackerMgrService.js:32`, `LoginInitializationRpcServices.cs:152`), so the look-at challenge (Black Monolith, challenge 2848) is a feature EveJS disables; enabling it needs a client look-at report path that no source here proves. Status: open, not implemented.

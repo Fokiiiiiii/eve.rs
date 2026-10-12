@@ -196,6 +196,7 @@ public sealed class HackingGameTests
     {
         var game = Blank();
         var core = Put(game, Far, HackingWire.TypeCore, HackingWire.SubtypeCoreLow, 100, 10);
+        core.Hidden = false;
         game.Slots[0] = new UtilityItem(1, HackingWire.SubtypeUeKernelRot);
 
         var events = game.UseOnTarget(0, Far);
@@ -220,6 +221,7 @@ public sealed class HackingGameTests
     {
         var game = Blank(coherence: 400, strength: 20);
         var core = Put(game, Far, HackingWire.TypeCore, HackingWire.SubtypeCoreLow, 100, 10);
+        core.Hidden = false;
         game.Slots[0] = new UtilityItem(1, HackingWire.SubtypeUeSecondaryVector);
 
         Assert.Equal(new[] { UeInUse }, Ids(game.UseOnTarget(0, Far)));
@@ -322,5 +324,29 @@ public sealed class HackingGameTests
         }
 
         Assert.Equal(Dump(a), Dump(b));
+    }
+
+    [Fact]
+    public void A_utility_target_on_a_hidden_node_is_acknowledged_whatever_it_hides()
+    {
+        // a hidden core and a revealed one, both next to the virus: only the revealed one can be targeted, and the reply does not tell which
+        foreach (var hiddenType in new[] { HackingWire.TypeCore, HackingWire.TypeDefenseSoftware, HackingWire.TypeSegment })
+        {
+            var game = Blank(slots: 1);
+            var item = PutInSlot(game, HackingWire.SubtypeUeKernelRot);
+            var hidden = Put(game, Left, hiddenType, coherence: 80);
+            var events = game.UseOnTarget(0, Left);
+            Assert.Equal(new[] { Ack }, events.Select(e => e.EventId).ToArray());
+            Assert.Equal(80, game.Board.Tiles[Left].Coherence);
+            Assert.True(hidden.Hidden);
+            Assert.NotNull(item);
+        }
+    }
+
+    private static UtilityItem PutInSlot(HackingGame game, int subtype)
+    {
+        var item = new UtilityItem(1, subtype);
+        game.Slots[0] = item;
+        return item;
     }
 }

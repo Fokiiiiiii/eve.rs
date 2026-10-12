@@ -197,12 +197,12 @@ public sealed class ClientSession
     /// Calls a client service and runs <paramref name="onResponse"/> with the client's answer (null when the client
     /// cancels it). False when there is no sink to send to (EveJS sendClientCallRequest returns null then).
     /// </summary>
-    public bool SendClientCall(string service, string method, IReadOnlyList<PyValue> args, Action<PyValue?> onResponse)
+    public bool SendClientCall(string service, string method, IReadOnlyList<PyValue> args, Action<PyValue?> onResponse, PyDict? kwargs = null)
     {
         if (Sink is null) return false;
         var callId = ClientCallRequest.NextCallId();
         lock (_gate) _clientCalls[callId] = onResponse;
-        Send(ClientCallRequest.Build(ClientId, UserId ?? 0, service, method, args, callId));
+        Send(ClientCallRequest.Build(ClientId, UserId ?? 0, service, method, args, callId, kwargs));
         return true;
     }
 

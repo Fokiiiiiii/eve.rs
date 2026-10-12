@@ -18,9 +18,9 @@ public static class ClientCallRequest
     /// <summary>The next call id the server uses for its own calls (EveJS starts at 610000 per session; one counter here serves all sessions).</summary>
     public static long NextCallId() => Interlocked.Increment(ref _nextCallId);
 
-    public static PyValue Build(long clientId, long userId, string service, string method, IReadOnlyList<PyValue> args, long callId)
+    public static PyValue Build(long clientId, long userId, string service, string method, IReadOnlyList<PyValue> args, long callId, PyDict? kwargs = null)
     {
-        var body = new PyTuple([new PyInt(1), new PyStr(method), new PyList([.. args]), new PyDict([])]);
+        var body = new PyTuple([new PyInt(1), new PyStr(method), new PyList([.. args]), kwargs ?? new PyDict([])]);
         var source = new MachoAddress(AddressKind.Node, NodeId: new PyInt(MachoMessage.ProxyNodeId), CallId: new PyInt(callId));
         var destination = new MachoAddress(AddressKind.Client, ClientId: new PyInt(clientId), Service: service);
         PyValue[] packet =

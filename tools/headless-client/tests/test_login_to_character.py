@@ -123,11 +123,16 @@ def test_the_session_starts_with_the_recorded_keys_and_types():
         ours = {"$dict": [[k, describe(v)] for k, v in init.items()]}
     recorded = {"$dict": [[k, v] for k, v in WALK["login"]["sessionInit"].items()]}
     # This client's plain session view unwraps PyLong; the Host wire test checks role's actual type.
+    # maxSessionTime and inDetention are not sent on purpose (SessionInitialState.cs): the reference's notification omits
+    # None-valued keys (oracle capture of evejs-login), and the client reads an absent session attribute as None
+    # (basesession.py GetDefaultValueOfAttribute; mailSvc.SendMsgDlg reads inDetention). Neither key is re-added here.
+    not_sent = {"maxSessionTime", "inDetention"}
+    assert not_sent.isdisjoint(init), sorted(not_sent & set(init))
     ours["$dict"] = [pair for pair in ours["$dict"] if pair[0] != "role"]
-    recorded["$dict"] = [pair for pair in recorded["$dict"] if pair[0] != "role"]
+    recorded["$dict"] = [pair for pair in recorded["$dict"] if pair[0] not in ({"role"} | not_sent)]
     assert "role" in init
     # every value is per run or per account: keys and types must agree, values need not
-    assert same_way(recorded, ours, "sessionInit", volatile=set(WALK["login"]["sessionInit"])) == []
+    assert same_way(recorded, ours, "sessionInit", volatile=set(WALK["login"]["sessionInit"]) - not_sent) == []
 
 
 def test_the_recorded_walk_replays():

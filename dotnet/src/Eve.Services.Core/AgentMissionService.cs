@@ -259,7 +259,7 @@ public sealed class AgentMissionService(
     /// <summary>Raises a prompt on the client; a session that cannot take the call answers with the no-answer path (EveJS sendAgentDeclineConfirmation).</summary>
     private static void Ask(AgentDialoguePrompt prompt, DeferredContext context)
     {
-        if (!context.Session.SendClientCall("agents", prompt.Method, prompt.Args, answer => _ = Answer(prompt, answer, context)))
+        if (!context.Session.SendClientCall("agents", prompt.Method, prompt.Args, answer => _ = Answer(prompt, answer, context), prompt.Kwargs))
             _ = Answer(prompt, null, context);
     }
 

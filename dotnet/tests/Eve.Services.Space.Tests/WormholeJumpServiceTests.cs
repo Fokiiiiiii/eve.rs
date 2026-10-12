@@ -6,6 +6,7 @@ using Eve.Marshal;
 using Eve.Space;
 using Eve.Universe;
 using Eve.Wormholes;
+using Eve.Services.Space;
 
 namespace Eve.Services.Space.Tests;
 
@@ -144,6 +145,58 @@ public sealed class WormholeJumpServiceTests
         var changed = rig.Sim.Heard.OfType<SimShipChanged>().Last();
         Assert.Equal((ulong)session.SessionId, changed.SessionId);
         Assert.Equal(entered * 1.3, changed.Ship.MaxVelocity, 6);
+    }
+
+    [PgFact]
+    public async Task The_polarization_lapses_five_minutes_after_the_jump_and_the_service_reports_none_then()
+    {
+        await using var rig = await Rig.CreateAsync();
+        await using var world = await JWorld.CreateAsync(rig, Type(1001, 1e9, 1e8));
+        var (session, character, oid) = await PilotInJSpaceAsync(rig);
+        var end = Assert.Single(await world.World.EndsInSystemAsync(JSystem));
+        rig.Sim.JumpAnswer = new CommandReply(true, 0, null, null, KSystem, 0);
+        await rig.Space.WormholeJumpAsync(session, end.BodyId, oid, CancellationToken.None);
+        Assert.NotNull(rig.Space.PolarizationOf(end.BodyId, character.CharacterId));
+
+        rig.Now += (long)WormholeRules.Polarization.TotalMilliseconds + 1_000;
+
+        Assert.Null(rig.Space.PolarizationOf(end.BodyId, character.CharacterId));
+    }
+
+    [PgFact]
+    public async Task The_wormhole_jump_through_the_rpc_service_is_the_space_jump_and_its_answer_is_the_list_the_client_reads()
+    {
+        await using var rig = await Rig.CreateAsync();
+        await using var world = await JWorld.CreateAsync(rig, Type(1001, 1e9, 1e8));
+        var (session, _, oid) = await PilotInJSpaceAsync(rig);
+        var end = Assert.Single(await world.World.EndsInSystemAsync(JSystem));
+        rig.Sim.JumpAnswer = new CommandReply(true, 0, null, null, KSystem, 0);
+        // the service as the composition builds it: the jump and the polarization are the space sessions'
+        var service = new WormholeMgrService(
+            rig.Space,
+            readPolarization: (endId, characterId, _) => ValueTask.FromResult(rig.Space.PolarizationOf(endId, characterId)),
+            jump: async (call, endId, cancellation) => await rig.Space.WormholeJumpAsync(call.Session, endId, call.BoundObjectId, cancellation));
+        var before = rig.Sim.Heard.Count;
+
+        var answer = Assert.IsType<PyList>(await service.CallAsync(new ServiceCall
+        {
+            Method = "WormholeJump",
+            Args = [new PyInt((int)end.BodyId)],
+            Session = session,
+            BoundObjectId = oid,
+            Cancellation = CancellationToken.None,
+        }));
+
+        Assert.Equal(oid, ((PyStr)answer.Items[0]).Value);
+        Assert.Single(rig.Sim.Heard.Skip(before).OfType<SimCommand>(), command => command.Code == SimCommands.Jump);
+        var polarization = Assert.IsType<PyList>(await service.CallAsync(new ServiceCall
+        {
+            Method = "GetWormholePolarization",
+            Args = [new PyInt((int)end.BodyId)],
+            Session = session,
+            Cancellation = CancellationToken.None,
+        }));
+        Assert.Equal(300, ((PyInt)polarization.Items[1]).Value);
     }
 
     [PgFact]

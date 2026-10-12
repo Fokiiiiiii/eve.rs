@@ -3358,6 +3358,34 @@ fn a_wormhole_end_the_host_places_takes_a_ship_through_to_its_far_end_and_places
 }
 
 #[test]
+fn a_warp_to_a_wormhole_end_under_the_minimum_warp_distance_is_refused_and_one_beyond_it_ends_within_jump_range() {
+    let mut scene = scene_by_a_gate();
+    let out = scene.ship(SESSION, NOON).unwrap().position;
+    // an end 50 km off is inside the 150 km minimum warp distance: refused, as the game refuses it
+    scene.place_wormhole(wormhole_placement(Vec3::new(out.x + 50_000.0, out.y, out.z), Vec3::ZERO, 5_000.0), NOON);
+    let near = scene.command(SESSION, Command::WarpTo { target_id: WORMHOLE_END, range: 0.0 }, NOON + seconds(1));
+    assert!(matches!(near.as_slice(), [Out::Refused { reason: "WARP_DISTANCE_TOO_CLOSE", .. }]), "{near:?}");
+    scene.remove_wormhole(WORMHOLE_END, NOON);
+
+    // an end 200,000 km off: the warp is made and ends within the jump range of the end, and the jump is accepted
+    scene.place_wormhole(wormhole_placement(Vec3::new(out.x + 2.0e11, out.y, out.z), Vec3::ZERO, 5_000.0), NOON);
+    let told = scene.command(SESSION, Command::WarpTo { target_id: WORMHOLE_END, range: 0.0 }, NOON + seconds(1));
+    assert_eq!(action_names(&told[0]), ["SetMaxSpeed", "WarpTo", "OnSpecialFX", "SetSpeedFraction"], "{told:?}");
+    let mut t = NOON + seconds(1);
+    while t < NOON + seconds(300) {
+        t += 2_500_000;
+        scene.poll(t);
+    }
+    let ship = scene.ship(SESSION, t).unwrap().clone();
+    assert!(!matches!(ship.course, Course::Warp { .. }), "the warp is over: {:?}", ship.course);
+    let end = scene.system().body(WORMHOLE_END).unwrap();
+    let surface = crate::gate::surface_distance(end, ship.position, ship.spec.radius);
+    assert!(surface <= crate::gate::JUMP_RANGE, "{surface} m off the wormhole's surface");
+    let jumped = scene.command(SESSION, jump(WORMHOLE_END, FAR_END), t + seconds(1));
+    assert!(matches!(jumped[1], Out::Jumping { .. }), "{jumped:?}");
+}
+
+#[test]
 fn a_wormhole_end_out_of_reach_refuses_the_jump_and_a_removed_one_is_not_found() {
     let mut scene = scene_by_a_gate();
     let out = scene.ship(SESSION, NOON).unwrap().position;

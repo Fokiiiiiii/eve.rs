@@ -213,10 +213,7 @@ public sealed class HomeStationHostTests
                 variable => $"hs_{suffix}_{variable[4..^7].ToLowerInvariant()}");
             var previous = SchemaVariables.Concat(["EVE_MARKET_SEED", "EVE_SIM"])
                 .ToDictionary(variable => variable, variable => Environment.GetEnvironmentVariable(variable));
-            var connectionBuilder = new NpgsqlConnectionStringBuilder(Eve.Data.PgConnection.ForTest(pgUrl))
-            {
-                Pooling = false,
-            };
+            var connectionBuilder = new NpgsqlConnectionStringBuilder(Eve.Data.PgConnection.ForTest(pgUrl));
             var source = new NpgsqlDataSourceBuilder(connectionBuilder.ConnectionString).Build();
             Func<Task>? shutdown = null;
 

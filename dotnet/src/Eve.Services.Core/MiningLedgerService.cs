@@ -86,7 +86,7 @@ public sealed class CorpMiningLedgerService(Eve.ReadSide.ReadSide reads, Func<lo
     {
         PyInt number => Positive(number.Value),
         PyLong number => Positive(number.Value),
-        PyStr text => long.TryParse(text.Value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed) ? Positive(parsed) : 0,
+        var text when Eve.Macho.JsSemantics.StringValue(text) is not null => long.TryParse(Eve.Macho.JsSemantics.StringValue(text)!, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed) ? Positive(parsed) : 0,
         _ => 0,
     };
 }

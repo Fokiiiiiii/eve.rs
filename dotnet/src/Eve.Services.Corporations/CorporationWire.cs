@@ -149,7 +149,7 @@ public static PyValue MemberTrackingCRowset(IEnumerable<PyValue[]> rows) =>
       {
           if (record is PyDict dictionary)
               foreach (var entry in dictionary.Entries)
-                  if (entry.Key is PyStr name && name.Value == key)
+                  if (Eve.Macho.JsSemantics.StringValue(entry.Key) == key)
                       return entry.Value;
           return PyNone.Instance;
       }
@@ -191,8 +191,7 @@ public static PyValue MemberTrackingCRowset(IEnumerable<PyValue[]> rows) =>
 
   private static string KillmailText(PyValue value) => value switch
   {
-      PyStr text => text.Value,
-      PyWString text => text.Value,
+      var text when Eve.Macho.JsSemantics.StringValue(text) is not null => Eve.Macho.JsSemantics.StringValue(text)!,
       _ => ""
   };
 
@@ -457,8 +456,7 @@ public sealed partial class VoteManagerService(Eve.Corporations.CorporationStore
     };
     private static string Text(PyValue value) => value switch
     {
-        PyStr text => text.Value,
-        PyWString text => text.Value,
+        var text when Eve.Macho.JsSemantics.StringValue(text) is not null => Eve.Macho.JsSemantics.StringValue(text)!,
         _ => throw new Eve.Corporations.CorporationError("CORPORATION_INVALID_VOTE_ARGUMENT"),
     };
     private static long CurrentCorporation(Eve.Services.ClientSession session) =>

@@ -443,8 +443,7 @@ public sealed partial class FleetStore
         {
             var text = Field(names) switch
             {
-                PyStr narrow => narrow.Value,
-                PyWString wide => wide.Value,
+                var narrow when Eve.Macho.JsSemantics.StringValue(narrow) is not null => Eve.Macho.JsSemantics.StringValue(narrow)!,
                 _ => ""
             };
             return text.Length > maximumLength ? text[..maximumLength] : text;
@@ -487,8 +486,7 @@ public sealed partial class FleetStore
                 PyInt number => number.Value != 0,
                 PyLong number => number.Value != 0,
                 PyReal number => number.Value != 0,
-                PyStr text => text.Value.Length > 0,
-                PyWString text => text.Value.Length > 0,
+                var text when Eve.Macho.JsSemantics.StringValue(text) is not null => Eve.Macho.JsSemantics.StringValue(text)!.Length > 0,
                 _ => fallback
             };
         }
@@ -572,8 +570,7 @@ public sealed partial class FleetStore
         {
             var key = entry.Key switch
             {
-                PyStr text => text.Value,
-                PyWString text => text.Value,
+                var text when Eve.Macho.JsSemantics.StringValue(text) is not null => Eve.Macho.JsSemantics.StringValue(text)!,
                 _ => null
             };
             if (key is not null && names.Contains(key, StringComparer.OrdinalIgnoreCase))
@@ -590,7 +587,7 @@ public sealed partial class FleetStore
     {
         switch (value)
         {
-            case PyStr narrow: text = narrow.Value; return true;
+            case var narrow when Eve.Macho.JsSemantics.StringValue(narrow) is { } plain: text = plain; return true;
             case PyWString wide: text = wide.Value; return true;
             default: text = ""; return false;
         }

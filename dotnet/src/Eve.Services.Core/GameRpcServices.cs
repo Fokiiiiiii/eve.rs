@@ -320,8 +320,7 @@ public sealed partial class SharedSettingsMgrService(
         PyInt integer => JsonValue.Create(integer.Value),
         PyLong integer => JsonValue.Create(integer.Value),
         PyReal number when double.IsFinite(number.Value) => JsonValue.Create(number.Value),
-        PyStr text => JsonValue.Create(text.Value),
-        PyWString text => JsonValue.Create(text.Value),
+        var text when Eve.Macho.JsSemantics.StringValue(text) is not null => JsonValue.Create(Eve.Macho.JsSemantics.StringValue(text)!),
         PyBytes bytes => JsonValue.Create(Encoding.UTF8.GetString(bytes.Value.Span)),
         PyTuple tuple => Array(tuple.Items),
         PyList list => Array(list.Items),
@@ -367,8 +366,7 @@ public sealed partial class SharedSettingsMgrService(
 
     private static string Text(PyValue? value) => value switch
     {
-        PyStr text => text.Value,
-        PyWString text => text.Value,
+        var text when Eve.Macho.JsSemantics.StringValue(text) is not null => Eve.Macho.JsSemantics.StringValue(text)!,
         PyBytes bytes => Encoding.UTF8.GetString(bytes.Value.Span),
         PyToken token => token.Value,
         PyInt integer => integer.Value.ToString(CultureInfo.InvariantCulture),
@@ -703,8 +701,7 @@ public sealed partial class WarStatisticMgrService(
 
     private static string Text(PyValue value) => value switch
     {
-        PyStr text => text.Value,
-        PyWString text => text.Value,
+        var text when Eve.Macho.JsSemantics.StringValue(text) is not null => Eve.Macho.JsSemantics.StringValue(text)!,
         PyBytes bytes => Encoding.UTF8.GetString(bytes.Value.Span),
         PyInt integer => integer.Value.ToString(CultureInfo.InvariantCulture),
         PyLong integer => integer.Value.ToString(CultureInfo.InvariantCulture),

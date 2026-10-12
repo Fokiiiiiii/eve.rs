@@ -12,7 +12,7 @@
 - Run relevant focused tests, then wider checks as appropriate. Database tests need `EVE_PG_URL`; skipped tests do not count as passed.
 - Reference commands: `README.md` ("Checks"), `tools/dev/run-eve-live.sh`, `tools/dev/run-evejs-live.sh`.
 - Use the pinned SDE in `sde/lock.json`; do not commit downloaded SDE data. Use `tools/spec-extract` and the separate `Fokiiiiiii/eve-logic` repository to inspect V24.01 client contracts.
-- Report in Japanese: verified findings, changes, tests actually run, remaining gaps and unverified behavior.
+- Report in Japanese: verified findings, changes, tests actually run, remaining gaps and behaviour that was not checked.
 
 ## MCP Tool Policy (mandatory)
 - Code search, reading, symbol lookup and editing go through MCP tools only: `codebase-memory-mcp` first (`search_graph` -> `trace_path` -> `get_code_snippet` -> `query_graph`; CLI form `codebase-memory-mcp cli <tool> '<json>'` if the server is not connected), then Serena (`find_symbol`, `find_referencing_symbols`, `get_symbols_overview`, `search_for_pattern`, `find_file`, `list_dir`, `read_file`, `replace_symbol_body`, `insert_before_symbol`/`insert_after_symbol`, `replace_content`, `replace_in_files`, `create_text_file`). Serena covers C# and Rust.

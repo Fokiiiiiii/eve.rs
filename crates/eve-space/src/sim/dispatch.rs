@@ -452,7 +452,8 @@ impl Sim {
         };
         let was_controlled = scene.controlled_structure_id(session_id).is_some();
         let previous_controller = active.then(|| scene.controller_of_structure(structure_id)).flatten();
-        let outs = scene.control_structure(session_id, solar_system_id, structure_id, character_id, active, now);
+        let outs =
+            scene.control_structure(session_id, solar_system_id, structure_id, character_id, active, now);
         if !outs.iter().any(|out| {
             matches!(
                 out,
@@ -1062,7 +1063,9 @@ impl Sim {
             }
             Message::RemoveStructure { structure_id } => {
                 let target = self.scenes.iter().find_map(|(system, scene)| {
-                    scene.structure_index(structure_id).map(|_| (*system, scene.controller_of_structure(structure_id)))
+                    scene
+                        .structure_index(structure_id)
+                        .map(|_| (*system, scene.controller_of_structure(structure_id)))
                 });
                 let Some((system, controller)) = target else { return Ok(Vec::new()) };
                 let told = self

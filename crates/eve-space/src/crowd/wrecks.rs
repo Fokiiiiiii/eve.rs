@@ -37,10 +37,7 @@ impl Scene {
 
     /// The bound views that can see a wreck's place.
     pub(super) fn watchers_of(&self, wreck: &Wreck) -> Vec<SessionId> {
-        self.view_sessions()
-            .into_iter()
-            .filter(|observer| self.sees_place_of(*observer, wreck))
-            .collect()
+        self.view_sessions().into_iter().filter(|observer| self.sees_place_of(*observer, wreck)).collect()
     }
 
     /// A pilot jettisons cargo into a can (the host made the can, an item of its own): it comes into the scene `distance` metres ahead of the ship (at
@@ -145,12 +142,7 @@ impl Scene {
             .into_iter()
             .filter(|observer| self.sees_wreck(*observer, wreck_id))
             .collect();
-        let viewers: Vec<_> = self
-            .pilots
-            .keys()
-            .chain(self.controlled_structures.keys())
-            .copied()
-            .collect();
+        let viewers: Vec<_> = self.pilots.keys().chain(self.controlled_structures.keys()).copied().collect();
         for viewer in viewers {
             self.set_sees_wreck(viewer, wreck_id, false);
         }
@@ -216,14 +208,14 @@ impl Scene {
         }
         let mut out = Vec::new();
         for observer in self.view_sessions() {
-            let seen: std::collections::BTreeSet<i64> = self
+            let seen: std::collections::BTreeSet<i64> =
+                self.wrecks.keys().copied().filter(|id| self.sees_wreck(observer, *id)).collect();
+            let should: std::collections::BTreeSet<i64> = self
                 .wrecks
-                .keys()
-                .copied()
-                .filter(|id| self.sees_wreck(observer, *id))
+                .values()
+                .filter(|wreck| self.sees_place_of(observer, wreck))
+                .map(|wreck| wreck.id)
                 .collect();
-            let should: std::collections::BTreeSet<i64> =
-                self.wrecks.values().filter(|wreck| self.sees_place_of(observer, wreck)).map(|wreck| wreck.id).collect();
             let gone: Vec<i64> = seen.difference(&should).copied().collect();
             let coming: Vec<i64> = should.difference(&seen).copied().collect();
             if !gone.is_empty() {

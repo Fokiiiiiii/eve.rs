@@ -1514,7 +1514,6 @@ fn every_invalid_frame_is_refused_for_the_stated_reason() {
     }
 }
 
-
 #[test]
 fn control_structure_frames_validate_ids_and_boolean() {
     let active = Message::ControlStructure {

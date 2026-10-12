@@ -355,7 +355,6 @@ fn a_wreck_the_host_made_is_put_in_space_with_its_id_for_whoever_can_see_it_and_
     assert_eq!(none, []);
 }
 
-
 #[test]
 fn the_remove_wreck_wire_also_removes_moon_asteroids() {
     let mut sim = undocked();
@@ -382,14 +381,14 @@ fn the_remove_wreck_wire_also_removes_moon_asteroids() {
         .unwrap();
     assert_eq!(names(&placed), ["DoDestinyUpdate"]);
 
-    let removed = sim
-        .handle(Message::RemoveWreck { wreck_id: asteroid_id, effect: 2 }, NOON + 2 * SECOND)
-        .unwrap();
+    let removed =
+        sim.handle(Message::RemoveWreck { wreck_id: asteroid_id, effect: 2 }, NOON + 2 * SECOND).unwrap();
     assert_eq!(names(&removed), ["DoDestinyUpdate"]);
-    assert!(sim
-        .handle(Message::RemoveWreck { wreck_id: asteroid_id, effect: 2 }, NOON + 3 * SECOND)
-        .unwrap()
-        .is_empty());
+    assert!(
+        sim.handle(Message::RemoveWreck { wreck_id: asteroid_id, effect: 2 }, NOON + 3 * SECOND)
+            .unwrap()
+            .is_empty()
+    );
     assert_eq!(
         sim.handle(
             Message::Command {
@@ -1145,7 +1144,11 @@ fn structure_observer_health_case(from_space: bool) {
             Condition { damage: 0.3, armor_damage: 0.2, shield_charge: 0.8, charge: 1.0 },
             NOON,
         );
-        Some(simulation.handle(Message::Command { session_id: SESSION, command: 19, args: vec![] }, NOON).unwrap())
+        Some(
+            simulation
+                .handle(Message::Command { session_id: SESSION, command: 19, args: vec![] }, NOON)
+                .unwrap(),
+        )
     } else {
         None
     };
@@ -1153,48 +1156,84 @@ fn structure_observer_health_case(from_space: bool) {
     let placement = crate::scene::tests::structure_placement(&base, NOON);
     let structure_id = placement.structure_id;
     simulation.handle(Message::PlaceStructure(Box::new(placement)), NOON).unwrap();
-    simulation.scenes.get_mut(&SYSTEM).unwrap().structure_health.get_mut(&structure_id).unwrap()
-        .apply(NOON, [1_250.0, 0.0, 0.0, 0.0]).unwrap();
-    simulation.handle(Message::ControlStructure {
-        session_id: SESSION, solar_system_id: SYSTEM, structure_id,
-        character_id: spec().character_id, active: true,
-    }, NOON).unwrap();
+    simulation
+        .scenes
+        .get_mut(&SYSTEM)
+        .unwrap()
+        .structure_health
+        .get_mut(&structure_id)
+        .unwrap()
+        .apply(NOON, [1_250.0, 0.0, 0.0, 0.0])
+        .unwrap();
+    simulation
+        .handle(
+            Message::ControlStructure {
+                session_id: SESSION,
+                solar_system_id: SYSTEM,
+                structure_id,
+                character_id: spec().character_id,
+                active: true,
+            },
+            NOON,
+        )
+        .unwrap();
 
     let expected = vec![Message::Condition {
-        session_id: SESSION, command: 19,
+        session_id: SESSION,
+        command: 19,
         condition: Condition { damage: 0.0, armor_damage: 0.5, shield_charge: 0.0, charge: 1.0 },
     }];
-    let observed = simulation.handle(Message::Command {
-        session_id: SESSION, command: 19, args: vec![],
-    }, NOON).unwrap();
+    let observed =
+        simulation.handle(Message::Command { session_id: SESSION, command: 19, args: vec![] }, NOON).unwrap();
     assert_eq!(observed, expected);
     if let Some(old_health) = &old_health {
-        assert_ne!(&observed, old_health, "the structure HUD must not inherit the previous physical ship's health");
+        assert_ne!(
+            &observed, old_health,
+            "the structure HUD must not inherit the previous physical ship's health"
+        );
         assert!(simulation.scenes[&SYSTEM].unpiloted.contains_key(&spec().ship_id));
     }
 
-    simulation.scenes.get_mut(&SYSTEM).unwrap().structure_health.get_mut(&structure_id).unwrap()
-        .apply(NOON, [125.0, 0.0, 0.0, 0.0]).unwrap();
-    assert_eq!(simulation.handle(Message::Command {
-        session_id: SESSION, command: 19, args: vec![],
-    }, NOON).unwrap(), [Message::Condition {
-        session_id: SESSION, command: 19,
-        condition: Condition { damage: 0.0, armor_damage: 0.75, shield_charge: 0.0, charge: 1.0 },
-    }], "subsequent damage is read from the same structure health owner");
+    simulation
+        .scenes
+        .get_mut(&SYSTEM)
+        .unwrap()
+        .structure_health
+        .get_mut(&structure_id)
+        .unwrap()
+        .apply(NOON, [125.0, 0.0, 0.0, 0.0])
+        .unwrap();
+    assert_eq!(
+        simulation.handle(Message::Command { session_id: SESSION, command: 19, args: vec![] }, NOON).unwrap(),
+        [Message::Condition {
+            session_id: SESSION,
+            command: 19,
+            condition: Condition { damage: 0.0, armor_damage: 0.75, shield_charge: 0.0, charge: 1.0 },
+        }],
+        "subsequent damage is read from the same structure health owner"
+    );
 
-    simulation.handle(Message::ControlStructure {
-        session_id: SESSION, solar_system_id: SYSTEM, structure_id: 0,
-        character_id: 0, active: false,
-    }, NOON).unwrap();
-    let released = simulation.handle(Message::Command {
-        session_id: SESSION, command: 19, args: vec![],
-    }, NOON).unwrap();
+    simulation
+        .handle(
+            Message::ControlStructure {
+                session_id: SESSION,
+                solar_system_id: SYSTEM,
+                structure_id: 0,
+                character_id: 0,
+                active: false,
+            },
+            NOON,
+        )
+        .unwrap();
+    let released =
+        simulation.handle(Message::Command { session_id: SESSION, command: 19, args: vec![] }, NOON).unwrap();
     if let Some(old_health) = old_health {
         assert_eq!(released, old_health, "release resumes the unchanged physical ship's health");
     } else {
-        assert_eq!(released, [Message::Refused {
-            session_id: SESSION, command: 19, reason: "NO_SHIP_IN_SPACE".into(),
-        }]);
+        assert_eq!(
+            released,
+            [Message::Refused { session_id: SESSION, command: 19, reason: "NO_SHIP_IN_SPACE".into() }]
+        );
     }
 }
 
@@ -1213,11 +1252,8 @@ fn structure_deposit_sim() -> (Sim, crate::link::StructurePlacement) {
     let scene = &simulation.scenes[&SYSTEM];
     let ship = &scene.pilots[&SESSION].ship;
     let mut placement = crate::scene::tests::structure_placement(scene, NOON);
-    placement.position = [
-        ship.position.x + placement.radius + ship.spec.radius + 2_500.0,
-        ship.position.y,
-        ship.position.z,
-    ];
+    placement.position =
+        [ship.position.x + placement.radius + ship.spec.radius + 2_500.0, ship.position.y, ship.position.z];
     simulation.handle(Message::PlaceStructure(Box::new(placement.clone())), NOON).unwrap();
     (simulation, placement)
 }
@@ -1227,46 +1263,101 @@ fn a_destroyed_retained_hull_releases_into_a_real_capsule_respawn_context() {
     let (mut simulation, placement) = structure_deposit_sim();
     let old_ship_id = spec().ship_id;
     simulation.handle(Message::Bind { session_id: SESSION }, NOON).unwrap();
-    simulation.handle(Message::ControlStructure {
-        session_id: SESSION, solar_system_id: SYSTEM, structure_id: placement.structure_id,
-        character_id: spec().character_id, active: true,
-    }, NOON).unwrap();
-    simulation.handle(Message::Destroy { ship_id: old_ship_id, credit: Default::default() }, NOON + SECOND).unwrap();
+    simulation
+        .handle(
+            Message::ControlStructure {
+                session_id: SESSION,
+                solar_system_id: SYSTEM,
+                structure_id: placement.structure_id,
+                character_id: spec().character_id,
+                active: true,
+            },
+            NOON,
+        )
+        .unwrap();
+    simulation
+        .handle(Message::Destroy { ship_id: old_ship_id, credit: Default::default() }, NOON + SECOND)
+        .unwrap();
     assert_eq!(simulation.scenes[&SYSTEM].controlled_structure_id(SESSION), Some(placement.structure_id));
-    let released = simulation.handle(Message::ControlStructure {
-        session_id: SESSION, solar_system_id: SYSTEM, structure_id: 0, character_id: 0, active: false,
-    }, NOON + 2 * SECOND).unwrap();
-    assert!(released.iter().any(|message| matches!(message,
-        Message::Accepted { session_id: SESSION, command: crate::link::COMMAND_STRUCTURE_CONTROL, .. })));
+    let released = simulation
+        .handle(
+            Message::ControlStructure {
+                session_id: SESSION,
+                solar_system_id: SYSTEM,
+                structure_id: 0,
+                character_id: 0,
+                active: false,
+            },
+            NOON + 2 * SECOND,
+        )
+        .unwrap();
+    assert!(released.iter().any(|message| matches!(
+        message,
+        Message::Accepted { session_id: SESSION, command: crate::link::COMMAND_STRUCTURE_CONTROL, .. }
+    )));
     // A refused/undelivered capsule spawn restores control before the client retries.
-    simulation.handle(Message::ControlStructure {
-        session_id: SESSION, solar_system_id: SYSTEM, structure_id: placement.structure_id,
-        character_id: spec().character_id, active: true,
-    }, NOON + 2 * SECOND).unwrap();
-    simulation.handle(Message::ControlStructure {
-        session_id: SESSION, solar_system_id: SYSTEM, structure_id: 0, character_id: 0, active: false,
-    }, NOON + 2 * SECOND).unwrap();
+    simulation
+        .handle(
+            Message::ControlStructure {
+                session_id: SESSION,
+                solar_system_id: SYSTEM,
+                structure_id: placement.structure_id,
+                character_id: spec().character_id,
+                active: true,
+            },
+            NOON + 2 * SECOND,
+        )
+        .unwrap();
+    simulation
+        .handle(
+            Message::ControlStructure {
+                session_id: SESSION,
+                solar_system_id: SYSTEM,
+                structure_id: 0,
+                character_id: 0,
+                active: false,
+            },
+            NOON + 2 * SECOND,
+        )
+        .unwrap();
     let mut capsule = spec();
     capsule.ship_id = old_ship_id + 1000;
     capsule.type_id = 670;
     capsule.group_id = 29;
     let capsule_id = capsule.ship_id;
-    let respawned = simulation.handle(Message::Respawn {
-        session_id: SESSION, ship: Box::new(capsule),
-        position: [12300.0, 45600.0, 78900.0], direction: [0.0, 1.0, 0.0],
-    }, NOON + 3 * SECOND).unwrap();
-    assert!(respawned.iter().any(|message| matches!(message,
-        Message::EnterReply { session_id: SESSION, outcome: Ok(..) })), "{respawned:?}");
+    let respawned = simulation
+        .handle(
+            Message::Respawn {
+                session_id: SESSION,
+                ship: Box::new(capsule),
+                position: [12300.0, 45600.0, 78900.0],
+                direction: [0.0, 1.0, 0.0],
+            },
+            NOON + 3 * SECOND,
+        )
+        .unwrap();
+    assert!(
+        respawned
+            .iter()
+            .any(|message| matches!(message, Message::EnterReply { session_id: SESSION, outcome: Ok(..) })),
+        "{respawned:?}"
+    );
     assert_eq!(simulation.scenes[&SYSTEM].pilots[&SESSION].ship.spec.ship_id, capsule_id);
     assert!(!simulation.scenes[&SYSTEM].controlled_structures.contains_key(&SESSION));
     assert_eq!(simulation.sessions.get(&SESSION), Some(&SYSTEM));
 }
 
 fn structure_deposit_query(simulation: &mut Sim, structure_id: i64, ship_id: i64) -> Vec<Message> {
-    simulation.handle(Message::Command {
-        session_id: SESSION, command: crate::link::COMMAND_MEASURE,
-        args: vec![structure_id as f64, ship_id as f64],
-    }, NOON).unwrap()
+    simulation
+        .handle(
+            Message::Command {
+                session_id: SESSION,
+                command: crate::link::COMMAND_MEASURE,
+                args: vec![structure_id as f64, ship_id as f64],
+            },
+            NOON,
+        )
+        .unwrap()
 }
 
 #[test]
@@ -1274,31 +1365,46 @@ fn structure_deposit_measure_uses_actual_surfaces_and_preserves_the_one_argument
     let (mut simulation, mut placement) = structure_deposit_sim();
     let structure_id = placement.structure_id;
     let ship_id = spec().ship_id;
-    assert_eq!(structure_deposit_query(&mut simulation, structure_id, ship_id),
-        [Message::Measured { session_id: SESSION, command: 20, distance: Some(2_500.0) }]);
+    assert_eq!(
+        structure_deposit_query(&mut simulation, structure_id, ship_id),
+        [Message::Measured { session_id: SESSION, command: 20, distance: Some(2_500.0) }]
+    );
 
     simulation.scenes.get_mut(&SYSTEM).unwrap().pilots.get_mut(&SESSION).unwrap().ship.spec.radius += 100.0;
-    assert_eq!(structure_deposit_query(&mut simulation, structure_id, ship_id),
-        [Message::Measured { session_id: SESSION, command: 20, distance: Some(2_400.0) }]);
+    assert_eq!(
+        structure_deposit_query(&mut simulation, structure_id, ship_id),
+        [Message::Measured { session_id: SESSION, command: 20, distance: Some(2_400.0) }]
+    );
 
     simulation.handle(Message::RemoveStructure { structure_id }, NOON).unwrap();
     placement.position[0] += 1_000.0;
     placement.radius += 500.0;
     simulation.handle(Message::PlaceStructure(Box::new(placement)), NOON).unwrap();
-    assert_eq!(structure_deposit_query(&mut simulation, structure_id, ship_id),
-        [Message::Measured { session_id: SESSION, command: 20, distance: Some(2_900.0) }]);
+    assert_eq!(
+        structure_deposit_query(&mut simulation, structure_id, ship_id),
+        [Message::Measured { session_id: SESSION, command: 20, distance: Some(2_900.0) }]
+    );
 
     let can = 1_050_000_000_002;
     simulation.handle(can_placement(can), NOON).unwrap();
-    let old_measure = simulation.handle(Message::Command {
-        session_id: SESSION, command: 20, args: vec![can as f64],
-    }, NOON).unwrap();
-    assert!(matches!(old_measure.as_slice(),
+    let old_measure = simulation
+        .handle(Message::Command { session_id: SESSION, command: 20, args: vec![can as f64] }, NOON)
+        .unwrap();
+    assert!(
+        matches!(old_measure.as_slice(),
         [Message::Measured { session_id: SESSION, command: 20, distance: Some(distance) }]
-            if (*distance - 261.0).abs() < 1e-3), "{old_measure:?}");
-    assert_eq!(simulation.handle(Message::Command {
-        session_id: SESSION, command: 20, args: vec![structure_id as f64],
-    }, NOON).unwrap(), [Message::Measured { session_id: SESSION, command: 20, distance: None }]);
+            if (*distance - 261.0).abs() < 1e-3),
+        "{old_measure:?}"
+    );
+    assert_eq!(
+        simulation
+            .handle(
+                Message::Command { session_id: SESSION, command: 20, args: vec![structure_id as f64] },
+                NOON
+            )
+            .unwrap(),
+        [Message::Measured { session_id: SESSION, command: 20, distance: None }]
+    );
 }
 
 #[test]
@@ -1306,12 +1412,17 @@ fn structure_deposit_measure_refuses_missing_nonlocal_cloaked_warping_and_observ
     let (mut simulation, placement) = structure_deposit_sim();
     let structure_id = placement.structure_id;
     let ship_id = spec().ship_id;
-    let refusal = |reason: &str| vec![Message::Refused {
-        session_id: SESSION, command: 20, reason: reason.into(),
-    }];
-    assert_eq!(structure_deposit_query(&mut simulation, structure_id + 1, ship_id), refusal("STRUCTURE_NOT_FOUND"));
+    let refusal =
+        |reason: &str| vec![Message::Refused { session_id: SESSION, command: 20, reason: reason.into() }];
+    assert_eq!(
+        structure_deposit_query(&mut simulation, structure_id + 1, ship_id),
+        refusal("STRUCTURE_NOT_FOUND")
+    );
     assert_eq!(structure_deposit_query(&mut simulation, STATION, ship_id), refusal("STRUCTURE_NOT_FOUND"));
-    assert_eq!(structure_deposit_query(&mut simulation, structure_id, ship_id + 1), refusal("NOT_LOCAL_SHIP"));
+    assert_eq!(
+        structure_deposit_query(&mut simulation, structure_id, ship_id + 1),
+        refusal("NOT_LOCAL_SHIP")
+    );
 
     for cloak in [crate::visibility::CloakState::Cloaking, crate::visibility::CloakState::Cloaked] {
         simulation.scenes.get_mut(&SYSTEM).unwrap().pilots.get_mut(&SESSION).unwrap().cloak = cloak;
@@ -1334,21 +1445,35 @@ fn structure_deposit_measure_refuses_missing_nonlocal_cloaked_warping_and_observ
     assert_eq!(structure_deposit_query(&mut simulation, structure_id, ship_id), refusal("IN_WARP"));
     simulation.scenes.get_mut(&SYSTEM).unwrap().pilots.get_mut(&SESSION).unwrap().flight = None;
 
-    simulation.handle(Message::ControlStructure {
-        session_id: SESSION, solar_system_id: SYSTEM, structure_id,
-        character_id: spec().character_id, active: true,
-    }, NOON).unwrap();
+    simulation
+        .handle(
+            Message::ControlStructure {
+                session_id: SESSION,
+                solar_system_id: SYSTEM,
+                structure_id,
+                character_id: spec().character_id,
+                active: true,
+            },
+            NOON,
+        )
+        .unwrap();
     assert_eq!(structure_deposit_query(&mut simulation, structure_id, ship_id), refusal("NO_SHIP_IN_SPACE"));
 
     for args in [
-        vec![0.0, ship_id as f64], vec![-1.0, ship_id as f64],
-        vec![structure_id as f64, 0.0], vec![structure_id as f64, -1.0],
-        vec![1.5, ship_id as f64], vec![f64::NAN, ship_id as f64],
-        vec![structure_id as f64, f64::INFINITY], vec![structure_id as f64, 9_007_199_254_740_992.0],
+        vec![0.0, ship_id as f64],
+        vec![-1.0, ship_id as f64],
+        vec![structure_id as f64, 0.0],
+        vec![structure_id as f64, -1.0],
+        vec![1.5, ship_id as f64],
+        vec![f64::NAN, ship_id as f64],
+        vec![structure_id as f64, f64::INFINITY],
+        vec![structure_id as f64, 9_007_199_254_740_992.0],
         vec![structure_id as f64, ship_id as f64, 1.0],
     ] {
-        assert_eq!(simulation.handle(Message::Command { session_id: SESSION, command: 20, args }, NOON).unwrap(),
-            refusal("UNKNOWN_COMMAND"));
+        assert_eq!(
+            simulation.handle(Message::Command { session_id: SESSION, command: 20, args }, NOON).unwrap(),
+            refusal("UNKNOWN_COMMAND")
+        );
     }
 }
 
@@ -1364,78 +1489,142 @@ fn docked_structure_control_dispatches_bind_updates_detach_and_leave() {
     assert!(simulation.scenes.contains_key(&SYSTEM), "a structures-only scene is retained");
 
     let observer = 71;
-    let missing = simulation.handle(Message::ControlStructure {
-        session_id: observer, solar_system_id: SYSTEM, structure_id: structure_id + 1,
-        character_id: spec().character_id, active: true,
-    }, NOON).unwrap();
+    let missing = simulation
+        .handle(
+            Message::ControlStructure {
+                session_id: observer,
+                solar_system_id: SYSTEM,
+                structure_id: structure_id + 1,
+                character_id: spec().character_id,
+                active: true,
+            },
+            NOON,
+        )
+        .unwrap();
     assert!(missing.iter().any(|message| matches!(message,
         Message::Refused { session_id, command, reason }
             if *session_id == observer && *command == crate::link::COMMAND_STRUCTURE_CONTROL && reason.as_str() == "STRUCTURE_NOT_FOUND")));
 
     simulation.handle(enter(SESSION, STATION, SYSTEM), NOON + SECOND).unwrap();
     simulation.handle(Message::Bind { session_id: SESSION }, NOON + SECOND).unwrap();
-    let owner_attached = simulation.handle(Message::ControlStructure {
-        session_id: SESSION, solar_system_id: SYSTEM, structure_id,
-        character_id: spec().character_id, active: true,
-    }, NOON + 2 * SECOND).unwrap();
+    let owner_attached = simulation
+        .handle(
+            Message::ControlStructure {
+                session_id: SESSION,
+                solar_system_id: SYSTEM,
+                structure_id,
+                character_id: spec().character_id,
+                active: true,
+            },
+            NOON + 2 * SECOND,
+        )
+        .unwrap();
     assert!(owner_attached.iter().any(|message| matches!(message,
         Message::Accepted { session_id, command, .. }
             if *session_id == SESSION && *command == crate::link::COMMAND_STRUCTURE_CONTROL)));
     assert!(!simulation.scenes[&SYSTEM].pilots.contains_key(&SESSION));
     assert!(simulation.scenes[&SYSTEM].unpiloted.contains_key(&spec().ship_id));
 
-    let attached = simulation.handle(Message::ControlStructure {
-        session_id: observer, solar_system_id: SYSTEM, structure_id,
-        character_id: 9002, active: true,
-    }, NOON + 3 * SECOND).unwrap();
+    let attached = simulation
+        .handle(
+            Message::ControlStructure {
+                session_id: observer,
+                solar_system_id: SYSTEM,
+                structure_id,
+                character_id: 9002,
+                active: true,
+            },
+            NOON + 3 * SECOND,
+        )
+        .unwrap();
     assert!(attached.iter().any(|message| matches!(message,
         Message::Accepted { session_id, command, .. }
             if *session_id == observer && *command == crate::link::COMMAND_STRUCTURE_CONTROL)));
     assert_eq!(simulation.sessions.get(&observer), Some(&SYSTEM));
-    assert_eq!(simulation.sessions.get(&SESSION), Some(&SYSTEM), "transferring control restores the previous pilot mapping");
+    assert_eq!(
+        simulation.sessions.get(&SESSION),
+        Some(&SYSTEM),
+        "transferring control restores the previous pilot mapping"
+    );
     assert!(simulation.scenes[&SYSTEM].pilots.contains_key(&SESSION));
     assert!(!simulation.scenes[&SYSTEM].pilots.contains_key(&observer));
 
     let bound = simulation.handle(Message::Bind { session_id: observer }, NOON + 3 * SECOND).unwrap();
     assert!(names(&bound).iter().any(|name| name == "DoDestinyUpdate"));
-    let snapshot = simulation.handle(Message::UpdateState { session_id: observer }, NOON + 3 * SECOND).unwrap();
+    let snapshot =
+        simulation.handle(Message::UpdateState { session_id: observer }, NOON + 3 * SECOND).unwrap();
     assert!(names(&snapshot).iter().any(|name| name == "DoDestinyUpdate"));
-    let updated = simulation.handle(Message::SetStructureState {
-        solar_system_id: SYSTEM, structure_id, status: changed_status,
-    }, NOON + 3 * SECOND).unwrap();
+    let updated = simulation
+        .handle(
+            Message::SetStructureState { solar_system_id: SYSTEM, structure_id, status: changed_status },
+            NOON + 3 * SECOND,
+        )
+        .unwrap();
     assert!(names(&updated).iter().any(|name| name == "DoDestinyUpdate"));
 
-    let detached = simulation.handle(Message::ControlStructure {
-        session_id: observer, solar_system_id: SYSTEM, structure_id: 0,
-        character_id: 0, active: false,
-    }, NOON + 4 * SECOND).unwrap();
+    let detached = simulation
+        .handle(
+            Message::ControlStructure {
+                session_id: observer,
+                solar_system_id: SYSTEM,
+                structure_id: 0,
+                character_id: 0,
+                active: false,
+            },
+            NOON + 4 * SECOND,
+        )
+        .unwrap();
     assert!(detached.iter().any(|message| matches!(message,
         Message::Accepted { session_id, command, .. }
             if *session_id == observer && *command == crate::link::COMMAND_STRUCTURE_CONTROL)));
     assert!(simulation.scenes[&SYSTEM].controlled_structure_id(observer).is_none());
     assert!(!simulation.sessions.contains_key(&observer));
-    let repeated_detach = simulation.handle(Message::ControlStructure {
-        session_id: observer, solar_system_id: SYSTEM, structure_id: 0,
-        character_id: 0, active: false,
-    }, NOON + 4 * SECOND).unwrap();
+    let repeated_detach = simulation
+        .handle(
+            Message::ControlStructure {
+                session_id: observer,
+                solar_system_id: SYSTEM,
+                structure_id: 0,
+                character_id: 0,
+                active: false,
+            },
+            NOON + 4 * SECOND,
+        )
+        .unwrap();
     assert!(repeated_detach.iter().any(|message| matches!(message,
         Message::Refused { session_id, command, reason }
             if *session_id == observer && *command == crate::link::COMMAND_STRUCTURE_CONTROL && reason.as_str() == "CONTROL_STRUCTURE_NOT_ACTIVE")));
 
-    simulation.handle(Message::ControlStructure {
-        session_id: observer, solar_system_id: SYSTEM, structure_id,
-        character_id: spec().character_id, active: true,
-    }, NOON + 5 * SECOND).unwrap();
+    simulation
+        .handle(
+            Message::ControlStructure {
+                session_id: observer,
+                solar_system_id: SYSTEM,
+                structure_id,
+                character_id: spec().character_id,
+                active: true,
+            },
+            NOON + 5 * SECOND,
+        )
+        .unwrap();
     simulation.handle(Message::Bind { session_id: observer }, NOON + 5 * SECOND).unwrap();
     simulation.handle(Message::Leave { session_id: observer, why: 0 }, NOON + 6 * SECOND).unwrap();
     assert!(simulation.scenes[&SYSTEM].controlled_structure_id(observer).is_none());
     assert!(!simulation.sessions.contains_key(&observer));
     assert!(simulation.scenes.contains_key(&SYSTEM), "leaving the observer does not discard the structure");
 
-    simulation.handle(Message::ControlStructure {
-        session_id: observer, solar_system_id: SYSTEM, structure_id,
-        character_id: spec().character_id, active: true,
-    }, NOON + 7 * SECOND).unwrap();
+    simulation
+        .handle(
+            Message::ControlStructure {
+                session_id: observer,
+                solar_system_id: SYSTEM,
+                structure_id,
+                character_id: spec().character_id,
+                active: true,
+            },
+            NOON + 7 * SECOND,
+        )
+        .unwrap();
     simulation.handle(Message::Bind { session_id: observer }, NOON + 7 * SECOND).unwrap();
     let removed = simulation.handle(Message::RemoveStructure { structure_id }, NOON + 8 * SECOND).unwrap();
     assert!(names(&removed).iter().any(|name| name == "DoDestinyUpdate"));
@@ -1447,7 +1636,9 @@ fn docked_structure_control_dispatches_bind_updates_detach_and_leave() {
 #[test]
 fn tether_protocol62_frames_round_trip_in_little_endian_with_standard_bool() {
     let policy = Message::TetherPolicy {
-        session_id: 7, blocked_for_ms: 1_500, lease_ms: 5_000,
+        session_id: 7,
+        blocked_for_ms: 1_500,
+        lease_ms: 5_000,
         candidates: vec![
             crate::link::TetherCandidate { structure_id: 1_040_000_000_001, range: 10_000.0 },
             crate::link::TetherCandidate { structure_id: 1_040_000_000_002, range: 20_000.0 },
@@ -1464,7 +1655,10 @@ fn tether_protocol62_frames_round_trip_in_little_endian_with_standard_bool() {
     assert_eq!(&frame[41..49], &10_000_f64.to_le_bytes());
     assert_eq!(Message::decode(&frame[4..]).unwrap(), policy);
     let changed = Message::TetherChanged {
-        session_id: 7, previous_structure_id: 0, structure_id: 1_040_000_000_001, repairing: true,
+        session_id: 7,
+        previous_structure_id: 0,
+        structure_id: 1_040_000_000_001,
+        repairing: true,
     };
     let frame = changed.encode();
     assert_eq!(u32::from_le_bytes(frame[..4].try_into().unwrap()), 26);
@@ -1480,12 +1674,23 @@ fn tether_protocol62_frames_round_trip_in_little_endian_with_standard_bool() {
 fn tether_codec_rejects_nonpositive_nonfinite_ranges_truncation_and_trailing_bytes() {
     for range in [0.0, -1.0, f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
         let frame = Message::TetherPolicy {
-            session_id: SESSION, blocked_for_ms: 0, lease_ms: 10,
+            session_id: SESSION,
+            blocked_for_ms: 0,
+            lease_ms: 10,
             candidates: vec![crate::link::TetherCandidate { structure_id: 1, range }],
-        }.encode();
-        assert!(matches!(Message::decode(&frame[4..]), Err(crate::link::DecodeError::BadValue("tether range"))));
+        }
+        .encode();
+        assert!(matches!(
+            Message::decode(&frame[4..]),
+            Err(crate::link::DecodeError::BadValue("tether range"))
+        ));
     }
-    let policy = Message::TetherPolicy { session_id: SESSION, blocked_for_ms: 0, lease_ms: 10, candidates: Vec::new() };
+    let policy = Message::TetherPolicy {
+        session_id: SESSION,
+        blocked_for_ms: 0,
+        lease_ms: 10,
+        candidates: Vec::new(),
+    };
     let frame = policy.encode();
     let mut malformed = frame[4..].to_vec();
     malformed[25..29].copy_from_slice(&u32::MAX.to_le_bytes());
@@ -1509,20 +1714,36 @@ fn tether_host_policy_dispatches_to_the_real_scene_and_transitions_return_to_the
     pilot.ship.course = crate::ship::Course::Stop;
     pilot.protected_until = NOON;
     let policy = Message::TetherPolicy {
-        session_id: SESSION, blocked_for_ms: 0, lease_ms: 1_000,
+        session_id: SESSION,
+        blocked_for_ms: 0,
+        lease_ms: 1_000,
         candidates: vec![crate::link::TetherCandidate { structure_id, range: 1_000.0 }],
     };
-    assert_eq!(simulation.handle(policy.clone(), NOON).unwrap(), [
-        Message::TetherChanged { session_id: SESSION, previous_structure_id: 0, structure_id, repairing: false },
-    ]);
+    assert_eq!(
+        simulation.handle(policy.clone(), NOON).unwrap(),
+        [Message::TetherChanged {
+            session_id: SESSION,
+            previous_structure_id: 0,
+            structure_id,
+            repairing: false
+        },]
+    );
     assert!(simulation.handle(policy, NOON).unwrap().is_empty());
     let expired = simulation.poll(NOON + SECOND);
     assert!(expired.iter().any(|message| matches!(message,
         Message::TetherChanged { session_id: SESSION, previous_structure_id, structure_id: 0, repairing: false }
         if *previous_structure_id == structure_id)));
-    let wrong_direction = simulation.handle(
-        Message::TetherChanged { session_id: SESSION, previous_structure_id: 0, structure_id, repairing: false }, NOON,
-    ).unwrap_err();
+    let wrong_direction = simulation
+        .handle(
+            Message::TetherChanged {
+                session_id: SESSION,
+                previous_structure_id: 0,
+                structure_id,
+                repairing: false,
+            },
+            NOON,
+        )
+        .unwrap_err();
     assert!(wrong_direction.0.contains("kind 81"));
     assert_eq!(crate::link::PROTOCOL_VERSION, 65);
 }

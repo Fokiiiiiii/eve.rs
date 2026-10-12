@@ -224,7 +224,6 @@ pub fn set_state(
     set_state_for_ego(stamp, system, ego.spec.ship_id, ships, wrecks, &std::collections::BTreeMap::new(), now)
 }
 
-
 /// Builds a ballpark state with an authoritative ego item id that is not a ship.
 pub(crate) fn set_state_for_ego(
     stamp: u32,

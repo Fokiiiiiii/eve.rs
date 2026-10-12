@@ -76,9 +76,9 @@ done
 
 EVE_DEV_AUTO_CREATE=1 EVE_HOST="$SOCK" EVE_SIM_SOCKET="$SIMSOCK" dotnet "$HERE/dotnet/src/Eve.Host/bin/Release/net10.0/eve-host.dll" >"$LOG/host.out" 2>&1 &
 host_pid=$!
-# a first start loads the static data catalogs: give a slow machine a minute
+# a first start loads the static data catalogs: give a slow machine a minute (EVE_LIVE_START_TENTHS: tenths of a second to wait, 600 by default)
 host_ready=0
-for _ in $(seq 1 600); do
+for _ in $(seq 1 "${EVE_LIVE_START_TENTHS:-600}"); do
   if [ -S "$SOCK" ]; then host_ready=1; break; fi
   kill -0 "$host_pid" 2>/dev/null || { echo "the host exited early:"; cat "$LOG/host.out"; exit 1; }
   sleep 0.1

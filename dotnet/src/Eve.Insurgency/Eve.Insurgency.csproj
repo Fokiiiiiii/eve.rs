@@ -7,6 +7,7 @@
   </ItemGroup>
   <ItemGroup>
     <EmbeddedResource Include="Migrations/*.sql" />
+    <EmbeddedResource Include="Data/warzone-systems.json" LogicalName="warzone-systems.json" />
   </ItemGroup>
   <ItemGroup>
     <InternalsVisibleTo Include="Eve.Insurgency.Tests" />

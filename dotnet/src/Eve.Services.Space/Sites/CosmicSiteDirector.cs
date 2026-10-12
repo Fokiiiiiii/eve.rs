@@ -138,6 +138,12 @@ public sealed class CosmicSiteDirector
                     && ended.TryGetProperty("owner", out var owner) && owner.TryGetInt32(out var system))
                 {
                     await FillAsync(context.Connection, context.Transaction, system);
+                    // a gas or ore site that ends takes its clouds and rocks out of the world (SpaceContainers)
+                    if (RemoveResources is { } remove && ended.TryGetProperty("instanceId", out var instance) && instance.TryGetInt64(out var siteId)
+                        && _templates.ById(id[DefinitionPrefix.Length..]) is { HasResources: true })
+                    {
+                        await remove(context.Connection, context.Transaction, system, siteId);
+                    }
                 }
             });
     }
@@ -262,11 +268,8 @@ public sealed class CosmicSiteDirector
         for (var index = 0; index < plan.Count; index++)
         {
             var planned = plan[index];
-            if (planned.Category is "gas" or "ore")
-            {
-                continue; // no site of these kinds is made yet (DEVIATIONS: wormhole sites, not built)
-            }
-            var kind = planned.Category == "combat" ? SiteTemplate.Anomaly : SiteTemplate.Signature;
+            // an ore deposit is an anomaly (warpable, in the scanner); the others are found with probes (the wiki)
+            var kind = planned.Category is "combat" or "ore" ? SiteTemplate.Anomaly : SiteTemplate.Signature;
             if (_templates.ById($"wormhole-{planned.DungeonKey}") is not { } template)
             {
                 _log?.Invoke($"wormhole system {solarSystemId}: {planned.SiteName} ({planned.DungeonKey}) has no site template and is not placed");
@@ -280,16 +283,26 @@ public sealed class CosmicSiteDirector
             var before = await _content.FindAsync(connection, transaction, kind, uniqueKey, cancellationToken) ?? 0;
             var seed = $"wormhole:{solarSystemId}:{index}:{before}";
             anchors ??= await _anchors.OfAsync(solarSystemId, cancellationToken);
-            await StartSiteAsync(connection, transaction, template, solarSystemId, index, uniqueKey, seed, anchors, codes, cancellationToken);
+            var started = await StartSiteAsync(connection, transaction, template, solarSystemId, index, uniqueKey, seed, anchors, codes, cancellationToken);
+            if (started.Created && template.HasResources && PlaceResources is { } place)
+            {
+                await place(solarSystemId, started.Id, template, started.Position);
+            }
         }
     }
+
+    /// <summary>Places the resources of a gas or ore site when it starts: its system, the site's instance id, its template and its origin (SpaceContainers).</summary>
+    public Func<int, long, SiteTemplate, double[], Task>? PlaceResources { get; set; }
+
+    /// <summary>Takes the resources of a site out of the world when the site ends: its system, the site's instance id (SpaceContainers, in the end's transaction).</summary>
+    public Func<NpgsqlConnection, NpgsqlTransaction, int, long, Task>? RemoveResources { get; set; }
 
     /// <summary>The wormhole class of a J-space system, or null when it is not one (or the director has no J-space).</summary>
     public int? WormholeClassOf(int solarSystemId) => _wormholeClassOf?.Invoke(solarSystemId);
 
     /// <summary>Starts one site of a template in its slot: placed beside a celestial by the seed, its code unique in the system, its containers in the same transaction.</summary>
-    private async Task StartSiteAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, SiteTemplate template, int solarSystemId, int index, string uniqueKey,
-        string seed, IReadOnlyList<SiteAnchor> anchors, HashSet<string> codes, CancellationToken cancellationToken)
+    private async Task<(long Id, bool Created, double[] Position)> StartSiteAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, SiteTemplate template,
+        int solarSystemId, int index, string uniqueKey, string seed, IReadOnlyList<SiteAnchor> anchors, HashSet<string> codes, CancellationToken cancellationToken)
     {
         var (anchor, position) = SitePlacement.Place(anchors, seed);
         var code = SiteSeed.Code(seed);
@@ -307,6 +320,7 @@ public sealed class CosmicSiteDirector
         {
             _log?.Invoke($"site {code}: {template.Name} ({template.Kind}, {template.Family}) in system {solarSystemId}, beside {anchor.Id}");
         }
+        return (started.Id, started.Created, position);
     }
 
     /// <summary>

@@ -41,7 +41,8 @@ public static class ServiceState
     public const int Cleanup = 3;
 }
 
-public enum StructureSize { Flex, Medium, Large, ExtraLarge }
+/// <summary>A pirate Forward Operating Base (<c>Fob</c>): no rig size; one armor reinforcement, no hull reinforcement, no repair countdown after the shield.</summary>
+public enum StructureSize { Flex, Medium, Large, ExtraLarge, Fob }
 
 /// <summary>The kind of space a structure lies in, as far as its timers care (client <c>REINFORCE_DURATION_*_BY_SECURITY</c>).</summary>
 public enum SecurityBand { HighSec, LowSec, NullSec, Wormhole, Pochven }
@@ -63,6 +64,9 @@ public static class StructureTimes
     public const long UnanchoringMs = 7 * Day;
     /// <summary>A Flex structure (client <c>FLEX_UNANCHORING_TIME</c>).</summary>
     public const long FlexUnanchoringMs = 2_700 * Second;
+    /// <summary>A FOB's armor reinforcement: 3 hours, with 1 hour of variance either way (wiki "Forward Operating Bases"; patch 24.01).</summary>
+    public const long FobArmorReinforceMs = 3 * Hour;
+    public const long FobReinforceJitterMs = Hour;
     /// <summary>A structure that stays in Low Power for this long is abandoned.</summary>
     public const long AbandonAfterMs = 7 * Day;
     /// <summary>A new reinforcement time takes effect this long after it was asked for.</summary>
@@ -94,14 +98,17 @@ public sealed record StructureRules(StructureSize Size, SecurityBand Band, bool 
     };
 
     /// <summary>Duration of the armor reinforcement. Medium structures depend on the space; Large and X-Large are 24 hours everywhere.</summary>
-    public long ArmorReinforceMs => Size == StructureSize.Medium
-        ? Band switch
+    public long ArmorReinforceMs => Size switch
+    {
+        StructureSize.Fob => StructureTimes.FobArmorReinforceMs,
+        StructureSize.Medium => Band switch
         {
             SecurityBand.Wormhole or SecurityBand.Pochven => 216_000 * StructureTimes.Second,
             SecurityBand.HighSec => 388_800 * StructureTimes.Second,
             _ => 302_400 * StructureTimes.Second,
-        }
-        : StructureTimes.Day;
+        },
+        _ => StructureTimes.Day,
+    };
 
     /// <summary>Duration of the hull reinforcement. A Flex structure waits 30 minutes (wiki); the others depend on the space.</summary>
     public long HullReinforceMs => Size == StructureSize.Flex
@@ -116,6 +123,7 @@ public sealed record StructureRules(StructureSize Size, SecurityBand Band, bool 
     /// <summary>How far the exit time may stray from the owner's hour: 1.5 hours for Medium, 30 minutes for Flex, 3 hours for the rest.</summary>
     public long ExitJitterMs => Size switch
     {
+        StructureSize.Fob => StructureTimes.FobReinforceJitterMs,
         StructureSize.Medium => 5_400 * StructureTimes.Second,
         StructureSize.Flex => 1_800 * StructureTimes.Second,
         _ => 10_800 * StructureTimes.Second,
@@ -126,7 +134,7 @@ public sealed record StructureRules(StructureSize Size, SecurityBand Band, bool 
         upkeep != UpkeepState.Abandoned && Size != StructureSize.Flex && !(Size != StructureSize.Medium && upkeep == UpkeepState.LowPower);
 
     /// <summary>Whether a structure that loses its armor goes into hull reinforcement. Large, X-Large and Flex in full power only; never a Medium or an abandoned one.</summary>
-    public bool CanHullReinforce(int upkeep) => upkeep == UpkeepState.FullPower && Size != StructureSize.Medium;
+    public bool CanHullReinforce(int upkeep) => upkeep == UpkeepState.FullPower && Size is not (StructureSize.Medium or StructureSize.Fob);
 }
 
 /// <summary>The structure as the state machine sees it: the columns of the <c>structures</c> table that belong to the timeline, plus the number of online services.</summary>
@@ -181,6 +189,15 @@ public sealed record FuelOut : StructureEvent;
 
 public sealed record UnanchorStarted : StructureEvent;
 public sealed record UnanchorCancelled : StructureEvent;
+
+/// <summary>A pirate FOB is put in space (its row is new): invulnerable until its insurgency exposes it.</summary>
+public sealed record FobDeployed : StructureEvent;
+
+/// <summary>The insurgency's empire side reached its goal: the FOB can be attacked, from its shield stage.</summary>
+public sealed record FobExposed : StructureEvent;
+
+/// <summary>The FOB leaves space without a fight (the insurgency ended in the pirates' favour, or with no winner).</summary>
+public sealed record FobDespawned : StructureEvent;
 
 /// <summary>The owner asked for another reinforcement day and hour. It becomes the structure's own after <see cref="StructureTimes.ReinforceChangeDelayMs"/>.</summary>
 public sealed record ReinforceTimeRequested(int Weekday, int Hour) : StructureEvent;

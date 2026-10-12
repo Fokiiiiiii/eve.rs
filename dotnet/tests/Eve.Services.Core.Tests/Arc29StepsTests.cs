@@ -76,7 +76,7 @@ public class Arc29StepsTests
         public AgentMissionStore? Store { get; set; }
 
         public async Task<bool> CompleteMissionAsync(long characterId, long agentId, DateTimeOffset now, string reference,
-            IReadOnlyList<MissionStandingGain> standings, IReadOnlyList<(int TypeId, long Quantity)> consume, CancellationToken cancellationToken) =>
+            IReadOnlyList<MissionStandingGain> standings, IReadOnlyList<(int TypeId, long Quantity, string? Tag)> consume, CancellationToken cancellationToken) =>
             // the items of a fetch step are not modelled here: the arc's first steps consume nothing
             consume.Count == 0 && Store is not null && await Store.CompleteAsync(characterId, agentId, now, reference, cancellationToken) is not null;
 
@@ -85,8 +85,10 @@ public class Arc29StepsTests
 
         public Task<long> HeldQuantityAsync(long characterId, int typeId, CancellationToken cancellationToken) => Task.FromResult(0L);
 
-        public Task GrantCargoAsync(long characterId, int typeId, long quantity, bool singleton, long stationId, CancellationToken cancellationToken) =>
+        public Task GrantCargoAsync(long characterId, long missionId, int typeId, long quantity, bool singleton, long stationId, CancellationToken cancellationToken) =>
             Task.CompletedTask;
+
+        public Task TakeCargoAsync(long characterId, long missionId, int typeId, CancellationToken cancellationToken) => Task.CompletedTask;
     }
 
     private static AgentMissionAgentData Agent(long id, bool inSpace, long? system, long? dungeon) => new(

@@ -91,6 +91,12 @@ public sealed class StructureTimers
             ? await ApplyAsync(connection, transaction, structure.StructureId, new AnchorPlaced(), cancellationToken)
             : null;
 
+    /// <summary>Puts a pirate FOB in space: its row and its deadline job, invulnerable until its insurgency exposes it. Returns null when the id is taken.</summary>
+    public async Task<StructureTransition?> DeployFobAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, NewStructure fob, CancellationToken cancellationToken = default) =>
+        await _store.CreateAsync(connection, transaction, fob, cancellationToken)
+            ? await ApplyAsync(connection, transaction, fob.StructureId, new FobDeployed(), cancellationToken)
+            : null;
+
     /// <summary>Puts a service module online or offline, then lets the timeline react (Low Power ends or begins).</summary>
     public async Task<StructureTransition?> SetServiceAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long structureId, int serviceId, bool online, CancellationToken cancellationToken = default)
     {

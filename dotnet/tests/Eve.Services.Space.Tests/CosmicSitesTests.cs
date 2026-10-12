@@ -206,21 +206,45 @@ public sealed class CosmicSiteDirectorTests
         var director = rig.NewDirector(_ => true, id => id == system.Id ? 3 : null);
         await rig.FillAsync(system.Id, director);
 
+        // every planned signature is a site: the ores are anomalies (warpable), the combat sites are anomalies, the rest are signatures
         var plan = WormholeSites.Plan(3, drifter: false, (ulong)system.Id);
         var sites = await rig.Director.ActiveAsync(system.Id);
-        // the gas and ore of the plan are not placed (no site of their kinds yet); the combat, data and relic ones are
-        var placed = plan.Select((signature, index) => (signature, index)).Where(item => item.signature.Category is not ("gas" or "ore")).ToList();
-        Assert.Equal(placed.Count, sites.Count);
-        foreach (var (signature, index) in placed)
+        Assert.Equal(plan.Count, sites.Count);
+        for (var index = 0; index < plan.Count; index++)
         {
             var site = sites.Single(candidate => candidate.Slot == index);
-            Assert.Equal($"wormhole-{signature.DungeonKey}", site.TemplateId);
-            Assert.Equal(signature.Category == "combat", site.IsAnomaly);
+            Assert.Equal($"wormhole-{plan[index].DungeonKey}", site.TemplateId);
+            Assert.Equal(plan[index].Category is "combat" or "ore", site.IsAnomaly);
         }
 
         var targets = await new ContentCosmicSites(director).SitesInAsync(system.Id);
-        Assert.Equal(placed.Count(item => item.signature.Category != "combat"), targets.Count);
+        Assert.Equal(plan.Count(signature => signature.Category is not ("combat" or "ore")), targets.Count);
         Assert.All(targets, target => Assert.Equal(WormholeSites.ScanStrength, target.RequiredStrength));
+    }
+
+    [PgFact]
+    public async Task A_gas_or_ore_site_that_expires_takes_its_resources_out_of_the_world_and_the_others_do_not()
+    {
+        var system = JSpaceSystems.Load().First(j => j.WormholeClass == 3);
+        await using var rig = await SiteRig.CreateAsync();
+        var removed = new List<(int System, long Site)>();
+        rig.Director.RemoveResources = (_, _, solarSystem, site) =>
+        {
+            removed.Add((solarSystem, site));
+            return Task.CompletedTask;
+        };
+        await rig.FillAsync(system.Id, rig.NewDirector(_ => true, id => id == system.Id ? 3 : null));
+        var before = await rig.Director.ActiveAsync(system.Id);
+        var withResources = before.Where(site => rig.Director.Templates.ById(site.TemplateId)!.HasResources).Select(site => site.InstanceId).ToHashSet();
+        Assert.NotEmpty(withResources);
+        Assert.True(withResources.Count < before.Count, "the combat, data and relic sites have no resources");
+
+        rig.Advance(CosmicSiteDirector.Lifetime + TimeSpan.FromMinutes(1));
+        await rig.RunDueAndDeliverAsync();
+
+        Assert.Equal(withResources.Count, removed.Count);
+        Assert.Equal(withResources.OrderBy(id => id), removed.Select(entry => entry.Site).OrderBy(id => id));
+        Assert.All(removed, entry => Assert.Equal(system.Id, entry.System));
     }
 
     [PgFact]

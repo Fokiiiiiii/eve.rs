@@ -12,11 +12,13 @@ pub struct StructureLimits {
     pub repair_pause: [f64; 3],
 }
 
-/// What a hit did to a structure: the layer it emptied (the deepest, when it emptied more than one), and whether a layer has taken its repair-pause
-/// damage in this second.
-#[derive(Debug, Clone, Copy, PartialEq)]
+/// What a hit did to a structure: the layer it emptied (the deepest, when it emptied more than one), every layer it emptied from the shallowest
+/// (`emptied`: the timeline needs each stage, a shield then an armor, not only the deepest), and whether a layer has taken its repair-pause damage in
+/// this second.
+#[derive(Debug, Clone, PartialEq)]
 pub struct StructureHit {
     pub depleted: Option<Layer>,
+    pub emptied: Vec<Layer>,
     pub over_threshold: bool,
 }
 
@@ -32,18 +34,17 @@ fn taken_in(layers: &Layers, layer: usize) -> f64 {
     [layers.shield, layers.armor, layers.structure][layer]
 }
 
-fn depleted(applied: &Applied) -> Option<Layer> {
-    let mut emptied = None;
-    if applied.before.shield > 0.0 && applied.after.shield <= 0.0 {
-        emptied = Some(Layer::Shield);
-    }
-    if applied.before.armor > 0.0 && applied.after.armor <= 0.0 {
-        emptied = Some(Layer::Armor);
-    }
-    if applied.before.structure > 0.0 && applied.after.structure <= 0.0 {
-        emptied = Some(Layer::Structure);
-    }
-    emptied
+/// The layers a hit emptied, from the shallowest.
+fn emptied(applied: &Applied) -> Vec<Layer> {
+    [
+        (applied.before.shield, applied.after.shield, Layer::Shield),
+        (applied.before.armor, applied.after.armor, Layer::Armor),
+        (applied.before.structure, applied.after.structure, Layer::Structure),
+    ]
+    .into_iter()
+    .filter(|(before, after, _)| *before > 0.0 && *after <= 0.0)
+    .map(|(_, _, layer)| layer)
+    .collect()
 }
 
 impl StructureHealth {
@@ -99,7 +100,8 @@ impl StructureHealth {
         }
         let over_threshold =
             self.taken.iter().zip(self.limits.repair_pause).any(|(taken, pause)| *taken >= pause);
-        Some(StructureHit { depleted: depleted(&applied), over_threshold })
+        let emptied = emptied(&applied);
+        Some(StructureHit { depleted: emptied.last().copied(), emptied, over_threshold })
     }
 }
 
@@ -110,8 +112,10 @@ mod tests {
     const SECOND: i64 = TICKS_PER_SECOND;
 
     fn structure(now: i64) -> StructureHealth {
-        let vitals = Vitals { shield_capacity: 1_000.0, armor_hp: 500.0, structure_hp: 300.0, ..Vitals::default() };
-        let limits = StructureLimits { per_second: [400.0, 200.0, 100.0], repair_pause: [300.0, 150.0, 80.0] };
+        let vitals =
+            Vitals { shield_capacity: 1_000.0, armor_hp: 500.0, structure_hp: 300.0, ..Vitals::default() };
+        let limits =
+            StructureLimits { per_second: [400.0, 200.0, 100.0], repair_pause: [300.0, 150.0, 80.0] };
         StructureHealth::new(vitals, 1.0e15, limits, now)
     }
 
@@ -125,7 +129,11 @@ mod tests {
         assert!(s.apply(t, [100.0, 0.0, 0.0, 0.0]).is_some_and(|h| h.depleted.is_none()));
         assert_eq!(s.health.layers_at(t).shield, 600.0, "nothing more of this second's allowance is left");
         s.apply(t + SECOND, [100.0, 0.0, 0.0, 0.0]).expect("the next second");
-        assert_eq!(s.health.layers_at(t + SECOND).shield, 500.0, "the next second's allowance is whole again");
+        assert_eq!(
+            s.health.layers_at(t + SECOND).shield,
+            500.0,
+            "the next second's allowance is whole again"
+        );
     }
 
     #[test]
@@ -138,6 +146,10 @@ mod tests {
             t,
         );
         assert_eq!(s.apply(t, [150.0, 0.0, 0.0, 0.0]).and_then(|h| h.depleted), Some(Layer::Shield));
-        assert_eq!(s.apply(t, [10.0, 0.0, 0.0, 0.0]).and_then(|h| h.depleted), None, "the shield was empty already");
+        assert_eq!(
+            s.apply(t, [10.0, 0.0, 0.0, 0.0]).and_then(|h| h.depleted),
+            None,
+            "the shield was empty already"
+        );
     }
 }

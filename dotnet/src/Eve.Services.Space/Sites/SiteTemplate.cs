@@ -5,6 +5,9 @@ namespace Eve.Services.Space.Sites;
 /// <summary>One group of NPCs of a site: the pool the NPC selector rolls them from, and how many come (the wiki's table of the site).</summary>
 public sealed record SiteWave(string Query, int Amount);
 
+/// <summary>A rock of a deposit site: its ore type, its quantity, and its offset from the site's origin (metres).</summary>
+public sealed record SiteRock(int TypeId, long Quantity, double[] Offset);
+
 /// <summary>A container of a site: what it is for (<c>data</c> or <c>relic</c> are opened with the matching analyzer), how many there are and the type names it may have.</summary>
 public sealed record SiteContainer(string Role, string? Analyzer, int Count, IReadOnlyList<string> Types);
 
@@ -14,7 +17,8 @@ public sealed record SiteContainer(string Role, string? Analyzer, int Count, IRe
 /// </summary>
 public sealed record SiteTemplate(
     string Id, int DungeonId, string Name, string Kind, string Family, int Difficulty, IReadOnlyList<string> Bands, int? ArchetypeId, int? FactionId,
-    int? DungeonNameId, int? EntryObjectTypeId, IReadOnlyList<SiteWave> Waves, IReadOnlyList<SiteContainer> Containers)
+    int? DungeonNameId, int? EntryObjectTypeId, IReadOnlyList<SiteWave> Waves, IReadOnlyList<SiteContainer> Containers,
+    IReadOnlyList<SiteRock>? Rocks = null, IReadOnlyList<int>? Clouds = null)
 {
     public const string Anomaly = "anomaly";
     public const string Signature = "signature";
@@ -35,6 +39,9 @@ public sealed record SiteTemplate(
     public int NpcCount => Waves.Sum(wave => wave.Amount);
 
     public int ContainerCount => Containers.Sum(container => container.Count);
+
+    /// <summary>Whether the site places resources when it starts: the rocks of a deposit, or a reservoir's cloud (one of <see cref="Clouds"/>).</summary>
+    public bool HasResources => Rocks is { Count: > 0 } || Clouds is { Count: > 0 };
 
     /// <summary>The sensor strength attribute that finds the site (SDE 208 radar for data, 210 magnetometric for relic, 1136 for the all-strength combat sites; 1908 for a wormhole signature).</summary>
     public int StrengthAttribute => IsWormhole ? 1908 : Family switch

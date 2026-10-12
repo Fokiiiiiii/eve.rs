@@ -211,7 +211,7 @@ impl Scene {
             });
         }
         // a mineable rock is locked through the same path as a wreck. Its id is an item id (the host allocates them from 1,990,000,000);
-        // the id spaces of rocks and system bodies are not yet verified against the SDE, so a rock is looked up before the bodies (UNVERIFIED, DEVIATIONS).
+        // the id spaces of rocks and system bodies are not cross-checked against the SDE, so a rock is looked up before the bodies.
         // A depleted rock is removed from the map, so it stops resolving and its locks are dropped by the upkeep in `target_order`.
         if let Some(asteroid) = self.asteroids.get(&target) {
             return Some(Subject {

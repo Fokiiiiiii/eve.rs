@@ -507,7 +507,7 @@ public sealed class CrimewatchRuntime(PgCrimewatchStore store, CharacterSessions
         }
     }
 
-    /// <summary>Estimated base delays from observed EVE University response times; CCP publishes no fixed response seconds.</summary>
+    /// <summary>Base delays taken from observed EVE University response times; CCP publishes no fixed response seconds.</summary>
     internal static long ConcordResponseDelayMs(double security) =>
         security >= 0.9 ? 6_000
         : security >= 0.8 ? 7_000

@@ -2804,6 +2804,35 @@ fn boarding_a_structure_preserves_the_physical_ship_and_release_rebinds_it() {
     assert_eq!(ego_in_state(&scene.bind(SESSION, NOON + SECOND)), Some(crate::wire::id(ship_id)));
 }
 
+
+#[test]
+fn a_structure_controller_survives_destruction_of_the_ship_it_left() {
+    let mut scene = scene();
+    scene.bind(SESSION, NOON);
+    let ship_id = scene.pilots[&SESSION].ship.spec.ship_id;
+    let placement = structure_placement(&scene, NOON);
+    scene.place_structure(placement, NOON);
+    scene.control_structure(SESSION, scene.solar_system_id(), STRUCTURE, spec().character_id, true, NOON);
+
+    let fake_session = scene.unpiloted[&ship_id];
+    let _ = scene.destroy_credited(
+        fake_session,
+        crate::death::Credit { character_id: 0, corporation_id: 0, alliance_id: 0, war_faction_id: 0 },
+        None,
+        NOON + SECOND,
+    );
+
+    assert_eq!(scene.controlled_structure_id(SESSION), Some(STRUCTURE));
+    assert!(!scene.pilots.contains_key(&fake_session));
+    assert!(!scene.unpiloted.contains_key(&ship_id));
+
+    let detached = scene.control_structure(SESSION, scene.solar_system_id(), 0, 0, false, NOON + 2 * SECOND);
+    assert!(detached.iter().any(|out| matches!(out,
+        Out::Accepted { session, command: crate::link::COMMAND_STRUCTURE_CONTROL, .. } if *session == SESSION)));
+    assert!(scene.controlled_structure_id(SESSION).is_none());
+    assert!(!scene.pilots.contains_key(&SESSION), "a destroyed ship must not be rebound");
+}
+
 #[test]
 fn transferring_structure_control_releases_the_old_owner_and_leave_clears_the_new_observer() {
     let mut scene = scene();

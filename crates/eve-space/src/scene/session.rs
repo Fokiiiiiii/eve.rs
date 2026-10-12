@@ -157,7 +157,7 @@ impl Scene {
                 self.unpiloted.remove(&ship_id);
             }
         }
-        self.widowed.remove(&session);
+        // A lost retained hull keeps its respawn context across control restoration and retry.
         Some(out)
     }
 

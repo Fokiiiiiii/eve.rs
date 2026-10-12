@@ -90,6 +90,7 @@ public sealed class StructureControlTests
         rig.Space.LifecycleBlockers = (_, _, _, _) => ValueTask.FromResult<IReadOnlyList<string>>([]);
         var character = await rig.NewCharacterAsync();
         var session = await rig.SessionAsync(character);
+        session.Set("corpid", new PyLong((await rig.Characters.GetAsync(character.CharacterId))!.CorporationId));
         var oid = await rig.BindShipAsync(session);
         await rig.ShipCallAsync(session, "Undock", oid, new PyLong(session.GetInt("shipid")!.Value), PyBool.False);
         Events.Of(session);
@@ -145,5 +146,101 @@ public sealed class StructureControlTests
         Assert.Equal(CharacterShips.InSpaceFlag, abandoned.Flag);
         Assert.NotEqual(ship, capsule.Id);
         Assert.Contains(rig.Sim.Heard, message => message is SimRespawn);
+    }
+
+
+    [PgFact]
+    public async Task A_boarded_hull_death_persists_capsule_and_none_eject_retries_without_duplicating_loss()
+    {
+        var (rig, character, session) = await FlyingAsync();
+        await using var _ = rig;
+        var ship = session.GetInt("shipid")!.Value;
+        var system = rig.Space.SolarSystemOf(session)!.Value;
+        long cargo;
+        await using (var connection = await rig.Source.OpenConnectionAsync())
+        await using (var transaction = await connection.BeginTransactionAsync())
+        {
+            cargo = await rig.Items.CreateAsync(connection, transaction,
+                new Eve.Inventory.NewItem(34, character.CharacterId, ship, CharacterShips.CargoFlag, 100, false));
+            await transaction.CommitAsync();
+        }
+        await rig.Space.SetStructureObserverAsync(session, system, Structure, character.CharacterId, true);
+        rig.Space.ApplyStructureControlSession(session, system, Structure, ship, system, true);
+
+        var position = new double[] { 12_300, 45_600, 78_900 };
+        var direction = new double[] { 0, 1, 0 };
+        var destroyed = new SimDestroyed((1UL << 61) + 1, ship, 0, position, direction, 0, 0);
+        rig.Sim.Deliver(destroyed);
+        await rig.Space.QuiesceAsync();
+
+        var capsule = (await rig.Ships.LoadAsync(character.CharacterId))!.Ship;
+        Assert.Equal(CharacterShips.CapsuleTypeId, capsule.TypeId);
+        Assert.Equal(capsule.Id, (await rig.Characters.GetAsync(character.CharacterId))!.ShipId);
+        Assert.Null(await rig.Items.GetAsync(ship));
+        Assert.Null(await rig.Items.GetAsync(cargo));
+        Assert.True(rig.Space.IsStructureObserver(session));
+        Assert.Equal(Structure, session.GetInt("shipid"));
+        Assert.Equal(capsule.Id, rig.Space.ShipIdOf(session));
+
+        rig.Sim.Deliver(destroyed);
+        await rig.Space.QuiesceAsync();
+        Assert.Equal(capsule.Id, (await rig.Ships.LoadAsync(character.CharacterId))!.Ship.Id);
+        Assert.Null(await rig.Items.GetAsync(ship));
+
+        rig.Sim.RespawnAnswer = "CAPSULE_RESPAWN_REFUSED";
+        await Assert.ThrowsAsync<MachoWrappedException>(() =>
+            rig.Space.SetStructureObserverAsync(session, system, 0, 0, false).AsTask());
+        Assert.True(rig.Space.IsStructureObserver(session));
+        Assert.Equal(Structure, session.GetInt("shipid"));
+        Assert.True(rig.Sim.Heard.OfType<SimControlStructure>().Last().Active);
+
+        rig.Sim.RespawnAnswer = null;
+        await rig.Space.SetStructureObserverAsync(session, system, 0, 0, false);
+        Assert.True(await rig.Space.EjectStructureControlToCapsuleAsync(session, CancellationToken.None));
+        Assert.False(rig.Space.IsStructureObserver(session));
+        Assert.Equal(capsule.Id, session.GetInt("shipid"));
+        Assert.Null(session.GetInt("structureid"));
+        Assert.Equal(capsule.Id, rig.Space.ShipIdOf(session));
+        var respawns = rig.Sim.Heard.OfType<SimRespawn>().Where(message => message.Ship.ShipId == capsule.Id).ToList();
+        Assert.Equal(2, respawns.Count);
+        Assert.Equal(position, respawns[^1].Position);
+        Assert.Equal(direction, respawns[^1].Direction);
+
+        await rig.Space.SetStructureObserverAsync(session, system, Structure, character.CharacterId, true);
+        rig.Space.ApplyStructureControlSession(session, system, Structure, capsule.Id, system, true);
+        await rig.Space.SetStructureObserverAsync(session, system, 0, 0, false);
+        rig.Space.RestoreStructureControlSession(session, ship, system, true, system);
+        Assert.Equal(capsule.Id, session.GetInt("shipid"));
+        Assert.Null(session.GetInt("structureid"));
+        Assert.Equal(capsule.Id, rig.Space.ShipIdOf(session));
+    }
+
+    [PgFact]
+    public async Task A_failed_retained_hull_transaction_can_retry_on_release_without_another_death_notice()
+    {
+        var (rig, character, session) = await FlyingAsync();
+        await using var _ = rig;
+        var ship = session.GetInt("shipid")!.Value;
+        var system = rig.Space.SolarSystemOf(session)!.Value;
+        await rig.Space.SetStructureObserverAsync(session, system, Structure, character.CharacterId, true);
+        rig.Space.ApplyStructureControlSession(session, system, Structure, ship, system, true);
+        await using var connection = await rig.Source.OpenConnectionAsync();
+        await using (var reject = new Npgsql.NpgsqlCommand($"ALTER TABLE \"{rig.InventorySchema}\".items ADD CONSTRAINT reject_control_capsule CHECK (type_id <> {CharacterShips.CapsuleTypeId}) NOT VALID", connection))
+            await reject.ExecuteNonQueryAsync();
+        rig.Sim.Deliver(new SimDestroyed((1UL << 61) + 1, ship, 0, [12300, 45600, 78900], [0, 1, 0], 0, 0));
+        await rig.Space.QuiesceAsync();
+        Assert.NotNull(await rig.Items.GetAsync(ship));
+        Assert.Equal(ship, (await rig.Characters.GetAsync(character.CharacterId))!.ShipId);
+        await Assert.ThrowsAsync<MachoWrappedException>(() => rig.Space.SetStructureObserverAsync(session, system, 0, 0, false).AsTask());
+        Assert.True(rig.Space.IsStructureObserver(session));
+        await using (var allow = new Npgsql.NpgsqlCommand($"ALTER TABLE \"{rig.InventorySchema}\".items DROP CONSTRAINT reject_control_capsule", connection))
+            await allow.ExecuteNonQueryAsync();
+        await rig.Space.SetStructureObserverAsync(session, system, 0, 0, false);
+        Assert.True(await rig.Space.EjectStructureControlToCapsuleAsync(session, default));
+        Assert.Null(await rig.Items.GetAsync(ship));
+        var capsule = (await rig.Ships.LoadAsync(character.CharacterId))!.Ship;
+        Assert.Equal(CharacterShips.CapsuleTypeId, capsule.TypeId);
+        Assert.Equal(capsule.Id, session.GetInt("shipid"));
+        Assert.Null(session.GetInt("structureid"));
     }
 }

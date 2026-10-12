@@ -465,6 +465,9 @@ impl Sim {
                 if scene.contains(previous) {
                     self.sessions.insert(previous, solar_system_id);
                     self.widowed.remove(&previous);
+                } else if scene.awaiting_respawn(previous) {
+                    self.sessions.remove(&previous);
+                    self.widowed.insert(previous, solar_system_id);
                 } else {
                     scene.forget_widow(previous);
                     self.sessions.remove(&previous);
@@ -475,6 +478,9 @@ impl Sim {
             if scene.contains(session_id) {
                 self.sessions.insert(session_id, solar_system_id);
                 self.widowed.remove(&session_id);
+            } else if scene.awaiting_respawn(session_id) {
+                self.sessions.remove(&session_id);
+                self.widowed.insert(session_id, solar_system_id);
             } else {
                 scene.forget_widow(session_id);
                 self.sessions.remove(&session_id);

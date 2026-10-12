@@ -41,18 +41,145 @@ public sealed partial class SpaceSessions
             throw new ArgumentOutOfRangeException(nameof(structureId));
         var id = (ulong)session.SessionId;
         var wasObserver = IsStructureObserver(session);
-        if (active) _structureObservers[id] = session; // The bind can send its initial ballpark before its acknowledgement.
+        long? trackedShipId = null;
+        var addedTracking = false;
+        if (active && IsInSpace(session) && _pilots.TryGetValue(id, out var shipPilot)
+            && shipPilot.TypeId != CharacterShips.CapsuleTypeId)
+        {
+            // The control backend already verifies inventory ownership; this is its live pilot projection.
+            var corporationId = session.GetInt("corpid") ?? 0;
+            if (shipPilot.CharacterId != session.CharacterId || shipPilot.SolarSystemId != solarSystemId || corporationId <= 0)
+                throw Notify("The physical ship could not be verified for structure control.");
+            var abandoned = new EjectedShip(
+                shipPilot.CharacterId, corporationId, shipPilot.TypeId, solarSystemId, id);
+            if (_ejectedShips.TryAdd(shipPilot.ShipId, abandoned))
+            {
+                trackedShipId = shipPilot.ShipId;
+                addedTracking = true;
+            }
+            else if (_ejectedShips.TryGetValue(shipPilot.ShipId, out var existing) && existing == abandoned)
+                trackedShipId = shipPilot.ShipId;
+            else
+                throw Notify("The physical ship is already tracked as unpiloted.");
+        }
+
+        var controllerShipId = _pilots.TryGetValue(id, out var controllerBefore) ? controllerBefore.ShipId : (long?)null;
+        if (active) _structureObservers[id] = session;
         try
         {
             var refusal = await _sim.ControlStructureAsync(
                 new SimControlStructure(id, solarSystemId, active ? structureId : 0, active ? characterId : 0, active), token);
             if (refusal is not null) throw Notify($"Structure control was refused: {refusal}");
-            if (!active) _structureObservers.TryRemove(id, out _);
+            if (active) return;
+
+            try
+            {
+                if (_pilots.TryGetValue(id, out var currentPilot)
+                    && currentPilot.StructureControlDeath is { } pendingDeath)
+                {
+                    await pendingDeath.ConfigureAwait(false);
+                    if (_pilots.TryGetValue(id, out currentPilot) && currentPilot.RetryStructureControlDeath is { } retry)
+                        await retry().ConfigureAwait(false);
+                    if (!_pilots.TryGetValue(id, out currentPilot)
+                        || currentPilot.StructureControlCapsulePosition is not { } deathPosition
+                        || currentPilot.StructureControlCapsuleDirection is not { } deathDirection)
+                        throw Notify("The destroyed ship was not persisted; structure control remains active.");
+
+                    if (currentPilot.TypeId != CharacterShips.CapsuleTypeId)
+                    {
+                        var fitting = await _ships.LoadAsync(currentPilot.CharacterId, CancellationToken.None);
+                        if (fitting is null
+                            || fitting.Ship.TypeId != CharacterShips.CapsuleTypeId
+                            || fitting.Character.ShipId != fitting.Ship.Id)
+                            throw Notify("The replacement capsule was not persisted.");
+
+                        var capsulePilot = new Pilot(
+                            currentPilot.Session, currentPilot.CharacterId, fitting.Ship.Id, fitting.Ship.TypeId,
+                            currentPilot.SolarSystemId, 0)
+                        {
+                            StructureControlDeath = currentPilot.StructureControlDeath,
+                            StructureControlCapsulePosition = deathPosition,
+                            StructureControlCapsuleDirection = deathDirection
+                        };
+                        if (!_pilots.TryUpdate(id, capsulePilot, currentPilot))
+                            throw Notify("The replacement capsule could not be associated with the controller.");
+                        EndTetherPilot(currentPilot);
+                        currentPilot.End();
+                        currentPilot = capsulePilot;
+                    }
+                }
+
+                if (!StructureControlSessionClosed(session)
+                    && _pilots.TryGetValue(id, out currentPilot)
+                    && currentPilot.StructureControlCapsulePosition is { } position)
+                {
+                    if (currentPilot.StructureControlCapsuleDirection is not { } direction
+                        || await _ships.LoadAsync(currentPilot.CharacterId, CancellationToken.None) is not { } capsule
+                        || capsule.Ship.Id != currentPilot.ShipId
+                        || capsule.Character.ShipId != currentPilot.ShipId
+                        || capsule.Ship.TypeId != CharacterShips.CapsuleTypeId)
+                        throw Notify("The replacement capsule was not persisted.");
+
+                    var capsuleRefusal = await _sim.RespawnAsync(new SimRespawn(
+                        id,
+                        SimShips.Of(capsule, _statics, await SecurityStatusAsync(currentPilot.CharacterId, CancellationToken.None)),
+                        position,
+                        direction), CancellationToken.None);
+                    if (capsuleRefusal is not null)
+                        throw Notify($"The replacement capsule was refused by the simulation: {capsuleRefusal}");
+                    currentPilot.StructureControlDeath = null;
+                    currentPilot.StructureControlCapsulePosition = null;
+                    currentPilot.StructureControlCapsuleDirection = null;
+                }
+
+                if (controllerShipId is { } oldShipId
+                    && _ejectedShips.TryGetValue(oldShipId, out var abandonedShip)
+                    && abandonedShip.StructureControlSessionId == id)
+                    _ejectedShips.TryRemove(oldShipId, out _);
+                _structureObservers.TryRemove(id, out _);
+            }
+            catch
+            {
+                if (StructureControlSessionClosed(session))
+                    _structureObservers.TryRemove(id, out _);
+                else
+                    await TryRestoreStructureObserverAsync(session, solarSystemId);
+                throw;
+            }
         }
         catch
         {
-            if (active && !wasObserver) _structureObservers.TryRemove(id, out _);
+            if (addedTracking && trackedShipId is { } shipId)
+                _ejectedShips.TryRemove(shipId, out _);
+            if (active && !wasObserver)
+                _structureObservers.TryRemove(id, out _);
             throw;
+        }
+    }
+
+    private async ValueTask TryRestoreStructureObserverAsync(ClientSession session, int solarSystemId)
+    {
+        var id = (ulong)session.SessionId;
+        if (session.GetInt("structureid") is not { } structureId || session.CharacterId is not { } characterId)
+        {
+            session.Close();
+            _structureObservers.TryRemove(id, out _);
+            return;
+        }
+
+        _structureObservers[id] = session;
+        try
+        {
+            var refusal = await _sim.ControlStructureAsync(
+                new SimControlStructure(id, solarSystemId, structureId, characterId, true), CancellationToken.None);
+            if (refusal is not null)
+                throw Notify($"Structure control was refused while restoring the controller: {refusal}");
+        }
+        catch (Exception error)
+        {
+            _structureObservers.TryRemove(id, out _);
+            session.Close();
+            _log?.Invoke($"structure control for session {session.SessionId} could not be restored after capsule ejection failed: {error}");
         }
     }
 
@@ -129,6 +256,7 @@ public sealed partial class SpaceSessions
         if (!_pilots.TryGetValue((ulong)session.SessionId, out var pilot)) return false;
         if (_statics.GroupName(_statics.Type(pilot.TypeId)?.GroupId ?? 0) == "Capsule")
         {
+            if (pilot.StructureControlCapsulePosition is not null) return false;
             RestoreStructureControlSession(session, pilot.ShipId, pilot.SolarSystemId, true, pilot.SolarSystemId);
             return true;
         }

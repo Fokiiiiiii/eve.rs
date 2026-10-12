@@ -211,6 +211,16 @@ public sealed class MoonExtractionStartHostTests
     }
 
     [PgFact]
+    public async Task A_profile_authorized_controller_from_another_corporation_can_start_an_extraction()
+    {
+        await using var route = await Route.CreateAsync(PgUrl());
+        await route.RefineryAsync();
+        route.Session.Set("corpid", new PyInt(OtherCorporation));
+        Assert.IsType<PyObject>(await route.Moon.CallAsync(route.Start()));
+        Assert.Single((await route.Store.ReadLegacyAsync())["extractions"]!.AsObject());
+    }
+
+    [PgFact]
     public async Task A_controller_release_cannot_pass_the_moon_mutations_transaction_lock()
     {
         await using var route = await Route.CreateAsync(PgUrl());

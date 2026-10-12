@@ -791,6 +791,10 @@ impl Scene {
         self.widowed.remove(&session);
     }
 
+    pub(crate) fn awaiting_respawn(&self, session: SessionId) -> bool {
+        self.widowed.contains_key(&session)
+    }
+
     pub fn contains(&self, session: SessionId) -> bool {
         self.pilots.contains_key(&session)
     }

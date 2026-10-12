@@ -100,6 +100,7 @@ public sealed class StructureControlBackendTests
             var ship = await Items.CreateAsync(connection, transaction, new NewItem(587, id, Structure, ItemFlags.Hangar, 1, true));
             await transaction.CommitAsync();
             var session = new ClientSession(new Capture(Order, id)) { SessionId = id, ClientId = id, CharacterId = id, UserId = 1 };
+            session.Set("corpid", new PyLong(98_000_001));
             session.Set("shipid", new PyLong(ship));
             session.Set("structureid", new PyLong(Structure));
             session.Set("locationid", new PyInt(System));
@@ -122,6 +123,7 @@ public sealed class StructureControlBackendTests
             }
             await transaction.CommitAsync();
             var session = new ClientSession(new Capture(Order, id)) { SessionId = id, ClientId = id, CharacterId = id, UserId = 1 };
+            session.Set("corpid", new PyLong(98_000_001));
             session.Set("shipid", new PyLong(ship));
             session.Set("locationid", new PyInt(System));
             session.Set("solarsystemid", new PyInt(System));

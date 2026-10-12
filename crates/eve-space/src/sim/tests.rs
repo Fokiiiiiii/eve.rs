@@ -1146,6 +1146,46 @@ fn structure_deposit_sim() -> (Sim, crate::link::StructurePlacement) {
     (simulation, placement)
 }
 
+#[test]
+fn a_destroyed_retained_hull_releases_into_a_real_capsule_respawn_context() {
+    let (mut simulation, placement) = structure_deposit_sim();
+    let old_ship_id = spec().ship_id;
+    simulation.handle(Message::Bind { session_id: SESSION }, NOON).unwrap();
+    simulation.handle(Message::ControlStructure {
+        session_id: SESSION, solar_system_id: SYSTEM, structure_id: placement.structure_id,
+        character_id: spec().character_id, active: true,
+    }, NOON).unwrap();
+    simulation.handle(Message::Destroy { ship_id: old_ship_id, credit: Default::default() }, NOON + SECOND).unwrap();
+    assert_eq!(simulation.scenes[&SYSTEM].controlled_structure_id(SESSION), Some(placement.structure_id));
+    let released = simulation.handle(Message::ControlStructure {
+        session_id: SESSION, solar_system_id: SYSTEM, structure_id: 0, character_id: 0, active: false,
+    }, NOON + 2 * SECOND).unwrap();
+    assert!(released.iter().any(|message| matches!(message,
+        Message::Accepted { session_id: SESSION, command: crate::link::COMMAND_STRUCTURE_CONTROL, .. })));
+    // A refused/undelivered capsule spawn restores control before the client retries.
+    simulation.handle(Message::ControlStructure {
+        session_id: SESSION, solar_system_id: SYSTEM, structure_id: placement.structure_id,
+        character_id: spec().character_id, active: true,
+    }, NOON + 2 * SECOND).unwrap();
+    simulation.handle(Message::ControlStructure {
+        session_id: SESSION, solar_system_id: SYSTEM, structure_id: 0, character_id: 0, active: false,
+    }, NOON + 2 * SECOND).unwrap();
+    let mut capsule = spec();
+    capsule.ship_id = old_ship_id + 1000;
+    capsule.type_id = 670;
+    capsule.group_id = 29;
+    let capsule_id = capsule.ship_id;
+    let respawned = simulation.handle(Message::Respawn {
+        session_id: SESSION, ship: Box::new(capsule),
+        position: [12300.0, 45600.0, 78900.0], direction: [0.0, 1.0, 0.0],
+    }, NOON + 3 * SECOND).unwrap();
+    assert!(respawned.iter().any(|message| matches!(message,
+        Message::EnterReply { session_id: SESSION, outcome: Ok(..) })), "{respawned:?}");
+    assert_eq!(simulation.scenes[&SYSTEM].pilots[&SESSION].ship.spec.ship_id, capsule_id);
+    assert!(!simulation.scenes[&SYSTEM].controlled_structures.contains_key(&SESSION));
+    assert_eq!(simulation.sessions.get(&SESSION), Some(&SYSTEM));
+}
+
 fn structure_deposit_query(simulation: &mut Sim, structure_id: i64, ship_id: i64) -> Vec<Message> {
     simulation.handle(Message::Command {
         session_id: SESSION, command: crate::link::COMMAND_MEASURE,

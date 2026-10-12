@@ -175,6 +175,32 @@ internal sealed partial class CharacterServicesComposition
                 Console.Error.WriteLine($"eve-host: {Eve.Universe.ClientSystemFlags.DirectoryVariable} is not set: stargate lists and alignment tolls are disabled");
             }
             spaceSessions.GateRules = await Eve.Services.Space.Gates.GateRules.LoadAsync(sde, clientDirectory);
+            // the gate toll is journaled as a sink: no source names a payee, so no wallet is credited (DEVIATIONS, slice 3)
+            var tollWallets = new Eve.Wallet.WalletTransactions(source, walletSchema);
+            spaceSessions.ChargeGateToll = async (character, amount, key, token) =>
+            {
+                await using var connection = await source.OpenConnectionAsync(token);
+                await using var transaction = await connection.BeginTransactionAsync(token);
+                try
+                {
+                    await tollWallets.AdjustAsync(connection, transaction, character, -amount, 0, Eve.Services.Space.Gates.GateRules.AlignmentBasedGateTollRefType,
+                        "Gate toll", now(), key, token);
+                }
+                catch (Eve.Wallet.InsufficientFundsException)
+                {
+                    return false;
+                }
+                await transaction.CommitAsync(token);
+                return true;
+            };
+            spaceSessions.RefundGateToll = async (character, amount, key, token) =>
+            {
+                await using var connection = await source.OpenConnectionAsync(token);
+                await using var transaction = await connection.BeginTransactionAsync(token);
+                await tollWallets.AdjustAsync(connection, transaction, character, amount, 0, Eve.Services.Space.Gates.GateRules.AlignmentBasedGateTollRefType,
+                    "Gate toll refund", now(), key, token);
+                await transaction.CommitAsync(token);
+            };
             var undockContraband = await UndockContraband.LoadAsync(sde, items, solarSystems);
             spaceSessions.InspectUndockContrabandAsync = undockContraband.InspectAsync;
             npcWrecks.Warm();

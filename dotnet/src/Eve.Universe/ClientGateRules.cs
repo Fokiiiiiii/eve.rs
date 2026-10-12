@@ -8,6 +8,9 @@ namespace Eve.Universe;
 public sealed record AlignmentToll(double PricePerKilo, double Exponent, double FixedAddition, double MinCost, double AlignedDiscountMultiplier,
     IReadOnlyList<long> AlignmentRestrictionList);
 
+/// <summary>The anchoring ranges of a stargate type's deployBlocker (client spacecomponentsbytype): metres around the gate, 0 when none.</summary>
+public sealed record DeployBlocker(double BubbleRange, double StructureRange);
+
 /// <summary>
 /// The stargate data the V24.01 client keeps locally and the server reads at start-up from <c>EVE_CLIENT_SDE_DIR</c> (nothing is copied):
 /// each stargate's <c>allowedShipsTypeListID</c> (solarsystemcontent) and each stargate type's <c>alignmentBasedToll</c> (spacecomponentsbytype).
@@ -66,6 +69,30 @@ public static class ClientGateRules
         }
         return tolls;
     }
+
+    /// <summary>The deploy blockers of each stargate type that has one (type ID to ranges).</summary>
+    public static async Task<IReadOnlyDictionary<int, DeployBlocker>> DeployBlockersAsync(string directory, CancellationToken cancellationToken = default)
+    {
+        var blockers = new Dictionary<int, DeployBlocker>();
+        if (string.IsNullOrWhiteSpace(directory))
+        {
+            return blockers;
+        }
+        await using var file = File.OpenRead(Path.Combine(directory, "native", "spacecomponentsbytype.jsonl.gz"));
+        await foreach (var row in RowsAsync(file, cancellationToken))
+        {
+            if (!row.TryGetProperty("_key", out var key) || key.ValueKind != JsonValueKind.Number
+                || !row.TryGetProperty("deployBlocker", out var blocker) || blocker.ValueKind != JsonValueKind.Object)
+            {
+                continue;
+            }
+            blockers[key.GetInt32()] = new DeployBlocker(Range(blocker, "blockAnchorWarpBubbles"), Range(blocker, "blockStructures"));
+        }
+        return blockers;
+    }
+
+    private static double Range(JsonElement blocker, string name) =>
+        blocker.TryGetProperty(name, out var block) && block.TryGetProperty("range", out var range) && range.ValueKind == JsonValueKind.Number ? range.GetDouble() : 0d;
 
     private static double Number(JsonElement element, string name) =>
         element.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.Number ? value.GetDouble() : 0d;

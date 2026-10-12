@@ -2198,6 +2198,50 @@ public class SpaceServiceTests
     }
 
     [PgFact]
+    public async Task A_gate_toll_is_charged_once_when_the_jump_is_taken_and_refused_when_the_wallet_cannot_pay_or_the_simulation_refuses()
+    {
+        var (rig, character, session) = await DockedAsync();
+        await using var _ = rig;
+        await InSpaceAsync(rig, session);
+        var oid = await rig.BindBeyonceAsync(session);
+        Events.Of(session);
+        // the gate of the rig's jump has a toll: the minimum for a small ship, 10000 ISK (client alignmentBasedToll, the wiki's "starts at 10k")
+        var toll = new Eve.Universe.AlignmentToll(0.015, 1.1, -100_000, 10_000, 0.0, [500011, 500010]);
+        rig.Space.GateRules = new Eve.Services.Space.Gates.GateRules(
+            new Dictionary<long, int>(), new Dictionary<int, IReadOnlySet<int>>(), new Dictionary<long, long>(),
+            new Dictionary<long, int> { [Gate] = 77918 }, new Dictionary<int, Eve.Universe.AlignmentToll> { [77918] = toll });
+        var charges = new List<(long Character, decimal Amount, string Key)>();
+        var refunds = new List<(long Character, decimal Amount, string Key)>();
+        var payable = true;
+        rig.Space.ChargeGateToll = (characterId, amount, key, _) => { charges.Add((characterId, amount, key)); return Task.FromResult(payable); };
+        rig.Space.RefundGateToll = (characterId, amount, key, _) => { refunds.Add((characterId, amount, key)); return Task.CompletedTask; };
+
+        // a jump the wallet cannot pay is refused, and the simulation hears nothing
+        payable = false;
+        var unpaid = await Assert.ThrowsAsync<MachoWrappedException>(() => JumpAsync(rig, session, oid, character.ShipId));
+        Assert.Equal("CustomNotify", unpaid.Error.UserErrorMessage);
+        Assert.DoesNotContain(rig.Sim.Heard, m => m is SimCommand { Code: SimCommands.Jump });
+        Assert.Empty(refunds);
+        charges.Clear();
+
+        // a paid jump is charged once and taken
+        payable = true;
+        Assert.IsType<PyTuple>(await JumpAsync(rig, session, oid, character.ShipId));
+        Assert.Single(charges);
+        Assert.Equal((character.CharacterId, 10_000m), (charges[0].Character, charges[0].Amount));
+        Assert.StartsWith("gate-toll:", charges[0].Key);
+        Assert.Contains(rig.Sim.Heard, m => m is SimCommand { Code: SimCommands.Jump });
+
+        // a jump the simulation refuses gets the toll back under its refund key
+        charges.Clear();
+        rig.Sim.JumpAnswer = new CommandReply(false, 0, "TOO_FAR_FROM_STARGATE");
+        await Assert.ThrowsAsync<MachoWrappedException>(() => JumpAsync(rig, session, oid, character.ShipId));
+        Assert.Single(charges);
+        Assert.Single(refunds);
+        Assert.Equal((character.CharacterId, 10_000m, charges[0].Key + ":refund"), refunds[0]);
+    }
+
+    [PgFact]
     public async Task A_jump_that_cannot_be_done_is_the_message_the_reference_tells()
     {
         var (rig, character, session) = await DockedAsync();

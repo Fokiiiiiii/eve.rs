@@ -18,6 +18,12 @@ namespace Eve.Services.Space;
 
 public sealed partial class SpaceSessions
 {
+    /// <summary>The Warp Disruption Field Generator's group (SDE 899; the effect <c>warpDisruptSphere</c>).</summary>
+    private const int WarpDisruptFieldGeneratorGroup = 899;
+
+    /// <summary>The in-game refusal for anchoring near a Jovian stargate (client message 669713, en-us).</summary>
+    private const string JovianAnchorNotice = "Cannot be anchored due to gravitational anomalies in the vicinity of an ancient Jovian stargate.";
+
     /// <summary>
     /// Whether a character is in a fleet, as the host's fleet store has it (the cynosural field generator's rule). Null when the host has no fleets, which
     /// refuses the lighting: no fleet is assumed.
@@ -144,6 +150,15 @@ public sealed partial class SpaceSessions
             {
                 throw MachoErrors.ThrowUserError("CannotLightCynoInSystem");
             }
+        }
+        // a warp disruption field generator anchors a warp bubble: none near a Jovian stargate (the client's deployBlocker, blockAnchorWarpBubbles,
+        // range 100000000 m; the text is the client's message 669713)
+        if (GateRules is not null && snapshot.Fitted.FirstOrDefault(m => m.Id == moduleId) is { } fieldModule
+            && _statics.Type(fieldModule.TypeId)?.GroupId == WarpDisruptFieldGeneratorGroup
+            && await PositionOfAsync(session, pilot.ShipId, cancellationToken) is { } at
+            && GateRules.GateBlocking(pilot.SolarSystemId, at.X, at.Y, at.Z, Eve.Services.Space.Gates.AnchorKind.WarpBubble) is not null)
+        {
+            throw MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr(JovianAnchorNotice)));
         }
         // a module that may not be used on warp (disallowActivateOnWarp) is refused while the ship aligns to warp or is in it: the host's warp state
         if (snapshot.Fitted.FirstOrDefault(m => m.Id == moduleId) is { } warpModule

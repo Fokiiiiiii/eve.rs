@@ -24,20 +24,17 @@ internal sealed partial class CharacterServicesComposition
     }
 
     /// <summary>
-    /// The minimum standing each station service needs from the owner's characters: the SDE's <c>stationStandingsRestrictions</c>
-    /// (<c>services</c>: service id to minimum). An owner with no row has no restriction.
+    /// The minimum standing each station service needs from the owner's characters (service id to minimum). An owner with no row has no
+    /// restriction. shortcut: the pinned SDE build has no stationStandingsRestrictions table (every read failed), so these are the seven
+    /// rules of owner 500026 as EveJS's static table holds them (from the client's stationstandingsrestrictions.fsdbinary); upgrade when the
+    /// SDE import carries the table.
     /// </summary>
-    private async ValueTask<IReadOnlyDictionary<long, double>> StationStandingRulesAsync(long owner, CancellationToken cancellationToken)
-    {
-        var rules = new Dictionary<long, double>();
-        foreach (var row in await sde.ReadAsync("stationStandingsRestrictions", [owner], cancellationToken))
+    private static readonly IReadOnlyDictionary<long, IReadOnlyDictionary<long, double>> EmbeddedRules =
+        new Dictionary<long, IReadOnlyDictionary<long, double>>
         {
-            if (row.Key != owner || !row.Doc.TryGetProperty("services", out var services)) continue;
-            foreach (var entry in services.EnumerateObject())
-                if (long.TryParse(entry.Name, System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out var serviceId)
-                    && entry.Value.ValueKind == System.Text.Json.JsonValueKind.Number)
-                    rules[serviceId] = entry.Value.GetDouble();
-        }
-        return rules;
-    }
+            [500026] = new Dictionary<long, double> { [5] = 3.0, [13] = -0.05, [14] = 3.0, [17] = -0.05, [22] = -0.05, [23] = 3.0, [24] = 3.0 },
+        };
+
+    private ValueTask<IReadOnlyDictionary<long, double>> StationStandingRulesAsync(long owner, CancellationToken cancellationToken) =>
+        ValueTask.FromResult(EmbeddedRules.TryGetValue(owner, out var rules) ? rules : new Dictionary<long, double>());
 }

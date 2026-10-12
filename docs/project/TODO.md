@@ -1522,3 +1522,27 @@ Research and what is cut: `docs/project/POCHVEN_DESIGN.md` (sources, SDE ids, th
 | CUT (no published state data) | Invasion states (Redoubt, Bulwark, Fortress, Liminality, Minor Victory) and their system lists | Thresholds (75%, 76%, 96%) are on the wiki; per-system state is not. `map.GetEdencomFortressSystems` stays open (see the line above in this file) |
 | OPEN | Filament entry (Pochven filaments 56065 to 56081, 1/5/15 ships), the 6.0 standing for Home systems | Needs the filament item and jump rules; not in the SDE beyond the counts |
 | OPEN | Pochven standings for docking (-0.05), the LP store (-0.01), manufacturing and offices (3.00), local chat in delayed mode | Wiki rules; not built |
+
+## 13. Wormhole space: research and the type catalog (2026-10-12)
+
+Evidence and decisions: `docs/project/WORMHOLE_DESIGN.md` (sources, SDE numbers, the SDE against the wiki, what is not published, owner decisions).
+
+| Status | Item | Missing work |
+|---|---|---|
+| DONE (tests) | The 129 wormhole types from the pinned SDE: lifetime, mass, per-jump mass, target class, distribution (`WormholeTypeCatalog`) | `WormholeTypeCatalogTests` (PgFact, real SDE). K162 is not a type of the catalog (no mass attribute) |
+| DONE (tests) | Rules on the numbers: J-space ids, the per-ship limit, the mass after a transit, the mass and lifetime states (wiki thresholds), the 5-minute polarization time (`WormholeRules`) | `WormholeRulesTests` (synthetic numbers, the state boundaries) |
+| OPEN | Jump through a wormhole (`wormholeMgr.WormholeJump`) | Needs a wormhole entity in the simulation and a jump callback in the composition (`SpaceRpc.cs` line 72 passes none; the call returns None). Owner decision 1 (the class of each J-space system) comes first |
+| OPEN | Connection generator (statics, k-space connections, spawn) and the lifetime and mass jobs | Statics per class and the spawn chances are not published (design section 4); owner decision 2 |
+| OPEN | Signatures, system effects, Sleeper and Drifter sites, Thera and Turnur connections | Design sections 4, 5 and 7. Effect magnitudes per class are not published (owner decision 3) |
+| OPEN | Local chat in J-space | The brief said there is none; the wiki and the client say there is one (owner decision 4) |
+
+### Slice 2 (2026-10-12)
+
+| Status | Item | Missing work |
+|---|---|---|
+| DONE (tests) | J-space system classes from the V24.01 client data (`WormholeSystemClasses`, `EVE_CLIENT_SDE_DIR/native/systems.jsonl.gz`): 2,604 systems | `WormholeClientDataTests`. Fuzzwork `mapLocationWormholeClasses` cross-check not done |
+| DONE (tests) | Per-class effect beacons from the SDE (group 920, 36 types) with their dogma modifiers (`WormholeEffects`) | `WormholeEffectsTests`. The wiki effects page is not reachable |
+| OPEN | Which effect each J-space system has | Design 9.2 (owner decision 6) |
+| CUT | Connection generator, statics, spawn | No source for statics per class or probabilities (design 9.3, owner decision 2) |
+| OPEN | Jump, lifetime/mass jobs, collapse, signatures, effects on ships, Sleeper/Drifter sites, Thera/Turnur, MITM run | Design 9.6 |
+| OPEN | Local chat in J-space | Design 9.4 (owner decision 4) |

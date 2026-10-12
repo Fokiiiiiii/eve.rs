@@ -47,6 +47,9 @@ internal sealed partial class CharacterServicesComposition
             // the containers the fill has just placed go into the scene at once (a pilot's entry restores the rest)
             if (spaceContainers is { } placed)
                 await placed.RestoreSiteContainersAsync(solarSystemId);
+            // the resources of the gas and ore sites (their clouds and rocks) are put back in the scene for the pilot who came
+            if (spaceContainers is { } resources && cosmicSites is { } sitesOfResources)
+                await resources.RestoreSiteResourcesAsync(solarSystemId, [.. (await sitesOfResources.ActiveAsync(solarSystemId)).Select(site => site.InstanceId)]);
             // a pilot in the system brings its sites' first waves (a scene is made for the pilot; a wave already in it is not made twice)
             if (siteNpcs is { } npcs)
                 await npcs.SpawnForSystemAsync(solarSystemId);
@@ -371,6 +374,11 @@ internal sealed partial class CharacterServicesComposition
             var probeScans = new Eve.Services.Space.SpaceProbeScans(spaceSessions, sim, dogma, new Eve.Ships.PgProbeStore(source, spaceSchema), ships, skills, foundations.Scheduler, probes, now,
                 sites: new Eve.Services.Space.Sites.ContentCosmicSites(cosmicSites));
             // a system a pilot comes to has its sites (a restart or a system nobody has scanned yet)
+            // a gas or ore site places its cloud or rocks in the scene of its system through the containers
+            if (cosmicSites is { } placingSites)
+                placingSites.PlaceResources = (system, site, template, origin) => spaceContainers!.PlaceSiteResourcesAsync(system, site, template, origin);
+            if (cosmicSites is { } endingSites)
+                endingSites.RemoveResources = (connection, transaction, system, site) => spaceContainers!.RemoveSiteResourcesAsync(connection, transaction, system, site);
             spaceSessions.SystemEntered += system => _ = EnsureSitesAsync(system);
             // the NPC waves of the dungeons (A-W1): the host runs their sweep and kill subscriber; a feature starts a dungeon through DungeonWaveDirector.StartAsync
             await Eve.Services.Space.Waves.DungeonWaveDirector.MigrateAsync(source, spaceSchema);

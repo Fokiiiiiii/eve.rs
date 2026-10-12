@@ -45,4 +45,26 @@ public static class BasicKillOffers
         }
         return best;
     }
+
+    /// <summary>
+    /// The basic courier offer of a Distribution agent (MissionKind "courier", basic type): the lowest courier mission of the agent's own level that
+    /// is not an epic arc step and that the character has not completed within the replay delay. The level comes from the committed level tags
+    /// (241 of the 1155 courier records carry one, levels 1 to 4); a level the destination rule does not state gets no offer.
+    /// </summary>
+    public static long? PickCourier(MissionStaticCatalog catalog, AgentMissionAgentData agent, IReadOnlyDictionary<long, DateTimeOffset> completedAt, DateTimeOffset now)
+    {
+        if (!catalog.IsLoaded || agent.AgentTypeId != AgentMissionKindRules.TypeBasicAgent || agent.MissionKind != "courier") return null;
+        if (MissionCourierRules.JumpRange(agent.Level) is null) return null;
+
+        long? best = null;
+        foreach (var mission in catalog.Missions)
+        {
+            if (mission.Courier is null) continue;
+            if (catalog.Level(mission.MissionId).Level is not { } level || level != agent.Level) continue;
+            if (catalog.MissionAvailability(mission.MissionId).ArcId is not null) continue;
+            if (completedAt.TryGetValue(mission.MissionId, out var at) && at + ReplayDelay > now) continue;
+            best = best is null || mission.MissionId < best ? mission.MissionId : best;
+        }
+        return best;
+    }
 }

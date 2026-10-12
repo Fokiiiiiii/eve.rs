@@ -1193,15 +1193,23 @@ fn a_missile_already_in_flight_cannot_damage_a_ship_that_acquires_tether() {
     structure.position = [p.x + structure.radius + spec().radius + 500.0, p.y, p.z];
     let structure_id = structure.structure_id;
     scene.place_structure(structure, now);
-    scene.set_tether_policy(PLAYER, 0, 30_000,
-        vec![crate::link::TetherCandidate { structure_id, range: 1_000.0 }], now);
+    scene.set_tether_policy(
+        PLAYER,
+        0,
+        30_000,
+        vec![crate::link::TetherCandidate { structure_id, range: 1_000.0 }],
+        now,
+    );
     assert!(scene.is_tethered(spec().ship_id, now));
     let mut told = Vec::new();
     for quarter in 1..=80 {
         told.extend(scene.poll(now + quarter * SECOND / 4));
     }
     assert!(scene.missiles.is_empty());
-    assert_eq!(Scene::condition_of(&scene.pilots[&PLAYER], now + 20 * SECOND), crate::health::Condition::FULL);
+    assert_eq!(
+        Scene::condition_of(&scene.pilots[&PLAYER], now + 20 * SECOND),
+        crate::health::Condition::FULL
+    );
     assert!(messages(&told, PLAYER, "OnDamageMessage").is_empty());
 }
 
@@ -1481,8 +1489,13 @@ fn a_disruptive_lance_and_its_neutralising_wave_skip_a_tethered_recipient() {
     structure.position = [p.x + structure.radius + spec().radius + 500.0, p.y, p.z];
     let structure_id = structure.structure_id;
     scene.place_structure(structure, now);
-    scene.set_tether_policy(PLAYER, 0, 30_000,
-        vec![crate::link::TetherCandidate { structure_id, range: 1_000.0 }], now);
+    scene.set_tether_policy(
+        PLAYER,
+        0,
+        30_000,
+        vec![crate::link::TetherCandidate { structure_id, range: 1_000.0 }],
+        now,
+    );
     let strike = crate::strike::Strike {
         direction: [-1.0, 0.0, 0.0],
         damage: [100.0; 4],

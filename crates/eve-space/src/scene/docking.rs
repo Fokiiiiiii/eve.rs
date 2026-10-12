@@ -112,8 +112,7 @@ impl Scene {
 
     pub(super) fn dock(&mut self, session: SessionId, station_id: i64, now: i64) -> Vec<Out> {
         let code = Command::Dock { station_id }.code();
-        let Some(station) = self.system.body(station_id).filter(|b| is_dock_body(b)).cloned()
-        else {
+        let Some(station) = self.system.body(station_id).filter(|b| is_dock_body(b)).cloned() else {
             return vec![Out::Refused { session, command: code, reason: "STATION_NOT_FOUND" }];
         };
         let pilot = self.pilots.get(&session).expect("the caller checked");

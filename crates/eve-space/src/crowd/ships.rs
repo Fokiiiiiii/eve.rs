@@ -37,11 +37,8 @@ impl Scene {
 
     /// Every client that currently has a scene view, ordered by pilot arrival then observer session.
     pub(crate) fn view_sessions(&self) -> Vec<SessionId> {
-        let mut sessions: Vec<_> = self
-            .in_entry_order()
-            .into_iter()
-            .filter(|session| self.pilots[session].bound)
-            .collect();
+        let mut sessions: Vec<_> =
+            self.in_entry_order().into_iter().filter(|session| self.pilots[session].bound).collect();
         sessions.extend(
             self.controlled_structures
                 .iter()
@@ -87,7 +84,9 @@ impl Scene {
         self.pilots
             .get(&observer)
             .map(|pilot| pilot.sees_wrecks.contains(&wreck_id))
-            .or_else(|| self.controlled_structures.get(&observer).map(|view| view.sees_wrecks.contains(&wreck_id)))
+            .or_else(|| {
+                self.controlled_structures.get(&observer).map(|view| view.sees_wrecks.contains(&wreck_id))
+            })
             .unwrap_or(false)
     }
 
@@ -110,16 +109,19 @@ impl Scene {
         self.pilots
             .get(&observer)
             .map(|pilot| pilot.sees_asteroids.contains(&asteroid_id))
-            .or_else(|| self.controlled_structures.get(&observer).map(|view| view.sees_asteroids.contains(&asteroid_id)))
+            .or_else(|| {
+                self.controlled_structures
+                    .get(&observer)
+                    .map(|view| view.sees_asteroids.contains(&asteroid_id))
+            })
             .unwrap_or(false)
     }
 
     pub(super) fn set_sees_asteroid(&mut self, observer: SessionId, asteroid_id: i64, seen: bool) {
-        let seen_set = self
-            .pilots
-            .get_mut(&observer)
-            .map(|pilot| &mut pilot.sees_asteroids)
-            .or_else(|| self.controlled_structures.get_mut(&observer).map(|view| &mut view.sees_asteroids));
+        let seen_set =
+            self.pilots.get_mut(&observer).map(|pilot| &mut pilot.sees_asteroids).or_else(|| {
+                self.controlled_structures.get_mut(&observer).map(|view| &mut view.sees_asteroids)
+            });
         if let Some(seen_set) = seen_set {
             if seen {
                 seen_set.insert(asteroid_id);

@@ -914,7 +914,9 @@ impl Modules {
     }
 
     pub(crate) fn active_or_pending_effects(&self) -> impl Iterator<Item = &Effect> {
-        self.running.iter().map(|run| &run.effect)
+        self.running
+            .iter()
+            .map(|run| &run.effect)
             .chain(self.pending_starts.iter().map(|start| &start.effect))
     }
 

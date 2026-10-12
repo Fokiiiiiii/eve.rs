@@ -30,11 +30,7 @@ impl Scene {
         ship_id: i64,
         now: i64,
     ) -> Vec<Out> {
-        let refused = |reason| Out::Refused {
-            session,
-            command: crate::link::COMMAND_MEASURE,
-            reason,
-        };
+        let refused = |reason| Out::Refused { session, command: crate::link::COMMAND_MEASURE, reason };
         if session == 0 || structure_id <= 0 || ship_id <= 0 {
             return vec![refused("INVALID_STRUCTURE_DEPOSIT_IDS")];
         }
@@ -50,7 +46,10 @@ impl Scene {
         self.settle_pilot(session, now);
         let distance = (|| {
             let pilot = self.pilots.get(&session).ok_or("NO_SHIP_IN_SPACE")?;
-            if matches!(pilot.cloak, crate::visibility::CloakState::Cloaking | crate::visibility::CloakState::Cloaked) {
+            if matches!(
+                pilot.cloak,
+                crate::visibility::CloakState::Cloaking | crate::visibility::CloakState::Cloaked
+            ) {
                 return Err("CLOAKED");
             }
             if pilot.flight.is_some() {
@@ -58,10 +57,20 @@ impl Scene {
             }
             let body = self.structure_body(structure_id).ok_or("STRUCTURE_NOT_FOUND")?;
             let ship = &pilot.ship;
-            if ![body.position.x, body.position.y, body.position.z,
-                ship.position.x, ship.position.y, ship.position.z,
-                body.radius, ship.spec.radius].iter().all(|value| value.is_finite())
-                || body.radius <= 0.0 || ship.spec.radius <= 0.0
+            if ![
+                body.position.x,
+                body.position.y,
+                body.position.z,
+                ship.position.x,
+                ship.position.y,
+                ship.position.z,
+                body.radius,
+                ship.spec.radius,
+            ]
+            .iter()
+            .all(|value| value.is_finite())
+                || body.radius <= 0.0
+                || ship.spec.radius <= 0.0
             {
                 return Err("INVALID_STRUCTURE_DEPOSIT_STATE");
             }
@@ -74,11 +83,9 @@ impl Scene {
             Ok((centre - body.radius - ship.spec.radius).max(0.0))
         })();
         let out = match distance {
-            Ok(distance) => Out::Measured {
-                session,
-                command: crate::link::COMMAND_MEASURE,
-                distance: Some(distance),
-            },
+            Ok(distance) => {
+                Out::Measured { session, command: crate::link::COMMAND_MEASURE, distance: Some(distance) }
+            }
             Err(reason) => refused(reason),
         };
         self.with_backlog(vec![out])
@@ -124,9 +131,13 @@ impl Scene {
                 return Vec::new();
             }
         };
-        let health = StructureHealth::new(placement.vitals, placement.shield_recharge_ms, placement.limits, now);
+        let health =
+            StructureHealth::new(placement.vitals, placement.shield_recharge_ms, placement.limits, now);
         self.structure_health.insert(placement.structure_id, health);
-        self.structure_audience().into_iter().map(|session| Self::update(session, vec![added.clone()])).collect()
+        self.structure_audience()
+            .into_iter()
+            .map(|session| Self::update(session, vec![added.clone()]))
+            .collect()
     }
 
     /// The host takes a structure out of space: its body goes and views that had it are told.
@@ -149,9 +160,15 @@ impl Scene {
 
     /// The host sets a structure's slim state: those who have it in view are told its slim item again (`OnSlimItemChange`). A state already
     /// set is not told again.
-    pub(crate) fn set_structure_state(&mut self, structure_id: i64, status: StructureStatus, at: i64) -> Vec<Out> {
+    pub(crate) fn set_structure_state(
+        &mut self,
+        structure_id: i64,
+        status: StructureStatus,
+        at: i64,
+    ) -> Vec<Out> {
         let Some(index) = self.structure_index(structure_id) else { return Vec::new() };
-        if matches!(&self.system.bodies[index].detail, Detail::Structure { status: current, .. } if *current == status) {
+        if matches!(&self.system.bodies[index].detail, Detail::Structure { status: current, .. } if *current == status)
+        {
             return Vec::new();
         }
         let stamp = self.next_stamp(at);
@@ -160,7 +177,10 @@ impl Scene {
             *current = status;
         }
         let change = payload::structure_slim_change(stamp, system, index);
-        self.structure_audience().into_iter().map(|session| Self::update(session, vec![change.clone()])).collect()
+        self.structure_audience()
+            .into_iter()
+            .map(|session| Self::update(session, vec![change.clone()]))
+            .collect()
     }
 
     /// A hit on a structure of this system: its layers take what the hit does, cut to the per-second limit of the layer it lands in. Told to the host
@@ -176,6 +196,10 @@ impl Scene {
         if hit.depleted.is_none() && !hit.over_threshold {
             return Vec::new();
         }
-        vec![Out::StructureDamaged { structure_id, depleted: hit.depleted, over_threshold: hit.over_threshold }]
+        vec![Out::StructureDamaged {
+            structure_id,
+            depleted: hit.depleted,
+            over_threshold: hit.over_threshold,
+        }]
     }
 }

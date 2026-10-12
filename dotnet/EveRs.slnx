@@ -32,6 +32,7 @@
     <Project Path="src/Eve.Trade/Eve.Trade.csproj" />
     <Project Path="src/Eve.Bookmarks/Eve.Bookmarks.csproj" />
     <Project Path="src/Eve.Universe/Eve.Universe.csproj" />
+    <Project Path="src/Eve.Wormholes/Eve.Wormholes.csproj" />
     <Project Path="src/Eve.Wallet/Eve.Wallet.csproj" />
     <Project Path="src/Eve.Services.CharacterInfo/Eve.Services.CharacterInfo.csproj" />
     <Project Path="src/Eve.Services.CharacterSelect/Eve.Services.CharacterSelect.csproj" />
@@ -83,6 +84,7 @@
     <Project Path="tests/Eve.Insurgency.Tests/Eve.Insurgency.Tests.csproj" />
     <Project Path="tests/Eve.Space.Tests/Eve.Space.Tests.csproj" />
     <Project Path="tests/Eve.Universe.Tests/Eve.Universe.Tests.csproj" />
+    <Project Path="tests/Eve.Wormholes.Tests/Eve.Wormholes.Tests.csproj" />
     <Project Path="tests/Eve.Wallet.Tests/Eve.Wallet.Tests.csproj" />
     <Project Path="tests/Eve.Services.Core.Tests/Eve.Services.Core.Tests.csproj" />
     <Project Path="tests/Eve.Services.Generator.Tests/Eve.Services.Generator.Tests.csproj" />

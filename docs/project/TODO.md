@@ -19,7 +19,7 @@ Do not fabricate successful state or fake backends to close these items.
 |---|---|---|
 | FUTURE | machoNet single sign-on login (`connection.LoginSso`, the `user_sso_token` of `machoNet.Authenticate`) | The acknowledgement now carries `access_token` and `computer_hash` (None), so the client no longer fails on the keys. The token is not read: EveJS records it only (`authenticationService.js:281`), and no token-to-account rule exists. Needs a decision on how a CCP SSO token maps to an account. |
 | PARTLY | `insurgencySolarsystem.GetAllVisibleCampaigns`; `GetLocalCampaignClientSnapshot`; campaign notices | The campaign state machine, store and deadline jobs exist (section 49, `Eve.Insurgency`); the snapshot reads them through the Host and the notices go to covered systems. Open: a start trigger (no client or operator path starts a campaign, Q-INS-4), the FOB structure (structures owner; `structureID` is None until then), point producers (C-P1: corruption and suppression sites, spread), and the public gateway for per-system bars (C-G1, not built; see section 49). |
-| OPEN | `essMgr.GetDataForClientSolarSystem`; `GetMainBankTheftsForClientSolarSystem`; `GetReserveBankTheftsForClientSolarSystem`; `RequestMainBankUnlink`; `RequestReserveBankUnlink` | Connect the real ESS state and operation backend to `ReadSystemStateAsync` and `ExecuteAsync`. Do not synthesize thefts or unlink success. |
+| PARTLY | `essMgr.GetDataForClientSolarSystem`; `GetMainBankTheftsForClientSolarSystem`; `GetReserveBankTheftsForClientSolarSystem`; `RequestMainBankUnlink`; `RequestReserveBankUnlink`; `AttemptLinkToMainBank`; `AttemptLinkToReserveBank`; `RequestUnlockReserveBank` | The ESS store, the rules, the clock, the ESS ball, the link checks (in system, linkable hull, 10 km, ship change), the weapon timer, the quadrant gate and key consumption are real (`PgEssStore`, `EssRules`, `EssComposition`, `space.ess.tick`). Open: the live walk (no linkable hull can be granted to a test character), the single-transaction key consumption, and the owner decisions in DEVIATIONS "Encounter Surveillance System, slice ESS-2". |
 | OPEN | `abyssalMgr.ClientIsReady` | Connect the runtime client-ready path and automatic trace activation. No Abyssal runtime provider was found in the current C# source. |
 | OPEN | `scanMgr.SignalTrackerRegister` | The Host can record the character/session/system registration and has a full-state publish hook. The live signal snapshot producer and the code that calls the publisher are still absent. |
 | OPEN | `posMgr.GetControlTowers` | Connect rows from a real starbase/tower data source to `ReadControlTowerRowsCallback`. The route is present; no current tower provider was found. |
@@ -987,7 +987,10 @@ Slice A9, part 1 (2026-10-11): DONE for the offers: ESI's official offers cached
 A4 client dialog path done: deferred `DoAction` with the client's YesNo (`SendClientCall`, `Provisional`); decline and quit
 confirmations use it (DEVIATIONS "Agents slice AG-4, A4").
 A6 research buttons 12 to 14 done: field choice, cancel, datacores from the SDE link, the purchase in one transaction (DEVIATIONS
-"Agents slice AG-4, A6 ..."). Open: research missions. Next: locator 15 to 17, live coverage.
+"Agents slice AG-4, A6 ..."). Open: research missions.
+A7 locator 15 to 17 done: the name, the offer with the fee, accept (fee and cooldown in one transaction, result notification type 69
+after the commit, refund if it cannot be written), reject (DEVIATIONS "Agents slice AG-4, A7"). Open: the client's localized labels for
+the dialog, the locator's standing split (faction and corporation), Host tests for delivery and refund. Next: live coverage.
 
 ## Agents slice AG-3 (2026-10-11)
 

@@ -52,6 +52,7 @@ internal sealed partial class CharacterServicesComposition
         await Eve.Agents.AgentMissionStore.MigrateAsync(source, agentMissionStore.Schema);
         agentResearchProjects = new Eve.Agents.ResearchProjectStore(source, agentMissionStore.Schema);
         await Eve.Agents.ResearchProjectStore.MigrateAsync(source, agentMissionStore.Schema);
+        agentLocates = new Eve.Agents.LocateStore(source, agentMissionStore.Schema);
 
         sde = new SdeReader(source);
     }

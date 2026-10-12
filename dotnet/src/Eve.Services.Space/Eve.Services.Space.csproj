@@ -24,6 +24,9 @@
     <EmbeddedResource Include="Effects/Data/fighter-abilities.json" LogicalName="fighter-abilities.json" />
     <EmbeddedResource Include="Sites/Data/site-templates.json" LogicalName="site-templates.json" />
     <EmbeddedResource Include="Migrations/*.sql" />
+    <EmbeddedResource Include="Ess/Data/ess-reserve-keys.json" LogicalName="ess-reserve-keys.json" />
+    <EmbeddedResource Include="Ess/Data/ess-quadrants.json" LogicalName="ess-quadrants.json" />
+    <EmbeddedResource Include="Ess/EssMigrations/*.sql" />
   </ItemGroup>
   <ItemGroup>
     <InternalsVisibleTo Include="Eve.Services.Space.Tests" />

@@ -173,6 +173,8 @@ internal sealed partial class CharacterServicesComposition
             npcWrecks.Warm();
             // the periodic work of the space features is jobs of the shared scheduler, not timers of their own
             spaceSessions.UseBounties(new PgBountyStore(source, new WalletTransactions(source, walletSchema), npcSchema, message => Console.Error.WriteLine($"eve-host: bounty: {message}")));
+            spaceSessions.Ess = Ess;   // the Main Bank share of a bounty earned in an ESS system
+            await PlaceEssBallsAsync(sim);   // each ESS is a ball in space, so a pilot in its system can link to it
             spaceSessions.Events = foundations.Events;   // what happens in space is announced on the bus as well
             spaceSessions.BuffStore = new Eve.Ships.PgShipBuffStore(source, spaceSchema);   // the buffs a restart keeps (track C8)
             ships.TransitionEventWriter = spaceSessions.Transitions.WriteEventAsync;
@@ -283,6 +285,8 @@ internal sealed partial class CharacterServicesComposition
             var bounties = spaceSessions;
             foundations.Scheduler.Register("space.bounty.pay", async (_, token) => await bounties.PayBountiesAsync(token));
             await foundations.Scheduler.EnsureRecurringAsync("space.bounty.pay", "pay", TimeSpan.FromSeconds(10));
+            foundations.Scheduler.Register("space.ess.tick", async (_, token) => await TickEssAsync(token));
+            await foundations.Scheduler.EnsureRecurringAsync("space.ess.tick", "tick", TimeSpan.FromSeconds(10));
             spaceContainers = new SpaceContainers(sim, ships, items, new PgSpaceItemStore(source, spaceSchema), new PgWorkCycleLedger(source, spaceSchema), new Eve.Services.Space.EventBusFacts(foundations.Events), dogma, spaceSessions, now, message => Console.Error.WriteLine($"eve-host: cans: {message}"), deployed: new PgDeployedStore(source, spaceSchema), scheduler: foundations.Scheduler);
 
             spaceContainers.SiteContainers = siteContainers;

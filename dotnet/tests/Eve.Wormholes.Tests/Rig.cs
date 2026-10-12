@@ -33,6 +33,11 @@ internal sealed class Rig : IAsyncDisposable
     private readonly IReadOnlyDictionary<int, int> _classes;
 
     public NpgsqlDataSource Source { get; }
+    public string WormholeSchema => _wormholeSchema;
+
+    public IReadOnlyDictionary<int, int> Classes => _classes;
+
+    public IReadOnlyDictionary<int, WormholeType> Types => _types;
     public long Now { get; set; } = 1_000_000;
     public DurableScheduler Scheduler { get; private set; } = null!;
     public WormholeStore Store { get; private set; } = null!;

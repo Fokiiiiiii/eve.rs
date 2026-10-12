@@ -69,6 +69,22 @@ public sealed class WormholeStore
         return rows;
     }
 
+    /// <summary>The active connections with an end in the system (leaving it or arriving in it), by ID.</summary>
+    public async Task<IReadOnlyList<StoredConnection>> ActiveAtAsync(NpgsqlConnection connection, NpgsqlTransaction? transaction, int systemId, CancellationToken cancellationToken = default)
+    {
+        await using var command = Sql.Command(connection, transaction,
+            Q($"SELECT {Columns} FROM {{schema}}.wormhole_connections WHERE (source_system_id = $1 OR destination_system_id = $1) AND active ORDER BY connection_id"), systemId);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        var rows = new List<StoredConnection>();
+        while (await reader.ReadAsync(cancellationToken))
+            rows.Add(Read(reader));
+        return rows;
+    }
+
+    /// <summary>Whether any connection is stored (a world is generated once).</summary>
+    public async Task<bool> AnyAsync(NpgsqlConnection connection, NpgsqlTransaction? transaction, CancellationToken cancellationToken = default) =>
+        (bool)(await Sql.ScalarAsync(connection, transaction, Q("SELECT EXISTS (SELECT 1 FROM {schema}.wormhole_connections)"), cancellationToken))!;
+
     /// <summary>Writes the mass and the active flag of a connection.</summary>
     public async Task UpdateAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, StoredConnection stored, CancellationToken cancellationToken = default)
     {

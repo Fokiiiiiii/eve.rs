@@ -31,6 +31,6 @@ def test_a_docked_pilot_asks_the_station_door_for_its_services():
         door = bound[0]
         assert who.call_bound(door, "DoStandingCheckForStationService", OPEN_SERVICE) is None
         answer, error = outcome(lambda: who.call_bound(door, "DoStandingCheckForStationService", CHECKED_SERVICE))
-        assert (answer is None) != (error is None), (answer, error)  # refused by standing or open, one of the two
+        assert answer is None or error is not None, (answer, error)  # open for this station's owner, or refused by standing
         answer, error = outcome(lambda: who.call_bound(door, "MoveCorpHQHere"))
         assert error is not None, answer  # no director role: refused

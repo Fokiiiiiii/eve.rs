@@ -347,8 +347,17 @@ def deliver(character: int, ship: int, step: Step, pickup_check: bool) -> None:
         who.call("charUnboundMgr", "SelectCharacterID", charID=character, secondChoiceID=None, skipTutorial=False)
         ballpark = who.call("beyonce", "MachoBindObject", int(system), None)
         wait_quietly(who, 2.0)
-        _, error = outcome(lambda: who.call_bound(ballpark[0], "CmdDock", drop))
-        assert error is None, f"mission {step.mission}: the dock at {drop}: {error}"
+        # the ship approaches the station first: while it is on its way the dock answers DockingApproach (with the distance), and it is asked again
+        for _ in range(60):
+            try:
+                who.call_bound(ballpark[0], "CmdDock", drop)
+                break
+            except packet.MachoError as refusal:
+                if "DockingApproach" not in repr(refusal.payload):
+                    raise AssertionError(f"mission {step.mission}: the dock at {drop} was refused: {describe(refusal.payload)}") from refusal
+                wait_quietly(who, 5.0)
+        else:
+            raise AssertionError(f"mission {step.mission}: the ship did not reach {drop} to dock")
         deadline = time.time() + 240
         while completed(character, step.mission) == 0 and time.time() < deadline:
             timed_events(who, 3.0)

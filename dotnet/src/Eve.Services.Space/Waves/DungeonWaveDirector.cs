@@ -86,12 +86,15 @@ public sealed class DungeonWaveDirector
     private readonly NpcSelector _selector;
     private readonly IDungeonNpcSpawner _spawner;
     private readonly string _schema;
+    private readonly Action<string>? _log;
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, bool> _refusalsLogged = new();
 
     public DungeonWaveDirector(
         NpgsqlDataSource source, ContentRuntime content, DurableScheduler scheduler, EventBus bus, DungeonCatalog catalog, WaveRules rules, NpcSelector selector,
-        IDungeonNpcSpawner spawner, string schema)
+        IDungeonNpcSpawner spawner, string schema, Action<string>? log = null)
     {
         (_source, _content, _scheduler, _bus, _catalog, _rules, _selector, _spawner) = (source, content, scheduler, bus, catalog, rules, selector, spawner);
+        _log = log;
         _schema = Sql.CheckSchema(schema);
     }
 
@@ -133,6 +136,9 @@ public sealed class DungeonWaveDirector
     {
         if (ValidatedPlan(dungeonID, out var plan) is { } refusal)
         {
+            // a refused start is retried by every sweep of its mission: the reason is logged once per pilot and dungeon
+            if (_refusalsLogged.TryAdd($"{characterId}:{dungeonID}", true))
+                _log?.Invoke($"dungeon {dungeonID} of pilot {characterId} did not start: {refusal}");
             return Refused(refusal);
         }
         if (!_spawner.IsPilotInSystem(characterId, solarSystemId))
@@ -323,6 +329,7 @@ public sealed class DungeonWaveDirector
                 && await _content.AbandonAsync(context.Connection, context.Transaction, instance.Id, AbandonReason, cancellationToken))
             {
                 abandoned.Add(instance.Id);
+                _log?.Invoke($"dungeon {instance.Definition} (instance {instance.Id}) of pilot {instance.Owner} abandoned: the pilot is not in system {data.SolarSystemId}");
             }
         }
         var withNpcs = new List<long>();

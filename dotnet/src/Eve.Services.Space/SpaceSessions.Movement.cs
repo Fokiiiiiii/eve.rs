@@ -20,6 +20,9 @@ namespace Eve.Services.Space;
 public sealed partial class SpaceSessions
 {
     /// <summary>Asks the simulation to dock the ship; the answer to the client's call is the time the docking was accepted, or nothing when it was not.</summary>
+    /// <summary>Told after a pilot has docked (the mission runtime's courier delivery); null when nothing listens.</summary>
+    public Func<long, long, CancellationToken, Task>? PilotDocked { get; set; }
+
     public async Task<PyValue> DockAsync(ClientSession session, long stationId, CancellationToken cancellationToken)
     {
         var id = (ulong)session.SessionId;
@@ -457,7 +460,9 @@ public sealed partial class SpaceSessions
                     var shipCondition = condition is null
                         ? null
                         : new ShipCondition(condition.Damage, condition.Charge, condition.ShieldCharge, condition.ArmorDamage, false);
-                    return await _ships.DockAsync(pilot.CharacterId, stationId, shipCondition, cancellationToken);
+                    var docked = await _ships.DockAsync(pilot.CharacterId, stationId, shipCondition, cancellationToken);
+                    if (docked.Moved is not null && PilotDocked is { } onDocked) await onDocked(pilot.CharacterId, stationId, cancellationToken);
+                    return docked;
                 },
                 result => result.Moved is not null,
                 applySimulation: null,

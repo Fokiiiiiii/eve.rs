@@ -67,6 +67,11 @@ public sealed class WormholeWorld
             {
                 await Jobs.OpenAsync(connection, transaction, planned, isStatic: true, nowMs, cancellationToken, _ => { });
             }
+            // Thera's connections (slice 8): their own seed, so the statics do not change when they do
+            foreach (var planned in TheraConnections.Plan(_classes, _types, seed ^ 0x7E4A5A9EUL))
+            {
+                await Jobs.OpenAsync(connection, transaction, planned, isStatic: true, nowMs, cancellationToken, _ => { });
+            }
         }
         await transaction.CommitAsync(cancellationToken);
     }

@@ -5,6 +5,7 @@ using Eve.Content;
 using Eve.Events;
 using Eve.Scheduler;
 using Eve.Universe;
+using Eve.Wormholes;
 using Npgsql;
 
 namespace Eve.Services.Space.Sites;
@@ -72,6 +73,7 @@ public sealed class CosmicSiteDirector
     private readonly SolarSystemCatalog _systems;
     private readonly Action<string>? _log;
     private readonly Func<int, bool>? _occupied;
+    private readonly Func<int, int?>? _wormholeClassOf;
 
     /// <summary>The store the containers of a site are placed in (their fill is in the site's transaction). Null: a site has no containers placed.</summary>
     public SiteContainerStore? Containers { get; set; }
@@ -85,11 +87,14 @@ public sealed class CosmicSiteDirector
 
     /// <param name="occupied">Whether a pilot is in a system. A system nobody is in gets no site (the wiki: sites do not respawn during downtime, and a
     /// system nobody is in is not seen); null means every system is kept filled.</param>
+    /// <param name="wormholeClassOf">The wormhole class of a J-space system (null for any other system). Such a system's sites are the plan of <see cref="WormholeSites"/>;
+    /// null means J-space has no sites.</param>
     public CosmicSiteDirector(
         NpgsqlDataSource source, ContentRuntime content, DurableScheduler scheduler, SiteTemplates templates, ISiteAnchors anchors, SolarSystemCatalog systems,
-        Action<string>? log = null, Func<int, bool>? occupied = null)
+        Action<string>? log = null, Func<int, bool>? occupied = null, Func<int, int?>? wormholeClassOf = null)
     {
-        (_source, _content, _scheduler, _templates, _anchors, _systems, _log, _occupied) = (source, content, scheduler, templates, anchors, systems, log, occupied);
+        (_source, _content, _scheduler, _templates, _anchors, _systems, _log, _occupied, _wormholeClassOf) =
+            (source, content, scheduler, templates, anchors, systems, log, occupied, wormholeClassOf);
     }
 
     public SiteTemplates Templates => _templates;
@@ -169,7 +174,7 @@ public sealed class CosmicSiteDirector
 
     private async Task StartAsync(int solarSystemId)
     {
-        if (BandOf(solarSystemId) is null)
+        if (BandOf(solarSystemId) is null && WormholeClassOf(solarSystemId) is null)
         {
             return;
         }
@@ -211,6 +216,11 @@ public sealed class CosmicSiteDirector
     /// </summary>
     public async Task FillAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, int solarSystemId, CancellationToken cancellationToken = default)
     {
+        if (WormholeClassOf(solarSystemId) is { } wormholeClass)
+        {
+            await FillWormholeAsync(connection, transaction, solarSystemId, wormholeClass, cancellationToken);
+            return;
+        }
         if (BandOf(solarSystemId) is not { } band || _occupied is { } occupied && !occupied(solarSystemId))
         {
             return;
@@ -230,22 +240,72 @@ public sealed class CosmicSiteDirector
             var seed = $"{kind}:{family}:{solarSystemId}:{index}:{before}";
             var template = candidates[(int)(SiteSeed.Hash(seed + ":template") % (uint)candidates.Count)];
             anchors ??= await _anchors.OfAsync(solarSystemId, cancellationToken);
-            var (anchor, position) = SitePlacement.Place(anchors, seed);
-            var code = SiteSeed.Code(seed);
-            for (var attempt = 1; !codes.Add(code); attempt++)
+            await StartSiteAsync(connection, transaction, template, solarSystemId, index, uniqueKey, seed, anchors, codes, cancellationToken);
+        }
+    }
+
+    /// <summary>
+    /// The sites of a J-space system: the plan of <see cref="WormholeSites"/> for its class and id, one site per planned signature, its index as the slot. A site
+    /// that ends is replaced in the same slot of the plan, somewhere else (the seed carries what was in the slot before). The plan keeps its template: the wiki
+    /// names the site of each signature, and no rule for its respawn is published (DEVIATIONS).
+    /// </summary>
+    private async Task FillWormholeAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, int solarSystemId, int wormholeClass, CancellationToken cancellationToken)
+    {
+        if (_occupied is { } occupied && !occupied(solarSystemId))
+        {
+            return;
+        }
+        var plan = WormholeSites.Plan(wormholeClass, wormholeClass >= WormholeSites.DrifterFirstClass, (ulong)solarSystemId);
+        var active = await ActiveAsync(solarSystemId, cancellationToken);
+        var codes = active.Select(site => site.Code).ToHashSet(StringComparer.Ordinal);
+        IReadOnlyList<SiteAnchor>? anchors = null;
+        for (var index = 0; index < plan.Count; index++)
+        {
+            var planned = plan[index];
+            if (planned.Category is "gas" or "ore")
             {
-                code = SiteSeed.Code($"{seed}:{attempt}");
+                continue; // no site of these kinds is made yet (DEVIATIONS: wormhole sites, not built)
             }
-            var started = await _content.StartAsync(connection, transaction, template.DefinitionId, solarSystemId, Data(template, solarSystemId, index, code, position, anchor), uniqueKey,
-                cancellationToken: cancellationToken);
-            if (started.Created && Containers is { } containerStore && ContainerType is { } typeOf)
+            var kind = planned.Category == "combat" ? SiteTemplate.Anomaly : SiteTemplate.Signature;
+            if (_templates.ById($"wormhole-{planned.DungeonKey}") is not { } template)
             {
-                await PlaceContainersAsync(connection, transaction, containerStore, typeOf, template, started.Id, solarSystemId, position, seed);
+                _log?.Invoke($"wormhole system {solarSystemId}: {planned.SiteName} ({planned.DungeonKey}) has no site template and is not placed");
+                continue;
             }
-            if (started.Created)
+            if (active.Any(site => site.Kind == kind && site.Slot == index))
             {
-                _log?.Invoke($"site {code}: {template.Name} ({template.Kind}, {template.Family}) in system {solarSystemId}, beside {anchor.Id}");
+                continue;
             }
+            var uniqueKey = $"system:{solarSystemId}:wormhole:{index}";
+            var before = await _content.FindAsync(connection, transaction, kind, uniqueKey, cancellationToken) ?? 0;
+            var seed = $"wormhole:{solarSystemId}:{index}:{before}";
+            anchors ??= await _anchors.OfAsync(solarSystemId, cancellationToken);
+            await StartSiteAsync(connection, transaction, template, solarSystemId, index, uniqueKey, seed, anchors, codes, cancellationToken);
+        }
+    }
+
+    /// <summary>The wormhole class of a J-space system, or null when it is not one (or the director has no J-space).</summary>
+    public int? WormholeClassOf(int solarSystemId) => _wormholeClassOf?.Invoke(solarSystemId);
+
+    /// <summary>Starts one site of a template in its slot: placed beside a celestial by the seed, its code unique in the system, its containers in the same transaction.</summary>
+    private async Task StartSiteAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, SiteTemplate template, int solarSystemId, int index, string uniqueKey,
+        string seed, IReadOnlyList<SiteAnchor> anchors, HashSet<string> codes, CancellationToken cancellationToken)
+    {
+        var (anchor, position) = SitePlacement.Place(anchors, seed);
+        var code = SiteSeed.Code(seed);
+        for (var attempt = 1; !codes.Add(code); attempt++)
+        {
+            code = SiteSeed.Code($"{seed}:{attempt}");
+        }
+        var started = await _content.StartAsync(connection, transaction, template.DefinitionId, solarSystemId, Data(template, solarSystemId, index, code, position, anchor), uniqueKey,
+            cancellationToken: cancellationToken);
+        if (started.Created && Containers is { } containerStore && ContainerType is { } typeOf)
+        {
+            await PlaceContainersAsync(connection, transaction, containerStore, typeOf, template, started.Id, solarSystemId, position, seed);
+        }
+        if (started.Created)
+        {
+            _log?.Invoke($"site {code}: {template.Name} ({template.Kind}, {template.Family}) in system {solarSystemId}, beside {anchor.Id}");
         }
     }
 

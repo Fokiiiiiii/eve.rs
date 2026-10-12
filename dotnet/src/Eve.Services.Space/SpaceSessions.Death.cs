@@ -82,19 +82,45 @@ public sealed partial class SpaceSessions
                 abandoned.SolarSystemId,
                 destroyed.ShipId,
                 wreckTypeId,
-                seed);
+                seed,
+                replaceActiveShip: abandoned.StructureControlSessionId is not null);
             if (death is null)
             {
                 _log?.Invoke($"unpiloted ship {destroyed.ShipId} was destroyed in space but is no longer owned by character {abandoned.OwnerCharacterId} at system {abandoned.SolarSystemId}");
                 return;
             }
 
+            _ejectedShips.TryRemove(destroyed.ShipId, out _);
             if (abandoned.ShipTypeId != CharacterShips.CapsuleTypeId)
             {
                 await _statics.EnsureTypesAsync([
                     .. death.Changes.Select(change => change.Item.TypeId),
-                    .. death.Wreck is { } wreck ? new[] { wreck.TypeId } : []
+                    .. death.Wreck is { } wreck ? new[] { wreck.TypeId } : [],
+                    .. death.Capsule is { } replacement ? new[] { replacement.TypeId } : []
                 ]);
+
+                if (death.Capsule is { } capsule
+                    && abandoned.StructureControlSessionId is { } controllerSessionId
+                    && _structureObservers.ContainsKey(controllerSessionId)
+                    && _pilots.TryGetValue(controllerSessionId, out var controller)
+                    && controller.CharacterId == abandoned.OwnerCharacterId
+                    && controller.ShipId == destroyed.ShipId)
+                {
+                    var capsulePilot = new Pilot(
+                        controller.Session, controller.CharacterId, capsule.Id, capsule.TypeId, abandoned.SolarSystemId, 0)
+                    {
+                        StructureControlDeath = controller.StructureControlDeath,
+                        StructureControlCapsulePosition = controller.StructureControlCapsulePosition ?? destroyed.Position,
+                        StructureControlCapsuleDirection = controller.StructureControlCapsuleDirection ?? destroyed.Direction
+                    };
+                    EndTetherPilot(controller);
+                    controller.End();
+                    if (!_pilots.TryUpdate(controllerSessionId, capsulePilot, controller))
+                    {
+                        controller.Session.Close();
+                        throw new InvalidOperationException($"the capsule for destroyed ship {destroyed.ShipId} could not replace its controller pilot");
+                    }
+                }
 
                 var killer = destroyed.KillerShipId == 0
                     ? null
@@ -149,6 +175,8 @@ public sealed partial class SpaceSessions
         }
         catch (Exception error)
         {
+            if (abandoned.StructureControlSessionId is not null)
+                _ejectedShips.TryAdd(destroyed.ShipId, abandoned);
             _log?.Invoke($"the loss of unpiloted ship {destroyed.ShipId} of character {abandoned.OwnerCharacterId} could not be processed: {error}");
         }
     }

@@ -428,3 +428,47 @@ Not done (the rest of step (b) onward):
   client classes and the SDE types loaded at start-up).
 - The effects, signatures, sites and Thera exits (steps c to f).
 - The live check (tools/mitm against EveJS): needs the jump to exist.
+
+## 14. Slice 7 (2026-10-12): status of steps d to f
+
+- (d) Signatures in probe scanning: NOT BUILT. Sources read: EveJS `wormholeSignatureProvider.js` (signature rows: scan group 3,
+  inventory group 502 `Cosmic Signature`, strength attribute 1908 from `explorationAuthority.scanStrengthAttributes`; the per-signature
+  strength value is not read in the provider) and `explorationAuthority.signatureTypeDefinitions.wormhole`. The SDE carries attribute
+  1908 on no type. The eve.rs probe path (`SpaceProbeScans`, the dungeon signature count in `DungeonRpcServices`, which has a
+  `VisibleWormholeSignatureCountsBySystem` input that nothing fills) has no wormhole rows. The wiki's scan-strength value for a
+  wormhole was not read in this slice. Next: one row per wormhole end in the probe's result, with the strength the wiki gives.
+- (e) Sleeper and Drifter sites: BLOCKED. The sites' counts, NPC compositions per class and respawn are not published (design 4, 10.4);
+  the dungeon machinery exists, the content does not. Needs an owner decision on the content source.
+- (f) Thera exits: BLOCKED. The wiki says Thera has "a dozen or so wormholes to high-, low-, and null-sec at any given time", tracked
+  by EVE Scout (the Thera page read on 2026-10-12): those are not static, so they are the K-space wandering connections, which the
+  owner keeps cut (decision 1 of slice 5). Thera has no static in the data file (`jspace-systems.json`).
+
+## 15. Slice 8 (2026-10-12): Thera's connections; the signature strength, the sites, the sim
+
+- Thera's connections (DONE, tests): `TheraConnections` (`Eve.Wormholes`). Sources: EVE University "Thera" (https://wiki.eveuniversity.org/Thera,
+  fetched 2026-10-12: "a dozen or so wormholes to high-, low-, and null-sec at any given time", tracked by EVE Scout); EVE University
+  "Wormhole Types" (the endpoints of the eight types with an end in Thera: F135 class 2 or 3 to Thera, F353 class 1, L031 null, M164
+  low, T458 high; Q063 Thera to high, V898 Thera to low, E587 Thera to null). The rule: 12 connections, each of a type drawn with a
+  seed (SplitMix64), its free end drawn among the systems of the type's classes that are not Thera and not already connected to
+  Thera. A collapsed Thera connection is opened again the same way (owner rule: respawn). Count 12 is the page's "a dozen or so";
+  the counts per type are not published (DEVIATIONS). Tests: `TheraConnectionsTests` (4 incl. a PG respawn), 21 wormhole tests in all.
+- Signature scan strength (NOT DONE, blocker): the EVE University pages read give no per-type scan strength: "Wormholes" (the
+  level system is not on the page), "Cosmic signature" (the probe-scan page: sensor thresholds per level only), "Wormhole Space"
+  (no signature counts or scan values). A web search found only forum posts (a 10-point scale and Pathfinder's 2.5% and 6.67% numbers)
+  that are not official. EveJS carries the strength attribute id (1908) and no per-type value (its provider reads none). So no per-type
+  strength is available from the sources; the probe scanner cannot be given the values without an owner decision.
+- Sleeper and Drifter sites (PARTIAL, blocker on the numbers): the wiki "Wormhole Space" page gives the combat site names per class
+  (C1: Perimeter Ambush Point, Perimeter Camp, Phase Catalyst Node, The Line; C2: Perimeter Checkpoint, Perimeter Hangar, The Ruins of
+  Enclave Cohort 27, Sleeper Data Sanctuary; C3: Fortification Frontier Stronghold, Outpost Frontier Stronghold, Solar Cell, The Oruze
+  Construct; C4: Frontier Barracks, Frontier Command Post, Integrated Terminus, Sleeper Information Sanctum; C5: Core Garrison, Core
+  Stronghold, Oruze Osobnyk, Quarantine Area; C6: Core Citadel, Core Bastion, Strange Energy Readings, The Mirror). The same page: the
+  number of cosmic signatures per system and the shares of combat, relic, data, gas and ore sites are NOT stated; C13 is not described.
+  The Drifter wormholes: each has five multi-room combat sites, and six statics to C1 to C6 (Z647, D382, O477, Y683, N062, R474).
+  The SDE has the site templates (dungeons with the factions 500021 Sleeper and 500024 Drifter). Blocked on the per-system counts;
+  the names above can select templates once the owner gives the count rule.
+- Environment effects in the simulation (NOT DONE): the Rust sim owns the ship's speed, signature radius, shield, armor, capacitor and
+  the module numbers; the C# attribute sync to the sim is the ship spec at entry (`SimShips.Of`). Extending it means a per-attribute
+  list in the spec and in the sim's ship model. Not started in this slice.
+- The service-layer jump tests (NOT DONE): the harness exists (`SpaceServiceTests`, the gate jump tests) but a wormhole world needs a
+  store and a scheduler in the space test rig. Not started.
+- The live check (NOT DONE): needs the sim, a static wormhole in a K-space system, and the MITM capture against EveJS; not run.

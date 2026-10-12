@@ -7,10 +7,16 @@ impl Scene {
             .is_some_and(|o| can_see(o, Presence { position: wreck.position, warping: false }))
     }
 
-    /// The wrecks in the ballpark of a pilot, in the order of their ids.
+    /// The wrecks in a bound view, in the order of their ids.
     pub(crate) fn wrecks_in_view(&self, session: SessionId) -> Vec<&Wreck> {
-        let Some(pilot) = self.pilots.get(&session) else { return Vec::new() };
-        self.wrecks.values().filter(|wreck| pilot.sees_wrecks.contains(&wreck.id)).collect()
+        let seen = if let Some(pilot) = self.pilots.get(&session) {
+            &pilot.sees_wrecks
+        } else if let Some(observer) = self.controlled_structures.get(&session) {
+            &observer.sees_wrecks
+        } else {
+            return Vec::new();
+        };
+        self.wrecks.values().filter(|wreck| seen.contains(&wreck.id)).collect()
     }
 
     /// A wreck comes into the scene: whoever has bound the ballpark and can see the place is sent it.
@@ -20,26 +26,20 @@ impl Scene {
         let stamp = self.next_stamp(now);
         let Some(wreck) = self.wrecks.get(&id) else { return Vec::new() };
         let Ok(added) = payload::add_wreck(stamp, wreck, now) else { return Vec::new() };
-        let watchers: Vec<SessionId> = self
-            .in_entry_order()
+        self.watchers_of(wreck)
             .into_iter()
-            .filter(|s| self.pilots[s].bound && self.sees_place_of(*s, wreck))
-            .collect();
-        let mut out = Vec::new();
-        for watcher in watchers {
-            if let Some(pilot) = self.pilots.get_mut(&watcher) {
-                pilot.sees_wrecks.insert(id);
-            }
-            out.push(Self::update(watcher, vec![added.clone()]));
-        }
-        out
+            .map(|watcher| {
+                self.set_sees_wreck(watcher, id, true);
+                Self::update(watcher, vec![added.clone()])
+            })
+            .collect()
     }
 
-    /// The pilots that have bound the ballpark and can see the place of a wreck, in the order they came into the scene.
+    /// The bound views that can see a wreck's place.
     pub(super) fn watchers_of(&self, wreck: &Wreck) -> Vec<SessionId> {
-        self.in_entry_order()
+        self.view_sessions()
             .into_iter()
-            .filter(|s| self.pilots[s].bound && self.sees_place_of(*s, wreck))
+            .filter(|observer| self.sees_place_of(*observer, wreck))
             .collect()
     }
 
@@ -120,7 +120,7 @@ impl Scene {
         out
     }
 
-    /// What is in a wreck or a can changed: its slim item is told again to whoever has it in view (`OnSlimItemChange`).
+    /// What is in a wreck or a can changed: its slim item is told again to whoever has it in view.
     pub fn change_wreck(&mut self, wreck_id: i64, is_empty: bool, now: i64) -> Vec<Out> {
         let Some(wreck) = self.wrecks.get_mut(&wreck_id) else { return Vec::new() };
         wreck.is_empty = is_empty;
@@ -128,26 +128,31 @@ impl Scene {
         let stamp = self.next_stamp(now);
         let Some(wreck) = self.wrecks.get(&wreck_id) else { return Vec::new() };
         let changed = payload::slim_item_change(stamp, wreck);
-        self.in_entry_order()
+        self.view_sessions()
             .into_iter()
-            .filter(|s| self.pilots[s].bound && self.pilots[s].sees_wrecks.contains(&wreck_id))
+            .filter(|observer| self.sees_wreck(*observer, wreck_id))
             .map(|watcher| Self::update(watcher, vec![changed.clone()]))
             .collect()
     }
 
-    /// A wreck or a can is taken out of space by the host (it was emptied, or its time ran out): whoever had it in view is told, with the destruction effect
-    /// `effect` played first when there is one (`0`: none).
+    /// A wreck or a can is taken out of space: whoever had it in view is told, with the destruction effect first when there is one.
     pub fn remove_wreck(&mut self, wreck_id: i64, effect: i64, now: i64) -> Vec<Out> {
         if self.wrecks.remove(&wreck_id).is_none() {
             return Vec::new();
         }
         let watchers: Vec<SessionId> = self
-            .in_entry_order()
+            .view_sessions()
             .into_iter()
-            .filter(|s| self.pilots[s].bound && self.pilots[s].sees_wrecks.contains(&wreck_id))
+            .filter(|observer| self.sees_wreck(*observer, wreck_id))
             .collect();
-        for pilot in self.pilots.values_mut() {
-            pilot.sees_wrecks.remove(&wreck_id);
+        let viewers: Vec<_> = self
+            .pilots
+            .keys()
+            .chain(self.controlled_structures.keys())
+            .copied()
+            .collect();
+        for viewer in viewers {
+            self.set_sees_wreck(viewer, wreck_id, false);
         }
         if watchers.is_empty() {
             return Vec::new();
@@ -162,7 +167,7 @@ impl Scene {
             ));
         }
         actions.push(payload::remove_ships(stamp, [wreck_id]));
-        watchers.into_iter().map(|w| Self::update(w, actions.clone())).collect()
+        watchers.into_iter().map(|watcher| Self::update(watcher, actions.clone())).collect()
     }
 
     /// How far the surface of a wreck or a can is from the centre of the pilot's ship (what the reference measures a container's range by), or `None`
@@ -204,34 +209,37 @@ impl Scene {
         out
     }
 
-    /// A pilot that moved into a box of the grid is sent the wrecks there and one that moved out is told they are gone.
+    /// A view that moved into a box is sent its wrecks, and one that moved out is told they are gone.
     pub(crate) fn reconcile_wrecks(&mut self, now: i64) -> Vec<Out> {
         if self.wrecks.is_empty() {
             return Vec::new();
         }
         let mut out = Vec::new();
-        for observer in self.in_entry_order() {
-            if !self.pilots[&observer].bound {
-                continue;
-            }
-            let seen = self.pilots[&observer].sees_wrecks.clone();
+        for observer in self.view_sessions() {
+            let seen: std::collections::BTreeSet<i64> = self
+                .wrecks
+                .keys()
+                .copied()
+                .filter(|id| self.sees_wreck(observer, *id))
+                .collect();
             let should: std::collections::BTreeSet<i64> =
-                self.wrecks.values().filter(|w| self.sees_place_of(observer, w)).map(|w| w.id).collect();
+                self.wrecks.values().filter(|wreck| self.sees_place_of(observer, wreck)).map(|wreck| wreck.id).collect();
             let gone: Vec<i64> = seen.difference(&should).copied().collect();
             let coming: Vec<i64> = should.difference(&seen).copied().collect();
             if !gone.is_empty() {
                 let stamp = self.next_stamp(now);
                 out.push(Self::update(observer, vec![payload::remove_ships(stamp, gone.iter().copied())]));
+                for id in &gone {
+                    self.set_sees_wreck(observer, *id, false);
+                }
             }
             for id in coming {
                 let stamp = self.next_stamp(now);
                 let Some(wreck) = self.wrecks.get(&id) else { continue };
                 if let Ok(added) = payload::add_wreck(stamp, wreck, now) {
+                    self.set_sees_wreck(observer, id, true);
                     out.push(Self::update(observer, vec![added]));
                 }
-            }
-            if let Some(pilot) = self.pilots.get_mut(&observer) {
-                pilot.sees_wrecks = should;
             }
         }
         out

@@ -227,6 +227,21 @@ public class SimClientTests
         Assert.Equal(new SimTetherChanged(7, 0, structureId, true), Assert.Single(heard));
     }
 
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Structure_control_waits_for_the_actual_simulation_outcome(bool accepted)
+    {
+        var (sim, client) = await ConnectedAsync(message => message is SimControlStructure control
+            ? accepted ? [new SimAccepted(control.SessionId, SimCommands.ControlStructure, 123)]
+                : [new SimRefused(control.SessionId, SimCommands.ControlStructure, "NO_STRUCTURE")] : []);
+        await using var disposeSim = sim;
+        await using var disposeClient = client;
+        var request = new SimControlStructure(7, 30000142, 1040000000000001, 90000001, true);
+        Assert.Equal(accepted ? null : "NO_STRUCTURE", await client.ControlStructureAsync(request));
+        Assert.Equal(request, Assert.Single(sim.HeardNow().OfType<SimControlStructure>()));
+    }
+
     [Fact]
     public async Task Commands_reach_the_simulation_in_the_order_they_were_given()
     {

@@ -1420,6 +1420,7 @@ Sources. The wiki: "Pochven" (https://wiki.eveuniversity.org/Pochven, fetched 20
   `GetEdencomMinorVictorySystems`, `GetTriglavianMinorVictorySystems`) are the reference's constant lists; the SDE does
   not carry them and no state produces them. `map.GetBeaconCount` answers an empty dictionary, although the cynosural
   beacons of track A9 exist: the count belongs to the ships track (the other agent). Status: each open (TODO section 41).
+- **Report row types (slice 2, 2026-10-12).** `lastUpdated` is a long (a FILETIME), as EVE.js's answer has it; the field was a real. The key sets of `GetIncursionGlobalReport` and `GetSystemsInIncursions` equal EVE.js's in the live walk (`test_incursion_walk.py`). Status: verified against EVE.js.
 - **Incursions and anomalies come from the content state.** `map.GetIncursionGlobalReport`, `map.GetSystemsInIncursions`,
   `taleMgr.*` and `scanMgr.*` read the content instances of kind `incursion` and `anomaly` (`PersistenceIncursionAnomalyReadModel`).
   With none seeded, the answers are the empty contract shapes (an empty list, an empty rowset, an empty tale list).
@@ -2532,10 +2533,7 @@ Engine: `dotnet/src/Eve.Hacking` (pure rules, no Host). Sources: EVE University 
 
 ## Moon extraction (ST-6a)
 
-- **Start gate (a stand-in).** EVE.js `validateMoonExtractionMutationAccess` needs the pilot to control the structure (`isControllingStructureSession`:
-  docked and `shipid` equal to the structure) and the profile's moon-mining access setting. Both wait for ST-3 (docking) and ST-5 (control, profiles).
-  Until then the start requires the pilot docked at the structure (`structureid`) and the structure owned by the pilot's corporation; a refusal is
-  `StructureDefenseDenied`. Source: EVE.js `moonExtractionsService.js:279-305`, `structureControlState.js` `isControllingStructureSession`.
+- **Mutation gate (ST-5 integration, 2026-10-12).** Start, fracture and cancel require `shipid = structureid`, a persisted controller record for this character/session and the profile's moon service access. Structure and controller rows are locked inside the mutation transaction, so a concurrent controller release cannot pass the authorization check before commit. Forged/released sessions and revoked profiles raise `StructureDefenseDenied`. Pochven/online-drill checks and the cancel Station Manager rule remain. Source: EveJS `moonExtractionsService.js:279-305`, V24.01 structure control callsites; 11 PG moon Host tests pass.
 - **Duration.** EVE.js clamps the requested duration to 518 460 to 4 838 400 s and answers `None` for a duration that is not positive. We clamp the same
   way; a duration that is not positive is refused by name (`MoonminingEventTooShort`, the client's own user error), because the client reports success on
   any reply.
@@ -2582,6 +2580,7 @@ Engine: `dotnet/src/Eve.Hacking` (pure rules, no Host). Sources: EVE University 
 - **At-least-once spawn.** The simulation spawns a wave before the commit of its drone rows. A crash between the two can make the drones twice (as for dungeon waves).
 - **Wave 2 (D-S2, 2026-10-12).** The second wave at scan progress 0.5 has the same pool and amount as the first (EVE.js `crabWaveAuthority.js`, `INFERRED_WAVE_SCHEDULE`). The CCP guide (support article 4408566646162) says Rogue Drone waves block the scan until cleared, which is what the scan does. The figures stay owner-decided (D-C1) and are not CCP data. Status: decided.
 - **Link lock (D-L2, 2026-10-12).** EVE.js `applyLinkRestrictionsToShip`: immobile until the link completes; warp, jump, cyno jump and dock held until one minute after (`MOBILE_ANALYSIS_BEACON_LINK_STATUS_CLEAR_DELAY_MS`). The CCP text for the four minutes gives no lock list, so the lock list is EVE.js's. A held command is refused as `LINK_HOLD`; the client sees the command's usual refusal text. Cloak and tether are not held yet. Status: decided; cloak and tether OPEN.
+- **Live walk (slice 2, 2026-10-12).** `tools/headless-client/tests/test_crab_walk.py` runs on eve.rs only: the walk's CRAB and anchoring skill are database fixtures, and EVE.js keeps its characters outside PostgreSQL, so the same fixture cannot be written there. Status: decided; the EVE.js comparison is not run.
 - **Not built.** The interference and energy costs, four links per character per day, the 10,000 km asteroid rule, bounties, beacon damage and drone attacks (see TODO section 48).
 - **Client ball.** A beacon is released as a container ball (as the lance beacon is), with category 22. Not verified in the graphical client.
 ## Incursions (B-L1, B-S1, B-M1, 2026-10-11)
@@ -2637,8 +2636,19 @@ Sources: CCP launch article "The Nation Strikes Back" (https://www.eveonline.com
 - **Item and structure in one transaction.** The item is deleted and the structure created with `structure.anchored` in one transaction; the structure id is the item id (EveJS keeps the source item id when the item is consumed; the same rule). A structure already holding the id refuses with EveJS's `That inventory item ID is already in use by a live structure.`
 - **Unanchoring.** Director or CEO (EveJS `requireStructureDecommissionSession`). The timer is the timeline's: 7 days, 45 minutes for Flex (wiki; EveJS `UNANCHORING`, `FLEX_UNANCHORING`). The states that refuse it are EveJS's `STRUCTURE_UNANCHOR_CANCEL_STATES` (the timeline refuses the same states now; a fitting-invulnerable or fob structure keeps its EveJS answer). A repeated unanchor or a cancel with nothing running is answered without a change (EveJS).
 - **Not done: the drop at the end of an unanchoring.** EveJS hands the hull, the eject container, the fitting containers and the rigs over in `structureAssetSafetyState.js` (unanchor handoffs). That is the asset-safety service, not this package; the structure leaves the simulation and the directory, and its items stay where they were.
-- **Notices.** Shapes and recipients from EveJS `space/runtime/structureLifecycleFanout.js`: `OnStructureStateChanged` to the owner corporation when the state changed; `OnCorporationStructuresUpdated` when the state, the upkeep or the presence changed (the payload carries the previous state and upkeep only, so a change of services or cores alone is not announced); `OnCurrentStructureStateChanged` to sessions docked in the structure. Sessions whose ship id is the structure (the control seat, ST-5) are not reached yet.
+- **Notices.** Shapes and recipients from EveJS `space/runtime/structureLifecycleFanout.js`: `OnStructureStateChanged` to the owner corporation when the state changed; `OnCorporationStructuresUpdated` when the state, the upkeep or the presence changed (the payload carries the previous state and upkeep only, so a change of services or cores alone is not announced); `OnCurrentStructureStateChanged` to sessions docked in the structure. ST-5 control sessions retain `structureid`, so the same `InStructure` audience now includes their control seat.
 
+
+## Structure control and deliveries (ST-5, 2026-10-12)
+
+- Client calls follow V24.01 `structureControl.py` / `invItemFunctions.py` / `dropboxController.py`; profile setting 17 regulates control (CCP Roles Listing). Host callbacks are wired to actual controller records, the simulation observer and existing inventory/mailbox persistence.
+- Wire integration: protocol 65; control kind 84 / command 33, with wormhole kinds 82/83 retained from upstream. Both Rust and C# use the same regenerated golden frames (188 valid / 65 invalid).
+- A controlled structure uses its real scene Body and StructureHealth. TakeControl keeps docked location attributes; BoardStructure preserves the physical ship and changes the session to the structure; Eject's optional shipID=0 creates a real capsule. Explicit return validates the original ship's actual 6.5 km boarding range. Exclusive ownership and compensation use sequence generations, and Host restart clears controllers.
+- Legitimate successful void RPCs return None. An absent provider, failed control transition or read-only structure inventory mutation raises a named refusal; these no longer report fake success. GetStructurePilot remains nullable when there is no controller.
+- Cargo Deposit has a 10 km surface range with no docking ACL requirement (CCP Cargo Deposit announcement). The existing Measure 20 reply measures the local physical ship against the actual structure; the Host also applies crimewatch refusal. FLEX allows only matching SDE fuel, with corporation ownership. Only committed eligible IDs are returned.
+- Deliver stores type 199/group 4 inbox data in the same transaction as item movements and outbox. `[quantity, typeID]` rows and notification arguments follow the V24.01 formatter. Successful retries do not duplicate moves/inbox. A live publisher failure preserves the durable inbox; automatic live resend is not added.
+- Retained-hull death now uses existing unpiloted tracking and a scoped active-ship replacement transaction; cargo/wreck and the real capsule persist together. The controller remains attached, and release retries failed persistence/respawn without duplicate loss. Real Rust retains the pending respawn context through control restoration. Ordinary abandoned-ship calls still reject an active hull.
+- Open: structure capacitor and fitted weapon execution/hardpoint accounting are ST-8 (capacitor currently remains full); the moon mining pilot/profile gate is now connected and protected by the same mutation transaction. Unit/PG tests cover these implemented flows, but native HUD and a live Host-to-sim walkthrough remain unverified. See `docs/project/structures-phase/HANDOFF.md` for exact test results and reference commits.
 
 ## Structure undock and hangar (ST-3 b, c)
 
@@ -3166,8 +3176,15 @@ Status: `warRegistry` is partly built (the wars are read and two of the owner's 
 ### blueprintManager
 - `GetLimits()` answers `maxBlueprintResults` 500 (`blueprintManagerService.js:26-28`).
 - `GetBlueprintData(itemID)` and `GetBlueprintDataByOwner(ownerID, facilityID)` answer the blueprint instance the client reads
-  (`industryPayloads.js:92`). A blueprint is an item of group 9. The caller sees only what its character or corporation holds; another
-  owner's blueprint is the client's own `IndustryBlueprintNotFound`, and another owner's listing is empty.
+  (`industryPayloads.js:92`). A blueprint is an item of category 9, the SDE category "Blueprint" (EveJS checks `categoryID === 9`,
+  `industryRuntimeState.js:714`); eve.rs first checked the group, which is the item's kind, and recognised no blueprint (corrected in
+  slice 6). The caller sees only what its character or corporation holds, and another owner's listing is empty.
+  **Difference, not aligned (cut):** for a blueprint the caller does not hold, EveJS answers an empty instance payload
+  (`blueprintManagerService.js:34`, `getBlueprintByItemID(...) || {}`), and eve.rs refuses with the user error
+  `IndustryBlueprintNotFound`. eve-logic does not require the refusal: the client raises `IndustryBlueprintNotFound` itself only when
+  its own static table lacks the blueprint type (`eve/client/script/industry/blueprintSvc.py:73-79`). Aligning needs the empty payload
+  with the reference's `buildBlueprintInstancePayload` defaults, which this slice did not port. The walk `test_walk_blueprints.py`
+  asserts the refusal, the eve.rs behaviour.
 - **Quantity and runs.** The client takes a blueprint as an original unless its quantity is -2, and as singleton when negative
   (`industryCommon.py:331-333`), so a copy has quantity -2 and an original -1. An original's runs are -1 (the EVE convention for an
   unlimited original); a copy's runs are the stored count.
@@ -3310,8 +3327,9 @@ rules), "Wormhole Types". The client's `wormholeMgr.WormholeJump(itemID)` (eve-l
 - The collapse of an end by the scheduler (the lifetime) publishes its removal to the simulation at the time the job runs; the job's
   transaction may still fail after that, and the next scene start places the stored ends again.
 - Tests: `WormholeWorldTests` (ends, positions, generation once, a captured collapse), `WormholeLifecycleTests` and
-  `WormholePlannerTests` (eve.wormholes); the simulation's placement and jump (`eve-space` scene tests). The space service jump has no
-  test yet (NOT RUN at the service level).
+  `WormholePlannerTests` (eve.wormholes); the simulation's placement and jump (`eve-space` scene tests). The space service jump:
+  `WormholeJumpServiceTests` (eve.services.space, PostgreSQL): the mass refusal with its text and no jump heard, the jump taken with the
+  destination's end placed and the polarization with its text, and a collapse that removes both ends in the simulation. Not run: the client.
 ## Slice 3, step 1: zones outside Pochven (2026-10-12)
 
 Sources. The EVE University wiki "Triglavian Invasion (Chapter 3)" (https://wiki.eveuniversity.org/Triglavian_Invasion_(Chapter_3), read 2026-10-12; the page was last edited 2023-08-28 and says it documents content no longer in the game): Arshat moved from Escalating Liminality to an EDENCOM Fortress at the end of Chapter 3 (2020-10-13). The wiki's "EDENCOM systems" page (last edited 2024-01-19) names no system and links an external "List of invasion systems" that returned 404 when fetched. The forum names of the 2020 renewed attacks (Abha, Inaya, Muttokon, Seiradih, Aldik, Iosantin) are not states and are not zones.
@@ -3347,6 +3365,16 @@ Loot. Unchanged: the sim-resident NPCs have no host profile and so no loot table
 
 Tests: `NpcBountyHostTests` (a werpost kill pays 12,500,000 ISK to the killer with the type in the bucket; a Damavik kill pays nothing), `Eve.Space.Tests` (300, the codec and fixtures), `eve-space` (764), `eve-net` and `eve-sim` build clean under clippy -D warnings.
 
+### System environment as dogma effects (slice 7c)
+
+- A solar system's environment is its effect beacon (SDE group 920, `Class N <effect> Effects`, the attributes of the beacon type). Each
+  attribute "<name>Multiplier" is a post-multiplication of the attribute "<name>", "<name>Bonus" a post-percentage of it; both reach the
+  ship and the items located in it (its modules), as a buff of the same shape does. Source: the SDE values (`WormholeEffects`), the
+  dogma modifier rules of `Eve.Dogma` (`SystemEnvironment`, tests `SystemEnvironmentTests`).
+- Applied in the C# dogma world of the ship (`SyncBuffsAsync` with the ship's buffs). The Rust simulation does not receive these
+  values: its combat and flight numbers are the ship spec's at the time the ship enters, so a wormhole's effect is seen in the
+  attributes the client reads and not in the simulation (not built).
+- Names with no base attribute (for example `shieldBonusMultiplier`, `capacitorCapacityMultiplierSystem`) are listed as not applied.
 ## Slice 3, step 3: filaments (rules and data; jumps not built)
 
 Data. `crates/eve-space/src/filament.rs` holds the 17 Pochven filament types (56065 to 56081, group "Triglavian Space Filaments") with the SDE's ship cap (`mjdShipJumpCap`) and spool-up (`filamentSpoolupTimeSeconds`) per type, and the link radius (`mjfgRadius`, 6000 m). The Proximity-Extraction types carry the SDE's 2.5 ly limit (`lightYearDistanceMax`). Families: Devana and Extraction are outbound (Pochven to k-space); Cladistic, Border, Internal and Home are inbound.
@@ -3356,3 +3384,40 @@ Conflict. The wiki's Pochven page gives 60 s for the inbound filaments; the SDE 
 Not built. The filament destinations are not in the client extract (the location list ids 4510 to 4569 are absent), so no filament can be jumped and no destination is invented. The trace rules (outbound cooldown 210 s, trace lifetime 900 s, unlink distance 30 km) are constants with tests; nothing consumes them until the destinations are sourced.
 
 Tests: `eve-space` filament module, 5 tests (the 17 SDE rows, the family directions, the fleet cap and empty-fleet refusal, the trace numbers, the 2.5 ly reach), all passing; clippy -D warnings and rustfmt clean.
+
+
+### Wormhole signatures, sites and scan strength (slice 9, project rules)
+Superseded in part by "Wormhole sites: real names and client dungeon keys (slice 10)" below: every category now names its site.
+
+- Scan strength of every wormhole signature: 0.0, the SDE dogma default of `scanWormholeStrength` (attribute 1908). EveJS holds no
+  per-type value for wormhole types (its provider reads none), and the wiki pages read give none, so one uniform strength is the rule.
+- Signatures per J-space system: a count from 4 to 9 drawn from the system's seed (`WormholeSites.Plan`).
+- Shares of the categories: combat 40%, relic 15%, data 15%, gas 20%, ore 10%. The wiki names only combat sites per class, so a relic,
+  data, gas or ore signature has no template name and is planned with no name; those sites are not built (no template is named in
+  the sources). Ore is not limited to the classes that list ore: the share is the rule.
+- Combat site names: the wiki's list for the system's class (each name exists in the SDE's dungeon data, archetype 24, faction 500021).
+  C13 uses the class 6 list (no extra for C13 is documented).
+- A Drifter system (classes 14 to 18) has exactly five combat sites, named from the class 6 list (no Drifter name list is on the pages read).
+- Not built: the link of the plan to `CosmicSiteDirector` and to probe scanning; the site entities are not created in the world.
+
+### Wormhole sites: real names and client dungeon keys (slice 10, project rules)
+- Names: the per-class lists of EVE University "Wormhole sites" (raw wikitext, fetched 2026-10-12): anomalies (combat), data, relic, gas (reservoirs) and ore (deposits). Each name is matched to the client dungeon by its en-us localization text (`native/localization_fsd_en-us.jsonl.gz`) and carries the dungeon key (`native/dungeons.jsonl.gz`, `dungeonNameID`). EveJS's `wormholeSites` content pack (`resolution-<kind>-<key>`) gives the same key for 68 of the 69 names.
+- Spelling: the wiki says "Sizable Perimeter Reservoir"; the client's localization says "Sizeable Perimeter Reservoir" (key 3559). The client spelling is used.
+- Zones of gas and ore follow the wiki's headings: gas (reservoirs) perimeter in C1 to C4, frontier in C3 to C6, core in C5 and C6 and Shattered; ore (deposits) perimeter and frontier in every class, core in C5 and C6, Shattered Debris Field in Shattered systems. Core ore that the wiki says may spawn rarely in C1 to C4 is not planned.
+- C13 (Shattered) uses the class 6 lists for every category, plus Shattered Debris Field (ore). Shattered Ice Field (an ice belt, the wiki's "Ice belts" heading) is in the client data but not planned: the share table has no ice category.
+- Thera (class 12) and the other classes outside 1 to 6 and 13 get no planned sites (`WormholeSites.Plan` returns none). Thera's own sites are not in the wiki's lists.
+- Drifter systems keep exactly five combat sites from the class 6 anomalies (unchanged from slice 9).
+- The scan strength (0.0) and the counts and shares are unchanged from slice 9. The link to the director and to probe scanning is in the next section.
+
+### Wormhole sites in the director and the probe scan (slice 10, project rules)
+- Placed: every planned combat (anomaly), data and relic signature of a J-system is a site of the director, in its own slot (the plan's index). Gas and ore signatures are planned but not placed: the director has no gas or ore site kind, and the mining site generation is not built (the "Cosmic sites" section above).
+- Templates: 48, one per combat, data and relic dungeon of the plan (`Sites/Data/wormhole-site-templates.json`, id `wormhole-<dungeon id>`), made by `tools/dev/extract-wormhole-site-templates.py` from the EveJS wormhole content pack (client build 3475087). The waves are the pack's encounters in key order, each a Sleeper spawn query (`sleepers_deadspace`, a pool of `npc_authority.json`); a guard encounter (`talocan_guard`, in 11 of the templates) counts as the last wave. The containers and their analyzers are the pack's. Their difficulty, faction and archetype are the client dungeon's.
+- Plan seed: the system id, so a J-system has the same sites in every world (the world seed `EVE_WORMHOLE_SEED` does not reach the director). Not an owner decision yet.
+- Respawn: a site that ends is replaced in its slot, somewhere else (the seed carries the slot's previous instance count), with the same template. The wiki gives no respawn rule for a wormhole site.
+- Scan strength: a J signature needs `WormholeSites.ScanStrength` (0.0, SDE attribute 1908), and `ProbeScanMath.Coverage` now treats a target that needs no strength as reached by its geometry alone (a probe in range covers it fully). Before, such a target covered nothing. A ship's required strength is never 0, so no ship changes.
+- Lifetime: 24 hours as the K-space sites (`CosmicSiteDirector.Lifetime`); a collapsed wormhole does not remove its system's sites (no rule published).
+- Not built: the signatures of gas and ore; the hacking and the analysis of a J-space container are the existing K-space path, not tested in a J-system; the live run in a J-system (the headless check) is not done.
+
+### Wormhole service jump tests (slice 10, service layer)
+- `WormholeJumpServiceTests` (PostgreSQL, under the heavy lock): a pilot undocked in a J-system (its location set before the undock), a world of one static of the test's types, and the space service's `WormholeJumpAsync`. Covered: the individual mass refusal with its text and no jump given to the simulation; a jump taken, the destination's end placed, the polarization and the second try's text; a connection of 10 tonnes that collapses on the first transit, with both of its ends removed from the simulation.
+- Not covered: the polarization's expiry after five minutes (the rig's clock is fixed), the RPC `WormholeMgr` path with its notifications, and a second ship's race between the check and the take (logged, shortcut above). The client is not driven (NOT RUN).

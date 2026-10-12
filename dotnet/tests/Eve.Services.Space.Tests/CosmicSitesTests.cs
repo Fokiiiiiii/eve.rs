@@ -7,6 +7,7 @@ using Eve.Scheduler;
 using Eve.Services.Space.Scanning;
 using Eve.Services.Space.Sites;
 using Eve.Universe;
+using Eve.Wormholes;
 using Npgsql;
 
 namespace Eve.Services.Space.Tests;
@@ -198,6 +199,31 @@ public sealed class CosmicSiteDirectorTests
     }
 
     [PgFact]
+    public async Task A_wormhole_system_gets_the_sites_of_its_plan_and_its_probe_targets_need_no_strength()
+    {
+        var system = JSpaceSystems.Load().First(j => j.WormholeClass == 3);
+        await using var rig = await SiteRig.CreateAsync();
+        var director = rig.NewDirector(_ => true, id => id == system.Id ? 3 : null);
+        await rig.FillAsync(system.Id, director);
+
+        var plan = WormholeSites.Plan(3, drifter: false, (ulong)system.Id);
+        var sites = await rig.Director.ActiveAsync(system.Id);
+        // the gas and ore of the plan are not placed (no site of their kinds yet); the combat, data and relic ones are
+        var placed = plan.Select((signature, index) => (signature, index)).Where(item => item.signature.Category is not ("gas" or "ore")).ToList();
+        Assert.Equal(placed.Count, sites.Count);
+        foreach (var (signature, index) in placed)
+        {
+            var site = sites.Single(candidate => candidate.Slot == index);
+            Assert.Equal($"wormhole-{signature.DungeonKey}", site.TemplateId);
+            Assert.Equal(signature.Category == "combat", site.IsAnomaly);
+        }
+
+        var targets = await new ContentCosmicSites(director).SitesInAsync(system.Id);
+        Assert.Equal(placed.Count(item => item.signature.Category != "combat"), targets.Count);
+        Assert.All(targets, target => Assert.Equal(WormholeSites.ScanStrength, target.RequiredStrength));
+    }
+
+    [PgFact]
     public async Task The_probe_source_lists_each_signature_of_the_system_by_its_code_with_the_strength_of_its_level()
     {
         await using var rig = await SiteRig.CreateAsync();
@@ -291,7 +317,8 @@ public sealed class CosmicSiteDirectorTests
         }
 
         /// <summary>A director over the same stores (what a restarted host makes).</summary>
-        public CosmicSiteDirector NewDirector(Func<int, bool>? occupied = null) => new(Source, Content, Scheduler, SiteTemplates.Load(), new FixedAnchors(), Systems, occupied: occupied);
+        public CosmicSiteDirector NewDirector(Func<int, bool>? occupied = null, Func<int, int?>? wormholeClassOf = null) =>
+            new(Source, Content, Scheduler, SiteTemplates.Load(), new FixedAnchors(), Systems, occupied: occupied, wormholeClassOf: wormholeClassOf);
 
         public void Advance(TimeSpan span) => _now += (long)span.TotalMilliseconds;
 

@@ -40,7 +40,8 @@ internal sealed partial class CharacterServicesComposition
     /// <summary>Inventory broker, crates, ship cosmetics, dynamic items, energy, dogma and planets.</summary>
     private IReadOnlyList<IService> InventoryRpc() =>
     [
-              HostInventoryServiceFactory.CreateInvBroker(items, itemTypes, stations, ships, dogma, now, spaceContainers, spaceDrones, corporations, characterEntryHooks),
+              HostInventoryServiceFactory.CreateInvBroker(items, itemTypes, stations, ships, dogma, now, spaceContainers, spaceDrones, corporations, characterEntryHooks,
+                    controlledStructureInventory: structureControlReadModel.InventoryAsync),
               new Eve.Services.Core.CrateService(new PersistenceCrateServiceBackend(source, items, itemTypes, skills, skillCatalog, mailCache)),
               new Eve.Host.ShipCosmeticsMgrRpcService(mailCache, mailCache, items, source, skinCosmeticsCatalog, now,
                   (characterId, shipId, skinId) =>
@@ -77,6 +78,7 @@ internal sealed partial class CharacterServicesComposition
                 health: spaceSessions,
                 rounds: spaceSessions,
                 probes: spaceSessions,
+                controlledStructureSnapshot: structureControlReadModel.DogmaAsync,
                 log: message => Console.Error.WriteLine($"eve-host: ammo: {message}"),
                 localTimers: foundations.LocalTimers).ListeningForDryGuns(),
     ];

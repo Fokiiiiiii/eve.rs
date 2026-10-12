@@ -1318,7 +1318,7 @@ Open (cut line, or not built):
 | Status | Item |
 |---|---|
 | VERIFIED (tests) | D-S2 wave 2 at scan progress 0.5 (EveJS `crabWaveAuthority.js`, same pool and amount; CCP guide: waves block the scan until cleared). The rule file holds both waves; the second is made when the scan reaches half (`AnalysisBeaconDirector.ScanTickAsync`, `waves_made` in migration `002_analysis_beacon_waves`) and the scan waits for its drones. Host test `A_scan_makes_its_second_wave_when_it_reaches_half...` |
-| PARTLY (tests) | D-L2 link lock: from the link start the ship cannot move (GotoDirection, AlignTo, FollowBall, Orbit) until the link completes, and cannot warp, jump, cyno-jump or dock until a minute later (EveJS status clear delay). Refused in the simulation as `LINK_HOLD` (`Scene::link_holds`, `crates/eve-space/src/deployable.rs`; test `a_linked_ship_is_held_until_...`). Open: cloak and tether are not held; the refusal text is the generic one of each command |
+| PARTLY (tests, live) | D-L2 link lock (live walk `tools/headless-client/tests/test_crab_walk.py`, eve.rs, 2026-10-12, passed: launch from the hold, first wave of NPCs in space, the link taken (the beacon row linked to the ship), a warp refused during the link, free after four minutes and a minute). Found and fixed by that walk: `BeyonceService.CallComponentFromClient` accepted only `PyStr` names, but a client's Python `str` arrives as `PyBytes`, so every live link was silently refused (the handler answers None). EVE.js side not run: its character store is not seeded through the database. The lock: from the link start the ship cannot move (GotoDirection, AlignTo, FollowBall, Orbit) until the link completes, and cannot warp, jump, cyno-jump or dock until a minute later (EveJS status clear delay). Refused in the simulation as `LINK_HOLD` (`Scene::link_holds`, `crates/eve-space/src/deployable.rs`; test `a_linked_ship_is_held_until_...`). Open: cloak and tether are not held; the refusal text is the generic one of each command |
 | OPEN (D-I1) | Interference cost of a link, and the character energy cost (EveJS checks both): not built |
 | OPEN | Four links per character per day (patch 2026-03-18.1): not built |
 | OPEN | No deployment within 10,000 km of an asteroid (patch 2026-03-26.1): not built, needs belt positions |
@@ -1343,6 +1343,7 @@ Status: implemented and tested at the host level on PostgreSQL (`IncursionDirect
 - Influence and mothership (B-F1, 2026-10-12): the influence is 1 minus the completed share of the non-mothership sites (EVE.js: every seeded site an equal share), updated by the subscriber `incursion.sites.completed` on `content.dungeon.completed`. When the influence is 0 and the headquarters is done, the mothership (5158; 5201 in lowsec) starts in the headquarters system, after the band's protection (three days highsec, one lowsec, none nullsec). Its completion ends the incursion (`mothership_defeated`) and the band's next one is scheduled. Not completed before the withdrawal ends: `withdrawn`, as before.
 - Not built: final-boss loyalty points (B-R1: CCP pays the fleet with the most damage on the site and publishes no amount, so the pending value stays 0), standings effects, the Sansha influence penalties on resistances and damage (10%, 25%, 50% at full influence; a dogma path), influence decay (no published rate), site counts tied to influence (no source), the stargate jump cache is capped at 64 sources (shortcut). Decisions and sources: DEVIATIONS.md, "Incursions (B-S2, B-F1)".
 - Not verified: the simulation spawns site NPCs with no pilot in the system (the path is covered with the fake simulation only); templateNameID is 0 because the owner catalog gives no name id for these dungeons.
+- Slice 2 (2026-10-12): the stargate layout (`StargateGraph`, `mapStargates`) replaces straight-line distance. Live walk `tools/headless-client/tests/test_incursion_walk.py` (eve.rs debug host through `tools/mitm`, lane eve ports 26110/26210) against EVE.js (scratch copy, port 26010): the report and the systems-in-incursions answers now have the same key sets and value types. Fixed on the way: `lastUpdated` is sent as a long (it was a real). Not walked: the site entry in space (the pilot in a staging system).
 ## 48. Track ST-10: hacking minigame, analyzer, site containers and loot (2026-10-11, package closed; two rows open)
 
 Built on main: the minigame engine (`dotnet/src/Eve.Hacking`), the `hackingMgr` service with its four calls and `OnHackingTurnComplete` (`Eve.Services.Space/HackingMgrService.cs`), the data and relic analyzer body and its activation checks, the hacking window (warp and reach), the site containers as inventory items (placement in the site fill, persistent failures, destruction at two failures), and the loot of a win (EveJS `generic_data_loot` / `generic_relic_loot`). Tests: `Eve.Hacking.Tests` (25), `HackingMgrServiceTests` (9), `SiteContainerTests` (4), `SiteLootTests` (3), `ContainerSiteEndToEndTests` (1), `HackingCompositionTests` (Host, 1). The full `Eve.Services.Space.Tests` passed on the final rebased tree (698). This section supersedes the open rows for `doHacking` in section 7 and for containers in section 45. Decisions: DEVIATIONS "Hacking minigame (ST-10)", "Site loot", "Container items", "Site container types", "Site completion" and "Cleared container ball".
@@ -1609,3 +1610,39 @@ Evidence and decisions: `docs/project/WORMHOLE_DESIGN.md` (sources, SDE numbers,
 |---|---|---|
 | DONE (tests) | Arshat (30002253) as an EDENCOM zone: GunStars at its gates, Sentinel camps at the first two | `pochven_population.rs`, `data/pochven_states.json` (source and date in the file) |
 | OPEN | More EDENCOM fortress, stronghold and minor-victory systems | No dated source names them (the wiki's list page 404s; the forum names are not states) |
+
+### Slice 7 (2026-10-12)
+
+| Status | Item | Missing work |
+|---|---|---|
+| DONE (tests) | 7b: placement of the ends with the system's scene, WormholeMgr.WormholeJump (mass, collapse, publication), polarization, world at start-up | Eve.Wormholes.Tests 17; the service jump has no test yet (DEVIATIONS) |
+| DONE (tests) | 7c: system environment as dogma modifiers on the ship and its modules (C# dogma) | Eve.Dogma.Tests `SystemEnvironmentTests` (3). Not in the Rust simulation |
+| OPEN | 7d signatures, 7e Sleeper/Drifter sites, 7f Thera exits | Not started |
+
+| BLOCKED | 7d signatures in probe scanning | Design 14: no wormhole rows in the probe path; scan-strength value not read from the wiki |
+| BLOCKED | 7e Sleeper and Drifter sites | Design 14: site content not published (owner decision needed) |
+| BLOCKED | 7f Thera exits | Design 14: Thera's connections are wandering (K-space), cut by owner decision |
+
+### Slice 8 (2026-10-12)
+
+| Status | Item | Missing work |
+|---|---|---|
+| DONE (tests) | Thera's seeded connections (12, documented types and endpoints), respawn after collapse | `TheraConnectionsTests`. Design 15 |
+| BLOCKED | Signature scan strength per type | No per-type value in the wiki pages or EveJS (design 15) |
+| PARTIAL | Sleeper/Drifter sites | Combat site names per class from the wiki; per-system counts and shares not published (design 15) |
+| NOT DONE | Environment effects in the Rust sim | Design 15 |
+| NOT DONE | Service-layer wormhole jump tests; headless live check | Design 15 |
+
+### Slice 9 and slice 10 (2026-10-12)
+
+| Status | Item | Missing work |
+|---|---|---|
+| DONE (tests) | Signatures per system (4 to 9 from the seed), shares by category, Drifter five combat sites (slice 9) | `WormholeSitesTests` |
+| DONE (tests) | Real site names and client dungeon keys per class, zones of gas and ore, C13 rule (slice 10) | `WormholeSitesTests`, DEVIATIONS |
+| DONE (tests) | Plan connected to `CosmicSiteDirector`: a J-system's planned combat, data and relic sites are placed in their slots, with containers and Sleeper waves (48 templates) | `A_wormhole_system_gets_the_sites_of_its_plan...` (PgFact), `WormholeSiteTemplatesTests` |
+| DONE (tests) | Probe scan of a J signature: strength 0.0 (SDE 1908); a probe in range finds it by its geometry | `ProbeScanMathTests` |
+| NOT DONE | Gas and ore signatures placed as sites (no site kind) | Mining site generation |
+| NOT DONE | Rust sim environment effects (the attributes the sim models) | Design 15 |
+| DONE (tests) | Service-layer `WormholeJumpAsync` tests: mass refusal, jump and destination end, polarization, collapse (own world in the space rig) | `WormholeJumpServiceTests` (PgFact). Polarization expiry and RPC path not covered |
+| NOT DONE | Headless MITM live check on 26110/26210 | Design 15 |
+

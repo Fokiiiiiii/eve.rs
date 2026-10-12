@@ -19,6 +19,11 @@ public sealed record SiteTemplate(
     public const string Anomaly = "anomaly";
     public const string Signature = "signature";
 
+    /// <summary>The band of the J-space sites (the wormhole templates): their sites are the plan of <c>WormholeSites</c>, never a draw of a band.</summary>
+    public const string WormholeBand = "wormhole";
+
+    public bool IsWormhole => Bands.Contains(WormholeBand);
+
     public bool IsAnomaly => Kind == Anomaly;
 
     /// <summary>The level of a signature, one to five (the wiki: levels I to III need a probe strength of 42, IV of 72, V of 104).</summary>
@@ -31,8 +36,8 @@ public sealed record SiteTemplate(
 
     public int ContainerCount => Containers.Sum(container => container.Count);
 
-    /// <summary>The sensor strength attribute that finds the site (SDE 208 radar for data, 210 magnetometric for relic, 1136 for the all-strength combat sites).</summary>
-    public int StrengthAttribute => Family switch
+    /// <summary>The sensor strength attribute that finds the site (SDE 208 radar for data, 210 magnetometric for relic, 1136 for the all-strength combat sites; 1908 for a wormhole signature).</summary>
+    public int StrengthAttribute => IsWormhole ? 1908 : Family switch
     {
         "data" => 208,
         "relic" => 210,
@@ -64,10 +69,14 @@ public sealed class SiteTemplates
 
     public static SiteTemplates Load()
     {
-        using var stream = typeof(SiteTemplates).Assembly.GetManifestResourceStream("site-templates.json")
-            ?? throw new InvalidOperationException("site-templates.json is not in the assembly");
-        var file = JsonSerializer.Deserialize<File>(stream, new JsonSerializerOptions(JsonSerializerDefaults.Web))
-            ?? throw new InvalidOperationException("site-templates.json is empty");
-        return new SiteTemplates(file.Templates);
+        return new SiteTemplates(Read("site-templates.json").Templates.Concat(Read("wormhole-site-templates.json").Templates));
+    }
+
+    private static File Read(string resource)
+    {
+        using var stream = typeof(SiteTemplates).Assembly.GetManifestResourceStream(resource)
+            ?? throw new InvalidOperationException($"{resource} is not in the assembly");
+        return JsonSerializer.Deserialize<File>(stream, new JsonSerializerOptions(JsonSerializerDefaults.Web))
+            ?? throw new InvalidOperationException($"{resource} is empty");
     }
 }

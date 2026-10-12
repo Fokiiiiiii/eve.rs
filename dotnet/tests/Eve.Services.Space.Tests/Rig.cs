@@ -366,6 +366,8 @@ private readonly Dictionary<long, ClientSession> _fleetSessions = new();
         return new Rig(source, suffix, await DogmaStatic.LoadAsync(sde), creation, catalog, await StationCatalog.LoadAsync(sde), await SolarSystemCatalog.LoadAsync(sde, clientFlags), modules, protection ?? Timeout.InfiniteTimeSpan, jumpCloak ?? Timeout.InfiniteTimeSpan, npcLoot, beltRats, localTimers, npcAuthority);
     }
 
+    public string InventorySchema => _schemas[1];
+
     /// <summary>A new character (Caldari), in its rookie ship in the station.</summary>
     /// <summary>A unit of something in the cargo hold of a ship (each is an item of its own).</summary>
     public async Task<long> GiveCargoAsync(long owner, long ship)

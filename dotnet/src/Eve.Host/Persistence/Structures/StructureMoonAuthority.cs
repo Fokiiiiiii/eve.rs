@@ -8,9 +8,9 @@ namespace Eve.Host;
 
 /// <summary>
 /// The backend of the moon service's mutations (<c>moonExtractions</c>, EVE.js moonExtractionsService): <c>StartNewExtraction</c>, <c>FractureChunkWithStructure</c> and
-/// <c>CancelExtraction</c>. Each one passes the same gate in EVE.js's order: the structure exists and the pilot is docked at it, it belongs to the pilot's corporation,
-/// it is not in Pochven, and its moon drill is online; the cancel also needs the Station Manager role. The moon's checks and the record are the domain's
-/// (<see cref="MoonExtractions"/>). The shortcut is the gate: EVE.js also needs the pilot to control the structure and the profile's access setting, which wait for ST-3 and ST-5.
+/// <c>CancelExtraction</c>. Each requires the current control seat, moon service profile access and an online drill outside Pochven;
+/// cancel also needs the Station Manager role. The moon's checks and the record are the domain's
+/// (<see cref="MoonExtractions"/>), gated by persistent control ownership and the moon service profile.
 /// </summary>
 public sealed class StructureMoonAuthority
 {
@@ -20,13 +20,18 @@ public sealed class StructureMoonAuthority
     private readonly StructureStore _structures;
     private readonly MoonExtractions _moons;
     private readonly MoonRulesSource _rules;
+    private readonly StructurePilotStore _pilots;
+    private readonly Func<long, long, CancellationToken, ValueTask<bool>> _hasMoonAccess;
 
-    public StructureMoonAuthority(NpgsqlDataSource source, StructureStore structures, MoonExtractions moons, MoonRulesSource rules)
+    public StructureMoonAuthority(NpgsqlDataSource source, StructureStore structures, MoonExtractions moons, MoonRulesSource rules,
+        StructurePilotStore pilots, Func<long, long, CancellationToken, ValueTask<bool>> hasMoonAccess)
     {
         _source = source;
         _structures = structures;
         _moons = moons;
         _rules = rules;
+        _pilots = pilots;
+        _hasMoonAccess = hasMoonAccess;
     }
 
     /// <summary>Answers a mutation of the moon service. A start replies the extraction (the client's KeyVal); a fracture and a cancel reply None, as EVE.js does.</summary>
@@ -47,8 +52,8 @@ public sealed class StructureMoonAuthority
             throw MachoErrors.ThrowUserError("MoonminingEventTooShort");
 
         await using var connection = await _source.OpenConnectionAsync();
-        await GateAsync(call, connection, structureId);
-        await using var transaction = await connection.BeginTransactionAsync();
+        await using var transaction = await connection.BeginTransactionAsync(call.Cancellation);
+        await GateAsync(call, connection, transaction, structureId);
         var result = await _moons.StartAsync(connection, transaction, structureId, durationSeconds, addToCalendar);
         switch (result.Outcome)
         {
@@ -71,8 +76,8 @@ public sealed class StructureMoonAuthority
     {
         var structureId = call.Session.GetInt("structureid") ?? 0;
         await using var connection = await _source.OpenConnectionAsync();
-        await GateAsync(call, connection, structureId);
-        await using var transaction = await connection.BeginTransactionAsync();
+        await using var transaction = await connection.BeginTransactionAsync(call.Cancellation);
+        await GateAsync(call, connection, transaction, structureId);
         if (await _moons.FractureAsync(connection, transaction, structureId) == MoonExtractions.FractureOutcome.NotReady)
             throw Refusal("The moon chunk is not ready to fracture.");
         await transaction.CommitAsync();
@@ -83,24 +88,30 @@ public sealed class StructureMoonAuthority
     {
         var structureId = call.Session.GetInt("structureid") ?? 0;
         await using var connection = await _source.OpenConnectionAsync();
-        await GateAsync(call, connection, structureId);
+        await using var transaction = await connection.BeginTransactionAsync(call.Cancellation);
+        await GateAsync(call, connection, transaction, structureId);
         if (((call.Session.GetInt("corprole") ?? 0) & StationManagerRole) != StationManagerRole)
             throw Refusal("Station Manager role is required.");
-        await using var transaction = await connection.BeginTransactionAsync();
         await _moons.CancelAsync(connection, transaction, structureId);
         await transaction.CommitAsync();
         return PyNone.Instance;
     }
 
-    /// <summary>The gate of every mutation (EVE.js validateMoonExtractionMutationAccess, without the control and access checks that wait for ST-3 and ST-5).</summary>
-    private async Task GateAsync(ServiceCall call, NpgsqlConnection connection, long structureId)
+    /// <summary>Every mutation requires the current controller and moon service access, as in validateMoonExtractionMutationAccess.</summary>
+    private async Task GateAsync(ServiceCall call, NpgsqlConnection connection, NpgsqlTransaction transaction, long structureId)
     {
-        var record = structureId > 0 ? await _structures.GetAsync(connection, null, structureId, false) : null;
-        if (record is null || record.Snapshot.DestroyedMs > 0 || call.Session.GetInt("structureid") != structureId || call.Session.GetInt("corpid") != record.OwnerCorporationId)
+        var record = structureId > 0 ? await _structures.GetAsync(connection, transaction, structureId, true, call.Cancellation) : null;
+        if (record is null || record.Snapshot.DestroyedMs > 0 || call.Session.GetInt("structureid") != structureId ||
+            call.Session.GetInt("shipid") != structureId || call.Session.CharacterId is not { } characterId ||
+            call.Session.SessionId <= 0)
             throw StructureDefenseDenied();
         if (_rules.IsPochven(record.SolarSystemId))
             throw Refusal("Moon mining is not available in Pochven.");
-        var services = await _structures.ServicesAsync(connection, null, structureId);
+        var pilot = await _pilots.GetBySessionAsync(connection, transaction, call.Session.SessionId, call.Cancellation, forUpdate: true);
+        if (pilot is null || pilot.CharacterId != characterId || pilot.StructureId != structureId ||
+            !await _hasMoonAccess(characterId, structureId, call.Cancellation))
+            throw StructureDefenseDenied();
+        var services = await _structures.ServicesAsync(connection, transaction, structureId, call.Cancellation);
         if (services.GetValueOrDefault(Eve.Structures.StructureServiceIds.MoonMining) != ServiceState.Online)
             throw DrillRequired();
     }

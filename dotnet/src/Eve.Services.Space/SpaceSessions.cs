@@ -44,6 +44,14 @@ public sealed partial class SpaceSessions : IDisposable, ISpaceTargeting, ISpace
 
         public int SolarSystemId { get; } = solarSystemId;
 
+        public Task? StructureControlDeath { get; set; }
+
+        public Func<Task>? RetryStructureControlDeath { get; set; }
+
+        public IReadOnlyList<double>? StructureControlCapsulePosition { get; set; }
+
+        public IReadOnlyList<double>? StructureControlCapsuleDirection { get; set; }
+
         /// <summary>A FILETIME: until when the ship cannot be hurt, unless a command of its pilot breaks it first.</summary>
         public long InvulnerableUntil { get; } = invulnerableUntil;
 
@@ -85,8 +93,8 @@ public sealed partial class SpaceSessions : IDisposable, ISpaceTargeting, ISpace
         /// <summary>The module repairs under way (nanite paste): what each began with. Ended by a stop, or by the pilot leaving the ship (<see cref="CancelRepairsAsync"/>).</summary>
         public ConcurrentDictionary<long, ModuleRepairRecord> Repairs { get; } = new();
 
-    /// <summary>The modules whose overheat the pilot asked for (accepted by the simulation as the request, applied at its next cycle): dogma sees them Overloaded.</summary>
-    public ConcurrentDictionary<long, byte> Overheated { get; } = new();
+        /// <summary>The modules whose overheat the pilot asked for (accepted by the simulation as the request, applied at its next cycle): dogma sees them Overloaded.</summary>
+        public ConcurrentDictionary<long, byte> Overheated { get; } = new();
 
         /// <summary>Marks the protection ended; false when it had ended already (each ending is told once).</summary>
         public bool End()
@@ -145,7 +153,7 @@ public sealed partial class SpaceSessions : IDisposable, ISpaceTargeting, ISpace
     /// <summary>Invalidates the former owner's insurance after an outsider successfully boards their ejected ship.</summary>
     public Func<ShipBoarded, CancellationToken, ValueTask>? InvalidateInsuranceForBoarding { get; set; }
 
-    private sealed record EjectedShip(long OwnerCharacterId, long OwnerCorporationId, int ShipTypeId, int SolarSystemId);
+    private sealed record EjectedShip(long OwnerCharacterId, long OwnerCorporationId, int ShipTypeId, int SolarSystemId, ulong? StructureControlSessionId = null);
     private readonly ConcurrentDictionary<long, EjectedShip> _ejectedShips = new();
 
 private readonly TransitionRuntime _transitions;
@@ -765,10 +773,13 @@ private readonly TransitionRuntime _transitions;
                 case SimRemoteRepairCycle cycle:
                     HandleMutadaptiveRepairCycle(cycle);
                     break;
+                case SimNotify notify when _structureObservers.TryGetValue(notify.SessionId, out var observer):
+                    Forward(observer, notify);
+                    break;
                 case SimNotify notify when _pilots.TryGetValue(notify.SessionId, out var pilot):
                     Forward(pilot.Session, notify);
                     break;
-                case SimAccepted accepted when _pilots.TryGetValue(accepted.SessionId, out var mover):
+                case SimAccepted accepted when !_structureObservers.ContainsKey(accepted.SessionId) && accepted.Command != SimCommands.ControlStructure && _pilots.TryGetValue(accepted.SessionId, out var mover):
                     if (accepted.Command == SimCommands.Stop)
                         _warping.TryRemove(accepted.SessionId, out _);
                     if (accepted.Command != SimCommands.Dock)
@@ -809,9 +820,31 @@ private readonly TransitionRuntime _transitions;
                     Background(() => FinishDeathAsync(victim, destroyed));
                     break;
                 case SimDestroyed destroyed when _ejectedShips.TryRemove(destroyed.ShipId, out var abandoned):
+                {
                     ForgetLockedTarget(destroyed.ShipId);
-                    Background(() => FinishAbandonedShipDeathAsync(abandoned, destroyed));
+                    TaskCompletionSource? completion = null;
+                    if (abandoned.StructureControlSessionId is { } controllerSessionId
+                        && _pilots.TryGetValue(controllerSessionId, out var controller))
+                    {
+                        completion = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                        controller.StructureControlDeath = completion.Task;
+                        controller.RetryStructureControlDeath = () => FinishAbandonedShipDeathAsync(abandoned, destroyed);
+                        controller.StructureControlCapsulePosition = destroyed.Position;
+                        controller.StructureControlCapsuleDirection = destroyed.Direction;
+                    }
+                    Background(async () =>
+                    {
+                        try
+                        {
+                            await FinishAbandonedShipDeathAsync(abandoned, destroyed);
+                        }
+                        finally
+                        {
+                            completion?.TrySetResult();
+                        }
+                    });
                     break;
+                }
                 case SimDestroyed destroyed when _npcShips.TryRemove(destroyed.ShipId, out var npc):
                     ForgetLockedTarget(destroyed.ShipId);
                     Background(() => FinishNpcDeathAsync(npc, destroyed));
@@ -889,7 +922,7 @@ private readonly TransitionRuntime _transitions;
     {
         var args = MarshalCodec.Decode(notify.Args.ToArray()) is PyTuple tuple ? tuple.Items : [];
         session.SendNotification(notify.Name, notify.IdType, [.. args]);
-        if (notify.Name == "SetState" || notify.Name == "DoDestinyUpdate" && args.Any(HasBallparkState)) ReplayTetherFx(session);
+        if (!IsStructureObserver(session) && (notify.Name == "SetState" || notify.Name == "DoDestinyUpdate" && args.Any(HasBallparkState))) ReplayTetherFx(session);
     }
 
     // ── the end of a jump ────────────────────────────────────────────────────
@@ -927,6 +960,12 @@ private readonly TransitionRuntime _transitions;
     /// <summary>The simulation was lost: every ship it held is gone, so each is brought home to the station its character last was at.</summary>
     private void OnLost()
     {
+        foreach (var observer in _structureObservers.Values.ToArray())
+            Background(async () =>
+            {
+                try { await EndStructureControlAsync(observer, true, CancellationToken.None); }
+                finally { ForgetStructureObserver(observer); observer.Close(); }
+            });
         _warping.Clear();
         ForgetMutadaptiveSpools();
         foreach (var pilot in _pilots.Values.ToArray())
@@ -1010,6 +1049,9 @@ private readonly TransitionRuntime _transitions;
 
     private async Task OnSessionClosedAsync(ClientSession session)
     {
+        try { await EndStructureControlAsync(session, true, CancellationToken.None); }
+        catch (Exception error) { _log?.Invoke($"structure control cleanup on disconnect failed: {error.Message}"); }
+        finally { ForgetStructureObserver(session); }
         var id = (ulong)session.SessionId;
         CancelSafeLogoff(session);
         _transitions.EndSessionChange(id);

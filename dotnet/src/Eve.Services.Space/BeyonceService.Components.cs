@@ -16,14 +16,24 @@ public sealed partial class BeyonceService
     [Method("CallComponentFromClient")]
     public async ValueTask<PyValue> CallComponentFromClient(ServiceCall call)
     {
-        if (!_binding.Owns(call) || Number(call.Arg(0)) is not { } itemId || call.Arg(1) is not PyStr component || call.Arg(2) is not PyStr method)
+        // the names are the client's Python strings (PyBytes on the wire) or string-table items (PyStr)
+        if (!_binding.Owns(call) || Number(call.Arg(0)) is not { } itemId || TextOf(call.Arg(1)) is not { } component || TextOf(call.Arg(2)) is not { } method)
         {
             return None;
         }
-        if (component.Value == "linkWithShip" && method.Value is "InitiateLink" or "InitiateLinkQuick" && InitiateBeaconLink is { } link)
+        if (component == "linkWithShip" && method is "InitiateLink" or "InitiateLinkQuick" && InitiateBeaconLink is { } link)
         {
             await link(call.Session, (long)itemId);
         }
         return None;
     }
+
+    /// <summary>The text of a client string: a string-table item or UTF-8 text is a PyStr, a Python <c>str</c> is PyBytes on the wire.</summary>
+    private static string? TextOf(PyValue value) => value switch
+    {
+        PyStr text => text.Value,
+        PyBytes bytes => System.Text.Encoding.UTF8.GetString(bytes.Value.Span),
+        PyWString wide => wide.Value,
+        _ => null,
+    };
 }

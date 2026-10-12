@@ -142,9 +142,12 @@ internal sealed partial class CharacterServicesComposition
             (int TypeId, int GroupId) FallbackOf(int group) => containerRows.Where(row => row.GroupId == group).OrderBy(row => row.TypeId).Select(row => (row.TypeId, row.GroupId)).First();
             var fallbackData = FallbackOf(306);
             var fallbackRelic = FallbackOf(1207);
+            // the sites of J-space: each wormhole system's class from the committed data (its plan is WormholeSites, the wormhole templates)
+            var jSpaceClasses = Eve.Universe.JSpaceSystems.Load().ToDictionary(system => system.Id, system => system.WormholeClass);
             cosmicSites = new Eve.Services.Space.Sites.CosmicSiteDirector(
                 source, foundations.Content, foundations.Scheduler, Eve.Services.Space.Sites.SiteTemplates.Load(), new Eve.Services.Space.Sites.SdeSiteAnchors(sde), solarSystems,
-                message => Console.Error.WriteLine($"eve-host: {message}"), system => spaceSessions?.HasPilotsIn(system) ?? false);
+                message => Console.Error.WriteLine($"eve-host: {message}"), system => spaceSessions?.HasPilotsIn(system) ?? false,
+                system => jSpaceClasses.TryGetValue(system, out var wormholeClass) ? wormholeClass : null);
             cosmicSites.Attach(foundations.Content, foundations.Events);
             cosmicSites.Containers = siteContainers;
             cosmicSites.NewContainerAsync = (connection, transaction, typeId, system) =>
@@ -175,6 +178,19 @@ internal sealed partial class CharacterServicesComposition
                 Console.Error.WriteLine($"eve-host: {Eve.Universe.ClientSystemFlags.DirectoryVariable} is not set: stargate lists and alignment tolls are disabled");
             }
             spaceSessions.GateRules = await Eve.Services.Space.Gates.GateRules.LoadAsync(sde, clientDirectory);
+            // the environment of the J-space systems (slice 7c): each system's effect beacon (SDE group 920) as dogma effects on the ships in it
+            var beaconEffects = await Eve.Universe.WormholeEffects.LoadAsync(sde);
+            var environments = new Dictionary<int, IReadOnlyList<Eve.Dogma.EffectDef>>();
+            foreach (var system in Eve.Universe.JSpaceSystems.Load())
+            {
+                if (system.Effect is { } effectName && system.EffectClass is int effectClass
+                    && beaconEffects.TryGetValue((effectName, effectClass), out var beacon)
+                    && Eve.Dogma.SystemEnvironment.EffectOf(beacon.TypeId, effectName, beacon.Modifiers, dogma.AttributeId).Effect is { } environment)
+                {
+                    environments[system.Id] = [environment];
+                }
+            }
+            spaceSessions.SystemEnvironment = id => environments.GetValueOrDefault(id) ?? [];
             // the wormholes of J-space (slice 7): the world is generated once from the seed (EVE_WORMHOLE_SEED) out of the SDE and the client's system classes;
             // no client directory, no wormholes. The ends of a system are placed with its scene (SpaceSessions); a collapse or an opening is published to it
             if (Env("EVE_WORMHOLES", "on") is not ("off" or "0" or "false") && !string.IsNullOrWhiteSpace(clientDirectory))

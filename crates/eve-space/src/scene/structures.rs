@@ -185,21 +185,27 @@ impl Scene {
 
     /// A hit on a structure of this system: its layers take what the hit does, cut to the per-second limit of the layer it lands in. Told to the host
     /// when a layer is emptied or a layer's repair is paused in this second (`StructureDamaged`). A structure not in space is left alone.
-    // shortcut: no weapon path hits a structure body yet (ST-8a, and the host's damage command in ST-1 d); the tests call it
-    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn damage_structure(&mut self, structure_id: i64, raw: Damage, now: i64) -> Vec<Out> {
         if self.structure_index(structure_id).is_none() {
             return Vec::new();
         }
         let Some(health) = self.structure_health.get_mut(&structure_id) else { return Vec::new() };
         let Some(hit) = health.apply(now, raw) else { return Vec::new() };
-        if hit.depleted.is_none() && !hit.over_threshold {
-            return Vec::new();
+        if hit.emptied.is_empty() {
+            return if hit.over_threshold {
+                vec![Out::StructureDamaged { structure_id, depleted: None, over_threshold: true }]
+            } else {
+                Vec::new()
+            };
         }
-        vec![Out::StructureDamaged {
-            structure_id,
-            depleted: hit.depleted,
-            over_threshold: hit.over_threshold,
-        }]
+        // one notice per emptied layer, from the shallowest: the host's timeline takes the shield's depletion before the armor's
+        hit.emptied
+            .into_iter()
+            .map(|layer| Out::StructureDamaged {
+                structure_id,
+                depleted: Some(layer),
+                over_threshold: hit.over_threshold,
+            })
+            .collect()
     }
 }

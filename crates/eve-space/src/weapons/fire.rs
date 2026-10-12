@@ -8,7 +8,32 @@ impl Scene {
         if effect.target_id == AUTO_TARGET_ID {
             return effect.turret.as_ref().is_some_and(|turret| turret.missile.is_some());
         }
-        self.session_of(effect.target_id).is_some() && self.locked_by(session).contains(&effect.target_id)
+        self.target_in_scene(effect.target_id) && self.locked_by(session).contains(&effect.target_id)
+    }
+
+    /// Whether a target is in the scene a weapon can shoot at: a ship, or a structure the host put in space (its vitals are there).
+    pub(crate) fn target_in_scene(&self, target: i64) -> bool {
+        self.session_of(target).is_some() || self.struck_structure(target)
+    }
+
+    /// A structure of this system a weapon can hit: in space, with the vitals the host gave it.
+    pub(crate) fn struck_structure(&self, target: i64) -> bool {
+        self.structure_health.contains_key(&target) && self.structure_index(target).is_some()
+    }
+
+    /// The kinematics a shot is rolled against: a ship's, or a structure body's (it does not move, and its size is its signature).
+    pub(crate) fn target_kinematics(&self, target: i64) -> Option<Kinematics> {
+        if let Some(session) = self.session_of(target) {
+            return self.kinematics_of(session);
+        }
+        let body = self.structure_body(target)?;
+        let p = body.position;
+        Some(Kinematics {
+            position: [p.x, p.y, p.z],
+            velocity: [0.0; 3],
+            radius: body.radius,
+            signature_radius: body.radius,
+        })
     }
 
     /// Whether a precursor weapon that builds its damage up (a spool) has its target past its optimal range (with the shooter's range disruption
@@ -82,6 +107,30 @@ impl Scene {
         inside
     }
 
+    /// The structures of the system within a blast's range of a ship (surface to surface, as the ships are reached), in id order.
+    pub(crate) fn structures_in_range(&self, session: SessionId, range: f64) -> Vec<i64> {
+        let Some(pilot) = self.pilots.get(&session) else { return Vec::new() };
+        let p = pilot.ship.position;
+        self.structures_within([p.x, p.y, p.z], range + pilot.ship.spec.radius)
+    }
+
+    /// The structures of the system whose surface is within `reach` of a point, in id order (a bomb's blast reaches them from where it goes off).
+    pub(crate) fn structures_within(&self, centre: [f64; 3], reach: f64) -> Vec<i64> {
+        let mut ids: Vec<i64> = self
+            .structure_health
+            .keys()
+            .copied()
+            .filter(|id| {
+                let Some(body) = self.structure_body(*id) else { return false };
+                let (dx, dy, dz) =
+                    (centre[0] - body.position.x, centre[1] - body.position.y, centre[2] - body.position.z);
+                ((dx * dx + dy * dy + dz * dz).sqrt() - body.radius).max(0.0) <= reach
+            })
+            .collect();
+        ids.sort_unstable();
+        ids
+    }
+
     /// A smartbomb goes off as a cycle begins: every ship in its range takes the damage whole (a ship in its undock protection does not), and each is aggressed and
     /// told as a shot is. Where the safety forbids it (`hurts_pilots` false) and a pilot is in range, nothing is hurt and the effect stops at once. The missiles of others on
     /// their way within its reach are hurt too, in their own hit points (`Scene::damage_missile`): a bomb of enough damage shoots them down.
@@ -150,6 +199,10 @@ impl Scene {
             }
             out.extend(self.damage_ship(session, effect.module_type, target, damage, at));
         }
+        // the structures in its range take the blast in their layers (the host hears of an emptied layer); a structure is not a pilot, so no one is aggressed
+        for structure in self.structures_in_range(session, range) {
+            out.extend(self.damage_structure(structure, damage, at));
+        }
         out
     }
 
@@ -211,7 +264,9 @@ impl Scene {
         if turret.missile.is_some() {
             return self.launch_missile(session, effect, at);
         }
-        let Some(target_session) = self.session_of(effect.target_id) else { return Vec::new() };
+        let Some(target_session) = self.session_of(effect.target_id) else {
+            return self.fire_at_structure(session, effect, at);
+        };
         let (Some(attacker), Some(target)) =
             (self.kinematics_of(session), self.kinematics_of(target_session))
         else {
@@ -287,6 +342,24 @@ impl Scene {
             }
         }
         out
+    }
+
+    /// A turret's shot at a structure of the system (a FOB, an Upwell structure): rolled against the structure's body as against a ship, and a hit takes the
+    /// structure's layers (`SimStructureDamaged` tells the host when a layer is emptied). shortcut: no spool, range disruption or area effect applies to a
+    /// structure yet; the shot is the weapon's own roll.
+    fn fire_at_structure(&mut self, session: SessionId, effect: &Effect, at: i64) -> Vec<Out> {
+        let Some(turret) = effect.turret.as_ref() else { return Vec::new() };
+        let (Some(attacker), Some(target)) =
+            (self.kinematics_of(session), self.target_kinematics(effect.target_id))
+        else {
+            return Vec::new();
+        };
+        let roll = self.rng.random();
+        let shot = resolve_shot(turret, &attacker, &target, roll);
+        if !shot.hit {
+            return Vec::new();
+        }
+        self.damage_structure(effect.target_id, shot.damage, at)
     }
 
     /// A shot lands on the ship of `target`: its damage is taken (whoever sees it is told its damage state), the shot is an offensive act (the crimewatch

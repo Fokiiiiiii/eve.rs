@@ -690,6 +690,10 @@ impl Scene {
                         at,
                     ));
                 }
+                // the structures in the blast take the damage in their layers (a structure is no pilot: no aggression)
+                for structure in self.structures_within(centre, *blast_radius) {
+                    out.extend(self.damage_structure(structure, *damage, at));
+                }
                 out
             }
             BombKind::Ecm => self.jam_at(centre, 0.0, Some(deployable.ship_id), ecm, *blast_radius, at),

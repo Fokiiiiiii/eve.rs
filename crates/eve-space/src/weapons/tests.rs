@@ -2138,3 +2138,97 @@ fn a_refresh_of_a_running_effect_takes_effect_at_the_start_of_its_next_cycle() {
     );
     assert!(at_refresh < now + 2_500 * SECOND / 1_000, "the refresh is sent before the cycle ends");
 }
+
+/// A structure of the system `metres` ahead of a ship (its centre), with a shield of `shield` and no per-second limit: the weapons' tests shoot at it.
+const SHIP_STRUCTURE: i64 = 98_100_001;
+
+fn structure_ahead(scene: &mut Scene, of: SessionId, metres: f64, shield: f64, now: i64) {
+    let here = scene.ship(of, now).unwrap().position;
+    let mut placement = crate::scene::tests::structure_placement(scene, now);
+    placement.structure_id = SHIP_STRUCTURE;
+    placement.position = [here.x + metres, here.y, here.z];
+    placement.vitals = crate::health::Vitals {
+        shield_capacity: shield,
+        armor_hp: 500.0,
+        structure_hp: 300.0,
+        ..Default::default()
+    };
+    placement.limits = crate::health::StructureLimits { per_second: [1e9; 3], repair_pause: [0.0; 3] };
+    scene.place_structure(placement, now);
+}
+
+#[test]
+fn a_turret_locked_on_a_structure_in_space_takes_its_shots_in_its_layers_and_a_depleted_shield_is_told_to_the_host()
+ {
+    let (mut scene, npc, now) = duel();
+    structure_ahead(&mut scene, npc, 62_000.0, 1.0, now);
+    let now = lock_target(&mut scene, npc, SHIP_STRUCTURE, now);
+    let started = scene.activate(npc, laser_effect(SHIP_STRUCTURE, laser()), now);
+    assert!(!started.iter().any(|o| matches!(o, Out::Refused { .. })), "{started:?}");
+    assert!(
+        started.iter().any(|o| matches!(
+            o,
+            Out::StructureDamaged { structure_id, depleted: Some(crate::health::Layer::Shield), .. } if *structure_id == SHIP_STRUCTURE
+        )),
+        "{started:?}"
+    );
+}
+
+#[test]
+fn a_structure_out_of_a_turret_lock_or_not_in_space_is_not_shot_at() {
+    let (mut scene, npc, now) = duel();
+    // not locked: refused as a ship is
+    assert_eq!(
+        scene.activate(npc, laser_effect(SHIP_STRUCTURE, laser()), now).iter().find_map(|o| match o {
+            Out::Refused { reason, .. } => Some(*reason),
+            _ => None,
+        }),
+        Some("TARGET_NOT_FOUND")
+    );
+    structure_ahead(&mut scene, npc, 62_000.0, 1.0, now);
+    let now = lock_target(&mut scene, npc, SHIP_STRUCTURE, now);
+    // a structure that leaves the system is gone from the scene, and the weapon stops with its target
+    scene.remove_structure(SHIP_STRUCTURE, now);
+    let out = scene.activate(npc, laser_effect(SHIP_STRUCTURE, laser()), now);
+    assert!(out.iter().any(|o| matches!(o, Out::Refused { reason: "TARGET_NOT_FOUND", .. })), "{out:?}");
+}
+
+#[test]
+fn a_missile_flown_at_a_structure_lands_on_it_and_its_warhead_takes_the_shield() {
+    let (mut scene, npc, now) = duel();
+    structure_ahead(&mut scene, npc, 62_000.0, 1.0, now);
+    let now = lock_target(&mut scene, npc, SHIP_STRUCTURE, now);
+    let started = scene.activate(npc, missile_effect(SHIP_STRUCTURE, launcher(1_000.0, 5_000.0, 56.0)), now);
+    assert!(!started.iter().any(|o| matches!(o, Out::Refused { .. })), "{started:?}");
+    assert_eq!(scene.missiles.len(), 1);
+    let mut told = Vec::new();
+    let mut at = now;
+    for _ in 0..200 {
+        at += SECOND / 4;
+        told.extend(scene.poll(at));
+        if told.iter().any(|o| matches!(o, Out::StructureDamaged { .. })) {
+            break;
+        }
+    }
+    assert!(
+        told.iter().any(|o| matches!(
+            o,
+            Out::StructureDamaged { structure_id, depleted: Some(crate::health::Layer::Shield), .. } if *structure_id == SHIP_STRUCTURE
+        )),
+        "{told:?}"
+    );
+}
+
+#[test]
+fn a_smartbomb_takes_the_structures_in_its_range_in_their_layers() {
+    let (mut scene, npc, now) = duel();
+    structure_ahead(&mut scene, npc, 62_000.0, 1.0, now);
+    let out = scene.activate(npc, smartbomb_effect(NPC_SHIP + 1, [400.0, 0.0, 0.0, 0.0]), now);
+    assert!(
+        out.iter().any(|o| matches!(
+            o,
+            Out::StructureDamaged { structure_id, depleted: Some(crate::health::Layer::Shield), .. } if *structure_id == SHIP_STRUCTURE
+        )),
+        "{out:?}"
+    );
+}

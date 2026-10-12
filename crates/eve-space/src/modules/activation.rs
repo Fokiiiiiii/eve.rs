@@ -399,7 +399,7 @@ impl Scene {
                 return vec![Out::Refused { session, command: CODE, reason: "NO_TARGET" }];
             }
             // a target that is not in the scene is not there (the reference answers `TARGET_NOT_FOUND`), one that is must be locked
-            if effect.target_id != AUTO_TARGET_ID && self.session_of(effect.target_id).is_none() {
+            if effect.target_id != AUTO_TARGET_ID && !self.target_in_scene(effect.target_id) {
                 return vec![Out::Refused { session, command: CODE, reason: "TARGET_NOT_FOUND" }];
             }
             if !self.turret_target_ok(session, &effect) {

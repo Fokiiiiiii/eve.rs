@@ -33,6 +33,8 @@ public sealed class SpaceStructures
     private readonly StructureTimers _timers;
     private readonly DogmaStatic _statics;
     private readonly Action<string>? _log;
+    private readonly object _damageOrder = new();
+    private Task _damageQueue = Task.CompletedTask;
 
     public SpaceStructures(ISimulation sim, SpaceSessions space, NpgsqlDataSource source, StructureStore store, StructureTimers timers, DogmaStatic statics, Action<string>? log = null)
     {
@@ -162,7 +164,11 @@ public sealed class SpaceStructures
     {
         if (message is SimStructureDamaged damaged)
         {
-            _space.Background(() => DamageAsync(damaged));
+            // one hit can empty a shield and then an armor, told as two messages: applied one after the other, so the timeline takes the shield first
+            lock (_damageOrder)
+            {
+                _damageQueue = _damageQueue.ContinueWith(_ => DamageAsync(damaged), TaskScheduler.Default).Unwrap();
+            }
         }
     }
 

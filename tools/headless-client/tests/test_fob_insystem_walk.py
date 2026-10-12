@@ -21,7 +21,7 @@ import pytest
 
 from evecli import marshal as m
 from evecli import packet
-from evecli.observe import timed_events
+from evecli.observe import timed_events, wait_quietly
 
 from tests.test_agents_live import psql, run_id, schema, seed_ship
 from tests.test_login_to_character import LIVE, WALK, connect, revive
@@ -37,7 +37,8 @@ EGO_OFFSET = 150_000.0  # 150 km from the FOB's centre (its radius is 50 km): in
 COCKROACH_GROUP = 25
 COCKROACH = 11019
 FAR_FUTURE_MS = 4_102_444_800_000
-WALK_LIMIT_S = 2_100.0
+PILOT_X = 148_950_042.0  # where the server's pose puts the pilot's ship in the Angel hub system (observed)
+WALK_LIMIT_S = float(os.environ.get("EVE_LIVE_FOB_LIMIT_S", "2100"))
 
 pytestmark = pytest.mark.skipif(
     not (LIVE and PG_URL and os.environ.get("EVE_LIVE_FOB_WALK") == "1"),
@@ -89,10 +90,16 @@ def test_the_qa_smartbombs_take_the_fobs_shield_in_its_system():
         seed_hub_pilot(character_id, ship, system)
         bombs = fit_bombs(ship, BOMBS)
         assert len(bombs) == BOMBS, f"only {len(bombs)} mid slots free for the bombs"
+        # the server puts the pilot's ship where its pose says (about 148,950 km out from the system's origin), not at the seeded 150 km, so the
+        # FOB is moved to 60 km from there, inside the bombs' 250 km fields
+        psql(f"UPDATE {structures}.structures SET x = {PILOT_X + 60_000.0}, y = 0, z = 0 WHERE structure_id = {fob}")
         client.notifications.clear()
+        print("POSE_ROW", psql(f"SELECT item_id, solar_system_id, x, y, z, expires_at_ms FROM {schema('EVE_SPACE_SCHEMA')}.space_items WHERE item_id = {ship}"))
         client.call("charUnboundMgr", "SelectCharacterID", charID=character_id, secondChoiceID=None, skipTutorial=False)
+        print("SHIP_ROW", psql(f"SELECT id, location_id, flag FROM {schema('EVE_INVENTORY_SCHEMA')}.items WHERE id = {ship}"), "CHAR_ROW", psql(f"SELECT ship_id, solar_system_id FROM {schema('EVE_CHARACTERS_SCHEMA')}.characters WHERE id = {character_id}"))
         ballpark = client.call("beyonce", "MachoBindObject", system, None)
         dogma = client.call("dogmaIM", "MachoBindObject", (system, 5), None)
+        wait_quietly(client, 5.0)  # the pilot comes into the system; its scene is filled before the bombs are switched on
         for bomb in bombs:
             client.call_bound(dogma[0], "SetModuleOnline", ship, bomb)
 

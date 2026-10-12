@@ -3915,7 +3915,10 @@ fn a_cloaked_ship_starts_a_module_that_is_not_offensive_only_in_the_first_five_s
     assert!(accepted(&scene.activate(A, cloak, t)));
     let t = t + 2 * SECOND;
     scene.poll(t);
-    assert!(accepted(&scene.activate(A, other_module(afterburner()), t)), "two seconds in: a propulsion module starts");
+    assert!(
+        accepted(&scene.activate(A, other_module(afterburner()), t)),
+        "two seconds in: a propulsion module starts"
+    );
     let mut bomb = smartbomb(3_000.0, [0.0, 40.0, 0.0, 40.0], true);
     bomb.module_id = MODULE + 2;
     let offensive = scene.activate(A, bomb, t);

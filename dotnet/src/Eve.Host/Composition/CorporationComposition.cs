@@ -72,6 +72,7 @@ internal sealed partial class CharacterServicesComposition
     {
         corporations = new Eve.Corporations.CorporationStore(source, characters, wallets, economyWallets, skills, now, corporationSchema,
             setBlueprintLock: SetCorporationBlueprintLockAsync);
+        corporations.ItemLockChanged += change => Eve.Services.Corporations.ItemLockingService.NotifyChanged(characterSessions, change);
         await corporations.SeedNpcAsync(sde);
         foundations.Scheduler.Register("corporation.votes.resolve",
             async (_, token) => await corporations.ResolveAllExpiredVotesAsync(token));

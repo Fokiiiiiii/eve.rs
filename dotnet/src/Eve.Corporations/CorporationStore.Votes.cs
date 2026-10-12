@@ -139,7 +139,7 @@ public sealed partial class CorporationStore
             }
 
             if (voteType == VoteLockBlueprint)
-                await _setBlueprintLock!(connection,tx,corporationId,parameter!.Value,parameter1!.Value,parameter2!.Value,true,token);
+                await SetBlueprintLockAsync(connection,tx,corporationId,parameter!.Value,parameter1!.Value,parameter2!.Value,true,token);
 
             return voteCaseId;
         },token);
@@ -411,7 +411,7 @@ private async Task<(long OptionId,decimal WinningWeight,decimal TotalCastWeight)
                 case VoteUnlockBlueprint:
                     if (parameter is null or <= 0 || parameter1 is null or <= 0 || parameter2 is null or <= 0 || _setBlueprintLock is null)
                         throw new InvalidOperationException("CorporationStore requires setBlueprintLock for blueprint votes.");
-                    await _setBlueprintLock(connection,tx,corporationId,parameter.GetValueOrDefault(),parameter1.GetValueOrDefault(),parameter2.GetValueOrDefault(),false,token);
+                    await SetBlueprintLockAsync(connection,tx,corporationId,parameter.GetValueOrDefault(),parameter1.GetValueOrDefault(),parameter2.GetValueOrDefault(),false,token);
                     break;
             }
 
@@ -566,7 +566,7 @@ private Task<bool> ResolveExpiredVotesAsync(long corporationId,CancellationToken
                         if (vote.Parameter is not { } itemId ||
                             vote.Parameter1 is not { } typeId || vote.Parameter2 is not { } locationId)
                             throw new CorporationError("CORPORATION_INVALID_VOTE_CASE");
-                        await _setBlueprintLock(connection,tx,corporationId,itemId,typeId,locationId,false,token);
+                        await SetBlueprintLockAsync(connection,tx,corporationId,itemId,typeId,locationId,false,token);
                     }
                     break;
             }

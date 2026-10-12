@@ -61,6 +61,7 @@ internal sealed partial class CharacterServicesComposition
             new Eve.Services.Corporations.StandingMgrService(foundations.Reads, corporations, now),
             new Eve.Services.Corporations.WarsInfoMgrService(foundations.Relations, now),
             new Eve.Services.Corporations.VoteManagerService(corporations),
+            new Eve.Services.Corporations.ItemLockingService(corporations),
     ];
 
       private async ValueTask<Eve.Services.Corporations.CorpWarDeclarationResult> CreateWarDeclarationAsync(

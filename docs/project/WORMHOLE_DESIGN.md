@@ -428,3 +428,17 @@ Not done (the rest of step (b) onward):
   client classes and the SDE types loaded at start-up).
 - The effects, signatures, sites and Thera exits (steps c to f).
 - The live check (tools/mitm against EveJS): needs the jump to exist.
+
+## 14. Slice 7 (2026-10-12): status of steps d to f
+
+- (d) Signatures in probe scanning: NOT BUILT. Sources read: EveJS `wormholeSignatureProvider.js` (signature rows: scan group 3,
+  inventory group 502 `Cosmic Signature`, strength attribute 1908 from `explorationAuthority.scanStrengthAttributes`; the per-signature
+  strength value is not read in the provider) and `explorationAuthority.signatureTypeDefinitions.wormhole`. The SDE carries attribute
+  1908 on no type. The eve.rs probe path (`SpaceProbeScans`, the dungeon signature count in `DungeonRpcServices`, which has a
+  `VisibleWormholeSignatureCountsBySystem` input that nothing fills) has no wormhole rows. The wiki's scan-strength value for a
+  wormhole was not read in this slice. Next: one row per wormhole end in the probe's result, with the strength the wiki gives.
+- (e) Sleeper and Drifter sites: BLOCKED. The sites' counts, NPC compositions per class and respawn are not published (design 4, 10.4);
+  the dungeon machinery exists, the content does not. Needs an owner decision on the content source.
+- (f) Thera exits: BLOCKED. The wiki says Thera has "a dozen or so wormholes to high-, low-, and null-sec at any given time", tracked
+  by EVE Scout (the Thera page read on 2026-10-12): those are not static, so they are the K-space wandering connections, which the
+  owner keeps cut (decision 1 of slice 5). Thera has no static in the data file (`jspace-systems.json`).

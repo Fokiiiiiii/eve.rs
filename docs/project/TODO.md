@@ -1597,7 +1597,9 @@ Evidence and decisions: `docs/project/WORMHOLE_DESIGN.md` (sources, SDE numbers,
 | CUT | Bounty and loot of the Pochven hulls | Host bounty code is keyed on profiles without these hulls; needs host work |
 | CUT | Fortress and Heavy GunStar placements in Pochven | No Pochven system is an EDENCOM fortress in the wiki; the path is tested through the data file |
 | OPEN | Live walk (Cockroach into Pochven, NPC fights through tools/mitm) | The headless client cannot place a pilot in Pochven; not run |
-| OPEN | Step 5: filaments and the Home-system 6.0 standing | Needs the filament item and jump rules; not started |
+| DONE (tests) | Step 3, filament rules and data (17 SDE types, caps, spool-ups, families, trace numbers) | `crates/eve-space/src/filament.rs`; jumps not built |
+| OPEN | Filament destinations (jump targets) | Not in the client extract (location list 4510 to 4569 absent); no invented destination |
+| OPEN | Home-system 6.0 standing | Skipped per owner |
 
 
 ## Slice 3, step 1: zones outside Pochven
@@ -1606,3 +1608,15 @@ Evidence and decisions: `docs/project/WORMHOLE_DESIGN.md` (sources, SDE numbers,
 |---|---|---|
 | DONE (tests) | Arshat (30002253) as an EDENCOM zone: GunStars at its gates, Sentinel camps at the first two | `pochven_population.rs`, `data/pochven_states.json` (source and date in the file) |
 | OPEN | More EDENCOM fortress, stronghold and minor-victory systems | No dated source names them (the wiki's list page 404s; the forum names are not states) |
+
+### Slice 7 (2026-10-12)
+
+| Status | Item | Missing work |
+|---|---|---|
+| DONE (tests) | 7b: placement of the ends with the system's scene, WormholeMgr.WormholeJump (mass, collapse, publication), polarization, world at start-up | Eve.Wormholes.Tests 17; the service jump has no test yet (DEVIATIONS) |
+| DONE (tests) | 7c: system environment as dogma modifiers on the ship and its modules (C# dogma) | Eve.Dogma.Tests `SystemEnvironmentTests` (3). Not in the Rust simulation |
+| OPEN | 7d signatures, 7e Sleeper/Drifter sites, 7f Thera exits | Not started |
+
+| BLOCKED | 7d signatures in probe scanning | Design 14: no wormhole rows in the probe path; scan-strength value not read from the wiki |
+| BLOCKED | 7e Sleeper and Drifter sites | Design 14: site content not published (owner decision needed) |
+| BLOCKED | 7f Thera exits | Design 14: Thera's connections are wandering (K-space), cut by owner decision |

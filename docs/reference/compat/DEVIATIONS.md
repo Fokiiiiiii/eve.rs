@@ -3327,8 +3327,42 @@ Protocol. The simulation's `Destroyed` message carries the destroyed ship's type
 
 Bounty. The host pays a kill of an NPC the simulation keeps (a session at or above 2^62 that the host has no profile for) the `entityKillBounty` of its type in the static data (SDE build 3396210, `typeDogma` attribute 481), paid to the pilot who dealt the last blow, through the same store and ESS split as a profiled NPC. Values from the SDE: Entropic Disintegrator Werpost 54577 pays 12,500,000 ISK; EDENCOM GunStar 54579 and Heavy GunStar 54580 pay 0; Liminal Damavik 52182, Interfering Phase-II Legionary 56493 pay 0; the Imperial Navy Sentinel 52923 and the Drifter hulls carry no bounty attribute and pay 0. Eleven Rogue Drone entity types carry non-zero SDE values and pay them.
 
+Sourced table (checked 2026-10-12 against the EVE Ref type pages, https://everef.net/type/{id}, which carry the static data's Bounty attribute; the SDE build 3396210 agrees):
+
+| Type id | Name | SDE entityKillBounty | EVE Ref Bounty |
+|---|---|---|---|
+| 54577 | Entropic Disintegrator Werpost | 12,500,000 | 12,500,000 |
+| 52182 | Liminal Damavik | 0 | 0 |
+| 56493 | Interfering Phase-II Legionary | 0 | 0 |
+| 54579 | EDENCOM GunStar | 0 | 0 |
+| 54580 | EDENCOM Heavy GunStar | 0 | 0 |
+| 52923 | Imperial Navy Sentinel | no attribute | not listed |
+| 56221 | Drifter Assault Cruiser | no attribute | not listed |
+
+Other Damavik variants have a bounty on EVE Ref under other type ids (Stoic 77562: 56,250 ISK; Stalker 77575: 62,500 ISK; Umbral 77608: 100,000 ISK; Blinding 52209: 0). None is adopted for the sim's Liminal Damavik (52182), which EVE Ref gives 0; mapping a value across type ids would be an invention. The owner can decide whether those variants should pay once the sim spawns them.
+
 Decision, no published bounty for the Triglavian and EDENCOM hulls. A search of the EVE University wiki (Triglavian Invasion, Triglavian Collective) and the wider web gave no per-ship ISK bounty for the Damavik, Vedmak, Leshak, Kikimora, Rodiva, Drekavac or the EDENCOM navy hulls. Those kills pay 0 until a source publishes a value; no number is invented.
 
 Loot. Unchanged: the sim-resident NPCs have no host profile and so no loot table (the loot rule is keyed on the profile). No published drop table exists for these types in the SDE.
 
 Tests: `NpcBountyHostTests` (a werpost kill pays 12,500,000 ISK to the killer with the type in the bucket; a Damavik kill pays nothing), `Eve.Space.Tests` (300, the codec and fixtures), `eve-space` (764), `eve-net` and `eve-sim` build clean under clippy -D warnings.
+
+### System environment as dogma effects (slice 7c)
+
+- A solar system's environment is its effect beacon (SDE group 920, `Class N <effect> Effects`, the attributes of the beacon type). Each
+  attribute "<name>Multiplier" is a post-multiplication of the attribute "<name>", "<name>Bonus" a post-percentage of it; both reach the
+  ship and the items located in it (its modules), as a buff of the same shape does. Source: the SDE values (`WormholeEffects`), the
+  dogma modifier rules of `Eve.Dogma` (`SystemEnvironment`, tests `SystemEnvironmentTests`).
+- Applied in the C# dogma world of the ship (`SyncBuffsAsync` with the ship's buffs). The Rust simulation does not receive these
+  values: its combat and flight numbers are the ship spec's at the time the ship enters, so a wormhole's effect is seen in the
+  attributes the client reads and not in the simulation (not built).
+- Names with no base attribute (for example `shieldBonusMultiplier`, `capacitorCapacityMultiplierSystem`) are listed as not applied.
+## Slice 3, step 3: filaments (rules and data; jumps not built)
+
+Data. `crates/eve-space/src/filament.rs` holds the 17 Pochven filament types (56065 to 56081, group "Triglavian Space Filaments") with the SDE's ship cap (`mjdShipJumpCap`) and spool-up (`filamentSpoolupTimeSeconds`) per type, and the link radius (`mjfgRadius`, 6000 m). The Proximity-Extraction types carry the SDE's 2.5 ly limit (`lightYearDistanceMax`). Families: Devana and Extraction are outbound (Pochven to k-space); Cladistic, Border, Internal and Home are inbound.
+
+Conflict. The wiki's Pochven page gives 60 s for the inbound filaments; the SDE gives 30 s (the 5-ship types) and 45 s (the 15-ship types). The SDE values are used, as SDE comes first. The Home-system standing (6.0) is skipped, per the owner.
+
+Not built. The filament destinations are not in the client extract (the location list ids 4510 to 4569 are absent), so no filament can be jumped and no destination is invented. The trace rules (outbound cooldown 210 s, trace lifetime 900 s, unlink distance 30 km) are constants with tests; nothing consumes them until the destinations are sourced.
+
+Tests: `eve-space` filament module, 5 tests (the 17 SDE rows, the family directions, the fleet cap and empty-fleet refusal, the trace numbers, the 2.5 ly reach), all passing; clippy -D warnings and rustfmt clean.

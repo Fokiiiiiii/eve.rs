@@ -332,6 +332,13 @@ public sealed class IncursionDirectorTests
         new SolarSystemInfo(3042, "Null E3", 304, 11, -0.8),
     ]);
 
+    /// <summary>A synthetic gate chain through every system of the universe, in id order: each system is some jumps from every other.</summary>
+    private static StargateGraph Stargates(SolarSystemCatalog systems)
+    {
+        var ids = systems.Systems.Select(s => s.Id).OrderBy(id => id).ToList();
+        return new StargateGraph(ids.Zip(ids.Skip(1), (a, b) => (a, b)));
+    }
+
     /// <summary>The incursion runtime over its own schemas, the director attached, a clock the test moves; a restart makes new runtime objects over the same records.</summary>
     private sealed class IncursionRig : IAsyncDisposable
     {
@@ -381,7 +388,7 @@ public sealed class IncursionDirectorTests
         private IncursionDirector NewDirector()
         {
             Waves = new DungeonWaveDirector(_source, Content, Scheduler, Bus, DungeonCatalog.LoadEmbedded(), WaveRules.LoadEmbedded(), new NpcSelector(NpcAuthority.Load()), Spawner, _schemas[3]);
-            return new IncursionDirector(_source, Content, Scheduler, Waves, Bus, Systems, _schemas[4], () => _unit < 0 ? _random.NextDouble() : _unit);
+            return new IncursionDirector(_source, Content, Scheduler, Waves, Bus, Systems, Stargates(Systems), _schemas[4], () => _unit < 0 ? _random.NextDouble() : _unit);
         }
 
         private async Task AttachAsync()

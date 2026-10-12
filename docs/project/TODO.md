@@ -1616,3 +1616,7 @@ Evidence and decisions: `docs/project/WORMHOLE_DESIGN.md` (sources, SDE numbers,
 | DONE (tests) | 7b: placement of the ends with the system's scene, WormholeMgr.WormholeJump (mass, collapse, publication), polarization, world at start-up | Eve.Wormholes.Tests 17; the service jump has no test yet (DEVIATIONS) |
 | DONE (tests) | 7c: system environment as dogma modifiers on the ship and its modules (C# dogma) | Eve.Dogma.Tests `SystemEnvironmentTests` (3). Not in the Rust simulation |
 | OPEN | 7d signatures, 7e Sleeper/Drifter sites, 7f Thera exits | Not started |
+
+| BLOCKED | 7d signatures in probe scanning | Design 14: no wormhole rows in the probe path; scan-strength value not read from the wiki |
+| BLOCKED | 7e Sleeper and Drifter sites | Design 14: site content not published (owner decision needed) |
+| BLOCKED | 7f Thera exits | Design 14: Thera's connections are wandering (K-space), cut by owner decision |

@@ -637,11 +637,12 @@ public sealed partial class MutualWarInviteMgrService(
     [Method("SendInviteByPlayer")]
     public async ValueTask<PyValue> SendInviteByPlayer(ServiceCall call)
     {
+        if (sendInvite is null)
+            throw NotAvailable();
         var fromOwnerId = OwnerId(call.Session);
         var toOwnerId = InviteInteger(call.Arg(0));
         if (fromOwnerId > 0 && toOwnerId > 0 &&
-            (readInvitesBlocked is null || !await readInvitesBlocked(toOwnerId, call.Cancellation)) &&
-            sendInvite is not null)
+            (readInvitesBlocked is null || !await readInvitesBlocked(toOwnerId, call.Cancellation)))
             await sendInvite(call, fromOwnerId, toOwnerId, call.Cancellation);
         return PyNone.Instance;
     }
@@ -649,9 +650,11 @@ public sealed partial class MutualWarInviteMgrService(
     [Method("WithdrawInviteByPlayer")]
     public async ValueTask<PyValue> WithdrawInviteByPlayer(ServiceCall call)
     {
+        if (withdrawInvite is null)
+            throw NotAvailable();
         var fromOwnerId = OwnerId(call.Session);
         var toOwnerId = InviteInteger(call.Arg(0));
-        if (fromOwnerId > 0 && toOwnerId > 0 && withdrawInvite is not null)
+        if (fromOwnerId > 0 && toOwnerId > 0)
             await withdrawInvite(call, fromOwnerId, toOwnerId, call.Cancellation);
         return PyNone.Instance;
     }
@@ -659,10 +662,12 @@ public sealed partial class MutualWarInviteMgrService(
     [Method("RespondToInviteByPlayer")]
     public async ValueTask<PyValue> RespondToInviteByPlayer(ServiceCall call)
     {
+        if (respondToInvite is null)
+            throw NotAvailable();
         var fromOwnerId = InviteInteger(call.Arg(0));
         var toOwnerId = OwnerId(call.Session);
         var accepts = JsTruthy(call.Arg(1));
-        if (fromOwnerId > 0 && toOwnerId > 0 && respondToInvite is not null)
+        if (fromOwnerId > 0 && toOwnerId > 0)
             await respondToInvite(call, fromOwnerId, toOwnerId, accepts, call.Cancellation);
         return PyNone.Instance;
     }
@@ -670,11 +675,16 @@ public sealed partial class MutualWarInviteMgrService(
     [Method("SetInvitesBlockedByPlayer")]
     public async ValueTask<PyValue> SetInvitesBlockedByPlayer(ServiceCall call)
     {
+        if (setInvitesBlocked is null)
+            throw NotAvailable();
         var ownerId = OwnerId(call.Session);
-        if (ownerId > 0 && setInvitesBlocked is not null)
+        if (ownerId > 0)
             await setInvitesBlocked(call, ownerId, JsTruthy(call.Arg(0)), call.Cancellation);
         return PyNone.Instance;
     }
+
+    private static MachoWrappedException NotAvailable() => MachoErrors.ThrowUserError("CustomNotify",
+        ("notify", new PyStr("Mutual war invitations are not available on this server.")));
 
     private static long OwnerId(ClientSession session) =>
         Positive(session.GetInt("allianceID")) ??

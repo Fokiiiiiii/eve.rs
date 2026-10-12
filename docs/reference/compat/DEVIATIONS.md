@@ -2287,13 +2287,13 @@ client's use of mission data: eve-logic `evemissions/client/data.py`, `eve/clien
   English and other languages under CCP's own keys). Each message type maps to an empty object, so the client shows no
   chapter titles on the epic arc screen. Status: open (`MissionDataGaps.EpicJournalText`). Before this change the server
   gave the same empty answer on any install without the EveJS directory.
-- **Levels: 1,274 basic missions tagged, with provenance, committed by the owner's exception.** The official build has no
+- **Levels: 1,429 basic missions tagged, with provenance, committed by the owner's exception.** The official build has no
   mission level. The repository owner's level tags (EveJS work of 2026-09-26) are committed in
-  `dotnet/src/Eve.Services.Core/Data/mission-level-tags.v1.json` (embedded resource): 1,274 rows, one per official mission
+  `dotnet/src/Eve.Services.Core/Data/mission-level-tags.v1.json` (embedded resource): 1,429 rows, one per official mission
   ID (every ID exists in build 3405148, table `missions`). Provenance classes: `client` 1,019 (client dungeon difficulty 790,
-  client dungeon name 229), `tq-log` 13 (the golden security missions, from captured TQ logs), `wiki` 191 (EVE University wiki
-  tables, transcribed by the owner), `rule` 51 (owner rules and defaults; 23 cargo-volume estimates, 22 related-chain, 4 default
-  level 1). Confidence: high 1,223, medium 24, low 27. Each row has exactly four fields: `missionID`, `level`, `provenance`,
+  client dungeon name 229), `tq-log` 13 (the golden security missions, from captured TQ logs), `wiki` 346 (EVE University wiki
+  tables: 191 transcribed by the owner, 155 added on 2026-10-12 by matching the mission report tables to the SDE names; a chain step takes its chain's level, confidence medium), `rule` 51 (owner rules and defaults; 23 cargo-volume estimates, 22 related-chain, 4 default
+  level 1). Confidence: high 1,324, medium 78, low 27. Each row has exactly four fields: `missionID`, `level`, `provenance`,
   `confidence`. Missions without a row answer `unknown` with the reason; they are never given a default level.
   `MissionStaticCatalog.Level` returns the provenance with every level. Status: decided (exception below).
 - **Exception to the rule against committing client-derived and captured-log data (owner-approved, 2026-10-11).** The

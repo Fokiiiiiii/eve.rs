@@ -1135,7 +1135,7 @@ rule table (`AgentMissionKindRules`), not from EveJS. DEVIATIONS "Mission static
 | OPEN | Client check of the mission build against the client's `missions.fsdbinary` (not in this environment) | DEVIATIONS "Mission static data" (build newer than client) |
 | OPEN | Epic arc count: 21 official, nine on the wiki, seven in the design file | owner decision; DEVIATIONS |
 | OPEN | Basic, storyline, research, FW, heraldry pools: no official agent-to-mission link | `MissionDataGaps.BasicPools`; Mi2 cannot offer missions until a source exists |
-| DONE (exception) | Levels: 1,274 tagged missions committed with provenance (client 1,019, tq-log 13, wiki 191, rule 51) under the owner's approval for four fields; 1,618 official missions have no tag and answer unknown | `MissionStaticCatalog.Level`, `Data/mission-level-tags.v1.json`; DEVIATIONS "Mission static data" | `MissionStaticCatalog.Level`, `Data/mission-level-tags.v1.json`; DEVIATIONS "Mission static data" |
+| DONE (exception) | Levels: 1,429 tagged missions committed with provenance (client 1,019, tq-log 13, wiki 346, rule 51) under the owner's approval for four fields; 1,463 official missions have no tag and answer unknown | `MissionStaticCatalog.Level`, `Data/mission-level-tags.v1.json`; DEVIATIONS "Mission static data" | `MissionStaticCatalog.Level`, `Data/mission-level-tags.v1.json`; DEVIATIONS "Mission static data" |
 | OPEN | Kill mission dungeon content: `dungeonID` is not a row of `dungeons` (3 of 1,460) | `MissionDataGaps.KillDungeonContent`; dungeon owner |
 | OPEN | Epic arc journal text IDs | `MissionDataGaps.EpicJournalText`; the client shows no chapter titles |
 | OPEN | LP reward per mission and the LP store standing requirement | `MissionDataGaps.Standings`; the LP store track owns the offers |
@@ -1144,7 +1144,7 @@ rule table (`AgentMissionKindRules`), not from EveJS. DEVIATIONS "Mission static
 
 Recorded:
 - **Exception, client and TQ-log level tags committed (owner-approved 2026-10-11).** 1,019 `client` and 13 `tq-log` values are in
-  `Data/mission-level-tags.v1.json` with the wiki and rule rows (1,274 rows). Limit: mission ID, level, provenance class, confidence
+  `Data/mission-level-tags.v1.json` with the wiki and rule rows (1,429 rows). Limit: mission ID, level, provenance class, confidence
   only. The exporter that made the client values is not available, so the file is the only record. DEVIATIONS "Mission static data"
   has the full entry. Not decided: whether any other derived data may be committed on the same ground (the owner's decision each time).
 - **Owner's heuristic rows.** 23 cargo-volume, 4 default level-1 and 22 related-chain values are committed as `rule` rows with low or

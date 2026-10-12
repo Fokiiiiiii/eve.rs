@@ -139,12 +139,7 @@ impl Scene {
             payload::action(stamp, "Stop", [ship_id]),
         ];
         out.extend(self.tell_all(session, actions.into()));
-        out.push(Out::Jumping {
-            session,
-            command: code,
-            destination_system,
-            destination_gate: leads_to,
-        });
+        out.push(Out::Jumping { session, command: code, destination_system, destination_gate: leads_to });
         out
     }
 

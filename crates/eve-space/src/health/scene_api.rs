@@ -131,12 +131,13 @@ impl Scene {
     pub fn condition(&mut self, session: SessionId, now: i64) -> Vec<Out> {
         const CODE: u8 = 19;
         if let Some(structure_id) = self.controlled_structure_id(session) {
-            return match self.structure_body(structure_id).and_then(|_| self.structure_health.get(&structure_id)) {
-                Some(health) => vec![Out::Condition {
-                    session,
-                    command: CODE,
-                    condition: health.condition_at(now),
-                }],
+            return match self
+                .structure_body(structure_id)
+                .and_then(|_| self.structure_health.get(&structure_id))
+            {
+                Some(health) => {
+                    vec![Out::Condition { session, command: CODE, condition: health.condition_at(now) }]
+                }
                 None => vec![Out::Refused { session, command: CODE, reason: "STRUCTURE_NOT_FOUND" }],
             };
         }

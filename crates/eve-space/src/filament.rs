@@ -236,10 +236,12 @@ mod tests {
         let outbound: Vec<&str> =
             FILAMENTS.iter().filter(|f| f.direction == Direction::Outbound).map(|f| f.name).collect();
         assert_eq!(outbound.len(), 5, "three Devana and two Extraction");
-        assert!(FILAMENTS
-            .iter()
-            .filter(|f| f.name.starts_with("Border") || f.name.starts_with("Home"))
-            .all(|f| f.direction == Direction::Inbound));
+        assert!(
+            FILAMENTS
+                .iter()
+                .filter(|f| f.name.starts_with("Border") || f.name.starts_with("Home"))
+                .all(|f| f.direction == Direction::Inbound)
+        );
     }
 
     #[test]

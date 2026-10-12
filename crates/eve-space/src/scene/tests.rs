@@ -2735,10 +2735,18 @@ fn a_docked_controller_observes_the_real_structure_and_is_released_when_it_is_re
     scene.place_structure(placement.clone(), NOON);
 
     assert_eq!(
-        refused_by(&scene.control_structure(SESSION, scene.solar_system_id(), STRUCTURE + 1, spec().character_id, true, NOON)),
+        refused_by(&scene.control_structure(
+            SESSION,
+            scene.solar_system_id(),
+            STRUCTURE + 1,
+            spec().character_id,
+            true,
+            NOON
+        )),
         "STRUCTURE_NOT_FOUND"
     );
-    let attached = scene.control_structure(SESSION, scene.solar_system_id(), STRUCTURE, spec().character_id, true, NOON);
+    let attached =
+        scene.control_structure(SESSION, scene.solar_system_id(), STRUCTURE, spec().character_id, true, NOON);
     assert!(attached.iter().any(|out| matches!(out,
         Out::Accepted { session, command: crate::link::COMMAND_STRUCTURE_CONTROL, .. } if *session == SESSION)));
     assert!(!scene.pilots.contains_key(&SESSION), "a docked observer needs no flying pilot");
@@ -2755,25 +2763,28 @@ fn a_docked_controller_observes_the_real_structure_and_is_released_when_it_is_re
     assert!(scene.controlled_structures[&SESSION].bound);
 
     let position = scene.system.bodies[scene.structure_index(STRUCTURE).unwrap()].position;
-    assert_eq!(
-        refused_by(&scene.command(SESSION, Command::Stop, NOON + SECOND)),
-        "NO_SHIP_IN_SPACE"
-    );
+    assert_eq!(refused_by(&scene.command(SESSION, Command::Stop, NOON + SECOND)), "NO_SHIP_IN_SPACE");
     assert_eq!(scene.system.bodies[scene.structure_index(STRUCTURE).unwrap()].position, position);
     assert!(scene.structure_health.contains_key(&STRUCTURE));
 
     let mut status = placement.status.clone();
     status.state += 1;
     let changed = scene.set_structure_state(STRUCTURE, status, NOON + SECOND);
-    assert!(changed.iter().any(|out| matches!(out,
-        Out::Notify { session, name: "DoDestinyUpdate", .. } if *session == SESSION)), "{changed:?}");
+    assert!(
+        changed.iter().any(|out| matches!(out,
+        Out::Notify { session, name: "DoDestinyUpdate", .. } if *session == SESSION)),
+        "{changed:?}"
+    );
 
     let removed = scene.remove_structure(STRUCTURE, NOON + 2 * SECOND);
     assert!(scene.controlled_structure_id(SESSION).is_none());
     assert!(scene.structure_index(STRUCTURE).is_none());
     assert!(!scene.structure_health.contains_key(&STRUCTURE));
-    assert!(removed.iter().any(|out| matches!(out,
-        Out::Notify { session, name: "DoDestinyUpdate", .. } if *session == SESSION)), "{removed:?}");
+    assert!(
+        removed.iter().any(|out| matches!(out,
+        Out::Notify { session, name: "DoDestinyUpdate", .. } if *session == SESSION)),
+        "{removed:?}"
+    );
 }
 
 #[test]
@@ -2784,7 +2795,8 @@ fn boarding_a_structure_preserves_the_physical_ship_and_release_rebinds_it() {
     let placement = structure_placement(&scene, NOON);
     scene.place_structure(placement, NOON);
 
-    let attached = scene.control_structure(SESSION, scene.solar_system_id(), STRUCTURE, spec().character_id, true, NOON);
+    let attached =
+        scene.control_structure(SESSION, scene.solar_system_id(), STRUCTURE, spec().character_id, true, NOON);
     assert!(attached.iter().any(|out| matches!(out,
         Out::Accepted { session, command: crate::link::COMMAND_STRUCTURE_CONTROL, .. } if *session == SESSION)));
     assert!(!scene.pilots.contains_key(&SESSION));
@@ -2803,7 +2815,6 @@ fn boarding_a_structure_preserves_the_physical_ship_and_release_rebinds_it() {
     assert!(!scene.unpiloted.contains_key(&ship_id));
     assert_eq!(ego_in_state(&scene.bind(SESSION, NOON + SECOND)), Some(crate::wire::id(ship_id)));
 }
-
 
 #[test]
 fn a_structure_controller_survives_destruction_of_the_ship_it_left() {
@@ -2844,7 +2855,8 @@ fn transferring_structure_control_releases_the_old_owner_and_leave_clears_the_ne
     scene.bind(SESSION, NOON);
 
     let next = 8;
-    let transferred = scene.control_structure(next, scene.solar_system_id(), STRUCTURE, 9002, true, NOON + SECOND);
+    let transferred =
+        scene.control_structure(next, scene.solar_system_id(), STRUCTURE, 9002, true, NOON + SECOND);
     assert!(transferred.iter().any(|out| matches!(out,
         Out::Accepted { session, command: crate::link::COMMAND_STRUCTURE_CONTROL, .. } if *session == next)));
     assert_eq!(scene.controller_of_structure(STRUCTURE), Some(next));
@@ -2853,9 +2865,20 @@ fn transferring_structure_control_releases_the_old_owner_and_leave_clears_the_ne
     assert_eq!(scene.pilots[&SESSION].ship.spec.ship_id, ship_id);
     assert!(!scene.unpiloted.contains_key(&ship_id));
 
-    let old_release = scene.control_structure(SESSION, scene.solar_system_id(), 0, spec().character_id, false, NOON + SECOND);
+    let old_release = scene.control_structure(
+        SESSION,
+        scene.solar_system_id(),
+        0,
+        spec().character_id,
+        false,
+        NOON + SECOND,
+    );
     assert!(matches!(old_release.first(), Some(Out::Refused { reason: "CONTROL_STRUCTURE_NOT_ACTIVE", .. })));
-    assert_eq!(scene.controller_of_structure(STRUCTURE), Some(next), "the former controller cannot release the new owner");
+    assert_eq!(
+        scene.controller_of_structure(STRUCTURE),
+        Some(next),
+        "the former controller cannot release the new owner"
+    );
     assert!(scene.leave(next, Departure::LoggedOff, NOON + 2 * SECOND).is_some());
     assert!(scene.controlled_structure_id(next).is_none());
     assert!(scene.controller_of_structure(STRUCTURE).is_none());
@@ -3358,19 +3381,32 @@ fn a_wormhole_end_the_host_places_takes_a_ship_through_to_its_far_end_and_places
 }
 
 #[test]
-fn a_warp_to_a_wormhole_end_under_the_minimum_warp_distance_is_refused_and_one_beyond_it_ends_within_jump_range() {
+fn a_warp_to_a_wormhole_end_under_the_minimum_warp_distance_is_refused_and_one_beyond_it_ends_within_jump_range()
+ {
     let mut scene = scene_by_a_gate();
     let out = scene.ship(SESSION, NOON).unwrap().position;
     // an end 50 km off is inside the 150 km minimum warp distance: refused, as the game refuses it
-    scene.place_wormhole(wormhole_placement(Vec3::new(out.x + 50_000.0, out.y, out.z), Vec3::ZERO, 5_000.0), NOON);
-    let near = scene.command(SESSION, Command::WarpTo { target_id: WORMHOLE_END, range: 0.0 }, NOON + seconds(1));
+    scene.place_wormhole(
+        wormhole_placement(Vec3::new(out.x + 50_000.0, out.y, out.z), Vec3::ZERO, 5_000.0),
+        NOON,
+    );
+    let near =
+        scene.command(SESSION, Command::WarpTo { target_id: WORMHOLE_END, range: 0.0 }, NOON + seconds(1));
     assert!(matches!(near.as_slice(), [Out::Refused { reason: "WARP_DISTANCE_TOO_CLOSE", .. }]), "{near:?}");
     scene.remove_wormhole(WORMHOLE_END, NOON);
 
     // an end 200,000 km off: the warp is made and ends within the jump range of the end, and the jump is accepted
-    scene.place_wormhole(wormhole_placement(Vec3::new(out.x + 2.0e11, out.y, out.z), Vec3::ZERO, 5_000.0), NOON);
-    let told = scene.command(SESSION, Command::WarpTo { target_id: WORMHOLE_END, range: 0.0 }, NOON + seconds(1));
-    assert_eq!(action_names(&told[0]), ["SetMaxSpeed", "WarpTo", "OnSpecialFX", "SetSpeedFraction"], "{told:?}");
+    scene.place_wormhole(
+        wormhole_placement(Vec3::new(out.x + 2.0e11, out.y, out.z), Vec3::ZERO, 5_000.0),
+        NOON,
+    );
+    let told =
+        scene.command(SESSION, Command::WarpTo { target_id: WORMHOLE_END, range: 0.0 }, NOON + seconds(1));
+    assert_eq!(
+        action_names(&told[0]),
+        ["SetMaxSpeed", "WarpTo", "OnSpecialFX", "SetSpeedFraction"],
+        "{told:?}"
+    );
     let mut t = NOON + seconds(1);
     while t < NOON + seconds(300) {
         t += 2_500_000;

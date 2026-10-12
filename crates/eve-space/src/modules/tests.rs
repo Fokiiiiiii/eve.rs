@@ -3757,7 +3757,9 @@ fn cloaking_device() -> Effect {
 
 fn cloak_notice(out: &Out) -> Option<(&'static str, Vec<Value>)> {
     match out {
-        Out::Notify { name: "OnCloakModuleForceDeactivated", id_type, args, .. } => Some((id_type, args.clone())),
+        Out::Notify { name: "OnCloakModuleForceDeactivated", id_type, args, .. } => {
+            Some((id_type, args.clone()))
+        }
         _ => None,
     }
 }
@@ -3778,7 +3780,11 @@ fn a_ship_that_comes_within_two_kilometres_breaks_a_cloak_and_the_pilot_is_told_
         eve_destiny::Vec3 { x: here.x + 1_999.0 + ra + rb, y: here.y, z: here.z };
     let told = scene.poll(t + SECOND);
 
-    let notices: Vec<_> = told.iter().filter(|out| matches!(out, Out::Notify { session: A, .. })).filter_map(cloak_notice).collect();
+    let notices: Vec<_> = told
+        .iter()
+        .filter(|out| matches!(out, Out::Notify { session: A, .. }))
+        .filter_map(cloak_notice)
+        .collect();
     assert_eq!(
         notices,
         [(
@@ -3807,7 +3813,8 @@ fn a_station_within_two_kilometres_refuses_a_cloak_and_breaks_one_that_runs() {
     let station = scene.system().body(STATION).unwrap().clone();
     let away = scene.pilots[&A].ship.position;
     let radius = scene.pilots[&A].ship.spec.radius;
-    let beside = eve_destiny::Vec3 { x: station.position.x + station.radius + radius + 1_000.0, ..station.position };
+    let beside =
+        eve_destiny::Vec3 { x: station.position.x + station.radius + radius + 1_000.0, ..station.position };
     scene.pilots.get_mut(&A).unwrap().ship.position = beside;
     assert_eq!(
         scene.activate(A, cloaking_device(), t),
@@ -3825,7 +3832,10 @@ fn a_station_within_two_kilometres_refuses_a_cloak_and_breaks_one_that_runs() {
             "shipid",
             vec![
                 Value::Str("CloakDeactivatedByProximityToType".into()),
-                Value::Dict(vec![(Value::Str("proximityTypeID".into()), Value::Int(i64::from(station.type_id)))]),
+                Value::Dict(vec![(
+                    Value::Str("proximityTypeID".into()),
+                    Value::Int(i64::from(station.type_id))
+                )]),
             ],
         )]
     );
@@ -3854,7 +3864,9 @@ fn a_cloak_ended_for_another_reason_tells_the_custom_notice_after_the_module_has
             Value::Dict(vec![
                 (
                     Value::Str("notify".into()),
-                    Value::Str("Your cloak has been deactivated by a Mobile Observatory decloaking ping.".into())
+                    Value::Str(
+                        "Your cloak has been deactivated by a Mobile Observatory decloaking ping.".into()
+                    )
                 ),
                 (Value::Str("decloakReason".into()), Value::Str("remoteDecloakPing".into())),
                 (Value::Str("itemID".into()), Value::Long(1_000_000_000_042)),
@@ -3863,5 +3875,8 @@ fn a_cloak_ended_for_another_reason_tells_the_custom_notice_after_the_module_has
         ]
     );
     assert_eq!(scene.pilots[&A].cloak, crate::visibility::CloakState::Uncloaked);
-    assert!(scene.force_decloak(A, cause, t + 2 * SECOND).is_empty(), "an uncloaked ship has nothing to break");
+    assert!(
+        scene.force_decloak(A, cause, t + 2 * SECOND).is_empty(),
+        "an uncloaked ship has nothing to break"
+    );
 }

@@ -331,7 +331,11 @@ impl Scene {
         let mut out = self.retune(target, at);
         // a ship that is still lining up for a warp it can no longer make is stopped (the reference stops it as the scramble lands)
         if matches!(what, Lasting::Scramble { .. } | Lasting::Tackle { .. }) {
-            if self.pilots.get(&target).is_some_and(|pilot| pilot.incoming.scrambled_with(self.scramble_status(target))) {
+            if self
+                .pilots
+                .get(&target)
+                .is_some_and(|pilot| pilot.incoming.scrambled_with(self.scramble_status(target)))
+            {
                 out.extend(self.break_tether(target, at));
             }
             out.extend(self.cancel_alignment(target, at));
@@ -468,9 +472,10 @@ impl Scene {
             .into_iter()
             .filter(|target| {
                 !self.is_tethered_session(*target, at)
-                    && self.pilots
-                    .get(target)
-                    .is_some_and(|pilot| pilot.cloak != crate::visibility::CloakState::Cloaked)
+                    && self
+                        .pilots
+                        .get(target)
+                        .is_some_and(|pilot| pilot.cloak != crate::visibility::CloakState::Cloaked)
             })
             .collect();
         let mut out = Vec::new();

@@ -41,13 +41,13 @@ impl Scene {
         active: bool,
         now: i64,
     ) -> Vec<Out> {
-        let refused = |reason| {
-            vec![Out::Refused { session, command: crate::link::COMMAND_STRUCTURE_CONTROL, reason }]
-        };
-        let accepted = || {
-            Out::Accepted { session, command: crate::link::COMMAND_STRUCTURE_CONTROL, at: now }
-        };
-        if session == 0 || solar_system_id <= 0 || structure_id < 0 || character_id < 0
+        let refused =
+            |reason| vec![Out::Refused { session, command: crate::link::COMMAND_STRUCTURE_CONTROL, reason }];
+        let accepted = || Out::Accepted { session, command: crate::link::COMMAND_STRUCTURE_CONTROL, at: now };
+        if session == 0
+            || solar_system_id <= 0
+            || structure_id < 0
+            || character_id < 0
             || (active && (structure_id == 0 || character_id == 0))
         {
             return refused("INVALID_CONTROL_STRUCTURE_IDS");
@@ -66,7 +66,8 @@ impl Scene {
             out.push(accepted());
             return out;
         }
-        if self.structure_index(structure_id).is_none() || !self.structure_health.contains_key(&structure_id) {
+        if self.structure_index(structure_id).is_none() || !self.structure_health.contains_key(&structure_id)
+        {
             return refused("STRUCTURE_NOT_FOUND");
         }
         if self.pilots.values().any(|pilot| pilot.ship.spec.ship_id == structure_id) {
@@ -187,7 +188,15 @@ impl Scene {
             Some(added)
         };
         let wrecks = self.wrecks_in_view(session);
-        let Ok(state) = payload::set_state_for_ego(second, &system, ship.spec.ship_id, &ships, &wrecks, &self.structure_health, now) else {
+        let Ok(state) = payload::set_state_for_ego(
+            second,
+            &system,
+            ship.spec.ship_id,
+            &ships,
+            &wrecks,
+            &self.structure_health,
+            now,
+        ) else {
             return Vec::new();
         };
         let update = |actions: Vec<Value>| {
@@ -244,7 +253,6 @@ impl Scene {
         self.with_backlog(told)
     }
 
-
     fn bind_controlled_structure(&mut self, session: SessionId, now: i64) -> Vec<Out> {
         let Some(observer) = self.controlled_structures.get(&session) else { return Vec::new() };
         let (structure_id, needs_initial_ballpark) = (observer.structure_id, observer.needs_initial_ballpark);
@@ -261,7 +269,15 @@ impl Scene {
         } else {
             None
         };
-        let Ok(state) = payload::set_state_for_ego(second, &system, structure_id, &ships, &wrecks, &self.structure_health, now) else {
+        let Ok(state) = payload::set_state_for_ego(
+            second,
+            &system,
+            structure_id,
+            &ships,
+            &wrecks,
+            &self.structure_health,
+            now,
+        ) else {
             return Vec::new();
         };
         let update = |actions: Vec<Value>| {
@@ -296,7 +312,15 @@ impl Scene {
         let system = Arc::clone(&self.system);
         let ships = self.ships_in_view(session);
         let wrecks = self.wrecks_in_view(session);
-        let told = match payload::set_state_for_ego(stamp, &system, structure_id, &ships, &wrecks, &self.structure_health, now) {
+        let told = match payload::set_state_for_ego(
+            stamp,
+            &system,
+            structure_id,
+            &ships,
+            &wrecks,
+            &self.structure_health,
+            now,
+        ) {
             Ok(state) => {
                 vec![Self::notify(session, "DoDestinyUpdate", payload::destiny_update([state], false))]
             }
@@ -316,7 +340,15 @@ impl Scene {
         let ships = self.ships_in_view(session);
         let Some(pilot) = self.pilots.get(&session) else { return Vec::new() };
         let wrecks = self.wrecks_in_view(session);
-        let told = match payload::set_state_for_ego(stamp, &system, pilot.ship.spec.ship_id, &ships, &wrecks, &self.structure_health, now) {
+        let told = match payload::set_state_for_ego(
+            stamp,
+            &system,
+            pilot.ship.spec.ship_id,
+            &ships,
+            &wrecks,
+            &self.structure_health,
+            now,
+        ) {
             Ok(state) => {
                 vec![Self::notify(session, "DoDestinyUpdate", payload::destiny_update([state], false))]
             }

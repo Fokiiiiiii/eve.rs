@@ -35,7 +35,9 @@ impl Scene {
         let ships = self
             .pilots
             .iter()
-            .filter(|(other, pilot)| **other != session && !pilot.flight.as_ref().is_some_and(|flight| flight.is_warping()))
+            .filter(|(other, pilot)| {
+                **other != session && !pilot.flight.as_ref().is_some_and(|flight| flight.is_warping())
+            })
             .filter_map(|(_, pilot)| {
                 let other = &pilot.ship;
                 let gap = crate::geo::surface_gap(
@@ -46,12 +48,20 @@ impl Scene {
                 )?;
                 Some(CloakTrigger { item_id: other.spec.ship_id, type_id: other.spec.type_id, distance: gap })
             });
-        let bodies = self.system().bodies.iter().filter(|body| body.kind != BodyKind::Belt).filter_map(|body| {
-            let gap =
-                crate::geo::surface_gap(at, radius, [body.position.x, body.position.y, body.position.z], body.radius)?;
-            Some(CloakTrigger { item_id: body.id, type_id: body.type_id, distance: gap })
-        });
-        ships.chain(bodies).filter(|trigger| trigger.distance <= metres).min_by(|a, b| a.distance.total_cmp(&b.distance))
+        let bodies =
+            self.system().bodies.iter().filter(|body| body.kind != BodyKind::Belt).filter_map(|body| {
+                let gap = crate::geo::surface_gap(
+                    at,
+                    radius,
+                    [body.position.x, body.position.y, body.position.z],
+                    body.radius,
+                )?;
+                Some(CloakTrigger { item_id: body.id, type_id: body.type_id, distance: gap })
+            });
+        ships
+            .chain(bodies)
+            .filter(|trigger| trigger.distance <= metres)
+            .min_by(|a, b| a.distance.total_cmp(&b.distance))
     }
 
     /// The cloaked ships that have an object within [`CLOAK_PROXIMITY_METERS`] lose their cloak (a ship in warp keeps a covert one).
@@ -92,26 +102,40 @@ impl Scene {
         let (first, notice) = match cause {
             DecloakCause::Proximity(trigger) => (
                 true,
-                Self::cloak_notice(session, "CloakDeactivatedByProximityToType", [(
-                    "proximityTypeID",
-                    int(i64::from(trigger.type_id)),
-                )]),
+                Self::cloak_notice(
+                    session,
+                    "CloakDeactivatedByProximityToType",
+                    [("proximityTypeID", int(i64::from(trigger.type_id)))],
+                ),
             ),
             DecloakCause::Custom { reason, notice, trigger } => (
                 false,
-                Self::cloak_notice(session, "CustomNotify", [
-                    ("notify", text(notice)),
-                    ("decloakReason", text(reason)),
-                    ("itemID", id(trigger.item_id)),
-                    ("distanceMeters", real((trigger.distance.max(0.0) * 1000.0).round() / 1000.0)),
-                ]),
+                Self::cloak_notice(
+                    session,
+                    "CustomNotify",
+                    [
+                        ("notify", text(notice)),
+                        ("decloakReason", text(reason)),
+                        ("itemID", id(trigger.item_id)),
+                        ("distanceMeters", real((trigger.distance.max(0.0) * 1000.0).round() / 1000.0)),
+                    ],
+                ),
             ),
         };
         let ended = self.offline_module(session, module_id, now);
         if first { [vec![notice], ended].concat() } else { [ended, vec![notice]].concat() }
     }
 
-    fn cloak_notice(session: SessionId, message: &str, args: impl IntoIterator<Item = (&'static str, Value)>) -> Out {
-        Out::Notify { session, name: "OnCloakModuleForceDeactivated", id_type: "shipid", args: vec![text(message), dict(args)] }
+    fn cloak_notice(
+        session: SessionId,
+        message: &str,
+        args: impl IntoIterator<Item = (&'static str, Value)>,
+    ) -> Out {
+        Out::Notify {
+            session,
+            name: "OnCloakModuleForceDeactivated",
+            id_type: "shipid",
+            args: vec![text(message), dict(args)],
+        }
     }
 }

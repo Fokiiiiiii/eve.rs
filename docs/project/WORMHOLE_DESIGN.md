@@ -333,3 +333,63 @@ Code: `dotnet/src/Eve.Wormholes/` (project `Eve.Wormholes`, migration `wormhole`
   read did not state one; the owner's rule needs a rate that is not published. Cut.
 - Not built: the entity in space, the simulation jump, the WormholeMgr callback, signatures, effects, sites, Thera and Turnur
   (sections 9.6 and 10.4 still hold for these; the generator and the lifecycle are now the data they need).
+
+## 12. Slice 5 (2026-10-12): the jump path, investigated and not built
+
+Status: not built in this slice. This section records what the code and the client require, so the next slice starts from facts.
+
+### 12.1 The client's call
+
+- `eve/client/script/ui/services/menuSvcExtras/movementFunctions.py` (lines 595 to 598): after the high-sec confirmation,
+  the client calls `sm.RemoteSvc('wormholeMgr').WormholeJump(itemID)` inside `PerformSessionChange('UI/Inflight/EnterWormhole')`.
+  `itemID` is the wormhole's item (the object the pilot picked), not a gate. `GetWormholePolarization` is the other method.
+- The session change is the client's; the server must send the session change and the jump effect as the stargate path does.
+- `eve/client/script/parklife/spaceMgr.py` (`OnWormholeJumpCancel`, line 94) and the jump indicator (lines 492 to 506) are
+  the client's answers to a cancelled or a running jump.
+
+### 12.2 The server path that exists
+
+- `dotnet/src/Eve.Services.Space/ActivityTravelRpcServices.cs`: `WormholeMgrService` answers `WormholeJump` through a
+  callback. The composition passes none (`dotnet/src/Eve.Host/Rpc/SpaceRpc.cs` line 72), so the call returns None.
+- The stargate jump is `SpaceSessions.JumpAsync` (`SpaceSessions.Movement.cs` line 217): checks, the toll, then the
+  simulation's `Jump` command with `[gateId, toGateId]`, then `FinishJumpAsync` (line 338) when the simulation reports the ship
+  has left (`SimJumped`), which moves the ship and the character to the destination system (`_ships.JumpAsync`).
+- The simulation side is `crates/eve-space/src/scene/jump.rs`: `jump()` (line 31) accepts only a body of kind
+  `BodyKind::Stargate` (line 60) with `Detail::Stargate`; `due_jumps()` (line 231) takes the ship out of this scene; `arrive()`
+  (line 266) places it at a stargate of the destination system (`system.body(traveller.to_gate)` of kind Stargate, line 281),
+  so the far end must be a body of that system.
+
+### 12.3 What a wormhole needs in the simulation
+
+1. A body kind: `BodyKind::Wormhole` and `Detail::Wormhole { destination_system, destination_end }` in `world.rs`.
+2. A placement: the host puts each end in space the way it puts a structure (`place_structure`, `scene/structures.rs`, protocol 59).
+   A new link message (protocol 60) and its C# codec and golden fixtures, as AGENTS.md requires. Both ends are needed: the
+   source end in the source scene, the far end in the destination scene. A scene exists only while a ship is in the system
+   (ADR 0007), so the far end must be placed when the destination scene is made or carried by the jump command.
+3. `jump()` accepts the wormhole body; the mass check (`WormholeJobs.TransitAsync`) is the host's and must run before the
+   simulation moves the ship. Its refusal must reach the client as the reference does.
+4. `arrive()` places the ship at the far end (a position in front of it, the random bearing as `gate::arrival` does).
+5. The C# side: `WormholeMgrService` callback in the composition that runs the transit and then the simulation command, with
+   the same toll-free path as the stargate; `FinishJumpAsync` reused.
+
+### 12.4 Other items, and what exists
+
+- Effects as dogma modifiers: no system-wide effect mechanism exists in eve.rs. `grep` of `crates/eve-space` and
+  `dotnet/src/Eve.Dogma`, `Eve.Services.Space` finds only deployable beacons (cyno, lance, CRAB), not environment effects. The
+  Abyssal, Pochven and Triglavian effects are not implemented either. A new modifier source (per system, applied to every
+  ship's attribute calculation) has to be built first; it is not a reuse.
+- Signatures: the probe scanner (`SpaceProbeScans`) exists. The signature rows of wormholes (scan group 3, `Cosmic Signature`,
+  strength attribute 1908) are in EveJS's `explorationAuthority` table; no type in the SDE carries attribute 1908.
+  Scan strength per wiki is not on the pages read.
+- Sleeper and Drifter sites: the dungeon machinery exists (`DungeonWaveDirector`, `Eve.Dungeons`), but no wormhole site
+  archetype is loaded; the site counts are not published (design 4).
+- Thera and Turnur: a static exit to Thera (class 12) has a pool of one system (31000005). Thera has no statics (data file).
+  Turnur (J377 leads there) needs the K-space side, which is cut with the wandering connections.
+- Delayed local: no chat service in eve.rs (section 10.3). Skipped.
+- Headless MITM run: needs a wormhole the client can enter, so it waits for 12.3.
+
+### 12.5 Decision for the next slice
+
+Build 12.3 in order (1, 2, 3, 4, 5) with tests at each step: a Rust unit test for the jump and the arrival, a PG test for the
+transit, and the golden fixture for the new link message. The effects (12.4) are a separate slice that needs an owner decision
+on where the modifier applies (the ship's attribute calculation in `eve-space`, or the dogma service in C#).

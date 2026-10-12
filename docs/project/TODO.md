@@ -1548,3 +1548,12 @@ Evidence and decisions: `docs/project/WORMHOLE_DESIGN.md` (sources, SDE numbers,
 | CUT | Wandering K-space connections (K162) | No published spawn rate (design 11) |
 | CUT | Region-neighbour exclusion for statics | The pages read do not state it (design 11) |
 | OPEN | Wormhole entities in space, sim jump, WormholeMgr.WormholeJump callback, signatures, effects on ships, sites, Thera/Turnur, delayed local (no chat service in eve.rs), MITM run | Design 11 |
+
+### Slice 5 (2026-10-12)
+
+| Status | Item | Missing work |
+|---|---|---|
+| OPEN | Wormhole jump path: simulation body kind, placement (protocol 60), jump and arrival in `crates/eve-space`, WormholeMgr callback in the composition | Design 12.3 (not started in slice 5; investigated) |
+| OPEN | Effects as dogma modifiers | No system-wide effect mechanism exists in eve.rs (design 12.4) |
+| OPEN | Signatures, sites, Thera/Turnur, headless MITM run | Design 12.4 |
+| CUT | Delayed local | No chat service in eve.rs (design 10.3) |

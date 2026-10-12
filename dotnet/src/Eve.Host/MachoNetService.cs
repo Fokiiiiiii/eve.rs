@@ -42,7 +42,6 @@ public static class ServiceLocations
         ["invbroker"] = "station",
         ["trademgr"] = "station",
         ["tradeMgr"] = "station",
-        ["corpStationMgr"] = "station",
         ["repairSvc"] = "station",
         ["reprocessingSvc"] = "station",
         ["insuranceSvc"] = "station",

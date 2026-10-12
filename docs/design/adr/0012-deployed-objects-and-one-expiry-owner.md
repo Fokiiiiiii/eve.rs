@@ -39,7 +39,7 @@ deadline is a row, it survives a restart. The sim also has its own timer-like ex
 ## Addendum (2026-10-08, bombs and warp disruption brief)
 
 - Probes stay simulation-only (bombs brief D11): an interdiction probe's lifetime is its SDE `explosionDelay`, checked in the simulation tick. Nothing is persisted, so a restart drops it (a stated LIMITATION). It is not a `Deployed` row, because the sweep runs every 30 s and would make a 120 s probe up to 25 % late.
-- Mobile warp disruptors are not deployable yet (D6): no SDE lifetime exists, and the EveJS table is unverified. When they are, they are `Deployed` rows and the expiry job stays `space.containers.sweep`; anchoring is a separate job, `space.deployed.anchor`, which is not an expiry job.
+- Mobile warp disruptors are not deployable yet (D6): no SDE lifetime exists, and the EveJS table has not been checked against the client. When they are, they are `Deployed` rows and the expiry job stays `space.containers.sweep`; anchoring is a separate job, `space.deployed.anchor`, which is not an expiry job.
 - Nothing is written to the sweep for the field generator: its bubble is refused (`EFFECT_NOT_IMPLEMENTED`) until its ship penalties have a source (D5).
 
 ## Addendum (2026-10-09, the bombs and bubbles track: deployables in the simulation)

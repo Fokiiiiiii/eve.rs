@@ -54,63 +54,60 @@ FAR_FUTURE_MS = 4_102_444_800_000
 REWARD_REF_TYPE = 33  # the wallet journal reference type of an agent mission reward (MissionDungeonRuntime.AgentMissionRewardRefType)
 COMPLETED, ACCEPTED = 4, 2  # AgentMissionState
 
-Step = namedtuple("Step", "mission agent system in_space station kind dungeon objective quantity reward")
+Step = namedtuple("Step", "mission agent system in_space station kind dungeon objective quantity reward next_agents", defaults=((),))
 # the arc on the offer path: mission, agent, the system the agent is in (its in-space system when it is in space), whether it is in space,
 # its station, the kind (kill, talk or courier), the kill's dungeon, the objective item and quantity (fetch), the ISK reward (SDE)
-PATH = [
-    Step(14117, 3019356, 30005001, False, 60012607, 'kill', 3509, None, None, 100000),
-    Step(14118, 3019356, 30005001, False, 60012607, 'talk', None, None, None, 100000),
-    Step(14119, 3019369, 30005199, True, 60012583, 'kill', 3660, 30755, 1, 100000),
-    Step(14120, 3019369, 30005199, True, 60012583, 'kill', 3661, 30756, 1, 100000),
-    Step(14121, 3019369, 30005199, True, 60012583, 'talk', None, None, None, 100000),
-    Step(14122, 3019356, 30005001, False, 60012607, 'kill', 3533, 30757, 1, 100000),
-    Step(14123, 3019356, 30005001, False, 60012607, 'kill', 3662, 30759, 1, 100000),
-    Step(14124, 3019356, 30005001, False, 60012607, 'kill', 3675, 30761, 1, 100000),
-    Step(14125, 3019356, 30005001, False, 60012607, 'kill', 3676, 30774, 1, 100000),
-    Step(14126, 3019356, 30005001, False, 60012607, 'talk', None, None, None, 100000),
-    Step(14127, 3019358, 30003017, False, 60010252, 'kill', 3649, 30782, 1, 100000),
-    Step(14128, 3019358, 30003017, False, 60010252, 'kill', 3651, None, None, 100000),
-    Step(14129, 3019358, 30003017, False, 60010252, 'kill', 3657, None, None, 100000),
-    Step(14130, 3019358, 30003017, False, 60010252, 'kill', 3658, 30784, 1, 100000),
-    Step(14131, 3019358, 30003017, False, 60010252, 'talk', None, None, None, 100000),
-    Step(14132, 3019359, 30002764, False, 60000541, 'kill', 3686, None, None, 100000),
-    Step(14134, 3019359, 30002764, False, 60000541, 'courier', None, None, None, 100000),
-    Step(14133, 3019359, 30002764, False, 60000541, 'kill', 3690, None, None, 0),
-    Step(14135, 3019359, 30002764, False, 60000541, 'kill', 3692, None, None, 100000),
-    Step(14137, 3019359, 30002764, False, 60000541, 'kill', 3693, None, None, 90000),
-    Step(14136, 3019359, 30002764, False, 60000541, 'talk', None, None, None, 200000),
-    Step(14138, 3019356, 30005001, False, 60012607, 'kill', 3677, 30814, 15, 150000),
-    Step(14140, 3019356, 30005001, False, 60012607, 'courier', None, None, None, 150000),
-    Step(14141, 3019356, 30005001, False, 60012607, 'talk', None, None, None, 150000),
-    Step(14139, 3019356, 30005001, False, 60012607, 'kill', 3683, 30812, 1, 150000),
-    Step(14386, 3019356, 30005001, False, 60012607, 'courier', None, None, None, 150000),
-    Step(14387, 3019356, 30005001, False, 60012607, 'kill', 3694, None, None, 150000),
-    Step(14390, 3019356, 30005001, False, 60012607, 'kill', 3700, None, None, 150000),
-    Step(14451, 3019356, 30005001, False, 60012607, 'talk', None, None, None, 150000),
-    Step(14391, 3019361, 30002053, False, 60004516, 'kill', 3689, None, None, 200000),
-    Step(14392, 3019361, 30002053, False, 60004516, 'talk', None, None, None, 200000),
-    Step(14393, 3019362, 30002545, False, 60004609, 'kill', 3698, None, None, 200000),
-    Step(14394, 3019362, 30002545, False, 60004609, 'kill', 3695, None, None, 200000),
-    Step(14422, 3019362, 30002545, False, 60004609, 'talk', None, None, None, 200000),
-    Step(14396, 3019361, 30002053, False, 60004516, 'kill', 3719, None, None, 200000),
-    Step(14397, 3019361, 30002053, False, 60004516, 'kill', 3701, None, None, 200000),
-    Step(14398, 3019361, 30002053, False, 60004516, 'talk', None, None, None, 200000),
-    Step(14399, 3019363, 30000001, False, 60012526, 'kill', 3685, None, None, 200000),
-    Step(14401, 3019363, 30000001, False, 60012526, 'talk', None, None, None, 200000),
-    Step(14403, 3019364, 30002973, False, 60008992, 'kill', 3684, 30778, 1, 200000),
-    Step(14404, 3019364, 30002973, False, 60008992, 'kill', 3682, 30780, 1, 200000),
-    Step(14405, 3019364, 30002973, False, 60008992, 'talk', None, None, None, 200000),
-    Step(14406, 3019363, 30000001, False, 60012526, 'kill', 3681, None, None, 200000),
-    Step(14407, 3019363, 30000001, False, 60012526, 'talk', None, None, None, 200000),
-    Step(14413, 3019356, 30005001, False, 60012607, 'courier', None, None, None, 250000),
-    Step(14414, 3019356, 30005001, False, 60012607, 'kill', 3650, None, None, 250000),
-    Step(14415, 3019356, 30005001, False, 60012607, 'kill', 3653, None, None, 250000),
-    Step(14416, 3019356, 30005001, False, 60012607, 'kill', 3654, 30719, 1, 250000),
-    Step(14442, 3019356, 30005001, False, 60012607, 'talk', None, None, None, 150000),
-    Step(14453, 3019356, 30005001, False, 60012607, 'talk', None, None, None, 250000),
-    Step(14443, 3019365, 30005217, True, 60011734, 'kill', 3673, 30827, 1, 250000),
-    Step(14467, 3019365, 30005217, True, 60011734, 'kill', 3758, None, None, 1000000),
-]
+ARC = int(os.environ.get("EVE_WALK_ARC", "29"))  # the epic arc walked (29: The Blood-Stained Stars)
+
+
+def arc_path(arc: int) -> list:
+    """The arc's steps in the order the server offers them: the lowest offerable mission ID first, a fork resolved by that rule (the
+    EpicArcOffers.Pick rule without failures or restarts). Each step carries its agent's place (in space in the agent's system when the
+    agent is in space, else its station) and its kind; the kill's dungeon, objective and reward are the SDE's."""
+    doc = json.loads(sql(f"SELECT doc::text FROM sde_mission.\"epicArcs\" WHERE key = '{arc}'"))
+    steps = {row["_key"]: row for row in doc["missions"]}
+    predecessors = {key: [] for key in steps}
+    for key, row in steps.items():
+        for nxt in row.get("nextMissions", []):
+            if nxt in predecessors:
+                predecessors[nxt].append(key)
+    done: list = []
+    while True:
+        offerable = []
+        for key in steps:
+            if key in done:
+                continue
+            leading = predecessors[key]
+            if leading and not any(parent in done for parent in leading):
+                continue
+            if any(sibling != key and sibling in done for parent in leading for sibling in steps[parent].get("nextMissions", [])):
+                continue
+            offerable.append(key)
+        if not offerable:
+            break
+        done.append(min(offerable))
+        if not steps[done[-1]].get("nextMissions"):
+            break  # a terminal step ends the run: the arc cools down for its restart interval, so later entries wait for the next run
+    path = []
+    for key in done:
+        mission = json.loads(sql(f"SELECT (doc - 'messages' - 'name')::text FROM sde_mission.missions WHERE key = '{key}'"))
+        agent = steps[key]["agentID"]
+        places = sql(f"SELECT doc->>'solarSystemID' FROM sde.\"agentsInSpace\" WHERE key = '{agent}'").splitlines()
+        in_space = bool(places and places[0])
+        character = json.loads(sql(f"SELECT doc::text FROM sde.\"npcCharacters\" WHERE key = '{agent}'"))
+        station = int(character["locationID"])
+        system = int(places[0]) if in_space else int(json.loads(sql(f"SELECT doc::text FROM sde.\"npcStations\" WHERE key = '{station}'"))["solarSystemID"])
+        kill = mission.get("killMission", {})
+        kind = "courier" if "courierMission" in mission else ("kill" if kill else "talk")
+        reward_row = mission.get("missionRewards", {}).get("reward", {})
+        reward = int(reward_row.get("rewardQuantity", 0) or 0) if reward_row.get("rewardTypeID") == 29 else 0  # ISK only (type 29)
+        if kill and "objectiveTypeID" not in kill:
+            objective, quantity = None, None
+        else:
+            objective, quantity = kill.get("objectiveTypeID"), kill.get("objectiveQuantity")
+        next_agents = tuple(sorted({steps[nxt]["agentID"] for nxt in steps[key].get("nextMissions", []) if nxt in steps}))
+        path.append(Step(key, agent, system, in_space, station, kind, kill.get("dungeonID"), objective, quantity, reward, next_agents))
+    return path
 
 ARC_WALK_RUN = uuid.uuid4().hex[:10]
 ACCOUNT = f"arc29-{ARC_WALK_RUN}"
@@ -197,6 +194,16 @@ def held(character: int, type_id: int) -> int:
     return int(float(sql(f"SELECT coalesce(sum(quantity), 0) FROM {schema('INVENTORY')}.items WHERE owner_id = {character} AND type_id = {type_id}")))
 
 
+def seed_agent_standings(character: int, path: list) -> None:
+    """A fixture: the standing a pilot has from earlier work with each agent's corporation (the client's CanUseAgent rule asks for one from a
+    level 4 agent: "Your current standings are not high enough", AgentDialogue). Only the corporation's standing is seeded; the arc's own
+    completions then move the standings the SDE gives."""
+    for agent in sorted({step.agent for step in path}):
+        corporation = int(sql(f"SELECT doc->>'corporationID' FROM sde.\"npcCharacters\" WHERE key = '{agent}'"))
+        sql(f"INSERT INTO {schema('RELATIONS')}.relations (kind, subject, object, value, since_ms, updated_ms) "
+            f"VALUES ('standing', {corporation}, {character}, 10, 0, 0) ON CONFLICT (kind, subject, object) DO UPDATE SET value = EXCLUDED.value")
+
+
 def seed_completed(character: int, step: Step) -> None:
     """A completion the walk does not play: the journal row the server writes when the step is completed (see the module docstring)."""
     sql(f"INSERT INTO {schema('AGENTS')}.journal (character_id, agent_id, mission_id, from_state, to_state, action, reference) "
@@ -212,7 +219,10 @@ def offer(who, character: int, step: Step) -> None:
     """Greets the agent (which completes a talk step waiting for this agent), requests the offer, accepts it; the journal must hold it."""
     do(who, step.agent, None)
     requested = do(who, step.agent, OFFER)
-    assert str(step.mission) in requested, f"mission {step.mission} was not offered by {step.agent}: {requested[:300]}"
+    if str(step.mission) not in requested:
+        rows = sql(f"SELECT mission_id, action, to_state FROM {schema('AGENTS')}.journal WHERE character_id = {character} AND agent_id = {step.agent} ORDER BY id")
+        raise AssertionError(f"mission {step.mission} was not offered by {step.agent}: state {mission_state(character, step.agent)}; "
+                             f"journal with this agent {rows!r}; said {requested[:160]!r}")
     do(who, step.agent, ACCEPT)
     assert mission_state(character, step.agent) == (ACCEPTED, step.mission), f"mission {step.mission} is not accepted: {mission_state(character, step.agent)}"
 
@@ -223,6 +233,10 @@ def stop(who, dogma, bomb: int) -> None:
         who.call_bound(dogma[0], "Deactivate", bomb, "empWave")
     except packet.MachoError:
         pass
+
+
+def _has_table(module: str, table: str) -> bool:
+    return sql(f"SELECT to_regclass('{schema(module)}.{table}') IS NOT NULL") == "t"
 
 
 def fire(who, dogma, bomb: int, mission: int) -> None:
@@ -273,7 +287,11 @@ def fight(character: int, ship: int, step: Step, bomb: int) -> None:
             if any(removed(e, ship) for e in seen):
                 raise AssertionError(f"mission {step.mission}: the pilot's ship was destroyed")
         else:
-            raise AssertionError(f"mission {step.mission}: the dungeon was not cleared in 900 s")
+            alive = sql(f"SELECT count(*) FROM {schema('SPACE')}.dungeon_wave_npcs") if _has_table("SPACE", "dungeon_wave_npcs") else "n/a"
+            contents = sql(f"SELECT kind, state, count(*) FROM {schema('CONTENT')}.instances GROUP BY kind, state") if _has_table("CONTENT", "instances") else "n/a"
+            sample = sql(f"SELECT definition, owner, result FROM {schema('CONTENT')}.instances WHERE kind = 'dungeon' AND state = 'failed' ORDER BY id DESC LIMIT 2")
+            raise AssertionError(f"mission {step.mission}: the dungeon {step.dungeon} was not cleared in 900 s; NPC rows {alive!r}; content {contents!r}; "
+                                 f"failed sample {sample!r}; character {character}")
         stop(who, dogma, bomb)  # the repeating bomb is left off, so the next session can start it
     if fetch:
         assert held(character, step.objective) >= step.quantity, f"mission {step.mission}: the objective item was not granted"
@@ -324,10 +342,11 @@ def outcome(call):
 
 
 def check_talk_done(character: int, step: Step) -> None:
-    assert completed(character, step.mission) == 1, f"talk step {step.mission}: not completed by talking to the next agent {step.agent}"
+    assert completed(character, step.mission) == 1, f"talk step {step.mission}: not completed by talking to its next agents {step.next_agents}"
 
 
-def test_arc_29_is_walked_step_by_step_in_the_order_the_server_offers_it():
+def test_arc_is_walked_step_by_step_in_the_order_the_server_offers_it():
+    PATH = arc_path(ARC)
     FROM = int(os.environ.get("ARC29_FROM", "0"))
     TO = int(os.environ.get("ARC29_TO", str(len(PATH))))
     seed_courier = os.environ.get("ARC29_SEED_COURIER") == "1"
@@ -335,8 +354,10 @@ def test_arc_29_is_walked_step_by_step_in_the_order_the_server_offers_it():
         character = new_pilot(client, uuid.uuid4().hex[:10])
     ship = ship_of(character)
     bomb = fit_smartbomb(character, ship)
+    seed_agent_standings(character, PATH)
     for step in PATH[:FROM]:
         seed_completed(character, step)
+    pending_talks: list = []
     for index in range(FROM, TO):
         step = PATH[index]
         started = time.time()
@@ -349,13 +370,15 @@ def test_arc_29_is_walked_step_by_step_in_the_order_the_server_offers_it():
         # the fetch step before this one is handed in at its agent before the next step is offered
         if index > FROM and PATH[index - 1].objective is not None and PATH[index - 1].kind == "kill":
             turn_in(character, ship, PATH[index - 1])
-        # a talk step before this one is completed by talking to this step's agent, in the offer's session
-        previous_talk = index > FROM and PATH[index - 1].kind == "talk"
+        # a talk step completes when the pilot talks to one of the agents of the steps after it: the greeting in this session may do that
         with session(character, ship, step, "offer") as who:
-            if previous_talk:
-                do(who, step.agent, None)
-                check_talk_done(character, PATH[index - 1])
+            do(who, step.agent, None)
+            for talk in [t for t in pending_talks if step.agent in t.next_agents]:
+                check_talk_done(character, talk)
+                pending_talks.remove(talk)
             offer(who, character, step)
+        if step.kind == "talk":
+            pending_talks.append(step)
         if step.kind == "kill":
             fight(character, ship, step, bomb)
         print(f"ARC29 step {index} mission {step.mission} {step.kind} ok in {time.time() - started:.0f} s")

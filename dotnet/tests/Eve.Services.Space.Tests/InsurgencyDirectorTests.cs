@@ -56,16 +56,23 @@ public sealed class InsurgencyDirectorTests
         var campaign = (await rig.CampaignsAsync()).First();
         Assert.Equal(Ins.CampaignStates.Active, campaign.State);
         var sites = await rig.SitesAsync();
-        Assert.Equal(10, sites.Count);
+        Assert.Equal(20, sites.Count);
         Assert.All(sites, site => Assert.Contains(site.Dungeon, InsurgencyTemplates()));
 
+        // each covered system gets a pirate site and an empire site
         var mine = sites.Where(site => site.CampaignId == campaign.CampaignId).ToList();
-        Assert.Equal(5, mine.Count);
-        await rig.CompleteAsync(mine[0].Instance);
-        await rig.CompleteAsync(mine[0].Instance);
+        Assert.Equal(10, mine.Count);
+        Assert.Equal(5, mine.Count(site => site.Side == "pirate"));
+        var pirate = mine.First(site => site.Side == "pirate");
+        var empire = mine.First(site => site.Side == "antipirate" && site.SolarSystemId == pirate.SolarSystemId);
+        await rig.CompleteAsync(pirate.Instance);
+        await rig.CompleteAsync(pirate.Instance);
         var after = await rig.CampaignAsync(campaign.CampaignId);
         Assert.Equal(1, after.PiratePointsScored);
         Assert.Equal(Ins.CampaignStates.Active, after.State);
+        // the empire site of the same system scores the empire side's point there
+        await rig.CompleteAsync(empire.Instance);
+        Assert.Equal(1, (await rig.CampaignAsync(campaign.CampaignId)).AntipiratePointsScored);
     }
 
     [PgFact]
@@ -76,11 +83,13 @@ public sealed class InsurgencyDirectorTests
         var campaign = (await rig.CampaignsAsync()).First();
         var fob = await rig.FobAsync(campaign.StructureId);
         Assert.Equal(StructureState.FobInvulnerable, fob.Snapshot.State);
+        // the empire side's point is also a contribution: a kill in a covered system while the campaign is active
         Assert.Equal(campaign.OriginSolarSystemId, fob.SolarSystemId);
         Assert.Equal(campaign.WarzoneId == Ins.InsurgencyWarzones.Angel.WarzoneId ? 78260 : 79172, fob.TypeId);
 
         rig.Advance(Forecast + TimeSpan.FromMinutes(1));
         await rig.RunDueAsync();
+        await rig.KillAsync(Contributor, campaign.CoveredSolarSystemIds[0]);
         for (var i = 0; i < 5; i++)
             await rig.ScoreAsync(campaign.CampaignId, Ins.Side.Antipirate, campaign.CoveredSolarSystemIds[i]);
         await rig.RunDueAsync();
@@ -97,6 +106,10 @@ public sealed class InsurgencyDirectorTests
         Assert.True((await rig.FobAsync(campaign.StructureId)).Snapshot.DestroyedMs > 0);
         var ended = await rig.CampaignAsync(campaign.CampaignId);
         Assert.Equal(Ins.CampaignStates.AntipirateWin, ended.State);
+        // the Empire win pays the contributor 1,500,000 LP from the Empire militia (the fallback here: the universe names no Empire faction)
+        var balance = Assert.Single(await rig.Loyalty.ReadAsync(new LoyaltyHolder(LoyaltyHolderKind.Character, Contributor)));
+        Assert.Equal(Ins.InsurgencyRules.VictoryLp, balance.Amount);
+        Assert.Equal(EmpireFallbackOf(campaign.WarzoneId), balance.IssuerCorpId);
         foreach (var site in (await rig.SitesAsync()).Where(site => site.CampaignId == campaign.CampaignId))
             Assert.Equal("abandoned", (await rig.Content.GetAsync(site.Instance))!.State);
     }
@@ -124,7 +137,9 @@ public sealed class InsurgencyDirectorTests
         var balance = Assert.Single(await rig.Loyalty.ReadAsync(new LoyaltyHolder(LoyaltyHolderKind.Character, Contributor)));
         Assert.Equal(Ins.InsurgencyRules.VictoryLp, balance.Amount);
         Assert.Equal(InsurgencyWarzoneCorporation(campaign.WarzoneId), balance.IssuerCorpId);
-        Assert.Empty(await rig.OpenSitesAsync(campaign.CampaignId));
+        // the sites that were still running when the pirates won are abandoned (a site that completed in time is finished)
+        foreach (var site in mine)
+            Assert.NotEqual("active", (await rig.Content.GetAsync(site.Instance))!.State);
         Assert.True((await rig.FobAsync(campaign.StructureId)).Snapshot.DestroyedMs > 0); // the FOB leaves space with the pirates' win
     }
 
@@ -132,7 +147,10 @@ public sealed class InsurgencyDirectorTests
     private static IEnumerable<long> InsurgencyTemplates() =>
         DungeonCatalog.LoadEmbedded().Dungeons.Where(d => d.ArchetypeID is >= 72 and <= 79).Select(d => d.DungeonID).ToList();
 
-    private static long InsurgencyWarzoneCorporation(long warzoneId) => warzoneId == Ins.InsurgencyWarzones.Angel.WarzoneId ? Ins.InsurgencyWarzones.Angel.PirateCorporationId : Ins.InsurgencyWarzones.Guristas.PirateCorporationId;
+    private static long InsurgencyWarzoneCorporation(long warzoneId) => warzoneId == Ins.InsurgencyWarzones.Angel.WarzoneId ? Ins.InsurgencyWarzones.Angel.MilitiaCorporationId : Ins.InsurgencyWarzones.Guristas.MilitiaCorporationId;
+
+    /// <summary>The Empire militia of a warzone's fallback: the test universe's systems name no Empire faction.</summary>
+    private static long EmpireFallbackOf(long warzoneId) => warzoneId == Ins.InsurgencyWarzones.Angel.WarzoneId ? Ins.InsurgencyWarzones.Angel.EmpireFallbackMilitiaId : Ins.InsurgencyWarzones.Guristas.EmpireFallbackMilitiaId;
 
     /// <summary>Ten low-security systems of each warzone on the client's map (the first ten by id), linked as a chain: each warzone has the systems a campaign needs.</summary>
     private static readonly int[] Angels = [.. Ins.InsurgencyWarzones.SystemsOf(Ins.InsurgencyWarzones.Angel.WarzoneId).OrderBy(i => i).Take(10)];
@@ -272,10 +290,10 @@ public sealed class InsurgencyDirectorTests
             var rows = new List<SiteRow>();
             await using var connection = await _source.OpenConnectionAsync();
             await using var command = connection.CreateCommand();
-            command.CommandText = $"SELECT campaign_id, solar_system_id, dungeon_id, instance_id FROM \"{_schemas[4]}\".insurgency_sites ORDER BY instance_id";
+            command.CommandText = $"SELECT campaign_id, solar_system_id, dungeon_id, instance_id, side FROM \"{_schemas[4]}\".insurgency_sites ORDER BY instance_id";
             await using var reader = await command.ExecuteReaderAsync();
             while (await reader.ReadAsync())
-                rows.Add(new SiteRow(reader.GetInt64(0), reader.GetInt64(1), reader.GetInt64(2), reader.GetInt64(3)));
+                rows.Add(new SiteRow(reader.GetInt64(0), reader.GetInt64(1), reader.GetInt64(2), reader.GetInt64(3), reader.GetString(4)));
             return rows;
         }
 
@@ -333,7 +351,7 @@ public sealed class InsurgencyDirectorTests
         }
     }
 
-    public sealed record SiteRow(long CampaignId, long SolarSystemId, long Dungeon, long Instance);
+    public sealed record SiteRow(long CampaignId, long SolarSystemId, long Dungeon, long Instance, string Side);
 
     /// <summary>Every structure is a pirate FOB here: the timeline's rules of a low-security FOB.</summary>
     private sealed class FobRules : IStructureRulesSource

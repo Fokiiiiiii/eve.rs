@@ -2287,13 +2287,13 @@ client's use of mission data: eve-logic `evemissions/client/data.py`, `eve/clien
   English and other languages under CCP's own keys). Each message type maps to an empty object, so the client shows no
   chapter titles on the epic arc screen. Status: open (`MissionDataGaps.EpicJournalText`). Before this change the server
   gave the same empty answer on any install without the EveJS directory.
-- **Levels: 1,274 basic missions tagged, with provenance, committed by the owner's exception.** The official build has no
+- **Levels: 1,429 basic missions tagged, with provenance, committed by the owner's exception.** The official build has no
   mission level. The repository owner's level tags (EveJS work of 2026-09-26) are committed in
-  `dotnet/src/Eve.Services.Core/Data/mission-level-tags.v1.json` (embedded resource): 1,274 rows, one per official mission
+  `dotnet/src/Eve.Services.Core/Data/mission-level-tags.v1.json` (embedded resource): 1,429 rows, one per official mission
   ID (every ID exists in build 3405148, table `missions`). Provenance classes: `client` 1,019 (client dungeon difficulty 790,
-  client dungeon name 229), `tq-log` 13 (the golden security missions, from captured TQ logs), `wiki` 191 (EVE University wiki
-  tables, transcribed by the owner), `rule` 51 (owner rules and defaults; 23 cargo-volume estimates, 22 related-chain, 4 default
-  level 1). Confidence: high 1,223, medium 24, low 27. Each row has exactly four fields: `missionID`, `level`, `provenance`,
+  client dungeon name 229), `tq-log` 13 (the golden security missions, from captured TQ logs), `wiki` 346 (EVE University wiki
+  tables: 191 transcribed by the owner, 155 added on 2026-10-12 by matching the mission report tables to the SDE names; a chain step takes its chain's level, confidence medium), `rule` 51 (owner rules and defaults; 23 cargo-volume estimates, 22 related-chain, 4 default
+  level 1). Confidence: high 1,324, medium 78, low 27. Each row has exactly four fields: `missionID`, `level`, `provenance`,
   `confidence`. Missions without a row answer `unknown` with the reason; they are never given a default level.
   `MissionStaticCatalog.Level` returns the provenance with every level. Status: decided (exception below).
 - **Exception to the rule against committing client-derived and captured-log data (owner-approved, 2026-10-11).** The
@@ -2685,18 +2685,19 @@ Focused PostgreSQL verification: Station 28/28, selected Space docking/undocking
 - **Covered systems.** The hub and the nearest low-security systems of the regions by stargate jumps, as many as the pirates' victory needs (5 plus the ambition). The wiki's spread (a system at corruption 3 spreads to a neighbour) is not modelled, so a campaign covers the systems it needs from the start. Status: shortcut.
 - **The FOB (slice 2, superseded by slice 3).** The FOB is a structure now (see "Pirate FOB (slice 3)" below); `structureID` is its id.
 - **One point per system and side.** A system scores once for a side: the first completed pirate site of the system (`insurgency_points`). The wiki gives per-completion contribution percentages (0.25% to 1.5%) whose meaning per stage is not stated, so the one-point rule is a shortcut for the stage model. Status: shortcut.
-- **Pirate sites.** Each covered system gets one site of the warzone's pool: a dungeon of archetype 72 to 79 in the owner catalog whose first wave draws from that pool (`angels_deadspace_pve`, `guristas_deadspace_pve`), chosen by campaign and system; it lasts to the campaign's maximum. The owner catalog has no empire-side campaign site, so the Suppression side scores nothing. Status: decided; the Suppression side OPEN.
+- **Insurgency sites (slice 4, 2026-10-12).** The owner catalog's campaign archetypes are the client's titles: 72 Pirate Laundering Center, 73 Anti-Pirate Security Post, 74 Warehouse Raid, 75 to 78 Corporate Outpost Raid (small, medium, large, X-large), 79 Mining Fleet Ambush (`archetypes.jsonl`, tag `feature_pirate_insurgencies`). Project rule: the pirate sites are 72 and 74, their first wave draws the warzone's pool (`guristas_deadspace_pve`, `angels_deadspace_pve`), one per covered system; the empire (Suppression) sites are 73, 75 to 79, one per covered system, chosen by campaign and system. The empire sites are the documented empire-side activities: the wiki's Corporate Outpost Raid and Mining Op Ambush (the Empire militia destroys the pirate NPCs) and the Anti-Pirate Security Post by its title. Not built: the wiki's Ice Refinery Heist (shared by both sides; not in the owner catalog) and the Counter-Insurgency Outposts (loot turn-in). A site completed scores its system's point of its side, once (the wiki's per-site percentages, 0.25 % to 1.5 %, are not used). Status: decided by the project rule; the wiki names the activities but not the sites' archetype numbers.
 - **Contributors.** A character who takes a final blow in a covered system while the campaign is active contributes (`npc.killed` with `characterId`). The owner data gives no per-site participation, so this is a shortcut. Status: shortcut.
-- **Victory payout.** A pirate win credits each contributor 1,500,000 LP (an empire win pays nothing yet: see "Pirate FOB (slice 3)") (the wiki's Insurgency page: "Victory pays every contributor 1,500,000 LP"), from the warzone's pirate corporation, in the win's transaction, keyed by campaign and character. The losing side and the ISK bonus are not paid: the Havoc notes say the winning side gets the bigger payout and publish no amount. Status: decided.
+- **Victory payout (slice 4 update).** A win pays each contributor 1,500,000 LP (the wiki's Insurgency page, "Victory pays every contributor 1,500,000 LP"), keyed by the campaign and the character, in the win's transaction. The issuer is the winning side's militia (the client's factions table, `militiaCorporationID`): a pirate win credits the pirate militia (Angel Cartel 1000436, Guristas 1000437); an Empire win credits the Empire militia of the faction that owns the FOB's system (Amarr 1000179, Caldari 1000180, Minmatar 1000182, Gallente 1000181), and the warzone's fallback (Amarr for Angel, Caldari for Guristas) when the system names no such faction. The wiki's Havoc notes say the pirate faction's LP is spent in its LP store, which matches. Not paid: the losing side's contribution (the wiki gives the losing multiplier 0.4 but no base amount, and the contributors do not record their side) and the ISK bonus (no amount is published). Searched twice (the wiki's Insurgency and Suppression pages, the Havoc announcement and the notes): no amount for either. Status: decided for the win; the losing side and ISK are unpublished.
 - **Notice audience.** Location notices (started, updated, ending) go to the pilots whose `solarsystemid2` (or `solarsystemid`) is a covered system, addressed with the `clientID` of each session. Faction notices (state changed, system fully corrupted or suppressed) go to every character session, because the client handlers do not filter by location (`insurgencyCampaignSvc.py:121-143`). Status: decided from the client code; not checked in the graphical client.
 - **Ending notice per covered system.** `OnInsurgencyCampaignEndingForLocation` takes one system id and the client compares it with the pilot's system, so it is sent once per covered system with that id. Status: decided.
 - **Pirate FOB (slice 3, 2026-10-12).** The FOB is a structure record of its own: the SDE type of the warzone (78260 Angel Cartel FOB, 79172 Guristas Pirates FOB; group 4644 "Pirate Forward Operating Base"), owned by the warzone's pirate NPC corporation, in the hub system. Its vitals are the type's dogma values: shield 9,600,000, armor 4,800,000, hull 1,200,000, every resonance 0.8. The structures timeline is the pirate FOB's: invulnerable until the empire side reaches its count (the campaign stays active, `insurgency.fob_exposed`), then the shield stage; the shield's depletion starts the one reinforcement of 3 hours with 1 hour of variance (2 to 4 hours; wiki "Forward Operating Bases", patch 24.01 numbers in `InsurgencyRules`); after it the armor and the hull have no repair countdown, so the FOB does not heal; its destruction ends an active campaign in the empire's win. A pirate win or a tie despawns it. It is never abandoned and has no owner reinforcement hour. The Havoc notes' 24-hour timer is a draft ("To Be Determined" on the wiki) and is not used. Status: decided from the wiki and the 24.01 numbers.
 - **FOB types of the other pirate factions (slice 3).** The V24.01 client data has an FOB type for Angel and Guristas only; the Blood Raiders, Sansha and Serpentis FOBs are not in it, and their warzones are not in the Faction Warfare regions the wiki names. None is invented. Status: decided; data limit.
 - **FOB position and respawn (slice 3).** The wiki puts the FOB on a temperate planet of the warzone; the owner data gives no planet rule, so the FOB sits at the system's origin. The wiki documents no respawn or replacement: the next hourly start of the warzone spawns a new FOB. Status: shortcut (`shortcut:` in `InsurgencyDirector`).
-- **FOB damage by players (slice 3): OPEN.** The simulation has no weapon path to a structure body yet (`crates/eve-space/src/scene/structures.rs`, "no weapon path hits a structure body yet", ST-8a). A hit reaches the timeline only as the host's `SimStructureDamaged`, which the tests send. A live fight on a FOB needs the weapon path first. The FOB is not refused the hit in the simulation while invulnerable, so the simulation's own vitals can drop before the timeline refuses the hit.
-- **Empire side (slice 3): the suppression points are still OPEN.** No empire-side content is in the owner catalog, so no site raises suppression; the campaign's empire win is only the FOB's destruction, which needs damage by players (above).
-- **Empire win payout (slice 3): not paid.** The wiki's win payout (1,500,000 LP per contributor, 1x) is for the winning side, which is the empire here; its issuer is an Empire militia corporation that the owner data does not give, so no LP is credited. The losing side's 0.4x factor is published but needs the side of each contributor, which the shortcut contributor rule does not record. Status: OPEN.
-- **FOB notices (slice 3): OPEN.** The campaign notices (started, updated, ending, state changed, system fully corrupted or suppressed) are the slice-2 ones; the exposure of the FOB and its destruction have no notice of their own, because the client's notice names and texts for them are not in the client code read so far (`insurgencyCampaignSvc.py`). Status: OPEN.
+- **Structures take weapon hits (slice 4, 2026-10-12, ST-8a).** The simulation applies player weapons to a structure body the host put in space: turrets (`weapons/fire.rs` `fire_at_structure`: the shot is rolled against the body as against a ship; the hit takes the layers, with the structure's resonances), missiles (`missile_entity.rs`: the warhead lands on the structure's layers), smartbombs and damage bombs (`structures_within`: the blast reaches the structures whose surface is in range). A structure is no pilot: no aggression, no damage message, no crimewatch. A hit that empties more than one layer is told once per layer, from the shallowest (`StructureHit::emptied`), and the host applies them in the order the simulation sent them (`SpaceStructures.OnReceived`), so the FOB timeline takes the shield before the armor. shortcut: a turret's spool, range disruption and area effect do not apply to a structure; a missile's range check at activation is for ships only; fighters and drones do not hit structures. Status: decided (owner decision 1); tests `weapons::tests` (structure turret, missile, smartbomb), `deployable::tests` (bomb).
+- **Empire side (slice 3, superseded by slice 4).** The owner catalog's empire sites are archetypes 73 and 75 to 79 (see "Insurgency sites"); completing one scores its system's suppression point.
+- **Empire win payout (slice 3, superseded by slice 4): paid from the Empire militia (see "Victory payout").** The wiki's win payout (1,500,000 LP per contributor, 1x) is for the winning side, which is the empire here; its issuer is an Empire militia corporation that the owner data does not give, so no LP is credited. The losing side's 0.4x factor is published but needs the side of each contributor, which the shortcut contributor rule does not record. Status: OPEN.
+- **FOB notices (slice 3, decided in slice 4).** The client's notice types for insurgencies are seven (`notificationconst.py`: Starting, Started, EndedPiratesWin, EndedAntiPiratesWin, EndedNoOneWins, Stage5Corruption, Stage5Suppression); none is for the FOB. The FOB's destruction is announced by `OnInsurgencyStateChangedForFaction` with the Empire win (sent by `NotifyCampaignChanged`), and an empire point that makes a system fully suppressed by `OnSystemFullySuppressedForFaction` (`NotifyPointScored`). The FOB's exposure has no notice of its own in the client: the Stage 5 Suppression notice of the system that reaches the count is the nearest. Status: decided from the client code.
+- **FOB notices (slice 3, earlier note).** The campaign notices (started, updated, ending, state changed, system fully corrupted or suppressed) are the slice-2 ones; the exposure of the FOB and its destruction have no notice of their own, because the client's notice names and texts for them are not in the client code read so far (`insurgencyCampaignSvc.py`). Status: OPEN.
 - **Public gateway not built (C-G1).** The corruption and suppression bars are unavailable. The client's gateway call fails on the client side (`messenger.py:71`, TypeError), which the space path catches and logs (`clientDogmaLocation.py:1506-1511`). Evidence: `scratchpad/work/insurgency-gateway-spike.md`. Status: decided; revisit with D-G1.
 
 
@@ -3232,6 +3233,62 @@ Landmarks (not done, with evidence). The SDE landmarks (45) and the client landm
 - **Pooling=false tests.** `HostServerTests` (the `host_port_test` fixture, user `unused`) never connects and stays unpooled: the cap does not apply to a source that opens no connection. `HostServerTests` (the `EVE_PG_URL` source) and `HomeStationHostTests` now use the capped source (`Pooling=false` removed); the Host tests pass (226). Status: fixed for the two that connect.
 - **Pool cap 10, the QA-bomb gate rule, the EveJS standing increases, the ISK base:** kept, as the owner decided (X7).
 
+## Mission execution X8: arc 29 live walk, and the arcs on and off (2026-10-12)
+
+- **The walk.** `tools/headless-client/tests/test_arc29_walk.py` walks The Blood-Stained Stars (epic arc 29, its name in the SDE mission
+  build 3405148; the brief's "Right to Rule?" is arc 48) along the offer path the server computes: at each point the lowest offerable step
+  (`EpicArcOffers.Pick`, forks resolved by the lowest ID). The path is 52 steps: 33 kill steps (14 of them with an objective item, a fetch),
+  15 talk steps and 4 courier steps. The arc has 64 step rows, 41 of them kill steps (the "41 kill steps" of X7); 17 fetch objectives,
+  5 courier steps and 18 talk steps in all. Per step: the agent offers the step (request and accept; the journal and the mission row are
+  checked in the database); the pilot is seeded where the step needs it (docked at the agent's station, or in space in the agent's system
+  for an in-space agent; the seeding is database state, which the server then answers from); a kill dungeon is cleared with the Cockroach
+  (type 11019) and the QA Smartbomb (type 18642), fitted by database insert with the Polaris skill it needs; a fetch kill's objective item
+  is checked in the hangar at the agent's station, and the turn-in at the agent completes the step; a talk step completes when the pilot
+  talks to the next step's agent. Checks: the agent journal, the wallet's agent-reward rows (reference type 33) by the SDE base ISK, the
+  standing rows by the SDE `extraStandings` (tenths, divided by 10), the objective items held and consumed.
+- **Walk result.** One live run on the eve_p2 lane (`EVE_LIVE_PORT` 26101, MITM capture on 26111, `EVE_MISSION_INCLUDE_GENERIC_ARCS=1`,
+  `ARC29_SEED_COURIER=1`): 48 steps walked and checked, 4 courier steps seeded (below); the run passed. Steps 0 to 15 and 16 to 51 were
+  also run in parts earlier on the same lane, each part seeding the completed steps before it, because a live run's schemas are dropped
+  at its end; the full single run is the evidence. Each step's wall time is 5 to 47 s.
+- **Courier steps are not built (blocker, not a pass).** Steps 14134, 14140, 14386 and 14413 are courier objectives. The server answers
+  an objective with empty `objectives` and `locations` lists (X3, X7), and the build gives no pickup or drop-off location, so there is
+  no official place to send the pilot. The walk records each courier step as completed in the journal (`seed:arc29:...` reference) and
+  says so in its output; that is a test fixture, not a server path. Owner decision needed: the courier rule (the pickup at the agent's
+  station and a drop-off in the same system, or another). The courier work of the mission track (X10) is not on main.
+- **Arc 29 is NOT turned on by default.** The owner rule is that all steps are completable; four are not (the courier steps above). The
+  switch is unchanged: arc 29 is held back by its generic kill sites unless `EVE_MISSION_INCLUDE_GENERIC_ARCS=1`. Flip after the courier
+  steps pass in a walk without the seeding.
+- **Fixed on the way.** A fetch step stays accepted after its dungeon completes (the objective is handed in later). The sweep started a
+  new dungeon for it while the pilot stayed in the system; when the pilot then left, that second dungeon was abandoned and failed the
+  mission (the turn-in found it Failed). `MissionDungeonRuntime.SweepAsync` now starts no dungeon for a fetch step whose objective is
+  held. Test: `MissionDungeonRuntimeTests.A_fetch_step_whose_objective_is_held_starts_no_second_dungeon_so_leaving_does_not_fail_it`.
+- **Walk-side findings (not server behaviour).** A seeded pilot in space starts its dungeon only after the walk binds the system's
+  ballpark (`beyonce.MachoBindObject`), as the Pochven walk does. A smartbomb left repeating (repeat 1000) keeps its effect active into the
+  next session (`EffectAlreadyActive2`); the walk asks it to stop (`dogmaIM.Deactivate`) at the end of each fight. The real client stops
+  its own module; this is the walk's own cleanup.
+- **Not covered.** The EVE.js comparison (`mitm diff`) of this walk: no reference run was made. The graphical client: not run. The
+  smartbomb's 250 km reach rule (X6) is not hit: a seeded pilot is placed at the system's origin. The bonus window, LP (none in the data),
+  Negotiation and the dungeon contents (generic sites, owner decision 2) are as in X1 to X7.
+
+Arc on and off list (default offers; the switch is `EVE_MISSION_INCLUDE_GENERIC_ARCS` for the generic sites):
+
+| Arc | Name (SDE) | Steps | Kill / fetch / courier / talk | Default | Walked |
+|---|---|---|---|---|---|
+| 29 | The Blood-Stained Stars | 64 (path 52) | 41 / 17 / 5 / 18 | off (courier not built) | 48 of 52 steps live; 4 courier seeded |
+| 128 | Fractured Legacy | 3 | 3 / 0 / 0 / 0 | off | no |
+| 132 | Visions of Greatness | 8 | 4 / 0 / 0 / 4 | off (4 kill sites missing: never offered) | no |
+| 40 | Penumbra | 40 | 19 / 7 / 7 / 14 | off (courier not built) | no |
+| 48 | Right to Rule | 24 | 19 / 5 / 0 / 5 | off | no |
+| 52 | Syndication | 27 | 18 / 3 / 0 / 9 | off | no |
+| 53 | Wildfire | 19 | 15 / 7 / 1 / 3 | off (courier not built) | no |
+| 55 | Smash and Grab | 20 | 13 / 8 / 0 / 7 | off | no |
+| 56 | Angel Sound | 22 | 14 / 0 / 0 / 8 | off | no |
+| 64, 67 to 77 | Pilot Certification Course (12 arcs, one per school) | 4 each | 3 / 1 / 1 / 0 each | off (courier not built) | no |
+
+Every kill step of the 21 arcs is a generic site (`mission-site-status.v1.json`) or missing; none is specific. So no arc is completable
+without its generic content, and no arc other than 29 has been walked. A completable arc needs its own walk; the walk test takes the
+arc's path from the SDE, and arc 29 is the one it is written for. Status: decided; the other 20 arcs stay off.
+
 ## Zarzakh gate, station and scanning rules (slice 2, 2026-10-12)
 
 Sources. The EVE University wiki "Zarzakh" (fetched 2026-10-12). The client export (`/home/user/eve-client-sde/native/`): `spacecomponentsbytype.jsonl.gz` (the `alignmentBasedToll` rows of stargate types 77918 and 78264 to 78266) and `solarsystemcontent.jsonl.gz` (each stargate's `allowedShipsTypeListID`; 8 gates name 579). The SDE: `typeLists` 579 "Zarzakh Allowed Ships" (`includedGroupIDs`, "All Subcapital Ships, up to and Including the Orca"); `mapStargates` (type and destination). The client code (eve-logic): `stargate/client/gateJumpSvc.py`, `spacecomponents/client/components/alignmentBasedToll.py`, `spacecomponents/common/components/alignmentBasedToll.py` (the toll formula), `stargate/client/gateLockController.py`, `stargate/common/lock_details.py`. EveJS v0.12.9 has no emanation lock, no capital-ship list and no gate toll (no code found), so it is not a behaviour reference for these rules.
@@ -3508,6 +3565,14 @@ Owner decisions (X9, X10). The courier rules below are eve.rs's project rules, n
 - **Basic mining (42 records, `BasicMiningMission`).** A dungeon kill whose objective is ore (`killMission`). The fetch of X8 grants the objective quantity at the dungeon's completion and the agent takes it at the turn-in. Shortcut: the quota is granted in full at the completion, not mined by the pilot. The basic mining offer (`BasicKillOffers.PickMining`) offers the lowest mining mission of the Mining agent's level (the 42 records are level tagged: L1 11, L2 10, L3 9, L4 12) that the dungeon can start and that the replay delay does not hold. Test: `A_basic_mining_agent_offers_the_lowest_mining_mission_of_its_level_that_the_dungeon_can_start`.
 - **Courier exclusions.** A trade mission is never a courier: its objective record is excluded from the cargo at acceptance, the docked delivery, the courier expiry and the quit take-back.
 - **Name-based level tags.** Not done here; another agent's job, which edits only the tag file.
+
+## Mission execution X14: the storyline offer counter (2026-10-12)
+
+- **The rule (wiki).** EVE University, Storyline missions: one storyline mission for every 16 completed missions of the same level and faction (any corporation); Faction Warfare missions do not count; the offer comes from the nearest storyline agent of that faction.
+- **Built.** The counter table `storyline_counters` (migration 0005: per character, faction and level, the completed and the offered counts), `StorylineCounters` (increment in a transaction, read, mark offered) and the due-offers rule `StorylineCounters.PendingOffers` (completions in whole intervals of 16, less the offers made). Tests: `The_storyline_offers_due_are_the_whole_intervals_less_the_offers_made` and `Sixteen_completions_of_one_faction_and_level_are_one_pending_storyline_offer_until_it_is_made`.
+- **Not wired.** The completion does not yet increment the counter, the offer picker does not yet offer a storyline mission, and the nearest storyline agent is not chosen. The wiki gives no jump range for the nearest agent, so none is applied when it is wired. Until then no storyline mission is offered and the counter stays empty.
+- **Mining quota.** Not made an actual quota: the ore quota is still granted in full at the dungeon's completion (X13b shortcut); the mining code is not reused.
+
 
 
 

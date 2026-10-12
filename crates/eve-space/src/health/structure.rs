@@ -12,11 +12,13 @@ pub struct StructureLimits {
     pub repair_pause: [f64; 3],
 }
 
-/// What a hit did to a structure: the layer it emptied (the deepest, when it emptied more than one), and whether a layer has taken its repair-pause
-/// damage in this second.
-#[derive(Debug, Clone, Copy, PartialEq)]
+/// What a hit did to a structure: the layer it emptied (the deepest, when it emptied more than one), every layer it emptied from the shallowest
+/// (`emptied`: the timeline needs each stage, a shield then an armor, not only the deepest), and whether a layer has taken its repair-pause damage in
+/// this second.
+#[derive(Debug, Clone, PartialEq)]
 pub struct StructureHit {
     pub depleted: Option<Layer>,
+    pub emptied: Vec<Layer>,
     pub over_threshold: bool,
 }
 
@@ -32,18 +34,17 @@ fn taken_in(layers: &Layers, layer: usize) -> f64 {
     [layers.shield, layers.armor, layers.structure][layer]
 }
 
-fn depleted(applied: &Applied) -> Option<Layer> {
-    let mut emptied = None;
-    if applied.before.shield > 0.0 && applied.after.shield <= 0.0 {
-        emptied = Some(Layer::Shield);
-    }
-    if applied.before.armor > 0.0 && applied.after.armor <= 0.0 {
-        emptied = Some(Layer::Armor);
-    }
-    if applied.before.structure > 0.0 && applied.after.structure <= 0.0 {
-        emptied = Some(Layer::Structure);
-    }
-    emptied
+/// The layers a hit emptied, from the shallowest.
+fn emptied(applied: &Applied) -> Vec<Layer> {
+    [
+        (applied.before.shield, applied.after.shield, Layer::Shield),
+        (applied.before.armor, applied.after.armor, Layer::Armor),
+        (applied.before.structure, applied.after.structure, Layer::Structure),
+    ]
+    .into_iter()
+    .filter(|(before, after, _)| *before > 0.0 && *after <= 0.0)
+    .map(|(_, _, layer)| layer)
+    .collect()
 }
 
 impl StructureHealth {
@@ -99,7 +100,8 @@ impl StructureHealth {
         }
         let over_threshold =
             self.taken.iter().zip(self.limits.repair_pause).any(|(taken, pause)| *taken >= pause);
-        Some(StructureHit { depleted: depleted(&applied), over_threshold })
+        let emptied = emptied(&applied);
+        Some(StructureHit { depleted: emptied.last().copied(), emptied, over_threshold })
     }
 }
 

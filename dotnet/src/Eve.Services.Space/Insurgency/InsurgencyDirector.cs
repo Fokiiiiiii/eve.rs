@@ -29,9 +29,17 @@ public sealed class InsurgencyDirector
     /// <summary>How often a warzone without an open campaign is looked at again. shortcut: CCP publishes no start interval; EVE.js starts at once when none is open.</summary>
     public static readonly TimeSpan StartTick = TimeSpan.FromHours(1);
 
-    /// <summary>The campaign site templates of the owner catalog: archetypes 72 to 79 (EVE.js <c>insurgencyFobRuntimeController</c> archetype check).</summary>
-    private const long FirstSiteArchetype = 72;
-    private const long LastSiteArchetype = 79;
+    /// <summary>
+    /// The pirate sites of the owner catalog (archetype titles of the client): 72 Pirate Laundering Center and 74 Warehouse Raid. Their first wave draws the
+    /// warzone's pool, so a warzone's pirate sites are its pool's templates.
+    /// </summary>
+    private static readonly long[] PirateArchetypes = [72, 74];
+
+    /// <summary>
+    /// The empire sites (Suppression): 73 Anti-Pirate Security Post, 75 to 78 Corporate Outpost Raid (the wiki: the Empire militia destroys the pirate NPCs and
+    /// captures the point) and 79 Mining Fleet Ambush (the wiki: the Empire militia destroys the ransoming pirates). Project rule, DEVIATIONS "Insurgency sites".
+    /// </summary>
+    private static readonly long[] EmpireArchetypes = [73, 75, 76, 77, 78, 79];
 
     private readonly InsurgencyStore _store;
     private readonly InsurgencyCampaigns _campaigns;
@@ -41,7 +49,8 @@ public sealed class InsurgencyDirector
     private readonly DungeonWaveDirector _sites;
     private readonly SolarSystemCatalog _systems;
     private readonly StargateGraph _stargates;
-    private readonly IReadOnlyDictionary<string, IReadOnlyList<long>> _templatesOfPool;
+    private readonly IReadOnlyDictionary<string, IReadOnlyList<long>> _pirateTemplatesOfPool;
+    private readonly IReadOnlyList<long> _empireTemplates;
     private readonly StructureTimers _structures;
     private readonly StructureStore _fobIds;
 
@@ -51,11 +60,13 @@ public sealed class InsurgencyDirector
     {
         (_store, _campaigns, _scheduler, _bus, _content, _sites, _systems, _stargates) = (store, campaigns, scheduler, bus, content, sites, systems, stargates);
         (_structures, _fobIds) = (structures, fobIds);
-        // the templates of each NPC pool: a site is started from the templates whose first wave draws from that pool and whose waves the simulation can make
-        _templatesOfPool = catalog.Dungeons
-            .Where(d => d.ArchetypeID is >= FirstSiteArchetype and <= LastSiteArchetype && d.Waves.Count > 0 && sites.StartRefusalOf(d.DungeonID) is null)
+        // the templates the simulation can make: the pirate ones by the pool of their first wave, the empire ones all together
+        var startable = catalog.Dungeons.Where(d => d.Waves.Count > 0 && sites.StartRefusalOf(d.DungeonID) is null).ToList();
+        _pirateTemplatesOfPool = startable
+            .Where(d => d.ArchetypeID is { } archetype && PirateArchetypes.Contains(archetype))
             .GroupBy(d => d.Waves[0].SpawnQuery ?? "")
             .ToDictionary(g => g.Key, g => (IReadOnlyList<long>)g.Select(d => d.DungeonID).OrderBy(id => id).ToList());
+        _empireTemplates = startable.Where(d => d.ArchetypeID is { } archetype && EmpireArchetypes.Contains(archetype)).Select(d => d.DungeonID).OrderBy(id => id).ToList();
     }
 
     /// <summary>Registers the start job and the subscribers, and schedules the start: at once, then every tick. Call it before the scheduler starts.</summary>
@@ -160,24 +171,31 @@ public sealed class InsurgencyDirector
     private async Task SpawnSitesAsync(EventContext context, Campaign campaign, CancellationToken cancellationToken)
     {
         var warzone = InsurgencyWarzones.All.Single(w => w.WarzoneId == campaign.WarzoneId);
-        if (!_templatesOfPool.TryGetValue(warzone.SpawnPool, out var templates) || templates.Count == 0)
+        if (!_pirateTemplatesOfPool.TryGetValue(warzone.SpawnPool, out var pirate) || pirate.Count == 0)
             throw new InvalidOperationException($"insurgency campaign {campaign.CampaignId}: the owner data has no site for the pool {warzone.SpawnPool}");
+        if (_empireTemplates.Count == 0)
+            throw new InvalidOperationException($"insurgency campaign {campaign.CampaignId}: the owner data has no empire site");
         long lifetimeMs = campaign.MaxEndsMs - _scheduler.Now;
         if (lifetimeMs <= 0)
             return;
         foreach (long system in campaign.CoveredSolarSystemIds)
         {
             // the template of a system is fixed by the campaign and the system (a restart of the same event starts the same site)
-            long dungeon = templates[(int)((campaign.CampaignId + system) % templates.Count)];
-            var start = await _sites.StartForSystemAsync((int)system, new double[] { 0, 0, 0 }, dungeon, $"insurgency:{campaign.CampaignId}:{system}",
-                TimeSpan.FromMilliseconds(lifetimeMs), context.Connection, context.Transaction, cancellationToken);
-            if (start.InstanceId is not { } instance)
-                throw new InvalidOperationException($"insurgency campaign {campaign.CampaignId} site in system {system} (dungeon {dungeon}): {start.Refusal}");
-            await _store.RecordSiteAsync(context.Connection, context.Transaction, campaign.CampaignId, system, dungeon, instance, cancellationToken);
+            await StartSiteAsync(context, campaign, system, pirate[(int)((campaign.CampaignId + system) % pirate.Count)], Side.Pirate, lifetimeMs, cancellationToken);
+            await StartSiteAsync(context, campaign, system, _empireTemplates[(int)((campaign.CampaignId + system) % _empireTemplates.Count)], Side.Antipirate, lifetimeMs, cancellationToken);
         }
     }
 
-    /// <summary>A campaign site completed: the system of the site scores the pirates' point (once; the campaign refuses it unless active).</summary>
+    private async Task StartSiteAsync(EventContext context, Campaign campaign, long system, long dungeon, Side side, long lifetimeMs, CancellationToken cancellationToken)
+    {
+        var start = await _sites.StartForSystemAsync((int)system, new double[] { 0, 0, 0 }, dungeon, $"insurgency:{campaign.CampaignId}:{system}:{side}",
+            TimeSpan.FromMilliseconds(lifetimeMs), context.Connection, context.Transaction, cancellationToken);
+        if (start.InstanceId is not { } instance)
+            throw new InvalidOperationException($"insurgency campaign {campaign.CampaignId} {side} site in system {system} (dungeon {dungeon}): {start.Refusal}");
+        await _store.RecordSiteAsync(context.Connection, context.Transaction, campaign.CampaignId, system, dungeon, instance, side, cancellationToken);
+    }
+
+    /// <summary>A campaign site completed: its system scores the point of the site's side (once; the campaign refuses it unless active).</summary>
     private async Task OnSiteCompletedAsync(EventContext context, CancellationToken cancellationToken)
     {
         using JsonDocument document = JsonDocument.Parse(context.Event.PayloadJson);
@@ -185,7 +203,7 @@ public sealed class InsurgencyDirector
             return;
         if (await _store.CompleteSiteAsync(context.Connection, context.Transaction, instanceId, _scheduler.Now, cancellationToken) is not { } site)
             return;
-        await _campaigns.ScorePointAsync(context.Connection, context.Transaction, site.CampaignId, Side.Pirate, site.SolarSystemId, cancellationToken);
+        await _campaigns.ScorePointAsync(context.Connection, context.Transaction, site.CampaignId, site.Side, site.SolarSystemId, cancellationToken);
     }
 
     /// <summary>

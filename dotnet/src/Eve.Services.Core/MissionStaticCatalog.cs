@@ -421,7 +421,7 @@ public sealed class MissionStaticCatalog
 public static class MissionDataGaps
 {
     public const string Levels =
-        "The official build has no mission level. The level tags are the repository owner's: 1,274 basic missions have a tag (client 1,019, tq-log 13, wiki 191, rule 51), committed in Data/mission-level-tags.v1.json under the owner's approval for four fields only. Other missions have no level: they are answered unknown, never defaulted.";
+        "The official build has no mission level. The level tags are the repository owner's: 1,429 basic missions have a tag (client 1,019, tq-log 13, wiki 346, rule 51), committed in Data/mission-level-tags.v1.json under the owner's approval for four fields only. Other missions have no level: they are answered unknown, never defaulted.";
 
     public const string BasicPools =
         "The official build links no basic, storyline, research, factional-warfare, heraldry, career, tutorial or event agent to a mission. Its only agent-to-mission table is epicArcs, so these agents answer no plausible missions.";

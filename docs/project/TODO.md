@@ -1631,3 +1631,17 @@ Evidence and decisions: `docs/project/WORMHOLE_DESIGN.md` (sources, SDE numbers,
 | PARTIAL | Sleeper/Drifter sites | Combat site names per class from the wiki; per-system counts and shares not published (design 15) |
 | NOT DONE | Environment effects in the Rust sim | Design 15 |
 | NOT DONE | Service-layer wormhole jump tests; headless live check | Design 15 |
+
+### Slice 9 and slice 10 (2026-10-12)
+
+| Status | Item | Missing work |
+|---|---|---|
+| DONE (tests) | Signatures per system (4 to 9 from the seed), shares by category, Drifter five combat sites (slice 9) | `WormholeSitesTests` |
+| DONE (tests) | Real site names and client dungeon keys per class, zones of gas and ore, C13 rule (slice 10) | `WormholeSitesTests`, DEVIATIONS |
+| DONE (tests) | Plan connected to `CosmicSiteDirector`: a J-system's planned combat, data and relic sites are placed in their slots, with containers and Sleeper waves (48 templates) | `A_wormhole_system_gets_the_sites_of_its_plan...` (PgFact), `WormholeSiteTemplatesTests` |
+| DONE (tests) | Probe scan of a J signature: strength 0.0 (SDE 1908); a probe in range finds it by its geometry | `ProbeScanMathTests` |
+| NOT DONE | Gas and ore signatures placed as sites (no site kind) | Mining site generation |
+| NOT DONE | Rust sim environment effects (the attributes the sim models) | Design 15 |
+| NOT DONE | Service-layer `WormholeJumpAsync` tests (store and scheduler in the rig) | Design 15 |
+| NOT DONE | Headless MITM live check on 26110/26210 | Design 15 |
+

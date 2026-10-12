@@ -73,13 +73,15 @@ public static class ProbeScanMath
     /// </summary>
     public static double Coverage(double distanceMeters, double scanRangeMeters, double strengthAtStep, double requiredStrength)
     {
-        if (scanRangeMeters <= 0 || distanceMeters > scanRangeMeters || requiredStrength <= 0)
+        if (scanRangeMeters <= 0 || distanceMeters > scanRangeMeters)
         {
             return 0;
         }
         var normalized = Math.Clamp(distanceMeters / scanRangeMeters, 0, 1);
         var geometry = Math.Max(0, 1 - normalized * normalized);
-        return Math.Clamp(geometry * Math.Max(0, strengthAtStep / requiredStrength), 0, 1);
+        // a target that needs no strength (a wormhole signature, WormholeSites.ScanStrength 0) is reached by any probe in range
+        var strength = requiredStrength <= 0 ? 1 : Math.Max(0, strengthAtStep / requiredStrength);
+        return Math.Clamp(geometry * strength, 0, 1);
     }
 
     /// <summary>

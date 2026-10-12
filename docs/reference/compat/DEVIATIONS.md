@@ -2951,6 +2951,29 @@ Differences and cuts, all listed:
    as a new row. The same convention as the direct trade (DEVIATIONS "Direct trade"). Not checked against a client capture.
 11. `GetQuotes` skips items the station cannot reprocess (no materials, fewer than one portion) rather than answering a quote with an error.
 
+
+## Corporation station door (corpStationMgr, 37a)
+
+Status: implemented. Tests: `Eve.Corporations.Tests` (`CorpStationMgrTests`, 4, PostgreSQL). Not run on the graphical client.
+
+- **What the client calls.** `Moniker('corpStationMgr', stationID)` (`eveMoniker.py:111`), then, on the bound object,
+  `DoStandingCheckForStationService(serviceID)` (`stationController.py:77`) and `MoveCorpHQHere()` (`stationController.py:28`).
+  Nothing else is called on it by the V24.01 client (the office count is `officeManager`).
+- **Standing check.** The minimum standing per service and owner is the SDE's `stationStandingsRestrictions`
+  (`native/stationstandingsrestrictions.jsonl.gz` in `eve-client-sde`, build 3396210): owner 500026 has services 5 (3.0), 13
+  (-0.05), 14 (3.0), 17 (-0.05), 22 (-0.05), 23 (3.0), 24 (3.0). The standing is the higher of the character's own and its
+  corporation's toward the owner, as the reprocessing plant reads it. A service with no rule is admitted. The refusal is the
+  `CustomNotify` text EVE.js uses (`corpStationMgrService.js:331-348`). The security-status limits EVE.js also reads are 0 for every
+  rule, so they are not checked.
+- **Headquarters.** `MoveCorpHQHere` moves the corporation's station and solar system to the NPC station the caller is docked in
+  (the session's `stationid`). The CEO (not suspended) or a director may do it. A headquarters already there changes nothing. The
+  corporation is told `OnCorporationChanged` for `stationID` and `solarSystemID`. A structure is refused, as EVE.js refuses it.
+- **Difference from EVE.js.** EVE.js also refreshes the sessions docked at the new headquarters (`refreshCorporationHeadquartersSessions`).
+  eve.rs computes a session's corporate roles on each call, so the next call of such a session already sees the new headquarters.
+  The notice to those sessions is not sent.
+- **Not built.** The reference's other `corpStationMgr` methods (rentable items, the office list, improvements, the home-station list,
+  clone owners, cost modifiers) are not called by the V24.01 client through this moniker, so they are not served.
+
 ## Repair (repairSvc, 37a)
 
 Status: the NPC station repair is implemented and tested in PostgreSQL (`RepairServiceTests`, 6 tests). The client has not been driven through a repair.

@@ -35,6 +35,7 @@ public sealed partial class InvBrokerService
     [Method("FitFitting")]
     public async ValueTask<PyValue> FitFitting(ServiceCall call)
     {
+        RequireMutableInventory(call);
         if (ContextOf(call) is not { Kind: Kind.Ship } context || call.Session.CharacterId is not { } character)
         {
             return new PyList([]);

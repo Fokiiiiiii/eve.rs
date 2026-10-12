@@ -7,11 +7,15 @@ impl Scene {
     }
 
     pub(super) fn presence(&self, session: SessionId) -> Option<Presence> {
-        let pilot = self.pilots.get(&session)?;
-        Some(Presence {
-            position: pilot.ship.position,
-            warping: pilot.flight.as_ref().is_some_and(|f| f.is_warping()),
-        })
+        if let Some(pilot) = self.pilots.get(&session) {
+            return Some(Presence {
+                position: pilot.ship.position,
+                warping: pilot.flight.as_ref().is_some_and(|f| f.is_warping()),
+            });
+        }
+        let observer = self.controlled_structures.get(&session)?;
+        let body = self.structure_body(observer.structure_id)?;
+        Some(Presence { position: body.position, warping: false })
     }
 
     pub(super) fn visible_to(&self, observer: SessionId, subject: SessionId) -> bool {
@@ -31,21 +35,120 @@ impl Scene {
         order.into_iter().map(|(_, s)| s).collect()
     }
 
-    /// The pilots that have the ship in their ballpark, in the order they came.
-    pub(crate) fn observers_of(&self, subject: SessionId) -> Vec<SessionId> {
-        self.in_entry_order()
+    /// Every client that currently has a scene view, ordered by pilot arrival then observer session.
+    pub(crate) fn view_sessions(&self) -> Vec<SessionId> {
+        let mut sessions: Vec<_> = self
+            .in_entry_order()
             .into_iter()
-            .filter(|s| *s != subject && self.pilots[s].bound && self.pilots[s].sees.contains(&subject))
+            .filter(|session| self.pilots[session].bound)
+            .collect();
+        sessions.extend(
+            self.controlled_structures
+                .iter()
+                .filter(|(_, observer)| observer.bound)
+                .map(|(session, _)| *session),
+        );
+        sessions
+    }
+
+    pub(super) fn sees_ship(&self, observer: SessionId, subject: SessionId) -> bool {
+        self.pilots
+            .get(&observer)
+            .map(|pilot| pilot.sees.contains(&subject))
+            .or_else(|| self.controlled_structures.get(&observer).map(|view| view.sees.contains(&subject)))
+            .unwrap_or(false)
+    }
+
+    pub(super) fn set_sees_ship(&mut self, observer: SessionId, subject: SessionId, seen: bool) {
+        let seen_set = self
+            .pilots
+            .get_mut(&observer)
+            .map(|pilot| &mut pilot.sees)
+            .or_else(|| self.controlled_structures.get_mut(&observer).map(|view| &mut view.sees));
+        if let Some(seen_set) = seen_set {
+            if seen {
+                seen_set.insert(subject);
+            } else {
+                seen_set.remove(&subject);
+            }
+        }
+    }
+
+    pub(super) fn clear_ship_from_views(&mut self, subject: SessionId) {
+        for pilot in self.pilots.values_mut() {
+            pilot.sees.remove(&subject);
+        }
+        for observer in self.controlled_structures.values_mut() {
+            observer.sees.remove(&subject);
+        }
+    }
+
+    pub(super) fn sees_wreck(&self, observer: SessionId, wreck_id: i64) -> bool {
+        self.pilots
+            .get(&observer)
+            .map(|pilot| pilot.sees_wrecks.contains(&wreck_id))
+            .or_else(|| self.controlled_structures.get(&observer).map(|view| view.sees_wrecks.contains(&wreck_id)))
+            .unwrap_or(false)
+    }
+
+    pub(super) fn set_sees_wreck(&mut self, observer: SessionId, wreck_id: i64, seen: bool) {
+        let seen_set = self
+            .pilots
+            .get_mut(&observer)
+            .map(|pilot| &mut pilot.sees_wrecks)
+            .or_else(|| self.controlled_structures.get_mut(&observer).map(|view| &mut view.sees_wrecks));
+        if let Some(seen_set) = seen_set {
+            if seen {
+                seen_set.insert(wreck_id);
+            } else {
+                seen_set.remove(&wreck_id);
+            }
+        }
+    }
+
+    pub(super) fn sees_asteroid(&self, observer: SessionId, asteroid_id: i64) -> bool {
+        self.pilots
+            .get(&observer)
+            .map(|pilot| pilot.sees_asteroids.contains(&asteroid_id))
+            .or_else(|| self.controlled_structures.get(&observer).map(|view| view.sees_asteroids.contains(&asteroid_id)))
+            .unwrap_or(false)
+    }
+
+    pub(super) fn set_sees_asteroid(&mut self, observer: SessionId, asteroid_id: i64, seen: bool) {
+        let seen_set = self
+            .pilots
+            .get_mut(&observer)
+            .map(|pilot| &mut pilot.sees_asteroids)
+            .or_else(|| self.controlled_structures.get_mut(&observer).map(|view| &mut view.sees_asteroids));
+        if let Some(seen_set) = seen_set {
+            if seen {
+                seen_set.insert(asteroid_id);
+            } else {
+                seen_set.remove(&asteroid_id);
+            }
+        }
+    }
+
+    /// The bound clients that currently have a ship in their ballpark.
+    pub(crate) fn observers_of(&self, subject: SessionId) -> Vec<SessionId> {
+        self.view_sessions()
+            .into_iter()
+            .filter(|observer| *observer != subject && self.sees_ship(*observer, subject))
             .collect()
     }
 
-    /// The ships in the ballpark of a pilot, itself included, in the order they came into the scene.
     pub(crate) fn ships_in_view(&self, session: SessionId) -> Vec<&Ship> {
-        let Some(pilot) = self.pilots.get(&session) else { return Vec::new() };
+        let (own, seen) = if let Some(pilot) = self.pilots.get(&session) {
+            (true, &pilot.sees)
+        } else if let Some(observer) = self.controlled_structures.get(&session) {
+            (false, &observer.sees)
+        } else {
+            return Vec::new();
+        };
         self.in_entry_order()
             .into_iter()
-            .filter(|s| *s == session || pilot.sees.contains(s))
-            .map(|s| &self.pilots[&s].ship)
+            .filter(|other| (own && *other == session) || seen.contains(other))
+            .map(|other| &self.pilots[&other].ship)
             .collect()
     }
 
@@ -95,12 +198,12 @@ impl Scene {
         ])
     }
 
-    /// A ship has come into the scene (an undock, a jump): whoever has bound the ballpark and can see it is sent the ship.
+    /// A ship has come into the scene: every bound view that can see it is sent the ship.
     pub(crate) fn announce_arrival(&mut self, subject: SessionId, now: i64) -> Vec<Out> {
         let watchers: Vec<SessionId> = self
-            .in_entry_order()
+            .view_sessions()
             .into_iter()
-            .filter(|s| *s != subject && self.pilots[s].bound && self.visible_to(*s, subject))
+            .filter(|observer| *observer != subject && self.visible_to(*observer, subject))
             .collect();
         if watchers.is_empty() {
             return Vec::new();
@@ -108,48 +211,44 @@ impl Scene {
         let Some(actions) = self.introduction(subject, now) else { return Vec::new() };
         let mut out = Vec::new();
         for watcher in watchers {
-            if let Some(pilot) = self.pilots.get_mut(&watcher) {
-                pilot.sees.insert(subject);
-            }
+            self.set_sees_ship(watcher, subject, true);
             out.push(Self::update(watcher, actions.clone()));
         }
         out
     }
 
-    /// A ship has left the scene (docked, jumped, gone offline; its pilot is already out): those who had it in view are told it is gone.
+    /// A ship has left the scene: every bound view that had it is told it is gone.
     pub(crate) fn announce_departure(&mut self, subject: SessionId, ship_id: i64, now: i64) -> Vec<Out> {
-        let watchers: Vec<SessionId> = self
-            .in_entry_order()
-            .into_iter()
-            .filter(|s| self.pilots[s].bound && self.pilots[s].sees.contains(&subject))
-            .collect();
-        for pilot in self.pilots.values_mut() {
-            pilot.sees.remove(&subject);
-        }
+        let watchers: Vec<SessionId> =
+            self.view_sessions().into_iter().filter(|observer| self.sees_ship(*observer, subject)).collect();
+        self.clear_ship_from_views(subject);
         if watchers.is_empty() {
             return Vec::new();
         }
         let stamp = self.next_stamp(now);
         let removal = payload::remove_ships(stamp, [ship_id]);
-        watchers.into_iter().map(|w| Self::update(w, vec![removal.clone()])).collect()
+        watchers.into_iter().map(|watcher| Self::update(watcher, vec![removal.clone()])).collect()
     }
 
-    /// Brings what each pilot has in view into line with the rule, at `now`: a ship that has come into view is sent (`AddBalls2` and its
-    /// numbers) and one that has gone out of view is taken away, in the packaged form the reference uses for a ship in warp. Only pilots that
-    /// have bound the ballpark are told.
+    /// Brings each bound pilot and structure view into line with the ships it can see.
     pub(crate) fn reconcile(&mut self, now: i64) -> Vec<Out> {
         let order = self.in_entry_order();
-        if order.len() < 2 {
+        let viewers = self.view_sessions();
+        if order.is_empty() {
             self.boxes.clear();
             self.warped_last = false;
             return Vec::new();
         }
-        // what can change who sees whom is a ship crossing into or out of a box, coming or going, or a warp: when none of that has happened since
-        // the last look there is nothing to do (the look costs a pass over the ships, not over the pairs)
+        if order.len() < 2 && !self.controlled_structures.values().any(|observer| observer.bound) {
+            self.boxes.clear();
+            self.warped_last = false;
+            return Vec::new();
+        }
+        // A ship crossing a box, arriving, leaving, or warping can change visibility.
         let mut boxes: std::collections::HashMap<(i64, i64, i64), Vec<SessionId>> =
             std::collections::HashMap::new();
         let mut warping = false;
-        for session in &order {
+        for session in order.iter().chain(self.controlled_structures.keys()) {
             if let Some(presence) = self.presence(*session) {
                 boxes.entry(grid_of(presence.position)).or_default().push(*session);
                 warping |= presence.warping;
@@ -163,42 +262,35 @@ impl Scene {
         let mut out = Vec::new();
         let mut entering: Vec<(SessionId, SessionId)> = Vec::new();
         let mut leaving: Vec<(SessionId, Vec<SessionId>)> = Vec::new();
-        for observer in &order {
-            if !self.pilots[observer].bound {
-                continue;
-            }
+        for observer in viewers {
             let mut gone = Vec::new();
             for subject in &order {
-                if subject == observer {
+                if *subject == observer {
                     continue;
                 }
-                let sees = self.pilots[observer].sees.contains(subject);
-                let should = self.visible_to(*observer, *subject);
+                let sees = self.sees_ship(observer, *subject);
+                let should = self.visible_to(observer, *subject);
                 if should && !sees {
-                    entering.push((*observer, *subject));
+                    entering.push((observer, *subject));
                 } else if !should && sees {
                     gone.push(*subject);
                 }
             }
             if !gone.is_empty() {
-                leaving.push((*observer, gone));
+                leaving.push((observer, gone));
             }
         }
         for (observer, gone) in leaving {
             let stamp = self.next_stamp(now);
-            let ids: Vec<i64> = gone.iter().map(|s| self.pilots[s].ship.spec.ship_id).collect();
-            if let Some(pilot) = self.pilots.get_mut(&observer) {
-                for subject in &gone {
-                    pilot.sees.remove(subject);
-                }
+            let ids: Vec<i64> = gone.iter().map(|session| self.pilots[session].ship.spec.ship_id).collect();
+            for subject in &gone {
+                self.set_sees_ship(observer, *subject, false);
             }
             out.push(Self::update(observer, vec![payload::remove_ships_packaged(stamp, ids)]));
         }
         for (observer, subject) in entering {
             let Some(actions) = self.introduction(subject, now) else { continue };
-            if let Some(pilot) = self.pilots.get_mut(&observer) {
-                pilot.sees.insert(subject);
-            }
+            self.set_sees_ship(observer, subject, true);
             out.push(Self::update(observer, actions));
         }
         out

@@ -965,6 +965,16 @@ private static void WriteAction(Writer w, SimAction action)
                 WriteStructureHealth(w, m.Health);
                 WriteStructureStatus(w, m.Status);
                 break;
+            case SimControlStructure m:
+                if (m.SolarSystemId <= 0 || m.StructureId < 0 || m.CharacterId < 0 || (m.Active && (m.StructureId == 0 || m.CharacterId == 0)))
+                    throw new SimLinkException(SimLinkError.BadValue, "structure control");
+                w.U8(Kind.ControlStructure);
+                w.U64(m.SessionId);
+                w.I32(m.SolarSystemId);
+                w.I64(m.StructureId);
+                w.I64(m.CharacterId);
+                w.U8(m.Active ? (byte)1 : (byte)0);
+                break;
             case SimTetherPolicy m:
                 w.U8(Kind.TetherPolicy);
                 w.U64(m.SessionId);

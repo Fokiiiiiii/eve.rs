@@ -39,7 +39,7 @@ public sealed record CommandReply(bool Accepted, long At, string? Reason, double
     /// <summary>What each fighter squadron did with an order to fighters (<see cref="SimFighterResult.Reason"/> is empty for one that took it).</summary>
     public IReadOnlyList<SimFighterResult> Fighters { get; init; } = [];
 
-    /// <summary>How far a wreck or can is, measured to its surface (the answer to <see cref="SimCommands.Measure"/>; null: there is no such wreck).</summary>
+    /// <summary>Surface distance from the current ship: one Measure argument selects a wreck/can, two select [structureId, shipId] for Cargo Deposit; null means unavailable.</summary>
     public double? Distance { get; init; }
 }
 
@@ -161,6 +161,8 @@ public interface ISimulation
     void RemoveWormhole(long wormholeId);
 
     void SetTetherPolicy(SimTetherPolicy policy);
+
+    Task<string?> ControlStructureAsync(SimControlStructure control, CancellationToken cancellationToken = default);
 
     /// <summary>The host takes a structure out of space (protocol 59).</summary>
     void RemoveStructure(long structureId);

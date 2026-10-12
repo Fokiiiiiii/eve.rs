@@ -30,7 +30,7 @@ use eve_destiny::Vec3;
 const MIN_JETTISON_DISTANCE: f64 = 50.0;
 
 impl Scene {
-    /// Sets what a pilot has in view when it binds the ballpark: every ship the rule lets it see.
+    /// Sets what a bound view sees before its first complete state.
     pub(crate) fn take_in_view(&mut self, session: SessionId) {
         let order = self.in_entry_order();
         let seen: BTreeSet<SessionId> =
@@ -41,6 +41,10 @@ impl Scene {
             pilot.bound = true;
             pilot.sees = seen;
             pilot.sees_wrecks = wrecks;
+        } else if let Some(observer) = self.controlled_structures.get_mut(&session) {
+            observer.bound = true;
+            observer.sees = seen;
+            observer.sees_wrecks = wrecks;
         }
     }
 

@@ -47,7 +47,8 @@ public static class HostInventoryServiceFactory
         Eve.Services.Ships.ISpaceContainers? space,
         Eve.Services.Ships.ISpaceDroneBays? droneBays,
         Eve.Corporations.CorporationStore corporations,
-        IReadOnlyList<ICharacterEntryHook>? entryHooks = null) =>
+        IReadOnlyList<ICharacterEntryHook>? entryHooks = null,
+        Func<Eve.Services.ClientSession, long, CancellationToken, ValueTask<ControlledStructureInventory?>>? controlledStructureInventory = null) =>
         new(
             items,
             types,
@@ -78,5 +79,6 @@ public static class HostInventoryServiceFactory
                     divisionFlag,
                     take: operation == Eve.Services.Inventory.CorporationHangarOperation.Take);
             },
-            entryHooks: entryHooks);
+            entryHooks: entryHooks,
+            controlledStructureInventory: controlledStructureInventory);
 }

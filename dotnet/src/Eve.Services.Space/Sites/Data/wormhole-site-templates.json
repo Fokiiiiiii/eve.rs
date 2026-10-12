@@ -1,0 +1,1936 @@
+{
+ "templates": [
+  {
+   "id": "wormhole-3704",
+   "dungeonId": 3704,
+   "name": "Core Citadel",
+   "kind": "anomaly",
+   "family": "combat",
+   "difficulty": 5,
+   "bands": [
+    "wormhole"
+   ],
+   "archetypeId": 24,
+   "factionId": 500021,
+   "dungeonNameId": 111663,
+   "entryObjectTypeId": 28356,
+   "waves": [
+    {
+     "query": "sleepers_deadspace",
+     "amount": 3
+    },
+    {
+     "query": "sleepers_deadspace",
+     "amount": 12
+    },
+    {
+     "query": "sleepers_deadspace",
+     "amount": 14
+    },
+    {
+     "query": "sleepers_deadspace",
+     "amount": 10
+    }
+   ],
+   "containers": []
+  },
+  {
+   "id": "wormhole-3706",
+   "dungeonId": 3706,
+   "name": "Core Bastion",
+   "kind": "anomaly",
+   "family": "combat",
+   "difficulty": 5,
+   "bands": [
+    "wormhole"
+   ],
+   "archetypeId": 24,
+   "factionId": 500021,
+   "dungeonNameId": 111662,
+   "entryObjectTypeId": 28356,
+   "waves": [
+    {
+     "query": "sleepers_deadspace",
+     "amount": 17
+    },
+    {
+     "query": "sleepers_deadspace",
+     "amount": 12
+    },
+    {
+     "query": "sleepers_deadspace",
+     "amount": 16
+    },
+    {
+     "query": "sleepers_deadspace",
+     "amount": 6
+    }
+   ],
+   "containers": []
+  },
+  {
+   "id": "wormhole-3707",
+   "dungeonId": 3707,
+   "name": "Perimeter Ambush Point",
+   "kind": "anomaly",
+   "family": "combat",
+   "difficulty": 3,
+   "bands": [
+    "wormhole"
+   ],
+   "archetypeId": 24,
+   "factionId": 500021,
+   "dungeonNameId": 111670,
+   "entryObjectTypeId": 28356,
+   "waves": [
+    {
+     "query": "sleepers_deadspace",
+     "amount": 4
+    },
+    {
+     "query": "sleepers_deadspace",
+     "amount": 5
+    },
+    {
+     "query": "sleepers_deadspace",
+     "amount": 4
+    }
+   ],
+   "containers": []
+  },
+  {
+   "id": "wormhole-3708",
+   "dungeonId": 3708,
+   "name": "Perimeter Camp",
+   "kind": "anomaly",
+   "family": "combat",
+   "difficulty": 3,
+   "bands": [
+    "wormhole"
+   ],
+   "archetypeId": 24,
+   "factionId": 500021,
+   "dungeonNameId": 111671,
+   "entryObjectTypeId": 28356,
+   "waves": [
+    {
+     "query": "sleepers_deadspace",
+     "amount": 8
+    },
+    {
+     "query": "sleepers_deadspace",
+     "amount": 9
+    },
+    {
+     "query": "sleepers_deadspace",
+     "amount": 5
+    }
+   ],
+   "containers": []
+  },
+  {
+   "id": "wormhole-3709",
+   "dungeonId": 3709,
+   "name": "Frontier Barracks",
+   "kind": "anomaly",
+   "family": "combat",
+   "difficulty": 4,
+   "bands": [
+    "wormhole"
+   ],
+   "archetypeId": 24,
+   "factionId": 500021,
+   "dungeonNameId": 113152,
+   "entryObjectTypeId": 28356,
+   "waves": [
+    {
+     "query": "sleepers_deadspace",
+     "amount": 2
+    },
+    {
+     "query": "sleepers_deadspace",
+     "amount": 5
+    },
+    {
+     "query": "sleepers_deadspace",
+     "amount": 9
+    }
+   ],
+   "containers": []
+  },
+  {
+   "id": "wormhole-3710",
+   "dungeonId": 3710,
+   "name": "Fortification Frontier Stronghold",
+   "kind": "anomaly",
+   "family": "combat",
+   "difficulty": 4,
+   "bands": [
+    "wormhole"
+   ],
+   "archetypeId": 24,
+   "factionId": 500021,
+   "dungeonNameId": 111678,
+   "entryObjectTypeId": 28356,
+   "waves": [
+    {
+     "query": "sleepers_deadspace",
+     "amount": 4
+    },
+    {
+     "query": "sleepers_deadspace",
+     "amount": 4
+    },
+    {
+     "query": "sleepers_deadspace",
+     "amount": 5
+    }
+   ],
+   "containers": []
+  },
+  {
+   "id": "wormhole-3713",
+   "dungeonId": 3713,
+   "name": "Outpost Frontier Stronghold",
+   "kind": "anomaly",
+   "family": "combat",
+   "difficulty": 4,
+   "bands": [
+    "wormhole"
+   ],
+   "archetypeId": 24,
+   "factionId": 500021,
+   "dungeonNameId": 111679,
+   "entryObjectTypeId": 28356,
+   "waves": [
+    {
+     "query": "sleepers_deadspace",
+     "amount": 4
+    },
+    {
+     "query": "sleepers_deadspace",
+     "amount": 4
+    },
+    {
+     "query": "sleepers_deadspace",
+     "amount": 6
+    }
+   ],
+   "containers": []
+  },
+  {
+   "id": "wormhole-3714",
+   "dungeonId": 3714,
+   "name": "Perimeter Checkpoint",
+   "kind": "anomaly",
+   "family": "combat",
+   "difficulty": 3,
+   "bands": [
+    "wormhole"
+   ],
+   "archetypeId": 24,
+   "factionId": 500021,
+   "dungeonNameId": 113153,
+   "entryObjectTypeId": 28356,
+   "waves": [
+    {
+     "query": "sleepers_deadspace",
+     "amount": 6
+    },
+    {
+     "query": "sleepers_deadspace",
+     "amount": 4
+    },
+    {
+     "query": "sleepers_deadspace",
+     "amount": 4
+    }
+   ],
+   "containers": []
+  },
+  {
+   "id": "wormhole-3715",
+   "dungeonId": 3715,
+   "name": "Perimeter Hangar",
+   "kind": "anomaly",
+   "family": "combat",
+   "difficulty": 3,
+   "bands": [
+    "wormhole"
+   ],
+   "archetypeId": 24,
+   "factionId": 500021,
+   "dungeonNameId": 113154,
+   "entryObjectTypeId": 28356,
+   "waves": [
+    {
+     "query": "sleepers_deadspace",
+     "amount": 5
+    },
+    {
+     "query": "sleepers_deadspace",
+     "amount": 3
+    },
+    {
+     "query": "sleepers_deadspace",
+     "amount": 3
+    }
+   ],
+   "containers": []
+  },
+  {
+   "id": "wormhole-3716",
+   "dungeonId": 3716,
+   "name": "Core Garrison",
+   "kind": "anomaly",
+   "family": "combat",
+   "difficulty": 5,
+   "bands": [
+    "wormhole"
+   ],
+   "archetypeId": 24,
+   "factionId": 500021,
+   "dungeonNameId": 111680,
+   "entryObjectTypeId": 28356,
+   "waves": [
+    {
+     "query": "sleepers_deadspace",
+     "amount": 13
+    },
+    {
+     "query": "sleepers_deadspace",
+     "amount": 9
+    },
+    {
+     "query": "sleepers_deadspace",
+     "amount": 11
+    },
+    {
+     "query": "sleepers_deadspace",
+     "amount": 7
+    }
+   ],
+   "containers": []
+  },
+  {
+   "id": "wormhole-3717",
+   "dungeonId": 3717,
+   "name": "Core Stronghold",
+   "kind": "anomaly",
+   "family": "combat",
+   "difficulty": 5,
+   "bands": [
+    "wormhole"
+   ],
+   "archetypeId": 24,
+   "factionId": 500021,
+   "dungeonNameId": 111664,
+   "entryObjectTypeId": 28356,
+   "waves": [
+    {
+     "query": "sleepers_deadspace",
+     "amount": 4
+    },
+    {
+     "query": "sleepers_deadspace",
+     "amount": 4
+    },
+    {
+     "query": "sleepers_deadspace",
+     "amount": 13
+    },
+    {
+     "query": "sleepers_deadspace",
+     "amount": 9
+    }
+   ],
+   "containers": []
+  },
+  {
+   "id": "wormhole-3718",
+   "dungeonId": 3718,
+   "name": "Frontier Command Post",
+   "kind": "anomaly",
+   "family": "combat",
+   "difficulty": 4,
+   "bands": [
+    "wormhole"
+   ],
+   "archetypeId": 24,
+   "factionId": 500021,
+   "dungeonNameId": 113155,
+   "entryObjectTypeId": 28356,
+   "waves": [
+    {
+     "query": "sleepers_deadspace",
+     "amount": 13
+    },
+    {
+     "query": "sleepers_deadspace",
+     "amount": 12
+    },
+    {
+     "query": "sleepers_deadspace",
+     "amount": 7
+    }
+   ],
+   "containers": []
+  },
+  {
+   "id": "wormhole-3722",
+   "dungeonId": 3722,
+   "name": "Forgotten Core Data Field",
+   "kind": "signature",
+   "family": "relic",
+   "difficulty": 5,
+   "bands": [
+    "wormhole"
+   ],
+   "archetypeId": 44,
+   "factionId": 500021,
+   "dungeonNameId": 113156,
+   "entryObjectTypeId": 19728,
+   "waves": [
+    {
+     "query": "sleepers_deadspace",
+     "amount": 10
+    },
+    {
+     "query": "sleepers_deadspace",
+     "amount": 16
+    },
+    {
+     "query": "sleepers_deadspace",
+     "amount": 10
+    },
+    {
+     "query": "sleepers_deadspace",
+     "amount": 8
+    }
+   ],
+   "containers": [
+    {
+     "role": "talocan_hull",
+     "analyzer": "relic",
+     "count": 1,
+     "types": [
+      "Abandoned Talocan Battleship"
+     ]
+    },
+    {
+     "role": "sleeper_artifact",
+     "analyzer": "relic",
+     "count": 10,
+     "types": [
+      "Decrepit Sleeper Artifact"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "wormhole-3723",
+   "dungeonId": 3723,
+   "name": "Forgotten Core Circuitry Disassembler",
+   "kind": "signature",
+   "family": "relic",
+   "difficulty": 5,
+   "bands": [
+    "wormhole"
+   ],
+   "archetypeId": 44,
+   "factionId": 500021,
+   "dungeonNameId": 114317,
+   "entryObjectTypeId": 19728,
+   "waves": [
+    {
+     "query": "sleepers_deadspace",
+     "amount": 35
+    },
+    {
+     "query": "sleepers_deadspace",
+     "amount": 25
+    },
+    {
+     "query": "sleepers_deadspace",
+     "amount": 15
+    },
+    {
+     "query": "sleepers_deadspace",
+     "amount": 29
+    },
+    {
+     "query": "sleepers_deadspace",
+     "amount": 1
+    }
+   ],
+   "containers": [
+    {
+     "role": "sleeper_artifact",
+     "analyzer": "relic",
+     "count": 15,
+     "types": [
+      "Forlorn Sleeper Artifact"
+     ]
+    },
+    {
+     "role": "talocan_hull",
+     "analyzer": "relic",
+     "count": 1,
+     "types": [
+      "Abandoned Talocan Battleship"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "wormhole-3725",
+   "dungeonId": 3725,
+   "name": "Forgotten Frontier Recursive Depot",
+   "kind": "signature",
+   "family": "relic",
+   "difficulty": 4,
+   "bands": [
+    "wormhole"
+   ],
+   "archetypeId": 44,
+   "factionId": 500021,
+   "dungeonNameId": 111677,
+   "entryObjectTypeId": 19728,
+   "waves": [
+    {
+     "query": "sleepers_deadspace",
+     "amount": 6
+    },
+    {
+     "query": "sleepers_deadspace",
+     "amount": 7
+    },
+    {
+     "query": "sleepers_deadspace",
+     "amount": 6
+    },
+    {
+     "query": "sleepers_deadspace",
+     "amount": 6
+    }
+   ],
+   "containers": [
+    {
+     "role": "sleeper_artifact",
+     "analyzer": "relic",
+     "count": 9,
+     "types": [
+      "Abandoned Sleeper Artifact"
+     ]
+    },
+    {
+     "role": "talocan_hull",
+     "analyzer": "relic",
+     "count": 1,
+     "types": [
+      "Deserted Talocan Cruiser"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "wormhole-3726",
+   "dungeonId": 3726,
+   "name": "Forgotten Frontier Quarantine Outpost",
+   "kind": "signature",
+   "family": "relic",
+   "difficulty": 4,
+   "bands": [
+    "wormhole"
+   ],
+   "archetypeId": 44,
+   "factionId": 500021,
+   "dungeonNameId": 111676,
+   "entryObjectTypeId": 19728,
+   "waves": [
+    {
+     "query": "sleepers_deadspace",
+     "amount": 9
+    },
+    {
+     "query": "sleepers_deadspace",
+     "amount": 8
+    },
+    {
+     "query": "sleepers_deadspace",
+     "amount": 5
+    },
+    {
+     "query": "sleepers_deadspace",
+     "amount": 6
+    }
+   ],
+   "containers": [
+    {
+     "role": "sleeper_artifact",
+     "analyzer": "relic",
+     "count": 7,
+     "types": [
+      "Abandoned Sleeper Artifact"
+     ]
+    },
+    {
+     "role": "talocan_hull",
+     "analyzer": "relic",
+     "count": 1,
+     "types": [
+      "Deserted Talocan Cruiser"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "wormhole-3727",
+   "dungeonId": 3727,
+   "name": "Forgotten Core Assembly Hall",
+   "kind": "signature",
+   "family": "relic",
+   "difficulty": 5,
+   "bands": [
+    "wormhole"
+   ],
+   "archetypeId": 44,
+   "factionId": 500021,
+   "dungeonNameId": 111642,
+   "entryObjectTypeId": 19728,
+   "waves": [
+    {
+     "query": "sleepers_deadspace",
+     "amount": 21
+    },
+    {
+     "query": "sleepers_deadspace",
+     "amount": 12
+    },
+    {
+     "query": "sleepers_deadspace",
+     "amount": 13
+    },
+    {
+     "query": "sleepers_deadspace",
+     "amount": 22
+    },
+    {
+     "query": "sleepers_deadspace",
+     "amount": 1
+    }
+   ],
+   "containers": [
+    {
+     "role": "sleeper_artifact",
+     "analyzer": "relic",
+     "count": 10,
+     "types": [
+      "Forlorn Sleeper Artifact"
+     ]
+    },
+    {
+     "role": "talocan_hull",
+     "analyzer": "relic",
+     "count": 1,
+     "types": [
+      "Abandoned Talocan Battleship"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "wormhole-3728",
+   "dungeonId": 3728,
+   "name": "Forgotten Core Information Pen",
+   "kind": "signature",
+   "family": "relic",
+   "difficulty": 5,
+   "bands": [
+    "wormhole"
+   ],
+   "archetypeId": 44,
+   "factionId": 500021,
+   "dungeonNameId": 113157,
+   "entryObjectTypeId": 19728,
+   "waves": [
+    {
+     "query": "sleepers_deadspace",
+     "amount": 4
+    },
+    {
+     "query": "sleepers_deadspace",
+     "amount": 10
+    },
+    {
+     "query": "sleepers_deadspace",
+     "amount": 16
+    },
+    {
+     "query": "sleepers_deadspace",
+     "amount": 13
+    },
+    {
+     "query": "sleepers_deadspace",
+     "amount": 1
+    }
+   ],
+   "containers": [
+    {
+     "role": "sleeper_artifact",
+     "analyzer": "relic",
+     "count": 15,
+     "types": [
+      "Decrepit Sleeper Artifact"
+     ]
+    },
+    {
+     "role": "talocan_hull",
+     "analyzer": "relic",
+     "count": 1,
+     "types": [
+      "Abandoned Talocan Battleship"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "wormhole-3729",
+   "dungeonId": 3729,
+   "name": "Unsecured Frontier Enclave Relay",
+   "kind": "signature",
+   "family": "data",
+   "difficulty": 5,
+   "bands": [
+    "wormhole"
+   ],
+   "archetypeId": 45,
+   "factionId": 500021,
+   "dungeonNameId": 111675,
+   "entryObjectTypeId": 19728,
+   "waves": [
+    {
+     "query": "sleepers_deadspace",
+     "amount": 4
+    },
+    {
+     "query": "sleepers_deadspace",
+     "amount": 11
+    },
+    {
+     "query": "sleepers_deadspace",
+     "amount": 16
+    },
+    {
+     "query": "sleepers_deadspace",
+     "amount": 11
+    },
+    {
+     "query": "sleepers_deadspace",
+     "amount": 1
+    }
+   ],
+   "containers": [
+    {
+     "role": "sleeper_databank",
+     "analyzer": "data",
+     "count": 15,
+     "types": [
+      "Broken Sleeper Databank"
+     ]
+    },
+    {
+     "role": "talocan_hull",
+     "analyzer": "relic",
+     "count": 1,
+     "types": [
+      "Abandoned Talocan Battleship"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "wormhole-3730",
+   "dungeonId": 3730,
+   "name": "Forgotten Perimeter Power Array",
+   "kind": "signature",
+   "family": "relic",
+   "difficulty": 3,
+   "bands": [
+    "wormhole"
+   ],
+   "archetypeId": 44,
+   "factionId": 500021,
+   "dungeonNameId": 111644,
+   "entryObjectTypeId": 19728,
+   "waves": [
+    {
+     "query": "sleepers_deadspace",
+     "amount": 2
+    },
+    {
+     "query": "sleepers_deadspace",
+     "amount": 6
+    },
+    {
+     "query": "sleepers_deadspace",
+     "amount": 4
+    }
+   ],
+   "containers": [
+    {
+     "role": "sleeper_artifact",
+     "analyzer": "relic",
+     "count": 4,
+     "types": [
+      "Forgotten Sleeper Artifact"
+     ]
+    },
+    {
+     "role": "talocan_hull",
+     "analyzer": "relic",
+     "count": 1,
+     "types": [
+      "Derelict Talocan Frigate"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "wormhole-3731",
+   "dungeonId": 3731,
+   "name": "Forgotten Frontier Evacuation Center",
+   "kind": "signature",
+   "family": "relic",
+   "difficulty": 4,
+   "bands": [
+    "wormhole"
+   ],
+   "archetypeId": 44,
+   "factionId": 500021,
+   "dungeonNameId": 111645,
+   "entryObjectTypeId": 19728,
+   "waves": [
+    {
+     "query": "sleepers_deadspace",
+     "amount": 6
+    },
+    {
+     "query": "sleepers_deadspace",
+     "amount": 6
+    },
+    {
+     "query": "sleepers_deadspace",
+     "amount": 4
+    },
+    {
+     "query": "sleepers_deadspace",
+     "amount": 1
+    }
+   ],
+   "containers": [
+    {
+     "role": "sleeper_artifact",
+     "analyzer": "relic",
+     "count": 10,
+     "types": [
+      "Sleeper Artifact"
+     ]
+    },
+    {
+     "role": "talocan_hull",
+     "analyzer": "relic",
+     "count": 1,
+     "types": [
+      "Deserted Talocan Cruiser"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "wormhole-3732",
+   "dungeonId": 3732,
+   "name": "Unsecured Frontier Server Bank",
+   "kind": "signature",
+   "family": "data",
+   "difficulty": 5,
+   "bands": [
+    "wormhole"
+   ],
+   "archetypeId": 45,
+   "factionId": 500021,
+   "dungeonNameId": 111674,
+   "entryObjectTypeId": 19728,
+   "waves": [
+    {
+     "query": "sleepers_deadspace",
+     "amount": 10
+    },
+    {
+     "query": "sleepers_deadspace",
+     "amount": 16
+    },
+    {
+     "query": "sleepers_deadspace",
+     "amount": 8
+    },
+    {
+     "query": "sleepers_deadspace",
+     "amount": 9
+    }
+   ],
+   "containers": [
+    {
+     "role": "sleeper_databank",
+     "analyzer": "data",
+     "count": 20,
+     "types": [
+      "Broken Sleeper Databank"
+     ]
+    },
+    {
+     "role": "talocan_hull",
+     "analyzer": "relic",
+     "count": 1,
+     "types": [
+      "Abandoned Talocan Battleship"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "wormhole-3735",
+   "dungeonId": 3735,
+   "name": "Unsecured Frontier Database",
+   "kind": "signature",
+   "family": "data",
+   "difficulty": 4,
+   "bands": [
+    "wormhole"
+   ],
+   "archetypeId": 45,
+   "factionId": 500021,
+   "dungeonNameId": 114325,
+   "entryObjectTypeId": 19728,
+   "waves": [
+    {
+     "query": "sleepers_deadspace",
+     "amount": 6
+    },
+    {
+     "query": "sleepers_deadspace",
+     "amount": 8
+    },
+    {
+     "query": "sleepers_deadspace",
+     "amount": 7
+    },
+    {
+     "query": "sleepers_deadspace",
+     "amount": 7
+    }
+   ],
+   "containers": [
+    {
+     "role": "sleeper_databank",
+     "analyzer": "data",
+     "count": 10,
+     "types": [
+      "Deformed Sleeper Databank"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "wormhole-3736",
+   "dungeonId": 3736,
+   "name": "Forgotten Frontier Conversion Module",
+   "kind": "signature",
+   "family": "relic",
+   "difficulty": 4,
+   "bands": [
+    "wormhole"
+   ],
+   "archetypeId": 44,
+   "factionId": 500021,
+   "dungeonNameId": 111646,
+   "entryObjectTypeId": 19728,
+   "waves": [
+    {
+     "query": "sleepers_deadspace",
+     "amount": 15
+    },
+    {
+     "query": "sleepers_deadspace",
+     "amount": 13
+    },
+    {
+     "query": "sleepers_deadspace",
+     "amount": 4
+    },
+    {
+     "query": "sleepers_deadspace",
+     "amount": 1
+    }
+   ],
+   "containers": [
+    {
+     "role": "talocan_hull",
+     "analyzer": "relic",
+     "count": 1,
+     "types": [
+      "Deserted Talocan Cruiser"
+     ]
+    },
+    {
+     "role": "sleeper_artifact",
+     "analyzer": "relic",
+     "count": 12,
+     "types": [
+      "Sleeper Artifact"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "wormhole-3737",
+   "dungeonId": 3737,
+   "name": "Forgotten Perimeter Coronation Platform",
+   "kind": "signature",
+   "family": "relic",
+   "difficulty": 3,
+   "bands": [
+    "wormhole"
+   ],
+   "archetypeId": 44,
+   "factionId": 500021,
+   "dungeonNameId": 111647,
+   "entryObjectTypeId": 19728,
+   "waves": [
+    {
+     "query": "sleepers_deadspace",
+     "amount": 5
+    },
+    {
+     "query": "sleepers_deadspace",
+     "amount": 4
+    },
+    {
+     "query": "sleepers_deadspace",
+     "amount": 8
+    }
+   ],
+   "containers": [
+    {
+     "role": "sleeper_artifact",
+     "analyzer": "relic",
+     "count": 3,
+     "types": [
+      "Forgotten Sleeper Artifact"
+     ]
+    },
+    {
+     "role": "talocan_hull",
+     "analyzer": "relic",
+     "count": 1,
+     "types": [
+      "Derelict Talocan Frigate"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "wormhole-3739",
+   "dungeonId": 3739,
+   "name": "Forgotten Perimeter Habitation Coils",
+   "kind": "signature",
+   "family": "relic",
+   "difficulty": 3,
+   "bands": [
+    "wormhole"
+   ],
+   "archetypeId": 44,
+   "factionId": 500021,
+   "dungeonNameId": 113158,
+   "entryObjectTypeId": 19728,
+   "waves": [
+    {
+     "query": "sleepers_deadspace",
+     "amount": 7
+    },
+    {
+     "query": "sleepers_deadspace",
+     "amount": 8
+    },
+    {
+     "query": "sleepers_deadspace",
+     "amount": 9
+    },
+    {
+     "query": "sleepers_deadspace",
+     "amount": 7
+    }
+   ],
+   "containers": [
+    {
+     "role": "sleeper_artifact",
+     "analyzer": "relic",
+     "count": 5,
+     "types": [
+      "Lost Sleeper Artifact"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "wormhole-3741",
+   "dungeonId": 3741,
+   "name": "Unsecured Core Emergence",
+   "kind": "signature",
+   "family": "data",
+   "difficulty": 5,
+   "bands": [
+    "wormhole"
+   ],
+   "archetypeId": 45,
+   "factionId": 500021,
+   "dungeonNameId": 111648,
+   "entryObjectTypeId": 19728,
+   "waves": [
+    {
+     "query": "sleepers_deadspace",
+     "amount": 37
+    },
+    {
+     "query": "sleepers_deadspace",
+     "amount": 25
+    },
+    {
+     "query": "sleepers_deadspace",
+     "amount": 15
+    },
+    {
+     "query": "sleepers_deadspace",
+     "amount": 26
+    },
+    {
+     "query": "sleepers_deadspace",
+     "amount": 1
+    }
+   ],
+   "containers": [
+    {
+     "role": "sleeper_databank",
+     "analyzer": "data",
+     "count": 15,
+     "types": [
+      "Spavined Sleeper Databank"
+     ]
+    },
+    {
+     "role": "talocan_hull",
+     "analyzer": "relic",
+     "count": 1,
+     "types": [
+      "Abandoned Talocan Battleship"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "wormhole-3744",
+   "dungeonId": 3744,
+   "name": "Unsecured Frontier Trinary Hub",
+   "kind": "signature",
+   "family": "data",
+   "difficulty": 4,
+   "bands": [
+    "wormhole"
+   ],
+   "archetypeId": 45,
+   "factionId": 500021,
+   "dungeonNameId": 111649,
+   "entryObjectTypeId": 19728,
+   "waves": [
+    {
+     "query": "sleepers_deadspace",
+     "amount": 6
+    },
+    {
+     "query": "sleepers_deadspace",
+     "amount": 6
+    },
+    {
+     "query": "sleepers_deadspace",
+     "amount": 4
+    },
+    {
+     "query": "sleepers_deadspace",
+     "amount": 1
+    }
+   ],
+   "containers": [
+    {
+     "role": "sleeper_databank",
+     "analyzer": "data",
+     "count": 10,
+     "types": [
+      "Obsolete Sleeper Databank"
+     ]
+    },
+    {
+     "role": "talocan_hull",
+     "analyzer": "relic",
+     "count": 1,
+     "types": [
+      "Deserted Talocan Cruiser"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "wormhole-3746",
+   "dungeonId": 3746,
+   "name": "Unsecured Frontier Receiver",
+   "kind": "signature",
+   "family": "data",
+   "difficulty": 4,
+   "bands": [
+    "wormhole"
+   ],
+   "archetypeId": 45,
+   "factionId": 500021,
+   "dungeonNameId": 111673,
+   "entryObjectTypeId": 19728,
+   "waves": [
+    {
+     "query": "sleepers_deadspace",
+     "amount": 8
+    },
+    {
+     "query": "sleepers_deadspace",
+     "amount": 7
+    },
+    {
+     "query": "sleepers_deadspace",
+     "amount": 4
+    },
+    {
+     "query": "sleepers_deadspace",
+     "amount": 6
+    }
+   ],
+   "containers": [
+    {
+     "role": "sleeper_databank",
+     "analyzer": "data",
+     "count": 7,
+     "types": [
+      "Deformed Sleeper Databank"
+     ]
+    },
+    {
+     "role": "talocan_hull",
+     "analyzer": "relic",
+     "count": 1,
+     "types": [
+      "Deserted Talocan Cruiser"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "wormhole-3747",
+   "dungeonId": 3747,
+   "name": "Unsecured Core Backup Array",
+   "kind": "signature",
+   "family": "data",
+   "difficulty": 5,
+   "bands": [
+    "wormhole"
+   ],
+   "archetypeId": 45,
+   "factionId": 500021,
+   "dungeonNameId": 111658,
+   "entryObjectTypeId": 19728,
+   "waves": [
+    {
+     "query": "sleepers_deadspace",
+     "amount": 24
+    },
+    {
+     "query": "sleepers_deadspace",
+     "amount": 14
+    },
+    {
+     "query": "sleepers_deadspace",
+     "amount": 13
+    },
+    {
+     "query": "sleepers_deadspace",
+     "amount": 24
+    },
+    {
+     "query": "sleepers_deadspace",
+     "amount": 1
+    }
+   ],
+   "containers": [
+    {
+     "role": "sleeper_databank",
+     "analyzer": "data",
+     "count": 10,
+     "types": [
+      "Spavined Sleeper Databank"
+     ]
+    },
+    {
+     "role": "talocan_hull",
+     "analyzer": "relic",
+     "count": 1,
+     "types": [
+      "Abandoned Talocan Battleship"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "wormhole-3748",
+   "dungeonId": 3748,
+   "name": "Unsecured Frontier Digital Nexus",
+   "kind": "signature",
+   "family": "data",
+   "difficulty": 4,
+   "bands": [
+    "wormhole"
+   ],
+   "archetypeId": 45,
+   "factionId": 500021,
+   "dungeonNameId": 113159,
+   "entryObjectTypeId": 19728,
+   "waves": [
+    {
+     "query": "sleepers_deadspace",
+     "amount": 11
+    },
+    {
+     "query": "sleepers_deadspace",
+     "amount": 11
+    },
+    {
+     "query": "sleepers_deadspace",
+     "amount": 4
+    },
+    {
+     "query": "sleepers_deadspace",
+     "amount": 1
+    }
+   ],
+   "containers": [
+    {
+     "role": "sleeper_databank",
+     "analyzer": "data",
+     "count": 12,
+     "types": [
+      "Obsolete Sleeper Databank"
+     ]
+    },
+    {
+     "role": "talocan_hull",
+     "analyzer": "relic",
+     "count": 1,
+     "types": [
+      "Deserted Talocan Cruiser"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "wormhole-3749",
+   "dungeonId": 3749,
+   "name": "Forgotten Perimeter Gateway",
+   "kind": "signature",
+   "family": "relic",
+   "difficulty": 3,
+   "bands": [
+    "wormhole"
+   ],
+   "archetypeId": 44,
+   "factionId": 500021,
+   "dungeonNameId": 113160,
+   "entryObjectTypeId": 19728,
+   "waves": [
+    {
+     "query": "sleepers_deadspace",
+     "amount": 5
+    },
+    {
+     "query": "sleepers_deadspace",
+     "amount": 3
+    },
+    {
+     "query": "sleepers_deadspace",
+     "amount": 6
+    }
+   ],
+   "containers": [
+    {
+     "role": "sleeper_artifact",
+     "analyzer": "relic",
+     "count": 8,
+     "types": [
+      "Lost Sleeper Artifact"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "wormhole-3752",
+   "dungeonId": 3752,
+   "name": "Unsecured Perimeter Transponder Farm",
+   "kind": "signature",
+   "family": "data",
+   "difficulty": 3,
+   "bands": [
+    "wormhole"
+   ],
+   "archetypeId": 24,
+   "factionId": 500021,
+   "dungeonNameId": 113161,
+   "entryObjectTypeId": 19728,
+   "waves": [
+    {
+     "query": "sleepers_deadspace",
+     "amount": 6
+    },
+    {
+     "query": "sleepers_deadspace",
+     "amount": 7
+    },
+    {
+     "query": "sleepers_deadspace",
+     "amount": 9
+    },
+    {
+     "query": "sleepers_deadspace",
+     "amount": 12
+    }
+   ],
+   "containers": [
+    {
+     "role": "sleeper_databank",
+     "analyzer": "data",
+     "count": 5,
+     "types": [
+      "Ejected Sleeper Databank"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "wormhole-3753",
+   "dungeonId": 3753,
+   "name": "Unsecured Perimeter Amplifier",
+   "kind": "signature",
+   "family": "data",
+   "difficulty": 3,
+   "bands": [
+    "wormhole"
+   ],
+   "archetypeId": 45,
+   "factionId": 500021,
+   "dungeonNameId": 111659,
+   "entryObjectTypeId": 19728,
+   "waves": [
+    {
+     "query": "sleepers_deadspace",
+     "amount": 2
+    },
+    {
+     "query": "sleepers_deadspace",
+     "amount": 6
+    },
+    {
+     "query": "sleepers_deadspace",
+     "amount": 4
+    }
+   ],
+   "containers": [
+    {
+     "role": "sleeper_databank",
+     "analyzer": "data",
+     "count": 4,
+     "types": [
+      "Malfunctioning Sleeper Databank"
+     ]
+    },
+    {
+     "role": "talocan_hull",
+     "analyzer": "relic",
+     "count": 1,
+     "types": [
+      "Derelict Talocan Frigate"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "wormhole-3754",
+   "dungeonId": 3754,
+   "name": "Unsecured Perimeter Information Center",
+   "kind": "signature",
+   "family": "data",
+   "difficulty": 3,
+   "bands": [
+    "wormhole"
+   ],
+   "archetypeId": 45,
+   "factionId": 500021,
+   "dungeonNameId": 111660,
+   "entryObjectTypeId": 19728,
+   "waves": [
+    {
+     "query": "sleepers_deadspace",
+     "amount": 5
+    },
+    {
+     "query": "sleepers_deadspace",
+     "amount": 4
+    },
+    {
+     "query": "sleepers_deadspace",
+     "amount": 7
+    }
+   ],
+   "containers": [
+    {
+     "role": "sleeper_databank",
+     "analyzer": "data",
+     "count": 3,
+     "types": [
+      "Malfunctioning Sleeper Databank"
+     ]
+    },
+    {
+     "role": "talocan_hull",
+     "analyzer": "relic",
+     "count": 1,
+     "types": [
+      "Derelict Talocan Frigate"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "wormhole-3759",
+   "dungeonId": 3759,
+   "name": "Unsecured Perimeter Comms Relay",
+   "kind": "signature",
+   "family": "data",
+   "difficulty": 3,
+   "bands": [
+    "wormhole"
+   ],
+   "archetypeId": 45,
+   "factionId": 500021,
+   "dungeonNameId": 111672,
+   "entryObjectTypeId": 19728,
+   "waves": [
+    {
+     "query": "sleepers_deadspace",
+     "amount": 6
+    },
+    {
+     "query": "sleepers_deadspace",
+     "amount": 3
+    },
+    {
+     "query": "sleepers_deadspace",
+     "amount": 4
+    },
+    {
+     "query": "sleepers_deadspace",
+     "amount": 1
+    }
+   ],
+   "containers": [
+    {
+     "role": "sleeper_databank",
+     "analyzer": "data",
+     "count": 8,
+     "types": [
+      "Ejected Sleeper Databank"
+     ]
+    },
+    {
+     "role": "talocan_hull",
+     "analyzer": "relic",
+     "count": 1,
+     "types": [
+      "Derelict Talocan Frigate"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "wormhole-3795",
+   "dungeonId": 3795,
+   "name": "The Ruins of Enclave Cohort 27",
+   "kind": "anomaly",
+   "family": "combat",
+   "difficulty": 3,
+   "bands": [
+    "wormhole"
+   ],
+   "archetypeId": 24,
+   "factionId": 500021,
+   "dungeonNameId": 111686,
+   "entryObjectTypeId": 28356,
+   "waves": [
+    {
+     "query": "sleepers_deadspace",
+     "amount": 7
+    },
+    {
+     "query": "sleepers_deadspace",
+     "amount": 6
+    },
+    {
+     "query": "sleepers_deadspace",
+     "amount": 1
+    }
+   ],
+   "containers": []
+  },
+  {
+   "id": "wormhole-3796",
+   "dungeonId": 3796,
+   "name": "Sleeper Data Sanctuary",
+   "kind": "anomaly",
+   "family": "combat",
+   "difficulty": 3,
+   "bands": [
+    "wormhole"
+   ],
+   "archetypeId": 24,
+   "factionId": 500021,
+   "dungeonNameId": 111687,
+   "entryObjectTypeId": 28356,
+   "waves": [
+    {
+     "query": "sleepers_deadspace",
+     "amount": 8
+    },
+    {
+     "query": "sleepers_deadspace",
+     "amount": 5
+    },
+    {
+     "query": "sleepers_deadspace",
+     "amount": 1
+    }
+   ],
+   "containers": []
+  },
+  {
+   "id": "wormhole-3797",
+   "dungeonId": 3797,
+   "name": "The Line",
+   "kind": "anomaly",
+   "family": "combat",
+   "difficulty": 3,
+   "bands": [
+    "wormhole"
+   ],
+   "archetypeId": 24,
+   "factionId": 500021,
+   "dungeonNameId": 111688,
+   "entryObjectTypeId": 28356,
+   "waves": [
+    {
+     "query": "sleepers_deadspace",
+     "amount": 4
+    },
+    {
+     "query": "sleepers_deadspace",
+     "amount": 5
+    },
+    {
+     "query": "sleepers_deadspace",
+     "amount": 5
+    }
+   ],
+   "containers": []
+  },
+  {
+   "id": "wormhole-3799",
+   "dungeonId": 3799,
+   "name": "Integrated Terminus",
+   "kind": "anomaly",
+   "family": "combat",
+   "difficulty": 4,
+   "bands": [
+    "wormhole"
+   ],
+   "archetypeId": 24,
+   "factionId": 500021,
+   "dungeonNameId": 111954,
+   "entryObjectTypeId": 28356,
+   "waves": [
+    {
+     "query": "sleepers_deadspace",
+     "amount": 11
+    },
+    {
+     "query": "sleepers_deadspace",
+     "amount": 8
+    },
+    {
+     "query": "sleepers_deadspace",
+     "amount": 7
+    }
+   ],
+   "containers": []
+  },
+  {
+   "id": "wormhole-3800",
+   "dungeonId": 3800,
+   "name": "The Oruze Construct",
+   "kind": "anomaly",
+   "family": "combat",
+   "difficulty": 4,
+   "bands": [
+    "wormhole"
+   ],
+   "archetypeId": 24,
+   "factionId": 500021,
+   "dungeonNameId": 111989,
+   "entryObjectTypeId": 28356,
+   "waves": [
+    {
+     "query": "sleepers_deadspace",
+     "amount": 7
+    },
+    {
+     "query": "sleepers_deadspace",
+     "amount": 5
+    },
+    {
+     "query": "sleepers_deadspace",
+     "amount": 3
+    }
+   ],
+   "containers": []
+  },
+  {
+   "id": "wormhole-3801",
+   "dungeonId": 3801,
+   "name": "Phase Catalyst Node",
+   "kind": "anomaly",
+   "family": "combat",
+   "difficulty": 3,
+   "bands": [
+    "wormhole"
+   ],
+   "archetypeId": 24,
+   "factionId": 500021,
+   "dungeonNameId": 112050,
+   "entryObjectTypeId": 28356,
+   "waves": [
+    {
+     "query": "sleepers_deadspace",
+     "amount": 10
+    },
+    {
+     "query": "sleepers_deadspace",
+     "amount": 3
+    },
+    {
+     "query": "sleepers_deadspace",
+     "amount": 9
+    }
+   ],
+   "containers": []
+  },
+  {
+   "id": "wormhole-3802",
+   "dungeonId": 3802,
+   "name": "The Mirror",
+   "kind": "anomaly",
+   "family": "combat",
+   "difficulty": 5,
+   "bands": [
+    "wormhole"
+   ],
+   "archetypeId": 24,
+   "factionId": 500021,
+   "dungeonNameId": 112051,
+   "entryObjectTypeId": 28356,
+   "waves": [
+    {
+     "query": "sleepers_deadspace",
+     "amount": 15
+    },
+    {
+     "query": "sleepers_deadspace",
+     "amount": 11
+    },
+    {
+     "query": "sleepers_deadspace",
+     "amount": 20
+    }
+   ],
+   "containers": []
+  },
+  {
+   "id": "wormhole-3803",
+   "dungeonId": 3803,
+   "name": "Oruze Osobnyk",
+   "kind": "anomaly",
+   "family": "combat",
+   "difficulty": 5,
+   "bands": [
+    "wormhole"
+   ],
+   "archetypeId": 24,
+   "factionId": 500021,
+   "dungeonNameId": 112052,
+   "entryObjectTypeId": 28356,
+   "waves": [
+    {
+     "query": "sleepers_deadspace",
+     "amount": 8
+    },
+    {
+     "query": "sleepers_deadspace",
+     "amount": 7
+    },
+    {
+     "query": "sleepers_deadspace",
+     "amount": 9
+    }
+   ],
+   "containers": []
+  },
+  {
+   "id": "wormhole-3808",
+   "dungeonId": 3808,
+   "name": "Sleeper Information Sanctum",
+   "kind": "anomaly",
+   "family": "combat",
+   "difficulty": 4,
+   "bands": [
+    "wormhole"
+   ],
+   "archetypeId": 24,
+   "factionId": 500021,
+   "dungeonNameId": 112053,
+   "entryObjectTypeId": 28356,
+   "waves": [
+    {
+     "query": "sleepers_deadspace",
+     "amount": 6
+    },
+    {
+     "query": "sleepers_deadspace",
+     "amount": 4
+    },
+    {
+     "query": "sleepers_deadspace",
+     "amount": 9
+    }
+   ],
+   "containers": []
+  },
+  {
+   "id": "wormhole-3809",
+   "dungeonId": 3809,
+   "name": "Solar Cell",
+   "kind": "anomaly",
+   "family": "combat",
+   "difficulty": 4,
+   "bands": [
+    "wormhole"
+   ],
+   "archetypeId": 24,
+   "factionId": 500021,
+   "dungeonNameId": 112054,
+   "entryObjectTypeId": 28356,
+   "waves": [
+    {
+     "query": "sleepers_deadspace",
+     "amount": 3
+    },
+    {
+     "query": "sleepers_deadspace",
+     "amount": 8
+    },
+    {
+     "query": "sleepers_deadspace",
+     "amount": 4
+    }
+   ],
+   "containers": []
+  },
+  {
+   "id": "wormhole-3812",
+   "dungeonId": 3812,
+   "name": "Quarantine Area",
+   "kind": "anomaly",
+   "family": "combat",
+   "difficulty": 5,
+   "bands": [
+    "wormhole"
+   ],
+   "archetypeId": 24,
+   "factionId": 500021,
+   "dungeonNameId": 112055,
+   "entryObjectTypeId": 28356,
+   "waves": [
+    {
+     "query": "sleepers_deadspace",
+     "amount": 6
+    },
+    {
+     "query": "sleepers_deadspace",
+     "amount": 6
+    },
+    {
+     "query": "sleepers_deadspace",
+     "amount": 10
+    }
+   ],
+   "containers": []
+  },
+  {
+   "id": "wormhole-3819",
+   "dungeonId": 3819,
+   "name": "Strange Energy Readings",
+   "kind": "anomaly",
+   "family": "combat",
+   "difficulty": 5,
+   "bands": [
+    "wormhole"
+   ],
+   "archetypeId": 24,
+   "factionId": 500021,
+   "dungeonNameId": 112056,
+   "entryObjectTypeId": 28356,
+   "waves": [
+    {
+     "query": "sleepers_deadspace",
+     "amount": 12
+    },
+    {
+     "query": "sleepers_deadspace",
+     "amount": 9
+    },
+    {
+     "query": "sleepers_deadspace",
+     "amount": 15
+    }
+   ],
+   "containers": []
+  }
+ ]
+}

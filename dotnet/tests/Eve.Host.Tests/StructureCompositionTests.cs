@@ -5,6 +5,7 @@ using Eve.Identity;
 using Eve.Macho;
 using Eve.Marshal;
 using Eve.Characters;
+using Eve.Inventory;
 using Eve.Services;
 using Eve.Sde;
 using Eve.Structures;
@@ -32,6 +33,7 @@ public sealed class StructureCompositionTests : IAsyncLifetime
         "EVE_FITTING_SCHEMA", "EVE_NPC_SCHEMA", "EVE_SPACE_SCHEMA", "EVE_GAMESTORE_SCHEMA", "EVE_ASSET_SAFETY_SCHEMA", "EVE_CORPORATIONS_SCHEMA",
         "EVE_MARKET_SCHEMA", "EVE_FLEET_SCHEMA", "EVE_INDUSTRY_SCHEMA", "EVE_SCHEDULER_SCHEMA", "EVE_EVENTS_SCHEMA", "EVE_RELATIONS_SCHEMA",
         "EVE_CONTENT_SCHEMA", "EVE_CRIMEWATCH_SCHEMA", "EVE_STRUCTURES_SCHEMA",
+        "EVE_TRADE_SCHEMA", "EVE_BOOKMARKS_SCHEMA", "EVE_ESS_SCHEMA",
     ];
 
     private readonly string _prefix = "sc" + Guid.NewGuid().ToString("N")[..10];
@@ -142,7 +144,7 @@ public sealed class StructureCompositionTests : IAsyncLifetime
     }
 
     /// <summary>A character of the corporation, in the characters schema: the host reconciles corporation membership from it at start-up.</summary>
-    private async Task<long> SeedManagerAsync()
+    private async Task<long> SeedManagerAsync(string name = "Structure Manager")
     {
         var url = Environment.GetEnvironmentVariable("EVE_PG_URL")!;
         await using var source = NpgsqlDataSource.Create(PgConnection.ForTest(url));
@@ -151,7 +153,7 @@ public sealed class StructureCompositionTests : IAsyncLifetime
         await using var connection = await source.OpenConnectionAsync();
         await using var transaction = await connection.BeginTransactionAsync();
         var characterId = await new PgCharacterStore(source, Schema("EVE_CHARACTERS_SCHEMA")).InsertAsync(connection, transaction,
-            new NewCharacter(1, "Structure Manager", 0, 1, 1, 1, 11, 1376, Corporation, null, station.Id, station.SolarSystemId, station.ConstellationId, station.RegionId, null, null));
+            new NewCharacter(1, name, 0, 1, 1, 1, 11, 1376, Corporation, null, station.Id, station.SolarSystemId, station.ConstellationId, station.RegionId, null, null));
         await transaction.CommitAsync();
         return characterId;
     }
@@ -189,6 +191,82 @@ public sealed class StructureCompositionTests : IAsyncLifetime
         var row = (await new StructureStore(source, Schema("EVE_STRUCTURES_SCHEMA")).ReadLegacyTableAsync())[StructureId.ToString()]!.AsObject();
         Assert.Equal(7, row["profileID"]!.GetValue<long>());
         await restarted.ShutdownAsync();
+    }
+
+    [PgFact]
+    public async Task Restart_clears_stale_structure_controller_records_without_removing_the_structure()
+    {
+        var url = Environment.GetEnvironmentVariable("EVE_PG_URL")!;
+        await using var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(url));
+        await SeedGameStoreAsync(source, SeededRow(StructureId, StructureState.ShieldVulnerable, 0, 0, UpkeepState.FullPower));
+        var host = await HostComposition.BuildAsync(Settings());
+        var structures = new StructureStore(source, Schema("EVE_STRUCTURES_SCHEMA"));
+        var pilots = new StructurePilotStore(structures);
+        await using (var connection = await source.OpenConnectionAsync())
+        await using (var transaction = await connection.BeginTransactionAsync())
+        {
+            var result = await pilots.AcquireAsync(connection, transaction,
+                new StructurePilotRequest(StructureId, 90000001, 1001, 10000001, StructureId, false), true);
+            Assert.Equal(StructurePilotAcquireStatus.Acquired, result.Status);
+            await transaction.CommitAsync();
+        }
+        await host.ShutdownAsync();
+
+        var restarted = await HostComposition.BuildAsync(Settings());
+        try
+        {
+            await using var connection = await source.OpenConnectionAsync();
+            Assert.Null(await pilots.GetByStructureAsync(connection, null, StructureId));
+            Assert.NotNull(await structures.GetAsync(StructureId));
+        }
+        finally { await restarted.ShutdownAsync(); }
+    }
+
+    [PgFact]
+    public async Task Registered_delivery_moves_items_and_persists_one_inbox_notification_across_retry_and_restart()
+    {
+        await using var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
+        await SeedGameStoreAsync(source, SeededRow(StructureId, StructureState.ShieldVulnerable, 0, 0, UpkeepState.FullPower));
+        var sender = await SeedManagerAsync();
+        var recipient = await SeedManagerAsync("Structure Recipient");
+        var session = ManagerSession(sender);
+        session.Set("structureid", new PyLong(StructureId));
+        session.Set("locationid", new PyLong(StructureId));
+        var host = await HostComposition.BuildAsync(Settings());
+        try
+        {
+            var items = new PgItemStore(source, Schema("EVE_INVENTORY_SCHEMA"));
+            long itemId;
+            await using (var connection = await source.OpenConnectionAsync())
+            await using (var transaction = await connection.BeginTransactionAsync())
+            {
+                itemId = await items.CreateAsync(connection, transaction, new NewItem(34, sender, StructureId, ItemFlags.Hangar, 25, false));
+                await transaction.CommitAsync();
+            }
+            var service = host.Registry.Lookup("structureDeliveries") ?? throw new InvalidOperationException("structureDeliveries is not registered");
+            var args = new PyValue[] { new PyLong(StructureId), new PyLong(recipient), new PyList([new PyLong(itemId), new PyLong(itemId)]) };
+            Assert.IsType<PyNone>(await service.CallAsync(Call(session, "Deliver", 1, args)));
+            Assert.IsType<PyNone>(await service.CallAsync(Call(session, "Deliver", 2, args)));
+            var moved = await items.GetAsync(itemId);
+            Assert.Equal(recipient, moved!.OwnerId);
+            Assert.Equal(173, moved.Flag);
+            await using var persisted = new PersistenceStore(source, Schema("EVE_GAMESTORE_SCHEMA"));
+            var table = await persisted.LoadTableAsync("notifications");
+            var box = table["boxes"]![recipient.ToString()]!["byID"]!.AsObject();
+            var notification = Assert.Single(box).Value!.AsObject();
+            Assert.Equal(199, notification["typeID"]!.GetValue<int>());
+            Assert.Equal(sender, notification["senderID"]!.GetValue<long>());
+            Assert.Equal(25, notification["data"]!["listOfTypesAndQty"]![0]![0]!.GetValue<long>());
+        }
+        finally { await host.ShutdownAsync(); }
+        var restarted = await HostComposition.BuildAsync(Settings());
+        try
+        {
+            await using var persisted = new PersistenceStore(source, Schema("EVE_GAMESTORE_SCHEMA"));
+            var table = await persisted.LoadTableAsync("notifications");
+            Assert.Single(table["boxes"]![recipient.ToString()]!["byID"]!.AsObject());
+        }
+        finally { await restarted.ShutdownAsync(); }
     }
 
     [PgFact]

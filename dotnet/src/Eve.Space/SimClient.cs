@@ -343,6 +343,12 @@ public sealed class SimClient : ISimulation, IAsyncDisposable
     public Task<string?> EnterAsync(SimEnter enter, CancellationToken cancellationToken = default) =>
         AwaitAsync(_entering, enter.SessionId, enter, cancellationToken);
 
+    public async Task<string?> ControlStructureAsync(SimControlStructure control, CancellationToken cancellationToken = default)
+    {
+        var reply = await AwaitAsync(_answered, (control.SessionId, SimCommands.ControlStructure), control, cancellationToken);
+        return reply.Accepted ? null : reply.Reason ?? "STRUCTURE_CONTROL_FAILED";
+    }
+
     public Task SetHeatProfileAsync(ulong sessionId, SimHeatProfile profile, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();

@@ -1,4 +1,5 @@
 using Eve.Services.Space.Scanning;
+using Eve.Wormholes;
 
 namespace Eve.Services.Space.Sites;
 
@@ -25,7 +26,7 @@ public sealed class ContentCosmicSites(CosmicSiteDirector director) : ICosmicSit
             }
             targets.Add(new ScanTargetSite(
                 site.InstanceId, CosmicSiteDirector.SignatureTypeId, CosmicSiteDirector.SignatureGroupId, SignatureScanGroup, site.Position,
-                ProbeScanMath.SignatureStrength(template.Level), IsSignature: true, StrengthAttributeId: template.StrengthAttribute,
+                template.IsWormhole ? WormholeSites.ScanStrength : ProbeScanMath.SignatureStrength(template.Level), IsSignature: true, StrengthAttributeId: template.StrengthAttribute,
                 Code: site.Code, DungeonId: template.DungeonId, DungeonNameId: template.DungeonNameId, ArchetypeId: template.ArchetypeId, FactionId: template.FactionId,
                 Difficulty: template.Difficulty));
         }

@@ -197,7 +197,7 @@ public sealed class AnalysisBeaconHostTests
 
         // the client's component call: linkWithShip.InitiateLink on the beacon, through the route of the ballpark service
         var linkedAt = rig.Now;
-        await rig.BeyonceCallAsync(session, "CallComponentFromClient", bound, new PyLong(beacon), new PyStr("linkWithShip"), new PyStr("InitiateLink"));
+        await rig.BeyonceCallAsync(session, "CallComponentFromClient", bound, new PyLong(beacon), PyStrOfClient("linkWithShip"), PyStrOfClient("InitiateLink"));
         await RunAsync(rig);
 
         var running = rig.Sim.Heard.OfType<SimSetAnalysisBeaconState>().Single(m => m.State.LinkState == 2);
@@ -229,7 +229,7 @@ public sealed class AnalysisBeaconHostTests
         var bound = await rig.BindBeyonceAsync(session);
         rig.Sim.Heard.Clear();
 
-        await rig.BeyonceCallAsync(session, "CallComponentFromClient", bound, new PyLong(beacon), new PyStr("linkWithShip"), new PyStr("InitiateLink"));
+        await rig.BeyonceCallAsync(session, "CallComponentFromClient", bound, new PyLong(beacon), PyStrOfClient("linkWithShip"), PyStrOfClient("InitiateLink"));
         await RunAsync(rig);
 
         Assert.DoesNotContain(rig.Sim.Heard, m => m is SimSetAnalysisBeaconState);
@@ -313,6 +313,9 @@ public sealed class AnalysisBeaconHostTests
         await AdvanceAsync(rig, 10_000);
         Assert.Equal(1441, await AddedToCargoAsync(rig, session, shipId, RewardAnalysisData));
     }
+
+    /// <summary>A Python <c>str</c> as the client sends it: the bytes of the text (a PyBytes on the wire).</summary>
+    private static PyBytes PyStrOfClient(string text) => new(System.Text.Encoding.UTF8.GetBytes(text));
 
     private static void Kill(Rig rig, ClientSession session, IEnumerable<long> ships)
     {

@@ -364,6 +364,8 @@ public class SimCodecTests
             "PlaceStructure" => new SimPlaceStructure(Wide(c, "structureId"), (int)c["solarSystemId"]!, (string)c["typeName"]!, (int)c["typeId"]!,
                 (int)c["groupId"]!, VectorOf(c["position"]!), (double)c["radius"]!, Wide(c, "ownerId"), (int)c["corporationId"]!, (int)c["allianceId"]!,
                 HealthOf(c), StatusOf(c["status"]!)),
+            "ControlStructure" => new SimControlStructure(ulong.Parse((string)c["sessionId"]!, CultureInfo.InvariantCulture),
+                (int)c["solarSystemId"]!, Wide(c, "structureId"), Wide(c, "characterId"), (bool)c["active"]!),
             "TetherPolicy" => new SimTetherPolicy(ulong.Parse((string)c["sessionId"]!, CultureInfo.InvariantCulture),
                 ulong.Parse((string)c["blockedForMs"]!, CultureInfo.InvariantCulture), ulong.Parse((string)c["leaseMs"]!, CultureInfo.InvariantCulture),
                 [.. ((JsonArray)c["candidates"]!).Select(candidate => new SimTetherCandidate(Wide(candidate!, "structureId"), (double)candidate!["range"]!))]),
@@ -420,7 +422,7 @@ public class SimCodecTests
     public void The_fixtures_cover_every_message_kind()
     {
         var kinds = ((JsonArray)Fixtures["valid"]!).Select(c => (string)c!["kind"]!).Distinct().Order().ToArray();
-                Assert.Equal(["Accepted", "Activate", "AdjustCharge", "Approaching", "Arrived", "Bind", "BuffState", "ChangeWreck", "ChargeAdjusted", "ChargeSpent", "Command", "Condition", "ContainerPlaced", "Deployed", "Destroy", "Destroyed", "DirectionalTargets", "Docked", "DroneCommand", "DroneReleased", "DroneResults", "DroneScooped", "EcmBurst", "Enter", "EnterReply", "FighterGotoPoint", "FighterLanded", "FighterOrder", "FighterReleased", "FighterResults", "FighterSize", "Hello", "HelloAck", "Jumped", "Jumping", "LaunchDrone", "LaunchFighter", "Leave", "Measured", "ModuleEnded", "ModuleWorkCycle", "ModuleWorkResult", "Notify", "PlaceAnalysisBeacon", "PlaceContainer", "PlaceCynoBeacon", "PlaceDisruptor", "PlaceInhibitor", "PlaceProbe", "PlaceStructure", "PlaceWormhole", "PlaceWreck", "Refused", "RemoveDeployed", "RemoveProbe", "RemoveStructure", "RemoveWormhole", "RemoveWreck", "Respawn", "ScanTargets", "SetAnalysisBeaconState", "SetDisruptorActive", "SetStructureState", "ShipSpec", "Spawn", "SpawnReply", "StructureDamaged", "TargetRefused", "Targets", "TetherChanged", "TetherPolicy", "UpdateEffect", "UpdateState"], kinds);
+                Assert.Equal(["Accepted", "Activate", "AdjustCharge", "Approaching", "Arrived", "Bind", "BuffState", "ChangeWreck", "ChargeAdjusted", "ChargeSpent", "Command", "Condition", "ContainerPlaced", "ControlStructure", "Deployed", "Destroy", "Destroyed", "DirectionalTargets", "Docked", "DroneCommand", "DroneReleased", "DroneResults", "DroneScooped", "EcmBurst", "Enter", "EnterReply", "FighterGotoPoint", "FighterLanded", "FighterOrder", "FighterReleased", "FighterResults", "FighterSize", "Hello", "HelloAck", "Jumped", "Jumping", "LaunchDrone", "LaunchFighter", "Leave", "Measured", "ModuleEnded", "ModuleWorkCycle", "ModuleWorkResult", "Notify", "PlaceAnalysisBeacon", "PlaceContainer", "PlaceCynoBeacon", "PlaceDisruptor", "PlaceInhibitor", "PlaceProbe", "PlaceStructure", "PlaceWormhole", "PlaceWreck", "Refused", "RemoveDeployed", "RemoveProbe", "RemoveStructure", "RemoveWormhole", "RemoveWreck", "Respawn", "ScanTargets", "SetAnalysisBeaconState", "SetDisruptorActive", "SetStructureState", "ShipSpec", "Spawn", "SpawnReply", "StructureDamaged", "TargetRefused", "Targets", "TetherChanged", "TetherPolicy", "UpdateEffect", "UpdateState"], kinds);
         Assert.True(((JsonArray)Fixtures["invalid"]!).Count >= 10);    }
 
     [Theory]
@@ -442,6 +444,29 @@ public class SimCodecTests
         System.Buffers.Binary.BinaryPrimitives.WriteUInt32LittleEndian(frame.AsSpan(25, 4), uint.MaxValue);
         var error = Assert.Throws<SimLinkException>(() => SimCodec.Decode(frame));
         Assert.Equal(SimLinkError.Truncated, error.Error);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void Structure_control_round_trips_with_the_reserved_wire_kind(bool active)
+    {
+        var message = new SimControlStructure(77, 30000142, active ? 1_040_000_000_001 : 0, active ? 90000001 : 0, active);
+        var frame = SimCodec.Encode(message);
+        Assert.Equal(84, frame[4]);
+        Assert.Equal(message, SimCodec.Decode(frame.AsMemory(4)));
+    }
+
+    [Theory]
+    [InlineData(0, 1, 1, true)]
+    [InlineData(30000142, 0, 1, true)]
+    [InlineData(30000142, 1, 0, true)]
+    [InlineData(30000142, -1, 1, false)]
+    public void Structure_control_rejects_invalid_identities(int system, long structure, long character, bool active)
+    {
+        var error = Assert.Throws<SimLinkException>(() =>
+            SimCodec.Encode(new SimControlStructure(77, system, structure, character, active)));
+        Assert.Equal(SimLinkError.BadValue, error.Error);
     }
 
     [Theory]

@@ -104,13 +104,13 @@ public sealed partial class CorpStationMgrService(
     {
         var corporation = corporationId > 0 ? await corporations.GetAsync(corporationId, token) : null;
         var member = await corporations.MemberAsync(actor, token);
-        if (corporation is null || corporation.IsNpc || member is null || member.CorporationId != corporationId)
+        if (corporation is null || member is null || member.CorporationId != corporationId)
             throw MachoErrors.ThrowUserError("CrpAccessDenied", ("reason", new PyStr("not a member of the corporation")));
         var ceo = !corporation.CeoRolesSuspended && corporation.CeoId == actor;
         var titles = await corporations.TitlesAsync(corporationId, token);
         var director = (CorporationRoles.Session(corporation, member, stationId, titles).AtAll & CorporationRoles.Director) != 0;
         if (!ceo && !director)
-            throw MachoErrors.ThrowUserError("CrpAccessDenied", ("reason", new PyStr("not a director")));
+            throw MachoErrors.ThrowUserError("CrpAccessDenied", ("reason", Py.Tuple(new PyInt(101), new PyStr("UI/Corporations/AccessRestrictions/NotDirector"))));
     }
 
     private CorporationStationPlace BoundPlace(ServiceCall call)

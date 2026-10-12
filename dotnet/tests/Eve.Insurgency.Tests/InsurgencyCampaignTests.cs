@@ -19,6 +19,15 @@ public sealed class InsurgencyCampaignTests
         return campaign;
     }
 
+    private static async Task<Campaign> StartCovering(Rig rig, long warzone, IReadOnlyList<long> covered)
+    {
+        await using var connection = await rig.Source.OpenConnectionAsync();
+        await using var transaction = await connection.BeginTransactionAsync();
+        var campaign = await rig.Campaigns.StartAsync(connection, transaction, new CampaignStart(500011, warzone, 30000001, covered));
+        await transaction.CommitAsync();
+        return campaign;
+    }
+
     private static async Task<ScoreOutcome> Score(Rig rig, long campaignId, Side side, long system = 30000001)
     {
         await using var connection = await rig.Source.OpenConnectionAsync();
@@ -80,11 +89,14 @@ public sealed class InsurgencyCampaignTests
     public async Task A_side_wins_when_it_reaches_its_count_and_the_ambition_moves()
     {
         await using var rig = await Rig.CreateAsync();
-        var first = await StartCampaign(rig, warzone: 7);
+        var first = await StartCovering(rig, 7, [30000001, 30000002, 30000003, 30000004, 30000005]);
         await rig.RunAt(Rig.Epoch + 48 * Hour);
-        Assert.Equal(ScoreOutcome.Scored, await Score(rig, first.CampaignId, Side.Pirate));
-        for (var i = 1; i < 5; i++)
-            Assert.Equal(ScoreOutcome.Scored, await Score(rig, first.CampaignId, Side.Pirate));
+        // a system scores once for a side: five covered systems make the five points
+        var systems = first.CoveredSolarSystemIds;
+        for (var i = 0; i < 4; i++)
+            Assert.Equal(ScoreOutcome.Scored, await Score(rig, first.CampaignId, Side.Pirate, system: systems[i]));
+        Assert.Equal(ScoreOutcome.AlreadyScored, await Score(rig, first.CampaignId, Side.Pirate, system: systems[0]));
+        Assert.Equal(ScoreOutcome.Scored, await Score(rig, first.CampaignId, Side.Pirate, system: systems[4]));
         Assert.Equal(CampaignStates.PirateWin, (await rig.Get(first.CampaignId))!.State);
         Assert.Equal(ScoreOutcome.NotActive, await Score(rig, first.CampaignId, Side.Pirate));
 

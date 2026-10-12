@@ -105,6 +105,86 @@ public sealed class InsurgencyStore
         await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
+    /// <summary>Records a side's point in a system once (the system's first point for that side). False when the system already scored for it.</summary>
+    public async Task<bool> TryScorePointAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long campaignId, long solarSystemId, Side side, long nowMs, CancellationToken cancellationToken = default)
+    {
+        await using var command = Sql.Command(connection, transaction, Q(
+            "INSERT INTO {schema}.insurgency_points (campaign_id, solar_system_id, side, scored_ms) VALUES ($1, $2, $3, $4) ON CONFLICT DO NOTHING"),
+            campaignId, solarSystemId, side == Side.Pirate ? "pirate" : "antipirate", nowMs);
+        return await command.ExecuteNonQueryAsync(cancellationToken) == 1;
+    }
+
+    /// <summary>Makes a character a contributor of the campaign (once).</summary>
+    public async Task AddContributorAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long campaignId, long characterId, long nowMs, CancellationToken cancellationToken = default)
+    {
+        await using var command = Sql.Command(connection, transaction, Q(
+            "INSERT INTO {schema}.insurgency_contributors (campaign_id, character_id, first_ms) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING"),
+            campaignId, characterId, nowMs);
+        await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    /// <summary>The characters that contributed to a campaign, in the order they first did.</summary>
+    public async Task<IReadOnlyList<long>> ContributorsAsync(NpgsqlConnection connection, NpgsqlTransaction? transaction, long campaignId, CancellationToken cancellationToken = default)
+    {
+        await using var command = Sql.Command(connection, transaction, Q("SELECT character_id FROM {schema}.insurgency_contributors WHERE campaign_id = $1 ORDER BY first_ms, character_id"), campaignId);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        var rows = new List<long>();
+        while (await reader.ReadAsync(cancellationToken))
+            rows.Add(reader.GetInt64(0));
+        return rows;
+    }
+
+    /// <summary>The active campaigns that cover a system (a kill there is a contribution to each).</summary>
+    public async Task<IReadOnlyList<long>> ActiveCoveringAsync(NpgsqlConnection connection, NpgsqlTransaction? transaction, long solarSystemId, CancellationToken cancellationToken = default)
+    {
+        await using var command = Sql.Command(connection, transaction, Q(
+            "SELECT campaign_id FROM {schema}.insurgency_campaigns WHERE state = 3 AND covered_solar_system_ids @> ARRAY[$1]::bigint[] ORDER BY campaign_id"), solarSystemId);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        var rows = new List<long>();
+        while (await reader.ReadAsync(cancellationToken))
+            rows.Add(reader.GetInt64(0));
+        return rows;
+    }
+
+    /// <summary>Records a site a campaign started in one of its systems.</summary>
+    public async Task RecordSiteAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long campaignId, long solarSystemId, long dungeonId, long instanceId, CancellationToken cancellationToken = default)
+    {
+        await using var command = Sql.Command(connection, transaction, Q(
+            "INSERT INTO {schema}.insurgency_sites (campaign_id, solar_system_id, dungeon_id, instance_id) VALUES ($1, $2, $3, $4)"),
+            campaignId, solarSystemId, dungeonId, instanceId);
+        await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    /// <summary>Marks a campaign site completed and returns its campaign and system, or null when the dungeon is not one of the campaigns' sites (or was already completed).</summary>
+    public async Task<(long CampaignId, long SolarSystemId)?> CompleteSiteAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long instanceId, long nowMs, CancellationToken cancellationToken = default)
+    {
+        await using var command = Sql.Command(connection, transaction, Q(
+            "UPDATE {schema}.insurgency_sites SET completed_ms = $2 WHERE instance_id = $1 AND completed_ms IS NULL RETURNING campaign_id, solar_system_id"),
+            instanceId, nowMs);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        if (!await reader.ReadAsync(cancellationToken))
+            return null;
+        return (reader.GetInt64(0), reader.GetInt64(1));
+    }
+
+    /// <summary>The instances of a campaign's sites that have not completed (they end with the campaign).</summary>
+    public async Task<IReadOnlyList<long>> OpenSiteInstancesAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long campaignId, CancellationToken cancellationToken = default)
+    {
+        await using var command = Sql.Command(connection, transaction, Q("SELECT instance_id FROM {schema}.insurgency_sites WHERE campaign_id = $1 AND completed_ms IS NULL ORDER BY instance_id"), campaignId);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        var rows = new List<long>();
+        while (await reader.ReadAsync(cancellationToken))
+            rows.Add(reader.GetInt64(0));
+        return rows;
+    }
+
+    /// <summary>How many campaigns a warzone has had (the next hub of the warzone is chosen from it).</summary>
+    public async Task<long> CountInWarzoneAsync(NpgsqlConnection connection, NpgsqlTransaction? transaction, long warzoneId, CancellationToken cancellationToken = default)
+    {
+        await using var command = Sql.Command(connection, transaction, Q("SELECT count(*) FROM {schema}.insurgency_campaigns WHERE warzone_id = $1"), warzoneId);
+        return (long)(await command.ExecuteScalarAsync(cancellationToken))!;
+    }
+
     private static Campaign Read(NpgsqlDataReader reader) => new(
         CampaignId: reader.GetInt64(0),
         PirateFactionId: (int)reader.GetInt64(1),

@@ -471,11 +471,22 @@ internal sealed partial class CharacterServicesComposition
         Eve.Relations.RelationStore relations, Eve.Inventory.PgItemStore items, long characterId, long agentId, DateTimeOffset now, string reference,
         IReadOnlyList<MissionStandingGain> standings, IReadOnlyList<(int TypeId, long Quantity)> consume, CancellationToken cancellationToken)
     {
-        // the holdings are read before the transaction: a short holding refuses the completion without writing anything
-        IReadOnlyList<Eve.Inventory.Item> owned = consume.Count == 0 ? [] : await items.OwnedByAsync(characterId, cancellationToken);
-        if (consume.Any(need => owned.Where(item => item.TypeId == need.TypeId).Sum(item => item.Quantity) < need.Quantity)) return false;
         await using var connection = await source.OpenConnectionAsync(cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        // the stacks are locked before anything is written: a second turn-in waits here and then finds them gone (or short)
+        var takes = new List<(Eve.Inventory.Item Stack, long Taken)>();
+        foreach (var (typeId, quantity) in consume)
+        {
+            var left = quantity;
+            foreach (var stack in await items.LockOwnedOfTypeAsync(connection, transaction, characterId, typeId, cancellationToken))
+            {
+                if (left == 0) break;
+                var taken = Math.Min(left, stack.Quantity);
+                takes.Add((stack, taken));
+                left -= taken;
+            }
+            if (left > 0) return false;
+        }
         Eve.Agents.AgentMissionChange? change;
         try
         {
@@ -486,18 +497,11 @@ internal sealed partial class CharacterServicesComposition
             return false;
         }
         if (change is null) return false;
-        // the objective items leave with the completion, the oldest stacks first
-        foreach (var (typeId, quantity) in consume)
+        // the objective items leave with the completion
+        foreach (var (stack, taken) in takes)
         {
-            var left = quantity;
-            foreach (var stack in owned.Where(item => item.TypeId == typeId).OrderBy(item => item.Id))
-            {
-                if (left == 0) break;
-                var taken = Math.Min(left, stack.Quantity);
-                if (taken == stack.Quantity) await items.DeleteAsync(connection, transaction, stack.Id, cancellationToken);
-                else await items.SetQuantityAsync(connection, transaction, stack.Id, stack.Quantity - taken, cancellationToken);
-                left -= taken;
-            }
+            if (taken == stack.Quantity) await items.DeleteAsync(connection, transaction, stack.Id, cancellationToken);
+            else await items.SetQuantityAsync(connection, transaction, stack.Id, stack.Quantity - taken, cancellationToken);
         }
         // read in the transaction: a diminishing gain depends on the standing the pilot has when the completion is written
         foreach (var gain in standings)

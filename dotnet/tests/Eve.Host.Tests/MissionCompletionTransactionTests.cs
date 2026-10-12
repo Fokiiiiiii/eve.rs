@@ -124,6 +124,25 @@ public class MissionCompletionTransactionTests
     }
 
     [PgFact]
+    public async Task Two_turn_ins_racing_for_one_item_consume_it_once()
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        const long OtherAgent = 3008417;
+        await fixture.Store.OfferAsync(Pilot, OtherAgent, Kill, Start, "offer:x9-race");
+        await fixture.Store.AcceptAsync(Pilot, OtherAgent, Start, "accept:x9-race");
+        await fixture.GrantAsync(Datacore, 1);
+
+        var results = await Task.WhenAll(
+            CharacterServicesComposition.CompleteInTransactionAsync(fixture.Source, fixture.Store, fixture.Relations, fixture.Items,
+                Pilot, Agent, Start + TimeSpan.FromHours(1), "complete:x9-a", Gains, [(Datacore, 1L)], CancellationToken.None),
+            CharacterServicesComposition.CompleteInTransactionAsync(fixture.Source, fixture.Store, fixture.Relations, fixture.Items,
+                Pilot, OtherAgent, Start + TimeSpan.FromHours(1), "complete:x9-b", Gains, [(Datacore, 1L)], CancellationToken.None));
+
+        Assert.Equal(1, results.Count(done => done));
+        Assert.Empty(await fixture.Items.OwnedByAsync(Pilot));
+    }
+
+    [PgFact]
     public async Task A_completion_with_the_objective_item_short_is_refused_and_writes_nothing()
     {
         await using var fixture = await Fixture.CreateAsync();

@@ -330,7 +330,7 @@ internal sealed partial class CharacterServicesComposition
             agentMissionStatic,
             host,
             agentId => agentMissionAgentById.TryGetValue(agentId, out var agent) && agent.SolarSystemId is { } system
-                ? new MissionAgentPlace(system, agent.CorporationId, agent.BaseLocationId)
+                ? new MissionAgentPlace(system, agent.CorporationId, agent.BaseLocationId, agent.Level)
                 : null,
             () => DateTimeOffset.UtcNow,
             (missionId, characterId, place, level) => stargateGraph is { } gates
@@ -429,7 +429,7 @@ internal sealed partial class CharacterServicesComposition
         if (IsTradeMission(record.Content.MissionId)) return null;
         if (agentMissionStatic.Mission(record.Content.MissionId)?.Courier is not { ObjectiveTypeId: { } typeId, ObjectiveQuantity: > 0 } courier) return null;
         if (!agentMissionAgentById.TryGetValue(record.AgentId, out var agent) || agent.BaseLocationId is not { } pickup || agent.SolarSystemId is not { } system) return null;
-        var level = agentMissionStatic.Level(record.Content.MissionId).Level;
+        var level = Eve.Services.Core.MissionCourierRules.CourierLevel(agentMissionStatic.IsEpicArcStep(record.Content.MissionId), agent.Level, agentMissionStatic.Level(record.Content.MissionId).Level);
         if (stargateGraph is not { } gates || Eve.Services.Core.MissionCourierRules.Destination(record.Content.MissionId, characterId, pickup, (int)system, level, gates, stations.All) is not { } destination) return null;
         var type = dogma.Type((int)typeId);
         var volume = type is not null && dogma.AttributeId("volume") is { } attribute ? type.Attributes.GetValueOrDefault(attribute, 0) : 0;

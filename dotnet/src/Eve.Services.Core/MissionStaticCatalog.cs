@@ -136,6 +136,9 @@ public sealed class MissionStaticCatalog
             ? NoIds
             : steps.Where(step => IsOfferable(step.ArcId)).Select(step => step.Step.MissionId).Distinct().Order().ToArray();
 
+    /// <summary>Whether the mission is a step of an epic arc (the official build's <c>epicArcs</c>).</summary>
+    public bool IsEpicArcStep(long missionId) => _stepByMission.ContainsKey(missionId);
+
     /// <summary>
     /// A talk step: an epic arc step with neither a kill nor a courier objective, completed by talking to the agent of the step that follows it.
     /// </summary>

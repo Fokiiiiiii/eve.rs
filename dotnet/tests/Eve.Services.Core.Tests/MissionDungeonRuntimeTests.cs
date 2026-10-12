@@ -578,6 +578,49 @@ public class MissionDungeonRuntimeTests
         Assert.Contains(level1!.Id, new long[] { 11, 20, 30 });
     }
 
+    // An epic arc with one courier step (9401, agent 3008500): the arc's step has no mission level, so its jump range comes from its agent.
+    private const string CourierArc = """
+        {"_key": 9001, "name": {"en": "Courier Arc"}, "arcRestartInterval": 129600,
+         "missions": [{"_key": 9401, "agentID": 3008500, "nextMissions": []}]}
+        """;
+
+    [AgentsPgFact]
+    public async Task An_epic_arc_courier_takes_its_agents_level_for_the_jump_range()
+    {
+        var source = NpgsqlDataSource.Create(PgConnection.ForTest(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
+        var schema = "mdr_" + Guid.NewGuid().ToString("N")[..12];
+        await using var cleanup = new Cleanup(source, schema);
+        await AgentMissionStore.MigrateAsync(source, schema);
+        var store = new AgentMissionStore(source, schema);
+        var host = new FakeHost { Store = store };
+        var catalog = MissionStaticCatalog.FromRows(3405148, [new SdeRow(9401, JsonDocument.Parse(CourierMission).RootElement.Clone())],
+            [new SdeRow(9001, JsonDocument.Parse(CourierArc).RootElement.Clone())]);
+        long? jumpLevel = null;
+        var runtime = new MissionDungeonRuntime(store, catalog, host, _ => new MissionAgentPlace(System, Corporation, AgentStation, 2), () => Start,
+            (missionId, characterId, place, level) =>
+            {
+                jumpLevel = level;
+                return Dest(DestinationStation, (int)System);
+            });
+        await store.OfferAsync(Pilot, Agent, new AgentMissionContent(9401, 1239, "Courier Step", "", false), Start, "offer:c3");
+        await store.AcceptAsync(Pilot, Agent, Start, "accept:c3");
+        await runtime.OnAcceptedAsync(Pilot, Agent);
+
+        await runtime.OnDockedAsync(Pilot, DestinationStation);
+
+        Assert.Equal(2L, jumpLevel);
+        Assert.Equal(AgentMissionState.Completed, (await store.ReadAsync(Pilot, Agent))!.State);
+    }
+
+    [Fact]
+    public void The_courier_level_of_an_epic_arc_step_is_its_agents_and_any_other_courier_keeps_its_tag()
+    {
+        Assert.Equal(2L, MissionCourierRules.CourierLevel(true, 2, null));
+        Assert.Equal(2L, MissionCourierRules.CourierLevel(true, 2, 4));
+        Assert.Equal(4L, MissionCourierRules.CourierLevel(false, 2, 4));
+        Assert.Null(MissionCourierRules.CourierLevel(false, 2, null));
+    }
+
     // A basic courier (level 4, Distribution) and a basic item kill (level 4, a dungeon whose objective is an item), both untagged by arcs.
     private const string BasicCourierStep = """
         {"_key": 9411, "name": {"en": "Basic Courier"}, "nameID": 1240, "hasStandingRewards": false,

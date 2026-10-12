@@ -234,6 +234,7 @@ public sealed partial class SpaceSessions
         {
             throw MovementRefused(policy, "jump");
         }
+        await CheckGateRulesAsync(pilot, gateId, cancellationToken);
         CommandReply reply;
         try
         {
@@ -249,8 +250,32 @@ public sealed partial class SpaceSessions
             _log?.Invoke($"jump of session {session.SessionId} through {gateId} refused: {reply.Reason}");
             throw JumpRefused(reply.Reason);
         }
+        // entering a restricted system through a gate locks the pilot to the gate it arrived by (the wiki: Emanation Lock)
+        if (GateRules?.DestinationOf(gateId) is { } arrivalGate)
+        {
+            _emanationLocks.Entered(pilot.CharacterId, destination, arrivalGate, _nowUnixMs());
+        }
         SendJumpQueueUpdate(session, pilot.CharacterId, destination);
         return Py.Tuple(boundObjectId is null ? None : new PyStr(boundObjectId), new PyLong(Py.FileTimeFromUnixMs(_nowUnixMs() + SessionChangeCooldownMs)));
+    }
+
+    /// <summary>The stargate rules of the client data: the pilot's ship group against the gate's list, and the emanation lock of the system it is in.</summary>
+    private async Task CheckGateRulesAsync(Pilot pilot, long gateId, CancellationToken cancellationToken)
+    {
+        if (GateRules is null)
+        {
+            return;
+        }
+        await _statics.EnsureTypesAsync([pilot.TypeId], cancellationToken);
+        var group = _statics.Type(pilot.TypeId)?.GroupId ?? 0;
+        if (!GateRules.ShipAllowed(gateId, group))
+        {
+            throw Notify("Capital ships cannot use this stargate.");
+        }
+        if (!_emanationLocks.MayLeave(pilot.CharacterId, pilot.SolarSystemId, gateId, _nowUnixMs()))
+        {
+            throw Notify("An emanation lock holds you to another stargate of this system.");
+        }
     }
 
     /// <summary>The message the client shows for a jump that cannot be done (the reference's mapping of what went wrong).</summary>

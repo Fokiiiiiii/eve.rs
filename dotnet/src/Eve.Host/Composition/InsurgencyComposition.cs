@@ -10,6 +10,8 @@ internal sealed partial class CharacterServicesComposition
 {
     private Ins.InsurgencyStore insurgencyStore = default!;
     private Ins.InsurgencyCampaigns insurgencyCampaigns = default!;
+    /// <summary>The stargate graph of the static data (set by the space composition; the incursion layout and the insurgency hubs use its jumps).</summary>
+    private Eve.Universe.StargateGraph? stargateGraph;
 
     /// <summary>
     /// The pirate insurgency campaigns (C-M1, C-S1): the store and the deadline jobs of the state machine, the campaign snapshot the client asks for, and the
@@ -21,8 +23,15 @@ internal sealed partial class CharacterServicesComposition
         var schema = Env("EVE_INSURGENCY_SCHEMA", Ins.InsurgencyStore.DefaultSchema);
         await Ins.InsurgencyStore.MigrateAsync(source, schema);
         insurgencyStore = new Ins.InsurgencyStore(source, schema);
-        insurgencyCampaigns = new Ins.InsurgencyCampaigns(insurgencyStore, foundations.Scheduler, foundations.Events);
+        insurgencyCampaigns = new Ins.InsurgencyCampaigns(insurgencyStore, foundations.Scheduler, foundations.Events, loyaltyPoints);
         insurgencyCampaigns.Register();
+        // the pirate sites, the start of the campaigns and their points need the space runtime (the dungeon waves and the stargates)
+        if (dungeonWavesDirector is not null && stargateGraph is not null)
+        {
+            var sites = new Eve.Services.Space.Insurgency.InsurgencyDirector(insurgencyStore, insurgencyCampaigns, foundations.Scheduler, foundations.Events,
+                foundations.Content, dungeonWavesDirector, solarSystems, stargateGraph, Eve.Dungeons.DungeonCatalog.LoadEmbedded());
+            await sites.AttachAsync();
+        }
         foundations.Events.Subscribe("insurgency.campaign-notices", [Ins.InsurgencyCampaigns.CampaignChangedTopic],
             (context, cancellation) =>
             {

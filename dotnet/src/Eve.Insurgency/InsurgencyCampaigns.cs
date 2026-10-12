@@ -1,5 +1,6 @@
 using Eve.Events;
 using Eve.Scheduler;
+using Eve.Wallet;
 using Npgsql;
 
 namespace Eve.Insurgency;
@@ -19,6 +20,7 @@ public enum ScoreOutcome
     NotActive,
     NotCovered,
     UnknownCampaign,
+    AlreadyScored,
 }
 
 /// <summary>
@@ -37,12 +39,15 @@ public sealed class InsurgencyCampaigns
     private readonly InsurgencyStore _store;
     private readonly DurableScheduler _scheduler;
     private readonly EventBus _events;
+    private readonly LoyaltyPointStore? _loyalty;
 
-    public InsurgencyCampaigns(InsurgencyStore store, DurableScheduler scheduler, EventBus events)
+    /// <summary>The campaigns. With a loyalty store, a pirate victory pays each contributor in the win's transaction (<see cref="InsurgencyRules.VictoryLp"/>).</summary>
+    public InsurgencyCampaigns(InsurgencyStore store, DurableScheduler scheduler, EventBus events, LoyaltyPointStore? loyalty = null)
     {
         _store = store;
         _scheduler = scheduler;
         _events = events;
+        _loyalty = loyalty;
     }
 
     public InsurgencyStore Store => _store;
@@ -81,9 +86,16 @@ public sealed class InsurgencyCampaigns
         var step = advanced;
         if (advanced.Campaign.CoveredSolarSystemIds.Contains(solarSystemId))
         {
-            var scored = CampaignMachine.Score(advanced.Campaign, side, now);
-            outcome = scored.Accepted ? ScoreOutcome.Scored : ScoreOutcome.NotActive;
-            step = new MachineStep(scored.Campaign, [.. advanced.Transitions, .. scored.Transitions], scored.Accepted);
+            if (advanced.Campaign.State != CampaignStates.Active)
+                outcome = ScoreOutcome.NotActive;
+            else if (!await _store.TryScorePointAsync(connection, transaction, campaignId, solarSystemId, side, now, cancellationToken))
+                outcome = ScoreOutcome.AlreadyScored;
+            else
+            {
+                var scored = CampaignMachine.Score(advanced.Campaign, side, now);
+                outcome = ScoreOutcome.Scored;
+                step = new MachineStep(scored.Campaign, [.. advanced.Transitions, .. scored.Transitions], scored.Accepted);
+            }
         }
         if (step.Transitions.Count > 0 || outcome == ScoreOutcome.Scored)
             await _store.UpdateAsync(connection, transaction, step.Campaign, cancellationToken);
@@ -135,8 +147,24 @@ public sealed class InsurgencyCampaigns
                     pirateWon ? InsurgencyRules.LoserModifier(antipirate) : InsurgencyRules.WinnerModifier(antipirate),
                     cancellationToken);
             }
+            if (transition.To == CampaignStates.PirateWin && _loyalty is not null)
+                await PayContributorsAsync(connection, transaction, step.Campaign, cancellationToken);
             await _events.PublishInTransactionAsync(connection, transaction, CampaignChangedTopic,
                 new CampaignChanged(step.Campaign.CampaignId, transition.From, transition.To, transition.AtMs, step.Campaign), KeyOf(step.Campaign.CampaignId), cancellationToken);
+        }
+    }
+
+    /// <summary>
+    /// The victory payout (the wiki: a win pays every contributor 1,500,000 LP): one credit per contributor from the pirate corporation of the warzone, keyed by the
+    /// campaign and the character, so a replayed win credits nothing.
+    /// </summary>
+    private async Task PayContributorsAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, Campaign campaign, CancellationToken cancellationToken)
+    {
+        var warzone = InsurgencyWarzones.All.Single(w => w.WarzoneId == campaign.WarzoneId);
+        foreach (var character in await _store.ContributorsAsync(connection, transaction, campaign.CampaignId, cancellationToken))
+        {
+            await _loyalty!.ApplyAsync(connection, transaction, new LoyaltyHolder(LoyaltyHolderKind.Character, character), warzone.PirateCorporationId,
+                InsurgencyRules.VictoryLp, "insurgency_victory", $"insurgency:{campaign.CampaignId}:{character}", cancellationToken);
         }
     }
 

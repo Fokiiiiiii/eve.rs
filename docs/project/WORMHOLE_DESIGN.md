@@ -240,3 +240,68 @@ Not built, with the reason:
   Thera and Turnur connections, the headless MITM run against EveJS: not built. Reasons above; the MITM run needs a wormhole
   to walk through.
 - Owner decision 5 (SDE over wiki for type attributes; the mismatch table in section 3.3) stays as it is.
+
+## 10. Slice 3 (2026-10-12): statics and effects per system, local chat
+
+### 10.1 The data file (committed, 393 KB)
+
+- `dotnet/src/Eve.Universe/Wormholes/Data/jspace-systems.json`, embedded in `Eve.Universe`, loaded by `JSpaceSystems.Load()`.
+  One row per J-space system (2,604): id, name (client localization), class (client `wormholeClassID`), effect (name, beacon
+  typeID, strength class), statics (code and type ID), and `staticsSource`. The header names every source and the cross-checks.
+- Classes: client `native/systems.jsonl.gz` (owner decision 1; Fuzzwork not used).
+- Statics and effects of the 2,504 normal systems: EveJS v0.12.9 `tools/DatabaseCreator/staticTables/explorationWormholeStatic/data.json`
+  (`staticSlots`, `environmentEffectTypeID`). The generator's spec file (`scripts\DataSync\spec`) is not in the repository, so the
+  generator is not read; the table itself is.
+- Statics of the 100 shattered systems: EVE University "List of shattered systems" (oldid 222738, fetched 2026-10-12). The
+  table has no IDs; the names (J015092 and so on) are matched to the client's localization names, so the mapping is by name.
+  EveJS has no statics for these 100 systems (0 of 100).
+- Effect beacons: SDE group 920 (36 types), by `effectTypeID` from EveJS.
+
+### 10.2 Cross-checks (two or more sources)
+
+| Check | Result |
+|---|---|
+| Shattered systems: class, client against the wiki (matched by name) | 98 of 100. J004686: wiki 3, client 2 (EveJS 2). J011376: wiki 3, client 4 (EveJS 4) |
+| Shattered systems: effect, EveJS against the wiki | 98 of 100. J005926: EveJS `environmentFamily` Pulsar, its beacon Red Giant, the wiki Red Giant. J010569: EveJS `environmentFamily` Red Giant, its beacon Wolf Rayet, the wiki Red Giant. The wiki is used for the 100 shattered systems |
+| Shattered systems: statics, EveJS against the wiki | 0 of 100 (EveJS has none). The wiki is used |
+| Static type codes against the SDE target class (1381) | Checked by `JSpaceSystemsTests` (PgFact): every static type is a wormhole type of the pinned SDE |
+| Statics per class, EveJS against the wiki's general rule (section 3.2) | Class 1: 1 static (348 systems); class 3: 1 (494 of 495); class 5, 6: 1; class 2: 2 (525). Class 4: 1 (498 of 505), against the wiki's "usually two". Open (owner decision 7) |
+| Effect strength class against the system class | Equal for 1,006 of 1,038 systems with an effect; 32 differ (30 Drifter systems, 2 C1 to C6). The wiki says the strength "depends on the system class, which the entry wormhole indicates" |
+
+The 1,038 systems with an effect: 1,036 agree by name between EveJS `environmentFamily` and its beacon typeID (after
+the `Wolf-Rayet` / `Wolf Rayet` spelling is normalised); the two others are the two shattered systems above, where EveJS disagrees
+with itself.
+
+### 10.3 Local chat (owner decision 5)
+
+- Client (V24.01, `chat/client/local_chat/channel_controller.py`): in a wormhole system (`IsWormholeSystem`, also Zarzakh and
+  Triglavian space) the local channel is "delayed": `is_local_chat_delayed` is true, so on joining a system no members are
+  added (line 254), members are added when they speak (`_update_member_activity`, line 200), inactive members are removed
+  (`_remove_inactive_members_routine`), and `member_count` is 0 (line 139). The member list fills only when pilots speak.
+- Server (EveJS `server/src/services/chat/channelRules.js`): `isDelayedLocalSolarSystemID` (line 126) and
+  `isWormholeSolarSystemID` (line 104). The rule is the same; the server sends messages, the client shows the list.
+- eve.rs has no chat service (`dotnet/src` has no local channel; `SessionStartupRpcServices.cs` mentions only the session
+  startup). So there is nothing to change for delayed local yet. Building the local channel is a chat-service task, not a
+  wormhole task. Not built.
+
+### 10.4 What is not done in slice 3, and why
+
+- Connection generator and the static pairing. A static gives its type and its target class (the SDE 1381 and the wiki
+  "Leads to"), but not the system it leads to. Nothing published (EVE University, Anoik.is not fetched, EveJS's wandering
+  profiles hold counts, not pairs) gives the pairing. The "random wandering connections" rule is not in the wiki pages read.
+  So no connection can be created from a source. Cut until owner decision 8.
+- The setup-time loader into a dedicated PostgreSQL schema: not built. The data file is loaded in memory; no runtime
+  consumer needs a table yet.
+- Lifetime and mass jobs, the jump, the entities, the sim changes, the signatures, the effects on ships, the sites, Thera and
+  Turnur connections, the headless MITM run: not built (section 9.6 still holds). The Rust workspace could not be built in
+  this session: the disk was 6.7 GB and a Rust build needs 9 to 11 GB of target output (BRIEF), so a sim change could not be
+  compiled or tested.
+
+### 10.5 Owner decisions open after slice 3
+
+7. Class 4 statics: EveJS gives one static for 498 of 505 normal class-4 systems; the wiki says "usually two". Which holds?
+8. Static pairing: the system a static leads to. No source found. Options: a documented rule, a data source the owner
+   names, or a cut (current).
+9. The shattered list's J004686 and J011376 classes (wiki 3, client 2 and 4): keep the client.
+10. Effects of J005926 and J010569 (EveJS disagrees with itself; the wiki says Red Giant for both): the wiki is used for the
+    100 shattered systems (current). Effects of the other 2,504 systems come from the EveJS beacon.

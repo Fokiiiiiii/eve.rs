@@ -91,13 +91,15 @@ public sealed class IncursionDirector
     private readonly Dictionary<IncursionBand, List<int>> _constellationsOfBand = [];
     private readonly Dictionary<int, List<SolarSystemInfo>> _systemsOfConstellation = [];
     private readonly EventBus _bus;
+    private readonly StargateGraph _stargates;
 
     public IncursionDirector(
-        NpgsqlDataSource source, ContentRuntime content, DurableScheduler scheduler, DungeonWaveDirector sites, EventBus bus, SolarSystemCatalog systems, string schema,
-        Func<double>? random = null)
+        NpgsqlDataSource source, ContentRuntime content, DurableScheduler scheduler, DungeonWaveDirector sites, EventBus bus, SolarSystemCatalog systems,
+        StargateGraph stargates, string schema, Func<double>? random = null)
     {
         ArgumentNullException.ThrowIfNull(systems);
-        (_source, _content, _scheduler, _sites, _bus) = (source, content, scheduler, sites, bus);
+        ArgumentNullException.ThrowIfNull(stargates);
+        (_source, _content, _scheduler, _sites, _bus, _stargates) = (source, content, scheduler, sites, bus, stargates);
         _schema = Sql.CheckSchema(schema);
         _random = random ?? Random.Shared.NextDouble;
         foreach (SolarSystemInfo system in systems.Systems.OrderBy(s => s.Id))
@@ -278,9 +280,20 @@ public sealed class IncursionDirector
         SolarSystemInfo stagingSystem = inBand[Pick(inBand.Count)];
         int staging = stagingSystem.Id;
         int[] systems = members.Select(s => s.Id).ToArray();
-        // the layout: the farthest system is the headquarters, the nearest ones are vanguards and assaults (EveJS buildIncursionSystemLayout)
+        // the layout by stargate jumps from the staging system: the farthest system is the headquarters, the nearest ones are vanguards and assaults (EveJS buildIncursionSystemLayout)
+        var jumps = _stargates.JumpsFrom(staging);
+        if (members.Any(s => !jumps.ContainsKey(s.Id)))
+        {
+            // a system the gates do not reach from the staging one: the layout cannot be made now, the band tries again later
+            await context.ScheduleAsync(new JobSpec(SpawnJob, context.NowMs + (long)NoConstellationRetry.TotalMilliseconds)
+            {
+                Key = $"retry:{due.Band}:{context.NowMs}",
+                Payload = due,
+            }, cancellationToken);
+            return;
+        }
         var (headquarters, vanguards, assaults) = IncursionRules.LayoutOf(members.Where(s => s.Id != staging)
-            .Select(s => (s.Id, Distance(stagingSystem, s))).ToList());
+            .Select(s => (s.Id, (double)jumps[s.Id])).ToList());
         long nowMs = context.NowMs;
         long id = (long)(await Sql.ScalarAsync(context.Connection, context.Transaction, Q("""
             INSERT INTO {schema}.incursions (band, constellation_id, staging_system_id, systems, phase, phase_since_ms, phase_due_ms, influence, reward_group_id, started_ms,
@@ -525,7 +538,4 @@ public sealed class IncursionDirector
 
     private double Offset() => (_random() * 2 - 1) * SiteSpread;
 
-    /// <summary>The straight-line distance between two systems in metres. shortcut: the layout uses straight-line distance, not stargate jumps (no jump graph is loaded), upgrade when the stargates are in the static data.</summary>
-    private static double Distance(SolarSystemInfo a, SolarSystemInfo b) =>
-        Math.Sqrt((a.X - b.X) * (a.X - b.X) + (a.Y - b.Y) * (a.Y - b.Y) + (a.Z - b.Z) * (a.Z - b.Z));
 }

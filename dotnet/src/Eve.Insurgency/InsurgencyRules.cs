@@ -43,6 +43,9 @@ public static class InsurgencyRules
     public const int MaxAmbitionModifier = 5;
     public const int SpreadCorruptionLevel = 3;
     public const long MaxWinningContributionLp = 1_500_000;
+
+    /// <summary>The loyalty points a victory pays each contributor (the wiki's Insurgency page: "1,500,000 LP").</summary>
+    public const long VictoryLp = MaxWinningContributionLp;
     public const double WinningMultiplier = 1.0;
     public const double LosingMultiplier = 0.4;
     public const double MaxPayoutShare = 0.45;

@@ -69,7 +69,12 @@ internal sealed partial class CharacterServicesComposition
             new Eve.Services.Space.PvpFilamentMgrService(),
             new Eve.Services.Space.RandomJumpMgrService(ReadTravelRpcItemAsync),
             new Eve.Services.Space.WarpVectorMgrService(ReadTravelRpcItemAsync),
-            new Eve.Services.Space.WormholeMgrService(spaceSessions),
+            new Eve.Services.Space.WormholeMgrService(
+                spaceSessions,
+                readPolarization: (endId, characterId, _) => ValueTask.FromResult(spaceSessions?.PolarizationOf(endId, characterId)),
+                jump: async (call, endId, cancellationToken) => spaceSessions is null
+                    ? null
+                    : await spaceSessions.WormholeJumpAsync(call.Session, endId, call.BoundObjectId, cancellationToken)),
             new Eve.Services.Core.StructureGuestsService(
             (structureId, cancellationToken) =>
             {

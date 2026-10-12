@@ -56,6 +56,30 @@ public class NpcBountyHostTests
     }
 
     [PgFact]
+    public async Task A_sim_resident_npc_pays_its_types_entity_kill_bounty_from_the_static_data()
+    {
+        // a Pochven Entropic Disintegrator Werpost (54577): no host profile, its SDE entityKillBounty is 12,500,000 ISK
+        var (rig, c, session) = await InSpaceAsync();
+        await using var _ = rig;
+        rig.Sim.Say(new SimDestroyed(1UL << 62 | 7, 980_100_000_001, 0, [0, 0, 0], [1, 0, 0], 1359, c.ShipId, null, 54577, 1000298));
+        await Rig.UntilAsync(() => rig.Bounties.PendingAsync().Result.Count == 1);
+        var bucket = Assert.Single(await rig.Bounties.PendingAsync());
+        Assert.Equal((c.CharacterId, 12_500_000m, 1), (bucket.CharacterId, bucket.Amount, bucket.Kills));
+        Assert.Equal(new Dictionary<int, int> { [54577] = 1 }, bucket.NpcTypes);
+    }
+
+    [PgFact]
+    public async Task A_sim_resident_npc_whose_type_has_no_entity_kill_bounty_pays_nothing()
+    {
+        // a Liminal Damavik (52182): its SDE entityKillBounty is 0, and no source publishes one
+        var (rig, c, session) = await InSpaceAsync();
+        await using var _ = rig;
+        rig.Sim.Say(new SimDestroyed(1UL << 62 | 8, 980_100_000_002, 0, [0, 0, 0], [1, 0, 0], 34, c.ShipId, null, 52182, 1000298));
+        await Task.Delay(1500);
+        Assert.Empty(await rig.Bounties.PendingAsync());
+    }
+
+    [PgFact]
     public async Task What_is_due_is_paid_into_the_wallet_and_raised_for_whoever_announces_wallets()
     {
         var (rig, c, session) = await InSpaceAsync();

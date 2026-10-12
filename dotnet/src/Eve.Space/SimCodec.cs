@@ -196,7 +196,7 @@ public static partial class SimCodec
                 message = new SimJumped(r.U64(), r.I32(), r.I64(), r.I32(), r.I64());
                 break;
             case Kind.Destroyed:
-                message = new SimDestroyed(r.U64(), r.I64(), r.I64(), ReadVector(ref r), ReadVector(ref r), r.F64(), r.I64(), ReadWreckKind(ref r));
+                message = new SimDestroyed(r.U64(), r.I64(), r.I64(), ReadVector(ref r), ReadVector(ref r), r.F64(), r.I64(), ReadWreckKind(ref r), r.I32(), r.I32());
                 break;
             case Kind.Respawn:
                 message = new SimRespawn(r.U64(), ReadShip(ref r), ReadVector(ref r), ReadVector(ref r));

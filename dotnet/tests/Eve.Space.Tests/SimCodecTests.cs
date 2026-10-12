@@ -343,7 +343,7 @@ public class SimCodecTests
             "ChargeAdjusted" => new SimChargeAdjusted((ulong)Wide(c, "requestId"), (bool)c["running"]!, Wide(c, "before"), Wide(c, "after")),
             "Targets" => new SimTargets(Session(), (byte)(int)c["command"]!, (bool)c["pending"]!, [.. ((JsonArray)c["targets"]!).Select(x => long.Parse((string)x!, CultureInfo.InvariantCulture))]),
             "TargetRefused" => new SimTargetRefused(Session(), (byte)(int)c["command"]!, (string)c["reason"]!, (int)c["targetType"]!, (double)c["desiredRange"]!, (double)c["actualDistance"]!),
-            "Destroyed" => new SimDestroyed(Session(), Wide(c, "shipId"), Wide(c, "wreckId"), VectorOf(c["position"]!), VectorOf(c["direction"]!), (double)c["radius"]!, Wide(c, "killerShipId"), WreckKindOf(c["wreckKind"])),
+            "Destroyed" => new SimDestroyed(Session(), Wide(c, "shipId"), Wide(c, "wreckId"), VectorOf(c["position"]!), VectorOf(c["direction"]!), (double)c["radius"]!, Wide(c, "killerShipId"), WreckKindOf(c["wreckKind"]), (int)c["shipTypeId"]!, (int)c["corporationId"]!),
             "Respawn" => new SimRespawn(Session(), ShipOf(c["ship"]!), VectorOf(c["position"]!), VectorOf(c["direction"]!)),
             "PlaceWreck" => new SimPlaceWreck(
                 (int)c["solarSystemId"]!, Wide(c, "wreckId"), (int)c["groupId"]!, WreckKindOf(c["wreck"])!, VectorOf(c["position"]!), VectorOf(c["direction"]!), (double)c["radius"]!, Wide(c, "launcherId"),

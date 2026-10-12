@@ -80,6 +80,8 @@ public sealed partial class SpaceSessions
                         await placeStructures(systemId, token);
                     refusal = await _sim.EnterAsync(new SimEnter(sessionId, systemId, EnterHow.Undock, placeId, spec), token);
                     if (refusal is null)
+                        await PlaceWormholeEndsAsync(systemId, token);
+                    if (refusal is null)
                         await _sim.SetHeatProfileAsync(sessionId, SimShips.HeatProfileOf(snapshot, _statics), token);
                 }
                 catch (SimUnavailableException error)

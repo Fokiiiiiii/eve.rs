@@ -204,12 +204,12 @@ impl Brains {
         solar_system_id: i64,
         behavior: &str,
         group_id: i64,
-        pochven_owners: Vec<i64>,
+        owners: crate::pochven_population::Owners,
     ) -> Result<(), GiveError> {
         let tree = if behavior == BELT_RAT {
             rats::create_belt_rat_behavior_tree()
-        } else if behavior == POCHVEN_NPC {
-            rats::create_pochven_npc_behavior_tree(pochven_owners)
+        } else if let Some(stationary) = rats::pochven_tree_kind(behavior) {
+            rats::create_pochven_behavior_tree(stationary, &owners)
         } else {
             self.loader.load(behavior, Some(ScopeType::Item)).map_err(|error| match error {
                 LoaderError::BehaviorDoesNotExist => GiveError::Unknown(behavior.to_string()),
@@ -238,7 +238,10 @@ impl Brains {
                     type_id: PROXIMITY_SENSOR_TYPE,
                     detection_range: npc.combat.aggression_range.max(MIN_ACQUISITION_RANGE),
                     // the tag the behavior's tree listens for (`rats.rs`): a Pochven NPC's tree listens for its own
-                    tags: vec![if behavior == POCHVEN_NPC { POCHVEN_NPC_TAG } else { RAT_TAG }.to_string()],
+                    tags: vec![
+                        if rats::pochven_tree_kind(behavior).is_some() { POCHVEN_NPC_TAG } else { RAT_TAG }
+                            .to_string(),
+                    ],
                     in_range: BTreeSet::new(),
                 },
             );

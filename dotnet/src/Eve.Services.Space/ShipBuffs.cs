@@ -68,6 +68,9 @@ public sealed class ShipBuffs
     }
 
     /// <summary>Makes the ship's buffs of <paramref name="nowMs"/> the world's, so the ship's numbers are the buffed ones.</summary>
+    /// <summary>The buff effects the ship carries at the time (the registry's), as the dogma world takes them.</summary>
+    public IReadOnlyList<Eve.Dogma.EffectDef> EffectsOf(long shipId, double nowMs) => _registry.EffectsOf(shipId, nowMs);
+
     public void Sync(DogmaWorld world, long shipId, double nowMs)
     {
         lock (_gate)

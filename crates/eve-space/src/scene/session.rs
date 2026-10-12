@@ -453,7 +453,7 @@ impl Scene {
 
     pub fn poll(&mut self, now: i64) -> Vec<Out> {
         self.settle_all(now);
-        let mut told = Vec::new();
+        let mut told = self.populate_pochven(now);
         let due: Vec<(SessionId, i64)> = self
             .pilots
             .iter()

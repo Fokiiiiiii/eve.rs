@@ -1158,19 +1158,19 @@ graphical client.
   answer. Session notifications are applied as they arrive (`ProcessSessionChange`, `OnSessionChanged`, `sessions.py:577-590`,
   `OnCharacterSessionChanged` on a `charid` change). Verdict: the client does not require a notification before the answer.
   eve.rs sends the selection's session change after the answer and the client accepts it. No change.
-- **`shipid` in the selection notification (cut).** EveJS's selection session change carries `shipid` (capture `evejs-nes_intro`,
-  seq 18). eve.rs leaves it out when the active ship is deferred (`SpaceSessions.cs:545-546`, `CharUnboundMgrService.cs:354-355`)
-  and sends a single-key `shipid` change after the hangar list answer (`eve-rs-nes_intro`, seq 28). The client reads
-  `session.shipid` when it builds the hold tracker (`inventorycommon/holdTracker.py:60-61`) and the hangar badges
-  (`neocomInventoryBadging.py`), and it handles a single-key `shipid` change (`invWindow.py:1142`). Verdict: the client needs
-  `shipid` when the inventory is built, which in eve.rs is after the list answer. Not aligned in this slice: the fix provisions the
-  active ship before selection and changes the deferral design (`SpaceSessions.cs`). Follow-up: provision the starter ship at
-  selection and send `shipid` in the selection change, as the reference does.
-- **The handshake's `2`.** The reference writes the `2` after it reads the client's encrypted authentication blob; eve.rs writes it
-  before (captures `evejs-login` and `eve-rs-login`, handshake records 7 and 8). The client's side of the handshake
-  (`carbon/common/script/net/GPS.py:400-434`) writes `OK CC`, reads the client's encrypted challenge, then writes the server
-  challenge. None of those writes is the `2`. Verdict: the order of the `2` relative to the client's blob is not set by the code
-  that this section reads. Not changed; follow-up: find what writes the `2` in the reference.
+- **`shipid` in the selection notification: aligned (slice 6).** The selection session change carries `shipid` with the
+  character's starter ship, the same as the reference's (capture `evejs-nes`, seq 18; `eve-rs-nes`, seq 19: both 22 keys, the
+  same set). The starter ship exists from character creation (`dotnet/src/Eve.Characters/CharacterCreation.cs`), so the value is
+  real. The deferred docked ship (`deferredDockedShipId`) was removed; the fitting bootstrap for a docked ship runs on the hangar
+  list (`CharacterDogmaSync.cs`). The unit test `Selecting_a_character_puts_its_active_ship_in_the_selection_session_change`
+  checks the announced change. The earlier "cut" text was wrong: it came from reading a stale capture file.
+- **The handshake's `2`: aligned (slice 6).** The reference writes `PyInt(2)` after it reads the client's challenge
+  (`server/src/network/tcp/handshake.js`, the CryptoChallengePacket step). eve.rs writes it after the same read
+  (`crates/eve-net/src/handshake.rs`). The `nes` walk captures of both servers match from the version exchange through
+  `GetServiceInfo`, so the handshake lines in the MITM diff are equal.
+- **Still different, not changed.** The reference sends `OnCharacterSelected` then the session change, and eve.rs sends the
+  session change first in one place; the walk's dogma and ping ordering differs by one packet; character ids and names differ per
+  run (volatile). These are order details the client code in `eve-logic` does not fix in the paths read so far.
 
 ## Track A8c: the mobile beacon as a jump target (2026-10-10)
 
@@ -3174,8 +3174,15 @@ Status: `warRegistry` is partly built (the wars are read and two of the owner's 
 ### blueprintManager
 - `GetLimits()` answers `maxBlueprintResults` 500 (`blueprintManagerService.js:26-28`).
 - `GetBlueprintData(itemID)` and `GetBlueprintDataByOwner(ownerID, facilityID)` answer the blueprint instance the client reads
-  (`industryPayloads.js:92`). A blueprint is an item of group 9. The caller sees only what its character or corporation holds; another
-  owner's blueprint is the client's own `IndustryBlueprintNotFound`, and another owner's listing is empty.
+  (`industryPayloads.js:92`). A blueprint is an item of category 9, the SDE category "Blueprint" (EveJS checks `categoryID === 9`,
+  `industryRuntimeState.js:714`); eve.rs first checked the group, which is the item's kind, and recognised no blueprint (corrected in
+  slice 6). The caller sees only what its character or corporation holds, and another owner's listing is empty.
+  **Difference, not aligned (cut):** for a blueprint the caller does not hold, EveJS answers an empty instance payload
+  (`blueprintManagerService.js:34`, `getBlueprintByItemID(...) || {}`), and eve.rs refuses with the user error
+  `IndustryBlueprintNotFound`. eve-logic does not require the refusal: the client raises `IndustryBlueprintNotFound` itself only when
+  its own static table lacks the blueprint type (`eve/client/script/industry/blueprintSvc.py:73-79`). Aligning needs the empty payload
+  with the reference's `buildBlueprintInstancePayload` defaults, which this slice did not port. The walk `test_walk_blueprints.py`
+  asserts the refusal, the eve.rs behaviour.
 - **Quantity and runs.** The client takes a blueprint as an original unless its quantity is -2, and as singleton when negative
   (`industryCommon.py:331-333`), so a copy has quantity -2 and an original -1. An original's runs are -1 (the EVE convention for an
   unlimited original); a copy's runs are the stored count.
@@ -3271,3 +3278,130 @@ Sources. `docs/project/POCHVEN_DESIGN.md` section 1: the EVE University wiki "Po
 - Decision, NPC standing rule. Wiki: Triglavian rats hostile at 0.00 and below; EDENCOM rats hostile below 0.00; Rogue Drones, Drifters and Sleepers hostile to all players (the wiki's "Pochven" page). Sleepers are not in the rule (see above).
 - Not done: the hostility is not yet used by the simulation (no NPC-vs-NPC targeting exists there); gate sentries that shoot (no published firing rule: EveJS draws cosmetic sentries only, `server/src/space/empireGatePresence/empireSentryLayout.js`); skirmish spawns; invasion states; filaments (see TODO "Pochven").
 - Tests: `PochvenRulesTests` (4, pure). The gate path in `CheckGateRulesAsync` is not exercised by a Pochven host test: the rig places the pilot in a high-security system (see the A8c note above), and no rig helper puts a pilot in Pochven. Status: NOT RUN for the host path; the existing `SpaceServiceTests` gate tests cover the unchanged path.
+
+
+## Pochven population: sentries, camps, skirmishes and the NPC-vs-NPC fight (2026-10-12)
+
+Sources: `docs/project/POCHVEN_DESIGN.md` (the wiki's Pochven and Invasion pages; SDE build 3396210 `typeDogma`, `types`, `groups`, `dungeons`); the hull and sentry numbers in `crates/eve-space/src/pochven_population.rs` (each `NpcType` names its SDE type id). The data file `crates/eve-space/data/pochven_states.json` holds which faction holds each of the 27 systems (source and date in its header).
+
+Published, used as published: the sentries' numbers (Entropic Disintegrator Werpost 54577, EDENCOM GunStar 54579, Heavy GunStar 54580: range 250 km, falloff 50 km, shield, armour, structure, resonances, tracking; the GunStar damage is 25 each times the multiplier 10, the Heavy 25 times 20, the Werpost 250 times 0.8); the hulls' numbers (Liminal Damavik 52182, Imperial Navy Sentinel 52923, Interfering Phase-II Legionary 56493, Drifter Assault Cruiser 56221); the factions and their corporations; the standing rules (the wiki: Triglavian rats hostile at 0.00 and below, EDENCOM rats below 0.00, Rogue Drones and Drifters hostile to every pilot); the Final Liminality systems (27, held by the Triglavians since 2020-10-13).
+
+Project rules (not published; stated in code):
+- Sentries: one at every stargate of a Pochven system, 20 km from the gate towards the system's centre. A Triglavian system gets Entropic Disintegrator Werposts; a system the EDENCOM hold gets EDENCOM GunStars (none in the data file). A sentry does not move (orbit velocity 0).
+- Camps: two Liminal Damavik at the first two gates of a Triglavian system, 5 km from the gate, attacking pilots and the other factions' NPCs (they stay near the gate: they orbit at 300 m/s, as the belt rat does).
+- Who a sentry attacks: a Triglavian sentry attacks every ship that is not Triglavian, pilots included (a pilot starts at 0.00 standing, which the wiki makes hostile to the Triglavians). An EDENCOM sentry attacks the NPCs of the other three Pochven factions and no pilot (a pilot at 0.00 is not hostile to the EDENCOM; the simulation has no pilot standing to lower).
+- Skirmishes: every 900 s per scene (the first 900 s after the system is first looked at); the pair of factions follows the skirmish's number (Triglavian against EDENCOM, Rogue Drones against Drifters, Triglavian against Rogue Drones, EDENCOM against Drifters, in turn); two groups of two hulls, 40 km apart, from the first gate of the system.
+- Shots: once every 4 s per turret (the SDE gives no cycle for these types); the shot is the SDE's raw damage times the hull's damage multiplier; the hull's resonances are the SDE's; the Drifter cruiser's agility and structure resonance are not in the SDE (agility 1, resonance 1).
+- Caps: at most 40 Pochven NPCs per scene; a skirmish waits until it fits (4 NPCs).
+- The owners a Pochven NPC attacks (`pochven_population::owners_for`): a fighter attacks the NPCs of the other Pochven factions and nothing outside Pochven.
+
+Implementation: `Scene::poll` looks at a Pochven scene once (`populate_pochven`), places the sentries and camps, and runs the skirmish schedule. The NPC-vs-NPC fight is the stock combat tree (`brains/rats.rs`, `create_pochven_behavior_tree`) with two additions: the proximity sensor reports entities too (`includedCategories`, a Combat parameter), and `invalidOwnerIds` (a Combat parameter) excludes the owners a tree does not attack. The sensor is tagged for the Pochven tree (it was always tagged for the belt rat, which is why a Pochven NPC never saw anything before).
+
+Found while building it (not a rule): the visibility grid's box edge is the origin (`GRID_BOX` 7,864,320 m). A fight that straddles the origin changes bubble, and the bubble filter drops the target: the test fight is placed at the middle of box 0.
+
+Not done (cut, with reasons): the bounty and loot of the Pochven NPCs (the bounty code is in the host, keyed on NPC profiles that do not include the Triglavian, EDENCOM or Drifter hulls: the sim cannot credit a kill yet); the EDENCOM fortress and Heavy GunStar placements (no Pochven system is an EDENCOM fortress in the wiki; the GunStar path is built and tested through the data file's `edencom` state only); the Triglavian Entropic sentries' effect on jamming and tracking beyond the stock turret; the filaments and the Home-system standing (step 5, not started); the live walk (the headless client cannot place a pilot in Pochven; see the A8c note).
+
+Tests: `pochven_population` (16 in the Pochven filter, including the scene-level ones: the sentries and camps on first look, the 20 km placement and no movement, the skirmish schedule with the cap, determinism, a sentry locks a rogue drone and never a fellow triglavian); `brains::pochven_tests` (the NPC-vs-NPC attack, its absence within the faction and outside Pochven); `pochven` (faction and owner rules). The full `eve-space` (762) and `eve-behaviors` (548) suites pass; clippy `-D warnings` is clean for both crates.
+
+
+## Wormhole space: placement, the jump and the ends (slice 7, 2026-10-12)
+
+Sources: the owner's decisions of slice 7 (the host places both ends of a connection with the system's scene; the end position rule
+below). The wiki "Wormhole" (https://wiki.eveuniversity.org/Wormhole: polarization five minutes per pilot, no stargates, collapse
+rules), "Wormhole Types". The client's `wormholeMgr.WormholeJump(itemID)` (eve-logic `movementFunctions.py`).
+
+- End position (not published): an end is 50 km from its system's centre on a bearing chosen from the connection's seed (the far end
+  uses the same seed with another salt); radius 3,000 m. Shortcut: the reference places wormholes at positions the sources do not
+  give. An end at 50 km from the star's centre may lie inside the star for some systems (the owner accepted the rule; not checked).
+- Ends: body ID = connection ID times two (the near end) and times two plus one (the far end). The ends of every active connection
+  of a system are placed when the system's scene starts (the undock) and before a jump into the system; the simulation makes the
+  scene for a placed end when it has none (a scene with no ship stays until the next ship leaves it).
+- Texts (ours, the sources give none): "Your ship is too large for this wormhole." (the individual limit), "You are polarized to
+  this wormhole: you cannot go into it from this side yet." (the five-minute polarization, kept in memory per pilot and end).
+- Jump order: the mass is checked before the simulation is asked; the simulation takes the jump (a stargate-like jump of the wormhole
+  end, the ship leaves for the far end after the usual delay); then the mass is taken (`WormholeLifecycle.Transit`) and the
+  change is published (a collapse removes both ends; an opening places both). Shortcut: another ship that transits between the
+  check and the take can make the take refuse after the jump is taken; this is logged, not refunded.
+- The collapse of an end by the scheduler (the lifetime) publishes its removal to the simulation at the time the job runs; the job's
+  transaction may still fail after that, and the next scene start places the stored ends again.
+- Tests: `WormholeWorldTests` (ends, positions, generation once, a captured collapse), `WormholeLifecycleTests` and
+  `WormholePlannerTests` (eve.wormholes); the simulation's placement and jump (`eve-space` scene tests). The space service jump has no
+  test yet (NOT RUN at the service level).
+## Slice 3, step 1: zones outside Pochven (2026-10-12)
+
+Sources. The EVE University wiki "Triglavian Invasion (Chapter 3)" (https://wiki.eveuniversity.org/Triglavian_Invasion_(Chapter_3), read 2026-10-12; the page was last edited 2023-08-28 and says it documents content no longer in the game): Arshat moved from Escalating Liminality to an EDENCOM Fortress at the end of Chapter 3 (2020-10-13). The wiki's "EDENCOM systems" page (last edited 2024-01-19) names no system and links an external "List of invasion systems" that returned 404 when fetched. The forum names of the 2020 renewed attacks (Abha, Inaya, Muttokon, Seiradih, Aldik, Iosantin) are not states and are not zones.
+
+Decision. The zones are the 27 Pochven systems (Triglavian) and Arshat (30002253, SDE region 10000043, EDENCOM). Arshat is the one zone outside Pochven that a source names with a state; its state is the end-of-Chapter-3 state, and no source confirms it today. The EDENCOM zone's sentries are GunStars at each gate (the data file's state 'edencom'), its camps are two Imperial Navy Sentinels at the first two gates, and its camp is a mobile tree that attacks the other factions' NPCs and no pilot (EDENCOM rats are hostile below 0.00 standing). The Triglavian zones keep the rule of step 2-4. Skirmishes stay Pochven's: a zone outside Pochven gets sentries and camps only.
+
+Not done: a dated list of EDENCOM Minor Victory and Stronghold systems, and more fortress systems: no source read names them.
+
+
+## Slice 3, step 2: the protocol bump for a kill, and the NPC bounty (2026-10-12)
+
+Protocol. The simulation's `Destroyed` message carries the destroyed ship's type id and corporation id (i32 each, after the wreck kind). The simulation's protocol version is 64 (the wormhole agent's 63 was pushed in 66b6b3c). The C# codec (`SimCodec.ProtocolVersion`, `SimDestroyed.ShipTypeId`, `CorporationId`) and the fixtures (`oracle/fixtures/simlink/messages.json`, from `tools/dev/gen-simlink-fixtures.py`) move with it. The host's own protocol (`HostCodec`, version 1) is unchanged.
+
+Bounty. The host pays a kill of an NPC the simulation keeps (a session at or above 2^62 that the host has no profile for) the `entityKillBounty` of its type in the static data (SDE build 3396210, `typeDogma` attribute 481), paid to the pilot who dealt the last blow, through the same store and ESS split as a profiled NPC. Values from the SDE: Entropic Disintegrator Werpost 54577 pays 12,500,000 ISK; EDENCOM GunStar 54579 and Heavy GunStar 54580 pay 0; Liminal Damavik 52182, Interfering Phase-II Legionary 56493 pay 0; the Imperial Navy Sentinel 52923 and the Drifter hulls carry no bounty attribute and pay 0. Eleven Rogue Drone entity types carry non-zero SDE values and pay them.
+
+Sourced table (checked 2026-10-12 against the EVE Ref type pages, https://everef.net/type/{id}, which carry the static data's Bounty attribute; the SDE build 3396210 agrees):
+
+| Type id | Name | SDE entityKillBounty | EVE Ref Bounty |
+|---|---|---|---|
+| 54577 | Entropic Disintegrator Werpost | 12,500,000 | 12,500,000 |
+| 52182 | Liminal Damavik | 0 | 0 |
+| 56493 | Interfering Phase-II Legionary | 0 | 0 |
+| 54579 | EDENCOM GunStar | 0 | 0 |
+| 54580 | EDENCOM Heavy GunStar | 0 | 0 |
+| 52923 | Imperial Navy Sentinel | no attribute | not listed |
+| 56221 | Drifter Assault Cruiser | no attribute | not listed |
+
+Other Damavik variants have a bounty on EVE Ref under other type ids (Stoic 77562: 56,250 ISK; Stalker 77575: 62,500 ISK; Umbral 77608: 100,000 ISK; Blinding 52209: 0). None is adopted for the sim's Liminal Damavik (52182), which EVE Ref gives 0; mapping a value across type ids would be an invention. The owner can decide whether those variants should pay once the sim spawns them.
+
+Decision, no published bounty for the Triglavian and EDENCOM hulls. A search of the EVE University wiki (Triglavian Invasion, Triglavian Collective) and the wider web gave no per-ship ISK bounty for the Damavik, Vedmak, Leshak, Kikimora, Rodiva, Drekavac or the EDENCOM navy hulls. Those kills pay 0 until a source publishes a value; no number is invented.
+
+Loot. Unchanged: the sim-resident NPCs have no host profile and so no loot table (the loot rule is keyed on the profile). No published drop table exists for these types in the SDE.
+
+Tests: `NpcBountyHostTests` (a werpost kill pays 12,500,000 ISK to the killer with the type in the bucket; a Damavik kill pays nothing), `Eve.Space.Tests` (300, the codec and fixtures), `eve-space` (764), `eve-net` and `eve-sim` build clean under clippy -D warnings.
+
+### System environment as dogma effects (slice 7c)
+
+- A solar system's environment is its effect beacon (SDE group 920, `Class N <effect> Effects`, the attributes of the beacon type). Each
+  attribute "<name>Multiplier" is a post-multiplication of the attribute "<name>", "<name>Bonus" a post-percentage of it; both reach the
+  ship and the items located in it (its modules), as a buff of the same shape does. Source: the SDE values (`WormholeEffects`), the
+  dogma modifier rules of `Eve.Dogma` (`SystemEnvironment`, tests `SystemEnvironmentTests`).
+- Applied in the C# dogma world of the ship (`SyncBuffsAsync` with the ship's buffs). The Rust simulation does not receive these
+  values: its combat and flight numbers are the ship spec's at the time the ship enters, so a wormhole's effect is seen in the
+  attributes the client reads and not in the simulation (not built).
+- Names with no base attribute (for example `shieldBonusMultiplier`, `capacitorCapacityMultiplierSystem`) are listed as not applied.
+## Slice 3, step 3: filaments (rules and data; jumps not built)
+
+Data. `crates/eve-space/src/filament.rs` holds the 17 Pochven filament types (56065 to 56081, group "Triglavian Space Filaments") with the SDE's ship cap (`mjdShipJumpCap`) and spool-up (`filamentSpoolupTimeSeconds`) per type, and the link radius (`mjfgRadius`, 6000 m). The Proximity-Extraction types carry the SDE's 2.5 ly limit (`lightYearDistanceMax`). Families: Devana and Extraction are outbound (Pochven to k-space); Cladistic, Border, Internal and Home are inbound.
+
+Conflict. The wiki's Pochven page gives 60 s for the inbound filaments; the SDE gives 30 s (the 5-ship types) and 45 s (the 15-ship types). The SDE values are used, as SDE comes first. The Home-system standing (6.0) is skipped, per the owner.
+
+Not built. The filament destinations are not in the client extract (the location list ids 4510 to 4569 are absent), so no filament can be jumped and no destination is invented. The trace rules (outbound cooldown 210 s, trace lifetime 900 s, unlink distance 30 km) are constants with tests; nothing consumes them until the destinations are sourced.
+
+Tests: `eve-space` filament module, 5 tests (the 17 SDE rows, the family directions, the fleet cap and empty-fleet refusal, the trace numbers, the 2.5 ly reach), all passing; clippy -D warnings and rustfmt clean.
+
+
+### Wormhole signatures, sites and scan strength (slice 9, project rules)
+Superseded in part by "Wormhole sites: real names and client dungeon keys (slice 10)" below: every category now names its site.
+
+- Scan strength of every wormhole signature: 0.0, the SDE dogma default of `scanWormholeStrength` (attribute 1908). EveJS holds no
+  per-type value for wormhole types (its provider reads none), and the wiki pages read give none, so one uniform strength is the rule.
+- Signatures per J-space system: a count from 4 to 9 drawn from the system's seed (`WormholeSites.Plan`).
+- Shares of the categories: combat 40%, relic 15%, data 15%, gas 20%, ore 10%. The wiki names only combat sites per class, so a relic,
+  data, gas or ore signature has no template name and is planned with no name; those sites are not built (no template is named in
+  the sources). Ore is not limited to the classes that list ore: the share is the rule.
+- Combat site names: the wiki's list for the system's class (each name exists in the SDE's dungeon data, archetype 24, faction 500021).
+  C13 uses the class 6 list (no extra for C13 is documented).
+- A Drifter system (classes 14 to 18) has exactly five combat sites, named from the class 6 list (no Drifter name list is on the pages read).
+- Not built: the link of the plan to `CosmicSiteDirector` and to probe scanning; the site entities are not created in the world.
+
+### Wormhole sites: real names and client dungeon keys (slice 10, project rules)
+- Names: the per-class lists of EVE University "Wormhole sites" (raw wikitext, fetched 2026-10-12): anomalies (combat), data, relic, gas (reservoirs) and ore (deposits). Each name is matched to the client dungeon by its en-us localization text (`native/localization_fsd_en-us.jsonl.gz`) and carries the dungeon key (`native/dungeons.jsonl.gz`, `dungeonNameID`). EveJS's `wormholeSites` content pack (`resolution-<kind>-<key>`) gives the same key for 68 of the 69 names.
+- Spelling: the wiki says "Sizable Perimeter Reservoir"; the client's localization says "Sizeable Perimeter Reservoir" (key 3559). The client spelling is used.
+- Zones of gas and ore follow the wiki's headings: gas (reservoirs) perimeter in C1 to C4, frontier in C3 to C6, core in C5 and C6 and Shattered; ore (deposits) perimeter and frontier in every class, core in C5 and C6, Shattered Debris Field in Shattered systems. Core ore that the wiki says may spawn rarely in C1 to C4 is not planned.
+- C13 (Shattered) uses the class 6 lists for every category, plus Shattered Debris Field (ore). Shattered Ice Field (an ice belt, the wiki's "Ice belts" heading) is in the client data but not planned: the share table has no ice category.
+- Thera (class 12) and the other classes outside 1 to 6 and 13 get no planned sites (`WormholeSites.Plan` returns none). Thera's own sites are not in the wiki's lists.
+- Drifter systems keep exactly five combat sites from the class 6 anomalies (unchanged from slice 9).
+- The scan strength (0.0) and the counts and shares are unchanged from slice 9. Not built: the link of the plan to `CosmicSiteDirector` and to probe scanning, and the site entities in the world.

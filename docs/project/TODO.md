@@ -1583,3 +1583,50 @@ Evidence and decisions: `docs/project/WORMHOLE_DESIGN.md` (sources, SDE numbers,
 | OPEN | The far end as a body of its own scene (pilots must be able to jump back) | Design 13 |
 | OPEN | Host placement of the ends, `WormholeMgr.WormholeJump` through the lifecycle, composition wiring | Design 13 |
 | OPEN | Effects, signatures, sites, Thera exits, MITM run | Design 13 |
+
+
+## Pochven population (2026-10-12, after step 1)
+
+| Status | Item | Note |
+|---|---|---|
+| DONE (tests) | NPC-vs-NPC attack between the Pochven factions | `brains::pochven_tests` (attack, own faction, outside Pochven) |
+| DONE (tests) | Gate sentries: a werpost at each gate of a Pochven system, 20 km out, stationary; locks a rogue drone, never a fellow triglavian | `pochven_population.rs`; rules in DEVIATIONS |
+| DONE (tests) | Camps: two Damavik at the first two gates of a Triglavian system | `pochven_population.rs` |
+| DONE (tests) | Skirmish spawner: every 900 s, four factions in turn, deterministic, capped at 40 NPCs per scene | `pochven_population.rs` (`populate_pochven`) |
+| DONE (data) | System states: 27 Pochven systems held by the Triglavians; EDENCOM list empty | `data/pochven_states.json` (source and date in the file) |
+| CUT | Bounty and loot of the Pochven hulls | Host bounty code is keyed on profiles without these hulls; needs host work |
+| CUT | Fortress and Heavy GunStar placements in Pochven | No Pochven system is an EDENCOM fortress in the wiki; the path is tested through the data file |
+| OPEN | Live walk (Cockroach into Pochven, NPC fights through tools/mitm) | The headless client cannot place a pilot in Pochven; not run |
+| DONE (tests) | Step 3, filament rules and data (17 SDE types, caps, spool-ups, families, trace numbers) | `crates/eve-space/src/filament.rs`; jumps not built |
+| OPEN | Filament destinations (jump targets) | Not in the client extract (location list 4510 to 4569 absent); no invented destination |
+| OPEN | Home-system 6.0 standing | Skipped per owner |
+
+
+## Slice 3, step 1: zones outside Pochven
+
+| Status | Item | Note |
+|---|---|---|
+| DONE (tests) | Arshat (30002253) as an EDENCOM zone: GunStars at its gates, Sentinel camps at the first two | `pochven_population.rs`, `data/pochven_states.json` (source and date in the file) |
+| OPEN | More EDENCOM fortress, stronghold and minor-victory systems | No dated source names them (the wiki's list page 404s; the forum names are not states) |
+
+### Slice 7 (2026-10-12)
+
+| Status | Item | Missing work |
+|---|---|---|
+| DONE (tests) | 7b: placement of the ends with the system's scene, WormholeMgr.WormholeJump (mass, collapse, publication), polarization, world at start-up | Eve.Wormholes.Tests 17; the service jump has no test yet (DEVIATIONS) |
+| DONE (tests) | 7c: system environment as dogma modifiers on the ship and its modules (C# dogma) | Eve.Dogma.Tests `SystemEnvironmentTests` (3). Not in the Rust simulation |
+| OPEN | 7d signatures, 7e Sleeper/Drifter sites, 7f Thera exits | Not started |
+
+| BLOCKED | 7d signatures in probe scanning | Design 14: no wormhole rows in the probe path; scan-strength value not read from the wiki |
+| BLOCKED | 7e Sleeper and Drifter sites | Design 14: site content not published (owner decision needed) |
+| BLOCKED | 7f Thera exits | Design 14: Thera's connections are wandering (K-space), cut by owner decision |
+
+### Slice 8 (2026-10-12)
+
+| Status | Item | Missing work |
+|---|---|---|
+| DONE (tests) | Thera's seeded connections (12, documented types and endpoints), respawn after collapse | `TheraConnectionsTests`. Design 15 |
+| BLOCKED | Signature scan strength per type | No per-type value in the wiki pages or EveJS (design 15) |
+| PARTIAL | Sleeper/Drifter sites | Combat site names per class from the wiki; per-system counts and shares not published (design 15) |
+| NOT DONE | Environment effects in the Rust sim | Design 15 |
+| NOT DONE | Service-layer wormhole jump tests; headless live check | Design 15 |

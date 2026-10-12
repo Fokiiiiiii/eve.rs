@@ -170,6 +170,8 @@ pub struct Combat {
     /// The categories the proximity sensors report (`includedCategories`): ships, drones and fighters by default, the entities too for a fleet
     /// that fights NPCs of another faction (`create_pochven_npc_behavior_tree`).
     pub included_categories: Value,
+    /// The owners whose ships the proximity sensors do not report (`invalidOwnerIds`): none by default.
+    pub invalid_owner_ids: Value,
 }
 
 impl Default for Combat {
@@ -185,6 +187,7 @@ impl Default for Combat {
             preferred_module_groups: Value::List(Vec::new()),
             proximity_sensor_tags: Value::Tuple(vec![Value::Str(DRIFTER_TAG.to_string())]),
             included_categories: int_list(&[CATEGORY_SHIP, CATEGORY_DRONE, CATEGORY_FIGHTER]),
+            invalid_owner_ids: Value::None,
         }
     }
 }
@@ -209,7 +212,7 @@ pub fn create_combat_behavior(args: Combat) -> Node {
                 .with("includedCategories", args.included_categories.clone())
                 .with("excludedGroups", int_list(&[GROUP_CAPSULE]))
                 .with("validOwnerIds", args.valid_owner_ids.clone())
-                .with("invalidOwnerIds", Value::None)
+                .with("invalidOwnerIds", args.invalid_owner_ids.clone())
                 .with("tags", args.proximity_sensor_tags.clone()),
         )
         .add(

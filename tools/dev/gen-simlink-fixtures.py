@@ -389,7 +389,8 @@ def build(m):
                      + struct.pack("<i", m["toSystem"]) + i64(m["toGate"]))
     if k == "Destroyed":
         return frame(k, u64(m["sessionId"]) + i64(m["shipId"]) + i64(m["wreckId"]) + struct.pack("<7d", *m["position"], *m["direction"], m["radius"])
-                     + i64(m["killerShipId"]) + wreck_kind(m.get("wreckKind")))
+                     + i64(m["killerShipId"]) + wreck_kind(m.get("wreckKind"))
+                     + struct.pack("<ii", m["shipTypeId"], m["corporationId"]))
     if k == "ChargeSpent":
         return frame(k, u64(m["sessionId"]) + i64(m["moduleId"]) + i64(m["roundsLeft"]))
     # protocol 38 (FP-C4b, FP-C5): a refresh of a running effect: the cycle, the capacitor a cycle costs, the turret (a flag, then the turret) and the changes
@@ -931,7 +932,10 @@ valid = [
     {"name": "destroyed with a wreck of the scene's own", "kind": "Destroyed", "sessionId": "4611686018427387905",
      "shipId": "980050000077", "wreckId": "4300000000000001", "position": [311989835983.1308, -13069154020.916222, 156646308895.76187],
      "direction": [0.6159, 0.01306, 0.78769], "radius": 47.0, "killerShipId": "9988400001939",
-     "wreckKind": {"typeId": 26506, "name": "Caldari Frigate Wreck", "graphicId": 3117}},
+     "wreckKind": {"typeId": 26506, "name": "Caldari Frigate Wreck", "graphicId": 3117}, "shipTypeId": 601, "corporationId": 1000125},
+    {"name": "destroyed Triglavian NPC (a Liminal Damavik) in Pochven, no wreck", "kind": "Destroyed", "sessionId": "4611686018427387906",
+     "shipId": "980060000001", "wreckId": "0", "position": [3932160.0, 3932160.0, 3932160.0], "direction": [0.0, 0.0, 1.0],
+     "radius": 34.0, "killerShipId": "9988400001939", "shipTypeId": 52182, "corporationId": 1000298},
     {"name": "new ship numbers with the armor pinned by a polarized weapon", "kind": "ShipSpec", "sessionId": "1790646377000015",
      "ship": dict(IBIS, vitals=dict(IBIS["vitals"], armorPinned=True,
                                     resonances={"shield": [0.0, 0.8, 0.6, 0.5], "armor": [1.0, 1.0, 1.0, 1.0],
@@ -949,10 +953,11 @@ valid = [
                                {"itemId": "9988400002810", "attributeId": 73, "value": 10000.0}]}},
     {"name": "destroyed player's ship, nobody to blame, no wreck", "kind": "Destroyed", "sessionId": "1790646377000015",
      "shipId": "9988400001939", "wreckId": "0", "position": [0.0, 0.0, 0.0], "direction": [1.0, 0.0, 0.0],
-     "radius": 47.0, "killerShipId": "0", "wreckKind": {"typeId": 26506, "name": "Caldari Frigate Wreck", "graphicId": 0}},
+     "radius": 47.0, "killerShipId": "0", "wreckKind": {"typeId": 26506, "name": "Caldari Frigate Wreck", "graphicId": 0},
+     "shipTypeId": 601, "corporationId": 1000006},
     {"name": "destroyed with no kind of wreck to leave", "kind": "Destroyed", "sessionId": "1790646377000016",
      "shipId": "9988400001940", "wreckId": "0", "position": [1.0, 2.0, 3.0], "direction": [0.0, 1.0, 0.0],
-     "radius": 12.5, "killerShipId": "0"},
+     "radius": 12.5, "killerShipId": "0", "shipTypeId": 601, "corporationId": 1000006},
     {"name": "spawn of an NPC with a laser, a wreck and a tree", "kind": "Spawn", "requestId": "7", "solarSystemId": 30100032,
      "ship": dict(BARE, shipId="980050000077", characterId="0", ownerId="1000125", categoryId=11, groupId=25, typeId=597),
      "anchorShipId": "0", "position": [1000500.0, 100.0, 100.0], "velocity": [0.0, 0.0, 0.0], "direction": [1.0, 0.0, 0.0], "behavior": "belt rat",

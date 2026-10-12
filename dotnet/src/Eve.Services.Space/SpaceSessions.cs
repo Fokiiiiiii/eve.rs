@@ -849,6 +849,11 @@ private readonly TransitionRuntime _transitions;
                     ForgetLockedTarget(destroyed.ShipId);
                     Background(() => FinishNpcDeathAsync(npc, destroyed));
                     break;
+                // an NPC the simulation keeps (a Pochven sentry or fighter): no profile here, so its type's bounty in the static data pays the last blow
+                case SimDestroyed destroyed when destroyed.SessionId >= SimNpcSessionBase:
+                    ForgetLockedTarget(destroyed.ShipId);
+                    Background(() => PaySimNpcBountyAsync(destroyed, _pilots.Values.FirstOrDefault(pilot => pilot.ShipId == destroyed.KillerShipId)));
+                    break;
                 case SimChargeSpent spent when _pilots.TryGetValue(spent.SessionId, out var shooter):
                     _charges.Enqueue(spent.SessionId, shooter.CharacterId, spent.ModuleId, spent.RoundsLeft);
                     // a gun that reloads from its hold and has no round left for its next cycle asks for its load (FP-C8)

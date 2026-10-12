@@ -24,7 +24,8 @@ const BOX_CENTRE: f64 = 3_932_160.0;
 /// A system of the given region, with a station in it (the belt rat tests' shape).
 fn system_in(region_id: i32) -> Arc<SolarSystem> {
     Arc::new(SolarSystem {
-        id: POCHVEN_SYSTEM,
+        // a system that is not a zone outside Pochven (the zones are data: `pochven_population`)
+        id: if region_id == 10_000_070 { POCHVEN_SYSTEM } else { 30_000_001 },
         name: "Pochven test".to_string(),
         constellation_id: 20_000_787,
         region_id,

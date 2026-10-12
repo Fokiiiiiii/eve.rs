@@ -142,9 +142,12 @@ internal sealed partial class CharacterServicesComposition
             (int TypeId, int GroupId) FallbackOf(int group) => containerRows.Where(row => row.GroupId == group).OrderBy(row => row.TypeId).Select(row => (row.TypeId, row.GroupId)).First();
             var fallbackData = FallbackOf(306);
             var fallbackRelic = FallbackOf(1207);
+            // the sites of J-space: each wormhole system's class from the committed data (its plan is WormholeSites, the wormhole templates)
+            var jSpaceClasses = Eve.Universe.JSpaceSystems.Load().ToDictionary(system => system.Id, system => system.WormholeClass);
             cosmicSites = new Eve.Services.Space.Sites.CosmicSiteDirector(
                 source, foundations.Content, foundations.Scheduler, Eve.Services.Space.Sites.SiteTemplates.Load(), new Eve.Services.Space.Sites.SdeSiteAnchors(sde), solarSystems,
-                message => Console.Error.WriteLine($"eve-host: {message}"), system => spaceSessions?.HasPilotsIn(system) ?? false);
+                message => Console.Error.WriteLine($"eve-host: {message}"), system => spaceSessions?.HasPilotsIn(system) ?? false,
+                system => jSpaceClasses.TryGetValue(system, out var wormholeClass) ? wormholeClass : null);
             cosmicSites.Attach(foundations.Content, foundations.Events);
             cosmicSites.Containers = siteContainers;
             cosmicSites.NewContainerAsync = (connection, transaction, typeId, system) =>

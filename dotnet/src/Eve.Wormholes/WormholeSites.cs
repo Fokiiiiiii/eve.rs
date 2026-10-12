@@ -22,6 +22,9 @@ public static class WormholeSites
     public const int DrifterCombatSites = 5;
     public const int ShatteredClass = 13;
 
+    /// <summary>The first wormhole class of a Drifter system (classes 14 to 18).</summary>
+    public const int DrifterFirstClass = 14;
+
     /// <summary>The share of each category among the signatures (the project rule).</summary>
     public static readonly (string Category, double Share)[] Shares =
     [

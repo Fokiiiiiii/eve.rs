@@ -81,4 +81,13 @@ public class ProbeScanMathTests
         // a probe too weak for the target covers it by its strength ratio
         Assert.Equal(0.5, ProbeScanMath.Coverage(0, 1_000, 2, 4), 9);
     }
+
+    [Fact]
+    public void A_target_that_needs_no_strength_is_reached_by_any_probe_in_range()
+    {
+        // a wormhole signature (WormholeSites.ScanStrength 0): the strength term is 1, so the distance alone decides
+        Assert.Equal(1, ProbeScanMath.Coverage(0, 1_000, 0, 0), 9);
+        Assert.Equal(0.75, ProbeScanMath.Coverage(500, 1_000, 0, 0), 9);
+        Assert.Equal(0, ProbeScanMath.Coverage(1_500, 1_000, 0, 0), 9);
+    }
 }

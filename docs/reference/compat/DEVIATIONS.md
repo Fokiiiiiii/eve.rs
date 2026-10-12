@@ -3309,3 +3309,13 @@ Decision, no published bounty for the Triglavian and EDENCOM hulls. A search of 
 Loot. Unchanged: the sim-resident NPCs have no host profile and so no loot table (the loot rule is keyed on the profile). No published drop table exists for these types in the SDE.
 
 Tests: `NpcBountyHostTests` (a werpost kill pays 12,500,000 ISK to the killer with the type in the bucket; a Damavik kill pays nothing), `Eve.Space.Tests` (300, the codec and fixtures), `eve-space` (764), `eve-net` and `eve-sim` build clean under clippy -D warnings.
+
+## Slice 3, step 3: filaments (rules and data; jumps not built)
+
+Data. `crates/eve-space/src/filament.rs` holds the 17 Pochven filament types (56065 to 56081, group "Triglavian Space Filaments") with the SDE's ship cap (`mjdShipJumpCap`) and spool-up (`filamentSpoolupTimeSeconds`) per type, and the link radius (`mjfgRadius`, 6000 m). The Proximity-Extraction types carry the SDE's 2.5 ly limit (`lightYearDistanceMax`). Families: Devana and Extraction are outbound (Pochven to k-space); Cladistic, Border, Internal and Home are inbound.
+
+Conflict. The wiki's Pochven page gives 60 s for the inbound filaments; the SDE gives 30 s (the 5-ship types) and 45 s (the 15-ship types). The SDE values are used, as SDE comes first. The Home-system standing (6.0) is skipped, per the owner.
+
+Not built. The filament destinations are not in the client extract (the location list ids 4510 to 4569 are absent), so no filament can be jumped and no destination is invented. The trace rules (outbound cooldown 210 s, trace lifetime 900 s, unlink distance 30 km) are constants with tests; nothing consumes them until the destinations are sourced.
+
+Tests: `eve-space` filament module, 5 tests (the 17 SDE rows, the family directions, the fleet cap and empty-fleet refusal, the trace numbers, the 2.5 ly reach), all passing; clippy -D warnings and rustfmt clean.

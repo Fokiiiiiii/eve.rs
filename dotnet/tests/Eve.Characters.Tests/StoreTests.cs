@@ -196,7 +196,7 @@ public class StoreTests
             await Eve.Data.Migrations.ApplyAsync(s.Source, s.CharactersSchema, legacyMigrations));
         var id = await Insert(s, Pilot("Legacy Home"));
         Assert.Equal(
-            new[] { "0004_remote_home_station_cooldown" },
+            new[] { "0004_remote_home_station_cooldown", "0005_nes_intro_state" },
             await PgCharacterStore.MigrateAsync(s.Source, s.CharactersSchema));
 
         var migrated = (await s.Characters.GetAsync(id))!;

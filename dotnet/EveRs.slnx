@@ -30,6 +30,7 @@
     <Project Path="src/Eve.Insurgency/Eve.Insurgency.csproj" />
     <Project Path="src/Eve.Space/Eve.Space.csproj" />
     <Project Path="src/Eve.Trade/Eve.Trade.csproj" />
+    <Project Path="src/Eve.Bookmarks/Eve.Bookmarks.csproj" />
     <Project Path="src/Eve.Universe/Eve.Universe.csproj" />
     <Project Path="src/Eve.Wallet/Eve.Wallet.csproj" />
     <Project Path="src/Eve.Services.CharacterInfo/Eve.Services.CharacterInfo.csproj" />
@@ -57,6 +58,7 @@
     <Project Path="tests/Eve.Identity.Tests/Eve.Identity.Tests.csproj" />
     <Project Path="tests/Eve.Market.Tests/Eve.Market.Tests.csproj" />
     <Project Path="tests/Eve.Trade.Tests/Eve.Trade.Tests.csproj" />
+    <Project Path="tests/Eve.Bookmarks.Tests/Eve.Bookmarks.Tests.csproj" />
     <Project Path="tests/Eve.Marshal.Tests/Eve.Marshal.Tests.csproj" />
     <Project Path="tests/Eve.Npc.Tests/Eve.Npc.Tests.csproj" />
     <Project Path="tests/Eve.Services.CharacterInfo.Tests/Eve.Services.CharacterInfo.Tests.csproj" />

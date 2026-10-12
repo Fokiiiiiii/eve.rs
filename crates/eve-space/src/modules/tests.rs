@@ -3864,6 +3864,43 @@ fn a_station_within_two_kilometres_refuses_a_cloak_and_breaks_one_that_runs() {
 }
 
 #[test]
+fn a_lance_is_activated_while_its_pilot_warps() {
+    // no SDE attribute (disallowActivateOnWarp) and no EVE.js rule stops a strike in warp; a locked target cannot be held through warp anyway, so a
+    // doomsday is refused by its lock, not by the warp
+    let (mut scene, t) = reaching_in(crowd_with_a_planet(), 3_000.0);
+    scene.command(A, Command::WarpTo { target_id: PLANET, range: 0.0 }, t);
+    let (_, t) = poll_until(&mut scene, t, 10.0);
+    assert!(scene.pilots[&A].flight.as_ref().is_some_and(|f| f.is_warping()), "the ship is in warp");
+    let strike = crate::strike::Strike {
+        shape: crate::strike::StrikeShape::Cylinder,
+        direction: [1.0, 0.0, 0.0],
+        length: 50_000.0,
+        radius: 2_500.0,
+        warning_ms: 15_000.0,
+        pulse_ms: 1_000.0,
+        pulses: 16,
+        damage: [0.0, 0.0, 0.0, 17_000.0],
+        signature_radius: 20_000.0,
+        immobile_ms: 30_000.0,
+        no_jump_ms: 120_000.0,
+        neut_amount: 31_000.0,
+        neut_radius: 10_000.0,
+        neut_signature_radius: 20_000.0,
+        debuff_ms: 60_000.0,
+        sweep_end: None,
+        beacon: None,
+    };
+    let lance = Effect {
+        duration_ms: 10_000.0,
+        capacitor_need: 5.0,
+        action: Some(Action::Strike { strike }),
+        ..projected(Remote::Web { percent: 0.0 }, Applies::CycleStart, 0)
+    };
+    let out = scene.activate(A, lance, t);
+    assert!(accepted(&out), "{:?}", labels(&out));
+}
+
+#[test]
 fn a_cloak_ended_for_another_reason_tells_the_custom_notice_after_the_module_has_stopped() {
     let (mut scene, t) = reaching(5_000.0);
     scene.target_order(A, crate::targeting::Order::Clear, t);

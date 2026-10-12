@@ -285,13 +285,10 @@ impl Scene {
         if effect.effect_id == MICROWARPDRIVE && pilot.incoming.mwd_blocked() {
             return vec![Out::Refused { session, command: CODE, reason: "MICROWARPDRIVE_BLOCKED" }];
         }
-        if let Some(Action::Strike { strike }) = effect.action.as_ref() {
-            if !strike.is_valid() {
-                return vec![Out::Refused { session, command: CODE, reason: "BAD_STRIKE" }];
-            }
-            if pilot.flight.as_ref().is_some_and(|flight| flight.is_warping()) {
-                return vec![Out::Refused { session, command: CODE, reason: "CANNOT_ACTIVATE_IN_WARP" }];
-            }
+        if let Some(Action::Strike { strike }) = effect.action.as_ref()
+            && !strike.is_valid()
+        {
+            return vec![Out::Refused { session, command: CODE, reason: "BAD_STRIKE" }];
         }
         if let Some(Action::Tractor { range, .. }) = effect.action.as_ref() {
             if effect.target_id <= 0 {
@@ -354,9 +351,6 @@ impl Scene {
                 || !damage.iter().all(|d| d.is_finite() && *d >= 0.0)
             {
                 return vec![Out::Refused { session, command: CODE, reason: "BAD_DOOMSDAY" }];
-            }
-            if pilot.flight.as_ref().is_some_and(|flight| flight.is_warping()) {
-                return vec![Out::Refused { session, command: CODE, reason: "CANNOT_ACTIVATE_IN_WARP" }];
             }
             // the target is a locked ship of the scene (the reference's TARGET_REQUIRED, TARGET_NOT_FOUND and TARGET_NOT_LOCKED)
             if effect.target_id <= 0 {

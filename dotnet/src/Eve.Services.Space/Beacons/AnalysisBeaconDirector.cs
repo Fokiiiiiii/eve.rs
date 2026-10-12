@@ -159,7 +159,7 @@ public sealed class AnalysisBeaconDirector
         await using (var transaction = await connection.BeginTransactionAsync(cancellationToken))
         {
             await _store.InsertAsync(connection, transaction, new BeaconRow(
-                beacon.Id, item.TypeId, system, character, shipId, now, activateAt, false, 1, 0, 0, 0, 0, null, false), cancellationToken);
+                beacon.Id, item.TypeId, system, character, shipId, now, activateAt, false, 1, 0, 0, 0, 0, null, false, 0), cancellationToken);
             await _scheduler.ScheduleAsync(connection, transaction, new JobSpec(ActivateJob, activateAt)
             {
                 Key = $"beacon:{beacon.Id}",
@@ -170,7 +170,7 @@ public sealed class AnalysisBeaconDirector
         }
         _sim.PlaceAnalysisBeacon(new SimPlaceAnalysisBeacon(
             beacon.Id, system, type.Name, item.TypeId, type.GroupId, position, radius, character, corporation, alliance, shipId,
-            StateOf(new BeaconRow(beacon.Id, item.TypeId, system, character, shipId, now, activateAt, false, 1, 0, 0, 0, 0, null, false))));
+            StateOf(new BeaconRow(beacon.Id, item.TypeId, system, character, shipId, now, activateAt, false, 1, 0, 0, 0, 0, null, false, 0))));
         _scheduler.Wake();
         return beacon.Id;
     }
@@ -201,18 +201,18 @@ public sealed class AnalysisBeaconDirector
             }
             await _store.ActivateAsync(connection, transaction, deployableId, now, cancellationToken);
             var rule = _rules.For(current.TypeId)!;
-            var (selection, refusal) = WaveComposition.Resolve(_selector, rule.Wave.SpawnPool);
+            var (selection, refusal) = WaveComposition.Resolve(_selector, rule.Waves[0].SpawnPool);
             if (selection is null)
             {
                 failure = $"the wave's pool could not be used: {refusal}";
             }
             else
             {
-                var result = await _spawner.SpawnAsync(record.SolarSystemId, record.Position, selection, rule.Wave.Amount, cancellationToken);
+                var result = await _spawner.SpawnAsync(record.SolarSystemId, record.Position, selection, rule.Waves[0].Amount, cancellationToken);
                 made.AddRange(result.ShipIds);
-                if (result.Error is not null || result.ShipIds.Count < rule.Wave.Amount)
+                if (result.Error is not null || result.ShipIds.Count < rule.Waves[0].Amount)
                 {
-                    failure = $"{result.ShipIds.Count} of {rule.Wave.Amount} Rogue Drones were made" + (result.Error is null ? "" : $": {result.Error}");
+                    failure = $"{result.ShipIds.Count} of {rule.Waves[0].Amount} Rogue Drones were made" + (result.Error is null ? "" : $": {result.Error}");
                 }
                 await _store.AddDronesAsync(connection, transaction, deployableId, result.ShipIds, cancellationToken);
             }
@@ -229,6 +229,31 @@ public sealed class AnalysisBeaconDirector
             _log?.Invoke($"the beacon {deployableId} failed at activation: {failure}");
         }
         _sim.SetAnalysisBeaconState(deployableId, StateOf(row));
+    }
+
+    /// <summary>
+    /// Makes one wave of a beacon's Rogue Drones: they are rows of the beacon (they block its scan until they die), and the wave is counted in the same transaction. A
+    /// wave not made in full fails the scan, with the reason; the drones made are returned so the caller takes them out.
+    /// </summary>
+    private async Task<(string? Failure, IReadOnlyList<long> Made)> MakeWaveAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, BeaconRow row, BeaconWaveRule wave, CancellationToken cancellationToken)
+    {
+        var (selection, refusal) = WaveComposition.Resolve(_selector, wave.SpawnPool);
+        if (selection is null)
+        {
+            return ($"the wave's pool could not be used: {refusal}", []);
+        }
+        var record = await _deployed.GetAsync(row.DeployableId, cancellationToken);
+        if (record is null)
+        {
+            return ("the beacon is no longer deployed", []);
+        }
+        var result = await _spawner.SpawnAsync(row.SolarSystemId, record.Position, selection, wave.Amount, cancellationToken);
+        await _store.AddDronesAsync(connection, transaction, row.DeployableId, result.ShipIds, cancellationToken);
+        await _store.SetWavesAsync(connection, transaction, row.DeployableId, row.WavesMade + 1, cancellationToken);
+        string? failure = result.Error is not null || result.ShipIds.Count < wave.Amount
+            ? $"{result.ShipIds.Count} of {wave.Amount} Rogue Drones were made" + (result.Error is null ? "" : $": {result.Error}")
+            : null;
+        return (failure, result.ShipIds);
     }
 
     // ── link ───────────────────────────────────────────────────────────────
@@ -334,6 +359,8 @@ public sealed class AnalysisBeaconDirector
     {
         var now = _nowUnixMs();
         var completed = new List<(BeaconRow Row, IReadOnlyList<ItemChanged> Changes)>();
+        var failed = new List<BeaconRow>();
+        var failedDrones = new List<long>();
         await using (var connection = await _source.OpenConnectionAsync(cancellationToken))
         await using (var transaction = await connection.BeginTransactionAsync(cancellationToken))
         {
@@ -347,14 +374,26 @@ public sealed class AnalysisBeaconDirector
                 var duration = (long)AnalysisBeaconRules.ScanOf(row.TypeId).TotalMilliseconds;
                 var advance = drones == 0 && row.ScanUpdatedMs > 0 ? Math.Max(0, now - row.ScanUpdatedMs) : 0;
                 var progress = Math.Min(duration, row.ScanMs + advance);
-                if (progress < duration)
+                await _store.SetScanAsync(connection, transaction, row.DeployableId, progress, now, cancellationToken);
+                // the next wave comes when the scan reaches its progress; its drones block the scan until they are dead
+                var rule = _rules.For(row.TypeId)!;
+                if (row.WavesMade < rule.Waves.Count && progress >= rule.Waves[row.WavesMade].AtScanProgress * duration)
                 {
-                    await _store.SetScanAsync(connection, transaction, row.DeployableId, progress, now, cancellationToken);
+                    var (failure, made) = await MakeWaveAsync(connection, transaction, row, rule.Waves[row.WavesMade], cancellationToken);
+                    if (failure is not null)
+                    {
+                        await _store.EndAsync(connection, transaction, row.DeployableId, "failed", failure, cancellationToken);
+                        failed.Add(row with { Outcome = "failed" });
+                        failedDrones.AddRange(made);
+                    }
                     continue;
                 }
-                await _store.SetScanAsync(connection, transaction, row.DeployableId, progress, now, cancellationToken);
+                if (progress < duration)
+                {
+                    continue;
+                }
                 var changes = new List<ItemChanged>();
-                var rewards = _rules.For(row.TypeId)!.Rewards;
+                var rewards = rule.Rewards;
                 var delivered = true;
                 foreach (var reward in rewards)
                 {
@@ -379,6 +418,15 @@ public sealed class AnalysisBeaconDirector
                 completed.Add((row, changes));
             }
             await transaction.CommitAsync(cancellationToken);
+        }
+        if (failedDrones.Count > 0)
+        {
+            _spawner.Remove(failedDrones);
+        }
+        foreach (var row in failed)
+        {
+            _log?.Invoke($"the beacon {row.DeployableId} failed in its scan: a wave was not made in full");
+            _sim.SetAnalysisBeaconState(row.DeployableId, StateOf(row));
         }
         foreach (var (row, changes) in completed)
         {

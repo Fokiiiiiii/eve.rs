@@ -6,7 +6,7 @@ namespace Eve.Services.Space.Beacons;
 /// <summary>One CRAB's own record (the host's, in the space schema): its activation, its link and its scan, and how it ended (null while it runs).</summary>
 public sealed record BeaconRow(
     long DeployableId, int TypeId, int SolarSystemId, long OwnerId, long ShipId, long DeployedMs, long ActivateAtMs, bool Active, int LinkState,
-    long LinkCompleteMs, long LinkedShipId, long ScanMs, long ScanUpdatedMs, string? Outcome, bool Rewarded);
+    long LinkCompleteMs, long LinkedShipId, long ScanMs, long ScanUpdatedMs, string? Outcome, bool Rewarded, int WavesMade);
 
 /// <summary>
 /// The tables of the CRAB runtime (<see cref="AnalysisBeaconDirector"/>): one row per beacon, and one row per Rogue Drone it has made, so a kill is a delete and the
@@ -43,8 +43,11 @@ public sealed class AnalysisBeaconStore(NpgsqlDataSource source, string schema)
         CREATE INDEX analysis_beacon_drones_beacon ON analysis_beacon_drones (deployable_id);
         """;
 
+    /// <summary>How many of a beacon's waves were made (the first at activation, the next when the scan reaches its progress).</summary>
+    private const string WavesText = "ALTER TABLE analysis_beacons ADD COLUMN waves_made integer NOT NULL DEFAULT 0;";
+
     private const string Columns =
-        "deployable_id, type_id, solar_system_id, owner_id, ship_id, deployed_ms, activate_at_ms, active, link_state, link_complete_ms, linked_ship_id, scan_ms, scan_updated_ms, outcome, rewarded";
+        "deployable_id, type_id, solar_system_id, owner_id, ship_id, deployed_ms, activate_at_ms, active, link_state, link_complete_ms, linked_ship_id, scan_ms, scan_updated_ms, outcome, rewarded, waves_made";
 
     private readonly NpgsqlDataSource _source = source;
     private readonly string _schema = Sql.CheckSchema(schema);
@@ -53,7 +56,7 @@ public sealed class AnalysisBeaconStore(NpgsqlDataSource source, string schema)
 
     /// <summary>Creates the tables in the schema (applied once; a second start changes nothing).</summary>
     public static Task<IReadOnlyList<string>> MigrateAsync(NpgsqlDataSource source, string schema, CancellationToken cancellationToken = default) =>
-        Migrations.ApplyAsync(source, schema, [new Migration(MigrationName, MigrationText)], cancellationToken);
+        Migrations.ApplyAsync(source, schema, [new Migration(MigrationName, MigrationText), new Migration("002_analysis_beacon_waves", WavesText)], cancellationToken);
 
     /// <summary>The row of a beacon, or null when it has none.</summary>
     public async Task<BeaconRow?> GetAsync(NpgsqlConnection connection, NpgsqlTransaction? transaction, long deployableId, bool forUpdate, CancellationToken cancellationToken)
@@ -86,8 +89,12 @@ public sealed class AnalysisBeaconStore(NpgsqlDataSource source, string schema)
 
     /// <summary>Records that a beacon is active (its scan runs from now).</summary>
     public Task ActivateAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long deployableId, long nowMs, CancellationToken cancellationToken) =>
-        Sql.ExecuteAsync(connection, transaction, Q("UPDATE {schema}.analysis_beacons SET active = true, scan_updated_ms = $2 WHERE deployable_id = $1"),
+        Sql.ExecuteAsync(connection, transaction, Q("UPDATE {schema}.analysis_beacons SET active = true, scan_updated_ms = $2, waves_made = 1 WHERE deployable_id = $1"),
             cancellationToken, deployableId, nowMs);
+
+    /// <summary>Records how many of the beacon's waves are made.</summary>
+    public Task SetWavesAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long deployableId, int waves, CancellationToken cancellationToken) =>
+        Sql.ExecuteAsync(connection, transaction, Q("UPDATE {schema}.analysis_beacons SET waves_made = $2 WHERE deployable_id = $1"), cancellationToken, deployableId, waves);
 
     /// <summary>Records the scan's progress (in milliseconds) and when it was last advanced.</summary>
     public Task SetScanAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long deployableId, long scanMs, long nowMs, CancellationToken cancellationToken) =>
@@ -148,7 +155,7 @@ public sealed class AnalysisBeaconStore(NpgsqlDataSource source, string schema)
     private static BeaconRow Read(System.Data.Common.DbDataReader reader) => new(
         reader.GetInt64(0), reader.GetInt32(1), reader.GetInt32(2), reader.GetInt64(3), reader.GetInt64(4), reader.GetInt64(5), reader.GetInt64(6),
         reader.GetBoolean(7), reader.GetInt32(8), reader.GetInt64(9), reader.GetInt64(10), reader.GetInt64(11), reader.GetInt64(12),
-        reader.IsDBNull(13) ? null : reader.GetString(13), reader.GetBoolean(14));
+        reader.IsDBNull(13) ? null : reader.GetString(13), reader.GetBoolean(14), reader.GetInt32(15));
 
     /// <summary>The store's source, for the director's own transactions.</summary>
     internal NpgsqlDataSource Source => _source;

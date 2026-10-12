@@ -2854,3 +2854,202 @@ Not done in ESS-3, with reasons:
 Affected gates on the merged tree: Services.Core 652/652, Host 223/223, Space host batch 256/256, Space non-host 516/516 (one run hit PostgreSQL's connection limit, `53300 too many clients`; the same test passed when re-run alone, and the batch then totals 516/516 with that re-run).
 
 >
+
+## Direct trade (trademgr, 37a)
+
+Status: the server side is implemented and covered by `Eve.Trade.Tests` (9) and `Eve.Services.Station.Tests` (30). A
+headless-client walk with two pilots is in progress (see TODO 37a); the graphical client has not been driven.
+
+- **What the server does.** `InitiateTrade` checks both pilots (docked, online, in the same place, not the same pilot, not in another
+  trade) and returns the trade as a `carbon.common.script.net.moniker.Moniker` (the shape `SkillMgr2Service` uses). The target gets
+  `OnTradeInitiate(initiatorCharID, moniker)`, as `pvptradesvc.py:42-50` expects. The bound trade serves `List`, `Add` (`qty` for a
+  part of a stack, `pvptradewnd`/`invControllers.py:1673-1691`), `MultiAdd`, `GetSelfInvItem`, `OfferMoney`, `MakeOffer` and `Abort`.
+- **Custody.** A staged item is moved into the trade container (its `locationID` is the trade id), as EVE.js does
+  (`tradeMgrService.js` `_stageItemIntoTrade`). The origin (location and flag) is stored. An abort returns it; a part of a stack is
+  merged back into the stack it came from, so the original item id returns.
+- **Completion.** When both pilots accept the same manifest (their ISK and the set of item ids), the items go to the other pilot's
+  docked hangar and the ISK moves in one PostgreSQL transaction, with one wallet journal entry per direction. The journal reference
+  type is `player_trading`, ESI ref type 1 (CCP eve-glue `JournalRefTypeEnumV2`, `wallet_journal_ref.py`). A pilot who no longer has the
+  ISK refuses the completion: the trade stays open, both acceptances are cleared and the items stay in custody.
+- **Restart and disconnect.** A host that stops with trades open ends them at start-up and returns the items
+  (`TradeAuthority.RecoverOpenAsync`). A pilot who disconnects ends the trade for both. EVE.js recovers durable trades instead;
+  eve.rs has no pilot connected to continue one, so the items go back.
+- **Trade ids.** A trade id is the container id, drawn from `trade.trade_ids` starting at 9 000 000 000 000 000, away from item ids.
+  It is a location for the items, so it must not collide with an item or a station.
+- **Where the rules are.** `Eve.Trade` (`TradeAuthority`, schema `trade`, migration `001_trade_sessions.sql`).
+  `Eve.Services.Station/TradeMgrService.cs` is the RPC layer only.
+
+**The manifest's item set.** The client builds `tradeItems=set(myItems) | set(herItems)` (`pvptradewnd.py:98`). EVE.js reads the
+set in both its header and its tail list, and reads each element as a plain id, an object with `itemID`, a packed row, or a row whose
+`line` starts with the id (`tradeMgrService.js:345-445`). eve.rs reads the same forms (`TradeMgrService.ManifestOf`, test
+`The_manifest_reads_every_form_of_a_trade_item_the_reference_accepts`).
+
+**The acceptance values.** `OnTradeOffer` carries one value per trader. The client reads only their truth
+(`pvptradewnd.py:126-139`, `bool(states[...])`), so eve.rs sends 0 or 1 where EVE.js sends the manifest or null. The window
+behaves the same. The 0/1 form is the difference, not the truth value.
+
+**The item-change diff.** EVE.js builds its item-change diff with the client's keys: owner 2, location 3, flag 4, quantity 5, stack
+size 9, singleton 10 (`characterState.js` `buildItemChangePayload`). For a non-singleton stack whose quantity equals its stack size,
+EVE.js sends only key 9 (`prefersStackSizeOnly`). eve.rs sends key 9 with the previous stack size for a changed stack, and keys 2, 3
+and 4 when the owner, location or flag changed. eve.rs sends one `OnItemChange` per item; EVE.js sends a batch `OnItemsChanged`. The
+client handles both (`invCache.py:219` and `invCache.py:229`).
+
+**Differences from EVE.js, all listed:**
+1. Staging from a ship's cargo or from a can is refused (`Only items in your hangar here can be offered.`). EVE.js accepts those
+   sources. Not built.
+2. No item tradability check. The client refuses non-tradable types (`is_tradable`, `invControllers.py:1681`); the server does not
+   check it yet, so a hand-made `Add` of such an item is accepted.
+3. A stack merged back into its source is announced as an `OnItemChange` with size 0 for the merged-away row. The EVE.js handling of
+   that case was not read; the live walk records what the client receives.
+4. `OnPrimingNeededForTradeItems` is sent to each pilot after a stage, with the staged item ids (`pvptradesvc.py:109-110`).
+
+## Item locking (itemLocking, 37a)
+
+Status: implemented. Tests: `Eve.Corporations.Tests` (`ItemLockTests`, 3, PostgreSQL; the project is 114).
+
+- **What the client calls.** `itemLocking` has two reads: `GetItemsByLocation(locationID)` (a dict of item id to
+  `itemID`, `typeID`, `ownerID`, `locationID`) and `GetLockedItemLocations()` (a set of location ids), used by
+  `eve/client/script/ui/services/corporation/itemLocking.py:30-40`. The client sets no lock through this service.
+- **Where locks come from.** A lockdown vote (`VoteLockBlueprint`) locks a corporation blueprint from the moment the vote is
+  created. A failed lock vote, or a passed unlock vote (`VoteUnlockBlueprint`), releases it. EVE.js does the same
+  (`voteRuntimeState.js` `ensureLockedItemRecord` and `removeLockedItemRecord`).
+- **Where the lock is kept.** The item row's flag (`blueprint_locked`) is the guard that refuses moves, consumption and edits
+  (`PgItemStore`, `EnsureUnlocked`). The list the client reads is `corporations.item_locks` (migration `013_item_locks`), written in the
+  same transaction as that flag. Industry jobs also set the flag, so the list is kept apart from it: a blueprint in a job is not
+  reported as locked.
+- **The push.** A change is sent after its transaction commits, to the sessions of the corporation, as `OnLockedItemChange(itemID,
+  ownerID, locationID, isLocked)`. That is the name the client service registers (`__notifyevents__`), and it refreshes the service's
+  cache. EVE.js sends `OnLockedItemChangeUI` with three arguments to every session. The client UI reads that only through the
+  service's re-send, so EVE.js leaves the service cache stale until the location is read again. eve.rs does not.
+- **Not served here.** The ALSC audit container locks (`invBroker` `ALSCLockItems` and `ALSCUnlockItems`, which set the flag `LOCKED`
+  on items inside a secure container) belong to the inventory service, not to `itemLocking`. Not built in this slice.
+- **Existing locks at migration.** A blueprint locked by a vote before migration `013` has no row in `item_locks`, so it is not listed
+  until the vote ends. The databases in use are development databases; no backfill was written.
+
+## Reprocessing (reprocessingSvc, 37a)
+
+Status: the server side is implemented for NPC stations. The client has not been driven through a reprocess.
+
+- **Rules (sources).** Base station efficiency is the SDE station row (`npcStations.reprocessingEfficiency`, 0.5 at the station used
+  here); the wiki gives 30%–50% by station equipment (EVE University, "Refining"). Skill bonuses are the SDE's `refiningYieldMutator`
+  (dogma attribute 379): Reprocessing (3385) 3% per level, Reprocessing Efficiency (3389), the ore skill named by the item's
+  `reprocessingSkillType` (attribute 790), and Scrapmetal Processing (12196) for items without one; the wiki gives 3%, 2% and 2% per
+  level. The tax is the station's `reprocessingStationsTake` (0.05), reduced by the standing toward the station's owner to zero at
+  6.67 (wiki). The reduced rate is rounded to two decimals, as `round2` in `reprocessingRuntime.js` does.
+- **Quotes and reprocess.** A quote processes whole portions (`types.portionSize`); the leftovers stay. Each material yields its
+  quantity times the portions times the efficiency, rounded down after removing binary noise (`floorAfterNormalizing` in
+  `reprocessingRuntime.js`). The tax is charged on the yield at the material's adjusted price. `Reprocess` consumes the portions in
+  one transaction with the output and the tax; the tax is a wallet entry with ref type 127 (`reprocessing_tax`, CCP eve-glue
+  `JournalRefTypeEnumV2`). The answer is `[processedItemIDs, {typeID: quantity}]`, as `reprocessingService.js` returns it.
+- **Client contract.** `GetQuotes(itemIDs, activeShipID)` answers `[tax, {typeID: efficiency, None: fallback}, {itemID: quote}]`
+  (`reprocessingService.js` `Handle_GetQuotes`; the client reads `quotes.py:19-21`). The quote fields are the reference's.
+
+Differences and cuts, all listed:
+1. Sources: the caller's items rooted at this station: its hangar, its containers and the cargo of its ships (`RootAtStationAsync`).
+   Corporation hangars are not quoted (their access rules are not built).
+2. Outputs: the sample item's place by default (EVE.js does the same); another place must be the caller's, in this station. Other owners are refused.
+3. Structures: refused with a named notice (`Reprocessing is available in the NPC station you are docked in.`). The structure rigs and
+   profiles of `reprocessingRuntime.js` are not built.
+4. Implants: the implants plugged in the character (flags 89 to 98) add their refining yield mutator to the skill multiplier of the
+   ore types, as the reference's legacy path does (`getLegacyReprocessingImplantMultiplier`). The active implant modifiers of
+   `getActiveReprocessingImplantMultiplier` are not read.
+5. Large stacks: a stack whose yield is above the client's stack limit (2^31 - 1, `CLIENT_INVENTORY_STACK_LIMIT`) is split into chunks the
+   reference way (`buildOversizedReprocessingSplitPlan`): the root keeps the largest safe quantity aligned to whole portions, the other chunks
+   are aligned too; each chunk is reprocessed. A yield above the limit is held as several stacks. `GetQuotes` answers the sum of the chunks
+   for such a stack, not the per-chunk quotes of the reference.
+6. The active ship is refused on the server: the character's `ShipId` is checked (the reference checks it in `reprocessItems`).
+7. Randomized outputs (`typeHasRandomizedMaterials`) are not produced; an item with only randomized materials yields nothing here. Not built.
+8. Adjusted prices: from ESI (DEVIATIONS "Reprocessing", item 7). A type with no stored price has a tax of zero on its materials.
+9. The standing is the higher of the character's own and its corporation's standing toward the owner (the wiki's rule).
+10. Notices: a consumed stack is announced as `OnItemChange` with quantity 0 (a removed row) or with its new size; an output is announced
+   as a new row. The same convention as the direct trade (DEVIATIONS "Direct trade"). Not checked against a client capture.
+11. `GetQuotes` skips items the station cannot reprocess (no materials, fewer than one portion) rather than answering a quote with an error.
+
+
+## Corporation station door (corpStationMgr, 37a)
+
+Status: implemented. Tests: `Eve.Corporations.Tests` (`CorpStationMgrTests`, 4, PostgreSQL). Not run on the graphical client.
+
+- **What the client calls.** `Moniker('corpStationMgr', stationID)` (`eveMoniker.py:111`), then, on the bound object,
+  `DoStandingCheckForStationService(serviceID)` (`stationController.py:77`) and `MoveCorpHQHere()` (`stationController.py:28`).
+  Nothing else is called on it by the V24.01 client (the office count is `officeManager`).
+- **Standing check.** The minimum standing per service and owner is the SDE's `stationStandingsRestrictions`
+  (`native/stationstandingsrestrictions.jsonl.gz` in `eve-client-sde`, build 3396210): owner 500026 has services 5 (3.0), 13
+  (-0.05), 14 (3.0), 17 (-0.05), 22 (-0.05), 23 (3.0), 24 (3.0). The standing is the higher of the character's own and its
+  corporation's toward the owner, as the reprocessing plant reads it. A service with no rule is admitted. The refusal is the
+  `CustomNotify` text EVE.js uses (`corpStationMgrService.js:331-348`). The security-status limits EVE.js also reads are 0 for every
+  rule, so they are not checked.
+- **Headquarters.** `MoveCorpHQHere` moves the corporation's station and solar system to the NPC station the caller is docked in
+  (the session's `stationid`). The CEO (not suspended) or a director may do it. A headquarters already there changes nothing. The
+  corporation is told `OnCorporationChanged` for `stationID` and `solarSystemID`. A structure is refused, as EVE.js refuses it.
+- **Difference from EVE.js.** EVE.js also refreshes the sessions docked at the new headquarters (`refreshCorporationHeadquartersSessions`).
+  eve.rs computes a session's corporate roles on each call, so the next call of such a session already sees the new headquarters.
+  The notice to those sessions is not sent.
+- **Not built.** The reference's other `corpStationMgr` methods (rentable items, the office list, improvements, the home-station list,
+  clone owners, cost modifiers) are not called by the V24.01 client through this moniker, so they are not served.
+
+## Repair (repairSvc, 37a)
+
+Status: the NPC station repair is implemented and tested in PostgreSQL (`RepairServiceTests`, 6 tests). The client has not been driven through a repair.
+
+- **Damage and state.** The damage is the module state store's (`ship_condition`, `module_condition`), keyed by item id; the fractions are
+  the store's. Health is in HP: shield capacity, armor HP and structure HP are the dogma attributes `shieldCapacity`, `armorHP` and `hp`
+  (SDE attribute ids 263, 265 and 9). The damage is shield damage plus armor damage plus structure damage, as `getItemHealthSnapshot`
+  computes it in `repairRuntime.js`.
+- **Cost.** One unit of damage costs the adjusted price x 0.1 (`STATION_REPAIR_COST_MULTIPLIER`) divided by the maximum HP, rounded to
+  six decimals. The adjusted price is the ESI one (DEVIATIONS "Reprocessing", item 7). The full cost is the damage rounded up times the unit
+  cost, rounded to cents.
+- **Repair and payment.** A payment (or the full cost when None) is spent in the order given: each item is charged the part it can take up
+  to its full cost and repaired by what that buys (`executeRepairPlan`). The damage is repaired in the order structure, armor, shield
+  (`applyRepairToHealthSnapshot`). A repair with a fitted module is paid in full (`MODULE_PARTIAL_REPAIR`, as the notice).
+- **One transaction.** The charge (wallet ref type 15, `repair_bill`, CCP eve-glue) and the new condition are written in one PostgreSQL
+  transaction. The module store gained transaction-taking overloads for the reads and writes. The notices go out after the commit.
+- **Which items.** Items the caller owns, singleton, of a repairable group or category (`REPAIRABLE_GROUP_IDS` and
+  `REPAIRABLE_CATEGORY_IDS`), in this station through their containers. Anything else is skipped, as the reference skips it.
+
+Differences and cuts:
+1. Structures: refused with a named notice (`Repair in structures is not available.`). The structure tax and the structure rules are not built.
+2. No price: an item with damage and no adjusted price is refused (`No repair price is known for that item.`). EVE.js invents a base
+   price from the volume (`getFallbackRepairBasePrice`) and repairs at that price; this server does not invent prices. An item with no damage
+   is skipped.
+3. The reference's aliasing of a docked ship's module ids (`DOCKED_SHIP_REPAIR_ALIAS_OFFSET`) is not used: the quote rows carry the real
+   item ids. The client accepts them because the execution reads them back.
+4. No durable settlement (`repair.settle`): the charge is in the same transaction as the repair, so a settlement that fails midway is rolled back, not queued.
+5. The notice to the client is an `OnItemChange` for each repaired item (the same rows the docked heal sends); the damage itself is read from
+   the item's dogma. The reference sends attribute notices (`syncDamageStateAttributesForSession`). Not checked against a client capture.
+6. The fitted modules of a ship in the hangar are quoted with the ship (`CATEGORY_SHIP` in the hangar, fitted slots and the drone bay).
+   The station-side contents are read outside the repair's transaction; a fitting changed during the repair is not seen by that repair.
+
+
+## Bookmarks: personal folders (accessGroupBookmarkMgr, 37a)
+
+Status: the personal folders, subfolders and bookmarks of a character are implemented and persisted. Shared folders and the
+bookmark of a place in space are not. Tests: `Eve.Bookmarks.Tests` (12, PostgreSQL: 9 store, 3 RPC shape).
+
+- **What is stored.** Schema `bookmarks` (`EVE_BOOKMARKS_SCHEMA`, migration `001_bookmarks.sql`): folders, subfolders and bookmarks, one
+  id sequence. A character with no folder gets the default personal folder, "Personal Locations", active (`ensureDefaultPersonalFolder`,
+  `bookmarkRuntimeState.js:398`). Limits are the reference's: 5 active personal folders, 30 known folders, 30 subfolders, 3 000
+  bookmarks per folder (`bookmarkConstants.js`). A folder over the active limit is made inactive; a known folder made active over the
+  limit is refused with a notice.
+- **Places.** A station and a solar system are bookmarkable from the static data (the station's type and solar system; a solar system
+  is its own location, type 5). Coordinates are null, as in the reference (`resolveStaticBookmarkTarget`, `bookmarkRuntimeState.js:882`).
+  Structures, stargates, belts, celestials, regions and constellations are refused with `BookmarkNotAvailable` (the reference's answer
+  for an id it cannot place). Not built: the structure and celestial places.
+- **Expiry.** A bookmark made with an expiry mode gets its expiry (4 hours, 2 days, 24 hours). The reference sweeps expired bookmarks on
+  a timer. Here they are removed when the active bookmarks are read, so a client that reads after the expiry sees them gone.
+- **Errors.** The reference's codes are sent as user errors (`BookmarkFolderNoLongerThere`, `FolderAccessDenied`,
+  `BookmarkNotAvailable`, `BookmarkSubfolderNoLongerThere`, `FolderCapacityExceeded`, `MAX_SUBFOLDERS`). The owner may delete any
+  bookmark of its folder, so `CouldNotDeleteBookmarksInSubfolder` cannot arise here. Where the reference throws a bare error (`TooManyActiveFolders`), the notice
+  is sent as CustomNotify.
+- **No push.** The reference sends `OnBookmarks*` notifications to the other sessions that know a shared folder. Personal folders are
+  known to their owner only, and the owner gets the result of the call, so no push is sent. A second session of the same character
+  does not see the change until it reads again.
+- **Not built.**
+  1. Shared folders (`isPersonal=false`, access groups). They depend on the access group store, the structure track's
+     `ownerGroupManager`, and are refused with `SharedFoldersNotBuilt` and a notice. Known-folder calls only accept a folder the character
+     owns, so no shared folder can be opened.
+  2. `BookmarkLocation`, the bookmark of the ship's place in space. It needs the space scene; refused with a notice.
+  3. The abyssal refusal of `BookmarkStaticLocation` (`assertAbyssalBookmarkCreationAllowed`): abyssal scenes are not read by the store.
+- **Where.** `Eve.Bookmarks` (`BookmarkStore`, rules in `BookmarkRules`, `BookmarkError`). The RPC is
+  `Eve.Services.Core/AccessGroupBookmarkMgrService.cs`, and `BookmarkRefusals` maps the store's error to the client's user error.
+  The host composition is `Eve.Host/Composition/BookmarkComposition.cs`.

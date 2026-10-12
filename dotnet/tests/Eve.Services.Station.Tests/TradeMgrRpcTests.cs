@@ -4,35 +4,17 @@ using Eve.Services.Station;
 
 namespace Eve.Services.Station.Tests;
 
+/// <summary>The checks <c>InitiateTrade</c> makes before a trade is opened. The trade rules and their persistence are tested in Eve.Trade.Tests.</summary>
 public sealed class TradeMgrRpcTests
 {
     [Fact]
-    public async Task InitiateTrade_uses_the_online_peer_and_returns_the_backend_moniker()
+    public void The_service_is_the_trademgr_door_with_the_trade_methods()
     {
-        var sessions = new CharacterSessions();
-        var initiator = Session(1001, stationId: 600001);
-        var target = Session(1002, stationId: 600001);
-        sessions.Enter(1001, initiator);
-        sessions.Enter(1002, target);
-        ClientSession? observedTarget = null;
-        var moniker = new PyTuple([new PyStr("trade"), new PyInt(17)]);
-        IService service = new TradeMgrService(sessions, (call, peer) =>
-        {
-            observedTarget = peer;
-            return ValueTask.FromResult<PyValue>(moniker);
-        });
+        IService service = new TradeMgrService(new CharacterSessions());
 
-        Assert.True(service.HasMethod("InitiateTrade"));
         Assert.Equal("trademgr", service.Name);
-        var result = await service.CallAsync(new ServiceCall
-        {
-            Method = "InitiateTrade",
-            Args = [new PyInt(1002)],
-            Session = initiator,
-        });
-
-        Assert.Same(target, observedTarget);
-        Assert.Same(moniker, result);
+        foreach (var method in new[] { "InitiateTrade", "MachoBindObject", "List", "Add", "MultiAdd", "OfferMoney", "MakeOffer", "Abort", "GetSelfInvItem" })
+            Assert.True(service.HasMethod(method), method);
     }
 
     [Fact]
@@ -43,12 +25,7 @@ public sealed class TradeMgrRpcTests
         var target = Session(1002, stationId: 600002);
         sessions.Enter(1001, initiator);
         sessions.Enter(1002, target);
-        var backendCalled = false;
-        IService service = new TradeMgrService(sessions, (_, _) =>
-        {
-            backendCalled = true;
-            return ValueTask.FromResult<PyValue>(PyNone.Instance);
-        });
+        IService service = new TradeMgrService(sessions);
 
         var error = await Assert.ThrowsAsync<MachoWrappedException>(async () =>
             await service.CallAsync(new ServiceCall
@@ -59,39 +36,31 @@ public sealed class TradeMgrRpcTests
             }));
 
         Assert.Equal("CustomNotify", error.Error.UserErrorMessage);
-
-        Assert.False(backendCalled);
     }
 
     [Fact]
-    public async Task InitiateTrade_rejects_self_and_offline_targets_before_backend()
+    public async Task InitiateTrade_rejects_self_and_offline_targets()
     {
         var sessions = new CharacterSessions();
         var initiator = Session(1001, stationId: 600001);
         sessions.Enter(1001, initiator);
-        var backendCalled = false;
-        IService service = new TradeMgrService(sessions, (_, _) =>
-        {
-            backendCalled = true;
-            return ValueTask.FromResult<PyValue>(PyNone.Instance);
-        });
+        IService service = new TradeMgrService(sessions);
 
         foreach (var targetId in new long[] { 1001, 1002 })
         {
-            await Assert.ThrowsAsync<MachoWrappedException>(async () =>
+            var error = await Assert.ThrowsAsync<MachoWrappedException>(async () =>
                 await service.CallAsync(new ServiceCall
                 {
                     Method = "InitiateTrade",
                     Args = [new PyInt(targetId)],
                     Session = initiator,
                 }));
+            Assert.Equal("CustomNotify", error.Error.UserErrorMessage);
         }
-
-        Assert.False(backendCalled);
     }
 
     [Fact]
-    public async Task InitiateTrade_uses_a_custom_notify_when_trade_backend_is_unwired()
+    public async Task InitiateTrade_without_a_trade_store_says_so_to_the_pilot()
     {
         var sessions = new CharacterSessions();
         var initiator = Session(1001, stationId: 600001);
@@ -109,6 +78,43 @@ public sealed class TradeMgrRpcTests
             }));
 
         Assert.Equal("CustomNotify", error.Error.UserErrorMessage);
+    }
+
+    [Fact]
+    public void The_manifest_names_the_trade_its_money_and_its_item_ids()
+    {
+        var item = new PyObjectEx(ObjectExKind.Ex1, new PyStr("InvItem"), [], [new(new PyStr("itemID"), new PyLong(1_000_000_000_042))]);
+        var manifest = new PyObjectEx(ObjectExKind.Ex1, new PyStr("KeyVal"), [], [
+            new(new PyStr("tradeContainerID"), new PyLong(9_000_000_000_000_001)),
+            new(new PyStr("money"), new PyList([new PyReal(250.5), new PyInt(0)])),
+            new(new PyStr("tradeItems"), new PyObjectEx(ObjectExKind.Ex1,
+                new PyTuple([new PyToken("__builtin__.set"), new PyTuple([new PyList([item, new PyLong(77)])])]), [], [])),
+        ]);
+
+        var (container, money, items) = TradeMgrService.ManifestOf(manifest);
+
+        Assert.Equal(9_000_000_000_000_001, container);
+        Assert.Equal([250.5m, 0m], money);
+        Assert.Equal(new HashSet<long> { 1_000_000_000_042, 77 }, items);
+    }
+
+    [Fact]
+    public void The_manifest_reads_every_form_of_a_trade_item_the_reference_accepts()
+    {
+        var packed = new PyObject(new PyStr("carbon.common.script.sys.row.Row"), new PyDict([
+            new(new PyStr("header"), new PyList([new PyStr("itemID")])),
+            new(new PyStr("line"), new PyList([new PyLong(1_000_000_000_050)])),
+        ]));
+        var manifest = new PyObjectEx(ObjectExKind.Ex1, new PyStr("KeyVal"), [], [
+            new(new PyStr("tradeContainerID"), new PyLong(9_000_000_000_000_002)),
+            new(new PyStr("money"), new PyList([new PyInt(0), new PyInt(0)])),
+            new(new PyStr("tradeItems"), new PyObjectEx(ObjectExKind.Ex1,
+                new PyTuple([new PyToken("__builtin__.set"), new PyTuple([new PyList([new PyLong(61)])])]), [packed, new PyLong(62)], [])),
+        ]);
+
+        var (_, _, items) = TradeMgrService.ManifestOf(manifest);
+
+        Assert.Equal(new HashSet<long> { 61, 62, 1_000_000_000_050 }, items);
     }
 
     private static ClientSession Session(long characterId, long? stationId = null, long? structureId = null)

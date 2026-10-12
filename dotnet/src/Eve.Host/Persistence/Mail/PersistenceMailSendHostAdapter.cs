@@ -359,6 +359,9 @@ public sealed class PersistenceMailSendHostAdapter(
             $"alliance-maintenance-bill:{billId}:receiver:{recipientId}", cancellationToken);
     }
 
+    // Structure delivery holds the same gate until its SQL commit and cache publication finish.
+    public SemaphoreSlim MutationGate => _sendGate;
+
     /// <summary>The located notification (type 69, group agents), sent by the agent; the key keeps one locate to one notification.</summary>
     public Task WriteLocateNotificationAsync(long recipientId, long agentId, JsonObject data, string idempotencyKey, CancellationToken cancellationToken) =>
         WriteNotificationAsync(recipientId, agentId, 69, 1, data, idempotencyKey, cancellationToken);

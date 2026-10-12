@@ -142,13 +142,16 @@ public sealed partial class SpaceSessions
     /// <summary>Leaves a docked ship, activates the character's capsule, and keeps the ship in the hangar.</summary>
 
     /// <summary>Boards a ship already in the character's station hangar.</summary>
-    public async ValueTask<PyValue> EjectAsync(ClientSession session, CancellationToken cancellationToken)
+    public ValueTask<PyValue> EjectAsync(ClientSession session, CancellationToken cancellationToken) =>
+        EjectPhysicalShipAsync(session, ShipIdOf(session) ?? 0, false, cancellationToken);
+
+    private async ValueTask<PyValue> EjectPhysicalShipAsync(ClientSession session, long expectedSessionShipId, bool exitStructure, CancellationToken cancellationToken)
     {
         var id = (ulong)session.SessionId;
         CancelSafeLogoff(session);
         if (LifecycleBlockers is not { } readBlockers
             || !_pilots.TryGetValue(id, out var pilot)
-            || session.CharacterId != pilot.CharacterId || session.GetInt("shipid") != pilot.ShipId
+            || session.CharacterId != pilot.CharacterId || session.GetInt("shipid") != expectedSessionShipId
             || !IsInSpace(session)
             || await _ships.LoadAsync(pilot.CharacterId, cancellationToken) is not { } fitting
             || fitting.Ship.Id != pilot.ShipId
@@ -245,7 +248,9 @@ public sealed partial class SpaceSessions
                     session.Close();
                     return Task.FromResult(false);
                 }
-                session.Change(("shipid", new PyLong(ejected.PilotShip.Id)));
+                if (exitStructure)
+                    session.Change(("structureid", None), ("shipid", new PyLong(ejected.PilotShip.Id)), ("locationid", new PyInt(pilot.SolarSystemId)));
+                else session.Change(("shipid", new PyLong(ejected.PilotShip.Id)));
                 Background(() => RefreshTetherPolicyAsync(session));
                 return Task.FromResult(true);
             },
@@ -480,7 +485,7 @@ public sealed partial class SpaceSessions
     /// <summary>The client bound the system's ballpark: the simulation sends it the scene.</summary>
     public void Bind(ClientSession session)
     {
-        if (IsInSpace(session))
+        if (IsInSpace(session) || IsStructureObserver(session))
         {
             _sim.Bind((ulong)session.SessionId);
         }
@@ -488,7 +493,7 @@ public sealed partial class SpaceSessions
 
     public void UpdateState(ClientSession session)
     {
-        if (IsInSpace(session))
+        if (IsInSpace(session) || IsStructureObserver(session))
         {
             _sim.UpdateState((ulong)session.SessionId);
         }
@@ -501,6 +506,12 @@ public sealed partial class SpaceSessions
     /// </summary>
     public void Command(ClientSession session, byte code, params double[] args)
     {
+        if (IsStructureObserver(session))
+        {
+            if (IsMovementOrder(code, args)) throw Notify("A controlled structure cannot move.");
+            _sim.Command((ulong)session.SessionId, code, args);
+            return;
+        }
         CancelSafeLogoff(session);
         if (_pilots.TryGetValue((ulong)session.SessionId, out var pilot))
         {

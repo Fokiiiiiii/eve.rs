@@ -27,7 +27,7 @@ public sealed class SimLinkException(SimLinkError error, string message) : Excep
 /// </summary>
 public static partial class SimCodec
 {
-    public const ushort ProtocolVersion = 64;
+    public const ushort ProtocolVersion = 65;
     /// <summary>The largest frame either side accepts (1 MiB).</summary>
     public const int MaxFrame = 1 << 20;
 
@@ -739,6 +739,18 @@ public static partial class SimCodec
                         throw new SimLinkException(SimLinkError.BadValue, "bad structure");
                     }
                     message = new SimPlaceStructure(structure, system, name, type, group, position, radius, owner, corporation, alliance, health, status);
+                    break;
+                }
+            case Kind.ControlStructure:
+                {
+                    var session = r.U64();
+                    var system = r.I32();
+                    var structure = r.I64();
+                    var character = r.I64();
+                    var active = ReadFlag(ref r, "structure control");
+                    if (system <= 0 || structure < 0 || character < 0 || (active && (structure == 0 || character == 0)))
+                        throw new SimLinkException(SimLinkError.BadValue, "structure control");
+                    message = new SimControlStructure(session, system, structure, character, active);
                     break;
                 }
             case Kind.TetherPolicy:

@@ -181,6 +181,43 @@ public class DeathTests
         Assert.Null(await rig.Ships.DestroyShipAsync(c.CharacterId, c.ShipId, FrigateWreck, "seed")); // once
     }
 
+
+    [PgFact]
+    public async Task Destroying_an_abandoned_active_hull_persists_one_capsule_wreck_and_cargo_outcome()
+    {
+        var (rig, character) = await InSpaceAsync();
+        await using var _ = rig;
+        var system = (await rig.Characters.GetAsync(character.CharacterId))!.SolarSystemId;
+        var cargo = await rig.GiveAsync(character.CharacterId, Rig.Afterburner, true, 1,
+            character.ShipId, CharacterShips.CargoFlag);
+        var seed = SeedWhere((cargo, true));
+
+        Assert.Null(await rig.Ships.DestroyAbandonedShipAsync(
+            character.CharacterId, system + 1, character.ShipId, FrigateWreck, seed));
+        Assert.Equal(character.ShipId, (await rig.Characters.GetAsync(character.CharacterId))!.ShipId);
+
+        Assert.Null(await rig.Ships.DestroyAbandonedShipAsync(
+            character.CharacterId, system, character.ShipId, FrigateWreck, seed));
+        var death = await rig.Ships.DestroyAbandonedShipAsync(
+            character.CharacterId, system, character.ShipId, FrigateWreck, seed, replaceActiveShip: true);
+
+        Assert.NotNull(death);
+        Assert.Null(await rig.Items.GetAsync(character.ShipId));
+        Assert.Equal(CharacterShips.CapsuleTypeId, death.Capsule!.TypeId);
+        Assert.Equal(death.Capsule.Id, (await rig.Characters.GetAsync(character.CharacterId))!.ShipId);
+        Assert.Equal(death.Capsule.Id, (await rig.Ships.LoadAsync(character.CharacterId))!.Ship.Id);
+        Assert.Equal((system, CharacterShips.InSpaceFlag), (death.Capsule.LocationId, death.Capsule.Flag));
+        var wreckContents = await rig.Items.InContainerAsync(death.Wreck!.Id);
+        Assert.Contains(wreckContents, item => item.Id == cargo);
+        Assert.Empty(await rig.Items.InContainerAsync(character.ShipId));
+
+        Assert.Null(await rig.Ships.DestroyAbandonedShipAsync(
+            character.CharacterId, system, character.ShipId, FrigateWreck, seed));
+        var itemsInSystem = await rig.Items.InLocationAsync(system, character.CharacterId);
+        Assert.Single(itemsInSystem, item => item.TypeId == FrigateWreck);
+        Assert.Equal(1, (await rig.Items.InContainerAsync(death.Wreck.Id)).Count(item => item.Id == cargo));
+    }
+
     private const int CorpseMale = 25;
     private const int Cockroach = 11019;
 

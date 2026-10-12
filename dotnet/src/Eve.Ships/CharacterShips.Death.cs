@@ -15,7 +15,7 @@ public sealed record DeathChange(Item Item, long PreviousLocationId, int Previou
 /// <param name="Wreck">The wreck, in space where the ship was; null when the ship left none.</param>
 /// <param name="Changes">What happened to what the ship held, in the order the rules did it (a stack that dropped in part shows as the new stack that is in the wreck, and the rest as destroyed).</param>
 /// <param name="Events">What dogma reports of the ship's modules leaving it: the ship's attributes that changed, and each module's, in the order of the slots.</param>
-public sealed record AbandonedShipDeath(Item Ship, Item? Wreck, IReadOnlyList<DeathChange> Changes);
+public sealed record AbandonedShipDeath(Item Ship, Item? Wreck, IReadOnlyList<DeathChange> Changes, Item? Capsule = null);
 
 public sealed record ShipDeath(
     Item Ship,
@@ -169,18 +169,20 @@ public sealed partial class CharacterShips
     /// <summary>What is in a place and in what is in it, as the death rules look at it (the ids of the snapshot are those of the items).</summary>
     public async Task<AbandonedShipDeath?> DestroyAbandonedShipAsync(
         long ownerCharacterId, int solarSystemId, long shipId, int? wreckTypeId, string seed,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default, bool replaceActiveShip = false)
     {
         await using var connection = await source.OpenConnectionAsync(cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
         await LockAsync(connection, transaction, ownerCharacterId, cancellationToken);
 
         if (await characters.GetAsync(ownerCharacterId, cancellationToken) is not { } character
-            || character.ShipId == shipId
             || await items.LockAndGetAsync(connection, transaction, shipId, cancellationToken) is not { } ship
             || ship.OwnerId != ownerCharacterId
             || ship.LocationId != solarSystemId
             || ship.Flag != InSpaceFlag)
+            return null;
+        var wasActiveShip = character.ShipId == shipId;
+        if (wasActiveShip && (!replaceActiveShip || ship.TypeId == CapsuleTypeId || character.SolarSystemId != solarSystemId))
             return null;
 
         Item? wreck = null;
@@ -224,12 +226,23 @@ public sealed partial class CharacterShips
         }
 
         await items.DeleteAsync(connection, transaction, ship.Id, cancellationToken);
+        Item? capsule = null;
+        if (wasActiveShip)
+        {
+            var capsuleId = await items.CreateAsync(connection, transaction,
+                new NewItem(CapsuleTypeId, ownerCharacterId, ship.LocationId, InSpaceFlag, 1, true), cancellationToken);
+            capsule = new Item(capsuleId, CapsuleTypeId, ownerCharacterId, ship.LocationId, InSpaceFlag, 1, true, null);
+            await characters.SetShipAsync(connection, transaction, ownerCharacterId, capsuleId, cancellationToken);
+            await WriteTransitionAsync(connection, transaction,
+                new ShipTransitionEvent("ship-destroyed", ownerCharacterId, ship.Id, capsuleId,
+                    ship.LocationId, InSpaceFlag, ship.LocationId, InSpaceFlag), cancellationToken);
+        }
         await transaction.CommitAsync(cancellationToken);
         await modules.SetShipConditionAsync(ship.Id, ShipCondition.Full, cancellationToken);
         await modules.SetModuleConditionsAsync(
             changes.Where(change => change.Destroyed).ToDictionary(change => change.Item.Id, _ => ModuleCondition.Untouched),
             cancellationToken);
-        return new AbandonedShipDeath(ship, wreck, changes);
+        return new AbandonedShipDeath(ship, wreck, changes, capsule);
     }
 
     private async Task<IReadOnlyList<DeathNode>> TreeAsync(long locationId, Dictionary<long, Item> snapshot, CancellationToken cancellationToken, int depth = 0)

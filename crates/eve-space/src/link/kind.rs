@@ -87,6 +87,8 @@ pub const STRUCTURE_DAMAGED: u8 = 77;
 pub const PLACE_ANALYSIS_BEACON: u8 = 78;
 /// The host sets a CRAB's state (protocol 61).
 pub const SET_ANALYSIS_BEACON_STATE: u8 = 79;
+/// The host attaches or releases a controlled-structure observer (protocol 64).
+pub const CONTROL_STRUCTURE: u8 = 84;
 /// The scan targets of a system, answered to the host's scan target query (command 27, protocol 52).
 pub const SCAN_TARGETS: u8 = 71;
 /// The things a directional scan can see in a cone of space, answered to command 28 (protocol 54).

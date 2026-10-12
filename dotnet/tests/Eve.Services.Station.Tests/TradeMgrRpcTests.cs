@@ -98,6 +98,25 @@ public sealed class TradeMgrRpcTests
         Assert.Equal(new HashSet<long> { 1_000_000_000_042, 77 }, items);
     }
 
+    [Fact]
+    public void The_manifest_reads_every_form_of_a_trade_item_the_reference_accepts()
+    {
+        var packed = new PyObject(new PyStr("carbon.common.script.sys.row.Row"), new PyDict([
+            new(new PyStr("header"), new PyList([new PyStr("itemID")])),
+            new(new PyStr("line"), new PyList([new PyLong(1_000_000_000_050)])),
+        ]));
+        var manifest = new PyObjectEx(ObjectExKind.Ex1, new PyStr("KeyVal"), [], [
+            new(new PyStr("tradeContainerID"), new PyLong(9_000_000_000_000_002)),
+            new(new PyStr("money"), new PyList([new PyInt(0), new PyInt(0)])),
+            new(new PyStr("tradeItems"), new PyObjectEx(ObjectExKind.Ex1,
+                new PyTuple([new PyToken("__builtin__.set"), new PyTuple([new PyList([new PyLong(61)])])]), [packed, new PyLong(62)], [])),
+        ]);
+
+        var (_, _, items) = TradeMgrService.ManifestOf(manifest);
+
+        Assert.Equal(new HashSet<long> { 61, 62, 1_000_000_000_050 }, items);
+    }
+
     private static ClientSession Session(long characterId, long? stationId = null, long? structureId = null)
     {
         var session = new ClientSession { CharacterId = characterId };

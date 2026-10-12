@@ -376,8 +376,7 @@ public sealed partial class TradeMgrService(CharacterSessions sessions, TradeAut
         var items = new HashSet<long>();
         foreach (var entry in ArgsOf(FieldOf(manifest, "tradeItems")))
         {
-            if (IdOf(entry) is { } direct) items.Add(direct);
-            else if (IdOf(FieldOf(entry, "itemID")) is { } id) items.Add(id);
+            if (ItemIdOf(entry) is { } id) items.Add(id);
         }
         return (container, money, items);
     }
@@ -406,12 +405,29 @@ public sealed partial class TradeMgrService(CharacterSessions sessions, TradeAut
         return None;
     }
 
-    /// <summary>The elements of a list, tuple, or Python set (its marshalled form); empty for anything else.</summary>
+    /// <summary>
+    /// The item id of one element of a trade's item set: a plain id, an object with <c>itemID</c>, a packed row, or a row object whose
+    /// <c>line</c> starts with the id (the forms EveJS reads, <c>tradeMgrService.js</c> <c>getItemIDFromManifestEntry</c>).
+    /// </summary>
+    private static long? ItemIdOf(PyValue entry)
+    {
+        if (IdOf(entry) is { } direct) return direct;
+        if (IdOf(FieldOf(entry, "itemID")) is { } named) return named;
+        if (entry is PyObject { Args: PyDict } && FieldOf(entry, "line") is PyList { Items.Count: > 0 } line && IdOf(line.Items[0]) is { } fromLine)
+            return fromLine;
+        return null;
+    }
+
+    /// <summary>
+    /// The elements of a list, tuple, or Python set (its marshalled form: the set's first element in the header, the rest in the list
+    /// tail); empty for anything else.
+    /// </summary>
     private static IEnumerable<PyValue> ArgsOf(PyValue value) => value switch
     {
         PyList list => list.Items,
         PyTuple tuple => tuple.Items,
-        PyObjectEx { Header: PyTuple { Items.Count: 2 } header } when header.Items[0] is PyToken { Value: "__builtin__.set" } && header.Items[1] is PyTuple { Items.Count: 1 } payload && payload.Items[0] is PyList setItems => setItems.Items,
+        PyObjectEx { Header: PyTuple { Items.Count: 2 } header } ex when header.Items[0] is PyToken { Value: "__builtin__.set" } && header.Items[1] is PyTuple { Items.Count: 1 } payload
+            => (payload.Items[0] is PyList first ? first.Items : []).Concat(ex.List),
         _ => [],
     };
 

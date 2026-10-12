@@ -17,8 +17,8 @@ public static class SessionInitialState
 
     public static PyValue Build(ulong sessionId, ulong clientId, uint userId, ulong role, string address, string language, string countryCode)
     {
-        // The keys and their order are the reference's. maxSessionTime is not sent: the client reads it only behind a
-        // guard, so an absent key and None mean the same. inDetention is sent because the client reads it unguarded.
+        // The keys and their order are the reference's. maxSessionTime and inDetention are not sent: the reference's
+        // notification omits None-valued keys, and the client reads an absent session attribute as None.
         // The login session's role is the account's bits plus the base bits every session has (EveJS composeSessionRoleMask).
         var state = Py.Dict(
             ("languageID", new PyStr(language)),
@@ -26,8 +26,7 @@ public static class SessionInitialState
             ("userid", new PyInt(userId)),
             ("userType", new PyInt(UserType)),
             ("role", new PyLong(unchecked((long)(role | (ulong)CharUnboundMgrService.SessionBaseRole)))),
-            ("address", new PyStr(address)),
-            ("inDetention", PyNone.Instance));
+            ("address", new PyStr(address)));
         var source = new MachoAddress(AddressKind.Node, NodeId: new PyInt(MachoMessage.ProxyNodeId), CallId: new PyInt(0));
         var destination = new MachoAddress(AddressKind.Client, ClientId: new PyLong(unchecked((long)clientId)), CallId: new PyInt(0));
         PyValue[] packet =

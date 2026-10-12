@@ -1,8 +1,6 @@
 {
-  "source": "EVE University wiki, Triglavian Invasion (Chapter 3) and Invasion (https://wiki.eveuniversity.org/Triglavian_Invasion, https://wiki.eveuniversity.org/Invasion), read 2026-10-12: the 27 systems that became Pochven on 2020-10-13 are the Final Liminality systems; Triglavian Final Liminality is irreversible. System ids: SDE build 3396210, mapSolarSystems region 10000070.",
-  "held_by_default": "triglavian",
-  "edencom_held": [],
-  "note": "No Pochven system is an EDENCOM fortress or minor victory on this list. The wiki's EDENCOM fortress (Arshat) is outside Pochven. Change edencom_held to hold a system with EDENCOM sentries (GunStars) and camps instead.",
+  "source": "Pochven: EVE University wiki, Triglavian Invasion (Chapter 3) and Invasion (https://wiki.eveuniversity.org/Triglavian_Invasion, https://wiki.eveuniversity.org/Invasion), read 2026-10-12: the 27 Final Liminality systems that became Pochven on 2020-10-13 (SDE build 3396210, mapSolarSystems region 10000070). Outside Pochven: the same Chapter 3 page names Arshat as the system that moved from Escalating Liminality to an EDENCOM Fortress (end of Chapter 3, 2020-10-13); the wiki does not give a current state for it, and no other K-space system is named with a state. The forum names of the 2020 renewed attacks (Abha, Inaya, Muttokon, Seiradih, Aldik, Iosantin) are not states and are not listed.",
+  "note": "Each system listed here is a zone: its sentries and camps are placed when a ship first looks at it. A zone is held by 'triglavian' or 'edencom'. Skirmishes run in Pochven only.",
   "systems": {
     "30000021": "triglavian",
     "30000157": "triglavian",
@@ -30,6 +28,7 @@
     "30031392": "triglavian",
     "30040141": "triglavian",
     "30045328": "triglavian",
-    "30045329": "triglavian"
+    "30045329": "triglavian",
+    "30002253": "edencom"
   }
 }

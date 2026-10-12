@@ -1598,3 +1598,11 @@ Evidence and decisions: `docs/project/WORMHOLE_DESIGN.md` (sources, SDE numbers,
 | CUT | Fortress and Heavy GunStar placements in Pochven | No Pochven system is an EDENCOM fortress in the wiki; the path is tested through the data file |
 | OPEN | Live walk (Cockroach into Pochven, NPC fights through tools/mitm) | The headless client cannot place a pilot in Pochven; not run |
 | OPEN | Step 5: filaments and the Home-system 6.0 standing | Needs the filament item and jump rules; not started |
+
+
+## Slice 3, step 1: zones outside Pochven
+
+| Status | Item | Note |
+|---|---|---|
+| DONE (tests) | Arshat (30002253) as an EDENCOM zone: GunStars at its gates, Sentinel camps at the first two | `pochven_population.rs`, `data/pochven_states.json` (source and date in the file) |
+| OPEN | More EDENCOM fortress, stronghold and minor-victory systems | No dated source names them (the wiki's list page 404s; the forum names are not states) |

@@ -13,7 +13,7 @@ use eve_behaviors::trees::combat::{
 use eve_behaviors::trees::role::create_register_entity_role;
 use eve_behaviors::value::Value;
 
-use crate::pochven_population::{CAMP, Owners, SENTRY_EDENCOM, SENTRY_TRIGLAVIAN};
+use crate::pochven_population::{CAMP, CAMP_EDENCOM, Owners, SENTRY_EDENCOM, SENTRY_TRIGLAVIAN};
 
 /// The name the tree is given an NPC by (`Scene::spawn_npc_with_behavior`).
 pub const BELT_RAT: &str = "belt rat";
@@ -50,7 +50,7 @@ const SENTRY_ATTACK_RANGE: f64 = 250_000.0;
 
 /// Whether a behavior is a Pochven NPC's, and if so whether the NPC stands still (a sentry does not move).
 pub fn pochven_tree_kind(behavior: &str) -> Option<bool> {
-    if behavior == POCHVEN_NPC || behavior == CAMP {
+    if behavior == POCHVEN_NPC || behavior == CAMP || behavior == CAMP_EDENCOM {
         Some(false)
     } else if behavior == SENTRY_TRIGLAVIAN || behavior == SENTRY_EDENCOM {
         Some(true)

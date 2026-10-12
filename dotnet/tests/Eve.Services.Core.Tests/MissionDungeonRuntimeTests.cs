@@ -55,7 +55,7 @@ public class MissionDungeonRuntimeTests
         public AgentMissionStore? Store { get; set; }
 
         public async Task<bool> CompleteMissionAsync(long characterId, long agentId, DateTimeOffset now, string reference,
-            IReadOnlyList<(long FactionId, double Delta)> standings, CancellationToken cancellationToken)
+            IReadOnlyList<MissionStandingGain> standings, CancellationToken cancellationToken)
         {
             if (Store is null) return false;
             try
@@ -66,7 +66,7 @@ public class MissionDungeonRuntimeTests
             {
                 return false;
             }
-            foreach (var (factionId, delta) in standings) Standings.Add((characterId, factionId, delta));
+            foreach (var gain in standings) Standings.Add((characterId, gain.EntityId, gain.Amount));
             return true;
         }
     }
@@ -79,7 +79,7 @@ public class MissionDungeonRuntimeTests
     [AgentsPgFact]
     public async Task An_accepted_kill_mission_starts_its_dungeon_for_the_pilot_in_space_and_completion_pays_once()
     {
-        var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
+        var source = NpgsqlDataSource.Create(PgConnection.ForTest(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
         var schema = "mdr_" + Guid.NewGuid().ToString("N")[..12];
         await using var cleanup = new Cleanup(source, schema);
         await AgentMissionStore.MigrateAsync(source, schema);
@@ -118,7 +118,7 @@ public class MissionDungeonRuntimeTests
     [AgentsPgFact]
     public async Task A_basic_level_4_kill_mission_with_no_reward_in_the_static_data_pays_the_level_4_isk_base_once()
     {
-        var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
+        var source = NpgsqlDataSource.Create(PgConnection.ForTest(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
         var schema = "mdr_" + Guid.NewGuid().ToString("N")[..12];
         await using var cleanup = new Cleanup(source, schema);
         await AgentMissionStore.MigrateAsync(source, schema);
@@ -134,13 +134,22 @@ public class MissionDungeonRuntimeTests
         await runtime.OnDungeonOutcomeAsync("completed", Pilot, "dungeon.3509", 78, default);
         var credit = Assert.Single(host.Credits);
         Assert.Equal((Pilot, 675_000L, Corporation), (credit.Character, credit.Amount, credit.Counterparty));
+        // the agent's and the corporation's diminishing gains of a level 4 mission, in the same completion
+        Assert.Equal(new[] { (Pilot, Agent, 0.028), (Pilot, Corporation, 0.055) }, host.Standings.Select(s => (s.Character, s.Faction, s.Delta)));
         Assert.Equal(AgentMissionState.Completed, (await store.ReadAsync(Pilot, Agent))!.State);
+    }
+
+    [Fact]
+    public void A_diminishing_gain_moves_the_standing_a_fraction_of_the_distance_to_ten_and_an_sde_gain_is_added_as_it_is()
+    {
+        Assert.Equal(0.14, new MissionStandingGain(1, 0.028, true).DeltaFrom(5.0), 10);
+        Assert.Equal(0.7, new MissionStandingGain(1, 0.7, false).DeltaFrom(5.0), 10);
     }
 
     [AgentsPgFact]
     public async Task A_failed_dungeon_fails_the_mission_and_pays_nothing()
     {
-        var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
+        var source = NpgsqlDataSource.Create(PgConnection.ForTest(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
         var schema = "mdr_" + Guid.NewGuid().ToString("N")[..12];
         await using var cleanup = new Cleanup(source, schema);
         await AgentMissionStore.MigrateAsync(source, schema);
@@ -159,7 +168,7 @@ public class MissionDungeonRuntimeTests
     [AgentsPgFact]
     public async Task A_talk_step_and_another_dungeon_are_not_touched()
     {
-        var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
+        var source = NpgsqlDataSource.Create(PgConnection.ForTest(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
         var schema = "mdr_" + Guid.NewGuid().ToString("N")[..12];
         await using var cleanup = new Cleanup(source, schema);
         await AgentMissionStore.MigrateAsync(source, schema);
@@ -186,7 +195,7 @@ public class MissionDungeonRuntimeTests
     [AgentsPgFact]
     public async Task A_completion_moves_the_standing_once_and_a_replay_moves_it_no_more()
     {
-        var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
+        var source = NpgsqlDataSource.Create(PgConnection.ForTest(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
         var schema = "mdr_" + Guid.NewGuid().ToString("N")[..12];
         await using var cleanup = new Cleanup(source, schema);
         await AgentMissionStore.MigrateAsync(source, schema);

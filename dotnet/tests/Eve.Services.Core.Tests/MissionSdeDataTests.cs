@@ -22,7 +22,7 @@ public sealed class MissionSdeDataTests
     }
 
     private static NpgsqlDataSource Source() =>
-        NpgsqlDataSource.Create(PgConnection.ToConnectionString(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
+        NpgsqlDataSource.Create(PgConnection.ForTest(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
 
     [PgFact]
     public async Task The_rule_gives_the_pinned_agents_the_kinds_its_counts_state()

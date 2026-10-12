@@ -30,7 +30,7 @@ public class SafetyTests
     [PgFact]
     public async Task A_character_is_at_full_until_it_sets_a_level_and_the_level_is_kept_per_character()
     {
-        await using var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
+        await using var source = NpgsqlDataSource.Create(PgConnection.ForTest(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
         var schema = "cw_" + Guid.NewGuid().ToString("N")[..12];
         await PgCrimewatchStore.MigrateAsync(source, schema);
         try

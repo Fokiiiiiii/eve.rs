@@ -139,7 +139,7 @@ public sealed class CompatibilityRpcServiceTests
     {
         var pgUrl = Environment.GetEnvironmentVariable("EVE_PG_URL");
         Assert.False(string.IsNullOrWhiteSpace(pgUrl));
-        await using var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(pgUrl!));
+        await using var source = NpgsqlDataSource.Create(PgConnection.ForTest(pgUrl!));
         var sde = new SdeReader(source);
         Assert.NotNull(await sde.BuildAsync());
         var skinCatalog = await ShipCosmeticsCatalog.LoadAsync(sde);
@@ -284,7 +284,7 @@ public sealed class CompatibilityRpcServiceTests
     {
         var pgUrl = Environment.GetEnvironmentVariable("EVE_PG_URL");
         Assert.False(string.IsNullOrWhiteSpace(pgUrl));
-        await using var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(pgUrl!));
+        await using var source = NpgsqlDataSource.Create(PgConnection.ForTest(pgUrl!));
         var schema = "rpc_chars_" + Guid.NewGuid().ToString("N");
         try
         {

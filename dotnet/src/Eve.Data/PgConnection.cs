@@ -40,4 +40,9 @@ public static class PgConnection
         }
         return builder.ConnectionString;
     }
+
+    /// <summary>The connection string of a test rig: at most 4 connections per data source. The four lanes share the server's max_connections (100) and the
+    /// test classes run in parallel, so an unbounded pool exhausted it (53300). The pool queues instead of failing.</summary>
+    public static string ForTest(string urlOrKeywords) =>
+        new NpgsqlConnectionStringBuilder(ToConnectionString(urlOrKeywords)) { MaxPoolSize = 4 }.ConnectionString;
 }

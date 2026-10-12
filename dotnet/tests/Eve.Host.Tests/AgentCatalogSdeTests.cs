@@ -22,7 +22,7 @@ public sealed class AgentCatalogSdeTests
     [SdeAgentPgFact]
     public async Task The_catalog_from_the_pinned_sde_has_the_sde_counts()
     {
-        await using var source = NpgsqlDataSource.Create(Eve.Data.PgConnection.ToConnectionString(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
+        await using var source = NpgsqlDataSource.Create(Eve.Data.PgConnection.ForTest(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
         var agents = await CatalogFromSdeAsync(source);
 
         Assert.Equal(10966, agents.Count);
@@ -44,7 +44,7 @@ public sealed class AgentCatalogSdeTests
     [SdeAgentPgFact]
     public async Task Concrete_agents_have_the_sde_station_system_and_dungeon()
     {
-        await using var source = NpgsqlDataSource.Create(Eve.Data.PgConnection.ToConnectionString(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
+        await using var source = NpgsqlDataSource.Create(Eve.Data.PgConnection.ForTest(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
         var agents = await CatalogFromSdeAsync(source);
         var byId = agents.ToDictionary(agent => agent.AgentId);
 

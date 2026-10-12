@@ -27,7 +27,7 @@ public class ReactiveArmorHardenerTests
     /// <summary>A Rifter with the modules fitted (id, type, flag, state), as the snapshot of a pilot in space.</summary>
     private static async Task<(ShipSnapshot Snapshot, DogmaStatic Statics)> ShipAsync(params (long Id, int TypeId, int Flag, ItemState State)[] fitted)
     {
-        var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
+        var source = NpgsqlDataSource.Create(PgConnection.ForTest(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
         var statics = await DogmaStatic.LoadAsync(new SdeReader(source));
         await statics.EnsureTypesAsync([Rifter, .. fitted.Select(module => module.TypeId)]);
         var world = new DogmaWorld(statics, CharacterId, ShipId);

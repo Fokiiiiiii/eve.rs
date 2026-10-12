@@ -155,7 +155,7 @@ public class StoreTests
     [Fact]
     public void A_schema_name_that_could_carry_sql_is_refused()
     {
-        using var source = NpgsqlDataSource.Create("Host=127.0.0.1");
+        using var source = NpgsqlDataSource.Create(Eve.Data.PgConnection.ForTest("Host=127.0.0.1"));
         Assert.Throws<ArgumentException>(() => new PgCharacterStore(source, "characters; DROP SCHEMA x"));
         Assert.Throws<ArgumentException>(() => new Eve.Inventory.PgItemStore(source, "Inventory"));
     }

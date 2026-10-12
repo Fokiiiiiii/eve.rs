@@ -438,7 +438,7 @@ internal sealed partial class CharacterServicesComposition
     /// completion is journalled, the standings change, and the session is told after the commit. False when the mission was not accepted.
     /// </summary>
     private async Task<bool> CompleteMissionAsync(long characterId, long agentId, DateTimeOffset now, string reference,
-        IReadOnlyList<(long FactionId, double Delta)> standings, CancellationToken cancellationToken)
+        IReadOnlyList<MissionStandingGain> standings, CancellationToken cancellationToken)
     {
         await using var connection = await source.OpenConnectionAsync(cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
@@ -452,9 +452,14 @@ internal sealed partial class CharacterServicesComposition
             return false;
         }
         if (change is null) return false;
-        foreach (var (factionId, delta) in standings)
-            await foundations.Relations.AdjustAsync(connection, transaction, Eve.Relations.RelationKinds.Standing.Name, factionId, characterId, delta,
+        // read in the transaction: a diminishing gain depends on the standing the pilot has when the completion is written
+        foreach (var gain in standings)
+        {
+            var kind = Eve.Relations.RelationKinds.Standing.Name;
+            var current = await foundations.Relations.ValueAsync(kind, gain.EntityId, characterId, 0, connection, transaction, cancellationToken);
+            await foundations.Relations.AdjustAsync(connection, transaction, kind, gain.EntityId, characterId, gain.DeltaFrom(current),
                 "Agent mission standing", cancellationToken: cancellationToken);
+        }
         await transaction.CommitAsync(cancellationToken);
         agentMissionStore.Announce(change);
         return true;
@@ -476,7 +481,7 @@ internal sealed class SpaceMissionDungeonHost(
     Func<long, int, bool> isPilotInSystem,
     Func<long, int, long, CancellationToken, Task<string?>> startDungeon,
     Func<long, long, long, int, string, string, CancellationToken, Task> creditIsk,
-    Func<long, long, DateTimeOffset, string, IReadOnlyList<(long FactionId, double Delta)>, CancellationToken, Task<bool>> completeMission) : IMissionDungeonHost
+    Func<long, long, DateTimeOffset, string, IReadOnlyList<MissionStandingGain>, CancellationToken, Task<bool>> completeMission) : IMissionDungeonHost
 {
     public bool IsPilotInSystem(long characterId, int solarSystemId) => isPilotInSystem(characterId, solarSystemId);
 
@@ -487,6 +492,6 @@ internal sealed class SpaceMissionDungeonHost(
         creditIsk(characterId, amount, counterpartyId, refTypeId, reason, operationKey, cancellationToken);
 
     public Task<bool> CompleteMissionAsync(long characterId, long agentId, DateTimeOffset now, string reference,
-        IReadOnlyList<(long FactionId, double Delta)> standings, CancellationToken cancellationToken) =>
+        IReadOnlyList<MissionStandingGain> standings, CancellationToken cancellationToken) =>
         completeMission(characterId, agentId, now, reference, standings, cancellationToken);
 }

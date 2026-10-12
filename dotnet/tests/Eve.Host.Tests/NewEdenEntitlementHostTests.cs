@@ -61,7 +61,7 @@ public sealed class NewEdenEntitlementHostTests : IAsyncLifetime
         var url = Environment.GetEnvironmentVariable("EVE_PG_URL");
         if (url is not null)
         {
-            await using var source = NpgsqlDataSource.Create(Eve.Data.PgConnection.ToConnectionString(url));
+            await using var source = NpgsqlDataSource.Create(Eve.Data.PgConnection.ForTest(url));
             foreach (var schema in _schemas)
             {
                 // a background job of this run may still hold a lock on the scratch schema: the drop is retried when the server
@@ -171,7 +171,7 @@ public sealed class NewEdenEntitlementHostTests : IAsyncLifetime
     [PgFact]
     public async Task An_omega_offer_extends_the_end_time_announces_the_grade_and_a_replayed_purchase_extends_nothing()
     {
-        await using var source = NpgsqlDataSource.Create(Eve.Data.PgConnection.ToConnectionString(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
+        await using var source = NpgsqlDataSource.Create(Eve.Data.PgConnection.ForTest(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
         var host = await HostComposition.BuildAsync(Settings());
         var accounts = Accounts(source);
         var station = (await StationCatalog.LoadAsync(new SdeReader(source))).All.First();
@@ -205,7 +205,7 @@ public sealed class NewEdenEntitlementHostTests : IAsyncLifetime
     [PgFact]
     public async Task An_omega_purchase_never_shortens_and_stops_at_the_2100_floor()
     {
-        await using var source = NpgsqlDataSource.Create(Eve.Data.PgConnection.ToConnectionString(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
+        await using var source = NpgsqlDataSource.Create(Eve.Data.PgConnection.ForTest(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
         var host = await HostComposition.BuildAsync(Settings());
         var accounts = Accounts(source);
         var station = (await StationCatalog.LoadAsync(new SdeReader(source))).All.First();
@@ -233,7 +233,7 @@ public sealed class NewEdenEntitlementHostTests : IAsyncLifetime
     [PgFact]
     public async Task A_multiple_character_training_offer_opens_a_free_slot_extends_the_one_that_ends_first_and_notifies_the_account()
     {
-        await using var source = NpgsqlDataSource.Create(Eve.Data.PgConnection.ToConnectionString(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
+        await using var source = NpgsqlDataSource.Create(Eve.Data.PgConnection.ForTest(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
         var host = await HostComposition.BuildAsync(Settings());
         var accounts = Accounts(source);
         var station = (await StationCatalog.LoadAsync(new SdeReader(source))).All.First();
@@ -274,7 +274,7 @@ public sealed class NewEdenEntitlementHostTests : IAsyncLifetime
     [PgFact]
     public async Task A_six_certificate_offer_adds_six_units_of_30_days_across_the_queues()
     {
-        await using var source = NpgsqlDataSource.Create(Eve.Data.PgConnection.ToConnectionString(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
+        await using var source = NpgsqlDataSource.Create(Eve.Data.PgConnection.ForTest(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
         var host = await HostComposition.BuildAsync(Settings());
         var accounts = Accounts(source);
         var station = (await StationCatalog.LoadAsync(new SdeReader(source))).All.First();
@@ -295,7 +295,7 @@ public sealed class NewEdenEntitlementHostTests : IAsyncLifetime
     [PgFact]
     public async Task A_certificate_activates_once_into_the_queues_and_an_alpha_account_is_refused_with_its_certificate_kept()
     {
-        await using var source = NpgsqlDataSource.Create(Eve.Data.PgConnection.ToConnectionString(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
+        await using var source = NpgsqlDataSource.Create(Eve.Data.PgConnection.ForTest(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
         var host = await HostComposition.BuildAsync(Settings());
         var accounts = Accounts(source);
         var station = (await StationCatalog.LoadAsync(new SdeReader(source))).All.First();

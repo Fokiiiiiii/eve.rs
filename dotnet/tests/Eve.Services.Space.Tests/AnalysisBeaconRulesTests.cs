@@ -96,7 +96,7 @@ public class AnalysisBeaconRulesTests
     [PgFact]
     public async Task The_beacon_types_and_their_reward_types_are_the_pinned_sde_records()
     {
-        await using var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
+        await using var source = NpgsqlDataSource.Create(PgConnection.ForTest(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
         var statics = await DogmaStatic.LoadAsync(new SdeReader(source));
         var rules = AnalysisBeaconRules.LoadEmbedded();
         var needed = rules.Types.Values.SelectMany(rule => rule.Rewards.Select(reward => reward.TypeId))
@@ -127,7 +127,7 @@ public class AnalysisBeaconRulesTests
     [PgFact]
     public async Task A_carrier_links_in_both_lists_and_a_titan_only_in_the_standard_one()
     {
-        await using var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
+        await using var source = NpgsqlDataSource.Create(PgConnection.ForTest(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
         var statics = await DogmaStatic.LoadAsync(new SdeReader(source));
         await statics.EnsureTypesAsync([23757, 11567]);
 

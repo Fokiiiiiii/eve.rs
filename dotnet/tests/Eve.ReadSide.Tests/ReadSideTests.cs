@@ -19,7 +19,7 @@ public class ReadSideTests
 
     private static long Num(PyValue value) => value switch { PyInt i => i.Value, PyLong l => l.Value, _ => throw new Xunit.Sdk.XunitException($"not a number: {value}") };
 
-    private static NpgsqlDataSource Source() => NpgsqlDataSource.Create(PgConnection.ToConnectionString(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
+    private static NpgsqlDataSource Source() => NpgsqlDataSource.Create(PgConnection.ForTest(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
 
     private static RowsetQuery Groups() => RowsetQuery.Sde("groupsOfCategory", "groups", Column.Key("groupID", ColumnType.Int), Column.Field("categoryID", ColumnType.Int, "categoryID"), Column.English("groupName", "name"))
         with { Where = "(doc->>'categoryID')::int = $1", Cache = true };

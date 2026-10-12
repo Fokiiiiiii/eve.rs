@@ -18,7 +18,7 @@ public class ItemMutationStoreTests : IAsyncLifetime
 
     private NpgsqlDataSource Source()
     {
-        var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(PgFactAttribute.Url!));
+        var source = NpgsqlDataSource.Create(PgConnection.ForTest(PgFactAttribute.Url!));
         _sources.Add(source);
         return source;
     }

@@ -20,7 +20,7 @@ public sealed class PgFactAttribute : FactAttribute
 
     public static async Task<SdeReader> SdeAsync()
     {
-        var reader = new SdeReader(NpgsqlDataSource.Create(PgConnection.ToConnectionString(Url!)));
+        var reader = new SdeReader(NpgsqlDataSource.Create(PgConnection.ForTest(Url!)));
         Assert.True(await reader.BuildAsync() is not null, "no SDE is loaded: run `cargo run -p eve-sde -- ensure --pg $EVE_PG_URL`");
         return reader;
     }

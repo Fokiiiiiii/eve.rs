@@ -147,7 +147,7 @@ public class SavedFittingStoreTests : IAsyncLifetime
 
     private async Task<(NpgsqlDataSource Source, string Schema)> FreshAsync()
     {
-        var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(PgFactAttribute.Url!));
+        var source = NpgsqlDataSource.Create(PgConnection.ForTest(PgFactAttribute.Url!));
         _sources.Add(source);
         var schema = "sfit_" + Guid.NewGuid().ToString("N")[..12];
         _schemas.Add(schema);

@@ -1217,7 +1217,7 @@ public class HostServerTests : IAsyncLifetime
             new EmptyIndustryJobOperations());
         // the ledger queries are only registered here (the registry test does not run them): the source is never opened
         var ledgerReads = Eve.Services.Core.MiningLedgerQueries.Register(new Eve.ReadSide.ReadSide(
-            Npgsql.NpgsqlDataSource.Create("Host=127.0.0.1;Port=1;Database=unused"),
+            Npgsql.NpgsqlDataSource.Create(Eve.Data.PgConnection.ForTest("Host=127.0.0.1;Port=1;Database=unused")),
             new Dictionary<string, string> { [Eve.Services.Core.MiningLedgerQueries.SpaceSchema] = "unused" }));
         var characterMining = new Eve.Services.Core.CharacterMiningLedgerService(ledgerReads);
         var corporationMining = new Eve.Services.Core.CorpMiningLedgerService(ledgerReads);
@@ -1431,7 +1431,7 @@ public class HostServerTests : IAsyncLifetime
     public async Task The_owner_rows_reach_the_client_through_the_host_and_an_unknown_id_has_no_row()
     {
         var url = Environment.GetEnvironmentVariable("EVE_PG_URL")!;
-        await using var source = Npgsql.NpgsqlDataSource.Create(Eve.Data.PgConnection.ToConnectionString(url));
+        await using var source = Npgsql.NpgsqlDataSource.Create(Eve.Data.PgConnection.ForTest(url));
         var schema = $"host_cfg_{Guid.NewGuid():N}"[..20];
         var charactersSchema = $"host_chr_{Guid.NewGuid():N}"[..20];
         try
@@ -2133,7 +2133,7 @@ private sealed class InSpaceInventory : Eve.Services.Ships.ISpaceContainers
         {
             var suffix = Guid.NewGuid().ToString("N")[..8];
             var connectionBuilder = new Npgsql.NpgsqlConnectionStringBuilder(
-                Eve.Data.PgConnection.ToConnectionString(Environment.GetEnvironmentVariable("EVE_PG_URL")!))
+                Eve.Data.PgConnection.ForTest(Environment.GetEnvironmentVariable("EVE_PG_URL")!))
             { Pooling = false };
             var source = new Npgsql.NpgsqlDataSourceBuilder(connectionBuilder.ConnectionString).Build();
             var inventorySchema = $"as_i_{suffix}";
@@ -2547,7 +2547,7 @@ private sealed class InSpaceInventory : Eve.Services.Ships.ISpaceContainers
     public async Task Foundations_owns_and_disposes_its_shared_local_timers()
     {
         await using var source = Npgsql.NpgsqlDataSource.Create(
-            Eve.Data.PgConnection.ToConnectionString(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
+            Eve.Data.PgConnection.ForTest(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
         var suffix = Guid.NewGuid().ToString("N")[..8];
         var schemas = new System.Collections.Generic.List<string>();
         string Schema(string _, string defaultName)

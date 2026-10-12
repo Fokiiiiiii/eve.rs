@@ -277,7 +277,7 @@ public sealed class CosmicSiteDirectorTests
         public static async Task<SiteRig> CreateAsync()
         {
             var url = Environment.GetEnvironmentVariable("EVE_PG_URL")!;
-            var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(url));
+            var source = NpgsqlDataSource.Create(PgConnection.ForTest(url));
             var id = Guid.NewGuid().ToString("N")[..12];
             string[] schemas = ["sit_sch_" + id, "sit_evt_" + id, "sit_cnt_" + id];
             await DurableScheduler.MigrateAsync(source, schemas[0]);

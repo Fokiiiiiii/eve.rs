@@ -75,7 +75,7 @@ public class MigrationsTests
     [Fact]
     public async Task Bad_input_is_refused_before_touching_the_database()
     {
-        await using var source = Npgsql.NpgsqlDataSource.Create("Host=127.0.0.1");
+        await using var source = Npgsql.NpgsqlDataSource.Create(Eve.Data.PgConnection.ForTest("Host=127.0.0.1"));
         await Assert.ThrowsAsync<ArgumentException>(() => Migrations.ApplyAsync(source, "bad; name", []));
         await Assert.ThrowsAsync<ArgumentException>(() => Migrations.ApplyAsync(source, "ok", [new Migration("a", ""), new Migration("a", "")]));
     }

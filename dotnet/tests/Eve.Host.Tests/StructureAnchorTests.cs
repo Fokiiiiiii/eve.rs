@@ -63,7 +63,7 @@ public sealed class StructureAnchorTests
 
         public static async Task<Route> CreateAsync(string pgUrl)
         {
-            var source = NpgsqlDataSource.Create(pgUrl);
+            var source = NpgsqlDataSource.Create(Eve.Data.PgConnection.ForTest(pgUrl));
             var sde = new SdeReader(source);
             Assert.NotNull(await sde.BuildAsync());
             var dogma = await DogmaStatic.LoadAsync(sde);

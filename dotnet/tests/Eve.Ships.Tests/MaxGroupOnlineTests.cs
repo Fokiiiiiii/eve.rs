@@ -18,7 +18,7 @@ public class MaxGroupOnlineTests
     [PgFact]
     public async Task Onlining_the_eleventh_capacitor_booster_is_refused_and_the_tenth_is_allowed()
     {
-        await using var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(Rig.Url!));
+        await using var source = NpgsqlDataSource.Create(PgConnection.ForTest(Rig.Url!));
         var sde = new SdeReader(source);
         var statics = await DogmaStatic.LoadAsync(sde);
         var booster = await TypeWithLimitAsync(sde, statics, CapacitorBoosterGroup);
@@ -40,7 +40,7 @@ public class MaxGroupOnlineTests
     [PgFact]
     public async Task Modules_of_another_group_and_groups_without_a_limit_do_not_count_against_the_limit()
     {
-        await using var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(Rig.Url!));
+        await using var source = NpgsqlDataSource.Create(PgConnection.ForTest(Rig.Url!));
         var sde = new SdeReader(source);
         var statics = await DogmaStatic.LoadAsync(sde);
         var booster = await TypeWithLimitAsync(sde, statics, CapacitorBoosterGroup);

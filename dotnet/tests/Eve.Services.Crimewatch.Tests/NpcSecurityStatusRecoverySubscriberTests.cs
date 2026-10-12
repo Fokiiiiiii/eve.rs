@@ -13,7 +13,7 @@ public sealed class NpcSecurityStatusRecoverySubscriberTests
     public async Task A_failed_delivery_rolls_back_and_a_retry_applies_two_distinct_kills_once()
     {
         var connectionString = Environment.GetEnvironmentVariable("EVE_PG_URL")!;
-        await using var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(connectionString));
+        await using var source = NpgsqlDataSource.Create(PgConnection.ForTest(connectionString));
         var suffix = Guid.NewGuid().ToString("N")[..12];
         string[] schemas = ["nsr_sched_" + suffix, "nsr_events_" + suffix, "nsr_rel_" + suffix, "nsr_cw_" + suffix];
         await DurableScheduler.MigrateAsync(source, schemas[0]);

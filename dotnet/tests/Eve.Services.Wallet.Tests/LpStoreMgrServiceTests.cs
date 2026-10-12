@@ -159,7 +159,7 @@ public class LpStoreMgrServiceTests
         public static async Task<Rig> CreateAsync()
         {
             var url = Environment.GetEnvironmentVariable("EVE_PG_URL")!;
-            var source = NpgsqlDataSource.Create(Eve.Data.PgConnection.ToConnectionString(url));
+            var source = NpgsqlDataSource.Create(Eve.Data.PgConnection.ForTest(url));
             var wallet = "lpp_" + Guid.NewGuid().ToString("N")[..12];
             var inventory = "lpi_" + Guid.NewGuid().ToString("N")[..12];
             await PgWalletStore.MigrateAsync(source, wallet);

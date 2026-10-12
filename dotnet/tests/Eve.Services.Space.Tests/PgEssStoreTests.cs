@@ -76,7 +76,7 @@ internal sealed class EssRig : IAsyncDisposable
 
     public static async Task<EssRig> CreateAsync()
     {
-        var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(Url!));
+        var source = NpgsqlDataSource.Create(PgConnection.ForTest(Url!));
         var rig = new EssRig(source);
         await PgWalletStore.MigrateAsync(source, rig._walletSchema);
         await PgBountyStore.MigrateAsync(source, rig._npcSchema);

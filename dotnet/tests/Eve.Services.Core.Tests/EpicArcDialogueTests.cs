@@ -31,7 +31,7 @@ public class EpicArcDialogueTests
     [AgentsPgFact]
     public async Task The_arc_offers_its_current_step_and_the_next_after_completion_through_the_dialogue()
     {
-        var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
+        var source = NpgsqlDataSource.Create(PgConnection.ForTest(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
         var schema = "arcdlg_" + Guid.NewGuid().ToString("N")[..12];
         await using var cleanup = new Cleanup(source, schema);
         await AgentMissionStore.MigrateAsync(source, schema);

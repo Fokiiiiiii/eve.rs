@@ -150,7 +150,7 @@ public class RuntimeTests : IAsyncLifetime
         {
             return;
         }
-        _source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(url));
+        _source = NpgsqlDataSource.Create(PgConnection.ForTest(url));
         await PgCrimewatchStore.MigrateAsync(_source, _schema);
     }
 
@@ -1237,7 +1237,7 @@ public class PenaltyTests : IAsyncLifetime
         {
             return;
         }
-        _source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(url));
+        _source = NpgsqlDataSource.Create(PgConnection.ForTest(url));
         await PgCrimewatchStore.MigrateAsync(_source, _schema);
     }
 

@@ -23,7 +23,7 @@ internal sealed class LoyaltyRig : IAsyncDisposable
     public static async Task<LoyaltyRig> CreateAsync()
     {
         var schema = $"lp_{Guid.NewGuid():N}"[..20];
-        var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(Rig.Url!));
+        var source = NpgsqlDataSource.Create(PgConnection.ForTest(Rig.Url!));
         await PgWalletStore.MigrateAsync(source, schema);
         return new LoyaltyRig(source, schema);
     }
@@ -120,7 +120,7 @@ public class LoyaltyPointStoreTests
         await rig.Store().ApplyAndCommitAsync(Pilot, IssuerA, 1, "mission", "char-1");
 
         // A new store on a new data source reads what the first one committed.
-        await using var restarted = NpgsqlDataSource.Create(PgConnection.ToConnectionString(Rig.Url!));
+        await using var restarted = NpgsqlDataSource.Create(PgConnection.ForTest(Rig.Url!));
         var reopened = new LoyaltyPointStore(restarted, rig.Schema);
         Assert.Equal([new LoyaltyPointBalance(IssuerA, 999)], await reopened.ReadAsync(corporation));
         Assert.Equal([new LoyaltyPointBalance(IssuerA, 1)], await reopened.ReadAsync(Pilot));

@@ -51,7 +51,7 @@ public class ModuleRuleTests
     [PgFact]
     public async Task Each_module_rule_constant_is_the_attribute_of_the_static_data_it_names()
     {
-        await using var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
+        await using var source = NpgsqlDataSource.Create(PgConnection.ForTest(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
         var statics = await DogmaStatic.LoadAsync(new SdeReader(source));
         foreach (var (id, name) in RuleAttributes)
         {
@@ -62,7 +62,7 @@ public class ModuleRuleTests
     [PgFact]
     public async Task A_module_that_burns_fuel_is_built_to_ask_for_its_fuel_before_each_cycle_and_is_not_run_free()
     {
-        await using var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
+        await using var source = NpgsqlDataSource.Create(PgConnection.ForTest(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
         var sde = new SdeReader(source);
         var statics = await DogmaStatic.LoadAsync(sde);
         var carriers = await PublishedCarriersAsync(sde, statics, "moduleBonusSiegeModule");
@@ -96,7 +96,7 @@ public class ModuleRuleTests
     [PgFact]
     public async Task Each_fuel_family_with_a_body_is_built_with_its_fuel_and_the_bodies_not_yet_run_stay_refused_by_name()
     {
-        await using var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
+        await using var source = NpgsqlDataSource.Create(PgConnection.ForTest(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
         var sde = new SdeReader(source);
         var statics = await DogmaStatic.LoadAsync(sde);
         var shipTypeId = await ShipTypeIdAsync(sde, statics);
@@ -143,7 +143,7 @@ public class ModuleRuleTests
     [PgFact]
     public async Task A_module_whose_effect_has_no_body_yet_is_refused_and_stays_uncovered()
     {
-        await using var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
+        await using var source = NpgsqlDataSource.Create(PgConnection.ForTest(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
         var sde = new SdeReader(source);
         var statics = await DogmaStatic.LoadAsync(sde);
         var carriers = await PublishedCarriersAsync(sde, statics, "barrage");

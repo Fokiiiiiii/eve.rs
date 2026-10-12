@@ -3369,6 +3369,7 @@ Tests: `eve-space` filament module, 5 tests (the 17 SDE rows, the family directi
 
 
 ### Wormhole signatures, sites and scan strength (slice 9, project rules)
+Superseded in part by "Wormhole sites: real names and client dungeon keys (slice 10)" below: every category now names its site.
 
 - Scan strength of every wormhole signature: 0.0, the SDE dogma default of `scanWormholeStrength` (attribute 1908). EveJS holds no
   per-type value for wormhole types (its provider reads none), and the wiki pages read give none, so one uniform strength is the rule.
@@ -3380,3 +3381,12 @@ Tests: `eve-space` filament module, 5 tests (the 17 SDE rows, the family directi
   C13 uses the class 6 list (no extra for C13 is documented).
 - A Drifter system (classes 14 to 18) has exactly five combat sites, named from the class 6 list (no Drifter name list is on the pages read).
 - Not built: the link of the plan to `CosmicSiteDirector` and to probe scanning; the site entities are not created in the world.
+
+### Wormhole sites: real names and client dungeon keys (slice 10, project rules)
+- Names: the per-class lists of EVE University "Wormhole sites" (raw wikitext, fetched 2026-10-12): anomalies (combat), data, relic, gas (reservoirs) and ore (deposits). Each name is matched to the client dungeon by its en-us localization text (`native/localization_fsd_en-us.jsonl.gz`) and carries the dungeon key (`native/dungeons.jsonl.gz`, `dungeonNameID`). EveJS's `wormholeSites` content pack (`resolution-<kind>-<key>`) gives the same key for 68 of the 69 names.
+- Spelling: the wiki says "Sizable Perimeter Reservoir"; the client's localization says "Sizeable Perimeter Reservoir" (key 3559). The client spelling is used.
+- Zones of gas and ore follow the wiki's headings: gas (reservoirs) perimeter in C1 to C4, frontier in C3 to C6, core in C5 and C6 and Shattered; ore (deposits) perimeter and frontier in every class, core in C5 and C6, Shattered Debris Field in Shattered systems. Core ore that the wiki says may spawn rarely in C1 to C4 is not planned.
+- C13 (Shattered) uses the class 6 lists for every category, plus Shattered Debris Field (ore). Shattered Ice Field (an ice belt, the wiki's "Ice belts" heading) is in the client data but not planned: the share table has no ice category.
+- Thera (class 12) and the other classes outside 1 to 6 and 13 get no planned sites (`WormholeSites.Plan` returns none). Thera's own sites are not in the wiki's lists.
+- Drifter systems keep exactly five combat sites from the class 6 anomalies (unchanged from slice 9).
+- The scan strength (0.0) and the counts and shares are unchanged from slice 9. Not built: the link of the plan to `CosmicSiteDirector` and to probe scanning, and the site entities in the world.

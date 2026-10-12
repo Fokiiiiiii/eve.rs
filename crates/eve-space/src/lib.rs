@@ -28,6 +28,7 @@ pub mod names;
 pub mod npc;
 pub mod payload;
 pub mod pochven;
+pub mod pochven_population;
 pub mod resistance_shift;
 pub mod scene;
 pub mod sde;

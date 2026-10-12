@@ -1169,7 +1169,7 @@ Sources, in the order of the rule. The wiki (https://wiki.eveuniversity.org/Jump
 
 Sources. The wiki: "Jump drive" (https://wiki.eveuniversity.org/Jump_drive, fetched 2026-10-10): "Cynos cannot be lit in high-sec"; "while they can be lit in wormhole space they serve no purpose as jump drives cannot jump to systems in wormhole space"; "Ships with a jump drive can only jump to cynosural fields or beacons". "Cynosural field" (https://wiki.eveuniversity.org/Cynosural_field, fetched 2026-10-10): the same wormhole sentence. "Pochven" (https://wiki.eveuniversity.org/Pochven, fetched 2026-10-10): "Region-wide cynosural field jammers stops anyone from lighting a cyno"; "capital ships cannot jump into the Pochven region"; "Jump drives cannot be used to enter Triglavian space, only to exit." The SDE (build 3396210, `sde."mapSolarSystems"`, `doc->>'regionID'`): Pochven is region 10000070 (27 systems); every wormhole system (31000001 to 31002604) lies in a region 11000000 to 11999999. EveJS v0.12.9 `server/src/services/chat/channelRules.js`: `isWormholeSolarSystemID` (line 104, the id range 31000000 to 31999999) and `isTriglavianSolarSystemID` (line 116, by the system's faction); EveJS `deployableCynoRuntime.js` lines 286 to 290 (the beacon's deployment texts: "Mobile Cynosural Beacons cannot be deployed in wormhole space.", "Mobile Cynosural Beacons cannot be deployed in Pochven."). eve-logic: no jump refusal text for a wormhole or Pochven destination was found (`stargate/client/jump_checks.py` covers gates; the labels are in the client's localization, not in the Python source).
 
-- Decision, the region as the Pochven check: the SDE in this build carries no `factionID` on the systems (EveJS's check is the faction, `worldData.getSolarSystemByID(...).factionID`), so the region 10000070 is used. The two are not compared against each other here (no faction data in the SDE to compare with).
+- Decision, the region as the Pochven check: the pinned SDE (build 3396210, `mapSolarSystems`) carries a `factionID` on 70 of 8,490 systems (factions 500001 to 500006, 500013, 500026, 500027, 500029; regions 10001004, 10000041, 11000033 and a few others), and none of the 27 Pochven systems (region 10000070) has one. EveJS's check is the faction (`worldData.getSolarSystemByID(...).factionID`), which therefore cannot name Pochven from this SDE, so the region 10000070 is used. eve.rs reads the system `factionID` where it exists (`TetherAuthority`, `PersistenceSovFwReadModel`).
 - Decision, the wormhole check: the region 11000000 to 11999999 (the SDE's J-space regions), not the EveJS id range; both name the same 2604 systems (the id range is 31000000 to 31999999).
 - Decision, jump drives into wormhole space: refused for the cynosural jump, a bridge's opening and a conduit, whatever the field (the wiki). Text: "Jump drives cannot jump to systems in wormhole space." (ours).
 - Decision, jump drives into Pochven: refused the same way (the wiki: "only to exit"). Text: "Jump drives cannot be used to enter Pochven." (ours). Leaving Pochven or wormhole space is not refused (the wiki says "only to exit"; no wiki rule restricts a jump out).
@@ -2114,15 +2114,47 @@ the wiki's ("Locator Agents") and the client's, not EveJS's.
 - **Standing.** The required standing per level (`LocatorRules.RequiredStandingFor`) is compared with the pilot's effective
   standing toward the agent (the Connections bonus applied, as the research start does). The wiki names this as faction standing;
   the corporation and faction standings are not split out here. Status: a gap.
-- **Result.** The located notification: type 69, group agents, sent by the agent, with `characterID`, `messageIndex` (0),
-  `agentLocation` and `targetLocation` keyed by group id (3 region, 4 constellation, 5 system, 15 station; the station only when
-  docked). It is written after the commit. If the notification cannot be written, the fee is refunded (journal reference type 27,
-  "Locate refund") and the error is returned to the pilot. Status: decided; the payload is read from the client formatter, not
-  shown in a client run.
+- **Result (outbox, AG-5).** The fee, the cooldown and the result are one PostgreSQL transaction: the result is an event
+  (`agents.locate_delivered`, the repo's transactional outbox, `EventBus`). A subscriber writes the located notification (type 69,
+  group agents, sent by the agent) with `characterID`, `messageIndex` (0), `agentLocation` and `targetLocation` keyed by group id
+  (3 region, 4 constellation, 5 system, 15 station; the station only when docked), keyed by the event id so a retry writes it once.
+  So a pilot who paid is always told: a crash between the commit and the write is replayed by the bus. No refund path.
+  Status: decided; the payload is read from the client formatter. Covered by the live locator walk.
 - **Gaps.** The prompt caption, its label and the lines the agent says are plain English: the client's `UI/Agents/Locator/*` labels
-  are not mapped to the dialog yet. `messageIndex` is always 0 (the first intro line). A refund that fails after a failed
-  notification leaves the cooldown started. No Host test covers the delivery, the refund or the name lookup; the dialogue tests
-  (`AgentLocatorDialogueTests`, PostgreSQL, fake port) cover the ask, offer, accept, reject, refusals, cooldown and the unpaid case.
+  are not mapped to the dialog yet. `messageIndex` is always 0 (the first intro line). A subscriber that keeps failing dead-letters
+  the notification (the fee stays charged; visible in the bus status). The dialogue tests (`AgentLocatorDialogueTests`, PostgreSQL,
+  fake port) cover the ask, offer, accept, reject, refusals, cooldown and the unpaid case; the live walk covers the delivery.
+
+## Agents slice AG-5: live walks for the dialogs, and what they found (2026-10-12)
+
+Sources. EveJS `researchDialogue.js:152-209, 264-336, 372-392` (SingleChoiceBox, YesNo and GetQuantity: the argument shapes, the
+answer readers), `agentMgrService.js:381-397` (the decline YesNo: five arguments and `machoVersion` as kwargs),
+`network/clientSession.js:1112-1150` (`consumeClientCallResponse`: a plain or a substream answer).
+
+- **Dialog kwargs were dropped (fixed).** `SendClientCall` built every call with empty kwargs, so the decline YesNo lost
+  `machoVersion` and the datacore GetQuantity lost its `maxvalue`, `label` and the rest. Both now go on the wire. Found by the
+  MITM capture of the walks against the EVE.js argument lists above.
+- **Typed answers were read as nothing (fixed).** The server decodes an ordinary string as `PyBytes` (only string-table items
+  are `PyStr`), so the locator's name and the radio-button answer did not match. The dialogue reads text through
+  `JsSemantics.StringValue`, as the slash commands do. Tests: `AgentLocatorDialogueTests`, `AgentResearchDialogueTests`
+  (byte-string answers).
+- **Locator result is an outbox event (AG-4 A7 revised).** The fee, the cooldown and the result are one transaction, the result
+  is an `agents.locate_delivered` event on the repo's `EventBus`; the subscriber writes the notification keyed by the event id.
+  The refund path is gone (no crash window between a charge and its notification).
+- **The Cockroach (typeID 11019, from the pinned SDE).** The live walks seed it through the database: a singleton in the pilot's
+  station hangar (flag 4) and the characters row's `ship_id`. The session does not carry `shipid` at selection: the server defers a
+  docked ship until the client's dogma bootstrap (`deferredDockedShipId`, not client-visible), so the walks check the database.
+  Flying it is not exercised by these walks (gap).
+- **Live walks (headless client, `tools/headless-client/tests/test_agents_live.py`, run through `run-eve-live.sh`).** LP store purchase
+  (ISK and LP debited, item granted), research start, datacores and cancel (the answers come from `client.answer`), locator to a second
+  pilot (fee taken on accept, the located notification delivered through the outbox), agent decline (a no keeps the offer, a yes
+  declines it). Quit is not walked: it needs the pilot at the agent's station with an accepted mission.
+- **MITM and EVE.js.** The four walks were captured through `tools/mitm` against eve.rs. The EVE.js side was not run: the walks
+  seed PostgreSQL state (ISK, standings, LP, the offer, the ship) that EVE.js does not read from a database, and without that state
+  its agents refuse before the dialogs. So the dialog shapes are compared by reading EVE.js (above), not by `mitm diff`. Gap.
+- **Owner decisions in this slice.** Locator fee on accept (unchanged). Starweb offers stay out. Structures untouched.
+- **Gaps.** Quit walk; flying the Cockroach; the EVE.js side of the capture (needs a seeded EVE.js data root); the client-side
+  display of the locator result (no graphical run).
 
 ## ST-E: cloak proximity and forced decloak notices (2026-10-10)
 - **Proximity radius and refusal.** The cloak breaks, and activation refuses, for a ship or a non-belt body within 2 000 m of the surface of the cloaked ship. Source: EveJS `shipCloak.js:100` (`MIN_CLOAKING_DISTANCE_METERS = 2000`). It replaces the 2 km smartbomb-range check, so the activation refusal now also counts bodies, not only smartbomb targets. Belts are not counted.
@@ -2260,6 +2292,7 @@ client's use of mission data: eve-logic `evemissions/client/data.py`, `eve/clien
   the 1,460 distinct IDs in the build are rows of the SDE `dungeons` table (checked on 3405148 and on the pinned 3396210),
   so the rooms and spawns cannot be taken from `dungeons`. `MissionStaticCatalog` returns the ID; `MissionDataGaps.DungeonContent`
   gives the reason. Status: open, belongs to the dungeon owner.
+- **Dungeon catalog manifest `sdeBuild` is 3405148, not the runtime pin 3396210.** `dotnet/src/Eve.Dungeons/Data/catalog/v1/manifest.json` is written by `tools/dev/extract-dungeon-catalog.py` run on the 3405148 JSONL directory: that script needs `missions.jsonl` and `epicArcs.jsonl`, which only build 3405148 has, and takes `sdeBuild` from that directory's `_sde.jsonl`. The type, archetype and dungeon checks in the manifest (0 mismatches) ran against that same build. The runtime static data stays the pinned 3396210 (`sde/lock.json`); the mission tables are the second pin (`missionPinned`). Status: explained; the manifest is unchanged because `DungeonCatalogTests` asserts 3405148.
 - **LP and standings: not answered by the mission data.** Mission LP rewards and LP store standing requirements are not in
   the build (the official `missions` rows carry ISK and item rewards and standings in `extraStandings`). LP store offers
   come from the agents track (its ESI source). Status: open (`MissionDataGaps.Standings`).

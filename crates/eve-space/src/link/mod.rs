@@ -37,7 +37,7 @@ use crate::weapons::{Aoe, Arc, Charge, Spool, Turret};
 use crate::world::StructureStatus;
 use crate::wreck::WreckKind;
 
-pub const PROTOCOL_VERSION: u16 = 64;
+pub const PROTOCOL_VERSION: u16 = 65;
 /// The message kinds.
 pub mod kind;
 

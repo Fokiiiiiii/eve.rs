@@ -24,7 +24,7 @@ public class MutatorCatalogTests
 {
     private static async Task<(SdeReader Reader, MutatorCatalog Catalog)> LoadAsync()
     {
-        var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(PgFactAttribute.Url!));
+        var source = NpgsqlDataSource.Create(PgConnection.ForTest(PgFactAttribute.Url!));
         var reader = new SdeReader(source);
         Assert.True(await reader.BuildAsync() is not null, "no SDE is loaded: run `cargo run -p eve-sde -- ensure --pg $EVE_PG_URL`");
         return (reader, await MutatorCatalog.LoadAsync(reader));

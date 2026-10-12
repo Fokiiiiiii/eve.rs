@@ -49,7 +49,7 @@ public class StationCatalogTests
 
     private static async Task<StationCatalog> LoadAsync()
     {
-        var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(PgFactAttribute.Url!));
+        var source = NpgsqlDataSource.Create(PgConnection.ForTest(PgFactAttribute.Url!));
         var reader = new SdeReader(source);
         Assert.True(await reader.BuildAsync() is not null, "no SDE is loaded: run `cargo run -p eve-sde -- ensure --pg $EVE_PG_URL`");
         return await StationCatalog.LoadAsync(reader);
@@ -118,7 +118,7 @@ public class SolarSystemCatalogTests
     [PgFact]
     public async Task The_systems_of_the_static_data_say_where_they_are_in_the_universe()
     {
-        var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(PgFactAttribute.Url!));
+        var source = NpgsqlDataSource.Create(PgConnection.ForTest(PgFactAttribute.Url!));
         var reader = new SdeReader(source);
         Assert.True(await reader.BuildAsync() is not null, "no SDE is loaded: run `cargo run -p eve-sde -- ensure --pg $EVE_PG_URL`");
         var systems = await SolarSystemCatalog.LoadAsync(reader);

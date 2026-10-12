@@ -67,7 +67,7 @@ public sealed class ConfigServiceTests
     public async Task Owners_answer_characters_corporations_and_alliances_and_leave_unknown_ids_out()
     {
         var url = Environment.GetEnvironmentVariable("EVE_PG_URL")!;
-        await using var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(url));
+        await using var source = NpgsqlDataSource.Create(PgConnection.ForTest(url));
         CharacterNames.EnsureUnicodeSupport();
         var schema = $"cfg_owner_{Guid.NewGuid():N}"[..20];
         var charactersSchema = $"cfg_chr_{Guid.NewGuid():N}"[..20];
@@ -105,7 +105,7 @@ public sealed class ConfigServiceTests
     public async Task Tickers_have_no_row_for_an_unknown_corporation()
     {
         var url = Environment.GetEnvironmentVariable("EVE_PG_URL")!;
-        await using var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(url));
+        await using var source = NpgsqlDataSource.Create(PgConnection.ForTest(url));
         var schema = $"cfg_ticker_{Guid.NewGuid():N}"[..20];
         try
         {
@@ -132,7 +132,7 @@ public sealed class ConfigServiceTests
     public async Task Locations_carry_the_station_position_and_leave_unknown_ids_out()
     {
         var url = Environment.GetEnvironmentVariable("EVE_PG_URL")!;
-        await using var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(url));
+        await using var source = NpgsqlDataSource.Create(PgConnection.ForTest(url));
         var sde = new SdeReader(source);
         var stations = await StationCatalog.LoadAsync(sde);
         var solarSystems = await SolarSystemCatalog.LoadAsync(sde);
@@ -217,7 +217,7 @@ public sealed class ConfigServiceTests
     public async Task Client_cache_prime_rpc_shapes_cover_all_four_empires()
     {
         var url = Environment.GetEnvironmentVariable("EVE_PG_URL")!;
-        await using var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(url));
+        await using var source = NpgsqlDataSource.Create(PgConnection.ForTest(url));
         CharacterNames.EnsureUnicodeSupport();
         var charactersSchema = $"cc_{Guid.NewGuid():N}"[..20];
         var corporationsSchema = $"cc_corp_{Guid.NewGuid():N}"[..20];
@@ -296,7 +296,7 @@ public sealed class ConfigServiceTests
     public async Task Alliance_short_names_return_a_client_rowset_and_ignore_deleted_or_unknown_ids()
     {
         var url = Environment.GetEnvironmentVariable("EVE_PG_URL")!;
-        await using var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(url));
+        await using var source = NpgsqlDataSource.Create(PgConnection.ForTest(url));
         var schema = $"cfg_alliance_{Guid.NewGuid():N}"[..20];
         try
         {

@@ -117,7 +117,7 @@ public Eve.Wallet.PgWalletStore WalletStore { get; }
             Eve.Scheduler.LocalTimers? localTimers = null, bool scheduleAnnouncer = false,
             Func<long, bool>? isAlphaClone = null, bool useCurrentSdeCatalog = false, int accountId = 34)
         {
-            var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(Url!));
+            var source = NpgsqlDataSource.Create(PgConnection.ForTest(Url!));
             var catalog = Catalog;
             if (useCurrentSdeCatalog)
             {

@@ -124,10 +124,13 @@ public sealed partial class WarsInfoMgrService
             .Select(Payload)]);
     }
 
-    private async Task<IReadOnlyList<WarRecord>> WarsAsync(CancellationToken token)
+    private Task<IReadOnlyList<WarRecord>> WarsAsync(CancellationToken token) => ReadWarsAsync(_relations, token);
+
+    /// <summary>Every war with its allies, read from the war relations (shared with the war registry).</summary>
+    internal static async Task<IReadOnlyList<WarRecord>> ReadWarsAsync(Eve.Relations.RelationStore relations, CancellationToken token)
     {
-        var warsTask = _relations.ListAsync(WarKind, token);
-        var alliesTask = _relations.ListAsync(WarAllyKind, token);
+        var warsTask = relations.ListAsync(WarKind, token);
+        var alliesTask = relations.ListAsync(WarAllyKind, token);
         await Task.WhenAll(warsTask, alliesTask);
         var allies = alliesTask.Result.GroupBy(row => row.Object)
             .ToDictionary(group => group.Key, group => group.OrderBy(row => row.Subject).ToArray());
@@ -167,7 +170,7 @@ public sealed partial class WarsInfoMgrService
             OptionalFileTime(attrs, "timeFinished", relation.UntilMs));
     }
 
-    private static bool Owns(WarRecord war, long id) =>
+    internal static bool Owns(WarRecord war, long id) =>
         war.DeclaredById == id || war.AgainstId == id || war.Allies.Any(ally => ally.AllyId == id);
 
     private static Eve.Marshal.PyValue Payload(WarRecord war)
@@ -395,10 +398,10 @@ public sealed partial class WarsInfoMgrService
         return false;
     }
 
-    private sealed record WarRecord(long WarId, long DeclaredById, long AgainstId, long TimeDeclared,
+    internal sealed record WarRecord(long WarId, long DeclaredById, long AgainstId, long TimeDeclared,
         long TimeStarted, long? TimeFinished, long? Retracted, long? RetractedBy, long? BillId,
         bool Mutual, bool OpenForAllies, long? CreatedFromWarId, long? WarHqId, long? WarHq,
         int ReasonEnded, int ReasonStarted, double Reward, IReadOnlyList<AllyInfo> Allies);
 
-    private sealed record AllyInfo(long AllyId, long TimeStarted, long? TimeFinished);
+    internal sealed record AllyInfo(long AllyId, long TimeStarted, long? TimeFinished);
 }

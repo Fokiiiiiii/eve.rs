@@ -154,7 +154,7 @@ public sealed class Harness : IAsyncDisposable
         int populationCapacity = SystemPopulation.DefaultCapacity)
     {
         CharacterNames.EnsureUnicodeSupport();
-        var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(Url!));
+        var source = NpgsqlDataSource.Create(PgConnection.ForTest(Url!));
         var harness = new Harness(
             source, Guid.NewGuid().ToString("N")[..12], newCharacterExperienceEnabled, securityStatus, entryHooks, systems, populationCapacity);
         await PgCharacterStore.MigrateAsync(source, harness._characterSchema);

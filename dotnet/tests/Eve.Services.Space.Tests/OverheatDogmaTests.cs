@@ -19,7 +19,7 @@ public class OverheatDogmaTests
     /// <summary>A Rifter with the turret fitted in the given state, as the snapshot of a pilot in space.</summary>
     private static async Task<(ShipSnapshot Snapshot, DogmaStatic Statics)> ShipAsync(ItemState turret)
     {
-        var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
+        var source = NpgsqlDataSource.Create(PgConnection.ForTest(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
         var statics = await DogmaStatic.LoadAsync(new SdeReader(source));
         await statics.EnsureTypesAsync([Rifter, HeavyPulseLaser, MultifrequencyS]);
         var world = new DogmaWorld(statics, CharacterId, ShipId);

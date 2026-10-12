@@ -153,8 +153,8 @@ class MockServer:
         send(m.Dict([
             ("live_updates", m.List()),
             ("session_init", m.Dict([
-                ("languageID", "EN"), ("countryCode", "GB"), ("userid", 7), ("maxSessionTime", None),
-                ("userType", 30), ("role", m.Long(0)), ("address", "127.0.0.1"), ("inDetention", None),
+                ("languageID", "EN"), ("countryCode", "GB"), ("userid", 7),
+                ("userType", 30), ("role", m.Long(0x6000_0000_8000_0000)), ("address", "127.0.0.1"), ("inDetention", None),
             ])),
             ("sessionID", m.Long(int(time.time() * 1000) * 15)),
             ("client_hash", None),

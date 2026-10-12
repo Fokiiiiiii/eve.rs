@@ -89,7 +89,7 @@ public class SkillCatalogTests
 
     private static async Task<SkillCatalog> LoadAsync()
     {
-        var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(PgSchema.Url!));
+        var source = NpgsqlDataSource.Create(PgConnection.ForTest(PgSchema.Url!));
         var reader = new SdeReader(source);
         Assert.True(await reader.BuildAsync() is not null, "no SDE is loaded: run `cargo run -p eve-sde -- ensure --pg $EVE_PG_URL`");
         return await SkillCatalog.LoadAsync(reader);

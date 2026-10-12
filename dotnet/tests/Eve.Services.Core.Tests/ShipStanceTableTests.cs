@@ -29,7 +29,7 @@ public class ShipStanceTableTests
     [PgFact]
     public async Task Every_stance_table_entry_is_a_mode_item_of_the_sde_for_its_hull()
     {
-        var source = Npgsql.NpgsqlDataSource.Create(Eve.Data.PgConnection.ToConnectionString(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
+        var source = Npgsql.NpgsqlDataSource.Create(Eve.Data.PgConnection.ForTest(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
         var sde = new SdeReader(source);
         var types = (await sde.ReadAsync("types")).ToDictionary(row => (int)row.Key, row => row.Doc);
         var dogma = (await sde.ReadAsync("typeDogma")).ToDictionary(row => (int)row.Key, row => row.Doc);

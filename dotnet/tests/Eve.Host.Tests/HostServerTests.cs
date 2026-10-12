@@ -9,6 +9,7 @@ using Eve.Macho;
 using Eve.Marshal;
 using Eve.Services;
 using Eve.Services.Core;
+using Eve.Services.CharacterSelect;
 using Eve.Services.CharacterInfo;
 
 namespace Eve.Host.Tests;
@@ -351,20 +352,32 @@ public class HostServerTests : IAsyncLifetime
         var initial = ((PyDict)payload[2]).Entries.ToDictionary(e => T(e.Key)!, e => e.Value);
         Assert.Equal(new PyInt(42), initial["userid"]);
         Assert.Equal(new PyInt(30), initial["userType"]);
-        Assert.Equal(new PyLong(0x0100_0000_0000_0001), initial["role"]);
+        // the account's role plus the base bits (ROLE_LOGIN, ROLE_PLAYER, ROLE_IGB) every login session has
+        Assert.Equal(new PyLong(0x0100_0000_0000_0001 | CharUnboundMgrService.SessionBaseRole), initial["role"]);
         Assert.Equal("EN", T(initial["languageID"]));
         Assert.Equal("GB", T(initial["countryCode"]));
         Assert.Equal("127.0.0.1", T(initial["address"]));
-        // the reference names these two as well, unset
-        Assert.Equal(PyNone.Instance, initial["maxSessionTime"]);
+        // the client reads inDetention without a guard, so it is sent, unset
         Assert.Equal(PyNone.Instance, initial["inDetention"]);
         Assert.Equal(
-            ["languageID", "countryCode", "userid", "maxSessionTime", "userType", "role", "address", "inDetention"],
+            ["languageID", "countryCode", "userid", "userType", "role", "address", "inDetention"],
             ((PyDict)payload[2]).Entries.Select(e => T(e.Key)!));
         // the client's address: type 2 (client), its client id
         var destination = (PyTuple)((PyObject)state[2]).Args;
         Assert.Equal(new PyInt(2), destination.Items[0]);
         Assert.Equal(new PyLong((long)open.ClientId), destination.Items[1]);
+    }
+
+    [Fact]
+    public void An_ordinary_account_is_sent_the_base_role_bits_and_no_staff_bits()
+    {
+        // role 0 is an ordinary player: the login session still carries ROLE_LOGIN, ROLE_PLAYER and ROLE_IGB (EveJS
+        // composeSessionRoleMask with no account role), and no ROLE_ADMIN (bit 56)
+        var packet = Assert.IsType<PyObject>(SessionInitialState.Build(1, 2, 42, 0, "127.0.0.1", "EN", "GB"));
+        var state = ((PyDict)((PyTuple)((PyTuple)packet.Args).Items[4]).Items[2]).Entries.ToDictionary(e => T(e.Key)!, e => e.Value);
+        var role = ((PyLong)state["role"]).Value;
+        Assert.Equal(0x6000_0000_8000_0000, role);
+        Assert.Equal(0L, role & (1L << 56));
     }
 
     [Fact]
@@ -1204,7 +1217,7 @@ public class HostServerTests : IAsyncLifetime
             new EmptyIndustryJobOperations());
         // the ledger queries are only registered here (the registry test does not run them): the source is never opened
         var ledgerReads = Eve.Services.Core.MiningLedgerQueries.Register(new Eve.ReadSide.ReadSide(
-            Npgsql.NpgsqlDataSource.Create("Host=127.0.0.1;Port=1;Database=unused"),
+            Npgsql.NpgsqlDataSource.Create(Eve.Data.PgConnection.ForTest("Host=127.0.0.1;Port=1;Database=unused")),
             new Dictionary<string, string> { [Eve.Services.Core.MiningLedgerQueries.SpaceSchema] = "unused" }));
         var characterMining = new Eve.Services.Core.CharacterMiningLedgerService(ledgerReads);
         var corporationMining = new Eve.Services.Core.CorpMiningLedgerService(ledgerReads);
@@ -1418,7 +1431,7 @@ public class HostServerTests : IAsyncLifetime
     public async Task The_owner_rows_reach_the_client_through_the_host_and_an_unknown_id_has_no_row()
     {
         var url = Environment.GetEnvironmentVariable("EVE_PG_URL")!;
-        await using var source = Npgsql.NpgsqlDataSource.Create(Eve.Data.PgConnection.ToConnectionString(url));
+        await using var source = Npgsql.NpgsqlDataSource.Create(Eve.Data.PgConnection.ForTest(url));
         var schema = $"host_cfg_{Guid.NewGuid():N}"[..20];
         var charactersSchema = $"host_chr_{Guid.NewGuid():N}"[..20];
         try
@@ -2120,7 +2133,7 @@ private sealed class InSpaceInventory : Eve.Services.Ships.ISpaceContainers
         {
             var suffix = Guid.NewGuid().ToString("N")[..8];
             var connectionBuilder = new Npgsql.NpgsqlConnectionStringBuilder(
-                Eve.Data.PgConnection.ToConnectionString(Environment.GetEnvironmentVariable("EVE_PG_URL")!))
+                Eve.Data.PgConnection.ForTest(Environment.GetEnvironmentVariable("EVE_PG_URL")!))
             { Pooling = false };
             var source = new Npgsql.NpgsqlDataSourceBuilder(connectionBuilder.ConnectionString).Build();
             var inventorySchema = $"as_i_{suffix}";
@@ -2534,7 +2547,7 @@ private sealed class InSpaceInventory : Eve.Services.Ships.ISpaceContainers
     public async Task Foundations_owns_and_disposes_its_shared_local_timers()
     {
         await using var source = Npgsql.NpgsqlDataSource.Create(
-            Eve.Data.PgConnection.ToConnectionString(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
+            Eve.Data.PgConnection.ForTest(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
         var suffix = Guid.NewGuid().ToString("N")[..8];
         var schemas = new System.Collections.Generic.List<string>();
         string Schema(string _, string defaultName)

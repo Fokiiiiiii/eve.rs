@@ -442,8 +442,17 @@ internal sealed partial class CharacterServicesComposition
     /// A mission's completion and its standings in one transaction (the mission store and the relations store share the database): the
     /// completion is journalled, the standings change, and the session is told after the commit. False when the mission was not accepted.
     /// </summary>
-    private async Task<bool> CompleteMissionAsync(long characterId, long agentId, DateTimeOffset now, string reference,
-        IReadOnlyList<(long FactionId, double Delta)> standings, CancellationToken cancellationToken)
+    private Task<bool> CompleteMissionAsync(long characterId, long agentId, DateTimeOffset now, string reference,
+        IReadOnlyList<MissionStandingGain> standings, CancellationToken cancellationToken) =>
+        CompleteInTransactionAsync(source, agentMissionStore, foundations.Relations, characterId, agentId, now, reference, standings, cancellationToken);
+
+    /// <summary>
+    /// The completion and its standing writes in one transaction: a standing write that fails rolls the completion back, so the mission stays
+    /// accepted. The commit notice follows the commit.
+    /// </summary>
+    internal static async Task<bool> CompleteInTransactionAsync(NpgsqlDataSource source, Eve.Agents.AgentMissionStore agentMissionStore,
+        Eve.Relations.RelationStore relations, long characterId, long agentId, DateTimeOffset now, string reference,
+        IReadOnlyList<MissionStandingGain> standings, CancellationToken cancellationToken)
     {
         await using var connection = await source.OpenConnectionAsync(cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
@@ -457,9 +466,14 @@ internal sealed partial class CharacterServicesComposition
             return false;
         }
         if (change is null) return false;
-        foreach (var (factionId, delta) in standings)
-            await foundations.Relations.AdjustAsync(connection, transaction, Eve.Relations.RelationKinds.Standing.Name, factionId, characterId, delta,
+        // read in the transaction: a diminishing gain depends on the standing the pilot has when the completion is written
+        foreach (var gain in standings)
+        {
+            var kind = Eve.Relations.RelationKinds.Standing.Name;
+            var current = await relations.ValueAsync(kind, gain.EntityId, characterId, 0, connection, transaction, cancellationToken);
+            await relations.AdjustAsync(connection, transaction, kind, gain.EntityId, characterId, gain.DeltaFrom(current),
                 "Agent mission standing", cancellationToken: cancellationToken);
+        }
         await transaction.CommitAsync(cancellationToken);
         agentMissionStore.Announce(change);
         return true;
@@ -481,7 +495,7 @@ internal sealed class SpaceMissionDungeonHost(
     Func<long, int, bool> isPilotInSystem,
     Func<long, int, long, CancellationToken, Task<string?>> startDungeon,
     Func<long, long, long, int, string, string, CancellationToken, Task> creditIsk,
-    Func<long, long, DateTimeOffset, string, IReadOnlyList<(long FactionId, double Delta)>, CancellationToken, Task<bool>> completeMission) : IMissionDungeonHost
+    Func<long, long, DateTimeOffset, string, IReadOnlyList<MissionStandingGain>, CancellationToken, Task<bool>> completeMission) : IMissionDungeonHost
 {
     public bool IsPilotInSystem(long characterId, int solarSystemId) => isPilotInSystem(characterId, solarSystemId);
 
@@ -492,6 +506,6 @@ internal sealed class SpaceMissionDungeonHost(
         creditIsk(characterId, amount, counterpartyId, refTypeId, reason, operationKey, cancellationToken);
 
     public Task<bool> CompleteMissionAsync(long characterId, long agentId, DateTimeOffset now, string reference,
-        IReadOnlyList<(long FactionId, double Delta)> standings, CancellationToken cancellationToken) =>
+        IReadOnlyList<MissionStandingGain> standings, CancellationToken cancellationToken) =>
         completeMission(characterId, agentId, now, reference, standings, cancellationToken);
 }

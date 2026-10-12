@@ -47,7 +47,7 @@ internal sealed class BountyRig : IAsyncDisposable
 
     public static async Task<BountyRig> CreateAsync()
     {
-        var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(Url!));
+        var source = NpgsqlDataSource.Create(PgConnection.ForTest(Url!));
         var rig = new BountyRig(source);
         await PgWalletStore.MigrateAsync(source, rig._walletSchema);
         await PgBountyStore.MigrateAsync(source, rig._npcSchema);

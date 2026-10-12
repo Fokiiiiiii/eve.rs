@@ -53,7 +53,7 @@ public sealed class MoonExtractionStartHostTests
 
         public static async Task<Route> CreateAsync(string pgUrl)
         {
-            var source = NpgsqlDataSource.Create(pgUrl);
+            var source = NpgsqlDataSource.Create(Eve.Data.PgConnection.ForTest(pgUrl));
             var sde = new SdeReader(source);
             Assert.NotNull(await sde.BuildAsync());
             var rules = await MoonRulesSource.LoadAsync(sde);

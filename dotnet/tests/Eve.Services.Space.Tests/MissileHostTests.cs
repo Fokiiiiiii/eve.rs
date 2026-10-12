@@ -188,7 +188,7 @@ public class MissileHostTests
     [PgFact]
     public async Task Every_launcher_group_the_static_data_gives_useMissiles_is_served_or_refused_with_a_reason_of_its_own()
     {
-        await using var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
+        await using var source = NpgsqlDataSource.Create(PgConnection.ForTest(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
         var sde = new SdeReader(source);
         var catalogBuild = await sde.BuildAsync() ?? throw new InvalidOperationException("The test SDE schema must expose its actual build number.");
         var statics = await DogmaStatic.LoadAsync(sde);
@@ -234,7 +234,7 @@ public class MissileHostTests
     [PgFact]
     public async Task A_launcher_of_a_refused_group_is_refused_with_its_own_reason_before_a_target_is_asked_for()
     {
-        await using var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
+        await using var source = NpgsqlDataSource.Create(PgConnection.ForTest(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
         var sde = new SdeReader(source);
         var statics = await DogmaStatic.LoadAsync(sde);
         var useMissiles = statics.Effects.Single(effect => effect.Name.Equals(MissileEffect.LauncherEffectName, StringComparison.OrdinalIgnoreCase));

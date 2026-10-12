@@ -15,7 +15,7 @@ public class CynoFieldTypesTests
     [PgFact]
     public async Task Each_field_type_has_the_group_and_radius_of_its_static_data()
     {
-        await using var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
+        await using var source = NpgsqlDataSource.Create(PgConnection.ForTest(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
         var statics = await DogmaStatic.LoadAsync(new SdeReader(source));
         await statics.EnsureTypesAsync(CynoFieldTypes.FieldTypes);
 
@@ -29,7 +29,7 @@ public class CynoFieldTypesTests
     [PgFact]
     public async Task A_type_the_static_data_does_not_have_is_not_given_a_fallback_field()
     {
-        await using var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
+        await using var source = NpgsqlDataSource.Create(PgConnection.ForTest(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
         var statics = await DogmaStatic.LoadAsync(new SdeReader(source));
 
         Assert.Null(CynoFieldTypes.Of(statics, 999_999_999));

@@ -32,7 +32,7 @@ public class ItemMutationServiceTests
 
     private static async Task<(DogmaStatic Statics, MutatorCatalog Catalog)> LoadStaticDataAsync()
     {
-        var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(PgFactAttribute.Url!));
+        var source = NpgsqlDataSource.Create(PgConnection.ForTest(PgFactAttribute.Url!));
         var sde = new SdeReader(source);
         Assert.True(await sde.BuildAsync() is not null, "no SDE is loaded: run `cargo run -p eve-sde -- ensure --pg $EVE_PG_URL`");
         return (await DogmaStatic.LoadAsync(sde), await MutatorCatalog.LoadAsync(sde));
@@ -95,7 +95,7 @@ public class ItemMutationServiceTests
         public static async Task<Mutations> CreateAsync()
         {
             var (statics, catalog) = await StaticData.Value;
-            var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(PgFactAttribute.Url!));
+            var source = NpgsqlDataSource.Create(PgConnection.ForTest(PgFactAttribute.Url!));
             var id = Guid.NewGuid().ToString("N")[..12];
             var mutations = new Mutations(source, id, statics, catalog);
             await PgItemStore.MigrateAsync(source, mutations._schema);

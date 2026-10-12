@@ -53,6 +53,7 @@ public sealed partial class PersistenceIndustryJobOperations : Eve.Services.Core
     private readonly Eve.Wallet.WalletTransactions _wallets;
     private readonly Eve.Skills.PgSkillStore _skills;
     private readonly Eve.Sde.SdeReader _sde;
+    private readonly Eve.Market.AdjustedPriceCache _adjustedPrices;
     private readonly Eve.Corporations.CorporationStore _corporations;
     private readonly Eve.Events.EventBus _events;
     private readonly Eve.Universe.StationCatalog _stations;
@@ -66,6 +67,7 @@ public sealed partial class PersistenceIndustryJobOperations : Eve.Services.Core
         Eve.Wallet.WalletTransactions wallets,
         Eve.Skills.PgSkillStore skills,
         Eve.Sde.SdeReader sde,
+        Eve.Market.AdjustedPriceCache adjustedPrices,
         Eve.Corporations.CorporationStore corporations,
         Eve.Events.EventBus events,
         Eve.Universe.StationCatalog stations,
@@ -80,6 +82,7 @@ public sealed partial class PersistenceIndustryJobOperations : Eve.Services.Core
         _wallets = wallets ?? throw new ArgumentNullException(nameof(wallets));
         _skills = skills ?? throw new ArgumentNullException(nameof(skills));
         _sde = sde ?? throw new ArgumentNullException(nameof(sde));
+        _adjustedPrices = adjustedPrices ?? throw new ArgumentNullException(nameof(adjustedPrices));
         _corporations = corporations ?? throw new ArgumentNullException(nameof(corporations));
         _events = events ?? throw new ArgumentNullException(nameof(events));
         _stations = stations ?? throw new ArgumentNullException(nameof(stations));
@@ -202,20 +205,16 @@ public sealed partial class PersistenceIndustryJobOperations : Eve.Services.Core
         return new ActivityRecipe(time, materials, products, skills);
     }
 
+    /// <summary>The ESI adjusted price of each type (the job cost's input); a type with no adjusted price is absent, and none is invented.</summary>
     private async Task<Dictionary<int, decimal>> ReadMarketPricesAsync(
         IReadOnlyCollection<int> typeIds,
         CancellationToken cancellationToken)
     {
-        var rows = await _sde.ReadAsync("marketPrices", typeIds.Distinct().Select(id => (long)id), cancellationToken);
         var prices = new Dictionary<int, decimal>();
-        foreach (var row in rows)
+        foreach (var (typeId, price) in await _adjustedPrices.GetAsync(typeIds.Distinct().ToArray(), cancellationToken))
         {
-            var typeId = checked((int)row.Key);
-            var price = Decimal(row.Doc, "adjustedPrice");
-            if (price <= 0)
-                price = Decimal(row.Doc, "averagePrice");
             if (price > 0)
-                prices[typeId] = price;
+                prices[typeId] = (decimal)price;
         }
         return prices;
     }

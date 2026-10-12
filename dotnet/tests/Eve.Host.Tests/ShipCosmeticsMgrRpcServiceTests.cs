@@ -17,7 +17,7 @@ public sealed class ShipCosmeticsMgrRpcServiceTests
     {
         var pgUrl = Environment.GetEnvironmentVariable("EVE_PG_URL");
         Assert.False(string.IsNullOrWhiteSpace(pgUrl));
-        await using var source = NpgsqlDataSource.Create(Eve.Data.PgConnection.ToConnectionString(pgUrl!));
+        await using var source = NpgsqlDataSource.Create(Eve.Data.PgConnection.ForTest(pgUrl!));
         var sde = new SdeReader(source);
         Assert.NotNull(await sde.BuildAsync());
         var catalog = await ShipCosmeticsCatalog.LoadAsync(sde);

@@ -19,7 +19,7 @@ Do not fabricate successful state or fake backends to close these items.
 |---|---|---|
 | FUTURE | machoNet single sign-on login (`connection.LoginSso`, the `user_sso_token` of `machoNet.Authenticate`) | The acknowledgement now carries `access_token` and `computer_hash` (None), so the client no longer fails on the keys. The token is not read: EveJS records it only (`authenticationService.js:281`), and no token-to-account rule exists. Needs a decision on how a CCP SSO token maps to an account. |
 | PARTLY | `insurgencySolarsystem.GetAllVisibleCampaigns`; `GetLocalCampaignClientSnapshot`; campaign notices | The campaign state machine, store and deadline jobs exist (section 49, `Eve.Insurgency`); the snapshot reads them through the Host and the notices go to covered systems. Open: a start trigger (no client or operator path starts a campaign, Q-INS-4), the FOB structure (structures owner; `structureID` is None until then), point producers (C-P1: corruption and suppression sites, spread), and the public gateway for per-system bars (C-G1, not built; see section 49). |
-| PARTLY | `essMgr.GetDataForClientSolarSystem`; `GetMainBankTheftsForClientSolarSystem`; `GetReserveBankTheftsForClientSolarSystem`; `RequestMainBankUnlink`; `RequestReserveBankUnlink`; `AttemptLinkToMainBank`; `AttemptLinkToReserveBank`; `RequestUnlockReserveBank` | The ESS store, the rules and the clock are real (`PgEssStore`, `EssRules`, `space.ess.tick`); the bounty share is paid in the bounty transaction; operator placement is `EVE_ESS_SYSTEMS`. Open: the ESS object in space and the link geometry callback (no link is made until one exists), the weapon timer, the proximity and ship-change unlinks, key consumption and quadrants, and the owner and reserve decisions in DEVIATIONS "Encounter Surveillance System". |
+| PARTLY | `essMgr.GetDataForClientSolarSystem`; `GetMainBankTheftsForClientSolarSystem`; `GetReserveBankTheftsForClientSolarSystem`; `RequestMainBankUnlink`; `RequestReserveBankUnlink`; `AttemptLinkToMainBank`; `AttemptLinkToReserveBank`; `RequestUnlockReserveBank` | The ESS store, the rules, the clock, the ESS ball, the link checks (in system, linkable hull, 10 km, ship change), the weapon timer, the quadrant gate and key consumption are real (`PgEssStore`, `EssRules`, `EssComposition`, `space.ess.tick`). Open: the live walk (no linkable hull can be granted to a test character), the single-transaction key consumption, and the owner decisions in DEVIATIONS "Encounter Surveillance System, slice ESS-2". |
 | OPEN | `abyssalMgr.ClientIsReady` | Connect the runtime client-ready path and automatic trace activation. No Abyssal runtime provider was found in the current C# source. |
 | OPEN | `scanMgr.SignalTrackerRegister` | The Host can record the character/session/system registration and has a full-state publish hook. The live signal snapshot producer and the code that calls the publisher are still absent. |
 | OPEN | `posMgr.GetControlTowers` | Connect rows from a real starbase/tower data source to `ReadControlTowerRowsCallback`. The route is present; no current tower provider was found. |
@@ -756,26 +756,103 @@ Open, each with its blocker:
 - NOT TESTED: a host jump to an anchored beacon and the simulation's arrival at it (the code path exists; no test drives it).
 - NOT RUN: the client.
 
-## 37. Services the client calls on demand, not yet advertised (slice A, 2026-10-10)
+## 37. Service table against the reference: the names eve.rs lacks and the names it adds (MITM parity, 2026-10-11)
 
-The reference advertises these 23 names; eve.rs does not register them, so it does not advertise them (DEVIATIONS.md, "Handshake, machoNet and the global config"). Each is listed with the slice that builds it. Advertise a name only with a real service behind it.
+The MITM run of `tests/test_live.py` (EVE.js 143 advertised names, eve.rs 171) gives 21 names the reference advertises that eve.rs
+does not, and 49 names eve.rs advertises that the reference does not. A name matters only if the V24.01 client calls it through a
+MachoNet route (`RemoteSvc`, `ProxySvc`, `ConnectToRemoteService`, `Moniker`) or a route table (`eveMachoNet.py`). Call sites are the
+first match in `/home/user/eve-logic`. Statuses: **OPEN** = the client calls it and eve.rs has no provider; **NOT NEEDED** = no
+remote call from the V24.01 client (reason given). Advertised names stay limited to registered services (DEVIATIONS.md, "Service
+table: the names left out").
 
-| Status | Name | Owner | Client call (eve-logic) |
+### 37a. Advertised by EVE.js, not by eve.rs (21)
+
+| Status | Name | Client evidence (eve-logic) | Owner / next step |
 |---|---|---|---|
-| OPEN | `corpStationMgr`, `itemLocking`, `ownerGroupManager`, `standing2`, `contractMgr`, `certificateMgr`, `tutorialSvc`, `bookmarkMgr` | Slice D / corporations / contracts | eveMoniker.py:111; corporation/itemLocking.py:27; not called in eve-logic (certificateMgr, tutorialSvc, bookmarkMgr, ownerGroupManager, standing2, contractMgr) |
-| OPEN | `accessGroupBookmarkMgr` | bookmarks: a handle at `bookmarkSvc.Initialize`, called on use (address book, bookmark menus); not at start-up (slice B2) | bookmarks/bookmarkSvc.py:40-41 |
-| OPEN | `blueprintManager` | industry, lazy: `blueprintSvc.Run` calls `GetLimits()` and reads `maxBlueprintResults`, so a window that starts it fails at once (slice B2: not at start-up; no source for the limit yet) | industry/blueprintSvc.py:22-25 |
-| OPEN | `repairSvc`, `reprocessingSvc` (`LPSvc` is registered since agents slice AG-1) | Slice D (station services) | eveMoniker.py:101, 227; station/repairshop/base_repairshop.py:58; loyaltyPointStore/lpStoreSvc.py:63 |
-| OPEN | `nes_intro` | storylines, lazy: the controller is built on the user's skip action only (slice B2) | storylines/client/nes_intro.py:45; airnpetracker.py:26 |
-| OPEN | `hackingMgr` | hacking minigame, lazy: the handle is made in `hackingUISvc.Run`, calls on use (slice B2) | eve/client/script/ui/hacking/hackingUISvc.py (Run) |
-| DONE (tests) | `FastCheckoutService` | plex store (fast checkout) | fastcheckout/client/fastCheckoutClientService.py:26, 76, 230-232 (`Message` == "OK"). `Eve.Services.Core/FastCheckoutService.cs`: flags, testing configuration, the nine PLEX packs, `BuyOffer` granted at no charge; `NewEdenStoreHostTests` |
-| DONE (tests) | Free real-money store: catalog and grants | storeManager.get_offers/can_purchase_offer/buy_offer, FastCheckoutService, store global-config keys | Owner policy: every real-money offer is granted at no charge; see DEVIATIONS "New Eden Store: real-money offers are granted free". Catalog `Data/new-eden-store.v1.json` (generated by `tools/dev/gen-new-eden-store-catalog.py` from EVE.js newEdenStore data). Tests: `NewEdenStoreCatalogTests`, `StoreOffersServiceTests`, `FastCheckoutServiceTests`, `NewEdenStoreHostTests` (PostgreSQL) |
-| DONE (tests) | Free real-money store: Omega and MCT grants | storeManager.buy_offer for `omega_30_days`, `cash_omega_*`, `mct_slot_30_days`, `cash_mct_*` | Granted at no charge. Omega extends the stored end time (`identity.accounts.subscription_end_at`) in the purchase transaction; MCT adds 30-day units to the training slots. Notifications after commit: OnSubscriptionChangedServer, OnSubscriptionTimeUpdateServer, OnMultipleCharactersTrainingUpdated. Tests: `NewEdenEntitlementHostTests`, `EntitlementRulesTests`, `CharacterTrainingTests` (PostgreSQL), `tools/headless-client/tests/test_store_entitlements_live.py` (live). Open: item-based MCT activation (see the userSvc row above). |
-| OPEN | Free real-money store: PLEX balance notice | client `on_balance_changed` after a purchase | The client refreshes PLEX from the eveProto message bus `BalanceChangedNotice` (plex/client/message_bus/notice_listener.py:21-24), which eve.rs does not serve. The balance is read on demand. |
-| OPEN | `loadService`, `tradeMgr`, `warRegistry`, `LSC`, `publicGatewaySvc`, `planetOrbitalRegistryBroker`, `structure` | cluster tool / local services / structures track (other Claude) | loadService.py:70-321; eveMachoNet.py:253; eveMoniker.py:197 (local); devtools only; gateway (client-local); eveplanet/orbital.py:35 |
-| OPEN | `objectCaching` (remote `GetCachableObject`) | required before any result is returned as a `CachedObject` reference (the proxy cache of EVE.js) | objectCaching.py:299-332 |
+| NOT NEEDED | `objectCaching` | Client-local service: `sm.GetService('objectCaching')` (`eve/client/script/ui/shared/bountySvc.py:236`) resolves to `eveObjectCaching` (`__replaceservice__`). A remote `GetCachableObject` is reached only for a `CachedObject` reference (`carbon/common/script/net/objectCaching.py:299-332`), which eve.rs never returns | DEVIATIONS "objectCaching is not a service here". Reopen with the proxy cache (section 37c) |
+| NOT NEEDED | `loadService` | Cluster load tool: `carbon/common/script/sys/loadService.py:70-321` (`ConnectToRemoteService`), no player path | none |
+| NOT NEEDED | `tutorialSvc` | No reference in the V24.01 client (only the marshal string table) | none |
+| NOT NEEDED | `bookmarkMgr` | No reference in the client; bookmarks call `accessGroupBookmarkMgr` (37a row below) | none |
+| NOT NEEDED | `certificateMgr` | No reference in the client | none |
+| NOT NEEDED | `contractMgr` | No reference in the client | none |
+| NOT NEEDED | `standing2` | No service reference (`standing2to1` is a field name). The client uses `standingMgr` (eve.rs serves it) | none |
+| NOT NEEDED | `LSC` | Developer tools only (`eve/devtools/script/tournamentRefereeTools.py:1422-1424`); player chat is XMPP | none |
+| NOT NEEDED | `publicGatewaySvc` | Client-local service (`publicGateway/publicGatewaySvc.py:25`, `svc.publicGatewaySvc`) that talks to the public gateway over gRPC, not MachoNet. The gateway itself is not built (owner decision 4, Insurgency) | DEVIATIONS (owner decision 4). Its start-up use is in `gameui.py:709-718` |
+| DONE | `trademgr` (`tradeMgr` routes here) | Direct trade end to end: `InitiateTrade` returns the trade moniker and notifies the target; the bound trade serves `List`, `Add`, `MultiAdd`, `GetSelfInvItem`, `OfferMoney`, `MakeOffer` and `Abort`; items are staged in the trade container and go back on abort; completion moves the items and the ISK in one transaction (Eve.Trade, schema `trade`, migration 001). Open: the graphical-client walk; ship-cargo staging and the item tradability check are not in the server rules (DEVIATIONS "Direct trade"). Tests: Eve.Trade.Tests (9, PostgreSQL), Eve.Services.Station.Tests (29). |
+| OPEN | `structure` | `Moniker('structure', ...)`, `eve/client/script/ui/services/menuSvcExtras/invItemFunctions.py:79` | Structures track (other Claude) |
+| OPEN | `ownerGroupManager` | `REMOTE_SERVICE_NAME`, `eve/client/script/ui/structure/accessGroups/accessGroupsController.py:14, 22` (structure access groups) | Structures track |
+| DONE (3a6d509) | `corpStationMgr` | `Moniker('corpStationMgr', stationID)`, `eve/common/script/net/eveMoniker.py:111`; routed to the station (`eveMachoNet.py:249`). Served: `DoStandingCheckForStationService` (SDE `stationStandingsRestrictions`), `MoveCorpHQHere`. Tests: `Eve.Corporations.Tests` (`CorpStationMgrTests`). DEVIATIONS "Corporation station door". | Corporation offices (done) |
+| DONE (3dc9b9b) | `itemLocking` | `sm.RemoteSvc('itemLocking')`, `eve/client/script/ui/services/corporation/itemLocking.py:27` (service `svc.lockedItems`, `Run`), lazy. Served: `GetItemsByLocation`, `GetLockedItemLocations`; locks from blueprint votes (migration 013, `item_locks`); push `OnLockedItemChange` after commit. Tests: `Eve.Corporations.Tests` (`ItemLockTests`). DEVIATIONS "Item locking". Open: ALSC container locks (inventory). | Corporation hangar locks (done) |
+| OPEN | `repairSvc` | `Moniker('repairSvc', ...)`, `eve/common/script/net/eveMoniker.py:227`, `eve/client/script/ui/station/repairshop/base_repairshop.py:58`; repair cycles touch ships (OUT-SHIP) | Station services; the ship part belongs to the ships track |
+| DONE | `repairSvc` | NPC station repair: `MachoBindObject` binds the repair shop of the docked station; `GetRepairQuotes` quotes ships (with their fitted and drone-bay items) and modules by damage in HP and unit cost (adjusted price x 0.1 / max HP); `RepairItemsInStation` charges and repairs in one PostgreSQL transaction (module state store, ref type 15), a fitted module in full only, a partial payment in the reference order. Open (DEVIATIONS "Repair"): structures refused, no repair without a price, no durable settlement, fitted module ids not aliased. Tests: `RepairServiceTests` (Station project, PostgreSQL). |
+| DONE | `reprocessingSvc` | Station reprocessing: `MachoBindObject` binds the plant of the docked NPC station; `GetQuotes` and `Reprocess` quote and consume the caller's items rooted at the station (hangar, containers, ship cargo), in one PostgreSQL transaction, and charge the tax through `WalletTransactions` (ref type 127). Yields: SDE station efficiency, skills, implants (legacy path), the tax from the standing; stacks above the client limit are split. Active ship refused on the server. Open (DEVIATIONS "Reprocessing"): corporation hangars, structures, randomized outputs, per-chunk quotes, live-client walk not run. Tests: `ReprocessingServiceTests`, `ReprocessingRulesTests` (Station project). |
+| DONE (543f31e) | `blueprintManager` | `sm.RemoteSvc('blueprintManager')`, `eve/client/script/industry/blueprintSvc.py:24`; `sm.GetService('blueprintManager').GetBlueprintType`, `eve/common/script/util/industryCommon.py:526` (lazy) Served: `GetLimits`, `GetBlueprintData`, `GetBlueprintDataByOwner`; facilities not modelled. Tests: `Eve.Services.Core.Tests` (`BlueprintManagerServiceTests`). DEVIATIONS "War registry, NES intro and blueprint manager". | Industry (done) |
+| DONE WITH CUTS (55e26a1) | `warRegistry` | `Moniker('warRegistry', ...)`, `eve/common/script/net/eveMoniker.py:198`, and the server-side check `sm.GetService('warRegistry').IsAllianceOrCorpLocal` at `eveMoniker.py:197` on alliance and corporation binds Served: `GetWars`, `IsAllianceOrCorpLocal`, `SetOpenForAllies`, `RetractMutualWar`; negotiations refused (not built). Tests: `Eve.Corporations.Tests` (`WarRegistryTests`). DEVIATIONS "War registry, NES intro and blueprint manager". | Wars (negotiations open) |
+| OPEN | `planetOrbitalRegistryBroker` | `ConnectToRemoteService('planetOrbitalRegistryBroker', nodeID)`, `eveplanet/orbital.py:35`; `Moniker` at `eveMoniker.py:220` | Planetary interaction (not on the start-up path) |
+| DONE (543f31e) | `nes_intro` | `sm.RemoteSvc('nes_intro')` in the controller's `__init__`, `storylines/client/nes_intro.py:45`; the controller is built on the first intro check (lazy) Served: `get_nes_intro_state`, `skip_nes_intro` (state table `nes_intro_states`, migration 0005); nothing sets an introduction to active, so the storyline is not run. Tests: `Eve.Characters.Tests` (`NesIntroStoreTests`), `Eve.Services.Core.Tests` (`NesIntroServiceTests`). | Storylines (intro not run) |
+| DONE WITH CUTS (448ea6a) | `accessGroupBookmarkMgr` | `sm.RemoteSvc('accessGroupBookmarkMgr')`, `eve/client/script/ui/shared/bookmarks/bookmarkSvc.py:41`; the first call is `GetMyActiveBookmarks` on the bookmark prime (`bookmarkSvc.py:163`), i.e. on use, not at boot. Served: personal folders, subfolders, bookmarks of stations and systems (schema `bookmarks`, `Eve.Bookmarks`). Open: shared (access group) folders (needs `ownerGroupManager`, structure track), `BookmarkLocation` in space, structure and celestial places. Tests: `Eve.Bookmarks.Tests`. DEVIATIONS "Bookmarks: personal folders". | Bookmarks (personal done; shared open) |
 
-Slice B (B2, 2026-10-10): no name on this list is needed during start-up (boot, login, character selection, station load). Every remote name a start-up path calls is registered, except the four lazy names above (`blueprintManager`, `accessGroupBookmarkMgr`, `hackingMgr`, `nes_intro`), and none of those is reached before a player acts. The start-up calls that are answered: `securityMgr.get_modified_systems` (an empty dictionary: no modified-security source yet), `loginCampaignManager`, `seasonalLoginCampaignManager`, `loginRewardFacilities` (character screen), `subscriptionMgr.GetCloneGrade`, `achievementTrackerMgr` (charid session change), `infoGatheringMgr.GetStateAndConfig` (gathering off), `mailMgr`, `account.GetCashBalance`.
+### 37b. Advertised by eve.rs, not by EVE.js (49)
+
+Every name below has a V24.01 client call site, except `abyssal_content_manager`, which only the developer tools call. `standingMgr` is
+also missing from EVE.js (its advertisement is `standing2`), so the gap is on the reference's side.
+
+| Name | First client call site (eve-logic) | Verdict |
+|---|---|---|
+| `ProjectDiscovery` | RemoteSvc at `eve/client/script/ui/station/loyaltyPointStore/lpStoreSvc.py:348` | real client service name |
+| `abyssalMgr` | RemoteSvc at `eve/client/script/ui/services/menuSvcExtras/movementFunctions.py:569` | real client service name |
+| `abyssal_content_manager` | RemoteSvc at `eve/devtools/script/abyssal_npc_spawn_tool.py:78` | devtools only (no player call) |
+| `achievementTrackerMgr` | RemoteSvc at `eve/client/script/ui/camera/enterSpaceCamera.py:40` | real client service name |
+| `bountyProxy` | ProxySvc at `eve/client/script/ui/shared/bountySvc.py:83` | real client service name |
+| `browserLockdownSvc` | RemoteSvc at `carbonui/control/browser/sites.py:327` | real client service name |
+| `colonyResourcesMgr` | RemoteSvc at `eve/client/script/ui/services/sovereigntyResourceSvc.py:272` | real client service name |
+| `communityTrackMgr` | RemoteSvc at `communitytracks/client/repository.py:84` | real client service name |
+| `crimewatch` | Moniker at `eve/common/script/net/eveMoniker.py:136` | real client service name |
+| `custom_agency_provider` | RemoteSvc at `agency/client/custom_content.py:10` | real client service name |
+| `devIndexManager` | RemoteSvc at `eve/client/script/ui/services/sovSvc.py:182` | real client service name |
+| `dungeon` | RemoteSvc at `eve/client/script/ui/inflight/dungeoneditor.py:142` | real client service name |
+| `dynamicItemService` | RemoteSvc at `eve/client/script/dogma/dynamicItemSvc.py:24` | real client service name |
+| `entity` | Moniker at `eve/common/script/net/eveMoniker.py:60` | real client service name |
+| `expertSystemMgr` | RemoteSvc at `expertSystems/client/service.py:34` | real client service name |
+| `fighterMgr` | RemoteSvc at `eve/client/script/parklife/fightersSvc.py:95` | real client service name |
+| `fleetMgr` | RemoteSvc at `eve/client/script/parklife/fleetSvc.py:367` | real client service name |
+| `fleetObjectHandler` | Moniker at `eve/common/script/net/eveMoniker.py:207` | real client service name |
+| `fleetProxy` | ProxySvc at `eve/client/script/parklife/fleetSvc.py:1891` | real client service name |
+| `fwVictoryPointMgr` | RemoteSvc at `eve/client/script/ui/services/fwVictoryPointSvc.py:36` | real client service name |
+| `hackingMgr` | RemoteSvc at `eve/client/script/ui/hacking/hackingUISvc.py:26` | real client service name |
+| `home_station` | RemoteSvc at `homestation/client/service.py:46` | real client service name |
+| `insurgencySolarsystem` | RemoteSvc at `eve/client/script/ui/services/insurgencyCampaignSvc.py:52` | real client service name |
+| `jumpTimers` | RemoteSvc at `eve/client/script/ui/services/crimewatchSvc.py:607` | real client service name |
+| `keeper` | RemoteSvc at `eve/client/script/ui/services/menuSvcExtras/movementFunctions.py:553` | real client service name |
+| `killRightMgr` | RemoteSvc at `eve/client/script/ui/shared/bountySvc.py:327` | real client service name |
+| `mailMgr` | RemoteSvc at `eve/client/script/ui/services/mail/mailSvc.py:79` | real client service name |
+| `mailingListsMgr` | RemoteSvc at `eve/client/script/ui/services/mail/mailingListsSvc.py:42` | real client service name |
+| `milestoneMgr` | RemoteSvc at `milestones/client/milestoneSvc.py:22` | real client service name |
+| `moonExtractions` | RemoteSvc at `eve/client/script/ui/moonmining/schedulingSvc.py:34` | real client service name |
+| `node_graph` | RemoteSvc at `nodegraph/client/service.py:144` | real client service name |
+| `notificationMgr` | RemoteSvc at `eve/client/script/ui/services/mail/notificationSvc.py:30` | real client service name |
+| `overviewPresetMgr` | RemoteSvc at `eve/client/script/ui/control/eveEditPlainText.py:157` | real client service name |
+| `paperDollServer` | RemoteSvc at `eve/client/script/ui/shared/preview.py:134` | real client service name |
+| `pingService` | ProxySvc at `carbon/client/script/remote/connectionService.py:189` | real client service name |
+| `populationCap` | Moniker at `eve/client/script/ui/login/charSelection/characterSelection.py:749` | real client service name |
+| `pvpFilamentMgr` | RemoteSvc at `pvpFilaments/client/pvpFilamentSvc.py:30` | real client service name |
+| `seasonManager` | RemoteSvc at `seasons/client/seasonservice.py:75` | real client service name |
+| `securityMgr` | RemoteSvc at `security/client/securitySvc.py:40` | real client service name |
+| `sharedSettingsMgr` | RemoteSvc at `eve/client/script/ui/shared/inventory/filterSvc.py:449` | real client service name |
+| `shipCosmeticsMgr` | RemoteSvc at `eve/client/script/ui/shared/skins/devMenuFunctions.py:15` | real client service name |
+| `shipKillCounter` | RemoteSvc at `eve/client/script/ui/shared/info/shipInfoPanels/panelOverview.py:276` | real client service name |
+| `solarsystemInterferenceMgr` | RemoteSvc at `eve/client/script/ui/services/solarsystemInterferenceSvc.py:41` | real client service name |
+| `sovMgr` | RemoteSvc at `eve/client/script/ui/services/sovSvc.py:80` | real client service name |
+| `standingMgr` | RemoteSvc at `eve/client/script/ui/shared/neocom/corporation/corp_dlg_edit_member.py:139` | real client service name |
+| `structureAssetSafety` | RemoteSvc at `eve/client/script/ui/shared/assets/assetSafetySvc.py:26` | real client service name |
+| `structureSettings` | RemoteSvc at `eve/client/script/ui/services/marketsvc.py:239` | real client service name |
+| `taleMgr` | RemoteSvc at `taleclient/tale_service.py:129` | real client service name |
+| `voidSpaceMgr` | RemoteSvc at `voidspace/client/void_space_service.py:46` | real client service name |
+
+### 37c. Still open (from the table above; the start-up path needs none of them)
+
+Slice B (2026-10-10) found no advertised name on the start-up path that is missing. The names above are needed when a player opens the
+feature (the lazy column). Each OPEN row needs its own slice: the owner is the track named in the table.
 
 ## 38. Non-strict host: a failing handler (slice A finding, closed in slice B, 2026-10-10)
 

@@ -83,7 +83,7 @@ internal sealed class Rig : IAsyncDisposable
 
     public static async Task<Rig> CreateAsync(bool activeShip = false, CorporationHangarAccess? corporationHangarAccess = null)
     {
-        var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(Url!));
+        var source = NpgsqlDataSource.Create(PgConnection.ForTest(Url!));
         var sde = new SdeReader(source);
         Assert.True(await sde.BuildAsync() is not null, "no SDE is loaded: run `cargo run -p eve-sde -- ensure --pg $EVE_PG_URL`");
         var rig = new Rig(source, await DogmaStatic.LoadAsync(sde), corporationHangarAccess);
@@ -932,7 +932,7 @@ public class InvBrokerTests
     [Fact]
     public void The_descriptor_call_needs_no_database()
     {
-        var source = NpgsqlDataSource.Create("Host=localhost");
+        var source = NpgsqlDataSource.Create(Eve.Data.PgConnection.ForTest("Host=localhost"));
         var items = new PgItemStore(source, "inventory");
         var service = new InvBrokerService(items, new ItemTypeCatalog(new SdeReader(source)), Rig.Stations, Rig.Unused(source, items, new DogmaStatic([], [], [])), new DogmaStatic([], [], []), () => 1);
         Assert.Equal(InventoryWire.DescriptorHeader, service.GetItemDescriptor(new ServiceCall { Method = "GetItemDescriptor", Args = [], Session = new ClientSession() }));

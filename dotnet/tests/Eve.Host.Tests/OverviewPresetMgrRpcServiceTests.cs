@@ -27,7 +27,7 @@ public sealed class OverviewPresetMgrRpcServiceTests
     {
         var pgUrl = Environment.GetEnvironmentVariable("EVE_PG_URL");
         Assert.False(string.IsNullOrWhiteSpace(pgUrl));
-        await using var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(pgUrl!));
+        await using var source = NpgsqlDataSource.Create(PgConnection.ForTest(pgUrl!));
         var schema = "rpc_overview_" + Guid.NewGuid().ToString("N");
         var store = new PersistenceStore(source, schema);
         OwnerSession? owner = null;

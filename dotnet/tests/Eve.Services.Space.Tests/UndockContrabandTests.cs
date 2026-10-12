@@ -30,7 +30,7 @@ public sealed class UndockContrabandTests
     [PgFact]
     public async Task Inspection_uses_SDE_faction_thresholds_and_current_owned_ship_cargo()
     {
-        await using var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(Rig.Url!));
+        await using var source = NpgsqlDataSource.Create(PgConnection.ForTest(Rig.Url!));
         var itemSchema = "undock_items_" + Guid.NewGuid().ToString("N");
         var sdeSchema = "undock_sde_" + Guid.NewGuid().ToString("N");
 

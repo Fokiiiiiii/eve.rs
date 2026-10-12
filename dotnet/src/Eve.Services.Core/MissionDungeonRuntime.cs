@@ -22,11 +22,20 @@ public interface IMissionDungeonHost
     /// accepted (a replay): then nothing is written.
     /// </summary>
     Task<bool> CompleteMissionAsync(long characterId, long agentId, DateTimeOffset now, string reference,
-        IReadOnlyList<(long FactionId, double Delta)> standings, CancellationToken cancellationToken);
+        IReadOnlyList<MissionStandingGain> standings, CancellationToken cancellationToken);
 }
 
 /// <summary>Where an agent is: its solar system (the mission dungeon's system) and its corporation (the counterparty of the reward).</summary>
 public sealed record MissionAgentPlace(long SolarSystemId, long CorporationId);
+
+/// <summary>
+/// One standing change of a completed mission toward an entity (an agent, a corporation or a faction). An SDE gain is added as it is. A basic
+/// mission's gain is diminishing, the wiki's rule: new = old + (10 - old) x increase, so the change is (10 - old) x increase.
+/// </summary>
+public sealed record MissionStandingGain(long EntityId, double Amount, bool Diminishing)
+{
+    public double DeltaFrom(double current) => Diminishing ? (10 - current) * Amount : Amount;
+}
 
 /// <summary>
 /// The kill missions of the agents in space (AG / A-X1 slice): an accepted kill mission starts its dungeon when the pilot is in space in the
@@ -106,17 +115,41 @@ public sealed class MissionDungeonRuntime(
         }
     }
 
+    // The ISK base of a basic level 4 or 5 security mission, which the official build does not give (its reward is null): the security scale of
+    // EveJS (server/src/services/agent/agentMissionRuntime.js, REWARD_BY_SCALE_AND_LEVEL). The wiki gives "large rewards" without figures, so these
+    // are the behaviour reference's numbers. shortcut: no timed bonus (EveJS pays 1.23x in time) and no Negotiation (wiki: 5% per level); upgrade with a sourced rule.
+    // The standing increases are EveJS's agentRaw and corpRaw of the same table, the increase of the wiki's formula (EVE University, Standings).
+    // shortcut: EveJS's numbers, not a CCP table; EveJS puts the corporation gain above the agent gain, a 2012 forum count the other way round.
+    private sealed record BasicRate(long Isk, double AgentIncrease, double CorporationIncrease);
+
+    private static readonly IReadOnlyDictionary<int, BasicRate> BasicRewards = new Dictionary<int, BasicRate>
+    {
+        [4] = new(675_000, 0.028, 0.055),
+        [5] = new(1_470_000, 0.036, 0.072),
+    };
+
     private async Task CompleteWithRewardAsync(long owner, AgentMissionRecord record, string rewardKey, string reference, CancellationToken cancellationToken)
     {
         var mission = catalog.Mission(record.Content.MissionId)!;
-        if (mission.Reward?.RewardTypeId == IskTypeId && mission.Reward.RewardQuantity > 0 && agentPlaceOf(record.AgentId) is { } place)
+        var place = agentPlaceOf(record.AgentId);
+        var sdeIsk = mission.Reward?.RewardTypeId == IskTypeId ? mission.Reward.RewardQuantity : 0;
+        var level = catalog.Level(record.Content.MissionId).Level;
+        var basic = mission.Reward is null && level is { } tagged && BasicRewards.TryGetValue(tagged, out var rates) ? rates : null;
+        var isk = sdeIsk > 0 ? sdeIsk : basic?.Isk ?? 0;
+        if (isk > 0 && place is not null)
         {
-            await host.CreditIskAsync(owner, mission.Reward.RewardQuantity, place.CorporationId, AgentMissionRewardRefType,
+            await host.CreditIskAsync(owner, isk, place.CorporationId, AgentMissionRewardRefType,
                 $"Agent mission reward: {mission.NameEn}", $"agent-mission:{owner}:{record.Content.MissionId}:{rewardKey}", cancellationToken);
         }
-        // the SDE gives standings in tenths (7.0 is the wiki's +0.7); the completion and the standings are one transaction
-        var standings = mission.ExtraStandings.Select(item => (item.Id, item.Value / 10)).ToArray();
-        await host.CompleteMissionAsync(owner, record.AgentId, now(), reference, standings, cancellationToken);
+        // the SDE's standings are in tenths (7.0 is +0.7), added as they are; a basic mission's are the wiki's diminishing gains toward the
+        // agent and the corporation. The completion and the standings are one transaction
+        var gains = mission.ExtraStandings.Select(item => new MissionStandingGain(item.Id, item.Value / 10, false)).ToList();
+        if (gains.Count == 0 && basic is not null && place is not null)
+        {
+            gains.Add(new MissionStandingGain(record.AgentId, basic.AgentIncrease, true));
+            gains.Add(new MissionStandingGain(place.CorporationId, basic.CorporationIncrease, true));
+        }
+        await host.CompleteMissionAsync(owner, record.AgentId, now(), reference, gains, cancellationToken);
     }
 
     private static async Task<AgentMissionChange?> TransitionAsync(Func<Task<AgentMissionChange?>> transition)

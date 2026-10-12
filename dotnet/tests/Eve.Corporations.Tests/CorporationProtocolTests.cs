@@ -219,7 +219,7 @@ public sealed class WarsInfoMgrServiceTests
 
         public static async Task<WarRig> CreateAsync()
         {
-            var source = Npgsql.NpgsqlDataSource.Create(Eve.Data.PgConnection.ToConnectionString(Eve.Corporations.Tests.Rig.Url!));
+            var source = Npgsql.NpgsqlDataSource.Create(Eve.Data.PgConnection.ForTest(Eve.Corporations.Tests.Rig.Url!));
             var id = Guid.NewGuid().ToString("N")[..12];
             string[] schemas = ["war_sched_" + id, "war_events_" + id, "war_rel_" + id];
             var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() + 10000;
@@ -592,7 +592,8 @@ private static PyValue RowField(PyValue value,string key)
                 "009_corporation_social",
                 "010_corporation_war_bills",
                 "011_alliance_registry_state",
-                "012_alliance_bill_lifecycle"
+                "012_alliance_bill_lifecycle",
+                "013_item_locks"
             },applied);
 
             await using var read = await rig.Source.OpenConnectionAsync();

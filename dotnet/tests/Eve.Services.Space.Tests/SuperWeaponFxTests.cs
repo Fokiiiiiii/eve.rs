@@ -29,7 +29,7 @@ public class SuperWeaponFxTests
     [PgFact]
     public async Task The_titan_doomsday_graphics_are_the_guids_of_the_sde_effect_rows()
     {
-        await using var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
+        await using var source = NpgsqlDataSource.Create(PgConnection.ForTest(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
         var rows = await new SdeReader(source).ReadAsync("dogmaEffects", Doomsdays.Select(d => (long)d.Effect));
 
         foreach (var (effect, name, guid) in Doomsdays)
@@ -45,7 +45,7 @@ public class SuperWeaponFxTests
     [PgFact]
     public async Task Each_lance_disruptive_lance_and_reaper_takes_the_graphic_of_its_race()
     {
-        await using var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
+        await using var source = NpgsqlDataSource.Create(PgConnection.ForTest(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
         var sde = new SdeReader(source);
         var types = await sde.ReadAsync("types", Lances.Concat(Reapers).Select(t => (long)t.Type));
 

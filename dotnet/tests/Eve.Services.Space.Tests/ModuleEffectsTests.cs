@@ -10,7 +10,7 @@ public class ModuleEffectsTests
     [PgFact]
     public async Task Every_effect_the_space_host_serves_exists_in_the_static_data_and_is_not_listed_as_uncovered()
     {
-        await using var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
+        await using var source = NpgsqlDataSource.Create(PgConnection.ForTest(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
         var sde = new SdeReader(source);
         var catalogBuild = await sde.BuildAsync()
             ?? throw new InvalidOperationException("The test SDE schema must expose its actual build number.");
@@ -312,7 +312,7 @@ public class ModuleEffectsTests
     [PgFact]
     public async Task The_effects_without_a_body_are_registered_listed_as_uncovered_and_assigned_to_module_types_in_the_current_sde()
     {
-        await using var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
+        await using var source = NpgsqlDataSource.Create(PgConnection.ForTest(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
         var sde = new SdeReader(source);
         var catalogBuild = await sde.BuildAsync()
             ?? throw new InvalidOperationException("The test SDE schema must expose its actual build number.");
@@ -354,7 +354,7 @@ public class ModuleEffectsTests
     [PgFact]
     public async Task Dogma_modifier_handlers_cover_their_published_module_effects_in_the_current_sde()
     {
-        await using var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
+        await using var source = NpgsqlDataSource.Create(PgConnection.ForTest(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
         var sde = new SdeReader(source);
         var catalogBuild = await sde.BuildAsync()
             ?? throw new InvalidOperationException("The test SDE schema must expose its actual build number.");
@@ -398,7 +398,7 @@ public class ModuleEffectsTests
     [PgFact]
     public async Task Sde_module_effect_handlers_use_actual_catalog_types_and_attributes()
     {
-        await using var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
+        await using var source = NpgsqlDataSource.Create(PgConnection.ForTest(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
         var sde = new SdeReader(source);
         var catalogBuild = await sde.BuildAsync()
             ?? throw new InvalidOperationException("The test SDE schema must expose its actual build number.");
@@ -585,7 +585,7 @@ public class ModuleEffectsTests
     [PgFact]
     public async Task Mutadaptive_repair_spool_uses_each_published_modules_sde_cycle_bonus_and_resets_at_boundaries()
     {
-        await using var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
+        await using var source = NpgsqlDataSource.Create(PgConnection.ForTest(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
         var sde = new SdeReader(source);
         var catalogBuild = await sde.BuildAsync()
             ?? throw new InvalidOperationException("The test SDE schema must expose its actual build number.");
@@ -738,7 +738,7 @@ public class ModuleEffectsTests
     [PgFact]
     public async Task Published_module_activation_and_target_effect_gaps_are_enumerated_from_the_current_sde()
     {
-        await using var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
+        await using var source = NpgsqlDataSource.Create(PgConnection.ForTest(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
         var sde = new SdeReader(source);
         var catalogBuild = await sde.BuildAsync()
             ?? throw new InvalidOperationException("The test SDE schema must expose its actual build number.");
@@ -802,7 +802,7 @@ public class ModuleEffectsTests
     [PgFact]
     public async Task A_precursor_weapon_carries_the_damage_ramp_its_sde_type_declares_on_its_turret()
     {
-        await using var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
+        await using var source = NpgsqlDataSource.Create(PgConnection.ForTest(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
         var sde = new SdeReader(source);
         var catalogBuild = await sde.BuildAsync()
             ?? throw new InvalidOperationException("The test SDE schema must expose its actual build number.");
@@ -864,7 +864,7 @@ public class ModuleEffectsTests
     [PgFact]
     public async Task A_vorton_projector_explodes_without_a_roll_and_arcs_with_the_sde_numbers_its_type_declares()
     {
-        await using var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
+        await using var source = NpgsqlDataSource.Create(PgConnection.ForTest(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
         var sde = new SdeReader(source);
         var catalogBuild = await sde.BuildAsync()
             ?? throw new InvalidOperationException("The test SDE schema must expose its actual build number.");
@@ -940,7 +940,7 @@ public class ModuleEffectsTests
     [PgFact]
     public async Task Two_modules_on_the_same_non_stackable_resonance_are_told_the_value_the_world_holds_with_both_running()
     {
-        await using var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
+        await using var source = NpgsqlDataSource.Create(PgConnection.ForTest(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
         var sde = new SdeReader(source);
         var catalogBuild = await sde.BuildAsync() ?? throw new InvalidOperationException("The test SDE schema must expose its actual build number.");
         var statics = await DogmaStatic.LoadAsync(sde);
@@ -1001,7 +1001,7 @@ public class ModuleEffectsTests
     [PgFact]
     public async Task Every_cloaking_device_is_refused_on_a_ship_that_cannot_cloak_or_disallows_it_and_tells_no_speed()
     {
-        await using var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
+        await using var source = NpgsqlDataSource.Create(PgConnection.ForTest(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
         var sde = new SdeReader(source);
         var statics = await DogmaStatic.LoadAsync(sde);
         var cloaks = await statics.TypesInGroupsAsync(["Cloaking Device"]);

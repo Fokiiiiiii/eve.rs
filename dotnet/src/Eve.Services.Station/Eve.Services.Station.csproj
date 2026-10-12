@@ -2,6 +2,13 @@
   <ItemGroup>
     <ProjectReference Include="../Eve.Services/Eve.Services.csproj" />
     <ProjectReference Include="../Eve.Services.Corporations/Eve.Services.Corporations.csproj" />
+    <ProjectReference Include="../Eve.Trade/Eve.Trade.csproj" />
+    <ProjectReference Include="../Eve.Sde/Eve.Sde.csproj" />
+    <ProjectReference Include="../Eve.Market/Eve.Market.csproj" />
+    <ProjectReference Include="../Eve.Relations/Eve.Relations.csproj" />
+    <ProjectReference Include="../Eve.Skills/Eve.Skills.csproj" />
+    <ProjectReference Include="../Eve.Wallet/Eve.Wallet.csproj" />
+    <ProjectReference Include="../Eve.Inventory/Eve.Inventory.csproj" />
     <ProjectReference Include="../Eve.Characters/Eve.Characters.csproj" />
     <ProjectReference Include="../Eve.Universe/Eve.Universe.csproj" />
     <ProjectReference Include="../Eve.ReadSide/Eve.ReadSide.csproj" />

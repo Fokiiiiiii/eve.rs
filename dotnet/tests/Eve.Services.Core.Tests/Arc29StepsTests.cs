@@ -76,7 +76,7 @@ public class Arc29StepsTests
         public AgentMissionStore? Store { get; set; }
 
         public async Task<bool> CompleteMissionAsync(long characterId, long agentId, DateTimeOffset now, string reference,
-            IReadOnlyList<(long FactionId, double Delta)> standings, CancellationToken cancellationToken) =>
+            IReadOnlyList<MissionStandingGain> standings, CancellationToken cancellationToken) =>
             Store is not null && await Store.CompleteAsync(characterId, agentId, now, reference, cancellationToken) is not null;
     }
 
@@ -89,7 +89,7 @@ public class Arc29StepsTests
     [AgentsPgFact]
     public async Task Arc_29_steps_one_and_two_run_end_to_end()
     {
-        var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
+        var source = NpgsqlDataSource.Create(PgConnection.ForTest(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
         var schema = "arc29_" + Guid.NewGuid().ToString("N")[..12];
         await using var cleanup = new Cleanup(source, schema);
         await AgentMissionStore.MigrateAsync(source, schema);

@@ -26,7 +26,7 @@ public sealed class PgScope : IAsyncDisposable
     {
         ConnectionString = connectionString;
         Schema = schema;
-        _source = NpgsqlDataSource.Create(connectionString);
+        _source = NpgsqlDataSource.Create(Eve.Data.PgConnection.ForTest(connectionString));
         Store = new PersistenceStore(connectionString, schema, () => Interlocked.Read(ref _now));
     }
 
@@ -45,7 +45,7 @@ public sealed class PgScope : IAsyncDisposable
 
     public static async Task<PgScope> CreateAsync()
     {
-        var scope = new PgScope(PgConnection.ToConnectionString(Url!), $"gs_test_{Guid.NewGuid():N}"[..24]);
+        var scope = new PgScope(PgConnection.ForTest(Url!), $"gs_test_{Guid.NewGuid():N}"[..24]);
         await scope.Store.EnsureSchemaAsync();
         return scope;
     }

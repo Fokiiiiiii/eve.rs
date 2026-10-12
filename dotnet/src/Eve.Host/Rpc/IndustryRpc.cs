@@ -45,6 +45,7 @@ internal sealed partial class CharacterServicesComposition
                 industryJobOperations.ReadJobsAsync,
                 industryJobOperations,
                 currentFileTime: () => checked(116444736000000000L + now() * 10_000L)),
+            new Eve.Services.Core.BlueprintManagerService(ReadBlueprintAsync, ReadOwnedBlueprintsAsync, ReadActiveJobsAsync),
             new Eve.Services.Core.CharacterMiningLedgerService(miningLedgerReads, () => Eve.Ships.MiningLedgerStore.FileTimeOf(now())),
             new Eve.Services.Core.CorpMiningLedgerService(miningLedgerReads, () => Eve.Ships.MiningLedgerStore.FileTimeOf(now())),
     ];

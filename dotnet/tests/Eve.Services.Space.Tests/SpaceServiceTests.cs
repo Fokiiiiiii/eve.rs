@@ -3138,7 +3138,7 @@ public class SpaceServiceTests
     [Fact]
     public void Fleet_added_bound_manager_and_proxy_rpcs_are_registered_for_dispatch()
     {
-        using var source = Npgsql.NpgsqlDataSource.Create("Host=127.0.0.1;Database=unused;Username=unused;Password=unused");
+        using var source = Npgsql.NpgsqlDataSource.Create(Eve.Data.PgConnection.ForTest("Host=127.0.0.1;Database=unused;Username=unused;Password=unused"));
         var store = new Eve.Services.Space.FleetStore(source);
         Eve.Services.IService bound = new Eve.Services.Space.FleetObjectService(store, () => Rig.ClockMs);
         Eve.Services.IService manager = new Eve.Services.Space.FleetManagerService(store);

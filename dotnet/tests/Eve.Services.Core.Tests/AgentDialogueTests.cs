@@ -42,7 +42,7 @@ public class AgentDialogueTests
 
         public static async Task<World> CreateAsync()
         {
-            var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
+            var source = NpgsqlDataSource.Create(PgConnection.ForTest(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
             return new World(source);
         }
 

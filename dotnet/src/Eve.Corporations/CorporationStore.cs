@@ -322,6 +322,17 @@ private readonly Func<NpgsqlConnection,NpgsqlTransaction,long,long,long,long,boo
                         ON alliance_bills(bill_type_id,due_filetime,bill_id)
                         WHERE processing_status IS NULL;
                 """),
+                new Migration("013_item_locks", """
+                    CREATE TABLE item_locks (
+                        item_id bigint PRIMARY KEY,
+                        corporation_id bigint NOT NULL,
+                        type_id integer NOT NULL,
+                        location_id bigint NOT NULL,
+                        locked_filetime bigint NOT NULL
+                    );
+                    CREATE INDEX item_locks_location
+                        ON item_locks(corporation_id,location_id,item_id);
+                """),
     ];
     public static Task<IReadOnlyList<string>> MigrateAsync(NpgsqlDataSource source, string schema = DefaultSchema, CancellationToken cancellationToken = default) =>
         Migrations.ApplyAsync(source, schema, MigrationSet(), cancellationToken);
@@ -348,16 +359,24 @@ private readonly Func<NpgsqlConnection,NpgsqlTransaction,long,long,long,long,boo
         {
             await using var connection = await _source.OpenConnectionAsync(token);
             await using var transaction = await connection.BeginTransactionAsync(IsolationLevel.Serializable,token);
+            var lockChanges = new List<ItemLockChange>();
+            PendingItemLockChanges.Value = lockChanges;
             try
             {
                 var result = await action(connection,transaction);
                 await transaction.CommitAsync(token);
+                PendingItemLockChanges.Value = null;
+                NotifyItemLockChanges(lockChanges);
                 return result;
             }
             catch (PostgresException error) when (attempt < 3 && error.SqlState is "40001" or "40P01")
             {
                 await transaction.RollbackAsync(CancellationToken.None);
                 await Task.Delay(5 * (attempt + 1),token);
+            }
+            finally
+            {
+                PendingItemLockChanges.Value = null;
             }
         }
     }

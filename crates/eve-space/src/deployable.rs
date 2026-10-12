@@ -17,7 +17,7 @@ use crate::link::AnalysisBeaconState;
 use crate::missile_entity::CHARGE_CATEGORY;
 use crate::modules::Effect;
 use crate::payload;
-use crate::scene::{Out, Scene, SessionId, TICKS_PER_SECOND};
+use crate::scene::{Command, Out, Scene, SessionId, TICKS_PER_SECOND};
 use crate::wire::{filetime, id, int, list, slim_object, text, tuple, word};
 
 /// The id of the first deployable a scene makes (its own range, apart from the missiles and the wrecks).
@@ -827,6 +827,35 @@ impl Scene {
 
     /// The host sets a CRAB's state: those who have it in view are told its slim item again (`OnSlimItemChange`, the whole slim item). A state already set is
     /// not told again, and a deployable that is not a CRAB is left alone.
+    /// Whether a CRAB's link holds a command of a pilot (EVE.js `applyLinkRestrictionsToShip`): from the start of the link the ship is immobile until the link is
+    /// complete, and it cannot warp, jump or dock until a minute after that (the status clear delay, `MOBILE_ANALYSIS_BEACON_LINK_STATUS_CLEAR_DELAY_MS`). A stop is
+    /// never held.
+    pub(crate) fn link_holds(&self, session: SessionId, command: &Command, now: i64) -> bool {
+        let Some(pilot) = self.pilots.get(&session) else { return false };
+        let ship = pilot.ship.spec.ship_id;
+        let Some(link) = self.deployables.values().find_map(|d| match &d.role {
+            Role::AnalysisBeacon { state } if state.link_state >= 2 && state.linked_ship_id == ship => {
+                Some(*state)
+            }
+            _ => None,
+        }) else {
+            return false;
+        };
+        let status_until = link.link_complete_at + ticks(60_000.0);
+        match command {
+            Command::GotoDirection(_)
+            | Command::AlignTo { .. }
+            | Command::FollowBall { .. }
+            | Command::Orbit { .. } => now < link.link_complete_at,
+            Command::WarpTo { .. }
+            | Command::WarpToPoint { .. }
+            | Command::Jump { .. }
+            | Command::CynoJump { .. }
+            | Command::Dock { .. } => now < status_until,
+            _ => false,
+        }
+    }
+
     pub(crate) fn set_analysis_beacon_state(
         &mut self,
         deployable_id: i64,

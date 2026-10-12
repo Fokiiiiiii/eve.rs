@@ -422,6 +422,12 @@ private readonly TransitionRuntime _transitions;
     /// <summary>The stargate rules of the client data and the SDE (set by the composition root): the ship lists of the gates, the tolls and the destinations.</summary>
     public Gates.GateRules? GateRules { get; set; }
 
+    /// <summary>Charges a gate toll to a character's wallet (set by the composition root): false when the wallet cannot pay.</summary>
+    public Func<long, decimal, string, CancellationToken, Task<bool>>? ChargeGateToll { get; set; }
+
+    /// <summary>Refunds a gate toll whose jump the simulation did not take (set by the composition root).</summary>
+    public Func<long, decimal, string, CancellationToken, Task>? RefundGateToll { get; set; }
+
     /// <summary>The emanation locks of the restricted systems (Zarzakh), in memory.</summary>
     private readonly Gates.EmanationLocks _emanationLocks = new();
 

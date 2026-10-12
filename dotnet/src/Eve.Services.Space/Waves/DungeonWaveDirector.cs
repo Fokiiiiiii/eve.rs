@@ -172,6 +172,22 @@ public sealed class DungeonWaveDirector
         return new DungeonStart(started.Created, started.Id, started.Created ? null : "the dungeon is already running");
     }
 
+    /// <summary>
+    /// <see cref="StartForSystemAsync(int, double[], long, string, TimeSpan, CancellationToken)"/> in the caller's transaction (a feature's job starts its sites in the same
+    /// commit as its own rows, and holds no second connection while it does).
+    /// </summary>
+    public async Task<DungeonStart> StartForSystemAsync(int solarSystemId, double[] origin, long dungeonID, string uniqueKey, TimeSpan lifetime, NpgsqlConnection connection,
+        NpgsqlTransaction transaction, CancellationToken cancellationToken = default)
+    {
+        if (ValidatedPlan(dungeonID, out var plan) is { } refusal)
+        {
+            return Refused(refusal);
+        }
+        var data = InstanceOf(dungeonID, solarSystemId, origin, plan!);
+        StartResult started = await _content.StartAsync(connection, transaction, DefinitionOf(dungeonID), NoPilotOwner, data, uniqueKey, (long)lifetime.TotalMilliseconds, cancellationToken);
+        return new DungeonStart(started.Created, started.Id, started.Created ? null : "the dungeon is already running");
+    }
+
     /// <summary>The waves of a dungeon, checked against the planner and the NPC authority: the plan, or why there is none (nothing starts then).</summary>
     private string? ValidatedPlan(long dungeonID, out WavePlan? plan)
     {

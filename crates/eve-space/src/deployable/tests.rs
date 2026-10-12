@@ -978,3 +978,49 @@ fn a_crab_is_put_in_space_once_and_the_state_the_host_sets_is_told_only_when_it_
         "a deployable that is not in space is left alone"
     );
 }
+
+#[test]
+fn a_linked_ship_is_held_until_its_link_is_complete_and_out_of_warp_for_a_minute_after() {
+    let (mut scene, t) = crowd();
+    let idle = AnalysisBeaconState {
+        active: true,
+        activate_at: 0,
+        deployed_at: t,
+        activation_seconds: 20,
+        link_state: 1,
+        link_complete_at: 0,
+        linked_ship_id: 0,
+    };
+    scene.place_analysis_beacon(crab_placement(&scene, idle), t);
+    let ship = scene.pilots[&A].ship.spec.ship_id;
+    let link_done = t + 240 * SECOND;
+    scene.set_analysis_beacon_state(
+        CRAB,
+        AnalysisBeaconState { link_state: 2, link_complete_at: link_done, linked_ship_id: ship, ..idle },
+        t,
+    );
+
+    let held = |out: &[Out], reason: &str| {
+        out.iter().any(|o| matches!(o, Out::Refused { reason: r, .. } if *r == reason))
+    };
+    let goto = Command::GotoDirection(eve_destiny::Vec3::new(1.0, 0.0, 0.0));
+    let warp = Command::WarpTo { target_id: STATION, range: 0.0 };
+    assert!(held(&scene.command(A, goto, t), "LINK_HOLD"), "the ship is immobile during the link");
+    assert!(held(&scene.command(A, warp, t), "LINK_HOLD"), "the ship cannot warp during the link");
+    assert!(!held(&scene.command(A, Command::Stop, t), "LINK_HOLD"), "a stop is never held");
+    assert!(!held(&scene.command(B, goto, t), "LINK_HOLD"), "another pilot's ship is not held");
+
+    let after_link = link_done + SECOND;
+    assert!(
+        !held(&scene.command(A, goto, after_link), "LINK_HOLD"),
+        "the ship moves again when the link is complete"
+    );
+    assert!(
+        held(&scene.command(A, warp, after_link), "LINK_HOLD"),
+        "the warp is held for a minute after the link"
+    );
+    assert!(
+        !held(&scene.command(A, warp, link_done + 61 * SECOND), "LINK_HOLD"),
+        "the warp is free after the status clear delay"
+    );
+}

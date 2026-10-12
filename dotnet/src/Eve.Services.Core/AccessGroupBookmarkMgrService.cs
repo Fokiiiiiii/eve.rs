@@ -181,12 +181,8 @@ public sealed partial class AccessGroupBookmarkMgrService(BookmarkStore store, F
         _ => null,
     };
 
-    private static string Text(PyValue value) => value switch
-    {
-        PyStr text => text.Value,
-        PyWString text => text.Value,
-        _ => "",
-    };
+    // the client sends ASCII text as a byte string (decoded as PyBytes): read every text type the JS string reads
+    private static string Text(PyValue value) => Eve.Macho.JsSemantics.StringValue(value) ?? "";
 
     /// <summary>A bookmark id set: the client sends a Python set (an <c>ObjectEx</c> over <c>__builtin__.set</c>) or a list.</summary>
     private static IReadOnlyList<long> IdsOf(PyValue value) =>

@@ -235,6 +235,8 @@ public sealed partial class SpaceSessions
             throw MovementRefused(policy, "jump");
         }
         await CheckGateRulesAsync(pilot, gateId, cancellationToken);
+        // the toll is paid before the simulation hears the jump; a jump that does not happen gets it back
+        var toll = await ChargeTollAsync(session, pilot, gateId, cancellationToken);
         CommandReply reply;
         try
         {
@@ -242,15 +244,18 @@ public sealed partial class SpaceSessions
         }
         catch (SimUnavailableException error)
         {
+            await RefundTollAsync(toll, cancellationToken);
             _log?.Invoke($"jump of session {session.SessionId}: {error.Message}");
             throw JumpRefused("SCENE_NOT_FOUND");
         }
         if (!reply.Accepted || reply.DestinationSystem is not { } destination)
         {
+            await RefundTollAsync(toll, cancellationToken);
             _log?.Invoke($"jump of session {session.SessionId} through {gateId} refused: {reply.Reason}");
             throw JumpRefused(reply.Reason);
         }
-        // entering a restricted system through a gate locks the pilot to the gate it arrived by (the wiki: Emanation Lock)
+        // leaving a restricted system ends its emanation lock; entering one through a gate locks the pilot to the gate it arrived by (the wiki)
+        _emanationLocks.Left(pilot.CharacterId, pilot.SolarSystemId);
         if (GateRules?.DestinationOf(gateId) is { } arrivalGate)
         {
             _emanationLocks.Entered(pilot.CharacterId, destination, arrivalGate, _nowUnixMs());
@@ -258,6 +263,42 @@ public sealed partial class SpaceSessions
         SendJumpQueueUpdate(session, pilot.CharacterId, destination);
         return Py.Tuple(boundObjectId is null ? None : new PyStr(boundObjectId), new PyLong(Py.FileTimeFromUnixMs(_nowUnixMs() + SessionChangeCooldownMs)));
     }
+
+    /// <summary>
+    /// The gate toll of the gate (the client's alignment-based toll, computed as the client computes it), charged to the pilot's wallet. Null when the
+    /// gate has no toll or the toll is zero for this pilot (a pirate-aligned pilot). The toll is a sink: no source names a payee (DEVIATIONS, slice 3).
+    /// </summary>
+    private async Task<(long CharacterId, string Key, decimal Amount)?> ChargeTollAsync(ClientSession session, Pilot pilot, long gateId, CancellationToken cancellationToken)
+    {
+        if (GateRules?.TollOf(gateId) is not { } toll || ChargeGateToll is null)
+        {
+            return null;
+        }
+        var aligned = Gates.GateRules.IsAligned(toll, session.GetInt("warfactionid"));
+        var amount = decimal.Round((decimal)Gates.GateRules.TollAmount(toll, await ShipMassAsync(pilot, cancellationToken), aligned), 2, MidpointRounding.AwayFromZero);
+        if (amount <= 0)
+        {
+            return null;
+        }
+        var key = $"gate-toll:{pilot.CharacterId}:{gateId}:{_nowUnixMs()}";
+        if (!await ChargeGateToll(pilot.CharacterId, amount, key, cancellationToken))
+        {
+            throw Notify("You cannot pay the toll of this stargate.");
+        }
+        return (pilot.CharacterId, key, amount);
+    }
+
+    private async Task RefundTollAsync((long CharacterId, string Key, decimal Amount)? toll, CancellationToken cancellationToken)
+    {
+        if (toll is { } charged && RefundGateToll is not null)
+        {
+            await RefundGateToll(charged.CharacterId, charged.Amount, charged.Key + ":refund", cancellationToken);
+        }
+    }
+
+    /// <summary>The ship's mass as it flies (dogma attribute 4, its fittings included): the mass the client's toll is computed from.</summary>
+    private async Task<double> ShipMassAsync(Pilot pilot, CancellationToken cancellationToken) =>
+        await FlownShipAsync(pilot, cancellationToken) is { } flown ? flown.World.Get(flown.Ship.Id, Eve.Services.Space.Effects.ModuleAttributes.Mass) : 0;
 
     /// <summary>The stargate rules of the client data: the pilot's ship group against the gate's list, and the emanation lock of the system it is in.</summary>
     private async Task CheckGateRulesAsync(Pilot pilot, long gateId, CancellationToken cancellationToken)

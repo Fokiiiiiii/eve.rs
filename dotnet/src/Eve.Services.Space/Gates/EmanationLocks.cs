@@ -32,6 +32,15 @@ public sealed class EmanationLocks
     public Lock? Active(long characterId, int solarSystemId, long nowMs) =>
         _locks.TryGetValue(characterId, out var locked) && locked.SolarSystemId == solarSystemId && locked.ExpiresMs > nowMs ? locked : null;
 
+    /// <summary>Clears the lock when the character leaves the restricted system (the client's text: "The lock is removed after exiting Zarzakh.").</summary>
+    public void Left(long characterId, int solarSystemId)
+    {
+        if (RestrictedSystems.Contains(solarSystemId))
+        {
+            _locks.TryRemove(characterId, out _);
+        }
+    }
+
     /// <summary>Whether the character may leave the system through this gate: no lock runs there, or the lock names this gate.</summary>
     public bool MayLeave(long characterId, int solarSystemId, long gateId, long nowMs) =>
         Active(characterId, solarSystemId, nowMs) is not { } locked || locked.GateId == gateId;

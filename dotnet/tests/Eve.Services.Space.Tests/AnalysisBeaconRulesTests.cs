@@ -19,8 +19,8 @@ public class AnalysisBeaconRulesTests
         {
           "schema": "eve.rs/analysis-beacon-rules/v1",
           "beacons": [
-            { "typeId": 60244, "wave": { "atScanProgress": 0, "spawnPool": "rogue_drones", "amount": 4 }, "rewards": [ { "typeId": 60459, "quantity": 1441 } ] },
-            { "typeId": 92183, "wave": { "atScanProgress": 0, "spawnPool": "rogue_drones_deadspace_pve", "amount": 6 }, "rewards": [ { "typeId": 60473, "quantity": 1 } ] }
+            { "typeId": 60244, "waves": [ { "atScanProgress": 0, "spawnPool": "rogue_drones", "amount": 4 } ], "rewards": [ { "typeId": 60459, "quantity": 1441 } ] },
+            { "typeId": 92183, "waves": [ { "atScanProgress": 0, "spawnPool": "rogue_drones_deadspace_pve", "amount": 6 } ], "rewards": [ { "typeId": 60473, "quantity": 1 } ] }
           ]
         }
         """;
@@ -31,8 +31,8 @@ public class AnalysisBeaconRulesTests
         var rules = AnalysisBeaconRules.LoadEmbedded();
 
         Assert.Equal(2, rules.Types.Count);
-        Assert.Equal(new BeaconWaveRule("rogue_drones", 4), rules.For(60244)!.Wave);
-        Assert.Equal(new BeaconWaveRule("rogue_drones_deadspace_pve", 6), rules.For(92183)!.Wave);
+        Assert.Equal([new BeaconWaveRule(0, "rogue_drones", 4), new BeaconWaveRule(0.5, "rogue_drones", 4)], rules.For(60244)!.Waves);
+        Assert.Equal([new BeaconWaveRule(0, "rogue_drones_deadspace_pve", 6), new BeaconWaveRule(0.5, "rogue_drones_deadspace_pve", 6)], rules.For(92183)!.Waves);
         Assert.Equal([new BeaconRewardRule(60459, 1441), new BeaconRewardRule(60466, 1), new BeaconRewardRule(60464, 1)], rules.For(60244)!.Rewards);
         Assert.Equal([new BeaconRewardRule(60459, 2270), new BeaconRewardRule(60473, 1)], rules.For(92183)!.Rewards);
     }
@@ -60,7 +60,7 @@ public class AnalysisBeaconRulesTests
     }
 
     [Fact]
-    public void A_wave_at_another_scan_progress_is_refused_because_the_first_cut_does_not_build_it()
+    public void A_first_wave_not_at_scan_progress_zero_is_refused()
     {
         var error = Assert.Throws<InvalidDataException>(() => Parse(Valid.Replace("\"atScanProgress\": 0, \"spawnPool\": \"rogue_drones\"", "\"atScanProgress\": 0.5, \"spawnPool\": \"rogue_drones\"")));
 
@@ -72,7 +72,7 @@ public class AnalysisBeaconRulesTests
     {
         const string standardOnly = """
             { "schema": "eve.rs/analysis-beacon-rules/v1", "beacons": [
-              { "typeId": 60244, "wave": { "atScanProgress": 0, "spawnPool": "rogue_drones", "amount": 4 }, "rewards": [] } ] }
+              { "typeId": 60244, "waves": [ { "atScanProgress": 0, "spawnPool": "rogue_drones", "amount": 4 } ], "rewards": [] } ] }
             """;
 
         var error = Assert.Throws<InvalidDataException>(() => Parse(standardOnly));

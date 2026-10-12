@@ -290,7 +290,8 @@ internal sealed partial class CharacterServicesComposition
                         ? agent.SolarSystemId is { } system && spaceSessions is not null && spaceSessions.IsPilotInSystem(characterId, (int)system)
                         : atLocation;
                     await missionDungeons.OnConversationAsync(characterId, agent.AgentId, together, ct);
-                }, researchPort, locatorPort));
+                }, researchPort, locatorPort,
+                async (characterId, agentId, token) => { if (missionDungeons is { } dungeons) await dungeons.OnAcceptedAsync(characterId, agentId, token); }));
         await AttachMissionDungeonsAsync();
     }
 
@@ -311,7 +312,8 @@ internal sealed partial class CharacterServicesComposition
             CreditMissionIskAsync,
             CompleteMissionAsync,
             GrantObjectiveItemAsync,
-            HeldQuantityAsync);
+            HeldQuantityAsync,
+            GrantCargoAsync);
         missionDungeons = new MissionDungeonRuntime(
             agentMissionStore,
             agentMissionStatic,
@@ -319,8 +321,12 @@ internal sealed partial class CharacterServicesComposition
             agentId => agentMissionAgentById.TryGetValue(agentId, out var agent) && agent.SolarSystemId is { } system
                 ? new MissionAgentPlace(system, agent.CorporationId, agent.BaseLocationId)
                 : null,
-            () => DateTimeOffset.UtcNow);
+            () => DateTimeOffset.UtcNow,
+            (missionId, characterId, place, level) => stargateGraph is { } gates
+                ? MissionCourierRules.Destination(missionId, characterId, place.BaseStationId!.Value, (int)place.SolarSystemId, level, gates, stations.All)
+                : null);
         var runtime = missionDungeons;
+        if (spaceSessions is not null) spaceSessions.PilotDocked = (characterId, stationId, token) => runtime.OnDockedAsync(characterId, stationId, token);
         foundations.Scheduler.Register(MissionDungeonSweepJob, (context, token) => runtime.SweepAsync(token));
         await foundations.Scheduler.EnsureRecurringAsync(MissionDungeonSweepJob, "sweep", TimeSpan.FromSeconds(10));
         foreach (var (topic, outcome) in new[] { ("content.dungeon.completed", "completed"), ("content.dungeon.failed", "failed"),
@@ -393,7 +399,24 @@ internal sealed partial class CharacterServicesComposition
         if (record is null || record.State is not (Eve.Agents.AgentMissionState.Offered or Eve.Agents.AgentMissionState.Accepted or Eve.Agents.AgentMissionState.Completed)) return null;
         if (agentMissionStatic.Mission(record.Content.MissionId) is not { } mission) return null;
         long? briefing = clientMissionMessages.TryGetValue(mission.MissionId, out var texts) && texts.TryGetValue(ClientMissionMessages.BriefingKey, out var id) ? id : null;
-        return new Eve.Services.Core.HeldMissionView(mission, record, briefing, await FetchObjectiveAsync(characterId, record, cancellationToken));
+        return new Eve.Services.Core.HeldMissionView(mission, record, briefing, await FetchObjectiveAsync(characterId, record, cancellationToken),
+            await CourierObjectiveAsync(characterId, record, cancellationToken));
+    }
+
+    /// <summary>
+    /// The cargo of a courier mission: the SDE's item and its volume, the pilot's holding, the pickup (the agent's station) and the destination of the
+    /// same seed the runtime uses. Null when the mission carries no courier objective, or no destination is in range.
+    /// </summary>
+    private async ValueTask<Eve.Services.Core.CourierObjectiveView?> CourierObjectiveAsync(long characterId, Eve.Agents.AgentMissionRecord record, CancellationToken cancellationToken)
+    {
+        if (agentMissionStatic.Mission(record.Content.MissionId)?.Courier is not { ObjectiveTypeId: { } typeId, ObjectiveQuantity: > 0 } courier) return null;
+        if (!agentMissionAgentById.TryGetValue(record.AgentId, out var agent) || agent.BaseLocationId is not { } pickup || agent.SolarSystemId is not { } system) return null;
+        var level = agentMissionStatic.Level(record.Content.MissionId).Level;
+        if (stargateGraph is not { } gates || Eve.Services.Core.MissionCourierRules.Destination(record.Content.MissionId, characterId, pickup, (int)system, level, gates, stations.All) is not { } destination) return null;
+        var type = dogma.Type((int)typeId);
+        var volume = type is not null && dogma.AttributeId("volume") is { } attribute ? type.Attributes.GetValueOrDefault(attribute, 0) : 0;
+        var held = await HeldQuantityAsync(characterId, (int)typeId, cancellationToken);
+        return new Eve.Services.Core.CourierObjectiveView((int)typeId, courier.ObjectiveQuantity, volume, held >= courier.ObjectiveQuantity, pickup, destination.Id, agent.CorporationId);
     }
 
     /// <summary>
@@ -471,11 +494,22 @@ internal sealed partial class CharacterServicesComposition
         Eve.Relations.RelationStore relations, Eve.Inventory.PgItemStore items, long characterId, long agentId, DateTimeOffset now, string reference,
         IReadOnlyList<MissionStandingGain> standings, IReadOnlyList<(int TypeId, long Quantity)> consume, CancellationToken cancellationToken)
     {
-        // the holdings are read before the transaction: a short holding refuses the completion without writing anything
-        IReadOnlyList<Eve.Inventory.Item> owned = consume.Count == 0 ? [] : await items.OwnedByAsync(characterId, cancellationToken);
-        if (consume.Any(need => owned.Where(item => item.TypeId == need.TypeId).Sum(item => item.Quantity) < need.Quantity)) return false;
         await using var connection = await source.OpenConnectionAsync(cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        // the stacks are locked before anything is written: a second turn-in waits here and then finds them gone (or short)
+        var takes = new List<(Eve.Inventory.Item Stack, long Taken)>();
+        foreach (var (typeId, quantity) in consume)
+        {
+            var left = quantity;
+            foreach (var stack in await items.LockOwnedOfTypeAsync(connection, transaction, characterId, typeId, cancellationToken))
+            {
+                if (left == 0) break;
+                var taken = Math.Min(left, stack.Quantity);
+                takes.Add((stack, taken));
+                left -= taken;
+            }
+            if (left > 0) return false;
+        }
         Eve.Agents.AgentMissionChange? change;
         try
         {
@@ -486,18 +520,11 @@ internal sealed partial class CharacterServicesComposition
             return false;
         }
         if (change is null) return false;
-        // the objective items leave with the completion, the oldest stacks first
-        foreach (var (typeId, quantity) in consume)
+        // the objective items leave with the completion
+        foreach (var (stack, taken) in takes)
         {
-            var left = quantity;
-            foreach (var stack in owned.Where(item => item.TypeId == typeId).OrderBy(item => item.Id))
-            {
-                if (left == 0) break;
-                var taken = Math.Min(left, stack.Quantity);
-                if (taken == stack.Quantity) await items.DeleteAsync(connection, transaction, stack.Id, cancellationToken);
-                else await items.SetQuantityAsync(connection, transaction, stack.Id, stack.Quantity - taken, cancellationToken);
-                left -= taken;
-            }
+            if (taken == stack.Quantity) await items.DeleteAsync(connection, transaction, stack.Id, cancellationToken);
+            else await items.SetQuantityAsync(connection, transaction, stack.Id, stack.Quantity - taken, cancellationToken);
         }
         // read in the transaction: a diminishing gain depends on the standing the pilot has when the completion is written
         foreach (var gain in standings)
@@ -524,6 +551,16 @@ internal sealed partial class CharacterServicesComposition
         await transaction.CommitAsync(cancellationToken);
     }
 
+    /// <summary>A courier's cargo: the quantity (singletons when the data says so) created into the hangar of the station.</summary>
+    private async Task GrantCargoAsync(long characterId, int typeId, long quantity, bool singleton, long stationId, CancellationToken cancellationToken)
+    {
+        await using var connection = await source.OpenConnectionAsync(cancellationToken);
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        await items.CreateAsync(connection, transaction,
+            new Eve.Inventory.NewItem(typeId, characterId, stationId, Eve.Inventory.ItemFlags.Hangar, quantity, Singleton: singleton), cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+    }
+
     /// <summary>The quantity of the type the pilot holds (all owned stacks).</summary>
     private async Task<long> HeldQuantityAsync(long characterId, int typeId, CancellationToken cancellationToken) =>
         (await items.OwnedByAsync(characterId, cancellationToken)).Where(item => item.TypeId == typeId).Sum(item => item.Quantity);
@@ -546,7 +583,8 @@ internal sealed class SpaceMissionDungeonHost(
     Func<long, long, long, int, string, string, CancellationToken, Task> creditIsk,
     Func<long, long, DateTimeOffset, string, IReadOnlyList<MissionStandingGain>, IReadOnlyList<(int TypeId, long Quantity)>, CancellationToken, Task<bool>> completeMission,
     Func<long, int, long, long, CancellationToken, Task> grantItem,
-    Func<long, int, CancellationToken, Task<long>> heldQuantity) : IMissionDungeonHost
+    Func<long, int, CancellationToken, Task<long>> heldQuantity,
+    Func<long, int, long, bool, long, CancellationToken, Task> grantCargo) : IMissionDungeonHost
 {
     public bool IsPilotInSystem(long characterId, int solarSystemId) => isPilotInSystem(characterId, solarSystemId);
 
@@ -565,4 +603,7 @@ internal sealed class SpaceMissionDungeonHost(
 
     public Task<long> HeldQuantityAsync(long characterId, int typeId, CancellationToken cancellationToken) =>
         heldQuantity(characterId, typeId, cancellationToken);
+
+    public Task GrantCargoAsync(long characterId, int typeId, long quantity, bool singleton, long stationId, CancellationToken cancellationToken) =>
+        grantCargo(characterId, typeId, quantity, singleton, stationId, cancellationToken);
 }

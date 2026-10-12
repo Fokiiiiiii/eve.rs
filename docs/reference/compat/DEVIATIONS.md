@@ -3444,3 +3444,26 @@ Superseded in part by "Wormhole sites: real names and client dungeon keys (slice
 - Tests: `a_wormhole_end_inside_a_star_is_placed_outside_it_on_its_bearing` (scene), `a_wormhole_end_placed_in_a_system_nobody_is_in_is_still_there_after_a_poll` (sim), and the live `test_wormhole_live.py` (headless, through the MITM proxy): a jump in, and a jump out through the junction end: passed.
 - Not done: the trace logging behind an env var (not needed: the destiny updates showed the 5e8 m position and the star's radius); the gas and ore sites.
 
+## Mission execution X10: courier missions (2026-10-12)
+
+Owner decisions (X9, X10). The courier rules below are eve.rs's project rules, not CCP's or EVE.js's; each is stated with its source.
+
+- **Pickup.** The cargo is handed over at acceptance into the hangar of the agent's station (`GrantCargoAsync`, the agent's `locationID` as the station). The quantity and the singleton flag come from the mission's `courierMission` record (`objectiveQuantity`, `objectiveSingleton`). The pickup location in the client objective is the same station.
+- **Destination.** A station chosen by a seed among the stations (other than the origin's) whose system lies within the level's jump range from the origin's system, counted on the stargate graph (`mapStargates`). The seed is the mission ID times 1,000,003 plus the character ID; the candidates are in station ID order. Jump ranges, from eve-survival's "Courier Missions" page (a third-party page, about ten years old; the EVE University wiki gives none): levels 1 and 2 0 to 5 jumps, level 3 0 to 12, level 4 1 to 12, level 5 as level 4. A level outside these gives no destination.
+- **Completion on delivery.** Docking at the destination station (`SpaceSessions.DockAsync`, after the ship's dock succeeds) completes the accepted courier mission when the cargo is held in any location; the cargo is consumed with the completion, in the completion's transaction.
+- **Expiry.** An accepted courier mission expires after the mission data's `expirationTime` (minutes; 1020 of the 1155 courier missions carry it, for example 10080 = 7 days), or after three days where the data gives none, counted from the acceptance. Expiry is checked by the mission sweep (every 10 seconds).
+- **Failure.** The expiry fails the mission with no standing change, as every failure of the runtime does today (no failure penalty is implemented). The cargo stays with the pilot (shortcut: the failure does not take it back).
+- **Reward.** The official ISK of `missionRewards.reward` when the record gives one (324 of the 1155 courier records do); the basic level rate is not applied to courier missions.
+- **Client objective.** The transport entry of the client contract (eve-logic `evemissions/client/mission.py`: pickup owner and location, drop-off owner and location, and the cargo with the SDE volume times the quantity and `hasCargo`).
+- **Reach.** The 25 courier missions that are epic-arc steps are offered through the arc. The other 1130 courier missions need a basic courier offer (the Distribution agents' missions), which is not built yet: those missions are held back.
+- Tests: `MissionDungeonRuntimeTests` (`A_courier_accepted_hands_the_cargo_over_at_the_agents_station`, `A_courier_delivered_at_its_destination_completes_consumes_the_cargo_and_pays`, `A_courier_past_its_data_expiry_fails_and_one_before_it_does_not`, `The_courier_destination_is_a_station_in_the_level_jump_range_reached_by_stargates_and_is_seeded`).
+
+## Mission execution X10 C: the kinds of the objective data (2026-10-12)
+
+- **The 560 kill objectives.** Every `killMission` with an `objectiveTypeID` (560 missions, 253 item types) also carries a `dungeonID` and an `objectiveQuantity` above zero. Each is a dungeon whose objective is an item: the shape of arc 29 step 14119 (the Strange Datacore). The item groups are commodities (the largest share), asteroid ores (Veldspar, Pyroxeres, Omber, Kernite and others), harvestable gas clouds, datacores, ship logs, criminal tags, drugs, identification cards and gate keys.
+- **Implemented:** the fetch from a dungeon (X8 A): `FetchOf` reads all 560 rows; the item is granted at the agent's station when the dungeon completes and handed in at the agent. The agent's kind decides which missions are offered (`AgentMissionKindRules`): Security agents give encounter missions, Mining agents mining, Distribution agents courier.
+- **Mining:** the ore objectives are the same shape (a dungeon with ore loot), because the SDE has no mining record without a dungeon. Mining is therefore the fetch from a dungeon; no separate mining mission is built. Mining agents offer no mission yet (no basic mining offer exists).
+- **Courier:** the 1155 `courierMission` records (X10 B above). Built: the lifecycle; the 25 that are arc steps are offered; the 1130 others need a basic courier offer, not built.
+- **Trade:** no SDE record is a trade objective (`killMission` and `courierMission` are the only objective records). Not implemented: no data. The client's trade kind is EveJS's mapping to a fetch, which is not a sourced rule.
+- **Encounter:** the basic pool offers dungeon kills only (`BasicKillOffers`), not the 560 item objectives. Not implemented for the basic pool; the 59 arc steps with item objectives work through the arc.
+

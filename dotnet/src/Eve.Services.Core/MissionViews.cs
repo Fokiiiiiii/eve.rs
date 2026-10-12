@@ -4,7 +4,12 @@ using Eve.Marshal;
 namespace Eve.Services.Core;
 
 /// <summary>A mission the character holds with an agent: the official record, the held state and the briefing text ID (null when not loaded).</summary>
-public sealed record HeldMissionView(MissionStatic Mission, AgentMissionRecord Record, long? BriefingMessageId, FetchObjectiveView? Fetch = null);
+public sealed record HeldMissionView(MissionStatic Mission, AgentMissionRecord Record, long? BriefingMessageId, FetchObjectiveView? Fetch = null,
+    CourierObjectiveView? Courier = null);
+
+/// <summary>The cargo of a courier mission: the item (SDE type, quantity and volume of one unit), whether the pilot holds it, the pickup (the agent's
+/// station), the drop-off station and the agent's corporation (the owner of the stations' tuples, as the fetch objective's).</summary>
+public sealed record CourierObjectiveView(int TypeId, long Quantity, double Volume, bool HasCargo, long PickupStationId, long DropoffStationId, long CorporationId);
 
 /// <summary>
 /// The objective item of a fetch step: the type and quantity from the SDE, the item's volume of one unit, the quantity the pilot holds, and the agent's
@@ -67,6 +72,24 @@ public static class MissionViews
                     Field("typeID", new PyInt(fetch.TypeId)),
                     Field("hasCargo", fetch.HeldQuantity >= fetch.Quantity ? PyBool.True : PyBool.False),
                     Field("quantity", new PyInt(fetch.Quantity)),
+                ]),
+            ])]));
+        }
+        if (view.Courier is { } courier)
+        {
+            // the client's transport objective (eve-logic evemissions/client/mission.py): pickup, drop-off and cargo, each location with its owner
+            objectives.Add(new PyTuple([new PyStr("transport"), new PyTuple(
+            [
+                new PyInt(courier.CorporationId),
+                new PyDict([Field("typeID", new PyInt(1531)), Field("solarsystemID", new PyInt(0)), Field("locationID", new PyInt(courier.PickupStationId))]),
+                new PyInt(courier.CorporationId),
+                new PyDict([Field("typeID", new PyInt(1531)), Field("solarsystemID", new PyInt(0)), Field("locationID", new PyInt(courier.DropoffStationId))]),
+                new PyDict(
+                [
+                    Field("volume", new PyReal(courier.Volume * courier.Quantity)),
+                    Field("typeID", new PyInt(courier.TypeId)),
+                    Field("hasCargo", courier.HasCargo ? PyBool.True : PyBool.False),
+                    Field("quantity", new PyInt(courier.Quantity)),
                 ]),
             ])]));
         }

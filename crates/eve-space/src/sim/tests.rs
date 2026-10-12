@@ -29,6 +29,33 @@ fn enter(session: SessionId, station_id: i64, system: i32) -> Message {
     }))
 }
 
+#[test]
+fn a_wormhole_end_placed_in_a_system_nobody_is_in_is_still_there_after_a_poll() {
+    // the host places the ends of a system before a ship jumps into it; the poll must not drop their scene while the ship is on its way
+    let mut sim = sim();
+    let end = crate::link::WormholePlacement {
+        wormhole_id: 1_050_000_001,
+        solar_system_id: SYSTEM,
+        name: "Wormhole".to_string(),
+        type_id: 34_134,
+        group_id: 988,
+        position: [5_000.0, 0.0, 0.0],
+        radius: 3_000.0,
+        destination_system_id: 31_000_001,
+        destination_end: 1_050_000_002,
+        destination_class: 2,
+        destination_position: [0.0, 0.0, 5_000.0],
+        destination_radius: 3_000.0,
+        max_jump_mass: 1.0e8,
+    };
+    sim.handle(Message::PlaceWormhole(Box::new(end)), NOON).unwrap();
+    sim.poll(NOON + 5 * SECOND);
+    assert!(
+        sim.scenes.get(&SYSTEM).is_some_and(|scene| scene.wormhole_index(1_050_000_001).is_some()),
+        "the end was dropped with its scene"
+    );
+}
+
 fn undocked() -> Sim {
     let mut sim = sim();
     let reply = sim.handle(enter(SESSION, STATION, SYSTEM), NOON).unwrap();

@@ -3386,6 +3386,31 @@ fn a_warp_to_a_wormhole_end_under_the_minimum_warp_distance_is_refused_and_one_b
 }
 
 #[test]
+fn a_wormhole_end_inside_a_star_is_placed_outside_it_on_its_bearing() {
+    // the host places an end 50 km from its system's centre; in this system the star's body (5e8 m) holds that point
+    let mut star_system = (*system()).clone();
+    star_system.bodies.push(Body {
+        id: 40_000_900,
+        type_id: 6_000,
+        group_id: 6,
+        category_id: 2,
+        owner_id: 0,
+        name: "Test Star".to_string(),
+        kind: BodyKind::Star,
+        position: Vec3::ZERO,
+        radius: 5.0e8,
+        graphic_id: None,
+        detail: Detail::None,
+    });
+    let mut scene = Scene::new(Arc::new(star_system));
+    scene.place_wormhole(wormhole_placement(Vec3::new(50_000.0, 0.0, 0.0), Vec3::ZERO, 5_000.0), NOON);
+    let placed = scene.system().body(WORMHOLE_END).unwrap().position;
+    let distance = (placed.x * placed.x + placed.y * placed.y + placed.z * placed.z).sqrt();
+    assert!(distance >= 5.0e8 + 3_000.0 + 50_000.0 - 1e-3, "{distance} m from the star's centre");
+    assert!(placed.x > 0.0 && placed.y.abs() < 1e-6 && placed.z.abs() < 1e-6, "on its bearing: {placed:?}");
+}
+
+#[test]
 fn a_wormhole_end_out_of_reach_refuses_the_jump_and_a_removed_one_is_not_found() {
     let mut scene = scene_by_a_gate();
     let out = scene.ship(SESSION, NOON).unwrap().position;

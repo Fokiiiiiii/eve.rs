@@ -12,6 +12,32 @@ const B: SessionId = 8;
 const SECOND: i64 = 10_000_000;
 const PLANET: i64 = 40_000_001;
 
+#[test]
+fn a_structure_observer_tracks_asteroid_visibility_and_seen_state_separately() {
+    let mut scene = watcher();
+    let placement = crate::scene::tests::structure_placement(&scene, NOON);
+    let structure_id = placement.structure_id;
+    scene.place_structure(placement, NOON);
+    scene.control_structure(A, scene.solar_system_id(), structure_id, spec().character_id, true, NOON);
+    scene.bind(A, NOON);
+    let asteroid_id = 1_050_000_000_001;
+    let position = scene.structure_body(structure_id).unwrap().position;
+    let added = scene.place_asteroid(crate::wreck::Asteroid {
+        id: asteroid_id, type_id: 1230, group_id: 450, category_id: 25,
+        name: "Veldspar".into(), graphic_id: None,
+        position, direction: Vec3::new(0.0, 0.0, 1.0), radius: 100.0, units_remaining: 100,
+    }, NOON);
+    assert!(added.iter().any(|out| matches!(out, Out::Notify { session: A, .. })));
+    assert!(scene.sees_asteroid(A, asteroid_id));
+    assert!(!scene.change_asteroid(asteroid_id, 99, NOON).is_empty());
+
+    scene.asteroids.get_mut(&asteroid_id).unwrap().position = Vec3::new(crate::visibility::GRID_BOX * 2.0, 0.0, 0.0);
+    let removed = scene.reconcile_asteroids(NOON);
+    assert!(removed.iter().any(|out| matches!(out, Out::Notify { session: A, .. })));
+    assert!(!scene.sees_asteroid(A, asteroid_id));
+    assert!(scene.change_asteroid(asteroid_id, 98, NOON).is_empty());
+}
+
 fn other_spec() -> crate::ship::ShipSpec {
     let mut other = spec();
     other.ship_id += 4;

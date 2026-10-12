@@ -26,7 +26,8 @@ public sealed partial class DogmaIMService(
     DogmaStatic statics, CharacterShips ships, Func<long> nowUnixMs, SkillBoosterActivationHandler activateBooster,
     CharacterDogmaSync? sync = null, ISpaceTargeting? space = null, ISpaceModules? modules = null, ISpaceHealth? health = null,
     ISpaceRounds? rounds = null, Func<TimeSpan, CancellationToken, Task>? delay = null, Action<string>? log = null, Eve.Scheduler.LocalTimers? localTimers = null, Func<ClientSession, IReadOnlyList<long>, CancellationToken, Task<PyValue>>? injectSkillBooks = null,
-    Func<ClientSession, CancellationToken, ValueTask>? createNewbieShip = null, ISpaceProbes? probes = null) : IBoundObjectReleaseHandler
+    Func<ClientSession, CancellationToken, ValueTask>? createNewbieShip = null, ISpaceProbes? probes = null,
+    Func<ClientSession, ShipSnapshot, CancellationToken, ValueTask<ShipSnapshot?>>? controlledStructureSnapshot = null) : IBoundObjectReleaseHandler
 {
     private readonly CharacterDogmaSync _sync = sync ?? new CharacterDogmaSync(statics, ships, nowUnixMs);
 
@@ -113,10 +114,9 @@ public sealed partial class DogmaIMService(
     [Method("GetAllInfo")]
     public async ValueTask<PyValue> GetAllInfo(ServiceCall call)
     {
-        if (BoundContextOf(call) is null || call.Session.CharacterId is not { } character || await ships.LoadAsync(character, call.Cancellation) is not { } snapshot)
-        {
+        if (BoundContextOf(call) is null || call.Session.CharacterId is not { } character
+            || await ReadSnapshotAsync(call.Session, call.Cancellation) is not { } snapshot)
             return None;
-        }
         // a ship in space has taken what the simulation says, not what it had when it left the station
         if (health is not null && await health.ConditionAsync(call.Session, call.Cancellation) is { } live)
         {
@@ -125,7 +125,7 @@ public sealed partial class DogmaIMService(
         var fileTime = Py.FileTimeFromUnixMs(nowUnixMs());
         var wantCharacter = Flag(call.Arg(0), true);
         var wantShip = Flag(call.Arg(1), true);
-        var answer = _info.GetAllInfo(snapshot, wantCharacter, wantShip, Flag(call.Arg(2), false), fileTime, docked: call.Session.DockedLocationId is not null);
+        var answer = _info.GetAllInfo(snapshot, wantCharacter, wantShip, Flag(call.Arg(2), call.Session.GetInt("structureid") is > 0), fileTime, docked: call.Session.DockedLocationId is not null);
         if (wantCharacter || (wantShip && !wantCharacter))
         {
             // sent after the answer: the client has the character before it is told how the character's attributes came to be
@@ -133,6 +133,21 @@ public sealed partial class DogmaIMService(
             call.Session.AfterResponse(() => _sync.SendCharacter(call.Session, snapshot, fileTime, version));
         }
         return answer;
+    }
+
+    private async Task<ShipSnapshot?> ReadSnapshotAsync(ClientSession session, CancellationToken cancellationToken)
+    {
+        if (session.CharacterId is not { } character || await ships.LoadAsync(character, cancellationToken) is not { } personal)
+            return null;
+        if (session.GetInt("structureid") is not { } structureId || structureId <= 0 || session.GetInt("shipid") != structureId)
+            return personal;
+        if (controlledStructureSnapshot is null
+            || await controlledStructureSnapshot(session, personal, cancellationToken) is not { } controlled
+            || controlled.Character.Id != character || controlled.Ship.Id != structureId
+            || statics.CategoryId("Structure") is not { } category
+            || statics.Type(controlled.Ship.TypeId)?.CategoryId != category)
+            return null;
+        return controlled;
     }
 
     /// <summary><c>GetRequiredSkillLevels(typeID)</c>: maps each required skill type to the maximum level required by the type.</summary>
@@ -182,8 +197,8 @@ public sealed partial class DogmaIMService(
     [Method("GetAvailableTurretSlots")]
     public async ValueTask<PyValue> GetAvailableTurretSlots(ServiceCall call)
     {
-        if (BoundContextOf(call) is null || call.Session.CharacterId is not { } character
-            || await ships.LoadAsync(character, call.Cancellation) is not { } snapshot)
+        if (BoundContextOf(call) is null
+            || await ReadSnapshotAsync(call.Session, call.Cancellation) is not { } snapshot)
         {
             return new PyInt(0);
         }

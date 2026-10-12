@@ -1038,6 +1038,13 @@ fn message_of(case: &Value) -> Message {
             structure_id: wide(case, "structureId"),
             status: status_of(&case["status"]),
         },
+        "ControlStructure" => Message::ControlStructure {
+            session_id: session_id(),
+            solar_system_id: number("solarSystemId") as i32,
+            structure_id: wide(case, "structureId"),
+            character_id: wide(case, "characterId"),
+            active: case["active"].as_bool().unwrap(),
+        },
         "PlaceDisruptor" => Message::PlaceDisruptor(Box::new(eve_space::link::DisruptorPlacement {
             deployable_id: wide(case, "deployableId"),
             solar_system_id: number("solarSystemId") as i32,
@@ -1481,6 +1488,54 @@ fn every_invalid_frame_is_refused_for_the_stated_reason() {
         let error = Message::decode(&frame[4..]).unwrap_err();
         assert_eq!(reason_of(error), text(case, "reason"), "{name}");
     }
+}
+
+
+#[test]
+fn control_structure_frames_validate_ids_and_boolean() {
+    let active = Message::ControlStructure {
+        session_id: 1,
+        solar_system_id: 30_000_001,
+        structure_id: 42,
+        character_id: 9001,
+        active: true,
+    };
+    let frame = active.encode();
+    assert_eq!(frame.len(), 34);
+    assert_eq!(u32::from_le_bytes(frame[..4].try_into().unwrap()), 30);
+    let valid = frame[4..].to_vec();
+    assert_eq!(valid[0], eve_space::link::kind::CONTROL_STRUCTURE);
+    assert_eq!(Message::decode(&valid).unwrap(), active);
+
+    let mut bad_flag = valid.clone();
+    bad_flag[29] = 2;
+    assert!(Message::decode(&bad_flag).is_err());
+    for (start, end) in [(1, 9), (9, 13), (13, 21), (21, 29)] {
+        let mut invalid = valid.clone();
+        invalid[start..end].fill(0);
+        assert!(Message::decode(&invalid).is_err());
+    }
+    let mut negative_structure = valid.clone();
+    negative_structure[13..21].copy_from_slice(&(-1_i64).to_le_bytes());
+    assert!(Message::decode(&negative_structure).is_err());
+    for end in 0..valid.len() {
+        assert!(Message::decode(&valid[..end]).is_err());
+    }
+    let mut trailing = valid.clone();
+    trailing.push(0);
+    assert_eq!(Message::decode(&trailing), Err(eve_space::link::DecodeError::Trailing));
+
+    let inactive = Message::ControlStructure {
+        session_id: 1,
+        solar_system_id: 30_000_001,
+        structure_id: 0,
+        character_id: 0,
+        active: false,
+    };
+    assert_eq!(Message::decode(&inactive.encode()[4..]).unwrap(), inactive);
+    let mut invalid_release = inactive.encode()[4..].to_vec();
+    invalid_release[21..29].copy_from_slice(&(-1_i64).to_le_bytes());
+    assert!(Message::decode(&invalid_release).is_err());
 }
 
 /// A structure's slim fields from its fixture: a timer is `[start, end, paused or null]`.

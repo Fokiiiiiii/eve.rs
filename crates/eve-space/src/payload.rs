@@ -212,6 +212,20 @@ pub fn set_state(
     wrecks: &[&Wreck],
     now: i64,
 ) -> Result<Value, BallError> {
+    set_state_for_ego(stamp, system, ego.spec.ship_id, ships, wrecks, &std::collections::BTreeMap::new(), now)
+}
+
+
+/// Builds a ballpark state with an authoritative ego item id that is not a ship.
+pub(crate) fn set_state_for_ego(
+    stamp: u32,
+    system: &SolarSystem,
+    ego_id: i64,
+    ships: &[&Ship],
+    wrecks: &[&Wreck],
+    structure_health: &std::collections::BTreeMap<i64, crate::health::StructureHealth>,
+    now: i64,
+) -> Result<Value, BallError> {
     let mut balls: Vec<BallEntity> = (0..system.bodies.len()).map(|i| rigid_ball(system, i)).collect();
     balls.extend(ships.iter().map(|ship| ship.ball()));
     balls.extend(wrecks.iter().map(|wreck| wreck.ball()));
@@ -220,7 +234,13 @@ pub fn set_state(
         .bodies
         .iter()
         .filter(|b| matches!(b.kind, BodyKind::Station | BodyKind::Structure))
-        .map(|b| (id(b.id), damage_state(&DamageState::whole(STATION_SHIELD_TAU_MS), now)))
+        .map(|b| {
+            let state = structure_health
+                .get(&b.id)
+                .map(|health| health.state_at(now))
+                .unwrap_or_else(|| DamageState::whole(STATION_SHIELD_TAU_MS));
+            (id(b.id), damage_state(&state, now))
+        })
         .collect();
     damage.extend(
         ships.iter().map(|ship| (id(ship.spec.ship_id), damage_state(&ship.health.state_at(now), now))),
@@ -235,7 +255,7 @@ pub fn set_state(
     let state = key_val([
         ("stamp", id(i64::from(stamp))),
         ("state", state_buffer(SET_STATE, stamp, &balls)?),
-        ("ego", id(ego.spec.ship_id)),
+        ("ego", id(ego_id)),
         ("industryLevel", int(0)),
         ("researchLevel", int(0)),
         ("damageState", Value::Dict(damage)),
@@ -247,6 +267,7 @@ pub fn set_state(
         ("effectStates", list([])),
         ("allianceBridges", list([])),
     ]);
+
     Ok(action(stamp, "SetState", [state]))
 }
 

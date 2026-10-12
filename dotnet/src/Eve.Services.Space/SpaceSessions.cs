@@ -758,10 +758,13 @@ private readonly TransitionRuntime _transitions;
                 case SimRemoteRepairCycle cycle:
                     HandleMutadaptiveRepairCycle(cycle);
                     break;
+                case SimNotify notify when _structureObservers.TryGetValue(notify.SessionId, out var observer):
+                    Forward(observer, notify);
+                    break;
                 case SimNotify notify when _pilots.TryGetValue(notify.SessionId, out var pilot):
                     Forward(pilot.Session, notify);
                     break;
-                case SimAccepted accepted when _pilots.TryGetValue(accepted.SessionId, out var mover):
+                case SimAccepted accepted when !_structureObservers.ContainsKey(accepted.SessionId) && accepted.Command != SimCommands.ControlStructure && _pilots.TryGetValue(accepted.SessionId, out var mover):
                     if (accepted.Command == SimCommands.Stop)
                         _warping.TryRemove(accepted.SessionId, out _);
                     if (accepted.Command != SimCommands.Dock)
@@ -877,7 +880,7 @@ private readonly TransitionRuntime _transitions;
     {
         var args = MarshalCodec.Decode(notify.Args.ToArray()) is PyTuple tuple ? tuple.Items : [];
         session.SendNotification(notify.Name, notify.IdType, [.. args]);
-        if (notify.Name == "SetState" || notify.Name == "DoDestinyUpdate" && args.Any(HasBallparkState)) ReplayTetherFx(session);
+        if (!IsStructureObserver(session) && (notify.Name == "SetState" || notify.Name == "DoDestinyUpdate" && args.Any(HasBallparkState))) ReplayTetherFx(session);
     }
 
     // ── the end of a jump ────────────────────────────────────────────────────
@@ -915,6 +918,12 @@ private readonly TransitionRuntime _transitions;
     /// <summary>The simulation was lost: every ship it held is gone, so each is brought home to the station its character last was at.</summary>
     private void OnLost()
     {
+        foreach (var observer in _structureObservers.Values.ToArray())
+            Background(async () =>
+            {
+                try { await EndStructureControlAsync(observer, true, CancellationToken.None); }
+                finally { ForgetStructureObserver(observer); observer.Close(); }
+            });
         _warping.Clear();
         ForgetMutadaptiveSpools();
         foreach (var pilot in _pilots.Values.ToArray())
@@ -998,6 +1007,9 @@ private readonly TransitionRuntime _transitions;
 
     private async Task OnSessionClosedAsync(ClientSession session)
     {
+        try { await EndStructureControlAsync(session, true, CancellationToken.None); }
+        catch (Exception error) { _log?.Invoke($"structure control cleanup on disconnect failed: {error.Message}"); }
+        finally { ForgetStructureObserver(session); }
         var id = (ulong)session.SessionId;
         CancelSafeLogoff(session);
         _transitions.EndSessionChange(id);

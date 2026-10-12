@@ -634,6 +634,17 @@ pub struct Traveller {
     pilot: Pilot,
 }
 
+#[derive(Debug)]
+pub(crate) struct ControlledStructureObserver {
+    pub(crate) structure_id: i64,
+    pub(crate) previous_ship_id: Option<i64>,
+    pub(crate) needs_initial_ballpark: bool,
+    pub(crate) bound: bool,
+    pub(crate) sees: BTreeSet<SessionId>,
+    pub(crate) sees_wrecks: BTreeSet<i64>,
+    pub(crate) sees_asteroids: BTreeSet<i64>,
+}
+
 /// One solar system with the ships in it.
 #[derive(Debug)]
 pub struct Scene {
@@ -688,6 +699,8 @@ pub struct Scene {
     pub(crate) widowed: BTreeMap<SessionId, Widow>,
     /// Unpiloted ships stay in the scene under synthetic sessions until someone boards or destroys them.
     pub(crate) unpiloted: BTreeMap<i64, SessionId>,
+    /// The session viewing each controlled structure, without a second physical ship.
+    pub(crate) controlled_structures: BTreeMap<SessionId, ControlledStructureObserver>,
     /// The health of each structure in space, by id (`crate::health::StructureHealth`).
     pub(crate) structure_health: BTreeMap<i64, crate::health::StructureHealth>,
 }
@@ -736,6 +749,7 @@ impl Scene {
             destroyed: Vec::new(),
             widowed: BTreeMap::new(),
             unpiloted: BTreeMap::new(),
+            controlled_structures: BTreeMap::new(),
             structure_health: BTreeMap::new(),
             wreck_catalog: None,
         }
@@ -754,9 +768,12 @@ impl Scene {
         &self.system
     }
 
-    /// Whether no player is in the scene (NPCs do not keep a scene: a system has one while somebody is there to see it).
+    /// Whether no player or persistent structure state keeps this scene; NPCs alone do not.
     pub fn is_empty(&self) -> bool {
-        self.widowed.is_empty() && self.pilots.keys().all(|session| crate::npc::is_npc_session(*session))
+        self.widowed.is_empty()
+            && self.controlled_structures.is_empty()
+            && self.structure_health.is_empty()
+            && self.pilots.keys().all(|session| crate::npc::is_npc_session(*session))
     }
 
     /// The wreck with this item id, if it is in the scene.

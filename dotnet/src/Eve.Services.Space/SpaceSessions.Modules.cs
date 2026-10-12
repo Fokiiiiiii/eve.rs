@@ -566,6 +566,7 @@ public sealed partial class SpaceSessions
 
     private async Task<ShipSnapshot?> FlownShipAsync(Pilot pilot, CancellationToken cancellationToken)
     {
+        if (IsStructureObserver(pilot.Session)) return null;
         if (await _ships.LoadAsync(pilot.CharacterId, cancellationToken) is not { } snapshot || snapshot.Ship.Id != pilot.ShipId)
         {
             return null;
@@ -736,7 +737,7 @@ public sealed partial class SpaceSessions
     public async Task<SpaceCondition?> ConditionAsync(ClientSession session, CancellationToken cancellationToken)
     {
         var id = (ulong)session.SessionId;
-        if (!_pilots.ContainsKey(id))
+        if (!_pilots.ContainsKey(id) && !_structureObservers.ContainsKey(id))
         {
             return null;
         }

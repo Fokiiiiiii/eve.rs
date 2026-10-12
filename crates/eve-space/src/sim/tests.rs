@@ -1059,6 +1059,275 @@ fn a_ship_that_has_docked_is_taken_from_the_view_of_the_others_by_the_poll() {
     assert_eq!(sim.ships(), 1, "the first ship is still there");
 }
 
+fn structure_observer_health_case(from_space: bool) {
+    let mut simulation = if from_space { undocked() } else { sim() };
+    let old_health = if from_space {
+        let pilot = simulation.scenes.get_mut(&SYSTEM).unwrap().pilots.get_mut(&SESSION).unwrap();
+        pilot.ship.health = crate::health::Health::new(
+            pilot.ship.spec.vitals,
+            pilot.ship.spec.shield_recharge_ms,
+            Condition { damage: 0.3, armor_damage: 0.2, shield_charge: 0.8, charge: 1.0 },
+            NOON,
+        );
+        Some(simulation.handle(Message::Command { session_id: SESSION, command: 19, args: vec![] }, NOON).unwrap())
+    } else {
+        None
+    };
+    let base = crate::scene::Scene::new(std::sync::Arc::new(big_station()));
+    let placement = crate::scene::tests::structure_placement(&base, NOON);
+    let structure_id = placement.structure_id;
+    simulation.handle(Message::PlaceStructure(Box::new(placement)), NOON).unwrap();
+    simulation.scenes.get_mut(&SYSTEM).unwrap().structure_health.get_mut(&structure_id).unwrap()
+        .apply(NOON, [1_250.0, 0.0, 0.0, 0.0]).unwrap();
+    simulation.handle(Message::ControlStructure {
+        session_id: SESSION, solar_system_id: SYSTEM, structure_id,
+        character_id: spec().character_id, active: true,
+    }, NOON).unwrap();
+
+    let expected = vec![Message::Condition {
+        session_id: SESSION, command: 19,
+        condition: Condition { damage: 0.0, armor_damage: 0.5, shield_charge: 0.0, charge: 1.0 },
+    }];
+    let observed = simulation.handle(Message::Command {
+        session_id: SESSION, command: 19, args: vec![],
+    }, NOON).unwrap();
+    assert_eq!(observed, expected);
+    if let Some(old_health) = &old_health {
+        assert_ne!(&observed, old_health, "the structure HUD must not inherit the previous physical ship's health");
+        assert!(simulation.scenes[&SYSTEM].unpiloted.contains_key(&spec().ship_id));
+    }
+
+    simulation.scenes.get_mut(&SYSTEM).unwrap().structure_health.get_mut(&structure_id).unwrap()
+        .apply(NOON, [125.0, 0.0, 0.0, 0.0]).unwrap();
+    assert_eq!(simulation.handle(Message::Command {
+        session_id: SESSION, command: 19, args: vec![],
+    }, NOON).unwrap(), [Message::Condition {
+        session_id: SESSION, command: 19,
+        condition: Condition { damage: 0.0, armor_damage: 0.75, shield_charge: 0.0, charge: 1.0 },
+    }], "subsequent damage is read from the same structure health owner");
+
+    simulation.handle(Message::ControlStructure {
+        session_id: SESSION, solar_system_id: SYSTEM, structure_id: 0,
+        character_id: 0, active: false,
+    }, NOON).unwrap();
+    let released = simulation.handle(Message::Command {
+        session_id: SESSION, command: 19, args: vec![],
+    }, NOON).unwrap();
+    if let Some(old_health) = old_health {
+        assert_eq!(released, old_health, "release resumes the unchanged physical ship's health");
+    } else {
+        assert_eq!(released, [Message::Refused {
+            session_id: SESSION, command: 19, reason: "NO_SHIP_IN_SPACE".into(),
+        }]);
+    }
+}
+
+#[test]
+fn command_19_reads_structure_health_for_a_docked_observer() {
+    structure_observer_health_case(false);
+}
+
+#[test]
+fn command_19_reads_structure_health_for_a_from_space_observer() {
+    structure_observer_health_case(true);
+}
+
+fn structure_deposit_sim() -> (Sim, crate::link::StructurePlacement) {
+    let mut simulation = undocked();
+    let scene = &simulation.scenes[&SYSTEM];
+    let ship = &scene.pilots[&SESSION].ship;
+    let mut placement = crate::scene::tests::structure_placement(scene, NOON);
+    placement.position = [
+        ship.position.x + placement.radius + ship.spec.radius + 2_500.0,
+        ship.position.y,
+        ship.position.z,
+    ];
+    simulation.handle(Message::PlaceStructure(Box::new(placement.clone())), NOON).unwrap();
+    (simulation, placement)
+}
+
+fn structure_deposit_query(simulation: &mut Sim, structure_id: i64, ship_id: i64) -> Vec<Message> {
+    simulation.handle(Message::Command {
+        session_id: SESSION, command: crate::link::COMMAND_MEASURE,
+        args: vec![structure_id as f64, ship_id as f64],
+    }, NOON).unwrap()
+}
+
+#[test]
+fn structure_deposit_measure_uses_actual_surfaces_and_preserves_the_one_argument_path() {
+    let (mut simulation, mut placement) = structure_deposit_sim();
+    let structure_id = placement.structure_id;
+    let ship_id = spec().ship_id;
+    assert_eq!(structure_deposit_query(&mut simulation, structure_id, ship_id),
+        [Message::Measured { session_id: SESSION, command: 20, distance: Some(2_500.0) }]);
+
+    simulation.scenes.get_mut(&SYSTEM).unwrap().pilots.get_mut(&SESSION).unwrap().ship.spec.radius += 100.0;
+    assert_eq!(structure_deposit_query(&mut simulation, structure_id, ship_id),
+        [Message::Measured { session_id: SESSION, command: 20, distance: Some(2_400.0) }]);
+
+    simulation.handle(Message::RemoveStructure { structure_id }, NOON).unwrap();
+    placement.position[0] += 1_000.0;
+    placement.radius += 500.0;
+    simulation.handle(Message::PlaceStructure(Box::new(placement)), NOON).unwrap();
+    assert_eq!(structure_deposit_query(&mut simulation, structure_id, ship_id),
+        [Message::Measured { session_id: SESSION, command: 20, distance: Some(2_900.0) }]);
+
+    let can = 1_050_000_000_002;
+    simulation.handle(can_placement(can), NOON).unwrap();
+    let old_measure = simulation.handle(Message::Command {
+        session_id: SESSION, command: 20, args: vec![can as f64],
+    }, NOON).unwrap();
+    assert!(matches!(old_measure.as_slice(),
+        [Message::Measured { session_id: SESSION, command: 20, distance: Some(distance) }]
+            if (*distance - 261.0).abs() < 1e-3), "{old_measure:?}");
+    assert_eq!(simulation.handle(Message::Command {
+        session_id: SESSION, command: 20, args: vec![structure_id as f64],
+    }, NOON).unwrap(), [Message::Measured { session_id: SESSION, command: 20, distance: None }]);
+}
+
+#[test]
+fn structure_deposit_measure_refuses_missing_nonlocal_cloaked_warping_and_observer_ships() {
+    let (mut simulation, placement) = structure_deposit_sim();
+    let structure_id = placement.structure_id;
+    let ship_id = spec().ship_id;
+    let refusal = |reason: &str| vec![Message::Refused {
+        session_id: SESSION, command: 20, reason: reason.into(),
+    }];
+    assert_eq!(structure_deposit_query(&mut simulation, structure_id + 1, ship_id), refusal("STRUCTURE_NOT_FOUND"));
+    assert_eq!(structure_deposit_query(&mut simulation, STATION, ship_id), refusal("STRUCTURE_NOT_FOUND"));
+    assert_eq!(structure_deposit_query(&mut simulation, structure_id, ship_id + 1), refusal("NOT_LOCAL_SHIP"));
+
+    for cloak in [crate::visibility::CloakState::Cloaking, crate::visibility::CloakState::Cloaked] {
+        simulation.scenes.get_mut(&SYSTEM).unwrap().pilots.get_mut(&SESSION).unwrap().cloak = cloak;
+        assert_eq!(structure_deposit_query(&mut simulation, structure_id, ship_id), refusal("CLOAKED"));
+    }
+    let pilot = simulation.scenes.get_mut(&SYSTEM).unwrap().pilots.get_mut(&SESSION).unwrap();
+    pilot.cloak = crate::visibility::CloakState::Uncloaked;
+    let destination = Vec3::new(pilot.ship.position.x + 1.0e12, pilot.ship.position.y, pilot.ship.position.z);
+    pilot.flight = Some(crate::flight::Flight::begin(NOON, destination, 0.0));
+    assert_eq!(structure_deposit_query(&mut simulation, structure_id, ship_id), refusal("IN_WARP"));
+
+    let pilot = simulation.scenes.get_mut(&SYSTEM).unwrap().pilots.get_mut(&SESSION).unwrap();
+    pilot.ship.direction = Vec3::new(1.0, 0.0, 0.0);
+    pilot.ship.velocity = Vec3::new(pilot.ship.spec.max_velocity, 0.0, 0.0);
+    pilot.ship.speed_fraction = 1.0;
+    let mut flight = crate::flight::Flight::begin(NOON - SECOND, destination, 0.0);
+    flight.advance(&mut pilot.ship, NOON - SECOND, NOON);
+    assert!(flight.is_warping(), "the regression reaches actual warp");
+    pilot.flight = Some(flight);
+    assert_eq!(structure_deposit_query(&mut simulation, structure_id, ship_id), refusal("IN_WARP"));
+    simulation.scenes.get_mut(&SYSTEM).unwrap().pilots.get_mut(&SESSION).unwrap().flight = None;
+
+    simulation.handle(Message::ControlStructure {
+        session_id: SESSION, solar_system_id: SYSTEM, structure_id,
+        character_id: spec().character_id, active: true,
+    }, NOON).unwrap();
+    assert_eq!(structure_deposit_query(&mut simulation, structure_id, ship_id), refusal("NO_SHIP_IN_SPACE"));
+
+    for args in [
+        vec![0.0, ship_id as f64], vec![-1.0, ship_id as f64],
+        vec![structure_id as f64, 0.0], vec![structure_id as f64, -1.0],
+        vec![1.5, ship_id as f64], vec![f64::NAN, ship_id as f64],
+        vec![structure_id as f64, f64::INFINITY], vec![structure_id as f64, 9_007_199_254_740_992.0],
+        vec![structure_id as f64, ship_id as f64, 1.0],
+    ] {
+        assert_eq!(simulation.handle(Message::Command { session_id: SESSION, command: 20, args }, NOON).unwrap(),
+            refusal("UNKNOWN_COMMAND"));
+    }
+}
+
+#[test]
+fn docked_structure_control_dispatches_bind_updates_detach_and_leave() {
+    let mut simulation = sim();
+    let base = crate::scene::Scene::new(std::sync::Arc::new(big_station()));
+    let placement = crate::scene::tests::structure_placement(&base, NOON);
+    let structure_id = placement.structure_id;
+    let mut changed_status = placement.status.clone();
+    changed_status.state += 1;
+    simulation.handle(Message::PlaceStructure(Box::new(placement)), NOON).unwrap();
+    assert!(simulation.scenes.contains_key(&SYSTEM), "a structures-only scene is retained");
+
+    let observer = 71;
+    let missing = simulation.handle(Message::ControlStructure {
+        session_id: observer, solar_system_id: SYSTEM, structure_id: structure_id + 1,
+        character_id: spec().character_id, active: true,
+    }, NOON).unwrap();
+    assert!(missing.iter().any(|message| matches!(message,
+        Message::Refused { session_id, command, reason }
+            if *session_id == observer && *command == crate::link::COMMAND_STRUCTURE_CONTROL && reason.as_str() == "STRUCTURE_NOT_FOUND")));
+
+    simulation.handle(enter(SESSION, STATION, SYSTEM), NOON + SECOND).unwrap();
+    simulation.handle(Message::Bind { session_id: SESSION }, NOON + SECOND).unwrap();
+    let owner_attached = simulation.handle(Message::ControlStructure {
+        session_id: SESSION, solar_system_id: SYSTEM, structure_id,
+        character_id: spec().character_id, active: true,
+    }, NOON + 2 * SECOND).unwrap();
+    assert!(owner_attached.iter().any(|message| matches!(message,
+        Message::Accepted { session_id, command, .. }
+            if *session_id == SESSION && *command == crate::link::COMMAND_STRUCTURE_CONTROL)));
+    assert!(!simulation.scenes[&SYSTEM].pilots.contains_key(&SESSION));
+    assert!(simulation.scenes[&SYSTEM].unpiloted.contains_key(&spec().ship_id));
+
+    let attached = simulation.handle(Message::ControlStructure {
+        session_id: observer, solar_system_id: SYSTEM, structure_id,
+        character_id: 9002, active: true,
+    }, NOON + 3 * SECOND).unwrap();
+    assert!(attached.iter().any(|message| matches!(message,
+        Message::Accepted { session_id, command, .. }
+            if *session_id == observer && *command == crate::link::COMMAND_STRUCTURE_CONTROL)));
+    assert_eq!(simulation.sessions.get(&observer), Some(&SYSTEM));
+    assert_eq!(simulation.sessions.get(&SESSION), Some(&SYSTEM), "transferring control restores the previous pilot mapping");
+    assert!(simulation.scenes[&SYSTEM].pilots.contains_key(&SESSION));
+    assert!(!simulation.scenes[&SYSTEM].pilots.contains_key(&observer));
+
+    let bound = simulation.handle(Message::Bind { session_id: observer }, NOON + 3 * SECOND).unwrap();
+    assert!(names(&bound).iter().any(|name| name == "DoDestinyUpdate"));
+    let snapshot = simulation.handle(Message::UpdateState { session_id: observer }, NOON + 3 * SECOND).unwrap();
+    assert!(names(&snapshot).iter().any(|name| name == "DoDestinyUpdate"));
+    let updated = simulation.handle(Message::SetStructureState {
+        solar_system_id: SYSTEM, structure_id, status: changed_status,
+    }, NOON + 3 * SECOND).unwrap();
+    assert!(names(&updated).iter().any(|name| name == "DoDestinyUpdate"));
+
+    let detached = simulation.handle(Message::ControlStructure {
+        session_id: observer, solar_system_id: SYSTEM, structure_id: 0,
+        character_id: 0, active: false,
+    }, NOON + 4 * SECOND).unwrap();
+    assert!(detached.iter().any(|message| matches!(message,
+        Message::Accepted { session_id, command, .. }
+            if *session_id == observer && *command == crate::link::COMMAND_STRUCTURE_CONTROL)));
+    assert!(simulation.scenes[&SYSTEM].controlled_structure_id(observer).is_none());
+    assert!(!simulation.sessions.contains_key(&observer));
+    let repeated_detach = simulation.handle(Message::ControlStructure {
+        session_id: observer, solar_system_id: SYSTEM, structure_id: 0,
+        character_id: 0, active: false,
+    }, NOON + 4 * SECOND).unwrap();
+    assert!(repeated_detach.iter().any(|message| matches!(message,
+        Message::Refused { session_id, command, reason }
+            if *session_id == observer && *command == crate::link::COMMAND_STRUCTURE_CONTROL && reason.as_str() == "CONTROL_STRUCTURE_NOT_ACTIVE")));
+
+    simulation.handle(Message::ControlStructure {
+        session_id: observer, solar_system_id: SYSTEM, structure_id,
+        character_id: spec().character_id, active: true,
+    }, NOON + 5 * SECOND).unwrap();
+    simulation.handle(Message::Bind { session_id: observer }, NOON + 5 * SECOND).unwrap();
+    simulation.handle(Message::Leave { session_id: observer, why: 0 }, NOON + 6 * SECOND).unwrap();
+    assert!(simulation.scenes[&SYSTEM].controlled_structure_id(observer).is_none());
+    assert!(!simulation.sessions.contains_key(&observer));
+    assert!(simulation.scenes.contains_key(&SYSTEM), "leaving the observer does not discard the structure");
+
+    simulation.handle(Message::ControlStructure {
+        session_id: observer, solar_system_id: SYSTEM, structure_id,
+        character_id: spec().character_id, active: true,
+    }, NOON + 7 * SECOND).unwrap();
+    simulation.handle(Message::Bind { session_id: observer }, NOON + 7 * SECOND).unwrap();
+    let removed = simulation.handle(Message::RemoveStructure { structure_id }, NOON + 8 * SECOND).unwrap();
+    assert!(names(&removed).iter().any(|name| name == "DoDestinyUpdate"));
+    assert!(simulation.scenes[&SYSTEM].structure_index(structure_id).is_none());
+    assert!(simulation.scenes[&SYSTEM].controlled_structure_id(observer).is_none());
+    assert!(!simulation.sessions.contains_key(&observer));
+}
+
 #[test]
 fn tether_protocol62_frames_round_trip_in_little_endian_with_standard_bool() {
     let policy = Message::TetherPolicy {
@@ -1139,5 +1408,5 @@ fn tether_host_policy_dispatches_to_the_real_scene_and_transitions_return_to_the
         Message::TetherChanged { session_id: SESSION, previous_structure_id: 0, structure_id, repairing: false }, NOON,
     ).unwrap_err();
     assert!(wrong_direction.0.contains("kind 81"));
-    assert_eq!(crate::link::PROTOCOL_VERSION, 62);
+    assert_eq!(crate::link::PROTOCOL_VERSION, 63);
 }

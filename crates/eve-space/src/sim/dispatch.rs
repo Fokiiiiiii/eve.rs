@@ -365,7 +365,8 @@ impl Sim {
             | Message::UpdateState { .. }
             | Message::Spawn(..)
             | Message::Destroy { .. }
-            | Message::Respawn { .. } => self.handle_session(message, now),
+            | Message::Respawn { .. }
+            | Message::ControlStructure { .. } => self.handle_session(message, now),
             Message::HeatProfile { .. }
             | Message::ModuleOverheat { .. }
             | Message::ModuleOffline { .. }
@@ -410,6 +411,77 @@ impl Sim {
         }
     }
 
+    /// Applies a host-authorized structure observer transition in the named live scene.
+    fn control_structure(
+        &mut self,
+        session_id: SessionId,
+        solar_system_id: i32,
+        structure_id: i64,
+        character_id: i64,
+        active: bool,
+        now: i64,
+    ) -> Vec<Out> {
+        let refused = |reason| {
+            vec![Out::Refused {
+                session: session_id,
+                command: crate::link::COMMAND_STRUCTURE_CONTROL,
+                reason,
+            }]
+        };
+        if session_id == 0
+            || solar_system_id <= 0
+            || structure_id < 0
+            || character_id < 0
+            || (active && (structure_id == 0 || character_id == 0))
+        {
+            return refused("INVALID_CONTROL_STRUCTURE_IDS");
+        }
+        if self.sessions.get(&session_id).is_some_and(|system| *system != solar_system_id)
+            || self.widowed.get(&session_id).is_some_and(|system| *system != solar_system_id)
+        {
+            return refused("CONTROL_STRUCTURE_SYSTEM_MISMATCH");
+        }
+        let Some(scene) = self.scenes.get_mut(&solar_system_id) else {
+            return refused("NO_SCENE");
+        };
+        let was_controlled = scene.controlled_structure_id(session_id).is_some();
+        let previous_controller = active.then(|| scene.controller_of_structure(structure_id)).flatten();
+        let outs = scene.control_structure(session_id, solar_system_id, structure_id, character_id, active, now);
+        if !outs.iter().any(|out| {
+            matches!(
+                out,
+                Out::Accepted { session, command, .. }
+                    if *session == session_id && *command == crate::link::COMMAND_STRUCTURE_CONTROL
+            )
+        }) {
+            return outs;
+        }
+        if active {
+            self.sessions.insert(session_id, solar_system_id);
+            self.widowed.remove(&session_id);
+            if let Some(previous) = previous_controller.filter(|previous| *previous != session_id) {
+                if scene.contains(previous) {
+                    self.sessions.insert(previous, solar_system_id);
+                    self.widowed.remove(&previous);
+                } else {
+                    scene.forget_widow(previous);
+                    self.sessions.remove(&previous);
+                    self.widowed.remove(&previous);
+                }
+            }
+        } else if was_controlled {
+            if scene.contains(session_id) {
+                self.sessions.insert(session_id, solar_system_id);
+                self.widowed.remove(&session_id);
+            } else {
+                scene.forget_widow(session_id);
+                self.sessions.remove(&session_id);
+                self.widowed.remove(&session_id);
+            }
+        }
+        outs
+    }
+
     /// A pilot's session in space: its arrival and departure, its ship's destruction and respawn.
     fn handle_session(&mut self, message: Message, now: i64) -> Result<Vec<Message>, ProtocolError> {
         let outs = match message {
@@ -443,6 +515,9 @@ impl Sim {
             }
             Message::UpdateState { session_id } => {
                 self.scene_of(session_id).map(|s| s.update_state(session_id, now)).unwrap_or_default()
+            }
+            Message::ControlStructure { session_id, solar_system_id, structure_id, character_id, active } => {
+                self.control_structure(session_id, solar_system_id, structure_id, character_id, active, now)
             }
             Message::Spawn(spawn) => return Ok(self.spawn(*spawn, now)),
             Message::Destroy { ship_id, credit } => {
@@ -711,6 +786,11 @@ impl Sim {
                         command: crate::link::COMMAND_MEASURE,
                         distance: scene.distance_to_wreck(session_id, *wreck as i64, now),
                     }],
+                    (Some(scene), [structure, ship])
+                        if is_id(*structure) && *structure > 0.0 && is_id(*ship) && *ship > 0.0 =>
+                    {
+                        scene.measure_structure_deposit(session_id, *structure as i64, *ship as i64, now)
+                    }
                     (Some(_), _) => vec![Out::Refused {
                         session: session_id,
                         command: crate::link::COMMAND_MEASURE,
@@ -959,15 +1039,40 @@ impl Sim {
                 let structure = *structure;
                 match self.scenes.get_mut(&structure.solar_system_id) {
                     Some(scene) => scene.place_structure(structure, now),
-                    None => Vec::new(),
+                    None => match self.universe.system(structure.solar_system_id) {
+                        Ok(system) => self
+                            .scenes
+                            .entry(structure.solar_system_id)
+                            .or_insert_with(|| self.universe.scene_of(system))
+                            .place_structure(structure, now),
+                        Err(_) => Vec::new(),
+                    },
                 }
             }
-            Message::RemoveStructure { structure_id } => self
-                .scenes
-                .values_mut()
-                .find(|scene| scene.structure_index(structure_id).is_some())
-                .map(|scene| scene.remove_structure(structure_id, now))
-                .unwrap_or_default(),
+            Message::RemoveStructure { structure_id } => {
+                let target = self.scenes.iter().find_map(|(system, scene)| {
+                    scene.structure_index(structure_id).map(|_| (*system, scene.controller_of_structure(structure_id)))
+                });
+                let Some((system, controller)) = target else { return Ok(Vec::new()) };
+                let told = self
+                    .scenes
+                    .get_mut(&system)
+                    .map(|scene| scene.remove_structure(structure_id, now))
+                    .unwrap_or_default();
+                if let Some(controller) = controller {
+                    if self.scenes.get(&system).is_some_and(|scene| scene.contains(controller)) {
+                        self.sessions.insert(controller, system);
+                        self.widowed.remove(&controller);
+                    } else {
+                        if let Some(scene) = self.scenes.get_mut(&system) {
+                            scene.forget_widow(controller);
+                        }
+                        self.sessions.remove(&controller);
+                        self.widowed.remove(&controller);
+                    }
+                }
+                told
+            }
             Message::SetStructureState { solar_system_id, structure_id, status } => {
                 match self.scenes.get_mut(&solar_system_id) {
                     Some(scene) => scene.set_structure_state(structure_id, status, now),

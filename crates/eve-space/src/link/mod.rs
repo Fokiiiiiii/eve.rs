@@ -37,7 +37,7 @@ use crate::weapons::{Aoe, Arc, Charge, Spool, Turret};
 use crate::wreck::WreckKind;
 use crate::world::StructureStatus;
 
-pub const PROTOCOL_VERSION: u16 = 62;
+pub const PROTOCOL_VERSION: u16 = 63;
 /// The message kinds.
 pub mod kind;
 
@@ -52,6 +52,8 @@ pub enum ChargeOp {
 
 /// The command that asks how far a wreck or a can is (`args`: its item id); answered with `Measured`.
 pub const COMMAND_MEASURE: u8 = 20;
+/// The host attaches or releases a controlled-structure observer.
+pub const COMMAND_STRUCTURE_CONTROL: u8 = 33;
 
 /// Prime the visual half of an in-space login before the client requests its full ballpark state.
 pub const COMMAND_PRIME_LOGIN_BALLPARK_VISUALS: u8 = 24;
@@ -329,6 +331,14 @@ pub enum Message {
     },
     UpdateState {
         session_id: u64,
+    },
+    /// The host makes a session observe a structure in this system (protocol 63).
+    ControlStructure {
+        session_id: u64,
+        solar_system_id: i32,
+        structure_id: i64,
+        character_id: i64,
+        active: bool,
     },
     Command {
         session_id: u64,
@@ -819,6 +829,7 @@ impl Message {
             Self::Leave { .. } => kind::LEAVE,
             Self::Bind { .. } => kind::BIND,
             Self::UpdateState { .. } => kind::UPDATE_STATE,
+            Self::ControlStructure { .. } => kind::CONTROL_STRUCTURE,
             Self::Command { .. } => kind::COMMAND,
             Self::ShipSpec { .. } => kind::SHIP_SPEC,
             Self::HeatProfile { .. } => kind::HEAT_PROFILE,

@@ -62,6 +62,12 @@ impl StructureHealth {
         self.health.state_at(now)
     }
 
+    /// The same authoritative layers, in the host's Command 19 condition format.
+    pub fn condition_at(&self, now: i64) -> Condition {
+        // shortcut: structure capacitor stays full until ST-8 adds its module runtime.
+        Condition { charge: 1.0, ..self.health.condition_at(now) }
+    }
+
     /// A hit of `raw` damage at `now`, cut to what the layer it lands in may still take this second. `None` when the structure has nothing to hurt.
     /// The layers are linear in the damage within one layer, so a cut hit is the whole hit scaled down; a hit that crosses into the next layer is
     /// scaled by its first layer's allowance (a stated approximation).

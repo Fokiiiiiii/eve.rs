@@ -9,9 +9,12 @@ using Eve.Universe;
 
 namespace Eve.Services.Inventory;
 
+public sealed record ControlledStructureInventory(Item Structure, IReadOnlyList<Item> Contents);
+
 [Service("invbroker")]
 public sealed partial class InvBrokerService(
-    PgItemStore items, ItemTypeCatalog types, StationCatalog stations, CharacterShips ships, DogmaStatic statics, Func<long> nowUnixMs, ISpaceContainers? space = null, ISpaceDroneBays? droneBays = null, CorporationHangarAccess? corporationHangarAccess = null, IReadOnlyList<Eve.Services.ICharacterEntryHook>? entryHooks = null) : IBoundObjectReleaseHandler
+    PgItemStore items, ItemTypeCatalog types, StationCatalog stations, CharacterShips ships, DogmaStatic statics, Func<long> nowUnixMs, ISpaceContainers? space = null, ISpaceDroneBays? droneBays = null, CorporationHangarAccess? corporationHangarAccess = null, IReadOnlyList<Eve.Services.ICharacterEntryHook>? entryHooks = null,
+    Func<ClientSession, long, CancellationToken, ValueTask<ControlledStructureInventory?>>? controlledStructureInventory = null) : IBoundObjectReleaseHandler
 {
     /// <summary>The container the client asks for to get the hangar of the station it is docked at.</summary>
     public const int ContainerHangar = 10004;
@@ -39,6 +42,9 @@ public sealed partial class InvBrokerService(
 
         /// <summary>A can or a wreck in space beside the ship.</summary>
         Container,
+
+        /// <summary>The current pilot's structure inventory; this binding never grants mutation access.</summary>
+        Structure,
     }
 
     /// <summary>What a bound inventory is: which kind, whose item it is, and the session that opened it.</summary>
@@ -71,6 +77,46 @@ public sealed partial class InvBrokerService(
     /// <summary>The bound inventory the call is addressed to, when this session opened it.</summary>
     private Context? ContextOf(ServiceCall call) =>
         call.BoundObjectId is { } oid && _bound.TryGetValue(oid, out var context) && context.SessionId == call.Session.SessionId ? context : null;
+
+    private async ValueTask<ControlledStructureInventory?> ControlledStructureAsync(
+        ClientSession session, long structureId, CancellationToken cancellationToken)
+    {
+        if (controlledStructureInventory is null || structureId <= 0 || session.CharacterId is null
+            || session.GetInt("shipid") != structureId || session.GetInt("structureid") != structureId)
+            return null;
+        var view = await controlledStructureInventory(session, structureId, cancellationToken);
+        if (view is null || view.Structure.Id != structureId || view.Structure.OwnerId <= 0
+            || statics.CategoryId("Structure") is not { } category
+            || statics.Type(view.Structure.TypeId)?.CategoryId != category
+            || view.Contents.Any(item => item.LocationId != structureId || item.OwnerId != view.Structure.OwnerId))
+            return null;
+        return view;
+    }
+
+    private void RequireMutableInventory(ServiceCall call)
+    {
+        if (ContextOf(call)?.Kind == Kind.Structure)
+            throw MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("The controlled structure inventory is read-only.")));
+    }
+
+    private async Task<PyValue> StructureCapacityAsync(
+        ControlledStructureInventory view, int? flag, CancellationToken cancellationToken)
+    {
+        await statics.EnsureTypesAsync([view.Structure.TypeId, .. view.Contents.Select(item => item.TypeId)], cancellationToken);
+        // EveJS owner bays without an SDE capacity use the existing unbounded inventory wire sentinel.
+        var capacityAttribute = statics.AttributeId("capacity");
+        var capacity = capacityAttribute is { } attribute && statics.Type(view.Structure.TypeId) is { } hull
+            && hull.Attributes.TryGetValue(attribute, out var value) ? value : HangarCapacity;
+        if (flag is { } slot && Eve.Fitting.Slots.IsSlotFlag(slot))
+        {
+            var module = view.Contents.FirstOrDefault(item => item.Flag == slot
+                && statics.Type(item.TypeId)?.CategoryId != statics.CategoryId("Charge"));
+            capacity = module is not null && capacityAttribute is { } moduleCapacity
+                ? statics.Type(module.TypeId)?.Attributes.GetValueOrDefault(moduleCapacity) ?? 0 : 0;
+        }
+        var used = await ships.VolumeOfAsync(view.Contents.Where(item => flag is null || item.Flag == flag), cancellationToken);
+        return KeyVal(capacity, used);
+    }
 
     // ── the rows ─────────────────────────────────────────────────────────────
 
@@ -162,6 +208,13 @@ public sealed partial class InvBrokerService(
     /// <summary>What is in the bound inventory: the hangar's ships, a ship's fitted modules and cargo, or what a can or a wreck holds.</summary>
     private async Task<IReadOnlyList<ItemRow>> ContentsAsync(Context context, ClientSession session, CancellationToken cancellationToken)
     {
+        if (context.Kind is Kind.Structure or Kind.Hangar)
+        {
+            if (await ControlledStructureAsync(session, context.ItemId, cancellationToken) is { } controlled)
+                return await RowsAsync(controlled.Contents, cancellationToken);
+            if (context.Kind == Kind.Structure)
+                return [];
+        }
         if (context.Kind == Kind.Hangar)
             return await HangarAsync(session, cancellationToken);
         if (context.Kind == Kind.Space || session.CharacterId is not { } character)
@@ -195,6 +248,13 @@ public sealed partial class InvBrokerService(
     /// <summary>The item the bound inventory is of: the station, the ship, or the can or wreck.</summary>
     private async Task<ItemRow?> SelfAsync(Context context, ClientSession session, CancellationToken cancellationToken)
     {
+        if (context.Kind is Kind.Structure or Kind.Hangar)
+        {
+            if (await ControlledStructureAsync(session, context.ItemId, cancellationToken) is { } controlled)
+                return (await RowsAsync([controlled.Structure], cancellationToken)).FirstOrDefault();
+            if (context.Kind == Kind.Structure)
+                return null;
+        }
         if (context.Kind == Kind.Hangar)
         {
             return await StationRowAsync(session, cancellationToken);
@@ -254,6 +314,12 @@ public sealed partial class InvBrokerService(
         if (IdOf(call.Arg(0)) is not { } id)
         {
             result = None;
+        }
+        else if (call.Session.GetInt("structureid") == id && call.Session.GetInt("shipid") == id)
+        {
+            result = await ControlledStructureAsync(call.Session, id, call.Cancellation) is not null
+                ? Bind(new Context(Kind.Structure, id, 0), call.Session)
+                : None;
         }
         else if (StationOf(call.Session) is not { } station)
         {
@@ -333,13 +399,17 @@ public sealed partial class InvBrokerService(
         else
         {
             var flag = FlagOf(call);
-            var contents = await ContentsAsync(context, call.Session, call.Cancellation);
+            var controlled = context.Kind is Kind.Structure or Kind.Hangar
+                ? await ControlledStructureAsync(call.Session, context.ItemId, call.Cancellation) : null;
+            var contents = controlled is not null
+                ? await RowsAsync(controlled.Contents, call.Cancellation)
+                : await ContentsAsync(context, call.Session, call.Cancellation);
             var chosen = flag is { } f ? contents.Where(r => r.Flag == f).ToList() : [.. contents];
             result = context.Kind == Kind.Ship && flag is null && StationOf(call.Session) is not null
                 ? InventoryWire.Set(chosen.Select(r => InventoryWire.PackedRow(r, r.CategoryId == PlayerCategory ? new PyStr("") : PyNone.Instance)))
                 : chosen.Count == 0 && flag is not null
                     ? InventoryWire.EmptySet()
-                    : new PyList([.. chosen.Select(r => InventoryWire.PackedRow(r))]);
+                    : new PyList([.. chosen.Select(r => controlled is not null ? InventoryWire.PackedRow(r, new PyStr("")) : InventoryWire.PackedRow(r))]);
         }
         return await CompleteInventoryRpcAsync(call, result);
     }
@@ -492,6 +562,13 @@ public sealed partial class InvBrokerService(
         if (ContextOf(call) is not { } context || call.Session.CharacterId is not { } character)
             return None;
         var flag = FlagOf(call);
+        if (context.Kind is Kind.Structure or Kind.Hangar)
+        {
+            if (await ControlledStructureAsync(call.Session, context.ItemId, call.Cancellation) is { } controlled)
+                return await StructureCapacityAsync(controlled, flag, call.Cancellation);
+            if (context.Kind == Kind.Structure)
+                return None;
+        }
         if (context.Kind == Kind.Ship)
         {
             if (space is not null && space.IsInSpace(call.Session) && flag == CharacterShips.DroneBayFlag)
@@ -542,6 +619,15 @@ public sealed partial class InvBrokerService(
             return new PyInt(0);
         }
 
+        if (call.Session.GetInt("structureid") is { } structureId && structureId > 0 && call.Session.GetInt("shipid") == structureId)
+        {
+            if (await ControlledStructureAsync(call.Session, structureId, call.Cancellation) is not { } controlled)
+                return new PyInt(0);
+            // shortcut: base HUD hardpoints only; fitted structure weapon accounting belongs to ST-8.
+            var world = new DogmaWorld(statics, character, structureId, structureId);
+            world.Add(ItemDogma.Of(controlled.Structure, character, controlled.Structure.LocationId, controlled.Structure.Flag));
+            return new PyInt(Math.Max(0L, (long)world.Get(structureId, BuiltInEffects.TurretSlotsLeft)));
+        }
         var remaining = snapshot.World.Get(snapshot.Ship.Id, BuiltInEffects.TurretSlotsLeft);
         return new PyInt(Math.Max(0L, (long)remaining));
     }
@@ -632,7 +718,8 @@ public sealed partial class InvBrokerService(
     [Method("StackAll")]
     public async ValueTask<PyValue> StackAll(ServiceCall call)
     {
-        if (ContextOf(call) is not { } context || call.Session.CharacterId is not { } character)
+        RequireMutableInventory(call);
+        if (ContextOf(call) is not { } context || context.Kind == Kind.Structure || call.Session.CharacterId is not { } character)
         {
             return None;
         }
@@ -681,10 +768,11 @@ private async ValueTask<bool> IsDockedShipContextAsync(ClientSession session, lo
     [Method("Add")]
     public async ValueTask<PyValue> Add(ServiceCall call)
     {
+        RequireMutableInventory(call);
         if (ContextOf(call) is not { } context
             || call.Session.CharacterId is not { } character
             || IdOf(call.Arg(0)) is not { } itemId
-            || context.Kind == Kind.Space)
+            || context.Kind is Kind.Space or Kind.Structure)
             return None;
         long? quantity = (call.Kwarg("qty") ?? call.Kwarg("quantity")) is { } asked ? IdOf(asked) : null;
         int? flag = call.Kwarg("flag") is { } flagValue ? Flag(flagValue) : null;
@@ -779,6 +867,7 @@ private async ValueTask<bool> IsDockedShipContextAsync(ClientSession session, lo
     [Method("MultiAdd")]
     public async ValueTask<PyValue> MultiAdd(ServiceCall call)
     {
+        RequireMutableInventory(call);
         if (ContextOf(call) is not { } context
             || context.Kind is not (Kind.Ship or Kind.Container or Kind.Hangar)
             || IdOf(call.Arg(1)) is not { } source)

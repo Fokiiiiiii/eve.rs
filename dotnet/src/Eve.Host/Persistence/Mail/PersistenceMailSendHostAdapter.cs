@@ -359,6 +359,9 @@ public sealed class PersistenceMailSendHostAdapter(
             $"alliance-maintenance-bill:{billId}:receiver:{recipientId}", cancellationToken);
     }
 
+    // Structure delivery holds the same gate until its SQL commit and cache publication finish.
+    public SemaphoreSlim MutationGate => _sendGate;
+
     private async Task WriteNotificationAsync(
         long recipientId, long senderId, int typeId, int groupId, JsonObject data,
         string? idempotencyKey, CancellationToken cancellationToken)

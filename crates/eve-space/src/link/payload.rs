@@ -44,6 +44,13 @@ impl Message {
             Self::Bind { session_id } | Self::UpdateState { session_id } => {
                 out.extend_from_slice(&session_id.to_le_bytes())
             }
+            Self::ControlStructure { session_id, solar_system_id, structure_id, character_id, active } => {
+                out.extend_from_slice(&session_id.to_le_bytes());
+                out.extend_from_slice(&solar_system_id.to_le_bytes());
+                out.extend_from_slice(&structure_id.to_le_bytes());
+                out.extend_from_slice(&character_id.to_le_bytes());
+                out.push(u8::from(*active));
+            }
             Self::Command { session_id, command, args } => {
                 out.extend_from_slice(&session_id.to_le_bytes());
                 out.push(*command);

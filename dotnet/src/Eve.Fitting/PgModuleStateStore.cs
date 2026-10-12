@@ -146,6 +146,62 @@ public sealed class PgModuleStateStore
 
     private static double Clamp(double fraction) => Math.Clamp(fraction, 0, 1);
 
+    /// <summary>What a ship has taken, read inside the caller's transaction (a repair reads and writes in one transaction).</summary>
+    public async Task<ShipCondition> ShipConditionAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long shipId, CancellationToken cancellationToken = default)
+    {
+        await using var command = new NpgsqlCommand($"SELECT damage, charge, shield_charge, armor_damage, incapacitated FROM {_schema}.ship_condition WHERE item_id = $1", connection, transaction)
+        {
+            Parameters = { new() { Value = shipId } },
+        };
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        return await reader.ReadAsync(cancellationToken)
+            ? new ShipCondition(reader.GetDouble(0), reader.GetDouble(1), reader.GetDouble(2), reader.GetDouble(3), reader.GetBoolean(4))
+            : ShipCondition.Full;
+    }
+
+    /// <summary>What each of these modules has taken, read inside the caller's transaction.</summary>
+    public async Task<IReadOnlyDictionary<long, ModuleCondition>> ModuleConditionsAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, IEnumerable<long> itemIds, CancellationToken cancellationToken = default)
+    {
+        var ids = itemIds.Distinct().ToArray();
+        var conditions = new Dictionary<long, ModuleCondition>();
+        if (ids.Length == 0)
+        {
+            return conditions;
+        }
+        await using var command = new NpgsqlCommand($"SELECT item_id, damage, armor_damage, shield_charge, incapacitated FROM {_schema}.module_condition WHERE item_id = ANY($1)", connection, transaction)
+        {
+            Parameters = { new() { Value = ids } },
+        };
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            conditions[reader.GetInt64(0)] = new ModuleCondition(reader.GetDouble(1), reader.GetDouble(2), reader.GetDouble(3), reader.GetBoolean(4));
+        }
+        return conditions;
+    }
+
+    /// <summary>Keeps what modules have taken, inside the caller's transaction. A module that is as nobody touched it has no row.</summary>
+    public async Task SetModuleConditionsAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, IReadOnlyDictionary<long, ModuleCondition> conditions, CancellationToken cancellationToken = default)
+    {
+        foreach (var (itemId, condition) in conditions)
+        {
+            var sql = condition == ModuleCondition.Untouched
+                ? $"DELETE FROM {_schema}.module_condition WHERE item_id = $1"
+                : $"INSERT INTO {_schema}.module_condition (item_id, damage, shield_charge, armor_damage, incapacitated) VALUES ($1, $2, $3, $4, $5) " +
+                  "ON CONFLICT (item_id) DO UPDATE SET damage = EXCLUDED.damage, shield_charge = EXCLUDED.shield_charge, armor_damage = EXCLUDED.armor_damage, incapacitated = EXCLUDED.incapacitated";
+            await using var command = new NpgsqlCommand(sql, connection, transaction);
+            command.Parameters.Add(new NpgsqlParameter { Value = itemId });
+            if (condition != ModuleCondition.Untouched)
+            {
+                foreach (var value in new object[] { Clamp(condition.Damage), Clamp(condition.ShieldCharge), Clamp(condition.ArmorDamage), condition.Incapacitated })
+                {
+                    command.Parameters.Add(new NpgsqlParameter { Value = value });
+                }
+            }
+            await command.ExecuteNonQueryAsync(cancellationToken);
+        }
+    }
+
     /// <summary>What each of these modules has taken (a module with no row was never damaged or mended).</summary>
     public async Task<IReadOnlyDictionary<long, ModuleCondition>> ModuleConditionsAsync(IEnumerable<long> itemIds, CancellationToken cancellationToken = default)
     {

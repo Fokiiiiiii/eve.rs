@@ -2973,3 +2973,36 @@ Status: implemented. Tests: `Eve.Corporations.Tests` (`CorpStationMgrTests`, 4, 
   The notice to those sessions is not sent.
 - **Not built.** The reference's other `corpStationMgr` methods (rentable items, the office list, improvements, the home-station list,
   clone owners, cost modifiers) are not called by the V24.01 client through this moniker, so they are not served.
+
+## Repair (repairSvc, 37a)
+
+Status: the NPC station repair is implemented and tested in PostgreSQL (`RepairServiceTests`, 6 tests). The client has not been driven through a repair.
+
+- **Damage and state.** The damage is the module state store's (`ship_condition`, `module_condition`), keyed by item id; the fractions are
+  the store's. Health is in HP: shield capacity, armor HP and structure HP are the dogma attributes `shieldCapacity`, `armorHP` and `hp`
+  (SDE attribute ids 263, 265 and 9). The damage is shield damage plus armor damage plus structure damage, as `getItemHealthSnapshot`
+  computes it in `repairRuntime.js`.
+- **Cost.** One unit of damage costs the adjusted price x 0.1 (`STATION_REPAIR_COST_MULTIPLIER`) divided by the maximum HP, rounded to
+  six decimals. The adjusted price is the ESI one (DEVIATIONS "Reprocessing", item 7). The full cost is the damage rounded up times the unit
+  cost, rounded to cents.
+- **Repair and payment.** A payment (or the full cost when None) is spent in the order given: each item is charged the part it can take up
+  to its full cost and repaired by what that buys (`executeRepairPlan`). The damage is repaired in the order structure, armor, shield
+  (`applyRepairToHealthSnapshot`). A repair with a fitted module is paid in full (`MODULE_PARTIAL_REPAIR`, as the notice).
+- **One transaction.** The charge (wallet ref type 15, `repair_bill`, CCP eve-glue) and the new condition are written in one PostgreSQL
+  transaction. The module store gained transaction-taking overloads for the reads and writes. The notices go out after the commit.
+- **Which items.** Items the caller owns, singleton, of a repairable group or category (`REPAIRABLE_GROUP_IDS` and
+  `REPAIRABLE_CATEGORY_IDS`), in this station through their containers. Anything else is skipped, as the reference skips it.
+
+Differences and cuts:
+1. Structures: refused with a named notice (`Repair in structures is not available.`). The structure tax and the structure rules are not built.
+2. No price: an item with damage and no adjusted price is refused (`No repair price is known for that item.`). EVE.js invents a base
+   price from the volume (`getFallbackRepairBasePrice`) and repairs at that price; this server does not invent prices. An item with no damage
+   is skipped.
+3. The reference's aliasing of a docked ship's module ids (`DOCKED_SHIP_REPAIR_ALIAS_OFFSET`) is not used: the quote rows carry the real
+   item ids. The client accepts them because the execution reads them back.
+4. No durable settlement (`repair.settle`): the charge is in the same transaction as the repair, so a settlement that fails midway is rolled back, not queued.
+5. The notice to the client is an `OnItemChange` for each repaired item (the same rows the docked heal sends); the damage itself is read from
+   the item's dogma. The reference sends attribute notices (`syncDamageStateAttributesForSession`). Not checked against a client capture.
+6. The fitted modules of a ship in the hangar are quoted with the ship (`CATEGORY_SHIP` in the hangar, fitted slots and the drone bay).
+   The station-side contents are read outside the repair's transaction; a fitting changed during the repair is not seen by that repair.
+

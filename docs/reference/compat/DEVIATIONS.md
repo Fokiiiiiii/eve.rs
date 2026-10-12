@@ -3332,3 +3332,14 @@ Decision, no published bounty for the Triglavian and EDENCOM hulls. A search of 
 Loot. Unchanged: the sim-resident NPCs have no host profile and so no loot table (the loot rule is keyed on the profile). No published drop table exists for these types in the SDE.
 
 Tests: `NpcBountyHostTests` (a werpost kill pays 12,500,000 ISK to the killer with the type in the bucket; a Damavik kill pays nothing), `Eve.Space.Tests` (300, the codec and fixtures), `eve-space` (764), `eve-net` and `eve-sim` build clean under clippy -D warnings.
+
+### System environment as dogma effects (slice 7c)
+
+- A solar system's environment is its effect beacon (SDE group 920, `Class N <effect> Effects`, the attributes of the beacon type). Each
+  attribute "<name>Multiplier" is a post-multiplication of the attribute "<name>", "<name>Bonus" a post-percentage of it; both reach the
+  ship and the items located in it (its modules), as a buff of the same shape does. Source: the SDE values (`WormholeEffects`), the
+  dogma modifier rules of `Eve.Dogma` (`SystemEnvironment`, tests `SystemEnvironmentTests`).
+- Applied in the C# dogma world of the ship (`SyncBuffsAsync` with the ship's buffs). The Rust simulation does not receive these
+  values: its combat and flight numbers are the ship spec's at the time the ship enters, so a wormhole's effect is seen in the
+  attributes the client reads and not in the simulation (not built).
+- Names with no base attribute (for example `shieldBonusMultiplier`, `capacitorCapacityMultiplierSystem`) are listed as not applied.

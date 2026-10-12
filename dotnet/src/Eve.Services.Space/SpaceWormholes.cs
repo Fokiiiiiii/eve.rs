@@ -25,6 +25,19 @@ namespace Eve.Services.Space;
 /// </summary>
 public sealed partial class SpaceSessions
 {
+    /// <summary>The environment of a solar system as dogma effects (its wormhole's effect beacon); empty for a system with none (slice 7c).</summary>
+    public Func<int, IReadOnlyList<Eve.Dogma.EffectDef>>? SystemEnvironment { get; set; }
+
+    /// <summary>The environment effects of the system the ship is in, from the pilot that flies it (no pilot, no environment).</summary>
+    private IReadOnlyList<Eve.Dogma.EffectDef> EnvironmentOf(long shipId)
+    {
+        if (SystemEnvironment is null || _pilots.Values.FirstOrDefault(pilot => pilot.ShipId == shipId) is not { } flown)
+        {
+            return [];
+        }
+        return SystemEnvironment(flown.SolarSystemId);
+    }
+
     /// <summary>The polarization of a wormhole end in one direction (wiki "Wormhole": five minutes per pilot).</summary>
     private static readonly long PolarizationMs = (long)WormholeRules.Polarization.TotalMilliseconds;
 

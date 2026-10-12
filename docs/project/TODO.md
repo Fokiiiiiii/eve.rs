@@ -1606,3 +1606,11 @@ Evidence and decisions: `docs/project/WORMHOLE_DESIGN.md` (sources, SDE numbers,
 |---|---|---|
 | DONE (tests) | Arshat (30002253) as an EDENCOM zone: GunStars at its gates, Sentinel camps at the first two | `pochven_population.rs`, `data/pochven_states.json` (source and date in the file) |
 | OPEN | More EDENCOM fortress, stronghold and minor-victory systems | No dated source names them (the wiki's list page 404s; the forum names are not states) |
+
+### Slice 7 (2026-10-12)
+
+| Status | Item | Missing work |
+|---|---|---|
+| DONE (tests) | 7b: placement of the ends with the system's scene, WormholeMgr.WormholeJump (mass, collapse, publication), polarization, world at start-up | Eve.Wormholes.Tests 17; the service jump has no test yet (DEVIATIONS) |
+| DONE (tests) | 7c: system environment as dogma modifiers on the ship and its modules (C# dogma) | Eve.Dogma.Tests `SystemEnvironmentTests` (3). Not in the Rust simulation |
+| OPEN | 7d signatures, 7e Sleeper/Drifter sites, 7f Thera exits | Not started |

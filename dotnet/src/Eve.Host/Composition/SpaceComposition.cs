@@ -175,6 +175,19 @@ internal sealed partial class CharacterServicesComposition
                 Console.Error.WriteLine($"eve-host: {Eve.Universe.ClientSystemFlags.DirectoryVariable} is not set: stargate lists and alignment tolls are disabled");
             }
             spaceSessions.GateRules = await Eve.Services.Space.Gates.GateRules.LoadAsync(sde, clientDirectory);
+            // the environment of the J-space systems (slice 7c): each system's effect beacon (SDE group 920) as dogma effects on the ships in it
+            var beaconEffects = await Eve.Universe.WormholeEffects.LoadAsync(sde);
+            var environments = new Dictionary<int, IReadOnlyList<Eve.Dogma.EffectDef>>();
+            foreach (var system in Eve.Universe.JSpaceSystems.Load())
+            {
+                if (system.Effect is { } effectName && system.EffectClass is int effectClass
+                    && beaconEffects.TryGetValue((effectName, effectClass), out var beacon)
+                    && Eve.Dogma.SystemEnvironment.EffectOf(beacon.TypeId, effectName, beacon.Modifiers, dogma.AttributeId).Effect is { } environment)
+                {
+                    environments[system.Id] = [environment];
+                }
+            }
+            spaceSessions.SystemEnvironment = id => environments.GetValueOrDefault(id) ?? [];
             // the wormholes of J-space (slice 7): the world is generated once from the seed (EVE_WORMHOLE_SEED) out of the SDE and the client's system classes;
             // no client directory, no wormholes. The ends of a system are placed with its scene (SpaceSessions); a collapse or an opening is published to it
             if (Env("EVE_WORMHOLES", "on") is not ("off" or "0" or "false") && !string.IsNullOrWhiteSpace(clientDirectory))

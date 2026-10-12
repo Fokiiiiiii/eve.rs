@@ -81,7 +81,7 @@ internal sealed class Rig : IAsyncDisposable
 
     public InvBrokerService Service { get; }
 
-    public static async Task<Rig> CreateAsync(bool activeShip = false, CorporationHangarAccess? corporationHangarAccess = null)
+    public static async Task<Rig> CreateAsync(bool activeShip = false, CorporationHangarAccess? corporationHangarAccess = null, int characterTypeId = 1)
     {
         var source = NpgsqlDataSource.Create(PgConnection.ForTest(Url!));
         var sde = new SdeReader(source);
@@ -91,20 +91,20 @@ internal sealed class Rig : IAsyncDisposable
         await PgCharacterStore.MigrateAsync(source, rig._schema + "c");
         await PgSkillStore.MigrateAsync(source, rig._schema + "s");
         await PgModuleStateStore.MigrateAsync(source, rig._schema + "f");
-        await rig.SeedCharacterAsync(activeShip);
+        await rig.SeedCharacterAsync(activeShip, characterTypeId);
         return rig;
     }
 
 
     public const long Corporation = 1_000_001;
 
-    private async Task SeedCharacterAsync(bool activeShip)
+    private async Task SeedCharacterAsync(bool activeShip, int characterTypeId)
     {
         var station = Stations.Get(Station)!;
         await using var connection = await Source.OpenConnectionAsync();
         await using var transaction = await connection.BeginTransactionAsync();
         var characterId = await Characters.InsertAsync(connection, transaction,
-            new Eve.Characters.NewCharacter(1, "Inventory Service Test", 1, 1, 1, 1, 1, 1, Corporation, null,
+            new Eve.Characters.NewCharacter(1, "Inventory Service Test", 1, 1, 1, 1, 1, characterTypeId, Corporation, null,
                 Station, station.SolarSystemId, station.ConstellationId, station.RegionId, null, null));
         if (activeShip)
         {
@@ -567,9 +567,39 @@ public class InvBrokerTests
         Assert.NotEqual(station, shipInventory);
         foreach (var id in new long[] { foreign, away, cargo, 1, 999_999_999 })
         {
-            Assert.Equal(PyNone.Instance, await rig.CallAsync(session, "GetInventoryFromId", null, new PyLong(id)));
+            var refusal = await Assert.ThrowsAsync<MachoWrappedException>(async () => await rig.CallAsync(session, "GetInventoryFromId", null, new PyLong(id)));
+            Assert.Equal("FakeItemNotFound", refusal.Error.UserErrorMessage);
         }
-        Assert.Equal(PyNone.Instance, await rig.CallAsync(session, "GetInventoryFromId", null, new PyStr("x")));
+        var invalid = await Assert.ThrowsAsync<MachoWrappedException>(async () => await rig.CallAsync(session, "GetInventoryFromId", null, new PyStr("x")));
+        Assert.Equal("FakeItemNotFound", invalid.Error.UserErrorMessage);
+    }
+
+    [PgFact]
+    public async Task The_selected_character_has_an_inventory_for_godma_priming_and_other_characters_are_refused()
+    {
+        await using var rig = await Rig.CreateAsync(activeShip: true, characterTypeId: 1378);
+        await rig.Skills.InTransactionAsync(async (connection, transaction, token) =>
+        {
+            await rig.Skills.GrantAsync(connection, transaction, Rig.Character, [new Eve.Skills.CharacterSkill(3300, 3, 8000)]);
+            return true;
+        });
+        var session = Rig.Session();
+        var snapshot = (await rig.Ships.LoadAsync(Rig.Character))!;
+        var inventory = Rig.OidOf(await rig.CallAsync(session, "GetInventoryFromId", null, new PyInt(Rig.Character), new PyInt(1)));
+        var self = Assert.IsType<PyPackedRow>(await rig.CallAsync(session, "GetSelfInvItem", inventory));
+        Assert.Equal(new PyLong(Rig.Character), self.Values[0]);
+        Assert.Equal(new PyLong(snapshot.Ship.Id), self.Values[3]);
+        Assert.Equal(new PyInt(ShipSnapshot.PilotFlag), self.Values[4]);
+        var skillRow = Assert.Single(Rows(await rig.CallAsync(session, "List", inventory)));
+        Assert.Equal(new PyLong(ShipSnapshot.SkillItemId(Rig.Character, 3300)), skillRow.Values[0]);
+        Assert.Equal(new PyInt(3300), skillRow.Values[1]);
+        Assert.Equal(new PyInt(ShipSnapshot.SkillFlag), skillRow.Values[4]);
+        await Assert.ThrowsAsync<Eve.Services.MachoWrappedException>(() => rig.CallAsync(session, "StackAll", inventory));
+        var foreign = await Assert.ThrowsAsync<MachoWrappedException>(async () => await rig.CallAsync(session, "GetInventoryFromId", null, new PyInt(Rig.Character + 1), new PyInt(1)));
+        Assert.Equal("FakeItemNotFound", foreign.Error.UserErrorMessage);
+        session.CharacterId = Rig.Character + 1;
+        Assert.Empty(Rows(await rig.CallAsync(session, "List", inventory)));
+        Assert.Equal(PyNone.Instance, await rig.CallAsync(session, "GetSelfInvItem", inventory));
     }
 
 
@@ -596,7 +626,8 @@ public class InvBrokerTests
         Assert.Equal("Tools", (await rig.Items.GetAsync(parent))!.CustomName);
 
         var foreign = await rig.AddAsync(containerType.TypeId, 140_000_002, Rig.Station, singleton: true);
-        Assert.Equal(PyNone.Instance, await rig.CallAsync(session, "GetInventoryFromId", null, new PyLong(foreign)));
+        var refusal = await Assert.ThrowsAsync<MachoWrappedException>(async () => await rig.CallAsync(session, "GetInventoryFromId", null, new PyLong(foreign)));
+        Assert.Equal("FakeItemNotFound", refusal.Error.UserErrorMessage);
     }
 
     [PgFact]
@@ -729,8 +760,8 @@ public class InvBrokerTests
             Assert.IsType<PySubStruct>(answer.Items[0]);
             Assert.Single(Rows(answer.Items[1])); // the nested call ran against the inventory that was just opened
         }
-        var unknown = (PyValue)await rig.CallAsync(session, "MachoBindObject", null, new PyInt(1), new PyTuple([new PyStr("List"), new PyTuple([]), PyNone.Instance]));
-        Assert.Equal(PyNone.Instance, unknown);
+        var unknown = await Assert.ThrowsAsync<MachoWrappedException>(async () => await rig.CallAsync(session, "MachoBindObject", null, new PyInt(1), new PyTuple([new PyStr("List"), new PyTuple([]), PyNone.Instance])));
+        Assert.Equal("FakeItemNotFound", unknown.Error.UserErrorMessage);
     }
 
     [PgFact]

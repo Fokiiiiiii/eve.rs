@@ -19,6 +19,9 @@ public sealed partial class WarRegistryService(Npgsql.NpgsqlDataSource source, R
     private const string NegotiationNotice = "War negotiations are not available on this server.";
 
     /// <summary><c>MachoBindObject((allianceOrCorpID, isMaster), (method, args, kwargs))</c>: binds, then makes the nested call.</summary>
+    [Method("MachoResolveObject")]
+    public PyValue MachoResolveObject(ServiceCall call) => new PyInt(MachoMessage.ProxyNodeId);
+
     [Method("MachoBindObject")]
     public async ValueTask<PyValue> MachoBindObject(ServiceCall call)
     {

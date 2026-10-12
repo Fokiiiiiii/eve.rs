@@ -371,7 +371,7 @@ public sealed partial class PublicQaToolsServerService(PublicQaToolsRpcCallbacks
         new(operation, call.Args, call.Kwargs, call.CallId, call.Session);
 }
 
-public delegate ValueTask<IReadOnlyList<PyValue>> ReadCommunityFittingsCallback(
+public delegate ValueTask<IReadOnlyDictionary<long, PyValue>> ReadCommunityFittingsCallback(
     ClientSession session,
     CancellationToken cancellationToken);
 

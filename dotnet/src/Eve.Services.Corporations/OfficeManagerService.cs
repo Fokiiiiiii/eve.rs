@@ -23,6 +23,36 @@ public sealed partial class OfficeManagerService(
     private const int ImpoundReleaseReferenceType = 41;
     private const long EveDayMs = 24L * 60 * 60 * 1000;
 
+    [Method("MachoResolveObject")]
+    public PyValue MachoResolveObject(ServiceCall call) => new PyInt(MachoMessage.ProxyNodeId);
+
+    [Method("MachoBindObject")]
+    public async ValueTask<PyValue> MachoBindObject(ServiceCall call)
+    {
+        var station = CurrentStation(call.Session);
+        var parameter = call.Arg(0) is PyTuple { Items.Count: > 0 } tuple ? tuple.Items[0] : call.Arg(0);
+        if (Integral(parameter) is { } requested && requested != station.Id)
+            throw new CorporationError("OFFICE_STATION_REQUIRED");
+        var oid = $"N={MachoMessage.ProxyNodeId}:{BoundObjectIds.Next()}";
+        var bound = new PySubStruct(new PySubStream(Py.Tuple(new PyStr(oid), new PyLong(Py.FileTimeFromUnixMs(now())))));
+        PyValue result = PyNone.Instance;
+        if (call.Arg(1) is PyTuple { Items.Count: > 0 } nested && JsSemantics.StringValue(nested.Items[0]) is { } method)
+        {
+            result = await ((IService)this).CallAsync(new ServiceCall
+            {
+                Method = method,
+                Args = nested.Items.Count > 1 && nested.Items[1] is PyTuple args ? args.Items : [],
+                Kwargs = nested.Items.Count > 2 ? nested.Items[2] : PyNone.Instance,
+                Session = call.Session,
+                CallId = call.CallId,
+                BoundObjectId = oid,
+                BoundObjectParameters = call.Arg(0),
+                Cancellation = call.Cancellation,
+            });
+        }
+        return Py.Tuple(bound, result);
+    }
+
     [Method("GetMyCorporationsOffices")]
     public async ValueTask<PyValue> GetMyCorporationsOffices(ServiceCall call)
     {

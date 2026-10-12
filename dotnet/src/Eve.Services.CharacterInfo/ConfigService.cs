@@ -1,6 +1,8 @@
 using Eve.Characters;
 using Eve.Corporations;
 using Eve.Marshal;
+using Eve.Inventory;
+using Eve.Dogma;
 using Eve.Services;
 using Eve.Universe;
 
@@ -12,7 +14,9 @@ public sealed partial class ConfigService(
     CorporationStore corporations,
     StationCatalog stations,
     SolarSystemCatalog solarSystems,
-    Func<CancellationToken, Task<IReadOnlyDictionary<long, decimal>>>? latestAverageSales = null)
+    Func<CancellationToken, Task<IReadOnlyDictionary<long, decimal>>>? latestAverageSales = null,
+    PgItemStore? items = null,
+    DogmaStatic? dogma = null)
 {
     private static readonly string[] OwnerColumns = ["ownerID", "ownerName", "typeID", "gender", "ownerNameID"];
     private static readonly string[] CorporationColumns =
@@ -182,10 +186,10 @@ public sealed partial class ConfigService(
 
     /// <summary>
     /// The locations asked for: the NPC stations and solar systems of the static data, with the station's position. Location 0
-    /// is the client's "none" row. A structure (its own catalogue, not built yet) or any other id has no row.
+    /// is the client's "none" row. Owned inventory items also expose their stored label or SDE type name; unknown and foreign items have no row.
     /// </summary>
     [Method("GetMultiLocationsEx")]
-    public ValueTask<PyValue> GetMultiLocationsEx(ServiceCall call)
+    public async ValueTask<PyValue> GetMultiLocationsEx(ServiceCall call)
     {
         var ids = RequestedIds(call.Arg(0), includeZero: true);
         var rows = new List<PyTuple>(ids.Length);
@@ -203,9 +207,21 @@ public sealed partial class ConfigService(
             {
                 rows.Add(LocationRow(id, system.Name, system.Id));
             }
+            else if (items is not null && dogma is not null && call.Session.CharacterId is { } characterId
+                && await items.GetAsync(id, call.Cancellation) is { } item && item.OwnerId == characterId)
+            {
+                await dogma.EnsureTypesAsync([item.TypeId], call.Cancellation);
+                var name = item.CustomName ?? dogma.Type(item.TypeId)?.Name;
+                if (string.IsNullOrWhiteSpace(name))
+                    continue;
+                if (stations.Get(item.LocationId) is { } itemStation)
+                    rows.Add(LocationRow(id, name, itemStation.SolarSystemId, itemStation.X, itemStation.Y, itemStation.Z));
+                else if (item.LocationId <= int.MaxValue && solarSystems.Get((int)item.LocationId) is { } itemSystem)
+                    rows.Add(LocationRow(id, name, itemSystem.Id));
+            }
         }
 
-        return ValueTask.FromResult<PyValue>(TupleSet(LocationColumns, rows));
+        return TupleSet(LocationColumns, rows);
     }
 
     private static long[] RequestedIds(PyValue value, bool includeZero = false)

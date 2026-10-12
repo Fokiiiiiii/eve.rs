@@ -54,7 +54,8 @@ public sealed class StructureControlInfoTests
         var stranger = Rig.Session(station: null, id: 12);
         stranger.Set("shipid", new PyLong(structureId));
         stranger.Set("structureid", new PyLong(structureId));
-        Assert.Equal(PyNone.Instance, await Call(service, stranger, "GetInventoryFromId", null, new PyLong(structureId)));
+        var refusal = await Assert.ThrowsAsync<Eve.Services.MachoWrappedException>(async () => await Call(service, stranger, "GetInventoryFromId", null, new PyLong(structureId)));
+        Assert.Equal("FakeItemNotFound", refusal.Error.UserErrorMessage);
         Assert.Equal(PyNone.Instance, await Call(service, stranger, "GetItem", oid));
         var personal = Assert.IsType<ShipSnapshot>(await rig.Ships.LoadAsync(Rig.Character));
         var normal = Rig.Session();

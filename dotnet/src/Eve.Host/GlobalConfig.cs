@@ -34,6 +34,7 @@ public static class GlobalConfig
     public static PyDict Build(ClusterOptions options)
     {
         static PyValue Flag(bool on) => new PyInt(on ? 1 : 0);
+        static PyValue StoreFlag(bool on) => new PyStr(on ? "1" : "0");
         var store = Eve.Services.Core.NewEdenStoreCatalog.Default;
         return Py.Dict(
             ("bugReporting_BugReportServer", new PyStr(options.BugReportUrl)),
@@ -46,12 +47,12 @@ public static class GlobalConfig
             ("expert_system_feature_enabled", Flag(options.ExpertSystemsEnabled)),
             // The New Eden Store's client settings (EVE.js storeState.js:503-527): the in-client PLEX checkout is on, and the store
             // is served in-client (fake_vgs_enabled). Each value is read by eve-logic globalConfig/getFunctions.py:233-258.
-            ("fake_fast_checkout_enabled", Flag(store.FastCheckoutEnabled)),
+            ("fake_fast_checkout_enabled", StoreFlag(store.FastCheckoutEnabled)),
             ("fake_fast_checkout_response", new PyStr(store.FakeFastCheckoutResponse)),
             ("fake_fast_checkout_plex_offers", new PyStr(store.FastCheckoutPlexOffers)),
-            ("fake_vgs_enabled", Flag(store.FakeVgsEnabled)),
-            ("fake_china_funnel_enabled", Flag(store.ChinaFunnelEnabled)),
+            ("fake_vgs_enabled", StoreFlag(store.FakeVgsEnabled)),
+            ("fake_china_funnel_enabled", StoreFlag(store.ChinaFunnelEnabled)),
             ("fake_buy_plex_offer_url", new PyStr(store.FakeBuyPlexOfferUrl)),
-            ("use_shell_execute_to_buy_plex_offer", Flag(store.UseShellExecuteToBuyPlexOffer)));
+            ("use_shell_execute_to_buy_plex_offer", StoreFlag(store.UseShellExecuteToBuyPlexOffer)));
     }
 }

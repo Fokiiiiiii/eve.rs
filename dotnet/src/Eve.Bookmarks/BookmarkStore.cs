@@ -53,6 +53,9 @@ public static class BookmarkRules
 
     public const string DefaultFolderName = "Personal Locations";
 
+    /// <summary>Systems where no bookmark can be made: Zarzakh (30100000), "Bookmarks are disabled in system." (the EVE University wiki).</summary>
+    public static readonly IReadOnlySet<long> DisabledSystems = new HashSet<long> { 30_100_000 };
+
     /// <summary>The expiry an expiry mode gives a bookmark made at <paramref name="nowMs"/>, or null for none (the reference's <c>translateExpiryToFiletime</c>).</summary>
     public static long? ExpiryMs(int mode, long nowMs) => mode switch
     {

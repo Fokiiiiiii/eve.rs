@@ -75,5 +75,7 @@ internal sealed partial class CharacterServicesComposition
                 () => newCharacterExperienceMode,
                 ReadAirNpeCharacterStateAsync,
                 (characterId, tutorialEnabled, ct) => characters.MarkTutorialSkippedAsync(characterId, tutorialEnabled, ct)),
+            new Eve.Services.Core.NesIntroService(nesIntro.ReadAsync, nesIntro.SkipAsync, ReadAirNpeCharacterStateAsync,
+                () => newCharacterExperienceMode, characterSessions),
     ];
 }

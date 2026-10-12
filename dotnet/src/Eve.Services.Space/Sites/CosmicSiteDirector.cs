@@ -137,9 +137,14 @@ public sealed class CosmicSiteDirector
             });
     }
 
-    /// <summary>The band of security a system's sites are chosen for, or null when it has none (a wormhole system, a system the static data does not have).</summary>
+    /// <summary>
+    /// Systems that get no sites: Zarzakh (30100000). The wiki names no site of it, and EveJS's site policy refuses them there, so none are placed.
+    /// </summary>
+    public static readonly IReadOnlySet<int> NoSiteSystems = new HashSet<int> { 30_100_000 };
+
+    /// <summary>The band of security a system's sites are chosen for, or null when it has none (a wormhole system, a system the static data does not have, a system in <see cref="NoSiteSystems"/>).</summary>
     public string? BandOf(int solarSystemId) =>
-        _systems.Get(solarSystemId) is not { } system || solarSystemId is >= 31_000_000 and <= 31_999_999
+        _systems.Get(solarSystemId) is not { } system || solarSystemId is >= 31_000_000 and <= 31_999_999 || NoSiteSystems.Contains(solarSystemId)
             ? null
             : Security.ClassFromLevel(system.Security) switch
             {

@@ -43,6 +43,21 @@ public sealed class AccessGroupBookmarkMgrTests
     }
 
     [PgFact]
+    public async Task A_place_in_a_system_with_bookmarks_disabled_is_refused_with_its_code()
+    {
+        // Zarzakh (30100000): "Bookmarks are disabled in system." (the wiki); the Fulcrum station is in it
+        await using var rig = await Rig.CreateAsync();
+        var fulcrum = new BookmarkTarget(60015187, 78334, 30100000);
+        var service = Service(rig, resolve: id => id == fulcrum.ItemId ? fulcrum : null);
+        var session = Session();
+
+        var error = await Assert.ThrowsAsync<MachoWrappedException>(async () =>
+            await Call(service, session, "BookmarkStaticLocation", new PyLong(fulcrum.ItemId), new PyLong(await DefaultFolderAsync(rig))));
+        // a refusal with a notice reaches the client as CustomNotify (BookmarkRefusals)
+        Assert.Equal("CustomNotify", error.Error.UserErrorMessage);
+    }
+
+    [PgFact]
     public async Task Deleting_bookmarks_answers_the_ids_that_were_removed()
     {
         await using var rig = await Rig.CreateAsync();

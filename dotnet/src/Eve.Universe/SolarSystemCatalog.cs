@@ -7,7 +7,11 @@ namespace Eve.Universe;
 /// A solar system of the static data: where it is in the universe. <c>FactionId</c> is the faction the system belongs to (its own, else its
 /// constellation's, else its region's; 0 when none), as the simulation's world takes it.
 /// </summary>
-public sealed record SolarSystemInfo(int Id, string Name, int ConstellationId, int RegionId, double Security, int FactionId = 0, double X = 0, double Y = 0, double Z = 0);
+/// <summary>
+/// The client's per-system flags (<see cref="ClientSystemFlags"/>): no cynosural field may be lit here, and no scanning (probes) is possible here.
+/// </summary>
+public sealed record SolarSystemInfo(int Id, string Name, int ConstellationId, int RegionId, double Security, int FactionId = 0, double X = 0, double Y = 0, double Z = 0,
+    bool DisallowCyno = false, bool DisallowScanning = false);
 
 /// <summary>The solar systems of the game, read from the static data.</summary>
 public sealed class SolarSystemCatalog
@@ -37,7 +41,7 @@ public sealed class SolarSystemCatalog
     /// <summary>One light year in metres (the exact value of the light year the game uses).</summary>
     public const double MetersPerLightYear = 9_460_730_472_580_800.0;
 
-    public static async Task<SolarSystemCatalog> LoadAsync(SdeReader sde, CancellationToken cancellationToken = default)
+    public static async Task<SolarSystemCatalog> LoadAsync(SdeReader sde, IReadOnlyDictionary<int, ClientSystemFlags>? clientFlags = null, CancellationToken cancellationToken = default)
     {
         var constellationFactions = await FactionsOfAsync(sde, "mapConstellations", cancellationToken);
         var regionFactions = await FactionsOfAsync(sde, "mapRegions", cancellationToken);
@@ -49,6 +53,7 @@ public sealed class SolarSystemCatalog
             var faction = FactionOf(r.Doc) is > 0 and var own ? own
                 : constellationFactions.GetValueOrDefault(constellation) is > 0 and var inherited ? inherited
                 : regionFactions.GetValueOrDefault(region);
+            var flags = clientFlags?.GetValueOrDefault((int)r.Key);
             return new SolarSystemInfo(
                 (int)r.Key,
                 SdeReader.English(r.Doc.GetProperty("name")),
@@ -56,7 +61,8 @@ public sealed class SolarSystemCatalog
                 region,
                 r.Doc.TryGetProperty("securityStatus", out var security) && security.ValueKind == JsonValueKind.Number ? security.GetDouble() : 0d,
                 faction,
-                Position(r.Doc, "x"), Position(r.Doc, "y"), Position(r.Doc, "z"));
+                Position(r.Doc, "x"), Position(r.Doc, "y"), Position(r.Doc, "z"),
+                flags?.DisallowCyno ?? false, flags?.DisallowScanning ?? false);
         }));
     }
 

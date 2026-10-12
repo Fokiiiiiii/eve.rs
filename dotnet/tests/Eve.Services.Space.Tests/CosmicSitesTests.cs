@@ -223,6 +223,31 @@ public sealed class CosmicSiteDirectorTests
     }
 
     [PgFact]
+    public async Task A_gas_or_ore_site_that_expires_takes_its_resources_out_of_the_world_and_the_others_do_not()
+    {
+        var system = JSpaceSystems.Load().First(j => j.WormholeClass == 3);
+        await using var rig = await SiteRig.CreateAsync();
+        var removed = new List<(int System, long Site)>();
+        rig.Director.RemoveResources = (_, _, solarSystem, site) =>
+        {
+            removed.Add((solarSystem, site));
+            return Task.CompletedTask;
+        };
+        await rig.FillAsync(system.Id, rig.NewDirector(_ => true, id => id == system.Id ? 3 : null));
+        var before = await rig.Director.ActiveAsync(system.Id);
+        var withResources = before.Where(site => rig.Director.Templates.ById(site.TemplateId)!.HasResources).Select(site => site.InstanceId).ToHashSet();
+        Assert.NotEmpty(withResources);
+        Assert.True(withResources.Count < before.Count, "the combat, data and relic sites have no resources");
+
+        rig.Advance(CosmicSiteDirector.Lifetime + TimeSpan.FromMinutes(1));
+        await rig.RunDueAndDeliverAsync();
+
+        Assert.Equal(withResources.Count, removed.Count);
+        Assert.Equal(withResources.OrderBy(id => id), removed.Select(entry => entry.Site).OrderBy(id => id));
+        Assert.All(removed, entry => Assert.Equal(system.Id, entry.System));
+    }
+
+    [PgFact]
     public async Task The_probe_source_lists_each_signature_of_the_system_by_its_code_with_the_strength_of_its_level()
     {
         await using var rig = await SiteRig.CreateAsync();

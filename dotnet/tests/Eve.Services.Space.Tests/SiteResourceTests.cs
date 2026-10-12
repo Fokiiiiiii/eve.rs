@@ -44,4 +44,29 @@ public sealed class SiteResourceTests
         Assert.Equal(deposit.Rocks.Count, restored.Count);
         Assert.Equal(deposit.Rocks.Select(rock => rock.TypeId), restored.Select(rock => rock.TypeId));
     }
+
+    [PgFact]
+    public async Task A_site_that_ends_takes_its_rocks_and_cloud_out_of_the_scene_and_the_store()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var templates = SiteTemplates.Load();
+        var deposit = templates.ById("wormhole-3811")!;
+        double[] origin = [1.0e9, 2.0e8, -3.0e8];
+        await rig.Containers.PlaceSiteResourcesAsync(SolarSystem, Site, deposit, origin);
+
+        var removedBefore = rig.Sim.Heard.OfType<SimRemoveWreck>().Count();
+        await using (var connection = await rig.Source.OpenConnectionAsync())
+        await using (var transaction = await connection.BeginTransactionAsync())
+        {
+            await rig.Containers.RemoveSiteResourcesAsync(connection, transaction, SolarSystem, Site);
+            await transaction.CommitAsync();
+        }
+
+        var removed = rig.Sim.Heard.OfType<SimRemoveWreck>().Skip(removedBefore).ToList();
+        Assert.Equal(deposit.Rocks!.Count, removed.Count);
+        // nothing is left to put back: the store has no row of the site
+        var before = rig.Sim.Heard.Count;
+        await rig.Containers.RestoreSiteResourcesAsync(SolarSystem, [Site]);
+        Assert.Empty(rig.Sim.Heard.Skip(before).OfType<SimPlaceAsteroid>());
+    }
 }

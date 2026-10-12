@@ -138,6 +138,12 @@ public sealed class CosmicSiteDirector
                     && ended.TryGetProperty("owner", out var owner) && owner.TryGetInt32(out var system))
                 {
                     await FillAsync(context.Connection, context.Transaction, system);
+                    // a gas or ore site that ends takes its clouds and rocks out of the world (SpaceContainers)
+                    if (RemoveResources is { } remove && ended.TryGetProperty("instanceId", out var instance) && instance.TryGetInt64(out var siteId)
+                        && _templates.ById(id[DefinitionPrefix.Length..]) is { HasResources: true })
+                    {
+                        await remove(context.Connection, context.Transaction, system, siteId);
+                    }
                 }
             });
     }
@@ -287,6 +293,9 @@ public sealed class CosmicSiteDirector
 
     /// <summary>Places the resources of a gas or ore site when it starts: its system, the site's instance id, its template and its origin (SpaceContainers).</summary>
     public Func<int, long, SiteTemplate, double[], Task>? PlaceResources { get; set; }
+
+    /// <summary>Takes the resources of a site out of the world when the site ends: its system, the site's instance id (SpaceContainers, in the end's transaction).</summary>
+    public Func<NpgsqlConnection, NpgsqlTransaction, int, long, Task>? RemoveResources { get; set; }
 
     /// <summary>The wormhole class of a J-space system, or null when it is not one (or the director has no J-space).</summary>
     public int? WormholeClassOf(int solarSystemId) => _wormholeClassOf?.Invoke(solarSystemId);

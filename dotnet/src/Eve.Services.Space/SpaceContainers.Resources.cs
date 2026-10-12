@@ -1,5 +1,6 @@
 using Eve.Services.Space.Sites;
 using Eve.Space;
+using Npgsql;
 
 namespace Eve.Services.Space;
 
@@ -63,6 +64,32 @@ public sealed partial class SpaceContainers
         catch (Exception error) when (error is not OperationCanceledException)
         {
             _log?.Invoke($"the resources of system {solarSystemId} were not put back: {error.Message}");
+        }
+    }
+
+    /// <summary>
+    /// The resources of a site that ends leave the world: each leaves the scene (as a depleted rock does) and the store (its item and its place), in the
+    /// transaction of the end. A site's resources that the store does not have (none was placed) are no change.
+    /// </summary>
+    public async Task RemoveSiteResourcesAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, int solarSystemId, long siteId)
+    {
+        foreach (var spaceItem in await _spaceItems.InSystemAsync(solarSystemId))
+        {
+            if (spaceItem.LauncherId != siteId)
+            {
+                continue;
+            }
+            _placed.TryRemove(spaceItem.ItemId, out _);
+            try
+            {
+                _sim.RemoveWreck(spaceItem.ItemId, 2);
+            }
+            catch (Exception error) when (error is not OperationCanceledException)
+            {
+                _log?.Invoke($"resource {spaceItem.ItemId} of site {siteId} could not be taken out of the scene: {error.Message}");
+            }
+            await _spaceItems.RemoveAsync(connection, transaction, spaceItem.ItemId);
+            await _items.DeleteAsync(connection, transaction, spaceItem.ItemId);
         }
     }
 

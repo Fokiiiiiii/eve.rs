@@ -377,6 +377,8 @@ internal sealed partial class CharacterServicesComposition
             // a gas or ore site places its cloud or rocks in the scene of its system through the containers
             if (cosmicSites is { } placingSites)
                 placingSites.PlaceResources = (system, site, template, origin) => spaceContainers!.PlaceSiteResourcesAsync(system, site, template, origin);
+            if (cosmicSites is { } endingSites)
+                endingSites.RemoveResources = (connection, transaction, system, site) => spaceContainers!.RemoveSiteResourcesAsync(connection, transaction, system, site);
             spaceSessions.SystemEntered += system => _ = EnsureSitesAsync(system);
             // the NPC waves of the dungeons (A-W1): the host runs their sweep and kill subscriber; a feature starts a dungeon through DungeonWaveDirector.StartAsync
             await Eve.Services.Space.Waves.DungeonWaveDirector.MigrateAsync(source, spaceSchema);

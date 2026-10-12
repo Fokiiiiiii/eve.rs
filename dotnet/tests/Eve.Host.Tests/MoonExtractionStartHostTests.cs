@@ -40,6 +40,7 @@ public sealed class MoonExtractionStartHostTests
         }
 
         public NpgsqlDataSource Source { get; }
+        public string EventsSchema => _schema + "_evt";
         public DurableScheduler Scheduler { get; }
         public TestClock Clock { get; }
         public StructureStore Structures { get; }
@@ -185,6 +186,27 @@ public sealed class MoonExtractionStartHostTests
         Assert.Equal(new PyLong(Structure), Field(payload, "structureID"));
         Assert.Equal(new PyInt(Corporation), Field(payload, "ownerID"));
         Assert.Equal(new[] { "OnMoonExtractionUpdate" }, NotificationNames(route.Packets));
+    }
+
+    [PgFact]
+    public async Task Registered_moon_mutations_put_the_real_actor_in_durable_lifecycle_events()
+    {
+        await using var route = await Route.CreateAsync(PgUrl());
+        await route.RefineryAsync();
+        await route.Moon.CallAsync(route.Start());
+        await using var connection = await route.Source.OpenConnectionAsync();
+        await using (var started = new NpgsqlCommand($"SELECT payload::text FROM {route.EventsSchema}.outbox WHERE topic = 'moon.extraction_started'", connection))
+        {
+            var json = JsonNode.Parse((string)(await started.ExecuteScalarAsync())!)!.AsObject();
+            Assert.Equal(Character, json["actorCharacterId"]!.GetValue<long>());
+            Assert.Equal(Structure, json["structureId"]!.GetValue<long>());
+        }
+        route.Session.Set("corprole", new PyLong(2048));
+        await route.Moon.CallAsync(Mutation("CancelExtraction", route.Session));
+        await using var cancelled = new NpgsqlCommand($"SELECT payload::text FROM {route.EventsSchema}.outbox WHERE topic = 'moon.extraction_ended'", connection);
+        var ended = JsonNode.Parse((string)(await cancelled.ExecuteScalarAsync())!)!.AsObject();
+        Assert.Equal(Character, ended["actorCharacterId"]!.GetValue<long>());
+        Assert.Equal("cancelled", ended["reason"]!.GetValue<string>());
     }
 
     [PgFact]

@@ -75,6 +75,11 @@ impl Scene {
         watchers.into_iter().map(|watcher| Self::update(watcher, actions.clone())).collect()
     }
 
+
+    pub fn has_asteroid(&self, asteroid_id: i64) -> bool {
+        self.asteroids.contains_key(&asteroid_id)
+    }
+
     /// The distance from the controller's ship to an ore rock's surface.
     pub fn distance_to_asteroid(&mut self, session: SessionId, asteroid_id: i64, now: i64) -> Option<f64> {
         let (position, radius) = {

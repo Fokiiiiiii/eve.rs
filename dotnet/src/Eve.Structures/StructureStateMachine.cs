@@ -37,6 +37,15 @@ public static class StructureStateMachine
             UnanchorStarted => OnUnanchorStarted(next, rules, now),
             UnanchorCancelled => next.UnanchorEndsMs > 0 ? Moved(next, next with { UnanchorEndsMs = 0 }) : Refuse(s, "NOT_UNANCHORING"),
             ReinforceTimeRequested request => OnReinforceTimeRequested(next, request, now),
+            FobDeployed => s.State == StructureState.Unanchored && rules.Size == StructureSize.Fob
+                ? Moved(next, Enter(next, StructureState.FobInvulnerable, now, 0) with { Upkeep = UpkeepState.FullPower })
+                : Refuse(s, "NOT_A_FOB"),
+            FobExposed => s.State == StructureState.FobInvulnerable
+                ? Moved(next, Enter(next, StructureState.ShieldVulnerable, now, 0))
+                : Refuse(s, "NOT_INVULNERABLE"),
+            FobDespawned => rules.Size == StructureSize.Fob
+                ? new StructureTransition(next with { DestroyedMs = now, StateEndsMs = 0, PendingEffectiveMs = 0, UnanchorEndsMs = 0 }, true, Removal: StructureRemoval.Destroyed)
+                : Refuse(s, "NOT_A_FOB"),
             _ => throw new ArgumentException($"unknown structure event {e.GetType().Name}", nameof(e)),
         };
         // a refusal returns the snapshot as it came in; the lazily applied reinforcement time is part of a successful event only
@@ -99,7 +108,7 @@ public static class StructureStateMachine
         }
         var n = s;
         // a hit starts the repair countdown of the shield, armor and hull stages when none runs, and a hard hit holds it
-        if (n.StateEndsMs == 0 && n.State is StructureState.ShieldVulnerable or StructureState.ArmorVulnerable or StructureState.HullVulnerable)
+        if (n.StateEndsMs == 0 && n.State is (StructureState.ShieldVulnerable or StructureState.ArmorVulnerable or StructureState.HullVulnerable) && Repairs(rules, n.State))
         {
             n = n with { StateEndsMs = now + RepairTime(n.State), StateStartedMs = now };
         }
@@ -118,10 +127,9 @@ public static class StructureStateMachine
                 if (rules.CanArmorReinforce(n.Upkeep))
                 {
                     var fighting = n with { FightWeekday = n.ReinforceWeekday, FightHour = n.ReinforceHour };
-                    return Moved(s, Enter(fighting, StructureState.ArmorReinforce, now,
-                        ExitTime(now + rules.ArmorReinforceMs, fighting.FightWeekday, fighting.FightHour, rules.ExitJitterMs, roll)));
+                    return Moved(s, Enter(fighting, StructureState.ArmorReinforce, now, ArmorReinforceEnd(rules, fighting, now, roll)));
                 }
-                return Moved(s, Enter(n, StructureState.ArmorVulnerable, now, now + StructureTimes.RepairMs));
+                return Moved(s, Enter(n, StructureState.ArmorVulnerable, now, Repairs(rules, StructureState.ArmorVulnerable) ? now + StructureTimes.RepairMs : 0));
             case StructureLayer.Armor when n.State == StructureState.ArmorVulnerable:
                 if (rules.CanHullReinforce(n.Upkeep))
                 {
@@ -129,7 +137,7 @@ public static class StructureStateMachine
                     var hour = n.FightHour >= 0 ? n.FightHour : n.ReinforceHour;
                     return Moved(s, Enter(n, StructureState.HullReinforce, now, ExitTime(now + rules.HullReinforceMs, weekday, hour, rules.ExitJitterMs, roll)));
                 }
-                return Moved(s, Enter(n, StructureState.HullVulnerable, now, now + StructureTimes.HullRepairMs));
+                return Moved(s, Enter(n, StructureState.HullVulnerable, now, Repairs(rules, StructureState.HullVulnerable) ? now + StructureTimes.HullRepairMs : 0));
             case StructureLayer.Hull when n.State is StructureState.AnchorVulnerable or StructureState.DeployVulnerable or StructureState.OnliningVulnerable
                     or StructureState.ArmorVulnerable or StructureState.HullVulnerable:
                 return new StructureTransition(n with { DestroyedMs = now, StateEndsMs = 0, PendingEffectiveMs = 0, UnanchorEndsMs = 0 }, true, Removal: StructureRemoval.Destroyed);
@@ -188,7 +196,7 @@ public static class StructureStateMachine
                     ? (Enter(s, StructureState.ShieldVulnerable, at, 0) with { Upkeep = UpkeepState.FullPower, LowPowerSinceMs = 0, FightWeekday = -1, FightHour = -1 }, true)
                     : (s with { StateEndsMs = 0, TimerPausedMs = 0 }, true);
             case StructureState.ArmorReinforce:
-                return (Enter(s, StructureState.ArmorVulnerable, at, at + StructureTimes.RepairMs), false);
+                return (Enter(s, StructureState.ArmorVulnerable, at, Repairs(rules, StructureState.ArmorVulnerable) ? at + StructureTimes.RepairMs : 0), false);
             case StructureState.HullReinforce:
                 return (Enter(s, StructureState.HullVulnerable, at, at + StructureTimes.HullRepairMs), false);
             default:
@@ -262,6 +270,15 @@ public static class StructureStateMachine
 
     private static long AbandonAt(StructureSnapshot s, StructureRules rules) =>
         s.Upkeep == UpkeepState.LowPower && s.LowPowerSinceMs > 0 && rules.CanBeAbandoned ? s.LowPowerSinceMs + StructureTimes.AbandonAfterMs : 0;
+
+    /// <summary>Whether a stage has a repair countdown. A FOB has none after its shield: its reinforcement is the only chance, and it does not heal.</summary>
+    private static bool Repairs(StructureRules rules, int state) => rules.Size != StructureSize.Fob || state == StructureState.ShieldVulnerable;
+
+    /// <summary>When a reinforcement ends. A FOB's is 3 hours with 1 hour of variance (2 to 4 hours); any other structure's is its owner's hour.</summary>
+    private static long ArmorReinforceEnd(StructureRules rules, StructureSnapshot n, long now, double roll) =>
+        rules.Size == StructureSize.Fob
+            ? now + rules.ArmorReinforceMs - rules.ExitJitterMs + (long)(2 * rules.ExitJitterMs * Math.Clamp(roll, 0, 0.999999))
+            : ExitTime(now + rules.ArmorReinforceMs, n.FightWeekday, n.FightHour, rules.ExitJitterMs, roll);
 
     private static long RepairTime(int state) => state == StructureState.HullVulnerable ? StructureTimes.HullRepairMs : StructureTimes.RepairMs;
 

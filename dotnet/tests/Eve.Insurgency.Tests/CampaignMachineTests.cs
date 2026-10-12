@@ -115,4 +115,20 @@ public sealed class CampaignMachineTests
         Assert.False(after.Accepted);
         Assert.Equal(0, after.Campaign.AntipiratePointsScored);
     }
+
+    [Fact]
+    public void The_empire_side_at_its_count_keeps_the_campaign_active_until_the_fob_is_destroyed()
+    {
+        var campaign = CampaignMachine.Advance(NewCampaign(antipirateRequired: 1), T0 + 48 * Hour).Campaign;
+        var exposed = CampaignMachine.Score(campaign, Side.Antipirate, T0 + 49 * Hour);
+        Assert.True(exposed.Accepted);
+        Assert.Empty(exposed.Transitions);
+        Assert.Equal(CampaignStates.Active, exposed.Campaign.State);
+        Assert.Equal(1, exposed.Campaign.AntipiratePointsScored);
+
+        var won = CampaignMachine.FobDestroyed(exposed.Campaign, T0 + 50 * Hour);
+        Assert.Equal(CampaignStates.AntipirateWin, won.Campaign.State);
+        Assert.Equal([new CampaignTransition(CampaignStates.Active, CampaignStates.AntipirateWin, T0 + 50 * Hour)], won.Transitions);
+        Assert.False(CampaignMachine.FobDestroyed(won.Campaign, T0 + 51 * Hour).Accepted);
+    }
 }

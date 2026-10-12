@@ -76,8 +76,9 @@ public static class CampaignMachine
     }
 
     /// <summary>
-    /// A system scores a point for a side at <paramref name="nowMs"/>. Refused (no change) unless the campaign is active. The side that reaches its
-    /// required count wins at once; the win starts the wind-down.
+    /// A system scores a point for a side at <paramref name="nowMs"/>. Refused (no change) unless the campaign is active. The pirates' side that reaches its
+    /// required count wins at once; the win starts the wind-down. The empire side that reaches its count exposes the FOB (the campaign stays active):
+    /// the win is <see cref="FobDestroyed"/>.
     /// </summary>
     public static MachineStep Score(Campaign campaign, Side side, long nowMs)
     {
@@ -88,10 +89,12 @@ public static class CampaignMachine
             : campaign with { AntipiratePointsScored = campaign.AntipiratePointsScored + 1 };
         if (side == Side.Pirate && c.PiratePointsScored >= c.PiratePointsRequired)
             return Won(c, CampaignStates.PirateWin, nowMs);
-        if (side == Side.Antipirate && c.AntipiratePointsScored >= c.AntipiratePointsRequired)
-            return Won(c, CampaignStates.AntipirateWin, nowMs);
         return new MachineStep(c, [], true);
     }
+
+    /// <summary>The FOB of an active campaign is destroyed: the empire side wins (the wiki: destroying the FOB ends the insurgency in an Empire win).</summary>
+    public static MachineStep FobDestroyed(Campaign campaign, long nowMs) =>
+        campaign.State == CampaignStates.Active ? Won(campaign, CampaignStates.AntipirateWin, nowMs) : new MachineStep(campaign, [], false);
 
     private static MachineStep Won(Campaign c, int winState, long nowMs)
     {

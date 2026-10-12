@@ -23,9 +23,15 @@ public sealed record MiningNumbers(double YieldM3, double WasteVolumeMultiplier,
 /// </summary>
 public sealed record OreMinedEvent(
     long CharacterId, int CorporationId, int SolarSystemId, long ShipId, int ShipTypeId, long MinerId, int MinerTypeId, MiningSource Source,
-    int OreTypeId, string YieldKind, long Quantity, long QuantityWasted, long QuantityCritical)
+    int OreTypeId, string YieldKind, long Quantity, long QuantityWasted, long QuantityCritical,
+    long MoonExtractionId = 0, long MoonStructureId = 0, long MoonId = 0, long MoonOwnerCorporationId = 0)
 {
     public const string Topic = "mining.ore_mined";
+}
+
+public sealed record MoonMiningObserverEvent(long MinedAtMs, OreMinedEvent Ore)
+{
+    public const string Topic = "mining.moon_observer";
 }
 
 /// <summary>What one volatility roll of a mining crystal did: whether it hit, whether the crystal broke (and was removed), and its damage after the roll.</summary>
@@ -294,7 +300,8 @@ private sealed record ShipHoldRule(
     /// </summary>
     public async Task<DroneMiningCommit> MineAsteroidAsync(
         long characterId, long shipId, int solarSystemId, long minerId, long asteroidId, MiningSource kind, MiningNumbers numbers, MiningRolls rolls,
-        long cycleId, PgWorkCycleLedger ledger, PgSpaceItemStore spaceItems, IFactBus events, int corporationId, CancellationToken cancellationToken = default)
+        long cycleId, PgWorkCycleLedger ledger, PgSpaceItemStore spaceItems, IFactBus events, int corporationId, CancellationToken cancellationToken = default,
+        long? nowUnixMs = null)
     {
         static bool IsRoll(double value) => value >= 0d && value <= 1d;
         if (!double.IsFinite(numbers.YieldM3) || numbers.YieldM3 <= 0 || !double.IsFinite(numbers.WasteVolumeMultiplier)
@@ -328,6 +335,10 @@ private sealed record ShipHoldRule(
         {
             return new(false, "NO_TARGET", 0, 0, false, null);
         }
+        var moonField = await spaceItems.GetAsync(connection, transaction, asteroidId, cancellationToken);
+        if (moonField is { MoonExtractionId: > 0 }
+            && moonField.ExpiresAtMs <= (nowUnixMs ?? DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()))
+            return new(false, "NO_TARGET", 0, 0, false, null);
         await statics.EnsureTypesAsync([asteroid.TypeId], cancellationToken);
         var type = statics.Type(asteroid.TypeId);
         // a gas cloud yields its compressed gas, and its units are that gas's (MiningTargets)
@@ -377,9 +388,16 @@ private sealed record ShipHoldRule(
         if (mined.TransferredQuantity > 0 || mined.WastedQuantity > 0)
         {
             var yieldKind = gas ? "gas" : statics.GroupName(type.GroupId).Equals("Ice", StringComparison.OrdinalIgnoreCase) ? "ice" : "ore";
+            if (moonField is { MoonExtractionId: > 0 }
+                && (moonField.MoonStructureId <= 0 || moonField.MoonId <= 0 || moonField.MoonOwnerCorporationId <= 0))
+            {
+                throw new InvalidDataException($"moon asteroid {asteroidId} has incomplete observer metadata");
+            }
             await events.PublishInTransactionAsync(connection, transaction, OreMinedEvent.Topic, new OreMinedEvent(
                 characterId, corporationId, solarSystemId, shipId, snapshot.Ship.TypeId, minerId, kind == MiningSource.Module ? miner.TypeId : 0, kind,
-                yieldTypeId, yieldKind, mined.TransferredQuantity, mined.WastedQuantity, mined.CriticalQuantity), $"char:{characterId}", cancellationToken);
+                yieldTypeId, yieldKind, mined.TransferredQuantity, mined.WastedQuantity, mined.CriticalQuantity,
+                moonField?.MoonExtractionId ?? 0, moonField?.MoonStructureId ?? 0, moonField?.MoonId ?? 0, moonField?.MoonOwnerCorporationId ?? 0),
+                $"char:{characterId}", cancellationToken);
         }
         await transaction.CommitAsync(cancellationToken);
         events.Wake();

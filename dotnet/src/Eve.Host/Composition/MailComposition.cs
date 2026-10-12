@@ -199,10 +199,20 @@ internal sealed partial class CharacterServicesComposition
             ResolveMailSendRecipientsAsync,
             now,
             (characterId, args) => characterSessions.Of(characterId)?.SendNotification("OnNotificationReceived", "clientID", args));
+        SubscribeMoonOwnerNotifications();
         if (allianceMaintenanceBillWorker is { } maintenanceWorker)
         {
             maintenanceWorker.BillNotificationWriter = mailSendWriter.WriteAllianceMaintenanceBillNotificationAsync;
             await maintenanceWorker.ReconcileAsync();
         }
+    }
+
+    private void SubscribeMoonOwnerNotifications()
+    {
+        var mailbox = new Eve.Host.Persistence.Mail.PersistenceTransactionMailbox(
+            source, mailStore, mailCache, mailStoreOwner, mailSendWriter.MutationGate, now,
+            (characterId, args) => characterSessions.Of(characterId)?.SendNotification("OnNotificationReceived", "clientID", args));
+        new Eve.Host.Persistence.Structures.MoonOwnerNotifications(
+            source, structureStore, moonExtractionStore, characters, mailbox).Subscribe(foundations.Events);
     }
 }

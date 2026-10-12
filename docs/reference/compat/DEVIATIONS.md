@@ -3509,6 +3509,14 @@ Owner decisions (X9, X10). The courier rules below are eve.rs's project rules, n
 - **Courier exclusions.** A trade mission is never a courier: its objective record is excluded from the cargo at acceptance, the docked delivery, the courier expiry and the quit take-back.
 - **Name-based level tags.** Not done here; another agent's job, which edits only the tag file.
 
+## Mission execution X14: the storyline offer counter (2026-10-12)
+
+- **The rule (wiki).** EVE University, Storyline missions: one storyline mission for every 16 completed missions of the same level and faction (any corporation); Faction Warfare missions do not count; the offer comes from the nearest storyline agent of that faction.
+- **Built.** The counter table `storyline_counters` (migration 0005: per character, faction and level, the completed and the offered counts), `StorylineCounters` (increment in a transaction, read, mark offered) and the due-offers rule `StorylineCounters.PendingOffers` (completions in whole intervals of 16, less the offers made). Tests: `The_storyline_offers_due_are_the_whole_intervals_less_the_offers_made` and `Sixteen_completions_of_one_faction_and_level_are_one_pending_storyline_offer_until_it_is_made`.
+- **Not wired.** The completion does not yet increment the counter, the offer picker does not yet offer a storyline mission, and the nearest storyline agent is not chosen. The wiki gives no jump range for the nearest agent, so none is applied when it is wired. Until then no storyline mission is offered and the counter stays empty.
+- **Mining quota.** Not made an actual quota: the ore quota is still granted in full at the dungeon's completion (X13b shortcut); the mining code is not reused.
+
+
 
 
 ### Wormhole space: final status (2026-10-12)

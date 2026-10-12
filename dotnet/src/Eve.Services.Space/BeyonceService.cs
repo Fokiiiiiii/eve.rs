@@ -148,10 +148,10 @@ public Func<long, long, CancellationToken, Task<int>>? SkillLevelOfCharacter { g
     private static PyValue Formations()
     {
         static PyValue Point(int x, int y, int z) => Py.Tuple(new PyInt(x), new PyInt(y), new PyInt(z));
-        return new PyList([
-            Py.Tuple(new PyStr("Diamond"), new PyList([Point(100, 0, 0), Point(0, 100, 0), Point(-100, 0, 0), Point(0, -100, 0)])),
-            Py.Tuple(new PyStr("Arrow"), new PyList([Point(100, 0, -50), Point(50, 0, 0), Point(-100, 0, -50), Point(-50, 0, 0)])),
-        ]);
+        return Py.Tuple(
+            Py.Tuple(new PyStr("Diamond"), Py.Tuple(Point(100, 0, 0), Point(0, 100, 0), Point(-100, 0, 0), Point(0, -100, 0))),
+            Py.Tuple(new PyStr("Arrow"), Py.Tuple(Point(100, 0, -50), Point(50, 0, 0), Point(-100, 0, -50), Point(-50, 0, 0)))
+        );
     }
 
     /// <summary><c>UpdateStateRequest()</c>: the client wants the state of every ball again.</summary>

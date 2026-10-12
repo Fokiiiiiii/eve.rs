@@ -152,7 +152,8 @@ public sealed class MissionDungeonRuntime(
     Func<long, MissionAgentPlace?> agentPlaceOf,
     Func<DateTimeOffset> now,
     Func<long, long, MissionAgentPlace, long?, Station?>? courierDestination = null,
-    Func<long, bool>? isTrade = null)
+    Func<long, bool>? isTrade = null,
+    Func<long, bool>? isMining = null)
 {
     /// <summary>The ISK type ID (EVE item type 29 "ISK" in the SDE reward records).</summary>
     public const long IskTypeId = 29;
@@ -270,7 +271,8 @@ public sealed class MissionDungeonRuntime(
             if (FetchOf(record.Content.MissionId) is { } fetch)
             {
                 // a fetch step: the dungeon yields the objective items into the hangar of the agent's station. Only the turn-in completes the step
-                if (agentPlaceOf(record.AgentId)?.BaseStationId is { } station)
+                // a basic mining step: the ore is not granted by the site; the pilot hands in the ore it holds (the turn-in consumes it)
+                if (isMining?.Invoke(record.Content.MissionId) != true && agentPlaceOf(record.AgentId)?.BaseStationId is { } station)
                 {
                     await host.GrantObjectiveItemAsync(owner, (int)fetch.TypeId, fetch.Quantity, station, cancellationToken);
                 }

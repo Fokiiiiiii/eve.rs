@@ -4,6 +4,9 @@ impl Scene {
     /// A drone sent at a target: flies to it, and when it is in range fires its weapon each cycle; a target that is gone leaves it idle.
     pub(super) fn fight(&mut self, session: SessionId, target: i64, now: i64) -> Vec<Out> {
         let Some(target_session) = self.session_of(target) else {
+            if self.struck_structure(target) {
+                return self.fight_structure(session, target, now);
+            }
             if let Some(ai) = self.drones.get_mut(&session) {
                 ai.task = Task::Idle;
             }
@@ -72,6 +75,39 @@ impl Scene {
                 ai.task = Task::Idle;
             }
             out.extend(self.go_home(session, IDLE, now));
+        }
+        out
+    }
+
+    /// A drone's engagement with a structure of the system: the structure does not move, so the drone fights it where it is while it is in its engagement
+    /// range (a structure beyond it is out of reach: the drone waits; shortcut: no flight to a structure). Its shots are the drone's own, through `fire_turret`
+    /// (a structure's layers take them); no remote effect applies to a structure.
+    pub(super) fn fight_structure(&mut self, session: SessionId, target: i64, now: i64) -> Vec<Out> {
+        let (Some(attacker), Some(structure), Some(engagement)) = (
+            self.kinematics_of(session),
+            self.target_kinematics(target),
+            self.drones.get(&session).map(|ai| ai.engagement_range),
+        ) else {
+            return Vec::new();
+        };
+        let apart = crate::weapons::surface_distance(&attacker, &structure);
+        let mut out = Vec::new();
+        if apart > engagement + 1.0 {
+            return out;
+        }
+        if self.activity_of(session) != COMBAT {
+            self.set_activity(session, COMBAT);
+            out.extend(self.told_state(session));
+        }
+        let next_shot = self.drones.get(&session).map_or(i64::MAX, |ai| ai.next_shot);
+        if now >= next_shot
+            && let Some(effect) = self.drone_effect(session, target)
+        {
+            if let Some(ai) = self.drones.get_mut(&session) {
+                ai.next_shot =
+                    now + (effect.duration_ms * crate::scene::TICKS_PER_SECOND as f64 / 1000.0) as i64;
+            }
+            out.extend(self.fire_turret(session, &effect, now));
         }
         out
     }

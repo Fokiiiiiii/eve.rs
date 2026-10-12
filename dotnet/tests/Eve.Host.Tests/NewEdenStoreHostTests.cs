@@ -133,6 +133,21 @@ public sealed class NewEdenStoreHostTests : IAsyncLifetime
     }
 
     [PgFact]
+    public async Task The_host_registers_the_reference_standings_and_trade_aliases()
+    {
+        var host = await HostComposition.BuildAsync(Settings());
+        var standings = Assert.IsAssignableFrom<IService>(host.Registry.Lookup("standingMgr"));
+        var trade = Assert.IsAssignableFrom<IService>(host.Registry.Lookup("trademgr"));
+        Assert.Same(standings, host.Registry.Lookup("standing2"));
+        Assert.Same(trade, host.Registry.Lookup("tradeMgr"));
+        Assert.True(standings.HasMethod("GetNPCNPCStandings"));
+        Assert.True(trade.HasMethod("InitiateTrade"));
+        var advertised = new HostMachoNetInfo(host.Registry, () => GlobalConfig.Build(new ClusterOptions())).Services();
+        Assert.Contains(advertised, entry => entry.Key == "standing2" && entry.Value is null);
+        Assert.Contains(advertised, entry => entry.Key == "tradeMgr" && entry.Value == "station");
+    }
+
+    [PgFact]
     public async Task A_plex_pack_from_the_fast_checkout_is_credited_to_the_vault_and_its_ok_answer_is_the_client_s_confirmation()
     {
         var url = Environment.GetEnvironmentVariable("EVE_PG_URL")!;
@@ -209,12 +224,12 @@ public sealed class NewEdenStoreHostTests : IAsyncLifetime
         var entries = GlobalConfig.Build(new ClusterOptions()).Entries
             .ToDictionary(entry => JsSemantics.StringValue(entry.Key) ?? "", entry => entry.Value);
 
-        Assert.Equal(new PyInt(1), entries["fake_fast_checkout_enabled"]);
+        Assert.Equal(new PyStr("1"), entries["fake_fast_checkout_enabled"]);
         Assert.Equal(new PyStr("OK"), entries["fake_fast_checkout_response"]);
-        Assert.Equal(new PyInt(1), entries["fake_vgs_enabled"]);
-        Assert.Equal(new PyInt(0), entries["fake_china_funnel_enabled"]);
+        Assert.Equal(new PyStr("1"), entries["fake_vgs_enabled"]);
+        Assert.Equal(new PyStr("0"), entries["fake_china_funnel_enabled"]);
         Assert.Equal(new PyStr(""), entries["fake_buy_plex_offer_url"]);
-        Assert.Equal(new PyInt(1), entries["use_shell_execute_to_buy_plex_offer"]);
+        Assert.Equal(new PyStr("1"), entries["use_shell_execute_to_buy_plex_offer"]);
         Assert.Equal(new PyStr("[[100,\"USD\",5],[200,\"USD\",10],[500,\"USD\",25],[1000,\"USD\",45],[1500,\"USD\",65],[3000,\"USD\",125],[6000,\"USD\",240],[12000,\"USD\",420],[20000,\"USD\",650]]"),
             entries["fake_fast_checkout_plex_offers"]);
     }

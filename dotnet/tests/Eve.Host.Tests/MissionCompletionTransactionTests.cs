@@ -38,6 +38,7 @@ public class MissionCompletionTransactionTests
         public NpgsqlDataSource Source { get; }
         public AgentMissionStore Store { get; }
         public PgItemStore Items { get; set; } = default!;
+        public Eve.Agents.StorylineCounters Counters { get; set; } = default!;
 
         /// <summary>Puts items of the type into the pilot's hangar (a station of the agent).</summary>
         public async Task GrantAsync(int typeId, long quantity, string? customInfo = null)
@@ -66,7 +67,7 @@ public class MissionCompletionTransactionTests
             // a relation store registers its jobs on its scheduler, so the store on the missing schema has a scheduler and a bus of its own
             var otherScheduler = new DurableScheduler(source, () => Start.ToUnixTimeMilliseconds(), new SchedulerOptions { Concurrency = 1 }, "mo_" + id);
             var otherBus = new EventBus(source, otherScheduler, null, "mob_" + id);
-            var fixture = new Fixture(source, schemas, scheduler, bus, otherScheduler, otherBus, "mis_" + id) { Items = new PgItemStore(source, schemas[4]) };
+            var fixture = new Fixture(source, schemas, scheduler, bus, otherScheduler, otherBus, "mis_" + id) { Items = new PgItemStore(source, schemas[4]), Counters = new Eve.Agents.StorylineCounters(source, schemas[3]) };
             await fixture.Store.OfferAsync(Pilot, Agent, Kill, Start, "offer:x6");
             await fixture.Store.AcceptAsync(Pilot, Agent, Start, "accept:x6");
             return fixture;
@@ -140,6 +141,19 @@ public class MissionCompletionTransactionTests
 
         Assert.Equal(1, results.Count(done => done));
         Assert.Empty(await fixture.Items.OwnedByAsync(Pilot));
+    }
+
+    [PgFact]
+    public async Task A_counted_completion_adds_one_to_its_faction_and_level_and_an_uncounted_one_adds_nothing()
+    {
+        await using var fixture = await Fixture.CreateAsync();
+
+        var done = await CharacterServicesComposition.CompleteInTransactionAsync(fixture.Source, fixture.Store, fixture.Relations, fixture.Items,
+            Pilot, Agent, Start + TimeSpan.FromHours(1), "complete:x15", Gains, [], CancellationToken.None, fixture.Counters, (500003L, 4L));
+
+        Assert.True(done);
+        Assert.Equal((1L, 0L), await fixture.Counters.ReadAsync(Pilot, 500003L, 4L));
+        Assert.Equal((0L, 0L), await fixture.Counters.ReadAsync(Pilot, 500003L, 3L));
     }
 
     [PgFact]

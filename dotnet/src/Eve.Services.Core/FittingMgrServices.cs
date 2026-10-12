@@ -38,8 +38,10 @@ public sealed class FittingMgrCalls(PgSavedFittingStore store, IFittingHost host
         var fittings = await store.ListAsync(scope, owner, call.Cancellation);
         var answer = new PyDict([.. fittings.Select(f => new KeyValuePair<PyValue, PyValue>(new PyLong(f.FittingId), FittingKeyVal(f)))]);
         // a corporation's list is cached by the client for 15 minutes; the changes invalidate it (Notify), as the reference does
-        return scope == FittingOwnerScope.Corporation ? ObjectCaching.MethodResult(answer, nowUnixMs(), "15 minutes") : answer;
+        return scope == FittingOwnerScope.Corporation ? CacheFittings(answer) : answer;
     }
+
+    internal PyValue CacheFittings(PyValue fittings) => ObjectCaching.MethodResult(fittings, nowUnixMs(), "15 minutes");
 
     public async ValueTask<PyValue> SaveFitting(ServiceCall call, FittingOwnerScope scope)
     {
@@ -352,8 +354,9 @@ public sealed partial class CorpFittingMgrService(FittingMgrCalls calls, ReadCom
         call.Cancellation.ThrowIfCancellationRequested();
         var fittings = readCommunityFittings is { } read
             ? await read(call.Session, call.Cancellation).ConfigureAwait(false)
-            : [];
-        return new PyList([.. fittings]);
+            : new Dictionary<long, PyValue>();
+        return calls.CacheFittings(new PyDict([.. fittings.Select(fitting =>
+            new KeyValuePair<PyValue, PyValue>(new PyLong(fitting.Key), fitting.Value))]));
     }
 }
 

@@ -337,6 +337,33 @@ public class ShipEventTests
     }
 
     [PgFact]
+    public async Task Fitting_bootstrap_never_sends_sublocation_quantity_for_normal_item_ids()
+    {
+        var (rig, character, session, _, _) = await ReadyAsync();
+        await using var owned = rig;
+        session.Set("shipid", new PyLong(character.ShipId));
+        var sync = new CharacterDogmaSync(rig.Statics, rig.Ships, () => Rig.ClockMs);
+        await sync.OnCharacterEnteredAsync(session, character.CharacterId, CancellationToken.None);
+        await sync.OnInventoryRpcAsync(session, "List", true, false, CancellationToken.None);
+        Assert.Empty(Events.Of(session, clear: false));
+        session.RunAfterResponse();
+        var events = Events.Of(session);
+        var attributes = Assert.Single(events, e => e.Name == "OnModuleAttributeChanges");
+        var changes = Assert.IsType<PyList>(attributes.Args[0]).Items.Cast<PyTuple>().ToArray();
+        Assert.NotEmpty(changes);
+        Assert.All(changes, change =>
+        {
+            Assert.IsType<PyLong>(change.Items[2]);
+            Assert.NotEqual(805L, Events.Number(change.Items[3]));
+        });
+        Assert.Contains(changes, change => Events.Number(change.Items[2]) == character.ShipId);
+        Assert.Contains(changes, change => Events.Number(change.Items[2]) != character.ShipId);
+        await sync.OnInventoryRpcAsync(session, "List", true, false, CancellationToken.None);
+        session.RunAfterResponse();
+        Assert.Empty(Events.Of(session));
+    }
+
+    [PgFact]
     public async Task Asking_for_only_the_ship_sends_the_character_events_too_but_asking_for_nothing_sends_none()
     {
         var (rig, _, session, oid, _) = await ReadyAsync();

@@ -22,6 +22,11 @@ public sealed class WarRegistryTests
         await using var rig = await WarRig.CreateAsync();
         var war = await rig.DeclareAsync(Declarer, Defender, mutual: true);
         var service = rig.Service();
+        Assert.True(service.HasMethod("MachoResolveObject"));
+        Assert.Equal(new PyInt(Eve.Macho.MachoMessage.ProxyNodeId), await service.CallAsync(new ServiceCall
+        {
+            Method = "MachoResolveObject", Args = [Py.Tuple(new PyInt(Declarer), new PyInt(1))], Session = Session(Declarer),
+        }));
 
         var wars = Assert.IsType<PyDict>(await service.CallAsync(new ServiceCall { Method = "GetWars", Args = [], Session = Session(Declarer) }));
         var entry = Assert.Single(wars.Entries);

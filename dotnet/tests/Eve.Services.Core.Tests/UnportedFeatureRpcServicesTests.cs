@@ -82,7 +82,8 @@ public sealed class UnportedFeatureRpcServicesTests
             Assert.Empty(rowset.List);
         });
 
-        Assert.Empty(Assert.IsType<PyList>(await ((IService)new CorpFittingMgrService(NoFittings)).CallAsync(Call("GetCommunityFittings"))).Items);
+        var community = Assert.IsType<PyObject>(await ((IService)new CorpFittingMgrService(NoFittings)).CallAsync(Call("GetCommunityFittings")));
+        Assert.Empty(Assert.IsType<PyDict>(Assert.IsType<PySubStream>(Assert.IsType<PyTuple>(community.Args).Items[1]).Decoded).Entries);
         var agency = (IService)new CustomAgencyProviderService();
         Assert.Empty(Assert.IsType<PyList>(await agency.CallAsync(Call("get_content_data"))).Items);
         Assert.Same(PyNone.Instance, await agency.CallAsync(Call("warp_to_content", args: [new PyInt(42)])));
@@ -161,9 +162,17 @@ public sealed class UnportedFeatureRpcServicesTests
         var corp = new CorpFittingMgrService(NoFittings, (actualSession, _) =>
         {
             fittingSession = actualSession;
-            return ValueTask.FromResult<IReadOnlyList<PyValue>>([new PyStr("community fitting")]);
+            return ValueTask.FromResult<IReadOnlyDictionary<long, PyValue>>(new Dictionary<long, PyValue>
+            {
+                [17] = Py.KeyVal(("fittingID", new PyLong(17)), ("name", new PyStr("community fitting")))
+            });
         });
-        Assert.Equal("community fitting", Assert.IsType<PyStr>(Assert.Single(Assert.IsType<PyList>(await ((IService)corp).CallAsync(Call("GetCommunityFittings", session))).Items)).Value);
+        var community = Assert.IsType<PyObject>(await ((IService)corp).CallAsync(Call("GetCommunityFittings", session)));
+        Assert.Equal(ObjectCaching.ResultClass, JsSemantics.StringValue(community.Name));
+        var communityFits = Assert.IsType<PyDict>(Assert.IsType<PySubStream>(Assert.IsType<PyTuple>(community.Args).Items[1]).Decoded);
+        var fitting = Assert.Single(communityFits.Entries);
+        Assert.Equal(new PyLong(17), fitting.Key);
+        Assert.Equal("community fitting", Assert.IsType<PyStr>(Field(Assert.IsType<PyDict>(Assert.IsType<PyObject>(fitting.Value).Args), "name")).Value);
         Assert.Same(session, fittingSession);
 
         var content = Assert.IsType<PyList>(await byName["custom_agency_provider"].CallAsync(Call("get_content_data", session, new PyInt(7))));

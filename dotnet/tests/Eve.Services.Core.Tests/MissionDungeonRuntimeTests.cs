@@ -441,6 +441,69 @@ public class MissionDungeonRuntimeTests
         Assert.Equal(AgentMissionState.Quit, (await store.ReadAsync(Pilot, Agent))!.State);
     }
 
+    // A storyline trade (3 Strange Datacores, paid 100000 ISK) and a basic mining step (ore loot of a dungeon, level 4).
+    private const string StorylineTrade = """
+        {"_key": 9501, "name": {"en": "Trade Step"}, "nameID": 1245, "hasStandingRewards": false,
+         "courierMission": {"objectiveTypeID": 30755, "objectiveQuantity": 3, "objectiveSingleton": 0},
+         "missionRewards": {"reward": {"rewardTypeID": 29, "rewardQuantity": 100000}}}
+        """;
+
+    private const string BasicMining = """
+        {"_key": 9511, "name": {"en": "Mining Step"}, "nameID": 1246, "hasStandingRewards": false,
+         "killMission": {"dungeonID": 2457, "objectiveTypeID": 30755, "objectiveQuantity": 18000}}
+        """;
+
+    private const string MiningLevel4 = """
+        {"schema": "eve.rs.mission-level-tags.v1", "tags": [{"missionID": 9511, "level": 4, "provenance": "client", "confidence": "high"}]}
+        """;
+
+    [AgentsPgFact]
+    public async Task A_storyline_trade_is_a_fetch_at_its_agent_with_no_cargo_no_delivery_and_no_courier_expiry()
+    {
+        var source = NpgsqlDataSource.Create(PgConnection.ForTest(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
+        var schema = "mdr_" + Guid.NewGuid().ToString("N")[..12];
+        await using var cleanup = new Cleanup(source, schema);
+        await AgentMissionStore.MigrateAsync(source, schema);
+        var store = new AgentMissionStore(source, schema);
+        var host = new FakeHost { Store = store };
+        var catalog = MissionStaticCatalog.FromRows(3405148, [new SdeRow(9501, JsonDocument.Parse(StorylineTrade).RootElement.Clone())], []);
+        var runtime = new MissionDungeonRuntime(store, catalog, host, _ => new MissionAgentPlace(System, Corporation, AgentStation), () => Start,
+            isTrade: id => id == 9501);
+        await store.OfferAsync(Pilot, Agent, new AgentMissionContent(9501, 1245, "Trade Step", "", false), Start, "offer:t1");
+        await store.AcceptAsync(Pilot, Agent, Start, "accept:t1");
+
+        // no cargo at the acceptance, no delivery at a station, and no courier expiry
+        await runtime.OnAcceptedAsync(Pilot, Agent);
+        Assert.Empty(host.Cargo);
+        Assert.Equal(0, await runtime.ExpireCouriersAsync(Start + TimeSpan.FromDays(30)));
+        await runtime.OnDockedAsync(Pilot, DestinationStation);
+        Assert.Equal(AgentMissionState.Accepted, (await store.ReadAsync(Pilot, Agent))!.State);
+
+        // the turn-in at the agent: a short holding changes nothing; the held quantity is consumed and the step pays
+        host.Held[Datacore] = 2;
+        await runtime.OnConversationAsync(Pilot, Agent, together: true);
+        Assert.Equal(AgentMissionState.Accepted, (await store.ReadAsync(Pilot, Agent))!.State);
+        Assert.Empty(host.Consumed);
+        host.Held[Datacore] = 3;
+        await runtime.OnConversationAsync(Pilot, Agent, together: true);
+        Assert.Equal(AgentMissionState.Completed, (await store.ReadAsync(Pilot, Agent))!.State);
+        Assert.Equal((Pilot, Datacore, 3L), Assert.Single(host.Consumed));
+        Assert.Equal(100000L, Assert.Single(host.Credits).Amount);
+    }
+
+    [Fact]
+    public void A_basic_mining_agent_offers_the_lowest_mining_mission_of_its_level_that_the_dungeon_can_start()
+    {
+        var catalog = MissionStaticCatalog.FromRows(3405148, [new SdeRow(9511, JsonDocument.Parse(BasicMining).RootElement.Clone())], [],
+            levels: MissionLevelTags.FromJson(MiningLevel4, "test"));
+        var none = new Dictionary<long, DateTimeOffset>();
+
+        Assert.Equal<long?>(9511L, BasicKillOffers.PickMining(catalog, BasicAgent("mining"), none, Start, _ => true, id => id == 9511));
+        Assert.Null(BasicKillOffers.PickMining(catalog, BasicAgent("mining"), none, Start, _ => false, id => id == 9511));
+        Assert.Null(BasicKillOffers.PickMining(catalog, BasicAgent("mining"), none, Start, _ => true, id => id != 9511));
+        Assert.Null(BasicKillOffers.PickMining(catalog, BasicAgent("courier"), none, Start, _ => true, id => id == 9511));
+    }
+
     [Fact]
     public void The_courier_destination_is_a_station_in_the_level_jump_range_reached_by_stargates_and_is_seeded()
     {

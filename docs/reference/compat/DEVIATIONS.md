@@ -3325,6 +3325,8 @@ Completable in a walk without seeded steps: arcs 128, 52, 55 and 56. Not complet
 The four completable arcs are held back by the owner's rule on generic sites (decision 2); turning them on is an owner decision, not made
 here. Arc 29 stays off until its courier steps can be delivered and walked without seeding. Status: decided.
 
+**Update (2026-10-13), live walks after the merge of the module audit.** Every arc of the table walked end to end on the eve_p3 lane with `EVE_MISSION_INCLUDE_GENERIC_ARCS=1` and `EVE_LIVE_SLOW=1`, without seeded steps: 29 (52 of 52), 40 (21 path steps, after the courier expiry fix below), 48, 52, 53, 55, 56, 64 (Pilot Certification Course) and 128. The walks fire the QA Smartbomb at the red safety: the pilot's crimewatch safety is set to none by the fixture (`dbseed.set_safety`), because the client asks a smartbomb in low, high and safe space for that level. Defect found in this run: the build's `expirationTime` is 0 for 73 courier missions, and the expiry sweep read a present 0 as zero minutes, so arc 40's courier failed seven seconds after its acceptance and the cargo was taken back. A 0 now means no time limit, and the default of three days applies (`MissionDungeonRuntime.ExpireCouriersAsync`, a regression test in `MissionDungeonRuntimeTests`).
+
 ## Mission execution X13: courier jump range, arc walks to completion, the arcs on by default (2026-10-12)
 
 Owner decisions (coordinator, this slice). (1) An epic arc courier step takes the level of its arc step's agent (SDE agent data) for the

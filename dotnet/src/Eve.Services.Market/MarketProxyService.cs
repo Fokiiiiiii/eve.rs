@@ -368,8 +368,7 @@ private const int PlexTypeId = 44992;
             RefuseRepeatedPlacement(call,request);
             var receipt=await trading.PlaceAsync(request,Key(call,"buy"),call.Cancellation);
             RecordPlacement(call,request);
-            if (receipt.OrderId is null && receipt.FilledQuantity==0)
-                throw MachoErrors.ThrowUserError("CustomInfo",("info",new PyStr("No matching sell orders were available at the requested price.")));
+            // an immediate buy (duration 0) that matches nothing rests nothing and charges nothing; the client has no error for it
             await Publish(receipt);
             return PyNone.Instance;
         }
@@ -461,16 +460,14 @@ private const int PlexTypeId = 44992;
         return Py.List();
     }
 
-    /// <summary>A PLEX sell line (EVE.js proxy 7009): the personal market only, and the PLEX type only. Answers whether it traded or rests.</summary>
+    /// <summary>A PLEX sell line (the client's SellPlex): the PLEX type only; it sells personally or for the corporation like any other item. Answers whether it traded or rests.</summary>
     [Method("PlacePlexSellOrder")]
     public async ValueTask<PyValue> PlacePlexSellOrder(ServiceCall call)
     {
-        if (JsSemantics.Truthy(call.Arg(1)))
-            throw MachoErrors.ThrowUserError("CustomInfo", ("info", new PyStr("PLEX sell orders are placed on the personal market only.")));
         var entry = call.Arg(0);
         if (Integer(Field(entry, "typeID")) != PlexTypeId)
             throw MachoErrors.ThrowUserError("CustomInfo", ("info", new PyStr("PLEX sell orders must use a PLEX inventory item.")));
-        var traded = await SellEntry(call, entry, false, (int)Integer(call.Arg(2)), call.Arg(3), Key(call, "plex-sell:0"));
+        var traded = await SellEntry(call, entry, JsSemantics.Truthy(call.Arg(1)), (int)Integer(call.Arg(2)), call.Arg(3), Key(call, "plex-sell:0"));
         return traded ? PyBool.True : PyBool.False;
     }
 

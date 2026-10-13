@@ -100,6 +100,118 @@ public sealed class HomeStationHostTests
         Assert.Equal(3, Notifications(sink).Count);
     }
 
+    [PgFact]
+    public async Task Registered_skin_activation_sends_two_scalar_args_only_after_commit_and_none_on_failure()
+    {
+        // Reuse the isolated Host composition, packet capture and wire decoder below.
+        await using var rig = await HomeStationPgRig.CreateAsync();
+        var character = await rig.CreateCharacterAsync();
+        var otherCharacter = await rig.CreateCharacterAsync();
+        var sink = new RecordingPacketSink();
+        var otherSink = new RecordingPacketSink();
+        var session = new ClientSession(sink) { CharacterId = character.Id, SessionId = character.Id };
+        var otherSession = new ClientSession(otherSink) { CharacterId = otherCharacter.Id, SessionId = otherCharacter.Id };
+        var sessions = Assert.IsType<CharacterSessions>(rig.Runtime.CharacterSessions);
+        sessions.Enter(character.Id, session);
+        sessions.Enter(otherCharacter.Id, otherSession);
+        var service = Assert.IsType<ShipCosmeticsMgrRpcService>(rig.Registry.Lookup("shipCosmeticsMgr"));
+        var sde = new Eve.Sde.SdeReader(rig.Source);
+        var catalog = await ShipCosmeticsCatalog.LoadAsync(sde);
+        var license = catalog.LicenseTypes.Values.First(entry => catalog.Skins.ContainsKey(entry.SkinId));
+        var items = new Eve.Inventory.PgItemStore(rig.Source, rig.InventorySchema);
+        long itemId, foreignItemId;
+        await using (var connection = await rig.Source.OpenConnectionAsync())
+        await using (var transaction = await connection.BeginTransactionAsync())
+        {
+            itemId = await items.CreateAsync(connection, transaction,
+                new Eve.Inventory.NewItem(license.LicenseTypeId, character.Id, rig.LocalOfficeStation.Id, 4, 2));
+            foreignItemId = await items.CreateAsync(connection, transaction,
+                new Eve.Inventory.NewItem(license.LicenseTypeId, otherCharacter.Id, rig.LocalOfficeStation.Id, 4, 2));
+            await transaction.CommitAsync();
+        }
+
+        Assert.IsType<PyNone>(await CallAsync(service, "ActivateSkinLicense", session, PyBool.False));
+        foreach (var invalidId in new[] { long.MaxValue, foreignItemId })
+            await Assert.ThrowsAsync<MachoWrappedException>(() => CallAsync(service,
+                "ActivateSkinLicense", session, new PyList([new PyLong(invalidId)])));
+        Assert.Empty(Notifications(sink));
+        Assert.Empty(Notifications(otherSink));
+
+        foreach (var cancel in new[] { true, false })
+        {
+            // Hold the real item row, so activation cannot commit or consume it yet.
+            await using var connection = await rig.Source.OpenConnectionAsync();
+            await using var transaction = await connection.BeginTransactionAsync();
+            Assert.NotNull(await items.LockAndGetAsync(connection, transaction, itemId));
+            using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+            var activation = service.CallAsync(new ServiceCall
+            {
+                Method = "ActivateSkinLicense", Session = session,
+                Args = [new PyList([new PyLong(itemId)])], Cancellation = cancellation.Token,
+            }).AsTask();
+            try
+            {
+                var waiting = false;
+                var deadline = DateTime.UtcNow.AddSeconds(10);
+                while (!waiting && !activation.IsCompleted && DateTime.UtcNow < deadline)
+                {
+                    await using var command = rig.Source.CreateCommand(
+                        "SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE wait_event_type='Lock' " +
+                        "AND query LIKE $1 AND pid <> pg_backend_pid())");
+                    command.Parameters.AddWithValue($"%FROM {rig.InventorySchema}.items%FOR UPDATE%");
+                    waiting = (bool)(await command.ExecuteScalarAsync())!;
+                    if (!waiting) await Task.Delay(10);
+                }
+                Assert.True(waiting, "Activation must reach the blocked item lock before notification assertions.");
+                Assert.False(activation.IsCompleted);
+                Assert.Empty(Notifications(sink));
+                Assert.Empty(Notifications(otherSink));
+                Assert.Equal(2L, (await items.GetAsync(itemId))!.Quantity);
+
+                if (cancel)
+                {
+                    cancellation.Cancel();
+                    await Assert.ThrowsAnyAsync<OperationCanceledException>(async () => await activation);
+                    Assert.Empty(Notifications(sink));
+                    Assert.Empty(Notifications(otherSink));
+                    Assert.Equal(2L, (await items.GetAsync(itemId))!.Quantity);
+                }
+                else
+                {
+                    await transaction.CommitAsync();
+                    Assert.IsType<PyNone>(await activation);
+                }
+            }
+            finally
+            {
+                cancellation.Cancel();
+                // Drain a failed assertion's pending call before disposing the Host fixture.
+                try { await activation; } catch (OperationCanceledException) { }
+            }
+        }
+
+        Assert.Equal(1L, (await items.GetAsync(itemId))!.Quantity);
+        var foreignItem = await items.GetAsync(foreignItemId);
+        Assert.Equal(otherCharacter.Id, foreignItem!.OwnerId);
+        Assert.Equal(2L, foreignItem.Quantity);
+        Assert.Collection(Notifications(sink),
+            notification => Assert.Equal("OnItemChange", notification.Name),
+            notification =>
+            {
+                Assert.Equal("OnSkinLicenseActivated", notification.Name);
+                Assert.Collection(notification.Args,
+                    value => Assert.Equal(new PyInt(license.SkinId), Assert.IsType<PyInt>(value)),
+                    value => Assert.Equal(new PyInt(character.Id), Assert.IsType<PyInt>(value)));
+            });
+        Assert.Empty(Notifications(otherSink));
+        // Retrying the already active license must not consume the remaining item or emit a packet.
+        await Assert.ThrowsAsync<MachoWrappedException>(() => CallAsync(service,
+            "ActivateSkinLicense", session, new PyList([new PyLong(itemId)])));
+        Assert.Equal(1L, (await items.GetAsync(itemId))!.Quantity);
+        Assert.Equal(2, Notifications(sink).Count);
+        Assert.Empty(Notifications(otherSink));
+    }
+
     private static async Task<PyValue> CallAsync(IService service, string method, ClientSession session, params PyValue[] args) =>
         await service.CallAsync(new ServiceCall { Method = method, Args = args, Session = session });
 
@@ -147,6 +259,7 @@ public sealed class HomeStationHostTests
         private static readonly string[] SchemaVariables =
         [
             "EVE_IDENTITY_SCHEMA",
+            "EVE_GLOBAL_CONFIG_SCHEMA",
             "EVE_CHARACTERS_SCHEMA",
             "EVE_INVENTORY_SCHEMA",
             "EVE_SKILLS_SCHEMA",
@@ -177,7 +290,7 @@ public sealed class HomeStationHostTests
         private HomeStationPgRig(
             NpgsqlDataSource source,
             IReadOnlyDictionary<string, string> schemas,
-            ServiceRegistry registry,
+            HostRuntime runtime,
             Func<Task> shutdown,
             Station initialHomeStation,
             Station localOfficeStation,
@@ -186,8 +299,9 @@ public sealed class HomeStationHostTests
             _source = source;
             _schemasToDrop = schemas.Values.ToArray();
             _shutdown = shutdown;
-            Registry = registry;
+            Runtime = runtime;
             Characters = new PgCharacterStore(source, schemas["EVE_CHARACTERS_SCHEMA"]);
+            InventorySchema = schemas["EVE_INVENTORY_SCHEMA"];
             CorporationSchema = schemas["EVE_CORPORATIONS_SCHEMA"];
             StructureSchema = schemas["EVE_STRUCTURES_SCHEMA"];
             InitialHomeStation = initialHomeStation;
@@ -195,7 +309,10 @@ public sealed class HomeStationHostTests
             RemoteOfficeStation = remoteOfficeStation;
         }
 
-        public ServiceRegistry Registry { get; }
+        public HostRuntime Runtime { get; }
+        public ServiceRegistry Registry => Runtime.Registry;
+        public NpgsqlDataSource Source => _source;
+        public string InventorySchema { get; }
         public PgCharacterStore Characters { get; }
         public string CorporationSchema { get; }
         public string StructureSchema { get; }
@@ -230,7 +347,7 @@ public sealed class HomeStationHostTests
                 shutdown = host.ShutdownAsync;
                 var stations = await ReadStationsAsync(new Eve.Sde.SdeReader(source));
                 return new HomeStationPgRig(
-                    source, schemas, host.Registry, shutdown,
+                    source, schemas, host, shutdown,
                     stations.InitialHome, stations.LocalOffice, stations.RemoteOffice);
             }
             catch

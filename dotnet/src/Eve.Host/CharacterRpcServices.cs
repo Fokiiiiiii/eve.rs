@@ -135,8 +135,8 @@ public sealed class PaperDollServerRpcService : IService
         var dollExists = call.Args.Count <= 3 || BooleanOrDefault(call.Arg(3), true);
         var hasDoll = !dollExists || call.Arg(1) is not PyNone;
         var hasPortrait = !dollExists || call.Arg(2) is not PyNone;
-        var doll = dollExists && call.Arg(1) is not PyNone ? MarshalCodec.Encode(NormalizePaperDollPayload(call.Arg(1))) : null;
-        var portrait = dollExists && call.Arg(2) is not PyNone ? MarshalCodec.Encode(call.Arg(2)) : null;
+        var doll = call.Arg(1) is not PyNone ? MarshalCodec.Encode(NormalizePaperDollPayload(call.Arg(1))) : null;
+        var portrait = call.Arg(2) is not PyNone ? MarshalCodec.Encode(call.Arg(2)) : null;
         if (hasDoll || hasPortrait)
             await _characters.SetAppearanceAsync(id, doll, hasDoll, portrait, hasPortrait, call.Cancellation);
         return PyNone.Instance;

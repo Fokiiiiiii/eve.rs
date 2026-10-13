@@ -54,7 +54,7 @@ internal sealed partial class CharacterServicesComposition
                   {
                       if (characterSessions.Of(characterId) is { } session)
                           session.SendNotification("OnSkinLicenseActivated", "clientID",
-                              new PyList([new PyInt(skinId), new PyInt(characterId)]));
+                              new PyInt(skinId), new PyInt(characterId));
                   },
                   inventoryItemConsumed: async (characterId, before, remainingQuantity, ct) =>
                   {

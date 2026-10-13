@@ -29,6 +29,12 @@ public sealed class CompatibilityRpcServiceTests
         return dict.Entries.Single(pair => JsSemantics.StringValue(pair.Key) == name).Value;
     }
 
+    private sealed class PaperDollPacketSink : IPacketSink
+    {
+        public List<PyValue> Packets { get; } = [];
+        public void Send(PyValue packet) => Packets.Add(packet);
+    }
+
     private static ServiceCall Call(string method, ClientSession? session = null, params PyValue[] args) => new()
     {
         Method = method,
@@ -276,6 +282,103 @@ public sealed class CompatibilityRpcServiceTests
             await command.ExecuteNonQueryAsync();
             await using var inventoryCommand = new NpgsqlCommand($"DROP SCHEMA IF EXISTS {inventorySchema} CASCADE", connection);
             await inventoryCommand.ExecuteNonQueryAsync();
+        }
+    }
+
+    [Theory]
+    [InlineData("UpdateExistingCharacterFull", true)]
+    [InlineData("UpdateExistingCharacterFull", false)]
+    [InlineData("UpdateExistingCharacterLimited", true)]
+    [InlineData("UpdateExistingCharacterLimited", false)]
+    public async Task Paper_doll_save_preserves_new_payload_and_existing_owner_and_update_guards(string method, bool dollExists)
+    {
+        var pgUrl = Environment.GetEnvironmentVariable("EVE_PG_URL");
+        Assert.False(string.IsNullOrWhiteSpace(pgUrl));
+        await using var source = NpgsqlDataSource.Create(PgConnection.ForTest(pgUrl!));
+        var schema = "rpc_doll_save_" + Guid.NewGuid().ToString("N");
+        try
+        {
+            await PgCharacterStore.MigrateAsync(source, schema);
+            var characters = new PgCharacterStore(source, schema);
+            async Task<long> InsertAsync(int accountId, string name)
+            {
+                await using var connection = await source.OpenConnectionAsync();
+                await using var transaction = await connection.BeginTransactionAsync();
+                var id = await characters.InsertAsync(connection, transaction, new NewCharacter(
+                    accountId, name, 1, 1, 1, 10, 35, 1373, 1_000_006, 500_001,
+                    60_000_610, 30_002_775, 20_000_406, 10_000_033, null, null));
+                await transaction.CommitAsync();
+                return id;
+            }
+
+            var activeId = await InsertAsync(20, "Paper Doll Active");
+            var targetId = await InsertAsync(20, "Paper Doll Target");
+            var foreignId = await InsertAsync(21, "Paper Doll Foreign");
+            var session = Session(activeId);
+            session.Set("userid", new PyInt(20));
+            var notifications = new PaperDollPacketSink();
+            session.Sink = notifications;
+            var service = new PaperDollServerRpcService(characters);
+            var doll = Py.KeyVal(("sculpts", Py.List()));
+            var portrait = Py.KeyVal(("cameraX", new PyReal(2.5)), ("backgroundID", new PyInt(4)));
+            var expectedDoll = MarshalCodec.Encode(doll);
+            var expectedPortrait = MarshalCodec.Encode(portrait);
+
+            Assert.IsType<PyNone>(await service.CallAsync(Call(method, session,
+                new PyInt(targetId), doll, portrait, PyValue.Of(dollExists))));
+            var reloaded = new PgCharacterStore(source, schema);
+            var saved = await reloaded.AppearanceAsync(targetId);
+            Assert.Equal(expectedDoll, saved.Doll);
+            Assert.Equal(expectedPortrait, saved.Portrait);
+
+            Assert.IsType<PyNone>(await service.CallAsync(Call(method, session,
+                new PyInt(foreignId), doll, portrait, PyBool.False)));
+            var foreign = await reloaded.AppearanceAsync(foreignId);
+            Assert.Null(foreign.Doll);
+            Assert.Null(foreign.Portrait);
+            const long missingId = long.MaxValue;
+            Assert.Null(await reloaded.GetAsync(missingId));
+            Assert.IsType<PyNone>(await service.CallAsync(Call(method, session,
+                new PyInt(missingId), doll, portrait, PyBool.False)));
+
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(async () =>
+                await service.CallAsync(new ServiceCall
+                {
+                    Method = method, Session = session,
+                    Args = [new PyInt(targetId), PyNone.Instance, PyNone.Instance, PyBool.False],
+                    Cancellation = new CancellationToken(canceled: true),
+                }));
+            saved = await reloaded.AppearanceAsync(targetId);
+            Assert.Equal(expectedDoll, saved.Doll);
+            Assert.Equal(expectedPortrait, saved.Portrait);
+
+            Assert.IsType<PyNone>(await service.CallAsync(Call(method, session,
+                new PyInt(targetId), PyNone.Instance, PyNone.Instance, PyBool.True)));
+            saved = await reloaded.AppearanceAsync(targetId);
+            Assert.Equal(expectedDoll, saved.Doll);
+            Assert.Equal(expectedPortrait, saved.Portrait);
+
+            Assert.IsType<PyNone>(await service.CallAsync(Call(method, session,
+                new PyInt(targetId), PyNone.Instance, PyNone.Instance, PyBool.False)));
+            saved = await reloaded.AppearanceAsync(targetId);
+            Assert.Null(saved.Doll);
+            Assert.Null(saved.Portrait);
+
+            Assert.IsType<PyNone>(await service.CallAsync(Call(method, session,
+                new PyInt(targetId), doll, PyNone.Instance, PyBool.False)));
+            saved = await reloaded.AppearanceAsync(targetId);
+            Assert.Equal(expectedDoll, saved.Doll);
+            Assert.Null(saved.Portrait);
+            var active = await reloaded.AppearanceAsync(activeId);
+            Assert.Null(active.Doll);
+            Assert.Null(active.Portrait);
+            Assert.Empty(notifications.Packets);
+        }
+        finally
+        {
+            await using var connection = await source.OpenConnectionAsync();
+            await using var command = new NpgsqlCommand($"DROP SCHEMA IF EXISTS \"{schema}\" CASCADE", connection);
+            await command.ExecuteNonQueryAsync();
         }
     }
 

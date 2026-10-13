@@ -48,7 +48,6 @@ public sealed class AgentMissionService(
     AgentDialogueSources? dialogue = null) : IService, IBoundObjectReleaseHandler
 {
     /// <summary>Methods a bound agent answers: the dialogue (A4). The mission journal is read through the other methods.</summary>
-    private static readonly HashSet<string> BoundMethods = ["DoAction"];
 
     private readonly AgentDialogueMachine? _dialogue = dialogue is null ? null : new AgentDialogueMachine(dialogue);
 
@@ -66,6 +65,7 @@ public sealed class AgentMissionService(
     public string Name => "agentMgr";
 
     public bool HasMethod(string method) => method is
+        "MachoResolveObject" or
         "MachoBindObject" or
         "DoAction" or
         "GetMissionBriefingInfo" or
@@ -88,6 +88,7 @@ public sealed class AgentMissionService(
 
     public ValueTask<PyValue> CallAsync(ServiceCall call) => call.Method switch
     {
+        "MachoResolveObject" => ValueTask.FromResult<PyValue>(new PyInt(MachoMessage.ProxyNodeId)),
         "MachoBindObject" => BindAsync(call),
         "DoAction" => DoActionAsync(call),
         "GetMyJournalDetails" => ReadAsync(call),
@@ -183,7 +184,13 @@ public sealed class AgentMissionService(
     private async ValueTask<PyValue> BindAsync(ServiceCall call)
     {
         call.Cancellation.ThrowIfCancellationRequested();
-        var agentId = Positive(call.Args.Count > 0 ? call.Args[0] : null);
+        var parameter = call.Arg(0) switch
+        {
+            PyTuple { Items.Count: > 0 } tuple => tuple.Items[0],
+            PyList { Items.Count: > 0 } list => list.Items[0],
+            var scalar => scalar,
+        };
+        var agentId = Positive(parameter);
         var agents = rpcCallbacks?.ReadAgents is { } readAgents
             ? await readAgents(call.Cancellation)
             : Array.Empty<AgentMissionAgentData>();
@@ -193,7 +200,7 @@ public sealed class AgentMissionService(
         }
 
         var nestedMethod = call.Arg(1) is PyTuple { Items.Count: > 0 } pending ? JsSemantics.StringValue(pending.Items[0]) : null;
-        if (nestedMethod is not null && !BoundMethods.Contains(nestedMethod))
+        if (nestedMethod is not null && (nestedMethod == "MachoBindObject" || !HasMethod(nestedMethod)))
         {
             throw new InvalidOperationException($"agentMgr has no bound method {nestedMethod}");
         }

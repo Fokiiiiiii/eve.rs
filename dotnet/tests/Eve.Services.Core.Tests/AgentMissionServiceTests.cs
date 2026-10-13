@@ -346,6 +346,43 @@ public sealed class AgentMissionServiceTests
     }
 
     [Fact]
+    public async Task Agent_monikers_resolve_to_the_live_node()
+    {
+        var service = CreateAgentRpcService();
+        Assert.True(service.HasMethod("MachoResolveObject"));
+        Assert.Equal(new PyInt(MachoMessage.ProxyNodeId),
+            await service.CallAsync(RpcCall("MachoResolveObject", new ClientSession(), new PyInt(7004))));
+    }
+
+    [Fact]
+    public async Task An_agent_bind_can_make_the_first_briefing_or_objective_call()
+    {
+        var agent = new AgentMissionAgentData(
+            7004, 8, 24, 3, null, 1000036, false, true, 17, false, "", "",
+            18, 1531, 1, 30000165, 416, 4239, 20520);
+        var queried = new List<(long CharacterId, long AgentId)>();
+        var service = CreateAgentRpcService(rpcCallbacks: new AgentMissionRpcCallbacks(
+            ReadAgents: _ => ValueTask.FromResult<IReadOnlyList<AgentMissionAgentData>>([agent]),
+            ReadHeldMission: (character, boundAgent, _) =>
+            {
+                queried.Add((character, boundAgent));
+                return ValueTask.FromResult<HeldMissionView?>(null);
+            }));
+        var session = new ClientSession();
+        session.Set("charid", new PyInt(42));
+        foreach (var method in new[] { "GetMissionBriefingInfo", "GetMissionObjectiveInfo" })
+        foreach (var parameter in new PyValue[] { new PyInt(7004), Py.Tuple(new PyInt(7004)), new PyList([new PyInt(7004)]) })
+        {
+            var answer = Assert.IsType<PyTuple>(await service.CallAsync(RpcCall("MachoBindObject", session,
+                parameter, Py.Tuple(new PyStr(method), Py.Tuple(), PyNone.Instance))));
+            Assert.Equal(PyNone.Instance, answer.Items[1]);
+            var bound = Assert.Single(BoundObjects.Registrations(answer));
+            service.OnBoundObjectReleased(bound.Oid, session);
+        }
+        Assert.Equal(Enumerable.Repeat((42L, 7004L), 6), queried);
+    }
+
+    [Fact]
     public async Task Binding_an_agent_the_catalog_does_not_hold_is_refused_and_a_nested_method_nobody_binds_is_not_answered()
     {
         var agent = new AgentMissionAgentData(

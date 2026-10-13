@@ -65,3 +65,8 @@ ST-5 core control/boarding/deliveries is implemented and verified by PG/Rust reg
 - Commit identity `Fokiiiiiii <229531129+Fokiiiiiii@users.noreply.github.com>`, English messages, no attribution trailers. Push to `main`, no force, no PR.
 - Real-client verification (MITM) is not done for any structure feature. Slim rendering, deployment UI, docking visuals, tether FX, hacking window,
   signature id format and moon FX are only provable with the graphical client.
+
+## ST-8a skill-input preparation (2026-10-13)
+StructureControlReadModel now adds only the four CCP-defined structure-specific skills to its DogmaWorld and copies their mutable item state. Personal skill metadata and total SP remain intact for the existing shipState wire projection. No module activation or Sim wire change is included in this slice.
+
+Evidence: the corrected regression failed on the original shared-item loop; the fixed Host StructureControl subset passed 12 tests (0 failure/skip). Upstream 6119b18d is integrated; post-merge Inventory 63 and Rust simlink fixtures 8 passed. See handoff-ST-8a-skills.md and continuation-20261013.md. Next remains ST-8a ordinary module execution, then ST-8b. EveJS end-to-end and native client acceptance are open.

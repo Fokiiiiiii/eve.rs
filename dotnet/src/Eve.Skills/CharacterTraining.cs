@@ -35,7 +35,7 @@ public sealed record TrainingView(QueueState State, IReadOnlyList<ProjectedEntry
 /// What a change to a character's training did: the skills before it (for what the ship's numbers were), the levels that finished, the skill
 /// whose points were carried when its training stopped or gave way, and the queue as it stands now.
 /// </summary>
-public sealed record TrainingUpdate(long CharacterId, long AccountId, IReadOnlyList<CharacterSkill> SkillsBefore, IReadOnlyList<CharacterSkill> Finished, CharacterSkill? Rebased, bool RebaseChanged, TrainingView View);
+public sealed record TrainingUpdate(long CharacterId, long AccountId, IReadOnlyList<CharacterSkill> SkillsBefore, IReadOnlyList<CharacterSkill> Finished, CharacterSkill? Rebased, bool RebaseChanged, TrainingView View, IReadOnlyList<CharacterSkill>? ChangedSkills = null, long? FreeSkillPoints = null, bool WasRunning = false);
 
 /// <summary>What became of a queue that was offered.</summary>
 public abstract record SaveOutcome;
@@ -192,7 +192,10 @@ public sealed class CharacterTraining(
             [],
             null,
             false,
-            BuildView(characterId, accountId, nextState, updated, Now)));
+            BuildView(characterId, accountId, nextState, updated, Now),
+            ChangedSkills: plan.After,
+            FreeSkillPoints: remaining.Value,
+            WasRunning: state.Running));
         return (plan.Applied, remaining.Value);
     }
 
@@ -270,7 +273,10 @@ public sealed class CharacterTraining(
             [],
             null,
             false,
-            BuildView(characterId, accountId, nextState, updated, Now)));
+            BuildView(characterId, accountId, nextState, updated, Now),
+            ChangedSkills: [updatedSkill],
+            FreeSkillPoints: remaining.Value,
+            WasRunning: state.Running));
         return remaining.Value;
     }
 

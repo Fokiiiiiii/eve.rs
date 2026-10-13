@@ -40,7 +40,7 @@ internal sealed class Rig : IAsyncDisposable
     private readonly string _schema = $"sks_{Guid.NewGuid():N}"[..20];
 
     private Rig(NpgsqlDataSource source, SkillCatalog catalog, TrainingSettings? settings = null,
-            Eve.Scheduler.LocalTimers? localTimers = null, bool scheduleAnnouncer = false, Func<long, bool>? isAlphaClone = null)
+            Eve.Scheduler.LocalTimers? localTimers = null, bool scheduleAnnouncer = false, Func<long, bool>? isAlphaClone = null, Eve.Dogma.DogmaStatic? loadedDogma = null)
     {
         Source = source;
         CatalogForTest = catalog;
@@ -48,7 +48,7 @@ internal sealed class Rig : IAsyncDisposable
         ItemStore = new Eve.Inventory.PgItemStore(source, _schema + "i");
         WalletStore = new Eve.Wallet.PgWalletStore(source, _schema + "w");
         Wallet = new Eve.Wallet.WalletTransactions(source, _schema + "w");
-        Dogma = TestDogma();
+        Dogma = loadedDogma ?? TestDogma();
         Training = new CharacterTraining(source, CatalogForTest, Store, new PgTrainingStore(source, _schema),
             settings ?? new TrainingSettings { Attribute = Store.LearningAttribute }, () => Now);
         Sessions = new CharacterSessions();
@@ -119,14 +119,16 @@ public Eve.Wallet.PgWalletStore WalletStore { get; }
         {
             var source = NpgsqlDataSource.Create(PgConnection.ForTest(Url!));
             var catalog = Catalog;
+            Eve.Dogma.DogmaStatic? loadedDogma = null;
             if (useCurrentSdeCatalog)
             {
                 var sde = new Eve.Sde.SdeReader(source);
                 if (await sde.BuildAsync() is null)
                     throw new InvalidOperationException("The seeded SDE is required for this skills test.");
                 catalog = await SkillCatalog.LoadAsync(sde);
+                loadedDogma = await Eve.Dogma.DogmaStatic.LoadAsync(sde);
             }
-            var rig = new Rig(source, catalog, settings, localTimers, scheduleAnnouncer, isAlphaClone);
+            var rig = new Rig(source, catalog, settings, localTimers, scheduleAnnouncer, isAlphaClone, loadedDogma);
             await PgSkillStore.MigrateAsync(source, rig._schema);
             await Eve.Characters.PgCharacterStore.MigrateAsync(source, rig._schema + "c");
             await Eve.Inventory.PgItemStore.MigrateAsync(source, rig._schema + "i");
@@ -315,7 +317,7 @@ public class SkillHandlerTests
         Assert.Equal(PyBool.True, await Rig.CallAsync(rig.Handler, session, "IsSkillAvailableForPurchase", new PyInt(skill.TypeId)));
         Assert.Equal(Py.Number((double)(skill.BasePrice * 1.3m)), await Rig.CallAsync(rig.Handler, session, "GetDirectPurchasePrice", new PyInt(skill.TypeId)));
 
-        var result = Assert.IsType<PyList>(await Rig.CallAsync(rig.Handler, session, "PurchaseSkills", new PyList([new PyInt(skill.TypeId)])));
+        var result = Assert.IsType<PyTuple>(await Rig.CallAsync(rig.Handler, session, "PurchaseSkills", new PyList([new PyInt(skill.TypeId)])));
         Assert.Equal([new PyInt(skill.TypeId)], result.Items);
         Assert.Contains(await rig.Store.ForCharacterAsync(characterId), trained => trained.TypeId == skill.TypeId && trained.Level == 0);
         var journal = await rig.Wallet.JournalAsync(characterId);
@@ -360,15 +362,57 @@ public class SkillHandlerTests
         await using var rig = await Rig.CreateAsync(useCurrentSdeCatalog: true);
         var characterId = rig.CharacterId;
         var skill = rig.CatalogForTest.Skills.Single(type => type.TypeId == 3300).TypeId;
-        await rig.GrantAsync(characterId, (skill, 5, 4_800_000));
+        await rig.GrantAsync(characterId, (skill, 5, 4_950_000));
         var injectorType = rig.CatalogForTest.ItemTypeId("Small Skill Injector");
         Assert.NotNull(injectorType);
         var injector = await rig.CreateItemAsync(new Eve.Inventory.NewItem(injectorType.Value, characterId, 60_000_001, 4, 2, false));
         var session = Rig.Session(characterId).Session;
 
-        Assert.Equal(new PyInt(900_000), await Rig.CallAsync(rig.Handler, session, "GetDiminishedSpFromInjectors", new PyInt(injectorType.Value), new PyInt(2), new PyInt(0)));
-        Assert.Equal(new PyInt(900_000), await Rig.CallAsync(rig.Handler, session, "InjectSkillpoints", new PyLong(injector), new PyInt(2)));
+        Assert.Equal(new PyInt(180_000), await Rig.CallAsync(rig.Handler, session, "GetDiminishedSpFromInjectors", new PyInt(injectorType.Value), new PyInt(2), new PyInt(0)));
+        Assert.Equal(new PyInt(180_000), await Rig.CallAsync(rig.Handler, session, "InjectSkillpoints", new PyLong(injector), new PyInt(2)));
         Assert.Null(await rig.ItemStore.GetAsync(injector));
+    }
+
+    [PgFact]
+    public async Task Injector_preview_uses_per_item_large_and_small_bands_and_non_diminishing_uses()
+    {
+        await using var rig = await Rig.CreateAsync(useCurrentSdeCatalog: true);
+        var character = rig.CharacterId;
+        var large = rig.CatalogForTest.ItemTypeId("Large Skill Injector")!.Value;
+        var small = rig.CatalogForTest.ItemTypeId("Small Skill Injector")!.Value;
+        Assert.Equal(40520, large);
+        Assert.Equal(45635, small);
+        var session = Rig.Session(character).Session;
+        async Task<PyValue> Preview(int typeId, int quantity = 1, int nonDiminishing = 0) =>
+            await Rig.CallAsync(rig.Handler, session, "GetDiminishedSpFromInjectors",
+                new PyInt(typeId), new PyInt(quantity), new PyInt(nonDiminishing));
+
+        Assert.Equal(new PyInt(500_000), await Preview(large));
+        Assert.Equal(new PyInt(100_000), await Preview(small));
+        await rig.GrantFreeSkillPointsAsync(character, 4_501_000);
+        Assert.Equal(new PyInt(900_000), await Preview(large, 2));
+        await rig.GrantFreeSkillPointsAsync(character, 449_000);
+        Assert.Equal(new PyInt(180_000), await Preview(small, 2));
+        await rig.GrantFreeSkillPointsAsync(character, 50_000);
+        Assert.Equal(new PyInt(400_000), await Preview(large));
+        Assert.Equal(new PyInt(80_000), await Preview(small));
+        Assert.Equal(new PyInt(800_000), await Preview(large, 2));
+        Assert.Equal(new PyInt(160_000), await Preview(small, 2));
+        Assert.Equal(new PyInt(900_000), await Preview(large, 2, 1));
+        Assert.Equal(new PyInt(180_000), await Preview(small, 2, 1));
+        await rig.GrantFreeSkillPointsAsync(character, 44_999_999);
+        Assert.Equal(new PyInt(400_000), await Preview(large));
+        Assert.Equal(new PyInt(80_000), await Preview(small));
+        await rig.GrantFreeSkillPointsAsync(character, 1);
+        Assert.Equal(new PyInt(300_000), await Preview(large));
+        Assert.Equal(new PyInt(60_000), await Preview(small));
+        await rig.GrantFreeSkillPointsAsync(character, 29_999_999);
+        Assert.Equal(new PyInt(300_000), await Preview(large));
+        Assert.Equal(new PyInt(60_000), await Preview(small));
+        // EveJS uses an exclusive 80M upper bound; the current CCP support table puts 80M in the final band.
+        await rig.GrantFreeSkillPointsAsync(character, 1);
+        Assert.Equal(new PyInt(150_000), await Preview(large));
+        Assert.Equal(new PyInt(30_000), await Preview(small));
     }
 
     [PgFact]
@@ -1086,5 +1130,282 @@ public class SkillHandlerTests
         var (session, sink) = Rig.Session(7);
         await rig.Hook.OnCharacterEnteredAsync(session, 7, CancellationToken.None);
         Assert.Empty(sink.Sent);
+    }
+
+    [PgFact]
+    public async Task Free_points_notify_only_committed_changed_skills_and_balance_and_a_retry_is_silent()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var character = rig.CharacterId;
+        await rig.GrantAsync(character, (3301, 1, 250), (3300, 4, 45255));
+        await rig.GrantFreeSkillPointsAsync(character, 2_000);
+        var (session, sink) = Rig.Session(character);
+        rig.Sessions.Enter(character, session);
+        var committed = new List<TrainingUpdate>();
+        rig.Training.Settled += async update =>
+        {
+            if (update.FreeSkillPoints is null) return;
+            Assert.Equal(update.FreeSkillPoints.Value, await rig.Store.FreeSkillPointsAsync(character));
+            Assert.Equal(update.ChangedSkills!.Single(), (await rig.Store.ForCharacterAsync(character)).Single(s => s.TypeId == 3301));
+            committed.Add(update);
+        };
+        var selected = new PyList([Py.Tuple(new PyInt(3301), new PyInt(2)), Py.Tuple(new PyInt(3301), new PyInt(2))]);
+        Assert.Equal(new PyInt(835), await Rig.CallAsync(rig.Handler, session, "ApplyFreeSkillPointsToSkills", selected));
+        var notes = Notes.Of(sink);
+        Assert.Equal(["OnServerSkillsChanged", "OnNewSkillQueueSaved", "OnFreeSkillPointsChanged"], notes.Select(n => n.Name));
+        Assert.Equal(["charid", "charid", "charid"], notes.Select(n => n.IdType));
+        var changes = Assert.IsType<PyDict>(notes[0].Args[0]);
+        Assert.Equal(3301, Notes.Number(Assert.Single(changes.Entries).Key));
+        var entry = Assert.IsType<PyObjectEx>(changes.Entries[0].Value);
+        Assert.Equal(2, Assert.IsType<PyTuple>(entry.Header).Items.Count);
+        Assert.Equal(PyNone.Instance, notes[0].Args[1]);
+        Assert.IsType<PyLong>(notes[0].Args[2]);
+        Assert.Equal(new PyInt(835), Assert.Single(notes[2].Args));
+        Assert.Empty(Assert.Single(committed).Finished);
+        Assert.Equal(new PyInt(835), await Rig.CallAsync(rig.Handler, session, "ApplyFreeSkillPointsToSkills", selected));
+        Assert.Empty(Notes.Of(sink));
+        Assert.Single(committed);
+        Assert.Equal(PyNone.Instance, await Rig.CallAsync(rig.Handler, session, "ApplyFreeSkillPoints", new PyInt(3301), new PyInt(836)));
+        Assert.Empty(Notes.Of(sink));
+        // A partial application changes points even though no level finishes.
+        Assert.Equal(new PyInt(735), await Rig.CallAsync(rig.Handler, session, "ApplyFreeSkillPoints", new PyInt(3301), new PyInt(100)));
+        var partial = Notes.Of(sink);
+        Assert.Equal(["OnServerSkillsChanged", "OnNewSkillQueueSaved", "OnFreeSkillPointsChanged"], partial.Select(n => n.Name));
+        Assert.Equal(1515, (await rig.Store.ForCharacterAsync(character)).Single(s => s.TypeId == 3301).SkillPoints);
+    }
+
+    [PgFact]
+    public async Task Free_points_preserve_running_skill_and_remove_completed_paused_queue_entries()
+    {
+        foreach (var running in new[] { false, true })
+        {
+            await using var rig = await Rig.CreateAsync();
+            var character = rig.CharacterId;
+            await rig.GrantAsync(character, (3301, 1, 250), (3315, 0, 0));
+            await rig.GrantFreeSkillPointsAsync(character, 2_000);
+            var (session, sink) = Rig.Session(character);
+            rig.Sessions.Enter(character, session);
+            await ((IService)rig.Handler).CallAsync(new ServiceCall
+            {
+                Method = "SaveNewQueue", Session = session,
+                Args = [new PyList([Py.Tuple(new PyInt(3301), new PyInt(2)), Py.Tuple(new PyInt(3315), new PyInt(1))])],
+                Kwargs = new PyDict([new(new PyStr("activate"), PyValue.Of(running))])
+            });
+            Notes.Of(sink);
+            await Rig.CallAsync(rig.Handler, session, "ApplyFreeSkillPointsToQueue");
+            var notes = Notes.Of(sink);
+            Assert.Equal(["OnServerSkillsChanged", "OnNewSkillQueueSaved", "OnFreeSkillPointsChanged"], notes.Select(n => n.Name));
+            var changes = Assert.IsType<PyDict>(notes[0].Args[0]);
+            Assert.Equal(running ? new long[] { 3315 } : [3301, 3315], changes.Entries.Select(e => Notes.Number(e.Key)));
+            var view = await rig.Training.ViewAsync(character, session.UserId!.Value);
+            Assert.Equal(running, view.State.Running);
+            Assert.Single(view.Queue);
+            Assert.Equal(running ? 3301 : 3315, view.Queue[0].TypeId);
+            if (running)
+            {
+                Assert.Equal(PyNone.Instance, await Rig.CallAsync(rig.Handler, session, "ApplyFreeSkillPoints", new PyInt(3301), new PyInt(1)));
+                Assert.Empty(Notes.Of(sink));
+                Assert.Equal(250, (await rig.Store.ForCharacterAsync(character)).Single(s => s.TypeId == 3301).SkillPoints);
+            }
+        }
+    }
+
+    [PgFact]
+    public async Task Injector_notifies_committed_inventory_then_free_balance_and_failed_retries_are_silent()
+    {
+        await using var rig = await Rig.CreateAsync(useCurrentSdeCatalog: true);
+        var character = rig.CharacterId;
+        const long initialFreePoints = 123;
+        const long awardPerLargeInjector = 500_000;
+        await rig.GrantFreeSkillPointsAsync(character, initialFreePoints);
+        var typeId = rig.CatalogForTest.ItemTypeId("Large Skill Injector")!.Value;
+        var itemId = await rig.CreateItemAsync(new Eve.Inventory.NewItem(typeId, character, 60_000_001, 4, 2, false));
+        var (session, sink) = Rig.Session(character);
+        rig.Sessions.Enter(character, session);
+        Assert.Equal(new PyInt(awardPerLargeInjector), await Rig.CallAsync(rig.Handler, session, "InjectSkillpoints", new PyLong(itemId), new PyInt(1)));
+        var first = Notes.Of(sink);
+        Assert.Equal(["OnItemChange", "OnFreeSkillPointsChanged"], first.Select(n => n.Name));
+        Assert.Equal(["clientID", "charid"], first.Select(n => n.IdType));
+        Assert.IsType<PyPackedRow>(first[0].Args[0]);
+        var diff = Assert.IsType<PyDict>(first[0].Args[1]);
+        Assert.Equal(new PyInt(9), Assert.Single(diff.Entries).Key);
+        Assert.Equal(2, Notes.Number(diff.Entries[0].Value));
+        Assert.Equal(new PyInt(initialFreePoints + awardPerLargeInjector), Assert.Single(first[1].Args));
+        Assert.Equal(1, (await rig.ItemStore.GetAsync(itemId))!.Quantity);
+        Assert.Equal(initialFreePoints + awardPerLargeInjector, await rig.Store.FreeSkillPointsAsync(character));
+        Assert.Equal(new PyInt(awardPerLargeInjector), await Rig.CallAsync(rig.Handler, session, "InjectSkillpoints", new PyLong(itemId), new PyInt(1)));
+        var removed = Notes.Of(sink);
+        Assert.Equal(["OnItemChange", "OnFreeSkillPointsChanged"], removed.Select(n => n.Name));
+        var removal = Assert.IsType<PyDict>(removed[0].Args[1]);
+        Assert.Equal(new PyInt(3), Assert.Single(removal.Entries).Key);
+        Assert.Equal(60_000_001, Notes.Number(removal.Entries[0].Value));
+        Assert.Null(await rig.ItemStore.GetAsync(itemId));
+        Assert.Equal(new PyInt(initialFreePoints + awardPerLargeInjector * 2), Assert.Single(removed[1].Args));
+        Assert.Equal(initialFreePoints + awardPerLargeInjector * 2, await rig.Store.FreeSkillPointsAsync(character));
+        await Assert.ThrowsAsync<MachoWrappedException>(() => Rig.CallAsync(rig.Handler, session, "InjectSkillpoints", new PyLong(itemId), new PyInt(1)));
+        Assert.Empty(Notes.Of(sink));
+        Assert.Equal(initialFreePoints + awardPerLargeInjector * 2, await rig.Store.FreeSkillPointsAsync(character));
+    }
+
+    [PgFact]
+    public async Task Purchase_returns_a_tuple_notifies_new_skills_and_refusal_or_retry_changes_nothing()
+    {
+        await using var rig = await Rig.CreateAsync(useCurrentSdeCatalog: true);
+        var character = rig.CharacterId;
+        var (session, sink) = Rig.Session(character);
+        rig.Sessions.Enter(character, session);
+        var requested = new PyList([new PyInt(3300)]);
+        Assert.Empty(Assert.IsType<PyTuple>(await Rig.CallAsync(rig.Handler, session, "PurchaseSkills", new PyList([]))).Items);
+        Assert.Empty(Notes.Of(sink));
+        await rig.FundWalletAsync(character, 1m);
+        await Assert.ThrowsAsync<MachoWrappedException>(() => Rig.CallAsync(rig.Handler, session, "PurchaseSkills", requested));
+        Assert.Empty(Notes.Of(sink));
+        Assert.Empty(await rig.Store.ForCharacterAsync(character));
+        Assert.Empty(await rig.Wallet.JournalAsync(character));
+        // Fund a different wallet state without duplicating its opening row.
+        await using (var connection = await rig.Source.OpenConnectionAsync())
+        await using (var transaction = await connection.BeginTransactionAsync())
+        {
+            await rig.Wallet.AdjustAsync(connection, transaction, character, 10_000_000m, 0, 57, "Test funding", rig.Now, "test-funding");
+            await transaction.CommitAsync();
+        }
+        var walletChanges = new List<Eve.Wallet.WalletBalanceChange>();
+        rig.Wallet.BalanceCommitted += walletChanges.Add;
+        var result = Assert.IsType<PyTuple>(await Rig.CallAsync(rig.Handler, session, "PurchaseSkills", requested));
+        Assert.Equal([new PyInt(3300)], result.Items);
+        var notes = Notes.Of(sink);
+        Assert.Equal(["OnServerSkillsChanged", "OnSkillsChanged"], notes.Select(n => n.Name));
+        Assert.Equal(["charid", "clientID"], notes.Select(n => n.IdType));
+        Assert.Equal(3300, Notes.Number(Assert.Single(Assert.IsType<PyDict>(notes[0].Args[0]).Entries).Key));
+        Assert.Equal(3, Assert.IsType<PyTuple>(Assert.IsType<PyObjectEx>(Assert.IsType<PyDict>(notes[0].Args[0]).Entries[0].Value).Header).Items.Count);
+        Assert.Single(walletChanges);
+        Assert.Empty((await rig.Training.ViewAsync(character, session.UserId!.Value)).Queue);
+        await Assert.ThrowsAsync<MachoWrappedException>(() => Rig.CallAsync(rig.Handler, session, "PurchaseSkills", requested));
+        Assert.Empty(Notes.Of(sink));
+        Assert.Single(walletChanges);
+        Assert.Single(await rig.Wallet.JournalAsync(character), j => j.OperationKey.Contains("skill-purchase", StringComparison.Ordinal));
+    }
+
+    [PgFact]
+    public async Task Concurrent_free_point_target_retries_commit_and_announce_once()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var character = rig.CharacterId;
+        await rig.GrantAsync(character, (3301, 1, 250));
+        await rig.GrantFreeSkillPointsAsync(character, 2_000);
+        var (session, sink) = Rig.Session(character);
+        rig.Sessions.Enter(character, session);
+        var targets = new PyList([Py.Tuple(new PyInt(3301), new PyInt(2))]);
+        var results = await Task.WhenAll(
+            Rig.CallAsync(rig.Handler, session, "ApplyFreeSkillPointsToSkills", targets),
+            Rig.CallAsync(rig.Handler, session, "ApplyFreeSkillPointsToSkills", targets));
+        Assert.All(results, result => Assert.Equal(new PyInt(835), result));
+        Assert.Equal(["OnServerSkillsChanged", "OnNewSkillQueueSaved", "OnFreeSkillPointsChanged"], Notes.Of(sink).Select(n => n.Name));
+        Assert.Equal(835, await rig.Store.FreeSkillPointsAsync(character));
+        Assert.Equal(1415, Assert.Single(await rig.Store.ForCharacterAsync(character)).SkillPoints);
+    }
+
+    [PgFact]
+    public async Task Concurrent_injector_consumption_commits_once_and_keeps_the_running_queue()
+    {
+        await using var rig = await Rig.CreateAsync(
+            settings: new TrainingSettings { HasOmega = _ => false },
+            isAlphaClone: _ => true,
+            useCurrentSdeCatalog: true);
+        var character = rig.CharacterId;
+        const int queuedSkillType = 3301;
+        const long awardPerLargeInjector = 500_000;
+        var queuedSkill = rig.CatalogForTest.Get(queuedSkillType)!;
+        var gunnery = rig.CatalogForTest.Get(3300)!;
+        var requirement = Assert.Single(queuedSkill.Needs);
+        Assert.Equal((3300, 1), (requirement.TypeId, requirement.Level));
+        Assert.Equal(5, rig.CatalogForTest.AlphaMaxLevel(1, queuedSkillType));
+        await rig.GrantAsync(character,
+            (gunnery.TypeId, requirement.Level, SkillPoints.ForTraining(gunnery.Rank, requirement.Level)),
+            (queuedSkillType, 1, SkillPoints.ForTraining(queuedSkill.Rank, 1)));
+        var (session, sink) = Rig.Session(character);
+        rig.Sessions.Enter(character, session);
+        Assert.Equal(PyNone.Instance, await Rig.CallAsync(rig.Handler, session, "SaveNewQueue", new PyList([Py.Tuple(new PyInt(queuedSkillType), new PyInt(2))])));
+        Notes.Of(sink);
+        var queue = await rig.Training.ViewAsync(character, 34);
+        Assert.True(queue.State.Running);
+        Assert.NotNull(queue.State.ActiveStart);
+        Assert.Equal((queuedSkillType, 2), (Assert.Single(queue.State.Entries).TypeId, queue.State.Entries[0].ToLevel));
+        Assert.Single(queue.Queue);
+        var item = await rig.CreateItemAsync(new Eve.Inventory.NewItem(
+            rig.CatalogForTest.ItemTypeId("Large Skill Injector")!.Value, character, 60_000_001, 4, 1, false));
+        async Task<bool> TryInject()
+        {
+            try
+            {
+                Assert.Equal(new PyInt(awardPerLargeInjector), await Rig.CallAsync(rig.Handler, session, "InjectSkillpoints", new PyLong(item), new PyInt(1)));
+                return true;
+            }
+            catch (MachoWrappedException) { return false; }
+        }
+        var outcomes = await Task.WhenAll(TryInject(), TryInject());
+        Assert.Single(outcomes, success => success);
+        Assert.Equal(["OnItemChange", "OnFreeSkillPointsChanged"], Notes.Of(sink).Select(n => n.Name));
+        Assert.Equal(awardPerLargeInjector, await rig.Store.FreeSkillPointsAsync(character));
+        Assert.Null(await rig.ItemStore.GetAsync(item));
+        var after = await rig.Training.ViewAsync(character, 34);
+        Assert.Equal(queue.State.Running, after.State.Running);
+        Assert.Equal(queue.State.ActiveStart, after.State.ActiveStart);
+        Assert.Equal(queue.State.Entries.Select(e => (e.TypeId, e.ToLevel)), after.State.Entries.Select(e => (e.TypeId, e.ToLevel)));
+        Assert.Equal(queue.Queue, after.Queue);
+    }
+
+    [PgFact]
+    public async Task Concurrent_purchase_retries_commit_once_and_keep_existing_training()
+    {
+        await using var rig = await Rig.CreateAsync(
+            settings: new TrainingSettings { HasOmega = _ => false },
+            isAlphaClone: _ => true,
+            useCurrentSdeCatalog: true);
+        var character = rig.CharacterId;
+        const int queuedSkillType = 3301;
+        var queuedSkill = rig.CatalogForTest.Get(queuedSkillType)!;
+        var gunnery = rig.CatalogForTest.Get(3300)!;
+        var requirement = Assert.Single(queuedSkill.Needs);
+        Assert.Equal((3300, 1), (requirement.TypeId, requirement.Level));
+        Assert.Equal(5, rig.CatalogForTest.AlphaMaxLevel(1, queuedSkillType));
+        await rig.GrantAsync(character,
+            (gunnery.TypeId, requirement.Level, SkillPoints.ForTraining(gunnery.Rank, requirement.Level)),
+            (queuedSkillType, 1, SkillPoints.ForTraining(queuedSkill.Rank, 1)));
+        const int purchasedType = 3327; // Spaceship Command remains unowned.
+        Assert.True(rig.CatalogForTest.Get(purchasedType) is { Published: true, AvailableForPurchase: true });
+        await rig.FundWalletAsync(character, 10_000_000m);
+        var (session, sink) = Rig.Session(character);
+        rig.Sessions.Enter(character, session);
+        Assert.Equal(PyNone.Instance, await Rig.CallAsync(rig.Handler, session, "SaveNewQueue", new PyList([Py.Tuple(new PyInt(queuedSkillType), new PyInt(2))])));
+        Notes.Of(sink);
+        var queue = await rig.Training.ViewAsync(character, 34);
+        Assert.True(queue.State.Running);
+        Assert.NotNull(queue.State.ActiveStart);
+        Assert.Equal((queuedSkillType, 2), (Assert.Single(queue.State.Entries).TypeId, queue.State.Entries[0].ToLevel));
+        Assert.Single(queue.Queue);
+        var changes = new List<Eve.Wallet.WalletBalanceChange>();
+        rig.Wallet.BalanceCommitted += changes.Add;
+        async Task<bool> TryPurchase()
+        {
+            try
+            {
+                var result = Assert.IsType<PyTuple>(await Rig.CallAsync(rig.Handler, session, "PurchaseSkills", new PyList([new PyInt(purchasedType)])));
+                Assert.Equal([new PyInt(purchasedType)], result.Items);
+                return true;
+            }
+            catch (MachoWrappedException) { return false; }
+        }
+        var outcomes = await Task.WhenAll(TryPurchase(), TryPurchase());
+        Assert.Single(outcomes, success => success);
+        Assert.Equal(["OnServerSkillsChanged", "OnSkillsChanged"], Notes.Of(sink).Select(n => n.Name));
+        Assert.Single(changes);
+        Assert.Single(await rig.Wallet.JournalAsync(character));
+        var after = await rig.Training.ViewAsync(character, 34);
+        Assert.Equal(queue.State.Running, after.State.Running);
+        Assert.Equal(queue.State.ActiveStart, after.State.ActiveStart);
+        Assert.Equal(queue.State.Entries.Select(e => (e.TypeId, e.ToLevel)), after.State.Entries.Select(e => (e.TypeId, e.ToLevel)));
+        Assert.Equal(queue.Queue, after.Queue);
+        Assert.Equal(SkillPoints.ForTraining(queuedSkill.Rank, 1), (await rig.Store.ForCharacterAsync(character)).Single(s => s.TypeId == queuedSkillType).SkillPoints);
     }
 }

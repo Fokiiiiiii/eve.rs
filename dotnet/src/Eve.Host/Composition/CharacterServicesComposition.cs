@@ -74,9 +74,9 @@ internal sealed partial class CharacterServicesComposition
         await PrepareCharacterHelpers();
         await CharMgrReadModel();
         await CrimewatchRuntime();
-        await TrainingSkillsAndCreation();
         await CorporationMigrations();
         await EconomyAndInsurance();
+        await TrainingSkillsAndCreation();
         await TradeAuthorityStore();
         await BookmarkStores();
         NesIntroStoreSetup();

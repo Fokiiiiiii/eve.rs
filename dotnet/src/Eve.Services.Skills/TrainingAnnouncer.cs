@@ -35,9 +35,25 @@ public sealed class TrainingAnnouncer(CharacterTraining training, SkillCatalog c
     {
         Reschedule(update.CharacterId, update.AccountId, update.View);
         if (sessions.Of(update.CharacterId) is not { } session)
+            return;
+
+        if (update.FreeSkillPoints is { } remaining)
         {
+            // This is an SP mutation, not a queue level finishing. The client
+            // scatters its own skill events from OnServerSkillsChanged.
+            var changed = update.ChangedSkills ?? [];
+            if (changed.Count == 0) return;
+            SkillNotifications.ServerSkillsChanged(session,
+                SkillWire.EntryDictionary(update.CharacterId, catalog, changed, metadata: false), null, NowFileTime);
+            SkillNotifications.QueueSaved(session, update.View.Queue);
+            session.SendNotification("OnFreeSkillPointsChanged", "charid", new PyInt(remaining));
+            await SyncDogmaAsync(session, update);
+            if (update.WasRunning && !update.View.State.Running)
+                SkillNotifications.QueuePaused(session);
             return;
         }
+
+        if (update.Finished.Count == 0) return;
         var skills = SkillWire.EntryDictionary(update.CharacterId, catalog, update.Finished);
         SkillNotifications.ServerSkillsChanged(session, skills, null, NowFileTime);
         SkillNotifications.LevelsTrained(session, update.Finished);
@@ -45,9 +61,33 @@ public sealed class TrainingAnnouncer(CharacterTraining training, SkillCatalog c
         await SyncDogmaAsync(session, update);
         SkillNotifications.QueueSaved(session, update.View.Queue);
         if (!update.View.State.Running)
-        {
             SkillNotifications.QueuePaused(session);
-        }
+    }
+
+    /// <summary>New skills, after their transaction committed; they did not train any levels.</summary>
+    public async Task AnnouncePurchasedAsync(ClientSession session, long characterId,
+        IReadOnlyList<CharacterSkill> before, IReadOnlyList<CharacterSkill> granted)
+    {
+        if (granted.Count == 0) return;
+        var changed = SkillWire.EntryDictionary(characterId, catalog, granted);
+        SkillNotifications.ServerSkillsChanged(session, changed, null, NowFileTime);
+        SkillNotifications.SkillsChanged(session, changed);
+        if (dogma is not null)
+            await dogma.SkillsChangedAsync(session, characterId, before);
+    }
+
+    /// <summary>The consumed injector's committed item change precedes the new free-SP balance.</summary>
+    public void AnnounceInjectedPoints(ClientSession session, ItemRow before, ItemRow after, long remaining)
+    {
+        var differences = new List<KeyValuePair<PyValue, PyValue>>();
+        if (after.LocationId != before.LocationId)
+            differences.Add(new(new PyInt(3), InventoryWire.Id(before.LocationId)));
+        if (after.Quantity != before.Quantity)
+            differences.Add(new(new PyInt(9), InventoryWire.Id(before.Quantity)));
+        if (differences.Count == 0) return;
+        session.SendNotification("OnItemChange", "clientID", InventoryWire.PackedRow(after),
+            new PyDict(differences), PyNone.Instance);
+        session.SendNotification("OnFreeSkillPointsChanged", "charid", new PyInt(remaining));
     }
 
     /// <summary>A queue was saved: the skill that gave way (when it changed), the queue, whether it runs, and every client of the account.</summary>

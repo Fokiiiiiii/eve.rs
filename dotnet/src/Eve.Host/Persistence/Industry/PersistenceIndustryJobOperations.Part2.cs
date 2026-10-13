@@ -147,7 +147,7 @@ public sealed partial class PersistenceIndustryJobOperations : Eve.Services.Core
     {
         var job = request.Job;
         var actor = request.Context.Actor;
-        await ValidateActorAsync(actor, job.OwnerId, job.Wallet, job.StationId, cancellationToken);
+        await ValidateActorAsync(actor, job.OwnerId, job.Wallet, job.StationId, job.ActivityId, cancellationToken);
         var facility = await _resolveFacility(
             job.FacilityId, job.StationId, job.SolarSystemId, actor.CharacterId, cancellationToken);
         if (facility is null || !facility.IsOnline || facility.FacilityId != job.FacilityId ||

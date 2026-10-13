@@ -220,6 +220,152 @@ internal sealed partial class CharacterServicesComposition
         _ => 0,
     };
 
+    private const int FactoryServiceId = 14;
+    private const int LaboratoryServiceId = 15;
+
+    /// <summary>An NPC station operation as the SDE gives it: the services that run activities and the job time factors.</summary>
+    private sealed record NpcOperation(double ManufacturingFactor, double ResearchFactor, IReadOnlySet<int> Services);
+
+    private Task<Dictionary<int, NpcOperation>>? npcOperationsCache;
+    private Task<Dictionary<long, decimal>>? npcCorporationTaxesCache;
+
+    /// <summary>The SDE station operations, read once: the activities an NPC station runs and its job time factors.</summary>
+    private Task<Dictionary<int, NpcOperation>> NpcOperationsAsync() =>
+        npcOperationsCache ??= LoadNpcOperationsAsync();
+
+    private async Task<Dictionary<int, NpcOperation>> LoadNpcOperationsAsync()
+    {
+        var rows = await sde.ReadAsync("stationOperations", cancellationToken: CancellationToken.None);
+        var operations = new Dictionary<int, NpcOperation>();
+        foreach (var row in rows)
+        {
+            var services = new HashSet<int>();
+            if (row.Doc.TryGetProperty("services", out var list) && list.ValueKind == JsonValueKind.Array)
+                foreach (var service in list.EnumerateArray())
+                    if (service.ValueKind == JsonValueKind.Number)
+                        services.Add(service.GetInt32());
+            operations[(int)row.Key] = new NpcOperation(SdeFactor(row.Doc, "manufacturingFactor"), SdeFactor(row.Doc, "researchFactor"), services);
+        }
+        return operations;
+    }
+
+    private async Task<NpcOperation?> NpcOperationAsync(int operationId) =>
+        (await NpcOperationsAsync()).TryGetValue(operationId, out var operation) ? operation : null;
+
+    /// <summary>The facility tax of each NPC corporation (npcCorporations.taxRate), read once.</summary>
+    private Task<Dictionary<long, decimal>> NpcCorporationTaxesAsync() =>
+        npcCorporationTaxesCache ??= LoadNpcCorporationTaxesAsync();
+
+    private async Task<Dictionary<long, decimal>> LoadNpcCorporationTaxesAsync()
+    {
+        var rows = await sde.ReadAsync("npcCorporations", cancellationToken: CancellationToken.None);
+        var taxes = new Dictionary<long, decimal>();
+        foreach (var row in rows)
+            if (row.Doc.TryGetProperty("taxRate", out var rate) && rate.ValueKind == JsonValueKind.Number)
+                taxes[row.Key] = Math.Clamp(rate.GetDecimal(), 0m, 1m);
+        return taxes;
+    }
+
+    /// <summary>
+    /// The activities of an NPC station as the client reads them: per activity the time modifiers, then empty material, cost,
+    /// category, group and type lists (no restriction). Manufacturing (1) needs the Factory (14); the science activities (3, 4, 5, 8)
+    /// need the Laboratory (15). A modifier is listed only for a factor other than 1, as EveJS does.
+    /// </summary>
+    static PyValue NpcActivitiesPayload(NpcOperation operation)
+    {
+        var entries = new List<KeyValuePair<PyValue, PyValue>>();
+        void Add(int activityId, double factor)
+        {
+            var modifiers = factor == 1d
+                ? new PyList([])
+                : new PyList([Py.Tuple(Py.Number(factor), PyNone.Instance, PyNone.Instance, PyNone.Instance, new PyInt(5))]);
+            entries.Add(new(new PyInt(activityId), Py.Tuple(modifiers, new PyList([]), new PyList([]), new PyList([]), new PyList([]), new PyList([]))));
+        }
+        if (operation.Services.Contains(14))
+            Add(1, operation.ManufacturingFactor);
+        if (operation.Services.Contains(15))
+            foreach (var activityId in new[] { 3, 4, 5, 8 })
+                Add(activityId, operation.ResearchFactor);
+        return new PyDict(entries);
+    }
+
+    /// <summary>The facility payload of an NPC station (the client's GetFacility shape) with its activities.</summary>
+    async ValueTask<PyValue?> NpcFacilityPayloadAsync(Eve.Universe.Station station, CancellationToken token)
+    {
+        var operation = await NpcOperationAsync(station.OperationId);
+        if (operation is null || !(operation.Services.Contains(14) || operation.Services.Contains(15)))
+            return null;
+        var taxes = await NpcCorporationTaxesAsync();
+        var tax = taxes.TryGetValue(station.OwnerId, out var rate) ? rate : 0m;
+        return Py.KeyVal(
+            ("facilityID", new PyLong(station.Id)),
+            ("typeID", new PyInt(station.TypeId)),
+            ("ownerID", new PyLong(station.OwnerId)),
+            ("tax", Py.Number((double)tax)),
+            ("solarSystemID", new PyInt(station.SolarSystemId)),
+            ("online", PyValue.Of(true)),
+            ("serviceAccess", new PyDict([])),
+            ("sccTaxModifier", Py.Number(1)),
+            ("rigModifiers", new PyDict([])),
+            ("globalModifiers", Py.Dict(("faction", Py.Number(1)), ("system", new PyDict([])))),
+            ("activities", NpcActivitiesPayload(operation)));
+    }
+
+    /// <summary>GetFacilities: the NPC stations that run industry in the caller's region (every region when the session has none).</summary>
+    async ValueTask<PyValue?> NpcFacilitiesAsync(ServiceCall call, CancellationToken token)
+    {
+        var region = FacilityNumber(call.Session.Get("regionid"));
+        var facilities = new List<PyValue>();
+        foreach (var station in stations.All)
+        {
+            if (region > 0 && station.RegionId != region)
+                continue;
+            if (await NpcFacilityPayloadAsync(station, token) is { } payload)
+                facilities.Add(payload);
+        }
+        return new PyList(facilities);
+    }
+
+    /// <summary>GetFacilityTaxes: the corporation tax of an NPC station (a fraction, as the facility payload gives it).</summary>
+    async ValueTask<PyValue?> FacilityTaxesAsync(long facilityId)
+    {
+        var station = stations.Get(facilityId);
+        var rate = station is null ? (decimal?)null
+            : (await NpcCorporationTaxesAsync()).TryGetValue(station.OwnerId, out var value) ? value : 0m;
+        return Py.KeyVal(
+            ("taxCorporation", rate is { } tax ? Py.Number((double)tax) : PyNone.Instance),
+            ("taxAlliance", PyNone.Instance),
+            ("taxStandingsHorrible", PyNone.Instance),
+            ("taxStandingsBad", PyNone.Instance),
+            ("taxStandingsNeutral", PyNone.Instance),
+            ("taxStandingsGood", PyNone.Instance),
+            ("taxStandingsHigh", PyNone.Instance));
+    }
+
+    /// <summary>
+    /// GetFacilityLocations: the station hangar of an NPC station, as the client's industry.Location object (itemID, typeID,
+    /// ownerID, flagID, canView, canTake). Corporation deliveries are not offered yet.
+    /// </summary>
+    PyValue? FacilityLocations(long facilityId, long ownerId)
+    {
+        var station = stations.Get(facilityId);
+        if (station is null)
+            return new PyList([]);
+        var hangar = new PyObjectEx(
+            ObjectExKind.Ex1,
+            new PyStr("util.KeyVal"),
+            [],
+            [
+                new(new PyStr("itemID"), new PyLong(station.Id)),
+                new(new PyStr("typeID"), new PyInt(station.TypeId)),
+                new(new PyStr("ownerID"), new PyLong(ownerId)),
+                new(new PyStr("flagID"), new PyInt(ItemFlags.Hangar)),
+                new(new PyStr("canView"), PyValue.Of(true)),
+                new(new PyStr("canTake"), PyValue.Of(true)),
+            ]);
+        return new PyList([hangar]);
+    }
+
     async ValueTask<PyValue?> FacilityManagerRpcAsync(ServiceCall call, CancellationToken token)
     {
         async ValueTask<PyValue?> ReadFacilityAsync(long facilityId)
@@ -240,7 +386,8 @@ internal sealed partial class CharacterServicesComposition
                 facilityId, 0, systemId, call.Session.CharacterId ?? 0, token);
             if (facility is null) return null;
 
-            var activities = new PyDict([]);
+            var operation = station is null ? null : await NpcOperationAsync(station.OperationId);
+            var activities = operation is null ? new PyDict([]) : NpcActivitiesPayload(operation);
             return Py.KeyVal(
                 ("facilityID", new PyLong(facility.FacilityId)),
                 ("typeID", new PyInt(typeId)),
@@ -255,6 +402,12 @@ internal sealed partial class CharacterServicesComposition
                 ("activities", activities));
         }
 
+        if (call.Method == "GetFacilities")
+            return await NpcFacilitiesAsync(call, token);
+        if (call.Method == "GetFacilityTaxes")
+            return await FacilityTaxesAsync(FacilityNumber(call.Arg(0)));
+        if (call.Method == "GetFacilityLocations")
+            return FacilityLocations(FacilityNumber(call.Arg(0)), FacilityNumber(call.Arg(1)));
         if (call.Method == "GetFacility")
             return await ReadFacilityAsync(FacilityNumber(call.Arg(0)));
         if (call.Method != "GetFacilitiesByID")

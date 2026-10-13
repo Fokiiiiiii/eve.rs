@@ -64,6 +64,9 @@ public sealed partial class PersistenceIndustryJobOperations : Eve.Services.Core
     private const int LowerInventionSkillTypeListId = 799;
     private const long FactoryManagerRole = 1024;
     private const long DirectorRole = 1;
+    // The client's roles for a corporation job (industry/const.py): manufacturing needs the manufacturing role, every other activity the science role.
+    private const long FactoryManufacturingRole = 1L << 50;
+    private const long FactoryScienceRole = 1L << 51;
 
     private readonly Npgsql.NpgsqlDataSource _source;
     private readonly string _schema;
@@ -510,6 +513,7 @@ public sealed partial class PersistenceIndustryJobOperations : Eve.Services.Core
         long ownerId,
         Eve.Services.Core.IndustryJobWallet wallet,
         long stationId,
+        int activityId,
         CancellationToken cancellationToken)
     {
         if (actor.CharacterId <= 0 || ownerId != actor.CharacterId && ownerId != actor.CorporationId ||
@@ -529,7 +533,9 @@ public sealed partial class PersistenceIndustryJobOperations : Eve.Services.Core
         var roles = Eve.Corporations.CorporationRoles.Session(
             corporation, member, stationId > 0 ? stationId : null,
             await _corporations.TitlesAsync(ownerId, cancellationToken)).CorpRole;
-        if ((roles & (FactoryManagerRole | DirectorRole)) == 0)
+        // a director holds every role of the corporation (CorporationRoles.Session), so it passes these checks too
+        var activityRole = activityId == Eve.Services.Core.IndustryRules.Manufacturing ? FactoryManufacturingRole : FactoryScienceRole;
+        if ((roles & FactoryManagerRole) == 0 || (roles & activityRole) == 0)
             throw new Eve.Services.Core.IndustryJobUserErrorException("IndustryInvalidOwner");
         if (wallet.OwnerId == ownerId &&
             (roles & Eve.Corporations.CorporationRoles.WalletTakeRole(wallet.AccountKey)) == 0)

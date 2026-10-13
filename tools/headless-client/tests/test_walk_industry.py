@@ -12,11 +12,13 @@ does not seed; the copy path is not walked (its completion would wait 480 second
 from __future__ import annotations
 
 import os
+import time
 import uuid
 
 import pytest
 
 from evecli.describe import describe
+from evecli.observe import notifications_of
 from tests import dbseed
 from tests import test_login_to_character as base
 from tests.test_health import HEALTH
@@ -112,6 +114,17 @@ def efficiencies(who, blueprint: int) -> tuple[int, int]:
     return number(fields["materialEfficiency"]), number(fields["timeEfficiency"])
 
 
+def wait_for_notification(who, name: str, seconds: float = 3.0) -> bool:
+    """Whether a named notification reaches the session within the time (the event pump delivers within its poll interval)."""
+    deadline = time.monotonic() + seconds
+    while True:
+        if any(event.get("name") == name for event in notifications_of(who)):
+            return True
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(0.2)
+
+
 def test_a_pilot_installs_lists_and_cancels_a_manufacturing_job():
     race = HEALTH["races"][0]
     run = uuid.uuid4().hex[:10]
@@ -124,6 +137,8 @@ def test_a_pilot_installs_lists_and_cancels_a_manufacturing_job():
         job = number(who.call("industryManager", "InstallJob", job_dump(character, blueprint, MANUFACTURING, system)))
         assert job_status(job) == 1
         assert dbseed.items_of(character, MATERIAL) == [], "the 86 units are consumed at install"
+        # the client's job list is kept by OnIndustryJob, which the change subscriber sends to the owner's session
+        assert wait_for_notification(who, "OnIndustryJob"), "no OnIndustryJob after the install"
 
         listed = who.call("industryManager", "GetJobsByOwner", character, False)
         assert job in [number(dict(describe(row)["args"]["$dict"])["jobID"]) for row in listed], listed
@@ -236,3 +251,51 @@ def test_an_invention_uses_the_decryptor_the_client_lists_and_its_skills():
                              f"where owner_id = {int(character)} and type_id = {INVENTION_PRODUCT} and blueprint_copy")
         for row in [line for line in outputs.splitlines() if line]:
             assert row.split("|") == ["2", "4", "14"], row
+
+
+def _entries(described) -> list:
+    """The (key, value) pairs of a described dictionary, util.KeyVal object or Python dictionary."""
+    if not isinstance(described, dict):
+        return []
+    if "$dict" in described:
+        return [tuple(pair) for pair in described["$dict"]]
+    if "$objectex" in described:
+        return [tuple(pair) for pair in described["dict"]]
+    if "$object" in described:
+        return _entries(described["args"])
+    return list(described.items())
+
+
+def _fields(value) -> dict:
+    """The fields of a result, by name (the values stay described)."""
+    return dict(_entries(describe(value)))
+
+
+def test_the_facility_selector_sees_the_station_its_activities_its_hangar_and_its_tax():
+    race = HEALTH["races"][0]
+    run = uuid.uuid4().hex[:10]
+    system = station_system()
+    lab, _, _ = nearest_laboratory(system)
+    with base.connect(f"walk-industry-{run}") as who:
+        character, _, _, _ = arrive(who, race, run)
+
+        facility = _fields(who.call("facilityManager", "GetFacility", STATION))
+        assert number(facility["facilityID"]) == STATION
+        activities = {number(key) for key, _ in _entries(facility["activities"])}
+        # the station has a Factory (14) and no Laboratory (15): manufacturing only, from the SDE operation
+        assert 1 in activities and 3 not in activities, sorted(activities)
+
+        lab_facility = _fields(who.call("facilityManager", "GetFacility", lab))
+        lab_activities = {number(key) for key, _ in _entries(lab_facility["activities"])}
+        assert {3, 4, 5, 8} <= lab_activities
+
+        location = _fields(who.call("facilityManager", "GetFacilityLocations", STATION, character)[0])
+        assert number(location["itemID"]) == STATION and number(location["flagID"]) == dbseed.HANGAR
+        assert number(location["ownerID"]) == character
+
+        taxes = _fields(who.call("facilityManager", "GetFacilityTaxes", STATION, 0))
+        assert "taxCorporation" in taxes
+
+        listed = describe(who.call("facilityManager", "GetFacilities"))
+        ids = [number(dict(_entries(row))["facilityID"]) for row in listed]
+        assert STATION in ids, ids

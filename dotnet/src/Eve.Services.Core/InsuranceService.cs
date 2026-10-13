@@ -368,7 +368,7 @@ private readonly IInsuranceWriteModel? _writeModel;
             throw Eve.Services.MachoErrors.ThrowUserError("InsureShipFailed");
         }
 
-        var replaceValue = call.Arg(3);
+        var replaceValue = call.Kwarg("voidOld") ?? call.Arg(3);
         var replaceExisting = false;
         if (replaceValue is not null && replaceValue is not PyNone &&
             !TryBoolean(replaceValue, out replaceExisting))

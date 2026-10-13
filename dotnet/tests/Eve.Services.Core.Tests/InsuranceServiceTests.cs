@@ -168,6 +168,171 @@ public sealed class InsuranceServiceTests
             Eve.Services.Py.FileTimeFromUnixMs(NowUnixMs + 84L * 24 * 60 * 60 * 1000)), writer.Purchase);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task InsureShip_forwards_voidOld_keyword_with_unchanged_purchase_terms(bool isCorporation)
+    {
+        var writer = new FakeInsuranceWriteModel();
+        IService service = Create(new FakeInsuranceReadModel(), writer);
+        var session = Session(
+            ("charid", new PyInt(100)),
+            ("corpid", new PyInt(200)),
+            ("corprole", new PyLong(256)),
+            ("stationid", new PyInt(300)),
+            ("solarsystemid2", new PyInt(400)));
+        var call = new ServiceCall
+        {
+            Method = "InsureShip",
+            Args = [new PyInt(500), new PyReal(356_011.65), PyValue.Of(isCorporation)],
+            Kwargs = new PyDict([new(new PyStr("voidOld"), PyBool.True)]),
+            Session = session
+        };
+
+        var result = await service.CallAsync(call);
+
+        Assert.Same(PyNone.Instance, result);
+        Assert.Equal(new InsurancePurchaseCommand(
+            new InsuranceActorSnapshot(100, 200, 256, 300, 0, 400),
+            500,
+            35_601_165,
+            isCorporation,
+            true,
+            Eve.Services.Py.FileTimeFromUnixMs(NowUnixMs),
+            Eve.Services.Py.FileTimeFromUnixMs(NowUnixMs + 84L * 24 * 60 * 60 * 1000)), writer.Purchase);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    [InlineData(null)]
+    public async Task InsureShip_voidOld_keyword_takes_precedence_over_positional_flag(bool? replaceExisting)
+    {
+        var writer = new FakeInsuranceWriteModel();
+        IService service = Create(new FakeInsuranceReadModel(), writer);
+        PyValue keyword = replaceExisting is { } flag ? PyValue.Of(flag) : PyNone.Instance;
+        var call = new ServiceCall
+        {
+            Method = "InsureShip",
+            Args = [new PyInt(500), new PyReal(356_011.65), PyBool.False,
+                PyValue.Of(replaceExisting != true)],
+            Kwargs = new PyDict([new(new PyStr("voidOld"), keyword)]),
+            Session = Session(("charid", new PyInt(100)), ("stationid", new PyInt(300)))
+        };
+
+        var result = await service.CallAsync(call);
+
+        Assert.Same(PyNone.Instance, result);
+        Assert.Equal(replaceExisting == true, writer.Purchase!.ReplaceExisting);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task InsureShip_invalid_voidOld_keyword_is_rejected_before_writer(bool useString)
+    {
+        var writer = new FakeInsuranceWriteModel();
+        IService service = Create(new FakeInsuranceReadModel(), writer);
+        PyValue invalid = useString ? new PyStr("true") : new PyInt(2);
+        var call = new ServiceCall
+        {
+            Method = "InsureShip",
+            Args = [new PyInt(500), new PyReal(356_011.65), PyBool.False, PyBool.True],
+            Kwargs = new PyDict([new(new PyStr("voidOld"), invalid)]),
+            Session = Session(("charid", new PyInt(100)), ("stationid", new PyInt(300)))
+        };
+
+        var error = await Assert.ThrowsAsync<MachoWrappedException>(async () => await service.CallAsync(call));
+
+        Assert.Equal("InsureShipFailed", error.Error.UserErrorMessage);
+        Assert.Null(writer.Purchase);
+    }
+
+    [Theory]
+    [InlineData(100, 0, false)]
+    [InlineData(100, 300, true)]
+    [InlineData(0, 300, false)]
+    public async Task InsureShip_voidOld_keyword_does_not_bypass_actor_authority(
+        long characterId, long stationId, bool isCorporation)
+    {
+        var writer = new FakeInsuranceWriteModel();
+        IService service = Create(new FakeInsuranceReadModel(), writer);
+        var call = new ServiceCall
+        {
+            Method = "InsureShip",
+            Args = [new PyInt(500), new PyReal(356_011.65), PyValue.Of(isCorporation)],
+            Kwargs = new PyDict([new(new PyStr("voidOld"), PyBool.True)]),
+            Session = Session(
+                ("charid", new PyInt(characterId)),
+                ("corpid", new PyInt(200)),
+                ("corprole", new PyLong(0)),
+                ("stationid", new PyInt(stationId)))
+        };
+
+        var error = await Assert.ThrowsAsync<MachoWrappedException>(async () => await service.CallAsync(call));
+
+        Assert.Equal("InsureShipFailed", error.Error.UserErrorMessage);
+        Assert.Null(writer.Purchase);
+    }
+
+    [Fact]
+    public async Task InsureShip_recontract_confirmation_preserves_refusal_then_forwards_voidOld()
+    {
+        var writer = new FakeInsuranceWriteModel
+        {
+            PurchaseResult = new InsuranceMutationResult(InsuranceMutationStatus.AlreadyInsured, 100)
+        };
+        IService service = Create(new FakeInsuranceReadModel(), writer);
+        var session = Session(("charid", new PyInt(100)), ("stationid", new PyInt(300)));
+
+        var error = await Assert.ThrowsAsync<MachoWrappedException>(async () => await service.CallAsync(
+            Call(session, "InsureShip", new PyInt(500), new PyReal(356_011.65), PyBool.False)));
+
+        Assert.Equal("InsureShipFailedSingleContract", error.Error.UserErrorMessage);
+        var payload = Assert.IsType<PyObjectEx>(error.Error.Payload);
+        var header = Assert.IsType<PyTuple>(payload.Header);
+        var arguments = Assert.IsType<PyTuple>(header.Items[1]);
+        Assert.Equal(100L, Long(Field(Assert.IsType<PyDict>(arguments.Items[1]), "ownerName")));
+        var original = writer.Purchase!;
+        Assert.False(original.ReplaceExisting);
+        writer.PurchaseResult = new InsuranceMutationResult(InsuranceMutationStatus.Applied);
+
+        var result = await service.CallAsync(new ServiceCall
+        {
+            Method = "InsureShip",
+            Args = [new PyInt(500), new PyReal(356_011.65), PyBool.False],
+            Kwargs = new PyDict([new(new PyStr("voidOld"), PyBool.True)]),
+            Session = session
+        });
+
+        Assert.Same(PyNone.Instance, result);
+        Assert.Equal(new InsurancePurchaseCommand(
+            original.Actor, original.ShipId, original.PremiumCents, original.IsCorporation, true,
+            original.StartDateFileTime, original.EndDateFileTime), writer.Purchase);
+    }
+
+    [Fact]
+    public async Task InsureShip_voidOld_keyword_preserves_writer_rejection()
+    {
+        var writer = new FakeInsuranceWriteModel
+        {
+            PurchaseResult = new InsuranceMutationResult(InsuranceMutationStatus.NotEligible)
+        };
+        IService service = Create(new FakeInsuranceReadModel(), writer);
+        var call = new ServiceCall
+        {
+            Method = "InsureShip",
+            Args = [new PyInt(500), new PyReal(356_011.65), PyBool.False],
+            Kwargs = new PyDict([new(new PyStr("voidOld"), PyBool.True)]),
+            Session = Session(("charid", new PyInt(100)), ("stationid", new PyInt(300)))
+        };
+
+        var error = await Assert.ThrowsAsync<MachoWrappedException>(async () => await service.CallAsync(call));
+
+        Assert.Equal("InsureShipFailed", error.Error.UserErrorMessage);
+        Assert.True(writer.Purchase!.ReplaceExisting);
+    }
+
     [Fact]
     public async Task Corporation_insurance_forwards_corporation_owner_and_role_context()
     {

@@ -67,7 +67,7 @@ internal sealed partial class CharacterServicesComposition
               new Eve.Host.DynamicItemRpcService(items, itemMutations, dogma, itemTypes, ships),
               new Eve.Host.CharacterEnergyMgrRpcService(mailCache, now),
               new Eve.Host.PaperDollServerRpcService(characters),
-              new Eve.Host.PlanetMgrRpcService(mailCache, sde, now),
+              planetMgr,
               new Eve.Host.IndustryMonitorRpcService(mailCache, items, nowUnixMs: now, itemTypes: itemTypes),
               new DogmaIMService(
                 dogma, ships, now,

@@ -29,6 +29,7 @@
     <Project Path="src/Eve.Structures/Eve.Structures.csproj" />
     <Project Path="src/Eve.Insurgency/Eve.Insurgency.csproj" />
     <Project Path="src/Eve.Planets/Eve.Planets.csproj" />
+    <Project Path="src/Eve.Services.Planets/Eve.Services.Planets.csproj" />
     <Project Path="src/Eve.Space/Eve.Space.csproj" />
     <Project Path="src/Eve.Trade/Eve.Trade.csproj" />
     <Project Path="src/Eve.Bookmarks/Eve.Bookmarks.csproj" />

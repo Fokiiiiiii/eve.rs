@@ -24,6 +24,8 @@ public sealed partial class PlanetMgrService
     private const int RefPlanetaryImportTax = 96;
     private const int RefPlanetaryExportTax = 97;
 
+    public double OfficeCapacity => Customs.OfficeCapacity;
+
     public async ValueTask<bool> IsOfficeAsync(long officeId, CancellationToken cancellationToken)
     {
         if (Customs.PlanetOf(officeId) is null) return false;
@@ -65,7 +67,6 @@ public sealed partial class PlanetMgrService
             Console.Error.WriteLine($"eve-host: the customs office of planet {planetId} is not put in space: no simulation");
             return;
         }
-        Console.Error.WriteLine($"eve-host: the customs office of planet {planetId} is put in space in system {body.SolarSystemId}");
         simulation.PlaceStructure(new SimPlaceStructure(Customs.OfficeId(planetId), (int)body.SolarSystemId, "Customs Office", Customs.OfficeTypeId, Customs.OfficeGroupId,
             Customs.OfficePosition(body), Customs.OfficeRadius, CustomsOfficeOwner, 0, 0,
             // no hit points and no resonances of its own (twelve values: four kinds in each of the three layers, all one)
@@ -195,7 +196,30 @@ public sealed partial class PlanetMgrService
     }
 
     /// <summary>Adds a commodity to the pilot's stack in the office hangar (a new stack when there is none).</summary>
-    private async Task AddToOfficeAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long officeId, long owner, int typeId, long quantity, CancellationToken cancellationToken)
+    /// <summary>The move of a pilot's stack from its ship's hold into the office hangar; the stack keeps its owner (importExportUI.MoveFromInventory).</summary>
+    public async ValueTask<long> MoveToOfficeAsync(ClientSession session, long officeId, long itemId, long quantity, CancellationToken cancellationToken)
+    {
+        if (session.CharacterId is not { } owner) return 0;
+        await using var connection = await source.OpenConnectionAsync(cancellationToken);
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        var item = await items.LockAndGetAsync(connection, transaction, itemId, cancellationToken);
+        if (item is null || item.OwnerId != owner || quantity <= 0 || quantity > item.Quantity) return 0;
+        var moved = itemId;
+        if (quantity == item.Quantity)
+        {
+            await items.MoveAsync(connection, transaction, itemId, officeId, HangarFlag, cancellationToken);
+        }
+        else
+        {
+            // a part of the stack: the rest stays where it was, the part is in the office's stack of its type
+            await items.SetQuantityAsync(connection, transaction, itemId, item.Quantity - quantity, cancellationToken);
+            moved = await AddToOfficeAsync(connection, transaction, officeId, owner, item.TypeId, quantity, cancellationToken);
+        }
+        await transaction.CommitAsync(cancellationToken);
+        return moved;
+    }
+
+    private async Task<long> AddToOfficeAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long officeId, long owner, int typeId, long quantity, CancellationToken cancellationToken)
     {
         await using var find = new NpgsqlCommand($"""
             SELECT id, quantity FROM {inventorySchema}.items
@@ -211,10 +235,10 @@ public sealed partial class PlanetMgrService
             var have = reader.GetInt64(1);
             await reader.CloseAsync();
             await items.SetQuantityAsync(connection, transaction, id, have + quantity, cancellationToken);
-            return;
+            return id;
         }
         await reader.CloseAsync();
-        await items.CreateAsync(connection, transaction, new NewItem(typeId, owner, officeId, HangarFlag, quantity), cancellationToken);
+        return await items.CreateAsync(connection, transaction, new NewItem(typeId, owner, officeId, HangarFlag, quantity), cancellationToken);
     }
 
     /// <summary>A fee, charged to the wallet in the transaction (whole cents; refused when the balance would be negative).</summary>

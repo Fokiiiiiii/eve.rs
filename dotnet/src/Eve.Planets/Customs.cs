@@ -14,6 +14,8 @@ public static class Customs
     public const int OfficeTypeId = 2233;
     /// <summary>The group of <see cref="OfficeTypeId"/> (the client's groupPlanetaryCustomsOffices).</summary>
     public const int OfficeGroupId = 1025;
+    /// <summary>The office's hangar room in m3 (SDE types.capacity of type 2233).</summary>
+    public const double OfficeCapacity = 35_000;
     /// <summary>The radius of the office's ball (SDE types.radius of type 2233).</summary>
     public const double OfficeRadius = 8000;
 

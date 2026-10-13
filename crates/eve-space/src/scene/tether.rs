@@ -36,16 +36,6 @@ fn action_blocks_tether(action: &Action) -> bool {
     }
 }
 
-fn action_refuses_tether(action: &Action) -> bool {
-    match action {
-        Action::Smartbomb { .. } | Action::Bomb { .. } => true,
-        Action::Charged { action, fallback, .. } => {
-            action_refuses_tether(action) || fallback.as_deref().is_some_and(action_refuses_tether)
-        }
-        _ => false,
-    }
-}
-
 impl Scene {
     pub(crate) fn set_tether_policy(
         &mut self,
@@ -274,9 +264,6 @@ impl Scene {
             })
     }
 
-    pub(crate) fn tether_refuses_activation(&self, session: SessionId, effect: &Effect, now: i64) -> bool {
-        self.is_tethered_session(session, now) && effect.action.as_ref().is_some_and(action_refuses_tether)
-    }
 
     fn repair_on_tether_engage(&mut self, session: SessionId, now: i64) -> (Vec<Out>, bool) {
         let pilot = self.pilots.get_mut(&session).expect("tether belongs to a pilot");

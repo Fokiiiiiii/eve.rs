@@ -168,9 +168,6 @@ impl Scene {
             return vec![Out::Refused { session, command: CODE, reason: "NOT_IMPLEMENTED" }];
         }
         self.settle_all(now);
-        if self.tether_refuses_activation(session, &effect, now) {
-            return vec![Out::Refused { session, command: CODE, reason: "TETHERED" }];
-        }
         let pilot = &self.pilots[&session];
         if pilot.modules.running.iter().any(|r| r.effect.module_id == effect.module_id)
             || pilot.modules.pending_starts.iter().any(|start| start.effect.module_id == effect.module_id)
@@ -515,9 +512,6 @@ impl Scene {
         }
         // the pilot has given up the undocking protection by flying the ship (the host tells the client)
         let (owner, ship_id) = (pilot.ship.spec.character_id, pilot.ship.spec.ship_id);
-        if self.tether_refuses_activation(session, &effect, now) {
-            return vec![Out::Refused { session, command: CODE, reason: "TETHERED" }];
-        }
         let mut out = if effect.offensive() {
             // Revoke the cached grant until the host supplies its authoritative weapons timer.
             let controller = self.controller_of_drone(session).filter(|id| *id != 0).unwrap_or(session);

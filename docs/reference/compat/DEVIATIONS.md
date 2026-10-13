@@ -3745,3 +3745,22 @@ Every refusal of the module activation path, as the code had it, checked against
 
 Tests: `crates/eve-space`, 797 passed (the audit commits and the follow-ups). dotnet: `SmartbombSafetyHostTests` and `EcmBurstHostTests` (4 passed), `ModuleOrderTests`, `ShipErrorTests`, `DogmaServiceTests` (29 passed). Not run: the live walk (`tools/headless-client/tests/test_fob_insystem_walk.py`); it uses the QA bomb near a gate, its bomb now needs the red safety in high security, and its launcher no longer refuses a far target.
 
+
+## Refusals reviewed against a basis (2026-10-13)
+
+Owner policy: a refusal needs an SDE attribute, a client error key or text or constant, or a wiki basis; EveJS alone is not one. Reviewed in
+the mission, agent, market, trade, LP store, repair, reprocessing, bookmark, blueprint, item-locking, corporation-station and war-registry code.
+
+- **Removed (no basis):** the "No matching sell orders" refusal of an immediate buy (`PlaceBuyOrder`, duration 0): the client's `BuyStuff`
+  defaults to duration 0 and has no key for it, so an immediate buy that matches nothing rests nothing and charges nothing. The PLEX
+  personal-market-only refusal: the client's `SellPlex` forwards the corporation flag like any item. The seven-day offer expiry for every
+  agent: the wiki gives it for COSMOS agents only and no data identifies them, so offers do not expire.
+- **Kept, with the basis:** the four-hour block on a re-offer after a decline (the client's per-agent `GetReplayTimestamp` timer); the
+  four-hour standing window (declining more than one mission in four hours, wiki) has no published amount and is not applied. The market
+  modification delay (`mktModificationDelay = 300`, client constant); the price ticks (`TICK_SIGNIFICANT_FIGURES = 4`); the bookmark folder,
+  subfolder and active-folder caps (client `MAX_*` constants and keys); the bookmark restriction in Zarzakh (wiki); the market skill and order
+  limits (SDE skills, wiki); the partial-repair refusal (the client's `RepairNonPartialConfirmation` dialog); the stack limit of the
+  reprocessing split (the client's 32-bit stack, `CLIENT_INVENTORY_STACK_LIMIT`); the corporation access rules (client keys and roles).
+- **Kept, not a game rule:** messages for services not built on this server ("not available on this server yet", "Direct trading is not
+  available", "Shared bookmark folders are not available"). They are placeholders and say so.
+- **Kept, protective:** the state guards of agent missions, the stale-view and duplicate-placement checks, the custody, escrow and money checks.

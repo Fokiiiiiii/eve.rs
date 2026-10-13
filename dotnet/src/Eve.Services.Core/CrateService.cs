@@ -56,7 +56,7 @@ public sealed class CrateService(ICrateServiceBackend? backend = null) : IServic
     ];
 
     private readonly ConcurrentDictionary<long, PendingLoot> _pendingLoot = new();
-    private readonly ConcurrentDictionary<(long CharacterId, long CrateId), ConcurrentDictionary<int, CrateSkillBundle>> _pendingSkills = new();
+    private readonly ConcurrentDictionary<(long CharacterId, long CrateId), ConcurrentDictionary<int, Queue<CrateSkillBundle>>> _pendingSkills = new();
     private readonly ConcurrentDictionary<(long CharacterId, long CrateId), ConcurrentDictionary<int, int>> _pendingFittings = new();
     private long _nextPendingLocationId = FirstPendingLocationId;
 
@@ -208,19 +208,40 @@ public sealed class CrateService(ICrateServiceBackend? backend = null) : IServic
         var bundleId = (int)Positive(call.Arg(1));
         if (backend is null || characterId == 0 || crateId == 0 || bundleId == 0) return PyNone.Instance;
         var key = (characterId, crateId);
-        if (!_pendingSkills.TryGetValue(key, out var bundles) || !bundles.TryRemove(bundleId, out var bundle))
-            return PyNone.Instance;
-        if (bundles.IsEmpty) _pendingSkills.TryRemove(key, out _);
+        CrateSkillBundle bundle;
+        lock (_pendingSkills)
+        {
+            if (!_pendingSkills.TryGetValue(key, out var bundles) ||
+                !bundles.TryGetValue(bundleId, out var rewards) || rewards.Count == 0)
+                return PyNone.Instance;
+            bundle = rewards.Dequeue();
+            if (rewards.Count == 0) bundles.TryRemove(bundleId, out _);
+            if (bundles.IsEmpty) _pendingSkills.TryRemove(key, out _);
+        }
 
-        var claim = await backend.ClaimSkillBundleAsync(characterId, bundle, call.Cancellation);
-        if (claim is null) return PyNone.Instance;
-        call.Session.SendNotification(
-            "OnSkillBundleInjected", "clientID",
-            new PyInt(claim.ChangedSkillCount), InventoryWire.Id(bundle.FreeSkillPoints));
-        return new PyDict([
-            new(new PyStr("changedSkillCount"), new PyInt(claim.ChangedSkillCount)),
-            new(new PyStr("freeSkillPoints"), InventoryWire.Id(claim.FreeSkillPoints)),
-        ]);
+        var claimed = false;
+        try
+        {
+            var claim = await backend.ClaimSkillBundleAsync(characterId, bundle, call.Cancellation);
+            if (claim is null) return PyNone.Instance;
+            claimed = true;
+            call.Session.SendNotification(
+                "OnSkillBundleInjected", "clientID",
+                new PyInt(claim.ChangedSkillCount), InventoryWire.Id(bundle.FreeSkillPoints));
+            return new PyDict([
+                new(new PyStr("changedSkillCount"), new PyInt(claim.ChangedSkillCount)),
+                new(new PyStr("freeSkillPoints"), InventoryWire.Id(claim.FreeSkillPoints)),
+            ]);
+        }
+        finally
+        {
+            if (!claimed)
+            {
+                lock (_pendingSkills)
+                    _pendingSkills.GetOrAdd(key, _ => new ConcurrentDictionary<int, Queue<CrateSkillBundle>>())
+                        .GetOrAdd(bundleId, _ => new Queue<CrateSkillBundle>()).Enqueue(bundle);
+            }
+        }
     }
 
     private async ValueTask<PyValue> ClaimFittingAsync(ServiceCall call)
@@ -296,7 +317,15 @@ public sealed class CrateService(ICrateServiceBackend? backend = null) : IServic
         var key = (characterId, crate.ItemId);
         var bundles = ParseSkillBundles(crate.CustomInfo);
         if (bundles.Count > 0)
-            _pendingSkills[key] = new ConcurrentDictionary<int, CrateSkillBundle>(bundles.ToDictionary(b => b.SkillBundleId));
+        {
+            var bundlesById = bundles.ToDictionary(bundle => bundle.SkillBundleId);
+            lock (_pendingSkills)
+            {
+                var pending = _pendingSkills.GetOrAdd(key, _ => new ConcurrentDictionary<int, Queue<CrateSkillBundle>>());
+                foreach (var bundle in bundlesById.Values)
+                    pending.GetOrAdd(bundle.SkillBundleId, _ => new Queue<CrateSkillBundle>()).Enqueue(bundle);
+            }
+        }
 
         lock (_pendingFittings)
         {

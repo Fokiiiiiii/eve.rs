@@ -667,6 +667,32 @@ fn launched_with(scene: &mut Scene, effect: DroneEffect) -> SessionId {
 }
 
 #[test]
+fn a_cloaked_ship_launches_no_drone_and_orders_none_to_engage() {
+    // the cloak blocks a ship's drones in space: none is launched while it is cloaked, and an order to engage is refused for each drone (the wiki, Cloaking)
+    let mut scene = scene_with_a_player();
+    launched_with(&mut scene, armor_bot());
+    let drone = scene.drones_of(PLAYER)[0];
+    scene.pilots.get_mut(&PLAYER).unwrap().cloak = crate::visibility::CloakState::Cloaked;
+    let flight = DroneFlight {
+        weapon: None,
+        graphic_id: 1_124,
+        orbit_distance: 700.0,
+        attack_range: 10_000.0,
+        cruise_fraction: 0.25,
+        work: DroneWorkProfile::default(),
+        effect: Some(armor_bot()),
+    };
+    assert_eq!(scene.launch_drone(PLAYER, hobgoblin(), flight, LATER).err(), Some("CLOAKED"));
+    let out = scene.drone_command(PLAYER, &[drone], DroneCommand::Engage { target: 1 }, LATER);
+    assert!(
+        out.iter().any(
+            |o| matches!(o, Out::DroneResults { results, .. } if results.contains(&(drone, Some("CLOAKED"))))
+        ),
+        "{out:?}"
+    );
+}
+
+#[test]
 fn a_web_drone_slows_the_rat_it_is_sent_at_while_its_cycle_lands_and_lets_go_when_called_home() {
     let mut scene = scene_with_a_player();
     scene.pilots.get_mut(&PLAYER).unwrap().ship.spec.corporation_id = 1_000_006;

@@ -6,7 +6,7 @@ using Eve.Universe;
 namespace Eve.Services.Core;
 
 /// <summary>
-/// The content template of each mission, read from the client records (contentTemplate, in the client file of EVE_CLIENT_SDE_DIR): the SDE carries
+/// The content template of each mission, read from the client records (contentTemplate, in the client data: <see cref="ClientMissionMessages.Open"/>): the SDE carries
 /// no template, and the trade and mining kinds are told apart by it. Rows without a template or with an unreadable line are skipped.
 /// </summary>
 public static class ClientMissionTemplates
@@ -61,6 +61,12 @@ public static class MissionCourierRules
         4 or 5 => (1, 12),
         _ => null,
     };
+
+    /// <summary>
+    /// The level that sets a courier's jump range (owner decision, X13). An epic arc step has no mission level in the official data, so it takes the
+    /// level of its agent (the SDE agent's level, 1 for most arc agents); any other courier takes its level tag. Null when neither is known.
+    /// </summary>
+    public static long? CourierLevel(bool epicArcStep, long? agentLevel, long? taggedLevel) => epicArcStep ? agentLevel : taggedLevel;
 
     /// <summary>
     /// The destination station: the stations (other than the origin's) whose system lies within the level's range of jumps from the origin's system,
@@ -128,7 +134,7 @@ public interface IMissionDungeonHost
 
 /// <summary>Where an agent is: its solar system (the mission dungeon's system) and its corporation (the counterparty of the reward).</summary>
 /// <summary>The base station of the agent (its SDE location, where the objective items of a fetch step are delivered), when it has one.</summary>
-public sealed record MissionAgentPlace(long SolarSystemId, long CorporationId, long? BaseStationId = null);
+public sealed record MissionAgentPlace(long SolarSystemId, long CorporationId, long? BaseStationId = null, long? AgentLevel = null);
 
 /// <summary>
 /// One standing change of a completed mission toward an entity (an agent, a corporation or a faction). An SDE gain is added as it is. A basic
@@ -152,7 +158,8 @@ public sealed class MissionDungeonRuntime(
     Func<long, MissionAgentPlace?> agentPlaceOf,
     Func<DateTimeOffset> now,
     Func<long, long, MissionAgentPlace, long?, Station?>? courierDestination = null,
-    Func<long, bool>? isTrade = null)
+    Func<long, bool>? isTrade = null,
+    Func<long, bool>? isMining = null)
 {
     /// <summary>The ISK type ID (EVE item type 29 "ISK" in the SDE reward records).</summary>
     public const long IskTypeId = 29;
@@ -220,7 +227,8 @@ public sealed class MissionDungeonRuntime(
         foreach (var record in await store.ReadAcceptedAsync(cancellationToken))
         {
             if (CourierOf(record.Content.MissionId) is not { } courierObjective || catalog.Mission(record.Content.MissionId) is not { } mission || record.AcceptedAt is not { } accepted) continue;
-            var expiry = mission.ExpirationMinutes is { } minutes ? TimeSpan.FromMinutes(minutes) : MissionCourierRules.DefaultExpiry;
+            // the data gives 0 for many courier missions: no time limit is given, so the default applies (not a limit of zero minutes)
+            var expiry = mission.ExpirationMinutes is { } minutes and > 0 ? TimeSpan.FromMinutes(minutes) : MissionCourierRules.DefaultExpiry;
             if (accepted + expiry > at) continue;
             await TransitionAsync(() => store.FailAsync(record.CharacterId, record.AgentId, at,
                 $"courier-expired:{record.Content.MissionId}:{accepted.ToUnixTimeMilliseconds()}", cancellationToken));
@@ -248,7 +256,8 @@ public sealed class MissionDungeonRuntime(
 
     private Station? CourierDestinationOf(AgentMissionRecord record) =>
         agentPlaceOf(record.AgentId) is { BaseStationId: not null } place && courierDestination is not null
-            ? courierDestination(record.Content.MissionId, record.CharacterId, place, catalog.Level(record.Content.MissionId).Level)
+            ? courierDestination(record.Content.MissionId, record.CharacterId, place,
+                MissionCourierRules.CourierLevel(catalog.IsEpicArcStep(record.Content.MissionId), place.AgentLevel, catalog.Level(record.Content.MissionId).Level))
             : null;
 
     /// <summary>
@@ -270,7 +279,8 @@ public sealed class MissionDungeonRuntime(
             if (FetchOf(record.Content.MissionId) is { } fetch)
             {
                 // a fetch step: the dungeon yields the objective items into the hangar of the agent's station. Only the turn-in completes the step
-                if (agentPlaceOf(record.AgentId)?.BaseStationId is { } station)
+                // a basic mining step: the ore is not granted by the site; the pilot hands in the ore it holds (the turn-in consumes it)
+                if (isMining?.Invoke(record.Content.MissionId) != true && agentPlaceOf(record.AgentId)?.BaseStationId is { } station)
                 {
                     await host.GrantObjectiveItemAsync(owner, (int)fetch.TypeId, fetch.Quantity, station, cancellationToken);
                 }

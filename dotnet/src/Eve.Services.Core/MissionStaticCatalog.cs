@@ -136,6 +136,9 @@ public sealed class MissionStaticCatalog
             ? NoIds
             : steps.Where(step => IsOfferable(step.ArcId)).Select(step => step.Step.MissionId).Distinct().Order().ToArray();
 
+    /// <summary>Whether the mission is a step of an epic arc (the official build's <c>epicArcs</c>).</summary>
+    public bool IsEpicArcStep(long missionId) => _stepByMission.ContainsKey(missionId);
+
     /// <summary>
     /// A talk step: an epic arc step with neither a kill nor a courier objective, completed by talking to the agent of the step that follows it.
     /// </summary>
@@ -244,8 +247,19 @@ public sealed class MissionStaticCatalog
     public bool IsHeldBack(long missionId) => SiteStatusOf(missionId) switch
     {
         MissionSiteStatus.Missing => true,
-        MissionSiteStatus.Generic => !_includeGenericArcs,
+        MissionSiteStatus.Generic => !_includeGenericArcs && !(_arcByMission.TryGetValue(missionId, out var arcId) && ArcsOnByDefault.Contains(arcId)),
         _ => false,
+    };
+
+    /// <summary>
+    /// The epic arcs whose generic kill sites are offered by default: the arcs whose whole offer path was walked live with the client's test ship
+    /// (tools/headless-client/tests/test_arc29_walk.py, DEVIATIONS "Mission execution X8"). Every other arc stays held back unless the
+    /// switch <see cref="IncludeGenericVariable"/> is set. Owner decision: an arc is added here only after its walk passes.
+    /// </summary>
+    public static readonly IReadOnlySet<long> ArcsOnByDefault = new HashSet<long>
+    {
+        29, 40, 48, 52, 53, 55, 56, 128,
+        64, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77,
     };
 
     /// <summary>

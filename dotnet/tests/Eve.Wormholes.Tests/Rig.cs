@@ -11,16 +11,6 @@ public sealed class PgFactAttribute : FactAttribute
     public PgFactAttribute() { if (Environment.GetEnvironmentVariable("EVE_PG_URL") is null) Skip = "EVE_PG_URL is not set"; }
 }
 
-/// <summary>A fact that needs PostgreSQL and the V24.01 client data (<c>EVE_CLIENT_SDE_DIR</c>); skipped without either.</summary>
-public sealed class RealDataFactAttribute : FactAttribute
-{
-    public RealDataFactAttribute()
-    {
-        if (Environment.GetEnvironmentVariable("EVE_PG_URL") is null) Skip = "EVE_PG_URL is not set";
-        else if (string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("EVE_CLIENT_SDE_DIR"))) Skip = "EVE_CLIENT_SDE_DIR is not set";
-    }
-}
-
 /// <summary>
 /// A world in its own scratch schemas (wormhole and scheduler), dropped at the end. Restart() makes a new scheduler and store on the
 /// same schemas, as after a restart: the durable jobs must still run.

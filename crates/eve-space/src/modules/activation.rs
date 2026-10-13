@@ -168,9 +168,6 @@ impl Scene {
             return vec![Out::Refused { session, command: CODE, reason: "NOT_IMPLEMENTED" }];
         }
         self.settle_all(now);
-        if self.tether_refuses_activation(session, &effect, now) {
-            return vec![Out::Refused { session, command: CODE, reason: "TETHERED" }];
-        }
         let pilot = &self.pilots[&session];
         if pilot.modules.running.iter().any(|r| r.effect.module_id == effect.module_id)
             || pilot.modules.pending_starts.iter().any(|start| start.effect.module_id == effect.module_id)
@@ -267,9 +264,12 @@ impl Scene {
         {
             return vec![Out::Refused { session, command: CODE, reason: "CYNOSURAL_FIELD_INHIBITED" }];
         }
-        // a smartbomb does not start close to a station or a stargate: the larger of 5 km and its own range (wiki "Smartbombs", see DEVIATIONS)
+        // a smartbomb does not start close to a station or a stargate: the larger of 5 km and its range, held to the wiki's largest value (wiki "Smartbombs", see DEVIATIONS)
         if let Some(Action::Smartbomb { range, .. }) = effect.action.as_ref()
-            && self.station_or_gate_within(pilot.ship.position, range.max(SMARTBOMB_NEAR_METERS))
+            && self.station_or_gate_within(
+                pilot.ship.position,
+                SMARTBOMB_NEAR_METERS.max(range.min(SMARTBOMB_NEAR_SOURCED_MAX_METERS)),
+            )
         {
             return vec![Out::Refused { session, command: CODE, reason: "SMARTBOMB_NEAR_STATION" }];
         }
@@ -285,13 +285,10 @@ impl Scene {
         if effect.effect_id == MICROWARPDRIVE && pilot.incoming.mwd_blocked() {
             return vec![Out::Refused { session, command: CODE, reason: "MICROWARPDRIVE_BLOCKED" }];
         }
-        if let Some(Action::Strike { strike }) = effect.action.as_ref() {
-            if !strike.is_valid() {
-                return vec![Out::Refused { session, command: CODE, reason: "BAD_STRIKE" }];
-            }
-            if pilot.flight.as_ref().is_some_and(|flight| flight.is_warping()) {
-                return vec![Out::Refused { session, command: CODE, reason: "CANNOT_ACTIVATE_IN_WARP" }];
-            }
+        if let Some(Action::Strike { strike }) = effect.action.as_ref()
+            && !strike.is_valid()
+        {
+            return vec![Out::Refused { session, command: CODE, reason: "BAD_STRIKE" }];
         }
         if let Some(Action::Tractor { range, .. }) = effect.action.as_ref() {
             if effect.target_id <= 0 {
@@ -355,9 +352,6 @@ impl Scene {
             {
                 return vec![Out::Refused { session, command: CODE, reason: "BAD_DOOMSDAY" }];
             }
-            if pilot.flight.as_ref().is_some_and(|flight| flight.is_warping()) {
-                return vec![Out::Refused { session, command: CODE, reason: "CANNOT_ACTIVATE_IN_WARP" }];
-            }
             // the target is a locked ship of the scene (the reference's TARGET_REQUIRED, TARGET_NOT_FOUND and TARGET_NOT_LOCKED)
             if effect.target_id <= 0 {
                 return vec![Out::Refused { session, command: CODE, reason: "TARGET_REQUIRED" }];
@@ -382,16 +376,14 @@ impl Scene {
             if pilot.flight.as_ref().is_some_and(|flight| flight.is_warping()) {
                 return vec![Out::Refused { session, command: CODE, reason: "CLOAK_WARP_BLOCKED" }];
             }
-            if !pilot.targeting.pending_targets().is_empty()
-                || !pilot.targeting.targets().is_empty()
-                || !self.targeters_of(pilot.ship.spec.ship_id).is_empty()
-            {
+            if !self.targeters_of(pilot.ship.spec.ship_id).is_empty() {
                 return vec![Out::Refused { session, command: CODE, reason: "CLOAK_TARGET_LOCKED" }];
             }
             if self.cloak_trigger(session, crate::scene::CLOAK_PROXIMITY_METERS).is_some() {
                 return vec![Out::Refused { session, command: CODE, reason: "CLOAK_PROXIMITY_BLOCKED" }];
             }
         } else if pilot.cloak != crate::visibility::CloakState::Uncloaked {
+            // the blanket rule of a cloaked ship: while the cloak runs nothing else starts (the reference; the cloak's own refusals above are the only ones)
             return vec![Out::Refused { session, command: CODE, reason: "MODULE_CLOAKED" }];
         }
         if effect.turret.is_some() {
@@ -408,21 +400,8 @@ impl Scene {
             if effect.turret.as_ref().and_then(|t| t.charge).is_some_and(|c| c.rounds < c.per_cycle) {
                 return vec![Out::Refused { session, command: CODE, reason: "NO_AMMO" }];
             }
-            // a missile goes only as far as it flies: a target further off is out of reach (the client is told how far the missile goes and how far the target is)
-            if let Some(missile) = effect.turret.as_ref().and_then(|t| t.missile.as_ref())
-                && let Some(target) = self.session_of(effect.target_id)
-                && let Some(apart) = self.apart(session, target)
-                && apart > missile.effective_range() + crate::weapons::MISSILE_RANGE_GRACE
-            {
-                return vec![Out::TargetRefused {
-                    session,
-                    command: CODE,
-                    reason: "TARGET_OUT_OF_RANGE",
-                    target_type: self.pilots[&target].ship.spec.type_id,
-                    desired_range: missile.effective_range(),
-                    actual_distance: apart,
-                }];
-            }
+            // a launcher is not refused for a target beyond its missile's flight: the missile flies its flight time and is spent (the wiki, Missiles);
+            // no client or EVE.js text refuses the activation
         }
         // an effect that is projected at a ship needs it: there, locked and in reach (what is too far off is told with the range and how far it is)
         if let Some((what, reach, _)) = effect.remote() {
@@ -533,9 +512,6 @@ impl Scene {
         }
         // the pilot has given up the undocking protection by flying the ship (the host tells the client)
         let (owner, ship_id) = (pilot.ship.spec.character_id, pilot.ship.spec.ship_id);
-        if self.tether_refuses_activation(session, &effect, now) {
-            return vec![Out::Refused { session, command: CODE, reason: "TETHERED" }];
-        }
         let mut out = if effect.offensive() {
             // Revoke the cached grant until the host supplies its authoritative weapons timer.
             let controller = self.controller_of_drone(session).filter(|id| *id != 0).unwrap_or(session);
@@ -1107,8 +1083,10 @@ impl Scene {
     }
 }
 
-/// The distance from a station or a stargate, short of which a smartbomb does not start (5 km, the least of the wiki's restrictions).
+/// The distance from a station or a stargate, short of which a smartbomb does not start: the larger of 5 km and its range, where the wiki gives values (3 km
+/// range held to 5 km, 6 km to 6 km). A range beyond the wiki's largest value takes that value: no source gives more.
 const SMARTBOMB_NEAR_METERS: f64 = 5_000.0;
+const SMARTBOMB_NEAR_SOURCED_MAX_METERS: f64 = 6_000.0;
 /// The covert cynosural field's type (EVE.js `TYPE_COVERT_CYNOSURAL_FIELD`): a Mobile Cynosural Inhibitor does not stop it.
 const COVERT_CYNOSURAL_FIELD_TYPE: i32 = 28_650;
 

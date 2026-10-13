@@ -211,7 +211,7 @@ public sealed class HomeStationHostTests
             var schemas = SchemaVariables.ToDictionary(
                 variable => variable,
                 variable => $"hs_{suffix}_{variable[4..^7].ToLowerInvariant()}");
-            var previous = SchemaVariables.Concat(["EVE_MARKET_SEED", "EVE_SIM"])
+            var previous = SchemaVariables.Concat(["EVE_MARKET_SEED", "EVE_SIM", "EVE_WORMHOLES"])
                 .ToDictionary(variable => variable, variable => Environment.GetEnvironmentVariable(variable));
             var connectionBuilder = new NpgsqlConnectionStringBuilder(Eve.Data.PgConnection.ForTest(pgUrl));
             var source = new NpgsqlDataSourceBuilder(connectionBuilder.ConnectionString).Build();
@@ -224,6 +224,7 @@ public sealed class HomeStationHostTests
 
                 Environment.SetEnvironmentVariable("EVE_MARKET_SEED", "skip");
                 Environment.SetEnvironmentVariable("EVE_SIM", "off");
+                Environment.SetEnvironmentVariable("EVE_WORMHOLES", "off");
                 // shortcut: CalendarStore has no schema override, so EVE_PG_URL must target an isolated test database.
                 var host = await HostComposition.BuildAsync(HostConfiguration.Read());
                 shutdown = host.ShutdownAsync;

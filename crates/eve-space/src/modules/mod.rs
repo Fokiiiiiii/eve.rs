@@ -410,8 +410,10 @@ pub enum Action {
         strength: [f64; 4],
     },
     /// Engages the ship's cloaking device (tag 5). A cloak that is not warp-safe (a standard cloaking device) holds the ship out of warp (`warp_safe` false).
+    /// `targeting_delay_ms` is the cloak's cloakingTargetingDelay (attribute 560, milliseconds): the ship acquires no lock for that long after it decloaks.
     Cloak {
         warp_safe: bool,
+        targeting_delay_ms: f64,
     },
     MicroJumpDrive {
         distance_meters: f64,

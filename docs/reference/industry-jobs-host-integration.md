@@ -12,7 +12,7 @@ projects. Host owns composition and one PostgreSQL transaction per lifecycle ope
 new IndustryJobsService(readIndustryJobs, industryJobOperations, currentFileTime, ...)
 ```
 
-**現状:** `Program.cs` applies migration `001_jobs`, constructs `PersistenceIndustryJobOperations`, and passes `ReadJobsAsync` plus the operations provider to `IndustryJobsService`. **コードあり・未検証:** DB transaction behavior for item custody, wallet settlement, job state, and outbox remains unverified pending DB/Host tests and a successful build. Keep using the existing inventory, wallet, and event stores; do not add parallel caches.
+**現状:** `Program.cs` applies migration `001_jobs`, constructs `PersistenceIndustryJobOperations`, and passes `ReadJobsAsync` plus the operations provider to `IndustryJobsService`. **コードあり:** DB transaction behavior for item custody, wallet settlement, job state, and outbox is not yet covered by DB/Host tests or a successful build. Keep using the existing inventory, wallet, and event stores; do not add parallel caches.
 
 The existing `readJobs` callback must ultimately read/project rows from `industry.jobs`, so the existing
 wire reader sees the same authoritative records the mutation port writes. A JSON projection for the existing
@@ -45,7 +45,7 @@ industry error key; unexpected storage failures remain server errors and never r
 
 ## Existing transaction APIs are compatible
 
-This was verified against the active implementations, not inferred from their constructors:
+This was verified against the active implementations, not taken from their constructors:
 
 - `PgItemStore.LockAndGetAsync`, `CreateAsync`, `MoveAsync`, and `SetQuantityAsync` accept the caller's
   `NpgsqlConnection` and `NpgsqlTransaction`; they do not open a separate connection for those operations.

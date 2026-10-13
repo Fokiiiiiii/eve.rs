@@ -150,7 +150,10 @@ public sealed class DungeonWaveTests
         await rig.RunDueAndDeliverAsync();
         rig.Spawner.Present = false;
 
+        // out for ten seconds, then past the absence grace: the dungeon ends before its first wave (240 s) comes
         rig.Advance(TimeSpan.FromSeconds(10));
+        await rig.RunDueAndDeliverAsync();
+        rig.Advance(DungeonWaveDirector.PilotAbsenceGrace);
         await rig.RunDueAndDeliverAsync();
         rig.Advance(TimeSpan.FromMinutes(10));
         await rig.RunDueAndDeliverAsync();
@@ -162,6 +165,30 @@ public sealed class DungeonWaveTests
     }
 
     [PgFact]
+    public async Task A_pilot_who_returns_within_the_absence_grace_keeps_the_dungeon_running()
+    {
+        await using var rig = await WaveRig.CreateAsync();
+        await rig.Director.StartAsync(Pilot, SystemId, Origin, 2173);
+        await rig.RunDueAndDeliverAsync();
+        var ships = Assert.Single(rig.Spawner.Batches).Ships;
+
+        // a logoff in space: the pilot is out of the system for two sweeps, then logs back in
+        rig.Spawner.Present = false;
+        rig.Advance(TimeSpan.FromSeconds(10));
+        await rig.RunDueAndDeliverAsync();
+        rig.Advance(TimeSpan.FromSeconds(10));
+        await rig.RunDueAndDeliverAsync();
+        rig.Spawner.Present = true;
+        rig.Advance(TimeSpan.FromSeconds(10));
+        await rig.RunDueAndDeliverAsync();
+
+        Assert.Empty(rig.Completions);
+        Assert.Empty(rig.Spawner.Removed);
+        Assert.Single(await rig.Content.ActiveByKindAsync(DungeonWaveDirector.Kind));
+        Assert.NotEmpty(ships);
+    }
+
+    [PgFact]
     public async Task A_pilot_who_leaves_after_a_wave_came_has_that_wave_taken_out_by_the_sweep()
     {
         await using var rig = await WaveRig.CreateAsync();
@@ -169,8 +196,11 @@ public sealed class DungeonWaveTests
         await rig.RunDueAndDeliverAsync();
         var ships = Assert.Single(rig.Spawner.Batches).Ships;
 
+        // out of the system past the absence grace: the first sweep notes the absence, a later one ends the dungeon
         rig.Spawner.Present = false;
         rig.Advance(TimeSpan.FromSeconds(10));
+        await rig.RunDueAndDeliverAsync();
+        rig.Advance(DungeonWaveDirector.PilotAbsenceGrace);
         await rig.RunDueAndDeliverAsync();
 
         Assert.Equal(ships.OrderBy(id => id), rig.Spawner.Removed.OrderBy(id => id));
@@ -329,7 +359,8 @@ public sealed class DungeonWaveTests
         }
 
         private DungeonWaveDirector NewDirector() =>
-            new(Source, Content, Scheduler, Bus, Catalog.Value, Rules.Value, new NpcSelector(NpcAuthority.Load()), Spawner, _schemas[3]);
+            new(Source, Content, Scheduler, Bus, Catalog.Value, Rules.Value, new NpcSelector(NpcAuthority.Load()), Spawner, _schemas[3],
+                clock: () => DateTimeOffset.FromUnixTimeMilliseconds(_now));
 
         private async Task AttachAsync()
         {

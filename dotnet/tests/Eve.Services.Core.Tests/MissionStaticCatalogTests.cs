@@ -182,4 +182,21 @@ public sealed class MissionStaticCatalogTests
         Assert.Equal("unknown", unknown.Provenance);
         Assert.NotNull(unknown.Reason);
     }
+
+    // Two arcs with one generic kill step each: 55 is on by default, 9001 is not.
+    private const string OnByDefaultArc = """{"_key": 55, "name": {"en": "On By Default"}, "arcRestartInterval": 129600, "missions": [{"_key": 9501, "agentID": 3000001, "nextMissions": []}]}""";
+    private const string OtherArc = """{"_key": 9001, "name": {"en": "Other"}, "arcRestartInterval": 129600, "missions": [{"_key": 9502, "agentID": 3000002, "nextMissions": []}]}""";
+
+    [Fact]
+    public void An_arc_on_by_default_offers_its_generic_steps_and_any_other_arc_holds_them_back()
+    {
+        var sites = new Dictionary<long, string> { [9501] = "generic", [9502] = "generic" };
+        var catalog = MissionStaticCatalog.FromRows(3405148, [], [
+            new SdeRow(55, JsonDocument.Parse(OnByDefaultArc).RootElement.Clone()),
+            new SdeRow(9001, JsonDocument.Parse(OtherArc).RootElement.Clone()),
+        ], siteStatus: sites);
+
+        Assert.False(catalog.IsHeldBack(9501));
+        Assert.True(catalog.IsHeldBack(9502));
+    }
 }

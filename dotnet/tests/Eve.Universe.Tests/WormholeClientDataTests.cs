@@ -3,13 +3,7 @@ using System.Text;
 
 namespace Eve.Universe.Tests;
 
-/// <summary>A fact that needs the V24.01 client data (<c>EVE_CLIENT_SDE_DIR</c>); skipped, not passed, without it.</summary>
-public sealed class ClientSdeFactAttribute : FactAttribute
-{
-    public ClientSdeFactAttribute() { if (string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("EVE_CLIENT_SDE_DIR"))) Skip = "EVE_CLIENT_SDE_DIR is not set"; }
-}
-
-/// <summary>The J-space classes of the client's system table: the rule on synthetic rows, and the real counts when the client data is given.</summary>
+/// <summary>The J-space classes of the client's system table: the rule on synthetic rows, and the real counts of the embedded copy.</summary>
 public sealed class WormholeClientDataTests
 {
     private static string DirectoryWith(params string[] systemRows)
@@ -59,15 +53,9 @@ public sealed class WormholeClientDataTests
     }
 
     [Fact]
-    public async Task No_directory_loads_no_classes()
+    public async Task The_embedded_client_data_gives_a_class_for_all_2604_j_space_systems()
     {
-        Assert.Empty(await WormholeSystemClasses.LoadAsync(""));
-    }
-
-    [ClientSdeFact]
-    public async Task The_client_data_gives_a_class_for_all_2604_j_space_systems()
-    {
-        var classes = await WormholeSystemClasses.LoadAsync(Environment.GetEnvironmentVariable("EVE_CLIENT_SDE_DIR")!);
+        var classes = await WormholeSystemClasses.LoadAsync("");
 
         Assert.Equal(2604, classes.Count);
         Assert.Equal(358, classes.Values.Count(c => c == 1));
@@ -79,5 +67,15 @@ public sealed class WormholeClientDataTests
         Assert.Equal(25, classes.Values.Count(c => c == 13));
         Assert.Equal(12, classes[31000005]);
         Assert.Equal(14, classes[31000001]);
+    }
+
+    [Fact]
+    public async Task The_embedded_client_data_gives_the_class_of_every_system_that_has_one()
+    {
+        var all = await WormholeSystemClasses.LoadAllAsync("");
+
+        Assert.Equal(8113, all.Count);
+        Assert.Equal(7, all[30000001]);
+        Assert.Equal(await WormholeSystemClasses.LoadAsync(""), all.Where(pair => pair.Key is >= 31_000_000 and < 32_000_000).ToDictionary(pair => pair.Key, pair => pair.Value));
     }
 }

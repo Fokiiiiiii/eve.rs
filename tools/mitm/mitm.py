@@ -28,6 +28,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "headless-client
 from evecli import marshal as m  # noqa: E402
 from evecli import packet as p  # noqa: E402
 from evecli.describe import describe, differences, shape  # noqa: E402
+from evecli.observe import _notification_event  # noqa: E402
 
 MAX_FRAME = 16 * 1024 * 1024
 MACHO_NAMES = {code: guid.split(".", 1)[1] for code, guid in p._GUID.items()}
@@ -71,7 +72,10 @@ def macho_record(pk, encoding):
     rec = {"stage": "macho", "encoding": encoding, "type": kind}
     rec["service"] = pk.destination.service if pk.destination.service is not None else pk.source.service
     rec["call_id"] = next((c for c in (pk.source.call_id, pk.destination.call_id) if c is not None), None)
-    if kind in ("CallReq", "Notification"):
+    if kind == "Notification":  # the client's decoder: the server's notifications carry their call in the address, not the payload
+        event = _notification_event(pk)
+        rec["method"], rec["args"] = event.get("name"), describe(event.get("args"))
+    elif kind == "CallReq":
         rec["method"], args, kwargs = _call_body(pk.payload)
         rec["args"] = describe(args)
         if kwargs is not None:

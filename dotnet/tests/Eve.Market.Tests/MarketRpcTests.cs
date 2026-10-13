@@ -126,9 +126,22 @@ public class MarketRpcTests
     }
 
     [PgFact]
+    public async Task An_immediate_buy_that_matches_nothing_rests_nothing_and_charges_nothing()
+    {
+        // PlaceBuyOrder with duration 0 (the client's BuyStuff default, the quick buy): no sell order to take, so nothing is placed or paid
+        await using var r = await TradeRig.Create();
+        var actor = await r.Actor("Quick Buyer", 10000m);
+        var seat = await SeatAsync(r, actor);
+        Assert.Equal(PyNone.Instance, await seat.Proxy.PlaceBuyOrder(Call(seat.Session, "PlaceBuyOrder", 1, new PyInt(r.Station.Id), new PyInt(Tritanium),
+            new PyReal(9), new PyInt(4), new PyInt(-1), new PyInt(1), new PyInt(0), PyBool.False, PyNone.Instance)));
+        Assert.Empty((await r.Book.BookAsync(r.Station.RegionId, Tritanium, r.Now)).Bids);
+        Assert.Equal(10000m, (await r.WalletStore.GetAsync(actor))!.Isk);
+    }
+
+    [PgFact]
     public async Task Plex_sell_is_refused_for_another_type_and_a_plex_line_rests_and_its_price_can_be_modified()
     {
-        // PlacePlexSellOrder (EVE.js 7009) and ModifyPlexCharOrder (EVE.js 7274, the ModifyCharOrder path): the PLEX type only, personal only.
+        // PlacePlexSellOrder (the client's SellPlex) and ModifyPlexCharOrder (the ModifyCharOrder path): the PLEX type only.
         await using var r = await TradeRig.Create();
         var actor = await r.Actor("Plex Seller", 10000m);
         var seat = await SeatAsync(r, actor);
@@ -137,6 +150,7 @@ public class MarketRpcTests
             Py.KeyVal(("typeID", new PyInt(Tritanium)), ("itemID", new PyLong(stock)), ("price", new PyReal(12)), ("quantity", new PyInt(5)), ("stationID", new PyInt(r.Station.Id))),
             PyBool.False, new PyInt(90), PyNone.Instance)).AsTask());
         Assert.Equal("CustomInfo", refusal.Error.UserErrorMessage);
+        // a corporate PLEX sell takes the corporate path like any item (no personal-market refusal); the stock is the seat's own, so the path refuses it
         var corporate = await Assert.ThrowsAsync<MachoWrappedException>(() => seat.Proxy.PlacePlexSellOrder(Call(seat.Session, "PlacePlexSellOrder", 5,
             Py.KeyVal(("typeID", new PyInt(Plex)), ("itemID", new PyLong(stock)), ("price", new PyReal(12)), ("quantity", new PyInt(5)), ("stationID", new PyInt(r.Station.Id))),
             PyBool.True, new PyInt(90), PyNone.Instance)).AsTask());

@@ -59,8 +59,8 @@ public sealed class AgentMissionStore
 {
     public const string DefaultSchema = "agents";
 
-    /// <summary>The offer lasts seven days (EveJS missionRuntimeState.js:27, OFFER_EXPIRY_MS).</summary>
-    public static readonly TimeSpan OfferLifetime = TimeSpan.FromDays(7);
+    // An offer does not expire. The EVE University wiki gives a seven-day expiry for COSMOS agents only, and no data here
+    // identifies a COSMOS agent (DEVIATIONS, Agents), so the expiry is not applied to any agent.
 
     /// <summary>After a decline the same agent does not offer again for four hours (EveJS missionRuntimeState.js:26, REPLAY_DELAY_MS).</summary>
     public static readonly TimeSpan DeclineReplayDelay = TimeSpan.FromHours(4);
@@ -167,7 +167,7 @@ public sealed class AgentMissionStore
             }
             return new AgentMissionRecord(
                 characterId, agentId, AgentMissionState.Offered, content,
-                OfferedAt: now, ExpiresAt: now + OfferLifetime, AcceptedAt: null, CompletedAt: null, DeclineUntil: null, QuitAt: null);
+                OfferedAt: now, ExpiresAt: null, AcceptedAt: null, CompletedAt: null, DeclineUntil: null, QuitAt: null);
         });
 
     /// <summary>The character accepts the offer. An offer past its expiry is refused; <see cref="ExpireOffersAsync"/> removes it.</summary>

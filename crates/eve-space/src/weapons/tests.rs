@@ -1368,23 +1368,34 @@ fn a_missile_that_takes_long_to_get_there_spreads_and_its_ball_stays_for_the_war
 }
 
 #[test]
-fn a_target_further_off_than_the_missile_flies_refuses_the_launcher_with_how_far_it_goes() {
+fn a_launcher_fires_at_a_target_further_than_its_missile_flies_and_the_missile_does_not_reach_it() {
+    // 300 m of flight against the distance between the two ships: the launcher starts (no refusal in the client or EVE.js), the missile flies and is spent
     let (mut scene, npc, now) = duel();
-    // 300 m of flight against the distance between the two ships
     let apart = scene.apart(npc, PLAYER).unwrap();
     assert!(apart > 301.0);
-    let refused = scene.activate(npc, missile_effect(spec().ship_id, launcher(1_500.0, 200.0, 56.0)), now);
-    let Some(Out::TargetRefused { reason, desired_range, actual_distance, target_type, .. }) =
-        refused.first()
-    else {
-        panic!("{refused:?}")
-    };
-    assert_eq!(*reason, "TARGET_OUT_OF_RANGE");
-    assert_eq!(*desired_range, 300.0);
-    assert_eq!(*actual_distance, apart);
-    assert_eq!(*target_type, spec().type_id);
-    assert_eq!(scene.pilots[&npc].modules.running_count(), 0, "it never started");
-    assert!(scene.missiles.is_empty());
+    let started = scene.activate(npc, missile_effect(spec().ship_id, launcher(1_500.0, 200.0, 56.0)), now);
+    assert!(started.iter().any(|o| matches!(o, Out::Accepted { .. })), "{started:?}");
+    assert!(!scene.missiles.is_empty(), "a missile is in flight");
+    let mut told = Vec::new();
+    for step in 1..=100 {
+        told.extend(scene.poll(now + step * SECOND / 10));
+    }
+    assert!(
+        messages(&told, PLAYER, "OnDamageMessage").is_empty(),
+        "the missile runs out of flight before it reaches the ship"
+    );
+}
+
+#[test]
+fn a_cloaked_ship_starts_no_targeted_module_because_the_cloak_check_comes_first() {
+    // the blanket rule of a cloaked ship (MODULE_CLOAKED) is checked before the lock: a launcher on a locked ship is refused for the cloak, not for the lock
+    let (mut scene, npc, now) = duel();
+    scene.pilots.get_mut(&npc).unwrap().cloak = crate::visibility::CloakState::Cloaked;
+    let refused = scene.activate(npc, missile_effect(spec().ship_id, launcher(1_000.0, 10_000.0, 56.0)), now);
+    assert!(
+        refused.iter().any(|o| matches!(o, Out::Refused { reason: "MODULE_CLOAKED", .. })),
+        "{refused:?}"
+    );
 }
 
 #[test]
@@ -1782,7 +1793,7 @@ fn a_strike_stops_the_jump_and_the_cloak_for_its_no_jump_window() {
         effect_id: 0,
         module_id: spec().ship_id + 2,
         fx: "effects.Cloaking".to_string(),
-        action: Some(crate::modules::Action::Cloak { warp_safe: false }),
+        action: Some(crate::modules::Action::Cloak { warp_safe: false, targeting_delay_ms: 0.0 }),
         duration_ms: 1_000.0,
         ..strike_effect(spec().ship_id + 2, strike_of(1))
     };
@@ -2231,4 +2242,46 @@ fn a_smartbomb_takes_the_structures_in_its_range_in_their_layers() {
         )),
         "{out:?}"
     );
+}
+
+#[test]
+fn a_fob_sized_structure_takes_the_qa_smartbomb_cycles_until_its_shield_is_gone() {
+    let (mut scene, _npc, now) = duel();
+    let mut placement = crate::scene::tests::structure_placement(&scene, now);
+    placement.structure_id = SHIP_STRUCTURE;
+    placement.position = [1.0, 0.0, 0.0];
+    placement.radius = 50_000.0;
+    placement.vitals = crate::health::Vitals {
+        shield_capacity: 9_600_000.0,
+        armor_hp: 4_800_000.0,
+        structure_hp: 1_200_000.0,
+        resonances: crate::health::Resonances { shield: [0.8; 4], armor: [0.8; 4], structure: [0.8; 4] },
+        ..Default::default()
+    };
+    placement.limits = crate::health::StructureLimits {
+        per_second: [9_600_000.0, 5_000.0, 5_000.0],
+        repair_pause: [500.0, 500.0, 500.0],
+    };
+    scene.place_structure(placement, now);
+    let bomb = smartbomb_effect(NPC_SHIP + 1, [5000.0, 5000.0, 5000.0, 5000.0]);
+    let mut at = now;
+    let mut told_at = None;
+    for cycle in 1..=800 {
+        let out = scene.damage_structure(SHIP_STRUCTURE, [5000.0, 5000.0, 5000.0, 5000.0], at);
+        if out
+            .iter()
+            .any(|o| matches!(o, Out::StructureDamaged { depleted: Some(crate::health::Layer::Shield), .. }))
+        {
+            told_at = Some(cycle);
+            break;
+        }
+        at += 3 * SECOND;
+    }
+    let _ = bomb;
+    assert!(
+        told_at.is_some(),
+        "the shield of a FOB is gone after the smartbomb's cycles: shield {:?}",
+        scene.structure_health[&SHIP_STRUCTURE].state_at(at).shield
+    );
+    eprintln!("FOB_SHIELD_CYCLE {:?}", told_at);
 }

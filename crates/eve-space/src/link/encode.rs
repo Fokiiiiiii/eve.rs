@@ -494,7 +494,10 @@ pub(super) fn put_action(out: &mut Vec<u8>, action: &Action) {
                 out.extend_from_slice(&number.to_le_bytes());
             }
         }
-        Action::Cloak { warp_safe } => out.extend([5, u8::from(*warp_safe)]),
+        Action::Cloak { warp_safe, targeting_delay_ms } => {
+            out.extend([5, u8::from(*warp_safe)]);
+            out.extend_from_slice(&targeting_delay_ms.to_le_bytes());
+        }
         Action::WarpBubble { range } => {
             out.push(16);
             out.extend_from_slice(&range.to_le_bytes());

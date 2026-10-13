@@ -382,6 +382,14 @@ fn a_target_out_of_range_is_refused_with_the_range_and_the_distance_between_the_
 }
 
 #[test]
+fn a_station_three_grid_boxes_away_is_refused_for_its_range_and_not_as_not_there() {
+    let (mut scene, t) = crowd(2);
+    // a system body is in view at any distance: the grid box of a ship does not hide it from a lock (visibility.rs)
+    scene.pilots.get_mut(&B).unwrap().ship.position = Vec3::new(3.0 * crate::visibility::GRID_BOX, 0.0, 0.0);
+    assert_eq!(refusal(&scene.target_order(B, Order::Lock(STATION), t)).reason, "TARGET_OUT_OF_RANGE");
+}
+
+#[test]
 fn range_is_measured_between_surfaces_and_the_range_itself_is_out() {
     let (mut scene, t) = crowd(2);
     scene.command(A, Command::Stop, t);

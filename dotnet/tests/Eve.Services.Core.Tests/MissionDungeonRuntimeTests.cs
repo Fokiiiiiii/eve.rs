@@ -441,6 +441,34 @@ public class MissionDungeonRuntimeTests
         Assert.Empty(host.Standings);
     }
 
+    // The same courier with expirationTime 0 (73 courier records of build 3405148 carry 0): no time limit is given.
+    private static MissionDungeonRuntime ZeroExpiryCourierRuntime(AgentMissionStore store, FakeHost host) => new(store,
+        MissionStaticCatalog.FromRows(3405148, [new SdeRow(9402, JsonDocument.Parse(CourierMission.Replace("9401", "9402").Replace("10080", "0")).RootElement.Clone())], []),
+        host, _ => new MissionAgentPlace(System, Corporation, AgentStation), () => Start, (missionId, characterId, place, level) => null);
+
+    [AgentsPgFact]
+    public async Task A_courier_whose_data_gives_zero_expiry_keeps_the_default_and_is_not_failed_at_once()
+    {
+        var source = NpgsqlDataSource.Create(PgConnection.ForTest(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
+        var schema = "mdr_" + Guid.NewGuid().ToString("N")[..12];
+        await using var cleanup = new Cleanup(source, schema);
+        await AgentMissionStore.MigrateAsync(source, schema);
+        var store = new AgentMissionStore(source, schema);
+        var host = new FakeHost { Store = store };
+        var runtime = ZeroExpiryCourierRuntime(store, host);
+        await store.OfferAsync(Pilot, Agent, new AgentMissionContent(9402, 1239, "Courier Step", "", false), Start, "offer:c5");
+        await store.AcceptAsync(Pilot, Agent, Start, "accept:c5");
+        await runtime.OnAcceptedAsync(Pilot, Agent);
+
+        // a limit of zero minutes failed the courier at once (live: arc 40, step 14898, accepted and failed seven seconds apart)
+        Assert.Equal(0, await runtime.ExpireCouriersAsync(Start + TimeSpan.FromMinutes(5)));
+        Assert.Equal(AgentMissionState.Accepted, (await store.ReadAsync(Pilot, Agent))!.State);
+        Assert.Empty(host.TakenBack);
+
+        Assert.Equal(1, await runtime.ExpireCouriersAsync(Start + MissionCourierRules.DefaultExpiry + TimeSpan.FromMinutes(1)));
+        Assert.Equal(AgentMissionState.Failed, (await store.ReadAsync(Pilot, Agent))!.State);
+    }
+
     [AgentsPgFact]
     public async Task A_courier_quit_takes_the_cargo_back_and_pays_nothing()
     {
@@ -513,6 +541,37 @@ public class MissionDungeonRuntimeTests
         Assert.Equal(100000L, Assert.Single(host.Credits).Amount);
     }
 
+    [AgentsPgFact]
+    public async Task A_mining_step_is_not_granted_by_its_dungeon_and_completes_when_the_pilot_hands_in_the_full_ore_quantity()
+    {
+        var source = NpgsqlDataSource.Create(PgConnection.ForTest(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
+        var schema = "mdr_" + Guid.NewGuid().ToString("N")[..12];
+        await using var cleanup = new Cleanup(source, schema);
+        await AgentMissionStore.MigrateAsync(source, schema);
+        var store = new AgentMissionStore(source, schema);
+        var host = new FakeHost { Store = store };
+        var catalog = MissionStaticCatalog.FromRows(3405148, [new SdeRow(9511, JsonDocument.Parse(BasicMining).RootElement.Clone())], []);
+        var runtime = new MissionDungeonRuntime(store, catalog, host, _ => new MissionAgentPlace(System, Corporation, AgentStation), () => Start,
+            isMining: id => id == 9511);
+        await store.OfferAsync(Pilot, Agent, new AgentMissionContent(9511, 1246, "Mining Step", "", false), Start, "offer:m1");
+        await store.AcceptAsync(Pilot, Agent, Start, "accept:m1");
+
+        // the site grants no ore: the dungeon's completion changes nothing
+        await runtime.OnDungeonOutcomeAsync("completed", Pilot, "dungeon.2457", 91, default);
+        Assert.Empty(host.Grants);
+        Assert.Equal(AgentMissionState.Accepted, (await store.ReadAsync(Pilot, Agent))!.State);
+
+        // the pilot hands in the ore it holds: one unit short changes nothing, the full quantity completes the step
+        host.Held[Datacore] = 17999;
+        await runtime.OnConversationAsync(Pilot, Agent, together: true);
+        Assert.Equal(AgentMissionState.Accepted, (await store.ReadAsync(Pilot, Agent))!.State);
+        Assert.Empty(host.Consumed);
+        host.Held[Datacore] = 18000;
+        await runtime.OnConversationAsync(Pilot, Agent, together: true);
+        Assert.Equal(AgentMissionState.Completed, (await store.ReadAsync(Pilot, Agent))!.State);
+        Assert.Equal((Pilot, Datacore, 18000L), Assert.Single(host.Consumed));
+    }
+
     [Fact]
     public void A_basic_mining_agent_offers_the_lowest_mining_mission_of_its_level_that_the_dungeon_can_start()
     {
@@ -545,6 +604,49 @@ public class MissionDungeonRuntimeTests
         // level 1 (0 to 5 jumps): the other station of the origin system counts, the unreachable one does not
         var level1 = MissionCourierRules.Destination(9401, Pilot, 10, 1, 1, gates, stations);
         Assert.Contains(level1!.Id, new long[] { 11, 20, 30 });
+    }
+
+    // An epic arc with one courier step (9401, agent 3008500): the arc's step has no mission level, so its jump range comes from its agent.
+    private const string CourierArc = """
+        {"_key": 9001, "name": {"en": "Courier Arc"}, "arcRestartInterval": 129600,
+         "missions": [{"_key": 9401, "agentID": 3008500, "nextMissions": []}]}
+        """;
+
+    [AgentsPgFact]
+    public async Task An_epic_arc_courier_takes_its_agents_level_for_the_jump_range()
+    {
+        var source = NpgsqlDataSource.Create(PgConnection.ForTest(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
+        var schema = "mdr_" + Guid.NewGuid().ToString("N")[..12];
+        await using var cleanup = new Cleanup(source, schema);
+        await AgentMissionStore.MigrateAsync(source, schema);
+        var store = new AgentMissionStore(source, schema);
+        var host = new FakeHost { Store = store };
+        var catalog = MissionStaticCatalog.FromRows(3405148, [new SdeRow(9401, JsonDocument.Parse(CourierMission).RootElement.Clone())],
+            [new SdeRow(9001, JsonDocument.Parse(CourierArc).RootElement.Clone())]);
+        long? jumpLevel = null;
+        var runtime = new MissionDungeonRuntime(store, catalog, host, _ => new MissionAgentPlace(System, Corporation, AgentStation, 2), () => Start,
+            (missionId, characterId, place, level) =>
+            {
+                jumpLevel = level;
+                return Dest(DestinationStation, (int)System);
+            });
+        await store.OfferAsync(Pilot, Agent, new AgentMissionContent(9401, 1239, "Courier Step", "", false), Start, "offer:c3");
+        await store.AcceptAsync(Pilot, Agent, Start, "accept:c3");
+        await runtime.OnAcceptedAsync(Pilot, Agent);
+
+        await runtime.OnDockedAsync(Pilot, DestinationStation);
+
+        Assert.Equal(2L, jumpLevel);
+        Assert.Equal(AgentMissionState.Completed, (await store.ReadAsync(Pilot, Agent))!.State);
+    }
+
+    [Fact]
+    public void The_courier_level_of_an_epic_arc_step_is_its_agents_and_any_other_courier_keeps_its_tag()
+    {
+        Assert.Equal(2L, MissionCourierRules.CourierLevel(true, 2, null));
+        Assert.Equal(2L, MissionCourierRules.CourierLevel(true, 2, 4));
+        Assert.Equal(4L, MissionCourierRules.CourierLevel(false, 2, 4));
+        Assert.Null(MissionCourierRules.CourierLevel(false, 2, null));
     }
 
     // A basic courier (level 4, Distribution) and a basic item kill (level 4, a dungeon whose objective is an item), both untagged by arcs.

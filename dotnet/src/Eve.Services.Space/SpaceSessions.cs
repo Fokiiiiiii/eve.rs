@@ -641,6 +641,7 @@ private readonly TransitionRuntime _transitions;
         _pilots[sessionId] = new Pilot(
             session, characterId, snapshot.Ship.Id, snapshot.Ship.TypeId,
             systemId, FileTimeNow(), snapshot.Character.StationId);
+        _log?.Invoke($"pilot {characterId} entered space in system {systemId} (session {sessionId})");
         await RefreshTetherPolicyAsync(session, cancellationToken);
         if (PilotEntered is { } entered)
         {
@@ -1080,8 +1081,12 @@ private readonly TransitionRuntime _transitions;
             }
 
             var spaceStateSaved = chargesSaved && await SaveSpaceStateAsync(pilot).ConfigureAwait(false);
+            _log?.Invoke($"pilot {pilot.CharacterId} left space in system {pilot.SolarSystemId} (session {id}): position saved {spaceStateSaved}");
             if (!spaceStateSaved && chargesSaved)
+            {
+                _log?.Invoke($"pilot {pilot.CharacterId} (session {id}): the ship is recovered to its station, its position was not saved");
                 await _ships.RecoverFromSpaceAsync(pilot.CharacterId, PlaceOfStation, CancellationToken.None).ConfigureAwait(false);
+            }
         }
         catch (Exception error)
         {

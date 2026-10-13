@@ -5,8 +5,8 @@ down and the FOB is in its armor reinforcement.
 
 The campaign and the FOB are set through the database, the way the walks seed their state: the Angel campaign (warzone 1) is made active with its
 empire side at its count, and its FOB structure is made vulnerable at its shield (state 110, the structures table). The pilot is seeded in space in
-that system, 150 km from the FOB's centre, with eight QA Smartbombs fitted (250 km fields, 5,000 of each damage type a cycle, against the FOB's
-9.6 million shield). The walk watches the ballpark for the FOB's ball (typeID 78260, its Angel Cartel FOB) and polls the structure's state until the
+that system, 150 km from the FOB's centre, with a QA Smartbomb in every free high slot at the red safety (250 km fields, 5,000 of each damage type a cycle, against the FOB's
+9.6 million shield; the bombs run together, the QA Smartbomb has no maxGroupActive). The walk watches the ballpark for the FOB's ball (typeID 78260, its Angel Cartel FOB) and polls the structure's state until the
 shield is depleted (state 111, the armor reinforcement). Run it through tools/mitm to keep the capture.
 """
 
@@ -21,33 +21,35 @@ import pytest
 
 from evecli import marshal as m
 from evecli import packet
-from evecli.observe import timed_events
+from evecli.observe import timed_events, wait_quietly
 
 from tests.test_agents_live import psql, run_id, schema, seed_ship
 from tests.test_login_to_character import LIVE, WALK, connect, revive
+from tests import dbseed
 from tests.test_mission_walk import QA_SMARTBOMB, seed_cockroach
 
 PG_URL = os.environ.get("EVE_PG_URL", "")
 FOB_TYPE = 78260  # the Angel Cartel FOB (SDE types row 78260; the Angel warzone is the client's warzone 1)
 ARMOR_REINFORCE = 111  # the structure state of the armor reinforcement (StructureState.ArmorReinforce)
 SHIELD_VULNERABLE = 110  # the structure state of the shield stage (StructureState.ShieldVulnerable)
-BOMBS = 1  # one QA Smartbomb runs at a time (the server refuses a second of the same effect, EffectAlreadyActive2): 5,333 damage a second
-# after the 0.8 resonances, so the FOB's 9.6 million shield takes about 30 minutes of cycles
 EGO_OFFSET = 150_000.0  # 150 km from the FOB's centre (its radius is 50 km): inside the bombs' 250 km fields
 COCKROACH_GROUP = 25
 COCKROACH = 11019
 FAR_FUTURE_MS = 4_102_444_800_000
-WALK_LIMIT_S = 2_100.0
+PILOT_X = 148_950_042.0  # where the server's pose puts the pilot's ship in the Angel hub system (observed)
+WALK_LIMIT_S = float(os.environ.get("EVE_LIVE_FOB_LIMIT_S", "900"))
+ACTIVATION_REPEAT = 1000  # cycles per activation: 3,000 s at the bomb's 3 s duration, past the walk's limit
 
 pytestmark = pytest.mark.skipif(
     not (LIVE and PG_URL and os.environ.get("EVE_LIVE_FOB_WALK") == "1"),
-    reason="set EVE_LIVE_HOST, EVE_PG_URL and EVE_LIVE_FOB_WALK=1 (about twenty minutes of smartbomb cycles)",
+    reason="set EVE_LIVE_HOST, EVE_PG_URL and EVE_LIVE_FOB_WALK=1 (a few minutes of smartbomb cycles)",
 )
 
 
-def fit_bombs(ship_id: int, count: int) -> list[int]:
-    """The QA Smartbomb of the ship: the mission walk's fixture (the Cockroach with the bomb in a mid slot)."""
-    return [seed_cockroach(ship_id)][:count]
+def fit_bombs(ship_id: int) -> list[int]:
+    """The Cockroach (the mission walk's fixture) with a QA Smartbomb in each free high slot (dbseed.seed_qa_arsenal): every bomb of the ship."""
+    seed_cockroach(ship_id)
+    return dbseed.items_of(dbseed.owner_of(ship_id), dbseed.QA_SMARTBOMB)
 
 
 def seed_hub_pilot(character_id: int, ship: int, system: int) -> None:
@@ -87,12 +89,18 @@ def test_the_qa_smartbombs_take_the_fobs_shield_in_its_system():
         character_id = m.plain(client.call(service, method, *[revive(value, run) for value in described]))
         ship = seed_ship(character_id)
         seed_hub_pilot(character_id, ship, system)
-        bombs = fit_bombs(ship, BOMBS)
-        assert len(bombs) == BOMBS, f"only {len(bombs)} mid slots free for the bombs"
+        bombs = fit_bombs(ship)
+        assert len(bombs) >= 2, f"only {len(bombs)} bomb in the mid slots"
+        # the server puts the pilot's ship where its pose says (about 148,950 km out from the system's origin), not at the seeded 150 km, so the
+        # FOB is moved to 60 km from there, inside the bombs' 250 km fields
+        psql(f"UPDATE {structures}.structures SET x = {PILOT_X + 60_000.0}, y = 0, z = 0 WHERE structure_id = {fob}")
         client.notifications.clear()
+        print("POSE_ROW", psql(f"SELECT item_id, solar_system_id, x, y, z, expires_at_ms FROM {schema('EVE_SPACE_SCHEMA')}.space_items WHERE item_id = {ship}"))
         client.call("charUnboundMgr", "SelectCharacterID", charID=character_id, secondChoiceID=None, skipTutorial=False)
+        print("SHIP_ROW", psql(f"SELECT id, location_id, flag FROM {schema('EVE_INVENTORY_SCHEMA')}.items WHERE id = {ship}"), "CHAR_ROW", psql(f"SELECT ship_id, solar_system_id FROM {schema('EVE_CHARACTERS_SCHEMA')}.characters WHERE id = {character_id}"))
         ballpark = client.call("beyonce", "MachoBindObject", system, None)
         dogma = client.call("dogmaIM", "MachoBindObject", (system, 5), None)
+        wait_quietly(client, 5.0)  # the pilot comes into the system; its scene is filled before the bombs are switched on
         for bomb in bombs:
             client.call_bound(dogma[0], "SetModuleOnline", ship, bomb)
 
@@ -102,18 +110,19 @@ def test_the_qa_smartbombs_take_the_fobs_shield_in_its_system():
         state = SHIELD_VULNERABLE
         last_check = 0.0
         cycles = 0
+        # each bomb is activated once for its whole run (the server repeats the cycle); the bombs run together, each on its own module
+        for bomb in bombs:
+            try:
+                client.call_bound(dogma[0], "Activate", bomb, "empWave", None, ACTIVATION_REPEAT)
+            except packet.MachoError as error:  # a refusal is kept for the report; the walk goes on with the others
+                refusals.append(repr(getattr(error, "payload", error))[:160])
         while time.time() - started < WALK_LIMIT_S and state != ARMOR_REINFORCE:
-            for bomb in bombs:
-                try:
-                    client.call_bound(dogma[0], "Activate", bomb, "empWave", None, 1000)
-                except packet.MachoError as error:  # a refusal is kept for the report; the walk goes on with the others
-                    refusals.append(repr(getattr(error, "payload", error))[:160])
             for event in timed_events(client, 3.0):
                 text = json.dumps(event, default=str)
                 cycles += text.count("EMPWave")  # each cycle of the bomb is one field of the effect on the pilot's scene
                 if re.search(r'\["typeID", %d\]' % FOB_TYPE, text):
                     fob_seen = True
-            if time.time() - last_check >= 15.0:
+            if time.time() - last_check >= 5.0:
                 last_check = time.time()
                 state = structure_state(fob)
         print("FOB_SEEN", fob_seen, "STATE", state, "SECONDS", int(time.time() - started), "CYCLES", cycles, "REFUSALS", len(refusals), refusals[:3])

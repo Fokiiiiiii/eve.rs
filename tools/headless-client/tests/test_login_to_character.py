@@ -364,14 +364,19 @@ def _expect_info_error(kind, outcome, where) -> list[str]:
     return []
 
 
+def _blank_ship_value(described):
+    copy = json.loads(json.dumps(described))
+    for entry in copy["$tuple"][4]["$tuple"][1]["$tuple"][1]["$dict"]:
+        if entry[0] == "shipid":
+            entry[1] = "$blanked"
+    return copy
+
+
 def _compare_session_change(recorded, ours) -> list[str]:
     if ours is None:
         return ["no SessionChangeNotification after SelectCharacterID"]
-    # The evers audit path intentionally delays docked shipid until the first hangar List.
-    if not REFERENCE:
-        recorded = json.loads(json.dumps(recorded))
-        attributes = recorded["$tuple"][4]["$tuple"][1]["$tuple"][1]["$dict"]
-        attributes[:] = [entry for entry in attributes if entry[0] != "shipid"]
+    # the active ship is in the selection change, as the reference's capture has it (evejs-nes_intro); its id is per run, like the character's
+    recorded, ours = _blank_ship_value(recorded), _blank_ship_value(ours)
     # who it is for and which session are per run
     for path in (("$tuple", 3), ("$tuple", 4, "$tuple", 0), ("$tuple", 2, "args", "$tuple", 1)):
         recorded, ours = blank(recorded, *path), blank(ours, *path)

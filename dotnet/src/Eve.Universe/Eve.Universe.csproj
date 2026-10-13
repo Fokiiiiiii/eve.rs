@@ -4,6 +4,9 @@
   </ItemGroup>
   <ItemGroup>
     <EmbeddedResource Include="Wormholes/Data/jspace-systems.json" LogicalName="Eve.Universe.jspace-systems.json" />
+    <EmbeddedResource Include="Data/client-solarsystemcontent.jsonl.gz" LogicalName="client-solarsystemcontent.jsonl.gz" />
+    <EmbeddedResource Include="Data/client-spacecomponentsbytype.jsonl.gz" LogicalName="client-spacecomponentsbytype.jsonl.gz" />
+    <EmbeddedResource Include="Data/client-systems.jsonl.gz" LogicalName="client-systems.jsonl.gz" />
   </ItemGroup>
   <ItemGroup>
     <InternalsVisibleTo Include="Eve.Universe.Tests" />

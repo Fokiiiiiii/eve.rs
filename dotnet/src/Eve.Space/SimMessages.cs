@@ -453,7 +453,7 @@ public abstract record SimAction
     /// Engages the ship's active cloaking device (tag 5). A cloak that is not warp-safe (<paramref name="WarpSafe"/> false, a standard cloaking device) holds the
     /// ship out of warp while it runs; a warp-safe (covert ops) cloak carries it into warp.
     /// </summary>
-    public sealed record Cloak(bool WarpSafe) : SimAction;
+    public sealed record Cloak(bool WarpSafe, double TargetingDelayMs) : SimAction;
 
     /// <summary>
     /// A warp disruption field generator's bubble (tag 16): while the effect runs the ship is a warp-disruption source of <paramref name="RangeMeters"/> around itself,

@@ -349,6 +349,16 @@ public sealed partial class SpaceSessions
                 package = package with { Action = bomb with { HurtsPilots = false } };
             }
         }
+        // a smartbomb is lit only at the red safety in low, high or safe space: the client's GetRequiredSafetyLevelForEffect asks none there for a targetless
+        // offensive effect with a range, and the wiki (Smartbombs) says the same for high security space
+        if (package.Action is SimAction.Smartbomb && securityClass is { } bombWhere && Security.IsLowSecOrHigher(bombWhere))
+        {
+            var bombSafety = SafetyLevelOf is { } askBomb ? await askBomb(characterId, cancellationToken) : SafetyLevel.Full;
+            if (bombSafety != SafetyLevel.None)
+            {
+                return ModuleResult.Refusal(WeaponSafety.Refusal, made.ModuleType, made.ModuleName);
+            }
+        }
         // an analyzer's container is checked before the cycle starts (EveJS moduleOperation.js _resolveAnalyzerHackingContext)
         if (string.Equals(effectName, AnalyzerEffectName, StringComparison.OrdinalIgnoreCase) && HackingService is { } analyzerChecks
             && await analyzerChecks.AnalyzerRefusalAsync(characterId, targetId, AnalyzerValuesOf(snapshot, moduleId, made.ModuleType), cancellationToken) is { } analyzerRefusal)

@@ -6,7 +6,7 @@ is complete (eve.rs only: the mission content is the server's own; the reference
 The pilot starts in Manifest (30100032), one stargate jump from 30005204, where the level 4 security agent 3015920 sits. It warps to the gate,
 jumps, requests the mission (DoAction 376), accepts it (377) and waits for the wave director's dungeon (the sweep runs every ten seconds). The
 dungeon's NPCs are shot with the pilot's gun as test_npc does. A basic level 4 mission has no ISK in the official data, so the wallet is only
-checked to be unchanged (owner decision D-R1). Needs EVE_SDE_DIR and EVE_CLIENT_SDE_DIR (the mission texts) on the host.
+checked to be unchanged (owner decision D-R1). Needs EVE_SDE_DIR on the host; the mission texts come from the embedded client data.
 """
 
 from __future__ import annotations
@@ -106,8 +106,8 @@ def journal_of(ship_id: int) -> list[str]:
 
 
 def seed_cockroach(ship_id: int) -> int:
-    """A fixture, not a server path: the character's ship row in the run's inventory schema takes the Cockroach's type, and a QA Smartbomb
-    is fitted in a free mid slot (flags 19 to 26). Returns the module's item id. The live run exports EVE_INVENTORY_SCHEMA and EVE_PSQL_URL."""
+    """A fixture, not a server path: the character's ship row in the run's inventory schema takes the Cockroach's type, and QA Smartbombs
+    are fitted in its free high slots (dbseed.seed_qa_arsenal). Returns the first one's item id. The live run exports EVE_INVENTORY_SCHEMA and EVE_PSQL_URL."""
     schema, url = os.environ["EVE_INVENTORY_SCHEMA"], os.environ["EVE_PSQL_URL"]
 
     def sql(text: str) -> str:
@@ -115,16 +115,16 @@ def seed_cockroach(ship_id: int) -> int:
 
     # the QA Smartbomb needs Polaris at level 5 to be fitted (its required-skill attributes): the character is given that skill
     owner = sql(f"SELECT owner_id FROM {schema}.items WHERE id = {ship_id}").split()[0]
+    # the smartbomb lights only at the red safety in low, high and safe space (the client's GetRequiredSafetyLevelForEffect): 0 is none
+    sql(f"INSERT INTO {os.environ['EVE_CRIMEWATCH_SCHEMA']}.safety (character_id, level, updated_ms) VALUES ({owner}, 0, {int(time.time() * 1000)}) "
+        f"ON CONFLICT (character_id) DO UPDATE SET level = 0, updated_ms = EXCLUDED.updated_ms")
     sql(f"INSERT INTO {os.environ['EVE_SKILLS_SCHEMA']}.character_skills (character_id, type_id, level, skill_points) "
         f"VALUES ({owner}, {POLARIS}, 5, {POLARIS_LEVEL5_POINTS}) ON CONFLICT (character_id, type_id) DO UPDATE SET level = 5, skill_points = {POLARIS_LEVEL5_POINTS}")
     # psql -c prints the rows and then the command tag ("UPDATE 1"): the first token is the answer
     assert sql(f"UPDATE {schema}.items SET type_id = {COCKROACH} WHERE id = {ship_id} RETURNING id").split()[0] == str(ship_id), \
         f"the ship row {ship_id} was not found in {schema}"
-    used = {int(flag) for flag in sql(f"SELECT flag FROM {schema}.items WHERE location_id = {ship_id}").split()}
-    flag = next(slot for slot in range(19, 27) if slot not in used)  # the mid slots
-    module = sql(f"INSERT INTO {schema}.items (type_id, owner_id, location_id, flag, quantity, singleton) "
-                 f"SELECT {QA_SMARTBOMB}, owner_id, {ship_id}, {flag}, 1, true FROM {schema}.items WHERE id = {ship_id} RETURNING id")
-    return int(module.split()[0])
+    from tests import dbseed  # the SDE high slots of the ship (smartbomb: hiPower), the bombs of the arsenal; the walk activates the first
+    return dbseed.seed_qa_arsenal(ship_id)[0]
 
 
 def until_stopped(who, limit: float = 240.0) -> None:

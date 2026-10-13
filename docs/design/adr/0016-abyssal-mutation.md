@@ -136,7 +136,7 @@ handling of damage.
 * **Open (not decided here):** the output-only identity values (D1 excludes them): techLevel 422, metaLevelOld 633, metaGroupID 1692,
   canFitShip 1298-1303, drone bonus 1255 and 2335-2338. Each needs a decision and a test before the mutated module is called done.
   Drone bases come from the source (Acolyte I 9 = 170, 263 = 40, 265 = 190), never from the output placeholders.
-* **Unverified:** the crafting-window flow and animation, the tooltip, the client's reaction to `OnItemChange`, contract tooltips,
+* **Not yet run on the graphical client:** the crafting-window flow and animation, the tooltip, the client's reaction to `OnItemChange`, contract tooltips,
   the displayed rounding, the damaged-source and fitted-source gates as CCP runs them, and the output volume. The live harness
-  (`tests/test_mutation.py`) is unverified until it is run with the graphical client. Skipped PostgreSQL tests are not passed tests.
+  (`tests/test_mutation.py`) has not been run with the graphical client yet. Skipped PostgreSQL tests are not passed tests.
 * Reprocess, market listing and re-mutation stay refused. Adding any of them later needs a new ADR.

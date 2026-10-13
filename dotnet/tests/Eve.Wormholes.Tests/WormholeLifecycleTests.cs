@@ -88,11 +88,11 @@ public sealed class WormholeLifecycleTests
         Assert.Equal(id, Assert.Single(await rig.ActiveFromAsync(31000001)).Id);
     }
 
-    [RealDataFact]
+    [PgFact]
     public async Task Every_static_of_the_real_world_gets_a_destination_of_its_target_class()
     {
         var jSystems = JSpaceSystems.Load();
-        var classes = await WormholeSystemClasses.LoadAllAsync(Environment.GetEnvironmentVariable("EVE_CLIENT_SDE_DIR")!);
+        var classes = await WormholeSystemClasses.LoadAllAsync(Environment.GetEnvironmentVariable(ClientStaticData.DirectoryVariable));
         await using var source = NpgsqlDataSource.Create(Eve.Data.PgConnection.ForTest(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
         var types = await WormholeTypeCatalog.LoadAsync(new SdeReader(source));
 

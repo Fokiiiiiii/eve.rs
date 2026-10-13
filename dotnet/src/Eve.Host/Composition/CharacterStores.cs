@@ -49,6 +49,7 @@ internal sealed partial class CharacterServicesComposition
         crimewatchStore = new Eve.Crimewatch.PgCrimewatchStore(source, crimewatchSchema);
         // agent offers and mission states (AG-2 / A5): the agents schema, migrated here
         agentMissionStore = new Eve.Agents.AgentMissionStore(source, Env("EVE_AGENTS_SCHEMA", Eve.Agents.AgentMissionStore.DefaultSchema));
+        storylineCounters = new Eve.Agents.StorylineCounters(source, Env("EVE_AGENTS_SCHEMA", Eve.Agents.AgentMissionStore.DefaultSchema));
         await Eve.Agents.AgentMissionStore.MigrateAsync(source, agentMissionStore.Schema);
         agentResearchProjects = new Eve.Agents.ResearchProjectStore(source, agentMissionStore.Schema);
         await Eve.Agents.ResearchProjectStore.MigrateAsync(source, agentMissionStore.Schema);
@@ -72,13 +73,8 @@ internal sealed partial class CharacterServicesComposition
         modules = new PgModuleStateStore(source, fittingSchema);
         savedFittings = new PgSavedFittingStore(source, fittingSchema);
         stations = await StationCatalog.LoadAsync(sde);
-        // the client's disallowCyno and disallowScanning flags, read from its export (EVE_CLIENT_SDE_DIR); unset means none are loaded
-        var clientDirectory = Env(ClientSystemFlags.DirectoryVariable, "");
-        if (string.IsNullOrWhiteSpace(clientDirectory))
-        {
-            Console.Error.WriteLine($"eve-host: {ClientSystemFlags.DirectoryVariable} is not set: client system flags (cyno and scan bans) are disabled");
-        }
-        solarSystems = await SolarSystemCatalog.LoadAsync(sde, await ClientSystemFlags.ReadDirectoryAsync(clientDirectory));
+        // the client's disallowCyno and disallowScanning flags: the embedded client data, or the export named by EVE_CLIENT_SDE_DIR where it holds the file
+        solarSystems = await SolarSystemCatalog.LoadAsync(sde, await ClientSystemFlags.LoadAsync(Env(ClientStaticData.DirectoryVariable, "")));
         dogma = await DogmaStatic.LoadAsync(sde);
     }
 }

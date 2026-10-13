@@ -136,6 +136,8 @@ pub(crate) struct Subject {
     has_damage_state: bool,
     warping: bool,
     protected: bool,
+    /// a system body (a station, planet, moon, belt, star or stargate): in view at any distance, so only the range decides (visibility.rs)
+    static_body: bool,
 }
 
 /// Why a lock cannot be had, with what the client is told about the target (its type, and for a target too far off the range the ship locks at
@@ -193,6 +195,7 @@ impl Scene {
                 has_damage_state: true,
                 warping: pilot.flight.as_ref().is_some_and(|f| f.is_warping()),
                 protected: pilot.protected_until > now || self.is_tethered_session(*session, now),
+                static_body: false,
             });
         }
         if let Some(wreck) = self.wrecks.get(&target) {
@@ -208,10 +211,11 @@ impl Scene {
                 has_damage_state: false,
                 warping: false,
                 protected: false,
+                static_body: false,
             });
         }
         // a mineable rock is locked through the same path as a wreck. Its id is an item id (the host allocates them from 1,990,000,000);
-        // the id spaces of rocks and system bodies are not yet verified against the SDE, so a rock is looked up before the bodies (UNVERIFIED, DEVIATIONS).
+        // the id spaces of rocks and system bodies are not cross-checked against the SDE, so a rock is looked up before the bodies.
         // A depleted rock is removed from the map, so it stops resolving and its locks are dropped by the upkeep in `target_order`.
         if let Some(asteroid) = self.asteroids.get(&target) {
             return Some(Subject {
@@ -226,6 +230,7 @@ impl Scene {
                 has_damage_state: false,
                 warping: false,
                 protected: false,
+                static_body: false,
             });
         }
         let body = self.system().body(target)?;
@@ -245,6 +250,7 @@ impl Scene {
             has_damage_state: body.kind == BodyKind::Station,
             warping: false,
             protected: false,
+            static_body: true,
         })
     }
 

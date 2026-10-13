@@ -177,7 +177,7 @@ public sealed class DungeonCatalogTests
     {
         var dungeons = Catalog.Dungeons.ToList();
         Assert.Equal(3049, dungeons.Sum(d => d.Gates.Count));
-        Assert.Equal(7084, dungeons.Sum(d => d.Waves.Count)); // + the derived on-load wave of dungeon 3533 (DEVIATIONS X7)
+        Assert.Equal(7085, dungeons.Sum(d => d.Waves.Count)); // + the derived on-load waves of dungeons 3533 (DEVIATIONS X7) and 3957 (X8)
         Assert.Equal(1161, dungeons.Sum(d => d.MiningLocks.Count));
         Assert.Equal(287, dungeons.Sum(d => d.Containers.Count));
         Assert.Equal(17, dungeons.Sum(d => d.Hazards.Count));

@@ -762,10 +762,13 @@ impl Scene {
         {
             out.extend(self.release(ship_id, run.effect.module_id, run.effect.target_id, at));
         }
-        if matches!(run.effect.action.as_ref(), Some(Action::Cloak { .. })) {
+        if let Some(Action::Cloak { targeting_delay_ms, .. }) = run.effect.action.as_ref() {
             let changed = if let Some(pilot) = self.pilots.get_mut(&session) {
                 let changed = pilot.cloak != crate::visibility::CloakState::Uncloaked;
                 pilot.cloak = crate::visibility::CloakState::Uncloaked;
+                // the decloak starts the targeting delay of the cloak that ended (cloakingTargetingDelay, in milliseconds): no lock is acquired until it has passed
+                pilot.targeting_blocked_until =
+                    at + (targeting_delay_ms.max(0.0) * TICKS_PER_SECOND as f64 / 1000.0) as i64;
                 changed
             } else {
                 false

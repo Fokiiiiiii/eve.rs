@@ -69,6 +69,7 @@ public static class ModuleRefusals
             // module id, which the refusal does not carry yet; until then the pilot is told in words of ours
             "MODULE_REACTIVATING" => Notify($"{name} cannot be reactivated yet."),
             "CLOAK_WARP_BLOCKED" => Notify("You cannot activate that cloaking device while warping."),
+            "MODULE_CLOAKED" => Notify("You cannot activate modules while cloaked."),
             // a module under nanite repair does not run, and no module is overheated while one is repaired (the wording is ours: the client has no text for it)
             "MODULE_REPAIRING" => Notify($"{name} cannot be activated while it is being repaired."),
             "REPAIR_IN_PROGRESS" => Notify("You cannot overheat a module while a module is being repaired."),
@@ -85,7 +86,6 @@ public static class ModuleRefusals
         // the text of EveJS's CYNOSURAL_FIELD_JAMMED (moduleOperation.js); eve-logic has no string for it. Pochven's jammer gives it too (the wiki)
         "CYNOSURAL_FIELD_JAMMED" => Notify("A cynosural system jammer is preventing cynosural fields from forming in this solar system."),
         "SMARTBOMB_NEAR_STATION" => Notify($"{name} cannot be activated this close to a station or stargate."),
-            "MODULE_CLOAKED" => Notify("You cannot activate modules while cloaked."),
             // a disruptive lance needs an active siege module on the ship (EveJS ACTIVE_SIEGE_MODULE_REQUIRED, moduleActivationRequiresActiveSiegeModule)
             "ACTIVE_SIEGE_MODULE_REQUIRED" => Notify($"{name} requires an active siege module."),
             // an effect with no body yet (PendingModuleEffect) or a module that burns a resource not taken yet (DogmaModifierEffect) is shown as one this module cannot run,

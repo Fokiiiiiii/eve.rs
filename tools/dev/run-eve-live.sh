@@ -20,6 +20,25 @@ export EVE_LP_STORE_SEED="${EVE_LP_STORE_SEED:-skip}"
 export EVE_ADJUSTED_PRICE_SEED="${EVE_ADJUSTED_PRICE_SEED:-skip}"
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+# the walks and seeds read the database with psql, which takes a postgres:// URL (EVE_PG_URL may be the Npgsql form)
+if [ -n "${EVE_PG_URL:-}" ] && [ -z "${EVE_PSQL_URL:-}" ]; then
+  export EVE_PSQL_URL="$(python3 -I -c "
+import re, sys, urllib.parse
+url = sys.argv[1].strip()
+if url.startswith(('postgres://', 'postgresql://')):
+    print(url)
+else:
+    f = dict(re.findall(r'(?i)([A-Za-z ]+)=([^;]*)', url))
+    f = {k.strip().lower(): v.strip() for k, v in f.items()}
+    user = urllib.parse.quote(f.get('username', 'postgres'))
+    print(f'postgres://{user}@{f.get(\"host\", \"127.0.0.1\")}:{f.get(\"port\", \"5432\")}/{f.get(\"database\", \"eve\")}')
+" "$EVE_PG_URL")"
+fi
+# the simulation reads the static data's JSONL export: the copy `eve-sde ensure` keeps under .cache/sde, unless EVE_SDE_DIR names one
+if [ -z "${EVE_SDE_DIR:-}" ]; then
+  sde_copy="$(ls -d "$HERE"/.cache/sde/eve-online-static-data-*-jsonl 2>/dev/null | head -n 1 || true)"
+  if [ -n "$sde_copy" ]; then export EVE_SDE_DIR="$sde_copy"; fi
+fi
 TARGET="${CARGO_TARGET_DIR:-$HERE/target}"
 PORT="${EVE_LIVE_PORT:-26100}"
 if (exec 3<>"/dev/tcp/127.0.0.1/$PORT") 2>/dev/null; then
@@ -39,7 +58,7 @@ if [ -n "${EVE_PG_URL:-}" ]; then
   SCRATCH="live_$$"
   export EVE_IDENTITY_SCHEMA="${SCRATCH}_identity" EVE_CHARACTERS_SCHEMA="${SCRATCH}_characters" EVE_INVENTORY_SCHEMA="${SCRATCH}_inventory" EVE_SKILLS_SCHEMA="${SCRATCH}_skills" EVE_WALLET_SCHEMA="${SCRATCH}_wallet" EVE_FITTING_SCHEMA="${SCRATCH}_fitting" EVE_NPC_SCHEMA="${SCRATCH}_npc" EVE_SPACE_SCHEMA="${SCRATCH}_space"
   export EVE_GAMESTORE_SCHEMA="${SCRATCH}_gamestore" EVE_ASSET_SAFETY_SCHEMA="${SCRATCH}_asset_safety" EVE_CORPORATIONS_SCHEMA="${SCRATCH}_corporations" EVE_FLEET_SCHEMA="${SCRATCH}_fleet" EVE_INDUSTRY_SCHEMA="${SCRATCH}_industry" EVE_MARKET_SCHEMA="${SCRATCH}_market"
-  export EVE_SCHEDULER_SCHEMA="${SCRATCH}_scheduler" EVE_EVENTS_SCHEMA="${SCRATCH}_events" EVE_RELATIONS_SCHEMA="${SCRATCH}_relations" EVE_CONTENT_SCHEMA="${SCRATCH}_content" EVE_CRIMEWATCH_SCHEMA="${SCRATCH}_crimewatch" EVE_GLOBAL_CONFIG_SCHEMA="${SCRATCH}_global_config" EVE_STRUCTURES_SCHEMA="${SCRATCH}_structures" EVE_AGENTS_SCHEMA="${SCRATCH}_agents" EVE_INSURGENCY_SCHEMA="${SCRATCH}_insurgency" EVE_ESS_SCHEMA="${SCRATCH}_ess" EVE_TRADE_SCHEMA="${SCRATCH}_trade" EVE_BOOKMARKS_SCHEMA="${SCRATCH}_bookmarks"
+  export EVE_SCHEDULER_SCHEMA="${SCRATCH}_scheduler" EVE_EVENTS_SCHEMA="${SCRATCH}_events" EVE_RELATIONS_SCHEMA="${SCRATCH}_relations" EVE_CONTENT_SCHEMA="${SCRATCH}_content" EVE_CRIMEWATCH_SCHEMA="${SCRATCH}_crimewatch" EVE_GLOBAL_CONFIG_SCHEMA="${SCRATCH}_global_config" EVE_STRUCTURES_SCHEMA="${SCRATCH}_structures" EVE_AGENTS_SCHEMA="${SCRATCH}_agents" EVE_INSURGENCY_SCHEMA="${SCRATCH}_insurgency" EVE_ESS_SCHEMA="${SCRATCH}_ess" EVE_TRADE_SCHEMA="${SCRATCH}_trade" EVE_BOOKMARKS_SCHEMA="${SCRATCH}_bookmarks" EVE_WORMHOLE_SCHEMA="${SCRATCH}_wormhole"
 fi
 
 cleanup() {
@@ -52,7 +71,7 @@ cleanup() {
     for _ in $(seq 1 50); do kill -0 "$pid" 2>/dev/null || break; sleep 0.1; done
   done
   if [ -n "$SCRATCH" ]; then
-    for schema in "$EVE_TRADE_SCHEMA" "$EVE_IDENTITY_SCHEMA" "$EVE_CHARACTERS_SCHEMA" "$EVE_INVENTORY_SCHEMA" "$EVE_SKILLS_SCHEMA" "$EVE_WALLET_SCHEMA" "$EVE_FITTING_SCHEMA" "$EVE_NPC_SCHEMA" "$EVE_SPACE_SCHEMA" "$EVE_SCHEDULER_SCHEMA" "$EVE_EVENTS_SCHEMA" "$EVE_RELATIONS_SCHEMA" "$EVE_CONTENT_SCHEMA" "$EVE_CRIMEWATCH_SCHEMA" "$EVE_GLOBAL_CONFIG_SCHEMA" "$EVE_STRUCTURES_SCHEMA" "$EVE_GAMESTORE_SCHEMA" "$EVE_ASSET_SAFETY_SCHEMA" "$EVE_CORPORATIONS_SCHEMA" "$EVE_FLEET_SCHEMA" "$EVE_INDUSTRY_SCHEMA" "$EVE_MARKET_SCHEMA" "$EVE_AGENTS_SCHEMA" "$EVE_INSURGENCY_SCHEMA" "$EVE_ESS_SCHEMA" "$EVE_BOOKMARKS_SCHEMA"; do
+    for schema in "$EVE_TRADE_SCHEMA" "$EVE_IDENTITY_SCHEMA" "$EVE_CHARACTERS_SCHEMA" "$EVE_INVENTORY_SCHEMA" "$EVE_SKILLS_SCHEMA" "$EVE_WALLET_SCHEMA" "$EVE_FITTING_SCHEMA" "$EVE_NPC_SCHEMA" "$EVE_SPACE_SCHEMA" "$EVE_SCHEDULER_SCHEMA" "$EVE_EVENTS_SCHEMA" "$EVE_RELATIONS_SCHEMA" "$EVE_CONTENT_SCHEMA" "$EVE_CRIMEWATCH_SCHEMA" "$EVE_GLOBAL_CONFIG_SCHEMA" "$EVE_STRUCTURES_SCHEMA" "$EVE_GAMESTORE_SCHEMA" "$EVE_ASSET_SAFETY_SCHEMA" "$EVE_CORPORATIONS_SCHEMA" "$EVE_FLEET_SCHEMA" "$EVE_INDUSTRY_SCHEMA" "$EVE_MARKET_SCHEMA" "$EVE_AGENTS_SCHEMA" "$EVE_INSURGENCY_SCHEMA" "$EVE_ESS_SCHEMA" "$EVE_BOOKMARKS_SCHEMA" "$EVE_WORMHOLE_SCHEMA"; do
       psql "$EVE_PG_URL" -qc "DROP SCHEMA IF EXISTS $schema CASCADE" 2>/dev/null || true
     done
   fi

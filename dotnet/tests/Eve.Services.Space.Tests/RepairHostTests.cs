@@ -306,10 +306,12 @@ public class ProjectedHostTests
     }
 
     [PgFact]
-    public async Task A_smartbomb_is_started_with_its_field_and_its_damage_from_dogma_and_does_not_hurt_pilots_where_the_safety_forbids_it()
+    public async Task A_smartbomb_is_started_at_the_red_safety_with_its_field_and_its_damage_from_dogma_and_hurts_pilots()
     {
         var (rig, session, character, module) = await ReadyAsync(SmallEmpSmartbomb, HighSlot);
         await using var _ = rig;
+        // a smartbomb in high security is lit only at the red safety (SmartbombSafetyHostTests); at red it is not limited to legal targets
+        rig.Space.SafetyLevelOf = (_, _) => Task.FromResult(Eve.Crimewatch.SafetyLevel.None);
         // it needs no target
         Assert.Equal(ModuleResult.Done, await rig.Space.ActivateAsync(session, module, "empWave", 0, 1000, CancellationToken.None));
         var effect = Assert.IsType<SimActivate>(rig.Sim.Heard.Last()).Effect;
@@ -322,8 +324,8 @@ public class ProjectedHostTests
         Assert.True(bomb.Damage.Sum() > 0);
         Assert.Equal(await ValueAsync(rig, character, module, 73), effect.DurationMs, 3);
         Assert.Equal(0, effect.TargetId);
-        // the rig's system is not null security: the simulation is told not to hurt pilots with it
-        Assert.False(bomb.HurtsPilots);
+        // at the red safety the bomb hurts the pilots in its range too (the limit applies only to the safeties that stop fire)
+        Assert.True(bomb.HurtsPilots);
     }
 
 // SDE type 580 uses a mid slot and is restricted to battleship-class hulls.

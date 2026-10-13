@@ -55,7 +55,10 @@ def new_pilot(client, run: str) -> int:
 
 
 def seed_ship(character_id: int) -> int:
-    """A Cockroach in the pilot's station hangar (flag 4, singleton), made the active ship through the characters row."""
+    """A Cockroach in the pilot's station hangar (flag 4, singleton), made the active ship through the characters row. The pilot's
+    safety is set to none (the red level), which a smartbomb needs in low, high and safe space."""
+    psql(f"INSERT INTO {schema('EVE_CRIMEWATCH_SCHEMA')}.safety (character_id, level, updated_ms) VALUES ({character_id}, 0, {int(time.time() * 1000)}) "
+         f"ON CONFLICT (character_id) DO UPDATE SET level = 0, updated_ms = EXCLUDED.updated_ms")
     items, characters = f"{schema('EVE_INVENTORY_SCHEMA')}.items", f"{schema('EVE_CHARACTERS_SCHEMA')}.characters"
     psql(f"WITH ship AS (INSERT INTO {items} (type_id, owner_id, location_id, flag, quantity, singleton) "
          f"SELECT {COCKROACH}, {character_id}, station_id, 4, 1, true FROM {characters} WHERE id = {character_id} RETURNING id) "

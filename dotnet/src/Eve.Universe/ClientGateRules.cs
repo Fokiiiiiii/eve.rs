@@ -12,20 +12,16 @@ public sealed record AlignmentToll(double PricePerKilo, double Exponent, double 
 public sealed record DeployBlocker(double BubbleRange, double StructureRange);
 
 /// <summary>
-/// The stargate data the V24.01 client keeps locally and the server reads at start-up from <c>EVE_CLIENT_SDE_DIR</c> (nothing is copied):
+/// The stargate data of the V24.01 client, read from the embedded copy (or from <c>EVE_CLIENT_SDE_DIR</c> where the export holds the file):
 /// each stargate's <c>allowedShipsTypeListID</c> (solarsystemcontent) and each stargate type's <c>alignmentBasedToll</c> (spacecomponentsbytype).
 /// </summary>
 public static class ClientGateRules
 {
     /// <summary>The allowed-ship type list of each stargate that has one (gate ID to list ID).</summary>
-    public static async Task<IReadOnlyDictionary<long, int>> AllowedShipListsAsync(string directory, CancellationToken cancellationToken = default)
+    public static async Task<IReadOnlyDictionary<long, int>> AllowedShipListsAsync(string? directory, CancellationToken cancellationToken = default)
     {
         var lists = new Dictionary<long, int>();
-        if (string.IsNullOrWhiteSpace(directory))
-        {
-            return lists;
-        }
-        await using var file = File.OpenRead(Path.Combine(directory, "native", "solarsystemcontent.jsonl.gz"));
+        await using var file = ClientStaticData.OpenSolarSystemContent(directory);
         await foreach (var row in RowsAsync(file, cancellationToken))
         {
             if (!row.TryGetProperty("stargates", out var gates) || gates.ValueKind != JsonValueKind.Object)
@@ -45,14 +41,10 @@ public static class ClientGateRules
     }
 
     /// <summary>The alignment-based toll of each stargate type that has one (type ID to toll).</summary>
-    public static async Task<IReadOnlyDictionary<int, AlignmentToll>> TollsAsync(string directory, CancellationToken cancellationToken = default)
+    public static async Task<IReadOnlyDictionary<int, AlignmentToll>> TollsAsync(string? directory, CancellationToken cancellationToken = default)
     {
         var tolls = new Dictionary<int, AlignmentToll>();
-        if (string.IsNullOrWhiteSpace(directory))
-        {
-            return tolls;
-        }
-        await using var file = File.OpenRead(Path.Combine(directory, "native", "spacecomponentsbytype.jsonl.gz"));
+        await using var file = ClientStaticData.OpenSpaceComponents(directory);
         await foreach (var row in RowsAsync(file, cancellationToken))
         {
             if (!row.TryGetProperty("_key", out var key) || key.ValueKind != JsonValueKind.Number
@@ -71,14 +63,10 @@ public static class ClientGateRules
     }
 
     /// <summary>The deploy blockers of each stargate type that has one (type ID to ranges).</summary>
-    public static async Task<IReadOnlyDictionary<int, DeployBlocker>> DeployBlockersAsync(string directory, CancellationToken cancellationToken = default)
+    public static async Task<IReadOnlyDictionary<int, DeployBlocker>> DeployBlockersAsync(string? directory, CancellationToken cancellationToken = default)
     {
         var blockers = new Dictionary<int, DeployBlocker>();
-        if (string.IsNullOrWhiteSpace(directory))
-        {
-            return blockers;
-        }
-        await using var file = File.OpenRead(Path.Combine(directory, "native", "spacecomponentsbytype.jsonl.gz"));
+        await using var file = ClientStaticData.OpenSpaceComponents(directory);
         await foreach (var row in RowsAsync(file, cancellationToken))
         {
             if (!row.TryGetProperty("_key", out var key) || key.ValueKind != JsonValueKind.Number

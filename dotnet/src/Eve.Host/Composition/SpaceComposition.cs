@@ -174,12 +174,8 @@ internal sealed partial class CharacterServicesComposition
                 });
             var npcWrecks = new NpcWrecks(npcAuthority, () => NpcLoot.LoadAsync(sde), ships);
             spaceSessions = new SpaceSessions(sim, ships, dogma, stations, solarSystems, now, message => Console.Error.WriteLine($"eve-host: space: {message}"), localTimers: foundations.LocalTimers, spaceItems: spaceItemStore) { RookieShipOfRace = race => catalog.Race(race)?.ShipTypeId, Npcs = new NpcSelector(npcAuthority), NpcWrecks = npcWrecks, BeltRats = new BeltRats(npcAuthority, BeltRatConfig.FromEnvironment(Environment.GetEnvironmentVariable), type => NpcHull.HasHitPoints(dogma.Type(type))), AutoReloadUsers = AutoReloadUserIds(Env("EVE_AUTO_RELOAD_ACCOUNTS", "")) };
-            // the stargate lists and tolls of the client export (EVE_CLIENT_SDE_DIR); unset means none are loaded
-            var clientDirectory = Env(Eve.Universe.ClientSystemFlags.DirectoryVariable, "");
-            if (string.IsNullOrWhiteSpace(clientDirectory))
-            {
-                Console.Error.WriteLine($"eve-host: {Eve.Universe.ClientSystemFlags.DirectoryVariable} is not set: stargate lists and alignment tolls are disabled");
-            }
+            // the stargate lists and tolls: the embedded client data, or the export named by EVE_CLIENT_SDE_DIR where it holds the file
+            var clientDirectory = Env(Eve.Universe.ClientStaticData.DirectoryVariable, "");
             spaceSessions.GateRules = await Eve.Services.Space.Gates.GateRules.LoadAsync(sde, clientDirectory);
             // the environment of the J-space systems (slice 7c): each system's effect beacon (SDE group 920) as dogma effects on the ships in it
             var beaconEffects = await Eve.Universe.WormholeEffects.LoadAsync(sde);
@@ -194,11 +190,11 @@ internal sealed partial class CharacterServicesComposition
                 }
             }
             spaceSessions.SystemEnvironment = id => environments.GetValueOrDefault(id) ?? [];
-            // the wormholes of J-space (slice 7): the world is generated once from the seed (EVE_WORMHOLE_SEED) out of the SDE and the client's system classes;
-            // no client directory, no wormholes. The ends of a system are placed with its scene (SpaceSessions); a collapse or an opening is published to it
-            if (Env("EVE_WORMHOLES", "on") is not ("off" or "0" or "false") && !string.IsNullOrWhiteSpace(clientDirectory))
+            // the wormholes of J-space (slice 7): the world is generated once from the seed (EVE_WORMHOLE_SEED) out of the SDE and the client's system classes
+            // (embedded; EVE_WORMHOLES=off turns the wormholes off). The ends of a system are placed with its scene (SpaceSessions); a collapse or an opening is published to it
+            if (Env("EVE_WORMHOLES", "on") is not ("off" or "0" or "false"))
             {
-                var wormholeSchema = Eve.Wormholes.WormholeStore.DefaultSchema;
+                var wormholeSchema = Env("EVE_WORMHOLE_SCHEMA", Eve.Wormholes.WormholeStore.DefaultSchema);
                 await Eve.Wormholes.WormholeWorld.MigrateAsync(source, wormholeSchema);
                 var wormholes = new Eve.Wormholes.WormholeWorld(source, foundations.Scheduler, wormholeSchema,
                     await Eve.Universe.WormholeTypeCatalog.LoadAsync(sde),
@@ -384,7 +380,7 @@ internal sealed partial class CharacterServicesComposition
             await Eve.Services.Space.Waves.DungeonWaveDirector.MigrateAsync(source, spaceSchema);
             var dungeonWaves = new Eve.Services.Space.Waves.DungeonWaveDirector(source, foundations.Content, foundations.Scheduler, foundations.Events,
                 Eve.Dungeons.DungeonCatalog.LoadEmbedded(), Eve.Dungeons.WaveRules.LoadEmbedded(), new NpcSelector(npcAuthority),
-                new Eve.Services.Space.SpaceDungeonNpcs(spaceSessions), spaceSchema);
+                new Eve.Services.Space.SpaceDungeonNpcs(spaceSessions), spaceSchema, message => Console.Error.WriteLine($"eve-host: space: {message}"));
             await dungeonWaves.AttachAsync();
             dungeonWavesDirector = dungeonWaves;
             // the CONCORD Rogue Analysis Beacon (CRAB, D-L1 and D-S1): deployed from the hold, linked, scanned, expired by its own record kind

@@ -22,6 +22,14 @@ impl Scene {
         flight: DroneFlight,
         now: i64,
     ) -> Result<(SessionId, Vec<Out>), &'static str> {
+        // a cloaked ship launches no drone or fighter (the cloak blocks what it does in space)
+        if self
+            .pilots
+            .get(&controller)
+            .is_some_and(|pilot| pilot.cloak != crate::visibility::CloakState::Uncloaked)
+        {
+            return Err("CLOAKED");
+        }
         let fighter = kind == CompanionKind::Fighter;
         let DroneFlight { weapon, graphic_id, orbit_distance, attack_range, cruise_fraction, work, effect } =
             flight;
@@ -343,6 +351,16 @@ impl Scene {
                 && self.drones.get(&session).is_some_and(|ai| !ai.can_combat)
             {
                 results.push((drone_id, Some("NO_WEAPON")));
+                continue;
+            }
+            // a cloaked ship orders no drone to engage (its drones do not fire for it)
+            if matches!(command, DroneCommand::Engage { .. })
+                && self
+                    .pilots
+                    .get(&controller)
+                    .is_some_and(|pilot| pilot.cloak != crate::visibility::CloakState::Uncloaked)
+            {
+                results.push((drone_id, Some("CLOAKED")));
                 continue;
             }
             // a drone that only mends finds nothing to mend by itself

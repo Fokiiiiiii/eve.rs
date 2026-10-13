@@ -19,9 +19,9 @@ EveJS is a working functional reference, not an architectural or implementation 
 5. Reuse existing shared foundations and state owners. Do not introduce duplicate stores or no-op handlers.
 6. Compare the same meaningful scenario against EveJS and eve.rs. Test success/failure, multiple input states, concurrency, retries and restart when relevant.
 7. Distinguish passing unit/headless tests from verification with the real graphical client.
-8. Keep TODOs and compatibility records evidence-based; do not mark unfinished or unverified features complete.
+8. Keep TODOs and compatibility records evidence-based; do not mark unfinished features, or features without a recorded check, complete.
 
 ## Definition of Done
 The end-to-end client-visible flow behaves correctly, including wire shape, state changes, persistence and notification order, with passing regression tests. Document any intentional difference from EveJS with evidence.
 
-Report in Japanese, separating verified, inferred and unverified statements.
+Report in Japanese, separating verified statements from the ones that were not checked.

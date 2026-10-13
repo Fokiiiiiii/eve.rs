@@ -440,6 +440,61 @@ public sealed class CorporationOfficeTests
     }
 
     [PgFact]
+    public async Task Office_manager_exports_reference_reads_and_empty_results()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var (actor, corporation) = await CreateCorporationAsync(rig);
+        Eve.Services.IService service = CreateService(rig);
+        foreach (var method in new[] { "GetCorporationsWithOffices", "PrimeOfficeItem", "GetEmptyOfficeCount",
+            "HasCorpImpoundedItems", "GetImpoundReleasePrice", "TrashImpoundedOffice" })
+            Assert.True(service.HasMethod(method), method);
+        var corporations = await service.CallAsync(Call("GetCorporationsWithOffices", actor, corporation.Id));
+        Assert.Equal(Eve.Marshal.MarshalCodec.Encode(Eve.Marshal.PyValue.PythonSet([])),
+            Eve.Marshal.MarshalCodec.Encode(corporations));
+        Assert.Equal(Eve.Marshal.PyNone.Instance, await service.CallAsync(Call("PrimeOfficeItem", actor, corporation.Id)));
+        Assert.Equal(new Eve.Marshal.PyInt(Station.OfficeCapacity),
+            await service.CallAsync(Call("GetEmptyOfficeCount", actor, corporation.Id)));
+        Assert.Equal(Eve.Marshal.PyBool.False, await service.CallAsync(Call("HasCorpImpoundedItems", actor, corporation.Id)));
+        Assert.Equal(new Eve.Marshal.PyInt(0), await service.CallAsync(Call("GetImpoundReleasePrice", actor, corporation.Id)));
+        Assert.Equal(Eve.Marshal.PyNone.Instance, await service.CallAsync(Call("TrashImpoundedOffice", actor, corporation.Id)));
+    }
+
+    [PgFact]
+    public async Task A_director_can_unrent_and_trash_remote_office_assets_but_cannot_collect_them_remotely()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var (actor, corporation) = await CreateCorporationAsync(rig);
+        var away = Station with { Id = Station.Id + 1 };
+        var service = CreateService(rig, away);
+        var quote = await QuoteAsync(service, actor, corporation.Id);
+        await service.RentOffice(Call("RentOffice", actor, corporation.Id, new Eve.Marshal.PyReal((double)quote)));
+        var item = await CreateItemAsync(rig, corporation.Id, Station.Id, Eve.Inventory.ItemFlags.CorpSAG3);
+        async Task<Eve.Marshal.PyValue> Remote(string method, long caller, params Eve.Marshal.PyValue[] args)
+        {
+            var call = Call("MachoBindObject", caller, corporation.Id,
+                Eve.Services.Py.Tuple(new Eve.Marshal.PyLong(Station.Id)),
+                new Eve.Marshal.PyList([new Eve.Marshal.PyStr(method), new Eve.Marshal.PyList(args), Eve.Marshal.PyNone.Instance]));
+            call.Session.Set("stationid", new Eve.Marshal.PyLong(away.Id));
+            return ((Eve.Marshal.PyTuple)await ((Eve.Services.IService)service).CallAsync(call)).Items[1];
+        }
+        var stranger = await rig.CharacterAsync("Remote Stranger");
+        var denied = await Assert.ThrowsAsync<CorporationError>(() => Remote("UnrentOffice", stranger));
+        Assert.Equal("CORPORATION_ACCESS_DENIED", denied.Code);
+        Assert.Single(await rig.OfficeStore.ForCorporationAsync(corporation.Id));
+        Assert.Equal(Eve.Marshal.PyNone.Instance, await Remote("UnrentOffice", actor));
+        Assert.Empty(await rig.OfficeStore.ForCorporationAsync(corporation.Id));
+        Assert.Equal(CorporationOfficeStore.ImpoundedFlag, (await rig.Items.GetAsync(item))!.Flag);
+        Assert.Equal(Eve.Marshal.PyBool.True, await Remote("HasCorpImpoundedItems", actor));
+        var releasePrice = await Remote("GetImpoundReleasePrice", actor);
+        Assert.IsType<Eve.Marshal.PyReal>(releasePrice);
+        var remoteCollect = await Assert.ThrowsAsync<CorporationError>(() => Remote("GetItemsFromImpound", actor, releasePrice));
+        Assert.Equal("OFFICE_STATION_REQUIRED", remoteCollect.Code);
+        Assert.NotNull(await rig.Items.GetAsync(item));
+        Assert.Equal(Eve.Marshal.PyNone.Instance, await Remote("TrashImpoundedOffice", actor));
+        Assert.Null(await rig.Items.GetAsync(item));
+    }
+
+    [PgFact]
     public async Task Bill_manager_lists_saves_settings_and_pays_office_rent_in_the_wallet_transaction()
     {
         await using var rig = await Rig.CreateAsync();
@@ -533,9 +588,9 @@ public sealed class CorporationOfficeTests
         Assert.Equal(rig.Now + 2 * Eve.Corporations.CorporationOfficeStore.RentalCycleMs, nextBill.DueAtMs);
     }
 
-    private static Eve.Services.Corporations.OfficeManagerService CreateService(Rig rig) =>
+    private static Eve.Services.Corporations.OfficeManagerService CreateService(Rig rig, CorporationOfficeStation? otherStation = null) =>
         new(rig.OfficeStore, rig.Store, rig.Characters, rig.Items, rig.Transactions,
-            id => id == Station.Id ? Station : null, () => rig.Now);
+            id => id == Station.Id ? Station : otherStation?.Id == id ? otherStation : null, () => rig.Now);
 
     private static Eve.Services.ServiceCall Call(string method, long actor, long corporationId,
         params Eve.Marshal.PyValue[] args)

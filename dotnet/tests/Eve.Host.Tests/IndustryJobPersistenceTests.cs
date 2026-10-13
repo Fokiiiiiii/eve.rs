@@ -175,12 +175,27 @@ internal sealed class IndustryRig : IAsyncDisposable
             new AdjustedPriceCache(_prices, null, () => Now), corporations, events, stations,
             (facilityId, stationId, systemId, characterId, token) => ValueTask.FromResult<PersistenceIndustryJobOperations.IndustryFacility?>(
                 new PersistenceIndustryJobOperations.IndustryFacility(
-                    station.Id, station.SolarSystemId, station.OwnerId, 0.10m, 1d, true, null, new HashSet<int> { 14, 15 })),
+                    station.Id, station.SolarSystemId, station.OwnerId, 0.10m, 1d, true, null,
+                    Structure ? null : new HashSet<int> { 14, 15 })),
             new FixedCostIndexes(0m),
+            (characterId, token) => ValueTask.FromResult<long?>(InstallerSystem ?? station.SolarSystemId),
             () => Now);
     }
 
     public long Now { get; set; } = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+
+    /// <summary>When true the facility is an industry structure (no NPC station services); otherwise the NPC station with its Factory and Laboratory.</summary>
+    public bool Structure { get; set; }
+
+    /// <summary>The installer's current solar system; null means the station's own system (zero jumps).</summary>
+    public long? InstallerSystem { get; set; }
+
+    /// <summary>A system one stargate jump from the station's system.</summary>
+    public async Task<long> NeighbourSystem()
+    {
+        var gates = await _sde.ReadContainingAsync("mapStargates", $"{{\"solarSystemID\": {_station.SolarSystemId}}}");
+        return gates[0].Doc.GetProperty("destination").GetProperty("solarSystemID").GetInt64();
+    }
 
     public static async Task<IndustryRig> CreateAsync()
     {
@@ -197,7 +212,7 @@ internal sealed class IndustryRig : IAsyncDisposable
         await DurableScheduler.MigrateAsync(source, rig._schemas[6]);
         await EventBus.MigrateAsync(source, rig._schemas[7]);
         await Migrations.ApplyAsync(source, rig._schemas[8], [IndustryJobsSchema.Jobs(rig._schemas[3])]);
-        await rig._prices.ReplaceAsync([new AdjustedPriceRow(Material, 10.0, 10.0)], rig.Now);
+        await rig._prices.ReplaceAsync([new AdjustedPriceRow(Material, 10.0, 10.0), new AdjustedPriceRow(16657, 2.0, 2.0), new AdjustedPriceRow(16661, 3.0, 3.0)], rig.Now);
         return rig;
     }
 
@@ -212,25 +227,26 @@ internal sealed class IndustryRig : IAsyncDisposable
         return id;
     }
 
-    public async Task<long> Give(long owner, int typeId, long quantity, bool blueprint = false)
+    public async Task<long> Give(long owner, int typeId, long quantity, bool blueprint = false, bool copy = false, int runs = -1, int me = 0, int te = 0)
     {
         await using var c = await _source.OpenConnectionAsync();
         await using var tx = await c.BeginTransactionAsync();
         var id = blueprint
             ? await _items.CreateAsync(c, tx, new NewItem(typeId, owner, _station.Id, ItemFlags.Hangar, 1, true,
-                BlueprintCopy: false, BlueprintRuns: -1, MaterialEfficiency: 0, TimeEfficiency: 0))
+                BlueprintCopy: copy, BlueprintRuns: runs, MaterialEfficiency: me, TimeEfficiency: te))
             : await _items.CreateAsync(c, tx, new NewItem(typeId, owner, _station.Id, ItemFlags.Hangar, quantity));
         await tx.CommitAsync();
         return id;
     }
 
-    public async Task<long> Install(long owner, long blueprintId, int activityId)
+    public async Task<long> Install(long owner, long blueprintId, int activityId, int blueprintType = BlueprintType, bool copy = false,
+        int runs = 1, int licensedRuns = 1, int? productTypeId = null, int? optionalTypeId = null)
     {
         var job = new IndustryJobInstallSubmission(
-            activityId, blueprintId, BlueprintType, false, _station.Id, ItemFlags.Hangar,
+            activityId, blueprintId, blueprintType, copy, _station.Id, ItemFlags.Hangar,
             _station.Id, owner, _station.SolarSystemId, _station.Id,
             new IndustryJobLocation(_station.Id, ItemFlags.Hangar), new IndustryJobLocation(_station.Id, ItemFlags.Hangar),
-            1, 1, null, null, null, new IndustryJobWallet(owner, 1000));
+            runs, licensedRuns, productTypeId, optionalTypeId, null, new IndustryJobWallet(owner, 1000));
         var request = new IndustryJobInstallRequest(
             new IndustryJobOperationContext(new IndustryJobActor(owner, 0, 0, 1000), "op-" + Guid.NewGuid().ToString("N")), job);
         return await _operations.InstallJobAsync(request, default);
@@ -243,6 +259,43 @@ internal sealed class IndustryRig : IAsyncDisposable
     public Task Cancel(long owner, long jobId) =>
         _operations.CancelJobAsync(new IndustryJobAction(
             new IndustryJobOperationContext(new IndustryJobActor(owner, 0, 0, 1000), "cancel-" + jobId), jobId, _station.SolarSystemId), default).AsTask();
+
+    /// <summary>The items of a type in the station hangar that the owner holds (the outputs and inputs of the jobs).</summary>
+    public async Task<List<Item>> Items(long owner, int typeId)
+    {
+        await using var c = await _source.OpenConnectionAsync();
+        await using var tx = await c.BeginTransactionAsync();
+        var items = await _items.LockInLocationAsync(c, tx, _station.Id, owner, ItemFlags.Hangar, [typeId]);
+        await tx.CommitAsync();
+        return items.Where(item => item.TypeId == typeId).ToList();
+    }
+
+    /// <summary>Grants skills at the given levels (the skill points are the level's minimum).</summary>
+    public async Task Grant(long owner, params (int TypeId, int Level)[] skills)
+    {
+        await using var c = await _source.OpenConnectionAsync();
+        await using var tx = await c.BeginTransactionAsync();
+        await _skills.GrantAsync(c, tx, owner, skills.Select(skill => new CharacterSkill(skill.TypeId, skill.Level, 0)).ToArray());
+        await tx.CommitAsync();
+    }
+
+    /// <summary>The job's stored activity snapshot, as JSON.</summary>
+    public async Task<string> SnapshotJson(long jobId)
+    {
+        await using var c = await _source.OpenConnectionAsync();
+        await using var command = new NpgsqlCommand($"SELECT activity_snapshot::text FROM {_schemas[8]}.jobs WHERE job_id = $1", c);
+        command.Parameters.Add(new NpgsqlParameter { Value = jobId });
+        return (string)(await command.ExecuteScalarAsync())!;
+    }
+
+    /// <summary>The job's probability, as stored at install.</summary>
+    public async Task<double> Probability(long jobId)
+    {
+        await using var c = await _source.OpenConnectionAsync();
+        await using var command = new NpgsqlCommand($"SELECT probability FROM {_schemas[8]}.jobs WHERE job_id = $1", c);
+        command.Parameters.Add(new NpgsqlParameter { Value = jobId });
+        return (double)(await command.ExecuteScalarAsync())!;
+    }
 
     public async Task<decimal> Balance(long owner) => await _wallets.AccountBalanceAsync(new WalletAccount(owner, 1000)) ?? 0m;
 

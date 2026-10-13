@@ -277,7 +277,9 @@ internal sealed partial class CharacterServicesComposition
         industryCostIndexes = IndustryCostIndexSetup();
         industryJobOperations = new PersistenceIndustryJobOperations(
             source, industrySchema, items, economyWallets, skills, sde, adjustedPrices, corporations,
-            foundations.Events, stations, ResolveIndustryFacilityAsync, industryCostIndexes, now);
+            foundations.Events, stations, ResolveIndustryFacilityAsync, industryCostIndexes,
+            async (characterId, token) => (await characters.GetAsync(characterId, token)) is { } character ? (long?)character.SolarSystemId : null,
+            now);
         return Task.CompletedTask;
     }
 

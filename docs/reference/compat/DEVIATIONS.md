@@ -3792,11 +3792,10 @@ Full status, formulas and sources: `docs/project/INDUSTRY_STATUS.md`. Decisions 
   the structure reaction service (cut).
 - **Delivery**: completed jobs wait in Ready until the owner delivers (`CompleteJob`), per the EVE wiki's Deliver
   button. The durable scheduler is not used for delivery.
-- **Distance rule** (`FACILITY_DISTANCE`): not enforced; the install payload carries no distance (cut).
-- **Invention skill probability**: 1/30 for every skill; the lower-probability type list (1/40) is not applied (cut).
-- **Duration skills**: Industry, Advanced Industry, required-skill (1982), Science (452), Metallurgy (468) and
-  Reactions (2660) come from SDE skill attributes. The client's character dogma and the TE-research and invention
-  time skills are not applied (cut).
+- **Distance rule** (`FACILITY_DISTANCE`): enforced: jumps from the installer's system over the SDE stargates against 5 jumps per distance-skill level (max 25). Basis: the client's job error and DISTANCE_PER_LEVEL.
+- **Invention skill probability**: 1/30 per level, 1/40 for skills on SDE type list 799 (applied).
+- **Duration skills**: Industry, Advanced Industry, required-skill (1982), Science (452), Metallurgy (468), Reactions
+  (2660) and Research (453, time efficiency) come from SDE skill attributes. Invention has no time skill in the SDE.
 - **Slots**: base 1 per activity class plus the skill levels (Mass Production, Advanced Mass Production,
   Laboratory Operation); the base of 1 is the project's basis (cut: not read from the SDE).
 - **Reverse engineering**: no activity in the pinned SDE; not built.

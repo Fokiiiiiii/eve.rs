@@ -12,11 +12,13 @@ does not seed; the copy path is not walked (its completion would wait 480 second
 from __future__ import annotations
 
 import os
+import time
 import uuid
 
 import pytest
 
 from evecli.describe import describe
+from evecli.observe import notifications_of
 from tests import dbseed
 from tests import test_login_to_character as base
 from tests.test_health import HEALTH
@@ -112,6 +114,17 @@ def efficiencies(who, blueprint: int) -> tuple[int, int]:
     return number(fields["materialEfficiency"]), number(fields["timeEfficiency"])
 
 
+def wait_for_notification(who, name: str, seconds: float = 3.0) -> bool:
+    """Whether a named notification reaches the session within the time (the event pump delivers within its poll interval)."""
+    deadline = time.monotonic() + seconds
+    while True:
+        if any(event.get("name") == name for event in notifications_of(who)):
+            return True
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(0.2)
+
+
 def test_a_pilot_installs_lists_and_cancels_a_manufacturing_job():
     race = HEALTH["races"][0]
     run = uuid.uuid4().hex[:10]
@@ -124,6 +137,8 @@ def test_a_pilot_installs_lists_and_cancels_a_manufacturing_job():
         job = number(who.call("industryManager", "InstallJob", job_dump(character, blueprint, MANUFACTURING, system)))
         assert job_status(job) == 1
         assert dbseed.items_of(character, MATERIAL) == [], "the 86 units are consumed at install"
+        # the client's job list is kept by OnIndustryJob, which the change subscriber sends to the owner's session
+        assert wait_for_notification(who, "OnIndustryJob"), "no OnIndustryJob after the install"
 
         listed = who.call("industryManager", "GetJobsByOwner", character, False)
         assert job in [number(dict(describe(row)["args"]["$dict"])["jobID"]) for row in listed], listed

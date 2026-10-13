@@ -39,7 +39,8 @@ public sealed record IndustryJobInstallSubmission(
     int? ProductTypeId,
     int? OptionalTypeId,
     int? OptionalTypeId2,
-    IndustryJobWallet Wallet);
+    IndustryJobWallet Wallet,
+    IReadOnlyList<int>? MaterialTypeIds = null);
 
 /// <summary>A retry key scoped to the authenticated character, RPC and Macho call id.</summary>
 public sealed record IndustryJobOperationContext(IndustryJobActor Actor, string OperationId);
@@ -248,11 +249,15 @@ private async ValueTask<PyValue> MutateAsync(ServiceCall call)
         var activityId = RequiredInt(payload, "activityID");
         var blueprintId = RequiredLong(payload, "blueprintID");
         var blueprintTypeId = RequiredInt(payload, "blueprintTypeID");
-        var ownerId = RequiredLong(payload, "ownerID");
+        // The client's job.dump() carries the wallet account and the character or corporation IDs, not the owner: the owner is the
+        // corporation when the account is the corporation's, and the character otherwise. The blueprint's own location is read by the host.
+        var accountOwner = AccountOwnerId(payload);
+        var ownerId = OptionalPositiveField(payload, "ownerID")
+            ?? (accountOwner is { } corporation && corporation == actor.CorporationId ? corporation : actor.CharacterId);
         if (ownerId != actor.CharacterId && (actor.CorporationId <= 0 || ownerId != actor.CorporationId))
             throw MachoErrors.ThrowUserError("IndustryInvalidOwner");
 
-        var blueprintLocationId = RequiredLong(payload, "blueprintLocationID");
+        var blueprintLocationId = OptionalPositiveField(payload, "blueprintLocationID") ?? 0;
         var blueprintLocationFlagId = NonNegativeInt(payload, "blueprintLocationFlagID", 0);
         var input = Location(payload, "inputLocation", "inputLocationID", "inputLocationFlagID",
             blueprintLocationId, blueprintLocationFlagId);
@@ -278,7 +283,26 @@ private async ValueTask<PyValue> MutateAsync(ServiceCall call)
             OptionalInt(payload, "productTypeID"),
             OptionalInt(payload, "optionalTypeID"),
             OptionalInt(payload, "optionalTypeID2"),
-            wallet);
+            wallet,
+            MaterialTypeIds(payload));
+    }
+
+    /// <summary>The item types of the job's materials dictionary: the client lists the chosen decryptor among them.</summary>
+    private static IReadOnlyList<int> MaterialTypeIds(PyValue payload) =>
+        WireField(payload, "materials") is PyDict materials
+            ? materials.Entries.Select(entry => (int)Integer(entry.Key)).Where(id => id > 0).ToArray()
+            : [];
+
+    /// <summary>The owner of the wallet account the job pays from (the character or corporation ID), or null when the payload names none.</summary>
+    private static long? AccountOwnerId(PyValue payload)
+    {
+        var owner = WireField(payload, "accountOwnerID");
+        if (owner is null && WireField(payload, "account") is PyTuple tuple && tuple.Items.Count == 2)
+            owner = tuple.Items[0];
+        else if (owner is null && WireField(payload, "account") is PyList list && list.Items.Count == 2)
+            owner = list.Items[0];
+        var id = Positive(owner);
+        return id > 0 ? id : null;
     }
 
     private static IndustryJobLocation Location(

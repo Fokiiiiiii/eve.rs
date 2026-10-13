@@ -99,6 +99,7 @@ public sealed partial class PersistenceIndustryJobOperations : Eve.Services.Core
         cancellationToken.ThrowIfCancellationRequested();
         if (string.IsNullOrWhiteSpace(request.Context.OperationId))
             throw InvalidJob();
+        request = request with { Job = await WithDecryptorAsync(request.Job, cancellationToken) };
         var fingerprint = Fingerprint(request.Job);
         try
         {
@@ -113,6 +114,30 @@ public sealed partial class PersistenceIndustryJobOperations : Eve.Services.Core
                 throw InvalidJob();
             return replay.Value.JobId;
         }
+    }
+
+    /// <summary>
+    /// The client chooses a decryptor in the materials dictionary, not as an optional type: an invention takes the first
+    /// listed item that is a decryptor (it carries a decryptor attribute) and is not a material of the activity.
+    /// </summary>
+    private async Task<Eve.Services.Core.IndustryJobInstallSubmission> WithDecryptorAsync(
+        Eve.Services.Core.IndustryJobInstallSubmission job,
+        CancellationToken cancellationToken)
+    {
+        if (job.ActivityId != InventionActivity || job.OptionalTypeId is not null || job.MaterialTypeIds is not { Count: > 0 } listed)
+            return job;
+        var recipe = await ReadRecipeAsync(job.BlueprintTypeId, job.ActivityId, cancellationToken);
+        foreach (var typeId in listed)
+        {
+            if (recipe.Materials.Any(material => material.TypeId == typeId))
+                continue;
+            if (await ReadTypeAttributeAsync(typeId, 1112, cancellationToken) is not null ||
+                await ReadTypeAttributeAsync(typeId, 1113, cancellationToken) is not null ||
+                await ReadTypeAttributeAsync(typeId, 1114, cancellationToken) is not null ||
+                await ReadTypeAttributeAsync(typeId, 1124, cancellationToken) is not null)
+                return job with { OptionalTypeId = typeId };
+        }
+        return job;
     }
 
     private async ValueTask<long> InstallOnceAsync(
@@ -152,9 +177,11 @@ public sealed partial class PersistenceIndustryJobOperations : Eve.Services.Core
         }
 
         var blueprint = await _items.LockAndGetAsync(connection, transaction, job.BlueprintId, cancellationToken);
+        // The blueprint's own location and copy flag are authoritative; a client value of zero means the client did not send it.
         if (blueprint is null || blueprint.OwnerId != job.OwnerId || blueprint.TypeId != job.BlueprintTypeId ||
-            blueprint.LocationId != job.BlueprintLocationId || blueprint.Flag != job.BlueprintLocationFlagId ||
-            !blueprint.Singleton || blueprint.BlueprintCopy != job.BlueprintCopy || blueprint.BlueprintLocked)
+            job.BlueprintLocationId > 0 && blueprint.LocationId != job.BlueprintLocationId ||
+            job.BlueprintLocationFlagId > 0 && blueprint.Flag != job.BlueprintLocationFlagId ||
+            !blueprint.Singleton || blueprint.BlueprintLocked)
             throw InvalidJob();
         if (blueprint.BlueprintCopy &&
             (blueprint.BlueprintRuns is not { } remainingRuns || remainingRuns < job.Runs))

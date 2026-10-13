@@ -3783,7 +3783,8 @@ Full status, formulas and sources: `docs/project/INDUSTRY_STATUS.md`. Decisions 
 - **System cost index**: a project rule. `EVE_INDUSTRY_COST_INDEX` (fraction, default 0) applies to every system and
   activity, and the map cost RPC uses the same rule. Basis: the pinned SDE and the client data carry no live indices;
   the ESI `/industry/systems/` activity keys were not confirmed. Next step: an ESI loader like the adjusted prices.
-- **NPC station facility tax**: 10 percent. Basis: a community forum thread; no official CCP table was read.
+- **NPC station facility tax**: the SDE `npcCorporations.taxRate` of the owning corporation (CCP data). The war-faction
+  modifier (`npcstationtaxmodifier`) is not applied (cut).
 - **NPC station activities**: the SDE station operation's service list decides. Factory (14) runs manufacturing;
   Laboratory (15) runs research, copying and invention. Time factors are the SDE `manufacturingFactor` and
   `researchFactor`, as EveJS applies them.

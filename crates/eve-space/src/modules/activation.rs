@@ -257,7 +257,7 @@ impl Scene {
         {
             return vec![Out::Refused { session, command: CODE, reason: "CYNOSURAL_FIELD_JAMMED" }];
         }
-        // a cynosural field does not light within 100 km of an anchored Mobile Cynosural Inhibitor (EVE.js CYNOSURAL_FIELD_INHIBITED); a covert field is not stopped
+        // a cynosural field does not light within 200 km of an anchored Mobile Cynosural Inhibitor (EVE.js CYNOSURAL_FIELD_INHIBITED); a covert field is not stopped
         if let Some(Action::CynoField { ball, .. }) = effect.action.as_ref()
             && ball.charge_type_id != COVERT_CYNOSURAL_FIELD_TYPE
             && self.inhibited_at(pilot.ship.position)

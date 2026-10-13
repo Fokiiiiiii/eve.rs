@@ -368,7 +368,6 @@ private const int PlexTypeId = 44992;
             RefuseRepeatedPlacement(call,request);
             var receipt=await trading.PlaceAsync(request,Key(call,"buy"),call.Cancellation);
             RecordPlacement(call,request);
-            // an immediate buy (duration 0) that matches nothing rests nothing and charges nothing; the client has no error for it
             await Publish(receipt);
             return PyNone.Instance;
         }
@@ -430,8 +429,8 @@ private const int PlexTypeId = 44992;
     }
 
     /// <summary>
-    /// One immediate buy per line (EVE.js proxy 6915): the line's price is the limit, the range is the station, and an unfilled line is
-    /// not an error (EVE.js does the same). Immediate orders rest nowhere, so the answer is the empty list.
+    /// One immediate buy per line (EVE.js proxy 6915): the line's price is the limit, the range is the station. What a line does not fill is booked as a
+    /// buy order; the answer is the list of the orders created, which the client announces (marketsvc BuyMulti).
     /// </summary>
     [Method("BuyMultipleItems")]
     public async ValueTask<PyValue> BuyMultipleItems(ServiceCall call)
@@ -440,6 +439,7 @@ private const int PlexTypeId = 44992;
         var stationId = Integer(call.Arg(0));
         var useCorporation = JsSemantics.Truthy(call.Arg(2));
         var line = 0;
+        var created = new List<MarketOwnedOrder>();
         foreach (var entry in Sequence(call.Arg(1)))
         {
             var key = Key(call, "buy-multi:" + line++);
@@ -454,10 +454,11 @@ private const int PlexTypeId = 44992;
                 var receipt = await trading.PlaceAsync(request, key, call.Cancellation);
                 RecordPlacement(call, request);
                 await Publish(receipt);
+                created.AddRange(receipt.ChangedOrders.Where(change => change.Reason == "Created").Select(change => change.Order));
             }
             catch (Exception e) when (e is MarketError or MoneyLimitException or InsufficientFundsException or Eve.Corporations.CorporationError) { throw Error(e); }
         }
-        return Py.List();
+        return OwnerOrderRowset(created, null);
     }
 
     /// <summary>A PLEX sell line (the client's SellPlex): the PLEX type only; it sells personally or for the corporation like any other item. Answers whether it traded or rests.</summary>

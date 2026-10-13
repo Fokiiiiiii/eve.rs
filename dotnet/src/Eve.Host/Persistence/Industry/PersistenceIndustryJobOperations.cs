@@ -1,4 +1,5 @@
 using System.Net;
+using IR = Eve.Services.Core.IndustryRules;
 using System.Net.Sockets;
 using Eve.Characters;
 using Eve.Data;
@@ -40,10 +41,21 @@ public sealed partial class PersistenceIndustryJobOperations : Eve.Services.Core
 
     private const int IndustryJobTaxReferenceType = 42;
     private const int ManufacturingActivity = 1;
-    private const int MaterialResearchActivity = 3;
-    private const int TimeResearchActivity = 4;
+    private const int TimeResearchActivity = 3;
+    private const int MaterialResearchActivity = 4;
     private const int CopyingActivity = 5;
     private const int InventionActivity = 8;
+    private const int ReactionActivity = 9;
+    private const int FactoryServiceId = 14;
+    private const int LaboratoryServiceId = 15;
+    private const int IndustrySkillId = 3380;
+    private const int AdvancedIndustrySkillId = 3388;
+    private const int MassProductionSkillId = 3387;
+    private const int AdvancedMassProductionSkillId = 24625;
+    private const int LaboratoryOperationSkillId = 3406;
+    private const int ScienceSkillId = 3402;
+    private const int MetallurgySkillId = 3409;
+    private const int ReactionsSkillId = 45746;
     private const long FactoryManagerRole = 1024;
     private const long DirectorRole = 1;
 
@@ -59,6 +71,7 @@ public sealed partial class PersistenceIndustryJobOperations : Eve.Services.Core
     private readonly Eve.Universe.StationCatalog _stations;
     private readonly Func<long, long, long, long, CancellationToken, ValueTask<IndustryFacility?>> _resolveFacility;
     private readonly Func<long> _nowUnixMs;
+    private readonly Func<long, int, CancellationToken, ValueTask<decimal>> _costIndex;
 
     public PersistenceIndustryJobOperations(
         Npgsql.NpgsqlDataSource source,
@@ -72,6 +85,7 @@ public sealed partial class PersistenceIndustryJobOperations : Eve.Services.Core
         Eve.Events.EventBus events,
         Eve.Universe.StationCatalog stations,
         Func<long, long, long, long, CancellationToken, ValueTask<IndustryFacility?>> resolveFacility,
+        Func<long, int, CancellationToken, ValueTask<decimal>> costIndex,
         Func<long> nowUnixMs)
     {
         if (!System.Text.RegularExpressions.Regex.IsMatch(schema, "^[a-z_][a-z0-9_]*$", System.Text.RegularExpressions.RegexOptions.CultureInvariant))
@@ -87,6 +101,7 @@ public sealed partial class PersistenceIndustryJobOperations : Eve.Services.Core
         _events = events ?? throw new ArgumentNullException(nameof(events));
         _stations = stations ?? throw new ArgumentNullException(nameof(stations));
         _resolveFacility = resolveFacility ?? throw new ArgumentNullException(nameof(resolveFacility));
+        _costIndex = costIndex ?? throw new ArgumentNullException(nameof(costIndex));
         _nowUnixMs = nowUnixMs ?? throw new ArgumentNullException(nameof(nowUnixMs));
     }
 
@@ -101,7 +116,7 @@ public sealed partial class PersistenceIndustryJobOperations : Eve.Services.Core
         var activityId = Int(job["activityID"]);
         var ownerId = Long(job["ownerID"]);
         var runs = Int(job["runs"]);
-        var successes = 0L;
+        var snapshot = job["activitySnapshot"] as System.Text.Json.Nodes.JsonObject;
         var selectedProducts = products.OfType<System.Text.Json.Nodes.JsonObject>().ToArray();
         if (selectedProducts.Length == 0 && activityId == CopyingActivity)
             selectedProducts = [new System.Text.Json.Nodes.JsonObject
@@ -110,64 +125,65 @@ public sealed partial class PersistenceIndustryJobOperations : Eve.Services.Core
                 ["quantity"] = 1,
                 ["probability"] = 1d,
             }];
-        var seedText = (job["activitySnapshot"] as System.Text.Json.Nodes.JsonObject)?["rollSeed"]?.ToString();
-        var seed = 0;
-        if (!string.IsNullOrEmpty(seedText))
-        {
-            var bytes = Convert.FromBase64String(seedText);
-            if (bytes.Length >= sizeof(int))
-                seed = BitConverter.ToInt32(bytes, 0);
-        }
-        var random = new Random(seed);
+        // A copy yields one blueprint per run; an invention yields one per successful attempt (the client's Invention.job_output_products).
+        var successes = activityId == InventionActivity
+            ? IR.SuccessfulAttempts(runs, Double(job["probability"], 1), RollSeed(snapshot))
+            : runs;
         foreach (var product in selectedProducts)
         {
             var typeId = Int(product["typeID"]);
             var perRun = Long(product["quantity"], 1);
-            var probability = Math.Clamp(Double(product["probability"], 1), 0, 1);
             if (typeId <= 0 || perRun <= 0)
                 throw InvalidJob();
-            long successful;
-            if (activityId == InventionActivity)
+            if (activityId is CopyingActivity or InventionActivity)
             {
-                successful = 0;
-                for (var i = 0; i < runs; i++)
-                    if (random.NextDouble() < probability)
-                        successful++;
-            }
-            else
-            {
-                successful = runs;
-            }
-            if (activityId == InventionActivity)
-                successes += successful;
-            var blueprintProduct = activityId is CopyingActivity or InventionActivity;
-            if (blueprintProduct)
-            {
-                for (long index = 0; index < successful; index++)
+                var copies = activityId == CopyingActivity ? runs : successes;
+                int blueprintRuns, materialEfficiency, timeEfficiency;
+                if (activityId == InventionActivity)
+                {
+                    var invention = snapshot?["invention"] as System.Text.Json.Nodes.JsonObject;
+                    blueprintRuns = Int(invention?["runs"]);
+                    materialEfficiency = Int(invention?["me"]);
+                    timeEfficiency = Int(invention?["te"]);
+                }
+                else
+                {
+                    blueprintRuns = Int(job["licensedRuns"]);
+                    materialEfficiency = Int(snapshot?["blueprintMaterialEfficiency"]);
+                    timeEfficiency = Int(snapshot?["blueprintTimeEfficiency"]);
+                }
+                for (long index = 0; index < copies; index++)
                 {
                     var id = await _items.CreateAsync(connection, transaction,
                         new Eve.Inventory.NewItem(
                             typeId, ownerId, Long(job["outputLocationID"]), Int(job["outputFlagID"]),
-                            1, true, BlueprintCopy: true, BlueprintRuns: Int(job["licensedRuns"]),
-                            MaterialEfficiency: Int((job["activitySnapshot"] as System.Text.Json.Nodes.JsonObject)?["blueprintMaterialEfficiency"]),
-                            TimeEfficiency: Int((job["activitySnapshot"] as System.Text.Json.Nodes.JsonObject)?["blueprintTimeEfficiency"])),
+                            1, true, BlueprintCopy: true, BlueprintRuns: blueprintRuns,
+                            MaterialEfficiency: materialEfficiency, TimeEfficiency: timeEfficiency),
                         cancellationToken);
                     outputIds.Add(id);
                 }
             }
             else
             {
-                var quantity = checked(perRun * successful);
+                var quantity = checked(perRun * runs);
                 if (quantity <= 0)
                     continue;
                 var id = await _items.CreateAsync(connection, transaction,
                     new Eve.Inventory.NewItem(typeId, ownerId, Long(job["outputLocationID"]), Int(job["outputFlagID"]), quantity),
                     cancellationToken);
                 outputIds.Add(id);
-                successes = Math.Max(successes, successful);
             }
         }
-        return activityId == InventionActivity ? successes : runs;
+        return successes;
+    }
+
+    private static int RollSeed(System.Text.Json.Nodes.JsonObject? snapshot)
+    {
+        var seedText = snapshot?["rollSeed"]?.ToString();
+        if (string.IsNullOrEmpty(seedText))
+            return 0;
+        var bytes = Convert.FromBase64String(seedText);
+        return bytes.Length >= sizeof(int) ? BitConverter.ToInt32(bytes, 0) : 0;
     }
 
     private async Task<ActivityRecipe> ReadRecipeAsync(
@@ -175,94 +191,123 @@ public sealed partial class PersistenceIndustryJobOperations : Eve.Services.Core
         int activityId,
         CancellationToken cancellationToken)
     {
-        var activities = await _sde.ReadByFieldAsync("industryActivity", "typeID", [blueprintTypeId], cancellationToken);
-        var activity = activities.FirstOrDefault(row => Int(row.Doc, "activityID") == activityId);
-        if (activity is null)
+        // The pinned SDE carries the activities inside the blueprints table (no industryActivity* tables).
+        var rows = await _sde.ReadAsync("blueprints", [(long)blueprintTypeId], cancellationToken);
+        if (rows.Count == 0 || !rows[0].Doc.TryGetProperty("activities", out var activities) ||
+            !activities.TryGetProperty(IR.ActivityKey(activityId), out var activity))
             throw InvalidJob();
-        var materials = (await _sde.ReadByFieldAsync(
-                "industryActivityMaterials", "typeID", [blueprintTypeId], cancellationToken))
-            .Where(row => Int(row.Doc, "activityID") == activityId)
-            .Select(row => new Material(Int(row.Doc, "materialTypeID"), Long(row.Doc, "quantity")))
+        var materials = ReadArray(activity, "materials")
+            .Select(row => new Material(Int(row, "typeID"), Long(row, "quantity")))
             .Where(row => row.TypeId > 0 && row.Quantity > 0)
             .ToArray();
-        var products = (await _sde.ReadByFieldAsync(
-                "industryActivityProducts", "typeID", [blueprintTypeId], cancellationToken))
-            .Where(row => Int(row.Doc, "activityID") == activityId)
-            .Select(row => new Product(Int(row.Doc, "productTypeID"),
-                Long(row.Doc, "quantity", 1), Double(row.Doc, "probability", 1)))
+        var products = ReadArray(activity, "products")
+            .Select(row => new Product(Int(row, "typeID"), Long(row, "quantity", 1), Double(row, "probability", 1)))
             .Where(row => row.TypeId > 0 && row.Quantity > 0)
             .ToArray();
-        var skills = (await _sde.ReadByFieldAsync(
-                "industryActivitySkills", "typeID", [blueprintTypeId], cancellationToken))
-            .Where(row => Int(row.Doc, "activityID") == activityId)
-            .Select(row => new SkillRequirement(Int(row.Doc, "skillID"), Int(row.Doc, "level")))
+        var skills = ReadArray(activity, "skills")
+            .Select(row => new SkillRequirement(Int(row, "typeID"), Int(row, "level")))
             .Where(row => row.TypeId > 0 && row.Level > 0)
             .ToArray();
-        var time = checked((int)Math.Clamp(Long(activity.Doc, "time"), 1, int.MaxValue));
+        var time = checked((int)Math.Clamp(Long(activity, "time"), 1, int.MaxValue));
+        var maxProductionLimit = Int(rows[0].Doc, "maxProductionLimit");
         if (materials.Length == 0 && products.Length == 0 &&
-            activityId is not (MaterialResearchActivity or TimeResearchActivity))
+            activityId is ManufacturingActivity or InventionActivity or ReactionActivity)
             throw InvalidJob();
-        return new ActivityRecipe(time, materials, products, skills);
+        return new ActivityRecipe(time, materials, products, skills, maxProductionLimit);
     }
 
-    /// <summary>The ESI adjusted price of each type (the job cost's input); a type with no adjusted price is absent, and none is invented.</summary>
-    private async Task<Dictionary<int, decimal>> ReadMarketPricesAsync(
-        IReadOnlyCollection<int> typeIds,
+    private static IEnumerable<System.Text.Json.JsonElement> ReadArray(System.Text.Json.JsonElement parent, string field) =>
+        parent.TryGetProperty(field, out var array) && array.ValueKind == System.Text.Json.JsonValueKind.Array
+            ? array.EnumerateArray().ToArray()
+            : Array.Empty<System.Text.Json.JsonElement>();
+
+    /// <summary>
+    /// The client's GetBlueprintPrice: the estimated item value of a type for an activity. A type whose blueprint
+    /// has that activity is priced from its base materials (recursively); any other type takes its ESI adjusted
+    /// price, and a type with neither is worth zero, as the client does.
+    /// </summary>
+    private async Task<double> ReadEstimatedValueAsync(
+        int typeId,
+        int activityId,
+        HashSet<int> visiting,
         CancellationToken cancellationToken)
     {
-        var prices = new Dictionary<int, decimal>();
-        foreach (var (typeId, price) in await _adjustedPrices.GetAsync(typeIds.Distinct().ToArray(), cancellationToken))
+        if (typeId <= 0)
+            return 0;
+        if (!visiting.Add(typeId))
+            return await ReadAdjustedPriceAsync(typeId, cancellationToken);
+        try
         {
-            if (price > 0)
-                prices[typeId] = (decimal)price;
+            var pricing = IR.PricingActivity(activityId);
+            var rows = await _sde.ReadAsync("blueprints", [(long)typeId], cancellationToken);
+            if (rows.Count > 0 && rows[0].Doc.TryGetProperty("activities", out var activities) &&
+                activities.TryGetProperty(IR.ActivityKey(pricing), out var activity))
+            {
+                double total = 0;
+                foreach (var material in ReadArray(activity, "materials"))
+                {
+                    var quantity = Long(material, "quantity");
+                    total += quantity * await ReadEstimatedValueAsync(
+                        Int(material, "typeID"), pricing, visiting, cancellationToken);
+                }
+                return total;
+            }
+            return await ReadAdjustedPriceAsync(typeId, cancellationToken);
         }
-        return prices;
+        finally
+        {
+            visiting.Remove(typeId);
+        }
+    }
+
+    /// <summary>The ESI adjusted price of one type (the market schema); zero when none is loaded.</summary>
+    private async Task<double> ReadAdjustedPriceAsync(int typeId, CancellationToken cancellationToken)
+    {
+        foreach (var (id, price) in await _adjustedPrices.GetAsync([typeId], cancellationToken))
+            if (id == typeId && price > 0)
+                return price;
+        return 0;
+    }
+
+    /// <summary>An attribute value of a type from the SDE typeDogma rows; null when the type does not carry it.</summary>
+    private async Task<double?> ReadTypeAttributeAsync(int typeId, int attributeId, CancellationToken cancellationToken)
+    {
+        var rows = await _sde.ReadAsync("typeDogma", [(long)typeId], cancellationToken);
+        if (rows.Count == 0 || !rows[0].Doc.TryGetProperty("dogmaAttributes", out var attributes) ||
+            attributes.ValueKind != System.Text.Json.JsonValueKind.Array)
+            return null;
+        foreach (var attribute in attributes.EnumerateArray())
+            if (Int(attribute, "attributeID") == attributeId)
+                return Double(attribute, "value");
+        return null;
+    }
+
+    /// <summary>The job's security class: the rounded security status of high security space (0.5 and up).</summary>
+    private async Task<bool> IsHighSecurityAsync(long solarSystemId, CancellationToken cancellationToken)
+    {
+        var rows = await _sde.ReadAsync("mapSolarSystems", [solarSystemId], cancellationToken);
+        if (rows.Count == 0 || !rows[0].Doc.TryGetProperty("securityStatus", out var status) ||
+            status.ValueKind != System.Text.Json.JsonValueKind.Number)
+            return false;
+        return Math.Round(status.GetDouble(), 1, MidpointRounding.AwayFromZero) >= 0.5;
     }
 
     private async Task<decimal> ReadCostIndexAsync(
         long solarSystemId,
         int activityId,
-        CancellationToken cancellationToken)
-    {
-        var rows = await _sde.ReadAsync("industrySystems", [solarSystemId], cancellationToken);
-        if (rows.Count == 0 ||
-            !rows[0].Doc.TryGetProperty("costIndices", out var indices) ||
-            indices.ValueKind != System.Text.Json.JsonValueKind.Array)
-            throw InvalidJob();
-        foreach (var index in indices.EnumerateArray())
-        {
-            if (Int(index, "activityID") != activityId)
-                continue;
-            var rate = Decimal(index, "costIndex");
-            if (rate > 1)
-                rate /= 100m;
-            return Math.Clamp(rate, 0, 1);
-        }
-        throw InvalidJob();
-    }
+        CancellationToken cancellationToken) =>
+        await _costIndex(solarSystemId, activityId, cancellationToken);
 
-
-    public PyValue ReadMapIndustryCostModifier(
+    public async Task<PyValue> ReadMapIndustryCostModifierAsync(
         int activityId,
-        IReadOnlyList<Eve.Sde.SdeRow> systems)
+        IReadOnlyList<Eve.Sde.SdeRow> systems,
+        CancellationToken cancellationToken)
     {
         var entries = new List<KeyValuePair<PyValue, PyValue>>();
         foreach (var system in systems)
         {
-            if (!system.Doc.TryGetProperty("costIndices", out var costIndices) ||
-                costIndices.ValueKind != System.Text.Json.JsonValueKind.Array)
-                continue;
-
-            foreach (var index in costIndices.EnumerateArray())
-            {
-                if (Int(index, "activityID") != activityId)
-                    continue;
-                var rate = Decimal(index, "costIndex");
-                if (rate > 1)
-                    rate /= 100m;
-                entries.Add(new(new PyInt(system.Key), new PyReal((double)Math.Clamp(rate, 0, 1))));
-                break;
-            }
+            var rate = await _costIndex(system.Key, activityId, cancellationToken);
+            entries.Add(new(new PyInt(system.Key), new PyReal((double)rate)));
         }
         return new PyDict(entries);
     }
@@ -325,11 +370,12 @@ public sealed partial class PersistenceIndustryJobOperations : Eve.Services.Core
         ActivityRecipe recipe)
     {
         var required = new SortedDictionary<int, long>();
+        var modifier = job.ActivityId == ManufacturingActivity
+            ? IR.MaterialEfficiencyModifier(blueprint.MaterialEfficiency)
+            : 1.0;
         foreach (var material in recipe.Materials)
         {
-            var amount = checked(material.Quantity * job.Runs);
-            if (job.ActivityId == ManufacturingActivity && blueprint.MaterialEfficiency > 0)
-                amount = checked((long)Math.Ceiling(amount * Math.Max(0, 100 - blueprint.MaterialEfficiency) / 100d));
+            var amount = IR.MaterialQuantity(material.Quantity, modifier, job.Runs, job.Runs);
             required[material.TypeId] = checked(required.GetValueOrDefault(material.TypeId) + amount);
         }
         if (job.OptionalTypeId is { } optionalTypeId)
@@ -339,29 +385,6 @@ public sealed partial class PersistenceIndustryJobOperations : Eve.Services.Core
         return required;
     }
 
-    private static long CalculateCost(
-        Eve.Services.Core.IndustryJobInstallSubmission job,
-        IReadOnlyList<Product> products,
-        IReadOnlyDictionary<int, decimal> prices,
-        decimal costIndex,
-        decimal facilityTax)
-    {
-        decimal outputValue = 0;
-        foreach (var product in products)
-        {
-            if (!prices.TryGetValue(product.TypeId, out var price) || price <= 0)
-                throw InvalidJob();
-            outputValue += price * product.Quantity * job.Runs;
-        }
-        if (products.Count == 0)
-        {
-            if (!prices.TryGetValue(job.BlueprintTypeId, out var price) || price <= 0)
-                throw InvalidJob();
-            outputValue = price * job.Runs;
-        }
-        return checked((long)decimal.Ceiling(outputValue * Math.Clamp(costIndex + facilityTax, 0, 1)));
-    }
-
     private async Task<int> TimeInSecondsAsync(
         Npgsql.NpgsqlConnection connection,
         Npgsql.NpgsqlTransaction transaction,
@@ -369,19 +392,68 @@ public sealed partial class PersistenceIndustryJobOperations : Eve.Services.Core
         Eve.Services.Core.IndustryJobInstallSubmission job,
         ActivityRecipe recipe,
         IndustryFacility facility,
+        Eve.Inventory.Item blueprint,
         CancellationToken cancellationToken)
     {
-        var modifier = 1d;
-        if (job.ActivityId == ManufacturingActivity)
+        async Task<int> LevelOf(int skillTypeId) =>
+            await _skills.LevelAsync(connection, transaction, characterId, skillTypeId, cancellationToken);
+        var facilityFactor = IR.IsScience(job.ActivityId) ? facility.ResearchFactor : facility.TimeMultiplier;
+        var modifiers = new List<double> { facilityFactor };
+        double seconds;
+        switch (job.ActivityId)
         {
-            var industry = await _skills.LevelAsync(connection, transaction, characterId, 3380, cancellationToken);
-            var advancedIndustry = await _skills.LevelAsync(connection, transaction, characterId, 3388, cancellationToken);
-            modifier = Math.Max(0.1, 1d - 0.04d * industry - 0.03d * advancedIndustry);
+            case ManufacturingActivity:
+                seconds = recipe.TimeSeconds * job.Runs;
+                modifiers.Add(IR.TimeEfficiencyModifier(blueprint.TimeEfficiency));
+                var industry = 0d;
+                foreach (var (skillId, attributeId) in new[] { (IndustrySkillId, 440), (AdvancedIndustrySkillId, 1961) })
+                    industry += (await ReadTypeAttributeAsync(skillId, attributeId, cancellationToken) ?? 0) *
+                        await LevelOf(skillId) / 100d;
+                if (industry != 0)
+                    modifiers.Add(1.0 + industry);
+                foreach (var requirement in recipe.Skills)
+                {
+                    var perLevel = await ReadTypeAttributeAsync(requirement.TypeId, 1982, cancellationToken) ?? 0;
+                    if (perLevel != 0)
+                        modifiers.Add(IR.SkillModifier(perLevel, await LevelOf(requirement.TypeId)));
+                }
+                break;
+            case CopyingActivity:
+                seconds = recipe.TimeSeconds * job.LicensedRuns * job.Runs;
+                await AddSkillModifierAsync(modifiers, ScienceSkillId, 452, LevelOf, cancellationToken);
+                break;
+            case MaterialResearchActivity:
+                seconds = IR.ResearchJobSeconds(recipe.TimeSeconds, blueprint.MaterialEfficiency, job.Runs);
+                await AddSkillModifierAsync(modifiers, MetallurgySkillId, 468, LevelOf, cancellationToken);
+                break;
+            case TimeResearchActivity:
+                seconds = IR.ResearchJobSeconds(
+                    recipe.TimeSeconds, blueprint.TimeEfficiency / IR.StepTimeEfficiency, job.Runs);
+                break;
+            case ReactionActivity:
+                seconds = recipe.TimeSeconds * job.Runs;
+                await AddSkillModifierAsync(modifiers, ReactionsSkillId, 2660, LevelOf, cancellationToken);
+                break;
+            default:
+                seconds = recipe.TimeSeconds * job.Runs;
+                break;
         }
-        var duration = Math.Ceiling(recipe.TimeSeconds * (double)job.Runs * modifier * facility.TimeMultiplier);
+        var duration = IR.DurationSeconds(seconds, modifiers);
         if (!double.IsFinite(duration) || duration < 1 || duration > int.MaxValue)
             throw InvalidJob();
         return checked((int)duration);
+    }
+
+    private async Task AddSkillModifierAsync(
+        List<double> modifiers,
+        int skillTypeId,
+        int attributeId,
+        Func<int, Task<int>> levelOf,
+        CancellationToken cancellationToken)
+    {
+        var perLevel = await ReadTypeAttributeAsync(skillTypeId, attributeId, cancellationToken) ?? 0;
+        if (perLevel != 0)
+            modifiers.Add(IR.SkillModifier(perLevel, await levelOf(skillTypeId)));
     }
 
     private async Task ConsumeMaterialsAsync(
@@ -479,7 +551,8 @@ public sealed partial class PersistenceIndustryJobOperations : Eve.Services.Core
         IReadOnlyList<Product> products,
         long cost,
         int duration,
-        IndustryFacility facility)
+        IndustryFacility facility,
+        JsonObject? invention)
     {
         var materialRows = new System.Text.Json.Nodes.JsonArray();
         foreach (var material in materials)
@@ -492,7 +565,7 @@ public sealed partial class PersistenceIndustryJobOperations : Eve.Services.Core
                 ["quantity"] = product.Quantity,
                 ["probability"] = product.Probability,
             });
-        return new JsonObject
+        var snapshot = new JsonObject
         {
             ["activityID"] = job.ActivityId,
             ["materials"] = materialRows,
@@ -513,6 +586,9 @@ public sealed partial class PersistenceIndustryJobOperations : Eve.Services.Core
                     ["level"] = skill.Level,
                 }).ToArray()),
         };
+        if (invention is not null)
+            snapshot["invention"] = invention;
+        return snapshot;
     }
 
     private static string Fingerprint(Eve.Services.Core.IndustryJobInstallSubmission job)

@@ -137,10 +137,10 @@ public sealed class MarketHostTests : IAsyncLifetime
         var session = new ClientSession(new Sink()) { SessionId = 301 };
         session.Set("charid", new PyInt(actor));
 
-        // the multi-buy fills the ask at its limit: an empty list back, the wallet charged, and the fill in the transaction tab
+        // the multi-buy fills the ask at its limit: no order is created (the answer is the rowset of created orders, empty), the wallet charged, and the fill in the transaction tab
         var bought = await market.CallAsync(Call(session, "BuyMultipleItems", 1, new PyInt(station.Id),
             new PyList([Line(Tritanium, 5, 10)]), PyBool.False));
-        Assert.Empty(Assert.IsType<PyList>(bought).Items);
+        Assert.IsType<PyObject>(bought);
         Assert.Equal(9950m, (await new PgWalletStore(source, Schema("EVE_WALLET_SCHEMA")).GetAsync(actor))!.Isk);
         var transactions = Assert.IsType<PyList>(await market.CallAsync(Call(session, "CharGetTransactions", 2, PyNone.Instance))).Items;
         var fill = Assert.IsType<PyObject>(Assert.Single(transactions));

@@ -464,6 +464,7 @@ public class DroneHostTests
         rig.Sim.Say(new SimDroneScooped((ulong)flying.Session.SessionId, flying.Drone));
         await Rig.UntilAsync(() => rig.Items.GetAsync(flying.Drone).GetAwaiter().GetResult() is { LocationId: var location, Flag: CharacterShips.DroneBayFlag }
             && location == flying.Session.GetInt("shipid"));
+        await Rig.UntilAsync(() => Events.Of(flying.Session, clear: false).Any(e => e.Name == "OnItemChange"));
         Assert.Contains(Events.Of(flying.Session, clear: false), e => e.Name == "OnItemChange");
     }
 

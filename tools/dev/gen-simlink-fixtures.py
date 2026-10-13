@@ -136,9 +136,10 @@ def action(a):
         return bytes([0, LAYERS[a["layer"]], 1 if a["when"] == "end" else 0]) + struct.pack("<d", a["amount"])
     if kind == "ecmBurst":
         return bytes([3]) + struct.pack("<d", a["range"]) + struct.pack("<4d", *a["strength"])
-    # the SimAction tag 5 (protocol 34): a cloak and whether it is warp-safe (a covert ops cloak carries the ship into warp; a standard one holds it)
+    # the SimAction tag 5 (protocol 34): a cloak and whether it is warp-safe (a covert ops cloak carries the ship into warp; a standard one holds it);
+    # protocol 66: the cloak's targeting delay after a decloak, in milliseconds (cloakingTargetingDelay, a f64)
     if kind == "cloak":
-        return bytes([5, 1 if a.get("warpSafe") else 0])
+        return bytes([5, 1 if a.get("warpSafe") else 0]) + struct.pack("<d", a.get("targetingDelayMs", 0.0))
     # the SimAction tags 16 to 20 (protocol 34): a warp disruption bubble on the ship, the immunity of a nullifier, a stabilizer's scramble status, an interdiction
     # probe in space, and a bomb that goes off where it is (kind 0 damage, 1 ECM, 2 neutralisation); a deployable's ball is its charge, its group, its name and radius
     if kind == "warpBubble":
@@ -558,8 +559,8 @@ BARE = dict(IBIS, name="", modules=[], allianceId=99000001, securityStatus=-2.5,
             condition={"damage": 0.0, "armorDamage": 0.0, "shieldCharge": 1.0, "charge": 1.0})
 
 valid = [
-    {"name": "hello", "kind": "Hello", "version": 65},
-    {"name": "hello ack", "kind": "HelloAck", "version": 65, "pollHz": 4},
+    {"name": "hello", "kind": "Hello", "version": 66},
+    {"name": "hello ack", "kind": "HelloAck", "version": 66, "pollHz": 4},
     {"name": "enter by undocking", "kind": "Enter", "sessionId": "1790646377000015", "solarSystemId": 30100032,
      "how": 0, "stationId": "60015249", "ship": IBIS},
     {"name": "enter already in space, no modules, non-ASCII name", "kind": "Enter", "sessionId": "1",
@@ -748,7 +749,7 @@ valid = [
     {"name": "activate a cloak that is not warp-safe", "kind": "Activate", "sessionId": "1790646377000015",
      "effect": {"moduleId": "9988400002813", "moduleType": 11577, "effectId": 197, "fx": "effects.Cloaking",
                 "durationMs": 10000.0, "capacitorNeed": 30.0, "repeat": 1000, "targetId": "0",
-                "action": {"kind": "cloak", "warpSafe": False}, "onChanges": [], "offChanges": []}},
+                "action": {"kind": "cloak", "warpSafe": False, "targetingDelayMs": 0.0}, "onChanges": [], "offChanges": []}},
     {"name": "activate a field generator's bubble", "kind": "Activate", "sessionId": "1790646377000015",
      "effect": {"moduleId": "9988400002813", "moduleType": 28654, "effectId": 1,
                 "fx": "effects.WarpDisruptFieldGenerating",

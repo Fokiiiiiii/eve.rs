@@ -1387,6 +1387,15 @@ fn a_launcher_fires_at_a_target_further_than_its_missile_flies_and_the_missile_d
 }
 
 #[test]
+fn a_cloaked_ship_starts_no_targeted_module_because_the_cloak_check_comes_first() {
+    // the blanket rule of a cloaked ship (MODULE_CLOAKED) is checked before the lock: a launcher on a locked ship is refused for the cloak, not for the lock
+    let (mut scene, npc, now) = duel();
+    scene.pilots.get_mut(&npc).unwrap().cloak = crate::visibility::CloakState::Cloaked;
+    let refused = scene.activate(npc, missile_effect(spec().ship_id, launcher(1_000.0, 10_000.0, 56.0)), now);
+    assert!(refused.iter().any(|o| matches!(o, Out::Refused { reason: "MODULE_CLOAKED", .. })), "{refused:?}");
+}
+
+#[test]
 fn a_missile_whose_target_has_left_is_gone_with_it_and_does_nothing() {
     let (mut scene, npc, now) = duel();
     scene.activate(npc, missile_effect(spec().ship_id, launcher(300.0, 5_000.0, 56.0)), now);
@@ -1781,7 +1790,7 @@ fn a_strike_stops_the_jump_and_the_cloak_for_its_no_jump_window() {
         effect_id: 0,
         module_id: spec().ship_id + 2,
         fx: "effects.Cloaking".to_string(),
-        action: Some(crate::modules::Action::Cloak { warp_safe: false }),
+        action: Some(crate::modules::Action::Cloak { warp_safe: false, targeting_delay_ms: 0.0 }),
         duration_ms: 1_000.0,
         ..strike_effect(spec().ship_id + 2, strike_of(1))
     };

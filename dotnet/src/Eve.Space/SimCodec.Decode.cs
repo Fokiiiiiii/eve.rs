@@ -411,7 +411,7 @@ public static partial class SimCodec
                     {
                         throw new SimLinkException(SimLinkError.BadValue, "bad warp-safe flag of the cloak");
                     }
-                    return new SimAction.Cloak(warpSafe == 1);
+                    return new SimAction.Cloak(warpSafe == 1, r.F64());
                 }
             case 16:
                 {

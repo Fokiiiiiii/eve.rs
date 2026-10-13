@@ -3104,31 +3104,18 @@ fn tether_repairs_ship_capacitor_and_fitted_heat_damage_only_on_engage() {
 }
 
 #[test]
-fn tether_refuses_smartbomb_and_bomb_activation_without_spending_or_fake_damage() {
+fn a_tethered_ship_starts_a_smartbomb_and_the_start_breaks_the_tether() {
+    // no refusal for a tethered ship's smartbomb or bomb: the SDE has no disallowTethering (2343) on them; the offensive start breaks the tether as before
     use crate::modules::Action;
-    let actions = [
-        Action::Smartbomb { range: 5_000.0, damage: [100.0; 4], hurts_pilots: true },
-        Action::Bomb {
-            ball: tether_test_ball(),
-            kind: crate::deployable::BombKind::Damage,
-            lifetime_ms: 10_000.0,
-            blast_radius: 15_000.0,
-            damage: [100.0; 4],
-            ecm: [0.0; 4],
-            neutralize: 0.0,
-        },
-    ];
-    for action in actions {
-        let mut scene = tether_scene();
-        grant_tether(&mut scene, NOON);
-        let before = Scene::condition_of(&scene.pilots[&SESSION], NOON);
-        let refused = scene.activate(SESSION, tether_effect(Some(action)), NOON);
-        assert_eq!(refused, [Out::Refused { session: SESSION, command: 17, reason: "TETHERED" }]);
-        assert_eq!(Scene::condition_of(&scene.pilots[&SESSION], NOON), before);
-        assert!(scene.deployables.is_empty());
-        assert!(scene.pilots[&SESSION].modules.running_count() == 0);
-        assert!(scene.is_tethered(spec().ship_id, NOON));
-    }
+    let mut scene = tether_scene();
+    grant_tether(&mut scene, NOON);
+    let started = scene.activate(
+        SESSION,
+        tether_effect(Some(Action::Smartbomb { range: 5_000.0, damage: [100.0; 4], hurts_pilots: true })),
+        NOON,
+    );
+    assert!(started.iter().any(|o| matches!(o, Out::Accepted { .. })), "{started:?}");
+    assert!(!scene.is_tethered(spec().ship_id, NOON));
 }
 
 #[test]

@@ -129,7 +129,11 @@ fn an_immune_ship_is_not_held_by_a_bubble() {
 fn a_cloak_that_is_not_warp_safe_holds_its_ship_and_a_covert_one_does_not() {
     let (mut scene, t) = crowd();
     // a cycle of two seconds: the cloak runs until its cycle ends (the simulation keeps an effect to the end of its cycle)
-    assert!(accepted(&scene.activate(B, module(MODULE, Action::Cloak { warp_safe: false }, 2_000.0), t)));
+    assert!(accepted(&scene.activate(
+        B,
+        module(MODULE, Action::Cloak { warp_safe: false, targeting_delay_ms: 0.0 }, 2_000.0),
+        t
+    )));
     assert_eq!(scene.pilots[&B].cloak, CloakState::Cloaked);
     let held = warp(&mut scene, B, t + SECOND);
     assert!(refused_with(&held, "WARP_BLOCKED_BY_CLOAK"), "{held:?}");
@@ -137,7 +141,7 @@ fn a_cloak_that_is_not_warp_safe_holds_its_ship_and_a_covert_one_does_not() {
     assert_eq!(scene.pilots[&B].cloak, CloakState::Uncloaked);
     assert!(accepted(&scene.activate(
         B,
-        module(MODULE + 1, Action::Cloak { warp_safe: true }, 30_000.0),
+        module(MODULE + 1, Action::Cloak { warp_safe: true, targeting_delay_ms: 0.0 }, 30_000.0),
         t2
     )));
     let covert = warp(&mut scene, B, t2 + SECOND);

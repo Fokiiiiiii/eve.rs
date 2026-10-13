@@ -137,7 +137,7 @@ public class SimCodecTests
         }
         if ((string)a["kind"]! == "cloak")
         {
-            return new SimAction.Cloak(a["warpSafe"] is { } warpSafe && (bool)warpSafe);
+            return new SimAction.Cloak(a["warpSafe"] is { } warpSafe && (bool)warpSafe, a["targetingDelayMs"] is { } delay ? (double)delay : 0.0);
         }
         if ((string)a["kind"]! == "warpBubble")
         {

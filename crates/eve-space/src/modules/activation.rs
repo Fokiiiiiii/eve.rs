@@ -168,9 +168,6 @@ impl Scene {
             return vec![Out::Refused { session, command: CODE, reason: "NOT_IMPLEMENTED" }];
         }
         self.settle_all(now);
-        if self.tether_refuses_activation(session, &effect, now) {
-            return vec![Out::Refused { session, command: CODE, reason: "TETHERED" }];
-        }
         let pilot = &self.pilots[&session];
         if pilot.modules.running.iter().any(|r| r.effect.module_id == effect.module_id)
             || pilot.modules.pending_starts.iter().any(|start| start.effect.module_id == effect.module_id)
@@ -275,12 +272,6 @@ impl Scene {
             )
         {
             return vec![Out::Refused { session, command: CODE, reason: "SMARTBOMB_NEAR_STATION" }];
-        }
-        // a smartbomb does not start while its ship is in warp (EVE.js refuses it so; no SDE attribute names it: disallowActivateOnWarp 1245 is not on the bomb types)
-        if matches!(effect.action.as_ref(), Some(Action::Smartbomb { .. }))
-            && pilot.flight.as_ref().is_some_and(|flight| flight.is_warping())
-        {
-            return vec![Out::Refused { session, command: CODE, reason: "CANNOT_ACTIVATE_IN_WARP" }];
         }
         // a warp scrambler that blocks a microwarpdrive keeps one from being started
         // a module burnt out by its own effect (an emergency hull energizer) does not start again (MODULE_INCAPACITATED)
@@ -391,11 +382,8 @@ impl Scene {
             if self.cloak_trigger(session, crate::scene::CLOAK_PROXIMITY_METERS).is_some() {
                 return vec![Out::Refused { session, command: CODE, reason: "CLOAK_PROXIMITY_BLOCKED" }];
             }
-        } else if pilot.cloak != crate::visibility::CloakState::Uncloaked
-            && !(pilot.cloak == crate::visibility::CloakState::Cloaked
-                && !effect.offensive()
-                && now - pilot.cloaked_at <= CLOAK_MODULE_WINDOW)
-        {
+        } else if pilot.cloak != crate::visibility::CloakState::Uncloaked {
+            // the blanket rule of a cloaked ship: while the cloak runs nothing else starts (the reference; the cloak's own refusals above are the only ones)
             return vec![Out::Refused { session, command: CODE, reason: "MODULE_CLOAKED" }];
         }
         if effect.turret.is_some() {
@@ -524,9 +512,6 @@ impl Scene {
         }
         // the pilot has given up the undocking protection by flying the ship (the host tells the client)
         let (owner, ship_id) = (pilot.ship.spec.character_id, pilot.ship.spec.ship_id);
-        if self.tether_refuses_activation(session, &effect, now) {
-            return vec![Out::Refused { session, command: CODE, reason: "TETHERED" }];
-        }
         let mut out = if effect.offensive() {
             // Revoke the cached grant until the host supplies its authoritative weapons timer.
             let controller = self.controller_of_drone(session).filter(|id| *id != 0).unwrap_or(session);
@@ -1102,9 +1087,6 @@ impl Scene {
 /// range held to 5 km, 6 km to 6 km). A range beyond the wiki's largest value takes that value: no source gives more.
 const SMARTBOMB_NEAR_METERS: f64 = 5_000.0;
 const SMARTBOMB_NEAR_SOURCED_MAX_METERS: f64 = 6_000.0;
-/// How long after a ship cloaks a module that is not offensive may still start (the wiki, Cloaking: "Non-offensive modules can still be activated during the
-/// first 5 seconds"); after it, a cloaked ship starts nothing but its cloak.
-const CLOAK_MODULE_WINDOW: i64 = 5 * TICKS_PER_SECOND;
 /// The covert cynosural field's type (EVE.js `TYPE_COVERT_CYNOSURAL_FIELD`): a Mobile Cynosural Inhibitor does not stop it.
 const COVERT_CYNOSURAL_FIELD_TYPE: i32 = 28_650;
 

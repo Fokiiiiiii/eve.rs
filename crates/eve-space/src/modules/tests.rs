@@ -705,7 +705,7 @@ fn an_active_cloak_hides_a_ship_from_locking_until_the_module_ends() {
     effect.module_type = 11577;
     effect.effect_id = 197;
     effect.fx = "effects.Cloaking".to_string();
-    effect.action = Some(Action::Cloak { warp_safe: false });
+    effect.action = Some(Action::Cloak { warp_safe: false, targeting_delay_ms: 0.0 });
     let started = scene.activate(A, effect, t);
     assert!(
         started.iter().any(|event| matches!(event, Out::Accepted { command: 17, .. })),
@@ -3331,8 +3331,11 @@ fn a_cloak_is_refused_while_a_module_that_cannot_be_deactivated_early_runs() {
     let held =
         Effect { rules: Rules { disallow_early_deactivation: true, ..Default::default() }, ..afterburner() };
     assert!(accepted(&scene.activate(A, held, t)));
-    let cloak =
-        Effect { module_id: MODULE + 500, action: Some(Action::Cloak { warp_safe: false }), ..afterburner() };
+    let cloak = Effect {
+        module_id: MODULE + 500,
+        action: Some(Action::Cloak { warp_safe: false, targeting_delay_ms: 0.0 }),
+        ..afterburner()
+    };
     assert_eq!(
         scene.activate(A, cloak.clone(), t),
         [Out::Refused { session: A, command: 17, reason: "CLOAK_MODULE_ACTIVE" }]
@@ -3787,7 +3790,7 @@ fn cloaking_device() -> Effect {
     effect.module_type = 11577;
     effect.effect_id = 197;
     effect.fx = "effects.Cloaking".to_string();
-    effect.action = Some(Action::Cloak { warp_safe: false });
+    effect.action = Some(Action::Cloak { warp_safe: false, targeting_delay_ms: 0.0 });
     effect
 }
 
@@ -3905,9 +3908,16 @@ fn other_module(mut effect: Effect) -> Effect {
     effect
 }
 
+fn cloak_with_delay(targeting_delay_ms: f64) -> Effect {
+    let mut cloak = cloaking_device();
+    cloak.action = Some(Action::Cloak { warp_safe: false, targeting_delay_ms });
+    cloak.repeat = 1;
+    cloak
+}
+
 #[test]
-fn a_cloaked_ship_starts_a_module_that_is_not_offensive_only_in_the_first_five_seconds() {
-    // the wiki (Cloaking): non-offensive modules can be activated during the first 5 seconds of a cloak; an offensive one never can
+fn a_cloaked_ship_starts_no_module_and_acquires_no_lock() {
+    // the blanket rule of a cloaked ship (the reference): a smartbomb or any other module is refused while the cloak runs, and a lock is not acquired
     let (mut scene, t) = crowd_off_the_station(10_000.0);
     scene.target_order(A, crate::targeting::Order::Clear, t);
     let mut cloak = cloaking_device();
@@ -3915,35 +3925,58 @@ fn a_cloaked_ship_starts_a_module_that_is_not_offensive_only_in_the_first_five_s
     assert!(accepted(&scene.activate(A, cloak, t)));
     let t = t + 2 * SECOND;
     scene.poll(t);
-    assert!(
-        accepted(&scene.activate(A, other_module(afterburner()), t)),
-        "two seconds in: a propulsion module starts"
-    );
+    assert_eq!(scene.pilots[&A].cloak, crate::visibility::CloakState::Cloaked);
     let mut bomb = smartbomb(3_000.0, [0.0, 40.0, 0.0, 40.0], true);
     bomb.module_id = MODULE + 2;
-    let offensive = scene.activate(A, bomb, t);
-    assert_eq!(refusal_of(&offensive), "MODULE_CLOAKED");
-
-    let (mut scene, t) = crowd_off_the_station(10_000.0);
-    scene.target_order(A, crate::targeting::Order::Clear, t);
-    let mut cloak = cloaking_device();
-    cloak.repeat = 1000;
-    assert!(accepted(&scene.activate(A, cloak, t)));
-    let t = t + 6 * SECOND;
-    scene.poll(t);
-    assert_eq!(scene.pilots[&A].cloak, crate::visibility::CloakState::Cloaked);
+    assert_eq!(refusal_of(&scene.activate(A, bomb, t)), "MODULE_CLOAKED");
     assert_eq!(refusal_of(&scene.activate(A, other_module(afterburner()), t)), "MODULE_CLOAKED");
+    let b_ship = scene.pilots[&B].ship.spec.ship_id;
+    let locked = scene.target_order(A, crate::targeting::Order::Lock(b_ship), t);
+    assert!(
+        locked.iter().any(|o| matches!(o, Out::TargetRefused { reason: "TARGET_NOT_FOUND", .. })),
+        "{:?}",
+        labels(&locked)
+    );
 }
 
 #[test]
-fn a_smartbomb_is_refused_while_its_pilot_warps() {
-    // EVE.js refuses a smartbomb in warp (isEntityActiveWarpInFlight); the lance of the next test is not refused
-    let (mut scene, t) = reaching_in(crowd_with_a_planet(), 3_000.0);
-    scene.command(A, Command::WarpTo { target_id: PLANET, range: 0.0 }, t);
-    let (_, t) = poll_until(&mut scene, t, 10.0);
-    assert!(scene.pilots[&A].flight.as_ref().is_some_and(|f| f.is_warping()), "the ship is in warp");
-    let refused = scene.activate(A, smartbomb(3_000.0, [0.0, 40.0, 0.0, 40.0], true), t);
-    assert_eq!(refusal_of(&refused), "CANNOT_ACTIVATE_IN_WARP");
+fn a_lock_is_refused_for_the_targeting_delay_of_the_cloak_that_ended_and_modules_start_again() {
+    // the cloak's cloakingTargetingDelay (attribute 560, milliseconds) is read from the cloak that ran: 3 s for one cloak, 8 s for another
+    for (delay_ms, still_refused_at, allowed_at) in [(3_000.0, 1, 4), (8_000.0, 4, 9)] {
+        let (mut scene, t) = reaching(5_000.0);
+        scene.target_order(A, crate::targeting::Order::Clear, t);
+        assert!(accepted(&scene.activate(A, cloak_with_delay(delay_ms), t)));
+        let b_ship = scene.pilots[&B].ship.spec.ship_id;
+        let (_, ended) = poll_until(&mut scene, t, 6.0);
+        assert_eq!(scene.pilots[&A].cloak, crate::visibility::CloakState::Uncloaked, "the cloak ended");
+
+        let refused_at = ended + still_refused_at * SECOND;
+        scene.poll(refused_at);
+        let refused = scene.target_order(A, crate::targeting::Order::Lock(b_ship), refused_at);
+        assert!(
+            refused.iter().any(|o| matches!(o, Out::TargetRefused { reason: "TARGET_NOT_FOUND", .. })),
+            "{delay_ms} ms: {:?}",
+            labels(&refused)
+        );
+        assert!(!scene.locked_by(A).contains(&b_ship));
+
+        // a module is not refused for the cloak once it has decloaked
+        assert!(
+            accepted(&scene.activate(A, other_module(afterburner()), refused_at)),
+            "{delay_ms} ms: starts after decloak"
+        );
+        scene.deactivate(A, MODULE + 1, refused_at);
+        let allowed = ended + allowed_at * SECOND;
+        scene.poll(allowed);
+        let granted = scene.target_order(A, crate::targeting::Order::Lock(b_ship), allowed);
+        assert!(
+            !granted.iter().any(|o| matches!(o, Out::TargetRefused { .. } | Out::Refused { .. })),
+            "{delay_ms} ms: {:?}",
+            labels(&granted)
+        );
+        let (_, _) = poll_until(&mut scene, allowed, 5.0);
+        assert!(scene.locked_by(A).contains(&b_ship), "{delay_ms} ms: the lock is had after the delay");
+    }
 }
 
 #[test]

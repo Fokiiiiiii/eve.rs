@@ -25,7 +25,8 @@ class SeedError(RuntimeError):
 
 
 def _url() -> str:
-    url = os.environ.get("EVE_PG_URL")
+    # psql takes the postgres:// form; the run script exports it as EVE_PSQL_URL when EVE_PG_URL is the Npgsql form
+    url = os.environ.get("EVE_PSQL_URL") or os.environ.get("EVE_PG_URL")
     if not url:
         raise SeedError("EVE_PG_URL is not set: run the walk through tools/dev/run-eve-live.sh")
     return url

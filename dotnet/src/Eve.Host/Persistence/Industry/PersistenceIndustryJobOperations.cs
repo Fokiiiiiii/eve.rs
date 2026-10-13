@@ -79,6 +79,7 @@ public sealed partial class PersistenceIndustryJobOperations : Eve.Services.Core
     private readonly Func<long> _nowUnixMs;
     private readonly IIndustryCostIndexSource _costIndexes;
     private readonly Func<long, CancellationToken, ValueTask<long?>> _installerSystem;
+    private readonly IndustryReadyJobs _readyJobs;
     private Task<IReadOnlyDictionary<long, long[]>>? _jumpGraph;
 
     public PersistenceIndustryJobOperations(
@@ -95,6 +96,7 @@ public sealed partial class PersistenceIndustryJobOperations : Eve.Services.Core
         Func<long, long, long, long, CancellationToken, ValueTask<IndustryFacility?>> resolveFacility,
         IIndustryCostIndexSource costIndexes,
         Func<long, CancellationToken, ValueTask<long?>> installerSystem,
+        IndustryReadyJobs readyJobs,
         Func<long> nowUnixMs)
     {
         if (!System.Text.RegularExpressions.Regex.IsMatch(schema, "^[a-z_][a-z0-9_]*$", System.Text.RegularExpressions.RegexOptions.CultureInvariant))
@@ -112,6 +114,7 @@ public sealed partial class PersistenceIndustryJobOperations : Eve.Services.Core
         _resolveFacility = resolveFacility ?? throw new ArgumentNullException(nameof(resolveFacility));
         _costIndexes = costIndexes ?? throw new ArgumentNullException(nameof(costIndexes));
         _installerSystem = installerSystem ?? throw new ArgumentNullException(nameof(installerSystem));
+        _readyJobs = readyJobs ?? throw new ArgumentNullException(nameof(readyJobs));
         _nowUnixMs = nowUnixMs ?? throw new ArgumentNullException(nameof(nowUnixMs));
     }
 

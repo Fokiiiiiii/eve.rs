@@ -168,6 +168,9 @@ internal sealed class IndustryRig : IAsyncDisposable
         var corporations = new CorporationStore(source, _characters, _walletStore, _wallets, _skills, () => Now, _schemas[5]);
         var scheduler = new DurableScheduler(source, () => Now, null, _schemas[6]);
         var events = new EventBus(source, scheduler, null, _schemas[7]);
+        Scheduler = scheduler;
+        ReadyJobs = new IndustryReadyJobs(source, _schemas[8], events, scheduler, () => Now);
+        ReadyJobs.Register();
         _prices = new AdjustedPriceStore(source, _schemas[0]);
         var station = _station;
         _operations = new PersistenceIndustryJobOperations(
@@ -179,10 +182,25 @@ internal sealed class IndustryRig : IAsyncDisposable
                     Structure ? null : new HashSet<int> { 14, 15 })),
             new FixedCostIndexes(0m),
             (characterId, token) => ValueTask.FromResult<long?>(InstallerSystem ?? station.SolarSystemId),
+            ReadyJobs,
             () => Now);
     }
 
     public long Now { get; set; } = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+
+    /// <summary>The durable scheduler the readiness jobs wait in (the rig's host, before any restart).</summary>
+    public DurableScheduler Scheduler { get; }
+
+    /// <summary>The readiness jobs of the rig's host.</summary>
+    public IndustryReadyJobs ReadyJobs { get; }
+
+    /// <summary>A restart of the host: a new scheduler and readiness service over the same schemas, which runs what is due.</summary>
+    public async Task<int> RestartAndRunDueAsync()
+    {
+        var scheduler = new DurableScheduler(_source, () => Now, null, _schemas[6]);
+        new IndustryReadyJobs(_source, _schemas[8], new EventBus(_source, scheduler, null, _schemas[7]), scheduler, () => Now).Register();
+        return await scheduler.RunDueAsync();
+    }
 
     /// <summary>When true the facility is an industry structure (no NPC station services); otherwise the NPC station with its Factory and Laboratory.</summary>
     public bool Structure { get; set; }

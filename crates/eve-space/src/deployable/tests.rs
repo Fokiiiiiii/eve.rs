@@ -314,10 +314,10 @@ fn a_field_the_host_puts_back_after_a_restart_lives_what_was_left_and_is_removed
     assert!(scene.deployables.is_empty());
 }
 
-/// A Mobile Cynosural Inhibitor (protocol 50): an anchored one within 100 km stops a cynosural field from lighting there, but not a covert field, and an
+/// A Mobile Cynosural Inhibitor (protocol 50): an anchored one within 200 km stops a cynosural field from lighting there, but not a covert field, and an
 /// unanchored one stops nothing. A field activation is refused with `CYNOSURAL_FIELD_INHIBITED`.
 #[test]
-fn an_anchored_cynosural_inhibitor_stops_a_field_within_100_km_but_not_a_covert_one_or_an_unanchored_one() {
+fn an_anchored_cynosural_inhibitor_stops_a_field_within_200_km_but_not_a_covert_one_or_an_unanchored_one() {
     let inhibitor = |system: i32, a: eve_destiny::Vec3, active: bool| crate::link::DisruptorPlacement {
         deployable_id: 990_000_000_200,
         solar_system_id: system,
@@ -326,7 +326,7 @@ fn an_anchored_cynosural_inhibitor_stops_a_field_within_100_km_but_not_a_covert_
         group_id: 1_249,
         position: [a.x + 50_000.0, a.y, a.z],
         radius: 100.0,
-        range: 100_000.0,
+        range: 200_000.0,
         active,
         owner_id: 4_242,
         corporation_id: 0,
@@ -351,8 +351,8 @@ fn an_anchored_cynosural_inhibitor_stops_a_field_within_100_km_but_not_a_covert_
     scene.place_inhibitor(inhibitor(system, a, true), t);
     assert!(scene.inhibited_at(a), "the inhibitor covers the ship");
     assert!(
-        !scene.inhibited_at(eve_destiny::Vec3::new(a.x + 200_000.0, a.y, a.z)),
-        "nothing 200 km away is covered"
+        !scene.inhibited_at(eve_destiny::Vec3::new(a.x + 300_000.0, a.y, a.z)),
+        "nothing 250 km beyond the inhibitor (300 km from the ship) is covered"
     );
     let refused = scene.activate(A, module(MODULE, field(21_094), 20_000.0), t);
     assert!(refused_with(&refused, "CYNOSURAL_FIELD_INHIBITED"), "{refused:?}");

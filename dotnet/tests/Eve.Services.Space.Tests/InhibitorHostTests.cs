@@ -74,7 +74,7 @@ public class InhibitorHostTests
         Assert.Equal(inhibitor, placed);
         var ball = Assert.Single(rig.Sim.Heard.OfType<SimPlaceInhibitor>());
         Assert.False(ball.Active, "an inhibitor is not anchored when it is dropped");
-        Assert.Equal(100_000, ball.Range);
+        Assert.Equal(200_000, ball.Range);
         Assert.Equal(new[] { 2_500.0, 0.0, 0.0 }, ball.Position.ToArray());
         Assert.Equal(100.0, ball.Radius);
         var record = (await rig.Deployed.GetAsync(inhibitor))!;
@@ -137,7 +137,7 @@ public class InhibitorHostTests
     }
 
     [PgFact]
-    public async Task A_second_inhibitor_within_200_km_of_the_first_is_refused_and_stays_in_the_hold()
+    public async Task A_second_inhibitor_within_400_km_of_the_first_is_refused_and_stays_in_the_hold()
     {
         await using var rig = await Rig.CreateAsync();
         var (session, items) = await PilotWithInhibitorsAsync(rig, 2);

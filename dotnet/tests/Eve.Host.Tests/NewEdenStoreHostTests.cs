@@ -37,6 +37,15 @@ public sealed class NewEdenStoreHostTests : IAsyncLifetime
     private readonly string _prefix = "ns" + Guid.NewGuid().ToString("N")[..10];
     private readonly Dictionary<string, string?> _saved = [];
     private readonly List<string> _schemas = [];
+    private readonly List<HostRuntime> _hosts = [];
+
+    /// <summary>A started host, shut down before the schemas are dropped (its scheduler would otherwise race the DROP).</summary>
+    private async Task<HostRuntime> BuildHostAsync()
+    {
+        var host = await HostComposition.BuildAsync(Settings());
+        _hosts.Add(host);
+        return host;
+    }
 
     private string Schema(string variable) => variable["EVE_".Length..^"_SCHEMA".Length].ToLowerInvariant() is var name ? $"{_prefix}_{name}" : "";
 
@@ -59,6 +68,7 @@ public sealed class NewEdenStoreHostTests : IAsyncLifetime
 
     public async Task DisposeAsync()
     {
+        foreach (var host in _hosts) await host.ShutdownAsync();
         var url = Environment.GetEnvironmentVariable("EVE_PG_URL");
         if (url is not null)
         {
@@ -110,7 +120,7 @@ public sealed class NewEdenStoreHostTests : IAsyncLifetime
     {
         var url = Environment.GetEnvironmentVariable("EVE_PG_URL")!;
         await using var source = NpgsqlDataSource.Create(Eve.Data.PgConnection.ForTest(url));
-        var host = await HostComposition.BuildAsync(Settings());
+        var host = await BuildHostAsync();
         var store = host.Registry.Lookup("storeManager") ?? throw new InvalidOperationException("storeManager is not registered");
         var vault = host.Registry.Lookup("vaultManager") ?? throw new InvalidOperationException("vaultManager is not registered");
         var stations = await StationCatalog.LoadAsync(new SdeReader(source));
@@ -135,7 +145,7 @@ public sealed class NewEdenStoreHostTests : IAsyncLifetime
     [PgFact]
     public async Task The_host_registers_the_reference_standings_and_trade_aliases()
     {
-        var host = await HostComposition.BuildAsync(Settings());
+        var host = await BuildHostAsync();
         var standings = Assert.IsAssignableFrom<IService>(host.Registry.Lookup("standingMgr"));
         var trade = Assert.IsAssignableFrom<IService>(host.Registry.Lookup("trademgr"));
         Assert.Same(standings, host.Registry.Lookup("standing2"));
@@ -152,7 +162,7 @@ public sealed class NewEdenStoreHostTests : IAsyncLifetime
     {
         var url = Environment.GetEnvironmentVariable("EVE_PG_URL")!;
         await using var source = NpgsqlDataSource.Create(Eve.Data.PgConnection.ForTest(url));
-        var host = await HostComposition.BuildAsync(Settings());
+        var host = await BuildHostAsync();
         var checkout = host.Registry.Lookup("FastCheckoutService") ?? throw new InvalidOperationException("FastCheckoutService is not registered");
         var vault = host.Registry.Lookup("vaultManager") ?? throw new InvalidOperationException("vaultManager is not registered");
         var station = (await StationCatalog.LoadAsync(new SdeReader(source))).All.First();
@@ -172,7 +182,7 @@ public sealed class NewEdenStoreHostTests : IAsyncLifetime
     {
         var url = Environment.GetEnvironmentVariable("EVE_PG_URL")!;
         await using var source = NpgsqlDataSource.Create(Eve.Data.PgConnection.ForTest(url));
-        var host = await HostComposition.BuildAsync(Settings());
+        var host = await BuildHostAsync();
         var store = host.Registry.Lookup("storeManager") ?? throw new InvalidOperationException("storeManager is not registered");
         var vault = host.Registry.Lookup("vaultManager") ?? throw new InvalidOperationException("vaultManager is not registered");
         var station = (await StationCatalog.LoadAsync(new SdeReader(source))).All.First();
@@ -198,7 +208,7 @@ public sealed class NewEdenStoreHostTests : IAsyncLifetime
     {
         var url = Environment.GetEnvironmentVariable("EVE_PG_URL")!;
         await using var source = NpgsqlDataSource.Create(Eve.Data.PgConnection.ForTest(url));
-        var host = await HostComposition.BuildAsync(Settings());
+        var host = await BuildHostAsync();
         var store = host.Registry.Lookup("storeManager") ?? throw new InvalidOperationException("storeManager is not registered");
         var vault = host.Registry.Lookup("vaultManager") ?? throw new InvalidOperationException("vaultManager is not registered");
         var station = (await StationCatalog.LoadAsync(new SdeReader(source))).All.First();

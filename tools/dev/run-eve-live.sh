@@ -20,6 +20,25 @@ export EVE_LP_STORE_SEED="${EVE_LP_STORE_SEED:-skip}"
 export EVE_ADJUSTED_PRICE_SEED="${EVE_ADJUSTED_PRICE_SEED:-skip}"
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+# the walks and seeds read the database with psql, which takes a postgres:// URL (EVE_PG_URL may be the Npgsql form)
+if [ -n "${EVE_PG_URL:-}" ] && [ -z "${EVE_PSQL_URL:-}" ]; then
+  export EVE_PSQL_URL="$(python3 -I -c "
+import re, sys, urllib.parse
+url = sys.argv[1].strip()
+if url.startswith(('postgres://', 'postgresql://')):
+    print(url)
+else:
+    f = dict(re.findall(r'(?i)([A-Za-z ]+)=([^;]*)', url))
+    f = {k.strip().lower(): v.strip() for k, v in f.items()}
+    user = urllib.parse.quote(f.get('username', 'postgres'))
+    print(f'postgres://{user}@{f.get(\"host\", \"127.0.0.1\")}:{f.get(\"port\", \"5432\")}/{f.get(\"database\", \"eve\")}')
+" "$EVE_PG_URL")"
+fi
+# the simulation reads the static data's JSONL export: the copy `eve-sde ensure` keeps under .cache/sde, unless EVE_SDE_DIR names one
+if [ -z "${EVE_SDE_DIR:-}" ]; then
+  sde_copy="$(ls -d "$HERE"/.cache/sde/eve-online-static-data-*-jsonl 2>/dev/null | head -n 1 || true)"
+  if [ -n "$sde_copy" ]; then export EVE_SDE_DIR="$sde_copy"; fi
+fi
 TARGET="${CARGO_TARGET_DIR:-$HERE/target}"
 PORT="${EVE_LIVE_PORT:-26100}"
 if (exec 3<>"/dev/tcp/127.0.0.1/$PORT") 2>/dev/null; then

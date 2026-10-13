@@ -117,9 +117,12 @@ public sealed class CrateServicePersistenceTests
         const string customInfo = "{\"evejsCrateLoot\":[[34,6]],\"evejsCrateFittings\":[699]}";
         var itemSchema = "crate_fit_inv_" + Guid.NewGuid().ToString("N")[..12];
         var storeSchema = "crate_fit_gs_" + Guid.NewGuid().ToString("N")[..12];
+        var fittingSchema = "crate_fit_sql_" + Guid.NewGuid().ToString("N")[..12];
         try
         {
             await PgItemStore.MigrateAsync(source, itemSchema);
+            await Eve.Fitting.PgModuleStateStore.MigrateAsync(source, fittingSchema);
+            var savedFittings = new Eve.Fitting.PgSavedFittingStore(source, fittingSchema);
             var items = new PgItemStore(source, itemSchema);
             var itemTypes = new ItemTypeCatalog(sde);
             await using var store = new PersistenceStore(source, storeSchema);
@@ -158,7 +161,7 @@ public sealed class CrateServicePersistenceTests
             }).Success);
             await cache.FlushTableAsync("savedFittings");
 
-            var backend = new PersistenceCrateServiceBackend(source, items, itemTypes, gameStoreCache: cache);
+            var backend = new PersistenceCrateServiceBackend(source, items, itemTypes, gameStoreCache: cache, savedFittings: savedFittings);
             long crateId;
             await using (var connection = await source.OpenConnectionAsync())
             await using (var transaction = await connection.BeginTransactionAsync())
@@ -187,22 +190,41 @@ public sealed class CrateServicePersistenceTests
             await service.CallAsync(Call("ClaimLoot", new PyInt(reward.Id), new PyInt(destinationId), new PyInt(destinationFlag)));
             Assert.Equal(destinationId, (await items.GetAsync(reward.Id))!.LocationId);
 
-            Assert.Equal(new PyInt(savedFittingId),
-                await service.CallAsync(Call("ClaimFitting", new PyInt(crateId), new PyInt(sourceFittingId))));
-            await using var reader = new GameStoreCache(store, null,
-                new GameStoreCacheOptions { ProcessRole = PersistenceRoles.Reader });
-            await reader.LoadAsync("savedFittings");
-            var saved = Assert.IsType<JsonObject>(reader.Read("savedFittings",
-                $"/owners/{characterId}/fittings/{savedFittingId}").Data);
-            Assert.Equal(characterId, saved["ownerID"]!.GetValue<long>());
-            Assert.Equal(shipTypeId, saved["shipTypeID"]!.GetValue<int>());
-            Assert.Equal("Crate source fitting", saved["name"]!.GetValue<string>());
-            Assert.True(JsonNode.DeepEquals(new JsonArray { new JsonArray { 34, 27, 1 } }, saved["fitData"]));
+            var claimed = await service.CallAsync(Call("ClaimFitting", new PyInt(crateId), new PyInt(sourceFittingId)));
+            var claimedId = claimed switch { PyInt id => id.Value, PyLong id => id.Value, _ => 0 };
+            Assert.True(claimedId > 0);
+            IService fittingService = new CharFittingMgrService(new FittingMgrCalls(savedFittings, null!, () => 0));
+            var fittingList = Assert.IsType<PyDict>(await fittingService.CallAsync(Call("GetFittings")));
+            var fitting = Assert.Single(fittingList.Entries);
+            Assert.Equal(new PyLong(claimedId), fitting.Key);
+            var data = Assert.IsType<PyDict>(Assert.IsType<PyObject>(fitting.Value).Args);
+            Assert.Equal(new PyStr("Crate source fitting"), data.Entries.Single(e => e.Key == new PyStr("name")).Value);
+            var restarted = new Eve.Fitting.PgSavedFittingStore(source, fittingSchema);
+            var saved = Assert.Single(await restarted.ListAsync(Eve.Fitting.FittingOwnerScope.Character, characterId));
+            Assert.Equal(claimedId, saved.FittingId);
+            Assert.Equal(shipTypeId, saved.Draft.ShipTypeId);
+            Assert.Equal([new Eve.Fitting.FittingItem(34, 27, 1)], saved.Draft.FitData);
+            Assert.Equal(PyNone.Instance, await service.CallAsync(Call("ClaimFitting", new PyInt(crateId), new PyInt(sourceFittingId))));
+            Assert.Single(await restarted.ListAsync(Eve.Fitting.FittingOwnerScope.Character, characterId));
+            Assert.Null(cache.Read("savedFittings", $"/owners/{characterId}").Data);
+            var catalog = cache.Read("savedFittings", "/").Data!.ToJsonString();
+            var unconfigured = new PersistenceCrateServiceBackend(source, items, itemTypes, gameStoreCache: cache);
+            Assert.Null(await unconfigured.ClaimFittingAsync(characterId, sourceFittingId, CancellationToken.None));
+            Assert.Null(await backend.ClaimFittingAsync(characterId, sourceFittingId + 99, CancellationToken.None));
+            var fitPath = $"/owners/{fittingOwnerId}/fittings/{sourceFittingId}/fitData";
+            Assert.True(cache.Write("savedFittings", fitPath, new JsonArray { new JsonArray { 34, 27, -1 } }).Success);
+            Assert.Null(await backend.ClaimFittingAsync(characterId, sourceFittingId, CancellationToken.None));
+            Assert.True(cache.Write("savedFittings", fitPath, new JsonArray { new JsonArray { 34, 27, 1 } }).Success);
+            Assert.NotNull(await savedFittings.SaveManyAsync(Eve.Fitting.FittingOwnerScope.Character, characterId,
+                Enumerable.Repeat(saved.Draft, 499).ToArray(), 500, saved.SavedAtFileTime));
+            Assert.Null(await backend.ClaimFittingAsync(characterId, sourceFittingId, CancellationToken.None));
+            Assert.Equal(500, (await restarted.ListAsync(Eve.Fitting.FittingOwnerScope.Character, characterId)).Count);
+            Assert.Equal(catalog, cache.Read("savedFittings", "/").Data!.ToJsonString());
         }
         finally
         {
             await using var connection = await source.OpenConnectionAsync();
-            await using var command = new NpgsqlCommand($"DROP SCHEMA IF EXISTS {itemSchema} CASCADE; DROP SCHEMA IF EXISTS {storeSchema} CASCADE", connection);
+            await using var command = new NpgsqlCommand($"DROP SCHEMA IF EXISTS {itemSchema} CASCADE; DROP SCHEMA IF EXISTS {storeSchema} CASCADE; DROP SCHEMA IF EXISTS {fittingSchema} CASCADE", connection);
             await command.ExecuteNonQueryAsync();
         }
     }

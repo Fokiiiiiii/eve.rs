@@ -67,6 +67,71 @@ public sealed class CrateServiceTests
     }
 
     [Fact]
+    public async Task Concurrent_fitting_claims_only_save_the_single_pending_reward_once()
+    {
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var finish = new TaskCompletionSource<long?>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var backend = new FakeBackend
+        {
+            FittingClaim = async _ => { entered.TrySetResult(); return await finish.Task; },
+        };
+        var service = new CrateService(backend);
+        await service.CallAsync(Call("OpenCrate", new PyInt(100)));
+        var first = service.CallAsync(Call("ClaimFitting", new PyInt(100), new PyInt(456))).AsTask();
+        await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        var second = service.CallAsync(Call("ClaimFitting", new PyInt(100), new PyInt(456))).AsTask();
+        finish.SetResult(456);
+        var answers = await Task.WhenAll(first, second);
+        Assert.Equal(1, backend.FittingsClaimed);
+        Assert.Contains(answers, answer => answer == new PyInt(456));
+        Assert.Contains(answers, answer => answer == PyNone.Instance);
+    }
+
+    [Fact]
+    public async Task A_failed_in_flight_claim_restores_the_reward_after_another_claim_finishes()
+    {
+        var failed = new TaskCompletionSource<long?>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var attempts = 0;
+        var backend = new FakeBackend
+        {
+            FittingClaim = _ => ++attempts == 1 ? failed.Task : Task.FromResult<long?>(456),
+        };
+        var service = new CrateService(backend);
+        await service.CallAsync(Call("OpenCrate", new PyInt(100)));
+        await service.CallAsync(Call("OpenCrate", new PyInt(100)));
+        var first = service.CallAsync(Call("ClaimFitting", new PyInt(100), new PyInt(456))).AsTask();
+        Assert.Equal(new PyInt(456), await service.CallAsync(Call("ClaimFitting", new PyInt(100), new PyInt(456))));
+        failed.SetResult(null);
+        Assert.Equal(PyNone.Instance, await first);
+        Assert.Equal(new PyInt(456), await service.CallAsync(Call("ClaimFitting", new PyInt(100), new PyInt(456))));
+        Assert.Equal(PyNone.Instance, await service.CallAsync(Call("ClaimFitting", new PyInt(100), new PyInt(456))));
+        Assert.Equal(3, backend.FittingsClaimed);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task A_failed_fitting_save_keeps_the_pending_reward_for_retry(bool throws)
+    {
+        var attempts = 0;
+        var backend = new FakeBackend
+        {
+            FittingClaim = _ => ++attempts == 1
+                ? throws ? Task.FromException<long?>(new InvalidOperationException("save failed")) : Task.FromResult<long?>(null)
+                : Task.FromResult<long?>(456),
+        };
+        var service = new CrateService(backend);
+        await service.CallAsync(Call("OpenCrate", new PyInt(100)));
+        if (throws)
+            await Assert.ThrowsAsync<InvalidOperationException>(() =>
+                service.CallAsync(Call("ClaimFitting", new PyInt(100), new PyInt(456))).AsTask());
+        else
+            Assert.Equal(PyNone.Instance, await service.CallAsync(Call("ClaimFitting", new PyInt(100), new PyInt(456))));
+        Assert.Equal(new PyInt(456), await service.CallAsync(Call("ClaimFitting", new PyInt(100), new PyInt(456))));
+        Assert.Equal(2, backend.FittingsClaimed);
+    }
+
+    [Fact]
     public async Task Claim_loot_recovers_pending_inventory_state_after_service_restart()
     {
         var backend = new FakeBackend
@@ -117,6 +182,7 @@ public sealed class CrateServiceTests
         public (long CrateId, long ItemId, long DestinationId, int FlagId) LastClaim { get; private set; }
         public int SkillBundlesClaimed { get; private set; }
         public int FittingsClaimed { get; private set; }
+        public Func<CancellationToken, Task<long?>>? FittingClaim { get; init; }
         public long LastPendingLocationId { get; private set; }
 
         public Task<CrateItem?> GetItemAsync(long itemId, CancellationToken cancellationToken) =>
@@ -163,7 +229,7 @@ public sealed class CrateServiceTests
         public Task<long?> ClaimFittingAsync(long characterId, int fittingId, CancellationToken cancellationToken)
         {
             FittingsClaimed++;
-            return Task.FromResult<long?>((long)fittingId);
+            return FittingClaim?.Invoke(cancellationToken) ?? Task.FromResult<long?>((long)fittingId);
         }
     }
 

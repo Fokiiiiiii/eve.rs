@@ -17,14 +17,14 @@ public sealed class PersistenceCrateServiceBackend(
     ItemTypeCatalog itemTypes,
     PgSkillStore? skills = null,
     SkillCatalog? skillCatalog = null,
-    GameStoreCache? gameStoreCache = null) : ICrateServiceBackend
+    GameStoreCache? gameStoreCache = null,
+    Eve.Fitting.PgSavedFittingStore? savedFittings = null) : ICrateServiceBackend
 {
     private const string FittingsTable = "savedFittings";
     private const int CharacterFittingLimit = 500;
     private const int CargoHoldFlag = 5;
     private const int DroneBayFlag = 87;
     private const int FighterBayFlag = 158;
-    private readonly SemaphoreSlim _fittingGate = new(1, 1);
 
     public async Task<CrateItem?> GetItemAsync(long itemId, CancellationToken cancellationToken)
     {
@@ -141,77 +141,30 @@ public sealed class PersistenceCrateServiceBackend(
 
     public async Task<long?> ClaimFittingAsync(long characterId, int fittingId, CancellationToken cancellationToken)
     {
-        if (gameStoreCache is null || characterId <= 0 || fittingId <= 0) return null;
+        if (gameStoreCache is null || savedFittings is null || characterId <= 0 || fittingId <= 0) return null;
         await gameStoreCache.LoadAsync(FittingsTable, cancellationToken);
-        await _fittingGate.WaitAsync(cancellationToken);
-        try
+        if (gameStoreCache.Read(FittingsTable, "/").Data is not JsonObject root ||
+            FindFitting(root, fittingId) is not { } sourceFit)
+            return null;
+
+        var shipType = await itemTypes.GetAsync(sourceFit.ShipTypeId, cancellationToken);
+        if (shipType?.CategoryId is not (6 or 65) || string.IsNullOrWhiteSpace(sourceFit.Name) ||
+            sourceFit.Name.Contains("@@", StringComparison.Ordinal) ||
+            sourceFit.Description.Contains("@@", StringComparison.Ordinal) || sourceFit.FitData.Count == 0)
+            return null;
+        foreach (var entry in sourceFit.FitData)
         {
-            if (gameStoreCache.Read(FittingsTable, "/").Data is not JsonObject root ||
-                FindFitting(root, fittingId) is not { } sourceFit)
+            if (entry.TypeId <= 0 || entry.FlagId <= 0 || entry.Quantity <= 0 ||
+                !Slots.IsSlotFlag(entry.FlagId) && entry.FlagId is not (CargoHoldFlag or DroneBayFlag or FighterBayFlag) ||
+                !await TypeExistsAsync(entry.TypeId, cancellationToken))
                 return null;
-
-            var shipType = await itemTypes.GetAsync(sourceFit.ShipTypeId, cancellationToken);
-            if (shipType?.CategoryId is not (6 or 65) || string.IsNullOrWhiteSpace(sourceFit.Name) ||
-                sourceFit.Name.Contains("@@", StringComparison.Ordinal) ||
-                sourceFit.Description.Contains("@@", StringComparison.Ordinal) || sourceFit.FitData.Count == 0)
-                return null;
-            foreach (var entry in sourceFit.FitData)
-            {
-                if (entry.TypeId <= 0 || entry.FlagId <= 0 || entry.Quantity == 0 ||
-                    !Slots.IsSlotFlag(entry.FlagId) && entry.FlagId is not (CargoHoldFlag or DroneBayFlag or FighterBayFlag) ||
-                    !await TypeExistsAsync(entry.TypeId, cancellationToken))
-                    return null;
-            }
-
-            var ownerKey = characterId.ToString(CultureInfo.InvariantCulture);
-            var owners = root["owners"] as JsonObject ?? new JsonObject();
-            if (root["owners"] is null) root["owners"] = owners;
-            var ownerRecord = owners[ownerKey] as JsonObject ?? new JsonObject
-            {
-                ["ownerID"] = characterId,
-                ["scope"] = "character",
-                ["fittings"] = new JsonObject(),
-            };
-            var fittings = ownerRecord["fittings"] as JsonObject ?? new JsonObject();
-            if (fittings.Count >= CharacterFittingLimit) return null;
-
-            var meta = root["_meta"] as JsonObject ?? new JsonObject { ["version"] = 1 };
-            var maxStoredId = owners
-                .SelectMany(owner => (owner.Value?["fittings"] as JsonObject ?? new JsonObject())
-                    .Select(fit => ReadInt(fit.Value?["fittingID"], ReadInt(JsonValue.Create(fit.Key)))))
-                .DefaultIfEmpty(0)
-                .Max();
-            var fittingIdToSave = Math.Max(ReadInt(meta["nextFittingID"], 1), maxStoredId + 1);
-            if (fittingIdToSave <= 0 || fittingIdToSave == int.MaxValue) return null;
-
-            var saved = new JsonObject
-            {
-                ["fittingID"] = fittingIdToSave,
-                ["ownerID"] = characterId,
-                ["shipTypeID"] = sourceFit.ShipTypeId,
-                ["name"] = sourceFit.Name,
-                ["description"] = sourceFit.Description,
-                ["fitData"] = sourceFit.ToJsonArray(),
-                ["savedDate"] = Py.FileTimeFromUnixMs(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds())
-                    .ToString(CultureInfo.InvariantCulture),
-            };
-            fittings[fittingIdToSave.ToString(CultureInfo.InvariantCulture)] = saved;
-            ownerRecord["ownerID"] = characterId;
-            ownerRecord["scope"] ??= "character";
-            ownerRecord["fittings"] = fittings;
-            owners[ownerKey] = ownerRecord;
-            meta["nextFittingID"] = fittingIdToSave + 1;
-            root["_meta"] = meta;
-
-            var write = gameStoreCache.Write(FittingsTable, "/", root);
-            if (!write.Success) return null;
-            await gameStoreCache.FlushTableAsync(FittingsTable, cancellationToken);
-            return fittingIdToSave;
         }
-        finally
-        {
-            _fittingGate.Release();
-        }
+
+        var draft = new Eve.Fitting.FittingDraft(sourceFit.ShipTypeId, sourceFit.Name, sourceFit.Description,
+            [.. sourceFit.FitData.Select(entry => new Eve.Fitting.FittingItem(entry.TypeId, entry.FlagId, entry.Quantity))]);
+        var ids = await savedFittings.SaveManyAsync(Eve.Fitting.FittingOwnerScope.Character, characterId,
+            [draft], CharacterFittingLimit, Py.FileTimeFromUnixMs(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()), cancellationToken);
+        return ids?.Single();
     }
 
     private static SavedFitting? FindFitting(JsonObject root, int fittingId)

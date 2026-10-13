@@ -92,7 +92,7 @@ public class MarketRpcTests
     [PgFact]
     public async Task Station_and_system_asks_are_key_value_rows_read_by_name()
     {
-        // marketSvc / marketQuote.py:98-100 reads `.typeID` on each ask and passes the row to Buy; the rows are KeyVals, not tuples (Q13, G10).
+        // This checks server-side fields only; it does not exercise MarketBase tuple conversion or V24 unmarshalling.
         await using var r = await TradeRig.Create();
         var actor = await r.Actor("Ask Reader");
         var seat = await SeatAsync(r, actor);
@@ -100,6 +100,7 @@ public class MarketRpcTests
         foreach (var asks in new[] { await seat.Proxy.GetStationAsks(Call(seat.Session, "GetStationAsks", 1)), await seat.Proxy.GetSystemAsks(Call(seat.Session, "GetSystemAsks", 2)) })
         {
             var row = Assert.IsType<PyObject>(Assert.Single(Assert.IsType<PyDict>(Received(asks)).Entries).Value);
+            Assert.Equal("util.KeyVal", JsSemantics.PlainText(row.Name));
             var fields = Assert.IsType<PyDict>(row.Args);
             Assert.Equal((double)(Tritanium), Num(Field(fields, "typeID")));
             Assert.Equal((double)(r.Station.Id), Num(Field(fields, "stationID")));

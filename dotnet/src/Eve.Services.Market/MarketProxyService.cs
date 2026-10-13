@@ -133,7 +133,7 @@ private const int PlexTypeId = 44992;
             group.IconId is { } icon ? new PyInt(icon) : PyNone.Instance,new PyInt(group.Id),PyNone.Instance,PyNone.Instance)));
 
 
-    /// <summary>The ask summary of one type: a KeyVal with the names the client reads (price, volRemaining, typeID, stationID).</summary>
+    /// <summary>Ask summaries are currently encoded as named KeyVal fields; the V24 tuple-consumer path remains unresolved.</summary>
     private static PyValue AskSummary(MarketOrder order,long quantity) => MarketWire.BestByOrder(order,quantity);
 
     [Method("GetStationAsks")]

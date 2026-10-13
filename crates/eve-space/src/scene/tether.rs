@@ -264,7 +264,6 @@ impl Scene {
             })
     }
 
-
     fn repair_on_tether_engage(&mut self, session: SessionId, now: i64) -> (Vec<Out>, bool) {
         let pilot = self.pilots.get_mut(&session).expect("tether belongs to a pilot");
         let (owner, ship_id) = (pilot.ship.spec.character_id, pilot.ship.spec.ship_id);

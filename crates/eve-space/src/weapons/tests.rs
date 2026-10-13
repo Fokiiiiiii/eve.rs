@@ -1392,7 +1392,10 @@ fn a_cloaked_ship_starts_no_targeted_module_because_the_cloak_check_comes_first(
     let (mut scene, npc, now) = duel();
     scene.pilots.get_mut(&npc).unwrap().cloak = crate::visibility::CloakState::Cloaked;
     let refused = scene.activate(npc, missile_effect(spec().ship_id, launcher(1_000.0, 10_000.0, 56.0)), now);
-    assert!(refused.iter().any(|o| matches!(o, Out::Refused { reason: "MODULE_CLOAKED", .. })), "{refused:?}");
+    assert!(
+        refused.iter().any(|o| matches!(o, Out::Refused { reason: "MODULE_CLOAKED", .. })),
+        "{refused:?}"
+    );
 }
 
 #[test]

@@ -129,9 +129,18 @@ Constants (`industry/const.py`): `COST_PERCENTAGE = 0.02`, `SCC_SURCHARGE_RATE =
   ladder, research limits, invention probability, deterministic attempts, activity keys.
 - Existing `IndustryJobsServiceTests` and `BlueprintManagerServiceTests`: pass unchanged (fake ports).
 - Host build: `dotnet build src/Eve.Host` succeeds.
+- `IndustryJobPersistenceTests` (5, `Eve.Host.Tests`, PostgreSQL on eve_p4, real `sde` schema): manufacturing install
+  (cost = item value of the materials + tax + SCC + security tax, 600 s, 86 units consumed, blueprint locked, wallet debited
+  by the cost), completion (product 165 delivered, blueprint unlocked), material research (ME 1, TE 0), time research after
+  it (TE 2, ME 1), cancel (status 102, unlocked, materials kept), insufficient materials (no job, no charge, no lock),
+  and the single manufacturing slot. Run: `EVE_PG_URL=Host=127.0.0.1;Port=5432;Username=postgres;Database=eve_p4`
+  under `/tmp/eve-heavy-eve_p4.lock`; all 5 passed.
+- Defects the PostgreSQL tests found and this slice fixed: the job INSERT had one placeholder fewer than its columns,
+  so the activity snapshot was written from the integer account key (every install failed); research completion passed
+  a negative runs value for an original blueprint, which the item store rejects (originals now pass null).
 
 ## Not done in this slice
 
-- PostgreSQL persistence test for install, completion and cancel through the real `sde` schema.
+- Invention, copying and reaction paths in PostgreSQL (the invention output and decryptor effects are covered by unit tests only).
 - Headless live walks through `tools/mitm` for each activity (DB-seeded Cockroach, blueprint, materials, skills).
 - ESI cost index loader.

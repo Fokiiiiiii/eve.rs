@@ -171,4 +171,40 @@ public sealed class SpaceStructuresTests
         var told = Assert.Single(rig.Sim.Heard.OfType<SimSetStructureState>());
         Assert.Equal(StructureState.ArmorReinforce, told.Status.State);
     }
+
+    /// A large structure in low power: its shield's depletion makes its armor vulnerable (no reinforcement), and its armor's makes its hull vulnerable.
+    private sealed class LargeLowPowerRules : IStructureRulesSource
+    {
+        public StructureRules RulesOf(int typeId, int solarSystemId) =>
+            new(StructureSize.Large, SecurityBand.HighSec, true, 86_400_000L, 604_800_000L);
+    }
+
+    [PgFact]
+    public async Task Two_hits_that_empty_the_shield_then_the_armor_are_applied_in_the_order_the_simulation_sent_them()
+    {
+        await using var rig = await Rig.CreateAsync();
+        await StructureStore.MigrateAsync(rig.Source, rig.StructureSchema);
+        var store = new StructureStore(rig.Source, rig.StructureSchema);
+        var timers = new StructureTimers(store, rig.Scheduler, rig.Events, new LargeLowPowerRules(), () => 0.5);
+        var structures = new SpaceStructures(rig.Sim, rig.Space, rig.Source, store, timers, rig.Statics);
+        structures.Subscribe(rig.Events);
+        await rig.Events.PumpAsync();
+        var now = NowMs(rig);
+        await SaveAsync(rig, store, StructureId, System, new StructureSnapshot
+        {
+            State = StructureState.ShieldVulnerable, Upkeep = UpkeepState.LowPower, OnlineServices = 1, StateStartedMs = now,
+        });
+
+        // the simulation sends the shield's emptying, then the armor's: each is applied after the one before (the damage of a structure is ordered)
+        rig.Sim.Deliver(new SimStructureDamaged(StructureId, Depleted: 1, OverThreshold: true));
+        rig.Sim.Deliver(new SimStructureDamaged(StructureId, Depleted: 2, OverThreshold: true));
+        for (var attempt = 0; attempt < 200; attempt++)
+        {
+            if ((await store.GetAsync(StructureId))!.Snapshot.State == StructureState.HullVulnerable)
+                break;
+            await Task.Delay(25);
+        }
+
+        Assert.Equal(StructureState.HullVulnerable, (await store.GetAsync(StructureId))!.Snapshot.State);
+    }
 }

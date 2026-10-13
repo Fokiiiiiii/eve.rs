@@ -177,3 +177,10 @@ Known differences, not closed:
 - **Tests**: `dotnet test tests/Eve.Services.Core.Tests --filter Industry` 28 passed; `dotnet test tests/Eve.Host.Tests
   --filter Industry` 25 passed; `test_walk_industry.py` 7 of 7 through the MITM proxy (`captures/eve-rs-industry.jsonl`).
 
+## Slice 6: rig and role bonuses, corporation recipients (2026-10-13)
+
+- **Rig and role bonuses for structure jobs.** Read from the SDE: a rig is an item in the structure's rig slots (flags 92 to 99); its structure-domain modifiers (dogmaEffects) and attributes (2593 to 2595, scaled by the system's security band 2355 to 2357) give the material, time and cost bonuses by activity and product group or category. An engineering complex's role bonuses (2600 to 2602) and a refinery's (2721) come from the structure type. They multiply the job's material quantity (per-run rounding), duration and cost index part. The facility payload lists them as the client's activity modifiers and `rigModifiers`. Code: `IndustryBonuses` (`Eve.Services.Core/IndustryRules.cs`), `StructureBonusesAsync` (`IndustryComposition.cs`), the install path (`PersistenceIndustryJobOperations.Part2.cs`). Decisions and basis: DEVIATIONS "Industry slice I4".
+- **Corporation job recipients.** Now the client's corporation industry view roles (Factory Manager, Rent Factory Slot, Rent Research Slot, from `CanSeeCorpBlueprints`), not Factory Manager only. Members without them are not sent the notification.
+- **Tests.** Unit: `IndustryRulesTests` (18 pass, filter `IndustryRulesTests`, includes the 4 bonus tests). PostgreSQL on eve_p4 (under the lane lock): `dotnet test tests/Eve.Host.Tests --filter Industry`, 27 of 27 pass (includes 2 bonus install tests).
+- **Not done.** A player fitting a rig through the client is not walked. No live walk with a fitted rig or hull bonus (no client session). The corporation notification is not walked for the new role set. Stacking penalties are not applied (basis: the client's arithmetic, DEVIATIONS I4).
+

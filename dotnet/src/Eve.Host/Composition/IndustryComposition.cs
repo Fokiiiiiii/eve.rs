@@ -247,6 +247,12 @@ internal sealed partial class CharacterServicesComposition
         _ => 0,
     };
 
+    /// <summary>
+    /// The corporation roles that see corporation blueprints and jobs (the client's CanSeeCorpBlueprints, blueprintSvc.py:165):
+    /// Factory Manager (1024), Rent Factory Slot (1125899906842624) and Rent Research Slot (2251799813685248), appConst.py.
+    /// </summary>
+    private const long IndustryJobViewRoles = 1024L | 1125899906842624L | 2251799813685248L;
+
     private const int FactoryServiceId = 14;
     private const int LaboratoryServiceId = 15;
 
@@ -574,14 +580,14 @@ internal sealed partial class CharacterServicesComposition
                 var change = context.Event.Payload<Eve.Services.Core.IndustryJobChangedEvent>();
                 if (change is null)
                     return Task.CompletedTask;
-                // The owner and the installer, and for a corporation's job the online members who hold Factory Manager (the
-                // corporation's job list is theirs; the client's Factory Manager role is 1024).
+                // The owner and the installer, and for a corporation's job the online members whose roles let them see corporation blueprints and jobs (the client's
+                // CanSeeCorpBlueprints: Factory Manager, Rent Factory Slot or Rent Research Slot).
                 var recipients = new List<Eve.Services.ClientSession>();
                 foreach (var characterId in new[] { change.OwnerId, change.InstallerId }.Distinct())
                     if (characterSessions.Of(characterId) is { } owned)
                         recipients.Add(owned);
                 foreach (var member in characterSessions.OfCorporation(change.OwnerId))
-                    if (((member.GetInt("corprole") ?? 0) & 1024) != 0)
+                    if (((member.GetInt("corprole") ?? 0) & IndustryJobViewRoles) != 0)
                         recipients.Add(member);
                 foreach (var session in recipients.Distinct())
                     session.SendNotification(

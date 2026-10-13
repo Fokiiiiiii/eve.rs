@@ -76,8 +76,10 @@ def nearest_laboratory(origin: int) -> tuple[int, int, int]:
 
 
 def job_dump(character: int, blueprint: int, activity: int, system: int, runs: int = 1, materials: dict | None = None,
-             facility: int = STATION, blueprint_type: int = BLUEPRINT) -> dict:
-    """The client's job.dump(): the keys the industry window sends (the cost and time are the client's quote; the server recomputes them)."""
+             facility: int = STATION, blueprint_type: int = BLUEPRINT, corporation: int = 0, flag: int = dbseed.HANGAR,
+             output_flag: int | None = None) -> dict:
+    """The client's job.dump(): the keys the industry window sends (the cost and time are the client's quote; the server recomputes them).
+    A corporation's job names the corporation and pays from its account; its inputs and outputs are the flags the corporation's places have."""
     return {
         "blueprintID": blueprint,
         "blueprintTypeID": blueprint_type,
@@ -85,15 +87,15 @@ def job_dump(character: int, blueprint: int, activity: int, system: int, runs: i
         "facilityID": facility,
         "solarSystemID": system,
         "characterID": character,
-        "corporationID": 0,
-        "account": (character, 1000),
+        "corporationID": corporation,
+        "account": (corporation or character, 1000),
         "runs": runs,
         "cost": 0,
         "tax": 0,
         "time": 0,
         "materials": materials or {},
-        "inputLocation": {"itemID": STATION, "flagID": dbseed.HANGAR},
-        "outputLocation": {"itemID": STATION, "flagID": dbseed.HANGAR},
+        "inputLocation": {"itemID": STATION, "flagID": flag},
+        "outputLocation": {"itemID": STATION, "flagID": flag if output_flag is None else output_flag},
         "licensedRuns": 1,
         "productTypeID": None,
     }
@@ -299,3 +301,56 @@ def test_the_facility_selector_sees_the_station_its_activities_its_hangar_and_it
         listed = describe(who.call("facilityManager", "GetFacilities"))
         ids = [number(dict(_entries(row))["facilityID"]) for row in listed]
         assert STATION in ids, ids
+
+
+CORPORATION_HANGAR_1 = 115  # flagCorpSAG1 (inventorycommon/const.py); the deliveries are flag 62
+CORPORATION_HANGAR_3 = 117
+FACTORY_MANAGER = 1024  # the client's ROLE_FACTORY_MANAGER
+MANUFACTURING_ROLE = 1 << 50  # the client's ROLE_FACTORY_MANUFACTURING
+WALLET_DIVISION_1_TAKE = 1 << 27  # the Account Take 1 role (CorporationRoles.WalletTakeRole(1000))
+
+
+def reenter(who, character: int) -> None:
+    """The character logs off and selects again, so its session takes the corporation and roles the database now has."""
+    who.call("userSvc", "UserLogOffCharacter")
+    assert base.attempt(who, "charUnboundMgr", "SelectCharacterID", character, None, False) == ("ok", None)
+
+
+def test_a_corporation_job_is_paid_from_its_division_announced_to_its_managers_and_delivered_to_the_chosen_hangar():
+    race = HEALTH["races"][0]
+    run = uuid.uuid4().hex[:8]
+    system = station_system()
+    with base.connect(f"walk-corpjob-{run}") as who, base.connect(f"walk-corpjob-mgr-{run}") as manager, \
+            base.connect(f"walk-corpjob-plain-{run}") as plain:
+        director, _, _, _ = arrive(who, race, run + "d")
+        manager_character, _, _, _ = arrive(manager, race, run + "m")
+        plain_character, _, _, _ = arrive(plain, race, run + "p")
+        corporation = dbseed.found_corporation(STATION, system, director, run)
+        dbseed.join_corporation(director, corporation, 1)  # Director (the chief executive holds every role)
+        dbseed.join_corporation(manager_character, corporation, FACTORY_MANAGER)
+        dbseed.join_corporation(plain_character, corporation, 0)
+        dbseed.fund_account(corporation, 1_000_000)
+        for client, character in ((who, director), (manager, manager_character), (plain, plain_character)):
+            reenter(client, character)
+
+        blueprint = dbseed.new_item(BLUEPRINT, owner=corporation, location=STATION, flag=CORPORATION_HANGAR_1, singleton=True, quantity=-1)
+        dbseed.new_item(MATERIAL, owner=corporation, location=STATION, flag=CORPORATION_HANGAR_1, quantity=86)
+        dump = job_dump(director, blueprint, MANUFACTURING, system, corporation=corporation, flag=CORPORATION_HANGAR_1,
+                        output_flag=CORPORATION_HANGAR_3)
+        job = number(who.call("industryManager", "InstallJob", dump))
+
+        assert job_status(job) == 1
+        assert dbseed.sql(f"select owner_id from {dbseed.schema('INDUSTRY')}.jobs where job_id = {job}") == str(corporation)
+        assert dbseed.items_of(corporation, MATERIAL) == [], "the corporation's 86 units are consumed at install"
+        cost = float(dbseed.sql(f"select cost_isk from {dbseed.schema('INDUSTRY')}.jobs where job_id = {job}"))
+        assert dbseed.account_of(corporation) == 1_000_000 - cost, "the job is paid from the corporation's division"
+
+        assert wait_for_notification(who, "OnIndustryJob"), "the installer hears of the job"
+        assert wait_for_notification(manager, "OnIndustryJob"), "a member who holds Factory Manager hears of the corporation's job"
+        assert not wait_for_notification(plain, "OnIndustryJob", seconds=1.0), "a member without the role does not"
+
+        ready_now(job)
+        who.call("industryManager", "CompleteJob", job, system)
+        product_flags = dbseed.sql(f"select flag from {dbseed.schema('INVENTORY')}.items where owner_id = {corporation} and type_id = {PRODUCT}")
+        assert product_flags.split() == [str(CORPORATION_HANGAR_3)], product_flags
+

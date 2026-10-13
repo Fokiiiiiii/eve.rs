@@ -94,6 +94,44 @@ def set_isk(character: int, isk: int) -> None:
     sql(f"update {wallet}.balances set isk = {int(isk)} where owner_id = {int(character)}")
 
 
+def found_corporation(station: int, system: int, ceo: int, key: str) -> int:
+    """A player corporation with the character as its chief executive (owner_names, corporations), as CorporationStore.CreateAsync writes it."""
+    corporation = int(sql(f"select nextval('{schema('CORPORATIONS')}.corporation_ids')"))
+    name = f"Industry {key}"
+    sql(f"insert into {schema('CORPORATIONS')}.owner_names (owner_id, name_key, ticker_key) values ({corporation}, '{name.lower()}', '{key[:5]}')")
+    sql(f"insert into {schema('CORPORATIONS')}.corporations (id, name, ticker, ceo_id, creator_id, station_id, solar_system_id, tax_rate, "
+        f"lp_tax_rate, description, url, member_limit, created_ms, settings) values ({corporation}, '{name}', '{key[:5]}', {int(ceo)}, {int(ceo)}, "
+        f"{int(station)}, {int(system)}, 0, 0, '', '', 100, {int(time.time() * 1000)}, '{{}}'::jsonb)")
+    return corporation
+
+
+def join_corporation(character: int, corporation: int, roles: int) -> None:
+    """A member of the corporation with the given role bits (members, and the employment that goes with them)."""
+    now = int(time.time() * 1000)
+    sql(f"update {schema('CORPORATIONS')}.employment set ended_ms = {now} where character_id = {int(character)} and ended_ms is null")
+    sql(f"insert into {schema('CORPORATIONS')}.employment (character_id, corporation_id, started_ms) values ({int(character)}, {int(corporation)}, {now})")
+    sql(f"update {schema('CHARACTERS')}.characters set corporation_id = {int(corporation)} where id = {int(character)}")
+    sql(f"insert into {schema('CORPORATIONS')}.members (character_id, corporation_id, started_ms, roles) values "
+        f"({int(character)}, {int(corporation)}, {now}, {int(roles)}) on conflict (character_id) do update set "
+        f"corporation_id = excluded.corporation_id, started_ms = excluded.started_ms, roles = excluded.roles")
+
+
+def fund_account(owner: int, isk: int, account_key: int = 1000) -> None:
+    """The ISK of one of an owner's wallet accounts (a corporation's division: wallet.balances by account key)."""
+    sql(f"insert into {schema('WALLET')}.balances (owner_id, isk, plex, account_key) values ({int(owner)}, {int(isk)}, 0, {int(account_key)}) "
+        f"on conflict (owner_id, account_key) do update set isk = excluded.isk")
+
+
+def account_of(owner: int, account_key: int = 1000) -> float:
+    """The ISK of an owner's wallet account."""
+    return float(sql(f"select isk from {schema('WALLET')}.balances where owner_id = {int(owner)} and account_key = {int(account_key)}") or 0)
+
+
+def flag_of(item: int) -> int:
+    """The flag of an item row (its hangar or corporation division)."""
+    return int(sql(f"select flag from {schema('INVENTORY')}.items where id = {int(item)}"))
+
+
 def items_of(owner: int, type_id: int) -> list[int]:
     """The ids of an owner's items of a type, newest first."""
     rows = sql(f"select id from {schema('INVENTORY')}.items where owner_id = {int(owner)} and type_id = {int(type_id)} order by id desc")

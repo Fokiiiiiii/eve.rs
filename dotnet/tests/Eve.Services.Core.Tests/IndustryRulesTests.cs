@@ -96,4 +96,15 @@ public sealed class IndustryRulesTests
         Assert.Equal(IndustryRules.Manufacturing, IndustryRules.PricingActivity(IndustryRules.Copying));
         Assert.Equal(IndustryRules.Reaction, IndustryRules.PricingActivity(IndustryRules.Reaction));
     }
+
+    [Fact]
+    public void A_structure_runs_the_activities_its_online_services_allow()
+    {
+        Assert.Empty(IndustryRules.StructureActivities([]));
+        Assert.Equal(new HashSet<int> { IndustryRules.Manufacturing }, IndustryRules.StructureActivities([21]));
+        Assert.Equal(new HashSet<int> { IndustryRules.ResearchTime, IndustryRules.ResearchMaterial, IndustryRules.Copying, IndustryRules.Invention },
+            IndustryRules.StructureActivities([30]));
+        Assert.Equal(new HashSet<int> { IndustryRules.ResearchMaterial }, IndustryRules.StructureActivities([32]));
+        Assert.Equal(new HashSet<int> { IndustryRules.Reaction }, IndustryRules.StructureActivities([42]));
+    }
 }

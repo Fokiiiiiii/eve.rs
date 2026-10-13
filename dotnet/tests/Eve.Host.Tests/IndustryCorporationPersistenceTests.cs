@@ -11,6 +11,9 @@ public sealed class IndustryCorporationPersistenceTests
 {
     private const int Blueprint = 681;
     private const int Material = 38;
+    private const int Product = 165;
+    private const int ManufacturingTimeSeconds = 600;
+    private const int PersonalHangar = 4;
     private const long FactoryManager = 1024;
     private const long FactoryManufacturing = 1L << 50;
     private const long WalletDivisionOne = 1L << 27;
@@ -87,6 +90,59 @@ public sealed class IndustryCorporationPersistenceTests
             rig.InstallForCorporation(member, corporation, blueprint, IndustryRules.Manufacturing));
 
         Assert.Equal("IndustryInvalidOwner", error.MessageKey);
+        Assert.Equal(0, await rig.JobCount());
+    }
+
+    [Theory]
+    [InlineData(62)]   // the deliveries of the facility (the client's flagCorpDeliveries)
+    [InlineData(117)]  // corporation hangar division 3
+    public async Task A_corporations_product_goes_to_the_chosen_deliveries_or_hangar_division(int flag)
+    {
+        await using var rig = await IndustryRig.CreateAsync();
+        var director = await rig.Owner(10_000_000m);
+        var corporation = await rig.Corporation(director);
+        await rig.Fund(corporation, 1_000_000m);
+        var blueprint = await rig.Give(corporation, Blueprint, 1, blueprint: true);
+        await rig.Give(corporation, Material, 86);
+        var jobId = await rig.InstallForCorporation(director, corporation, blueprint, IndustryRules.Manufacturing, outputFlag: flag);
+
+        rig.Now += (ManufacturingTimeSeconds + 1) * 1000L;
+        await rig.Complete(director, jobId);
+
+        Assert.Equal(1, await rig.QuantityAt(corporation, Product, flag));
+        Assert.Equal(0, await rig.QuantityAt(corporation, Product, PersonalHangar));
+    }
+
+    [Fact]
+    public async Task A_corporation_job_cannot_send_its_outputs_to_a_personal_hangar()
+    {
+        await using var rig = await IndustryRig.CreateAsync();
+        var director = await rig.Owner(10_000_000m);
+        var corporation = await rig.Corporation(director);
+        await rig.Fund(corporation, 1_000_000m);
+        var blueprint = await rig.Give(corporation, Blueprint, 1, blueprint: true);
+        await rig.Give(corporation, Material, 86);
+
+        var error = await Assert.ThrowsAsync<IndustryJobUserErrorException>(() =>
+            rig.InstallForCorporation(director, corporation, blueprint, IndustryRules.Manufacturing, outputFlag: PersonalHangar));
+
+        Assert.Equal("IndustryInvalidJob", error.MessageKey);
+        Assert.Equal(0, await rig.JobCount());
+    }
+
+    [Fact]
+    public async Task A_structure_runs_only_the_activities_its_services_allow()
+    {
+        await using var rig = await IndustryRig.CreateAsync();
+        var owner = await rig.Owner();
+        var blueprint = await rig.Give(owner, Blueprint, 1, blueprint: true);
+        rig.Structure = true;
+        rig.Activities = new HashSet<int> { IndustryRules.Manufacturing };
+
+        var error = await Assert.ThrowsAsync<IndustryJobUserErrorException>(() =>
+            rig.Install(owner, blueprint, IndustryRules.ResearchMaterial));
+
+        Assert.Equal("IndustryInvalidJob", error.MessageKey);
         Assert.Equal(0, await rig.JobCount());
     }
 }

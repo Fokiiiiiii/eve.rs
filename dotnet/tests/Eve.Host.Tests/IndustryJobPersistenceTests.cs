@@ -181,7 +181,7 @@ internal sealed class IndustryRig : IAsyncDisposable
             (facilityId, stationId, systemId, characterId, token) => ValueTask.FromResult<PersistenceIndustryJobOperations.IndustryFacility?>(
                 new PersistenceIndustryJobOperations.IndustryFacility(
                     station.Id, station.SolarSystemId, station.OwnerId, 0.10m, 1d, true, null,
-                    Structure ? null : new HashSet<int> { 14, 15 })),
+                    Structure ? null : new HashSet<int> { 14, 15 }, Structure ? Activities : null)),
             new FixedCostIndexes(0m),
             (characterId, token) => ValueTask.FromResult<long?>(InstallerSystem ?? station.SolarSystemId),
             ReadyJobs,
@@ -206,6 +206,9 @@ internal sealed class IndustryRig : IAsyncDisposable
 
     /// <summary>When true the facility is an industry structure (no NPC station services); otherwise the NPC station with its Factory and Laboratory.</summary>
     public bool Structure { get; set; }
+
+    /// <summary>The activities of a structure (what its online services run); null means every activity.</summary>
+    public IReadOnlySet<int>? Activities { get; set; }
 
     /// <summary>The installer's current solar system; null means the station's own system (zero jumps).</summary>
     public long? InstallerSystem { get; set; }
@@ -300,12 +303,13 @@ internal sealed class IndustryRig : IAsyncDisposable
     }
 
     /// <summary>A corporation job installed by a member: the member is the installer, the corporation owns the blueprint and pays.</summary>
-    public async Task<long> InstallForCorporation(long member, long corporation, long blueprintId, int activityId, int runs = 1)
+    public async Task<long> InstallForCorporation(long member, long corporation, long blueprintId, int activityId, int runs = 1,
+        int outputFlag = 115)
     {
         var job = new IndustryJobInstallSubmission(
             activityId, blueprintId, BlueprintType, false, _station.Id, ItemFlags.Hangar,
             _station.Id, corporation, _station.SolarSystemId, _station.Id,
-            new IndustryJobLocation(_station.Id, ItemFlags.Hangar), new IndustryJobLocation(_station.Id, ItemFlags.Hangar),
+            new IndustryJobLocation(_station.Id, ItemFlags.Hangar), new IndustryJobLocation(_station.Id, outputFlag),
             runs, 1, null, null, null, new IndustryJobWallet(corporation, 1000));
         var request = new IndustryJobInstallRequest(
             new IndustryJobOperationContext(new IndustryJobActor(member, corporation, 0, 1000), "op-" + Guid.NewGuid().ToString("N")), job);
@@ -373,6 +377,16 @@ internal sealed class IndustryRig : IAsyncDisposable
         var item = await _items.LockAndGetAsync(c, tx, itemId);
         await tx.CommitAsync();
         return item!;
+    }
+
+    /// <summary>The quantity of a type that the owner holds at the station in one flag (a corporation hangar division or deliveries).</summary>
+    public async Task<long> QuantityAt(long owner, int typeId, int flag)
+    {
+        await using var c = await _source.OpenConnectionAsync();
+        await using var tx = await c.BeginTransactionAsync();
+        var items = await _items.LockInLocationAsync(c, tx, _station.Id, owner, flag, [typeId]);
+        await tx.CommitAsync();
+        return items.Where(item => item.TypeId == typeId).Sum(item => item.Quantity);
     }
 
     public async Task<long> Quantity(long owner, int typeId)

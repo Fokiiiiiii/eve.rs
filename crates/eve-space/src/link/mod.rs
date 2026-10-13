@@ -37,7 +37,7 @@ use crate::weapons::{Aoe, Arc, Charge, Spool, Turret};
 use crate::world::StructureStatus;
 use crate::wreck::WreckKind;
 
-pub const PROTOCOL_VERSION: u16 = 66;
+pub const PROTOCOL_VERSION: u16 = 67;
 /// The message kinds.
 pub mod kind;
 
@@ -233,6 +233,9 @@ pub struct StructurePlacement {
     pub shield_recharge_ms: f64,
     pub limits: crate::health::StructureLimits,
     pub status: crate::world::StructureStatus,
+    /// The planet whose customs office this is (protocol 67); 0 for an Upwell structure. An office is an orbital of its planet: its slim item has
+    /// the planet and the level the client's office window reads.
+    pub planet_id: i64,
 }
 
 /// A wormhole end the host puts in space (protocol 63): its body in `solar_system_id`, and the far end it leads to (the other system, the far end's body ID,

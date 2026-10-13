@@ -1025,7 +1025,7 @@ public sealed record SimStructureStatus(int State, int UpkeepState, (long Start,
 /// <summary>An Upwell structure the host puts in space, as a body of the system with its slim state (protocol 59). It stays until <see cref="SimRemoveStructure"/>.</summary>
 public sealed record SimPlaceStructure(
     long StructureId, int SolarSystemId, string Name, int TypeId, int GroupId, IReadOnlyList<double> Position, double Radius, long OwnerId, int CorporationId,
-    int AllianceId, SimStructureHealth Health, SimStructureStatus Status) : SimMessage;
+    int AllianceId, SimStructureHealth Health, SimStructureStatus Status, long PlanetId = 0) : SimMessage;
 
 /// <summary>The simulation says a hit emptied a layer of a structure (<c>Depleted</c>: 0 none, 1 shield, 2 armor, 3 hull) or paused its repair
 /// (<c>OverThreshold</c>), to the host (simulation to host, protocol 60).</summary>

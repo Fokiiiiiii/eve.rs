@@ -10,8 +10,18 @@ public static class Customs
 {
     /// <summary>The office of a planet has the id 1.2e12 + the planet id (the id range of the reference's customs offices, DEVIATIONS 16).</summary>
     public const long OfficeIdBase = 1_200_000_000_000L;
-    /// <summary>The planetary customs office type of the server's data (SDE type 35897, group 1717).</summary>
-    public const int OfficeTypeId = 35897;
+    /// <summary>The planetary customs office type (SDE type 2233 "Customs Office", group 1025 Orbital Infrastructure, category Orbital): the client's office window and planet orbitals read this group.</summary>
+    public const int OfficeTypeId = 2233;
+    /// <summary>The group of <see cref="OfficeTypeId"/> (the client's groupPlanetaryCustomsOffices).</summary>
+    public const int OfficeGroupId = 1025;
+    /// <summary>The radius of the office's ball (SDE types.radius of type 2233).</summary>
+    public const double OfficeRadius = 8000;
+
+    /// <summary>
+    /// Where a planet's office hangs in its system: two radii above the planet's centre. The place is the server's (the reference's orbit of a
+    /// customs office is not in the snapshot); it is outside the planet and stays the same for every visit.
+    /// </summary>
+    public static double[] OfficePosition(PlanetBody body) => [body.X, body.Y, body.Z + 2 * body.Radius];
     /// <summary>Customs Code Expertise (SDE type 33467): one percent off the high-security rate per level.</summary>
     public const int CustomsCodeExpertise = 33467;
     /// <summary>The security status from which a system is high-security for the rate (EVE: 0.5 displayed; 0.45 rounds to it).</summary>

@@ -2485,6 +2485,7 @@ pub(crate) fn structure_placement(scene: &Scene, at: i64) -> crate::link::Struct
         owner_id: 98_000_001,
         corporation_id: 98_000_001,
         alliance_id: 0,
+        planet_id: 0,
         vitals: crate::health::Vitals {
             shield_capacity: 1_000.0,
             armor_hp: 500.0,
@@ -2561,6 +2562,20 @@ fn a_structure_put_in_space_is_a_body_with_its_slim_item_and_is_in_the_bind_of_a
         scene.place_structure(placement, NOON).is_empty(),
         "a structure already in space is not put in twice"
     );
+}
+
+#[test]
+fn a_customs_office_is_an_orbital_of_its_planet_with_the_planet_and_level_in_its_slim_item() {
+    let mut scene = scene();
+    let placement = crate::link::StructurePlacement { planet_id: 40_486_618, group_id: 1_025, type_id: 2_233, ..structure_placement(&scene, NOON) };
+    scene.place_structure(placement, NOON);
+    let body = scene.system.bodies[scene.structure_index(STRUCTURE).unwrap()].clone();
+    assert_eq!(body.category_id, 46, "a customs office is an orbital (categoryOrbital)");
+    let entries = crate::slim::body_entries(&scene.system, &body);
+    let field = |key: &str| entries.iter().find(|(k, _)| *k == key).map(|(_, v)| v.clone());
+    assert_eq!(field("planetID"), Some(crate::wire::id(40_486_618)));
+    assert_eq!(field("level"), Some(crate::wire::int(1)));
+    assert_eq!(field("groupID"), Some(crate::wire::int(1_025)));
 }
 
 #[test]

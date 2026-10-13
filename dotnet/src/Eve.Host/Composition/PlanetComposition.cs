@@ -21,7 +21,8 @@ internal sealed partial class CharacterServicesComposition
         await PlanetStore.MigrateAsync(source, schema);
         var catalog = await PlanetCatalogLoader.LoadAsync(source);
         planetMgr = new PlanetMgrService(source, new PlanetStore(source, schema), catalog, new DeterministicResourceField(), items, economyWallets,
-            skills, now, NotifyPlanetChanged, Env("EVE_INVENTORY_SCHEMA", PgItemStore.DefaultSchema));
+            skills, now, NotifyPlanetChanged, Env("EVE_INVENTORY_SCHEMA", PgItemStore.DefaultSchema), sim, spaceItemStore, dogma);
+        await planetMgr.PlaceOfficesAsync();
         planetRegistry = new PlanetOrbitalRegistryService(planetMgr, now);
     }
 

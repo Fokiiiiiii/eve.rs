@@ -964,6 +964,7 @@ private static void WriteAction(Writer w, SimAction action)
                 w.I32(m.AllianceId);
                 WriteStructureHealth(w, m.Health);
                 WriteStructureStatus(w, m.Status);
+                w.I64(m.PlanetId);
                 break;
             case SimControlStructure m:
                 if (m.SolarSystemId <= 0 || m.StructureId < 0 || m.CharacterId < 0 || (m.Active && (m.StructureId == 0 || m.CharacterId == 0)))

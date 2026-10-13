@@ -3,15 +3,17 @@ using Eve.Macho;
 using Eve.Marshal;
 using Eve.Planets;
 using Eve.Services;
+using Eve.Space;
+using Eve.Structures;
 using Npgsql;
 
 namespace Eve.Services.Planets;
 
 /// <summary>
 /// The customs offices of the planets (the client's importExportUI.py and planetInfoSvc): the office is an item of the server's
-/// inventory (type 35897, id 1.2e12 + planet id, at the planet's system, owned by an NPC owner). Imports take the pilot's stacks out of
-/// the office hangar onto the launchpad; exports put the launchpad's commodities into the office hangar. The fees are charged in the
-/// same transaction (ref 96 import, 97 export).
+/// inventory (type 2233, id 1.2e12 + planet id, at the planet's system, owned by an NPC owner) and, in space, an orbital of its planet
+/// (the simulation's ball, <see cref="PlaceOffice"/>). Imports take the pilot's stacks out of the office hangar onto the launchpad;
+/// exports put the launchpad's commodities into the office hangar. The fees are charged in the same transaction (ref 96 import, 97 export).
 /// </summary>
 public sealed partial class PlanetMgrService
 {
@@ -39,7 +41,8 @@ public sealed partial class PlanetMgrService
         await using var command = new NpgsqlCommand($"""
             INSERT INTO {inventorySchema}.items (id, type_id, owner_id, location_id, flag, quantity, singleton, custom_name, blueprint_copy, blueprint_locked,
                 blueprint_runs, material_efficiency, time_efficiency, custom_info)
-            OVERRIDING SYSTEM VALUE VALUES ($1, $2, $3, $4, 0, 1, true, NULL, false, false, NULL, 0, 0, NULL) ON CONFLICT (id) DO NOTHING
+            OVERRIDING SYSTEM VALUE VALUES ($1, $2, $3, $4, 0, 1, true, NULL, false, false, NULL, 0, 0, NULL)
+            ON CONFLICT (id) DO UPDATE SET type_id = EXCLUDED.type_id WHERE items.type_id <> EXCLUDED.type_id
             """, connection, transaction)
         {
             Parameters =
@@ -49,6 +52,48 @@ public sealed partial class PlanetMgrService
             },
         };
         await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    /// <summary>
+    /// Puts a planet's customs office in space: the simulation's ball of it, an orbital of the planet, at <see cref="Customs.OfficePosition"/>. The
+    /// simulation keeps a ball that is in space as it is, so this may be called again. Nothing is put without a simulation.
+    /// </summary>
+    private void PlaceOffice(long planetId, PlanetBody body)
+    {
+        simulation?.PlaceStructure(new SimPlaceStructure(Customs.OfficeId(planetId), (int)body.SolarSystemId, "Customs Office", Customs.OfficeTypeId, Customs.OfficeGroupId,
+            Customs.OfficePosition(body), Customs.OfficeRadius, CustomsOfficeOwner, 0, 0,
+            new SimStructureHealth(0, 0, 0, [], 0, [0, 0, 0], [0, 0, 0]),
+            new SimStructureStatus(StructureState.ShieldVulnerable, UpkeepState.FullPower, null, null, null), planetId));
+    }
+
+    /// <summary>
+    /// Puts the existing customs offices in space again: a simulation starts with none, so the host calls this once it has the simulation.
+    /// An office whose planet is not in the catalog is left out (it is reported, not thrown: the other offices still go up).
+    /// </summary>
+    public async Task PlaceOfficesAsync(CancellationToken cancellationToken = default)
+    {
+        var planets = new List<long>();
+        await using (var connection = await source.OpenConnectionAsync(cancellationToken))
+        await using (var command = new NpgsqlCommand($"SELECT id FROM {inventorySchema}.items WHERE type_id = $1", connection)
+        {
+            Parameters = { new() { Value = Customs.OfficeTypeId } },
+        })
+        await using (var reader = await command.ExecuteReaderAsync(cancellationToken))
+        {
+            while (await reader.ReadAsync(cancellationToken))
+                if (Customs.PlanetOf(reader.GetInt64(0)) is { } planetId) planets.Add(planetId);
+        }
+        foreach (var planetId in planets)
+        {
+            try
+            {
+                PlaceOffice(planetId, await BodyAsync(planetId, cancellationToken));
+            }
+            catch (Exception error)
+            {
+                Console.Error.WriteLine($"eve-host: the customs office of planet {planetId} was not put in space: {error.Message}");
+            }
+        }
     }
 
     /// <summary>The office rate the character gets at this planet (creating the office if it does not exist yet); null when the planet has none.</summary>

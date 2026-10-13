@@ -6,6 +6,10 @@
     <ProjectReference Include="../Eve.Wallet/Eve.Wallet.csproj" />
     <ProjectReference Include="../Eve.Skills/Eve.Skills.csproj" />
     <ProjectReference Include="../Eve.Services.Inventory/Eve.Services.Inventory.csproj" />
+    <ProjectReference Include="../Eve.Space/Eve.Space.csproj" />
+    <ProjectReference Include="../Eve.Structures/Eve.Structures.csproj" />
+    <ProjectReference Include="../Eve.Ships/Eve.Ships.csproj" />
+    <ProjectReference Include="../Eve.Dogma/Eve.Dogma.csproj" />
     <ProjectReference Include="../Eve.Services.Generator/Eve.Services.Generator.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
   </ItemGroup>
   <ItemGroup>

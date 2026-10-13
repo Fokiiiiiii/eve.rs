@@ -184,8 +184,11 @@ impl Scene {
         let added = if login_visuals_sent {
             None
         } else {
-            let Ok(added) = payload::add_ships(first, &ships, now) else { return Vec::new() };
-            Some(added)
+            let Ok(ship_added) = payload::add_ships(first, &ships, now) else { return Vec::new() };
+            // the structures of the system are balls a pilot who comes in is told (placed while it was alone, they were told to nobody)
+            let mut actions = vec![ship_added];
+            actions.extend(payload::add_structures(first, &system, now));
+            Some(actions)
         };
         let wrecks = self.wrecks_in_view(session);
         let Ok(state) = payload::set_state_for_ego(
@@ -208,7 +211,7 @@ impl Scene {
                 Self::notify(session, "OnSetTimeDilation", vec![int(1), int(1), int(100_000_000)]),
                 Self::notify(session, "DoSimClockRebase", vec![tuple([filetime(now), filetime(now)])]),
                 // An undocked ship waits for its ball; an in-space arrival does not.
-                Self::notify(session, "DoDestinyUpdate", payload::destiny_update([added], !pilot.jumped_in)),
+                Self::notify(session, "DoDestinyUpdate", payload::destiny_update(added, !pilot.jumped_in)),
             ]);
         }
         if !pilot.jumped_in {

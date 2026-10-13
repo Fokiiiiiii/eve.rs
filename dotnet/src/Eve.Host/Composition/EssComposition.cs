@@ -175,7 +175,7 @@ internal sealed partial class CharacterServicesComposition
                 state.OwnerId ?? 0,
                 0,
                 0,
-                new SimStructureHealth(Attribute(263), Attribute(265), Attribute(9), [], 0, [0, 0, 0], [0, 0, 0]),
+                new SimStructureHealth(Attribute(263), Attribute(265), Attribute(9), [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1], 0, [0, 0, 0], [0, 0, 0]),
                 new SimStructureStatus(StructureState.ShieldVulnerable, UpkeepState.FullPower, null, null, null)));
         }
     }

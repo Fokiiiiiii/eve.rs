@@ -134,6 +134,17 @@ public sealed class PlanetStore(NpgsqlDataSource source, string schema = PlanetS
         return found;
     }
 
+    /// <summary>Marks the launches whose time is up as deleted (their containers stay where they are; the owner's items are not destroyed).</summary>
+    public async Task ExpireLaunchesAsync(long ownerId, long nowTicks, CancellationToken cancellationToken = default)
+    {
+        await using var connection = await source.OpenConnectionAsync(cancellationToken);
+        await using var command = new NpgsqlCommand($"UPDATE {schema}.launches SET deleted = true WHERE owner_id = $1 AND NOT deleted AND expires_ticks <= $2", connection)
+        {
+            Parameters = { new() { Value = ownerId }, new() { Value = nowTicks } },
+        };
+        await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
     /// <summary>Marks a launch deleted; false when the launch is not the owner's (or not there).</summary>
     public async Task<bool> DeleteLaunchAsync(long ownerId, long launchId, CancellationToken cancellationToken = default)
     {

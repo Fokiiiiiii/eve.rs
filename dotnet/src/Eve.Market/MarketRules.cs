@@ -43,6 +43,8 @@ public static class MarketRules
     }
 
     public static bool IsAllowedDuration(int days) => days is 0 or 1 or 3 or 7 or 14 or 30 or 90;
+    /// <summary>The duration of an immediate buy that is booked for its unfilled rest: the default duration of a buy order (90 days).</summary>
+    public const int ImmediateBuyBookedDays = 90;
     public static bool IsAllowedBuyRange(int range) => range is -1 or 0 or 1 or 2 or 3 or 4 or 5 or 10 or 20 or 30 or 40 or RangeRegion;
     private static int Skill(int level) => Math.Clamp(level, 0, 5);
     private static int RangeOf(int level) => Skill(level) switch { 0 => -1, 1 => 0, 2 => 5, 3 => 10, 4 => 20, _ => RangeRegion };

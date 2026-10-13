@@ -172,9 +172,40 @@ public class TradingTests
         await r.Trading.PlaceAsync(r.Sell(seller,item,50,1,90),"ask");
         var results=await Task.WhenAll(r.Trading.PlaceAsync(r.Buy(a,50,1),"buy-a"),r.Trading.PlaceAsync(r.Buy(b,50,1),"buy-b"));
         Assert.Equal(1,results.Sum(x => x.FilledQuantity));
-        Assert.Equal(19950m,(await r.WalletStore.GetAsync(a))!.Isk+(await r.WalletStore.GetAsync(b))!.Isk);
         Assert.Equal(1,(await r.Items.InLocationAsync(r.Station.Id,a)).Sum(i => i.Quantity)+(await r.Items.InLocationAsync(r.Station.Id,b)).Sum(i => i.Quantity));
         Assert.Empty((await r.Book.BookAsync(r.Station.RegionId,34,r.Now)).Asks);
+        // the buyer that did not fill books its order (an immediate buy's rest is booked): one bid is left, and its escrow is held
+        Assert.Single((await r.Book.BookAsync(r.Station.RegionId,34,r.Now)).Bids);
+        Assert.True((await r.WalletStore.GetAsync(a))!.Isk+(await r.WalletStore.GetAsync(b))!.Isk < 19950m);
+    }
+
+    [PgFact]
+    public async Task An_immediate_buy_fills_what_matches_and_books_the_rest()
+    {
+        await using var r=await TradeRig.Create();
+        var actor=await r.Actor("Quick Buyer");
+        await r.Book.SeedNpcAsync([new("ask",34,false,10,2,32767,MarketLocation.From(r.Station),r.Now)]);
+        var result=await r.Trading.PlaceAsync(r.Buy(actor,10,5),"quick-mixed");
+        Assert.Equal(2,result.FilledQuantity);
+        Assert.NotNull(result.OrderId);
+        Assert.Empty((await r.Book.BookAsync(r.Station.RegionId,34,r.Now)).Asks);
+        var bid=Assert.Single((await r.Book.BookAsync(r.Station.RegionId,34,r.Now)).Bids);
+        Assert.Equal((3,90), (bid.VolumeRemaining,bid.Duration));
+        // 2 bought at 10 and 3 escrowed at 10, the fees aside
+        Assert.True((await r.WalletStore.GetAsync(actor))!.Isk <= 10000m-20m-30m);
+    }
+
+    [PgFact]
+    public async Task An_immediate_buy_that_matches_nothing_books_its_order_and_returns_its_id()
+    {
+        await using var r=await TradeRig.Create();
+        var actor=await r.Actor("Quick Buyer");
+        var result=await r.Trading.PlaceAsync(r.Buy(actor,10,5),"quick-empty");
+        Assert.Equal(0,result.FilledQuantity);
+        Assert.NotNull(result.OrderId);
+        var bid=Assert.Single((await r.Book.BookAsync(r.Station.RegionId,34,r.Now)).Bids);
+        Assert.Equal((5,90), (bid.VolumeRemaining,bid.Duration));
+        Assert.True((await r.WalletStore.GetAsync(actor))!.Isk <= 10000m-50m);
     }
 
     [PgFact]

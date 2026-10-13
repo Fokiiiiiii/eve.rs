@@ -175,12 +175,12 @@ public class BeaconHostTests
         Assert.True(anchored.Active);
     }
 
-    /// <summary>The record of a Mobile Cynosural Inhibitor in <paramref name="system"/> at <paramref name="at"/>: anchored (its activation is past), 100 km.</summary>
+    /// <summary>The record of a Mobile Cynosural Inhibitor in <paramref name="system"/> at <paramref name="at"/>: anchored (its activation is past), 200 km.</summary>
     private static async Task InhibitorOnRecordAsync(Rig rig, int system, double[] at)
     {
         await rig.Deployed.SaveAsync(new DeployedRecord(
             4_250_000_000_000_501, "mobile_cyno_inhibitor", system, "Mobile Cynosural Inhibitor", 33476, 1249, at, 100, 1, 0, 0, 0,
-            rig.Now + 60L * 60 * 1000, rig.Now - 1, 100_000));
+            rig.Now + 60L * 60 * 1000, rig.Now - 1, 200_000));
     }
 
     [PgFact]
@@ -218,13 +218,13 @@ public class BeaconHostTests
         await rig.Containers.AnchorAsync(covert);
         Assert.Contains(rig.Sim.Heard, m => m is SimSetDisruptorActive lit && lit.DeployableId == covert && lit.Active);
 
-        // a standard beacon 150 km from the inhibitor (its range is 100 km) anchors
+        // a standard beacon 250 km from the inhibitor (its range is 200 km) anchors
         var (standardSession, standardItems) = await PilotWithBeaconsAsync(rig, Beacon, 1, NullSecSystem, name: "Standard Beacon Pilot", sessionId: 2);
         var standard = standardItems[0];
         await rig.Containers.LaunchFromShipAsync(standardSession, standard, CancellationToken.None);
         rig.Now += 2 * 60_000;
-        // the standard beacon is dropped where the covert one is, so the inhibitor 150 km along x is 150 km from it
-        await InhibitorOnRecordAsync(rig, (int)NullSecSystem, [at[0] + 150_000, at[1], at[2]]);
+        // the standard beacon is dropped where the covert one is, so the inhibitor 250 km along x is 250 km from it
+        await InhibitorOnRecordAsync(rig, (int)NullSecSystem, [at[0] + 250_000, at[1], at[2]]);
         rig.Sim.Heard.Clear();
         await rig.Containers.AnchorAsync(standard);
         Assert.Contains(rig.Sim.Heard, m => m is SimSetDisruptorActive lit && lit.DeployableId == standard && lit.Active);

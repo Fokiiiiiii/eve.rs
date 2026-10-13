@@ -159,3 +159,21 @@ Known differences, not closed:
 - **Tests**: `dotnet test tests/Eve.Host.Tests --filter Industry` passes 21 of 21 (under the lane lock, `EVE_PG_URL` set).
   The walk file `tests/test_walk_industry.py` passes 6 of 6 live through the MITM proxy.
 
+## Slice 5: corporation outputs and announcements, structure activities (2026-10-13)
+
+- **Corporation delivery location**: honoured. The facility lists the deliveries (62) and hangar divisions 1..7; the install
+  refuses a personal hangar; a missing output goes to the deliveries. PostgreSQL tests: `IndustryCorporationPersistenceTests`.
+- **Corporation notifications**: `OnIndustryJob` to the owner, the installer and online members with Factory Manager. The walk
+  shows the manager's session receiving it and the member without the role not (`test_a_corporation_job_is_paid_...`).
+- **Corporation walk** (through the MITM proxy): a player corporation seeded in the database (owner names, corporation,
+  members, employment, character corporation, wallet division 1000), the director installs from the corporation's division,
+  the materials are consumed, the division pays, and the product goes to the chosen corporation hangar division.
+- **Structure activities**: from the online service ids (EveJS mapping, see DEVIATIONS I3); the structure payload lists them.
+  PostgreSQL test: `A_structure_runs_only_the_activities_its_services_allow`; unit test in `IndustryRulesTests`.
+- **Not done**: rig and role bonuses (no fitted rigs in eve.rs; the SDE attributes are 2593 to 2595). The corporation
+  notification to all members (EveJS sends to every member; eve.rs sends to the role holders).
+- **Rust gate**: `cargo check --workspace --all-targets` passes on the merged tree. `cargo fmt --all -- --check` reports one
+  file that is not changed by this slice (`crates/eve-space/src/scene/tests.rs`, a customs office test line).
+- **Tests**: `dotnet test tests/Eve.Services.Core.Tests --filter Industry` 28 passed; `dotnet test tests/Eve.Host.Tests
+  --filter Industry` 25 passed; `test_walk_industry.py` 7 of 7 through the MITM proxy (`captures/eve-rs-industry.jsonl`).
+

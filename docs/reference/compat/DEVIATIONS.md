@@ -3828,6 +3828,28 @@ Full status: `docs/project/INDUSTRY_STATUS.md`. Decisions recorded here:
 - **Ready and install notifications**: `OnIndustryJob` is sent once per state change (install, ready, cancel, delivery).
   The MITM capture of the walk shows the install notification (status 1); the walk asserts it.
 
+## Industry slice I3: corporation outputs, structure activities (2026-10-13)
+
+- **Corporation outputs.** The facility lists a corporation's places as its deliveries (flag 62) and its hangar divisions 1..7
+  (flags 115..121), the client's `flagCorpDeliveries` and `flagCorpSAG1` (`inventorycommon/const.py`). A corporation's job
+  outputs only to one of those at its facility; a personal hangar is refused (`IndustryInvalidJob`, the client's error key for
+  an invalid job). A corporation job with no chosen output goes to the deliveries (`industry/job.py` MatchLocation's default).
+- **Corporation announcements.** `OnIndustryJob` goes to the owner, the installer and the online members who hold Factory
+  Manager (1024). The EveJS reference sends it to every online member of the corporation (`industryNotifications.js`
+  `notifyIndustryJob`); eve.rs narrows it to the role holders, because the client lists a corporation's jobs to them only
+  (`industryManagerService` `sessionCanAccessIndustryOwner`). The walk checks both sides.
+- **Structure activities** (`IndustryRules.StructureActivities`): a structure runs the activities its online services allow,
+  by the EveJS service mapping (`structureServiceAuthority.js` `getIndustryActivityServiceIDs`): manufacturing by 21 to 24;
+  each science activity by the Laboratory (30) or its own laboratory service (31 to 34); reactions by 40 to 43. The structure
+  payload lists those activities. The SDE service module types are Standup Manufacturing Plant I (35878), Standup Research
+  Lab I (35891) and Standup Invention Lab I (35886) (`types.jsonl`); the service ids are the EveJS constants, not read from the
+  SDE. The earlier name match (industry, manufacturing, research in a service name) is removed.
+- **Rig and role bonuses: not applied.** The SDE carries the engineering rig attributes (`attributeEngRigTimeBonus` 2593,
+  `attributeEngRigMatBonus` 2594, `attributeEngRigCostBonus` 2595; `dogmaAttributes.jsonl`), but eve.rs keeps no rigs fitted
+  to a structure (the structure schema has no rig or role data). With no fitted rig there is nothing to read, so the bonuses
+  are cut for this slice. Role bonuses of the structure hull are not read either.
+- **Reverse engineering and duplicating**: not client activities (`industry/const.py`); nothing added.
+
 ## Planetary interaction (PI)
 
 Source: `docs/project/PI_DESIGN.md` (inventory, client contract, formulas with their files and lines, SDE facts). The rules are the V24.01 client's (eve-logic `eve/common/script/planet/*`, `planetCommon.py`); the numbers are the SDE's (build 3396210) or the EVE University wiki's (Planetary Interaction, Skills: Planet Management).

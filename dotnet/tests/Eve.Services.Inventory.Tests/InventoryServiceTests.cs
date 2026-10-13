@@ -450,8 +450,9 @@ public class InvBrokerTests
         var existing = Rows(await rig.CallAsync(session, "List", inventory, new PyInt(CharacterShips.CargoFlag)));
         Assert.Contains(existing, row => PackedItemId(row) == corporationCargo);
 
-        Assert.Equal(PyNone.Instance, await rig.CallAsync(session, "SetLabel", inventory,
+        var renameDenied = await Assert.ThrowsAsync<MachoWrappedException>(async () => await rig.CallAsync(session, "SetLabel", inventory,
             new PyLong(corporationShip), new PyStr("Denied")));
+        Assert.Equal("CrpAccessDenied", renameDenied.Error.UserErrorMessage);
         Assert.Null((await rig.Items.GetAsync(corporationShip))!.CustomName);
         allowTake = true;
         Assert.Equal(PyNone.Instance, await rig.CallAsync(session, "SetLabel", inventory,

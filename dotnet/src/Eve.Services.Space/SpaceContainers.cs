@@ -279,8 +279,12 @@ public async Task<long?> MoveAsync(ClientSession session, long itemId, long sour
     public Task<bool?> MoveAllAsync(ClientSession session, IReadOnlyList<long> itemIds, long sourceId, long destinationId, CancellationToken cancellationToken) =>
         MoveAllAsync(session, itemIds, sourceId, destinationId, null, cancellationToken);
 
-public async Task<bool?> MoveAllAsync(ClientSession session, IReadOnlyList<long> itemIds, long sourceId, long destinationId,
-        int? destinationFlag, CancellationToken cancellationToken)
+    public Task<bool?> MoveAllAsync(ClientSession session, IReadOnlyList<long> itemIds, long sourceId, long destinationId,
+        int? destinationFlag, CancellationToken cancellationToken) =>
+        MoveAllAsync(session, itemIds, sourceId, destinationId, destinationFlag, null, cancellationToken);
+
+    public async Task<bool?> MoveAllAsync(ClientSession session, IReadOnlyList<long> itemIds, long sourceId, long destinationId,
+        int? destinationFlag, long? quantity, CancellationToken cancellationToken)
     {
         if (session.CharacterId is not { } characterId || session.GetInt("shipid") is not { } shipId || !_space.IsInSpace(session)
             || destinationId != shipId || sourceId == shipId)
@@ -289,7 +293,7 @@ public async Task<bool?> MoveAllAsync(ClientSession session, IReadOnlyList<long>
         if (!await MayTakeFromAsync(characterId, container, cancellationToken))
             throw MachoErrors.ThrowUserError("SafetyActivated");
         var flag = destinationFlag ?? CargoFlag;
-        switch (await _ships.MoveAllInSpaceAsync(characterId, itemIds, sourceId, flag, cancellationToken))
+        switch (await _ships.MoveAllInSpaceAsync(characterId, itemIds, sourceId, flag, cancellationToken, quantity))
         {
             case ShipRefused refused:
                 throw ShipErrors.Of(refused, _statics);
@@ -300,6 +304,11 @@ public async Task<bool?> MoveAllAsync(ClientSession session, IReadOnlyList<long>
                 return false;
         }
     }
+
+    public Task RefreshShipNameAsync(ClientSession session, long itemId, CancellationToken cancellationToken) =>
+        session.GetInt("shipid") == itemId && _space.IsInSpace(session)
+            ? _space.RefreshShipAsync(session, cancellationToken)
+            : Task.CompletedTask;
 
 
 

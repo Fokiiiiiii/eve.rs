@@ -38,6 +38,16 @@ public interface ISpaceContainers
     Task<bool?> MoveAllAsync(ClientSession session, IReadOnlyList<long> itemIds, long sourceId, long destinationId, int? destinationFlag, CancellationToken cancellationToken) =>
         MoveAllAsync(session, itemIds, sourceId, destinationId, cancellationToken);
 
+    /// <summary>Moves at most the requested units of each stack with the batch's cumulative capacity check and notifications.</summary>
+    Task<bool?> MoveAllAsync(ClientSession session, IReadOnlyList<long> itemIds, long sourceId, long destinationId,
+        int? destinationFlag, long? quantity, CancellationToken cancellationToken) =>
+        quantity is null
+            ? MoveAllAsync(session, itemIds, sourceId, destinationId, destinationFlag, cancellationToken)
+            : throw new NotSupportedException("This space container service cannot move a partial batch.");
+
+    /// <summary>Refreshes an active ship's presentation from committed inventory after its location-name notification.</summary>
+    Task RefreshShipNameAsync(ClientSession session, long itemId, CancellationToken cancellationToken) => Task.CompletedTask;
+
 
     /// <summary>Abandons loot rights for owned cans or wrecks without moving their contents.</summary>
     Task AbandonLootAsync(ClientSession session, IReadOnlyList<long> containerIds, CancellationToken cancellationToken) =>

@@ -125,6 +125,17 @@ public sealed class IndustryJobPersistenceTests
     }
 }
 
+/// <summary>Every system and activity has the same index (the configured fallback, with nothing stored).</summary>
+internal sealed class FixedCostIndexes(decimal rate) : IIndustryCostIndexSource
+{
+    public decimal Fallback => rate;
+
+    public ValueTask<decimal> GetAsync(long solarSystemId, int activityId, CancellationToken cancellationToken) => ValueTask.FromResult(rate);
+
+    public ValueTask<IReadOnlyDictionary<long, decimal>> GetActivityAsync(int activityId, CancellationToken cancellationToken) =>
+        ValueTask.FromResult<IReadOnlyDictionary<long, decimal>>(new Dictionary<long, decimal>());
+}
+
 internal sealed class IndustryRig : IAsyncDisposable
 {
     private const int BlueprintType = 681;
@@ -165,7 +176,7 @@ internal sealed class IndustryRig : IAsyncDisposable
             (facilityId, stationId, systemId, characterId, token) => ValueTask.FromResult<PersistenceIndustryJobOperations.IndustryFacility?>(
                 new PersistenceIndustryJobOperations.IndustryFacility(
                     station.Id, station.SolarSystemId, station.OwnerId, 0.10m, 1d, true, null, new HashSet<int> { 14, 15 })),
-            (systemId, activityId, token) => ValueTask.FromResult(0m),
+            new FixedCostIndexes(0m),
             () => Now);
     }
 

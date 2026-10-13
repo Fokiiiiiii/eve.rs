@@ -71,7 +71,7 @@ public sealed partial class PersistenceIndustryJobOperations : Eve.Services.Core
     private readonly Eve.Universe.StationCatalog _stations;
     private readonly Func<long, long, long, long, CancellationToken, ValueTask<IndustryFacility?>> _resolveFacility;
     private readonly Func<long> _nowUnixMs;
-    private readonly Func<long, int, CancellationToken, ValueTask<decimal>> _costIndex;
+    private readonly IIndustryCostIndexSource _costIndexes;
 
     public PersistenceIndustryJobOperations(
         Npgsql.NpgsqlDataSource source,
@@ -85,7 +85,7 @@ public sealed partial class PersistenceIndustryJobOperations : Eve.Services.Core
         Eve.Events.EventBus events,
         Eve.Universe.StationCatalog stations,
         Func<long, long, long, long, CancellationToken, ValueTask<IndustryFacility?>> resolveFacility,
-        Func<long, int, CancellationToken, ValueTask<decimal>> costIndex,
+        IIndustryCostIndexSource costIndexes,
         Func<long> nowUnixMs)
     {
         if (!System.Text.RegularExpressions.Regex.IsMatch(schema, "^[a-z_][a-z0-9_]*$", System.Text.RegularExpressions.RegexOptions.CultureInvariant))
@@ -101,7 +101,7 @@ public sealed partial class PersistenceIndustryJobOperations : Eve.Services.Core
         _events = events ?? throw new ArgumentNullException(nameof(events));
         _stations = stations ?? throw new ArgumentNullException(nameof(stations));
         _resolveFacility = resolveFacility ?? throw new ArgumentNullException(nameof(resolveFacility));
-        _costIndex = costIndex ?? throw new ArgumentNullException(nameof(costIndex));
+        _costIndexes = costIndexes ?? throw new ArgumentNullException(nameof(costIndexes));
         _nowUnixMs = nowUnixMs ?? throw new ArgumentNullException(nameof(nowUnixMs));
     }
 
@@ -296,17 +296,19 @@ public sealed partial class PersistenceIndustryJobOperations : Eve.Services.Core
         long solarSystemId,
         int activityId,
         CancellationToken cancellationToken) =>
-        await _costIndex(solarSystemId, activityId, cancellationToken);
+        (await _costIndexes.GetAsync(solarSystemId, activityId, cancellationToken));
 
     public async Task<PyValue> ReadMapIndustryCostModifierAsync(
         int activityId,
         IReadOnlyList<Eve.Sde.SdeRow> systems,
         CancellationToken cancellationToken)
     {
+        // One read of the stored indices for the activity; a system with no stored index shows the configured fallback.
+        var stored = await _costIndexes.GetActivityAsync(activityId, cancellationToken);
         var entries = new List<KeyValuePair<PyValue, PyValue>>();
         foreach (var system in systems)
         {
-            var rate = await _costIndex(system.Key, activityId, cancellationToken);
+            var rate = stored.TryGetValue(system.Key, out var value) ? value : _costIndexes.Fallback;
             entries.Add(new(new PyInt(system.Key), new PyReal((double)rate)));
         }
         return new PyDict(entries);

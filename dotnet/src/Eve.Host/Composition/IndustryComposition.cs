@@ -58,8 +58,9 @@ internal sealed partial class CharacterServicesComposition
             // An NPC station runs the activities its SDE operation lists; its factors are the job time factors.
             if (await ReadNpcStationOperationAsync(station.Id, token) is not { } operation)
                 return null;
+            var tax = await ReadNpcStationTaxAsync(station.OwnerId, token);
             return new PersistenceIndustryJobOperations.IndustryFacility(
-                station.Id, station.SolarSystemId, station.OwnerId, NpcStationFacilityTax, operation.ManufacturingFactor,
+                station.Id, station.SolarSystemId, station.OwnerId, tax, operation.ManufacturingFactor,
                 true, operation.ResearchFactor, operation.Services);
         }
 
@@ -113,10 +114,16 @@ internal sealed partial class CharacterServicesComposition
     }
 
     /// <summary>
-    /// The facility tax of an NPC station: 10 percent (a community source; standings do not reduce it for
-    /// manufacturing). No official CCP table was read for it; see docs/project/INDUSTRY_STATUS.md.
+    /// The facility tax of an NPC station: the SDE <c>npcCorporations.taxRate</c> of the station's owning corporation
+    /// (CCP data; most NPC corporations are 0, some 0.10 or 0.11). Zero when the owner has no row.
     /// </summary>
-    const decimal NpcStationFacilityTax = 0.10m;
+    async ValueTask<decimal> ReadNpcStationTaxAsync(long ownerId, CancellationToken token)
+    {
+        var rows = await sde.ReadAsync("npcCorporations", [ownerId], token);
+        if (rows.Count == 0 || !rows[0].Doc.TryGetProperty("taxRate", out var rate) || rate.ValueKind != JsonValueKind.Number)
+            return 0m;
+        return Math.Clamp(rate.GetDecimal(), 0m, 1m);
+    }
 
     /// <summary>
     /// The system cost index applied to every system and activity. No source loaded here carries live indices
@@ -129,8 +136,21 @@ internal sealed partial class CharacterServicesComposition
             ? Math.Clamp(value, 0m, 1m)
             : 0m;
 
-    static ValueTask<decimal> ConfiguredCostIndexAsync(long solarSystemId, int activityId, CancellationToken token) =>
-        ValueTask.FromResult(ConfiguredIndustryCostIndex);
+    private static readonly System.Net.Http.HttpClient industryIndexHttp = new();
+
+    private IIndustryCostIndexSource industryCostIndexes = default!;
+
+    /// <summary>The stored ESI cost indices, refreshed at most daily; EVE_INDUSTRY_INDEX_SEED=skip makes no call out.</summary>
+    private IIndustryCostIndexSource IndustryCostIndexSetup()
+    {
+        var esi = Env("EVE_INDUSTRY_INDEX_SEED", "auto") is "skip" or "off"
+            ? null
+            : new Eve.Market.EsiIndustrySystems(industryIndexHttp, Eve.Market.EsiIndustrySystems.DefaultBase);
+        var cache = new Eve.Market.IndustryCostIndexCache(
+            new Eve.Market.IndustryCostIndexStore(source, marketSchema), esi, () => now(),
+            message => Console.Error.WriteLine("eve-host: " + message));
+        return new StoredIndustryCostIndexes(cache, ConfiguredIndustryCostIndex);
+    }
 
     /// <summary>The factors and services of an NPC station's SDE operation (npcStations, then stationOperations).</summary>
     async ValueTask<(double ManufacturingFactor, double ResearchFactor, IReadOnlySet<int> Services)?> ReadNpcStationOperationAsync(
@@ -254,9 +274,10 @@ internal sealed partial class CharacterServicesComposition
 
     private Task IndustryFacilities()
     {
+        industryCostIndexes = IndustryCostIndexSetup();
         industryJobOperations = new PersistenceIndustryJobOperations(
             source, industrySchema, items, economyWallets, skills, sde, adjustedPrices, corporations,
-            foundations.Events, stations, ResolveIndustryFacilityAsync, ConfiguredCostIndexAsync, now);
+            foundations.Events, stations, ResolveIndustryFacilityAsync, industryCostIndexes, now);
         return Task.CompletedTask;
     }
 

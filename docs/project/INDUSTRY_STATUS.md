@@ -13,7 +13,7 @@ Sources, in the order used:
 - EveJS v0.12.9 (`server/src/services/industry/`) as the behaviour reference. Its price model (base-price fallback,
   flat cost index) is not copied.
 - EVE University wiki and CCP pages for the delivery rule (the Deliver button in the station's industry window).
-- Community sources for the NPC station tax (see "Decisions").
+- The SDE `npcCorporations.taxRate` for the NPC station tax (see "Decisions").
 
 ## What existed before this slice
 
@@ -100,8 +100,9 @@ Constants (`industry/const.py`): `COST_PERCENTAGE = 0.02`, `SCC_SURCHARGE_RATE =
 - **Cost index**: the pinned SDE and the client data carry no live cost indices, and the ESI `GET /industry/systems/`
   activity keys could not be confirmed from a page read in this slice. The project rule is `EVE_INDUSTRY_COST_INDEX`
   (a fraction, default 0), applied to every system and activity, and used by the map RPC too. Live indices are the next step.
-- **NPC station facility tax**: 10 percent. The basis is a community forum thread (manufacturing taxes at NPC stations
-  are a flat 10 percent). No official CCP table was read. Standings do not reduce it in this rule.
+- **NPC station facility tax**: the SDE `npcCorporations.taxRate` of the station's owning corporation (CCP data; 0 for
+  254 corporations, 0.11 for 27, 0.10 for 2). The war-faction modifier (`npcstationtaxmodifier`, applied by the client only
+  during a faction war with a war faction) is not applied: cut.
 - **NPC station services**: the SDE station operation's service list decides the activity. Service 14 (Factory) runs
   manufacturing; service 15 (Laboratory) runs the science activities. No NPC station service runs reactions, so reactions
   at NPC stations are refused. The basis is the SDE service list and the client's reaction facility rule.

@@ -52,10 +52,16 @@ public sealed partial class PersistenceIndustryJobOperations : Eve.Services.Core
     private const int AdvancedIndustrySkillId = 3388;
     private const int MassProductionSkillId = 3387;
     private const int AdvancedMassProductionSkillId = 24625;
+    private const int AdvancedLaboratoryOperationSkillId = 24624;
     private const int LaboratoryOperationSkillId = 3406;
     private const int ScienceSkillId = 3402;
     private const int MetallurgySkillId = 3409;
     private const int ReactionsSkillId = 45746;
+    private const int ResearchSkillId = 3403;
+    private const int ScmSkillId = 24268;
+    private const int ScientificNetworkingSkillId = 24270;
+    private const int RemoteReactionsSkillId = 45750;
+    private const int LowerInventionSkillTypeListId = 799;
     private const long FactoryManagerRole = 1024;
     private const long DirectorRole = 1;
 
@@ -72,6 +78,9 @@ public sealed partial class PersistenceIndustryJobOperations : Eve.Services.Core
     private readonly Func<long, long, long, long, CancellationToken, ValueTask<IndustryFacility?>> _resolveFacility;
     private readonly Func<long> _nowUnixMs;
     private readonly IIndustryCostIndexSource _costIndexes;
+    private readonly Func<long, CancellationToken, ValueTask<long?>> _installerSystem;
+    private readonly IndustryReadyJobs _readyJobs;
+    private Task<IReadOnlyDictionary<long, long[]>>? _jumpGraph;
 
     public PersistenceIndustryJobOperations(
         Npgsql.NpgsqlDataSource source,
@@ -86,6 +95,8 @@ public sealed partial class PersistenceIndustryJobOperations : Eve.Services.Core
         Eve.Universe.StationCatalog stations,
         Func<long, long, long, long, CancellationToken, ValueTask<IndustryFacility?>> resolveFacility,
         IIndustryCostIndexSource costIndexes,
+        Func<long, CancellationToken, ValueTask<long?>> installerSystem,
+        IndustryReadyJobs readyJobs,
         Func<long> nowUnixMs)
     {
         if (!System.Text.RegularExpressions.Regex.IsMatch(schema, "^[a-z_][a-z0-9_]*$", System.Text.RegularExpressions.RegexOptions.CultureInvariant))
@@ -102,6 +113,8 @@ public sealed partial class PersistenceIndustryJobOperations : Eve.Services.Core
         _stations = stations ?? throw new ArgumentNullException(nameof(stations));
         _resolveFacility = resolveFacility ?? throw new ArgumentNullException(nameof(resolveFacility));
         _costIndexes = costIndexes ?? throw new ArgumentNullException(nameof(costIndexes));
+        _installerSystem = installerSystem ?? throw new ArgumentNullException(nameof(installerSystem));
+        _readyJobs = readyJobs ?? throw new ArgumentNullException(nameof(readyJobs));
         _nowUnixMs = nowUnixMs ?? throw new ArgumentNullException(nameof(nowUnixMs));
     }
 
@@ -431,6 +444,7 @@ public sealed partial class PersistenceIndustryJobOperations : Eve.Services.Core
             case TimeResearchActivity:
                 seconds = IR.ResearchJobSeconds(
                     recipe.TimeSeconds, blueprint.TimeEfficiency / IR.StepTimeEfficiency, job.Runs);
+                await AddSkillModifierAsync(modifiers, ResearchSkillId, 453, LevelOf, cancellationToken);
                 break;
             case ReactionActivity:
                 seconds = recipe.TimeSeconds * job.Runs;

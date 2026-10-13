@@ -153,50 +153,6 @@ public sealed class PaperDollServerRpcService
     }
 }
 
-public sealed class PlanetMgrRpcService(
-    Func<ServiceCall, ValueTask<PyValue?>>? handler = null) : IService
-{
-    private const string CRowsetName = "carbon.common.script.sys.crowset.CRowset";
-    private static readonly (string Name, int Type)[] LaunchColumns =
-    [
-        ("launchID", 3), ("solarSystemID", 3), ("itemID", 20), ("ownerID", 3), ("planetID", 3),
-        ("status", 17), ("launchTime", 64), ("x", 5), ("y", 5), ("z", 5),
-    ];
-    private static readonly (string Name, int Type)[] PlanetColumns =
-    [
-        ("solarSystemID", 3), ("planetID", 3), ("typeID", 3), ("numberOfPins", 3), ("celestialIndex", 3),
-    ];
-
-    public string Name => "planetMgr";
-    public bool HasMethod(string method) => method is "DeleteLaunch" or "GetMyLaunchesDetails" or "GetPlanetsForChar";
-
-    public ValueTask<PyValue> CallAsync(ServiceCall call)
-    {
-        if (!HasMethod(call.Method)) return ValueTask.FromResult<PyValue>(PyNone.Instance);
-        return CompatibilityRpc.Invoke(call, handler, () => call.Method switch
-        {
-            "DeleteLaunch" => PyBool.True,
-            "GetMyLaunchesDetails" => EmptyCRowset(LaunchColumns),
-            "GetPlanetsForChar" => EmptyCRowset(PlanetColumns),
-            _ => PyNone.Instance,
-        });
-    }
-
-    private static PyObjectEx EmptyCRowset(IReadOnlyList<(string Name, int Type)> columns)
-    {
-        var packedColumns = Py.Tuple([.. columns.Select(column =>
-            (PyValue)Py.Tuple(new PyStr(column.Name), new PyInt(column.Type)))]);
-        var descriptor = new PyObjectEx(
-            ObjectExKind.Ex1,
-            Py.Tuple(new PyToken("blue.DBRowDescriptor"), Py.Tuple(packedColumns)),
-            [], []);
-        var header = Py.Tuple(
-            Py.Tuple(new PyToken(CRowsetName)),
-            Py.Dict(("header", descriptor)));
-        return new PyObjectEx(ObjectExKind.Ex2, header, [], []);
-    }
-}
-
 internal static class CompatibilityRpc
 {
     public static async ValueTask<PyValue> Invoke(

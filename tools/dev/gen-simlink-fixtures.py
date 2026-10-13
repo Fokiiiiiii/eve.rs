@@ -438,7 +438,8 @@ def build(m):
     if k == "PlaceStructure":
         return frame(k, i64(m["structureId"]) + struct.pack("<i", m["solarSystemId"]) + s(m["typeName"]) + struct.pack("<ii", m["typeId"], m["groupId"])
                      + struct.pack("<3d", *m["position"]) + struct.pack("<d", m["radius"]) + i64(m["ownerId"])
-                     + struct.pack("<ii", m["corporationId"], m["allianceId"]) + structure_health(m) + structure_status(m["status"]))
+                     + struct.pack("<ii", m["corporationId"], m["allianceId"]) + structure_health(m) + structure_status(m["status"])
+                     + i64(m["planetId"]))  # protocol 67: the planet whose customs office this is (0 for an Upwell structure)
     if k == "RemoveStructure":
         return frame(k, i64(m["structureId"]))
     if k == "PlaceWormhole":  # protocol 63: the wormhole end, then the far end it leads to (its system, body ID, class, position, radius) and the largest ship
@@ -559,8 +560,8 @@ BARE = dict(IBIS, name="", modules=[], allianceId=99000001, securityStatus=-2.5,
             condition={"damage": 0.0, "armorDamage": 0.0, "shieldCharge": 1.0, "charge": 1.0})
 
 valid = [
-    {"name": "hello", "kind": "Hello", "version": 66},
-    {"name": "hello ack", "kind": "HelloAck", "version": 66, "pollHz": 4},
+    {"name": "hello", "kind": "Hello", "version": 67},
+    {"name": "hello ack", "kind": "HelloAck", "version": 67, "pollHz": 4},
     {"name": "enter by undocking", "kind": "Enter", "sessionId": "1790646377000015", "solarSystemId": 30100032,
      "how": 0, "stationId": "60015249", "ship": IBIS},
     {"name": "enter already in space, no modules, non-ASCII name", "kind": "Enter", "sessionId": "1",
@@ -1054,13 +1055,14 @@ valid = [
      "corporationId": 98000001, "allianceId": 0, "shipId": "9988400001943"},
     {"name": "scanner probe recalled by its pilot", "kind": "RemoveProbe", "probeId": "990000000000001"},
     {"name": "structure put in space by the host with a running timer", "kind": "PlaceStructure", "structureId": "1040000000000001", "solarSystemId": 30100032,
-     "typeName": "Astrahus", "typeId": 35832, "groupId": 1657,
+     "typeName": "Astrahus", "typeId": 35832, "groupId": 1657, "planetId": 0,
      "position": [311989835983.1308, -13069154020.916222, 156646308895.76187], "radius": 60000.0, "ownerId": "98000001",
      "corporationId": 98000001, "allianceId": 0,
      "vitals": {"shieldCapacity": 200000000.0, "armorHp": 4000000.0, "structureHp": 6000000.0,
                 "resonances": {"shield": [1.0, 1.0, 1.0, 1.0], "armor": [1.0, 1.0, 1.0, 1.0], "structure": [1.0, 1.0, 1.0, 1.0]}},
      "shieldRechargeMs": 110000.0, "perSecond": [14400000.0, 5000.0, 5000.0], "repairPause": [500.0, 500.0, 500.0],
      "status": {"state": 110, "upkeepState": 3, "timer": [132000000000000000, 132000860000000000, None], "unanchoring": None, "repairing": None}},
+    {"name": "customs office of a planet put in orbit by the host (protocol 67)", "kind": "PlaceStructure", "structureId": "1200000040486618", "solarSystemId": 30100032, "typeName": "Customs Office", "typeId": 2233, "groupId": 1025, "planetId": 40486618, "position": [311989835983.1308, -13069154020.916222, 156646308895.76187], "radius": 8000.0, "ownerId": "1000125", "corporationId": 0, "allianceId": 0, "vitals": {"shieldCapacity": 0.0, "armorHp": 0.0, "structureHp": 0.0, "resonances": {"shield": [1.0, 1.0, 1.0, 1.0], "armor": [1.0, 1.0, 1.0, 1.0], "structure": [1.0, 1.0, 1.0, 1.0]}}, "shieldRechargeMs": 0.0, "perSecond": [0.0, 0.0, 0.0], "repairPause": [0.0, 0.0, 0.0], "status": {"state": 110, "upkeepState": 3, "timer": None, "unanchoring": None, "repairing": None}},
     {"name": "structure state set by the host: paused timer, unanchoring, repairing", "kind": "SetStructureState", "solarSystemId": 30100032,
      "structureId": "1040000000000001",
      "status": {"state": 111, "upkeepState": 3, "timer": [132000000000000000, 132000860000000000, 132000100000000000], "unanchoring": 132000900000000000, "repairing": True}},

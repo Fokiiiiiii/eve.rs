@@ -49,14 +49,13 @@ public sealed class CompatibilityRpcServiceTests
         {
             new ShipCosmeticsMgrRpcService(),
             new CharacterEnergyMgrRpcService(), new PaperDollServerRpcService(),
-            new PlanetMgrRpcService(), new IndustryMonitorRpcService(),
+            new IndustryMonitorRpcService(),
         };
         var expected = new Dictionary<string, string[]>
         {
             ["shipCosmeticsMgr"] = ["ActivateSkinLicense", "ApplySkinToShip", "GMExpireSkinLicense", "GetEnabledCosmetics", "GetFirstPartySkinData", "GiveSkin", "RemoveSkin"],
             ["characterEnergyMgr"] = ["GetMyEnergyState"],
             ["paperDollServer"] = ["GetMyPaperDollData", "GetPaperDollData", "GetPaperDollDataBatch", "GetPaperDollPortraitDataFor", "UpdateExistingCharacterFull", "UpdateExistingCharacterLimited"],
-            ["planetMgr"] = ["DeleteLaunch", "GetMyLaunchesDetails", "GetPlanetsForChar"],
             ["industryMonitor"] = ["ConnectJob", "DisconnectJob"],
         };
         Assert.Equal(expected.Keys.Order(), services.Select(service => service.Name).Order());
@@ -71,7 +70,6 @@ public sealed class CompatibilityRpcServiceTests
         var cosmetics = new ShipCosmeticsMgrRpcService();
         var energy = new CharacterEnergyMgrRpcService(nowUnixMs: () => 1_700_000_000_000L);
         var paperDoll = new PaperDollServerRpcService();
-        var planets = new PlanetMgrRpcService();
         var industry = new IndustryMonitorRpcService(availableMaterials: (_, _) => ValueTask.FromResult<IReadOnlyDictionary<int, long>>(new Dictionary<int, long> { [34] = 5 }));
 
         Assert.IsType<PyDict>(await cosmetics.CallAsync(Call("GetEnabledCosmetics", args: [new PyInt(10)])));
@@ -86,9 +84,6 @@ public sealed class CompatibilityRpcServiceTests
         Assert.IsType<PyTuple>(await paperDoll.CallAsync(Call("GetPaperDollPortraitDataFor", Session(20), new PyInt(20))));
         Assert.IsType<PyNone>(await paperDoll.CallAsync(Call("UpdateExistingCharacterFull", Session(20), new PyInt(20))));
         Assert.IsType<PyNone>(await paperDoll.CallAsync(Call("UpdateExistingCharacterLimited", Session(20), new PyInt(20))));
-        Assert.IsType<PyObjectEx>(await planets.CallAsync(Call("GetMyLaunchesDetails", Session(20))));
-        Assert.IsType<PyObjectEx>(await planets.CallAsync(Call("GetPlanetsForChar", Session(20))));
-        Assert.Equal(PyBool.True, await planets.CallAsync(Call("DeleteLaunch", Session(20), new PyInt(100))));
 
         var connected = Assert.IsType<PyTuple>(await industry.CallAsync(Call("ConnectJob", Session(20),
             Py.KeyVal(("blueprintID", new PyInt(10)), ("activityID", new PyInt(1)), ("facilityID", new PyInt(20))))));
@@ -244,12 +239,6 @@ public sealed class CompatibilityRpcServiceTests
             await wiredCosmetics.CallAsync(Call("GiveSkin", session, new PyInt(license.SkinId)));
             await wiredCosmetics.CallAsync(Call("GMExpireSkinLicense", session, new PyInt(license.SkinId)));
             Assert.IsType<PyNone>(await wiredCosmetics.CallAsync(Call("GetFirstPartySkinData", session, new PyInt(20), new PyInt(license.SkinId))));
-
-            var planetMgr = new PlanetMgrRpcService(cache, nowUnixMs: () => now);
-            Assert.Single(Assert.IsType<PyObjectEx>(await planetMgr.CallAsync(Call("GetMyLaunchesDetails", session))).List);
-            Assert.Single(Assert.IsType<PyObjectEx>(await planetMgr.CallAsync(Call("GetPlanetsForChar", session))).List);
-            Assert.Equal(PyBool.True, await planetMgr.CallAsync(Call("DeleteLaunch", session, new PyInt(77))));
-            Assert.Empty(Assert.IsType<PyObjectEx>(await planetMgr.CallAsync(Call("GetMyLaunchesDetails", session))).List);
 
             var itemTypes = new ItemTypeCatalog(sde);
             Assert.Equal(9, (await itemTypes.GetAsync(681))?.CategoryId);

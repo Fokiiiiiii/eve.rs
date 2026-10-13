@@ -136,9 +136,14 @@ fn wormhole_fields(body: &Body, entries: &mut Entries) {
 /// A structure's slim fields (the client's structure bracket and `structure.py` read them): its owner, its state and upkeep, its timer
 /// `(start, end, paused)`, its unanchoring time and whether it is repaired.
 fn structure_fields(body: &Body, entries: &mut Entries) {
-    let Detail::Structure { corporation_id, alliance_id, status } = &body.detail else {
+    let Detail::Structure { corporation_id, alliance_id, status, planet_id } = &body.detail else {
         return;
     };
+    if *planet_id > 0 {
+        // a customs office: an orbital of its planet, at the level the client's office window reads (the spaceport model)
+        entries.push(("planetID", id(*planet_id)));
+        entries.push(("level", int(1)));
+    }
     entries.push(("corpID", id(*corporation_id)));
     entries.push(("allianceID", int(*alliance_id)));
     entries.push(("state", int(i64::from(status.state))));

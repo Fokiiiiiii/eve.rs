@@ -69,6 +69,9 @@ public sealed partial class InvBrokerService(
 
     public void OnBoundObjectReleased(string oid, ClientSession? session) => _bound.TryRemove(oid, out _);
 
+    /// <summary>The planetary customs offices (set by the host when the planets are running).</summary>
+    public ICustomsOffices? Customs { get; set; }
+
     private PyValue Bind(Context context, ClientSession session)
     {
         var oid = $"N={MachoMessage.ProxyNodeId}:{BoundObjectIds.Next()}";
@@ -345,6 +348,10 @@ public sealed partial class InvBrokerService(
                 ? Bind(new Context(Kind.Structure, id, 0), call.Session)
                 : None;
         }
+        else if (Customs is not null && await Customs.IsOfficeAsync(id, call.Cancellation))
+        {
+            result = Bind(new Context(Kind.Container, id, 0, CharacterShips.ContainerFlag), call.Session);
+        }
         else if (StationOf(call.Session) is not { } station)
         {
             result = await OpenInSpaceAsync(call, id);
@@ -383,6 +390,28 @@ public sealed partial class InvBrokerService(
         if (result is PyNone)
             throw MachoErrors.ThrowUserError("FakeItemNotFound");
         return await CompleteInventoryRpcAsync(call, result);
+    }
+
+    /// <summary>
+    /// <c>ImportExportWithPlanet(spaceportPinID, importData, exportData, taxRate)</c> on a bound customs office: the import of the pilot's
+    /// stacks in the office, the export of the launchpad's contents to the office, charged and recorded in one transaction (planets).
+    /// </summary>
+    [Method("ImportExportWithPlanet")]
+    public async ValueTask<PyValue> ImportExportWithPlanet(ServiceCall call)
+    {
+        if (ContextOf(call) is not { Kind: Kind.Container } office || Customs is null)
+            throw MachoErrors.ThrowUserError("CustomsOfficeAccessDenied");
+        var imports = new Dictionary<long, long>();
+        if (call.Arg(1) is PyDict importDict)
+            foreach (var (key, quantity) in importDict.Entries)
+                imports[IdOf(key) ?? 0] = IdOf(quantity) ?? 0;
+        var exports = new Dictionary<int, long>();
+        if (call.Arg(2) is PyDict exportDict)
+            foreach (var (key, quantity) in exportDict.Entries)
+                exports[(int)(IdOf(key) ?? 0)] = IdOf(quantity) ?? 0;
+        var rate = call.Arg(3) switch { PyReal real => real.Value, PyInt number => number.Value, PyLong number => number.Value, _ => 0.0 };
+        await Customs.ImportExportAsync(call.Session, office.ItemId, IdOf(call.Arg(0)) ?? 0, imports, exports, rate, call.Cancellation);
+        return None;
     }
 
     /// <summary>The inventories of a pilot in space: the solar system it binds first, then its ship and the cans and wrecks beside it.</summary>
@@ -584,6 +613,30 @@ public sealed partial class InvBrokerService(
         return askedLocation is null || stations.Get(askedLocation.Value) is null || askedLocation == location ? PyBool.True : PyBool.False;
     }
 
+    /// <summary>
+    /// The pilot's stack from its ship's hold into a customs office in its system (importExportUI.MoveFromInventory). Only the ship's hold is a
+    /// source here: a station hangar is refused (shortcut: a station's hangar into an office in the station's system, when a walk needs it).
+    /// The office's room is checked as the client checks it (NotEnoughSpace with the volume and the room left).
+    /// </summary>
+    private async ValueTask<PyValue> AddToCustomsOfficeAsync(ServiceCall call, long character, long itemId, long source, long officeId, long? quantity)
+    {
+        if (call.Session.GetInt("shipid") is not { } shipId || source != shipId || space?.SolarSystemOf(call.Session) is not { } system
+            || await items.GetAsync(itemId, call.Cancellation) is not { } stack || stack.OwnerId != character || stack.LocationId != shipId
+            || await items.GetAsync(officeId, call.Cancellation) is not { } office || office.LocationId != system)
+            return None;
+        var moving = stack.Singleton ? stack.Quantity : Math.Min(quantity ?? stack.Quantity, stack.Quantity);
+        if (moving <= 0)
+            return None;
+        // the office is not a cargo container (no room of the container model): its room is its type's capacity less what is in it
+        var used = await ships.VolumeOfAsync(await items.InContainerAsync(officeId, call.Cancellation), call.Cancellation);
+        var required = await ships.VolumeOfAsync([stack with { Quantity = moving }], call.Cancellation);
+        var available = Customs!.OfficeCapacity - used;
+        if (required - available > 1e-5)
+            throw MachoErrors.ThrowUserError("NotEnoughSpace", ("volume", new PyReal(required)), ("available", new PyReal(available)));
+        var landed = await Customs!.MoveToOfficeAsync(call.Session, officeId, itemId, moving, call.Cancellation);
+        return landed == 0 ? None : InventoryWire.Id(landed);
+    }
+
     [Method("GetCapacity")]
     public async ValueTask<PyValue> GetCapacity(ServiceCall call)
     {
@@ -622,6 +675,9 @@ public sealed partial class InvBrokerService(
             return None;
         if (context.Kind == Kind.Container)
         {
+            // a customs office is an NPC's: its room is its capacity less what is in it, for any pilot (the import window reads it)
+            if (Customs is not null && await Customs.IsOfficeAsync(context.ItemId, call.Cancellation))
+                return KeyVal(Customs.OfficeCapacity, await ships.VolumeOfAsync(await items.InContainerAsync(context.ItemId, call.Cancellation), call.Cancellation));
             if (await items.GetAsync(context.ItemId, call.Cancellation) is not { } container
                 || container.OwnerId != character
                     && !await CanAccessCorporationItemAsync(call.Session, container, CorporationHangarOperation.Query, call.Cancellation))
@@ -832,6 +888,10 @@ private async ValueTask<bool> IsDockedShipContextAsync(ClientSession session, lo
         long? quantity = (call.Kwarg("qty") ?? call.Kwarg("quantity")) is { } asked ? IdOf(asked) : null;
         int? flag = call.Kwarg("flag") is { } flagValue ? Flag(flagValue) : null;
         var source = IdOf(call.Arg(1)) ?? 0;
+        // a customs office in space takes the pilot's stacks from its ship's hold (the office is an inventory of its own, not a can)
+        if (context.Kind == Kind.Container && Customs is not null && space is not null && space.IsInSpace(call.Session)
+            && await Customs.IsOfficeAsync(context.ItemId, call.Cancellation))
+            return await AddToCustomsOfficeAsync(call, character, itemId, source, context.ItemId, quantity);
         if (space is not null && space.IsInSpace(call.Session))
         {
             if (context.Kind == Kind.Ship && flag == CharacterShips.DroneBayFlag)

@@ -537,6 +537,7 @@ impl Message {
                 let alliance_id = r.i32()?;
                 let (vitals, shield_recharge_ms, limits) = read_structure_health(&mut r)?;
                 let status = read_structure_status(&mut r)?;
+                let planet_id = r.i64()?;
                 if !(radius.is_finite() && radius >= 0.0) {
                     return Err(DecodeError::BadValue("structure"));
                 }
@@ -555,6 +556,7 @@ impl Message {
                     shield_recharge_ms,
                     limits,
                     status,
+                    planet_id,
                 }))
             }
             kind::STRUCTURE_DAMAGED => {

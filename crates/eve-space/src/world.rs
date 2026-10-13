@@ -26,6 +26,8 @@ pub enum BodyKind {
 
 /// The category of a structure's item (`categoryID` 65 in the client).
 pub const STRUCTURE_CATEGORY: i32 = 65;
+/// The category of an orbital (a customs office of a planet, categoryOrbital 46 in the client's constants).
+pub const ORBITAL_CATEGORY: i32 = 46;
 
 /// The slim fields of a structure, as the host has them: the sim shows them and decides nothing about them (ADR 0012, rule 3). A timer is
 /// `(start, end, paused)` in filetime; `repairing` is `None` when the client should show no repair at all.
@@ -49,6 +51,8 @@ pub enum Detail {
         corporation_id: i64,
         alliance_id: i64,
         status: StructureStatus,
+        /// The planet of a customs office (0 for an Upwell structure): see `StructurePlacement::planet_id`.
+        planet_id: i64,
     },
     Stargate {
         destination_system: i32,

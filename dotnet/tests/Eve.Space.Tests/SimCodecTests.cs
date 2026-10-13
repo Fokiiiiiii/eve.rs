@@ -363,7 +363,7 @@ public class SimCodecTests
             "RemoveProbe" => new SimRemoveProbe(Wide(c, "probeId")),
             "PlaceStructure" => new SimPlaceStructure(Wide(c, "structureId"), (int)c["solarSystemId"]!, (string)c["typeName"]!, (int)c["typeId"]!,
                 (int)c["groupId"]!, VectorOf(c["position"]!), (double)c["radius"]!, Wide(c, "ownerId"), (int)c["corporationId"]!, (int)c["allianceId"]!,
-                HealthOf(c), StatusOf(c["status"]!)),
+                HealthOf(c), StatusOf(c["status"]!), (long)c["planetId"]!),
             "ControlStructure" => new SimControlStructure(ulong.Parse((string)c["sessionId"]!, CultureInfo.InvariantCulture),
                 (int)c["solarSystemId"]!, Wide(c, "structureId"), Wide(c, "characterId"), (bool)c["active"]!),
             "TetherPolicy" => new SimTetherPolicy(ulong.Parse((string)c["sessionId"]!, CultureInfo.InvariantCulture),

@@ -23,6 +23,9 @@ public static class PlanetAttr
     public const int EcuAreaOfInfluence = 1689;
     public const int ExtractorHeadCpu = 1690;
     public const int ExtractorHeadPower = 1691;
+    public const int ImportTax = 1638;
+    public const int ExportTax = 1639;
+    public const int ImportTaxMultiplier = 1640;
 }
 
 /// <summary>Type groups of the planetary pins and links (inventorycommon/const.py).</summary>
@@ -85,4 +88,7 @@ public sealed class PlanetCatalog(IReadOnlyDictionary<int, TypeInfo> types, IRea
     }
 
     public bool IsLink(int typeId) => types.TryGetValue(typeId, out var t) && t.GroupId == PlanetGroups.Link;
+
+    /// <summary>The link type of the planetary network (the client sends no type: there is one, group 1036).</summary>
+    public int LinkTypeId => types.Values.First(t => t.GroupId == PlanetGroups.Link).TypeId;
 }

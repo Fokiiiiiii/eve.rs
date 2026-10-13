@@ -92,6 +92,15 @@ pub fn add_structure(stamp: u32, system: &SolarSystem, index: usize, now: i64) -
     Ok(action(stamp, "AddBalls2", [tuple([buffer, list([tuple([slim, damage])])])]))
 }
 
+/// `AddBalls2` for each structure of the system (the customs offices too): a pilot who comes in is told them as balls, since a structure placed while
+/// nobody was in the system was told to nobody.
+pub fn add_structures(stamp: u32, system: &SolarSystem, now: i64) -> Vec<Value> {
+    (0..system.bodies.len())
+        .filter(|&index| system.bodies[index].kind == BodyKind::Structure)
+        .filter_map(|index| add_structure(stamp, system, index, now).ok())
+        .collect()
+}
+
 /// `AddBalls2` for a wormhole end of the system (the body at `index`): its ball, and its slim item with an empty damage state (a wormhole has no hit points).
 pub fn add_wormhole(stamp: u32, system: &SolarSystem, index: usize, now: i64) -> Result<Value, BallError> {
     let buffer = state_buffer(ADD_BALLS, stamp, &[rigid_ball(system, index)])?;

@@ -35,6 +35,44 @@ public interface IResourceField
     double ValueAt(long planetId, int resourceTypeId, double theta, double phi);
 }
 
+/// <summary>
+/// The survey the server gives a planet (the client's GetPlanetResourceInfo): which resources the planet carries and how much of each, on the
+/// client's display scale. Project rule (PI_DESIGN.md D9): CCP's resource set of a planet is not in the snapshot, so each planet carries
+/// <see cref="ResourcesPerPlanet"/> of the raw resources, chosen by its id; the amounts are the field's, so the survey and the extractor
+/// yields read the same numbers.
+/// </summary>
+public static class PlanetSurvey
+{
+    public const int ResourcesPerPlanet = 4;
+    private const int Rows = 16;
+    private const int Columns = 32;
+
+    /// <summary>The raw resources the planet carries: a run of the sorted raw types, starting where the planet's id puts it.</summary>
+    public static IReadOnlyList<int> ResourcesOf(long planetId, IReadOnlyList<int> rawTypes)
+    {
+        if (rawTypes.Count == 0) return [];
+        var sorted = rawTypes.OrderBy(type => type).ToArray();
+        var start = (int)((ulong)planetId * 0x9E3779B97F4A7C15UL >> 33) % sorted.Length;
+        return [.. Enumerable.Range(0, Math.Min(ResourcesPerPlanet, sorted.Length)).Select(i => sorted[(start + i) % sorted.Length])];
+    }
+
+    /// <summary>
+    /// The quality the client shows for a resource: the field's largest value on a sample grid over the sphere, scaled by 255 / 2 (the client's
+    /// MAX_DISPLAY_QUALITY is the maximum value times 255 / 2, so a value of the maximum shows as full).
+    /// </summary>
+    public static double QualityOf(IResourceField field, long planetId, int resourceTypeId)
+    {
+        var largest = 0.0;
+        for (var row = 0; row < Rows; row++)
+        {
+            var theta = Math.PI * row / (Rows - 1);
+            for (var column = 0; column < Columns; column++)
+                largest = Math.Max(largest, field.ValueAt(planetId, resourceTypeId, theta, 2 * Math.PI * column / Columns));
+        }
+        return largest * 255 * 0.5;
+    }
+}
+
 /// <summary>An extractor head: its id and its place (latitude, longitude in radians).</summary>
 public readonly record struct Head(int Id, double Latitude, double Longitude);
 

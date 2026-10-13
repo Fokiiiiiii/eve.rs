@@ -1,6 +1,6 @@
 # Planetary Interaction (PI): design
 
-Status: design and first implementation slice (see "Scope and cuts"). Client truth: V24.01 eve-logic build 3396210.
+Status: implemented (M1 domain, M2 service and store, slice 2 customs and launch cans); the live walk on lane eve_p2 passes (see section 10). Client truth: V24.01 eve-logic build 3396210.
 Work track: eve.rs `Eve.Planets` (domain), `Eve.Planets.Pg` (PostgreSQL, schema `planets`), `planetMgr` RPC in `Eve.Services.Planets`.
 
 ## 1. Inventory (before this work)
@@ -87,11 +87,13 @@ All numbers are per the file named. Time is in milliseconds (the client's `const
 
 Built in this track: colony read (planet info, colony snapshot, command pins, extractor lists), command stream validation and application, the simulation (extractors / ECU programs and heads, processors with schematics, storage, launchpads, links, routes, expedited transfer, command center levels), the launch record, planets-per-skill and upgrade-skill checks, persistence in one transaction per write, notifications after commit, the planetMgr RPC.
 
+Built in slice 2 and 3: customs offices (type 2233, an orbital of the planet in space: the simulation's ball with the planet in its slim item, so the client's launchpad window reaches it; `GetTaxRate` and `ImportExportWithPlanet`), launches as real cans in space (a wreck-kind ball of group 12 at the launch's place, a space row for the owner's rights and the five days), `GetPlanetResourceInfo` (no resource listed, D9).
+
 Cut (documented, not built):
-- Customs office import and export, POCO taxes and the orbital registry (`planetOrbitalRegistryBroker`, TODO line 865). Needs the orbital structure track.
-- Pickup of launches in space (launch containers in orbit). Launches are records until deleted.
-- GM tools (`GM*`), the depletion sim, and resource surveys beyond `GetResourceData`.
-- Corporation-owned colonies.
+- POCO taxes with an owner (the structure track). The office is NPC-owned only.
+- GM tools (`GM*`, shown to the GM role only in the client; no GM role in the server yet).
+- The depletion sim, the native resource survey (D9: no band, no resource list: the native harmonic and the planet's resource set are not in the snapshot).
+- Corporation-owned colonies. Obsolete extractors (group 1026) are refused as `InvalidPinType`; the client does not call them in V24.01 (D9 list in DEVIATIONS).
 
 ## 8. Gaps
 
@@ -104,3 +106,18 @@ Cut (documented, not built):
 - EVE University wiki, Interplanetary Consolidation / Planetology: https://wiki.eveuniversity.org/Skills:Planet_Management (one planet per level, up to 6).
 - Client: eve-logic commit 1dbb571 (files and lines above).
 - SDE 3396210: `sde.types`, `sde.typeDogma`, `sde.groups`, `sde.planetSchematics`, `sde.dogmaAttributes` (`sde/lock.json`).
+
+## 10. Status (as committed)
+
+- M1 `Eve.Planets` (domain): colony model, simulation, command validation and application, launches, expedited transfers, program math, deterministic resource field (D1). Tests: `Eve.Planets.Tests`, 23 pure tests.
+- M2 persistence and service: colony document in schema `planets` (migration `0001_planets.sql`, `EVE_PLANETS_SCHEMA`), launches table, SDE catalog loader (`PlanetCatalogLoader`), `planetMgr` service (`Eve.Services.Planets`), Host composition (`PlanetComposition.cs`), notification `OnMajorPlanetStateUpdate` after commit, ISK debit (ref 98) in the change's transaction. Tests: 3 PostgreSQL tests in `Eve.Planets.Tests` (store round trip, launches, catalog from the SDE) pass against `eve_p2`; 26 planet tests in total.
+- Slice 2 (customs and launches): customs offices (`planets.Customs`, `Eve.Services.Planets/Customs.cs`, `ICustomsOffices` in `Eve.Services.Inventory`), `planetOrbitalRegistryBroker` (`GetTaxRate`), launch cans (`UserLaunchCommodities` creates a type 23 can with the commodities as stacks and a launch row with its item id). Tests: `CustomsTests.cs` (rate table, fee formula, launchpad import/export, capacity refusal).
+- Live walk on lane `eve_p2` through `tools/mitm` (ports 26111/26211): `test_planet_walk.py` has two tests, both pass. Test 1 places a command center and a storage facility on a barren planet. Test 2 builds a colony (command center upgraded to 5, storage, ECU with heads, link, processor program, route, launchpad), advances the colony by 3 hours through the lazy simulation (a seeded past timestamp), launches 5 Water from the launchpad (a real can and launch row), then imports 20 Water and exports 5 Water through `ImportExportWithPlanet` at the office rate 0.17 (the planet is in system 31000604, wormhole space, where the NPC rate outside high-security applies). Fees 680 and 340 ISK match the formula. A stale tax rate is refused as `TaxChanged`.
+- Live-walk fixes made while running it: the headless client selects the character after creation (`charUnboundMgr.SelectCharacterID`), the `util.KeyVal` answers are read as records, and the customs rate expectation is the wormhole NPC rate. No server defect was found in this pass.
+- Slice 3 (client UI path): the customs office is type 2233 and an orbital in space (`PlaceStructure` carries the planet, protocol 67; the slim item has `planetID` and `level`). The office is created with the colony's first pin, placed after commit, placed again when a pilot enters its system (the simulation drops a scene without pilots) and told to a pilot at its first bind (`add_structures`). The launch can is a wreck-kind ball of group 12 with a space row for five days. `GetPlanetResourceInfo` answers an empty list (D9). Bugs found by the live walk and fixed: a structure's frame had no resonances (the simulation dropped the link; ESS had the same empty list), a placed structure was told only to pilots present at placement.
+- Live walk (slice 3): `test_planet_walk.py` passes both tests on `eve_p2` through `tools/mitm`. The colony test checks the office ball in the pilot's first bind (`UpdateStateRequest`, the notifications), the launch can's space row, the rate, and the import and export through the office's container (the call the launchpad window makes). Not checked: the launch can's ball (the walk's pilot is about 1.9e10 m from the planet and does not see it), the window's own drawing, and the container `Add` (dragging stock into the office, `MoveFromInventory`).
+- Slice 4: the container `Add` into the office (the client's MoveFromInventory) takes a stack from the pilot's ship hold; the office's room (35,000 m3) refuses with `NotEnoughSpace`; `GetCapacity` answers the room. The survey list (`GetPlanetResourceInfo`) gives each planet four raw resources by rule, with the field's qualities (D9). Band data is not served: the client's survey path raises before the server call (clientPlanet.py:781 unpacks scalar band limits; D9). The office and launch can are placed after commit (rollback places nothing); the placement log is quiet. The colony walk passes with the Add and the survey checks (`livelog28`).
+- No EveJS reference exists for PI (EveJS v0.12.9 has no planet code), so the comparison is with the client contract, not with EveJS.
+- Skills read: Interplanetary Consolidation (`LevelAsync`, `character_skills`), Command Center Upgrades. Remote Sensing and Planetology are not checked (no resource survey data, D1).
+- Pin items: created in the transaction with the pin (location: the planet), deleted with it; the command center consumes its hold item (checked: owner and type only; the hold flag is not checked).
+

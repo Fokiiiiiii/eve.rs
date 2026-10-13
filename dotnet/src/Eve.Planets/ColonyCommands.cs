@@ -583,6 +583,28 @@ public sealed partial class Colony
         return (runTime, source.LastRunTime.Value);
     }
 
+    // ----- customs: the launchpad's side of an import or export -----
+
+    /// <summary>A launchpad takes a commodity from a customs office; the volume must fit (spaceportPin.CanImportCommodities).</summary>
+    public void ImportToLaunchpad(long pinId, int typeId, long quantity)
+    {
+        var pad = PinOf(pinId);
+        if (pad.Kind != PinKind.Launchpad) throw new PlanetRefusal("CannotImportEndpointNotFound");
+        if (quantity < 1) throw new PlanetRefusal("PleaseSelectCommoditiesToImport");
+        var volume = Catalog.Type(typeId).Volume * quantity;
+        if (UsedVolume(pad) + volume > (Capacity(pad) ?? 0)) throw new PlanetRefusal("CannotImportCapacityExceeded");
+        AddCommodity(pad, typeId, quantity);
+    }
+
+    /// <summary>A launchpad gives a commodity to a customs office; the launchpad must hold it.</summary>
+    public void ExportFromLaunchpad(long pinId, int typeId, long quantity)
+    {
+        var pad = PinOf(pinId);
+        if (pad.Kind != PinKind.Launchpad) throw new PlanetRefusal("CannotImportEndpointNotFound");
+        if (quantity < 1 || pad.Contents.GetValueOrDefault(typeId) < quantity) throw new PlanetRefusal("RouteFailedValidationExpeditedSourceLacksCommodityQty");
+        RemoveCommodity(pad, typeId, quantity);
+    }
+
     // ----- helpers for the host -----
 
     /// <summary>Route removal of a pin's routes, for an abandoned colony's or a removed pin's links (exposed for tests).</summary>

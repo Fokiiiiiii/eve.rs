@@ -99,6 +99,7 @@ public sealed partial class PersistenceIndustryJobOperations : Eve.Services.Core
         cancellationToken.ThrowIfCancellationRequested();
         if (string.IsNullOrWhiteSpace(request.Context.OperationId))
             throw InvalidJob();
+        request = request with { Job = await WithDecryptorAsync(request.Job, cancellationToken) };
         var fingerprint = Fingerprint(request.Job);
         try
         {
@@ -113,6 +114,30 @@ public sealed partial class PersistenceIndustryJobOperations : Eve.Services.Core
                 throw InvalidJob();
             return replay.Value.JobId;
         }
+    }
+
+    /// <summary>
+    /// The client chooses a decryptor in the materials dictionary, not as an optional type: an invention takes the first
+    /// listed item that is a decryptor (it carries a decryptor attribute) and is not a material of the activity.
+    /// </summary>
+    private async Task<Eve.Services.Core.IndustryJobInstallSubmission> WithDecryptorAsync(
+        Eve.Services.Core.IndustryJobInstallSubmission job,
+        CancellationToken cancellationToken)
+    {
+        if (job.ActivityId != InventionActivity || job.OptionalTypeId is not null || job.MaterialTypeIds is not { Count: > 0 } listed)
+            return job;
+        var recipe = await ReadRecipeAsync(job.BlueprintTypeId, job.ActivityId, cancellationToken);
+        foreach (var typeId in listed)
+        {
+            if (recipe.Materials.Any(material => material.TypeId == typeId))
+                continue;
+            if (await ReadTypeAttributeAsync(typeId, 1112, cancellationToken) is not null ||
+                await ReadTypeAttributeAsync(typeId, 1113, cancellationToken) is not null ||
+                await ReadTypeAttributeAsync(typeId, 1114, cancellationToken) is not null ||
+                await ReadTypeAttributeAsync(typeId, 1124, cancellationToken) is not null)
+                return job with { OptionalTypeId = typeId };
+        }
+        return job;
     }
 
     private async ValueTask<long> InstallOnceAsync(
@@ -152,9 +177,11 @@ public sealed partial class PersistenceIndustryJobOperations : Eve.Services.Core
         }
 
         var blueprint = await _items.LockAndGetAsync(connection, transaction, job.BlueprintId, cancellationToken);
+        // The blueprint's own location and copy flag are authoritative; a client value of zero means the client did not send it.
         if (blueprint is null || blueprint.OwnerId != job.OwnerId || blueprint.TypeId != job.BlueprintTypeId ||
-            blueprint.LocationId != job.BlueprintLocationId || blueprint.Flag != job.BlueprintLocationFlagId ||
-            !blueprint.Singleton || blueprint.BlueprintCopy != job.BlueprintCopy || blueprint.BlueprintLocked)
+            job.BlueprintLocationId > 0 && blueprint.LocationId != job.BlueprintLocationId ||
+            job.BlueprintLocationFlagId > 0 && blueprint.Flag != job.BlueprintLocationFlagId ||
+            !blueprint.Singleton || blueprint.BlueprintLocked)
             throw InvalidJob();
         if (blueprint.BlueprintCopy &&
             (blueprint.BlueprintRuns is not { } remainingRuns || remainingRuns < job.Runs))
@@ -186,6 +213,12 @@ public sealed partial class PersistenceIndustryJobOperations : Eve.Services.Core
                 throw InvalidJob();
             skillLevels[requirement.TypeId] = level;
         }
+        // The facility's jumps from the installer against the distance skill of the activity (the client's FACILITY_DISTANCE).
+        var installerSystemId = await _installerSystem(actor.CharacterId, cancellationToken) ?? throw InvalidJob();
+        var jumps = await JumpsAsync(installerSystemId, job.SolarSystemId, cancellationToken);
+        var distanceLevel = await _skills.LevelAsync(connection, transaction, actor.CharacterId, DistanceSkill(job.ActivityId), cancellationToken);
+        if (jumps is null || jumps > IR.MaxDistanceJumps(distanceLevel))
+            throw InvalidJob();
         await CheckSlotsAsync(connection, transaction, actor.CharacterId, job.ActivityId, cancellationToken);
 
         var duration = await TimeInSecondsAsync(
@@ -198,9 +231,10 @@ public sealed partial class PersistenceIndustryJobOperations : Eve.Services.Core
         if (job.ActivityId == InventionActivity)
         {
             var decryptor = await ReadDecryptorAsync(job.OptionalTypeId, job.OptionalTypeId2, cancellationToken);
+            var lowerSkills = await LowerInventionSkillsAsync(cancellationToken);
             probability = IR.InventionProbability(
                 recipe.Products.Select(product => product.Probability).ToArray(),
-                recipe.Skills.Select(skill => skillLevels[skill.TypeId]).ToArray(),
+                IR.InventionSkillBonus(recipe.Skills.Select(skill => (skillLevels[skill.TypeId], lowerSkills.Contains(skill.TypeId)))),
                 decryptor.ProbabilityMultiplier);
             invention = new JsonObject
             {
@@ -262,6 +296,7 @@ public sealed partial class PersistenceIndustryJobOperations : Eve.Services.Core
             (object?)job.OptionalTypeId2 ?? DBNull.Value,
             job.Wallet.OwnerId, job.Wallet.AccountKey, snapshotJson);
         var jobId = (long)(await insert.ExecuteScalarAsync(cancellationToken))!;
+        await _readyJobs.ScheduleAsync(connection, transaction, jobId, endFileTime, cancellationToken);
         await PublishChangedAsync(connection, transaction, jobId, job.OwnerId, blueprint.Id,
             actor.CharacterId, 1, 0, request.Context.OperationId, cancellationToken);
         await transaction.CommitAsync(cancellationToken);
@@ -348,13 +383,14 @@ public sealed partial class PersistenceIndustryJobOperations : Eve.Services.Core
         if (activityId == ManufacturingActivity)
         {
             activities = [ManufacturingActivity];
-            slots = 1 + await _skills.LevelAsync(connection, transaction, characterId, MassProductionSkillId, cancellationToken)
-                      + await _skills.LevelAsync(connection, transaction, characterId, AdvancedMassProductionSkillId, cancellationToken);
+            slots = 1 + await SlotBonusAsync(connection, transaction, characterId, MassProductionSkillId, 450, cancellationToken)
+                      + await SlotBonusAsync(connection, transaction, characterId, AdvancedMassProductionSkillId, 450, cancellationToken);
         }
         else if (activityId is TimeResearchActivity or MaterialResearchActivity or CopyingActivity or InventionActivity)
         {
             activities = [TimeResearchActivity, MaterialResearchActivity, CopyingActivity, InventionActivity];
-            slots = 1 + await _skills.LevelAsync(connection, transaction, characterId, LaboratoryOperationSkillId, cancellationToken);
+            slots = 1 + await SlotBonusAsync(connection, transaction, characterId, LaboratoryOperationSkillId, 471, cancellationToken)
+                      + await SlotBonusAsync(connection, transaction, characterId, AdvancedLaboratoryOperationSkillId, 471, cancellationToken);
         }
         else
         {
@@ -379,6 +415,87 @@ public sealed partial class PersistenceIndustryJobOperations : Eve.Services.Core
         var used = (long)(await count.ExecuteScalarAsync(cancellationToken))!;
         if (used >= slots)
             throw InvalidJob();
+    }
+
+    /// <summary>The slot bonus of a skill: its SDE attribute per level times the character's level (0 when it has none).</summary>
+    private async Task<long> SlotBonusAsync(
+        Npgsql.NpgsqlConnection connection,
+        Npgsql.NpgsqlTransaction transaction,
+        long characterId,
+        int skillTypeId,
+        int attributeId,
+        CancellationToken cancellationToken)
+    {
+        var perLevel = await ReadTypeAttributeAsync(skillTypeId, attributeId, cancellationToken) ?? 0;
+        return (long)perLevel * await _skills.LevelAsync(connection, transaction, characterId, skillTypeId, cancellationToken);
+    }
+
+    /// <summary>The skill set that gives the jump allowance of an activity (the client's DISTANCE_SKILL_FOR_ACTIVITY).</summary>
+    private static int DistanceSkill(int activityId) => activityId switch
+    {
+        ManufacturingActivity => ScmSkillId,
+        ReactionActivity => RemoteReactionsSkillId,
+        _ => ScientificNetworkingSkillId,
+    };
+
+    /// <summary>The skill types on the lower invention probability list (the SDE type list the client reads).</summary>
+    private async Task<IReadOnlySet<int>> LowerInventionSkillsAsync(CancellationToken cancellationToken)
+    {
+        var skills = new HashSet<int>();
+        var rows = await _sde.ReadAsync("typeLists", [(long)LowerInventionSkillTypeListId], cancellationToken);
+        if (rows.Count > 0 && rows[0].Doc.TryGetProperty("includedTypeIDs", out var ids) && ids.ValueKind == System.Text.Json.JsonValueKind.Array)
+            foreach (var id in ids.EnumerateArray())
+                if (id.ValueKind == System.Text.Json.JsonValueKind.Number)
+                    skills.Add(id.GetInt32());
+        return skills;
+    }
+
+    /// <summary>The jumps between two solar systems over the stargate graph (the SDE neighbours), or null when none within the allowance.</summary>
+    private async Task<int?> JumpsAsync(long from, long to, CancellationToken cancellationToken)
+    {
+        if (from == to)
+            return 0;
+        _jumpGraph ??= LoadJumpGraphAsync();
+        var graph = await _jumpGraph;
+        var distance = new Dictionary<long, int> { [from] = 0 };
+        var queue = new Queue<long>();
+        queue.Enqueue(from);
+        while (queue.Count > 0)
+        {
+            var system = queue.Dequeue();
+            var jumps = distance[system];
+            if (jumps >= IR.MaxIndustryDistanceJumps)
+                continue;
+            foreach (var neighbour in graph.TryGetValue(system, out var neighbours) ? neighbours : [])
+            {
+                if (distance.ContainsKey(neighbour))
+                    continue;
+                if (neighbour == to)
+                    return jumps + 1;
+                distance[neighbour] = jumps + 1;
+                queue.Enqueue(neighbour);
+            }
+        }
+        return null;
+    }
+
+    /// <summary>The stargate graph: each gate joins its system to its destination (the pinned SDE carries no neighbour lists).</summary>
+    private async Task<IReadOnlyDictionary<long, long[]>> LoadJumpGraphAsync()
+    {
+        var rows = await _sde.ReadAsync("mapStargates", cancellationToken: CancellationToken.None);
+        var graph = new Dictionary<long, HashSet<long>>();
+        foreach (var row in rows)
+        {
+            if (!row.Doc.TryGetProperty("solarSystemID", out var from) || from.ValueKind != System.Text.Json.JsonValueKind.Number ||
+                !row.Doc.TryGetProperty("destination", out var destination) ||
+                !destination.TryGetProperty("solarSystemID", out var to) || to.ValueKind != System.Text.Json.JsonValueKind.Number)
+                continue;
+            var origin = from.GetInt64();
+            var target = to.GetInt64();
+            if (!graph.TryGetValue(origin, out var origins)) graph[origin] = origins = [];
+            origins.Add(target);
+        }
+        return graph.ToDictionary(pair => pair.Key, pair => pair.Value.ToArray());
     }
 
     /// <summary>

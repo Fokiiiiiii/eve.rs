@@ -139,6 +139,7 @@ internal sealed partial class CharacterServicesComposition
     private static readonly System.Net.Http.HttpClient industryIndexHttp = new();
 
     private IIndustryCostIndexSource industryCostIndexes = default!;
+    private IndustryReadyJobs industryReady = default!;
 
     /// <summary>The stored ESI cost indices, refreshed at most daily; EVE_INDUSTRY_INDEX_SEED=skip makes no call out.</summary>
     private IIndustryCostIndexSource IndustryCostIndexSetup()
@@ -272,13 +273,18 @@ internal sealed partial class CharacterServicesComposition
         return new PyList(facilities);
     }
 
-    private Task IndustryFacilities()
+    private async Task IndustryFacilities()
     {
         industryCostIndexes = IndustryCostIndexSetup();
+        industryReady = new IndustryReadyJobs(source, industrySchema, foundations.Events, foundations.Scheduler, () => now());
+        industryReady.Register();
+        await industryReady.StartAsync();
         industryJobOperations = new PersistenceIndustryJobOperations(
             source, industrySchema, items, economyWallets, skills, sde, adjustedPrices, corporations,
-            foundations.Events, stations, ResolveIndustryFacilityAsync, industryCostIndexes, now);
-        return Task.CompletedTask;
+            foundations.Events, stations, ResolveIndustryFacilityAsync, industryCostIndexes,
+            async (characterId, token) => (await characters.GetAsync(characterId, token)) is { } character ? (long?)character.SolarSystemId : null,
+            industryReady, now);
+        
     }
 
     static long PositiveMapRpcId(PyValue value) => value switch

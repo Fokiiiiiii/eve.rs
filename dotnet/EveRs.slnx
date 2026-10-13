@@ -28,6 +28,7 @@
     <Project Path="src/Eve.Agents/Eve.Agents.csproj" />
     <Project Path="src/Eve.Structures/Eve.Structures.csproj" />
     <Project Path="src/Eve.Insurgency/Eve.Insurgency.csproj" />
+    <Project Path="src/Eve.Planets/Eve.Planets.csproj" />
     <Project Path="src/Eve.Space/Eve.Space.csproj" />
     <Project Path="src/Eve.Trade/Eve.Trade.csproj" />
     <Project Path="src/Eve.Bookmarks/Eve.Bookmarks.csproj" />
@@ -82,6 +83,7 @@
     <Project Path="tests/Eve.Agents.Tests/Eve.Agents.Tests.csproj" />
     <Project Path="tests/Eve.Structures.Tests/Eve.Structures.Tests.csproj" />
     <Project Path="tests/Eve.Insurgency.Tests/Eve.Insurgency.Tests.csproj" />
+    <Project Path="tests/Eve.Planets.Tests/Eve.Planets.Tests.csproj" />
     <Project Path="tests/Eve.Space.Tests/Eve.Space.Tests.csproj" />
     <Project Path="tests/Eve.Universe.Tests/Eve.Universe.Tests.csproj" />
     <Project Path="tests/Eve.Wormholes.Tests/Eve.Wormholes.Tests.csproj" />

@@ -60,39 +60,58 @@ public sealed partial class PlanetMgrService
     /// </summary>
     private void PlaceOffice(long planetId, PlanetBody body)
     {
-        simulation?.PlaceStructure(new SimPlaceStructure(Customs.OfficeId(planetId), (int)body.SolarSystemId, "Customs Office", Customs.OfficeTypeId, Customs.OfficeGroupId,
+        if (simulation is null)
+        {
+            Console.Error.WriteLine($"eve-host: the customs office of planet {planetId} is not put in space: no simulation");
+            return;
+        }
+        Console.Error.WriteLine($"eve-host: the customs office of planet {planetId} is put in space in system {body.SolarSystemId}");
+        simulation.PlaceStructure(new SimPlaceStructure(Customs.OfficeId(planetId), (int)body.SolarSystemId, "Customs Office", Customs.OfficeTypeId, Customs.OfficeGroupId,
             Customs.OfficePosition(body), Customs.OfficeRadius, CustomsOfficeOwner, 0, 0,
-            new SimStructureHealth(0, 0, 0, [], 0, [0, 0, 0], [0, 0, 0]),
+            // no hit points and no resonances of its own (twelve values: four kinds in each of the three layers, all one)
+            new SimStructureHealth(0, 0, 0, [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1], 0, [0, 0, 0], [0, 0, 0]),
             new SimStructureStatus(StructureState.ShieldVulnerable, UpkeepState.FullPower, null, null, null), planetId));
     }
 
     /// <summary>
-    /// Puts the existing customs offices in space again: a simulation starts with none, so the host calls this once it has the simulation.
-    /// An office whose planet is not in the catalog is left out (it is reported, not thrown: the other offices still go up).
+    /// Puts the customs offices in space: all of them at the host's start (a simulation starts with none), and those of a system when a pilot
+    /// enters it (the simulation drops a scene that has no pilot, and its balls with it). An office whose planet is not in the catalog is left
+    /// out and reported; the others still go up.
     /// </summary>
-    public async Task PlaceOfficesAsync(CancellationToken cancellationToken = default)
+    public async Task PlaceOfficesAsync(int? solarSystemId = null, CancellationToken cancellationToken = default)
     {
-        var planets = new List<long>();
-        await using (var connection = await source.OpenConnectionAsync(cancellationToken))
-        await using (var command = new NpgsqlCommand($"SELECT id FROM {inventorySchema}.items WHERE type_id = $1", connection)
+        try
         {
-            Parameters = { new() { Value = Customs.OfficeTypeId } },
-        })
-        await using (var reader = await command.ExecuteReaderAsync(cancellationToken))
-        {
-            while (await reader.ReadAsync(cancellationToken))
-                if (Customs.PlanetOf(reader.GetInt64(0)) is { } planetId) planets.Add(planetId);
+            var planets = new List<long>();
+            await using (var connection = await source.OpenConnectionAsync(cancellationToken))
+            await using (var command = new NpgsqlCommand($"SELECT id FROM {inventorySchema}.items WHERE type_id = $1 AND ($2::bigint IS NULL OR location_id = $2)", connection)
+            {
+                Parameters =
+                {
+                    new() { Value = Customs.OfficeTypeId },
+                    new() { Value = (object?)solarSystemId ?? DBNull.Value, NpgsqlDbType = NpgsqlTypes.NpgsqlDbType.Bigint },
+                },
+            })
+            await using (var reader = await command.ExecuteReaderAsync(cancellationToken))
+            {
+                while (await reader.ReadAsync(cancellationToken))
+                    if (Customs.PlanetOf(reader.GetInt64(0)) is { } planetId) planets.Add(planetId);
+            }
+            foreach (var planetId in planets)
+            {
+                try
+                {
+                    PlaceOffice(planetId, await BodyAsync(planetId, cancellationToken));
+                }
+                catch (Exception error)
+                {
+                    Console.Error.WriteLine($"eve-host: the customs office of planet {planetId} was not put in space: {error.Message}");
+                }
+            }
         }
-        foreach (var planetId in planets)
+        catch (Exception error)
         {
-            try
-            {
-                PlaceOffice(planetId, await BodyAsync(planetId, cancellationToken));
-            }
-            catch (Exception error)
-            {
-                Console.Error.WriteLine($"eve-host: the customs office of planet {planetId} was not put in space: {error.Message}");
-            }
+            Console.Error.WriteLine($"eve-host: the customs offices were not put in space: {error.Message}");
         }
     }
 

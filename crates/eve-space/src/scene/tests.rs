@@ -2579,6 +2579,16 @@ fn a_customs_office_is_an_orbital_of_its_planet_with_the_planet_and_level_in_its
 }
 
 #[test]
+fn a_pilot_who_comes_in_is_told_the_structures_placed_while_it_was_away_as_balls() {
+    let without = format!("{:?}", scene().bind(SESSION, NOON)).matches("AddBalls2").count();
+    let mut scene = scene();
+    let placement = structure_placement(&scene, NOON);
+    scene.place_structure(placement, NOON);
+    let with = format!("{:?}", scene.bind(SESSION, NOON)).matches("AddBalls2").count();
+    assert_eq!(with, without + 1, "the structure is one more ball in the first bind of a pilot");
+}
+
+#[test]
 fn a_structure_placed_while_a_pilot_is_in_the_system_is_added_to_its_view_and_its_state_change_and_removal_are_told()
  {
     let mut scene = scene();

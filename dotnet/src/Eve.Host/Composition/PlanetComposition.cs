@@ -23,6 +23,9 @@ internal sealed partial class CharacterServicesComposition
         planetMgr = new PlanetMgrService(source, new PlanetStore(source, schema), catalog, new DeterministicResourceField(), items, economyWallets,
             skills, now, NotifyPlanetChanged, Env("EVE_INVENTORY_SCHEMA", PgItemStore.DefaultSchema), sim, spaceItemStore, dogma);
         await planetMgr.PlaceOfficesAsync();
+        // a pilot that enters a system brings its offices back into the simulation's scene (as the cans and the structures are)
+        if (spaceSessions is not null)
+            spaceSessions.SystemEntered += system => _ = planetMgr.PlaceOfficesAsync(system);
         planetRegistry = new PlanetOrbitalRegistryService(planetMgr, now);
     }
 

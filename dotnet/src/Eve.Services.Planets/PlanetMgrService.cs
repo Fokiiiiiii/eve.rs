@@ -154,6 +154,13 @@ public sealed partial class PlanetMgrService(NpgsqlDataSource source, PlanetStor
     [Method("GetResourceData")]
     public PyValue GetResourceData(ServiceCall call) => Py.KeyVal(("data", PyNone.Instance), ("numBands", new PyInt(0)), ("proximity", PyNone.Instance));
 
+    /// <summary>
+    /// GetPlanetResourceInfo: the resources of the planet with their quality (resourceController lists them). The planet's resource set is CCP's
+    /// (not in the snapshot, PI_DESIGN.md D9): none is listed, so the resource list is empty rather than invented.
+    /// </summary>
+    [Method("GetPlanetResourceInfo")]
+    public PyValue GetPlanetResourceInfo(ServiceCall call) => new PyDict([]);
+
     // ----- the writes -----
 
     /// <summary>UserUpdateNetwork(changes): the batch of the client's command stream, applied in one transaction (clientPlanet.SubmitChanges).</summary>

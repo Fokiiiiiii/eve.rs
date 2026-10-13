@@ -10,9 +10,13 @@ facility is paid for, and the colony is in the database. Run it through tools/mi
 
 import json
 import os
+import re
 from contextlib import contextmanager
 
 import pytest
+
+from evecli.observe import wait_quietly
+from tests.test_fob_insystem_walk import seed_hub_pilot
 
 from evecli import marshal as m
 
@@ -22,6 +26,7 @@ from tests.test_login_to_character import LIVE, WALK, connect, revive
 
 PG_URL = os.environ.get("EVE_PG_URL", "")
 PLANET = 40486618  # a barren planet of the SDE (sde.mapPlanets, type 2016, radius 2310000 m)
+PLANET_SYSTEM = 31000604  # its solar system (sde.mapPlanets; a wormhole system)
 BARREN = 2016
 COMMAND_CENTER = 2524  # Barren Command Center
 STORAGE = 2541  # Barren Storage Facility (250,000 ISK)
@@ -112,15 +117,19 @@ def record(value):
 
 
 @contextmanager
-def new_pilot(tag: str):
-    """A character created through the login walk, with its ship; yields (client, character, ship)."""
+def new_pilot(tag: str, system: int | None = None):
+    """A character created through the login walk, with its ship; yields (client, character, ship). With a system, the ship is seeded in space there
+    before the character is selected (the server brings a selected pilot into space where its rows say)."""
     run = run_id()
     creation = next(step for step in WALK["steps"] if step["call"][1] == "CreateCharacterWithDoll" and "ok" in step)
     with connect(f"{tag}-{run}") as client:
         service, method, described = creation["call"]
         character = m.plain(client.call(service, method, *[revive(value, run) for value in described]))
+        ship = seed_ship(character)
+        if system is not None:
+            seed_hub_pilot(character, ship, system)
         client.call("charUnboundMgr", "SelectCharacterID", charID=character, secondChoiceID=None, skipTutorial=False)
-        yield client, character, seed_ship(character)
+        yield client, character, ship
 
 
 def colony_doc(owner: int, planet: int) -> dict:
@@ -161,8 +170,19 @@ def pin_of_type(colony: dict, type_id: int) -> int:
     return next(p["id"] for p in colony["pins"] if p["typeID"] == type_id)
 
 
+def ball_of(events: list, item: int, planet: int | None) -> bool:
+    """Whether the events tell of the item's ball: its slim item has its id (and, for an orbital, its planet and its category). A destiny update's
+    arguments come through as text, so the keys are matched in either quoting."""
+    text = json.dumps(events, default=str)
+    value = r"[^\]]{0,24}?"  # a number, or a long in its wrapper ({'$long': N})
+    if not re.search(r"[\"']itemID[\"'],\s*%s%d\b" % (value, item), text):
+        return False
+    return planet is None or bool(re.search(r"[\"']planetID[\"'],\s*%s%d\b" % (value, planet), text)
+                                  and re.search(r"[\"']categoryID[\"'],\s*46\b", text))
+
+
 def test_a_colony_runs_in_time_launches_and_trades_at_customs():
-    with new_pilot("colony") as (client, pilot, ship):
+    with new_pilot("colony", system=PLANET_SYSTEM) as (client, pilot, ship):
         skill(pilot, CONSOLIDATION, 1)
         skill(pilot, COMMAND_CENTER_UPGRADE, 5)
         dbseed.set_isk(pilot, 10_000_000)
@@ -194,17 +214,32 @@ def test_a_colony_runs_in_time_launches_and_trades_at_customs():
         colony = record(client.call_bound(handle, "GetPlanetInfo"))
         assert pin_contents(colony, storage).get(AQUEOUS, 0) > 0, "the extractor's output reached the storage"
 
+        # the pilot is in the planet's system: the customs office is a ball there (an orbital of the planet, the launchpad window reaches it through it)
+        office = 1_200_000_000_000 + PLANET
+        assert system == PLANET_SYSTEM, "the planet is in the system the pilot was seeded in"
+        client.notifications.clear()
+        ballpark = client.call("beyonce", "MachoBindObject", system, None)
+        assert ballpark and ballpark[0], "the pilot's ballpark is bound: the pilot is in the system"
+        # the ballpark's state is the scene the pilot is given: its balls arrive as notifications after the state is asked for
+        client.call_bound(ballpark[0], "UpdateStateRequest")
+        assert ball_of(wait_quietly(client, 4.0), office, PLANET), "the customs office is not a ball of the planet in its system"
+
         # the launch: commodities leave the command center into a can in the system, with the launch row naming it
         set_contents(pilot, PLANET, center, {WATER: 50})
+        client.notifications.clear()
         client.call_bound(handle, "UserLaunchCommodities", center, m.Dict([(WATER, 5)]))
         assert pin_contents(record(client.call_bound(handle, "GetPlanetInfo")), center)[WATER] == 45
-        can = psql(f"SELECT count(*) FROM {schema('EVE_INVENTORY_SCHEMA')}.items c WHERE c.type_id = {LAUNCH_CONTAINER} AND c.owner_id = {pilot} "
+        can = psql(f"SELECT c.id FROM {schema('EVE_INVENTORY_SCHEMA')}.items c WHERE c.type_id = {LAUNCH_CONTAINER} AND c.owner_id = {pilot} "
                    f"AND c.location_id = {system} AND EXISTS (SELECT 1 FROM {schema('EVE_INVENTORY_SCHEMA')}.items s WHERE s.location_id = c.id AND s.type_id = {WATER} AND s.quantity = 5)")
-        assert can == "1", "the launch container holds the launched commodities"
+        assert can, "the launch container holds the launched commodities"
         assert psql(f"SELECT count(*) FROM {schema('EVE_PLANETS_SCHEMA')}.launches WHERE owner_id = {pilot} AND NOT deleted") == "1"
+        # the can is in space: its space row (the owner's, a can's group, the launch's expiry) and its ball in the pilot's scene
+        assert psql(f"SELECT group_id || '|' || character_id FROM {schema('EVE_SPACE_SCHEMA')}.space_items WHERE item_id = {can}") == f"12|{pilot}"
+        # its ball is told to the pilots who can see its place: this pilot is about 1.9e10 m from the planet (the walk's pose), so the ball is not
+        # checked here; the simulation's wreck placement is checked in eve-space (the watchers of a placed wreck)
+        wait_quietly(client, 2.0)
 
         # customs: the office is the planet's (its id). The planet is in system 31000604 (wormhole space): the NPC rate outside high-security is 17%
-        office = 1_200_000_000_000 + PLANET
         registry = client.call("planetOrbitalRegistryBroker", "MachoBindObject", system, None)[0]
         rate = record(client.call_bound(registry, "GetTaxRate", office))
         assert abs(rate - 0.17) < 1e-9

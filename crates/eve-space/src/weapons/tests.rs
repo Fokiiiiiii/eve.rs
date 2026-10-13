@@ -1781,7 +1781,7 @@ fn a_strike_stops_the_jump_and_the_cloak_for_its_no_jump_window() {
         effect_id: 0,
         module_id: spec().ship_id + 2,
         fx: "effects.Cloaking".to_string(),
-        action: Some(crate::modules::Action::Cloak { warp_safe: false }),
+        action: Some(crate::modules::Action::Cloak { warp_safe: false, targeting_delay_ms: 0.0 }),
         duration_ms: 1_000.0,
         ..strike_effect(spec().ship_id + 2, strike_of(1))
     };

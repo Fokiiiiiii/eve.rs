@@ -112,6 +112,10 @@ impl Scene {
         if pilot.targeting.pending.iter().any(|p| p.target == target) {
             return Self::answer(session, order, true, self.locked_by(session));
         }
+        // the post-decloak targeting delay: a ship that has just decloaked acquires no lock until it has passed (existing locks are kept)
+        if pilot.targeting_blocked_until > now {
+            return Self::refused(session, order, Refusal::of("TARGET_NOT_FOUND"));
+        }
         let Some(subject) = self.subject(target, now) else {
             return Self::refused(session, order, Refusal::of("TARGET_NOT_FOUND"));
         };

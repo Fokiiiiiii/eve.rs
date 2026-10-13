@@ -280,7 +280,10 @@ fn effect_of(case: &Value) -> Effect {
                 radius: v["radius"].as_f64().unwrap(),
             };
             if a["kind"] == "cloak" {
-                return Action::Cloak { warp_safe: a["warpSafe"].as_bool().unwrap_or(false) };
+                return Action::Cloak {
+                    warp_safe: a["warpSafe"].as_bool().unwrap_or(false),
+                    targeting_delay_ms: a["targetingDelayMs"].as_f64().unwrap_or(0.0),
+                };
             }
             if a["kind"] == "warpBubble" {
                 return Action::WarpBubble { range: a["range"].as_f64().unwrap() };

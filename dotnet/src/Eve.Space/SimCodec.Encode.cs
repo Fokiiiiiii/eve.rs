@@ -308,7 +308,7 @@ private static void WriteAction(Writer w, SimAction action)
                 if (charged.Fallback is { } fallback) WriteAction(w, fallback);
                 break;
             case SimAction.Cloak cloak:
-                w.U8(5); w.U8(cloak.WarpSafe ? (byte)1 : (byte)0);
+                w.U8(5); w.U8(cloak.WarpSafe ? (byte)1 : (byte)0); w.F64(cloak.TargetingDelayMs);
                 break;
             case SimAction.WarpBubble bubble:
                 if (!(double.IsFinite(bubble.RangeMeters) && bubble.RangeMeters > 0))

@@ -100,6 +100,9 @@ public const int ReloadTime = 1795;
     /// <summary>After a doomsday: the ship is immobile for this long, and it may not jump or cloak for the longer window.</summary>
     public const int DoomsdayImmobilityDuration = 2428;
     public const int DoomsdayNoJumpOrCloakDuration = 2427;
+
+    /// <summary>cloakingTargetingDelay (560): the milliseconds a ship that decloaks acquires no lock (the cloaking device's value).</summary>
+    public const int CloakingTargetingDelay = 560;
     /// <summary>How long the buff a doomsday applies lasts on its recipients.</summary>
     public const int DoomsdayAppliedDBuffDuration = 5412;
 

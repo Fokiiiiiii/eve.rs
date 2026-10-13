@@ -149,7 +149,7 @@ impl Scene {
     /// Whether a cloaking device that is not warp-safe runs on the ship of `session`: such a cloak holds the ship out of warp until it decloaks.
     pub(crate) fn cloak_blocks_warp(&self, session: SessionId) -> bool {
         self.running_actions(session)
-            .any(|action| matches!(action, crate::modules::Action::Cloak { warp_safe: false }))
+            .any(|action| matches!(action, crate::modules::Action::Cloak { warp_safe: false, .. }))
     }
 
     /// The actions of the effects that run on the ship of `session` (a state of the ship while they run, not a cycle).

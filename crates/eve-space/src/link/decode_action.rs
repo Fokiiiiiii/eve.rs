@@ -115,6 +115,7 @@ pub(super) fn read_action(reader: &mut Reader) -> Result<Action, DecodeError> {
                 1 => true,
                 _ => return Err(DecodeError::BadValue("warp_safe")),
             },
+            targeting_delay_ms: reader.f64()?,
         }),
         16 => {
             let range = reader.f64()?;

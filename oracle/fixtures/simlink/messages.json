@@ -4,15 +4,15 @@
   {
    "name": "hello",
    "kind": "Hello",
-   "version": 65,
-   "hex": "03000000014100"
+   "version": 66,
+   "hex": "03000000014200"
   },
   {
    "name": "hello ack",
    "kind": "HelloAck",
-   "version": 65,
+   "version": 66,
    "pollHz": 4,
-   "hex": "0700000002410004000000"
+   "hex": "0700000002420004000000"
   },
   {
    "name": "enter by undocking",
@@ -1352,12 +1352,13 @@
     "targetId": "0",
     "action": {
      "kind": "cloak",
-     "warpSafe": false
+     "warpSafe": false,
+     "targetingDelayMs": 0.0
     },
     "onChanges": [],
     "offChanges": []
    },
-   "hex": "52000000134f2c3859955c0600fdb6089b15090000392d0000c50000001000656666656374732e436c6f616b696e67000000000088c3400000000000003e40e803000000000000000000000800000000000000000500"
+   "hex": "5a000000134f2c3859955c0600fdb6089b15090000392d0000c50000001000656666656374732e436c6f616b696e67000000000088c3400000000000003e40e8030000000000000000000008000000000000000005000000000000000000"
   },
   {
    "name": "activate a field generator's bubble",

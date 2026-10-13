@@ -67,12 +67,12 @@ public sealed partial class SpaceContainers
     /// <summary>The life of a beacon: one hour, and thirty minutes for the covert one (EveJS <c>MOBILE_CYNO_LIFETIME_MS</c>, <c>COVERT_MOBILE_CYNO_LIFETIME_MS</c>).</summary>
     private static TimeSpan BeaconLifetime(int typeId) => typeId == JumpDriveRules.CovertBeaconType ? TimeSpan.FromMinutes(30) : TimeSpan.FromHours(1);
 
-    /// <summary>The range of a Mobile Cynosural Inhibitor: 100 km (the wiki; the SDE carries none for the type).</summary>
-    private const double InhibitorRangeMeters = 100_000;
+    /// <summary>The range of a Mobile Cynosural Inhibitor: 200 km (the wiki, "Mobile Cynosural Inhibitor"; the SDE carries none for the type).</summary>
+    private const double InhibitorRangeMeters = 200_000;
 
-    /// <summary>The closest two inhibitors may be dropped: two of 100 km fields would overlap inside 200 km (the wiki: a second inhibitor "cannot be placed where two cyno
+    /// <summary>The closest two inhibitors may be dropped: two of 200 km fields would overlap inside 400 km (the wiki: a second inhibitor "cannot be placed where two cyno
     /// fields would overlap").</summary>
-    private const double InhibitorMinimumSpacingMeters = 200_000;
+    private const double InhibitorMinimumSpacingMeters = 400_000;
 
     /// <summary>The payload of the anchor job: the mobile deployable to anchor.</summary>
     public sealed record DisruptorAnchorDue(long DeployableId);
@@ -263,7 +263,7 @@ public sealed partial class SpaceContainers
 
     /// <summary>
     /// Whether an anchored Mobile Cynosural Inhibitor covers a beacon at its activation: an inhibitor in its system whose anchoring time is past, whose record's time
-    /// is not up and whose range (the record's <c>RangeMeters</c>, 100 km) reaches the beacon. A covert beacon is not stopped (the wiki: "not covert cynos"). An
+    /// is not up and whose range (the record's <c>RangeMeters</c>, 200 km) reaches the beacon. A covert beacon is not stopped (the wiki: "not covert cynos"). An
     /// existing lit beacon is not asked: an inhibitor does not remove existing cynos (the wiki, Cynosural field).
     /// </summary>
     private async Task<bool> InhibitedAsync(DeployedRecord beacon, long now, CancellationToken cancellationToken)

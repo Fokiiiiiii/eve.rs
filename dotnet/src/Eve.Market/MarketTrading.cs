@@ -190,12 +190,15 @@ public sealed class MarketTrading(NpgsqlDataSource source,MarketStore store,PgCh
             var context = await Context(c,tx,actor.Id,station,token);
             var current = new MarketLocation(actor.StationId,actor.SolarSystemId,actor.ConstellationId,actor.RegionId);
             var location = MarketLocation.From(station);
-            if (!request.Buying || request.Duration>0)
+            // an immediate buy (duration 0) takes what matches on the book and books its unfilled rest like any buy order; the booked order lasts the
+            // default buy duration, since an order of duration 0 rests nowhere
+            var duration = request.Buying && request.Duration == 0 ? MarketRules.ImmediateBuyBookedDays : request.Duration;
+            if (!request.Buying || duration>0)
             {
                 if (topology.OrderDistance(current,location) > (request.Buying ? context.Limits.BuyRange : context.Limits.SellRange))
                     throw new MarketError("MARKET_REMOTE_SKILL_REQUIRED");
             }
-            if (request.Duration>0)
+            if (duration>0)
             {
                 if (request.Buying && request.Range > context.Limits.Visibility) throw new MarketError("MARKET_VISIBILITY_REQUIRED");
                 if (request.ExpectedBrokerFee is { } quoted && double.IsFinite(quoted) && Math.Abs(quoted-context.BrokerCommissionRate)>0.0001)
@@ -227,7 +230,7 @@ public sealed class MarketTrading(NpgsqlDataSource source,MarketStore store,PgCh
             var upper = checked(request.Price*request.Quantity);
             if (request.Buying)
             {
-                var required = upper + (request.Duration>0 ? (decimal)MarketRules.BrokerFee(context,null,(double)upper).Amount + (decimal)MarketRules.SccSurcharge(context,null,(double)upper).Amount : 0);
+                var required = upper + (duration>0 ? (decimal)MarketRules.BrokerFee(context,null,(double)upper).Amount + (decimal)MarketRules.SccSurcharge(context,null,(double)upper).Amount : 0);
                 if (locked[account]<required) throw new InsufficientFundsException(account.OwnerId);
             }
             var delivered = new List<long>();
@@ -313,7 +316,7 @@ public sealed class MarketTrading(NpgsqlDataSource source,MarketStore store,PgCh
             }
             long? opened = null;
             var remaining = request.Quantity-filled;
-            if (request.Duration>0 && remaining>0)
+            if (duration>0 && remaining>0)
             {
                 var value = checked(request.Price*remaining);
                 await Adjust(c,tx,account,-(decimal)MarketRules.BrokerFee(context,null,(double)value).Amount,station.OwnerId,46,"Market broker fee",time,
@@ -326,11 +329,11 @@ public sealed class MarketTrading(NpgsqlDataSource source,MarketStore store,PgCh
                         issued_ms,duration_days,actor_id,wallet_owner_id,account_key,escrow_isk,source_owner_id,source_location_id,source_flag)
                     VALUES($1,$2,$3,$4,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19) RETURNING id
                     """,request.TypeId,request.Buying,request.Price,remaining,request.Buying ? request.MinimumVolume : 1L,
-                    request.Buying ? request.Range : -1,station.Id,station.SolarSystemId,station.ConstellationId,station.RegionId,time,request.Duration,
+                    request.Buying ? request.Range : -1,station.Id,station.SolarSystemId,station.ConstellationId,station.RegionId,time,duration,
                     actor.Id,account.OwnerId,account.AccountKey,request.Buying ? value : 0m,
                     stock?.OwnerId ?? actor.Id,stock?.LocationId ?? station.Id,stock?.Flag ?? ItemFlags.Hangar))
                     opened = (long)(await insert.ExecuteScalarAsync(token))!;
-                await ScheduleExpiryAsync(c,tx,opened.Value,time,request.Duration,token);
+                await ScheduleExpiryAsync(c,tx,opened.Value,time,duration,token);
                 if (!request.Buying)
                 {
                     var rest = await items.LockAndGetAsync(c,tx,stock!.Id,token) ?? throw new MarketError("MARKET_ITEM_CUSTODY_INVALID");
@@ -354,7 +357,7 @@ public sealed class MarketTrading(NpgsqlDataSource source,MarketStore store,PgCh
             if (opened is { } openedId)
             {
                 var openedRow=new MarketOrder(openedId,request.TypeId,request.Buying,request.Price,remaining,remaining,
-                    request.Buying ? request.MinimumVolume : 1L,request.Buying ? request.Range : -1,location,time,request.Duration);
+                    request.Buying ? request.MinimumVolume : 1L,request.Buying ? request.Range : -1,location,time,duration);
                 var openedEscrow=request.Buying ? checked(request.Price*remaining) : 0m;
                 var created=new MarketOwnedOrder(openedRow,actor.Id,account.OwnerId,account.AccountKey,openedEscrow,0,time);
                 changes.Add(new(created,"Created",await NoticeRecipientsAsync(c,tx,account.OwnerId,actor.Id,station.Id,[],token)));

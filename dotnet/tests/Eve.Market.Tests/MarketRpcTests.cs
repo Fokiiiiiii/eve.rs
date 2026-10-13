@@ -92,7 +92,7 @@ public class MarketRpcTests
     [PgFact]
     public async Task Station_and_system_asks_are_key_value_rows_read_by_name()
     {
-        // marketSvc / marketQuote.py:98-100 reads `.typeID` on each ask and passes the row to Buy; the rows are KeyVals, not tuples (Q13, G10).
+        // This checks server-side fields only; it does not exercise MarketBase tuple conversion or V24 unmarshalling.
         await using var r = await TradeRig.Create();
         var actor = await r.Actor("Ask Reader");
         var seat = await SeatAsync(r, actor);
@@ -100,6 +100,7 @@ public class MarketRpcTests
         foreach (var asks in new[] { await seat.Proxy.GetStationAsks(Call(seat.Session, "GetStationAsks", 1)), await seat.Proxy.GetSystemAsks(Call(seat.Session, "GetSystemAsks", 2)) })
         {
             var row = Assert.IsType<PyObject>(Assert.Single(Assert.IsType<PyDict>(Received(asks)).Entries).Value);
+            Assert.Equal("util.KeyVal", JsSemantics.PlainText(row.Name));
             var fields = Assert.IsType<PyDict>(row.Args);
             Assert.Equal((double)(Tritanium), Num(Field(fields, "typeID")));
             Assert.Equal((double)(r.Station.Id), Num(Field(fields, "stationID")));
@@ -109,33 +110,38 @@ public class MarketRpcTests
     }
 
     [PgFact]
-    public async Task Buy_multi_fills_each_line_at_its_limit_with_no_resting_order_and_no_notification()
+    public async Task Buy_multi_fills_each_line_at_its_limit_and_books_the_unfilled_rest_of_each_line()
     {
-        // BuyMultipleItems (EVE.js proxy 6915): immediate buys; the answer is the list of created orders, which is empty for immediate lines.
-        // marketQuote BuyMulti (marketsvc.py:270-273) iterates it. An unfilled line is not an error (EVE.js does the same).
+        // BuyMultipleItems (EVE.js proxy 6915): immediate buys; a line fills what matches at its limit and books the rest as a buy order; the answer is the
+        // list of the orders created, which marketQuote BuyMulti (marketsvc.py:270-273) iterates and the client announces.
         await using var r = await TradeRig.Create();
         var actor = await r.Actor("Multi Buyer");
         var seat = await SeatAsync(r, actor);
         await r.Book.SeedNpcAsync([new("ask", Tritanium, false, 10, 100, 32767, MarketLocation.From(r.Station), r.Now)]);
         var created = await seat.Proxy.BuyMultipleItems(Call(seat.Session, "BuyMultipleItems", 3, new PyInt(r.Station.Id),
             new PyList([Line(Tritanium, 5, 10), Line(Tritanium, 0, 10), Line(Tritanium, 4, 9)]), PyBool.False));
-        Assert.Empty(Assert.IsType<PyList>(created).Items);
-        Assert.Equal(9950m, (await r.WalletStore.GetAsync(actor))!.Isk);
-        Assert.Empty(seat.Sink.Packets);
+        Assert.NotNull(created);
+        var booked = Assert.Single((await r.Book.BookAsync(r.Station.RegionId, Tritanium, r.Now)).Bids);
+        Assert.Equal((4, 9m, 90), (booked.VolumeRemaining, booked.Price, booked.Duration));
+        // the 5 units of the first line are paid at 10; the booked line escrows 4 at 9 and pays its broker fee
+        Assert.True((await r.WalletStore.GetAsync(actor))!.Isk <= 9950m - 36m);
+        Assert.NotEmpty(seat.Sink.Packets);
         Assert.Equal(95, (await r.Book.BookAsync(r.Station.RegionId, Tritanium, r.Now)).Asks.Single().VolumeRemaining);
     }
 
     [PgFact]
-    public async Task An_immediate_buy_that_matches_nothing_rests_nothing_and_charges_nothing()
+    public async Task An_immediate_buy_that_matches_nothing_is_booked_with_its_escrow()
     {
-        // PlaceBuyOrder with duration 0 (the client's BuyStuff default, the quick buy): no sell order to take, so nothing is placed or paid
+        // PlaceBuyOrder with duration 0 (the client's BuyStuff default, the quick buy): no sell order to take, so the order is booked for the default
+        // duration and its escrow is held, as for any buy order (the client announces the order it placed)
         await using var r = await TradeRig.Create();
         var actor = await r.Actor("Quick Buyer", 10000m);
         var seat = await SeatAsync(r, actor);
         Assert.Equal(PyNone.Instance, await seat.Proxy.PlaceBuyOrder(Call(seat.Session, "PlaceBuyOrder", 1, new PyInt(r.Station.Id), new PyInt(Tritanium),
             new PyReal(9), new PyInt(4), new PyInt(-1), new PyInt(1), new PyInt(0), PyBool.False, PyNone.Instance)));
-        Assert.Empty((await r.Book.BookAsync(r.Station.RegionId, Tritanium, r.Now)).Bids);
-        Assert.Equal(10000m, (await r.WalletStore.GetAsync(actor))!.Isk);
+        var booked = Assert.Single((await r.Book.BookAsync(r.Station.RegionId, Tritanium, r.Now)).Bids);
+        Assert.Equal((4, 9m, 90), (booked.VolumeRemaining, booked.Price, booked.Duration));
+        Assert.True((await r.WalletStore.GetAsync(actor))!.Isk <= 10000m - 36m);
     }
 
     [PgFact]

@@ -1,3 +1,4 @@
+using Eve.Macho;
 using Eve.Marshal;
 using Eve.Services;
 using Eve.Services.Core;
@@ -64,6 +65,205 @@ public sealed class CrateServiceTests
         Assert.Contains(skillClaim.Entries, pair => pair.Key == new PyStr("changedSkillCount") && pair.Value == new PyInt(1));
         Assert.Equal(new PyInt(456), await service.CallAsync(Call("ClaimFitting", new PyInt(100), new PyInt(456))));
         Assert.Equal(1, backend.FittingsClaimed);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task A_failed_skill_bundle_claim_keeps_the_reward_and_only_notifies_after_retry(bool throws)
+    {
+        var attempts = 0;
+        var backend = new FakeBackend
+        {
+            SkillClaim = _ => ++attempts == 1
+                ? throws ? Task.FromException<CrateSkillClaim?>(new InvalidOperationException("grant failed")) : Task.FromResult<CrateSkillClaim?>(null)
+                : Task.FromResult<CrateSkillClaim?>(new CrateSkillClaim(1, 10)),
+        };
+        var service = new CrateService(backend);
+        await service.CallAsync(Call("OpenCrate", new PyInt(100)));
+        var sink = new RecordingSink();
+        var call = Call("ClaimSkillBundle", new PyInt(100), new PyInt(123));
+        call.Session.Sink = sink;
+
+        if (throws)
+            await Assert.ThrowsAsync<InvalidOperationException>(() => service.CallAsync(call).AsTask());
+        else
+            Assert.Equal(PyNone.Instance, await service.CallAsync(call));
+        Assert.Equal(1, backend.SkillBundlesClaimed);
+        Assert.Empty(sink.Packets);
+
+        var claim = Assert.IsType<PyDict>(await service.CallAsync(call));
+        Assert.Equal(2, claim.Entries.Count);
+        Assert.Contains(claim.Entries, pair => pair.Key == new PyStr("changedSkillCount") && pair.Value == new PyInt(1));
+        Assert.Contains(claim.Entries, pair => pair.Key == new PyStr("freeSkillPoints") && pair.Value == new PyInt(10));
+        Assert.Equal(2, backend.SkillBundlesClaimed);
+        var packet = Assert.IsType<PyObject>(Assert.Single(sink.Packets));
+        Assert.Equal(new PyStr(ClientNotification.ClassName), packet.Name);
+        var notification = Assert.IsType<MachoPacket>(MachoPacket.Decode(packet));
+        Assert.Equal(MachoMessage.Notification, notification.Type);
+        Assert.Equal(AddressKind.Broadcast, notification.Dest.Kind);
+        Assert.Equal("OnSkillBundleInjected", notification.Dest.BroadcastId);
+        Assert.Equal("clientID", notification.Dest.IdType);
+        var sequence = Assert.Single(Assert.IsType<PyDict>(notification.NamedPayload).Entries);
+        Assert.Equal(new PyStr("sn"), sequence.Key);
+        Assert.Equal(new PyInt(0), sequence.Value);
+        var envelope = Assert.IsType<PyTuple>(Assert.Single(Assert.IsType<PyTuple>(notification.Payload).Items));
+        Assert.Equal(2, envelope.Items.Count);
+        Assert.Equal(new PyInt(0), envelope.Items[0]);
+        var body = Assert.IsType<PyTuple>(MarshalCodec.Decode(Assert.IsType<PyBuffer>(envelope.Items[1]).Value));
+        Assert.Equal(PyTuple.Of(new PyInt(0), PyTuple.Of(new PyInt(1), PyTuple.Of(new PyInt(1), new PyInt(10)))), body);
+
+        Assert.Equal(PyNone.Instance, await service.CallAsync(call));
+        Assert.Equal(2, backend.SkillBundlesClaimed);
+        Assert.Single(sink.Packets);
+    }
+
+    [Fact]
+    public async Task Concurrent_skill_bundle_claims_only_grant_the_pending_reward_once()
+    {
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var finish = new TaskCompletionSource<CrateSkillClaim?>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var backend = new FakeBackend
+        {
+            SkillClaim = async _ => { entered.TrySetResult(); return await finish.Task; },
+        };
+        var service = new CrateService(backend);
+        await service.CallAsync(Call("OpenCrate", new PyInt(100)));
+        var sink = new RecordingSink();
+        var call = Call("ClaimSkillBundle", new PyInt(100), new PyInt(123));
+        call.Session.Sink = sink;
+        var first = service.CallAsync(call).AsTask();
+        await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        Assert.Equal(PyNone.Instance, await service.CallAsync(call));
+        Assert.Equal(1, backend.SkillBundlesClaimed);
+        Assert.Empty(sink.Packets);
+
+        finish.SetResult(new CrateSkillClaim(1, 10));
+        Assert.IsType<PyDict>(await first.WaitAsync(TimeSpan.FromSeconds(5)));
+        Assert.Single(sink.Packets);
+        Assert.Equal(PyNone.Instance, await service.CallAsync(call));
+        Assert.Equal(1, backend.SkillBundlesClaimed);
+        Assert.Single(sink.Packets);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task A_failed_skill_claim_restores_pending_after_a_new_owner_finishes(bool throws)
+    {
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var failed = new TaskCompletionSource<CrateSkillClaim?>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var attempts = 0;
+        var backend = new FakeBackend
+        {
+            SkillClaim = _ =>
+            {
+                if (++attempts != 1) return Task.FromResult<CrateSkillClaim?>(new CrateSkillClaim(1, 10));
+                entered.TrySetResult();
+                return failed.Task;
+            },
+        };
+        var service = new CrateService(backend);
+        await service.CallAsync(Call("OpenCrate", new PyInt(100)));
+        var sink = new RecordingSink();
+        var call = Call("ClaimSkillBundle", new PyInt(100), new PyInt(123));
+        call.Session.Sink = sink;
+        var first = service.CallAsync(call).AsTask();
+        await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        await service.CallAsync(Call("OpenCrate", new PyInt(100)));
+        Assert.IsType<PyDict>(await service.CallAsync(call));
+        Assert.Single(sink.Packets);
+        if (throws)
+        {
+            failed.SetException(new InvalidOperationException("grant failed"));
+            await Assert.ThrowsAsync<InvalidOperationException>(() => first.WaitAsync(TimeSpan.FromSeconds(5)));
+        }
+        else
+        {
+            failed.SetResult(null);
+            Assert.Equal(PyNone.Instance, await first.WaitAsync(TimeSpan.FromSeconds(5)));
+        }
+        Assert.Single(sink.Packets);
+
+        Assert.IsType<PyDict>(await service.CallAsync(call));
+        Assert.Equal(3, backend.SkillBundlesClaimed);
+        Assert.Equal(2, sink.Packets.Count);
+        Assert.Equal(PyNone.Instance, await service.CallAsync(call));
+        Assert.Equal(3, backend.SkillBundlesClaimed);
+        Assert.Equal(2, sink.Packets.Count);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task A_failed_skill_claim_does_not_replace_a_reopened_pending_bundle(bool throws)
+    {
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var failed = new TaskCompletionSource<CrateSkillClaim?>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var attempts = 0;
+        var backend = new FakeBackend
+        {
+            SkillClaim = _ =>
+            {
+                if (++attempts != 1) return Task.FromResult<CrateSkillClaim?>(new CrateSkillClaim(1, 10));
+                entered.TrySetResult();
+                return failed.Task;
+            },
+        };
+        var service = new CrateService(backend);
+        await service.CallAsync(Call("OpenCrate", new PyInt(100)));
+        var sink = new RecordingSink();
+        var call = Call("ClaimSkillBundle", new PyInt(100), new PyInt(123));
+        call.Session.Sink = sink;
+        var first = service.CallAsync(call).AsTask();
+        await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await service.CallAsync(Call("OpenCrate", new PyInt(100)));
+
+        if (throws)
+        {
+            failed.SetException(new InvalidOperationException("grant failed"));
+            await Assert.ThrowsAsync<InvalidOperationException>(() => first.WaitAsync(TimeSpan.FromSeconds(5)));
+        }
+        else
+        {
+            failed.SetResult(null);
+            Assert.Equal(PyNone.Instance, await first.WaitAsync(TimeSpan.FromSeconds(5)));
+        }
+        Assert.Empty(sink.Packets);
+
+        Assert.IsType<PyDict>(await service.CallAsync(call));
+        Assert.IsType<PyDict>(await service.CallAsync(call));
+        Assert.Equal(3, backend.SkillBundlesClaimed);
+        Assert.Equal(2, sink.Packets.Count);
+        Assert.Equal(PyNone.Instance, await service.CallAsync(call));
+        Assert.Equal(3, backend.SkillBundlesClaimed);
+        Assert.Equal(2, sink.Packets.Count);
+    }
+
+    [Fact]
+    public async Task Skill_bundle_claims_keep_character_crate_and_bundle_ownership()
+    {
+        var backend = new FakeBackend();
+        var service = new CrateService(backend);
+        await service.CallAsync(Call("OpenCrate", new PyInt(100)));
+        var sink = new RecordingSink();
+        var otherCharacter = Call("ClaimSkillBundle", new PyInt(100), new PyInt(123));
+        otherCharacter.Session.CharacterId = 43;
+        otherCharacter.Session.Sink = sink;
+
+        Assert.Equal(PyNone.Instance, await service.CallAsync(otherCharacter));
+        Assert.Equal(PyNone.Instance, await service.CallAsync(Call("ClaimSkillBundle", new PyInt(101), new PyInt(123))));
+        Assert.Equal(PyNone.Instance, await service.CallAsync(Call("ClaimSkillBundle", new PyInt(100), new PyInt(124))));
+        Assert.Equal(0, backend.SkillBundlesClaimed);
+        Assert.Empty(sink.Packets);
+
+        var call = Call("ClaimSkillBundle", new PyInt(100), new PyInt(123));
+        call.Session.Sink = sink;
+        Assert.IsType<PyDict>(await service.CallAsync(call));
+        Assert.Equal(1, backend.SkillBundlesClaimed);
+        Assert.Single(sink.Packets);
     }
 
     [Fact]
@@ -182,6 +382,7 @@ public sealed class CrateServiceTests
         public (long CrateId, long ItemId, long DestinationId, int FlagId) LastClaim { get; private set; }
         public int SkillBundlesClaimed { get; private set; }
         public int FittingsClaimed { get; private set; }
+        public Func<CancellationToken, Task<CrateSkillClaim?>>? SkillClaim { get; init; }
         public Func<CancellationToken, Task<long?>>? FittingClaim { get; init; }
         public long LastPendingLocationId { get; private set; }
 
@@ -221,9 +422,11 @@ public sealed class CrateServiceTests
             long characterId, CrateSkillBundle bundle, CancellationToken cancellationToken)
         {
             SkillBundlesClaimed++;
+            Assert.Equal(42, characterId);
             Assert.Equal(10, bundle.FreeSkillPoints);
             Assert.Equal(new CrateSkillGrant(333, 2), bundle.Skills.Single());
-            return Task.FromResult<CrateSkillClaim?>(new CrateSkillClaim(1, 10));
+            return SkillClaim?.Invoke(cancellationToken)
+                ?? Task.FromResult<CrateSkillClaim?>(new CrateSkillClaim(1, 10));
         }
 
         public Task<long?> ClaimFittingAsync(long characterId, int fittingId, CancellationToken cancellationToken)

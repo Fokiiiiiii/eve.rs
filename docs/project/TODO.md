@@ -43,7 +43,7 @@ Built from the sections below, as of 2026-10-12. **Status** is what the area doe
 
 ## 全サービス応答監査で追加確認する未実装経路 (2026-10-12)
 
-監査入口と担当一覧は `docs/project/service-response-audit/README.md`。別checkoutの結果は現行mainの判定に採用しない。以下は実client/strict RPCまたは同一シナリオのMITMで確認した不足。対応するsource、wire shape、Host配線を担当監査で確定し、未実装と既存実装の破損を区別する。
+監査入口と担当一覧は `docs/project/service-response-audit/README.md`。別checkoutの結果は現行mainの判定に採用しない。以下は実client/strict RPCまたは同一シナリオのMITMで確認した不足。対応するsource、wire shape、Host配線を担当監査で確定し、未実装と既存実装の破損を区別する。 2026-10-13のsource-only不足一覧は [EveJS response audit backlog](#evejs-response-audit-backlog-2026-10-13) と [日本語summary](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-summary.md)。この追記は既存作業のmethod別索引で、別件を重複加算しない。
 
 | 状態 | 経路 | 必要な作業と根拠 |
 |---|---|---|
@@ -55,7 +55,7 @@ Built from the sections below, as of 2026-10-12. **Status** is what the area doe
 | OPEN | `eventLog.LogClientStats`; `clientStatLogger.LogString` | 実clientで未知の経路。EveJS/clientのログ収集形式を確認し、既存ログ基盤へ接続する。 |
 | OPEN | public gateway protobuf startup | 実clientでcorporation/career/daily goals、map tags、campaign、saved skin capacity、Omega offersにエラー/timeout。各namespace/method、request/response DTO、callback/状態所有者を確認し、未実装producerを列挙する。 |
 | OPEN | community fitting catalog | GetCommunityFittingsのdict/cache wire shapeは修正済み。実Hostはcommunity catalog callbackを渡していない。EveJSのcommunity owner catalogに対応する実データsourceが必要。 |
-| OPEN (registration inventory) | `LSC`, `bookmarkMgr`, `certificateMgr`, `contractMgr`, `loadService`, `objectCaching`, `ownerGroupManager`, `planetOrbitalRegistryBroker`, `publicGatewaySvc`, `structure`, `tutorialSvc` | 既定MITM比較でEveJSはadvertiseし、eve.rsは未登録。サービス名だけを追加せず、aliasか独立handlerか、実状態とHost配線まで確認する。`tradeMgr`/`standing2`は既存実装へのHost alias修正対象。 |
+| VERIFY (advertisement difference) | `LSC`, `bookmarkMgr`, `certificateMgr`, `contractMgr`, `loadService`, `objectCaching`, `ownerGroupManager`, `planetOrbitalRegistryBroker`, `publicGatewaySvc`, `structure`, `tutorialSvc` | 既定MITM比較でEveJSはadvertiseし、eve.rsは未登録。サービス名だけを追加せず、aliasか独立handlerか、実状態とHost配線まで確認する。`tradeMgr`/`standing2`のHost aliasはcf450dc9で対応済みであり、修正待ちに数えない。広告差11件と全登録候補差29件を区別し、`publicGatewaySvc`のclient-local性、別API代替、既存NOT NEEDED/policy判断を確認する。 |
 
 ### Corporation監査で確認した未実装
 
@@ -64,15 +64,15 @@ Built from the sections below, as of 2026-10-12. **Status** is what the area doe
 | 状態 | 経路 | 未実装の内容 |
 |---|---|---|
 | OPEN | `warRegistry.GetNegotiations`, `GetWarNegotiation`; `CreateWarAllyOffer`, `RetractWarAllyOffer`, `CreateSurrenderNegotiation`, `AcceptAllyNegotiation`, `DeclineAllyOffer`, `AcceptSurrender`, `DeclineSurrender` | 現行は空/Noneまたはnegotiation unavailableで拒否。EveJSは交渉の保存・状態変更・相手への通知を行う。既存RelationStore/war authorityと整合する交渉ownerが必要。 |
-| OPEN | `mutualWarInviteMgr` 全6 RPC | Hostがcallbackを渡していない。pending/blocked readsと4 mutationを実際のinvite/blocked状態へ接続する。書込みのNone fallbackで成功したように見せない。 |
+| OPEN | `mutualWarInviteMgr` 全6 RPC | Hostがcallbackを渡していない。pending/blocked readsと4 mutationを実際のinvite/blocked状態へ接続する。5fce9173で4 mutationの未接続時は明示拒否へ修正済み。残るTODOは実provider接続であり、現在もNone成功fallbackだとは扱わない。 |
 | OPEN | `billMgr.CharPayBill` | 個人請求支払のcallback未接続。個人billのowner、wallet引落し、paid状態、重複支払拒否を一つのtransactionで実行するauthorityが必要。corporation billの既存支払とは別経路。 |
 | OPEN | `warStatisticMgr` bound `GetBaseInfo`, `GetKills`, `GetKillsByGroup` | Host登録とGetKillMailは存在。V24.01 warReport.py:198のbound report集計が不足。war/killmailの実データを集計し、正しいbindと結果を返す。 |
 | OPEN (EveJS legacy API) | `corpStationMgr.GetStationServiceStates`, `GetImprovementStaticData`, `GetStationServiceIdentifiers`, `GetStationDetails`, `GetStationServiceAccessRule`, `GetStationManagementServiceCostModifiers`, `GetRentableItems`, `GetNumberOfUnrentedOffices`, `GetQuoteForRentingAnOffice`, `GetCorporateStationOffice`, `GetStationOffices`, `GetPotentialHomeStations`, `GetOwnerIDsOfClonesAtStation`, `GetStationImprovements` | EveJSにある14旧RPCが未実装。V24.01直接callsiteは未確認。既存office/station/SDE/home/clone ownerを使う実データ読取りが必要で、空stubを追加して閉じない。 |
 | OPEN (EveJS legacy API) | `corporationSvc.GetNPCDivisions`; `voteManager.ActOnSanctionedAction` | EveJSとの名前差。V24.01直接callsiteを確認できていないためcompatibility未確認として保持。既存SDE/vote sanction authorityの有無を確認して接続する。 |
 
-Allianceの3 RPC送信先不足という初回指摘は誤検出だった。同じファイルにあるCorpRegistryService partial型をAllianceRegistryServiceと取り違えていた。現行corpRegistryは3 RPCを公開しており、型名とHasMethodの回帰assertionを追加した。Officeの6 RPC公開/remote station経路は実装担当が再検証・修正中。member kickのsession/cache通知、domain errorのclient向け変換、corpRegistry bound parameters、corpStationMgr release cleanupは追加修正対象。legacy `CanVote` とRecruitment/Info wrapperの名前差はclient側計算・委譲があるため、未実装と断定して重複RPCを追加しない。
+Allianceの3 RPC送信先不足という初回指摘は誤検出だった。同じファイルにあるCorpRegistryService partial型をAllianceRegistryServiceと取り違えていた。現行corpRegistryは3 RPCを公開しており、型名とHasMethodの回帰assertionを追加した。Office公開/remote station経路は009291c6で対応済み。OnOfficeRentalChange producerは別の未実装群(EJS-0666)として追う。member kickのsession/cache通知、domain errorのclient向け変換、corpRegistry bound parametersは別の検証・修正対象。corpStationMgr release cleanupはcf450dc9で対応済みであり、古いprivate-map cleanup不足の指摘を撤回する。legacy `CanVote` とRecruitment/Info wrapperの名前差はclient側計算・委譲があるため、未実装と断定して重複RPCを追加しない。
 
-既存実装の修正: character inventory、owned item location priming、mutable agent rows、moniker解決、GetFormations tuple、quantity805通知、community fitting dict/cache、FakeItemNotFoundは `b636110e`。GlobalConfigのstore flag4項目とtrade/standings aliasは追加修正・検証中。実clientのUndock/再入港、Fleet UpdateMemberInfo bound object、guest/notification順序の受け入れは未完了。
+既存実装の修正: character inventory、owned item location priming、mutable agent rows、moniker解決、GetFormations tuple、quantity805通知、community fitting dict/cache、FakeItemNotFoundは `b636110e`。trade/standings aliasのHost登録はcf450dc9で対応済み。GlobalConfigのstore flag4項目と実client受入は別の検証対象。実clientのUndock/再入港、Fleet UpdateMemberInfo bound object、guest/notification順序の受け入れは未完了。
 
 **Updated:** 2026-10-13
 **Baseline:** main source commit `7379a70fdeee0e93d2ac38c1b7a7bd9ecd29da60`
@@ -1082,7 +1082,7 @@ section 4.7: A8 done for balances and notifications; A2 done as a rule; A3 done 
 | OPEN | No credit source: missions (Mi5), factional warfare and insurgency (I5) must call `LoyaltyPointStore.ApplyAsync` in their transaction | design 4.6, 5.5 |
 | OPEN | LP store (A9): `LPStoreMgr` still answers no offers and refuses every take | design 4.7 A9; `CoreCompatibilityServiceAdapters.cs` |
 | OPEN | Access rule (A2) has no client-visible consumer yet; implants are not modelled in the skill bonus | `AgentAccessRule`; consumers A4, A5, Mi3 |
-| OPEN | Bound agentMgr (A3): no bound method yet; a nested call is refused | `AgentMissionService.BindAsync`, `BoundMethods` (empty) |
+| SOURCE FIXED (aab0dd10; not full Agent acceptance) | Bound agentMgr resolve and initial nested calls | Current MachoResolveObject and HasMethod-based nested dispatch are present; the old empty/DoAction-only BoundMethods finding is superseded. Remaining 13 unimplemented agentMgr exits (plus 1 client-local alternative and 2 legacy names) are separated in the EveJS response audit backlog; do not reopen the fixed binder. |
 | OPEN | Dialogue `DoAction` (A4): greeting, view, request, accept, decline and quit; needs offers (A5) and the dialogue texts of EveJS `agentMgrService.js:906-1120` | design 4.7 A4 |
 | OPEN | Journal and offers (A5): offers from the pool, mission state writes, `OnAgentMissionChange`, `OnMissionsUpdated` | design 4.7 A5; `MissionComposition.cs` (read-only today) |
 | OPEN | Research agents (A6), locator (A7, fee unknown Q-AG-6) | design 4.7 |
@@ -1774,3 +1774,632 @@ The server runs without `EVE_CLIENT_SDE_DIR`: the rows and fields it reads from 
 | DONE (tests) | Wormholes are on without the variable (their classes are embedded); `EVE_WORMHOLES=off` turns them off | `SpaceComposition`; `ClientStaticDataHostTests` |
 | DONE (tests) | Not consumers of the client directory: the epic arcs, agents in space and mission dungeons come from the pinned SDE in the database; the warzone map is embedded already (`warzone-systems.json`) | DEVIATIONS "Client-side data read by the server" |
 | OPEN | Live run of `tools/dev/run-eve-live.sh` without the variable | Needs a live run |
+
+
+## EveJS response audit backlog (2026-10-13)
+
+### Snapshot, review result and status gates
+
+This is the method-level entrance for the received [Japanese summary](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-summary.md), [672-row detailed ledger](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md) and [Host/protobuf audit](C:/Users/yutai/eve.rs/docs/project/service-response-audit/host-protobuf.md). It extends the existing native-audit/feature TODO rows; it is **not a second set of additive work items**. Match by service + method/operation before assigning or closing work. Existing feature owner rows, NOT NEEDED decisions and documented policy differences are retained.
+
+- Canonical root/branch: `C:/Users/yutai/eve.rs` / `main`. Source-audit start HEAD `52b8421f34e635900a18459da4403f26f2dfaec0`; final source-audit and documentation review HEAD `dda03ca0464043822e68c8348604ff34eadedcac`. The received source snapshot includes parent dirty RPC declarations (870 attributed declarations); it is not a clean-tree/runtime acceptance claim. Reference snapshots: EveJS `828823a75f211fdecb945b087a26c225f111491f`, V24.01 eve-logic `1dbb5711a072a146e1d228365668ac05655eefe1`.
+- Summary review: counts and evidence tiers agree with the ledger. 672 rows = 476 physical named-export differences (448 unimplemented named exits + 3 client-local covered + 25 legacy/unverified) + 182 gateway selector candidates + 14 response/notification/session/provider groups. There are 63 service groups in the 448-exit index below. These are not counts of wholly unimplemented business domains or reproduced broken features.
+- Host coverage: 181 registered keys / 1280 paths in the full source profile (1212 primary + 68 alias paths), 8 detailed common Host RPC source comparisons and 1272 other response paths not fully compared in that slice. Runtime/differential/client acceptance remains unverified; no tests/builds were run for this documentation update.
+- **UNIMPLEMENTED NAMED EXIT** means the exact named exit is absent from the inspected partial type/Method/HasMethod/Host or bound registration. It does **not** mean the whole service/business operation is unimplemented. **Alternative API/alias equivalence remains unverified** unless explicitly recorded; verify the V24 caller, meaningful state, full arguments/kwargs, result and failure contract before adding another endpoint.
+- **UNIMPLEMENTED PROVIDER/NOTIFICATION/RESPONSE BRANCH** means a route can exist while real reads/writes/persistence or a response/notice producer is absent. Connect existing owners; do not close it with empty defaults, guessed values, captured packets or fake success.
+- **FIX EXISTING RESPONSE / VERIFY FIELD IMPACT** is separate from new implementation. **VERIFY CANDIDATE/LEGACY/DTO** is not a blanket OPEN gameplay defect. Preserve CCP-required improvements and policy decisions rather than copying permissive or partial-commit EveJS behavior.
+- Categories overlap. Service differences (11 advertised / 29 source candidates), 39 bound rows and 6 provider groups are **not** added to 448. In the 14 groups, category tags occur 7 result / 3 notification / 2 session / 6 provider times, with shared rows; 13 groups have concrete source differences and 1 has a current-sequence verification gap. In the named ledger's V24 column, 40 rows have caller/forwarding-source evidence and 436 are unverified; this is not an exhaustive caller count across the older native traces.
+
+### Service boundary candidates (category 1; no additive service implementation count)
+
+The 143-name EveJS advertisement has **11 names absent from the full RS source profile**: `objectCaching, structure, loadService, planetOrbitalRegistryBroker, LSC, certificateMgr, tutorialSvc, bookmarkMgr, ownerGroupManager, contractMgr, publicGatewaySvc`. These are a source/advertisement difference, not 11 proven failed player operations.
+
+The wider 210-name constructor/re-export/bootstrap source inventory has **29 absent candidates**: `activityMgr, autoMoonMining, bookmarkMgr, certificateMgr, clientStatLogger, contractMgr, dungeonUniverseSite, eventLog, externalQueueMgr, facWarMgr, inventoryAssetHoldingMgr, loadService, LSC, market, miningCommand, miningResourceSite, monolithTaskTrackerMgr, objectCaching, ownerGroupManager, photoUploadSvc, planetOrbitalRegistryBroker, publicGateway, publicGatewaySvc, search, sessionMgr, structure, tcpRawProxyService, tutorialSvc, XmppChatMgr`. The 11 are included in these 29; there are 18 additional candidates. Constructor success, runtime activation, caller reachability and semantic replacement are unverified. Services with no finite named-handler list stay candidates; do not fabricate method names for them.
+
+Use the [service boundary ledger](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:27) and the named index below. It covers 144 named rows on absent services: 143 absent-exit rows plus the single legacy publicGateway row. Do not duplicate these as another 144 tasks. Section 37a NOT NEEDED decisions for loadService/tutorialSvc/bookmarkMgr/certificateMgr/LSC/publicGatewaySvc are preserved. In particular publicGatewaySvc is a client-local adapter; registering the name is not a public protobuf gateway implementation. Newer native startup evidence and the old gateway owner decision must be reconciled explicitly, not silently discarded.
+
+### Named exits: complete 448-method index (category 2)
+
+**Status for every method in this index: UNIMPLEMENTED NAMED EXIT; VERIFY REMAINING ALTERNATIVE API / V24 FLOW.** Exact-name absence is not an unimplemented whole domain. Source-proven client-local alternatives and legacy candidates are separated below; dynamic response/notification acceptance remains unverified. These are method-level supplements to existing owner TODOs, not additive duplicate tasks.
+
+#### Named group: account (10 exits)
+
+[GetAurumBalance (EJS-0001)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:252); [GetDefaultContactCost (EJS-0002)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:253); [GetDefaultWalletDivision (EJS-0003)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:254); [GetEntryTypes (EJS-0004)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:255); [GetJournal (EJS-0005)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:256); [GetJournalForAccounts (EJS-0006)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:257); [GetKeyMap (EJS-0007)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:258); [GetTransactions (EJS-0008)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:259); [GetWalletDivisionsInfo (EJS-0009)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:260); [SetContactCost (EJS-0010)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:261).
+
+#### Named group: activityMgr (4 exits)
+
+[ActivitySeen (EJS-0011)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:262); [GetActivitiesPopState (EJS-0012)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:263); [GetActivityBadgeStatuses (EJS-0013)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:264); [SetActivitiesPopState (EJS-0014)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:265).
+
+#### Named group: agentMgr (13 exits)
+
+[GetDungeonShipRestrictions (EJS-0017)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:268); [GetEntryPoint (EJS-0018)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:269); [GetInfoServiceDetails (EJS-0019)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:270); [GetMissionJournalInfo (EJS-0020)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:271); [GetMissionKeywords (EJS-0021)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:272); [GetReplayTimestamp (EJS-0022)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:273); [GetStandingGainsForMission (EJS-0023)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:274); [GotoLocation (EJS-0025)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:276); [IsCheatingWithAgent (EJS-0026)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:277); [RemoveOfferFromJournal (EJS-0027)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:278); [ShouldAlwaysAllowReplay (EJS-0028)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:279); [WarpToAgentInSpace (EJS-0029)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:280); [WarpToLocation (EJS-0030)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:281).
+
+#### Named group: alert (3 exits)
+
+[BeanDelivery (EJS-0031)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:282); [GetLogModeForError (EJS-0032)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:283); [GroupBeanDelivery (EJS-0033)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:284).
+
+#### Named group: autoMoonMining (2 exits)
+
+[RequestMiningCycleOutput (EJS-0036)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:287); [RequestMiningDetails (EJS-0037)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:288).
+
+#### Named group: beyonce (7 exits)
+
+[BookmarkLocation (EJS-0038)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:289); [BookmarkScanResult (EJS-0039)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:290); [CmdFleetTagTarget (EJS-0040)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:291); [CmdGotoBookmark (EJS-0041)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:292); [CmdGotoPoint (EJS-0042)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:293); [CmdSteerDirection (EJS-0043)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:294); [GetCapacityOfSiphon (EJS-0044)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:295).
+
+#### Named group: bookmarkMgr (4 exits)
+
+[CreateFolder (EJS-0045)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:296); [GetBookmarks (EJS-0046)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:297); [GetBookmarksInFolder (EJS-0047)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:298); [GetFolders (EJS-0048)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:299).
+
+#### Named group: certificateMgr (9 exits)
+
+[BatchCertificateGrant (EJS-0049)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:300); [BatchCertificateUpdate (EJS-0050)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:301); [GetAllShipCertificateRecommendations (EJS-0051)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:302); [GetCertificateCategories (EJS-0052)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:303); [GetCertificateClasses (EJS-0053)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:304); [GetCertificatesByCharacter (EJS-0054)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:305); [GetMyCertificates (EJS-0055)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:306); [GrantCertificate (EJS-0056)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:307); [UpdateCertificateFlags (EJS-0057)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:308).
+
+#### Named group: charMgr (18 exits)
+
+Existing exact-name TODO evidence (same owner/work): [existing row](C:/Users/yutai/eve.rs/docs/project/TODO.md:50). Retain its status/policy; use the detailed row for the contract and classification.
+
+[AssignLabels (EJS-0058)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:309); [CreateLabel (EJS-0059)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:310); [DeleteLabel (EJS-0060)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:311); [EditContact (EJS-0061)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:312); [EditLabel (EJS-0062)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:313); [get_home_station_row (EJS-0063)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:314); [GetAssetWorth (EJS-0064)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:315); [GetCloneInfo (EJS-0065)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:316); [getHomeStationRow (EJS-0066)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:317); [GetPrivateInfo (EJS-0067)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:318); [GetTopBounties (EJS-0068)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:319); [List (EJS-0069)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:320); [ListIncludingContainers (EJS-0070)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:321); [ListStationItems (EJS-0071)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:322); [ListStations (EJS-0072)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:323); [LogStartOfCharacterCreation (EJS-0073)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:324); [MachoBindObject (EJS-0074)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:325); [RemoveLabels (EJS-0075)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:326).
+
+#### Named group: charUnboundMgr (7 exits)
+
+[DeleteCharacter (EJS-0076)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:327); [GetCharacterToSelect (EJS-0077)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:328); [GetCharCreationInfo (EJS-0078)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:329); [GetCharNewExtraCreationInfo (EJS-0079)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:330); [GetTopBounties (EJS-0080)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:331); [IsUserReceivingCharacter (EJS-0081)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:332); [PrepareCharacterForDelete (EJS-0082)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:333).
+
+#### Named group: clientStatLogger (1 exits)
+
+Existing exact-name TODO evidence (same owner/work): [existing row](C:/Users/yutai/eve.rs/docs/project/TODO.md:55). Retain its status/policy; use the detailed row for the contract and classification.
+
+[LogString (EJS-0083)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:334).
+
+#### Named group: config (2 exits)
+
+[GetMapObjects (EJS-0084)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:335); [GetMultiGraphicsEx (EJS-0085)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:336).
+
+#### Named group: contractMgr (12 exits)
+
+[AcceptContract (EJS-0086)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:337); [CollectMyPageInfo (EJS-0087)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:338); [CompleteContract (EJS-0088)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:339); [CreateContract (EJS-0089)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:340); [DeleteContract (EJS-0090)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:341); [GetContract (EJS-0091)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:342); [GetContractListForOwner (EJS-0092)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:343); [GetItemsInStation (EJS-0093)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:344); [GetLoginInfo (EJS-0094)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:345); [GetMyExpiredContractList (EJS-0095)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:346); [NumOutstandingContracts (EJS-0096)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:347); [SearchContracts (EJS-0097)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:348).
+
+#### Named group: contractProxy (30 exits)
+
+Existing exact-name TODO evidence (same owner/work): [existing row](C:/Users/yutai/eve.rs/docs/project/TODO.md:52). Retain its status/policy; use the detailed row for the contract and classification.
+
+[AcceptContract (EJS-0098)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:349); [CollectMyPageInfo (EJS-0099)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:350); [CompleteContract (EJS-0100)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:351); [CreateContract (EJS-0101)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:352); [DeleteContract (EJS-0102)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:353); [DeleteContractNotification (EJS-0103)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:354); [DeleteMultipleContracts (EJS-0104)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:355); [DeleteNotification (EJS-0105)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:356); [FinishAuction (EJS-0106)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:357); [GetAvailableContractList (EJS-0107)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:358); [GetContract (EJS-0108)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:359); [GetContractBids (EJS-0109)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:360); [GetContractListForOwner (EJS-0110)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:361); [GetContractListForStatus (EJS-0111)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:362); [GetContractsForOwner (EJS-0112)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:363); [GetContractTypes (EJS-0113)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:364); [GetCourierContractFromItemID (EJS-0114)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:365); [GetItemsInContainer (EJS-0115)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:366); [GetItemsInDockableLocation (EJS-0116)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:367); [GetLoginInfo (EJS-0117)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:368); [GetMyBids (EJS-0118)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:369); [GetMyCurrentContractList (EJS-0119)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:370); [GetMyExpiredContractList (EJS-0120)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:371); [GetNumItemsInContainers (EJS-0121)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:372); [GM_ExpireContract (EJS-0122)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:373); [NumOutstandingContracts (EJS-0123)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:374); [PlaceBid (EJS-0124)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:375); [SearchContracts (EJS-0125)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:376); [SetContractExpired (EJS-0126)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:377); [SplitStack (EJS-0127)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:378).
+
+#### Named group: corporationSvc (3 exits)
+
+Existing exact-name TODO evidence (same owner/work): [existing row](C:/Users/yutai/eve.rs/docs/project/TODO.md:71). Retain its status/policy; use the detailed row for the contract and classification.
+
+[GetInfoWindowDataForChar (EJS-0128)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:379); [GetNPCDivisions (EJS-0129)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:380); [GetRecruitmentAdsByCriteria (EJS-0130)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:381).
+
+#### Named group: corpStationMgr (14 exits)
+
+Existing exact-name TODO evidence (same owner/work): [existing row](C:/Users/yutai/eve.rs/docs/project/TODO.md:70). Retain its status/policy; use the detailed row for the contract and classification.
+
+[GetCorporateStationOffice (EJS-0131)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:382); [GetImprovementStaticData (EJS-0132)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:383); [GetNumberOfUnrentedOffices (EJS-0133)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:384); [GetOwnerIDsOfClonesAtStation (EJS-0134)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:385); [GetPotentialHomeStations (EJS-0135)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:386); [GetQuoteForRentingAnOffice (EJS-0136)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:387); [GetRentableItems (EJS-0137)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:388); [GetStationDetails (EJS-0138)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:389); [GetStationImprovements (EJS-0139)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:390); [GetStationManagementServiceCostModifiers (EJS-0140)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:391); [GetStationOffices (EJS-0141)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:392); [GetStationServiceAccessRule (EJS-0142)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:393); [GetStationServiceIdentifiers (EJS-0143)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:394); [GetStationServiceStates (EJS-0144)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:395).
+
+#### Named group: devIndexManager (1 exits)
+
+[GetDevelopmentIndicesForSystem (EJS-0145)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:396).
+
+#### Named group: dogmaIM (1 exits)
+
+[GetLocationInfo (EJS-0146)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:397).
+
+#### Named group: dungeonExplorationMgr (1 exits)
+
+[GetInstancesForSolarsystem (EJS-0147)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:398).
+
+#### Named group: eventLog (3 exits)
+
+Existing exact-name TODO evidence (same owner/work): [existing row](C:/Users/yutai/eve.rs/docs/project/TODO.md:55). Retain its status/policy; use the detailed row for the contract and classification.
+
+[LogClientEvent (EJS-0148)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:399); [LogClientStats (EJS-0149)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:400); [LogPlayerRequestedDisconnect (EJS-0150)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:401).
+
+#### Named group: expertSystemMgr (2 exits)
+
+[ConsumeExpertSystem (EJS-0151)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:402); [RemoveMyExpertSystem (EJS-0152)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:403).
+
+#### Named group: externalQueueMgr (3 exits)
+
+[PublishEvent (EJS-0153)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:404); [PublishEventPayload (EJS-0154)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:405); [PublishProxyEvent (EJS-0155)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:406).
+
+#### Named group: facWarMgr (4 exits)
+
+[GetCharacterRankInfo (EJS-0156)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:407); [GetCharacterRankOverview (EJS-0157)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:408); [GetMyCharacterRankInfo (EJS-0158)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:409); [GetMyCharacterRankOverview (EJS-0159)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:410).
+
+#### Named group: hackingMgr (1 exits)
+
+[StartNewGameInstance (EJS-0160)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:411).
+
+#### Named group: insuranceSvc (3 exits)
+
+[GetItemsToInsure (EJS-0161)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:412); [MachoBindObject (EJS-0162)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:413); [MachoResolveObject (EJS-0163)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:414).
+
+#### Named group: invbroker (7 exits)
+
+[GetDamageForCrystals (EJS-0164)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:415); [GetItemByID (EJS-0165)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:416); [ListDroneBay (EJS-0166)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:417); [ListFighterBay (EJS-0167)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:418); [ListFuelBay (EJS-0168)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:419); [ValidateItemCanBeOpened (EJS-0169)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:420); [ValidateItemListCanBeOpened (EJS-0170)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:421).
+
+#### Named group: inventoryAssetHoldingMgr (4 exits)
+
+[is_item_failure_enabled (EJS-0171)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:422); [is_item_validation_enabled (EJS-0172)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:423); [set_item_failure_enabled (EJS-0173)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:424); [set_item_validation_enabled (EJS-0174)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:425).
+
+#### Named group: jumpCloneSvc (16 exits)
+
+[AcceptShipCloneInstallation (EJS-0175)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:426); [CancelShipCloneInstallation (EJS-0176)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:427); [CloneJump (EJS-0177)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:428); [DestroyInstalledClone (EJS-0178)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:429); [GetCloneState (EJS-0179)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:430); [GetNumClonesInPilotsStructure (EJS-0180)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:431); [GetPriceForClone (EJS-0181)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:432); [GetShipCloneState (EJS-0182)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:433); [GetStationCloneState (EJS-0183)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:434); [InstallCloneInStation (EJS-0184)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:435); [InstallCloneInStructure (EJS-0185)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:436); [MachoBindObject (EJS-0186)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:437); [OfferShipCloneInstallation (EJS-0187)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:438); [ResetLastCloneJumpTime (EJS-0188)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:439); [SetJumpCloneName (EJS-0189)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:440); [ValidateInstallJumpClone (EJS-0190)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:441).
+
+#### Named group: keeper (1 exits)
+
+[GetOperationSpawnpointPosition (EJS-0191)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:442).
+
+#### Named group: loadService (7 exits)
+
+[GetConfig (EJS-0192)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:443); [GetTotalStats (EJS-0193)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:444); [IsRunning (EJS-0194)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:445); [Ping (EJS-0195)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:446); [SetConfig (EJS-0196)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:447); [StartLoad (EJS-0197)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:448); [StopLoad (EJS-0198)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:449).
+
+#### Named group: lookupSvc (4 exits)
+
+[LookupAgents (EJS-0199)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:450); [LookupKnownLocations (EJS-0200)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:451); [LookupNPCCharacters (EJS-0201)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:452); [LookupStations (EJS-0202)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:453).
+
+#### Named group: LPStoreMgr (2 exits)
+
+[MachoBindObject (EJS-0203)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:454); [MachoResolveObject (EJS-0204)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:455).
+
+#### Named group: LPSvc (7 exits)
+
+[GetAvailableOffersFromCorp (EJS-0205)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:456); [GetLPExchangeRates (EJS-0206)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:457); [GetLPForCharacterCorp (EJS-0207)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:458); [GetLPsForCharacter (EJS-0208)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:459); [MachoBindObject (EJS-0209)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:460); [MachoResolveObject (EJS-0210)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:461); [TakeOffer (EJS-0211)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:462).
+
+#### Named group: LSC (7 exits)
+
+[GetChannels (EJS-0212)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:463); [GetMyMessages (EJS-0213)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:464); [JoinChannel (EJS-0214)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:465); [JoinChannels (EJS-0215)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:466); [LeaveChannel (EJS-0216)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:467); [LeaveChannels (EJS-0217)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:468); [SendMessage (EJS-0218)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:469).
+
+#### Named group: machoNet (4 exits)
+
+[ForwardCharacterNotification (EJS-0219)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:470); [GetClusterGameStatisticsForClient (EJS-0220)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:471); [GetNodeFromAddress (EJS-0221)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:472); [ReloadClientCodeHash (EJS-0222)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:473).
+
+#### Named group: mailMgr (22 exits)
+
+[AssignLabels (EJS-0223)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:474); [CreateLabel (EJS-0224)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:475); [DeleteLabel (EJS-0225)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:476); [DeleteMail (EJS-0226)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:477); [EditLabel (EJS-0227)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:478); [EmptyTrash (EJS-0228)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:479); [MarkAllAsRead (EJS-0229)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:480); [MarkAllAsUnread (EJS-0230)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:481); [MarkAsRead (EJS-0231)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:482); [MarkAsReadByLabel (EJS-0232)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:483); [MarkAsReadByList (EJS-0233)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:484); [MarkAsUnread (EJS-0234)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:485); [MarkAsUnreadByLabel (EJS-0235)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:486); [MarkAsUnreadByList (EJS-0236)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:487); [MoveAllFromTrash (EJS-0237)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:488); [MoveAllToTrash (EJS-0238)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:489); [MoveFromTrash (EJS-0239)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:490); [MoveToTrash (EJS-0240)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:491); [MoveToTrashByLabel (EJS-0241)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:492); [MoveToTrashByList (EJS-0242)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:493); [RemoveLabels (EJS-0243)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:494); [ReplaceLabels (EJS-0244)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:495).
+
+#### Named group: map (1 exits)
+
+[GetSolarsystemItems (EJS-0245)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:496).
+
+#### Named group: market (10 exits)
+
+[GetCharOrders (EJS-0246)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:497); [GetCorporationOrders (EJS-0247)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:498); [GetMarketGroups (EJS-0248)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:499); [GetNewPriceHistory (EJS-0249)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:500); [GetOldPriceHistory (EJS-0250)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:501); [GetOrders (EJS-0251)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:502); [GetRegionBest (EJS-0252)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:503); [GetStationAsks (EJS-0253)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:504); [GetSystemAsks (EJS-0254)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:505); [StartupCheck (EJS-0255)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:506).
+
+#### Named group: notificationMgr (6 exits)
+
+[DeleteAllNotifications (EJS-0256)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:507); [DeleteGroupNotifications (EJS-0257)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:508); [DeleteNotifications (EJS-0258)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:509); [MarkAllAsProcessed (EJS-0259)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:510); [MarkAsProcessed (EJS-0260)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:511); [MarkGroupAsProcessed (EJS-0261)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:512).
+
+#### Named group: objectCaching (8 exits)
+
+[GetCachableObject (EJS-0262)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:513); [GetCachedMethodCallVersion (EJS-0263)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:514); [GetCachedObject (EJS-0264)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:515); [GetCachedObjectVersion (EJS-0265)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:516); [InvalidateCachedMethodCall (EJS-0266)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:517); [InvalidateCachedMethodCalls (EJS-0267)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:518); [InvalidateCachedObjects (EJS-0268)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:519); [UpdateCache (EJS-0269)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:520).
+
+#### Named group: ownerGroupManager (21 exits)
+
+[AddMembers (EJS-0270)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:521); [Create (EJS-0271)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:522); [CreateGroup (EJS-0272)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:523); [Delete (EJS-0273)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:524); [DeleteGroup (EJS-0274)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:525); [DeleteMembers (EJS-0275)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:526); [GetGroup (EJS-0276)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:527); [GetGroupLogs (EJS-0277)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:528); [GetGroupsMany (EJS-0278)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:529); [GetMembers (EJS-0279)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:530); [GetMembersForMultipleGroups (EJS-0280)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:531); [GetMyGroups (EJS-0281)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:532); [GetMyGroupsAndMembers (EJS-0282)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:533); [GetMyGroupsToUseForBookmarks (EJS-0283)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:534); [GetPublicGroupInfo (EJS-0284)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:535); [RemoveMembers (EJS-0285)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:536); [SearchGroups (EJS-0286)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:537); [UpdateDescription (EJS-0287)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:538); [UpdateMemberships (EJS-0288)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:539); [UpdateMembershipTypes (EJS-0289)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:540); [UpdateName (EJS-0290)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:541).
+
+#### Named group: photoUploadSvc (1 exits)
+
+[Upload (EJS-0292)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:543).
+
+#### Named group: planetMgr (17 exits)
+
+[GetCommandPinsForPlanet (EJS-0293)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:544); [GetExtractorsForPlanet (EJS-0294)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:545); [GetFullNetworkForOwner (EJS-0295)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:546); [GetPlanetInfo (EJS-0296)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:547); [GetPlanetResourceInfo (EJS-0297)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:548); [GetProgramResultInfo (EJS-0298)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:549); [GetResourceData (EJS-0299)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:550); [GMAddCommodity (EJS-0300)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:551); [GMGetCompleteResource (EJS-0302)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:553); [GMGetLocalDistributionReport (EJS-0303)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:554); [GMGetSynchedServerState (EJS-0305)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:556); [MachoBindObject (EJS-0306)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:557); [MachoResolveObject (EJS-0307)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:558); [UserAbandonPlanet (EJS-0308)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:559); [UserLaunchCommodities (EJS-0309)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:560); [UserTransferCommodities (EJS-0310)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:561); [UserUpdateNetwork (EJS-0311)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:562).
+
+#### Named group: planetOrbitalRegistryBroker (6 exits)
+
+[GetSettingsInfo (EJS-0312)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:563); [GetTaxRate (EJS-0313)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:564); [MachoBindObject (EJS-0314)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:565); [MachoResolveObject (EJS-0315)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:566); [RevertOrbitalsToInterBus (EJS-0316)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:567); [UpdateSettings (EJS-0317)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:568).
+
+#### Named group: posMgr (22 exits)
+
+[AnchorOrbital (EJS-0318)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:569); [AnchorStructure (EJS-0319)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:570); [AssumeStructureControl (EJS-0320)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:571); [ChangeStructureProvisionType (EJS-0321)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:572); [GetConsumptionFactor (EJS-0322)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:573); [GetMoonForTower (EJS-0323)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:574); [GetMoonProcessInfoForTower (EJS-0324)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:575); [GetStarbasePermissions (EJS-0325)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:576); [GetTowerNotificationSettings (EJS-0326)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:577); [GetTowerSentrySettings (EJS-0327)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:578); [LinkResourceForTower (EJS-0328)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:579); [MachoBindObject (EJS-0329)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:580); [MachoResolveObject (EJS-0330)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:581); [OnlineOrbital (EJS-0331)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:582); [RelinquishStructureControl (EJS-0332)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:583); [RunMoonProcessCycleforTower (EJS-0333)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:584); [SetStarbasePermissions (EJS-0334)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:585); [SetTowerNotifications (EJS-0335)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:586); [SetTowerPassword (EJS-0336)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:587); [SetTowerSentrySettings (EJS-0337)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:588); [UnanchorOrbital (EJS-0338)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:589); [UnanchorStructure (EJS-0339)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:590).
+
+#### Named group: raffleProxy (15 exits)
+
+[AwardItem (EJS-0356)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:607); [BuyRandomTickets (EJS-0357)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:608); [BuyTicket (EJS-0358)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:609); [CreateRaffle (EJS-0359)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:610); [FilteredGrab (EJS-0360)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:611); [GetActiveHistoricPrices (EJS-0361)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:612); [GetCreatedParticipated (EJS-0362)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:613); [GetMyActiveTickets (EJS-0363)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:614); [GetMyRaffleHistory (EJS-0364)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:615); [GetRaffle (EJS-0365)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:616); [Grab (EJS-0366)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:617); [SubscribeToRaffle (EJS-0367)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:618); [SubscribeToTickets (EJS-0368)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:619); [UnsubscribeFromRaffle (EJS-0369)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:620); [UnSubscribeFromTickets (EJS-0370)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:621).
+
+#### Named group: repairSvc (5 exits)
+
+[DamageModules (EJS-0371)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:622); [GetDamageReports (EJS-0372)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:623); [MachoResolveObject (EJS-0373)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:624); [RepairItems (EJS-0374)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:625); [UnasembleItems (EJS-0375)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:626).
+
+#### Named group: reprocessingSvc (4 exits)
+
+[GetOptionsForItemTypes (EJS-0376)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:627); [GetQuote (EJS-0377)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:628); [GetReprocessingInfo (EJS-0378)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:629); [MachoResolveObject (EJS-0379)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:630).
+
+#### Named group: scanMgr (7 exits)
+
+[GetScanTargetID (EJS-0380)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:631); [MachoBindObject (EJS-0381)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:632); [MachoResolveObject (EJS-0382)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:633); [QAOverrideProbeExpiry (EJS-0383)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:634); [QAScanSites (EJS-0384)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:635); [SetProbeDestination (EJS-0385)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:636); [SetProbeRangeStep (EJS-0386)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:637).
+
+#### Named group: search (2 exits)
+
+[Query (EJS-0387)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:638); [QuickQuery (EJS-0388)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:639).
+
+#### Named group: seasonManager (13 exits)
+
+Existing exact-name TODO evidence (same owner/work): [existing row](C:/Users/yutai/eve.rs/docs/project/TODO.md:53). Retain its status/policy; use the detailed row for the contract and classification.
+
+[challenge_is_dormant (EJS-0389)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:640); [claim_challenge_rewards (EJS-0390)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:641); [claim_goal_reward (EJS-0391)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:642); [fill_up_and_return_challenges_for_character (EJS-0392)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:643); [get_challenge (EJS-0393)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:644); [get_challenge_expiration_date (EJS-0394)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:645); [get_character_progress_by_character_id (EJS-0395)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:646); [get_loot_table_by_typeID (EJS-0396)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:647); [get_max_active_challenges (EJS-0397)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:648); [get_season_data_for_character (EJS-0398)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:649); [get_season_end_time (EJS-0399)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:650); [reload_fsd_data (EJS-0400)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:651); [select_season (EJS-0401)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:652).
+
+#### Named group: sessionMgr (2 exits)
+
+[GetSessionStatistics (EJS-0402)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:653); [RemoveSessionsFromServer (EJS-0403)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:654).
+
+#### Named group: ship (20 exits)
+
+[ActivateShip (EJS-0404)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:655); [BoardStoredShip (EJS-0405)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:656); [ConfigureShip (EJS-0406)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:657); [Drop (EJS-0407)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:658); [FitShips (EJS-0408)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:659); [GetDisplayKillCounterValue (EJS-0409)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:660); [GetFittedItems (EJS-0410)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:661); [GetKillCounter (EJS-0411)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:662); [GetModules (EJS-0412)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:663); [GetShipConfiguration (EJS-0413)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:664); [GetShipKillCounter (EJS-0414)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:665); [GetTurretModules (EJS-0415)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:666); [LaunchFromContainer (EJS-0416)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:667); [ResetDirtTimestamp (EJS-0417)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:668); [Scoop (EJS-0418)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:669); [ScoopToFleetHangar (EJS-0419)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:670); [ScoopToMobileDepotHold (EJS-0420)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:671); [SetDirtTimestamp (EJS-0421)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:672); [SetShipPassword (EJS-0422)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:673); [StoreVessel (EJS-0423)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:674).
+
+#### Named group: storeManager (1 exits)
+
+[BuyOffer (EJS-0428)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:679).
+
+#### Named group: structure (3 exits)
+
+[JettisonStructureFuel (EJS-0429)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:680); [MachoBindObject (EJS-0430)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:681); [MachoResolveObject (EJS-0431)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:682).
+
+#### Named group: structureDirectory (5 exits)
+
+[GetCorporationStructures (EJS-0432)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:683); [GetSolarsystemStructures (EJS-0433)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:684); [GetStructureInfo_ (EJS-0434)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:685); [GetStructures (EJS-0435)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:686); [GetStructuresInSystem (EJS-0436)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:687).
+
+#### Named group: tcpRawProxyService (2 exits)
+
+[GetESPTunnelingAddressByNodeID (EJS-0437)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:688); [GetTunnelsByType (EJS-0438)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:689).
+
+#### Named group: tourneyMgr (2 exits)
+
+[BanShip (EJS-0439)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:690); [ExecuteMemberChange (EJS-0440)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:691).
+
+#### Named group: tutorialSvc (14 exits)
+
+[GetActions (EJS-0441)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:692); [GetCareerAgents (EJS-0442)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:693); [GetCategories (EJS-0443)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:694); [GetCharacterTutorialState (EJS-0444)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:695); [GetCriterias (EJS-0445)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:696); [GetTutorialAgents (EJS-0446)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:697); [GetTutorialInfo (EJS-0447)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:698); [GetTutorials (EJS-0448)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:699); [GetTutorialsAndConnections (EJS-0449)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:700); [LogAborted (EJS-0450)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:701); [LogAppClosed (EJS-0451)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:702); [LogClosed (EJS-0452)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:703); [LogCompleted (EJS-0453)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:704); [LogStarted (EJS-0454)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:705).
+
+#### Named group: vaultManager (1 exits)
+
+[GetAccountBalance (EJS-0455)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:706).
+
+#### Named group: voteManager (2 exits)
+
+Existing exact-name TODO evidence (same owner/work): [existing row](C:/Users/yutai/eve.rs/docs/project/TODO.md:71). Retain its status/policy; use the detailed row for the contract and classification.
+
+[ActOnSanctionedAction (EJS-0456)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:707); [CanVote (EJS-0457)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:708).
+
+#### Named group: warStatisticMgr (5 exits)
+
+[GetBaseInfo (EJS-0458)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:709); [GetKills (EJS-0459)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:710); [GetKillsByGroup (EJS-0460)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:711); [MachoBindObject (EJS-0461)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:712); [MachoResolveObject (EJS-0462)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:713).
+
+#### Named group: XmppChatMgr (14 exits)
+
+Existing exact-name TODO evidence (same owner/work): [existing row](C:/Users/yutai/eve.rs/docs/project/TODO.md:54). Retain its status/policy; use the detailed row for the contract and classification.
+
+[AddCharacterToChannel (EJS-0463)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:714); [CreatePlayerOwnedChannel (EJS-0464)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:715); [CreatePrivateChannel (EJS-0465)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:716); [EnsureResourceWarsChannelExists (EJS-0466)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:717); [GetDeprecatedPrefsFallback (EJS-0467)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:718); [GetHelpChannel (EJS-0468)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:719); [GetRookieChannel (EJS-0469)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:720); [GetRookieHelpChannel (EJS-0470)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:721); [GMMute (EJS-0471)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:722); [GMUnmute (EJS-0472)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:723); [GrantChannelOwnership (EJS-0473)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:724); [Hostname (EJS-0474)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:725); [ResyncSystemChannelAccess (EJS-0475)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:726); [SetMotd (EJS-0476)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:727).
+
+### Bound registration and successor verification (category 3; 39 overlapping exact-name rows)
+
+These 39 physical-exit rows are a subset of the 476 named differences: 37 unimplemented rows in the 448 backlog plus 2 legacy candidates below, grouped into 13 services. They add **zero** missing-method count. Verify resolve → bind(parameter, nested call) → OID registration/parameter ownership → every successor → stale/current release → retry/reconnect; a service route alone is not a working moniker. The V24 column has caller-source evidence for 17 rows and leaves 22 unverified. Each group's complete tagged method set is:
+
+- **charMgr (1, same named entries):** [MachoBindObject (EJS-0074)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:325).
+- **insuranceSvc (2, same named entries):** [MachoBindObject (EJS-0162)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:413); [MachoResolveObject (EJS-0163)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:414).
+- **jumpCloneSvc (1, same named entries):** [MachoBindObject (EJS-0186)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:437).
+- **LPStoreMgr (2, same named entries):** [MachoBindObject (EJS-0203)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:454); [MachoResolveObject (EJS-0204)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:455).
+- **LPSvc (2, same named entries):** [MachoBindObject (EJS-0209)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:460); [MachoResolveObject (EJS-0210)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:461).
+- **planetMgr (19, same named entries):** [GetCommandPinsForPlanet (EJS-0293)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:544); [GetExtractorsForPlanet (EJS-0294)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:545); [GetFullNetworkForOwner (EJS-0295)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:546); [GetPlanetInfo (EJS-0296)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:547); [GetPlanetResourceInfo (EJS-0297)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:548); [GetProgramResultInfo (EJS-0298)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:549); [GetResourceData (EJS-0299)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:550); [GMAddCommodity (EJS-0300)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:551); [GMCleanupExpiredLaunches (EJS-0301)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:552); [GMGetCompleteResource (EJS-0302)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:553); [GMGetLocalDistributionReport (EJS-0303)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:554); [GMGetPlanetDiagnostics (EJS-0304)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:555); [GMGetSynchedServerState (EJS-0305)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:556); [MachoBindObject (EJS-0306)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:557); [MachoResolveObject (EJS-0307)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:558); [UserAbandonPlanet (EJS-0308)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:559); [UserLaunchCommodities (EJS-0309)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:560); [UserTransferCommodities (EJS-0310)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:561); [UserUpdateNetwork (EJS-0311)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:562).
+- **planetOrbitalRegistryBroker (2, same named entries):** [MachoBindObject (EJS-0314)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:565); [MachoResolveObject (EJS-0315)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:566).
+- **posMgr (2, same named entries):** [MachoBindObject (EJS-0329)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:580); [MachoResolveObject (EJS-0330)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:581).
+- **repairSvc (1, same named entries):** [MachoResolveObject (EJS-0373)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:624).
+- **reprocessingSvc (1, same named entries):** [MachoResolveObject (EJS-0379)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:630).
+- **scanMgr (2, same named entries):** [MachoBindObject (EJS-0381)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:632); [MachoResolveObject (EJS-0382)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:633).
+- **structure (2, same named entries):** [MachoBindObject (EJS-0430)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:681); [MachoResolveObject (EJS-0431)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:682).
+- **warStatisticMgr (2, same named entries):** [MachoBindObject (EJS-0461)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:712); [MachoResolveObject (EJS-0462)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:713).
+
+Agent resolve/initial nested dispatch is already fixed by aab0dd10 and is not in this bound-gap list. Its 13 unimplemented exits are in the agentMgr group; one client-local lookup and two legacy names are separated below. Office resolve/bind/remote-station exports and CorpStationMgr release cleanup are also not new OPEN binder work.
+
+### Connected-route provider backlog (category 7; 6 overlapping groups)
+
+These routes already exist. The work is an authoritative provider/transaction/notification connection, not another service registration. All methods attributed to each provider group are listed. Categories 4 and 7 share some of these ledger rows; do not create a separate field task for the same missing owner without keeping that relationship explicit.
+
+- **UNIMPLEMENTED PROVIDER: facilityManager.** All methods: `GetFacilities`, `GetMaxActivityModifiers`, `GetFacilityTaxes`, `GetFacilityLocations`, `SetFacilityTaxes`. Detailed group: [EJS-0661](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:947). Connect real facility lists/activity modifiers/taxes/locations and tax persistence. GetFacility/GetFacilitiesByID are already routed; do not replace them with new stubs. Existing Industry/facility owner; this is one group also tagged as a result-field gap.
+- **PARTIAL ACL PROVIDER / RESULT: accessGroupBookmarkMgr.** All methods: `AddFolder`, `UpdateFolder`, `SearchFoldersWithAdminAccess`. Detailed group: [EJS-0665](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:951). Use shared ACL owners for admin/manage/use/view group IDs and accessible shared-folder search. Personal bookmark implementation stays in place. Existing section 37a accessGroupBookmarkMgr shared-folder work; not an extra bookmark service project.
+- **UNIMPLEMENTED PROVIDER: billMgr.** All methods: `CharPayBill`. Detailed group: [EJS-0667](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:953). Connect personal bill ownership, wallet debit, paid state and idempotency to an authoritative transaction. Current refusal is not fake success; corporation payment is separate. Existing Corporation audit CharPayBill row (same work item).
+- **UNIMPLEMENTED NEGOTIATION PROVIDER: warRegistry.** All methods: `GetNegotiations`, `GetWarNegotiation`, `CreateWarAllyOffer`, `RetractWarAllyOffer`, `CreateSurrenderNegotiation`, `AcceptAllyNegotiation`, `DeclineAllyOffer`, `AcceptSurrender`, `DeclineSurrender`. Detailed group: [EJS-0668](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:954). Implement negotiation reads/writes, permissions, state and target notification through the existing war/relation owner. Existing SetOpenForAllies/RetractMutualWar are excluded. Existing Corporation negotiation row and section 37a 'DONE WITH CUTS' negotiation remainder (same work).
+- **UNIMPLEMENTED INVITE PROVIDER; REFUSAL FIXED: mutualWarInviteMgr.** All methods: `GetPendingInvitesForSession`, `IsCorpInvitesBlockedPlayer`, `SendInviteByPlayer`, `WithdrawInviteByPlayer`, `RespondToInviteByPlayer`, `SetInvitesBlockedByPlayer`. Detailed group: [EJS-0669](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:955). Connect invite/blocked-state reads and four writes. Keep 5fce9173's explicit unavailable refusal until the owner is connected; do not restore None success. Existing Corporation mutual-war row (same work); V24 caller/complete state flow still needs verification.
+- **UNIMPLEMENTED COMMUNITY CATALOG PROVIDER: corpFittingMgr.** All methods: `GetCommunityFittings`. Detailed group: [EJS-0670](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:956). Connect real community fitting records to the existing cached dictionary callback. The dict/cache wire shape is already fixed. Existing native-audit community fitting catalog row (same work).
+
+### Other response, notification and session work (categories 4–6)
+
+- **FIX EXISTING RESPONSE — machoNet.GetServerStatus:** live multi-session count is always forced to 1 in the inspected Host source. Reconnect the actual count owner; branding/time/ID differences are not the same issue. [EJS-0659](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:945). Client display acceptance not replayed.
+- **UNIMPLEMENTED RESPONSE BRANCH / VERIFY CLIENT CACHE CONTRACT — CachedMethodCallResult / CacheOK:** kwargs.machoVersion checksum validation and CacheOK producer are absent, although fresh result wrappers exist. Trace consumer behavior before deciding whether the branch is required; do not describe the whole cache domain as broken. [EJS-0660](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:946). objectCaching's 8 named exits are already in the named index.
+- **PARTIAL EXISTING RESULT — facilityManager.GetFacility:** activities/serviceAccess/rigModifiers are empty in the current provider. Fill them from the same facility authority, alongside [EJS-0661](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:947) provider work; full nested payload/client eligibility not verified. [EJS-0662](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:948).
+- **UNIMPLEMENTED NOTIFICATION PRODUCER — calendarMgr:** event names `OnNewCalendarEvent, OnEditCalendarEvent, OnRemoveCalendarEvent, OnEventResponseByExternal`; mutation coverage `CreatePersonalEvent, CreateCorporationEvent, CreateAllianceEvent, EditPersonalEvent, EditCorporationEvent, EditAllianceEvent, DeleteEvent, UpdateEventParticipants, SendEventResponse`. Trace recipients/payload/state-before-reply order for each mutation; do not add notification calls blindly to reads. [EJS-0663](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:949).
+- **UNIMPLEMENTED NOTIFICATION PRODUCER — accessGroupBookmarkMgr:** event names `OnSharedBookmarksFolderUpdated, OnSharedBookmarksFolderDeleted`; folder/bookmark/subfolder write coverage `AddFolder, UpdateFolder, DeleteFolder, BookmarkStaticLocation, BookmarkLocation, UpdateBookmark, DeleteBookmarks, MoveBookmarksToFolderAndSubfolder, CopyBookmarksToFolderAndSubfolder, CreateSubfolder, UpdateSubfolder, DeleteSubfolder`. Trace exact publication conditions/recipients against the ledger's sources; the applicability of the non-static path remains unverified. [EJS-0664](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:950). Share the ACL owner backlog [EJS-0665](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:951); no extra service-count item.
+- **UNIMPLEMENTED NOTIFICATION PRODUCER — officeManager:** `OnOfficeRentalChange` after rental-state changes. This is the only Office gap reintroduced here; 009291c6's existing exports/remote-station operations remain source-fixed, not OPEN. [EJS-0666](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:952).
+- **VERIFY CURRENT SESSION FLOW, NOT CONFIRMED MISSING — Skills mutations and corporation kick/leave:** trace current feature writers, committed attributes, recipients and order. The ledger group does not establish a finite named-method deficit; do not manufacture a method list or count it as missing implementation. This is a current-sequence verification item, not 448+another group of missing RPCs. [EJS-0671](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:957).
+- **PENDING CORRECTION / VERIFICATION — Skills DiminishedInjectorSp (Zeno; post-snapshot finding, outside the 672-row ledger):** Parent + Zeno confirmed that the pre-correction calculation treated a Large Skill Injector as 3 × 500k-tier units and a Small Skill Injector as 1 × 500k-tier unit, differing from CCP and the EveJS reference. Per consumed item, Large uses 500k/400k/300k/150k SP and Small uses 100k/80k/60k/30k SP at the corresponding total-SP tiers; do not multiply one Large into three injections. Evidence: [CCP Skill Extractors and Skill Injectors](https://support.eveonline.com/hc/en-us/articles/207605005-Skill-Extractors-and-Skill-Injectors), [CCP Increased Skill Injector Flexibility Coming On May 23rd](https://www.eveonline.com/news/view/increased-skill-injector-flexibility-coming-on-may-23rd), and [SkillHandlerService.Injection.cs — DiminishedInjectorSp](C:/Users/yutai/eve.rs/dotnet/src/Eve.Services.Skills/SkillHandlerService.Injection.cs:55). Zeno owns the ongoing correction. The limited current-source readback sees the working-tree scale correction, but parent regression/acceptance is pending; **not DONE**. Verify tier boundaries, quantity/sequential injection, non-diminishing allowances, returned/persisted SP and inventory/skill notifications in the assigned correction. This confirmed existing-implementation difference was found after the dda03ca0 audit snapshot; it is separate from EJS-0671's unverified session-flow group, adds no EJS ID, and changes none of the 672/448/182/14 snapshot counts.
+- **VERIFY FIELD IMPACT — Placebo ack.session_init.maxSessionTime:** EveJS sends None and the inspected Rust ack omits the key; no required V24 consumer was established. Keep separate from functional login failure, and preserve the additional access_token/computer_hash keys required by LoginSso. [EJS-0672](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:958).
+
+The provider entries [EJS-0661](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:947), [EJS-0665](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:951), [EJS-0668](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:954) are also result-field entries; they are not repeated as separate work above. Thus this provider+other index covers all **14 unique** group IDs EJS-0659 through EJS-0672. The three notification groups and both session groups still need real delivery/order acceptance; no live break reproduction was performed in this worker.
+
+### Public protobuf gateway: complete candidate selector index (182; category VERIFY)
+
+**Status for every selector below: VERIFY V24 NEED / DTO / OWNER / POLICY, not “182 confirmed missing features.”** Current production public transport/producer absence is a source finding, but the 182 selectors include legacy defaults, empty compatibility payloads, admin requests and intentional 404 cases. Full nested DTO comparisons: **0 complete / 182 incomplete**. The index has 59 namespace groups. It extends the existing native protobuf startup row; it is not a second gateway project or 182 additional OPEN services.
+
+For each candidate, establish actual caller/request fields, response field numbers/types/oneof/repeated/optional status, application status versus gRPC trailers, identity/permission scope, real state owner, notifications, retry and next client action. Retain the older “gateway not built” owner decision until it is explicitly reconciled with the current startup TODO. The actual public service paths `Requests/Ping, Notices/Ping, Events/Ping, Requests/Send, Notices/Consume, Events/Publish` are separate from MachoNet and internal HostLink; no name alias substitutes for them.
+
+#### Gateway candidate namespace: eve_public.achievement.api (1)
+
+[GetRequest (EJS-0477)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:754).
+
+#### Gateway candidate namespace: eve_public.achievement.category.api (1)
+
+[GetRequest (EJS-0478)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:755).
+
+#### Gateway candidate namespace: eve_public.achievement.definition.api.cdn (1)
+
+[GetLatestRequest (EJS-0479)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:756).
+
+#### Gateway candidate namespace: eve_public.achievement.reward.api (2)
+
+[ClaimRequest (EJS-0480)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:757); [GetUnclaimedRequest (EJS-0481)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:758).
+
+#### Gateway candidate namespace: eve_public.achievement.showcase.api (1)
+
+[GetCharacterScoreRequest (EJS-0482)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:759).
+
+#### Gateway candidate namespace: eve_public.campaign.api (6)
+
+[GetAllRequest (EJS-0483)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:760); [GetAllUnredeemedRewardsRequest (EJS-0484)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:761); [GetLimitsRequest (EJS-0485)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:762); [GetParticipantStatsRequest (EJS-0486)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:763); [GetRequest (EJS-0487)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:764); [GetStatsRequest (EJS-0488)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:765).
+
+#### Gateway candidate namespace: eve_public.campaign.contributionmethod.definition.api (1)
+
+[GetAllRequest (EJS-0489)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:766).
+
+#### Gateway candidate namespace: eve_public.campaign.objective.api (5)
+
+[CommitRequest (EJS-0490)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:767); [GetParticipantStatsRequest (EJS-0491)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:768); [GetStatsRequest (EJS-0492)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:769); [RedeemRewardsRequest (EJS-0493)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:770); [ResignRequest (EJS-0494)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:771).
+
+#### Gateway candidate namespace: eve_public.career.goal.api (2)
+
+[GetAllRequest (EJS-0495)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:772); [GetDefinitionsRequest (EJS-0496)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:773).
+
+#### Gateway candidate namespace: eve_public.character.skill.plan (10)
+
+[CreateRequest (EJS-0497)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:774); [DeleteRequest (EJS-0498)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:775); [GetActiveRequest (EJS-0499)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:776); [GetAllRequest (EJS-0500)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:777); [GetRequest (EJS-0501)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:778); [GetSharedRequest (EJS-0502)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:779); [SetActiveRequest (EJS-0507)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:784); [SetDescriptionRequest (EJS-0508)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:785); [SetNameRequest (EJS-0509)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:786); [SetSkillRequirementsRequest (EJS-0510)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:787).
+
+#### Gateway candidate namespace: eve_public.character.skill.plan.milestone (4)
+
+[CreateRequest (EJS-0503)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:780); [DeleteRequest (EJS-0504)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:781); [GetAllRequest (EJS-0505)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:782); [SetDescriptionRequest (EJS-0506)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:783).
+
+#### Gateway candidate namespace: eve_public.chat.local.api (2)
+
+[BroadcastMessageRequest (EJS-0512)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:789); [GetMembershipListRequest (EJS-0513)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:790).
+
+#### Gateway candidate namespace: eve_public.chat.local.api.admin (1)
+
+[MuteRequest (EJS-0511)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:788).
+
+#### Gateway candidate namespace: eve_public.corporation.skill.plan (9)
+
+[CreateRequest (EJS-0514)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:791); [DeleteRequest (EJS-0515)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:792); [GetAllRequest (EJS-0516)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:793); [GetRequest (EJS-0517)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:794); [GetSharedRequest (EJS-0518)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:795); [SetCategoryRequest (EJS-0523)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:800); [SetDescriptionRequest (EJS-0524)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:801); [SetNameRequest (EJS-0525)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:802); [SetSkillRequirementsRequest (EJS-0526)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:803).
+
+#### Gateway candidate namespace: eve_public.corporation.skill.plan.milestone (4)
+
+[CreateRequest (EJS-0519)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:796); [DeleteRequest (EJS-0520)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:797); [GetAllRequest (EJS-0521)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:798); [SetDescriptionRequest (EJS-0522)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:799).
+
+#### Gateway candidate namespace: eve_public.corporationgoal.api (9)
+
+[GetActiveRequest (EJS-0527)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:804); [GetAllRequest (EJS-0528)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:805); [GetContributorSummariesForGoalRequest (EJS-0529)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:806); [GetInactiveRequest (EJS-0530)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:807); [GetMineWithRewardsRequest (EJS-0531)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:808); [GetMyContributorSummariesRequest (EJS-0532)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:809); [GetMyContributorSummaryForGoalRequest (EJS-0533)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:810); [RedeemAllMyRewardsRequest (EJS-0534)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:811); [RedeemMyRewardsRequest (EJS-0535)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:812).
+
+#### Gateway candidate namespace: eve_public.cosmetic.character.title.api (4)
+
+[EquipRequest (EJS-0536)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:813); [GetEquippedForCharacterRequest (EJS-0537)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:814); [GetOwnedRequest (EJS-0538)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:815); [UnequipRequest (EJS-0539)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:816).
+
+#### Gateway candidate namespace: eve_public.cosmetic.character.title.definition.api (1)
+
+[GetLatestRequest (EJS-0540)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:817).
+
+#### Gateway candidate namespace: eve_public.cosmetic.corporation.palette.api (4)
+
+[CanEditRequest (EJS-0541)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:818); [GetOwnRequest (EJS-0542)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:819); [GetRequest (EJS-0543)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:820); [SetRequest (EJS-0544)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:821).
+
+#### Gateway candidate namespace: eve_public.cosmetic.market.skin.listing.api (2)
+
+[GetAllOwnedRequest (EJS-0545)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:822); [GetAllRequest (EJS-0546)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:823).
+
+#### Gateway candidate namespace: eve_public.cosmetic.ship.api (2)
+
+[GetAllInBubbleRequest (EJS-0547)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:824); [GetRequest (EJS-0548)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:825).
+
+#### Gateway candidate namespace: eve_public.cosmetic.ship.logo (2)
+
+[ClearRequest (EJS-0549)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:826); [DisplayRequest (EJS-0550)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:827).
+
+#### Gateway candidate namespace: eve_public.cosmetic.ship.skin.thirdparty.component.license.api (1)
+
+[GetOwnedRequest (EJS-0551)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:828).
+
+#### Gateway candidate namespace: eve_public.cosmetic.ship.skin.thirdparty.draft.api (2)
+
+[GetAllSavedRequest (EJS-0552)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:829); [GetSaveCapacityRequest (EJS-0553)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:830).
+
+#### Gateway candidate namespace: eve_public.cosmetic.ship.skin.thirdparty.license.api (4)
+
+[ActivateRequest (EJS-0554)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:831); [ApplyRequest (EJS-0555)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:832); [GetOwnedRequest (EJS-0556)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:833); [UnapplyRequest (EJS-0557)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:834).
+
+#### Gateway candidate namespace: eve_public.cosmetic.ship.skin.thirdparty.sequencing.job.api (1)
+
+[GetAllActiveRequest (EJS-0558)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:835).
+
+#### Gateway candidate namespace: eve_public.cosmetic.structure.paintwork.api (2)
+
+[GetAllInSolarSystemRequest (EJS-0559)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:836); [GetRequest (EJS-0560)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:837).
+
+#### Gateway candidate namespace: eve_public.cosmetic.structure.paintwork.license.api (5)
+
+[GetAllOwnedByCorporationRequest (EJS-0563)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:840); [GetCatalogueRequest (EJS-0564)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:841); [GetRequest (EJS-0565)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:842); [IssueRequest (EJS-0566)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:843); [RevokeRequest (EJS-0567)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:844).
+
+#### Gateway candidate namespace: eve_public.cosmetic.structure.paintwork.license.api.admin (2)
+
+[IssueRequest (EJS-0561)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:838); [RevokeRequest (EJS-0562)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:839).
+
+#### Gateway candidate namespace: eve_public.dailygoal.api (7)
+
+[GetAllCompletedWithEntitlementsRequest (EJS-0568)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:845); [GetAllCurrentRequest (EJS-0569)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:846); [GetAllWithRewardsRequest (EJS-0570)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:847); [GetRequest (EJS-0571)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:848); [PayForCompletionRequest (EJS-0572)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:849); [RedeemAllRequest (EJS-0573)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:850); [RedeemRequest (EJS-0574)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:851).
+
+#### Gateway candidate namespace: eve_public.entitlement.character (1)
+
+[GetAllRequest (EJS-0575)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:852).
+
+#### Gateway candidate namespace: eve_public.entitlement.character.ship.admin.alliancelogo (2)
+
+[GrantRequest (EJS-0576)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:853); [RevokeRequest (EJS-0577)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:854).
+
+#### Gateway candidate namespace: eve_public.entitlement.character.ship.admin.corplogo (2)
+
+[GrantRequest (EJS-0578)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:855); [RevokeRequest (EJS-0579)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:856).
+
+#### Gateway candidate namespace: eve_public.faction.activity (1)
+
+[GetSolarSystemScoresRequest (EJS-0580)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:857).
+
+#### Gateway candidate namespace: eve_public.freelance.contributionmethod.definition.api (2)
+
+[GetAllLatestRequest (EJS-0581)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:858); [GetAllLatestWithinMajorRequest (EJS-0582)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:859).
+
+#### Gateway candidate namespace: eve_public.freelance.contributionmethod.itemdelivery.api (1)
+
+[GetStatusRequest (EJS-0583)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:860).
+
+#### Gateway candidate namespace: eve_public.freelance.project.api (19)
+
+[CloseRequest (EJS-0584)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:861); [CommitRequest (EJS-0585)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:862); [CreateRequest (EJS-0586)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:863); [GetAllActiveForCorporationRequest (EJS-0587)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:864); [GetAllActiveRequest (EJS-0588)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:865); [GetAllBroadcastedRequest (EJS-0589)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:866); [GetAllCommittedRequest (EJS-0590)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:867); [GetAllInactiveRequest (EJS-0591)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:868); [GetAllUnredeemedRequest (EJS-0592)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:869); [GetCommitLimitsRequest (EJS-0593)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:870); [GetCreationLimitsRequest (EJS-0594)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:871); [GetCreationPricesRequest (EJS-0595)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:872); [GetForManagerRequest (EJS-0596)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:873); [GetParticipationDetailsRequest (EJS-0597)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:874); [GetRequest (EJS-0598)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:875); [GetStatsRequest (EJS-0599)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:876); [KickRequest (EJS-0600)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:877); [RedeemRewardRequest (EJS-0601)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:878); [ResignRequest (EJS-0602)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:879).
+
+#### Gateway candidate namespace: eve_public.goal.api (7)
+
+[CloseRequest (EJS-0603)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:880); [CreateRequest (EJS-0604)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:881); [DeleteRequest (EJS-0605)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:882); [GetAllRequest (EJS-0606)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:883); [GetCapacityRequest (EJS-0607)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:884); [GetRequest (EJS-0608)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:885); [SetCurrentProgressRequest (EJS-0609)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:886).
+
+#### Gateway candidate namespace: eve_public.payment.purchase.api (2)
+
+[CostRequest (EJS-0610)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:887); [TokenRequest (EJS-0611)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:888).
+
+#### Gateway candidate namespace: eve_public.payment.schedule.api (1)
+
+[GetActiveByTypeRequest (EJS-0612)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:889).
+
+#### Gateway candidate namespace: eve_public.payment.token.api (3)
+
+[DisableAllRequest (EJS-0613)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:890); [GetQuickPayRequest (EJS-0614)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:891); [GetRequest (EJS-0615)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:892).
+
+#### Gateway candidate namespace: eve_public.pirate.corruption.api (2)
+
+[GetStageThresholdsRequest (EJS-0616)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:893); [GetSystemInfoRequest (EJS-0617)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:894).
+
+#### Gateway candidate namespace: eve_public.pirate.suppression.api (2)
+
+[GetStageThresholdsRequest (EJS-0618)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:895); [GetSystemInfoRequest (EJS-0619)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:896).
+
+#### Gateway candidate namespace: eve_public.plex.vault.api (2)
+
+[BalanceRequest (EJS-0620)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:897); [PurchaseRequest (EJS-0621)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:898).
+
+#### Gateway candidate namespace: eve_public.plex.vault.transaction.api (3)
+
+[GetAllLoggedForUserRequest (EJS-0622)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:899); [GetLogRequest (EJS-0623)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:900); [GetStatisticsRequest (EJS-0624)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:901).
+
+#### Gateway candidate namespace: eve_public.sovereignty.hub.api (1)
+
+[GetResourcesRequest (EJS-0625)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:902).
+
+#### Gateway candidate namespace: eve_public.sovereignty.hub.fuel.api (2)
+
+[AddRequest (EJS-0626)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:903); [GetRequest (EJS-0627)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:904).
+
+#### Gateway candidate namespace: eve_public.sovereignty.hub.upgrade.api (4)
+
+[GetDefinitionsRequest (EJS-0628)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:905); [GetHubUpgradesRequest (EJS-0629)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:906); [ProcessConfigurationRequest (EJS-0630)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:907); [UninstallRequest (EJS-0631)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:908).
+
+#### Gateway candidate namespace: eve_public.sovereignty.hub.workforce.api (4)
+
+[ConfigureRequest (EJS-0632)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:909); [GetConfigurationRequest (EJS-0633)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:910); [GetNetworkableHubsRequest (EJS-0634)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:911); [GetStateRequest (EJS-0635)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:912).
+
+#### Gateway candidate namespace: eve_public.sovereignty.mercenaryden.activity.api (4)
+
+[GetAllRequest (EJS-0636)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:913); [GetCapacityRequest (EJS-0637)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:914); [GetForMercenaryDenRequest (EJS-0638)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:915); [StartRequest (EJS-0639)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:916).
+
+#### Gateway candidate namespace: eve_public.sovereignty.mercenaryden.api (3)
+
+[GetAllOwnedRequest (EJS-0640)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:917); [GetAsOwnerRequest (EJS-0641)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:918); [GetMaximumForCharacterRequest (EJS-0642)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:919).
+
+#### Gateway candidate namespace: eve_public.sovereignty.resource.planet.api (2)
+
+[GetAllDefinitionsRequest (EJS-0643)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:920); [GetDefinitionsVersionRequest (EJS-0644)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:921).
+
+#### Gateway candidate namespace: eve_public.sovereignty.resource.star.api (1)
+
+[GetAllConfigurationsRequest (EJS-0645)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:922).
+
+#### Gateway candidate namespace: eve_public.sovereignty.skyhook.api (7)
+
+[ActivateRequest (EJS-0646)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:923); [DeactivateRequest (EJS-0648)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:925); [GetAllByCorporationRequest (EJS-0649)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:926); [GetAllLocalRequest (EJS-0650)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:927); [GetRequest (EJS-0651)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:928); [GetSolarSystemsWithTheftVulnerableSkyhooksRequest (EJS-0652)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:929); [GetTheftVulnerableSkyhooksInSolarSystemRequest (EJS-0653)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:930).
+
+#### Gateway candidate namespace: eve_public.sovereignty.skyhook.api.admin (1)
+
+[ModifyReagentsRequest (EJS-0647)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:924).
+
+#### Gateway candidate namespace: eve_public.space.api.cdn (1)
+
+[GetUpdateRequest (EJS-0654)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:931).
+
+#### Gateway candidate namespace: eve_public.stargate.lock.api (1)
+
+[GetRestrictedSystemsRequest (EJS-0655)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:932).
+
+#### Gateway candidate namespace: eve_public.store.offer.api (2)
+
+[GetAllByTagRequest (EJS-0656)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:933); [GetRequest (EJS-0657)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:934).
+
+#### Gateway candidate namespace: eve_public.user.license.api (1)
+
+[GetRequest (EJS-0658)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:935).
+
+### Client-local alternatives and legacy (3 + 25; excluded from the 448 named backlog)
+
+**CLIENT-LOCAL COVERED (3)** means the V24 wrapper/local lookup uses an existing operation. The literal old RPC name remains absent; this is not proof of dynamic materialization or full value/notification parity. Two spelling aliases are a subset of these three, not a fourth/fifth work item.
+
+- **CLIENT-LOCAL COVERED:** [agentMgr.GetAgentByID (EJS-0015)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:266). svc.agents.GetAgentByID → GetAgents().Clone/Index; existing agentMgr.GetAgents (materialization/OnAgentAdded dynamic parity unverified).
+- **CLIENT-LOCAL COVERED:** [shipCosmeticsMgr.GetLicensedSkins (EJS-0424)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:675). cosmeticsSvc local wrapper → GetLicencedSkins; existing same-service wire exit; dynamic parity unverified.
+- **CLIENT-LOCAL COVERED:** [shipCosmeticsMgr.GetLicensedSkinsForShipType (EJS-0425)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:676). cosmeticsSvc local wrapper → GetLicencedSkinsForShipType; existing same-service wire exit; dynamic parity unverified.
+
+**VERIFY LEGACY (25):** caller/need remains unverified; legacy is not a NOT NEEDED decision or an implemented RPC. Retain existing Native trace OPENs for ProjectDiscovery.initialize_tutorial_status and skillHandler.CheckAndSendNotifications; skillHandler/skillMgr inherited alias is one issue.
+
+- **agentMgr (2):** [GetAgentStaticInfo (EJS-0016)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:267); [GetStaticBlob (EJS-0024)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:275).
+- **authentication (2):** [Login (EJS-0034)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:285); [Logout (EJS-0035)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:286).
+- **paperDollServer (1):** [ConvertAndSavePaperDoll (EJS-0291)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:542).
+- **planetMgr (2):** [GMCleanupExpiredLaunches (EJS-0301)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:552); [GMGetPlanetDiagnostics (EJS-0304)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:555).
+- **ProjectDiscovery (15):** [get_is_player_entitled_to_tutorial_reward (EJS-0340)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:591); [get_maximum_bonus_samples (EJS-0341)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:592); [get_new_task (EJS-0342)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:593); [get_project_id (EJS-0343)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:594); [get_remaining_bonus_samples (EJS-0344)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:595); [get_total_needed_xp (EJS-0345)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:596); [get_tutorial_level (EJS-0346)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:597); [get_tutorial_xp_reward (EJS-0347)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:598); [give_tutorial_rewards (EJS-0348)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:599); [increase_tutorial_level (EJS-0349)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:600); [initialize_tutorial_status (EJS-0350)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:601); [new_training_task (EJS-0351)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:602); [post_classification (EJS-0352)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:603); [reset_tutorial (EJS-0353)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:604); [skip_tutorial (EJS-0354)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:605).
+- **publicGateway (1):** [send_request (EJS-0355)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:606).
+- **shipKillCounter (1):** [GetItemKillCountNPC (EJS-0426)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:677).
+- **skillMgr (1):** [CheckAndSendNotifications (EJS-0427)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:678).
+
+Core A-F reconciliation: old 44 = 33 unimplemented + 3 client-local + 6 legacy + 2 same-service implemented; current missing names 42. agentMgr.MachoResolveObject and dungeonInstanceCacheMgr.GetTriglavianSiteInstances were already excluded from the old 455 index. No double decrement and no new OPEN. [Revised handoff](C:/Users/yutai/eve.rs/docs/project/service-response-audit/core-a-f.md:345).
+
+### Corrected / policy / existing-implementation exclusions
+
+- **SOURCE FIXED, no new OPEN:** station/skillMgr/tradeMgr/standing2 aliases (cf450dc9); correct CorpRegistryService partial ownership of CreateAlliance/GetAllianceApplications/GetSuggestedAllianceShortNames (c98dffeb regression); Agent resolve and initial nested dispatch (aab0dd10); Office exports/remote-station operations (009291c6); Crate shared fitting-store target and claim retry/restoration path (c7288f1c/dda03ca0); parent-added beyonce.CmdAbandonLoot delegation; dungeonInstanceCacheMgr.GetTriglavianSiteInstances; CorpStationMgr bound release cleanup. Source fixes do not mean full client acceptance. Remaining distinct fields/providers/notices keep their own entries above.
+- **CONTAINER MISDETECTION WITHDRAWN:** EveJS native arrays marshal as Python tuples. PaperDoll portrait and IndustryMonitor.ConnectJob native-array/Py.Tuple comparisons are not list/tuple deficits. Other DTO/provider/authorization differences remain separate.
+- **CCP-required improvements, not omissions:** ROLE_ADMIN/ROLE_SERVICE global-config write gate; LoginSso acknowledgement access_token/computer_hash keys. Preserve transaction atomicity for SKIN activation/dynamic-item mutation instead of copying partial-commit reference behavior.
+- **POLICY/INTENT DIFFERENCE, no blanket missing-route work:** protected config-key errors; explicit unavailable refusal for unconnected mutual invites; wrapped errors instead of unknown-service/method None success; older public-gateway omission decision. Preserve existing NOT NEEDED/cut decisions and verify conflicts using the current client flow. No fake field values or response packets are authorized by this backlog.
+- **EXISTING RESPONSE DIFFERENCE / IMPACT UNVERIFIED:** multi-session status count and partial facility/ACL DTOs are repair/connect work, not whole services to implement. maxSessionTime and cache-validation differences need consumer/impact verification. EJS-0671's session-flow group remains unverified, not a confirmed missing producer.
+
+### Closure and non-additive accounting
+
+A named-exit item can close only after the actual partial type/attribute/HasMethod and Host/bound registration are connected, or an existing API is shown to satisfy the same meaningful V24 flow and the documented caller is routed there. Confirm arguments/kwargs, complete result type/fields/rowsets, authoritative reads/writes, permissions/errors, persistence/idempotency, required notification/session order and next operation. Do not infer closure from a route name or a stub response. A retained legacy/policy difference closes as an explicit justified decision, not fabricated success.
+
+This documentation review did not rerun source acceptance, builds, tests, runtime comparisons, graphical-client scenarios, concurrency/retry/restart or all nested DTO checks. Snapshot and parent dirty changes are stated above. Implementation/test work belongs to a separately authorized owner; this update changed documentation only and made no Git mutation.
+
+Accounting checks for this appendix: **448 unique unimplemented named IDs across 63 service groups; 39 bound IDs are an overlapping 37-unimplemented/2-legacy subset; 6 provider IDs overlap the 14 response groups; 182 unique gateway selector IDs across 59 namespaces; 25 legacy + 3 client-local IDs (including 2 spelling aliases) are separate; all 672 ledger IDs are addressable.** Do not add 11/29 services, 39 bound, 182 candidates or provider group sizes to 448 as a total of unimplemented gameplay features.
+
+### Core A-F handoff applied (2026-10-13; document reconciliation)
+
+All 42 current literal-name differences in [core-a-f.md](C:/Users/yutai/eve.rs/docs/project/service-response-audit/core-a-f.md:345) match existing EJS IDs. Seven former unimplemented rows changed class: EJS-0015 is client-local covered; EJS-0016/EJS-0024/EJS-0426/EJS-0291/EJS-0301/EJS-0304 are legacy/unverified. EJS-0424/EJS-0425 are included in client-local 3. The already implemented Resolve/Triglavian names were absent from the old missing index and remain source-fixed. The 33 core-a-f unimplemented entries stay in the 448 index.
+
+Total remains **672 = 476 physical named differences (448 + 3 + 25) + 182 candidate selectors + 14 groups**. No dynamic acceptance, service coverage, caller necessity outside the new handoff, complete nested DTO parity or source functionality was newly executed. CBM MCP Transport closed was checked again; documented CLI index_status verified the canonical main root ready. Serena remained canonical. This update changes the five authorized documents only, no source/test/build or Git mutation.
+
+Document readback observed parent main HEAD `c114dc0d8e292c056e8d71b37f496084f484676f`. The classification/source snapshot above remains `dda03ca0464043822e68c8348604ff34eadedcac`; the later parent source commit was not re-audited by this documentation task.

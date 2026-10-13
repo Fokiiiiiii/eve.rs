@@ -169,7 +169,13 @@ def session(character: int, ship: int, step: Step, where: str):
 
 
 def fit_smartbomb(character: int, ship: int) -> int:
-    """The Cockroach's QA Smartbomb in a free mid slot, and the Polaris skill that fitting needs (the walk's fixture, as test_mission_walk)."""
+    """The Cockroach's QA Smartbombs in its free high slots (dbseed.seed_qa_arsenal: the SDE's slot, the red safety and the Polaris skill that
+    fitting needs); the walk activates the first."""
+    from tests import dbseed
+    return dbseed.seed_qa_arsenal(ship)[0]
+
+
+def _old_fit_smartbomb_unused(character: int, ship: int) -> int:
     items = f"{schema('INVENTORY')}.items"
     owner = int(sql(f"SELECT owner_id FROM {items} WHERE id = {ship}"))
     # the red safety: a smartbomb lights only there in low, high and safe space (crimewatch.safety, 0 is none)

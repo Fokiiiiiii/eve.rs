@@ -106,8 +106,8 @@ def journal_of(ship_id: int) -> list[str]:
 
 
 def seed_cockroach(ship_id: int) -> int:
-    """A fixture, not a server path: the character's ship row in the run's inventory schema takes the Cockroach's type, and a QA Smartbomb
-    is fitted in a free mid slot (flags 19 to 26). Returns the module's item id. The live run exports EVE_INVENTORY_SCHEMA and EVE_PSQL_URL."""
+    """A fixture, not a server path: the character's ship row in the run's inventory schema takes the Cockroach's type, and QA Smartbombs
+    are fitted in its free high slots (dbseed.seed_qa_arsenal). Returns the first one's item id. The live run exports EVE_INVENTORY_SCHEMA and EVE_PSQL_URL."""
     schema, url = os.environ["EVE_INVENTORY_SCHEMA"], os.environ["EVE_PSQL_URL"]
 
     def sql(text: str) -> str:
@@ -123,11 +123,8 @@ def seed_cockroach(ship_id: int) -> int:
     # psql -c prints the rows and then the command tag ("UPDATE 1"): the first token is the answer
     assert sql(f"UPDATE {schema}.items SET type_id = {COCKROACH} WHERE id = {ship_id} RETURNING id").split()[0] == str(ship_id), \
         f"the ship row {ship_id} was not found in {schema}"
-    used = {int(flag) for flag in sql(f"SELECT flag FROM {schema}.items WHERE location_id = {ship_id}").split()}
-    flag = next(slot for slot in range(19, 27) if slot not in used)  # the mid slots
-    module = sql(f"INSERT INTO {schema}.items (type_id, owner_id, location_id, flag, quantity, singleton) "
-                 f"SELECT {QA_SMARTBOMB}, owner_id, {ship_id}, {flag}, 1, true FROM {schema}.items WHERE id = {ship_id} RETURNING id")
-    return int(module.split()[0])
+    from tests import dbseed  # the SDE high slots of the ship (smartbomb: hiPower), the bombs of the arsenal; the walk activates the first
+    return dbseed.seed_qa_arsenal(ship_id)[0]
 
 
 def until_stopped(who, limit: float = 240.0) -> None:

@@ -47,8 +47,9 @@ pytestmark = pytest.mark.skipif(
 
 
 def fit_bombs(ship_id: int) -> list[int]:
-    """The Cockroach (the mission walk's fixture: its type and the Polaris skill) with a QA Smartbomb in each free high slot (dbseed)."""
-    return [seed_cockroach(ship_id)] + dbseed.seed_qa_arsenal(ship_id)
+    """The Cockroach (the mission walk's fixture) with a QA Smartbomb in each free high slot (dbseed.seed_qa_arsenal): every bomb of the ship."""
+    seed_cockroach(ship_id)
+    return dbseed.items_of(dbseed.owner_of(ship_id), dbseed.QA_SMARTBOMB)
 
 
 def seed_hub_pilot(character_id: int, ship: int, system: int) -> None:

@@ -1,6 +1,6 @@
 # Planetary Interaction (PI): design
 
-Status: design and first implementation slice (see "Scope and cuts"). Client truth: V24.01 eve-logic build 3396210.
+Status: implemented in three commits (M1 domain, M2 service and store); live walk written, not run (see section 10). Client truth: V24.01 eve-logic build 3396210.
 Work track: eve.rs `Eve.Planets` (domain), `Eve.Planets.Pg` (PostgreSQL, schema `planets`), `planetMgr` RPC in `Eve.Services.Planets`.
 
 ## 1. Inventory (before this work)
@@ -104,3 +104,13 @@ Cut (documented, not built):
 - EVE University wiki, Interplanetary Consolidation / Planetology: https://wiki.eveuniversity.org/Skills:Planet_Management (one planet per level, up to 6).
 - Client: eve-logic commit 1dbb571 (files and lines above).
 - SDE 3396210: `sde.types`, `sde.typeDogma`, `sde.groups`, `sde.planetSchematics`, `sde.dogmaAttributes` (`sde/lock.json`).
+
+## 10. Status (as committed)
+
+- M1 `Eve.Planets` (domain): colony model, simulation, command validation and application, launches, expedited transfers, program math, deterministic resource field (D1). Tests: `Eve.Planets.Tests`, 23 pure tests.
+- M2 persistence and service: colony document in schema `planets` (migration `0001_planets.sql`, `EVE_PLANETS_SCHEMA`), launches table, SDE catalog loader (`PlanetCatalogLoader`), `planetMgr` service (`Eve.Services.Planets`), Host composition (`PlanetComposition.cs`), notification `OnMajorPlanetStateUpdate` after commit, ISK debit (ref 98) in the change's transaction. Tests: 3 PostgreSQL tests in `Eve.Planets.Tests` (store round trip, launches, catalog from the SDE) pass against `eve_p2`; 26 planet tests in total.
+- Not run: the live walk `tools/headless-client/tests/test_planet_walk.py` (needs a run of `tools/dev/run-eve-live.sh` on lane `eve_p2`: port 26101, MITM 26111/26211). The run needs the simulation build and about 2 GB of disk; the disk was at its floor when this was written.
+- No EveJS reference exists for PI (EveJS v0.12.9 has no planet code), so the comparison is with the client contract, not with EveJS.
+- Skills read: Interplanetary Consolidation (`LevelAsync`, `character_skills`), Command Center Upgrades. Remote Sensing and Planetology are not checked (no resource survey data, D1).
+- Pin items: created in the transaction with the pin (location: the planet), deleted with it; the command center consumes its hold item (checked: owner and type only; the hold flag is not checked).
+

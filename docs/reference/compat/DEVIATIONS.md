@@ -3799,3 +3799,17 @@ Full status, formulas and sources: `docs/project/INDUSTRY_STATUS.md`. Decisions 
 - **Slots**: base 1 per activity class plus the skill levels (Mass Production, Advanced Mass Production,
   Laboratory Operation); the base of 1 is the project's basis (cut: not read from the SDE).
 - **Reverse engineering**: no activity in the pinned SDE; not built.
+
+## Planetary interaction (PI)
+
+Source: `docs/project/PI_DESIGN.md` (inventory, client contract, formulas with their files and lines, SDE facts). The rules are the V24.01 client's (eve-logic `eve/common/script/planet/*`, `planetCommon.py`); the numbers are the SDE's (build 3396210) or the EVE University wiki's (Planetary Interaction, Skills: Planet Management).
+
+- **D1 Resource distribution.** The value a program draws from a point of the planet comes from CCP's native resource harmonic (`eve/common/lib/PlanetResources`, `_eveplanetresources`), which is not in the client snapshot. The server uses a deterministic field of the planet id and the resource id (`Eve.Planets.DeterministicResourceField`, bounded by the client's `planetResourceMaxValue` 1.21). The mechanics (overlap of heads, cycles, decay and noise, bandwidth) are the client's; the yields are not CCP's. `GetResourceData` answers no band (the client keeps its empty survey).
+- **D2 Installable resources.** Any planetary resource (category 42) is accepted as a program's resource. The planet-type list of resources is not in the snapshot.
+- **D3 Command center removal.** The command center item is consumed when the planet is first placed; removing the command center abandons the colony and destroys its pins (their items go with them). No refund. The client's rules say nothing; the wiki is silent on what a removed command center returns.
+- **D4 ISK.** A non-command pin costs its base price and an upgrade its cost difference; both are charged on submit (`refPlanetaryConstruction`, 98) in the same transaction as the change. The client's wallet check is advisory.
+- **D5 Launches.** A launch is a record (commodities, place, time) until its owner deletes it or its 5 days pass (wiki). It is not an item in orbit: pickup in space is not built, and the launch item id is 0.
+- **D6 Lazy simulation.** A colony is stored with its time and is run to now on each read and write. The result depends only on the stored state and the time, the client does the same, so no periodic job is kept. The durable scheduler is not used for PI.
+- **D7 Pin ids.** A pin is an item row of the inventory store (location: the planet), created with the pin and deleted with it. The command center uses the id of the hold item the client sends.
+- **Cuts.** Customs offices (import and export) and POCO taxes (`planetOrbitalRegistryBroker`: the orbital structure track); obsolete extractors (group 1026, `ObsoletePinContainer` in V24.01); corporation colonies; GM calls; `GetCommandPinsForPlanet` and `GetExtractorsForPlanet` answer the caller's own colony on the planet (the client asks for other owners' pins only in planet views). Planet blocklist (`IsPlanetTypeBlackListed`) not applied.
+

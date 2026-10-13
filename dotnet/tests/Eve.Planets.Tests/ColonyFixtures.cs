@@ -11,8 +11,6 @@ internal static class Fixtures
     {
         var colony = new Colony(catalog ?? TestCatalog.Build(), field ?? new TestCatalog.ConstantField(1.0), TestCatalog.PlanetId, TestCatalog.Barren,
             TestCatalog.Radius, TestCatalog.ColonyOwner) { CurrentSimTime = Now };
-        long next = 1000;
-        colony.NewRouteId = () => ++next;
         return colony;
     }
 

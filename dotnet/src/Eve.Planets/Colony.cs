@@ -13,7 +13,7 @@ public sealed class Pin
     public long? LastRunTime { get; set; }
     /// <summary>-1 disabled, 0 idle, 1 active (basePin.py STATE_*).</summary>
     public int State { get; set; }
-    public Dictionary<int, long> Contents { get; } = [];
+    public Dictionary<int, long> Contents { get; set; } = [];
 
     // extraction control unit: the program and its heads
     public int? ProgramType { get; set; }
@@ -22,13 +22,13 @@ public sealed class Pin
     public long? InstallTime { get; set; }
     public long? ExpiryTime { get; set; }
     public double HeadRadius { get; set; }
-    public List<Head> Heads { get; } = [];
+    public List<Head> Heads { get; set; } = [];
 
     // processor: the schematic, its cycle and the demands and products of one cycle
     public int? SchematicId { get; set; }
     public long ProcessCycle { get; set; }
-    public Dictionary<int, long> Demands { get; } = [];
-    public Dictionary<int, long> Products { get; } = [];
+    public Dictionary<int, long> Demands { get; set; } = [];
+    public Dictionary<int, long> Products { get; set; } = [];
     public bool HasReceivedInputs { get; set; } = true;
     public bool ReceivedInputsLastCycle { get; set; } = true;
 
@@ -75,8 +75,11 @@ public sealed partial class Colony(PlanetCatalog catalog, IResourceField field, 
     public Dictionary<long, Pin> Pins { get; } = [];
     public Dictionary<(long, long), Link> Links { get; } = [];
     public Dictionary<long, Route> Routes { get; } = [];
-    /// <summary>Allocates the id of a new route (the host supplies the item store ids).</summary>
-    public Func<long> NewRouteId { get; set; } = () => throw new InvalidOperationException("no route id source");
+    /// <summary>The last route id given out; the colony keeps it, so ids stay unique across the colony's life.</summary>
+    public long RouteCounter { get; set; }
+
+    /// <summary>The next route id of the colony.</summary>
+    public long NewRouteId() => ++RouteCounter;
 
     /// <summary>The command center, or null when the colony has none (the rest of the network is then not allowed).</summary>
     public Pin? CommandCenter => Pins.Values.FirstOrDefault(p => p.Kind == PinKind.CommandCenter);

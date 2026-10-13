@@ -60,8 +60,22 @@ public sealed class IndustryRulesTests
     [Fact]
     public void Invention_probability_multiplies_base_skills_and_decryptor_and_clamps()
     {
-        Assert.Equal(0.48, IndustryRules.InventionProbability([0.3], [5, 5], 1.2), 9);
-        Assert.Equal(1.0, IndustryRules.InventionProbability([0.9], [30], 2.0), 9);
+        Assert.Equal(0.48, IndustryRules.InventionProbability([0.3], 10.0 / 30.0, 1.2), 9);
+        Assert.Equal(1.0, IndustryRules.InventionProbability([0.9], 1.0, 2.0), 9);
+    }
+
+    [Fact]
+    public void Invention_skill_bonus_counts_1_30_per_level_and_1_40_for_the_lower_list()
+    {
+        Assert.Equal(2.0 / 30.0 + 1.0 / 40.0, IndustryRules.InventionSkillBonus([(2, false), (1, true)]), 12);
+    }
+
+    [Fact]
+    public void Jump_allowance_is_five_per_distance_level_up_to_twenty_five()
+    {
+        Assert.Equal(0, IndustryRules.MaxDistanceJumps(0));
+        Assert.Equal(5, IndustryRules.MaxDistanceJumps(1));
+        Assert.Equal(25, IndustryRules.MaxDistanceJumps(5));
     }
 
     [Fact]

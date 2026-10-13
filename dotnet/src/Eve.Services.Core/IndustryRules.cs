@@ -24,6 +24,9 @@ public static class IndustryRules
     public const int InventionMaterialEfficiency = 2;
     public const int InventionTimeEfficiency = 4;
     public const double InventionSkillProbability = 1.0 / 30.0;
+    public const double InventionLowerSkillProbability = 1.0 / 40.0;
+    public const int JumpsPerDistanceLevel = 5;
+    public const int MaxIndustryDistanceJumps = 25;
     public const int MaxRunLengthSeconds = 2592000;
     public const int MaxRuns = 500;
 
@@ -121,16 +124,22 @@ public static class IndustryRules
     /// <summary>The number of ME (or TE) levels a blueprint can still research.</summary>
     public static int ResearchRunsLeft(int efficiency, int maximum, int step) => Math.Max(0, (maximum - efficiency) / step);
 
+    /// <summary>The invention skill bonus: each skill level adds 1/30, or 1/40 for a skill on the lower-probability list.</summary>
+    public static double InventionSkillBonus(IEnumerable<(int Level, bool LowerProbability)> skills) =>
+        skills.Sum(skill => skill.Level * (skill.LowerProbability ? InventionLowerSkillProbability : InventionSkillProbability));
+
     /// <summary>
-    /// Invention success probability: the mean base probability of the products, times one plus the sum of the
-    /// invention skill levels (1/30 each), times the decryptor's probability multiplier, clamped to [0, 1].
+    /// Invention success probability: the mean base probability of the products, times one plus the skill bonus, times the
+    /// decryptor's probability multiplier, clamped to [0, 1].
     /// </summary>
-    public static double InventionProbability(IReadOnlyList<double> productProbabilities, IEnumerable<int> skillLevels, double decryptorMultiplier)
+    public static double InventionProbability(IReadOnlyList<double> productProbabilities, double skillBonus, double decryptorMultiplier)
     {
         var baseProbability = productProbabilities.Count == 0 ? 1.0 : productProbabilities.Average();
-        var skillFactor = 1.0 + skillLevels.Sum(level => level * InventionSkillProbability);
-        return Math.Clamp(baseProbability * skillFactor * decryptorMultiplier, 0.0, 1.0);
+        return Math.Clamp(baseProbability * (1.0 + skillBonus) * decryptorMultiplier, 0.0, 1.0);
     }
+
+    /// <summary>The jumps a facility may be from the installer: 5 per level of the distance skill, at most 25 (the client's DISTANCE_PER_LEVEL).</summary>
+    public static int MaxDistanceJumps(int distanceSkillLevel) => Math.Min(MaxIndustryDistanceJumps, JumpsPerDistanceLevel * Math.Max(0, distanceSkillLevel));
 
     /// <summary>
     /// The successful invention attempts: each attempt succeeds when its roll is at most the probability.

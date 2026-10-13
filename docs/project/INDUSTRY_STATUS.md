@@ -76,51 +76,9 @@ Constants (`industry/const.py`): `COST_PERCENTAGE = 0.02`, `SCC_SURCHARGE_RATE =
 - **Invention output** (`Invention.job_output_products`): one blueprint copy per successful attempt, with runs =
   product quantity + decryptor runs (1124), ME = 2 + decryptor ME (1113, truncated), TE = 4 + decryptor TE (1114,
   truncated). Successful attempts are drawn with a seed stored in the job, so a retry gives the same result.
-- **Slots** (`CHARACTER_MODIFIERS`, skills 3387, 24625, 3406): manufacturing `1 + Mass Production + Advanced Mass
-  Production`; the science activities share `1 + Laboratory Operation`. The base of 1 is the project's basis, not read
-  from the SDE.
-- **Research limits**: ME research runs left `(10 - ME)`, TE research runs left `(20 - TE) / 2`.
-- **Activity compatibility** (`Activity.is_compatible`): invention needs a copy; copying, ME, TE and reaction need an
-  original; copying's licensed runs stay within `maxProductionLimit`.
-
-## Per-activity status
-
-| Activity | Install | Completion | Status |
-|---|---|---|---|
-| Manufacturing (1) | Yes (Factory service at NPC stations) | Outputs, BPC runs decremented | Fixed and unit-tested in this slice. Not run end to end against a live server. |
-| ME research (4) | Yes (Laboratory) | ME + 1 per run, cap 10 | Fixed (ids swapped before). Not run live. |
-| TE research (3) | Yes (Laboratory) | TE + 2 per run, cap 20 | Fixed. Not run live. |
-| Copying (5) | Yes (Laboratory) | One BPC per run, licensed runs, source ME/TE | Checks added. Not run live. |
-| Invention (8) | Yes (Laboratory) | Successful attempts, decryptor applied | Implemented in this slice. Not run live. |
-| Reaction (9) | Structures only | Outputs | Installs at NPC stations are refused (see Decisions). Structure reaction service not checked. |
-| Reverse engineering | Not in the pinned SDE (no activity key) | - | Not built: nothing to implement against. |
-
-## Decisions and cuts
-
-- **Cost index**: the pinned SDE and the client data carry no live cost indices, and the ESI `GET /industry/systems/`
-  activity keys could not be confirmed from a page read in this slice. The project rule is `EVE_INDUSTRY_COST_INDEX`
-  (a fraction, default 0), applied to every system and activity, and used by the map RPC too. Live indices are the next step.
-- **NPC station facility tax**: the SDE `npcCorporations.taxRate` of the station's owning corporation (CCP data; 0 for
-  254 corporations, 0.11 for 27, 0.10 for 2). The war-faction modifier (`npcstationtaxmodifier`, applied by the client only
-  during a faction war with a war faction) is not applied: cut.
-- **NPC station services**: the SDE station operation's service list decides the activity. Service 14 (Factory) runs
-  manufacturing; service 15 (Laboratory) runs the science activities. No NPC station service runs reactions, so reactions
-  at NPC stations are refused. The basis is the SDE service list and the client's reaction facility rule.
-- **Structure reactions**: the structure branch still accepts any industry-capable structure for reactions; the
-  reaction service is not checked. Cut for this slice.
-- **Distance**: the client's `FACILITY_DISTANCE` rule (jumps to the facility against the Supply Chain Management,
-  Scientific Networking and Remote Reactions skills) is not enforced. The install payload carries no distance, and the
-  character's jump distance is not computed here. Cut.
-- **Lower invention skill probability** (`TYPE_LIST_LOWER_INVENTION_SKILL_PROBABILITY`, 1/40): not applied; every skill
-  uses 1/30. Cut.
-- **Duration skills**: the Industry, Advanced Industry, required-skill, Science, Metallurgy and Reactions factors come from
-  the SDE skill attributes. The client's character dogma (`GetIndustryCharacterModifiers`) is not replicated. The TE
-  research skill and invention time skills are not applied. Cut.
-- **Delivery**: completed jobs stay in the Ready state until the owner delivers them (the Deliver button, `CompleteJob`).
-  The EVE wiki describes that flow. The scheduler is not used for delivery, so no auto-delivery exists. The client raises
-  its ready notification from its own timer, as before.
-- **Invention decryptors**: the optional item must carry a decryptor attribute (1112, 1113, 1114 or 1124); anything else
-  is refused, following the client's decryptor option list.
+- **Slots**: manufacturing is 1 + Mass Production (450) + Advanced Mass Production (450); the science activities are 1 +
+  Laboratory Operation (471) + Advanced Laboratory Operation (471), each bonus read from the SDE per level. The base of 1 is
+  the project's basis (cut: not read from the SDE).
 - **Refusal basis**: each refusal in this slice is one of: an SDE station service list, the client's activity
   compatibility rule, the client's job slot model, the client's research limit, or the client's decryptor list.
 

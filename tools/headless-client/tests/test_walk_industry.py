@@ -236,3 +236,51 @@ def test_an_invention_uses_the_decryptor_the_client_lists_and_its_skills():
                              f"where owner_id = {int(character)} and type_id = {INVENTION_PRODUCT} and blueprint_copy")
         for row in [line for line in outputs.splitlines() if line]:
             assert row.split("|") == ["2", "4", "14"], row
+
+
+def _entries(described) -> list:
+    """The (key, value) pairs of a described dictionary, util.KeyVal object or Python dictionary."""
+    if not isinstance(described, dict):
+        return []
+    if "$dict" in described:
+        return [tuple(pair) for pair in described["$dict"]]
+    if "$objectex" in described:
+        return [tuple(pair) for pair in described["dict"]]
+    if "$object" in described:
+        return _entries(described["args"])
+    return list(described.items())
+
+
+def _fields(value) -> dict:
+    """The fields of a result, by name (the values stay described)."""
+    return dict(_entries(describe(value)))
+
+
+def test_the_facility_selector_sees_the_station_its_activities_its_hangar_and_its_tax():
+    race = HEALTH["races"][0]
+    run = uuid.uuid4().hex[:10]
+    system = station_system()
+    lab, _, _ = nearest_laboratory(system)
+    with base.connect(f"walk-industry-{run}") as who:
+        character, _, _, _ = arrive(who, race, run)
+
+        facility = _fields(who.call("facilityManager", "GetFacility", STATION))
+        assert number(facility["facilityID"]) == STATION
+        activities = {number(key) for key, _ in _entries(facility["activities"])}
+        # the station has a Factory (14) and no Laboratory (15): manufacturing only, from the SDE operation
+        assert 1 in activities and 3 not in activities, sorted(activities)
+
+        lab_facility = _fields(who.call("facilityManager", "GetFacility", lab))
+        lab_activities = {number(key) for key, _ in _entries(lab_facility["activities"])}
+        assert {3, 4, 5, 8} <= lab_activities
+
+        location = _fields(who.call("facilityManager", "GetFacilityLocations", STATION, character)[0])
+        assert number(location["itemID"]) == STATION and number(location["flagID"]) == dbseed.HANGAR
+        assert number(location["ownerID"]) == character
+
+        taxes = _fields(who.call("facilityManager", "GetFacilityTaxes", STATION, 0))
+        assert "taxCorporation" in taxes
+
+        listed = describe(who.call("facilityManager", "GetFacilities"))
+        ids = [number(dict(_entries(row))["facilityID"]) for row in listed]
+        assert STATION in ids, ids

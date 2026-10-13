@@ -441,6 +441,34 @@ public class MissionDungeonRuntimeTests
         Assert.Empty(host.Standings);
     }
 
+    // The same courier with expirationTime 0 (73 courier records of build 3405148 carry 0): no time limit is given.
+    private static MissionDungeonRuntime ZeroExpiryCourierRuntime(AgentMissionStore store, FakeHost host) => new(store,
+        MissionStaticCatalog.FromRows(3405148, [new SdeRow(9402, JsonDocument.Parse(CourierMission.Replace("9401", "9402").Replace("10080", "0")).RootElement.Clone())], []),
+        host, _ => new MissionAgentPlace(System, Corporation, AgentStation), () => Start, (missionId, characterId, place, level) => null);
+
+    [AgentsPgFact]
+    public async Task A_courier_whose_data_gives_zero_expiry_keeps_the_default_and_is_not_failed_at_once()
+    {
+        var source = NpgsqlDataSource.Create(PgConnection.ForTest(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
+        var schema = "mdr_" + Guid.NewGuid().ToString("N")[..12];
+        await using var cleanup = new Cleanup(source, schema);
+        await AgentMissionStore.MigrateAsync(source, schema);
+        var store = new AgentMissionStore(source, schema);
+        var host = new FakeHost { Store = store };
+        var runtime = ZeroExpiryCourierRuntime(store, host);
+        await store.OfferAsync(Pilot, Agent, new AgentMissionContent(9402, 1239, "Courier Step", "", false), Start, "offer:c5");
+        await store.AcceptAsync(Pilot, Agent, Start, "accept:c5");
+        await runtime.OnAcceptedAsync(Pilot, Agent);
+
+        // a limit of zero minutes failed the courier at once (live: arc 40, step 14898, accepted and failed seven seconds apart)
+        Assert.Equal(0, await runtime.ExpireCouriersAsync(Start + TimeSpan.FromMinutes(5)));
+        Assert.Equal(AgentMissionState.Accepted, (await store.ReadAsync(Pilot, Agent))!.State);
+        Assert.Empty(host.TakenBack);
+
+        Assert.Equal(1, await runtime.ExpireCouriersAsync(Start + MissionCourierRules.DefaultExpiry + TimeSpan.FromMinutes(1)));
+        Assert.Equal(AgentMissionState.Failed, (await store.ReadAsync(Pilot, Agent))!.State);
+    }
+
     [AgentsPgFact]
     public async Task A_courier_quit_takes_the_cargo_back_and_pays_nothing()
     {

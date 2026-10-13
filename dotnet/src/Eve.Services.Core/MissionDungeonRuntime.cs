@@ -227,7 +227,8 @@ public sealed class MissionDungeonRuntime(
         foreach (var record in await store.ReadAcceptedAsync(cancellationToken))
         {
             if (CourierOf(record.Content.MissionId) is not { } courierObjective || catalog.Mission(record.Content.MissionId) is not { } mission || record.AcceptedAt is not { } accepted) continue;
-            var expiry = mission.ExpirationMinutes is { } minutes ? TimeSpan.FromMinutes(minutes) : MissionCourierRules.DefaultExpiry;
+            // the data gives 0 for many courier missions: no time limit is given, so the default applies (not a limit of zero minutes)
+            var expiry = mission.ExpirationMinutes is { } minutes and > 0 ? TimeSpan.FromMinutes(minutes) : MissionCourierRules.DefaultExpiry;
             if (accepted + expiry > at) continue;
             await TransitionAsync(() => store.FailAsync(record.CharacterId, record.AgentId, at,
                 $"courier-expired:{record.Content.MissionId}:{accepted.ToUnixTimeMilliseconds()}", cancellationToken));

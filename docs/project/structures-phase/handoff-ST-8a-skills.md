@@ -36,3 +36,6 @@ ST-8 end-to-end execution and client-visible validation remain incomplete and mu
 
 ## EveJS reference comparison
 The parent checked EveJS 828823a server/src/services/fitting/liveFittingState.js:55-60 and :886-895. Its filterStructureDogmaSkillMap selects precisely type IDs 37796-37799, matching the four CCP/SDE names used here. The parent executed the exact helper body and declared allowlist in isolation with a toInt utility substitute and valid integer SDE inputs: a six-skill map selected the same four without changing the input; null and empty maps returned empty maps (3 checks passed). This is a helper-level functional comparison, not an EveJS server/client walkthrough. Copying mutable C# DogmaItem values is independently required by the PG alias regression; the EveJS filtered Map retains record references and is not an implementation template.
+
+## Final upstream verification (2026-10-13)
+After integrating upstream c5782d80, the selected Host StructureControl plus changed Industry persistence suites passed 21 tests with 0 failures/skips. This is a post-merge regression checkpoint; graphical acceptance and full structure module execution remain open.

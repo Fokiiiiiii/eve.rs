@@ -129,8 +129,21 @@ internal sealed partial class CharacterServicesComposition
             ? Math.Clamp(value, 0m, 1m)
             : 0m;
 
-    static ValueTask<decimal> ConfiguredCostIndexAsync(long solarSystemId, int activityId, CancellationToken token) =>
-        ValueTask.FromResult(ConfiguredIndustryCostIndex);
+    private static readonly System.Net.Http.HttpClient industryIndexHttp = new();
+
+    private IIndustryCostIndexSource industryCostIndexes = default!;
+
+    /// <summary>The stored ESI cost indices, refreshed at most daily; EVE_INDUSTRY_INDEX_SEED=skip makes no call out.</summary>
+    private IIndustryCostIndexSource IndustryCostIndexSetup()
+    {
+        var esi = Env("EVE_INDUSTRY_INDEX_SEED", "auto") is "skip" or "off"
+            ? null
+            : new Eve.Market.EsiIndustrySystems(industryIndexHttp, Eve.Market.EsiIndustrySystems.DefaultBase);
+        var cache = new Eve.Market.IndustryCostIndexCache(
+            new Eve.Market.IndustryCostIndexStore(source, marketSchema), esi, () => now(),
+            message => Console.Error.WriteLine("eve-host: " + message));
+        return new StoredIndustryCostIndexes(cache, ConfiguredIndustryCostIndex);
+    }
 
     /// <summary>The factors and services of an NPC station's SDE operation (npcStations, then stationOperations).</summary>
     async ValueTask<(double ManufacturingFactor, double ResearchFactor, IReadOnlySet<int> Services)?> ReadNpcStationOperationAsync(
@@ -254,9 +267,10 @@ internal sealed partial class CharacterServicesComposition
 
     private Task IndustryFacilities()
     {
+        industryCostIndexes = IndustryCostIndexSetup();
         industryJobOperations = new PersistenceIndustryJobOperations(
             source, industrySchema, items, economyWallets, skills, sde, adjustedPrices, corporations,
-            foundations.Events, stations, ResolveIndustryFacilityAsync, ConfiguredCostIndexAsync, now);
+            foundations.Events, stations, ResolveIndustryFacilityAsync, industryCostIndexes, now);
         return Task.CompletedTask;
     }
 

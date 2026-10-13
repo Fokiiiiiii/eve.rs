@@ -8,6 +8,32 @@ namespace Eve.Services.Core;
 public static class IndustryRules
 {
     public const int Manufacturing = 1;
+    /// <summary>
+    /// The activities a structure runs from its online service ids (STRUCTURE_SERVICE_ID): manufacturing needs a Manufacturing
+    /// service (21 to 24); each science activity needs the Laboratory (30) or its own laboratory service (31 to 34); reactions need
+    /// a Reactions service (40 to 43). Any one of the listed services is enough (EveJS structureSupportsActivity).
+    /// </summary>
+    public static IReadOnlySet<int> StructureActivities(IEnumerable<int> onlineServices)
+    {
+        var online = onlineServices as ISet<int> ?? new HashSet<int>(onlineServices);
+        var activities = new HashSet<int>();
+        if (online.Overlaps([21, 22, 23, 24])) activities.Add(Manufacturing);
+        if (online.Overlaps([30, 31])) activities.Add(ResearchTime);
+        if (online.Overlaps([30, 32])) activities.Add(ResearchMaterial);
+        if (online.Overlaps([30, 33])) activities.Add(Copying);
+        if (online.Overlaps([30, 34])) activities.Add(Invention);
+        if (online.Overlaps([40, 41, 42, 43])) activities.Add(Reaction);
+        return activities;
+    }
+
+    /// <summary>The client's flagCorpDeliveries (inventorycommon/const.py) and the corporation hangar divisions 1..7 (flagCorpSAG1 = 115).</summary>
+    public const int CorporationDeliveriesFlag = 62;
+    public const int CorporationHangarFirstFlag = 115;
+    public const int CorporationHangarLastFlag = 121;
+
+    /// <summary>Where a corporation's job may put its outputs: the deliveries or a corporation hangar division.</summary>
+    public static bool IsCorporationOutputFlag(int flag) =>
+        flag == CorporationDeliveriesFlag || flag is >= CorporationHangarFirstFlag and <= CorporationHangarLastFlag;
     public const int ResearchTime = 3;
     public const int ResearchMaterial = 4;
     public const int Copying = 5;

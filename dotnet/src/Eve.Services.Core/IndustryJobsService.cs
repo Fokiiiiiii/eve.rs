@@ -261,8 +261,11 @@ private async ValueTask<PyValue> MutateAsync(ServiceCall call)
         var blueprintLocationFlagId = NonNegativeInt(payload, "blueprintLocationFlagID", 0);
         var input = Location(payload, "inputLocation", "inputLocationID", "inputLocationFlagID",
             blueprintLocationId, blueprintLocationFlagId);
+        // A corporation job without a chosen output goes to the facility's deliveries (industry/job.py MatchLocation's default).
+        var corporate = ownerId != actor.CharacterId;
         var output = Location(payload, "outputLocation", "outputLocationID", "outputFlagID",
-            input.LocationId, input.FlagId);
+            corporate ? RequiredLong(payload, "facilityID") : input.LocationId,
+            corporate ? IndustryRules.CorporationDeliveriesFlag : input.FlagId);
         var wallet = Wallet(payload, ownerId, actor);
 
         return new IndustryJobInstallSubmission(

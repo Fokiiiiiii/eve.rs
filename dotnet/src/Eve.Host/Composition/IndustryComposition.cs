@@ -76,28 +76,16 @@ internal sealed partial class CharacterServicesComposition
         if (IndustryLong(structure["solarSystemID"]) != solarSystemId)
             return null;
 
+        // The online service ids of the structure (its service modules) decide the activities it runs (IR.StructureActivities).
         var services = structure["services"] as JsonObject ?? structure["serviceStates"] as JsonObject;
-        var industryOnline = IndustryTruthy(structure["industryServiceOnline"]) ||
-            IndustryTruthy(structure["manufacturingServiceOnline"]) ||
-            IndustryTruthy(structure["researchServiceOnline"]);
-        if (!industryOnline && services is not null)
-        {
+        var online = new List<int>();
+        if (services is not null)
             foreach (var (key, value) in services)
-            {
-                var name = key + " " + (value is JsonObject service
-                    ? service["serviceName"]?.ToString() ?? service["name"]?.ToString() ?? ""
-                    : "");
-                if ((name.Contains("industry", StringComparison.OrdinalIgnoreCase) ||
-                     name.Contains("manufactur", StringComparison.OrdinalIgnoreCase) ||
-                     name.Contains("research", StringComparison.OrdinalIgnoreCase)) &&
-                    IndustryOnline(value))
-                {
-                    industryOnline = true;
-                    break;
-                }
-            }
-        }
-        if (!industryOnline)
+                if (int.TryParse(key, System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out var serviceId) &&
+                    IndustryLong(value) == 1)  // STRUCTURE_SERVICE_STATE.ONLINE
+                    online.Add(serviceId);
+        var activities = Eve.Services.Core.IndustryRules.StructureActivities(online);
+        if (activities.Count == 0)
             return null;
 
         var ownerCorporationId = IndustryLong(structure["ownerCorpID"] ?? structure["corporationID"]);
@@ -110,7 +98,7 @@ internal sealed partial class CharacterServicesComposition
         if (!double.IsFinite(timeMultiplier) || timeMultiplier <= 0)
             return null;
         return new PersistenceIndustryJobOperations.IndustryFacility(
-            facilityId, solarSystemId, ownerCorporationId, Math.Max(0, taxRate), timeMultiplier, true);
+            facilityId, solarSystemId, ownerCorporationId, Math.Max(0, taxRate), timeMultiplier, true, null, null, activities);
     }
 
     /// <summary>
@@ -191,14 +179,6 @@ internal sealed partial class CharacterServicesComposition
             System.Globalization.CultureInfo.InvariantCulture, out var result) && double.IsFinite(result)
             ? result : fallback;
 
-    static bool IndustryTruthy(JsonNode? value) =>
-        value is JsonValue scalar && scalar.TryGetValue<bool>(out var flag) ? flag : IndustryLong(value) != 0;
-
-    static bool IndustryOnline(JsonNode? value) =>
-        value is JsonObject service
-            ? IndustryTruthy(service["online"] ?? service["isOnline"] ?? service["active"])
-            : IndustryTruthy(value);
-
     static PyValue? FacilityField(PyValue? source, string name)
     {
         IEnumerable<KeyValuePair<PyValue, PyValue>> entries = source switch
@@ -273,19 +253,27 @@ internal sealed partial class CharacterServicesComposition
     /// </summary>
     static PyValue NpcActivitiesPayload(NpcOperation operation)
     {
+        var activities = new List<int>();
+        if (operation.Services.Contains(14))
+            activities.Add(Eve.Services.Core.IndustryRules.Manufacturing);
+        if (operation.Services.Contains(15))
+            activities.AddRange([Eve.Services.Core.IndustryRules.ResearchTime, Eve.Services.Core.IndustryRules.ResearchMaterial,
+                Eve.Services.Core.IndustryRules.Copying, Eve.Services.Core.IndustryRules.Invention]);
+        return ActivitiesPayload(activities, operation.ManufacturingFactor, operation.ResearchFactor);
+    }
+
+    /// <summary>The activities as the client reads them, with the job time factor of manufacturing and of the science activities.</summary>
+    static PyValue ActivitiesPayload(IEnumerable<int> activityIds, double manufacturingFactor, double researchFactor)
+    {
         var entries = new List<KeyValuePair<PyValue, PyValue>>();
-        void Add(int activityId, double factor)
+        foreach (var activityId in activityIds)
         {
+            var factor = activityId == Eve.Services.Core.IndustryRules.Manufacturing ? manufacturingFactor : researchFactor;
             var modifiers = factor == 1d
                 ? new PyList([])
                 : new PyList([Py.Tuple(Py.Number(factor), PyNone.Instance, PyNone.Instance, PyNone.Instance, new PyInt(5))]);
             entries.Add(new(new PyInt(activityId), Py.Tuple(modifiers, new PyList([]), new PyList([]), new PyList([]), new PyList([]), new PyList([]))));
         }
-        if (operation.Services.Contains(14))
-            Add(1, operation.ManufacturingFactor);
-        if (operation.Services.Contains(15))
-            foreach (var activityId in new[] { 3, 4, 5, 8 })
-                Add(activityId, operation.ResearchFactor);
         return new PyDict(entries);
     }
 
@@ -346,12 +334,18 @@ internal sealed partial class CharacterServicesComposition
     /// GetFacilityLocations: the station hangar of an NPC station, as the client's industry.Location object (itemID, typeID,
     /// ownerID, flagID, canView, canTake). Corporation deliveries are not offered yet.
     /// </summary>
-    PyValue? FacilityLocations(long facilityId, long ownerId)
+    PyValue? FacilityLocations(long facilityId, long ownerId, bool corporate)
     {
         var station = stations.Get(facilityId);
         if (station is null)
             return new PyList([]);
-        var hangar = new PyObjectEx(
+        // A corporation's places are its deliveries and its hangar divisions 1..7; a character's is its station hangar.
+        var flags = corporate
+            ? new[] { Eve.Services.Core.IndustryRules.CorporationDeliveriesFlag }.Concat(
+                Enumerable.Range(Eve.Services.Core.IndustryRules.CorporationHangarFirstFlag,
+                    Eve.Services.Core.IndustryRules.CorporationHangarLastFlag - Eve.Services.Core.IndustryRules.CorporationHangarFirstFlag + 1))
+            : [ItemFlags.Hangar];
+        return new PyList(flags.Select(flag => (PyValue)new PyObjectEx(
             ObjectExKind.Ex1,
             new PyStr("util.KeyVal"),
             [],
@@ -359,11 +353,10 @@ internal sealed partial class CharacterServicesComposition
                 new(new PyStr("itemID"), new PyLong(station.Id)),
                 new(new PyStr("typeID"), new PyInt(station.TypeId)),
                 new(new PyStr("ownerID"), new PyLong(ownerId)),
-                new(new PyStr("flagID"), new PyInt(ItemFlags.Hangar)),
+                new(new PyStr("flagID"), new PyInt(flag)),
                 new(new PyStr("canView"), PyValue.Of(true)),
                 new(new PyStr("canTake"), PyValue.Of(true)),
-            ]);
-        return new PyList([hangar]);
+            ])).ToList());
     }
 
     async ValueTask<PyValue?> FacilityManagerRpcAsync(ServiceCall call, CancellationToken token)
@@ -386,8 +379,10 @@ internal sealed partial class CharacterServicesComposition
                 facilityId, 0, systemId, call.Session.CharacterId ?? 0, token);
             if (facility is null) return null;
 
+            // An NPC station lists the activities of its SDE operation; a structure lists those its online services run.
             var operation = station is null ? null : await NpcOperationAsync(station.OperationId);
-            var activities = operation is null ? new PyDict([]) : NpcActivitiesPayload(operation);
+            var activities = operation is not null ? NpcActivitiesPayload(operation)
+                : ActivitiesPayload(facility.Activities ?? new HashSet<int>(), facility.TimeMultiplier, facility.ResearchFactor);
             return Py.KeyVal(
                 ("facilityID", new PyLong(facility.FacilityId)),
                 ("typeID", new PyInt(typeId)),
@@ -407,7 +402,10 @@ internal sealed partial class CharacterServicesComposition
         if (call.Method == "GetFacilityTaxes")
             return await FacilityTaxesAsync(FacilityNumber(call.Arg(0)));
         if (call.Method == "GetFacilityLocations")
-            return FacilityLocations(FacilityNumber(call.Arg(0)), FacilityNumber(call.Arg(1)));
+        {
+            var ownerId = FacilityNumber(call.Arg(1));
+            return FacilityLocations(FacilityNumber(call.Arg(0)), ownerId, ownerId > 0 && FacilityNumber(call.Session.Get("corpid")) == ownerId);
+        }
         if (call.Method == "GetFacility")
             return await ReadFacilityAsync(FacilityNumber(call.Arg(0)));
         if (call.Method != "GetFacilitiesByID")
@@ -496,16 +494,21 @@ internal sealed partial class CharacterServicesComposition
                 var change = context.Event.Payload<Eve.Services.Core.IndustryJobChangedEvent>();
                 if (change is null)
                     return Task.CompletedTask;
+                // The owner and the installer, and for a corporation's job the online members who hold Factory Manager (the
+                // corporation's job list is theirs; the client's Factory Manager role is 1024).
+                var recipients = new List<Eve.Services.ClientSession>();
                 foreach (var characterId in new[] { change.OwnerId, change.InstallerId }.Distinct())
-                {
-                    if (characterSessions.Of(characterId) is not { } session)
-                        continue;
+                    if (characterSessions.Of(characterId) is { } owned)
+                        recipients.Add(owned);
+                foreach (var member in characterSessions.OfCorporation(change.OwnerId))
+                    if (((member.GetInt("corprole") ?? 0) & 1024) != 0)
+                        recipients.Add(member);
+                foreach (var session in recipients.Distinct())
                     session.SendNotification(
                         "OnIndustryJob", "charid",
                         new PyInt(change.JobId), new PyInt(change.OwnerId), new PyInt(change.BlueprintId),
                         new PyInt(change.InstallerId), new PyInt(change.Status),
                         change.SuccessfulRuns is { } runs ? new PyInt(runs) : PyNone.Instance);
-                }
                 return Task.CompletedTask;
             });
         return Task.CompletedTask;

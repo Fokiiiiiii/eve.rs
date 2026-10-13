@@ -23,6 +23,9 @@ public static class PlanetAttr
     public const int EcuAreaOfInfluence = 1689;
     public const int ExtractorHeadCpu = 1690;
     public const int ExtractorHeadPower = 1691;
+    public const int ImportTax = 1638;
+    public const int ExportTax = 1639;
+    public const int ImportTaxMultiplier = 1640;
 }
 
 /// <summary>Type groups of the planetary pins and links (inventorycommon/const.py).</summary>

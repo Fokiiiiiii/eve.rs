@@ -17,7 +17,8 @@ namespace Eve.Services.Planets;
 /// </summary>
 [Service("planetMgr")]
 public sealed partial class PlanetMgrService(NpgsqlDataSource source, PlanetStore store, PlanetCatalog catalog, IResourceField field,
-    PgItemStore items, WalletTransactions wallets, PgSkillStore skills, Func<long> nowMs, Func<long, PyValue?, Task> notify)
+    PgItemStore items, WalletTransactions wallets, PgSkillStore skills, Func<long> nowMs, Func<long, PyValue?, Task> notify, string inventorySchema)
+    : Eve.Services.Inventory.ICustomsOffices
 {
     private const long UnboundPlanetKey = -1;
     private readonly Dictionary<string, long> _boundPlanets = [];
@@ -72,6 +73,7 @@ public sealed partial class PlanetMgrService(NpgsqlDataSource source, PlanetStor
     public async ValueTask<PyValue> GetMyLaunchesDetails(ServiceCall call)
     {
         var owner = call.Session.CharacterId ?? 0;
+        if (owner != 0) await store.ExpireLaunchesAsync(owner, Ticks(), call.Cancellation);
         var launches = owner == 0 ? [] : await store.LaunchesOfAsync(owner, Ticks(), call.Cancellation);
         return CRowset(LaunchRowDescriptor, [.. launches.Select(l => (PyValue)new PyPackedRow(LaunchRowDescriptor,
             [new PyInt(l.LaunchId), new PyInt(l.SolarSystemId), new PyLong(l.ItemId), new PyInt(l.OwnerId), new PyInt(l.PlanetId),
@@ -191,8 +193,13 @@ public sealed partial class PlanetMgrService(NpgsqlDataSource source, PlanetStor
             return Task.FromResult<List<ColonyCommand>>([]);
         }, call.Cancellation, extra: async (connection, transaction) =>
         {
-            await store.InsertLaunchAsync(connection, transaction, new LaunchRecord(0, owner, planetId, body.SolarSystemId, 0, true,
-                launchTime, launchTime + PlanetRules.LaunchLifetime, body.X, body.Y, body.Z,
+            // the launch container: a can in the system with the commodities inside, as the owner's items (the can model of CharacterShips)
+            var container = await items.CreateAsync(connection, transaction, new NewItem(LaunchContainerType, owner, body.SolarSystemId, ContainerFlag, 1, Singleton: true), call.Cancellation);
+            foreach (var (type, quantity) in commodities)
+                await items.CreateAsync(connection, transaction, new NewItem(type, owner, container, ContainerFlag, quantity), call.Cancellation);
+            // near the planet: two radii out along x from its centre (the launch's place in the system)
+            await store.InsertLaunchAsync(connection, transaction, new LaunchRecord(0, owner, planetId, body.SolarSystemId, container, true,
+                launchTime, launchTime + PlanetRules.LaunchLifetime, body.X + 2 * body.Radius, body.Y, body.Z,
                 System.Text.Json.JsonSerializer.Serialize(commodities.ToDictionary(kv => kv.Key.ToString(System.Globalization.CultureInfo.InvariantCulture), kv => kv.Value))),
                 call.Cancellation);
         });
@@ -235,6 +242,19 @@ public sealed partial class PlanetMgrService(NpgsqlDataSource source, PlanetStor
     /// changes such as a launch), applies the commands, saves the colony, charges the ISK, and commits. Notifies the owner.
     /// </summary>
     private async Task<ChangeResult> ChangeAsync(long owner, long planetId, Func<Colony, ChangeContext, Task<List<ColonyCommand>>> build,
+        CancellationToken cancellationToken, Func<NpgsqlConnection, NpgsqlTransaction, Task>? extra = null)
+    {
+        try
+        {
+            return await ChangeCoreAsync(owner, planetId, build, cancellationToken, extra);
+        }
+        catch (PlanetRefusal refusal)
+        {
+            throw MachoErrors.ThrowUserError(refusal.Key);
+        }
+    }
+
+    private async Task<ChangeResult> ChangeCoreAsync(long owner, long planetId, Func<Colony, ChangeContext, Task<List<ColonyCommand>>> build,
         CancellationToken cancellationToken, Func<NpgsqlConnection, NpgsqlTransaction, Task>? extra = null)
     {
         var now = Ticks();
@@ -527,5 +547,8 @@ public sealed partial class PlanetMgrService(NpgsqlDataSource source, PlanetStor
     /// <summary>The wallet reference of a planetary construction charge (appConst refPlanetaryConstruction).</summary>
     private const int PlanetaryConstructionRef = 98;
     private const int TypeInterplanetaryConsolidation = 2495;
+    /// <summary>The can a launch is put in (Cargo Container, the type of the cans of CharacterShips), and its flag in space (0).</summary>
+    private const int LaunchContainerType = 23;
+    private const int ContainerFlag = 0;
     private const int TypeCommandCenterUpgrade = 2505;
 }

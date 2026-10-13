@@ -102,6 +102,19 @@ public static class PlanetCatalogLoader
             doc.GetProperty("celestialIndex").GetInt32(), position.GetProperty("x").GetDouble(), position.GetProperty("y").GetDouble(), position.GetProperty("z").GetDouble());
     }
 
+    /// <summary>The security status of a solar system (sde.mapSolarSystems, securityStatus).</summary>
+    public static async Task<double> SecurityAsync(NpgsqlDataSource source, long solarSystemId, CancellationToken cancellationToken = default)
+    {
+        await using var connection = await source.OpenConnectionAsync(cancellationToken);
+        await using var command = new NpgsqlCommand("SELECT doc::text FROM sde.\"mapSolarSystems\" WHERE key = $1", connection)
+        {
+            Parameters = { new() { Value = solarSystemId.ToString(CultureInfo.InvariantCulture) } },
+        };
+        var text = await command.ExecuteScalarAsync(cancellationToken) as string
+            ?? throw new InvalidDataException($"solar system {solarSystemId} is not in the static data");
+        return JsonDocument.Parse(text).RootElement.GetProperty("securityStatus").GetDouble();
+    }
+
     private static async Task<long> SolarSystemOfStarAsync(NpgsqlConnection connection, long orbitId, CancellationToken cancellationToken)
     {
         await using var command = new NpgsqlCommand("SELECT doc::text FROM sde.\"mapStars\" WHERE key = $1", connection)
@@ -128,6 +141,7 @@ public static class PlanetAttributes
         PlanetAttr.Capacity, PlanetAttr.PowerOutput, PlanetAttr.PowerLoad, PlanetAttr.CpuOutput, PlanetAttr.CpuLoad, PlanetAttr.PinCycleTime,
         PlanetAttr.PinExtractionQuantity, PlanetAttr.PlanetRestriction, PlanetAttr.LogisticalCapacity, PlanetAttr.PowerLoadPerKm, PlanetAttr.CpuLoadPerKm,
         PlanetAttr.CpuLoadLevelModifier, PlanetAttr.PowerLoadLevelModifier, PlanetAttr.EcuMaxVolume, PlanetAttr.EcuDecayFactor, PlanetAttr.EcuOverlapFactor,
+        PlanetAttr.ImportTax, PlanetAttr.ExportTax, PlanetAttr.ImportTaxMultiplier,
         PlanetAttr.EcuNoiseFactor, PlanetAttr.EcuAreaOfInfluence, PlanetAttr.ExtractorHeadCpu, PlanetAttr.ExtractorHeadPower,
     ];
 }

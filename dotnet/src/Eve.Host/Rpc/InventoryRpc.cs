@@ -40,8 +40,8 @@ internal sealed partial class CharacterServicesComposition
     /// <summary>Inventory broker, crates, ship cosmetics, dynamic items, energy, dogma and planets.</summary>
     private IReadOnlyList<IService> InventoryRpc() =>
     [
-              HostInventoryServiceFactory.CreateInvBroker(items, itemTypes, stations, ships, dogma, now, spaceContainers, spaceDrones, corporations, characterEntryHooks,
-                    controlledStructureInventory: structureControlReadModel.InventoryAsync),
+              WithCustoms(HostInventoryServiceFactory.CreateInvBroker(items, itemTypes, stations, ships, dogma, now, spaceContainers, spaceDrones, corporations, characterEntryHooks,
+                    controlledStructureInventory: structureControlReadModel.InventoryAsync)),
               new Eve.Services.Core.CrateService(new PersistenceCrateServiceBackend(source, items, itemTypes, skills, skillCatalog, mailCache, savedFittings)),
               new Eve.Host.ShipCosmeticsMgrRpcService(mailCache, mailCache, items, source, skinCosmeticsCatalog, now,
                   (characterId, shipId, skinId) =>
@@ -68,6 +68,7 @@ internal sealed partial class CharacterServicesComposition
               new Eve.Host.CharacterEnergyMgrRpcService(mailCache, now),
               new Eve.Host.PaperDollServerRpcService(characters),
               planetMgr,
+              planetRegistry,
               new Eve.Host.IndustryMonitorRpcService(mailCache, items, nowUnixMs: now, itemTypes: itemTypes),
               new DogmaIMService(
                 dogma, ships, now,

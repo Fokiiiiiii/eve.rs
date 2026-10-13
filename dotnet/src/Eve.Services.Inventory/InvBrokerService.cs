@@ -69,6 +69,9 @@ public sealed partial class InvBrokerService(
 
     public void OnBoundObjectReleased(string oid, ClientSession? session) => _bound.TryRemove(oid, out _);
 
+    /// <summary>The planetary customs offices (set by the host when the planets are running).</summary>
+    public ICustomsOffices? Customs { get; set; }
+
     private PyValue Bind(Context context, ClientSession session)
     {
         var oid = $"N={MachoMessage.ProxyNodeId}:{BoundObjectIds.Next()}";
@@ -345,6 +348,10 @@ public sealed partial class InvBrokerService(
                 ? Bind(new Context(Kind.Structure, id, 0), call.Session)
                 : None;
         }
+        else if (Customs is not null && await Customs.IsOfficeAsync(id, call.Cancellation))
+        {
+            result = Bind(new Context(Kind.Container, id, 0, CharacterShips.ContainerFlag), call.Session);
+        }
         else if (StationOf(call.Session) is not { } station)
         {
             result = await OpenInSpaceAsync(call, id);
@@ -383,6 +390,28 @@ public sealed partial class InvBrokerService(
         if (result is PyNone)
             throw MachoErrors.ThrowUserError("FakeItemNotFound");
         return await CompleteInventoryRpcAsync(call, result);
+    }
+
+    /// <summary>
+    /// <c>ImportExportWithPlanet(spaceportPinID, importData, exportData, taxRate)</c> on a bound customs office: the import of the pilot's
+    /// stacks in the office, the export of the launchpad's contents to the office, charged and recorded in one transaction (planets).
+    /// </summary>
+    [Method("ImportExportWithPlanet")]
+    public async ValueTask<PyValue> ImportExportWithPlanet(ServiceCall call)
+    {
+        if (ContextOf(call) is not { Kind: Kind.Container } office || Customs is null)
+            throw MachoErrors.ThrowUserError("CustomsOfficeAccessDenied");
+        var imports = new Dictionary<long, long>();
+        if (call.Arg(1) is PyDict importDict)
+            foreach (var (key, quantity) in importDict.Entries)
+                imports[IdOf(key) ?? 0] = IdOf(quantity) ?? 0;
+        var exports = new Dictionary<int, long>();
+        if (call.Arg(2) is PyDict exportDict)
+            foreach (var (key, quantity) in exportDict.Entries)
+                exports[(int)(IdOf(key) ?? 0)] = IdOf(quantity) ?? 0;
+        var rate = call.Arg(3) switch { PyReal real => real.Value, PyInt number => number.Value, PyLong number => number.Value, _ => 0.0 };
+        await Customs.ImportExportAsync(call.Session, office.ItemId, IdOf(call.Arg(0)) ?? 0, imports, exports, rate, call.Cancellation);
+        return None;
     }
 
     /// <summary>The inventories of a pilot in space: the solar system it binds first, then its ship and the cans and wrecks beside it.</summary>

@@ -24,7 +24,7 @@ public class AgentMissionStoreTests
         Assert.NotNull(held);
         Assert.Equal(AgentMissionState.Offered, held.State);
         Assert.Equal(Courier, held.Content);
-        Assert.Equal(now + AgentMissionStore.OfferLifetime, held.ExpiresAt);
+        Assert.Null(held.ExpiresAt);
         Assert.Equal(["offered:0>1"], await rig.JournalAsync(Character, Agent));
         Assert.Equal(change, Assert.Single(rig.Changes));
     }
@@ -127,23 +127,17 @@ public class AgentMissionStoreTests
     }
 
     [PgFact]
-    public async Task An_expired_offer_is_refused_on_accept_and_removed_once_by_the_sweep()
+    public async Task An_offer_does_not_expire_so_a_late_accept_is_taken_and_the_sweep_leaves_it_alone()
     {
+        // the wiki's seven-day expiry is for COSMOS agents only (not identified in the data): other agents' offers stay until accepted or declined
         await using var rig = await Rig.Create();
         await rig.Store.OfferAsync(Character, Agent, Courier, Rig.Start, "offer:1");
-        var late = Rig.Start + AgentMissionStore.OfferLifetime;
+        var late = Rig.Start + TimeSpan.FromDays(30);
 
-        var refused = await Assert.ThrowsAsync<AgentMissionRefusedException>(() =>
-            rig.Store.AcceptAsync(Character, Agent, late, "accept:late"));
-        Assert.Equal("offer_expired", refused.Reason);
-
-        var swept = await rig.Store.ExpireOffersAsync(late);
-        var again = await rig.Store.ExpireOffersAsync(late);
-
-        Assert.Equal("offer_expired", Assert.Single(swept).Action);
-        Assert.Empty(again);
-        Assert.Equal(AgentMissionState.Allocated, (await rig.Store.ReadAsync(Character, Agent))!.State);
-        Assert.Equal(["offered:0>1", "offer_expired:1>0"], await rig.JournalAsync(Character, Agent));
+        Assert.Empty(await rig.Store.ExpireOffersAsync(late));
+        await rig.Store.AcceptAsync(Character, Agent, late, "accept:late");
+        Assert.Equal(AgentMissionState.Accepted, (await rig.Store.ReadAsync(Character, Agent))!.State);
+        Assert.Equal(["offered:0>1", "accepted:1>2"], await rig.JournalAsync(Character, Agent));
     }
 
     [PgFact]

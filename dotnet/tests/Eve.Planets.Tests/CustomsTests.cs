@@ -2,6 +2,37 @@ using Eve.Planets;
 
 namespace Eve.Planets.Tests;
 
+public class PlanetSurveyTests
+{
+    private static readonly int[] Raw = [2267, 2268, 2270, 2272, 2286, 2287, 2288, 2305, 2306, 2307, 2308, 2309, 2310, 2311];
+
+    private sealed class Field(double value) : IResourceField
+    {
+        public double ValueAt(long planetId, int resourceTypeId, double theta, double phi) => value;
+    }
+
+    [Fact]
+    public void A_planet_carries_four_distinct_raw_resources_the_same_way_each_time()
+    {
+        var first = PlanetSurvey.ResourcesOf(40486618, Raw);
+        Assert.Equal(PlanetSurvey.ResourcesPerPlanet, first.Count);
+        Assert.Equal(first.Distinct().Count(), first.Count);
+        Assert.All(first, type => Assert.Contains(type, Raw));
+        Assert.Equal(first, PlanetSurvey.ResourcesOf(40486618, Raw));
+        Assert.Empty(PlanetSurvey.ResourcesOf(40486618, []));
+    }
+
+    [Fact]
+    public void The_quality_is_the_field_on_the_client_display_scale_and_the_maximum_shows_as_full()
+    {
+        var max = PlanetRules.MaxResourceValue;
+        // the client divides by planetResourceMaxValue * 255 * 0.5: a field at its maximum is the display's full
+        var full = PlanetSurvey.QualityOf(new Field(max), 1, 2268) / (max * 255 * 0.5);
+        Assert.Equal(1.0, full, 9);
+        Assert.Equal(0.5 * max * 255 * 0.5, PlanetSurvey.QualityOf(new Field(0.5 * max), 1, 2268), 9);
+    }
+}
+
 public class CustomsTests
 {
     private static Colony LaunchpadColony()

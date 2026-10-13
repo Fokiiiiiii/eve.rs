@@ -155,11 +155,22 @@ public sealed partial class PlanetMgrService(NpgsqlDataSource source, PlanetStor
     public PyValue GetResourceData(ServiceCall call) => Py.KeyVal(("data", PyNone.Instance), ("numBands", new PyInt(0)), ("proximity", PyNone.Instance));
 
     /// <summary>
-    /// GetPlanetResourceInfo: the resources of the planet with their quality (resourceController lists them). The planet's resource set is CCP's
-    /// (not in the snapshot, PI_DESIGN.md D9): none is listed, so the resource list is empty rather than invented.
+    /// GetPlanetResourceInfo: the planet's resources and their quality on the client's display scale (resourceController lists them). The set is the
+    /// project's rule (<see cref="PlanetSurvey"/>, D9); the amounts are the field's.
     /// </summary>
     [Method("GetPlanetResourceInfo")]
-    public PyValue GetPlanetResourceInfo(ServiceCall call) => new PyDict([]);
+    public async ValueTask<PyValue> GetPlanetResourceInfo(ServiceCall call)
+    {
+        var planetId = PlanetOf(call);
+        if (dogma is null) return new PyDict([]);
+        var raw = (await dogma.TypesInGroupsAsync(RawResourceGroups, call.Cancellation)).Select(type => type.TypeId).ToList();
+        var survey = PlanetSurvey.ResourcesOf(planetId, raw)
+            .Select(type => new KeyValuePair<PyValue, PyValue>(new PyInt(type), new PyReal(PlanetSurvey.QualityOf(field, planetId, type))));
+        return new PyDict([.. survey]);
+    }
+
+    /// <summary>The raw planetary resource groups (SDE 1032, 1033, 1035: solid, liquid-gas, organic).</summary>
+    private static readonly string[] RawResourceGroups = ["Planet Solid - Raw Resource", "Planet Liquid-Gas - Raw Resource", "Planet Organic - Raw Resource"];
 
     // ----- the writes -----
 

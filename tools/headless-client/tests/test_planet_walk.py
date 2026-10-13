@@ -15,6 +15,7 @@ from contextlib import contextmanager
 
 import pytest
 
+from evecli import packet
 from evecli.observe import wait_quietly
 from tests.test_fob_insystem_walk import seed_hub_pilot
 
@@ -40,6 +41,7 @@ WATER = 3645  # Water (a P1 commodity: base value 400 ISK per unit, SDE attribut
 AQUEOUS = 2268  # Aqueous Liquids (an R0 resource: base value 5 ISK per unit)
 LAUNCH_CONTAINER = 23  # Cargo Container, the can a launch is put in
 HANGAR = 4
+CARGO_FLAG = 5  # the ship's hold (CharacterShips.CargoFlag)
 TICKS_PER_HOUR = 36_000_000_000
 
 pytestmark = pytest.mark.skipif(
@@ -206,6 +208,9 @@ def test_a_colony_runs_in_time_launches_and_trades_at_customs():
             (6, ((2, 1), [(1, 2), (1, 1)], AQUEOUS, 1)),
         ]))
         storage, ecu, pad = pin_of_type(colony, STORAGE), pin_of_type(colony, ECU), pin_of_type(colony, LAUNCHPAD)
+        # the survey the resource list shows: four resources, each with a quality on the client's display scale (a maximum is 1.21 x 127.5)
+        survey = record(client.call_bound(handle, "GetPlanetResourceInfo"))
+        assert len(survey) == 4 and all(0 < quality <= 1.21 * 127.5 for quality in survey.values()), survey
         assert colony["level"] == 5
         assert [route["commodityTypeID"] for route in colony["routes"]] == [AQUEOUS]
 
@@ -263,4 +268,22 @@ def test_a_colony_runs_in_time_launches_and_trades_at_customs():
         with pytest.raises(Exception):
             client.call_bound(customs, "ImportExportWithPlanet", pad, m.Dict([]), m.Dict([(WATER, 1)]), 0.25)
         assert pin_contents(record(client.call_bound(handle, "GetPlanetInfo")), pad)[WATER] == 15
+
+        # the container Add (the client's importExportUI.MoveFromInventory): a stack from the pilot's ship hold goes into the office; it keeps its
+        # owner and lands in the office hangar. Too much for the office's room is refused as NotEnoughSpace.
+        room = record(client.call_bound(customs, "GetCapacity"))  # the window reads the office's room first
+        assert room["capacity"] == 35000.0
+        hold = dbseed.new_item(WATER, owner=pilot, location=ship, flag=CARGO_FLAG, quantity=10)
+        landed = m.plain(client.call_bound(customs, "Add", hold, ship, qty=6))
+        assert int(landed) > 0, "the office took the stack"
+        assert psql(f"SELECT quantity FROM {schema('EVE_INVENTORY_SCHEMA')}.items WHERE id = {hold}") == "4", "the ship hold keeps the rest"
+        # the office's own stack of the pilot's Water (35 left by the export above) takes the 6: one stack, the pilot's, in the hangar
+        assert int(landed) == stock, "the stack merged into the office's stack of the same commodity"
+        assert psql(f"SELECT quantity || '|' || owner_id || '|' || flag || '|' || location_id FROM {schema('EVE_INVENTORY_SCHEMA')}.items WHERE id = {stock}") \
+            == f"41|{pilot}|{HANGAR}|{office}"
+        too_much = dbseed.new_item(WATER, owner=pilot, location=ship, flag=CARGO_FLAG, quantity=1_000_000)
+        with pytest.raises(packet.MachoError) as refused:
+            client.call_bound(customs, "Add", too_much, ship)
+        assert "NotEnoughSpace" in repr(getattr(refused.value, "payload", refused.value)), "the office refuses what does not fit by its key"
+        assert psql(f"SELECT quantity FROM {schema('EVE_INVENTORY_SCHEMA')}.items WHERE id = {too_much}") == "1000000", "nothing moved"
 

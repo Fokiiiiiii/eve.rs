@@ -1,4 +1,5 @@
 using System.Net;
+using IR = Eve.Services.Core.IndustryRules;
 using System.Net.Sockets;
 using Eve.Characters;
 using Eve.Data;
@@ -38,7 +39,12 @@ namespace Eve.Host;
 public sealed partial class PersistenceIndustryJobOperations : Eve.Services.Core.IIndustryJobOperations
 {
     public sealed record IndustryFacility(
-        long FacilityId, long SolarSystemId, long OwnerId, decimal TaxRate, double TimeMultiplier, bool IsOnline);
+        long FacilityId, long SolarSystemId, long OwnerId, decimal TaxRate, double TimeMultiplier, bool IsOnline,
+        double? ResearchTimeMultiplier = null, IReadOnlySet<int>? StationServices = null)
+    {
+        /// <summary>The time factor of the science activities (research, copying, invention); the job factor otherwise.</summary>
+        public double ResearchFactor => ResearchTimeMultiplier ?? TimeMultiplier;
+    }
 
     private sealed record Material(int TypeId, long Quantity);
 
@@ -50,7 +56,8 @@ public sealed partial class PersistenceIndustryJobOperations : Eve.Services.Core
         int TimeSeconds,
         IReadOnlyList<Material> Materials,
         IReadOnlyList<Product> Products,
-        IReadOnlyList<SkillRequirement> Skills);
+        IReadOnlyList<SkillRequirement> Skills,
+        int MaxProductionLimit);
 
     private sealed record PreparedInstall(
         ActivityRecipe Recipe,
@@ -114,22 +121,24 @@ public sealed partial class PersistenceIndustryJobOperations : Eve.Services.Core
         CancellationToken cancellationToken)
     {
         var job = request.Job;
-        await ValidateActorAsync(request.Context.Actor, job.OwnerId, job.Wallet, job.StationId, cancellationToken);
+        var actor = request.Context.Actor;
+        await ValidateActorAsync(actor, job.OwnerId, job.Wallet, job.StationId, cancellationToken);
         var facility = await _resolveFacility(
-            job.FacilityId, job.StationId, job.SolarSystemId, request.Context.Actor.CharacterId, cancellationToken);
+            job.FacilityId, job.StationId, job.SolarSystemId, actor.CharacterId, cancellationToken);
         if (facility is null || !facility.IsOnline || facility.FacilityId != job.FacilityId ||
             facility.SolarSystemId != job.SolarSystemId || facility.OwnerId <= 0 ||
-            !double.IsFinite(facility.TimeMultiplier) || facility.TimeMultiplier <= 0)
+            !double.IsFinite(facility.TimeMultiplier) || facility.TimeMultiplier <= 0 ||
+            !double.IsFinite(facility.ResearchFactor) || facility.ResearchFactor <= 0)
             throw InvalidJob();
 
         var recipe = await ReadRecipeAsync(job.BlueprintTypeId, job.ActivityId, cancellationToken);
+        if (facility.StationServices is { } services && !StationRunsActivity(services, job.ActivityId))
+            throw InvalidJob();
         var products = SelectProducts(job, recipe);
-
-        var priceTypes = products.Count > 0
-            ? products.Select(product => product.TypeId).Distinct().ToArray()
-            : [job.BlueprintTypeId];
-        var prices = await ReadMarketPricesAsync(priceTypes, cancellationToken);
+        if (job.ActivityId == InventionActivity && products.Count != 1)
+            throw InvalidJob();
         var costIndex = await ReadCostIndexAsync(job.SolarSystemId, job.ActivityId, cancellationToken);
+        var highSecurity = await IsHighSecurityAsync(job.SolarSystemId, cancellationToken);
 
         await using var connection = await _source.OpenConnectionAsync(cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
@@ -150,21 +159,57 @@ public sealed partial class PersistenceIndustryJobOperations : Eve.Services.Core
         if (blueprint.BlueprintCopy &&
             (blueprint.BlueprintRuns is not { } remainingRuns || remainingRuns < job.Runs))
             throw InvalidJob();
-        if (job.ActivityId == CopyingActivity && job.LicensedRuns <= 0)
+        // The client's activity compatibility: invention needs a copy; copying, research and reactions need an original.
+        if (job.ActivityId == InventionActivity && !blueprint.BlueprintCopy)
             throw InvalidJob();
+        if (job.ActivityId is CopyingActivity or TimeResearchActivity or MaterialResearchActivity or ReactionActivity &&
+            blueprint.BlueprintCopy)
+            throw InvalidJob();
+        if (job.ActivityId == CopyingActivity && (job.LicensedRuns <= 0 || job.LicensedRuns > recipe.MaxProductionLimit))
+            throw InvalidJob();
+        if (job.ActivityId is TimeResearchActivity or MaterialResearchActivity)
+        {
+            var left = job.ActivityId == MaterialResearchActivity
+                ? IR.ResearchRunsLeft(blueprint.MaterialEfficiency, IR.MaxMaterialEfficiency, 1)
+                : IR.ResearchRunsLeft(blueprint.TimeEfficiency, IR.MaxTimeEfficiency, IR.StepTimeEfficiency);
+            if (job.Runs > left)
+                throw InvalidJob();
+        }
         var requiredMaterials = RequiredMaterials(job, blueprint, recipe);
 
+        var skillLevels = new Dictionary<int, int>();
         foreach (var requirement in recipe.Skills)
         {
             var level = await _skills.LevelAsync(
-                connection, transaction, request.Context.Actor.CharacterId, requirement.TypeId, cancellationToken);
+                connection, transaction, actor.CharacterId, requirement.TypeId, cancellationToken);
             if (level < requirement.Level)
                 throw InvalidJob();
+            skillLevels[requirement.TypeId] = level;
         }
+        await CheckSlotsAsync(connection, transaction, actor.CharacterId, job.ActivityId, cancellationToken);
 
         var duration = await TimeInSecondsAsync(
-            connection, transaction, request.Context.Actor.CharacterId, job, recipe, facility, cancellationToken);
-        var cost = CalculateCost(job, products, prices, costIndex, facility.TaxRate);
+            connection, transaction, actor.CharacterId, job, recipe, facility, blueprint, cancellationToken);
+        var baseCost = await ReadBaseCostAsync(job, blueprint, products, recipe, cancellationToken);
+        var cost = IR.Total(IR.CostParts(baseCost, (double)costIndex, (double)facility.TaxRate, highSecurity, job.ActivityId));
+
+        var probability = 1d;
+        JsonObject? invention = null;
+        if (job.ActivityId == InventionActivity)
+        {
+            var decryptor = await ReadDecryptorAsync(job.OptionalTypeId, job.OptionalTypeId2, cancellationToken);
+            probability = IR.InventionProbability(
+                recipe.Products.Select(product => product.Probability).ToArray(),
+                recipe.Skills.Select(skill => skillLevels[skill.TypeId]).ToArray(),
+                decryptor.ProbabilityMultiplier);
+            invention = new JsonObject
+            {
+                ["runs"] = (int)Math.Round(products[0].Quantity + decryptor.Runs, MidpointRounding.AwayFromZero),
+                ["me"] = IR.InventionMaterialEfficiency + (int)Math.Truncate(decryptor.MaterialEfficiency),
+                ["te"] = IR.InventionTimeEfficiency + (int)Math.Truncate(decryptor.TimeEfficiency),
+            };
+        }
+
         await ConsumeMaterialsAsync(
             connection, transaction, job, blueprint.Id, requiredMaterials, cancellationToken);
         await _items.SetJobBlueprintLockedAsync(
@@ -174,7 +219,7 @@ public sealed partial class PersistenceIndustryJobOperations : Eve.Services.Core
         var now = _nowUnixMs();
         var startFileTime = FileTime(now);
         var endFileTime = FileTime(checked(now + (long)duration * 1000));
-        var snapshot = ActivitySnapshot(job, blueprint, recipe, requiredMaterials, products, cost, duration, facility);
+        var snapshot = ActivitySnapshot(job, blueprint, recipe, requiredMaterials, products, cost, duration, facility, invention);
         var snapshotJson = snapshot.ToJsonString();
         Eve.Wallet.WalletSettlement? settlement = null;
         if (cost > 0)
@@ -207,22 +252,145 @@ public sealed partial class PersistenceIndustryJobOperations : Eve.Services.Core
         Add(insert,
             request.Context.OperationId, fingerprint, job.ActivityId, blueprint.Id, blueprint.TypeId,
             blueprint.BlueprintCopy, blueprint.LocationId, blueprint.Flag, job.FacilityId, job.OwnerId,
-            request.Context.Actor.CharacterId, job.SolarSystemId, job.StationId,
+            actor.CharacterId, job.SolarSystemId, job.StationId,
             job.InputLocation.LocationId, job.InputLocation.FlagId,
             job.OutputLocation.LocationId, job.OutputLocation.FlagId,
             startFileTime, endFileTime, job.Runs, job.LicensedRuns, cost, duration,
-            products.Count == 0 ? 1d : products.Max(product => product.Probability),
+            probability,
             (object?)job.ProductTypeId ?? DBNull.Value,
             (object?)job.OptionalTypeId ?? DBNull.Value,
             (object?)job.OptionalTypeId2 ?? DBNull.Value,
             job.Wallet.OwnerId, job.Wallet.AccountKey, snapshotJson);
         var jobId = (long)(await insert.ExecuteScalarAsync(cancellationToken))!;
         await PublishChangedAsync(connection, transaction, jobId, job.OwnerId, blueprint.Id,
-            request.Context.Actor.CharacterId, 1, 0, request.Context.OperationId, cancellationToken);
+            actor.CharacterId, 1, 0, request.Context.OperationId, cancellationToken);
         await transaction.CommitAsync(cancellationToken);
         Announce(settlement);
         return jobId;
     }
+
+    /// <summary>
+    /// The client's job base cost (Activity.job_cost): the estimated item value of the materials per run, scaled
+    /// by the activity (copying and research by 2 percent of the blueprint's value, invention by the product's).
+    /// </summary>
+    private async Task<double> ReadBaseCostAsync(
+        Eve.Services.Core.IndustryJobInstallSubmission job,
+        Eve.Inventory.Item blueprint,
+        IReadOnlyList<Product> products,
+        ActivityRecipe recipe,
+        CancellationToken cancellationToken)
+    {
+        async Task<double> Value(int typeId, int activityId) =>
+            await ReadEstimatedValueAsync(typeId, activityId, new HashSet<int>(), cancellationToken);
+        switch (job.ActivityId)
+        {
+            case ManufacturingActivity:
+                return await Value(job.BlueprintTypeId, ManufacturingActivity) * job.Runs;
+            case TimeResearchActivity:
+            case MaterialResearchActivity:
+                var level = job.ActivityId == MaterialResearchActivity
+                    ? blueprint.MaterialEfficiency
+                    : blueprint.TimeEfficiency / IR.StepTimeEfficiency;
+                var ratio = IR.ResearchJobSeconds(recipe.TimeSeconds, level, job.Runs) / recipe.TimeSeconds;
+                return await Value(job.BlueprintTypeId, ManufacturingActivity) * IR.CostPercentage * ratio;
+            case CopyingActivity:
+                return await Value(job.BlueprintTypeId, ManufacturingActivity) * IR.CostPercentage * job.LicensedRuns * job.Runs;
+            case InventionActivity:
+                return await Value(products[0].TypeId, ManufacturingActivity) * IR.CostPercentage * job.Runs;
+            case ReactionActivity:
+                return await Value(job.BlueprintTypeId, ReactionActivity) * job.Runs;
+            default:
+                throw InvalidJob();
+        }
+    }
+
+    /// <summary>
+    /// The decryptor of an invention: its probability multiplier (dogma 1112), the extra runs (1124) and the ME
+    /// (1113) and TE (1114) of the output. A selected item without those attributes is not a decryptor.
+    /// </summary>
+    private async Task<(double ProbabilityMultiplier, double Runs, double MaterialEfficiency, double TimeEfficiency)> ReadDecryptorAsync(
+        int? first,
+        int? second,
+        CancellationToken cancellationToken)
+    {
+        double probability = 1, runs = 0, materialEfficiency = 0, timeEfficiency = 0;
+        foreach (var typeId in new[] { first, second })
+        {
+            if (typeId is not { } id)
+                continue;
+            var multiplier = await ReadTypeAttributeAsync(id, 1112, cancellationToken);
+            var me = await ReadTypeAttributeAsync(id, 1113, cancellationToken);
+            var te = await ReadTypeAttributeAsync(id, 1114, cancellationToken);
+            var extraRuns = await ReadTypeAttributeAsync(id, 1124, cancellationToken);
+            if (multiplier is null && me is null && te is null && extraRuns is null)
+                throw InvalidJob();
+            probability *= multiplier ?? 1;
+            runs += extraRuns ?? 0;
+            materialEfficiency += me ?? 0;
+            timeEfficiency += te ?? 0;
+        }
+        return (probability, runs, materialEfficiency, timeEfficiency);
+    }
+
+    /// <summary>
+    /// The job slots of an installer: manufacturing has one base slot plus Mass Production and Advanced Mass
+    /// Production; the science activities share one base slot plus Laboratory Operation (one slot per level each).
+    /// </summary>
+    private async Task CheckSlotsAsync(
+        Npgsql.NpgsqlConnection connection,
+        Npgsql.NpgsqlTransaction transaction,
+        long characterId,
+        int activityId,
+        CancellationToken cancellationToken)
+    {
+        int[] activities;
+        long slots;
+        if (activityId == ManufacturingActivity)
+        {
+            activities = [ManufacturingActivity];
+            slots = 1 + await _skills.LevelAsync(connection, transaction, characterId, MassProductionSkillId, cancellationToken)
+                      + await _skills.LevelAsync(connection, transaction, characterId, AdvancedMassProductionSkillId, cancellationToken);
+        }
+        else if (activityId is TimeResearchActivity or MaterialResearchActivity or CopyingActivity or InventionActivity)
+        {
+            activities = [TimeResearchActivity, MaterialResearchActivity, CopyingActivity, InventionActivity];
+            slots = 1 + await _skills.LevelAsync(connection, transaction, characterId, LaboratoryOperationSkillId, cancellationToken);
+        }
+        else
+        {
+            return;
+        }
+        // One character's installs are serialised so two requests cannot both pass the count.
+        await using (var locked = new Npgsql.NpgsqlCommand(
+            "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", connection, transaction))
+        {
+            locked.Parameters.Add(new Npgsql.NpgsqlParameter
+            {
+                Value = "industry-slots:" + characterId.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            });
+            await locked.ExecuteNonQueryAsync(cancellationToken);
+        }
+        await using var count = new Npgsql.NpgsqlCommand($"""
+            SELECT COUNT(*) FROM {_schema}.jobs
+             WHERE installer_id = $1 AND status < 100 AND activity_id = ANY($2)
+            """, connection, transaction);
+        count.Parameters.Add(new Npgsql.NpgsqlParameter { Value = characterId });
+        count.Parameters.Add(new Npgsql.NpgsqlParameter { Value = activities });
+        var used = (long)(await count.ExecuteScalarAsync(cancellationToken))!;
+        if (used >= slots)
+            throw InvalidJob();
+    }
+
+    /// <summary>
+    /// The NPC station services that run an activity (the SDE station operation's service list): the Factory
+    /// (14) runs manufacturing, the Laboratory (15) the science activities. No NPC station service runs reactions.
+    /// </summary>
+    private static bool StationRunsActivity(IReadOnlySet<int> services, int activityId) => activityId switch
+    {
+        ManufacturingActivity => services.Contains(FactoryServiceId),
+        ReactionActivity => false,
+        _ => services.Contains(LaboratoryServiceId),
+    };
 
     public async ValueTask CompleteJobAsync(
         Eve.Services.Core.IndustryJobAction request,
@@ -259,7 +427,7 @@ public sealed partial class PersistenceIndustryJobOperations : Eve.Services.Core
         if (row is null)
             throw InvalidJob();
         var status = Int(row["status"]);
-        if (status == 101)
+        if (status == 102)
         {
             await transaction.CommitAsync(cancellationToken);
             return;
@@ -281,14 +449,14 @@ public sealed partial class PersistenceIndustryJobOperations : Eve.Services.Core
             blueprint.Flag, blueprint.BlueprintCopy, false, cancellationToken);
         await using var update = new Npgsql.NpgsqlCommand($"""
             UPDATE {_schema}.jobs
-               SET status = 101, completed_character_id = $2, completed_at = clock_timestamp()
+               SET status = 102, completed_character_id = $2, completed_at = clock_timestamp()
              WHERE job_id = $1 AND status < 100
             """, connection, transaction);
         Add(update, request.JobId, request.Context.Actor.CharacterId);
         if (await update.ExecuteNonQueryAsync(cancellationToken) != 1)
             throw InvalidJob();
         await PublishChangedAsync(connection, transaction, request.JobId, ownerId, blueprintId,
-            request.Context.Actor.CharacterId, 101, Long(row["successfulRuns"]),
+            request.Context.Actor.CharacterId, 102, Long(row["successfulRuns"]),
             request.Context.OperationId + ":" + request.JobId, cancellationToken);
         await transaction.CommitAsync(cancellationToken);
     }
@@ -338,9 +506,9 @@ public sealed partial class PersistenceIndustryJobOperations : Eve.Services.Core
         var nextTimeEfficiency = blueprint.TimeEfficiency;
 
         if (activityId == MaterialResearchActivity)
-            nextMaterialEfficiency = Math.Min(10, checked(nextMaterialEfficiency + runs));
+            nextMaterialEfficiency = Math.Min(IR.MaxMaterialEfficiency, checked(nextMaterialEfficiency + runs));
         else if (activityId == TimeResearchActivity)
-            nextTimeEfficiency = Math.Min(20, checked(nextTimeEfficiency + runs));
+            nextTimeEfficiency = Math.Min(IR.MaxTimeEfficiency, checked(nextTimeEfficiency + IR.StepTimeEfficiency * runs));
         else
         {
             if (blueprint.BlueprintCopy && activityId != CopyingActivity)

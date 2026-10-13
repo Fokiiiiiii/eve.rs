@@ -55,8 +55,12 @@ internal sealed partial class CharacterServicesComposition
         {
             if (station.SolarSystemId != solarSystemId || stationId > 0 && stationId != station.Id)
                 return null;
+            // An NPC station runs the activities its SDE operation lists; its factors are the job time factors.
+            if (await ReadNpcStationOperationAsync(station.Id, token) is not { } operation)
+                return null;
             return new PersistenceIndustryJobOperations.IndustryFacility(
-                station.Id, station.SolarSystemId, station.OwnerId, 0m, 1d, true);
+                station.Id, station.SolarSystemId, station.OwnerId, NpcStationFacilityTax, operation.ManufacturingFactor,
+                true, operation.ResearchFactor, operation.Services);
         }
 
         if (stationId > 0)
@@ -107,6 +111,51 @@ internal sealed partial class CharacterServicesComposition
         return new PersistenceIndustryJobOperations.IndustryFacility(
             facilityId, solarSystemId, ownerCorporationId, Math.Max(0, taxRate), timeMultiplier, true);
     }
+
+    /// <summary>
+    /// The facility tax of an NPC station: 10 percent (a community source; standings do not reduce it for
+    /// manufacturing). No official CCP table was read for it; see docs/project/INDUSTRY_STATUS.md.
+    /// </summary>
+    const decimal NpcStationFacilityTax = 0.10m;
+
+    /// <summary>
+    /// The system cost index applied to every system and activity. No source loaded here carries live indices
+    /// (the SDE has none), so EVE_INDUSTRY_COST_INDEX (a fraction, default 0) is the project rule.
+    /// </summary>
+    static readonly decimal ConfiguredIndustryCostIndex = ParseCostIndex(Environment.GetEnvironmentVariable("EVE_INDUSTRY_COST_INDEX"));
+
+    static decimal ParseCostIndex(string? text) =>
+        decimal.TryParse(text, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var value)
+            ? Math.Clamp(value, 0m, 1m)
+            : 0m;
+
+    static ValueTask<decimal> ConfiguredCostIndexAsync(long solarSystemId, int activityId, CancellationToken token) =>
+        ValueTask.FromResult(ConfiguredIndustryCostIndex);
+
+    /// <summary>The factors and services of an NPC station's SDE operation (npcStations, then stationOperations).</summary>
+    async ValueTask<(double ManufacturingFactor, double ResearchFactor, IReadOnlySet<int> Services)?> ReadNpcStationOperationAsync(
+        long stationId, CancellationToken token)
+    {
+        var stationRows = await sde.ReadAsync("npcStations", [stationId], token);
+        if (stationRows.Count == 0 || !stationRows[0].Doc.TryGetProperty("operationID", out var operationId) ||
+            operationId.ValueKind != JsonValueKind.Number)
+            return null;
+        var operationRows = await sde.ReadAsync("stationOperations", [operationId.GetInt64()], token);
+        if (operationRows.Count == 0)
+            return null;
+        var operation = operationRows[0].Doc;
+        var services = new HashSet<int>();
+        if (operation.TryGetProperty("services", out var list) && list.ValueKind == JsonValueKind.Array)
+            foreach (var service in list.EnumerateArray())
+                if (service.ValueKind == JsonValueKind.Number)
+                    services.Add(service.GetInt32());
+        return (SdeFactor(operation, "manufacturingFactor"), SdeFactor(operation, "researchFactor"), services);
+    }
+
+    static double SdeFactor(System.Text.Json.JsonElement row, string field) =>
+        row.TryGetProperty(field, out var value) && value.ValueKind == JsonValueKind.Number && value.GetDouble() > 0
+            ? value.GetDouble()
+            : 1d;
 
     static long IndustryLong(JsonNode? value) =>
         long.TryParse(value?.ToString(), System.Globalization.NumberStyles.Integer,
@@ -207,7 +256,7 @@ internal sealed partial class CharacterServicesComposition
     {
         industryJobOperations = new PersistenceIndustryJobOperations(
             source, industrySchema, items, economyWallets, skills, sde, adjustedPrices, corporations,
-            foundations.Events, stations, ResolveIndustryFacilityAsync, now);
+            foundations.Events, stations, ResolveIndustryFacilityAsync, ConfiguredCostIndexAsync, now);
         return Task.CompletedTask;
     }
 
@@ -240,9 +289,10 @@ internal sealed partial class CharacterServicesComposition
             case "GetRecentSovActivity":
                 return await sovereigntyReadModel.ReadRecentSovActivityAsync(call.Cancellation);
             case "GetIndustryCostModifier":
-                return industryJobOperations.ReadMapIndustryCostModifier(
+                return await industryJobOperations.ReadMapIndustryCostModifierAsync(
                     MapActivityId(call.Arg(0)),
-                    await mapIndustrySystems.Value.WaitAsync(call.Cancellation));
+                    await mapIndustrySystems.Value.WaitAsync(call.Cancellation),
+                    call.Cancellation);
             case "GetIndustryJobsOverLast24Hours":
                 return await industryJobOperations.ReadMapIndustryJobsOverLast24HoursAsync(
                     MapActivityId(call.Arg(0)), now(), call.Cancellation);
@@ -256,7 +306,7 @@ internal sealed partial class CharacterServicesComposition
         mapSolarSystems = new Lazy<Task<IReadOnlyList<Eve.Sde.SdeRow>>>(() =>
             sde.ReadAsync("mapSolarSystems", cancellationToken: CancellationToken.None));
         mapIndustrySystems = new Lazy<Task<IReadOnlyList<Eve.Sde.SdeRow>>>(() =>
-            sde.ReadAsync("industrySystems", cancellationToken: CancellationToken.None));
+            sde.ReadAsync("mapSolarSystems", cancellationToken: CancellationToken.None));
         foundations.Events.Subscribe(
             "industry.jobs.client-notifications",
             [Eve.Services.Core.IndustryJobEvents.Changed],

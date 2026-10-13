@@ -41,7 +41,40 @@ Built from the sections below, as of 2026-10-12. **Status** is what the area doe
 - Sources: real Windows client trace/capture on 2026-10-12; EveJS 828823a server/src/services/inventory/invBrokerService.js Handle_GetInventoryFromId/_getCharacterContainerItems; V24.01 eve/client/script/environment/invCache.py GetInventoryFromId and native godma traceback. Initial character selection shipid timing matches the current EveJS plan; no speculative deferral change was made.
 
 
-**Updated:** 2026-10-10
+## 全サービス応答監査で追加確認する未実装経路 (2026-10-12)
+
+監査入口と担当一覧は `docs/project/service-response-audit/README.md`。別checkoutの結果は現行mainの判定に採用しない。以下は実client/strict RPCまたは同一シナリオのMITMで確認した不足。対応するsource、wire shape、Host配線を担当監査で確定し、未実装と既存実装の破損を区別する。
+
+| 状態 | 経路 | 必要な作業と根拠 |
+|---|---|---|
+| OPEN | `charMgr.MachoBindObject` global assets | 実clientの `(charID, 10002)` bindとnested ListStationsがunknown method。既存InvBrokerのasset readsだけではCharMgrGlobalAssetsのbound RPCを満たさない。EveJS `charMgrGlobalAssets.js` のstation CRowset、station items、container-inclusive assets、asset/PLEX worthを同じ所有者から返す配線が必要。 |
+| OPEN | `skillHandler.CheckAndSendNotifications` | 実clientのbound呼出しがunknown method。永続skill/queue状態を使う通知処理を接続し、重複・login後順序を検証する。 |
+| OPEN | `contractProxy.GetLoginInfo` | 実clientのstartup呼出しがunknown method。既存contract readsの有無を確認し、clientが消費するlogin情報を契約状態から構成する。 |
+| OPEN | `seasonManager.get_season_data_for_character`; `ProjectDiscovery.initialize_tutorial_status` | 実clientのstartup呼出しがunknown method。client signatureとEveJS handlerを確認し、実データ・tutorial状態の読み取りを接続する。 |
+| OPEN | `XmppChatMgr.Hostname` | 実clientでunknown service。chat endpointと認証・接続の所有者を確認し、架空hostnameで成功させずchat/public gateway計画へ接続する。 |
+| OPEN | `eventLog.LogClientStats`; `clientStatLogger.LogString` | 実clientで未知の経路。EveJS/clientのログ収集形式を確認し、既存ログ基盤へ接続する。 |
+| OPEN | public gateway protobuf startup | 実clientでcorporation/career/daily goals、map tags、campaign、saved skin capacity、Omega offersにエラー/timeout。各namespace/method、request/response DTO、callback/状態所有者を確認し、未実装producerを列挙する。 |
+| OPEN | community fitting catalog | GetCommunityFittingsのdict/cache wire shapeは修正済み。実Hostはcommunity catalog callbackを渡していない。EveJSのcommunity owner catalogに対応する実データsourceが必要。 |
+| OPEN (registration inventory) | `LSC`, `bookmarkMgr`, `certificateMgr`, `contractMgr`, `loadService`, `objectCaching`, `ownerGroupManager`, `planetOrbitalRegistryBroker`, `publicGatewaySvc`, `structure`, `tutorialSvc` | 既定MITM比較でEveJSはadvertiseし、eve.rsは未登録。サービス名だけを追加せず、aliasか独立handlerか、実状態とHost配線まで確認する。`tradeMgr`/`standing2`は既存実装へのHost alias修正対象。 |
+
+### Corporation監査で確認した未実装
+
+根拠: `docs/project/service-response-audit/corporations.md` (現行main、14サービス/228 RPCの監査)。未実装と登録・配線の不具合は分離する。
+
+| 状態 | 経路 | 未実装の内容 |
+|---|---|---|
+| OPEN | `warRegistry.GetNegotiations`, `GetWarNegotiation`; `CreateWarAllyOffer`, `RetractWarAllyOffer`, `CreateSurrenderNegotiation`, `AcceptAllyNegotiation`, `DeclineAllyOffer`, `AcceptSurrender`, `DeclineSurrender` | 現行は空/Noneまたはnegotiation unavailableで拒否。EveJSは交渉の保存・状態変更・相手への通知を行う。既存RelationStore/war authorityと整合する交渉ownerが必要。 |
+| OPEN | `mutualWarInviteMgr` 全6 RPC | Hostがcallbackを渡していない。pending/blocked readsと4 mutationを実際のinvite/blocked状態へ接続する。書込みのNone fallbackで成功したように見せない。 |
+| OPEN | `billMgr.CharPayBill` | 個人請求支払のcallback未接続。個人billのowner、wallet引落し、paid状態、重複支払拒否を一つのtransactionで実行するauthorityが必要。corporation billの既存支払とは別経路。 |
+| OPEN | `warStatisticMgr` bound `GetBaseInfo`, `GetKills`, `GetKillsByGroup` | Host登録とGetKillMailは存在。V24.01 warReport.py:198のbound report集計が不足。war/killmailの実データを集計し、正しいbindと結果を返す。 |
+| OPEN (EveJS legacy API) | `corpStationMgr.GetStationServiceStates`, `GetImprovementStaticData`, `GetStationServiceIdentifiers`, `GetStationDetails`, `GetStationServiceAccessRule`, `GetStationManagementServiceCostModifiers`, `GetRentableItems`, `GetNumberOfUnrentedOffices`, `GetQuoteForRentingAnOffice`, `GetCorporateStationOffice`, `GetStationOffices`, `GetPotentialHomeStations`, `GetOwnerIDsOfClonesAtStation`, `GetStationImprovements` | EveJSにある14旧RPCが未実装。V24.01直接callsiteは未確認。既存office/station/SDE/home/clone ownerを使う実データ読取りが必要で、空stubを追加して閉じない。 |
+| OPEN (EveJS legacy API) | `corporationSvc.GetNPCDivisions`; `voteManager.ActOnSanctionedAction` | EveJSとの名前差。V24.01直接callsiteを確認できていないためcompatibility未確認として保持。既存SDE/vote sanction authorityの有無を確認して接続する。 |
+
+Allianceの3 RPC送信先不足という初回指摘は誤検出だった。同じファイルにあるCorpRegistryService partial型をAllianceRegistryServiceと取り違えていた。現行corpRegistryは3 RPCを公開しており、型名とHasMethodの回帰assertionを追加した。Officeの6 RPC公開/remote station経路は実装担当が再検証・修正中。member kickのsession/cache通知、domain errorのclient向け変換、corpRegistry bound parameters、corpStationMgr release cleanupは追加修正対象。legacy `CanVote` とRecruitment/Info wrapperの名前差はclient側計算・委譲があるため、未実装と断定して重複RPCを追加しない。
+
+既存実装の修正: character inventory、owned item location priming、mutable agent rows、moniker解決、GetFormations tuple、quantity805通知、community fitting dict/cache、FakeItemNotFoundは `b636110e`。GlobalConfigのstore flag4項目とtrade/standings aliasは追加修正・検証中。実clientのUndock/再入港、Fleet UpdateMemberInfo bound object、guest/notification順序の受け入れは未完了。
+
+**Updated:** 2026-10-13
 **Baseline:** main source commit `7379a70fdeee0e93d2ac38c1b7a7bd9ecd29da60`
 
 This list distinguishes a real behavior/provider gap from an intentionally empty default and from a method whose route already exists. These items are not missing-route work.

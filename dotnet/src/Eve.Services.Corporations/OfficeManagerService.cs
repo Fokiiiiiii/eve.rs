@@ -29,20 +29,37 @@ public sealed partial class OfficeManagerService(
     [Method("MachoBindObject")]
     public async ValueTask<PyValue> MachoBindObject(ServiceCall call)
     {
-        var station = CurrentStation(call.Session);
-        var parameter = call.Arg(0) is PyTuple { Items.Count: > 0 } tuple ? tuple.Items[0] : call.Arg(0);
-        if (Integral(parameter) is { } requested && requested != station.Id)
-            throw new CorporationError("OFFICE_STATION_REQUIRED");
+        var stationId = StationParameter(call.Arg(0));
+        if (stationId is not > 0) throw new CorporationError("OFFICE_STATION_REQUIRED");
+        if (readStation(stationId.Value) is null) throw new CorporationError("OFFICE_STATION_NOT_FOUND");
+
         var oid = $"N={MachoMessage.ProxyNodeId}:{BoundObjectIds.Next()}";
         var bound = new PySubStruct(new PySubStream(Py.Tuple(new PyStr(oid), new PyLong(Py.FileTimeFromUnixMs(now())))));
         PyValue result = PyNone.Instance;
-        if (call.Arg(1) is PyTuple { Items.Count: > 0 } nested && JsSemantics.StringValue(nested.Items[0]) is { } method)
+        var nestedItems = call.Arg(1) switch
         {
+            PyTuple nested => nested.Items,
+            PyList nested => nested.Items,
+            _ => Array.Empty<PyValue>(),
+        };
+        if (nestedItems.Count > 0 && JsSemantics.StringValue(nestedItems[0]) is { } method)
+        {
+            IReadOnlyList<PyValue> nestedArgs = Array.Empty<PyValue>();
+            if (nestedItems.Count > 1)
+            {
+                nestedArgs = nestedItems[1] switch
+                {
+                    PyTuple args => args.Items,
+                    PyList args => args.Items,
+                    PyNone => Array.Empty<PyValue>(),
+                    var argument => new[] { argument },
+                };
+            }
             result = await ((IService)this).CallAsync(new ServiceCall
             {
                 Method = method,
-                Args = nested.Items.Count > 1 && nested.Items[1] is PyTuple args ? args.Items : [],
-                Kwargs = nested.Items.Count > 2 ? nested.Items[2] : PyNone.Instance,
+                Args = nestedArgs,
+                Kwargs = nestedItems.Count > 2 ? nestedItems[2] : PyNone.Instance,
                 Session = call.Session,
                 CallId = call.CallId,
                 BoundObjectId = oid,
@@ -69,7 +86,7 @@ public sealed partial class OfficeManagerService(
         var sessionCorporationId = SessionCorporationId(call.Session);
         if (corporationId <= 0 || corporationId != sessionCorporationId)
             throw new CorporationError("CORPORATION_ACCESS_DENIED");
-        var station = CurrentStation(call.Session);
+        var station = LocalStation(call);
         var price = await QuoteAsync(station, call.Cancellation);
         return new PyReal((double)price);
     }
@@ -79,7 +96,7 @@ public sealed partial class OfficeManagerService(
     {
         var actor = RequireActor(call.Session);
         var corporationId = SessionCorporationId(call.Session);
-        var station = CurrentStation(call.Session);
+        var station = LocalStation(call);
         var authority = await RequireAuthorityAsync(actor, corporationId, station.Id, call.Cancellation);
         if ((authority.Roles.AtAll & RentOfficeRole) == 0)
             throw new CorporationError("CORPORATION_ACCESS_DENIED");
@@ -123,7 +140,7 @@ public sealed partial class OfficeManagerService(
     {
         var actor = RequireActor(call.Session);
         var corporationId = SessionCorporationId(call.Session);
-        var station = CurrentStation(call.Session);
+        var station = BoundStation(call);
         var authority = await RequireAuthorityAsync(actor, corporationId, station.Id, call.Cancellation);
         if (!IsCeoOrDirector(actor, authority))
             throw new CorporationError("CORPORATION_ACCESS_DENIED");
@@ -155,7 +172,7 @@ public sealed partial class OfficeManagerService(
     {
         var actor = RequireActor(call.Session);
         var corporationId = SessionCorporationId(call.Session);
-        var station = CurrentStation(call.Session);
+        var station = LocalStation(call);
         var authority = await RequireAuthorityAsync(actor, corporationId, station.Id, call.Cancellation);
         if (!IsCeoOrDirector(actor, authority)) throw new CorporationError("CORPORATION_ACCESS_DENIED");
 
@@ -184,29 +201,36 @@ public sealed partial class OfficeManagerService(
         return PyNone.Instance;
     }
 
+    [Method("GetCorporationsWithOffices")]
     public async ValueTask<PyValue> GetCorporationsWithOffices(ServiceCall call)
     {
-        var stationId = call.Session.GetInt("stationid") ?? call.Session.GetInt("structureid");
-        if (stationId is not > 0) return new PyList([]);
+        var stationId = call.BoundObjectId is null
+            ? call.Session.GetInt("stationid") ?? call.Session.GetInt("structureid")
+            : StationParameter(call.BoundObjectParameters) ??
+              throw new CorporationError("OFFICE_STATION_REQUIRED");
+        if (stationId is not > 0) return PyValue.PythonSet([]);
         var ids = await store.CorporationsAtStationAsync(stationId.Value, call.Cancellation);
-        return new PyList([.. ids.Select(id => (PyValue)new PyLong(id))]);
+        return PyValue.PythonSet(ids.Select(id => (PyValue)new PyLong(id)));
     }
 
+    [Method("GetEmptyOfficeCount")]
     public async ValueTask<PyValue> GetEmptyOfficeCount(ServiceCall call)
     {
-        var station = CurrentStation(call.Session);
+        if (call.Session.GetInt("structureid") is > 0) return PyNone.Instance;
+        var station = BoundStation(call);
         var occupied = await store.WriteAsync((connection, transaction) =>
             store.CountAtStationAsync(connection, transaction, station.Id, call.Cancellation), call.Cancellation);
         return new PyInt(Math.Max(0, station.OfficeCapacity - occupied));
     }
 
+    [Method("HasCorpImpoundedItems")]
     public async ValueTask<PyValue> HasCorpImpoundedItems(ServiceCall call)
     {
         var corporationId = SessionCorporationId(call.Session);
         if (corporationId <= 0) return PyBool.False;
         var corporation = await corporations.GetAsync(corporationId, call.Cancellation);
         if (corporation is null || corporation.IsNpc) return PyBool.False;
-        var station = CurrentStation(call.Session);
+        var station = BoundStation(call);
         if (await store.WriteAsync(async (connection, transaction) =>
         {
             var office = await store.GetAsync(connection, transaction, corporationId, station.Id,
@@ -218,31 +242,33 @@ public sealed partial class OfficeManagerService(
         return contents.Any(item => item.Flag == ImpoundedFlag) ? PyBool.True : PyBool.False;
     }
 
+    [Method("GetImpoundReleasePrice")]
     public async ValueTask<PyValue> GetImpoundReleasePrice(ServiceCall call)
     {
         var corporationId = SessionCorporationId(call.Session);
-        if (corporationId <= 0) return PyNone.Instance;
+        if (corporationId <= 0) return new PyInt(0);
         var corporation = await corporations.GetAsync(corporationId, call.Cancellation);
-        if (corporation is null || corporation.IsNpc) return PyNone.Instance;
-        var station = CurrentStation(call.Session);
+        if (corporation is null || corporation.IsNpc) return new PyInt(0);
+        var station = BoundStation(call);
         if (await store.WriteAsync(async (connection, transaction) =>
         {
             var office = await store.GetAsync(connection, transaction, corporationId, station.Id,
                 cancellationToken: call.Cancellation);
             return office is not null;
         }, call.Cancellation))
-            return PyNone.Instance;
+            return new PyInt(0);
         var contents = await items.InLocationAsync(station.Id, corporationId, call.Cancellation);
-        if (!contents.Any(item => item.Flag == ImpoundedFlag)) return PyNone.Instance;
+        if (!contents.Any(item => item.Flag == ImpoundedFlag)) return new PyInt(0);
         var rent = await QuoteAsync(station, call.Cancellation);
         return new PyReal((double)decimal.Round(rent / 2m, 2, MidpointRounding.AwayFromZero));
     }
 
+    [Method("TrashImpoundedOffice")]
     public async ValueTask<PyValue> TrashImpoundedOffice(ServiceCall call)
     {
         var actor = RequireActor(call.Session);
         var corporationId = SessionCorporationId(call.Session);
-        var station = CurrentStation(call.Session);
+        var station = BoundStation(call);
         var authority = await RequireAuthorityAsync(actor, corporationId, station.Id, call.Cancellation);
         if (!IsCeoOrDirector(actor, authority)) throw new CorporationError("CORPORATION_ACCESS_DENIED");
         var impounded = (await items.InLocationAsync(station.Id, corporationId, call.Cancellation))
@@ -262,16 +288,9 @@ public sealed partial class OfficeManagerService(
         return PyNone.Instance;
     }
 
-    public async ValueTask<PyValue> PrimeOfficeItem(ServiceCall call)
-    {
-        var corporationId = SessionCorporationId(call.Session);
-        if (corporationId <= 0) return PyNone.Instance;
-        var station = CurrentStation(call.Session);
-        var office = await store.WriteAsync((connection, transaction) =>
-            store.GetAsync(connection, transaction, corporationId, station.Id,
-                cancellationToken: call.Cancellation), call.Cancellation);
-        return office is null ? PyNone.Instance : OfficeRow(office);
-    }
+    [Method("PrimeOfficeItem")]
+    public ValueTask<PyValue> PrimeOfficeItem(ServiceCall call) =>
+        ValueTask.FromResult<PyValue>(PyNone.Instance);
 
     private async Task<decimal> QuoteAsync(CorporationOfficeStation station, CancellationToken token) =>
         await store.WriteAsync(async (connection, transaction) =>
@@ -309,6 +328,34 @@ public sealed partial class OfficeManagerService(
         if (current is { OwnerId: var owner, LocationId: var location, Flag: var flag } &&
             owner == corporationId && location == stationId && flag == expectedFlag)
             await items.MoveAsync(connection, transaction, current.Id, stationId, destinationFlag, token);
+    }
+
+    private CorporationOfficeStation BoundStation(ServiceCall call)
+    {
+        if (call.BoundObjectId is null) return CurrentStation(call.Session);
+        var stationId = StationParameter(call.BoundObjectParameters);
+        if (stationId is not > 0) throw new CorporationError("OFFICE_STATION_REQUIRED");
+        return readStation(stationId.Value) ?? throw new CorporationError("OFFICE_STATION_NOT_FOUND");
+    }
+
+    private CorporationOfficeStation LocalStation(ServiceCall call)
+    {
+        var station = CurrentStation(call.Session);
+        if (call.BoundObjectId is not null &&
+            StationParameter(call.BoundObjectParameters) != station.Id)
+            throw new CorporationError("OFFICE_STATION_REQUIRED");
+        return station;
+    }
+
+    private static long? StationParameter(PyValue? parameter)
+    {
+        var value = parameter switch
+        {
+            PyTuple { Items.Count: > 0 } tuple => tuple.Items[0],
+            PyList { Items.Count: > 0 } list => list.Items[0],
+            _ => parameter,
+        };
+        return value is null ? null : Integral(value);
     }
 
     private CorporationOfficeStation CurrentStation(ClientSession session)

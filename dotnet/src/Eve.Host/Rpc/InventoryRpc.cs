@@ -42,7 +42,7 @@ internal sealed partial class CharacterServicesComposition
     [
               HostInventoryServiceFactory.CreateInvBroker(items, itemTypes, stations, ships, dogma, now, spaceContainers, spaceDrones, corporations, characterEntryHooks,
                     controlledStructureInventory: structureControlReadModel.InventoryAsync),
-              new Eve.Services.Core.CrateService(new PersistenceCrateServiceBackend(source, items, itemTypes, skills, skillCatalog, mailCache)),
+              new Eve.Services.Core.CrateService(new PersistenceCrateServiceBackend(source, items, itemTypes, skills, skillCatalog, mailCache, savedFittings)),
               new Eve.Host.ShipCosmeticsMgrRpcService(mailCache, mailCache, items, source, skinCosmeticsCatalog, now,
                   (characterId, shipId, skinId) =>
                   {

@@ -209,8 +209,12 @@ public class AllianceTests
         Assert.True(allianceRegistry.HasMethod("UpdateApplication"));
 
         var corpRegistry = (Eve.Services.IService)new Eve.Services.Corporations.CorpRegistryService(null!,null!,() => 0);
+        Assert.Equal("corpRegistry", corpRegistry.Name);
         Assert.True(corpRegistry.HasMethod("ApplyToJoinAlliance"));
         Assert.True(corpRegistry.HasMethod("DeleteAllianceApplication"));
+        Assert.True(corpRegistry.HasMethod("CreateAlliance"));
+        Assert.True(corpRegistry.HasMethod("GetAllianceApplications"));
+        Assert.True(corpRegistry.HasMethod("GetSuggestedAllianceShortNames"));
     }
 
     [PgFact]

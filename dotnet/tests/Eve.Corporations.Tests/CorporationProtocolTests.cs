@@ -1333,8 +1333,12 @@ private static PyValue RowField(PyValue value,string key)
             Call(session, "GetPendingInvitesForSession"))).Items);
         Assert.Equal(new PyInt(0), await unconfigured.IsCorpInvitesBlockedPlayer(
             Call(session, "IsCorpInvitesBlockedPlayer")));
-        Assert.IsType<PyNone>(await unconfigured.SetInvitesBlockedByPlayer(
-            Call(session, "SetInvitesBlockedByPlayer", PyBool.True)));
+        foreach (var method in new[] { "SendInviteByPlayer", "WithdrawInviteByPlayer", "RespondToInviteByPlayer", "SetInvitesBlockedByPlayer" })
+        {
+            var refused = await Assert.ThrowsAsync<MachoWrappedException>(async () => await ((IService)unconfigured).CallAsync(
+                Call(session, method, new PyInt(8002), PyBool.True)));
+            Assert.Equal("CustomNotify", refused.Error.UserErrorMessage);
+        }
     }
 
     [Fact]

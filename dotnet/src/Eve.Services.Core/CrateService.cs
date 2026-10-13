@@ -228,18 +228,40 @@ public sealed class CrateService(ICrateServiceBackend? backend = null) : IServic
         var characterId = CharacterId(call);
         var crateId = Positive(call.Arg(0));
         var fittingId = (int)Positive(call.Arg(1));
-        if (characterId == 0 || crateId == 0 || fittingId == 0) return PyNone.Instance;
+        if (backend is null || characterId == 0 || crateId == 0 || fittingId == 0) return PyNone.Instance;
         var key = (characterId, crateId);
-        if (!_pendingFittings.TryGetValue(key, out var fittings) ||
-            !fittings.TryGetValue(fittingId, out var count) || count <= 0)
-            return PyNone.Instance;
-
-        var savedId = await backend!.ClaimFittingAsync(characterId, fittingId, call.Cancellation);
-        if (savedId is not > 0) return PyNone.Instance;
-        if (count == 1) fittings.TryRemove(fittingId, out _);
-        else fittings[fittingId] = count - 1;
-        if (fittings.IsEmpty) _pendingFittings.TryRemove(key, out _);
-        return InventoryWire.Id(savedId.Value);
+        ConcurrentDictionary<int, int> fittings;
+        lock (_pendingFittings)
+        {
+            if (!_pendingFittings.TryGetValue(key, out var pending) ||
+                !pending.TryGetValue(fittingId, out var count) || count <= 0)
+                return PyNone.Instance;
+            fittings = pending;
+            fittings[fittingId] = count - 1;
+        }
+        var saved = false;
+        try
+        {
+            var savedId = await backend.ClaimFittingAsync(characterId, fittingId, call.Cancellation);
+            if (savedId is not > 0) return PyNone.Instance;
+            saved = true;
+            return InventoryWire.Id(savedId.Value);
+        }
+        finally
+        {
+            lock (_pendingFittings)
+            {
+                if (!saved)
+                    _pendingFittings.GetOrAdd(key, _ => new ConcurrentDictionary<int, int>())
+                        .AddOrUpdate(fittingId, 1, (_, count) => count + 1);
+                else if (_pendingFittings.TryGetValue(key, out var current) && ReferenceEquals(current, fittings))
+                {
+                    if (current.TryGetValue(fittingId, out var count) && count == 0)
+                        current.TryRemove(fittingId, out _);
+                    if (current.IsEmpty) _pendingFittings.TryRemove(key, out _);
+                }
+            }
+        }
     }
 
     private async Task<CrateItem> OwnedCrateAsync(ServiceCall call)
@@ -276,10 +298,11 @@ public sealed class CrateService(ICrateServiceBackend? backend = null) : IServic
         if (bundles.Count > 0)
             _pendingSkills[key] = new ConcurrentDictionary<int, CrateSkillBundle>(bundles.ToDictionary(b => b.SkillBundleId));
 
-        foreach (var fittingId in ParseFittingIds(crate.CustomInfo))
+        lock (_pendingFittings)
         {
-            _pendingFittings.GetOrAdd(key, _ => new ConcurrentDictionary<int, int>())
-                .AddOrUpdate(fittingId, 1, (_, count) => count + 1);
+            foreach (var fittingId in ParseFittingIds(crate.CustomInfo))
+                _pendingFittings.GetOrAdd(key, _ => new ConcurrentDictionary<int, int>())
+                    .AddOrUpdate(fittingId, 1, (_, count) => count + 1);
         }
     }
 

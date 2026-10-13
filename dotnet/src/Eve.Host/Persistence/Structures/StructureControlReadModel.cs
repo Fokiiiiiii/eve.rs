@@ -61,8 +61,13 @@ public sealed class StructureControlReadModel(
             world.SetValue(charge.Id, ShipSnapshot.QuantityCharge, charge.Quantity);
         }
         foreach (var skill in personal.Skills)
-            if (personal.World.Item(ShipSnapshot.SkillItemId(character, skill.TypeId)) is { } item)
-                world.Add(item);
+            if ((statics.Type(skill.TypeId)?.Name is "Structure Doomsday Operation"
+                    or "Structure Electronic Systems"
+                    or "Structure Engineering Systems"
+                    or "Structure Missile Systems")
+                && personal.World.Item(ShipSnapshot.SkillItemId(character, skill.TypeId)) is { } item)
+                world.Add(new DogmaItem(item.Id, item.TypeId, item.OwnerId, item.LocationId, item.FlagId, item.State,
+                    item.ActiveEffectIds?.ToHashSet(), item.BaseTypeId, item.OwnValues));
         return new ShipSnapshot
         {
             Character = personal.Character, Ship = ship, Fitted = fitted, Charges = charges,

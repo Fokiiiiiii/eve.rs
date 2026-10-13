@@ -176,7 +176,7 @@ public sealed partial class SkillHandlerService
             PyTuple tuple => tuple.Items.Select(IdOf).OfType<long>().Distinct().ToArray(),
             _ => [],
         };
-        if (ids.Length == 0) return new PyList([]);
+        if (ids.Length == 0) return Py.Tuple();
         var requested = new List<SkillType>(ids.Length);
         foreach (var id in ids)
         {
@@ -190,29 +190,33 @@ public sealed partial class SkillHandlerService
         if (cost <= 0)
             throw MachoErrors.ThrowUserError("SkillPurchaseUnknownError");
         var operationKey = $"skill-purchase:{character}:{call.Session.SessionId}:{IdOf(call.CallId) ?? nowUnixMs()}";
+        (IReadOnlyList<CharacterSkill> Before, CharacterSkill[] Granted, decimal Balance) committed;
         try
         {
-            await store.InTransactionAsync(async (connection, transaction, token) =>
+            committed = await store.InTransactionAsync(async (connection, transaction, token) =>
             {
                 await using (var characterLock = new NpgsqlCommand(
                     "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", connection, transaction))
                 {
-                    characterLock.Parameters.Add(new NpgsqlParameter { Value = $"skill-purchase:{character}" });
+                    characterLock.Parameters.Add(new NpgsqlParameter { Value = $"skills:{character}" });
                     await characterLock.ExecuteScalarAsync(token);
                 }
                 var current = await store.ForCharacterAsync(connection, transaction, character, token);
                 if (requested.Any(skill => current.Any(have => have.TypeId == skill.TypeId)))
                     throw MachoErrors.ThrowUserError("CharacterAlreadyKnowsSkill", ("skillName", new PyInt(requested.First(skill => current.Any(have => have.TypeId == skill.TypeId)).TypeId)));
-                await walletTransactions.AdjustAsync(connection, transaction, character, -cost, 0, 57, "Direct skill purchase",
+                var balance = await walletTransactions.AdjustAsync(connection, transaction, character, -cost, 0, 57, "Direct skill purchase",
                     nowUnixMs(), operationKey, token);
-                await store.GrantAsync(connection, transaction, character, requested.Select(skill => new CharacterSkill(skill.TypeId, 0, 0)), token);
-                return true;
+                var granted = requested.Select(skill => new CharacterSkill(skill.TypeId, 0, 0)).ToArray();
+                await store.GrantAsync(connection, transaction, character, granted, token);
+                return (Before: current, Granted: granted, Balance: balance);
             }, call.Cancellation);
         }
         catch (Eve.Wallet.InsufficientFundsException)
         {
             throw MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("Not enough ISK to purchase these skills.")));
         }
-        return new PyList([.. requested.Select(skill => (PyValue)new PyInt(skill.TypeId))]);
+        walletTransactions.AnnounceCommitted(new Eve.Wallet.WalletBalanceChange(character, 1000, committed.Balance));
+        await announcer.AnnouncePurchasedAsync(call.Session, character, committed.Before, committed.Granted);
+        return Py.Tuple([.. committed.Granted.Select(skill => (PyValue)new PyInt(skill.TypeId))]);
     }
 }

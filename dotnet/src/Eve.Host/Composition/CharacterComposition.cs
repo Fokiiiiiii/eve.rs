@@ -115,6 +115,7 @@ internal sealed partial class CharacterServicesComposition
         readAugmentations = SkillHandlerService.CreateAugmentationReader(items, dogma, skills, now);
         skillHandler = new SkillHandlerService(
             skills, skillCatalog, training, characters, items, dogma, announcer, now, readAugmentations,
+            walletTransactions: economyWallets,
             isAlphaClone: accountId => !omega.Resolve(new PyInt(accountId)).HasLicense);
         startingWallet = new StartingWallet(
             decimal.Parse(Env("EVE_START_ISK", "100000"), System.Globalization.CultureInfo.InvariantCulture),

@@ -40,7 +40,7 @@ public sealed partial class PersistenceIndustryJobOperations : Eve.Services.Core
 {
     public sealed record IndustryFacility(
         long FacilityId, long SolarSystemId, long OwnerId, decimal TaxRate, double TimeMultiplier, bool IsOnline,
-        double? ResearchTimeMultiplier = null, IReadOnlySet<int>? StationServices = null)
+        double? ResearchTimeMultiplier = null, IReadOnlySet<int>? StationServices = null, IReadOnlySet<int>? Activities = null)
     {
         /// <summary>The time factor of the science activities (research, copying, invention); the job factor otherwise.</summary>
         public double ResearchFactor => ResearchTimeMultiplier ?? TimeMultiplier;
@@ -148,6 +148,10 @@ public sealed partial class PersistenceIndustryJobOperations : Eve.Services.Core
         var job = request.Job;
         var actor = request.Context.Actor;
         await ValidateActorAsync(actor, job.OwnerId, job.Wallet, job.StationId, job.ActivityId, cancellationToken);
+        // A corporation's outputs go to the facility's deliveries or a corporation hangar division (the client's output list).
+        if (job.OwnerId != actor.CharacterId &&
+            (job.OutputLocation.LocationId != job.FacilityId || !IR.IsCorporationOutputFlag(job.OutputLocation.FlagId)))
+            throw InvalidJob();
         var facility = await _resolveFacility(
             job.FacilityId, job.StationId, job.SolarSystemId, actor.CharacterId, cancellationToken);
         if (facility is null || !facility.IsOnline || facility.FacilityId != job.FacilityId ||
@@ -158,6 +162,8 @@ public sealed partial class PersistenceIndustryJobOperations : Eve.Services.Core
 
         var recipe = await ReadRecipeAsync(job.BlueprintTypeId, job.ActivityId, cancellationToken);
         if (facility.StationServices is { } services && !StationRunsActivity(services, job.ActivityId))
+            throw InvalidJob();
+        if (facility.Activities is { } supported && !supported.Contains(job.ActivityId))
             throw InvalidJob();
         var products = SelectProducts(job, recipe);
         if (job.ActivityId == InventionActivity && products.Count != 1)

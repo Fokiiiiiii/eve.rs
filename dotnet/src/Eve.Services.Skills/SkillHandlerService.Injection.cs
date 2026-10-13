@@ -58,17 +58,17 @@ private long DiminishedInjectorSp(long totalSp, int typeId, long quantity, long 
         if (dailyAlpha == typeId) return quantity == 1 ? 50_000L : 0L;
         var large = catalog.ItemTypeId("Large Skill Injector");
         var small = catalog.ItemTypeId("Small Skill Injector");
-        var unitsPerItem = large == typeId ? 3 : small == typeId ? 1 : 0;
-        if (unitsPerItem == 0 || quantity is <= 0 or > 1_000) return 0;
-        var units = quantity * unitsPerItem;
+        var scale = large == typeId ? 1L : small == typeId ? 5L : 0L;
+        if (scale == 0 || quantity is <= 0 or > 1_000) return 0;
         var total = 0L;
-        for (var i = 0L; i < units; i++)
+        for (var i = 0L; i < quantity; i++)
         {
             var gained = nonDiminishing > 0 ? 500_000L
                 : totalSp < 5_000_000 ? 500_000L
                 : totalSp < 50_000_000 ? 400_000L
                 : totalSp < 80_000_000 ? 300_000L
                 : 150_000L;
+            if (scale > 1) gained /= scale;
             if (nonDiminishing > 0) nonDiminishing--;
             totalSp = checked(totalSp + gained);
             total = checked(total + gained);
@@ -118,11 +118,14 @@ private long DiminishedInjectorSp(long totalSp, int typeId, long quantity, long 
                 && (quantity != 1 || isAlphaClone?.Invoke(AccountOf(call)) != true))
             throw MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("That skill injector cannot be used.")));
 
-        var balance = await store.InTransactionAsync(async (connection, transaction, token) =>
+        await dogmaStatic.EnsureTypesAsync([current.TypeId], call.Cancellation);
+        var type = dogmaStatic.Type(current.TypeId)
+            ?? throw new InvalidOperationException("The injector's SDE type is unavailable.");
+        var committed = await store.InTransactionAsync(async (connection, transaction, token) =>
         {
             await using (var characterLock = new NpgsqlCommand("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", connection, transaction))
             {
-                characterLock.Parameters.Add(new NpgsqlParameter { Value = $"skill-inject:{character}" });
+                characterLock.Parameters.Add(new NpgsqlParameter { Value = $"skills:{character}" });
                 await characterLock.ExecuteScalarAsync(token);
             }
             if (await items.LockAndGetAsync(connection, transaction, itemId, token) is not { } item
@@ -141,9 +144,16 @@ private long DiminishedInjectorSp(long totalSp, int typeId, long quantity, long 
                 await items.DeleteAsync(connection, transaction, itemId, token);
             else
                 await items.SetQuantityAsync(connection, transaction, itemId, item.Quantity - quantity, token);
-            return newBalance;
+            var before = new ItemRow(item.Id, item.TypeId, item.OwnerId, item.LocationId, item.Flag,
+                item.Singleton ? -1 : item.Quantity, type.GroupId, type.CategoryId);
+            // EveJS removes consumed items from the client's cache at location 6.
+            var after = item.Singleton || quantity == item.Quantity
+                ? before with { LocationId = 6 }
+                : before with { Quantity = item.Quantity - quantity };
+            return (Balance: newBalance, Award: award, Before: before, After: after);
         }, call.Cancellation);
-        return new PyInt(balance);
+        announcer.AnnounceInjectedPoints(call.Session, committed.Before, committed.After, committed.Balance);
+        return new PyInt(committed.Award);
     }
 
 

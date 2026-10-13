@@ -2406,3 +2406,7 @@ All 42 current literal-name differences in [core-a-f.md](C:/Users/yutai/eve.rs/d
 Total remains **672 = 476 physical named differences (448 + 3 + 25) + 182 candidate selectors + 14 groups**. No dynamic acceptance, service coverage, caller necessity outside the new handoff, complete nested DTO parity or source functionality was newly executed. CBM MCP Transport closed was checked again; documented CLI index_status verified the canonical main root ready. Serena remained canonical. This update changes the five authorized documents only, no source/test/build or Git mutation.
 
 Document readback observed parent main HEAD `c114dc0d8e292c056e8d71b37f496084f484676f`. The classification/source snapshot above remains `dda03ca0464043822e68c8348604ff34eadedcac`; the later parent source commit was not re-audited by this documentation task.
+
+## Structure ST-8a skill inputs (2026-10-13)
+- VERIFIED (PG regression only): controlled structure DogmaWorld uses only Structure Doomsday Operation, Structure Electronic Systems, Structure Engineering Systems and Structure Missile Systems; mutable skill item values are independent from the retained personal snapshot. Character skill metadata and total SP are preserved. Host StructureControl subset: 12 PASS, 0 FAIL/SKIP. Evidence and source priority: docs/project/structures-phase/handoff-ST-8a-skills.md.
+- OPEN: ordinary structure module execution and full Host-to-Sim/EveJS comparison; ST-8b doomsdays and native client acceptance. This input-layer correction does not close those feature rows.

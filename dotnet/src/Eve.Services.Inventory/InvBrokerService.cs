@@ -477,7 +477,9 @@ public sealed partial class InvBrokerService(
         {
             return None;
         }
-        var wanted = (call.Arg(0) switch { PyTuple t => t.Items, PyList l => l.Items, _ => [] }).Select(IdOf).Where(v => v is not null).Select(v => (int)v!.Value).ToHashSet();
+        var flags = call.Arg(0);
+        if (flags is PyNone) flags = call.Kwarg("flags") ?? PyNone.Instance;
+        var wanted = (flags switch { PyTuple t => t.Items, PyList l => l.Items, _ => [] }).Select(IdOf).Where(v => v is not null).Select(v => (int)v!.Value).ToHashSet();
         var contents = await ContentsAsync(context, call.Session, call.Cancellation);
         return new PyList([.. contents.Where(r => wanted.Contains(r.Flag)).Select(r => InventoryWire.PackedRow(r))]);
     }
@@ -726,20 +728,46 @@ public sealed partial class InvBrokerService(
             return None;
 
         var owner = item.OwnerId;
-        var typeId = item.TypeId;
-        var canEdit = owner == character
-            || await CanAccessCorporationItemAsync(call.Session, item, CorporationHangarOperation.Take, call.Cancellation);
-        if (!canEdit) return None;
-
+        var type = await types.GetAsync(item.TypeId, call.Cancellation);
+        var isShip = type is { CategoryId: ShipCategory };
         var station = StationOf(call.Session);
-        var isShip = await types.GetAsync(typeId, call.Cancellation) is { CategoryId: ShipCategory };
         var isDockedContainer = station is { } at
             && await ships.IsOwnedDockedContainerAsync(itemId, owner, at, call.Cancellation);
+        if (owner != character)
+        {
+            if (owner != CorporationIdOf(call.Session))
+                throw MachoErrors.ThrowUserError("ItemNotYours");
+            if (await CorporationDivisionOfItemAsync(item, owner, call.Cancellation) is not { } division
+                || division.StationId != station)
+                return None;
+            if (!await CanAccessCorporationItemAsync(call.Session, item, CorporationHangarOperation.Take, call.Cancellation))
+                throw MachoErrors.ThrowUserError("CrpAccessDenied",
+                    ("reason", Py.Tuple(new PyInt(101), new PyStr("UI/Corporations/AccessRestrictions/InsufficientRoles"))));
+        }
         if (!isShip && !isDockedContainer)
             return None;
 
-        var label = call.Arg(1) is PyNone ? null : JsSemantics.StringValue(call.Arg(1));
-        await items.SetCustomNameAsync(itemId, label, call.Cancellation);
+        var rawLabel = call.Arg(1) is PyNone ? null : JsSemantics.StringValue(call.Arg(1));
+        var label = isShip
+            ? CharacterShips.NormalizeName(rawLabel)
+            : System.Text.RegularExpressions.Regex.Replace(rawLabel ?? "", "[\\r\\n]+", " ").Trim();
+        if (!isShip && label is { Length: > 100 }) label = label[..100];
+        if (string.IsNullOrEmpty(label))
+            return None;
+
+        // Refuse a stale authorization snapshot, and publish only the item returned after commit.
+        if (await items.SetCustomNameAsync(item, label, call.Cancellation) is not { } updated)
+            return None;
+        if (call.Session.GetInt("shipid") == itemId)
+            call.Session.Set("shipName", new PyStr(updated.CustomName!));
+        if (isDockedContainer && type is not null)
+            ShipNotifications.SendItemChange(call.Session,
+                new ItemChanged(updated, item.LocationId, item.Flag, item.Quantity), value => Row(value, type));
+        call.Session.SendNotification("OnCfgDataChanged", "charid", new PyStr("evelocations"),
+            new PyList([InventoryWire.Id(updated.Id), new PyStr(updated.CustomName!), PyNone.Instance,
+                new PyReal(0), new PyReal(0), new PyReal(0), PyNone.Instance]));
+        if (isShip && space is not null && space.IsInSpace(call.Session))
+            await space.RefreshShipNameAsync(call.Session, updated.Id, call.Cancellation);
         return None;
     }
 
@@ -966,6 +994,9 @@ private async ValueTask<bool> IsDockedShipContextAsync(ClientSession session, lo
             _ => [],
         };
         if (ids.Count == 0) return None;
+        var quantityValue = call.Kwarg("qty");
+        if (quantityValue is null or PyNone) quantityValue = call.Kwarg("quantity");
+        long? quantity = quantityValue is not null && IdOf(quantityValue) is { } amount && amount > 0 ? amount : null;
         var flagValue = call.Kwarg("flag");
         var requestedFlag = flagValue is null ? context.FlagId : flagValue is PyNone ? 0L : IdOf(flagValue);
         if (requestedFlag is not { } flag)
@@ -978,7 +1009,7 @@ private async ValueTask<bool> IsDockedShipContextAsync(ClientSession session, lo
         if (space is not null && space.IsInSpace(call.Session))
         {
             if (context.Kind != Kind.Ship || flag != CharacterShips.CargoFlag) return None;
-            return await space.MoveAllAsync(call.Session, ids, source, context.ItemId, (int)flag, call.Cancellation) switch
+            return await space.MoveAllAsync(call.Session, ids, source, context.ItemId, (int)flag, quantity, call.Cancellation) switch
             {
                 true => PyBool.True,
                 false => throw MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("None of the selected items could be moved."))),
@@ -1020,9 +1051,9 @@ private async ValueTask<bool> IsDockedShipContextAsync(ClientSession session, lo
                 sourceOwnerId = corporationId;
             }
             var outcome = context.Kind == Kind.Container
-                ? await ships.MoveContainerAsync(character, itemId, source, destinationId, null, (int)flag,
+                ? await ships.MoveContainerAsync(character, itemId, source, destinationId, quantity, (int)flag,
                     call.Cancellation, sourceOwnerId, destinationOwnerId)
-                : await ships.MoveAsync(character, itemId, source, destinationId, (int)flag, null,
+                : await ships.MoveAsync(character, itemId, source, destinationId, (int)flag, quantity,
                     call.Cancellation, sourceOwnerId, destinationOwnerId);
             switch (outcome)
             {

@@ -286,13 +286,13 @@ public sealed partial class CharacterShips
     /// (<c>NotEnoughCargoSpace</c> with the room left and the room it takes). An id that is not in the container is left out of the batch; when none is, nothing happens.
     /// </summary>
     public async Task<ShipOutcome> MoveAllInSpaceAsync(long characterId, IReadOnlyList<long> itemIds, long containerId, int? requestedFlag = null,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default, long? quantity = null)
     {
         await using var connection = await source.OpenConnectionAsync(cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
         await LockAsync(connection, transaction, characterId, cancellationToken);
 
-        if (await LoadAsync(characterId, cancellationToken) is not { } snapshot || snapshot.Ship.Flag != InSpaceFlag
+        if (quantity is <= 0 || await LoadAsync(characterId, cancellationToken) is not { } snapshot || snapshot.Ship.Flag != InSpaceFlag
             || await items.GetAsync(containerId, cancellationToken) is not { } container || container.LocationId != snapshot.Ship.LocationId || container.Id == snapshot.Ship.Id)
             return new NothingHappened();
         var ship = snapshot.Ship;
@@ -301,27 +301,48 @@ public sealed partial class CharacterShips
         var batch = new List<Item>();
         foreach (var id in itemIds.Distinct())
         {
-            if (id != ship.Id && id != containerId && await items.LockAndGetAsync(connection, transaction, id, cancellationToken) is { } item && item.LocationId == containerId)
+            if (id != ship.Id && id != containerId && await items.LockAndGetAsync(connection, transaction, id, cancellationToken) is { } item
+                && item.LocationId == containerId && (item.Singleton || quantity is null || quantity <= item.Quantity))
                 batch.Add(item);
         }
         if (batch.Count == 0) return new NothingHappened();
         await statics.EnsureTypesAsync(batch.Select(i => i.TypeId), cancellationToken);
+        long MovingQuantity(Item item) => item.Singleton ? item.Quantity : quantity ?? item.Quantity;
         foreach (var item in batch)
         {
             if (statics.Type(item.TypeId) is not { } type && destinationFlag != CargoFlag)
                 return new ShipRefused(ShipRefusal.NotAllowedInHold, ModuleTypeId: item.TypeId, ShipTypeId: ship.TypeId);
             if (statics.Type(item.TypeId) is { } itemType
-                && (!CanAddToShipHold(destinationFlag, itemType, item.Singleton, item.Quantity)
+                && (!CanAddToShipHold(destinationFlag, itemType, item.Singleton, MovingQuantity(item))
                     || !await ShipContentsAllowedInBayAsync(item, destinationFlag, snapshot.World, characterId, cancellationToken)))
                 return new ShipRefused(ShipRefusal.NotAllowedInHold, ModuleTypeId: item.TypeId, ShipTypeId: ship.TypeId);
         }
-        if (await RefuseWhatDoesNotFitTogetherAsync(snapshot, batch, destinationFlag, cancellationToken) is { } full)
+        // Capacity is checked once for the units that will actually move, before any stack is changed.
+        var movingBatch = batch.Select(item => item with { Quantity = MovingQuantity(item) }).ToArray();
+        if (await RefuseWhatDoesNotFitTogetherAsync(snapshot, movingBatch, destinationFlag, cancellationToken) is { } full)
             return full;
+        var stacks = new List<ItemChanged>();
+        long? firstMovedId = null;
         foreach (var item in batch)
-            await items.MoveToOwnerAsync(connection, transaction, item.Id, characterId, ship.Id, destinationFlag, cancellationToken);
+        {
+            var amount = MovingQuantity(item);
+            Item moved;
+            if (!item.Singleton && amount < item.Quantity)
+            {
+                moved = await items.MoveStackAsync(connection, transaction, item, amount, characterId, ship.Id, destinationFlag, cancellationToken);
+                stacks.Add(new ItemChanged(item with { Quantity = item.Quantity - amount }, item.LocationId, item.Flag, item.Quantity));
+                stacks.Add(new ItemChanged(moved, 0, moved.Flag, 0));
+            }
+            else
+            {
+                await items.MoveToOwnerAsync(connection, transaction, item.Id, characterId, ship.Id, destinationFlag, cancellationToken);
+                moved = item with { OwnerId = characterId, LocationId = ship.Id, Flag = destinationFlag };
+                stacks.Add(new ItemChanged(moved, item.LocationId, item.Flag, item.Quantity));
+            }
+            firstMovedId ??= moved.Id;
+        }
         await transaction.CommitAsync(cancellationToken);
-        return new ShipChanged(batch[0].Id, ship.Id, [], [],
-            [.. batch.Select(item => new ItemChanged(item with { OwnerId = characterId, LocationId = ship.Id, Flag = destinationFlag }, item.LocationId, item.Flag, item.Quantity))]);
+        return new ShipChanged(firstMovedId!.Value, ship.Id, [], [], stacks);
     }
 
     /// <summary>What a batch takes in all is more than is left of a hold: refused whole, with the room that is left and the room the batch takes.</summary>

@@ -229,21 +229,33 @@ public sealed class PgItemStore
     }
 
 
-    public async Task<bool> SetCustomNameAsync(long id, string? customName, CancellationToken cancellationToken = default)
+    public async Task<bool> SetCustomNameAsync(long id, string? customName, CancellationToken cancellationToken = default) =>
+        await SetCustomNameCoreAsync(id, customName, null, cancellationToken) is not null;
+
+    /// <summary>Renames the exact authorized snapshot, returning real item state only after commit. A stale snapshot does not write.</summary>
+    public Task<Item?> SetCustomNameAsync(Item expected, string? customName, CancellationToken cancellationToken = default) =>
+        SetCustomNameCoreAsync(expected.Id, customName, expected, cancellationToken);
+
+    private async Task<Item?> SetCustomNameCoreAsync(long id, string? customName, Item? expected, CancellationToken cancellationToken)
     {
         await using var connection = await _source.OpenConnectionAsync(cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
         var item = await LockAndGetAsync(connection, transaction, id, cancellationToken);
-        if (item is null) return false;
+        if (item is null || expected is not null && item != expected) return null;
         EnsureUnlocked(item);
         await using var command = new NpgsqlCommand(
-            $"UPDATE {_schema}.items SET custom_name = $2 WHERE id = $1", connection, transaction)
+            $"UPDATE {_schema}.items SET custom_name = $2 WHERE id = $1 RETURNING {Columns}", connection, transaction)
         {
             Parameters = { new() { Value = id }, new() { Value = (object?)customName ?? DBNull.Value } },
         };
-        await command.ExecuteNonQueryAsync(cancellationToken);
+        Item updated;
+        await using (var reader = await command.ExecuteReaderAsync(cancellationToken))
+        {
+            if (!await reader.ReadAsync(cancellationToken)) return null;
+            updated = Read(reader);
+        }
         await transaction.CommitAsync(cancellationToken);
-        return true;
+        return updated;
     }
 
     /// <summary>Who owns something with this flag, once each (what a sweep for items that are in space asks: a ship, a can or a wreck has the flag of no place).</summary>

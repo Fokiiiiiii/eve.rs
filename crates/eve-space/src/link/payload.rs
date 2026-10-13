@@ -453,6 +453,7 @@ impl Message {
                     &structure.limits,
                 );
                 put_structure_status(&mut out, &structure.status);
+                out.extend_from_slice(&structure.planet_id.to_le_bytes());
             }
             Self::PlaceWormhole(wormhole) => {
                 out.extend_from_slice(&wormhole.wormhole_id.to_le_bytes());

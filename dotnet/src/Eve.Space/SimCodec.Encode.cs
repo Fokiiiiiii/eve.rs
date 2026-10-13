@@ -951,6 +951,9 @@ private static void WriteAction(Writer w, SimAction action)
                 w.I64(m.ShipId);
                 break;
             case SimPlaceStructure m:
+                // the frame has twelve resonances (four kinds in each of three layers); a shorter list would cut the frame short
+                if (m.Health.Resonances.Count != 12)
+                    throw new SimLinkException(SimLinkError.BadValue, "structure resonances");
                 w.U8(Kind.PlaceStructure);
                 w.I64(m.StructureId);
                 w.I32(m.SolarSystemId);
@@ -964,6 +967,7 @@ private static void WriteAction(Writer w, SimAction action)
                 w.I32(m.AllianceId);
                 WriteStructureHealth(w, m.Health);
                 WriteStructureStatus(w, m.Status);
+                w.I64(m.PlanetId);
                 break;
             case SimControlStructure m:
                 if (m.SolarSystemId <= 0 || m.StructureId < 0 || m.CharacterId < 0 || (m.Active && (m.StructureId == 0 || m.CharacterId == 0)))

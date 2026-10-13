@@ -995,6 +995,7 @@ fn message_of(case: &Value) -> Message {
         })),
         "RemoveProbe" => Message::RemoveProbe { probe_id: wide(case, "probeId") },
         "PlaceStructure" => Message::PlaceStructure(Box::new(eve_space::link::StructurePlacement {
+            planet_id: case["planetId"].as_i64().unwrap(),
             structure_id: wide(case, "structureId"),
             solar_system_id: number("solarSystemId") as i32,
             name: text(case, "typeName"),

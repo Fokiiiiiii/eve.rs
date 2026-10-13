@@ -611,6 +611,30 @@ public sealed partial class InvBrokerService(
         return askedLocation is null || stations.Get(askedLocation.Value) is null || askedLocation == location ? PyBool.True : PyBool.False;
     }
 
+    /// <summary>
+    /// The pilot's stack from its ship's hold into a customs office in its system (importExportUI.MoveFromInventory). Only the ship's hold is a
+    /// source here: a station hangar is refused (shortcut: a station's hangar into an office in the station's system, when a walk needs it).
+    /// The office's room is checked as the client checks it (NotEnoughSpace with the volume and the room left).
+    /// </summary>
+    private async ValueTask<PyValue> AddToCustomsOfficeAsync(ServiceCall call, long character, long itemId, long source, long officeId, long? quantity)
+    {
+        if (call.Session.GetInt("shipid") is not { } shipId || source != shipId || space?.SolarSystemOf(call.Session) is not { } system
+            || await items.GetAsync(itemId, call.Cancellation) is not { } stack || stack.OwnerId != character || stack.LocationId != shipId
+            || await items.GetAsync(officeId, call.Cancellation) is not { } office || office.LocationId != system)
+            return None;
+        var moving = stack.Singleton ? stack.Quantity : Math.Min(quantity ?? stack.Quantity, stack.Quantity);
+        if (moving <= 0)
+            return None;
+        // the office is not a cargo container (no room of the container model): its room is its type's capacity less what is in it
+        var used = await ships.VolumeOfAsync(await items.InContainerAsync(officeId, call.Cancellation), call.Cancellation);
+        var required = await ships.VolumeOfAsync([stack with { Quantity = moving }], call.Cancellation);
+        var available = Customs!.OfficeCapacity - used;
+        if (required - available > 1e-5)
+            throw MachoErrors.ThrowUserError("NotEnoughSpace", ("volume", new PyReal(required)), ("available", new PyReal(available)));
+        var landed = await Customs!.MoveToOfficeAsync(call.Session, officeId, itemId, moving, call.Cancellation);
+        return landed == 0 ? None : InventoryWire.Id(landed);
+    }
+
     [Method("GetCapacity")]
     public async ValueTask<PyValue> GetCapacity(ServiceCall call)
     {
@@ -649,6 +673,9 @@ public sealed partial class InvBrokerService(
             return None;
         if (context.Kind == Kind.Container)
         {
+            // a customs office is an NPC's: its room is its capacity less what is in it, for any pilot (the import window reads it)
+            if (Customs is not null && await Customs.IsOfficeAsync(context.ItemId, call.Cancellation))
+                return KeyVal(Customs.OfficeCapacity, await ships.VolumeOfAsync(await items.InContainerAsync(context.ItemId, call.Cancellation), call.Cancellation));
             if (await items.GetAsync(context.ItemId, call.Cancellation) is not { } container
                 || container.OwnerId != character
                     && !await CanAccessCorporationItemAsync(call.Session, container, CorporationHangarOperation.Query, call.Cancellation))
@@ -833,6 +860,10 @@ private async ValueTask<bool> IsDockedShipContextAsync(ClientSession session, lo
         long? quantity = (call.Kwarg("qty") ?? call.Kwarg("quantity")) is { } asked ? IdOf(asked) : null;
         int? flag = call.Kwarg("flag") is { } flagValue ? Flag(flagValue) : null;
         var source = IdOf(call.Arg(1)) ?? 0;
+        // a customs office in space takes the pilot's stacks from its ship's hold (the office is an inventory of its own, not a can)
+        if (context.Kind == Kind.Container && Customs is not null && space is not null && space.IsInSpace(call.Session)
+            && await Customs.IsOfficeAsync(context.ItemId, call.Cancellation))
+            return await AddToCustomsOfficeAsync(call, character, itemId, source, context.ItemId, quantity);
         if (space is not null && space.IsInSpace(call.Session))
         {
             if (context.Kind == Kind.Ship && flag == CharacterShips.DroneBayFlag)

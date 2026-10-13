@@ -103,3 +103,59 @@ Constants (`industry/const.py`): `COST_PERCENTAGE = 0.02`, `SCC_SURCHARGE_RATE =
 - Invention, copying and reaction paths in PostgreSQL (the invention output and decryptor effects are covered by unit tests only).
 - Headless live walks through `tools/mitm` for each activity (DB-seeded Cockroach, blueprint, materials, skills).
 - ESI cost index loader.
+
+## Live walks (eve_p4, eve.rs, 2026-10-13)
+
+`tools/headless-client/tests/test_walk_industry.py` (5 walks, all passed live through the headless client on the
+run script: `EVE_MARKET_SEED=skip EVE_SDE_DIR=<sde jsonl> tools/dev/run-eve-live.sh` with `EVE_RUN='cd tools/headless-client &&
+python3 -m pytest tests/test_walk_industry.py'`, port 26103, under `/tmp/eve-heavy-eve_p4.lock`):
+
+- manufacturing: install (86 units consumed, status 1), list, cancel (status 102, a cancelled job cannot be delivered);
+- manufacturing delivery: the product (165) reaches the hangar, status 100;
+- ME then TE research at a station with a Laboratory: ME 1 / TE 0, then ME 1 / TE 2;
+- copying at a Laboratory: one copy (blueprint_copy) per run;
+- invention: the decryptor the client lists in `materials` is used (consumed, probability 0.393), the copy's runs fall, the
+  outputs carry runs 2, ME 4, TE 14.
+
+The walks found three client-payload defects, fixed in this slice: `job.dump()` has no `ownerID` and no
+`blueprintLocationID` (the server required both, so every client install was refused), the copy flag is not in the dump
+(the item decides it now), and the decryptor is listed in `materials` (the server now reads it from there).
+
+Slice 3:
+- Durable readiness: each installed job has a durable scheduler job at its end time (`IndustryReadyJobs`, Eve.Scheduler)
+  that sets the job to Ready and sends `OnIndustryJob` through the event bus. The job is idempotent, and a startup sweep
+  marks the jobs that ended while the host was down. The client's Ready status is 3 (`eve-logic` const.py); the coordinator's
+  104 is not the client's value and was not used. Tests: `IndustryReadyTests` (5).
+- Facility selector (`facilityManager`: GetFacility, GetFacilities, GetFacilitiesByID, GetFacilityTaxes,
+  GetFacilityLocations): the NPC station's activities from the SDE services (manufacturing 1 with the Factory, 3/4/5/8 with
+  the Laboratory), its corporation tax from `npcCorporations`, and the hangar location. Walk: `test_the_facility_selector_*`
+  passed live.
+- Remote calls the client makes, checked against the server: `industryManager` (GetJob, GetJobsByOwner, InstallJob,
+  CompleteJob, CompleteManyJobs, CancelJob), `blueprintManager` (GetBlueprintData, GetBlueprintDataByOwner, GetLimits),
+  `facilityManager` (above, GetMaxActivityModifiers, SetFacilityTaxes). The other `industrySvc` and `facilitySvc` methods
+  are client-side. Not built: corporation jobs, structure facilities beyond the existing structure lookup.
+
+Known differences, not closed:
+- The MITM capture against the real client and the EveJS reference run (`docs/project/MITM_COMPARE.md`) were not run in
+  slice 3; no client session was available to capture.
+- The MITM capture against the real client and the EveJS reference run (`docs/project/MITM_COMPARE.md`) were not run for the
+  industry walks; the shapes were compared by reading the code (InstallJob returns the job ID in both; cancel and
+  complete return nothing in both).
+- Station Laboratory: the walk's station (60015249) has no Laboratory (service 15), so research there is refused by the SDE
+  service list; the walks run research at the nearest Laboratory station, with the Scientific Networking level that reaches it.
+
+## Slice 4: MITM, corporation jobs, structures (2026-10-13)
+
+- **MITM capture**: the industry walk file ran through `tools/mitm` (proxy 26213 to the eve.rs lane port 26103) with
+  `tools/dev/run-eve-live.sh` under the lane lock. Capture: `captures/eve-rs-industry.jsonl` (git-ignored). It holds six
+  connections and the calls `InstallJob` (6), `CompleteJob`, `CancelJob`, `GetJobsByOwner`, `GetBlueprintData`,
+  `GetFacility`, `GetFacilities`, `GetFacilityLocations`, `GetFacilityTaxes`, and five `OnIndustryJob` notifications.
+- **EveJS comparison**: by code reading (`server/src/services/industry/industryManagerService.js`). The EveJS reference was not
+  run live for this slice (no reference run for the industry walk exists). Differences are in `DEVIATIONS.md` (slice I2).
+- **Corporation jobs**: the client's rules are enforced (see DEVIATIONS I2). Not done: corporation notifications to other
+  members, and the corporation delivery location.
+- **Structures**: not changed (see DEVIATIONS I2).
+- **Reverse engineering and duplicating**: not in the client's activities (`industry/const.py`); nothing to add.
+- **Tests**: `dotnet test tests/Eve.Host.Tests --filter Industry` passes 21 of 21 (under the lane lock, `EVE_PG_URL` set).
+  The walk file `tests/test_walk_industry.py` passes 6 of 6 live through the MITM proxy.
+

@@ -3,15 +3,17 @@ using Eve.Macho;
 using Eve.Marshal;
 using Eve.Planets;
 using Eve.Services;
+using Eve.Space;
+using Eve.Structures;
 using Npgsql;
 
 namespace Eve.Services.Planets;
 
 /// <summary>
 /// The customs offices of the planets (the client's importExportUI.py and planetInfoSvc): the office is an item of the server's
-/// inventory (type 35897, id 1.2e12 + planet id, at the planet's system, owned by an NPC owner). Imports take the pilot's stacks out of
-/// the office hangar onto the launchpad; exports put the launchpad's commodities into the office hangar. The fees are charged in the
-/// same transaction (ref 96 import, 97 export).
+/// inventory (type 2233, id 1.2e12 + planet id, at the planet's system, owned by an NPC owner) and, in space, an orbital of its planet
+/// (the simulation's ball, <see cref="PlaceOffice"/>). Imports take the pilot's stacks out of the office hangar onto the launchpad;
+/// exports put the launchpad's commodities into the office hangar. The fees are charged in the same transaction (ref 96 import, 97 export).
 /// </summary>
 public sealed partial class PlanetMgrService
 {
@@ -21,6 +23,8 @@ public sealed partial class PlanetMgrService
     private const int HangarFlag = 4;
     private const int RefPlanetaryImportTax = 96;
     private const int RefPlanetaryExportTax = 97;
+
+    public double OfficeCapacity => Customs.OfficeCapacity;
 
     public async ValueTask<bool> IsOfficeAsync(long officeId, CancellationToken cancellationToken)
     {
@@ -39,7 +43,8 @@ public sealed partial class PlanetMgrService
         await using var command = new NpgsqlCommand($"""
             INSERT INTO {inventorySchema}.items (id, type_id, owner_id, location_id, flag, quantity, singleton, custom_name, blueprint_copy, blueprint_locked,
                 blueprint_runs, material_efficiency, time_efficiency, custom_info)
-            OVERRIDING SYSTEM VALUE VALUES ($1, $2, $3, $4, 0, 1, true, NULL, false, false, NULL, 0, 0, NULL) ON CONFLICT (id) DO NOTHING
+            OVERRIDING SYSTEM VALUE VALUES ($1, $2, $3, $4, 0, 1, true, NULL, false, false, NULL, 0, 0, NULL)
+            ON CONFLICT (id) DO UPDATE SET type_id = EXCLUDED.type_id WHERE items.type_id <> EXCLUDED.type_id
             """, connection, transaction)
         {
             Parameters =
@@ -49,6 +54,66 @@ public sealed partial class PlanetMgrService
             },
         };
         await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    /// <summary>
+    /// Puts a planet's customs office in space: the simulation's ball of it, an orbital of the planet, at <see cref="Customs.OfficePosition"/>. The
+    /// simulation keeps a ball that is in space as it is, so this may be called again. Nothing is put without a simulation.
+    /// </summary>
+    private void PlaceOffice(long planetId, PlanetBody body)
+    {
+        if (simulation is null)
+        {
+            Console.Error.WriteLine($"eve-host: the customs office of planet {planetId} is not put in space: no simulation");
+            return;
+        }
+        simulation.PlaceStructure(new SimPlaceStructure(Customs.OfficeId(planetId), (int)body.SolarSystemId, "Customs Office", Customs.OfficeTypeId, Customs.OfficeGroupId,
+            Customs.OfficePosition(body), Customs.OfficeRadius, CustomsOfficeOwner, 0, 0,
+            // no hit points and no resonances of its own (twelve values: four kinds in each of the three layers, all one)
+            new SimStructureHealth(0, 0, 0, [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1], 0, [0, 0, 0], [0, 0, 0]),
+            new SimStructureStatus(StructureState.ShieldVulnerable, UpkeepState.FullPower, null, null, null), planetId));
+    }
+
+    /// <summary>
+    /// Puts the customs offices in space: all of them at the host's start (a simulation starts with none), and those of a system when a pilot
+    /// enters it (the simulation drops a scene that has no pilot, and its balls with it). An office whose planet is not in the catalog is left
+    /// out and reported; the others still go up.
+    /// </summary>
+    public async Task PlaceOfficesAsync(int? solarSystemId = null, CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            var planets = new List<long>();
+            await using (var connection = await source.OpenConnectionAsync(cancellationToken))
+            await using (var command = new NpgsqlCommand($"SELECT id FROM {inventorySchema}.items WHERE type_id = $1 AND ($2::bigint IS NULL OR location_id = $2)", connection)
+            {
+                Parameters =
+                {
+                    new() { Value = Customs.OfficeTypeId },
+                    new() { Value = (object?)solarSystemId ?? DBNull.Value, NpgsqlDbType = NpgsqlTypes.NpgsqlDbType.Bigint },
+                },
+            })
+            await using (var reader = await command.ExecuteReaderAsync(cancellationToken))
+            {
+                while (await reader.ReadAsync(cancellationToken))
+                    if (Customs.PlanetOf(reader.GetInt64(0)) is { } planetId) planets.Add(planetId);
+            }
+            foreach (var planetId in planets)
+            {
+                try
+                {
+                    PlaceOffice(planetId, await BodyAsync(planetId, cancellationToken));
+                }
+                catch (Exception error)
+                {
+                    Console.Error.WriteLine($"eve-host: the customs office of planet {planetId} was not put in space: {error.Message}");
+                }
+            }
+        }
+        catch (Exception error)
+        {
+            Console.Error.WriteLine($"eve-host: the customs offices were not put in space: {error.Message}");
+        }
     }
 
     /// <summary>The office rate the character gets at this planet (creating the office if it does not exist yet); null when the planet has none.</summary>
@@ -131,7 +196,30 @@ public sealed partial class PlanetMgrService
     }
 
     /// <summary>Adds a commodity to the pilot's stack in the office hangar (a new stack when there is none).</summary>
-    private async Task AddToOfficeAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long officeId, long owner, int typeId, long quantity, CancellationToken cancellationToken)
+    /// <summary>The move of a pilot's stack from its ship's hold into the office hangar; the stack keeps its owner (importExportUI.MoveFromInventory).</summary>
+    public async ValueTask<long> MoveToOfficeAsync(ClientSession session, long officeId, long itemId, long quantity, CancellationToken cancellationToken)
+    {
+        if (session.CharacterId is not { } owner) return 0;
+        await using var connection = await source.OpenConnectionAsync(cancellationToken);
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        var item = await items.LockAndGetAsync(connection, transaction, itemId, cancellationToken);
+        if (item is null || item.OwnerId != owner || quantity <= 0 || quantity > item.Quantity) return 0;
+        var moved = itemId;
+        if (quantity == item.Quantity)
+        {
+            await items.MoveAsync(connection, transaction, itemId, officeId, HangarFlag, cancellationToken);
+        }
+        else
+        {
+            // a part of the stack: the rest stays where it was, the part is in the office's stack of its type
+            await items.SetQuantityAsync(connection, transaction, itemId, item.Quantity - quantity, cancellationToken);
+            moved = await AddToOfficeAsync(connection, transaction, officeId, owner, item.TypeId, quantity, cancellationToken);
+        }
+        await transaction.CommitAsync(cancellationToken);
+        return moved;
+    }
+
+    private async Task<long> AddToOfficeAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long officeId, long owner, int typeId, long quantity, CancellationToken cancellationToken)
     {
         await using var find = new NpgsqlCommand($"""
             SELECT id, quantity FROM {inventorySchema}.items
@@ -147,10 +235,10 @@ public sealed partial class PlanetMgrService
             var have = reader.GetInt64(1);
             await reader.CloseAsync();
             await items.SetQuantityAsync(connection, transaction, id, have + quantity, cancellationToken);
-            return;
+            return id;
         }
         await reader.CloseAsync();
-        await items.CreateAsync(connection, transaction, new NewItem(typeId, owner, officeId, HangarFlag, quantity), cancellationToken);
+        return await items.CreateAsync(connection, transaction, new NewItem(typeId, owner, officeId, HangarFlag, quantity), cancellationToken);
     }
 
     /// <summary>A fee, charged to the wallet in the transaction (whole cents; refused when the balance would be negative).</summary>

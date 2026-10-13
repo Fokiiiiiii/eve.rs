@@ -64,6 +64,9 @@ public sealed partial class PersistenceIndustryJobOperations : Eve.Services.Core
     private const int LowerInventionSkillTypeListId = 799;
     private const long FactoryManagerRole = 1024;
     private const long DirectorRole = 1;
+    // The client's roles for a corporation job (industry/const.py): manufacturing needs the manufacturing role, every other activity the science role.
+    private const long FactoryManufacturingRole = 1L << 50;
+    private const long FactoryScienceRole = 1L << 51;
 
     private readonly Npgsql.NpgsqlDataSource _source;
     private readonly string _schema;
@@ -79,6 +82,7 @@ public sealed partial class PersistenceIndustryJobOperations : Eve.Services.Core
     private readonly Func<long> _nowUnixMs;
     private readonly IIndustryCostIndexSource _costIndexes;
     private readonly Func<long, CancellationToken, ValueTask<long?>> _installerSystem;
+    private readonly IndustryReadyJobs _readyJobs;
     private Task<IReadOnlyDictionary<long, long[]>>? _jumpGraph;
 
     public PersistenceIndustryJobOperations(
@@ -95,6 +99,7 @@ public sealed partial class PersistenceIndustryJobOperations : Eve.Services.Core
         Func<long, long, long, long, CancellationToken, ValueTask<IndustryFacility?>> resolveFacility,
         IIndustryCostIndexSource costIndexes,
         Func<long, CancellationToken, ValueTask<long?>> installerSystem,
+        IndustryReadyJobs readyJobs,
         Func<long> nowUnixMs)
     {
         if (!System.Text.RegularExpressions.Regex.IsMatch(schema, "^[a-z_][a-z0-9_]*$", System.Text.RegularExpressions.RegexOptions.CultureInvariant))
@@ -112,6 +117,7 @@ public sealed partial class PersistenceIndustryJobOperations : Eve.Services.Core
         _resolveFacility = resolveFacility ?? throw new ArgumentNullException(nameof(resolveFacility));
         _costIndexes = costIndexes ?? throw new ArgumentNullException(nameof(costIndexes));
         _installerSystem = installerSystem ?? throw new ArgumentNullException(nameof(installerSystem));
+        _readyJobs = readyJobs ?? throw new ArgumentNullException(nameof(readyJobs));
         _nowUnixMs = nowUnixMs ?? throw new ArgumentNullException(nameof(nowUnixMs));
     }
 
@@ -507,6 +513,7 @@ public sealed partial class PersistenceIndustryJobOperations : Eve.Services.Core
         long ownerId,
         Eve.Services.Core.IndustryJobWallet wallet,
         long stationId,
+        int activityId,
         CancellationToken cancellationToken)
     {
         if (actor.CharacterId <= 0 || ownerId != actor.CharacterId && ownerId != actor.CorporationId ||
@@ -526,7 +533,9 @@ public sealed partial class PersistenceIndustryJobOperations : Eve.Services.Core
         var roles = Eve.Corporations.CorporationRoles.Session(
             corporation, member, stationId > 0 ? stationId : null,
             await _corporations.TitlesAsync(ownerId, cancellationToken)).CorpRole;
-        if ((roles & (FactoryManagerRole | DirectorRole)) == 0)
+        // a director holds every role of the corporation (CorporationRoles.Session), so it passes these checks too
+        var activityRole = activityId == Eve.Services.Core.IndustryRules.Manufacturing ? FactoryManufacturingRole : FactoryScienceRole;
+        if ((roles & FactoryManagerRole) == 0 || (roles & activityRole) == 0)
             throw new Eve.Services.Core.IndustryJobUserErrorException("IndustryInvalidOwner");
         if (wallet.OwnerId == ownerId &&
             (roles & Eve.Corporations.CorporationRoles.WalletTakeRole(wallet.AccountKey)) == 0)

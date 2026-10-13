@@ -1,9 +1,13 @@
 using Eve.Inventory;
 using Eve.Macho;
 using Eve.Marshal;
+using Eve.Dogma;
 using Eve.Planets;
 using Eve.Services;
+using Eve.Ships;
 using Eve.Skills;
+using Eve.Space;
+using Eve.Structures;
 using Eve.Wallet;
 using Npgsql;
 
@@ -17,7 +21,8 @@ namespace Eve.Services.Planets;
 /// </summary>
 [Service("planetMgr")]
 public sealed partial class PlanetMgrService(NpgsqlDataSource source, PlanetStore store, PlanetCatalog catalog, IResourceField field,
-    PgItemStore items, WalletTransactions wallets, PgSkillStore skills, Func<long> nowMs, Func<long, PyValue?, Task> notify, string inventorySchema)
+    PgItemStore items, WalletTransactions wallets, PgSkillStore skills, Func<long> nowMs, Func<long, PyValue?, Task> notify, string inventorySchema,
+    ISimulation? simulation = null, PgSpaceItemStore? spaceItems = null, DogmaStatic? dogma = null)
     : Eve.Services.Inventory.ICustomsOffices
 {
     private const long UnboundPlanetKey = -1;
@@ -149,6 +154,24 @@ public sealed partial class PlanetMgrService(NpgsqlDataSource source, PlanetStor
     [Method("GetResourceData")]
     public PyValue GetResourceData(ServiceCall call) => Py.KeyVal(("data", PyNone.Instance), ("numBands", new PyInt(0)), ("proximity", PyNone.Instance));
 
+    /// <summary>
+    /// GetPlanetResourceInfo: the planet's resources and their quality on the client's display scale (resourceController lists them). The set is the
+    /// project's rule (<see cref="PlanetSurvey"/>, D9); the amounts are the field's.
+    /// </summary>
+    [Method("GetPlanetResourceInfo")]
+    public async ValueTask<PyValue> GetPlanetResourceInfo(ServiceCall call)
+    {
+        var planetId = PlanetOf(call);
+        if (dogma is null) return new PyDict([]);
+        var raw = (await dogma.TypesInGroupsAsync(RawResourceGroups, call.Cancellation)).Select(type => type.TypeId).ToList();
+        var survey = PlanetSurvey.ResourcesOf(planetId, raw)
+            .Select(type => new KeyValuePair<PyValue, PyValue>(new PyInt(type), new PyReal(PlanetSurvey.QualityOf(field, planetId, type))));
+        return new PyDict([.. survey]);
+    }
+
+    /// <summary>The raw planetary resource groups (SDE 1032, 1033, 1035: solid, liquid-gas, organic).</summary>
+    private static readonly string[] RawResourceGroups = ["Planet Solid - Raw Resource", "Planet Liquid-Gas - Raw Resource", "Planet Organic - Raw Resource"];
+
     // ----- the writes -----
 
     /// <summary>UserUpdateNetwork(changes): the batch of the client's command stream, applied in one transaction (clientPlanet.SubmitChanges).</summary>
@@ -187,6 +210,7 @@ public sealed partial class PlanetMgrService(NpgsqlDataSource source, PlanetStor
         var commodities = Commodities(call.Arg(1));
         var body = await BodyAsync(planetId, call.Cancellation);
         long launchTime = 0;
+        long canId = 0;
         await ChangeAsync(owner, planetId, (colony, _) =>
         {
             launchTime = colony.Launch(pinId, commodities);
@@ -195,6 +219,7 @@ public sealed partial class PlanetMgrService(NpgsqlDataSource source, PlanetStor
         {
             // the launch container: a can in the system with the commodities inside, as the owner's items (the can model of CharacterShips)
             var container = await items.CreateAsync(connection, transaction, new NewItem(LaunchContainerType, owner, body.SolarSystemId, ContainerFlag, 1, Singleton: true), call.Cancellation);
+            canId = container;
             foreach (var (type, quantity) in commodities)
                 await items.CreateAsync(connection, transaction, new NewItem(type, owner, container, ContainerFlag, quantity), call.Cancellation);
             // near the planet: two radii out along x from its centre (the launch's place in the system)
@@ -203,7 +228,28 @@ public sealed partial class PlanetMgrService(NpgsqlDataSource source, PlanetStor
                 System.Text.Json.JsonSerializer.Serialize(commodities.ToDictionary(kv => kv.Key.ToString(System.Globalization.CultureInfo.InvariantCulture), kv => kv.Value))),
                 call.Cancellation);
         });
+        await PlaceLaunchCanAsync(body, canId, owner, call.Cancellation);
         return new PyLong(launchTime);
+    }
+
+    /// <summary>
+    /// Puts a launch's can in space two radii out from its planet, where the launch record says: the simulation's ball of a can, and its space row
+    /// (the owner's rights, and the time the launch lasts). Only the owner may take from it: a launch has no corporation.
+    /// </summary>
+    private async Task PlaceLaunchCanAsync(PlanetBody body, long canId, long owner, CancellationToken cancellationToken)
+    {
+        if (simulation is null || spaceItems is null || dogma is null) return;
+        await dogma.EnsureTypesAsync([LaunchContainerType], cancellationToken);
+        var type = dogma.Type(LaunchContainerType);
+        var radius = type?.Attributes.GetValueOrDefault(162, LaunchCanRadius) ?? LaunchCanRadius;
+        double[] position = [body.X + 2 * body.Radius, body.Y, body.Z];
+        double[] direction = [1, 0, 0];
+        var expiresMs = nowMs() + PlanetRules.LaunchLifetime / 10_000;
+        await spaceItems.SaveAsync(new SpaceItem(canId, (int)body.SolarSystemId, position, direction, radius, LaunchCanGroup, 0, owner, 0, 0, 0, expiresMs),
+            cancellationToken);
+        simulation.PlaceWreck(new SimPlaceWreck((int)body.SolarSystemId, canId, LaunchCanGroup,
+            new SimWreckKind(LaunchContainerType, type?.Name ?? "Cargo Container", type?.GraphicId ?? 0), position, direction, radius, 0,
+            new SimCredit(owner, 0, 0, 0), false));
     }
 
     /// <summary>UserTransferCommodities(path, commodities): an expedited transfer between two of the colony's pins.</summary>
@@ -258,6 +304,7 @@ public sealed partial class PlanetMgrService(NpgsqlDataSource source, PlanetStor
         CancellationToken cancellationToken, Func<NpgsqlConnection, NpgsqlTransaction, Task>? extra = null)
     {
         var now = Ticks();
+        var body = await BodyAsync(planetId, cancellationToken);
         await using var connection = await source.OpenConnectionAsync(cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
         var context = new ChangeContext(connection, transaction, owner, planetId);
@@ -282,7 +329,11 @@ public sealed partial class PlanetMgrService(NpgsqlDataSource source, PlanetStor
         }
         var snapshot = outcome.Abandoned ? [] : Snapshot(colony);
         await store.SaveAsync(connection, transaction, owner, planetId, outcome.Abandoned ? null : ColonyDocument.From(colony), now, cancellationToken);
+        // a planet with pins has its customs office (the client's launchpad reaches it through the office's ball in space)
+        var office = !outcome.Abandoned && colony.Pins.Count > 0;
+        if (office) await EnsureOfficeAsync(connection, transaction, planetId, body.SolarSystemId, cancellationToken);
         await transaction.CommitAsync(cancellationToken);
+        if (office) PlaceOffice(planetId, body);
         if (before.Count > 0 || colony.Pins.Count > 0) await notify(owner, new PyInt(planetId));
         return new ChangeResult(owner, planetId, snapshot);
     }
@@ -549,6 +600,9 @@ public sealed partial class PlanetMgrService(NpgsqlDataSource source, PlanetStor
     private const int TypeInterplanetaryConsolidation = 2495;
     /// <summary>The can a launch is put in (Cargo Container, the type of the cans of CharacterShips), and its flag in space (0).</summary>
     private const int LaunchContainerType = 23;
+    /// <summary>The group of a can (Cargo Container, SDE group 12) and its radius when the type has no radius attribute (162).</summary>
+    private const int LaunchCanGroup = 12;
+    private const double LaunchCanRadius = 14;
     private const int ContainerFlag = 0;
     private const int TypeCommandCenterUpgrade = 2505;
 }

@@ -151,6 +151,7 @@ internal sealed class IndustryRig : IAsyncDisposable
     private readonly SdeReader _sde;
     private readonly AdjustedPriceStore _prices;
     private readonly PersistenceIndustryJobOperations _operations;
+    private readonly CorporationStore _corporations;
 
     private IndustryRig(NpgsqlDataSource source, SdeReader sde, StationCatalog stations)
     {
@@ -166,8 +167,12 @@ internal sealed class IndustryRig : IAsyncDisposable
         _items = new PgItemStore(source, _schemas[3]);
         _skills = new PgSkillStore(source, _schemas[4]);
         var corporations = new CorporationStore(source, _characters, _walletStore, _wallets, _skills, () => Now, _schemas[5]);
+        _corporations = corporations;
         var scheduler = new DurableScheduler(source, () => Now, null, _schemas[6]);
         var events = new EventBus(source, scheduler, null, _schemas[7]);
+        Scheduler = scheduler;
+        ReadyJobs = new IndustryReadyJobs(source, _schemas[8], events, scheduler, () => Now);
+        ReadyJobs.Register();
         _prices = new AdjustedPriceStore(source, _schemas[0]);
         var station = _station;
         _operations = new PersistenceIndustryJobOperations(
@@ -179,10 +184,25 @@ internal sealed class IndustryRig : IAsyncDisposable
                     Structure ? null : new HashSet<int> { 14, 15 })),
             new FixedCostIndexes(0m),
             (characterId, token) => ValueTask.FromResult<long?>(InstallerSystem ?? station.SolarSystemId),
+            ReadyJobs,
             () => Now);
     }
 
     public long Now { get; set; } = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+
+    /// <summary>The durable scheduler the readiness jobs wait in (the rig's host, before any restart).</summary>
+    public DurableScheduler Scheduler { get; }
+
+    /// <summary>The readiness jobs of the rig's host.</summary>
+    public IndustryReadyJobs ReadyJobs { get; }
+
+    /// <summary>A restart of the host: a new scheduler and readiness service over the same schemas, which runs what is due.</summary>
+    public async Task<int> RestartAndRunDueAsync()
+    {
+        var scheduler = new DurableScheduler(_source, () => Now, null, _schemas[6]);
+        new IndustryReadyJobs(_source, _schemas[8], new EventBus(_source, scheduler, null, _schemas[7]), scheduler, () => Now).Register();
+        return await scheduler.RunDueAsync();
+    }
 
     /// <summary>When true the facility is an industry structure (no NPC station services); otherwise the NPC station with its Factory and Laboratory.</summary>
     public bool Structure { get; set; }
@@ -220,7 +240,7 @@ internal sealed class IndustryRig : IAsyncDisposable
     {
         await using var c = await _source.OpenConnectionAsync();
         await using var tx = await c.BeginTransactionAsync();
-        var id = await _characters.InsertAsync(c, tx, new NewCharacter(1, "Industrialist", 0, 1, 1, 1, 11, 1376, 1000044, null,
+        var id = await _characters.InsertAsync(c, tx, new NewCharacter(1, "Industrialist " + Guid.NewGuid().ToString("N")[..8], 0, 1, 1, 1, 11, 1376, 1000044, null,
             _station.Id, _station.SolarSystemId, _station.ConstellationId, _station.RegionId, null, null));
         await _walletStore.OpenAsync(c, tx, id, isk, 0);
         await tx.CommitAsync();
@@ -249,6 +269,46 @@ internal sealed class IndustryRig : IAsyncDisposable
             runs, licensedRuns, productTypeId, optionalTypeId, null, new IndustryJobWallet(owner, 1000));
         var request = new IndustryJobInstallRequest(
             new IndustryJobOperationContext(new IndustryJobActor(owner, 0, 0, 1000), "op-" + Guid.NewGuid().ToString("N")), job);
+        return await _operations.InstallJobAsync(request, default);
+    }
+
+    /// <summary>A corporation founded by the character (who becomes its director); its wallet is open and empty.</summary>
+    public async Task<long> Corporation(long founder) =>
+        (await _corporations.CreateAsync(founder, new NewCorporation("Industry Corp", "INDC", "", "", 0m), "found-" + Guid.NewGuid().ToString("N"))).Id;
+
+    /// <summary>A character who is a member of the corporation with the given role bits (a non-director member).</summary>
+    public async Task<long> Member(long corporation, long roles)
+    {
+        var character = await Owner();
+        await using var c = await _source.OpenConnectionAsync();
+        await using var command = new NpgsqlCommand(
+            $"INSERT INTO {_schemas[5]}.members (character_id, corporation_id, started_ms, roles) VALUES ($1, $2, 0, $3)", c);
+        command.Parameters.Add(new NpgsqlParameter { Value = character });
+        command.Parameters.Add(new NpgsqlParameter { Value = corporation });
+        command.Parameters.Add(new NpgsqlParameter { Value = roles });
+        await command.ExecuteNonQueryAsync();
+        return character;
+    }
+
+    /// <summary>Pays ISK into the corporation's wallet (the account it pays jobs from).</summary>
+    public async Task Fund(long corporation, decimal isk)
+    {
+        await using var c = await _source.OpenConnectionAsync();
+        await using var tx = await c.BeginTransactionAsync();
+        await _wallets.AdjustAsync(c, tx, corporation, isk, 1000125, 39, "test funding", Now, "fund-" + Guid.NewGuid().ToString("N"));
+        await tx.CommitAsync();
+    }
+
+    /// <summary>A corporation job installed by a member: the member is the installer, the corporation owns the blueprint and pays.</summary>
+    public async Task<long> InstallForCorporation(long member, long corporation, long blueprintId, int activityId, int runs = 1)
+    {
+        var job = new IndustryJobInstallSubmission(
+            activityId, blueprintId, BlueprintType, false, _station.Id, ItemFlags.Hangar,
+            _station.Id, corporation, _station.SolarSystemId, _station.Id,
+            new IndustryJobLocation(_station.Id, ItemFlags.Hangar), new IndustryJobLocation(_station.Id, ItemFlags.Hangar),
+            runs, 1, null, null, null, new IndustryJobWallet(corporation, 1000));
+        var request = new IndustryJobInstallRequest(
+            new IndustryJobOperationContext(new IndustryJobActor(member, corporation, 0, 1000), "op-" + Guid.NewGuid().ToString("N")), job);
         return await _operations.InstallJobAsync(request, default);
     }
 
@@ -333,6 +393,14 @@ internal sealed class IndustryRig : IAsyncDisposable
         await using var reader = await command.ExecuteReaderAsync();
         await reader.ReadAsync();
         return (reader.GetInt32(0), reader.GetInt64(1), reader.GetInt32(2));
+    }
+
+    public async Task<long> JobOwner(long jobId)
+    {
+        await using var c = await _source.OpenConnectionAsync();
+        await using var command = new NpgsqlCommand($"SELECT owner_id FROM {_schemas[8]}.jobs WHERE job_id = $1", c);
+        command.Parameters.Add(new NpgsqlParameter { Value = jobId });
+        return (long)(await command.ExecuteScalarAsync())!;
     }
 
     public async Task<long> JobCount()

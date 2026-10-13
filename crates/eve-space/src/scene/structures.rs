@@ -9,7 +9,7 @@ use super::{Out, Scene, SessionId};
 use crate::health::{Damage, StructureHealth};
 use crate::link::StructurePlacement;
 use crate::payload;
-use crate::world::{Body, BodyKind, Detail, STRUCTURE_CATEGORY, StructureStatus};
+use crate::world::{Body, BodyKind, Detail, ORBITAL_CATEGORY, STRUCTURE_CATEGORY, StructureStatus};
 
 impl Scene {
     /// The index of a structure body of this system, if it is in space.
@@ -107,7 +107,7 @@ impl Scene {
             id: placement.structure_id,
             type_id: placement.type_id,
             group_id: placement.group_id,
-            category_id: STRUCTURE_CATEGORY,
+            category_id: if placement.planet_id > 0 { ORBITAL_CATEGORY } else { STRUCTURE_CATEGORY },
             owner_id: placement.owner_id,
             name: placement.name,
             kind: BodyKind::Structure,
@@ -118,6 +118,7 @@ impl Scene {
                 corporation_id: i64::from(placement.corporation_id),
                 alliance_id: i64::from(placement.alliance_id),
                 status: placement.status,
+                planet_id: placement.planet_id,
             },
         };
         let stamp = self.next_stamp(now);

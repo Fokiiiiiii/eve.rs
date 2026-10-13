@@ -3775,3 +3775,27 @@ the mission, agent, market, trade, LP store, repair, reprocessing, bookmark, blu
 - **Kept, not a game rule:** messages for services not built on this server ("not available on this server yet", "Direct trading is not
   available", "Shared bookmark folders are not available"). They are placeholders and say so.
 - **Kept, protective:** the state guards of agent missions, the stale-view and duplicate-placement checks, the custody, escrow and money checks.
+
+## Industry slice I1: job rules, NPC stations and cost index (2026-10-13)
+
+Full status, formulas and sources: `docs/project/INDUSTRY_STATUS.md`. Decisions and cuts recorded here:
+
+- **System cost index**: a project rule. `EVE_INDUSTRY_COST_INDEX` (fraction, default 0) applies to every system and
+  activity, and the map cost RPC uses the same rule. Basis: the pinned SDE and the client data carry no live indices;
+  the ESI `/industry/systems/` activity keys were not confirmed. Next step: an ESI loader like the adjusted prices.
+- **NPC station facility tax**: 10 percent. Basis: a community forum thread; no official CCP table was read.
+- **NPC station activities**: the SDE station operation's service list decides. Factory (14) runs manufacturing;
+  Laboratory (15) runs research, copying and invention. Time factors are the SDE `manufacturingFactor` and
+  `researchFactor`, as EveJS applies them.
+- **Reactions**: refused at NPC stations (no station service runs them). Structure reactions are not checked against
+  the structure reaction service (cut).
+- **Delivery**: completed jobs wait in Ready until the owner delivers (`CompleteJob`), per the EVE wiki's Deliver
+  button. The durable scheduler is not used for delivery.
+- **Distance rule** (`FACILITY_DISTANCE`): not enforced; the install payload carries no distance (cut).
+- **Invention skill probability**: 1/30 for every skill; the lower-probability type list (1/40) is not applied (cut).
+- **Duration skills**: Industry, Advanced Industry, required-skill (1982), Science (452), Metallurgy (468) and
+  Reactions (2660) come from SDE skill attributes. The client's character dogma and the TE-research and invention
+  time skills are not applied (cut).
+- **Slots**: base 1 per activity class plus the skill levels (Mass Production, Advanced Mass Production,
+  Laboratory Operation); the base of 1 is the project's basis (cut: not read from the SDE).
+- **Reverse engineering**: no activity in the pinned SDE; not built.

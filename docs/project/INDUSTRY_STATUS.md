@@ -121,10 +121,23 @@ The walks found three client-payload defects, fixed in this slice: `job.dump()` 
 `blueprintLocationID` (the server required both, so every client install was refused), the copy flag is not in the dump
 (the item decides it now), and the decryptor is listed in `materials` (the server now reads it from there).
 
+Slice 3:
+- Durable readiness: each installed job has a durable scheduler job at its end time (`IndustryReadyJobs`, Eve.Scheduler)
+  that sets the job to Ready and sends `OnIndustryJob` through the event bus. The job is idempotent, and a startup sweep
+  marks the jobs that ended while the host was down. The client's Ready status is 3 (`eve-logic` const.py); the coordinator's
+  104 is not the client's value and was not used. Tests: `IndustryReadyTests` (5).
+- Facility selector (`facilityManager`: GetFacility, GetFacilities, GetFacilitiesByID, GetFacilityTaxes,
+  GetFacilityLocations): the NPC station's activities from the SDE services (manufacturing 1 with the Factory, 3/4/5/8 with
+  the Laboratory), its corporation tax from `npcCorporations`, and the hangar location. Walk: `test_the_facility_selector_*`
+  passed live.
+- Remote calls the client makes, checked against the server: `industryManager` (GetJob, GetJobsByOwner, InstallJob,
+  CompleteJob, CompleteManyJobs, CancelJob), `blueprintManager` (GetBlueprintData, GetBlueprintDataByOwner, GetLimits),
+  `facilityManager` (above, GetMaxActivityModifiers, SetFacilityTaxes). The other `industrySvc` and `facilitySvc` methods
+  are client-side. Not built: corporation jobs, structure facilities beyond the existing structure lookup.
+
 Known differences, not closed:
-- EveJS schedules a durable job at each job's end date that marks it ready and sends the notification
-  (`industryRuntimeState.js` 1380-1420, `reconcileDurableIndustryJob`). eve.rs notifies on each state change only; the
-  client's own timer raises the ready notice. Not built.
+- The MITM capture against the real client and the EveJS reference run (`docs/project/MITM_COMPARE.md`) were not run in
+  slice 3; no client session was available to capture.
 - The MITM capture against the real client and the EveJS reference run (`docs/project/MITM_COMPARE.md`) were not run for the
   industry walks; the shapes were compared by reading the code (InstallJob returns the job ID in both; cancel and
   complete return nothing in both).

@@ -143,3 +143,19 @@ Known differences, not closed:
   complete return nothing in both).
 - Station Laboratory: the walk's station (60015249) has no Laboratory (service 15), so research there is refused by the SDE
   service list; the walks run research at the nearest Laboratory station, with the Scientific Networking level that reaches it.
+
+## Slice 4: MITM, corporation jobs, structures (2026-10-13)
+
+- **MITM capture**: the industry walk file ran through `tools/mitm` (proxy 26213 to the eve.rs lane port 26103) with
+  `tools/dev/run-eve-live.sh` under the lane lock. Capture: `captures/eve-rs-industry.jsonl` (git-ignored). It holds six
+  connections and the calls `InstallJob` (6), `CompleteJob`, `CancelJob`, `GetJobsByOwner`, `GetBlueprintData`,
+  `GetFacility`, `GetFacilities`, `GetFacilityLocations`, `GetFacilityTaxes`, and five `OnIndustryJob` notifications.
+- **EveJS comparison**: by code reading (`server/src/services/industry/industryManagerService.js`). The EveJS reference was not
+  run live for this slice (no reference run for the industry walk exists). Differences are in `DEVIATIONS.md` (slice I2).
+- **Corporation jobs**: the client's rules are enforced (see DEVIATIONS I2). Not done: corporation notifications to other
+  members, and the corporation delivery location.
+- **Structures**: not changed (see DEVIATIONS I2).
+- **Reverse engineering and duplicating**: not in the client's activities (`industry/const.py`); nothing to add.
+- **Tests**: `dotnet test tests/Eve.Host.Tests --filter Industry` passes 21 of 21 (under the lane lock, `EVE_PG_URL` set).
+  The walk file `tests/test_walk_industry.py` passes 6 of 6 live through the MITM proxy.
+

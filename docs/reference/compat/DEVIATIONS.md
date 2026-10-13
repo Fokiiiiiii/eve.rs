@@ -3800,6 +3800,34 @@ Full status, formulas and sources: `docs/project/INDUSTRY_STATUS.md`. Decisions 
   Laboratory Operation); the base of 1 is the project's basis (cut: not read from the SDE).
 - **Reverse engineering**: no activity in the pinned SDE; not built.
 
+## Industry slice I2: corporation jobs, MITM shapes, structures (2026-10-13)
+
+Full status: `docs/project/INDUSTRY_STATUS.md`. Decisions recorded here:
+
+- **Corporation jobs** follow the client's rules (`industry/job.py` validation): a corporation owner needs Factory Manager
+  (1024) and, at the job's station, the manufacturing role (1<<50) for a manufacturing job or the science role (1<<51) for
+  any other activity; a director holds every role. The wallet division is paid only by a member with its take role. The
+  client's `roles` is `RolesAtLocation(facility)`; the server reads the member's roles at the job's station (the same
+  CorporationRoles.Session rule as the hangar). Covered by `IndustryCorporationPersistenceTests` (4).
+- **Corporation notifications** (not built): `OnIndustryJob` goes to the owner and the installer character only. The other
+  members of the corporation who hold Factory Manager are not notified of a corporation job.
+- **Corporation delivery location** (not built): the corporation's delivery flag is not known from the client code read
+  (`flagCorpDeliveries` is the client's flag for the output of a corporation job; the server delivers to the hangar of the
+  owner's station). No guess is made here.
+- **Structures** (not changed): a structure with an online industry service runs every activity (no service-module to
+  activity mapping), its tax and time multiplier come from the structure record, and rig and role bonuses are not applied.
+  Changing this needs the structure service names from the structure data, which the walk did not read; cut for this slice.
+- **Reverse engineering and duplicating**: not client activities. `industry/const.py` lists manufacturing (1), research
+  time (3), research material (4), copying (5), invention (8) and reaction (9) only, and the client's ACTIVITY sets are
+  these. Nothing is added.
+- **Shape comparison with EveJS** (code reading, and the MITM capture of the walk; EveJS was not run live for this slice):
+  `InstallJob` returns the job id (both); `GetJobsByOwner` returns a list of job rows (both); `CancelJob` and `CompleteJob`
+  return the job payload in EveJS (`industryManagerService.js` Handle_CancelJob, Handle_CompleteJob) and null in eve.rs.
+  The client ignores both returns (`industrySvc.CancelJob`, `CompleteJob`), so this is a shape difference with no client
+  effect. The earlier note that both return nothing was wrong for EveJS.
+- **Ready and install notifications**: `OnIndustryJob` is sent once per state change (install, ready, cancel, delivery).
+  The MITM capture of the walk shows the install notification (status 1); the walk asserts it.
+
 ## Planetary interaction (PI)
 
 Source: `docs/project/PI_DESIGN.md` (inventory, client contract, formulas with their files and lines, SDE facts). The rules are the V24.01 client's (eve-logic `eve/common/script/planet/*`, `planetCommon.py`); the numbers are the SDE's (build 3396210) or the EVE University wiki's (Planetary Interaction, Skills: Planet Management).

@@ -245,7 +245,7 @@ public sealed partial class PersistenceIndustryJobOperations : Eve.Services.Core
             )
             VALUES (
                 $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,0,$12,$13,$14,$15,$16,$17,1,
-                $18,$19,$20,$21,0,$22,$23,$24,$25,$26,$27,$28,$29::jsonb
+                $18,$19,$20,$21,0,$22,$23,$24,$25,$26,$27,$28,$29,$30::jsonb
             )
             RETURNING job_id
             """, connection, transaction);
@@ -540,7 +540,7 @@ public sealed partial class PersistenceIndustryJobOperations : Eve.Services.Core
         {
             await _items.SetIndustryBlueprintStateAsync(
                 connection, transaction, ownerId, blueprint.Id, blueprint.TypeId, false,
-                blueprint.BlueprintRuns, nextMaterialEfficiency, nextTimeEfficiency, cancellationToken);
+                null, nextMaterialEfficiency, nextTimeEfficiency, cancellationToken);
         }
 
         var outputArray = new Npgsql.NpgsqlParameter

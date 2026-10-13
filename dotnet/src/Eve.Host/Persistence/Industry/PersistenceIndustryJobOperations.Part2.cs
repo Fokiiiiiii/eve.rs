@@ -40,8 +40,12 @@ public sealed partial class PersistenceIndustryJobOperations : Eve.Services.Core
 {
     public sealed record IndustryFacility(
         long FacilityId, long SolarSystemId, long OwnerId, decimal TaxRate, double TimeMultiplier, bool IsOnline,
-        double? ResearchTimeMultiplier = null, IReadOnlySet<int>? StationServices = null, IReadOnlySet<int>? Activities = null)
+        double? ResearchTimeMultiplier = null, IReadOnlySet<int>? StationServices = null, IReadOnlySet<int>? Activities = null,
+        IReadOnlyList<IndustryBonus>? Bonuses = null)
     {
+        /// <summary>The facility's rig and role bonuses (null for none): the client's facility modifiers.</summary>
+        public IReadOnlyList<IndustryBonus> ModifierBonuses => Bonuses ?? [];
+
         /// <summary>The time factor of the science activities (research, copying, invention); the job factor otherwise.</summary>
         public double ResearchFactor => ResearchTimeMultiplier ?? TimeMultiplier;
     }
@@ -170,6 +174,14 @@ public sealed partial class PersistenceIndustryJobOperations : Eve.Services.Core
             throw InvalidJob();
         var costIndex = await ReadCostIndexAsync(job.SolarSystemId, job.ActivityId, cancellationToken);
         var highSecurity = await IsHighSecurityAsync(job.SolarSystemId, cancellationToken);
+        // The facility's rig and role bonuses: the product's category and group decide the manufacturing and reaction targets.
+        var (productCategory, productGroup) = job.ActivityId is ManufacturingActivity or ReactionActivity && products.Count > 0
+            ? await ReadProductContextAsync(products[0].TypeId, cancellationToken)
+            : ((int?)null, (int?)null);
+        var bonuses = facility.ModifierBonuses;
+        var materialBonus = IndustryBonuses.Multiplier(bonuses, IndustryBonusKind.Material, job.ActivityId, productCategory, productGroup);
+        var timeBonus = IndustryBonuses.Multiplier(bonuses, IndustryBonusKind.Time, job.ActivityId, productCategory, productGroup);
+        var costBonus = IndustryBonuses.Multiplier(bonuses, IndustryBonusKind.Cost, job.ActivityId, productCategory, productGroup);
 
         await using var connection = await _source.OpenConnectionAsync(cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
@@ -208,7 +220,7 @@ public sealed partial class PersistenceIndustryJobOperations : Eve.Services.Core
             if (job.Runs > left)
                 throw InvalidJob();
         }
-        var requiredMaterials = RequiredMaterials(job, blueprint, recipe);
+        var requiredMaterials = RequiredMaterials(job, blueprint, recipe, materialBonus);
 
         var skillLevels = new Dictionary<int, int>();
         foreach (var requirement in recipe.Skills)
@@ -228,9 +240,10 @@ public sealed partial class PersistenceIndustryJobOperations : Eve.Services.Core
         await CheckSlotsAsync(connection, transaction, actor.CharacterId, job.ActivityId, cancellationToken);
 
         var duration = await TimeInSecondsAsync(
-            connection, transaction, actor.CharacterId, job, recipe, facility, blueprint, cancellationToken);
+            connection, transaction, actor.CharacterId, job, recipe, facility, blueprint, timeBonus, cancellationToken);
         var baseCost = await ReadBaseCostAsync(job, blueprint, products, recipe, cancellationToken);
-        var cost = IR.Total(IR.CostParts(baseCost, (double)costIndex, (double)facility.TaxRate, highSecurity, job.ActivityId));
+        var cost = IR.Total(IR.CostParts(
+            baseCost, (double)costIndex * costBonus, (double)facility.TaxRate, highSecurity, job.ActivityId));
 
         var probability = 1d;
         JsonObject? invention = null;
@@ -343,6 +356,21 @@ public sealed partial class PersistenceIndustryJobOperations : Eve.Services.Core
             default:
                 throw InvalidJob();
         }
+    }
+
+    /// <summary>The category and group of a product type from the SDE (types, then groups); a missing row leaves its part null.</summary>
+    private async Task<(int? CategoryId, int? GroupId)> ReadProductContextAsync(int typeId, CancellationToken cancellationToken)
+    {
+        var types = await _sde.ReadAsync("types", [(long)typeId], cancellationToken);
+        if (types.Count == 0 || !types[0].Doc.TryGetProperty("groupID", out var group) ||
+            group.ValueKind != System.Text.Json.JsonValueKind.Number)
+            return (null, null);
+        var groupId = group.GetInt32();
+        var groups = await _sde.ReadAsync("groups", [(long)groupId], cancellationToken);
+        if (groups.Count == 0 || !groups[0].Doc.TryGetProperty("categoryID", out var category) ||
+            category.ValueKind != System.Text.Json.JsonValueKind.Number)
+            return (null, groupId);
+        return (category.GetInt32(), groupId);
     }
 
     /// <summary>

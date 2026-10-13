@@ -123,6 +123,57 @@ public sealed class IndustryJobPersistenceTests
         await Assert.ThrowsAsync<IndustryJobUserErrorException>(() => rig.Install(owner, second, IndustryRules.Manufacturing));
         Assert.Equal(1, await rig.JobCount());
     }
+
+    [Fact]
+    public async Task A_structure_rig_and_role_bonuses_scale_the_materials_and_the_time_of_its_jobs()
+    {
+        await using var rig = await IndustryRig.CreateAsync();
+        var owner = await rig.Owner();
+        var blueprint = await rig.Give(owner, Blueprint, 1, blueprint: true);
+        await rig.Give(owner, Material, 86);
+        rig.Structure = true;
+        rig.Activities = new HashSet<int> { IndustryRules.Manufacturing };
+        rig.Bonuses =
+        [
+            // A rig on the product's group (Clone, group 23): material -2 %, time -20 %.
+            new IndustryBonus(IndustryBonusKind.Material, IndustryRules.Manufacturing, 0.98, IndustryBonuses.SourceRig, GroupId: 23, RigTypeId: 1),
+            new IndustryBonus(IndustryBonusKind.Time, IndustryRules.Manufacturing, 0.8, IndustryBonuses.SourceRig, GroupId: 23, RigTypeId: 1),
+            // A role bonus of an engineering complex: time -15 %, on every product.
+            new IndustryBonus(IndustryBonusKind.Time, IndustryRules.Manufacturing, 0.85, IndustryBonuses.SourceHull),
+            // A rig on another group (Cruiser, 26): it does not apply to this product.
+            new IndustryBonus(IndustryBonusKind.Material, IndustryRules.Manufacturing, 0.5, IndustryBonuses.SourceRig, GroupId: 26, RigTypeId: 2),
+        ];
+
+        var jobId = await rig.Install(owner, blueprint, IndustryRules.Manufacturing);
+
+        // 86 x 0.98 = 84.28, rounded up to 85 consumed; 600 s x 0.85 x 0.8 = 408 s.
+        var (status, _, seconds) = await rig.JobRow(jobId);
+        Assert.Equal(1, status);
+        Assert.Equal(408, seconds);
+        Assert.Equal(1, await rig.Quantity(owner, Material));
+    }
+
+    [Fact]
+    public async Task A_rig_for_another_product_group_changes_neither_the_materials_nor_the_time()
+    {
+        await using var rig = await IndustryRig.CreateAsync();
+        var owner = await rig.Owner();
+        var blueprint = await rig.Give(owner, Blueprint, 1, blueprint: true);
+        await rig.Give(owner, Material, 86);
+        rig.Structure = true;
+        rig.Activities = new HashSet<int> { IndustryRules.Manufacturing };
+        rig.Bonuses =
+        [
+            new IndustryBonus(IndustryBonusKind.Material, IndustryRules.Manufacturing, 0.5, IndustryBonuses.SourceRig, GroupId: 26, RigTypeId: 2),
+            new IndustryBonus(IndustryBonusKind.Time, IndustryRules.Manufacturing, 0.5, IndustryBonuses.SourceRig, GroupId: 26, RigTypeId: 2),
+        ];
+
+        var jobId = await rig.Install(owner, blueprint, IndustryRules.Manufacturing);
+
+        var (_, _, seconds) = await rig.JobRow(jobId);
+        Assert.Equal(ManufacturingTimeSeconds, seconds);
+        Assert.Equal(0, await rig.Quantity(owner, Material));
+    }
 }
 
 /// <summary>Every system and activity has the same index (the configured fallback, with nothing stored).</summary>
@@ -181,7 +232,8 @@ internal sealed class IndustryRig : IAsyncDisposable
             (facilityId, stationId, systemId, characterId, token) => ValueTask.FromResult<PersistenceIndustryJobOperations.IndustryFacility?>(
                 new PersistenceIndustryJobOperations.IndustryFacility(
                     station.Id, station.SolarSystemId, station.OwnerId, 0.10m, 1d, true, null,
-                    Structure ? null : new HashSet<int> { 14, 15 }, Structure ? Activities : null)),
+                    Structure ? null : new HashSet<int> { 14, 15 }, Structure ? Activities : null,
+                    Structure ? Bonuses : null)),
             new FixedCostIndexes(0m),
             (characterId, token) => ValueTask.FromResult<long?>(InstallerSystem ?? station.SolarSystemId),
             ReadyJobs,
@@ -209,6 +261,9 @@ internal sealed class IndustryRig : IAsyncDisposable
 
     /// <summary>The activities of a structure (what its online services run); null means every activity.</summary>
     public IReadOnlySet<int>? Activities { get; set; }
+
+    /// <summary>The rig and role bonuses of the structure (used when Structure is set).</summary>
+    public IReadOnlyList<IndustryBonus>? Bonuses { get; set; }
 
     /// <summary>The installer's current solar system; null means the station's own system (zero jumps).</summary>
     public long? InstallerSystem { get; set; }

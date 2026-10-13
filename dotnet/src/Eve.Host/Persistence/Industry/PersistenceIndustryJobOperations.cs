@@ -385,12 +385,14 @@ public sealed partial class PersistenceIndustryJobOperations : Eve.Services.Core
     private static IReadOnlyDictionary<int, long> RequiredMaterials(
         Eve.Services.Core.IndustryJobInstallSubmission job,
         Eve.Inventory.Item blueprint,
-        ActivityRecipe recipe)
+        ActivityRecipe recipe,
+        double bonus)
     {
         var required = new SortedDictionary<int, long>();
-        var modifier = job.ActivityId == ManufacturingActivity
+        // The facility's material bonus (rigs and role) multiplies the efficiency modifier of the job.
+        var modifier = (job.ActivityId == ManufacturingActivity
             ? IR.MaterialEfficiencyModifier(blueprint.MaterialEfficiency)
-            : 1.0;
+            : 1.0) * bonus;
         foreach (var material in recipe.Materials)
         {
             var amount = IR.MaterialQuantity(material.Quantity, modifier, job.Runs, job.Runs);
@@ -411,12 +413,13 @@ public sealed partial class PersistenceIndustryJobOperations : Eve.Services.Core
         ActivityRecipe recipe,
         IndustryFacility facility,
         Eve.Inventory.Item blueprint,
+        double timeBonus,
         CancellationToken cancellationToken)
     {
         async Task<int> LevelOf(int skillTypeId) =>
             await _skills.LevelAsync(connection, transaction, characterId, skillTypeId, cancellationToken);
         var facilityFactor = IR.IsScience(job.ActivityId) ? facility.ResearchFactor : facility.TimeMultiplier;
-        var modifiers = new List<double> { facilityFactor };
+        var modifiers = new List<double> { facilityFactor, timeBonus };
         double seconds;
         switch (job.ActivityId)
         {

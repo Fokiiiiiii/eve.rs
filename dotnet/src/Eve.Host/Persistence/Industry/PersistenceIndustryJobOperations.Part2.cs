@@ -296,6 +296,7 @@ public sealed partial class PersistenceIndustryJobOperations : Eve.Services.Core
             (object?)job.OptionalTypeId2 ?? DBNull.Value,
             job.Wallet.OwnerId, job.Wallet.AccountKey, snapshotJson);
         var jobId = (long)(await insert.ExecuteScalarAsync(cancellationToken))!;
+        await _readyJobs.ScheduleAsync(connection, transaction, jobId, endFileTime, cancellationToken);
         await PublishChangedAsync(connection, transaction, jobId, job.OwnerId, blueprint.Id,
             actor.CharacterId, 1, 0, request.Context.OperationId, cancellationToken);
         await transaction.CommitAsync(cancellationToken);

@@ -25,7 +25,8 @@ internal sealed class TurretEffect : ShipEffect
     public override IReadOnlyCollection<string> EffectNames { get; } = ["targetAttack", "projectileFired", "targetDisintegratorAttack", "ChainLightning", "lightningWeapon"];
 
     protected override bool Handles(ModuleEffectContext module) =>
-        module.Type.EffectIds.Select(module.Statics.Effect).Any(e => e is not null && e.Name.Trim().Equals(TurretFitted, StringComparison.OrdinalIgnoreCase));
+        module.Type.EffectIds.Select(module.Statics.Effect).Any(e => e is not null && (e.Name.Trim().Equals(TurretFitted, StringComparison.OrdinalIgnoreCase)
+            || e.Name.Trim().Equals("lightningWeapon", StringComparison.OrdinalIgnoreCase)));
 
     /// <summary>
     /// A turret with nothing to shoot is refused before it is asked for a target (the reference's order): no charge in it, or fewer rounds than a cycle burns. A gun that takes no charge

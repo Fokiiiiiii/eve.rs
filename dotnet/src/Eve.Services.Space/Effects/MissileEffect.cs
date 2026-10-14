@@ -109,7 +109,7 @@ internal sealed class MissileEffect : ShipEffect
     /// <summary>The launcher groups this effect runs: the missile family derived from the static data (<see cref="LauncherFamilies"/>).</summary>
     private static readonly IReadOnlySet<int> StructureMissileLauncherGroups = new HashSet<int> { StructureAntiCapitalLauncherGroup, StructureMultiroleLauncherGroup };
 
-    public static IReadOnlySet<int> ServedLauncherGroups(DogmaStatic statics) => statics.MissileLauncherGroups.Concat(StructureMissileLauncherGroups).ToHashSet();
+    public static IReadOnlySet<int> ServedLauncherGroups(DogmaStatic statics) => statics.MissileLauncherGroups;
 
     /// <summary>The launchers this effect runs that are not of the missile family: the festival launcher and the countermeasure launcher (<see cref="OtherLauncherNames"/>).</summary>
     public static IReadOnlySet<int> OtherServedLauncherGroups { get; } = OtherLauncherNames.Keys.ToHashSet();

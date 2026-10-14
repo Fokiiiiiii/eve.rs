@@ -116,13 +116,13 @@ public sealed partial class SpaceSessions
             return IsStructureObserver(session) ? ModuleResult.Refusal("REFUSED") : null;
         }
         var structureObserver = IsStructureObserver(session);
+        // Read the fit only after earlier cycle charge counts have committed.
+        await _charges.FlushAsync(id).ConfigureAwait(false);
         if (await ModuleShipAsync(pilot, cancellationToken) is not { } snapshot)
         {
             return structureObserver || session.GetInt("shipid") != pilot.ShipId ? ModuleResult.Refusal("REFUSED") : null;
         }
         CancelSafeLogoff(session);
-        // A gun uses the rounds from the previous accepted cycles, written before its next start.
-        await _charges.FlushAsync(id).ConfigureAwait(false);
         // a module under nanite repair does not run (the EVE University wiki, Overheating)
         if (pilot.Repairs.ContainsKey(moduleId) && snapshot.Fitted.FirstOrDefault(m => m.Id == moduleId) is { } repairing)
         {

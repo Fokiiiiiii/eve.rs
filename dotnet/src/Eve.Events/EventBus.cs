@@ -177,10 +177,30 @@ public sealed class EventBus
         return id;
     }
 
-    /// <summary>
-    /// The publish that new domain events use: the event is written in the caller's transaction, so it is committed with the change it announces and rolled back with it.
-    /// It cannot wake the pump itself (the commit is the caller's); the caller calls <see cref="Wake"/> after committing, as a best-effort latency step.
-    /// </summary>
+    /// <summary>Publishes one occurrence per topic and publication key, returning the original event ID on retry even after outbox retention.</summary>
+    public async Task<long> PublishOnceAsync(string topic, object? payload, string publicationKey, CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(topic);
+        ArgumentException.ThrowIfNullOrWhiteSpace(publicationKey);
+        await using var connection = await _source.OpenConnectionAsync(cancellationToken);
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        await Sql.ExecuteAsync(connection, transaction, "SELECT pg_advisory_xact_lock_shared(hashtext($1))", cancellationToken, LockName);
+        await Sql.ExecuteAsync(connection, transaction, "SELECT pg_advisory_xact_lock(hashtext($1), hashtext($2))", cancellationToken, topic, publicationKey);
+        var prior = await Sql.ScalarAsync(connection, transaction, Q("SELECT event_id FROM {schema}.publication_receipts WHERE topic = $1 AND publication_key = $2"), cancellationToken, topic, publicationKey);
+        long id;
+        if (prior is long existing)
+            id = existing;
+        else
+        {
+            id = await PublishAsync(connection, transaction, topic, payload, publicationKey, cancellationToken);
+            await Sql.ExecuteAsync(connection, transaction, Q("INSERT INTO {schema}.publication_receipts (topic, publication_key, event_id) VALUES ($1, $2, $3)"), cancellationToken, topic, publicationKey, id);
+        }
+        await transaction.CommitAsync(cancellationToken);
+        Wake();
+        return id;
+    }
+
+    /// <summary>Writes the event in the caller's transaction. Call <see cref="Wake"/> after committing.</summary>
     public Task<long> PublishInTransactionAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, string topic, object? payload, string? key = null, CancellationToken cancellationToken = default) =>
         PublishAsync(connection, transaction, topic, payload, key, cancellationToken);
 

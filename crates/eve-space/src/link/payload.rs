@@ -315,6 +315,25 @@ impl Message {
                     *control_lease_generation, *cycle_id, *pulse_hop_ordinal);
                 write_structure_damage_ids(&mut out, allowed_target_ids);
             }
+            Self::StructureDamageCandidatesFieldResult {
+                session_id, structure_id, module_id, effect_id, activation_nonce, control_lease_generation, cycle_id,
+                pulse_hop_ordinal, allowed_target_ids, field_moved_target_ids, field_held_target_ids,
+            } => {
+                assert!(*session_id > 0 && *structure_id > 0 && *module_id > 0 && *effect_id > 0 && *activation_nonce > 0
+                    && *control_lease_generation > 0 && *cycle_id > 0, "invalid structure-damage correlation");
+                assert!(
+                    structure_field_partition_is_valid(allowed_target_ids, field_moved_target_ids, field_held_target_ids),
+                    "invalid structure-field target partition"
+                );
+                write_structure_damage_correlation(&mut out, *session_id, *structure_id, *module_id, *effect_id, *activation_nonce,
+                    *control_lease_generation, *cycle_id, *pulse_hop_ordinal);
+                write_structure_damage_ids(&mut out, allowed_target_ids);
+                if !field_moved_target_ids.is_empty() || !field_held_target_ids.is_empty() {
+                    out.push(STRUCTURE_FIELD_PARTITION_EXTENSION_VERSION);
+                    write_structure_damage_ids(&mut out, field_moved_target_ids);
+                    write_structure_damage_ids(&mut out, field_held_target_ids);
+                }
+            }
             Self::ModuleWorkCycle {
                 session_id,
                 character_id,

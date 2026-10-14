@@ -110,6 +110,45 @@ public const byte UpdateEffect = 61;
     }
 
     private const int MaxStructureDamageCandidates = 4096;
+    private const byte StructureFieldPartitionExtensionVersion = 1;
+
+    private static bool StructureFieldPartitionIsValid(
+        IReadOnlyList<long> allowed,
+        IReadOnlyList<long> moved,
+        IReadOnlyList<long> held)
+    {
+        if (allowed.Count != moved.Count + held.Count)
+        {
+            return false;
+        }
+
+        var allowedIds = new HashSet<long>();
+        foreach (var id in allowed)
+        {
+            if (id <= 0 || !allowedIds.Add(id))
+            {
+                return false;
+            }
+        }
+
+        var partition = new HashSet<long>();
+        foreach (var id in moved)
+        {
+            if (id <= 0 || !allowedIds.Contains(id) || !partition.Add(id))
+            {
+                return false;
+            }
+        }
+        foreach (var id in held)
+        {
+            if (id <= 0 || !allowedIds.Contains(id) || !partition.Add(id))
+            {
+                return false;
+            }
+        }
+
+        return partition.Count == allowedIds.Count;
+    }
 
     private ref struct Reader(ReadOnlyMemory<byte> data)
     {

@@ -577,9 +577,25 @@ public static partial class SimCodec
                     if (session == 0 || structure <= 0 || module <= 0 || effect <= 0 || activationNonce == 0 || controlLeaseGeneration <= 0 || cycle == 0)
                         throw new SimLinkException(SimLinkError.BadValue, "bad structure-damage correlation");
                     var targets = ReadStructureDamageIds(ref r);
-                    message = payload.Span[0] == Kind.StructureDamageCandidatesRequest
-                        ? new SimStructureDamageCandidatesRequest(session, structure, module, effect, activationNonce, controlLeaseGeneration, cycle, pulseHopOrdinal, targets)
-                        : new SimStructureDamageCandidatesResult(session, structure, module, effect, activationNonce, controlLeaseGeneration, cycle, pulseHopOrdinal, targets);
+                    if (payload.Span[0] == Kind.StructureDamageCandidatesRequest)
+                    {
+                        message = new SimStructureDamageCandidatesRequest(session, structure, module, effect, activationNonce, controlLeaseGeneration, cycle, pulseHopOrdinal, targets);
+                    }
+                    else
+                    {
+                        var result = new SimStructureDamageCandidatesResult(session, structure, module, effect, activationNonce, controlLeaseGeneration, cycle, pulseHopOrdinal, targets);
+                        if (r.Remaining > 0)
+                        {
+                            if (r.U8() != StructureFieldPartitionExtensionVersion)
+                                throw new SimLinkException(SimLinkError.BadValue, "structure-field partition extension");
+                            var moved = ReadStructureDamageIds(ref r);
+                            var held = ReadStructureDamageIds(ref r);
+                            if (!StructureFieldPartitionIsValid(targets, moved, held))
+                                throw new SimLinkException(SimLinkError.BadValue, "structure-field target partition");
+                            result = result with { FieldMovedTargetIds = moved, FieldHeldTargetIds = held };
+                        }
+                        message = result;
+                    }
                     break;
                 }
             case Kind.ModuleEnded:

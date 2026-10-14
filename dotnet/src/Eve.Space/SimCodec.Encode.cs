@@ -1319,6 +1319,14 @@ private static void WriteStructureDamageCorrelation(
                 w.U8(Kind.StructureDamageCandidatesResult);
                 WriteStructureDamageCorrelation(w, m.SessionId, m.StructureId, m.ModuleId, m.EffectId, m.ActivationNonce, m.ControlLeaseGeneration, m.CycleId, m.PulseHopOrdinal);
                 WriteStructureDamageIds(w, m.AllowedTargetIds);
+                if (m.FieldMovedTargetIds.Count != 0 || m.FieldHeldTargetIds.Count != 0)
+                {
+                    if (!StructureFieldPartitionIsValid(m.AllowedTargetIds, m.FieldMovedTargetIds, m.FieldHeldTargetIds))
+                        throw new ArgumentException("invalid structure-field target partition", nameof(m));
+                    w.U8(StructureFieldPartitionExtensionVersion);
+                    WriteStructureDamageIds(w, m.FieldMovedTargetIds);
+                    WriteStructureDamageIds(w, m.FieldHeldTargetIds);
+                }
                 break;
             case SimMeasured m:
                 w.U8(Kind.Measured);

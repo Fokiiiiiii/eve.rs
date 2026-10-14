@@ -9,6 +9,8 @@ mod decode_action;
 mod decode_message;
 mod encode;
 mod payload;
+#[cfg(test)]
+mod field_partition_tests;
 mod reader;
 use self::decode::*;
 use self::decode_action::*;
@@ -41,7 +43,21 @@ pub const PROTOCOL_VERSION: u16 = 69;
 
 /// Maximum candidate or allowed target IDs in a structure-damage authorization step.
 pub const MAX_STRUCTURE_DAMAGE_CANDIDATES: usize = 4096;
-/// The message kinds.
+const STRUCTURE_FIELD_PARTITION_EXTENSION_VERSION: u8 = 1;
+
+fn structure_field_partition_is_valid(allowed: &[i64], moved: &[i64], held: &[i64]) -> bool {
+    if allowed.len() != moved.len() + held.len() {
+        return false;
+    }
+    let allowed_set: std::collections::HashSet<i64> = allowed.iter().copied().collect();
+    let mut partition = std::collections::HashSet::with_capacity(allowed.len());
+    allowed_set.len() == allowed.len()
+        && moved
+            .iter()
+            .chain(held)
+            .all(|id| *id > 0 && allowed_set.contains(id) && partition.insert(*id))
+        && partition.len() == allowed.len()
+}/// The message kinds.
 pub mod kind;
 
 /// What the host changes in the rounds of a gun, in the order the simulation hears it (the host asks for it when a pilot loads or unloads a gun in space).
@@ -767,6 +783,20 @@ pub enum Message {
         pulse_hop_ordinal: u32,
         allowed_target_ids: Vec<i64>,
     },
+    /// A kind-86 result with the SDE-backed moved/held partition for a transport-field pulse.
+    StructureDamageCandidatesFieldResult {
+        session_id: u64,
+        structure_id: i64,
+        module_id: i64,
+        effect_id: i32,
+        activation_nonce: u64,
+        control_lease_generation: i64,
+        cycle_id: u64,
+        pulse_hop_ordinal: u32,
+        allowed_target_ids: Vec<i64>,
+        field_moved_target_ids: Vec<i64>,
+        field_held_target_ids: Vec<i64>,
+    },
     /// A work cycle of a module (a mining laser's or a salvager's) ended with its target there: the numbers of the cycle and the three rolls the
     /// simulation drew (waste, rounding, crit). The module is parked until a `ModuleWorkResult`, and the same `cycle_id` is sent again while it waits.
     ModuleWorkCycle {
@@ -961,7 +991,7 @@ impl Message {
             Self::RemoteRepairCycle { .. } => kind::REMOTE_REPAIR_CYCLE,
             Self::RemoteRepairCycleResult { .. } => kind::REMOTE_REPAIR_CYCLE_RESULT,
             Self::StructureDamageCandidatesRequest { .. } => kind::STRUCTURE_DAMAGE_CANDIDATES_REQUEST,
-            Self::StructureDamageCandidatesResult { .. } => kind::STRUCTURE_DAMAGE_CANDIDATES_RESULT,
+            Self::StructureDamageCandidatesResult { .. } | Self::StructureDamageCandidatesFieldResult { .. } => kind::STRUCTURE_DAMAGE_CANDIDATES_RESULT,
             Self::ModuleWorkCycle { .. } => kind::MODULE_WORK_CYCLE,
             Self::ModuleWorkResult { .. } => kind::MODULE_WORK_RESULT,
             Self::ModuleEnded { .. } => kind::MODULE_ENDED,

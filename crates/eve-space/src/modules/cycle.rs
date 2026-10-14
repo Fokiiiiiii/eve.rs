@@ -749,6 +749,38 @@ impl Scene {
         allowed_target_ids: &[i64],
         now: i64,
     ) -> Vec<Out> {
+        self.structure_field_damage_candidates_result(
+            session,
+            structure_id,
+            module_id,
+            effect_id,
+            activation_nonce,
+            control_lease_generation,
+            cycle_id,
+            pulse_hop_ordinal,
+            allowed_target_ids,
+            &[],
+            &[],
+            now,
+        )
+    }
+
+    /// Settles a correlated structure result with its complete per-step HOG disposition partition.
+    pub fn structure_field_damage_candidates_result(
+        &mut self,
+        session: SessionId,
+        structure_id: i64,
+        module_id: i64,
+        effect_id: i32,
+        activation_nonce: u64,
+        control_lease_generation: i64,
+        cycle_id: u64,
+        pulse_hop_ordinal: u32,
+        allowed_target_ids: &[i64],
+        field_moved_target_ids: &[i64],
+        field_held_target_ids: &[i64],
+        now: i64,
+    ) -> Vec<Out> {
         let (mut out, settled) = self.with_controlled_structure_modules(now, |scene| {
             scene.apply_structure_damage_candidates_result(
                 session,
@@ -760,6 +792,8 @@ impl Scene {
                 cycle_id,
                 pulse_hop_ordinal,
                 allowed_target_ids,
+                field_moved_target_ids,
+                field_held_target_ids,
                 now,
             )
         });
@@ -780,6 +814,8 @@ impl Scene {
         cycle_id: u64,
         pulse_hop_ordinal: u32,
         allowed_target_ids: &[i64],
+        field_moved_target_ids: &[i64],
+        field_held_target_ids: &[i64],
         now: i64,
     ) -> (Vec<Out>, bool) {
         const MAX_CANDIDATES: usize = 4_096;
@@ -818,6 +854,21 @@ impl Scene {
         {
             return (Vec::new(), false);
         }
+        if matches!(&pending.operation, PendingStructureDamageOperation::TransportFieldPulse { .. }) {
+            let moved: std::collections::BTreeSet<i64> = field_moved_target_ids.iter().copied().collect();
+            let held: std::collections::BTreeSet<i64> = field_held_target_ids.iter().copied().collect();
+            let mut partition = moved.clone();
+            partition.extend(held.iter().copied());
+            if moved.len() != field_moved_target_ids.len()
+                || held.len() != field_held_target_ids.len()
+                || partition.len() != moved.len() + held.len()
+                || partition != allowed
+            {
+                return (Vec::new(), false);
+            }
+        } else if !field_moved_target_ids.is_empty() || !field_held_target_ids.is_empty() {
+            return (Vec::new(), false);
+        }
         let authorized_now = match &pending.operation {
             PendingStructureDamageOperation::PointDefense { range_meters, .. } => {
                 let source = pilot.ship.position;
@@ -844,6 +895,16 @@ impl Scene {
                     Vec::new()
                 }
             }
+            PendingStructureDamageOperation::TransportFieldPulse { centre, strike, .. } => {
+                let sphere = [
+                    centre.x + strike.direction[0] * strike.length,
+                    centre.y + strike.direction[1] * strike.length,
+                    centre.z + strike.direction[2] * strike.length,
+                ];
+                self.damageable_entity_ids(now, |target_id, target, radius| {
+                    target_id != structure_id && strike.covers(sphere, [target.x, target.y, target.z], radius)
+                })
+            }
             PendingStructureDamageOperation::VortonArcHop { anchor, arc, struck_ids, .. } => {
                 self.vorton_arc_candidate_ids(now, anchor, arc.range, struck_ids)
             }
@@ -865,7 +926,9 @@ impl Scene {
         let commit_charge = !run.structure_damage_charge_committed
             && match &pending.operation {
                 PendingStructureDamageOperation::PointDefense { .. } => true,
-                PendingStructureDamageOperation::StrikePulse { .. } => pulse_hop_ordinal == 0,
+                PendingStructureDamageOperation::StrikePulse { .. } | PendingStructureDamageOperation::TransportFieldPulse { .. } => {
+                    pulse_hop_ordinal == 0
+                }
                 PendingStructureDamageOperation::VortonArcHop { .. } => pulse_hop_ordinal == 0,
             };
         let mut out = Vec::new();
@@ -946,6 +1009,34 @@ impl Scene {
                         out.extend(self.damage_ship(session, *module_type, (target_session, target_id), damage, now));
                     }
                 }
+            }
+            PendingStructureDamageOperation::TransportFieldPulse {
+                centre,
+                strike,
+                destination,
+                warp_block_ms,
+            } => {
+                let authorized: std::collections::BTreeSet<i64> = authorized.into_iter().collect();
+                let moved: Vec<i64> = field_moved_target_ids
+                    .iter()
+                    .copied()
+                    .filter(|id| authorized.contains(id))
+                    .collect();
+                let held: Vec<i64> = field_held_target_ids
+                    .iter()
+                    .copied()
+                    .filter(|id| authorized.contains(id))
+                    .collect();
+                out.extend(self.transport_field(
+                    session,
+                    *strike,
+                    *centre,
+                    *destination,
+                    *warp_block_ms,
+                    &moved,
+                    &held,
+                    now,
+                ));
             }
             PendingStructureDamageOperation::VortonArcHop {
                 anchor,

@@ -548,7 +548,7 @@ pub enum Action {
     },
     /// A gravitational transport field (the Gravitational Transportation Field Oscillator, tag 15, protocol 29): the strike's sphere and windows; at its
     /// pulse, every ship of `moved` inside the sphere is carried to `destination` (an offset from the firing ship's centre), and every ship of `held` inside
-    /// it cannot warp for `warp_block_ms`. The ship ids are the host's: the simulation only tests their geometry.
+    /// it cannot warp for `warp_block_ms`. World-backed ship scenes recompute current moved/held pilots from SDE isCapitalSize (1785) type facts each pulse; controlled structures use the Host's correlated, complete per-pulse partition. The action lists are retained only for hand-built scenes without World metadata.
     Field {
         strike: Strike,
         destination: [f64; 3],
@@ -849,6 +849,12 @@ struct PendingRemoteRepairCycle {
 pub(crate) enum PendingStructureDamageOperation {
     PointDefense { range_meters: f64, damage: crate::health::Damage },
     StrikePulse { origin: [f64; 3], strike: Option<crate::strike::Strike>, module_type: i32 },
+    TransportFieldPulse {
+        centre: eve_destiny::Vec3,
+        strike: crate::strike::Strike,
+        destination: [f64; 3],
+        warp_block_ms: f64,
+    },
     VortonArcHop {
         anchor: crate::weapons::Kinematics,
         arc: crate::weapons::Arc,
@@ -1099,3 +1105,6 @@ fn capacitor_warfare_multiplier(resistance: f64) -> f64 {
 
 #[cfg(test)]
 pub(crate) mod tests;
+
+#[cfg(test)]
+mod field_tests;

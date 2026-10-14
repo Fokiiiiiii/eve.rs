@@ -741,6 +741,8 @@ pub struct Scene {
     pub(crate) destroyed: Vec<i64>,
     /// Which wreck a ship of some type leaves (`crate::wreck_types`), when the static data is there to say.
     pub(crate) wreck_catalog: Option<Arc<crate::wreck_types::WreckCatalog>>,
+    /// SDE capital-size by type ID for live transport-field participants.
+    pub(crate) field_capital_size_by_type: Option<Arc<HashMap<i32, bool>>>,
     /// The sessions whose ship was destroyed and have no other yet (the host gives them a capsule with `respawn`): what they had bound and seen.
     pub(crate) widowed: BTreeMap<SessionId, Widow>,
     /// Unpiloted ships stay in the scene under synthetic sessions until someone boards or destroys them.
@@ -810,6 +812,7 @@ impl Scene {
             structure_modules: BTreeMap::new(),
             pochven: Default::default(),
             wreck_catalog: None,
+            field_capital_size_by_type: None,
         }
     }
 
@@ -862,6 +865,10 @@ impl Scene {
     /// Gives the scene the item types the wreck rules look up, so that a ship that is destroyed leaves the wreck of its type.
     pub fn set_wreck_catalog(&mut self, catalog: Arc<crate::wreck_types::WreckCatalog>) {
         self.wreck_catalog = Some(catalog);
+    }
+
+    pub(crate) fn set_field_capital_size_by_type(&mut self, types: Arc<HashMap<i32, bool>>) {
+        self.field_capital_size_by_type = Some(types);
     }
 
     pub fn system(&self) -> &SolarSystem {

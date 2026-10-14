@@ -418,6 +418,7 @@ impl Sim {
             | Message::RackOverheat { .. }
             | Message::Activate { .. }
             | Message::StructureDamageCandidatesResult { .. }
+            | Message::StructureDamageCandidatesFieldResult { .. }
             | Message::ModuleWorkResult { .. }
             | Message::RemoteRepairCycleResult { .. }
             | Message::AdjustCharge { .. }
@@ -721,6 +722,35 @@ impl Sim {
                     cycle_id,
                     pulse_hop_ordinal,
                     &allowed_target_ids,
+                    now,
+                ))
+                .unwrap_or_default(),
+            Message::StructureDamageCandidatesFieldResult {
+                session_id,
+                structure_id,
+                module_id,
+                effect_id,
+                activation_nonce,
+                control_lease_generation,
+                cycle_id,
+                pulse_hop_ordinal,
+                allowed_target_ids,
+                field_moved_target_ids,
+                field_held_target_ids,
+            } => self
+                .scene_of(session_id)
+                .map(|scene| scene.structure_field_damage_candidates_result(
+                    session_id,
+                    structure_id,
+                    module_id,
+                    effect_id,
+                    activation_nonce,
+                    control_lease_generation,
+                    cycle_id,
+                    pulse_hop_ordinal,
+                    &allowed_target_ids,
+                    &field_moved_target_ids,
+                    &field_held_target_ids,
                     now,
                 ))
                 .unwrap_or_default(),

@@ -1115,10 +1115,24 @@ impl Message {
                         session_id, structure_id, module_id, effect_id, activation_nonce, control_lease_generation,
                         cycle_id, pulse_hop_ordinal, candidate_ids: ids,
                     }
-                } else {
+                } else if r.data.is_empty() {
                     Message::StructureDamageCandidatesResult {
                         session_id, structure_id, module_id, effect_id, activation_nonce, control_lease_generation,
                         cycle_id, pulse_hop_ordinal, allowed_target_ids: ids,
+                    }
+                } else {
+                    if r.u8()? != STRUCTURE_FIELD_PARTITION_EXTENSION_VERSION {
+                        return Err(DecodeError::BadValue("structure-field partition extension"));
+                    }
+                    let field_moved_target_ids = read_structure_damage_ids(&mut r)?;
+                    let field_held_target_ids = read_structure_damage_ids(&mut r)?;
+                    if !structure_field_partition_is_valid(&ids, &field_moved_target_ids, &field_held_target_ids) {
+                        return Err(DecodeError::BadValue("structure-field target partition"));
+                    }
+                    Message::StructureDamageCandidatesFieldResult {
+                        session_id, structure_id, module_id, effect_id, activation_nonce, control_lease_generation,
+                        cycle_id, pulse_hop_ordinal, allowed_target_ids: ids,
+                        field_moved_target_ids, field_held_target_ids,
                     }
                 }
             }

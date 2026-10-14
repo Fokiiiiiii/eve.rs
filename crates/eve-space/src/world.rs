@@ -26,6 +26,8 @@ pub enum BodyKind {
 
 /// The category of a structure's item (`categoryID` 65 in the client).
 pub const STRUCTURE_CATEGORY: i32 = 65;
+/// SDE build 3396210 typeDogma marks capital-sized hulls with this attribute.
+const ATTRIBUTE_IS_CAPITAL_SIZE: i64 = 1785;
 /// The category of an orbital (a customs office of a planet, categoryOrbital 46 in the client's constants).
 pub const ORBITAL_CATEGORY: i32 = 46;
 
@@ -145,12 +147,16 @@ struct SystemInfo {
 pub struct World {
     sde: Sde,
     types: HashMap<i64, TypeInfo>,
+    field_capital_size_by_type: std::sync::Arc<HashMap<i32, bool>>,
     category_of_group: HashMap<i64, i32>,
     systems: HashMap<i64, SystemInfo>,
     corporations: HashMap<i64, String>,
     operations: HashMap<i64, String>,
     wrecks: std::sync::Arc<crate::wreck_types::WreckCatalog>,
 }
+
+#[cfg(test)]
+mod field_tests;
 
 impl World {
     pub fn load(sde: Sde) -> Result<Self, SdeError> {
@@ -165,6 +171,28 @@ impl World {
                         graphic_id: i(record, "graphicID"),
                     },
                 );
+            }
+        })?;
+        let mut field_capital_size_by_type: HashMap<i32, bool> = types
+            .keys()
+            .filter_map(|type_id| i32::try_from(*type_id).ok().map(|type_id| (type_id, false)))
+            .collect();
+        let capital_attribute_needle = format!(r#""attributeID": {ATTRIBUTE_IS_CAPITAL_SIZE}"#);
+        sde.scan("typeDogma", Some(&capital_attribute_needle), |key, record| {
+            let is_capital_size = record
+                .get("dogmaAttributes")
+                .and_then(Value::as_array)
+                .is_some_and(|attributes| {
+                    attributes.iter().any(|attribute| {
+                        i(attribute, "attributeID") == Some(ATTRIBUTE_IS_CAPITAL_SIZE)
+                            && f(attribute, "value").is_some_and(|value| value > 0.0)
+                    })
+                });
+            if is_capital_size
+                && let Ok(type_id) = i32::try_from(key)
+                && let Some(is_capital_size) = field_capital_size_by_type.get_mut(&type_id)
+            {
+                *is_capital_size = true;
             }
         })?;
         let mut category_of_group = HashMap::new();
@@ -215,12 +243,16 @@ impl World {
             operations.insert(key, record.get("operationName").map(english).unwrap_or_default());
         })?;
         let wrecks = std::sync::Arc::new(crate::wreck_types::WreckCatalog::from_sde(&sde)?);
-        Ok(Self { sde, types, category_of_group, systems, corporations, operations, wrecks })
+        Ok(Self { sde, types, field_capital_size_by_type: std::sync::Arc::new(field_capital_size_by_type), category_of_group, systems, corporations, operations, wrecks })
     }
 
     /// The item types the wreck rules look up (`crate::wreck_types`).
     pub fn wreck_catalog(&self) -> std::sync::Arc<crate::wreck_types::WreckCatalog> {
         std::sync::Arc::clone(&self.wrecks)
+    }
+
+    pub(crate) fn field_capital_size_by_type(&self) -> std::sync::Arc<HashMap<i32, bool>> {
+        std::sync::Arc::clone(&self.field_capital_size_by_type)
     }
 
     fn type_info(&self, type_id: i64) -> Option<&TypeInfo> {

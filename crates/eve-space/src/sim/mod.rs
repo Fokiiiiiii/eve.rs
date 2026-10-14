@@ -56,6 +56,7 @@ impl Universe {
         let mut scene = Scene::new(system);
         if let Some(world) = &self.world {
             scene.set_wreck_catalog(world.wreck_catalog());
+            scene.set_field_capital_size_by_type(world.field_capital_size_by_type());
         }
         scene
     }

@@ -533,12 +533,13 @@ impl Scene {
         {
             return vec![Out::Refused { session, command: CODE, reason: "STRUCTURE_CONTROL_LEASE_REQUIRED" }];
         }
-        if matches!(active_action, Some(Action::Field { .. })) && controlled_structure.is_some() {
-            return vec![Out::Refused {
-                session,
-                command: CODE,
-                reason: "STRUCTURE_FIELD_DISPOSITION_UNRESOLVED",
-            }];
+        if matches!(active_action, Some(Action::Field { .. }))
+            && controlled_structure.is_some_and(|structure_id| {
+                structure_id != pilot.ship.spec.ship_id
+                    || self.control_lease_generation(session, structure_id).is_none()
+            })
+        {
+            return vec![Out::Refused { session, command: CODE, reason: "STRUCTURE_CONTROL_LEASE_REQUIRED" }];
         }
         if matches!(active_action, Some(Action::Strike { .. }))
             && controlled_structure.is_some_and(|structure_id| {
@@ -898,7 +899,7 @@ impl Scene {
             .action
             .as_ref()
             .and_then(|action| action.with_charges(charged_this_cycle))
-            .is_some_and(|action| matches!(action, Action::Strike { .. }))
+            .is_some_and(|action| matches!(action, Action::Strike { .. } | Action::Field { .. }))
     }
 
     /// The pilot asks for an effect to stop: it does at the end of the cycle it is in. `Refused` (`NOT_ACTIVE`) when it is not running.

@@ -40,22 +40,20 @@ private sealed record SimDamageableEntityRegistration(
 
     private void UpsertSimDamageableEntity(SimDamageableEntityUpserted update)
     {
-        var type = update.TypeId > 0 ? _statics.Type(update.TypeId) : null;
         var keyIsValid = update.SolarSystemId > 0
             && update.EntityId > 0
             && update.TypeId > 0
             && update.OwnerId >= 0
             && update.CorporationId >= 0
             && update.AllianceId >= 0
-            && update.WarFactionId >= 0
-            && Eve.Npc.NpcHull.HasHitPoints(type);
+            && update.WarFactionId >= 0;
 
         lock (_simDamageableEntitiesSync)
         {
             if (!keyIsValid)
             {
                 _simDamageableEntities.TryRemove(update.EntityId, out _);
-                _log?.Invoke($"the simulation sent invalid or non-damageable SDE identity metadata for entity {update.EntityId} in system {update.SolarSystemId}");
+                _log?.Invoke($"the simulation sent invalid identity metadata for entity {update.EntityId} in system {update.SolarSystemId}");
                 return;
             }
 
@@ -150,9 +148,16 @@ private sealed record SimDamageableEntityRegistration(
     /// <summary>Evaluates a structure-owner corporation against a player structure's owner corporation.</summary>
     public Func<long, long, CancellationToken, Task<WeaponTargetContext>>? StructureDamageTargetCorporationContextOf { get; set; }
 
+    internal static bool IsStructureDamageModuleType(DogmaStatic statics, TypeDef type) =>
+        type.CategoryId == statics.CategoryId("Structure Module");
+
+    internal static bool IsCapitalFieldTarget(TypeDef type) => type.Attributes.GetValueOrDefault(1785) > 0;
+
+    private sealed record StructureDamageAuthorization(IReadOnlyList<long> AllowedIds, IReadOnlyList<long> MovedIds, IReadOnlyList<long> HeldIds);
+
     private async Task ReplyToStructureDamageCandidatesAsync(SimStructureDamageCandidatesRequest request)
     {
-        IReadOnlyList<long> allowed = Array.Empty<long>();
+        StructureDamageAuthorization allowed = new([], [], []);
         try
         {
             allowed = await AuthorizeStructureDamageCandidatesAsync(request, CancellationToken.None).ConfigureAwait(false);
@@ -175,7 +180,11 @@ private sealed record SimDamageableEntityRegistration(
                 request.ControlLeaseGeneration,
                 request.CycleId,
                 request.PulseHopOrdinal,
-                allowed));
+                allowed.AllowedIds)
+            {
+                FieldMovedTargetIds = allowed.MovedIds,
+                FieldHeldTargetIds = allowed.HeldIds,
+            });
         }
         catch (Exception error)
         {
@@ -183,7 +192,7 @@ private sealed record SimDamageableEntityRegistration(
         }
     }
 
-    private async Task<IReadOnlyList<long>> AuthorizeStructureDamageCandidatesAsync(
+    private async Task<StructureDamageAuthorization> AuthorizeStructureDamageCandidatesAsync(
         SimStructureDamageCandidatesRequest request,
         CancellationToken cancellationToken)
     {
@@ -191,16 +200,18 @@ private sealed record SimDamageableEntityRegistration(
             || request.StructureId <= 0
             || request.ModuleId <= 0
             || request.EffectId <= 0
+            || request.ActivationNonce == 0
+            || request.CycleId == 0
             || request.ControlLeaseGeneration <= 0
             || request.CandidateIds is null
             || request.CandidateIds.Count is < 1 or > MaxStructureDamageCandidates)
-            return Array.Empty<long>();
+            return new([], [], []);
 
         var candidateIds = request.CandidateIds.ToArray();
         var unique = new HashSet<long>();
         foreach (var candidateId in candidateIds)
             if (candidateId <= 0 || !unique.Add(candidateId))
-                return Array.Empty<long>();
+                return new([], [], []);
 
         if (!_structureObservers.TryGetValue(request.SessionId, out var session)
             || !IsStructureObserver(session)
@@ -215,17 +226,17 @@ private sealed record SimDamageableEntityRegistration(
             || controller.CharacterId != characterId
             || controller.SolarSystemId <= 0
             || StructureControlLeaseGenerationOf is not { } readLease)
-            return Array.Empty<long>();
+            return new([], [], []);
 
         if (await readLease(session, request.StructureId, cancellationToken).ConfigureAwait(false) != request.ControlLeaseGeneration)
-            return Array.Empty<long>();
+            return new([], [], []);
 
         if (await ModuleShipAsync(controller, cancellationToken).ConfigureAwait(false) is not { } structure
             || structure.Character.Id != characterId
             || structure.Ship.Id != request.StructureId
             || structure.Ship.OwnerId <= 0
             || !MatchesActiveStructureDamageModule(structure, controller, request, out _))
-            return Array.Empty<long>();
+            return new([], [], []);
 
         IReadOnlyDictionary<long, (long OwnerCorporationId, int TypeId, long AllianceId)> structureOwners =
             new Dictionary<long, (long OwnerCorporationId, int TypeId, long AllianceId)>();
@@ -240,6 +251,12 @@ private sealed record SimDamageableEntityRegistration(
                 _log?.Invoke($"structure damage candidate structure owners for {request.StructureId} could not be read: {error.Message}");
             }
         }
+
+        var registrationTypes = candidateIds
+            .Select(id => _simDamageableEntities.TryGetValue(id, out var entity) && entity.SolarSystemId == controller.SolarSystemId ? entity.TypeId : 0)
+            .Where(typeId => typeId > 0)
+            .Distinct();
+        await _statics.EnsureTypesAsync(registrationTypes, cancellationToken).ConfigureAwait(false);
 
         var system = _systems.Get(controller.SolarSystemId);
         SecurityClass? securityClass = system is null ? null : Security.ClassFromLevel(system.Security);
@@ -274,12 +291,14 @@ private sealed record SimDamageableEntityRegistration(
                     && fighterOwner.SolarSystemId == controller.SolarSystemId)
                     fighterOwners[candidateId] = fighterOwner;
 
+        var candidateTypes = new Dictionary<long, int>(candidateIds.Length);
         var owners = new StructureDamageCandidateOwner[candidateIds.Length];
         for (var index = 0; index < candidateIds.Length; index++)
         {
             var candidateId = candidateIds[index];
             var hasRegistration = _simDamageableEntities.TryGetValue(candidateId, out var identity);
-            if (hasRegistration && identity!.SolarSystemId != controller.SolarSystemId)
+            if (hasRegistration && (identity!.SolarSystemId != controller.SolarSystemId
+                || !Eve.Npc.NpcHull.HasHitPoints(_statics.Type(identity.TypeId))))
             {
                 owners[index] = new(StructureDamageCandidateKind.Unknown, 0);
                 continue;
@@ -287,7 +306,7 @@ private sealed record SimDamageableEntityRegistration(
 
             bool RegistrationMatches(long ownerId, long corporationId, long allianceId, long warFactionId, int typeId)
             {
-                return Eve.Npc.NpcHull.HasHitPoints(_statics.Type(typeId))
+                var valid = Eve.Npc.NpcHull.HasHitPoints(_statics.Type(typeId))
                     && (!hasRegistration
                         || identity is not null
                         && identity.SolarSystemId == controller.SolarSystemId
@@ -296,6 +315,8 @@ private sealed record SimDamageableEntityRegistration(
                         && identity.CorporationId == corporationId
                         && identity.AllianceId == allianceId
                         && identity.WarFactionId == warFactionId);
+                if (valid) candidateTypes[candidateId] = typeId;
+                return valid;
             }
 
             if (candidateId == structure.Ship.Id)
@@ -383,6 +404,8 @@ private sealed record SimDamageableEntityRegistration(
                 // current Host source or a validated NPC creation profile above identifies it.
                 owners[index] = new(StructureDamageCandidateKind.Unknown, 0);
             }
+            if (owners[index].Kind != StructureDamageCandidateKind.Unknown && hasRegistration)
+                candidateTypes[candidateId] = identity!.TypeId;
         }
 
         var playerTargets = owners
@@ -438,9 +461,20 @@ private sealed record SimDamageableEntityRegistration(
             || currentStructure.Ship.Id != request.StructureId
             || currentStructure.Ship.OwnerId != structure.Ship.OwnerId
             || !MatchesActiveStructureDamageModule(currentStructure, controller, request, out _))
-            return Array.Empty<long>();
+            return new([], [], []);
 
-        return grants;
+        if (!_statics.Effect(request.EffectId)!.Name.Equals("doomsdayHOG", StringComparison.OrdinalIgnoreCase))
+            return new(grants, [], []);
+
+        var moved = new List<long>(grants.Count);
+        var held = new List<long>(grants.Count);
+        foreach (var targetId in grants)
+        {
+            if (!candidateTypes.TryGetValue(targetId, out var typeId) || _statics.Type(typeId) is not { } type)
+                return new([], [], []);
+            (IsCapitalFieldTarget(type) ? held : moved).Add(targetId);
+        }
+        return new(grants, moved, held);
     }
 
     private bool MatchesActiveStructureDamageModule(
@@ -455,7 +489,7 @@ private sealed record SimDamageableEntityRegistration(
             || _statics.Type(structure.Ship.TypeId)?.CategoryId != structureCategory
             || structure.Fitted.FirstOrDefault(module => module.Id == request.ModuleId) is not { } module
             || _statics.Type(module.TypeId) is not { Published: true } type
-            || type.CategoryId != structureCategory
+            || !IsStructureDamageModuleType(_statics, type)
             || !type.EffectIds.Contains(request.EffectId)
             || _statics.Effect(request.EffectId) is not { } foundEffect
             || foundEffect.Category is not (EffectDef.Activation or EffectDef.Target)

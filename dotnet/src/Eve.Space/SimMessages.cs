@@ -951,10 +951,14 @@ public sealed record SimStructureDamageCandidatesRequest(
     ulong SessionId, long StructureId, long ModuleId, int EffectId, ulong ActivationNonce, long ControlLeaseGeneration,
     ulong CycleId, uint PulseHopOrdinal, IReadOnlyList<long> CandidateIds) : SimMessage;
 
-/// <summary>The Host-authorized subset for the same structure-damage application; all correlation fields must match the request.</summary>
+/// <summary>The Host-authorized subset for the same structure-damage application; Field pulses also carry the complete moved/held partition. All correlation fields must match the request.</summary>
 public sealed record SimStructureDamageCandidatesResult(
     ulong SessionId, long StructureId, long ModuleId, int EffectId, ulong ActivationNonce, long ControlLeaseGeneration,
-    ulong CycleId, uint PulseHopOrdinal, IReadOnlyList<long> AllowedTargetIds) : SimMessage;
+    ulong CycleId, uint PulseHopOrdinal, IReadOnlyList<long> AllowedTargetIds) : SimMessage
+{
+    public IReadOnlyList<long> FieldMovedTargetIds { get; init; } = Array.Empty<long>();
+    public IReadOnlyList<long> FieldHeldTargetIds { get; init; } = Array.Empty<long>();
+}
 
 /// <summary>An SDE-typed mineable asteroid rock with host-owned remaining units.</summary>
 public sealed record SimPlaceAsteroid(

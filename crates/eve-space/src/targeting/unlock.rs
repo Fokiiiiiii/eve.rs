@@ -35,7 +35,7 @@ impl Scene {
 
     /// A ship lets go of everything: what is going is given up, what is held is let go and the ship is told once (`clear`); the ships that were
     /// locked are told they are not.
-    pub(super) fn clear_locks(&mut self, session: SessionId, notify_target: bool, now: i64) -> Vec<Out> {
+    pub(crate) fn clear_locks(&mut self, session: SessionId, notify_target: bool, now: i64) -> Vec<Out> {
         let Some(pilot) = self.pilots.get_mut(&session) else { return Vec::new() };
         pilot.targeting.pending.clear();
         let held = pilot.targeting.targets();

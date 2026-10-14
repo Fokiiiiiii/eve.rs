@@ -26,8 +26,13 @@ public sealed partial class SpaceSessions
     {
         public static RunningModule Of(string effectName, long targetId, int repeat, IReadOnlyList<double>? aim, IReadOnlyList<double>? aimEnd, SimEffect effect)
         {
-            var charge = effect.Turret?.Charge;
-            return new RunningModule(effectName, targetId, repeat, aim, aimEnd, SimCodec.Encode(UpdateOf(0, effect.ModuleId, effect)), charge?.Reloads == true, charge?.PerCycle ?? 0, charge?.TypeId ?? 0);
+            var turretCharge = effect.Turret?.Charge;
+            var actionCharge = effect.Action as SimAction.Charged;
+            return new RunningModule(
+                effectName, targetId, repeat, aim, aimEnd, SimCodec.Encode(UpdateOf(0, effect.ModuleId, effect)),
+                turretCharge?.Reloads == true,
+                turretCharge?.PerCycle ?? actionCharge?.ChargePerCycle ?? 0,
+                turretCharge?.TypeId ?? actionCharge?.ChargeTypeId ?? 0);
         }
     }
 
@@ -45,7 +50,7 @@ public sealed partial class SpaceSessions
     /// </summary>
     public async Task EndBlockedModulesAsync(ClientSession session, CancellationToken cancellationToken)
     {
-        if (!_pilots.TryGetValue((ulong)session.SessionId, out var pilot) || await FlownShipAsync(pilot, cancellationToken) is not { } snapshot)
+        if (!_pilots.TryGetValue((ulong)session.SessionId, out var pilot) || await ModuleShipAsync(pilot, cancellationToken) is not { } snapshot)
         {
             return;
         }
@@ -75,7 +80,7 @@ public sealed partial class SpaceSessions
 
     private async Task RefreshRunningAsync(Pilot pilot, ulong sessionId, CancellationToken cancellationToken)
     {
-        if (pilot.RunningModules.IsEmpty || !_sim.IsConnected || await FlownShipAsync(pilot, cancellationToken) is not { } snapshot)
+        if (pilot.RunningModules.IsEmpty || !_sim.IsConnected || await ModuleShipAsync(pilot, cancellationToken) is not { } snapshot)
         {
             return;
         }
@@ -87,14 +92,20 @@ public sealed partial class SpaceSessions
                 continue;
             }
             var update = UpdateOf(sessionId, moduleId, effect);
-            // the key is the numbers only: the session is not part of what the simulation holds for the effect
             var key = SimCodec.Encode(UpdateOf(0, moduleId, effect));
             if (key.AsSpan().SequenceEqual(running.Key))
             {
                 continue;
             }
-            var charge = effect.Turret?.Charge;
-            pilot.RunningModules[moduleId] = running with { Key = key, Reloads = charge?.Reloads == true, PerCycle = charge?.PerCycle ?? 0, ChargeTypeId = charge?.TypeId ?? 0 };
+            var turretCharge = effect.Turret?.Charge;
+            var actionCharge = effect.Action as SimAction.Charged;
+            pilot.RunningModules[moduleId] = running with
+            {
+                Key = key,
+                Reloads = turretCharge?.Reloads == true,
+                PerCycle = turretCharge?.PerCycle ?? actionCharge?.ChargePerCycle ?? 0,
+                ChargeTypeId = turretCharge?.TypeId ?? actionCharge?.ChargeTypeId ?? 0
+            };
             await _sim.UpdateEffectAsync(update, cancellationToken).ConfigureAwait(false);
         }
     }

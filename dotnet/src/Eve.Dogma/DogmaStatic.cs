@@ -112,50 +112,53 @@ public sealed class DogmaStatic
 
     /// <summary>Makes sure these types are known (reads them from the SDE when they are not).</summary>
     public async Task EnsureTypesAsync(IEnumerable<int> typeIds, CancellationToken cancellationToken = default)
+{
+    var missing = typeIds.Distinct().Where(id => !_types.ContainsKey(id)).ToArray();
+    if (missing.Length == 0 || _sde is null)
     {
-        var missing = typeIds.Distinct().Where(id => !_types.ContainsKey(id)).ToArray();
-        if (missing.Length == 0 || _sde is null)
-        {
-            return;
-        }
-        var keys = missing.Select(id => (long)id).ToArray();
-        var types = await _sde.ReadAsync("types", keys, cancellationToken);
-        var dogma = (await _sde.ReadAsync("typeDogma", keys, cancellationToken)).ToDictionary(r => r.Key, r => r.Doc);
-        foreach (var row in types)
-        {
-            var group = row.Doc.GetProperty("groupID").GetInt32();
-            var attributes = new Dictionary<int, double>();
-            foreach (var (attribute, field) in IntrinsicAttributes)
-            {
-                if (row.Doc.TryGetProperty(field, out var v) && v.ValueKind == JsonValueKind.Number)
-                {
-                    attributes[attribute] = v.GetDouble();
-                }
-            }
-            var effects = new List<int>();
-            if (dogma.TryGetValue(row.Key, out var doc))
-            {
-                // a type may have attributes and no effects, or effects and no attributes
-                if (doc.TryGetProperty("dogmaAttributes", out var dogmaAttributes))
-                {
-                    foreach (var a in dogmaAttributes.EnumerateArray())
-                    {
-                        attributes[a.GetProperty("attributeID").GetInt32()] = a.GetProperty("value").GetDouble();
-                    }
-                }
-                if (doc.TryGetProperty("dogmaEffects", out var dogmaEffects))
-                {
-                    foreach (var e in dogmaEffects.EnumerateArray())
-                    {
-                        effects.Add(e.GetProperty("effectID").GetInt32());
-                    }
-                }
-            }
-            var name = row.Doc.TryGetProperty("name", out var names) ? SdeReader.English(names) : "";
-            var graphic = row.Doc.TryGetProperty("graphicID", out var graphicId) && graphicId.ValueKind == JsonValueKind.Number ? graphicId.GetInt32() : 0;
-            _types[(int)row.Key] = new TypeDef((int)row.Key, group, _categoryOfGroup.GetValueOrDefault(group), attributes, effects, name, graphic);
-        }
+        return;
     }
+    var keys = missing.Select(id => (long)id).ToArray();
+    var types = await _sde.ReadAsync("types", keys, cancellationToken);
+    var dogma = (await _sde.ReadAsync("typeDogma", keys, cancellationToken)).ToDictionary(r => r.Key, r => r.Doc);
+    foreach (var row in types)
+    {
+        var group = row.Doc.GetProperty("groupID").GetInt32();
+        var attributes = new Dictionary<int, double>();
+        foreach (var (attribute, field) in IntrinsicAttributes)
+        {
+            if (row.Doc.TryGetProperty(field, out var v) && v.ValueKind == JsonValueKind.Number)
+            {
+                attributes[attribute] = v.GetDouble();
+            }
+        }
+        var effects = new List<int>();
+        if (dogma.TryGetValue(row.Key, out var doc))
+        {
+            // a type may have attributes and no effects, or effects and no attributes
+            if (doc.TryGetProperty("dogmaAttributes", out var dogmaAttributes))
+            {
+                foreach (var a in dogmaAttributes.EnumerateArray())
+                {
+                    attributes[a.GetProperty("attributeID").GetInt32()] = a.GetProperty("value").GetDouble();
+                }
+            }
+            if (doc.TryGetProperty("dogmaEffects", out var dogmaEffects))
+            {
+                foreach (var e in dogmaEffects.EnumerateArray())
+                {
+                    effects.Add(e.GetProperty("effectID").GetInt32());
+                }
+            }
+        }
+        var name = row.Doc.TryGetProperty("name", out var names) ? SdeReader.English(names) : "";
+        var graphic = row.Doc.TryGetProperty("graphicID", out var graphicId) && graphicId.ValueKind == JsonValueKind.Number ? graphicId.GetInt32() : 0;
+        _types[(int)row.Key] = new TypeDef((int)row.Key, group, _categoryOfGroup.GetValueOrDefault(group), attributes, effects, name, graphic)
+        {
+            Published = IsPublished(row.Doc),
+        };
+    }
+}
 
     /// <summary>
     /// Whether the SDE type list <paramref name="listId"/> names the type: included by its id, group or category, and not excluded by any of them (the
@@ -332,6 +335,7 @@ public sealed class DogmaStatic
                 row.Doc.TryGetProperty("effectCategoryID", out var c) ? c.GetInt32() : 0,
                 modifiers)
             {
+                Published = IsPublished(row.Doc),
                 Guid = row.Doc.TryGetProperty("guid", out var guid) && guid.ValueKind == JsonValueKind.String ? guid.GetString() ?? "" : "",
                 RangeAttributeId = row.Doc.TryGetProperty("rangeAttributeID", out var range) && range.ValueKind == JsonValueKind.Number ? range.GetInt32() : 0,
                 DurationAttributeId = row.Doc.TryGetProperty("durationAttributeID", out var duration) && duration.ValueKind == JsonValueKind.Number ? duration.GetInt32() : 0,

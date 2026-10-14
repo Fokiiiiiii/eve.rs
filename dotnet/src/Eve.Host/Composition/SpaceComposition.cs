@@ -308,6 +308,8 @@ internal sealed partial class CharacterServicesComposition
                 ReadGameStoreTableAsync,
                 now);
             spaceSessions.WeaponTargetContextOf = weaponSafetyReadModel.ReadAsync;
+            SetStructureWeaponTargetContext(weaponSafetyReadModel.ReadStructureAsync);
+            SetStructureDamageTargetCorporationContext(weaponSafetyReadModel.ReadStructureCorporationAsync);
             crimewatchRuntime.AttackPolicyFactsOf = async (request, _, token) =>
             {
                 var facts = Eve.Services.Space.WeaponSafety.PolicyFactsOf(

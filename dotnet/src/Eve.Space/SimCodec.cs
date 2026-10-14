@@ -27,13 +27,32 @@ public sealed class SimLinkException(SimLinkError error, string message) : Excep
 /// </summary>
 public static partial class SimCodec
 {
-    public const ushort ProtocolVersion = 67;
+    public const ushort ProtocolVersion = 69;
     /// <summary>The largest frame either side accepts (1 MiB).</summary>
     public const int MaxFrame = 1 << 20;
 
     private static readonly UTF8Encoding Strict = new(encoderShouldEmitUTF8Identifier: false, throwOnInvalidBytes: true);
 
     /// <summary>Decodes a frame's payload: the kind byte and the body (without the length prefix).</summary>
+    private static long[] ReadStructureDamageIds(ref Reader r)
+    {
+        var count = r.U32();
+        if (count > MaxStructureDamageCandidates)
+            throw new SimLinkException(SimLinkError.BadValue, "too many structure-damage candidate IDs");
+        if (count > (uint)(r.Remaining / sizeof(long)))
+            throw new SimLinkException(SimLinkError.Truncated, "structure-damage candidate IDs");
+        var ids = new long[(int)count];
+        var seen = new HashSet<long>();
+        for (var index = 0; index < ids.Length; index++)
+        {
+            var id = r.I64();
+            if (id <= 0 || !seen.Add(id))
+                throw new SimLinkException(SimLinkError.BadValue, "structure-damage target IDs must be positive and unique");
+            ids[index] = id;
+        }
+        return ids;
+    }
+
     public static SimMessage Decode(ReadOnlyMemory<byte> payload)
     {
         if (payload.IsEmpty)
@@ -544,6 +563,25 @@ public static partial class SimCodec
                     message = new SimModuleWorkResult(session, module, target, cycleId, accepted == 1, reason, remaining, delivered, complete == 1);
                     break;
                 }
+            case Kind.StructureDamageCandidatesRequest:
+            case Kind.StructureDamageCandidatesResult:
+                {
+                    var session = r.U64();
+                    var structure = r.I64();
+                    var module = r.I64();
+                    var effect = r.I32();
+                    var activationNonce = r.U64();
+                    var controlLeaseGeneration = r.I64();
+                    var cycle = r.U64();
+                    var pulseHopOrdinal = r.U32();
+                    if (session == 0 || structure <= 0 || module <= 0 || effect <= 0 || activationNonce == 0 || controlLeaseGeneration <= 0 || cycle == 0)
+                        throw new SimLinkException(SimLinkError.BadValue, "bad structure-damage correlation");
+                    var targets = ReadStructureDamageIds(ref r);
+                    message = payload.Span[0] == Kind.StructureDamageCandidatesRequest
+                        ? new SimStructureDamageCandidatesRequest(session, structure, module, effect, activationNonce, controlLeaseGeneration, cycle, pulseHopOrdinal, targets)
+                        : new SimStructureDamageCandidatesResult(session, structure, module, effect, activationNonce, controlLeaseGeneration, cycle, pulseHopOrdinal, targets);
+                    break;
+                }
             case Kind.ModuleEnded:
                 {
                     var session = r.U64();
@@ -673,6 +711,38 @@ public static partial class SimCodec
             case Kind.RemoveDeployed:
                 message = new SimRemoveDeployed(r.I64());
                 break;
+            case Kind.RemoveCynoBeacon:
+                {
+                    var system = r.I32();
+                    var structureBeacon = r.I64();
+                    if (system <= 0 || structureBeacon <= 0)
+                        throw new SimLinkException(SimLinkError.BadValue, "bad cyno beacon removal");
+                    message = new SimRemoveCynoBeacon(system, structureBeacon);
+                    break;
+                }
+            case Kind.SimDamageableEntityUpserted:
+                {
+                    var system = r.I32();
+                    var entity = r.I64();
+                    var type = r.I32();
+                    var owner = r.I64();
+                    var corporation = r.I64();
+                    var alliance = r.I64();
+                    var faction = r.I64();
+                    if (system <= 0 || entity <= 0 || type <= 0 || owner < 0 || corporation < 0 || alliance < 0 || faction < 0)
+                        throw new SimLinkException(SimLinkError.BadValue, "damageable entity identity");
+                    message = new SimDamageableEntityUpserted(system, entity, type, owner, corporation, alliance, faction);
+                    break;
+                }
+            case Kind.SimDamageableEntityRemoved:
+                {
+                    var system = r.I32();
+                    var entity = r.I64();
+                    if (system <= 0 || entity <= 0)
+                        throw new SimLinkException(SimLinkError.BadValue, "damageable entity removal");
+                    message = new SimDamageableEntityRemoved(system, entity);
+                    break;
+                }
             case Kind.PlaceProbe:
                 {
                     var probe = r.I64();
@@ -749,9 +819,10 @@ public static partial class SimCodec
                     var structure = r.I64();
                     var character = r.I64();
                     var active = ReadFlag(ref r, "structure control");
-                    if (system <= 0 || structure < 0 || character < 0 || (active && (structure == 0 || character == 0)))
+                    var controlLeaseGeneration = r.I64();
+                    if (system <= 0 || structure < 0 || character < 0 || controlLeaseGeneration < 0 || (active && (structure == 0 || character == 0 || controlLeaseGeneration == 0)))
                         throw new SimLinkException(SimLinkError.BadValue, "structure control");
-                    message = new SimControlStructure(session, system, structure, character, active);
+                    message = new SimControlStructure(session, system, structure, character, active, controlLeaseGeneration);
                     break;
                 }
             case Kind.TetherPolicy:

@@ -869,6 +869,56 @@ fn a_strike_with_no_beacon_puts_nothing_in_space() {
     assert!(scene.deployables.is_empty());
 }
 
+    #[test]
+
+fn a_cyno_beacon_removal_is_scoped_to_system_and_beacon_id() {
+    let (mut scene, t) = crowd();
+    let b = scene.pilots[&B].ship.position;
+    let system = scene.solar_system_id();
+    let beacon = crate::link::DisruptorPlacement {
+        deployable_id: 990_000_000_200,
+        solar_system_id: system,
+        name: "Mobile Cynosural Beacon".to_string(),
+        type_id: 57_319,
+        group_id: 4_093,
+        position: [b.x, b.y, b.z],
+        radius: 100.0,
+        range: 0.0,
+        active: false,
+        owner_id: 4_242,
+        corporation_id: 0,
+        alliance_id: 0,
+        ship_id: 0,
+    };
+    let unrelated = crate::link::DisruptorPlacement {
+        deployable_id: 990_000_000_201,
+        solar_system_id: system,
+        name: "Mobile Cynosural Inhibitor".to_string(),
+        type_id: 33_476,
+        group_id: 1_249,
+        position: [b.x, b.y, b.z],
+        radius: 100.0,
+        range: 200_000.0,
+        active: true,
+        owner_id: 4_242,
+        corporation_id: 0,
+        alliance_id: 0,
+        ship_id: 0,
+    };
+    scene.place_cyno_beacon(beacon.clone(), t);
+    scene.place_inhibitor(unrelated.clone(), t);
+
+    assert!(scene.remove_cyno_beacon(system + 1, beacon.deployable_id, t).is_empty());
+    assert!(scene.deployables.contains_key(&beacon.deployable_id));
+    assert!(scene.remove_cyno_beacon(system, unrelated.deployable_id, t).is_empty());
+    assert!(scene.deployables.contains_key(&unrelated.deployable_id));
+
+    let removed = scene.remove_cyno_beacon(system, beacon.deployable_id, t + SECOND);
+    assert!(!removed.is_empty(), "observers are told the beacon left space");
+    assert!(!scene.deployables.contains_key(&beacon.deployable_id));
+    assert!(scene.deployables.contains_key(&unrelated.deployable_id));
+}
+
 #[test]
 fn a_mobile_cynosural_beacon_is_a_field_only_once_anchored_and_is_taken_out_on_request() {
     let (mut scene, t) = crowd();

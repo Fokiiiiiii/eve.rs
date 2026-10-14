@@ -21,7 +21,7 @@ KINDS = {"Hello": 1, "HelloAck": 2, "Enter": 3, "Leave": 4, "Bind": 5, "UpdateSt
          "EcmBurst": 67, "PlaceDisruptor": 68, "SetDisruptorActive": 69, "PlaceInhibitor": 70, "ScanTargets": 71, "DirectionalTargets": 72,
          "PlaceCynoBeacon": 73, "PlaceStructure": 74, "RemoveStructure": 75, "SetStructureState": 76, "StructureDamaged": 77,
          "PlaceAnalysisBeacon": 78, "SetAnalysisBeaconState": 79, "TetherPolicy": 80, "TetherChanged": 81,
-         "PlaceWormhole": 82, "RemoveWormhole": 83, "ControlStructure": 84}
+         "PlaceWormhole": 82, "RemoveWormhole": 83, "ControlStructure": 84, "StructureDamageCandidatesRequest": 85, "StructureDamageCandidatesResult": 86, "RemoveCynoBeacon": 87, "DamageableEntityUpserted": 88, "DamageableEntityRemoved": 89}
 
 def s(text):  # u16 length + UTF-8
     data = text.encode("utf-8")
@@ -115,7 +115,14 @@ def turret(t):
     body += bytes([1]) + struct.pack("<4d", a["explosionRadius"], a["explosionVelocity"], a["damageReductionFactor"],
                                      a["damageReductionSensitivity"]) if a else bytes([0])
     c = t.get("arc")
-    body += bytes([1]) + struct.pack("<di", c["range"], c["targets"]) if c else bytes([0])
+    if c:
+        body += bytes([1]) + struct.pack("<di", c["range"], c["targets"])
+        if c.get("damageLossTarget") is None:
+            body += bytes([0])
+        else:
+            body += bytes([1]) + struct.pack("<d", c["damageLossTarget"])
+    else:
+        body += bytes([0])
     # whether the weapon requires Gunnery: a tracking disruptor or computer reaches only such a weapon (FP-10)
     return body + bytes([1 if t.get("requiresGunnery", False) else 0])
 
@@ -132,6 +139,8 @@ def action(a):
     kind = a["kind"]
     if kind == "smartbomb":
         return bytes([2]) + struct.pack("<d", a["range"]) + struct.pack("<4d", *a["damage"]) + bytes([1 if a["hurtsPilots"] else 0])
+    if kind == "pointDefense":
+        return bytes([30]) + struct.pack("<d4d", a["rangeMeters"], *a["damage"])
     if kind == "repair":
         return bytes([0, LAYERS[a["layer"]], 1 if a["when"] == "end" else 0]) + struct.pack("<d", a["amount"])
     if kind == "ecmBurst":
@@ -429,6 +438,13 @@ def build(m):
                      + i64(m["ownerId"]) + struct.pack("<ii", m["corporationId"], m["allianceId"]) + i64(m["shipId"]) + struct.pack("<d", m["lifetimeMs"]))
     if k == "RemoveDeployed":
         return frame(k, i64(m["deployableId"]))
+    if k == "RemoveCynoBeacon":
+        return frame(k, struct.pack("<i", m["solarSystemId"]) + i64(m["structureBeaconId"]))
+    if k == "DamageableEntityUpserted":
+        return frame(k, struct.pack("<i", m["solarSystemId"]) + i64(m["entityId"]) + struct.pack("<i", m["typeId"])
+                     + i64(m["ownerId"]) + i64(m["corporationId"]) + i64(m["allianceId"]) + i64(m["warFactionId"]))
+    if k == "DamageableEntityRemoved":
+        return frame(k, struct.pack("<i", m["solarSystemId"]) + i64(m["entityId"]))
     if k == "PlaceProbe":
         return frame(k, i64(m["probeId"]) + struct.pack("<i", m["solarSystemId"]) + s(m["typeName"]) + struct.pack("<ii", m["typeId"], m["groupId"])
                      + struct.pack("<3d", *m["position"]) + struct.pack("<d", m["radius"]) + i64(m["ownerId"])
@@ -456,7 +472,14 @@ def build(m):
             payload += i64(candidate["structureId"]) + struct.pack("<d", candidate["range"])
         return frame(k, payload)
     if k == "ControlStructure":
-        return frame(k, u64(m["sessionId"]) + struct.pack("<i", m["solarSystemId"]) + i64(m["structureId"]) + i64(m["characterId"]) + bytes([1 if m["active"] else 0]))
+        return frame(k, u64(m["sessionId"]) + struct.pack("<i", m["solarSystemId"]) + i64(m["structureId"]) + i64(m["characterId"])
+                     + bytes([1 if m["active"] else 0]) + i64(m["controlLeaseGeneration"]))
+    if k in ("StructureDamageCandidatesRequest", "StructureDamageCandidatesResult"):
+        ids = m["candidateIds"] if k == "StructureDamageCandidatesRequest" else m["allowedTargetIds"]
+        payload = (u64(m["sessionId"]) + i64(m["structureId"]) + i64(m["moduleId"]) + struct.pack("<i", m["effectId"])
+                   + u64(m["activationNonce"]) + i64(m["controlLeaseGeneration"]) + u64(m["cycleId"])
+                   + struct.pack("<I", m["pulseHopOrdinal"]) + struct.pack("<I", len(ids)) + b"".join(i64(item) for item in ids))
+        return frame(k, payload)
     if k == "TetherChanged":
         return frame(k, u64(m["sessionId"]) + i64(m["previousStructureId"]) + i64(m["structureId"]) + bytes([1 if m["repairing"] else 0]))
     if k == "StructureDamaged":  # sent by the simulation: the layer a hit emptied (0 none, 1 shield, 2 armor, 3 hull) and whether a repair is paused
@@ -560,8 +583,8 @@ BARE = dict(IBIS, name="", modules=[], allianceId=99000001, securityStatus=-2.5,
             condition={"damage": 0.0, "armorDamage": 0.0, "shieldCharge": 1.0, "charge": 1.0})
 
 valid = [
-    {"name": "hello", "kind": "Hello", "version": 67},
-    {"name": "hello ack", "kind": "HelloAck", "version": 67, "pollHz": 4},
+    {"name": "hello", "kind": "Hello", "version": 69},
+    {"name": "hello ack", "kind": "HelloAck", "version": 69, "pollHz": 4},
     {"name": "enter by undocking", "kind": "Enter", "sessionId": "1790646377000015", "solarSystemId": 30100032,
      "how": 0, "stationId": "60015249", "ship": IBIS},
     {"name": "enter already in space, no modules, non-ASCII name", "kind": "Enter", "sessionId": "1",
@@ -1067,8 +1090,21 @@ valid = [
      "structureId": "1040000000000001",
      "status": {"state": 111, "upkeepState": 3, "timer": [132000000000000000, 132000860000000000, 132000100000000000], "unanchoring": 132000900000000000, "repairing": True}},
     {"name": "a hit empties a structure's shield and pauses its repair", "kind": "StructureDamaged", "structureId": "1040000000000001", "depleted": 1, "overThreshold": True},
-    {"name": "bind a structure control observer", "kind": "ControlStructure", "sessionId": "77", "solarSystemId": 30000142, "structureId": "1040000000000001", "characterId": "90000001", "active": True},
-    {"name": "release a structure control observer", "kind": "ControlStructure", "sessionId": "77", "solarSystemId": 30000142, "structureId": "0", "characterId": "0", "active": False},
+    {"name": "bind a structure control observer", "kind": "ControlStructure", "sessionId": "77", "solarSystemId": 30000142, "structureId": "1040000000000001", "characterId": "90000001", "active": True, "controlLeaseGeneration": "19"},
+    {"name": "release a structure control observer", "kind": "ControlStructure", "sessionId": "77", "solarSystemId": 30000142, "structureId": "0", "characterId": "0", "active": False, "controlLeaseGeneration": "20"},
+    {"name": "structure-damage candidate request for one pulse (candidate IDs may be ships or other damageable entities)", "kind": "StructureDamageCandidatesRequest",
+     "sessionId": "77", "structureId": "1040000000000001", "moduleId": "9988400002813", "effectId": 6443,
+     "activationNonce": "31", "controlLeaseGeneration": "20", "cycleId": "4300", "pulseHopOrdinal": 0,
+     "candidateIds": ["9988400001939", "9988400001940"]},
+    {"name": "Host authorization for the same pulse allows one candidate", "kind": "StructureDamageCandidatesResult",
+     "sessionId": "77", "structureId": "1040000000000001", "moduleId": "9988400002813", "effectId": 6443,
+     "activationNonce": "31", "controlLeaseGeneration": "20", "cycleId": "4300", "pulseHopOrdinal": 0,
+     "allowedTargetIds": ["9988400001940"]},
+    {"name": "remove a structure-owned cyno beacon from its solar system", "kind": "RemoveCynoBeacon", "solarSystemId": 30000142, "structureBeaconId": "1040000000000003"},
+    {"name": "register a Sim-created damageable Pochven NPC from its SDE type and corporation", "kind": "DamageableEntityUpserted",
+     "solarSystemId": 30000142, "entityId": "980100000000", "typeId": 52182, "ownerId": "1000298", "corporationId": "1000298", "allianceId": "0", "warFactionId": "0"},
+    {"name": "remove a Sim-created damageable entity on non-death despawn", "kind": "DamageableEntityRemoved",
+     "solarSystemId": 30000142, "entityId": "980100000000"},
     {"name": "host tether policy grants a leased range", "kind": "TetherPolicy", "sessionId": "77", "blockedForMs": "1000", "leaseMs": "3000", "candidates": [{"structureId": "1040000000000001", "range": 10000.0}]},
     {"name": "host tether policy clears all rights", "kind": "TetherPolicy", "sessionId": "77", "blockedForMs": "0", "leaseMs": "0", "candidates": []},
     {"name": "tether engages and repairs the ship", "kind": "TetherChanged", "sessionId": "77", "previousStructureId": "0", "structureId": "1040000000000001", "repairing": True},
@@ -1165,6 +1201,11 @@ valid = [
                 "durationMs": 2000.0, "capacitorNeed": 5.0, "repeat": 1000, "targetId": "1000000000001",
                 "action": {"kind": "mining", "family": "ore", "miningAmountM3": 20.0, "wasteMultiplier": 1.0,
                            "wasteProbability": 0.1, "critProbability": 0.05, "critMultiplier": 2.0},
+                "onChanges": [], "offChanges": []}},
+    {"name": "activate a Standup Point Defense Battery I (wire action sentinel)", "kind": "Activate", "sessionId": "77",
+     "effect": {"moduleId": "9988400002813", "moduleType": 35926, "effectId": 6443, "fx": "effects.PointDefense",
+                "durationMs": 1.0, "capacitorNeed": 0.0, "repeat": 1, "targetId": "0",
+                "action": {"kind": "pointDefense", "rangeMeters": 1.0, "damage": [1.0, 2.0, 3.0, 4.0]},
                 "onChanges": [], "offChanges": []}},
     {"name": "activate a siege module that burns fuel", "kind": "Activate", "sessionId": "1790646377000015",
      "effect": {"moduleId": "9988400002810", "moduleType": 20280, "effectId": 6582, "fx": "effects.SiegeMode",
@@ -1263,6 +1304,24 @@ good = build(valid[2])  # a good Enter
 precursor = next(c for c in valid if c["name"] == "activate a precursor weapon that builds its damage up")
 negative_spool = dict(precursor, effect=dict(precursor["effect"], turret=dict(precursor["effect"]["turret"], spool={"perCycle": -0.07, "max": 2.125})))
 vorton = next(c for c in valid if c["name"].startswith("activate a vorton projector"))
+standup_vorton = dict(vorton, name="wire fixture: Standup Vorton SDE arc and per-hop loss attributes", effect=dict(
+    vorton["effect"], moduleType=35928, effectId=6447, fx="effects.Laser",
+    turret=dict(vorton["effect"]["turret"], weaponTypeId=35928, fx="effects.Laser",
+               arc={"range": 20000.0, "targets": 5, "damageLossTarget": 0.85})))
+valid.append(standup_vorton)
+standup_vorton["hex"] = build(standup_vorton).hex()
+negative_standup_vorton_loss = dict(standup_vorton, effect=dict(standup_vorton["effect"], turret=dict(standup_vorton["effect"]["turret"],
+    arc=dict(standup_vorton["effect"]["turret"]["arc"], damageLossTarget=-0.1))))
+nan_standup_vorton_loss = dict(
+    standup_vorton,
+    effect=dict(
+        standup_vorton["effect"],
+        turret=dict(
+            standup_vorton["effect"]["turret"],
+            arc=dict(standup_vorton["effect"]["turret"]["arc"], damageLossTarget=float("nan")),
+        ),
+    ),
+)
 negative_radius = dict(vorton, effect=dict(vorton["effect"], turret=dict(vorton["effect"]["turret"],
                                                                          aoe=dict(vorton["effect"]["turret"]["aoe"], explosionRadius=-43.0))))
 negative_targets = dict(vorton, effect=dict(vorton["effect"], turret=dict(vorton["effect"]["turret"],
@@ -1283,10 +1342,34 @@ panic = named("activate the invulnerability core (Pulse Activated Nexus Invulner
 panic_negative = dict(panic, effect=dict(panic["effect"], action={"kind": "panic", "rangeMeters": -1.0}))
 grant = named("module work cycle of the invulnerability core's grant, two ships in reach")
 buff_state = named("buff state of a ship: a shield resistance buff and a repair buff")
+point_defense = named("activate a Standup Point Defense Battery I (wire action sentinel)")
+point_defense_bad_range = dict(point_defense, effect=dict(point_defense["effect"], action={"kind": "pointDefense", "rangeMeters": 0.0, "damage": [1.0, 2.0, 3.0, 4.0]}))
+point_defense_bad_channel = dict(point_defense, effect=dict(point_defense["effect"], action={"kind": "pointDefense", "rangeMeters": 1.0, "damage": [1.0, -1.0, 3.0, 4.0]}))
+damage_request = named("structure-damage candidate request for one pulse (candidate IDs may be ships or other damageable entities)")
+damage_zero_id = dict(damage_request, candidateIds=["0"])
+damage_duplicate_id = dict(damage_request, candidateIds=["9988400001939", "9988400001939"])
+damage_over_limit = dict(damage_request, candidateIds=[str(500000 + index) for index in range(4097)])
+damage_bad_generation = dict(damage_request, controlLeaseGeneration="0")
+damage_result = named("Host authorization for the same pulse allows one candidate")
+damage_duplicate_grant = dict(damage_result, allowedTargetIds=["9988400001940", "9988400001940"])
 invalid = [
-    {"name": "structure control active flag is not boolean", "reason": "bad-value", "hex": frame("ControlStructure", u64("77") + struct.pack("<i", 30000142) + i64("1040000000000001") + i64("90000001") + bytes([2])).hex()},
-    {"name": "structure control cannot bind a zero structure", "reason": "bad-value", "hex": frame("ControlStructure", u64("77") + struct.pack("<i", 30000142) + i64("0") + i64("90000001") + bytes([1])).hex()},
-    {"name": "structure control cannot use a negative character", "reason": "bad-value", "hex": frame("ControlStructure", u64("77") + struct.pack("<i", 30000142) + i64("1040000000000001") + i64("-1") + bytes([0])).hex()},
+    {"name": "structure control active flag is not boolean", "reason": "bad-value", "hex": frame("ControlStructure", u64("77") + struct.pack("<i", 30000142) + i64("1040000000000001") + i64("90000001") + bytes([2]) + i64("19")).hex()},
+    {"name": "structure control cannot bind a zero structure", "reason": "bad-value", "hex": frame("ControlStructure", u64("77") + struct.pack("<i", 30000142) + i64("0") + i64("90000001") + bytes([1]) + i64("19")).hex()},
+    {"name": "structure control cannot use a negative character", "reason": "bad-value", "hex": frame("ControlStructure", u64("77") + struct.pack("<i", 30000142) + i64("1040000000000001") + i64("-1") + bytes([0]) + i64("19")).hex()},
+    {"name": "active structure control has no Host lease generation", "reason": "bad-value", "hex": build(dict(named("bind a structure control observer"), controlLeaseGeneration="0")).hex()},
+    {"name": "structure control generation is negative", "reason": "bad-value", "hex": build(dict(named("release a structure control observer"), controlLeaseGeneration="-1")).hex()},
+    {"name": "structure-damage request has a zero candidate ID", "reason": "bad-value", "hex": build(damage_zero_id).hex()},
+    {"name": "structure-damage request has duplicate candidate IDs", "reason": "bad-value", "hex": build(damage_duplicate_id).hex()},
+    {"name": "structure-damage candidate count exceeds 4096", "reason": "bad-value", "hex": build(damage_over_limit).hex()},
+    {"name": "structure-damage correlation has no control generation", "reason": "bad-value", "hex": build(damage_bad_generation).hex()},
+    {"name": "structure-damage result has duplicate allowed IDs", "reason": "bad-value", "hex": build(damage_duplicate_grant).hex()},
+    {"name": "point-defense action has zero range", "reason": "bad-value", "hex": build(point_defense_bad_range).hex()},
+    {"name": "point-defense action has a negative channel", "reason": "bad-value", "hex": build(point_defense_bad_channel).hex()},
+    {"name": "damageable entity registration has a zero system", "reason": "bad-value", "hex": build(dict(named("register a Sim-created damageable Pochven NPC from its SDE type and corporation"), solarSystemId=0)).hex()},
+    {"name": "damageable entity registration has a zero entity ID", "reason": "bad-value", "hex": build(dict(named("register a Sim-created damageable Pochven NPC from its SDE type and corporation"), entityId="0")).hex()},
+    {"name": "damageable entity registration has a zero type ID", "reason": "bad-value", "hex": build(dict(named("register a Sim-created damageable Pochven NPC from its SDE type and corporation"), typeId=0)).hex()},
+    {"name": "damageable entity registration has negative owner ID", "reason": "bad-value", "hex": build(dict(named("register a Sim-created damageable Pochven NPC from its SDE type and corporation"), ownerId="-1")).hex()},
+    {"name": "damageable entity removal has a zero entity ID", "reason": "bad-value", "hex": build(dict(named("remove a Sim-created damageable entity on non-death despawn"), entityId="0")).hex()},
     {"name": "tether candidate count exceeds its frame", "reason": "truncated", "hex": frame("TetherPolicy", u64("77") + u64("0") + u64("3000") + struct.pack("<I", 0xffffffff)).hex()},
     {"name": "tether candidate has zero range", "reason": "bad-value", "hex": frame("TetherPolicy", u64("77") + u64("0") + u64("3000") + struct.pack("<I", 1) + i64("1040000000000001") + struct.pack("<d", 0.0)).hex()},
     {"name": "tether candidate has NaN range", "reason": "bad-value", "hex": frame("TetherPolicy", u64("77") + u64("0") + u64("3000") + struct.pack("<I", 1) + i64("1040000000000001") + struct.pack("<d", float("nan"))).hex()},
@@ -1306,6 +1389,8 @@ invalid = [
     {"name": "precursor spool with a negative bonus per cycle", "reason": "bad-value", "hex": build(negative_spool).hex()},
     {"name": "vorton explosion with a negative radius", "reason": "bad-value", "hex": build(negative_radius).hex()},
     {"name": "vorton arc with a negative number of targets", "reason": "bad-value", "hex": build(negative_targets).hex()},
+    {"name": "Standup Vorton arc has negative damage loss per target", "reason": "bad-value", "hex": build(negative_standup_vorton_loss).hex()},
+    {"name": "Standup Vorton arc has nonfinite damage loss per target", "reason": "bad-value", "hex": build(nan_standup_vorton_loss).hex()},
     {"name": "reactive armor hardener with a seed above one", "reason": "bad-value", "hex": build(hardener_seed_high).hex()},
     {"name": "reactive armor hardener that shifts by nothing", "reason": "bad-value", "hex": build(hardener_shift_none).hex()},
     {"name": "armor pinned flag that is not a flag", "reason": "bad-value", "hex": build(pinned_flag_two).hex()},

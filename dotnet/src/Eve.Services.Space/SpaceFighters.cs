@@ -40,7 +40,9 @@ public sealed class SpaceFighters : ISpaceFighters, IDisposable
     private const double DefaultOrbitMeters = 1_500;
 
     /// <summary>A squadron that is out in space: the item it is, the character and ship that launched it, the tube it came from and the pilot to tell.</summary>
-    private sealed record Launched(long FighterId, int TypeId, long CharacterId, long ShipId, int SolarSystemId, int TubeFlag, ClientSession Pilot, ulong? SquadronSession = null);
+    private sealed record Launched(
+        long FighterId, int TypeId, long CharacterId, long CorporationId, long AllianceId, long WarFactionId,
+        long ShipId, int SolarSystemId, int TubeFlag, ClientSession Pilot, ulong? SquadronSession = null);
 
     /// <summary>The members of each squadron out in space now (what its abilities land per member), and the state of its ability slots.</summary>
     private readonly ConcurrentDictionary<long, int> _sizes = new();
@@ -721,7 +723,10 @@ public sealed class SpaceFighters : ISpaceFighters, IDisposable
             return reply?.Error ?? NoSimulationText;
         }
 
-        var launched = new Launched(squadron.Id, squadron.TypeId, characterId, shipId, system, tubeFlag, session, reply.Session);
+        var launched = new Launched(
+            squadron.Id, squadron.TypeId, characterId,
+            character.CorporationId, character.AllianceId ?? 0, character.FactionId ?? 0,
+            shipId, system, tubeFlag, session, reply.Session);
         _launched[squadron.Id] = launched;
         _sizes[squadron.Id] = members;
         Resume(squadron.Id, squadron.CustomInfo);
@@ -789,6 +794,17 @@ public sealed class SpaceFighters : ISpaceFighters, IDisposable
 
     /// <summary>One ability slot as it is kept: the charges left (null for none) and the cooldown's end (Unix milliseconds, 0 for none).</summary>
     private sealed record StoredSlot(int? Charges, long CooldownUntilMs);
+
+public (long CharacterId, int TypeId, int SolarSystemId, long CorporationId, long AllianceId, long WarFactionId)? DamageOwnerOf(long fighterId)
+    {
+        if (fighterId <= 0)
+            return null;
+        if (_launched.TryGetValue(fighterId, out var launched))
+            return (launched.CharacterId, launched.TypeId, launched.SolarSystemId, launched.CorporationId, launched.AllianceId, launched.WarFactionId);
+        if (_abandoned.TryGetValue(fighterId, out var abandoned))
+            return (abandoned.CharacterId, abandoned.TypeId, abandoned.SolarSystemId, abandoned.CorporationId, abandoned.AllianceId, abandoned.WarFactionId);
+        return null;
+    }
 
     private static StoredState? StateOf(string? customInfo)
     {
@@ -902,7 +918,10 @@ public sealed class SpaceFighters : ISpaceFighters, IDisposable
         var state = StateOf(squadron.CustomInfo);
         var controlled = state is not null && state.Ship == shipId;
         var tube = state?.Tube ?? 0;
-        var launched = new Launched(squadron.Id, squadron.TypeId, characterId, state?.Ship ?? shipId, system, tube, session, reply.Session);
+        var launched = new Launched(
+            squadron.Id, squadron.TypeId, characterId,
+            snapshot.Character.CorporationId, snapshot.Character.AllianceId ?? 0, snapshot.Character.FactionId ?? 0,
+            state?.Ship ?? shipId, system, tube, session, reply.Session);
         _launched[squadron.Id] = launched;
         _sizes[squadron.Id] = members;
         Resume(squadron.Id, squadron.CustomInfo);

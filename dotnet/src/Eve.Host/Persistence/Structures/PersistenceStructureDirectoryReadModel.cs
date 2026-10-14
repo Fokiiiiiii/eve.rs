@@ -39,7 +39,8 @@ public sealed partial class PersistenceStructureDirectoryReadModel(
     Func<string, CancellationToken, Task<JsonObject>> readTable,
     Func<long, CancellationToken, Task<Eve.Relations.Affiliation>> affiliationOf,
     Eve.Sde.SdeReader sde,
-    Func<long, string, CancellationToken, Task>? setDescriptionAsync) :
+    Func<long, string, CancellationToken, Task>? setDescriptionAsync,
+    Func<long, CancellationToken, ValueTask<bool>>? cynoJammedAsync = null) :
     Eve.Services.Core.IStructureDirectoryReadCallbacks,
     Eve.Services.Core.IStructureSettingsReadCallbacks
 {
@@ -378,6 +379,11 @@ public async ValueTask<Eve.Services.Core.PersistedStructureInfo?> GetStructureIn
                     35))
                 continue;
 
+            var solarSystemId = Positive(Integer(structure["solarSystemID"]));
+            if (solarSystemId <= 0 ||
+                (cynoJammedAsync is not null && await cynoJammedAsync(solarSystemId, call.Cancellation)))
+                continue;
+
             var ownerId = Positive(Integer(structure["ownerID"], ownerCorporationId));
             var stateId = Integer(structure["state"]);
             var name = Text(structure["itemName"] ?? structure["name"]);
@@ -387,7 +393,7 @@ public async ValueTask<Eve.Services.Core.PersistedStructureInfo?> GetStructureIn
                 new PyInt(structureId),
                 new PyInt(Positive(Integer(structure["typeID"]))),
                 new PyInt(ownerId),
-                new PyInt(Positive(Integer(structure["solarSystemID"]))),
+                new PyInt(solarSystemId),
                 new PyInt(stateId),
                 new PyStr(name),
             ])));
@@ -403,6 +409,7 @@ public async ValueTask<Eve.Services.Core.PersistedStructureInfo?> GetStructureIn
     {
         var structures = await readTable("structures", cancellationToken);
         var systems = new SortedSet<long>();
+        var jammedBySystem = new Dictionary<long, bool>();
         foreach (var (key, node) in structures)
         {
             if (node is not JsonObject structure ||
@@ -413,8 +420,19 @@ public async ValueTask<Eve.Services.Core.PersistedStructureInfo?> GetStructureIn
                 Integer((structure["serviceStates"] as JsonObject)?["16"]) != 1)
                 continue;
             var solarSystemId = Positive(Integer(structure["solarSystemID"]));
-            if (solarSystemId > 0)
-                systems.Add(solarSystemId);
+            if (solarSystemId <= 0)
+                continue;
+            if (cynoJammedAsync is not null)
+            {
+                if (!jammedBySystem.TryGetValue(solarSystemId, out var jammed))
+                {
+                    jammed = await cynoJammedAsync(solarSystemId, cancellationToken);
+                    jammedBySystem.Add(solarSystemId, jammed);
+                }
+                if (jammed)
+                    continue;
+            }
+            systems.Add(solarSystemId);
         }
 
         return new PyList(systems.Select(id => (PyValue)new PyInt(id)).ToArray());

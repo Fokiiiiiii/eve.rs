@@ -278,9 +278,9 @@ public sealed record SimAoe(double ExplosionRadius, double ExplosionVelocity, do
 
 /// <summary>
 /// The chain a shot links from its target: the ships within <paramref name="Range"/> of the target, up to <paramref name="Targets"/> ships in all (the target
-/// counts, so the chain makes one link fewer than the ships).
+/// counts, so the chain makes one link fewer than the ships). If present, <see cref="DamageLossTarget"/> is the SDE per-hop damage factor.
 /// </summary>
-public sealed record SimArc(double Range, int Targets);
+public sealed record SimArc(double Range, int Targets, double? DamageLossTarget = null);
 
 public sealed record SimDeployable(int ChargeTypeId, int GroupId, string Name, double Radius);
 
@@ -509,6 +509,13 @@ public abstract record SimAction
     /// parks its start until the host grants the ships of its fleet in <paramref name="RangeMeters"/> (plus one metre) their buffs (<see cref="SimModuleWorkCommands.Panic"/>).
     /// </summary>
     public sealed record Panic(double RangeMeters) : SimAction;
+
+    /// <summary>A structure point-defense cycle; the host authorizes damageable candidates per cycle, and damage keeps the four SDE channels.</summary>
+    public sealed record PointDefense(double RangeMeters, IReadOnlyList<double> Damage) : SimAction
+    {
+        public bool IsValid => double.IsFinite(RangeMeters) && RangeMeters > 0
+            && Damage is { Count: 4 } && Damage.All(amount => double.IsFinite(amount) && amount >= 0);
+    }
 
     /// <summary>Spools once, then shifts the ship along its heading; cooldown begins when the spool succeeds or is interrupted.</summary>
     public sealed record MicroJumpDrive(double DistanceMeters, long CooldownMs) : SimAction;
@@ -939,6 +946,16 @@ public sealed record SimRemoteRepairCycle(
 public sealed record SimRemoteRepairCycleResult(
     ulong SessionId, long ModuleId, long TargetId, ulong CycleId, bool Accepted, string Reason, double Amount) : SimMessage;
 
+/// <summary>The simulation's fresh damageable candidates for one controlled-structure area pulse or chain hop.</summary>
+public sealed record SimStructureDamageCandidatesRequest(
+    ulong SessionId, long StructureId, long ModuleId, int EffectId, ulong ActivationNonce, long ControlLeaseGeneration,
+    ulong CycleId, uint PulseHopOrdinal, IReadOnlyList<long> CandidateIds) : SimMessage;
+
+/// <summary>The Host-authorized subset for the same structure-damage application; all correlation fields must match the request.</summary>
+public sealed record SimStructureDamageCandidatesResult(
+    ulong SessionId, long StructureId, long ModuleId, int EffectId, ulong ActivationNonce, long ControlLeaseGeneration,
+    ulong CycleId, uint PulseHopOrdinal, IReadOnlyList<long> AllowedTargetIds) : SimMessage;
+
 /// <summary>An SDE-typed mineable asteroid rock with host-owned remaining units.</summary>
 public sealed record SimPlaceAsteroid(
     int SolarSystemId, long AsteroidId, int TypeId, int GroupId, int CategoryId, string Name, int? GraphicId,
@@ -1057,7 +1074,7 @@ public sealed record SimTetherChanged(
     ulong SessionId, long PreviousStructureId, long StructureId, bool Repairing) : SimMessage;
 
 public sealed record SimControlStructure(
-    ulong SessionId, int SolarSystemId, long StructureId, long CharacterId, bool Active) : SimMessage;
+    ulong SessionId, int SolarSystemId, long StructureId, long CharacterId, bool Active, long ControlLeaseGeneration) : SimMessage;
 
 /// <summary>A mobile warp disruptor the host keeps a record of, put in space where its pilot dropped it (protocol 48). Its disruption is on while <see cref="Active"/>
 /// (it is anchored); <see cref="Range"/> is the warp disruption range in metres.</summary>
@@ -1092,6 +1109,16 @@ public sealed record SimPlaceInhibitor(
 public sealed record SimPlaceCynoBeacon(
     long DeployableId, int SolarSystemId, string Name, int TypeId, int GroupId, IReadOnlyList<double> Position, double Radius, bool Active,
     long OwnerId, int CorporationId, int AllianceId, long ShipId) : SimMessage;
+
+/// <summary>Takes the named structure-owned cyno beacon out of its solar system's scene.</summary>
+public sealed record SimRemoveCynoBeacon(int SolarSystemId, long StructureBeaconId) : SimMessage;
+
+/// <summary>Registers or updates a Sim-created damageable entity's creation identity for Host-side owner resolution (protocol 69). Host validates these facts against authoritative type/owner sources.</summary>
+public sealed record SimDamageableEntityUpserted(
+    int SolarSystemId, long EntityId, int TypeId, long OwnerId, long CorporationId, long AllianceId, long WarFactionId) : SimMessage;
+
+/// <summary>Removes a non-destroyed Sim-created damageable entity from the Host's owner-resolution registry (protocol 69).</summary>
+public sealed record SimDamageableEntityRemoved(int SolarSystemId, long EntityId) : SimMessage;
 
 /// <summary>The answer to <see cref="SimCommands.Measure"/>: metres from the centre of the ship to the surface of the wreck or can, or null when there is no such wreck.</summary>
 public sealed record SimMeasured(ulong SessionId, byte Command, double? Distance) : SimMessage;

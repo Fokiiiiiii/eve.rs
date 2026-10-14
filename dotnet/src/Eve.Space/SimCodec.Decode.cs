@@ -454,6 +454,14 @@ public static partial class SimCodec
                     }
                     return new SimAction.ScrambleStatus(delta);
                 }
+            case 30:
+                {
+                    var range = r.F64();
+                    double[] damage = [r.F64(), r.F64(), r.F64(), r.F64()];
+                    if (!(double.IsFinite(range) && range > 0) || damage.Any(amount => !double.IsFinite(amount) || amount < 0))
+                        throw new SimLinkException(SimLinkError.BadValue, "bad point-defense action");
+                    return new SimAction.PointDefense(range, damage);
+                }
             case 29:
                 {
                     var range = r.F64();
@@ -811,7 +819,10 @@ public static partial class SimCodec
         {
             throw new SimLinkException(SimLinkError.BadValue, "bad arc");
         }
-        return new SimArc(range, targets);
+        var damageLossTarget = ReadFlag(ref r, "arc damage loss target") ? r.F64() : (double?)null;
+        if (damageLossTarget is { } factor && (!double.IsFinite(factor) || factor < 0))
+            throw new SimLinkException(SimLinkError.BadValue, "bad arc damage loss target");
+        return new SimArc(range, targets, damageLossTarget);
     }
 
     private static SimSpool ReadSpool(ref Reader r)

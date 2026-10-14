@@ -330,6 +330,14 @@ pub(super) fn put_turret(out: &mut Vec<u8>, turret: &Turret) {
             out.push(1);
             out.extend_from_slice(&arc.range.to_le_bytes());
             out.extend_from_slice(&arc.targets.to_le_bytes());
+            match arc.damage_loss_target {
+                None => out.push(0),
+                Some(damage_loss_target) => {
+                    assert!(damage_loss_target.is_finite() && damage_loss_target >= 0.0, "invalid arc damage loss target");
+                    out.push(1);
+                    out.extend_from_slice(&damage_loss_target.to_le_bytes());
+                }
+            }
         }
     }
     out.push(u8::from(turret.requires_gunnery));
@@ -616,6 +624,13 @@ pub(super) fn put_action(out: &mut Vec<u8>, action: &Action) {
                 blast.reduction_sensitivity,
             ] {
                 out.extend_from_slice(&number.to_le_bytes());
+            }
+        }
+        Action::PointDefense { range_meters, damage } => {
+            out.push(30);
+            out.extend_from_slice(&range_meters.to_le_bytes());
+            for amount in damage {
+                out.extend_from_slice(&amount.to_le_bytes());
             }
         }
         Action::Scan { cargo, reach } => {

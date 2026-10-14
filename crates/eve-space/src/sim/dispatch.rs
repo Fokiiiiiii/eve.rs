@@ -304,6 +304,47 @@ impl Sim {
                 bonus_per_cycle,
                 bonus_max,
             },
+            Out::StructureDamageCandidatesRequest {
+                session,
+                structure_id,
+                module_id,
+                effect_id,
+                activation_nonce,
+                control_lease_generation,
+                cycle_id,
+                pulse_hop_ordinal,
+                candidate_ids,
+            } => Message::StructureDamageCandidatesRequest {
+                session_id: session,
+                structure_id,
+                module_id,
+                effect_id,
+                activation_nonce,
+                control_lease_generation,
+                cycle_id,
+                pulse_hop_ordinal,
+                candidate_ids,
+            },
+            Out::SimDamageableEntityUpserted {
+                solar_system_id,
+                entity_id,
+                type_id,
+                owner_id,
+                corporation_id,
+                alliance_id,
+                war_faction_id,
+            } => Message::DamageableEntityUpserted {
+                solar_system_id,
+                entity_id,
+                type_id,
+                owner_id,
+                corporation_id,
+                alliance_id,
+                war_faction_id,
+            },
+            Out::SimDamageableEntityRemoved { solar_system_id, entity_id } => {
+                Message::DamageableEntityRemoved { solar_system_id, entity_id }
+            }
             Out::ModuleWorkCycle {
                 session,
                 character_id,
@@ -376,6 +417,7 @@ impl Sim {
             | Message::ModuleOffline { .. }
             | Message::RackOverheat { .. }
             | Message::Activate { .. }
+            | Message::StructureDamageCandidatesResult { .. }
             | Message::ModuleWorkResult { .. }
             | Message::RemoteRepairCycleResult { .. }
             | Message::AdjustCharge { .. }
@@ -396,6 +438,7 @@ impl Sim {
             | Message::RemoveWreck { .. }
             | Message::Deployed(..)
             | Message::RemoveDeployed { .. }
+            | Message::RemoveCynoBeacon { .. }
             | Message::PlaceStructure(..)
             | Message::RemoveStructure { .. }
             | Message::PlaceWormhole(..)
@@ -425,6 +468,7 @@ impl Sim {
         structure_id: i64,
         character_id: i64,
         active: bool,
+        control_lease_generation: i64,
         now: i64,
     ) -> Vec<Out> {
         let refused = |reason| {
@@ -438,6 +482,7 @@ impl Sim {
             || solar_system_id <= 0
             || structure_id < 0
             || character_id < 0
+            || control_lease_generation < 0
             || (active && (structure_id == 0 || character_id == 0))
         {
             return refused("INVALID_CONTROL_STRUCTURE_IDS");
@@ -452,8 +497,15 @@ impl Sim {
         };
         let was_controlled = scene.controlled_structure_id(session_id).is_some();
         let previous_controller = active.then(|| scene.controller_of_structure(structure_id)).flatten();
-        let outs =
-            scene.control_structure(session_id, solar_system_id, structure_id, character_id, active, now);
+        let outs = scene.control_structure(
+            session_id,
+            solar_system_id,
+            structure_id,
+            character_id,
+            active,
+            control_lease_generation,
+            now,
+        );
         if !outs.iter().any(|out| {
             matches!(
                 out,
@@ -510,7 +562,7 @@ impl Sim {
                     3 => Departure::Ejected,
                     _ => Departure::Boarded,
                 };
-                let told = match self.scene_of(session_id) {
+                let mut told = match self.scene_of(session_id) {
                     Some(scene) => scene.leave(session_id, why, now).unwrap_or_default(),
                     None => Vec::new(),
                 };
@@ -519,7 +571,7 @@ impl Sim {
                         self.widowed.insert(session_id, system);
                     }
                 } else {
-                    self.forget(session_id);
+                    told.extend(self.forget(session_id));
                 }
                 told
             }
@@ -529,9 +581,22 @@ impl Sim {
             Message::UpdateState { session_id } => {
                 self.scene_of(session_id).map(|s| s.update_state(session_id, now)).unwrap_or_default()
             }
-            Message::ControlStructure { session_id, solar_system_id, structure_id, character_id, active } => {
-                self.control_structure(session_id, solar_system_id, structure_id, character_id, active, now)
-            }
+            Message::ControlStructure {
+                session_id,
+                solar_system_id,
+                structure_id,
+                character_id,
+                active,
+                control_lease_generation,
+            } => self.control_structure(
+                session_id,
+                solar_system_id,
+                structure_id,
+                character_id,
+                active,
+                control_lease_generation,
+                now,
+            ),
             Message::Spawn(spawn) => return Ok(self.spawn(*spawn, now)),
             Message::Destroy { ship_id, credit } => {
                 let target = self
@@ -634,6 +699,31 @@ impl Sim {
                 Some(scene) => scene.activate(session_id, *effect, now),
                 None => vec![Out::Refused { session: session_id, command: 17, reason: "NO_SHIP_IN_SPACE" }],
             },
+            Message::StructureDamageCandidatesResult {
+                session_id,
+                structure_id,
+                module_id,
+                effect_id,
+                activation_nonce,
+                control_lease_generation,
+                cycle_id,
+                pulse_hop_ordinal,
+                allowed_target_ids,
+            } => self
+                .scene_of(session_id)
+                .map(|scene| scene.structure_damage_candidates_result(
+                    session_id,
+                    structure_id,
+                    module_id,
+                    effect_id,
+                    activation_nonce,
+                    control_lease_generation,
+                    cycle_id,
+                    pulse_hop_ordinal,
+                    &allowed_target_ids,
+                    now,
+                ))
+                .unwrap_or_default(),
             Message::ModuleWorkResult {
                 session_id,
                 module_id,
@@ -1166,6 +1256,11 @@ impl Sim {
                 .values_mut()
                 .find(|scene| scene.deployables.contains_key(&deployable_id))
                 .map(|scene| scene.set_disruptor_active(deployable_id, active))
+                .unwrap_or_default(),
+            Message::RemoveCynoBeacon { solar_system_id, structure_beacon_id } => self
+                .scenes
+                .get_mut(&solar_system_id)
+                .map(|scene| scene.remove_cyno_beacon(solar_system_id, structure_beacon_id, now))
                 .unwrap_or_default(),
             Message::RemoveDeployed { deployable_id } => self
                 .scenes

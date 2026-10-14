@@ -100,46 +100,96 @@ public sealed class StructureControlBackend
             try
             {
                 if (_space.StructureControlSessionClosed(session)) throw Denied("SESSION_ENDED");
-                if (displacedSession is not null)
+                if (displacedSession is not null && acquired.Displaced is { } displacedOwner)
                 {
-                    await _space.SetStructureObserverAsync(displacedSession, system, 0, 0, false, call.Cancellation);
                     oldDetached = true;
+                    await _space.SetStructureObserverAsync(displacedSession, system, 0, 0, false, call.Cancellation,
+                        controlLeaseGeneration: displacedOwner.Version);
                 }
-                await _space.SetStructureObserverAsync(session, system, structureId, character, true, call.Cancellation);
+                await _space.SetStructureObserverAsync(session, system, structureId, character, true, call.Cancellation,
+                    controlLeaseGeneration: current.Version);
                 newAttached = true;
                 if (_space.StructureControlSessionClosed(session) || session.CharacterId != character) throw Denied("SESSION_ENDED");
                 if (displacedSession is not null && acquired.Displaced is { } previous)
                     RestoreSession(displacedSession, previous, system);
                 _space.ApplyStructureControlSession(session, system, structureId, current.OriginalShipId, current.OriginalLocationId, current.FromSpace);
+                await _space.RefreshShipAsync(session, call.Cancellation);
             }
             catch (Exception failure)
             {
-                if (failure is Eve.Space.SimUnavailableException) session.Close();
-                if (acquired.Status == StructurePilotAcquireStatus.AlreadyOwned) throw;
+                if (acquired.Status == StructurePilotAcquireStatus.AlreadyOwned)
+                {
+                    RestoreControlSnapshot(session, beforeSession);
+                    if (failure is Eve.Space.SimUnavailableException) session.Close();
+                    throw;
+                }
+
+                var compensationFailures = new List<Exception>();
+                Eve.Structures.StructurePilotRecord? restoredOwner = null;
+                if (newAttached)
+                {
+                    try
+                    {
+                        await _space.SetStructureObserverAsync(session, system, 0, 0, false, CancellationToken.None,
+                            controlLeaseGeneration: current.Version);
+                    }
+                    catch (Exception detachFailure)
+                    {
+                        compensationFailures.Add(detachFailure);
+                        _space.ForgetStructureObserver(session);
+                        session.Close();
+                    }
+                }
+
                 try
                 {
-                    if (newAttached) await _space.SetStructureObserverAsync(session, system, 0, 0, false, CancellationToken.None);
                     await using var rollback = await connection.BeginTransactionAsync(CancellationToken.None);
                     if (acquired.Displaced is { } previous)
                     {
-                        if (await _pilots.RestoreAsync(connection, rollback, current, previous, CancellationToken.None) is null)
+                        restoredOwner = await _pilots.RestoreAsync(connection, rollback, current, previous, CancellationToken.None);
+                        if (restoredOwner is null)
                             throw new InvalidOperationException("Structure control rollback lost its expected owner.");
                     }
                     else if (!await _pilots.ReleaseAsync(connection, rollback, current, CancellationToken.None))
                         throw new InvalidOperationException("Structure control rollback lost its expected owner.");
                     await rollback.CommitAsync(CancellationToken.None);
                     RestoreControlSnapshot(session, beforeSession);
-                    if (oldDetached && displacedSession is not null && acquired.Displaced is { } old)
+                    if (oldDetached && displacedSession is not null && acquired.Displaced is { } old
+                        && restoredOwner is { } restoredLease)
                     {
                         if (beforeDisplacedSession is not null) RestoreControlSnapshot(displacedSession, beforeDisplacedSession);
                         if (!_space.StructureControlSessionClosed(displacedSession))
-                            await _space.SetStructureObserverAsync(displacedSession, system, structureId, old.CharacterId, true, CancellationToken.None);
+                        {
+                            try
+                            {
+                                await _space.SetStructureObserverAsync(displacedSession, system, structureId, old.CharacterId, true, CancellationToken.None,
+                                    controlLeaseGeneration: restoredLease.Version);
+                                await _space.RefreshShipAsync(displacedSession, CancellationToken.None);
+                            }
+                            catch (Exception restoreFailure)
+                            {
+                                compensationFailures.Add(restoreFailure);
+                                _space.ForgetStructureObserver(displacedSession);
+                                displacedSession.Close();
+                            }
+                        }
                     }
                 }
                 catch (Exception rollbackFailure)
                 {
-                    session.Close(); displacedSession?.Close();
-                    throw new AggregateException("Structure control compensation failed.", failure, rollbackFailure);
+                    session.Close();
+                    displacedSession?.Close();
+                    var errors = new List<Exception> { failure, rollbackFailure };
+                    errors.AddRange(compensationFailures);
+                    throw new AggregateException("Structure control compensation failed.", errors);
+                }
+
+                if (failure is Eve.Space.SimUnavailableException) session.Close();
+                if (compensationFailures.Count != 0)
+                {
+                    var errors = new List<Exception> { failure };
+                    errors.AddRange(compensationFailures);
+                    throw new AggregateException("Structure control compensation failed.", errors);
                 }
                 throw;
             }
@@ -178,7 +228,18 @@ public sealed class StructureControlBackend
             if (_space.IsStructureObserver(session))
             {
                 var system = checked((int)(session.GetInt("structureControlSystemId") ?? 0));
-                try { await _space.SetStructureObserverAsync(session, system, 0, 0, false, token); }
+                try
+                {
+                    var generation = session.GetInt("structureControlLeaseGeneration") ?? 0;
+                    if (generation > 0)
+                        await _space.SetStructureObserverAsync(session, system, 0, 0, false, token,
+                            controlLeaseGeneration: generation);
+                    else
+                    {
+                        _space.ForgetStructureObserver(session);
+                        session.Close();
+                    }
+                }
                 finally
                 {
                     _space.ForgetStructureObserver(session);
@@ -210,7 +271,8 @@ public sealed class StructureControlBackend
             if (!await _pilots.ReleaseAsync(connection, transaction, owner, token)) throw Denied("OWNER_CHANGED");
             try
             {
-                await _space.SetStructureObserverAsync(session, systemId, 0, 0, false, token);
+                await _space.SetStructureObserverAsync(session, systemId, 0, 0, false, token,
+                    controlLeaseGeneration: owner.Version);
                 detached = true;
             }
             catch (Exception error) when (force)
@@ -223,7 +285,8 @@ public sealed class StructureControlBackend
         catch
         {
             if (detached && !force)
-                await _space.SetStructureObserverAsync(session, systemId, owner.StructureId, owner.CharacterId, true, CancellationToken.None);
+                await _space.SetStructureObserverAsync(session, systemId, owner.StructureId, owner.CharacterId, true, CancellationToken.None,
+                    controlLeaseGeneration: owner.Version);
             throw;
         }
         if (returnShipId == 0)
@@ -243,7 +306,8 @@ public sealed class StructureControlBackend
                 if (reacquired.Status is not (StructurePilotAcquireStatus.Acquired or StructurePilotAcquireStatus.AlreadyOwned))
                 { session.Close(); throw new InvalidOperationException("The refused capsule ejection could not restore structure control."); }
                 await restore.CommitAsync(CancellationToken.None);
-                await _space.SetStructureObserverAsync(session, systemId, owner.StructureId, owner.CharacterId, true, CancellationToken.None);
+                await _space.SetStructureObserverAsync(session, systemId, owner.StructureId, owner.CharacterId, true, CancellationToken.None,
+                    controlLeaseGeneration: reacquired.Current!.Version);
                 throw;
             }
         }

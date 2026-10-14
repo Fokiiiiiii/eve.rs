@@ -131,6 +131,9 @@ public interface ISimulation
     /// <summary>The host's decision for a module work cycle (ADR 0013); the module is parked until it arrives.</summary>
     void ModuleWorkResult(SimModuleWorkResult result);
 
+    /// <summary>Returns the Host-authorized candidate subset for one controlled-structure point-defense cycle.</summary>
+    void StructureDamageCandidatesResult(SimStructureDamageCandidatesResult result);
+
     /// <summary>The timed buffs of a ship of this session (a command burst's, protocol 43): the simulation tells the client what they are.</summary>
     void BuffState(ulong sessionId, long shipId, IReadOnlyList<SimBuffEntry> entries);
 
@@ -181,6 +184,9 @@ public interface ISimulation
     void PlaceInhibitor(SimPlaceInhibitor inhibitor);
     /// <summary>Puts a Mobile Cynosural Beacon in space where its pilot dropped it, anchored or not (protocol 58).</summary>
     void PlaceCynoBeacon(SimPlaceCynoBeacon beacon);
+
+    /// <summary>Removes the structure-owned cyno beacon from a specific solar-system scene.</summary>
+    void RemoveCynoBeacon(int solarSystemId, long structureBeaconId);
 
     /// <summary>Destroys a ship: the explosion, the wreck (for <paramref name="credit"/> to loot), and (for a player's ship) a <see cref="SimDestroyed"/> that comes back through <see cref="Received"/>.</summary>
     void Destroy(long shipId, SimCredit credit);

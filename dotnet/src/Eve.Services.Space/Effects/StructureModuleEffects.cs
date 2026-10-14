@@ -1,9 +1,7 @@
 namespace Eve.Services.Space.Effects;
 
 /// <summary>
-/// The module whose work is done to a structure: the entosis link (<c>entosisLink</c>, which contests a sovereignty hub). Structures are phase 3 on this server: there
-/// is no structure host and no structure in space, so the module cannot lock or act on the target it needs. It is refused with <see cref="StructuresPhase3"/> before
-/// a target is asked for, and is not coverage (the gap manifest keeps it). The link's lock and range rules apply to a structure target and are not run.
+/// The entosis link (<c>entosisLink</c>) targets a sovereignty hub and applies sovereignty capture rules. It remains refused until that owner and capture flow are integrated.
 /// (The industrial item compressor is a ship module and has its body in <see cref="CompressionModuleEffect"/>.)
 /// </summary>
 internal sealed class EntosisLinkEffect() : PendingModuleEffect("entosisLink")
@@ -13,6 +11,6 @@ internal sealed class EntosisLinkEffect() : PendingModuleEffect("entosisLink")
 
 internal static class StructureModuleEffects
 {
-    /// <summary>The refusal of a module whose work is on a structure: structures are phase 3, and this server has none in space.</summary>
+    /// <summary>The refusal of an entosis link while the sovereignty capture owner is not wired.</summary>
     public const string StructuresPhase3 = "STRUCTURES_PHASE_3";
 }

@@ -238,7 +238,9 @@ public sealed partial class SpaceSessions
 
                 var ejected = result!;
                 _ejectedShips[ejected.Ship.Id] = new EjectedShip(
-                    pilot.CharacterId, fitting.Character.CorporationId, ejected.Ship.TypeId, pilot.SolarSystemId);
+                    pilot.CharacterId, fitting.Character.CorporationId, ejected.Ship.TypeId, pilot.SolarSystemId,
+                    OwnerAllianceId: fitting.Character.AllianceId ?? 0,
+                    OwnerWarFactionId: fitting.Character.FactionId ?? 0);
                 EndTetherPilot(pilot);
                 pilot.End();
                 var capsulePilot = new Pilot(
@@ -359,7 +361,9 @@ public sealed partial class SpaceSessions
                 var boarding = result!;
                 await CancelRepairsAsync(currentPilot, token);
                 _ejectedShips[currentShipId] = new EjectedShip(
-                    characterId, boarding.BoarderCorporationId, currentPilot.TypeId, currentPilot.SolarSystemId);
+                    characterId, boarding.BoarderCorporationId, currentPilot.TypeId, currentPilot.SolarSystemId,
+                    OwnerAllianceId: currentPilot.Session.GetInt("allianceid") ?? currentPilot.Session.GetInt("allianceID") ?? 0,
+                    OwnerWarFactionId: currentPilot.Session.GetInt("warfactionid") ?? currentPilot.Session.GetInt("warFactionID") ?? 0);
                 _ejectedShips.TryRemove(shipId, out _);
                 _sim.Leave(id, LeaveWhy.Boarded);
 

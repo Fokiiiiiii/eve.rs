@@ -278,6 +278,7 @@ impl Action {
         match self {
             Self::Remote { what, .. } => what.hostile(),
             Self::Smartbomb { .. }
+            | Self::PointDefense { .. }
             | Self::EcmBurst { .. }
             | Self::Strike { .. }
             | Self::Field { .. }
@@ -404,6 +405,11 @@ pub enum Action {
         range: f64,
         damage: crate::health::Damage,
         hurts_pilots: bool,
+    },
+/// A Standup Point Defense cycle waits for Host's correlated per-target Crimewatch decision before applying this typed damage.
+    PointDefense {
+        range_meters: f64,
+        damage: crate::health::Damage,
     },
     EcmBurst {
         range: f64,
@@ -744,6 +750,15 @@ impl Capacitor {
         if self.capacity - charge <= FULL_SNAP { self.capacity } else { charge }
     }
 
+    pub(crate) fn respec(&mut self, capacity: f64, recharge_s: f64, now: i64) {
+        let ratio = self.ratio_at(now);
+        self.capacity = capacity;
+        self.recharge_s = recharge_s;
+        self.charge = (capacity * ratio).clamp(0.0, capacity);
+        self.at = now;
+        self.next_sample = (ratio < 1.0).then_some(now);
+    }
+
     /// Adds `amount` at `now` (the charge never goes above the capacity) and returns the charge before and after.
     fn give(&mut self, now: i64, amount: f64) -> (f64, f64) {
         let before = self.charge_at(now);
@@ -829,10 +844,44 @@ struct PendingRemoteRepairCycle {
     range_share: f64,
 }
 
+/// What a correlated Host authorization reply will settle for this damage step.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) enum PendingStructureDamageOperation {
+    PointDefense { range_meters: f64, damage: crate::health::Damage },
+    StrikePulse { origin: [f64; 3], strike: Option<crate::strike::Strike>, module_type: i32 },
+    VortonArcHop {
+        anchor: crate::weapons::Kinematics,
+        arc: crate::weapons::Arc,
+        aoe: crate::weapons::Aoe,
+        raw_damage: crate::health::Damage,
+        shooter: crate::weapons::Shooter,
+        links_remaining: u32,
+        struck_ids: Vec<i64>,
+    },
+}
+
+/// One controlled-structure damage step parked on the Host's correlated allowed-target reply.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct PendingStructureDamageRequest {
+    pub(crate) structure_id: i64,
+    pub(crate) effect_id: i32,
+    pub(crate) activation_nonce: u64,
+    pub(crate) control_lease_generation: i64,
+    pub(crate) cycle_id: u64,
+    pub(crate) pulse_hop_ordinal: u32,
+    pub(crate) sent_at: i64,
+    pub(crate) candidate_ids: Vec<i64>,
+    pub(crate) operation: PendingStructureDamageOperation,
+}
+
 /// An effect that is running.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct Running {
     pub(crate) effect: Effect,
+/// A unique nonce for this activation, stable across its module cycles.
+    activation_nonce: u64,
+    /// The unique id of the module cycle currently in progress.
+    cycle_id: u64,
     /// When the cycle that is on began.
     cycle_start: i64,
     cycles: i32,
@@ -848,9 +897,13 @@ pub(crate) struct Running {
     rounds: Option<i64>,
     /// Whether the cycle in progress started with a charge available.
     charged_this_cycle: bool,
+    /// Whether this structure damage cycle has committed its charge after a matching authorization.
+    structure_damage_charge_committed: bool,
     pending_remote_repair: Option<PendingRemoteRepairCycle>,
     /// The work cycle the host has not answered yet: the module is parked on it (no cycle is timed) until the answer, a stop or the loss of the target.
     pending_work: Option<PendingWorkCycle>,
+    /// A damage step waiting for Host's allowed-target subset; the module cycle is parked until the exact reply arrives.
+    pending_structure_damage: Option<PendingStructureDamageRequest>,
     /// The damage ramp a precursor weapon has built on its target; it ends with the effect, so a new one starts from none.
     spool: SpoolState,
     /// The turret ran out of rounds and reloads from its hold: it waits here (no cycle is timed) for the host's load, which resumes it at the start of the next
@@ -901,6 +954,13 @@ impl Modules {
             burnt_out: Vec::new(),
             next_remote_repair_cycle_id: 0,
             pending_starts: Vec::new(),
+        }
+    }
+
+    pub(crate) fn respec_capacitor(&mut self, capacity: f64, recharge_s: f64, now: i64) {
+        match self.capacitor.as_mut() {
+            Some(capacitor) => capacitor.respec(capacity, recharge_s, now),
+            None => self.capacitor = Some(Capacitor::filled(capacity, recharge_s, 1.0, now)),
         }
     }
 
@@ -1019,6 +1079,8 @@ enum Moment {
     Shield,
     /// A parked work cycle is sent again (same id, same rolls).
     WorkResend(usize),
+/// A structure damage step is resent with the same full correlation tuple until Host answers.
+    StructureDamageResend(usize),
     /// The target of a parked work cycle is gone: the effect stops.
     WorkStop(usize),
     /// A start parked for fuel is asked again (same id), at this index of the pending starts.

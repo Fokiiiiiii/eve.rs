@@ -84,6 +84,9 @@ public sealed record EffectDef(int Id, string Name, int Category, IReadOnlyList<
     public const int Online = 4;
     public const int Overload = 5;
 
+    /// <summary>Whether the SDE publishes this dogma effect. This does not determine whether a module type is published.</summary>
+    public bool Published { get; init; } = true;
+
     /// <summary>What the client's effects are called in the destiny stream (<c>effects.Afterburner</c>); empty when the data has none.</summary>
     public string Guid { get; init; } = "";
 
@@ -109,6 +112,9 @@ public sealed record AttributeDef(int Id, string Name, double DefaultValue, bool
 /// <summary>A type as dogma sees it: its attributes and the effects it has.</summary>
 public sealed record TypeDef(int TypeId, int GroupId, int CategoryId, IReadOnlyDictionary<int, double> Attributes, IReadOnlyList<int> EffectIds, string Name = "", int GraphicId = 0)
 {
+    /// <summary>Whether the SDE publishes this type to ordinary clients.</summary>
+    public bool Published { get; init; } = true;
+
     /// <summary>The attributes that name the skills a type needs (requiredSkill1 to requiredSkill6).</summary>
     public static readonly int[] RequiredSkillAttributes = [182, 183, 184, 1285, 1289, 1290];
 

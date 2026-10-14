@@ -6,9 +6,8 @@ using Eve.Services.Space;
 namespace Eve.Services.Space.Tests;
 
 /// <summary>
-/// The structure cyno beacon route (<c>structureCynoBeaconMgr</c>) while no structure travel backend is wired: every advertised call answers a visible user error
-/// with its text, never <c>PyNone</c> (which the client reads as a jump that went through; AGENTS rule 4). Structure modules are module and wiring only (superweapons
-/// brief O5): there is no structure host, so the route stays unwired and this test keeps it so.
+/// The RPC service's fallback when no structure travel handler is supplied. The live direct jump, ACL, and group/bridge boundary are covered by
+/// <see cref="StructureBeaconTravelTests"/>.
 /// </summary>
 public sealed class StructureTravelTests
 {

@@ -1,3 +1,4 @@
+using Eve.Inventory;
 using Eve.Npc;
 using Eve.Space;
 using static Eve.Services.Space.Effects.ModuleAttributes;
@@ -62,19 +63,21 @@ internal sealed class HogEffect : ShipEffect
 {
     /// <summary>The transport's warp block on the capital ships it holds, in ms: the SDE description's "60 seconds", not an attribute of the static data.</summary>
     public const double TransportWarpBlockMs = 60_000.0;
+    internal const string EffectName = "doomsdayHOG";
 
-    public override IReadOnlyCollection<string> EffectNames { get; } = ["doomsdayHOG"];
+    public override IReadOnlyCollection<string> EffectNames { get; } = [EffectName];
 
     /// <summary>The ship's oscillator. The structure variant (category 66) is <see cref="StructureHogEffect"/>.</summary>
     protected override bool Handles(ModuleEffectContext module) => module.Type.CategoryId != SuperWeaponCategories.Structure;
 
-    protected override string? Refusal(ModuleEffectContext module)
+    protected override string? Refusal(ModuleEffectContext module) => RefusalFor(module);
+
+    internal static string? RefusalFor(ModuleEffectContext module)
     {
         if (module.Aim is not { Count: 3 } aim || DoomsdayStrike.Unit(aim) is null)
         {
             return "TARGET_POINT_REQUIRED";
         }
-        // the static data says the shape is a sphere (doomsdayAOEShape 4); another shape would be a different body, not this one
         if (module.Value(DoomsdayAoeShape, 0) != 4)
         {
             return "SUPERWEAPON_HOG_SHAPE_NOT_IMPLEMENTED";
@@ -82,12 +85,14 @@ internal sealed class HogEffect : ShipEffect
         return DoomsdayStrike.Sphere(module, aim) is { IsValid: true } ? null : "SUPERWEAPON_HOG_DATA_MISSING";
     }
 
-    protected override SimEffect Build(ModuleEffectContext module)
+    protected override SimEffect Build(ModuleEffectContext module) => BuildField(module);
+
+    internal static SimEffect BuildField(ModuleEffectContext module)
     {
         var (duration, capacitor, durationAttribute) = module.Cycle();
         SimChange[] told = [new(module.ModuleId, CapacitorNeed, capacitor), new(module.ModuleId, durationAttribute, Three(duration))];
         var aim = module.Aim!;
-        // the host's list of the system's capsuleer ships: the capitals are held, the rest are carried (the field's destination is the aim point)
+        // The simulation applies this explicit participant list inside the field; unrelated ships are not picked up by the field's spatial query.
         var moved = module.Neighbours.Where(neighbour => !neighbour.IsCapital).Select(neighbour => neighbour.ShipId).ToArray();
         var held = module.Neighbours.Where(neighbour => neighbour.IsCapital).Select(neighbour => neighbour.ShipId).ToArray();
         var field = new SimAction.Field(DoomsdayStrike.Sphere(module, aim), aim.Select(NpcArmament.Round6).ToArray(), TransportWarpBlockMs, moved, held);
@@ -101,8 +106,144 @@ internal sealed class HogEffect : ShipEffect
 /// The structure variant of the transport field (the Standup Gravitational Transportation Field Oscillator, 47068, category 66): module and wiring only (SDE
 /// category 66 is the structure modules, and no structure host exists). Refused by name, never a success.
 /// </summary>
-internal sealed class StructureHogEffect()
-    : SuperWeaponPendingEffect("STRUCTURE_SUPERWEAPON_NOT_IMPLEMENTED", "doomsdayHOG")
+internal static class StructureDamageModuleRules
 {
-    protected override bool Handles(ModuleEffectContext module) => module.Type.CategoryId == SuperWeaponCategories.Structure;
+    public static bool FitsStructureType(ModuleEffectContext module)
+    {
+        var structureCategory = module.Statics.CategoryId("Structure");
+        if (structureCategory is null
+            || module.Statics.Type(module.Snapshot.Ship.TypeId)?.CategoryId != structureCategory)
+            return false;
+
+        var hasRestriction = false;
+        var fits = false;
+        for (var index = 1; index <= 11; index++)
+        {
+            if (module.Statics.AttributeId($"canFitShipType{index}") is not { } attributeId
+                || !module.Type.Attributes.TryGetValue(attributeId, out var allowedType)
+                || allowedType <= 0)
+                continue;
+            hasRestriction = true;
+            fits |= (int)allowedType == module.Snapshot.Ship.TypeId;
+        }
+        return !hasRestriction || fits;
+    }
+}
+
+internal sealed class StructureHogEffect() : ShipEffect
+{
+    private static readonly string[] Names = ["doomsdayHOG"];
+
+    public override IReadOnlyCollection<string> EffectNames => Names;
+
+    protected override bool Handles(ModuleEffectContext module) =>
+        module.Type.CategoryId == SuperWeaponCategories.Structure;
+
+    protected override string? Refusal(ModuleEffectContext module)
+    {
+        if (!module.Type.Published)
+        {
+            return "MODULE_NOT_PUBLISHED";
+        }
+        if (!StructureDamageModuleRules.FitsStructureType(module))
+        {
+            return "REFUSED";
+        }
+
+        // The structure's shared HOG body is implemented by HogEffect, but its area participants
+        // need the per-pulse owner-corporation permission reply before the simulation may apply it.
+        return "STRUCTURE_DAMAGE_PERMISSION_REQUIRED";
+    }
+
+    protected override bool Implemented => false;
+
+    protected override SimEffect Build(ModuleEffectContext module) => HogEffect.BuildField(module);
+}
+
+internal sealed class PointDefenseEffect : ShipEffect
+{
+    private static readonly string[] Names = ["pointDefense"];
+
+    public override IReadOnlyCollection<string> EffectNames => Names;
+
+    protected override bool Handles(ModuleEffectContext module) =>
+        module.Type.CategoryId == SuperWeaponCategories.Structure;
+
+    protected override string? Refusal(ModuleEffectContext module)
+    {
+        if (!module.Type.Published)
+            return "MODULE_NOT_PUBLISHED";
+        if (!StructureDamageModuleRules.FitsStructureType(module))
+            return "REFUSED";
+
+        var charge = module.Snapshot.ChargeOf(module.Module);
+        if (charge is null)
+            return "NO_AMMO";
+
+        var chargeRate = ModuleAttributes.ChargesPerCycle(module.Attributes);
+        if (chargeRate > int.MaxValue
+            || charge.Quantity < chargeRate
+            || !IsCompatibleCharge(module, charge))
+            return "NO_AMMO";
+
+        var (duration, _, _) = module.Cycle();
+        var range = module.Value(ModuleAttributes.EmpFieldRange, 0);
+        var damage = DamageVector(module, charge, chargeRate);
+        if (duration <= 0 || range <= 0 || damage.Sum() <= 0)
+            return "UNSUPPORTED_MODULE";
+
+        return null;
+    }
+
+    protected override bool Implemented => true;
+
+    protected override SimEffect Build(ModuleEffectContext module)
+    {
+        var charge = module.Snapshot.ChargeOf(module.Module)!;
+        var chargeRate = (int)ModuleAttributes.ChargesPerCycle(module.Attributes);
+        var (duration, capacitor, durationAttribute) = module.Cycle();
+        var range = ModuleAttributes.Three(Math.Max(0, module.Value(ModuleAttributes.EmpFieldRange, 0)));
+        var damage = DamageVector(module, charge, chargeRate);
+
+        SimChange[] told =
+        [
+            new(module.ModuleId, ModuleAttributes.CapacitorNeed, capacitor),
+            new(module.ModuleId, durationAttribute, ModuleAttributes.Three(duration)),
+            new(module.ModuleId, ModuleAttributes.EmpFieldRange, range),
+        ];
+        var fx = string.IsNullOrWhiteSpace(module.Effect.Guid) ? "pointDefense" : module.Effect.Guid;
+        var pointDefense = new SimAction.PointDefense(range, damage);
+        var action = new SimAction.Charged(
+            pointDefense, null, charge.TypeId, charge.Flag, chargeRate, charge.Quantity);
+
+        return new SimEffect(
+            module.ModuleId, module.Module.TypeId, module.Effect.Id, fx, duration, capacitor, Math.Max(1, module.Repeat), 0,
+            null, null, told, told, null, action);
+    }
+
+    private static bool IsCompatibleCharge(ModuleEffectContext module, Item charge)
+    {
+        var chargeGroup = module.Statics.Type(charge.TypeId)?.GroupId;
+        return chargeGroup is > 0
+            && ModuleAttributes.ChargeGroups.Any(attribute => (int)module.Value(attribute, 0) == chargeGroup);
+    }
+
+    private static IReadOnlyList<double> DamageVector(ModuleEffectContext module, Item charge, long chargeRate)
+    {
+        var attributes = module.World.Attributes(charge.Id);
+        var multiplier = Math.Max(0, module.Value(ModuleAttributes.DamageMultiplier, 1)) * chargeRate;
+        double Damage(int attribute)
+        {
+            var amount = attributes.TryGetValue(attribute, out var value) && double.IsFinite(value) ? value : 0;
+            return ModuleAttributes.Six(Math.Max(0, amount * multiplier));
+        }
+
+        return
+        [
+            Damage(ModuleAttributes.EmDamage),
+            Damage(ModuleAttributes.ThermalDamage),
+            Damage(ModuleAttributes.KineticDamage),
+            Damage(ModuleAttributes.ExplosiveDamage),
+        ];
+    }
 }

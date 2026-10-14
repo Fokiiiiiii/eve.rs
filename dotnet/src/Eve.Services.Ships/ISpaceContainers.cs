@@ -53,6 +53,13 @@ public interface ISpaceContainers
     Task AbandonLootAsync(ClientSession session, IReadOnlyList<long> containerIds, CancellationToken cancellationToken) =>
         throw new NotSupportedException("This space container service cannot abandon loot.");
 
+
+    /// <summary>
+    /// <c>ship.Scoop(itemID, password)</c>: takes an eligible marked space artifact into the active ship after the provider checks scene visibility, range, rights and cargo room.
+    /// </summary>
+    Task ScoopAsync(ClientSession session, long itemId, string? password, CancellationToken cancellationToken) =>
+        throw new NotSupportedException("This space container provider cannot scoop space artifacts.");
+
     /// <summary>
     /// <c>ship.Jettison</c>: the stacks of the hold go into a new can ahead of the ship. Answers the ids that went into a can (none when nothing could be jettisoned); throws the
     /// client's error while the pilot waits for the next can.

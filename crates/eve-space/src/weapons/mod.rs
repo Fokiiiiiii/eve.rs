@@ -80,12 +80,26 @@ pub struct Aoe {
     pub damage_reduction_sensitivity: f64,
 }
 
-/// The chain a shot links from its target (EVE.js `vortonArcChain`): other ships within `range` of the target, up to `targets` ships in all (the target
-/// counts, so `targets - 1` links are made), each struck with the explosion of the shot.
+/// The chain a shot links from its target (EVE.js `vortonArcChain`): damageable entities within `range` of the target, up to `targets` in all (the target
+/// counts, so `targets - 1` links are made), each struck with the explosion of the shot. A structure Vorton's optional `damage_loss_target`
+/// scales each secondary hop; SDE attributes do not give ship Vortons this value.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Arc {
     pub range: f64,
     pub targets: i32,
+    pub damage_loss_target: Option<f64>,
+}
+
+impl Arc {
+    pub(crate) fn damage_for_hop(
+        self,
+        raw_damage: crate::health::Damage,
+        hop_ordinal: u32,
+    ) -> crate::health::Damage {
+        let Some(loss) = self.damage_loss_target else { return raw_damage };
+        let multiplier = loss.powf(f64::from(hop_ordinal) + 1.0);
+        raw_damage.map(|amount| amount * multiplier)
+    }
 }
 
 /// The damage ramp of a weapon that builds up its damage on the target it keeps shooting at (a precursor weapon, EVE.js `precursorTurrets.js`): each
@@ -167,8 +181,8 @@ pub struct Shot {
 
 /// Who a shot is from: the pilot that is told of it (a drone's controller), the ship it counts against and the ship that is aggressed by it, the owner
 /// the combat log names, and the weapon's type.
-#[derive(Debug, Clone, Copy)]
-struct Shooter {
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct Shooter {
     reporter: SessionId,
     attacker_ship: i64,
     aggressor_ship: i64,

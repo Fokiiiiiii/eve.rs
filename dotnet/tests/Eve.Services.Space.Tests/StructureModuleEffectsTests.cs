@@ -27,4 +27,25 @@ public sealed class StructureModuleEffectsTests
         Assert.Equal("STRUCTURES_PHASE_3", StructureModuleEffects.StructuresPhase3);
         Assert.NotEqual("UNSUPPORTED_EFFECT", StructureModuleEffects.StructuresPhase3);
     }
+
+    [Fact]
+    public void Structure_targeted_combat_effects_use_the_existing_projected_handlers()
+    {
+        string[] effects =
+        [
+            "structureEnergyNeutralizerFalloff",
+            "structureModuleEffectStasisWebifier",
+            "structureModuleEffectTargetPainter",
+            "structureModuleEffectRemoteSensorDampener",
+            "structureModuleEffectECM",
+            "structureModuleEffectWeaponDisruption",
+            "structureWarpScrambleBlockMWDWithNPCEffect",
+        ];
+
+        foreach (var effect in effects)
+        {
+            Assert.Contains(effect, ModuleEffects.Default.Names, StringComparer.OrdinalIgnoreCase);
+            Assert.Contains(effect, ModuleEffects.Default.ImplementedNames, StringComparer.OrdinalIgnoreCase);
+        }
+    }
 }

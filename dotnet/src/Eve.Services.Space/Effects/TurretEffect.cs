@@ -22,7 +22,7 @@ internal sealed class TurretEffect : ShipEffect
     /// <summary>Gunnery (typeGunnery): a tracking disruptor or computer reaches a turret whose type requires it (FP-10).</summary>
     private const int GunnerySkill = 3300;
 
-    public override IReadOnlyCollection<string> EffectNames { get; } = ["targetAttack", "projectileFired", "targetDisintegratorAttack", "ChainLightning"];
+    public override IReadOnlyCollection<string> EffectNames { get; } = ["targetAttack", "projectileFired", "targetDisintegratorAttack", "ChainLightning", "lightningWeapon"];
 
     protected override bool Handles(ModuleEffectContext module) =>
         module.Type.EffectIds.Select(module.Statics.Effect).Any(e => e is not null && e.Name.Trim().Equals(TurretFitted, StringComparison.OrdinalIgnoreCase));
@@ -66,12 +66,20 @@ internal sealed class TurretEffect : ShipEffect
             NpcArmament.Round6(AttributeOr(attributes, AoeDamageReductionSensitivity, 5.5)));
     }
 
-    /// <summary>A weapon whose module declares a range and a number of targets for its arc chains to them (a vorton projector's arc, after dogma).</summary>
-    private static SimArc? ArcOf(IReadOnlyDictionary<int, double> attributes) =>
-        attributes.TryGetValue(VortonArcRange, out var range) && double.IsFinite(range) && range > 0
-        && attributes.TryGetValue(VortonArcTargets, out var targets) && double.IsFinite(targets) && targets >= 1
-            ? new SimArc(NpcArmament.Round6(range), (int)targets)
-            : null;
+    /// <summary>A ship Vorton uses its Vorton arc attributes; a structure lightning Vorton uses the SDE target, range and per-hop damage-loss attributes.</summary>
+    private static SimArc? ArcOf(IReadOnlyDictionary<int, double> attributes)
+    {
+        var structureLightning = attributes.TryGetValue(VortonArcDamageLossTarget, out var damageLoss);
+        var rangeAttribute = structureLightning ? LightningWeaponTargetRange : VortonArcRange;
+        var targetsAttribute = structureLightning ? LightningWeaponTargetAmount : VortonArcTargets;
+        if (!attributes.TryGetValue(rangeAttribute, out var range) || !double.IsFinite(range) || range <= 0
+            || !attributes.TryGetValue(targetsAttribute, out var targets) || !double.IsFinite(targets) || targets < 1
+            || (structureLightning && (!double.IsFinite(damageLoss) || damageLoss < 0)))
+        {
+            return null;
+        }
+        return new SimArc(NpcArmament.Round6(range), (int)targets, structureLightning ? NpcArmament.Round6(damageLoss) : null);
+    }
 
     private static double AttributeOr(IReadOnlyDictionary<int, double> attributes, int attribute, double fallback) =>
         attributes.TryGetValue(attribute, out var value) && double.IsFinite(value) ? value : fallback;

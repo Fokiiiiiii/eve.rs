@@ -14,7 +14,7 @@ public interface IStructureRulesSource
 public sealed record StructureTimerInfo(long StartedMs, long EndsMs, long PausedMs);
 
 /// <summary>The payload of <see cref="StructureTimers.StateChangedTopic"/>. <c>PreviousState</c>/<c>PreviousUpkeep</c>: what the structure was before the change. <c>Repaired</c>: a repair countdown completed, the simulation must make the layers whole. <c>Removal</c>: "unanchored" or "destroyed" when the structure is gone.</summary>
-public sealed record StructureStateChanged(long StructureId, int SolarSystemId, int State, int Upkeep, StructureTimerInfo Timer, bool Repaired, string? Removal, int PreviousState = 0, int PreviousUpkeep = 0);
+public sealed record StructureStateChanged(long StructureId, int SolarSystemId, int State, int Upkeep, StructureTimerInfo Timer, bool Repaired, string? Removal, int PreviousState = 0, int PreviousUpkeep = 0, StructureUnanchorDrop? UnanchorDrop = null);
 
 /// <summary>The payload of <c>structure.anchored</c> (<c>StructureAnchorAuthority.AnchoredTopic</c>): an Upwell structure was anchored from an item of the pilot's ship.</summary>
 public sealed record StructureAnchored(long StructureId, int SolarSystemId, int TypeId, long OwnerCorporationId);
@@ -40,14 +40,22 @@ public sealed class StructureTimers
     private readonly EventBus _events;
     private readonly IStructureRulesSource _rules;
     private readonly Func<double> _roll;
+    private readonly Func<NpgsqlConnection, NpgsqlTransaction, StructureRecord, CancellationToken, Task<StructureUnanchorDrop>>? _completeUnanchor;
 
-    public StructureTimers(StructureStore store, DurableScheduler scheduler, EventBus events, IStructureRulesSource rules, Func<double>? roll = null)
+    public StructureTimers(
+        StructureStore store,
+        DurableScheduler scheduler,
+        EventBus events,
+        IStructureRulesSource rules,
+        Func<double>? roll = null,
+        Func<NpgsqlConnection, NpgsqlTransaction, StructureRecord, CancellationToken, Task<StructureUnanchorDrop>>? completeUnanchor = null)
     {
         _store = store;
         _scheduler = scheduler;
         _events = events;
         _rules = rules;
         _roll = roll ?? Random.Shared.NextDouble;
+        _completeUnanchor = completeUnanchor;
     }
 
     /// <summary>Registers the job handler. Call it once, before the foundations start.</summary>
@@ -70,15 +78,25 @@ public sealed class StructureTimers
         {
             return null;
         }
-        var rules = _rules.RulesOf(record.TypeId, record.SolarSystemId);
+        var rules = _rules.RulesOf(record.TypeId, record.SolarSystemId) with { AnchoringMs = record.Snapshot.AnchoringMs };
         var transition = StructureStateMachine.Apply(record.Snapshot, rules, e, _scheduler.Now, _roll());
+        StructureUnanchorDrop? unanchorDrop = null;
+        if (transition.Changed && transition.Removal == StructureRemoval.Unanchored && _completeUnanchor is { } complete)
+        {
+            unanchorDrop = await complete(connection, transaction, record, cancellationToken);
+            if (unanchorDrop.HullItemId <= 0 || unanchorDrop.FittingsContainerItemId < 0)
+            {
+                throw new InvalidOperationException($"Structure {structureId} produced invalid unanchor drop item IDs.");
+            }
+        }
         if (transition.Changed)
         {
             await _store.SaveAsync(connection, transaction, transition.Next, cancellationToken);
             var next = transition.Next;
             await _events.PublishInTransactionAsync(connection, transaction, StateChangedTopic,
                 new StructureStateChanged(structureId, record.SolarSystemId, next.State, next.Upkeep, new StructureTimerInfo(next.StateStartedMs, next.StateEndsMs, next.TimerPausedMs),
-                    transition.Repaired, transition.Removal switch { StructureRemoval.Unanchored => "unanchored", StructureRemoval.Destroyed => "destroyed", _ => null }, record.Snapshot.State, record.Snapshot.Upkeep),
+                    transition.Repaired, transition.Removal switch { StructureRemoval.Unanchored => "unanchored", StructureRemoval.Destroyed => "destroyed", _ => null },
+                    record.Snapshot.State, record.Snapshot.Upkeep, unanchorDrop),
                 $"structure:{structureId}", cancellationToken);
         }
         await ScheduleAsync(connection, transaction, transition.Next, rules, cancellationToken);
@@ -139,7 +157,8 @@ public sealed class StructureTimers
         var scheduled = 0;
         foreach (var record in await _store.ListAsync(connection, transaction, false, cancellationToken))
         {
-            if (await ScheduleAsync(connection, transaction, record.Snapshot, _rules.RulesOf(record.TypeId, record.SolarSystemId), cancellationToken))
+            var rules = _rules.RulesOf(record.TypeId, record.SolarSystemId) with { AnchoringMs = record.Snapshot.AnchoringMs };
+            if (await ScheduleAsync(connection, transaction, record.Snapshot, rules, cancellationToken))
             {
                 scheduled++;
             }

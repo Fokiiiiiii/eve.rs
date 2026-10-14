@@ -57,6 +57,7 @@ impl Scene {
         let starts = self
             .pilots
             .iter()
+            .filter(|(session, _)| !self.controlled_structures.contains_key(session))
             .map(|(session, pilot)| {
                 (
                     *session,
@@ -64,7 +65,12 @@ impl Scene {
                 )
             })
             .collect();
-        let sessions: Vec<SessionId> = self.pilots.keys().copied().collect();
+        let sessions: Vec<SessionId> = self
+            .pilots
+            .keys()
+            .copied()
+            .filter(|session| !self.controlled_structures.contains_key(session))
+            .collect();
         for session in sessions {
             self.settle_pilot_after(session, now, 0);
         }

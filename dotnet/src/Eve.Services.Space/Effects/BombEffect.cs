@@ -15,13 +15,14 @@ namespace Eve.Services.Space.Effects;
 internal sealed class BombEffect : ShipEffect
 {
     private const int BombLauncherGroup = 862;
+    private const int StructureGuidedBombLauncherGroup = 1328;
     private const int MissileDamageMultiplier = 212;
     private const int ExplosionDelay = 281;
     private const int BlastRadius = 654;
 
     public override IReadOnlyCollection<string> EffectNames { get; } = [MissileEffect.LauncherEffectName];
 
-    protected override bool Handles(ModuleEffectContext module) => module.Type.GroupId == BombLauncherGroup;
+    protected override bool Handles(ModuleEffectContext module) => module.Type.GroupId is BombLauncherGroup or StructureGuidedBombLauncherGroup;
 
     protected override string? Refusal(ModuleEffectContext module) => Deployables.NoRounds(module);
 

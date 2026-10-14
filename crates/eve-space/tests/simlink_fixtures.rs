@@ -181,6 +181,7 @@ fn turret_of(w: &Value) -> Turret {
         arc: w.get("arc").filter(|a| !a.is_null()).map(|a| Arc {
             range: a["range"].as_f64().unwrap(),
             targets: a["targets"].as_i64().unwrap() as i32,
+            damage_loss_target: a.get("damageLossTarget").and_then(Value::as_f64),
         }),
         requires_gunnery: w["requiresGunnery"].as_bool().unwrap_or_else(|| panic!("requiresGunnery in {w}")),
     }
@@ -236,6 +237,18 @@ fn effect_of(case: &Value) -> Effect {
             };
             let when = if a["when"] == "end" { Applies::CycleEnd } else { Applies::CycleStart };
             let amount = a["amount"].as_f64().unwrap_or(0.0);
+            if a["kind"] == "pointDefense" {
+                let damage = a["damage"].as_array().unwrap();
+                return Action::PointDefense {
+                    range_meters: a["rangeMeters"].as_f64().unwrap(),
+                    damage: [
+                        damage[0].as_f64().unwrap(),
+                        damage[1].as_f64().unwrap(),
+                        damage[2].as_f64().unwrap(),
+                        damage[3].as_f64().unwrap(),
+                    ],
+                };
+            }
             if a["kind"] == "smartbomb" {
                 let damage = a["damage"].as_array().unwrap();
                 return Action::Smartbomb {
@@ -707,7 +720,7 @@ fn beacon_state(state: &Value) -> eve_space::link::AnalysisBeaconState {
 }
 
 fn message_of(case: &Value) -> Message {
-    let number = |field: &str| case[field].as_u64().unwrap_or_else(|| panic!("{field} in {case}"));
+    let number = |field: &str| case[field].as_u64().or_else(|| case[field].as_str().and_then(|value| value.parse::<u64>().ok())).unwrap_or_else(|| panic!("{field} in {case}"));
     let session_id = || wide(case, "sessionId") as u64;
     match case["kind"].as_str().unwrap() {
         "Hello" => Message::Hello { version: number("version") as u16 },
@@ -980,6 +993,7 @@ fn message_of(case: &Value) -> Message {
             lifetime_ms: case["lifetimeMs"].as_f64().unwrap(),
         })),
         "RemoveDeployed" => Message::RemoveDeployed { deployable_id: wide(case, "deployableId") },
+        "RemoveCynoBeacon" => Message::RemoveCynoBeacon { solar_system_id: number("solarSystemId") as i32, structure_beacon_id: wide(case, "structureBeaconId") },
         "PlaceProbe" => Message::PlaceProbe(Box::new(eve_space::link::ProbePlacement {
             probe_id: wide(case, "probeId"),
             solar_system_id: number("solarSystemId") as i32,
@@ -1066,12 +1080,48 @@ fn message_of(case: &Value) -> Message {
             structure_id: wide(case, "structureId"),
             status: status_of(&case["status"]),
         },
+        "DamageableEntityUpserted" => Message::DamageableEntityUpserted {
+            solar_system_id: number("solarSystemId") as i32,
+            entity_id: wide(case, "entityId"),
+            type_id: number("typeId") as i32,
+            owner_id: wide(case, "ownerId"),
+            corporation_id: wide(case, "corporationId"),
+            alliance_id: wide(case, "allianceId"),
+            war_faction_id: wide(case, "warFactionId"),
+        },
+        "DamageableEntityRemoved" => Message::DamageableEntityRemoved {
+            solar_system_id: number("solarSystemId") as i32,
+            entity_id: wide(case, "entityId"),
+        },
+        "StructureDamageCandidatesRequest" => Message::StructureDamageCandidatesRequest {
+            session_id: session_id(),
+            structure_id: wide(case, "structureId"),
+            module_id: wide(case, "moduleId"),
+            effect_id: number("effectId") as i32,
+            activation_nonce: number("activationNonce"),
+            control_lease_generation: wide(case, "controlLeaseGeneration"),
+            cycle_id: number("cycleId"),
+            pulse_hop_ordinal: number("pulseHopOrdinal") as u32,
+            candidate_ids: case["candidateIds"].as_array().unwrap().iter().map(|id| id.as_str().unwrap().parse().unwrap()).collect(),
+        },
+        "StructureDamageCandidatesResult" => Message::StructureDamageCandidatesResult {
+            session_id: session_id(),
+            structure_id: wide(case, "structureId"),
+            module_id: wide(case, "moduleId"),
+            effect_id: number("effectId") as i32,
+            activation_nonce: number("activationNonce"),
+            control_lease_generation: wide(case, "controlLeaseGeneration"),
+            cycle_id: number("cycleId"),
+            pulse_hop_ordinal: number("pulseHopOrdinal") as u32,
+            allowed_target_ids: case["allowedTargetIds"].as_array().unwrap().iter().map(|id| id.as_str().unwrap().parse().unwrap()).collect(),
+        },
         "ControlStructure" => Message::ControlStructure {
             session_id: session_id(),
             solar_system_id: number("solarSystemId") as i32,
             structure_id: wide(case, "structureId"),
             character_id: wide(case, "characterId"),
             active: case["active"].as_bool().unwrap(),
+            control_lease_generation: wide(case, "controlLeaseGeneration"),
         },
         "PlaceDisruptor" => Message::PlaceDisruptor(Box::new(eve_space::link::DisruptorPlacement {
             deployable_id: wide(case, "deployableId"),
@@ -1526,10 +1576,11 @@ fn control_structure_frames_validate_ids_and_boolean() {
         structure_id: 42,
         character_id: 9001,
         active: true,
+        control_lease_generation: 19,
     };
     let frame = active.encode();
-    assert_eq!(frame.len(), 34);
-    assert_eq!(u32::from_le_bytes(frame[..4].try_into().unwrap()), 30);
+    assert_eq!(frame.len(), 42);
+    assert_eq!(u32::from_le_bytes(frame[..4].try_into().unwrap()), 38);
     let valid = frame[4..].to_vec();
     assert_eq!(valid[0], eve_space::link::kind::CONTROL_STRUCTURE);
     assert_eq!(Message::decode(&valid).unwrap(), active);
@@ -1537,7 +1588,7 @@ fn control_structure_frames_validate_ids_and_boolean() {
     let mut bad_flag = valid.clone();
     bad_flag[29] = 2;
     assert!(Message::decode(&bad_flag).is_err());
-    for (start, end) in [(1, 9), (9, 13), (13, 21), (21, 29)] {
+    for (start, end) in [(1, 9), (9, 13), (13, 21), (21, 29), (30, 38)] {
         let mut invalid = valid.clone();
         invalid[start..end].fill(0);
         assert!(Message::decode(&invalid).is_err());
@@ -1558,11 +1609,15 @@ fn control_structure_frames_validate_ids_and_boolean() {
         structure_id: 0,
         character_id: 0,
         active: false,
+        control_lease_generation: 0,
     };
     assert_eq!(Message::decode(&inactive.encode()[4..]).unwrap(), inactive);
     let mut invalid_release = inactive.encode()[4..].to_vec();
     invalid_release[21..29].copy_from_slice(&(-1_i64).to_le_bytes());
     assert!(Message::decode(&invalid_release).is_err());
+    let mut invalid_generation = inactive.encode()[4..].to_vec();
+    invalid_generation[30..38].copy_from_slice(&(-1_i64).to_le_bytes());
+    assert!(Message::decode(&invalid_generation).is_err());
 }
 
 /// A structure's slim fields from its fixture: a timer is `[start, end, paused or null]`.

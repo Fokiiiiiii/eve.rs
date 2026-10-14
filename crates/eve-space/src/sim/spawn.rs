@@ -34,17 +34,20 @@ impl Sim {
                 messages
             }
             Err(SceneError::UnknownStation(station)) => {
-                if scene.is_empty() {
-                    self.scenes.remove(&solar_system_id);
+                let mut messages = reply(Err(format!("UNKNOWN_STATION {station}")));
+                if scene.is_empty()
+                    && let Some(mut scene) = self.scenes.remove(&solar_system_id)
+                {
+                    messages.extend(Self::messages(scene.take_sim_damageable_entity_removals()));
                 }
-                reply(Err(format!("UNKNOWN_STATION {station}")))
+                messages
             }
             Err(SceneError::AlreadyInSpace(_)) => reply(Err(format!("ALREADY_IN_SPACE {session_id}"))),
             Err(SceneError::NotDestroyed(_)) => reply(Err(format!("NOT_DESTROYED {session_id}"))),
         }
     }
 
-    pub(super) fn forget(&mut self, session: SessionId) {
+    pub(super) fn forget(&mut self, session: SessionId) -> Vec<Out> {
         let system = self.sessions.remove(&session).or_else(|| {
             let system = self.widowed.remove(&session)?;
             if let Some(scene) = self.scenes.get_mut(&system) {
@@ -54,9 +57,11 @@ impl Sim {
         });
         if let Some(system) = system
             && self.scenes.get(&system).is_some_and(Scene::is_empty)
+            && let Some(mut scene) = self.scenes.remove(&system)
         {
-            self.scenes.remove(&system);
+            return scene.take_sim_damageable_entity_removals();
         }
+        Vec::new()
     }
 
     /// A player whose ship was destroyed is not in space any more; its scene keeps its ballpark until the host gives it a capsule (`Respawn`) or it leaves.
@@ -172,16 +177,16 @@ impl Sim {
         }
     }
 
-    /// What is due at `now`: ships that finished docking leave their scenes, ships whose jump is due arrive in the scene of the other system,
-    /// and ships that have come into view or left it are told of one another.
     pub fn poll(&mut self, now: i64) -> Vec<Message> {
-        let outs: Vec<Out> = self.scenes.values_mut().flat_map(|scene| scene.poll(now)).collect();
+        let mut outs: Vec<Out> = self.scenes.values_mut().flat_map(|scene| scene.poll(now)).collect();
+        let mut teardown = Vec::new();
         for out in &outs {
             if let Out::Docked { session, .. } = out {
-                self.forget(*session);
+                teardown.extend(self.forget(*session));
             }
         }
         self.forget_the_destroyed(&outs);
+        outs.extend(teardown);
         let mut messages: Vec<Message> = Self::messages(outs);
         let mut travellers: Vec<Traveller> = Vec::new();
         for scene in self.scenes.values_mut() {
@@ -192,12 +197,19 @@ impl Sim {
         for traveller in travellers {
             messages.extend(self.arrive(traveller, now));
         }
-        self.scenes.retain(|_, scene| !scene.is_empty());
+        let empty_systems: Vec<i32> = self
+            .scenes
+            .iter()
+            .filter_map(|(system_id, scene)| scene.is_empty().then_some(*system_id))
+            .collect();
+        for system_id in empty_systems {
+            if let Some(mut scene) = self.scenes.remove(&system_id) {
+                messages.extend(Self::messages(scene.take_sim_damageable_entity_removals()));
+            }
+        }
         messages
     }
 
-    /// A ship whose jump is due appears at the gate it leads to (the scene of that system is made when it has none): the host is told it has
-    /// gone. A jump that cannot be finished leaves the ship where it was, and the host is told the command was refused.
     pub(super) fn arrive(&mut self, traveller: Traveller, now: i64) -> Vec<Message> {
         let (session, from_system, from_gate, to_system, to_gate) = (
             traveller.session,
@@ -228,10 +240,18 @@ impl Sim {
                 messages
             }
             Err(traveller) => {
-                if scene.is_empty() {
-                    self.scenes.remove(&to_system);
-                }
-                failed(self, *traveller)
+                let should_remove = scene.is_empty();
+                let mut removals = if should_remove {
+                    self.scenes
+                        .remove(&to_system)
+                        .map(|mut scene| Self::messages(scene.take_sim_damageable_entity_removals()))
+                        .unwrap_or_default()
+                } else {
+                    Vec::new()
+                };
+                let mut messages = failed(self, *traveller);
+                messages.append(&mut removals);
+                messages
             }
         }
     }

@@ -65,8 +65,15 @@ impl StructureHealth {
 
     /// The same authoritative layers, in the host's Command 19 condition format.
     pub fn condition_at(&self, now: i64) -> Condition {
-        // shortcut: structure capacitor stays full until ST-8 adds its module runtime.
-        Condition { charge: 1.0, ..self.health.condition_at(now) }
+        self.health.condition_at(now)
+    }
+
+    pub(crate) fn health_snapshot(&self) -> Health {
+        self.health.clone()
+    }
+
+    pub(crate) fn replace_health_from_controlled_modules(&mut self, health: Health) {
+        self.health = health;
     }
 
     /// A hit of `raw` damage at `now`, cut to what the layer it lands in may still take this second. `None` when the structure has nothing to hurt.

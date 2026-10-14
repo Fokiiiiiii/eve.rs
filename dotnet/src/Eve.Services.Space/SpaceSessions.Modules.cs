@@ -83,14 +83,23 @@ public sealed partial class SpaceSessions
                 if (target is not null)
                     CancelSafeLogoff(target.Session);
             }
-            EndInvulnerability(pilot);
-            session.SendNotification("OnInvulnCancelled", "shipid", InventoryWire.Id(pilot.ShipId));
+            if (!IsStructureObserver(session))
+            {
+                EndInvulnerability(pilot);
+                session.SendNotification("OnInvulnCancelled", "shipid", InventoryWire.Id(pilot.ShipId));
+            }
         }
         return new TargetingResult(true, reply.Pending, reply.Targets);
     }
 
     /// <summary>The name of the effect an effect id of the static data names (the superweapon route names the effect by its id), or null when there is none.</summary>
     public string? EffectNameOf(long effectId) => effectId is > 0 and <= int.MaxValue ? _statics.Effect((int)effectId)?.Name : null;
+
+    /// <summary>Reads the current, controlled structure fit through its authoritative owner and control lease.</summary>
+    public Func<ClientSession, ShipSnapshot, CancellationToken, ValueTask<ShipSnapshot?>>? StructureDogmaOf { get; set; }
+
+    /// <summary>Resolves attack legality from the structure owner's corporation, never the controlling character.</summary>
+    public Func<long, long, CancellationToken, Task<WeaponTargetContext>>? StructureWeaponTargetContextOf { get; set; }
 
     /// <summary>
     /// Starts an effect of a module. The dogma engine works out the package (the cycle, its cost, the ship's numbers with and without the effect) and the
@@ -101,18 +110,19 @@ public sealed partial class SpaceSessions
     /// </summary>
     public async Task<ModuleResult?> ActivateAsync(ClientSession session, long moduleId, string effectName, long targetId, int repeat, CancellationToken cancellationToken, IReadOnlyList<double>? aim = null, IReadOnlyList<double>? aimEnd = null)
     {
-        CancelSafeLogoff(session);
         var id = (ulong)session.SessionId;
         if (!_pilots.TryGetValue(id, out var pilot) || session.CharacterId is not { } characterId)
         {
-            return null;
+            return IsStructureObserver(session) ? ModuleResult.Refusal("REFUSED") : null;
         }
-        // a gun is started with the rounds it has left: what was spent a moment ago is written first
-        await _charges.FlushAsync(id).ConfigureAwait(false);
-        if (await FlownShipAsync(pilot, cancellationToken) is not { } snapshot)
+        var structureObserver = IsStructureObserver(session);
+        if (await ModuleShipAsync(pilot, cancellationToken) is not { } snapshot)
         {
-            return null;
+            return structureObserver || session.GetInt("shipid") != pilot.ShipId ? ModuleResult.Refusal("REFUSED") : null;
         }
+        CancelSafeLogoff(session);
+        // A gun uses the rounds from the previous accepted cycles, written before its next start.
+        await _charges.FlushAsync(id).ConfigureAwait(false);
         // a module under nanite repair does not run (the EVE University wiki, Overheating)
         if (pilot.Repairs.ContainsKey(moduleId) && snapshot.Fitted.FirstOrDefault(m => m.Id == moduleId) is { } repairing)
         {
@@ -170,7 +180,7 @@ public sealed partial class SpaceSessions
         // a transport field carries the capsuleer ships of the system and holds the capitals among them: the host lists them (the ships of a system are its own)
         await _statics.EnsureTypesAsync(_pilots.Values.Select(other => other.TypeId), cancellationToken).ConfigureAwait(false);
         var neighbours = _pilots.Values
-            .Where(other => other.ShipId != pilot.ShipId && other.SolarSystemId == pilot.SolarSystemId)
+            .Where(other => other.Session.SessionId != session.SessionId && other.SolarSystemId == pilot.SolarSystemId)
             .Select(other => new TransportNeighbour(other.ShipId, _statics.Type(other.TypeId) is { } type && ShipSnapshot.CapitalGroupIds.Contains(type.GroupId)))
             .ToList();
         var made = ModulePackages.Of(snapshot.WithNeighbours(neighbours), _statics, moduleId, effectName, targetId, repeat, aim, aimEnd, AutoReloadsOf(pilot));
@@ -312,9 +322,15 @@ public sealed partial class SpaceSessions
             }
         }
 
+        // Structure legality is target-specific; untargeted effects cannot safely authorize every entity they reach.
+        if (structureObserver && package.Action is (SimAction.Smartbomb or SimAction.EcmBurst or SimAction.Bomb))
+        {
+            return ModuleResult.Refusal(WeaponSafety.Refusal, made.ModuleType, made.ModuleName);
+        }
+
         // an ECM burst jams friends too and draws CONCORD in high security space, so it is not activated there unless the pilot's safety is set to none (red)
         // (EVE University wiki, Electronic Countermeasures; EVE.js refuses only the smartbomb here)
-        if (package.Action is SimAction.EcmBurst && securityClass is { } burstWhere && Security.IsHighSecOrHigher(burstWhere))
+        if (!structureObserver && package.Action is SimAction.EcmBurst && securityClass is { } burstWhere && Security.IsHighSecOrHigher(burstWhere))
         {
             var burstSafety = SafetyLevelOf is { } askSafety ? await askSafety(characterId, cancellationToken) : SafetyLevel.Full;
             if (burstSafety != SafetyLevel.None)
@@ -323,12 +339,19 @@ public sealed partial class SpaceSessions
             }
         }
 
-        // the safety of the pilot: a weapon is not started at the ship of another pilot where that would be a crime the safety the pilot has set does not allow
+        // Structure safety is always green, and its attack authority belongs to its owner corporation rather than the ACL controller.
         var attack = IsOffensive(package);
-        var victim = attack && targetPilot is { CharacterId: > 0 } && targetPilot.CharacterId != characterId
+        var victim = !structureObserver && attack && targetPilot is { CharacterId: > 0 } && targetPilot.CharacterId != characterId
             ? targetPilot
             : null;
-        if (securityClass is { } empire && (attack || package.Action is SimAction.Smartbomb))
+        if (structureObserver && attack && targetPilot is { CharacterId: > 0 } structureTarget
+            && (securityClass is not { } structureSecurity
+                || !await StructureAllowsAttackAsync(snapshot, structureTarget, structureSecurity, cancellationToken)))
+        {
+            return ModuleResult.Refusal(WeaponSafety.Refusal, made.ModuleType, made.ModuleName);
+        }
+        // A structure controller never records personal crimewatch flags; the owner-corporation legality gate above still applies.
+        if (!structureObserver && securityClass is { } empire && (attack || package.Action is SimAction.Smartbomb))
         {
             var level = SafetyLevelOf is { } ask ? await ask(characterId, cancellationToken) : SafetyLevel.Full;
             if (victim is not null)
@@ -367,6 +390,22 @@ public sealed partial class SpaceSessions
         }
         // the module is marked active while its start is pending: a start the simulation parks for the host (a fuel ask, a P.A.N.I.C.'s grant) asks the host
         // whether the module runs, and its answer comes only when the start is accepted (track C6); a refused start is unmarked below
+        var chargeOwnerTrackedHere = false;
+        var structureModuleTrackedHere = false;
+        if (structureObserver)
+        {
+            var fittedModule = snapshot.Fitted.FirstOrDefault(item => item.Id == moduleId);
+            if (snapshot.Ship.OwnerId <= 0 || fittedModule is null || fittedModule.OwnerId != snapshot.Ship.OwnerId)
+            {
+                return ModuleResult.Refusal("REFUSED", made.ModuleType, made.ModuleName);
+            }
+            if (pilot.ModuleChargeOwners.TryGetValue(moduleId, out var previousOwner) && previousOwner != fittedModule.OwnerId)
+            {
+                return ModuleResult.Refusal("REFUSED", made.ModuleType, made.ModuleName);
+            }
+            chargeOwnerTrackedHere = pilot.ModuleChargeOwners.TryAdd(moduleId, fittedModule.OwnerId);
+            structureModuleTrackedHere = pilot.StructureModuleIds.TryAdd(moduleId, 0);
+        }
         var markedHere = pilot.ActiveModules.TryAdd(moduleId, ItemState.Active);
         CommandReply reply;
         try
@@ -375,6 +414,7 @@ public sealed partial class SpaceSessions
         }
         catch
         {
+            // A cancelled or lost SIM reply is ambiguous; retain owner tracking so a late charge event cannot fall back to the controller.
             if (markedHere)
             {
                 pilot.ActiveModules.TryRemove(moduleId, out _);
@@ -383,6 +423,10 @@ public sealed partial class SpaceSessions
         }
         if (!reply.Accepted)
         {
+            if (chargeOwnerTrackedHere)
+                pilot.ModuleChargeOwners.TryRemove(moduleId, out _);
+            if (structureModuleTrackedHere)
+                pilot.StructureModuleIds.TryRemove(moduleId, out _);
             if (markedHere)
             {
                 pilot.ActiveModules.TryRemove(moduleId, out _);
@@ -404,7 +448,8 @@ public sealed partial class SpaceSessions
             await analyzerOpen.OpenAnalyzerAttemptAsync(session, characterId, targetId, AnalyzerValuesOf(snapshot, moduleId, made.ModuleType), cancellationToken);
         }
         // a module that may run in a gate cloak (canActivateInGateCloak: the warp core stabilizers and interdiction nullifiers) keeps the cloak of a jump
-        EndInvulnerability(pilot, keepsJumpCloak: snapshot.World.Get(moduleId, ModuleAttributes.CanActivateInGateCloak) > 0);
+        if (!structureObserver)
+            EndInvulnerability(pilot, keepsJumpCloak: snapshot.World.Get(moduleId, ModuleAttributes.CanActivateInGateCloak) > 0);
         if (assistanceRequest is { } remoteRequest && recordAssistance is { } recordRemoteAssistance)
         {
             try
@@ -497,6 +542,28 @@ public sealed partial class SpaceSessions
         }
     }
 
+    private async Task<bool> StructureAllowsAttackAsync(
+        ShipSnapshot structure, Pilot target, SecurityClass securityClass, CancellationToken cancellationToken)
+    {
+        if (structure.Ship.OwnerId <= 0 || StructureWeaponTargetContextOf is not { } read)
+            return false;
+
+        var targetIsCapsule = await IsCapsuleAsync(target, securityClass, cancellationToken);
+        try
+        {
+            var facts = await read(structure.Ship.OwnerId, target.CharacterId, cancellationToken);
+            if (!facts.AttackerIsPlayer || !facts.TargetIsPlayerProperty)
+                return false;
+            facts = facts with { TargetIsCapsule = targetIsCapsule, SamePilot = false };
+            return !WeaponSafety.StopsFire(securityClass, SafetyLevel.Full, facts);
+        }
+        catch (Exception error) when (error is not OperationCanceledException)
+        {
+            _log?.Invoke($"structure weapon legality for owner {structure.Ship.OwnerId} -> {target.CharacterId} failed: {error.Message}");
+            return false;
+        }
+    }
+
     /// <summary>
     /// The attack an ECM burst makes on each pilot it reached: the same record as a module started at the ship of another pilot (EVE.js records the aggression on
     /// every ship a burst reaches, before its roll). A reached ship that is not a pilot's (an NPC's) is not recorded.
@@ -550,22 +617,30 @@ public sealed partial class SpaceSessions
     public async Task<ModuleResult?> DeactivateAsync(ClientSession session, long moduleId, string effectName, CancellationToken cancellationToken)
     {
         var id = (ulong)session.SessionId;
-        if (!_pilots.TryGetValue(id, out var pilot) || session.CharacterId is not { } characterId)
+        if (!_pilots.TryGetValue(id, out var pilot) || session.CharacterId is null)
         {
-            return null;
+            return IsStructureObserver(session) ? ModuleResult.Refusal("REFUSED") : null;
         }
-        var snapshot = await FlownShipAsync(pilot, cancellationToken);
-        var module = snapshot?.Fitted.FirstOrDefault(m => m.Id == moduleId);
+        var structureObserver = IsStructureObserver(session);
+        var snapshot = await ModuleShipAsync(pilot, cancellationToken);
+        if (snapshot is null)
+        {
+            return structureObserver || session.GetInt("shipid") != pilot.ShipId ? ModuleResult.Refusal("REFUSED") : null;
+        }
+        var module = snapshot.Fitted.FirstOrDefault(item => item.Id == moduleId);
+        if (structureObserver && (snapshot.Ship.OwnerId <= 0 || module is null || module.OwnerId != snapshot.Ship.OwnerId))
+        {
+            return ModuleResult.Refusal("REFUSED");
+        }
         var type = module is null ? null : _statics.Type(module.TypeId);
         var reply = await AskSimAsync(id, () => _sim.CommandAsync(id, SimCommands.Deactivate, [moduleId], cancellationToken), session);
         if (reply.Accepted)
         {
             Eve.Services.Space.Effects.ProjectedEffect.MutadaptiveSpool.StopAfterCurrentCycle(moduleId);
-            // the simulation ends the effect at the end of its cycle; the host takes the module out of its numbers now, and the ship is sent again
             if (pilot.ActiveModules.TryRemove(moduleId, out _))
                 AnnounceModeChange(pilot, snapshot, moduleId, started: false);
             pilot.RunningModules.TryRemove(moduleId, out _);
-            await SendShipAsync(id, pilot, snapshot is null ? null : SimShips.VitalsOf(snapshot), cancellationToken);
+            await SendShipAsync(id, pilot, SimShips.VitalsOf(snapshot), cancellationToken);
             await RefreshRunningAsync(pilot, id, cancellationToken).ConfigureAwait(false);
         }
         return reply.Accepted ? ModuleResult.Done : ModuleResult.Refusal(reply.Reason == "NOT_ACTIVE" ? "MODULE_NOT_ACTIVE" : reply.Reason ?? "REFUSED", module?.TypeId ?? 0, type?.Name ?? "");
@@ -592,6 +667,35 @@ public sealed partial class SpaceSessions
         {
             Announce(started ? ShipModeTopics.SiegeEntered : ShipModeTopics.SiegeLeft, payload, key);
         }
+    }
+
+    private async Task<ShipSnapshot?> ModuleShipAsync(Pilot pilot, CancellationToken cancellationToken)
+    {
+        if (!IsStructureObserver(pilot.Session))
+        {
+            if (pilot.Session.GetInt("shipid") != pilot.ShipId) return null;
+            return await FlownShipAsync(pilot, cancellationToken);
+        }
+
+        if (pilot.Session.CharacterId != pilot.CharacterId
+            || pilot.Session.GetInt("shipid") is not { } structureId
+            || pilot.Session.GetInt("structureid") != structureId
+            || StructureDogmaOf is not { } read
+            || await _ships.LoadAsync(pilot.CharacterId, cancellationToken) is not { } personal
+            || personal.Character.Id != pilot.CharacterId
+            || await read(pilot.Session, personal, cancellationToken) is not { } snapshot
+            || snapshot.Character.Id != pilot.CharacterId
+            || snapshot.Ship.Id != structureId
+            || _statics.CategoryId("Structure") is not { } structureCategory
+            || _statics.Type(snapshot.Ship.TypeId)?.CategoryId != structureCategory)
+            return null;
+
+        var fittedIds = snapshot.Fitted.Select(module => module.Id).ToHashSet();
+        foreach (var (moduleId, state) in pilot.ActiveModules)
+            if (fittedIds.Contains(moduleId))
+                snapshot.World.SetState(moduleId, state);
+
+        return snapshot;
     }
 
     private async Task<ShipSnapshot?> FlownShipAsync(Pilot pilot, CancellationToken cancellationToken)
@@ -642,7 +746,7 @@ public sealed partial class SpaceSessions
     /// </summary>
     private async Task SendShipAsync(ulong sessionId, Pilot pilot, SimVitals? before, CancellationToken cancellationToken)
     {
-        if (!_sim.IsConnected || await FlownShipAsync(pilot, cancellationToken) is not { } snapshot)
+        if (!_sim.IsConnected || await ModuleShipAsync(pilot, cancellationToken) is not { } snapshot)
         {
             return;
         }
@@ -650,7 +754,10 @@ public sealed partial class SpaceSessions
         {
             return;
         }
-        _sim.ShipChanged(sessionId, SimShips.Of(snapshot, _statics, await SecurityStatusAsync(pilot.CharacterId, cancellationToken)));
+        var securityStatus = IsStructureObserver(pilot.Session)
+            ? 0
+            : await SecurityStatusAsync(pilot.CharacterId, cancellationToken);
+        _sim.ShipChanged(sessionId, SimShips.Of(snapshot, _statics, securityStatus));
     }
 
     /// <summary>Whether two ships take and resist the same (the lists are compared by value; a record's equality would compare them by reference).</summary>
@@ -680,15 +787,34 @@ public sealed partial class SpaceSessions
     }
 
     /// <inheritdoc/>
-    public Task RefreshShipAsync(ClientSession session, CancellationToken cancellationToken) =>
-        _pilots.TryGetValue((ulong)session.SessionId, out var pilot)
-            ? SendShipAsync((ulong)session.SessionId, pilot, null, cancellationToken)
-            : Task.CompletedTask;
+    public async Task RefreshShipAsync(ClientSession session, CancellationToken cancellationToken)
+    {
+        var id = (ulong)session.SessionId;
+        if (!_pilots.TryGetValue(id, out var pilot))
+        {
+            return;
+        }
+        if (IsStructureObserver(session))
+        {
+            // Isolated SpaceSessions fixtures do not compose the Host read model.
+            if (StructureDogmaOf is null)
+                return;
+            if (!_sim.IsConnected)
+                throw new Eve.Space.SimUnavailableException("the simulation is not running");
+            if (await ModuleShipAsync(pilot, cancellationToken) is not { } structure)
+                throw Notify("The controlled structure could not be loaded.");
+            _sim.ShipChanged(id, SimShips.Of(structure, _statics, 0));
+            return;
+        }
+        await SendShipAsync(id, pilot, null, cancellationToken);
+    }
 
     public async Task<ModuleResult?> OfflineAsync(ClientSession session, long moduleId, CancellationToken cancellationToken)
     {
         var id = (ulong)session.SessionId;
         if (!_pilots.TryGetValue(id, out var pilot)) return null;
+        if (IsStructureObserver(session) || session.GetInt("shipid") != pilot.ShipId)
+            return ModuleResult.Refusal("REFUSED");
         if (!_sim.IsConnected) return ModuleResult.Refusal("SIM_UNAVAILABLE");
         var snapshot = await FlownShipAsync(pilot, cancellationToken);
         if (snapshot is not null)
@@ -706,6 +832,8 @@ public sealed partial class SpaceSessions
     {
         var id = (ulong)session.SessionId;
         if (!_pilots.TryGetValue(id, out var overheating) || session.CharacterId is not { } characterId) return null;
+        if (IsStructureObserver(session) || session.GetInt("shipid") != overheating.ShipId)
+            return ModuleResult.Refusal("REFUSED");
         if (!_sim.IsConnected) return ModuleResult.Refusal("SIM_UNAVAILABLE");
 
         var snapshot = await _ships.LoadAsync(characterId, cancellationToken);
@@ -733,6 +861,8 @@ public sealed partial class SpaceSessions
     {
         var id = (ulong)session.SessionId;
         if (!_pilots.TryGetValue(id, out var pilot)) return null;
+        if (IsStructureObserver(session) || session.GetInt("shipid") != pilot.ShipId)
+            return ModuleResult.Refusal("REFUSED");
         if (!_sim.IsConnected) return ModuleResult.Refusal("SIM_UNAVAILABLE");
         if (session.CharacterId is not { } characterId) return ModuleResult.Refusal("NO_SHIP_IN_SPACE");
 
@@ -779,7 +909,7 @@ public sealed partial class SpaceSessions
     public async Task<bool> HealAsync(ClientSession session, CancellationToken cancellationToken)
     {
         var id = (ulong)session.SessionId;
-        if (!_pilots.ContainsKey(id))
+        if (!_pilots.TryGetValue(id, out var pilot) || IsStructureObserver(session) || session.GetInt("shipid") != pilot.ShipId)
         {
             return false;
         }

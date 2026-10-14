@@ -1,5 +1,36 @@
 use super::*;
 
+fn write_structure_damage_correlation(
+    out: &mut Vec<u8>,
+    session_id: u64,
+    structure_id: i64,
+    module_id: i64,
+    effect_id: i32,
+    activation_nonce: u64,
+    control_lease_generation: i64,
+    cycle_id: u64,
+    pulse_hop_ordinal: u32,
+) {
+    out.extend_from_slice(&session_id.to_le_bytes());
+    out.extend_from_slice(&structure_id.to_le_bytes());
+    out.extend_from_slice(&module_id.to_le_bytes());
+    out.extend_from_slice(&effect_id.to_le_bytes());
+    out.extend_from_slice(&activation_nonce.to_le_bytes());
+    out.extend_from_slice(&control_lease_generation.to_le_bytes());
+    out.extend_from_slice(&cycle_id.to_le_bytes());
+    out.extend_from_slice(&pulse_hop_ordinal.to_le_bytes());
+}
+
+fn write_structure_damage_ids(out: &mut Vec<u8>, ids: &[i64]) {
+    assert!(ids.len() <= MAX_STRUCTURE_DAMAGE_CANDIDATES, "structure-damage ID list exceeds wire limit");
+    let mut seen = std::collections::HashSet::with_capacity(ids.len());
+    assert!(ids.iter().all(|id| *id > 0 && seen.insert(*id)), "structure-damage IDs must be positive and unique");
+    out.extend_from_slice(&(ids.len() as u32).to_le_bytes());
+    for id in ids {
+        out.extend_from_slice(&id.to_le_bytes());
+    }
+}
+
 impl Message {
     /// The frame's payload: the kind and the body, without the length prefix.
     pub fn payload(&self) -> Vec<u8> {
@@ -44,12 +75,13 @@ impl Message {
             Self::Bind { session_id } | Self::UpdateState { session_id } => {
                 out.extend_from_slice(&session_id.to_le_bytes())
             }
-            Self::ControlStructure { session_id, solar_system_id, structure_id, character_id, active } => {
+            Self::ControlStructure { session_id, solar_system_id, structure_id, character_id, active, control_lease_generation } => {
                 out.extend_from_slice(&session_id.to_le_bytes());
                 out.extend_from_slice(&solar_system_id.to_le_bytes());
                 out.extend_from_slice(&structure_id.to_le_bytes());
                 out.extend_from_slice(&character_id.to_le_bytes());
                 out.push(u8::from(*active));
+                out.extend_from_slice(&control_lease_generation.to_le_bytes());
             }
             Self::Command { session_id, command, args } => {
                 out.extend_from_slice(&session_id.to_le_bytes());
@@ -263,6 +295,26 @@ impl Message {
                 put_text(&mut out, reason);
                 out.extend_from_slice(&amount.to_le_bytes());
             }
+            Self::StructureDamageCandidatesRequest {
+                session_id, structure_id, module_id, effect_id, activation_nonce, control_lease_generation, cycle_id,
+                pulse_hop_ordinal, candidate_ids,
+            } => {
+                assert!(*session_id > 0 && *structure_id > 0 && *module_id > 0 && *effect_id > 0 && *activation_nonce > 0
+                    && *control_lease_generation > 0 && *cycle_id > 0, "invalid structure-damage correlation");
+                write_structure_damage_correlation(&mut out, *session_id, *structure_id, *module_id, *effect_id, *activation_nonce,
+                    *control_lease_generation, *cycle_id, *pulse_hop_ordinal);
+                write_structure_damage_ids(&mut out, candidate_ids);
+            }
+            Self::StructureDamageCandidatesResult {
+                session_id, structure_id, module_id, effect_id, activation_nonce, control_lease_generation, cycle_id,
+                pulse_hop_ordinal, allowed_target_ids,
+            } => {
+                assert!(*session_id > 0 && *structure_id > 0 && *module_id > 0 && *effect_id > 0 && *activation_nonce > 0
+                    && *control_lease_generation > 0 && *cycle_id > 0, "invalid structure-damage correlation");
+                write_structure_damage_correlation(&mut out, *session_id, *structure_id, *module_id, *effect_id, *activation_nonce,
+                    *control_lease_generation, *cycle_id, *pulse_hop_ordinal);
+                write_structure_damage_ids(&mut out, allowed_target_ids);
+            }
             Self::ModuleWorkCycle {
                 session_id,
                 character_id,
@@ -422,6 +474,26 @@ impl Message {
                 out.extend_from_slice(&placement.lifetime_ms.to_le_bytes());
             }
             Self::RemoveDeployed { deployable_id } => out.extend_from_slice(&deployable_id.to_le_bytes()),
+                    Self::RemoveCynoBeacon { solar_system_id, structure_beacon_id } => {
+                        out.extend_from_slice(&solar_system_id.to_le_bytes());
+                        out.extend_from_slice(&structure_beacon_id.to_le_bytes());
+                    }
+            Self::DamageableEntityUpserted { solar_system_id, entity_id, type_id, owner_id, corporation_id, alliance_id, war_faction_id } => {
+                assert!(*solar_system_id > 0 && *entity_id > 0 && *type_id > 0 && *owner_id >= 0
+                    && *corporation_id >= 0 && *alliance_id >= 0 && *war_faction_id >= 0, "invalid damageable entity identity");
+                out.extend_from_slice(&solar_system_id.to_le_bytes());
+                out.extend_from_slice(&entity_id.to_le_bytes());
+                out.extend_from_slice(&type_id.to_le_bytes());
+                out.extend_from_slice(&owner_id.to_le_bytes());
+                out.extend_from_slice(&corporation_id.to_le_bytes());
+                out.extend_from_slice(&alliance_id.to_le_bytes());
+                out.extend_from_slice(&war_faction_id.to_le_bytes());
+            }
+            Self::DamageableEntityRemoved { solar_system_id, entity_id } => {
+                assert!(*solar_system_id > 0 && *entity_id > 0, "invalid damageable entity removal");
+                out.extend_from_slice(&solar_system_id.to_le_bytes());
+                out.extend_from_slice(&entity_id.to_le_bytes());
+            }
             Self::PlaceProbe(probe) => {
                 out.extend_from_slice(&probe.probe_id.to_le_bytes());
                 out.extend_from_slice(&probe.solar_system_id.to_le_bytes());

@@ -19,9 +19,9 @@ public sealed class StructureRulesSource : IStructureRulesSource
 
     private readonly IReadOnlySet<int> _types;
     private readonly IReadOnlyDictionary<int, double> _rigSizes;
-    private readonly IReadOnlyDictionary<int, (double Security, int RegionId)> _systems;
+    private readonly IReadOnlyDictionary<int, (double Security, int RegionId, int[] DisallowedAnchorCategories, int[] DisallowedAnchorGroups)> _systems;
 
-    private StructureRulesSource(IReadOnlySet<int> types, IReadOnlyDictionary<int, double> rigSizes, IReadOnlyDictionary<int, (double Security, int RegionId)> systems)
+    private StructureRulesSource(IReadOnlySet<int> types, IReadOnlyDictionary<int, double> rigSizes, IReadOnlyDictionary<int, (double Security, int RegionId, int[] DisallowedAnchorCategories, int[] DisallowedAnchorGroups)> systems)
     {
         _types = types;
         _rigSizes = rigSizes;
@@ -42,16 +42,31 @@ public sealed class StructureRulesSource : IStructureRulesSource
                     rigSizes[typeId] = attribute.GetProperty("value").GetDouble();
             }
         }
-        var systems = new Dictionary<int, (double Security, int RegionId)>();
+        var systems = new Dictionary<int, (double Security, int RegionId, int[] DisallowedAnchorCategories, int[] DisallowedAnchorGroups)>();
         foreach (var row in await sde.ReadAsync("mapSolarSystems", null, cancellationToken))
         {
-            systems[(int)row.Key] = (row.Doc.GetProperty("securityStatus").GetDouble(), row.Doc.GetProperty("regionID").GetInt32());
+            systems[(int)row.Key] = (
+                row.Doc.GetProperty("securityStatus").GetDouble(),
+                row.Doc.GetProperty("regionID").GetInt32(),
+                ReadAnchorIds(row.Doc, "disallowedAnchorCategories"),
+                ReadAnchorIds(row.Doc, "disallowedAnchorGroups"));
         }
         return new StructureRulesSource(types, rigSizes, systems);
     }
 
     /// <summary>Whether the type is an Upwell structure that can be anchored (it has a size: the Flex structures are not in this package).</summary>
     public bool IsAnchorable(int typeId) => _rigSizes.ContainsKey(typeId);
+
+    /// <summary>Whether the SDE forbids this type's category or group in the solar system.</summary>
+    public bool IsAnchorRestricted(int typeId, int solarSystemId, int groupId, int categoryId)
+    {
+        if (!_types.Contains(typeId))
+            throw new InvalidOperationException($"structure type {typeId} has no static data");
+        if (!_systems.TryGetValue(solarSystemId, out var system))
+            throw new InvalidOperationException($"solar system {solarSystemId} has no static data");
+        return system.DisallowedAnchorCategories.Contains(categoryId) ||
+            system.DisallowedAnchorGroups.Contains(groupId);
+    }
 
     public StructureRules RulesOf(int typeId, int solarSystemId)
     {
@@ -73,4 +88,9 @@ public sealed class StructureRulesSource : IStructureRulesSource
             return StructureRules.Of(StructureSize.Fob, band, canBeAbandoned: false);
         return StructureRules.Of(size, band);
     }
+
+    private static int[] ReadAnchorIds(System.Text.Json.JsonElement system, string property) =>
+        system.TryGetProperty(property, out var values) && values.ValueKind == System.Text.Json.JsonValueKind.Array
+            ? values.EnumerateArray().Select(value => value.GetInt32()).ToArray()
+            : [];
 }

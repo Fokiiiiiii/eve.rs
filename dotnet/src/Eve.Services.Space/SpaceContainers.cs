@@ -120,7 +120,10 @@ public sealed partial class SpaceContainers : ISpaceContainers, IDisposable
             return null;
         }
         await _statics.EnsureTypesAsync([item.TypeId], cancellationToken);
-        if (_statics.Type(item.TypeId) is not { GroupId: CanGroup or WreckGroup })
+        var type = _statics.Type(item.TypeId);
+        if (type is null ||
+            (type.GroupId != CanGroup && type.GroupId != WreckGroup &&
+             !Eve.Structures.StructureUnanchorDrop.IsFittingsContainer(item.TypeId, item.CustomInfo)))
         {
             return null;
         }
@@ -149,7 +152,8 @@ public sealed partial class SpaceContainers : ISpaceContainers, IDisposable
     /// <summary>Whether the pilot may take what is in the container: it is the pilot's own, or its corporation's (a can's owner is the one who jettisoned into it).</summary>
     private async Task<bool> MayTakeFromAsync(long characterId, Item container, CancellationToken cancellationToken, SpaceItem? rights = null)
     {
-        if (_abandonedLoot.ContainsKey(container.Id) || container.OwnerId == characterId)
+        if (Eve.Structures.StructureUnanchorDrop.IsFittingsContainer(container.TypeId, container.CustomInfo) ||
+            _abandonedLoot.ContainsKey(container.Id) || container.OwnerId == characterId)
         {
             return true;
         }
@@ -169,6 +173,11 @@ public sealed partial class SpaceContainers : ISpaceContainers, IDisposable
     /// </summary>
     private async Task<bool?> MayPullAsync(long characterId, long wreckId, CancellationToken cancellationToken)
     {
+        if (await _items.GetAsync(wreckId, cancellationToken) is { } item &&
+            Eve.Structures.StructureUnanchorDrop.IsArtifact(item.CustomInfo))
+        {
+            return true;
+        }
         if (await _spaceItems.GetAsync(wreckId, cancellationToken) is not { } rights)
         {
             return null;
@@ -528,6 +537,11 @@ private void OnReceived(SimMessage message)
     {
         try
         {
+            if (Eve.Structures.StructureUnanchorDrop.IsArtifact((await _items.GetAsync(wreck.WreckId))?.CustomInfo))
+            {
+                // The transactional handoff wrote an unbounded space row; don't replace it with a jettison lifetime.
+                return;
+            }
             var item = new SpaceItem(
                 wreck.WreckId, wreck.SolarSystemId, wreck.Position, wreck.Direction, wreck.Radius, wreck.GroupId, wreck.LauncherId, wreck.Credit.CharacterId, wreck.Credit.CorporationId,
                 wreck.Credit.AllianceId, wreck.Credit.WarFactionId, _nowUnixMs() + (long)CanLifetime.TotalMilliseconds);

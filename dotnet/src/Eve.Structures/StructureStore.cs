@@ -13,7 +13,8 @@ public sealed record StructureRecord(
 /// <summary>A structure that is about to be anchored (a fresh row in the Unanchored state).</summary>
 public sealed record NewStructure(
     long StructureId, int TypeId, int SolarSystemId, double X, double Y, double Z, double Yaw, long OwnerCorporationId, long AllianceId, string Name, string Bio,
-    long ProfileId = 0, int ReinforceWeekday = StructureTimes.DefaultReinforceWeekday, int ReinforceHour = StructureTimes.DefaultReinforceHour);
+    long ProfileId = 0, int ReinforceWeekday = StructureTimes.DefaultReinforceWeekday, int ReinforceHour = StructureTimes.DefaultReinforceHour,
+    long AnchoringMs = StructureTimes.AnchoringMs);
 
 /// <summary>
 /// The structure records in PostgreSQL (schema <c>structures</c>, migration 0001): the one owner of Upwell structures (docs/design/adr/0003). Every method that changes a row takes the
@@ -28,7 +29,7 @@ public sealed class StructureStore
         "s.structure_id, s.type_id, s.solar_system_id, s.x, s.y, s.z, s.yaw, s.owner_corporation_id, s.alliance_id, s.name, s.bio, s.profile_id, s.state, s.state_started_ms, " +
         "s.state_ends_ms, s.timer_paused_ms, s.upkeep, s.core_installed, s.reinforce_weekday, s.reinforce_hour, s.fight_weekday, s.fight_hour, s.pending_weekday, " +
         "s.pending_hour, s.pending_effective_ms, s.unanchor_ends_ms, s.low_power_since_ms, s.destroyed_ms, s.doc::text, s.version, " +
-        "(SELECT count(*) FROM {schema}.structure_services v WHERE v.structure_id = s.structure_id AND v.state = 1)";
+        "(SELECT count(*) FROM {schema}.structure_services v WHERE v.structure_id = s.structure_id AND v.state = 1), s.anchoring_ms";
 
     /// <summary>Fields of the legacy record that a column of the table carries (EVE.js names); the rest of the record is kept in <c>doc</c>.</summary>
     private static readonly string[] ColumnFields =
@@ -115,6 +116,7 @@ public sealed class StructureStore
             State = r.GetInt16(12),
             StateStartedMs = r.GetInt64(13),
             StateEndsMs = r.GetInt64(14),
+            AnchoringMs = r.GetInt64(31),
             TimerPausedMs = r.GetInt64(15),
             Upkeep = r.GetInt16(16),
             CoreInstalled = r.GetBoolean(17),
@@ -150,22 +152,22 @@ public sealed class StructureStore
     /// <summary>Inserts a fresh structure in the Unanchored state. Returns false when the id is taken.</summary>
     public async Task<bool> CreateAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, NewStructure n, CancellationToken cancellationToken = default) =>
         await Sql.ExecuteAsync(connection, transaction, Q("""
-            INSERT INTO {schema}.structures (structure_id, type_id, solar_system_id, x, y, z, yaw, owner_corporation_id, alliance_id, name, bio, profile_id, reinforce_weekday, reinforce_hour)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+            INSERT INTO {schema}.structures (structure_id, type_id, solar_system_id, x, y, z, yaw, owner_corporation_id, alliance_id, name, bio, profile_id, reinforce_weekday, reinforce_hour, anchoring_ms)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
             ON CONFLICT (structure_id) DO NOTHING
             """), cancellationToken, n.StructureId, n.TypeId, n.SolarSystemId, n.X, n.Y, n.Z, n.Yaw, n.OwnerCorporationId, n.AllianceId, n.Name, n.Bio, n.ProfileId,
-            (short)n.ReinforceWeekday, (short)n.ReinforceHour) > 0;
+            (short)n.ReinforceWeekday, (short)n.ReinforceHour, n.AnchoringMs) > 0;
 
     /// <summary>Writes the timeline columns of a snapshot (the caller holds the row lock) and counts the version up.</summary>
     public async Task SaveAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, StructureSnapshot s, CancellationToken cancellationToken = default) =>
         await Sql.ExecuteAsync(connection, transaction, Q("""
             UPDATE {schema}.structures SET state = $2, state_started_ms = $3, state_ends_ms = $4, timer_paused_ms = $5, upkeep = $6, core_installed = $7,
                 reinforce_weekday = $8, reinforce_hour = $9, fight_weekday = $10, fight_hour = $11, pending_weekday = $12, pending_hour = $13, pending_effective_ms = $14,
-                unanchor_ends_ms = $15, low_power_since_ms = $16, destroyed_ms = $17, version = version + 1
+                unanchor_ends_ms = $15, low_power_since_ms = $16, destroyed_ms = $17, anchoring_ms = $18, version = version + 1
             WHERE structure_id = $1
             """), cancellationToken, s.StructureId, (short)s.State, s.StateStartedMs, s.StateEndsMs, s.TimerPausedMs, (short)s.Upkeep, s.CoreInstalled,
             (short)s.ReinforceWeekday, (short)s.ReinforceHour, (short)s.FightWeekday, (short)s.FightHour, (short)s.PendingWeekday, (short)s.PendingHour,
-            s.PendingEffectiveMs, s.UnanchorEndsMs, s.LowPowerSinceMs, s.DestroyedMs);
+            s.PendingEffectiveMs, s.UnanchorEndsMs, s.LowPowerSinceMs, s.DestroyedMs, s.AnchoringMs);
 
     /// <summary>Sets a service's state. An online service records <paramref name="nowMs"/> as the time it came online; an offline one holds 0.</summary>
     public async Task SetServiceAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long structureId, int serviceId, int state, long nowMs, CancellationToken cancellationToken = default) =>

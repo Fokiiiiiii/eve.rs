@@ -74,6 +74,9 @@ impl Scene {
             Some(Action::Smartbomb { range, damage, hurts_pilots }) if when == Applies::CycleStart => {
                 self.smartbomb(session, effect, *range, *damage, *hurts_pilots, at)
             }
+            Some(Action::PointDefense { range_meters, damage }) if when == Applies::CycleStart => {
+                self.request_point_defense_candidates(session, effect, *range_meters, *damage, at)
+            }
             Some(Action::Strike { strike }) if when == Applies::CycleStart => {
                 self.strike_start(session, effect, *strike, at)
             }
@@ -158,6 +161,49 @@ impl Scene {
             }
             _ => Vec::new(),
         }
+    }
+
+
+    pub(super) fn request_point_defense_candidates(
+        &mut self,
+        session: SessionId,
+        effect: &Effect,
+        range_meters: f64,
+        damage: crate::health::Damage,
+        now: i64,
+    ) -> Vec<Out> {
+        let Some(structure_id) = self.controlled_structure_id(session) else { return Vec::new() };
+        let Some(control_lease_generation) = self.control_lease_generation(session, structure_id) else {
+            return Vec::new();
+        };
+        let Some(source) = self.pilots.get(&session).map(|pilot| pilot.ship.position) else {
+            return Vec::new();
+        };
+        if !range_meters.is_finite()
+            || range_meters < 0.0
+            || damage.iter().any(|channel| !channel.is_finite() || *channel < 0.0)
+        {
+            return Vec::new();
+        }
+        let candidates = self.damageable_entity_ids(now, |target_id, target, _| {
+            if target_id == structure_id {
+                return false;
+            }
+            let dx = target.x - source.x;
+            let dy = target.y - source.y;
+            let dz = target.z - source.z;
+            (dx * dx + dy * dy + dz * dz).sqrt() <= range_meters + 1e-6
+        });
+        let _ = control_lease_generation;
+        self.request_structure_damage_candidates(
+            session,
+            effect.module_id,
+            effect.effect_id,
+            0,
+            candidates,
+            PendingStructureDamageOperation::PointDefense { range_meters, damage },
+            now,
+        )
     }
 
     /// A passive targeter's cycle starts: its target is locked through the one lock path, with the target not told (EVE.js `suppressTargetNotice`). A lock the
@@ -553,10 +599,18 @@ impl Scene {
     }
 
     pub(super) fn strike_pulse(&mut self, session: SessionId, index: usize, at: i64) -> Vec<Out> {
-        let (module_type, pulse, strike, centre, radius, transport) = {
+        let (module_id, effect_id, module_type, pulse, strike, centre, radius, transport) = {
             let Some(pilot) = self.pilots.get_mut(&session) else { return Vec::new() };
             let Some(run) = pilot.modules.running.get_mut(index) else { return Vec::new() };
-            let Some(action) = run.effect.action.clone() else { return Vec::new() };
+            let Some(action) = run
+                .effect
+                .action
+                .as_ref()
+                .and_then(|action| action.with_charges(run.charged_this_cycle))
+                .cloned()
+            else {
+                return Vec::new();
+            };
             let Some(strike) = strike_of(Some(&action)) else { return Vec::new() };
             if run.strike_done >= strike.pulses {
                 return Vec::new();
@@ -570,6 +624,8 @@ impl Scene {
                 _ => None,
             };
             (
+                run.effect.module_id,
+                run.effect.effect_id,
                 run.effect.module_type,
                 pulse,
                 strike,
@@ -578,8 +634,12 @@ impl Scene {
                 transport,
             )
         };
-        // a transport field carries its ships at its pulse and deals no damage
+        // A transport field carries Host-named entities. Its moved/held lists do not grant damage permission,
+        // so a controlled structure never applies them without a source-backed disposition contract.
         if let Some((destination, warp_block_ms, moved, held)) = transport {
+            if self.controlled_structure_id(session).is_some() {
+                return Vec::new();
+            }
             return self.transport_field(
                 session,
                 strike,
@@ -591,17 +651,71 @@ impl Scene {
                 at,
             );
         }
-        // a sweep (a reaper) has its axis at this pulse; a pulse whose axis has no length hits nothing
-        let Some(strike) = strike.at_pulse(pulse) else { return Vec::new() };
+        let pulse_strike = strike.at_pulse(pulse);
+        let centre = [centre.x, centre.y, centre.z];
+        let Some(structure_id) = self.controlled_structure_id(session) else {
+            let Some(strike) = pulse_strike else { return Vec::new() };
+            return self.apply_strike_pulse(session, module_type, strike, centre, radius, at);
+        };
+        if self.control_lease_generation(session, structure_id).is_none()
+            || self.pilots.get(&session).is_none_or(|pilot| pilot.ship.spec.ship_id != structure_id)
+        {
+            return Vec::new();
+        }
+        let origin = if let Some(strike) = pulse_strike {
+            if strike.sweep_end.is_some() {
+                centre
+            } else {
+                [
+                    centre[0] + strike.direction[0] * radius,
+                    centre[1] + strike.direction[1] * radius,
+                    centre[2] + strike.direction[2] * radius,
+                ]
+            }
+        } else {
+            centre
+        };
+        let candidate_ids = if let Some(strike) = pulse_strike {
+            self.damageable_entity_ids(at, |target_id, target, target_radius| {
+                target_id != structure_id
+                    && self.session_of(target_id).is_some()
+                    && strike.covers(origin, [target.x, target.y, target.z], target_radius)
+            })
+        } else {
+            Vec::new()
+        };
+        self.request_structure_damage_candidates(
+            session,
+            module_id,
+            effect_id,
+            pulse as u32,
+            candidate_ids,
+            PendingStructureDamageOperation::StrikePulse {
+                origin,
+                strike: pulse_strike,
+                module_type,
+            },
+            at,
+        )
+    }
+
+    fn apply_strike_pulse(
+        &mut self,
+        session: SessionId,
+        module_type: i32,
+        strike: crate::strike::Strike,
+        centre: [f64; 3],
+        radius: f64,
+        at: i64,
+    ) -> Vec<Out> {
         let direction = strike.direction;
-        // the area starts at the hull, along the aim (the reference's hull surface origin); a sweep starts at the centre (`resolveSlashDamageVolume`)
         let origin = if strike.sweep_end.is_some() {
-            [centre.x, centre.y, centre.z]
+            centre
         } else {
             [
-                centre.x + direction[0] * radius,
-                centre.y + direction[1] * radius,
-                centre.z + direction[2] * radius,
+                centre[0] + direction[0] * radius,
+                centre[1] + direction[1] * radius,
+                centre[2] + direction[2] * radius,
             ]
         };
         let targets: Vec<(SessionId, i64, f64)> = self
@@ -624,7 +738,6 @@ impl Scene {
                 Some((other, target.ship.spec.ship_id, factor))
             })
             .collect();
-        // the debuff lands on every ship the pulse covers, whatever its signature takes of the damage (`applyDisruptiveLanceDebuff`)
         if strike.debuff_ms > 0.0 {
             let until = at + (strike.debuff_ms * TICKS_PER_SECOND as f64 / 1000.0) as i64;
             for (target_session, _, _) in &targets {
@@ -813,6 +926,11 @@ impl Scene {
     /// https://github.com/Fokiiiiiii/evejs-v0.12.9/blob/828823a75f211fdecb945b087a26c225f111491f/server/src/services/dogma/dogmaService/moduleOperation.js#L2607-L2618
     /// The caller remains responsible for persisting the module's online state.
     pub(crate) fn offline_module(&mut self, session: SessionId, module_id: i64, now: i64) -> Vec<Out> {
+        if !self.pilots.contains_key(&session)
+            && self.controlled_structure_id(session).is_some_and(|id| self.structure_modules.contains_key(&id))
+        {
+            return self.with_controlled_structure_modules(now, |scene| scene.offline_module(session, module_id, now));
+        }
         let Some(pilot) = self.pilots.get_mut(&session) else { return Vec::new() };
         let (owner, ship_id) = (pilot.ship.spec.character_id, pilot.ship.spec.ship_id);
         let Some(index) = pilot.modules.running.iter().position(|run| run.effect.module_id == module_id)

@@ -130,7 +130,18 @@ pub(super) fn read_turret(reader: &mut Reader) -> Result<Turret, DecodeError> {
             if !range.is_finite() || range < 0.0 || targets < 0 {
                 return Err(DecodeError::BadValue("arc"));
             }
-            Some(Arc { range, targets })
+            let damage_loss_target = match reader.u8()? {
+                0 => None,
+                1 => {
+                    let value = reader.f64()?;
+                    if !value.is_finite() || value < 0.0 {
+                        return Err(DecodeError::BadValue("arc damage loss target"));
+                    }
+                    Some(value)
+                }
+                _ => return Err(DecodeError::BadValue("arc damage loss target")),
+            };
+            Some(Arc { range, targets, damage_loss_target })
         }
         _ => return Err(DecodeError::BadValue("arc")),
     };

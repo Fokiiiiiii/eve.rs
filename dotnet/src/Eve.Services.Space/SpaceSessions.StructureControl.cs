@@ -35,12 +35,17 @@ public sealed partial class SpaceSessions
     }
 
     public async ValueTask SetStructureObserverAsync(ClientSession session, int solarSystemId,
-        long structureId, long characterId, bool active, CancellationToken token = default)
+        long structureId, long characterId, bool active, CancellationToken token = default, long controlLeaseGeneration = 0)
     {
         if (session.SessionId <= 0 || solarSystemId <= 0 || active && (structureId <= 0 || characterId <= 0))
             throw new ArgumentOutOfRangeException(nameof(structureId));
+        if (controlLeaseGeneration <= 0)
+            throw new ArgumentOutOfRangeException(nameof(controlLeaseGeneration));
         var id = (ulong)session.SessionId;
         var wasObserver = IsStructureObserver(session);
+        ShipSnapshot? releaseSnapshot = null;
+        if (!active && _pilots.TryGetValue(id, out var releasingPilot))
+            releaseSnapshot = await ModuleShipAsync(releasingPilot, token);
         long? trackedShipId = null;
         var addedTracking = false;
         if (active && IsInSpace(session) && _pilots.TryGetValue(id, out var shipPilot)
@@ -51,7 +56,9 @@ public sealed partial class SpaceSessions
             if (shipPilot.CharacterId != session.CharacterId || shipPilot.SolarSystemId != solarSystemId || corporationId <= 0)
                 throw Notify("The physical ship could not be verified for structure control.");
             var abandoned = new EjectedShip(
-                shipPilot.CharacterId, corporationId, shipPilot.TypeId, solarSystemId, id);
+                shipPilot.CharacterId, corporationId, shipPilot.TypeId, solarSystemId, id,
+                session.GetInt("allianceid") ?? session.GetInt("allianceID") ?? 0,
+                session.GetInt("warfactionid") ?? session.GetInt("warFactionID") ?? 0);
             if (_ejectedShips.TryAdd(shipPilot.ShipId, abandoned))
             {
                 trackedShipId = shipPilot.ShipId;
@@ -67,10 +74,40 @@ public sealed partial class SpaceSessions
         if (active) _structureObservers[id] = session;
         try
         {
+            if (active && StructureControlLeaseGenerationOf is { } readLease
+                && await readLease(session, structureId, token) != controlLeaseGeneration)
+                throw Notify("Structure control lease changed before attachment.");
             var refusal = await _sim.ControlStructureAsync(
-                new SimControlStructure(id, solarSystemId, active ? structureId : 0, active ? characterId : 0, active), token);
+                new SimControlStructure(id, solarSystemId, active ? structureId : 0, active ? characterId : 0, active, controlLeaseGeneration), token);
             if (refusal is not null) throw Notify($"Structure control was refused: {refusal}");
+            session.Set("structureControlLeaseGeneration", active ? new PyLong(controlLeaseGeneration) : None);
             if (active) return;
+
+            try
+            {
+                await _charges.FlushAsync(id).ConfigureAwait(false);
+            }
+            catch
+            {
+                if (!StructureControlSessionClosed(session))
+                    await TryRestoreStructureObserverAsync(session, solarSystemId, controlLeaseGeneration);
+                throw;
+            }
+            if (_pilots.TryGetValue(id, out var releasedPilot))
+            {
+                foreach (var moduleId in releasedPilot.StructureModuleIds.Keys)
+                {
+                    if (releasedPilot.ActiveModules.TryRemove(moduleId, out _)
+                        && releaseSnapshot?.Fitted.Any(item => item.Id == moduleId) == true)
+                    {
+                        AnnounceModeChange(releasedPilot, releaseSnapshot, moduleId, started: false);
+                    }
+                    releasedPilot.RunningModules.TryRemove(moduleId, out _);
+                    Eve.Services.Space.Effects.ProjectedEffect.MutadaptiveSpool.Reset(moduleId);
+                    releasedPilot.ModuleChargeOwners.TryRemove(moduleId, out _);
+                    releasedPilot.StructureModuleIds.TryRemove(moduleId, out _);
+                }
+            }
 
             try
             {
@@ -143,7 +180,7 @@ public sealed partial class SpaceSessions
                 if (StructureControlSessionClosed(session))
                     _structureObservers.TryRemove(id, out _);
                 else
-                    await TryRestoreStructureObserverAsync(session, solarSystemId);
+                    await TryRestoreStructureObserverAsync(session, solarSystemId, controlLeaseGeneration);
                 throw;
             }
         }
@@ -157,7 +194,7 @@ public sealed partial class SpaceSessions
         }
     }
 
-    private async ValueTask TryRestoreStructureObserverAsync(ClientSession session, int solarSystemId)
+    private async ValueTask TryRestoreStructureObserverAsync(ClientSession session, int solarSystemId, long controlLeaseGeneration)
     {
         var id = (ulong)session.SessionId;
         if (session.GetInt("structureid") is not { } structureId || session.CharacterId is not { } characterId)
@@ -167,13 +204,21 @@ public sealed partial class SpaceSessions
             return;
         }
 
+        if (StructureControlLeaseGenerationOf is { } readLease
+            && await readLease(session, structureId, CancellationToken.None) != controlLeaseGeneration)
+        {
+            _structureObservers.TryRemove(id, out _);
+            return;
+        }
+
         _structureObservers[id] = session;
         try
         {
             var refusal = await _sim.ControlStructureAsync(
-                new SimControlStructure(id, solarSystemId, structureId, characterId, true), CancellationToken.None);
+                new SimControlStructure(id, solarSystemId, structureId, characterId, true, controlLeaseGeneration), CancellationToken.None);
             if (refusal is not null)
                 throw Notify($"Structure control was refused while restoring the controller: {refusal}");
+            session.Set("structureControlLeaseGeneration", new PyLong(controlLeaseGeneration));
         }
         catch (Exception error)
         {

@@ -31,10 +31,10 @@ public sealed class StructureControlTests
         var sink = new Sink();
         var session = Docked(sink);
         var before = session.SnapshotAttributes();
-        await space.SetStructureObserverAsync(session, System, Structure, 20, true);
+        await space.SetStructureObserverAsync(session, System, Structure, 20, true, controlLeaseGeneration: 1);
         Assert.Empty(sink.Sent);
         Assert.Equal(501, session.GetInt("shipid"));
-        Assert.Equal(new SimControlStructure(7, System, Structure, 20, true), Assert.Single(sim.Heard.OfType<SimControlStructure>()));
+        Assert.Equal(new SimControlStructure(7, System, Structure, 20, true, 1), Assert.Single(sim.Heard.OfType<SimControlStructure>()));
         space.ApplyStructureControlSession(session, System, Structure, 501, System, false);
         Assert.Equal(Structure, session.GetInt("shipid"));
         foreach (var (name, value) in before.Where(pair => pair.Key != "shipid")) Assert.Equal(value, session.Get(name));
@@ -46,7 +46,7 @@ public sealed class StructureControlTests
         Assert.Equal(count + 2, sim.Heard.Count);
         sim.Deliver(new SimNotify(7, "OnSlimItemChange", "clientID", MarshalCodec.Encode(Py.Tuple(new PyLong(Structure)))));
         Assert.Equal(["OnSlimItemChange"], Sequence.Of(session));
-        await space.SetStructureObserverAsync(session, System, 0, 0, false);
+        await space.SetStructureObserverAsync(session, System, 0, 0, false, controlLeaseGeneration: 1);
         space.RestoreStructureControlSession(session, 501, System, false, System);
         Assert.Equal(501, session.GetInt("shipid"));
         Assert.Equal(Structure, session.GetInt("structureid"));
@@ -60,7 +60,7 @@ public sealed class StructureControlTests
         var sim = new FakeSim { ConditionAnswer = new SimCondition(0.2, 0.4, 0.6, 0.3) };
         using var space = new SpaceSessions(sim, null!, null!, null!, null!, () => 0);
         var session = Docked(new Sink());
-        await space.SetStructureObserverAsync(session, System, Structure, 20, true);
+        await space.SetStructureObserverAsync(session, System, Structure, 20, true, controlLeaseGeneration: 1);
         var condition = await space.ConditionAsync(session, CancellationToken.None);
         Assert.NotNull(condition);
         Assert.Equal(0.2, condition.Damage);
@@ -75,12 +75,12 @@ public sealed class StructureControlTests
         using var space = new SpaceSessions(sim, null!, null!, null!, null!, () => 0);
         var sink = new Sink();
         var session = Docked(sink);
-        await Assert.ThrowsAsync<MachoWrappedException>(() => space.SetStructureObserverAsync(session, System, Structure, 20, true).AsTask());
+        await Assert.ThrowsAsync<MachoWrappedException>(() => space.SetStructureObserverAsync(session, System, Structure, 20, true, controlLeaseGeneration: 1).AsTask());
         Assert.Equal(501, session.GetInt("shipid"));
         Assert.Empty(sink.Sent);
         Assert.False(space.IsStructureObserver(session));
         sim.IsConnected = false;
-        await Assert.ThrowsAsync<SimUnavailableException>(() => space.SetStructureObserverAsync(session, System, Structure, 20, true).AsTask());
+        await Assert.ThrowsAsync<SimUnavailableException>(() => space.SetStructureObserverAsync(session, System, Structure, 20, true, controlLeaseGeneration: 1).AsTask());
         Assert.False(space.IsStructureObserver(session));
     }
 
@@ -105,7 +105,7 @@ public sealed class StructureControlTests
         var ship = session.GetInt("shipid")!.Value;
         var system = rig.Space.SolarSystemOf(session)!.Value;
         var before = await rig.Ships.LoadAsync(character.CharacterId);
-        await rig.Space.SetStructureObserverAsync(session, system, Structure, character.CharacterId, true);
+        await rig.Space.SetStructureObserverAsync(session, system, Structure, character.CharacterId, true, controlLeaseGeneration: 1);
         rig.Space.ApplyStructureControlSession(session, system, Structure, ship, system, true);
         Assert.Equal(ship, rig.Space.ShipIdOf(session));
         Assert.Equal(ship, (await rig.Characters.GetAsync(character.CharacterId))!.ShipId);
@@ -117,7 +117,7 @@ public sealed class StructureControlTests
             MarshalCodec.Encode(Py.Tuple(new PyLong(Structure), Py.Tuple(new PyReal(0.1), new PyReal(0.2), new PyReal(0.3))))));
         await rig.Space.QuiesceAsync();
         Assert.Equal(before!.Condition, (await rig.Ships.LoadAsync(character.CharacterId))!.Condition);
-        await rig.Space.SetStructureObserverAsync(session, system, 0, 0, false);
+        await rig.Space.SetStructureObserverAsync(session, system, 0, 0, false, controlLeaseGeneration: 1);
         rig.Space.RestoreStructureControlSession(session, ship, system, true, system);
         Assert.Null(session.GetInt("structureid"));
         Assert.Equal(ship, session.GetInt("shipid"));
@@ -132,9 +132,9 @@ public sealed class StructureControlTests
         await using var _ = rig;
         var ship = session.GetInt("shipid")!.Value;
         var system = rig.Space.SolarSystemOf(session)!.Value;
-        await rig.Space.SetStructureObserverAsync(session, system, Structure, character.CharacterId, true);
+        await rig.Space.SetStructureObserverAsync(session, system, Structure, character.CharacterId, true, controlLeaseGeneration: 1);
         rig.Space.ApplyStructureControlSession(session, system, Structure, ship, system, true);
-        await rig.Space.SetStructureObserverAsync(session, system, 0, 0, false);
+        await rig.Space.SetStructureObserverAsync(session, system, 0, 0, false, controlLeaseGeneration: 1);
         Assert.True(await rig.Space.EjectStructureControlToCapsuleAsync(session, CancellationToken.None));
         var capsule = (await rig.Ships.LoadAsync(character.CharacterId))!.Ship;
         Assert.Equal(CharacterShips.CapsuleTypeId, capsule.TypeId);
@@ -164,7 +164,7 @@ public sealed class StructureControlTests
                 new Eve.Inventory.NewItem(34, character.CharacterId, ship, CharacterShips.CargoFlag, 100, false));
             await transaction.CommitAsync();
         }
-        await rig.Space.SetStructureObserverAsync(session, system, Structure, character.CharacterId, true);
+        await rig.Space.SetStructureObserverAsync(session, system, Structure, character.CharacterId, true, controlLeaseGeneration: 1);
         rig.Space.ApplyStructureControlSession(session, system, Structure, ship, system, true);
 
         var position = new double[] { 12_300, 45_600, 78_900 };
@@ -189,13 +189,13 @@ public sealed class StructureControlTests
 
         rig.Sim.RespawnAnswer = "CAPSULE_RESPAWN_REFUSED";
         await Assert.ThrowsAsync<MachoWrappedException>(() =>
-            rig.Space.SetStructureObserverAsync(session, system, 0, 0, false).AsTask());
+            rig.Space.SetStructureObserverAsync(session, system, 0, 0, false, controlLeaseGeneration: 1).AsTask());
         Assert.True(rig.Space.IsStructureObserver(session));
         Assert.Equal(Structure, session.GetInt("shipid"));
         Assert.True(rig.Sim.Heard.OfType<SimControlStructure>().Last().Active);
 
         rig.Sim.RespawnAnswer = null;
-        await rig.Space.SetStructureObserverAsync(session, system, 0, 0, false);
+        await rig.Space.SetStructureObserverAsync(session, system, 0, 0, false, controlLeaseGeneration: 1);
         Assert.True(await rig.Space.EjectStructureControlToCapsuleAsync(session, CancellationToken.None));
         Assert.False(rig.Space.IsStructureObserver(session));
         Assert.Equal(capsule.Id, session.GetInt("shipid"));
@@ -206,9 +206,9 @@ public sealed class StructureControlTests
         Assert.Equal(position, respawns[^1].Position);
         Assert.Equal(direction, respawns[^1].Direction);
 
-        await rig.Space.SetStructureObserverAsync(session, system, Structure, character.CharacterId, true);
+        await rig.Space.SetStructureObserverAsync(session, system, Structure, character.CharacterId, true, controlLeaseGeneration: 1);
         rig.Space.ApplyStructureControlSession(session, system, Structure, capsule.Id, system, true);
-        await rig.Space.SetStructureObserverAsync(session, system, 0, 0, false);
+        await rig.Space.SetStructureObserverAsync(session, system, 0, 0, false, controlLeaseGeneration: 1);
         rig.Space.RestoreStructureControlSession(session, ship, system, true, system);
         Assert.Equal(capsule.Id, session.GetInt("shipid"));
         Assert.Null(session.GetInt("structureid"));
@@ -222,7 +222,7 @@ public sealed class StructureControlTests
         await using var _ = rig;
         var ship = session.GetInt("shipid")!.Value;
         var system = rig.Space.SolarSystemOf(session)!.Value;
-        await rig.Space.SetStructureObserverAsync(session, system, Structure, character.CharacterId, true);
+        await rig.Space.SetStructureObserverAsync(session, system, Structure, character.CharacterId, true, controlLeaseGeneration: 1);
         rig.Space.ApplyStructureControlSession(session, system, Structure, ship, system, true);
         await using var connection = await rig.Source.OpenConnectionAsync();
         await using (var reject = new Npgsql.NpgsqlCommand($"ALTER TABLE \"{rig.InventorySchema}\".items ADD CONSTRAINT reject_control_capsule CHECK (type_id <> {CharacterShips.CapsuleTypeId}) NOT VALID", connection))
@@ -231,11 +231,11 @@ public sealed class StructureControlTests
         await rig.Space.QuiesceAsync();
         Assert.NotNull(await rig.Items.GetAsync(ship));
         Assert.Equal(ship, (await rig.Characters.GetAsync(character.CharacterId))!.ShipId);
-        await Assert.ThrowsAsync<MachoWrappedException>(() => rig.Space.SetStructureObserverAsync(session, system, 0, 0, false).AsTask());
+        await Assert.ThrowsAsync<MachoWrappedException>(() => rig.Space.SetStructureObserverAsync(session, system, 0, 0, false, controlLeaseGeneration: 1).AsTask());
         Assert.True(rig.Space.IsStructureObserver(session));
         await using (var allow = new Npgsql.NpgsqlCommand($"ALTER TABLE \"{rig.InventorySchema}\".items DROP CONSTRAINT reject_control_capsule", connection))
             await allow.ExecuteNonQueryAsync();
-        await rig.Space.SetStructureObserverAsync(session, system, 0, 0, false);
+        await rig.Space.SetStructureObserverAsync(session, system, 0, 0, false, controlLeaseGeneration: 1);
         Assert.True(await rig.Space.EjectStructureControlToCapsuleAsync(session, default));
         Assert.Null(await rig.Items.GetAsync(ship));
         var capsule = (await rig.Ships.LoadAsync(character.CharacterId))!.Ship;

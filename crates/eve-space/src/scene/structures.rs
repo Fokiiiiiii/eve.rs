@@ -153,6 +153,7 @@ impl Scene {
         }
         Arc::make_mut(&mut self.system).bodies.remove(index);
         self.structure_health.remove(&structure_id);
+        self.structure_modules.remove(&structure_id);
         let stamp = self.next_stamp(at);
         let removed = payload::remove_ships(stamp, [structure_id]);
         out.extend(audience.into_iter().map(|session| Self::update(session, vec![removed.clone()])));

@@ -506,7 +506,20 @@ impl Scene {
         if let Ok(actions) = launch_actions(stamp, &missile, target.radius) {
             out.extend(watchers.into_iter().map(|watcher| Self::update(watcher, actions.clone())));
         }
+        let war_faction_id = self
+            .pilots
+            .get(&session)
+            .map_or(0, |pilot| pilot.ship.spec.war_faction_id);
+        let registration = self.publish_sim_damageable_entity(
+            missile_id,
+            missile.spec.charge_type_id,
+            missile.shooter.owner_id,
+            i64::from(missile.shooter.corporation_id),
+            i64::from(missile.shooter.alliance_id),
+            i64::from(war_faction_id),
+        );
         self.missiles.insert(missile_id, missile);
+        out.push(registration);
         out
     }
 
@@ -614,7 +627,6 @@ impl Scene {
         out
     }
 
-    /// The missile is taken out of the ballpark of whoever was told of it: with the explosion played first when `explode`.
     fn missile_gone(&mut self, missile: &MissileEntity, explode: bool, now: i64) -> Vec<Out> {
         let stamp = self.next_stamp(now);
         let mut actions = Vec::new();
@@ -626,12 +638,16 @@ impl Scene {
             ));
         }
         actions.push(payload::remove_ships(stamp, [missile.id]));
-        missile
+        let mut out: Vec<Out> = missile
             .watchers
             .iter()
             .filter(|watcher| self.pilots.get(watcher).is_some_and(|pilot| pilot.bound))
             .map(|watcher| Self::update(*watcher, actions.clone()))
-            .collect()
+            .collect();
+        if let Some(removed) = self.remove_sim_damageable_entity(missile.id) {
+            out.push(removed);
+        }
+        out
     }
 
     pub fn missiles_within(&self, centre: Vec3, range: f64) -> Vec<i64> {

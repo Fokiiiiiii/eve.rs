@@ -214,5 +214,8 @@ internal sealed partial class CharacterServicesComposition
             (characterId, args) => characterSessions.Of(characterId)?.SendNotification("OnNotificationReceived", "clientID", args));
         new Eve.Host.Persistence.Structures.MoonOwnerNotifications(
             source, structureStore, moonExtractionStore, characters, mailbox).Subscribe(foundations.Events);
+        new Eve.Host.Persistence.Structures.ReinforcementChangedNotifications(characters, mailbox)
+            .Subscribe(foundations.Events);
     }
+
 }

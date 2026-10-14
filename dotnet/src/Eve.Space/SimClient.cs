@@ -441,6 +441,8 @@ public sealed class SimClient : ISimulation, IAsyncDisposable
 
     public void ModuleWorkResult(SimModuleWorkResult result) => Send(result);
 
+    public void StructureDamageCandidatesResult(SimStructureDamageCandidatesResult result) => Send(result);
+
     public void BuffState(ulong sessionId, long shipId, IReadOnlyList<SimBuffEntry> entries) => Send(new SimBuffState(sessionId, shipId, entries));
 
     public Task<CommandReply> PlaceContainerAsync(SimPlaceContainer can, CancellationToken cancellationToken = default) =>
@@ -482,6 +484,8 @@ public sealed class SimClient : ISimulation, IAsyncDisposable
     public void PlaceInhibitor(SimPlaceInhibitor inhibitor) => Send(inhibitor);
 
     public void PlaceCynoBeacon(SimPlaceCynoBeacon beacon) => Send(beacon);
+
+    public void RemoveCynoBeacon(int solarSystemId, long structureBeaconId) => Send(new SimRemoveCynoBeacon(solarSystemId, structureBeaconId));
 
     public void Destroy(long shipId, SimCredit credit) => Send(new SimDestroy(shipId, credit));
 

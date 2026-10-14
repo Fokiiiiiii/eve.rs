@@ -46,6 +46,7 @@ internal sealed partial class CharacterServicesComposition
         if (spaceSessions is not null)
         {
             spaceSessions.PilotEntered = fighters.RebuildAsync;
+            spaceSessions.StructureDamageFighterOwnerOf = fighters.DamageOwnerOf;
         }
         return fighters;
     }

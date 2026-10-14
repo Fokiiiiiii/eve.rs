@@ -108,6 +108,60 @@ public sealed class PersistenceWeaponTargetContextReadModel(
         return false;
     }
 
+    public async Task<Eve.Services.Space.WeaponTargetContext> ReadStructureAsync(
+        long ownerCorporationId,
+        long targetCharacterId,
+        CancellationToken cancellationToken)
+    {
+        if (ownerCorporationId <= 0 || targetCharacterId <= 0)
+            return default;
+
+        var now = nowUnixMs();
+        var targetAffiliationTask = affiliationOf(targetCharacterId, cancellationToken);
+        var targetStateTask = crimewatchStateOf(targetCharacterId, cancellationToken);
+        var targetSecurityTask = securityStatusOf(targetCharacterId, cancellationToken);
+        var crimewatchRowsTask = readTable("crimewatchRuntime", cancellationToken);
+        var corporationRowsTask = readTable("corporationRuntime", cancellationToken);
+        await Task.WhenAll(targetAffiliationTask, targetStateTask, targetSecurityTask, crimewatchRowsTask, corporationRowsTask);
+
+        var targetAffiliation = await targetAffiliationTask;
+        var targetState = await targetStateTask;
+        var targetSecurity = await targetSecurityTask;
+        // RelationWars walks an entity's owner chain, so the structure corporation is the attacker identity.
+        var activeWarState = await activeWar(ownerCorporationId, targetCharacterId, now, cancellationToken);
+        var legalFriendlyFire = targetAffiliation.Corporation == ownerCorporationId
+            && FriendlyFireIsEnabled(await corporationRowsTask, ownerCorporationId, now);
+
+        return new Eve.Services.Space.WeaponTargetContext(
+            AttackerIsPlayer: true,
+            TargetIsPlayerProperty: true,
+            TargetIsCriminal: targetState.IsCriminal(now),
+            TargetIsSuspect: targetState.IsSuspect(now),
+            TargetIsOutlaw: targetSecurity <= -5.0,
+            ActiveWar: activeWarState,
+            LegalFriendlyFire: legalFriendlyFire);
+    }
+
+public async Task<Eve.Services.Space.WeaponTargetContext> ReadStructureCorporationAsync(
+        long ownerCorporationId,
+        long targetCorporationId,
+        CancellationToken cancellationToken)
+    {
+        if (ownerCorporationId <= 0 || targetCorporationId <= 0)
+            return default;
+
+        var now = nowUnixMs();
+        var activeWarState = await activeWar(ownerCorporationId, targetCorporationId, now, cancellationToken);
+        var legalFriendlyFire = targetCorporationId == ownerCorporationId
+            && FriendlyFireIsEnabled(await readTable("corporationRuntime", cancellationToken), ownerCorporationId, now);
+
+        return new Eve.Services.Space.WeaponTargetContext(
+            AttackerIsPlayer: true,
+            TargetIsPlayerProperty: true,
+            ActiveWar: activeWarState,
+            LegalFriendlyFire: legalFriendlyFire);
+    }
+
     private static bool FriendlyFireIsEnabled(JsonObject state, long corporationId, long nowUnixMs)
     {
         var corporations = state["corporations"] as JsonObject;

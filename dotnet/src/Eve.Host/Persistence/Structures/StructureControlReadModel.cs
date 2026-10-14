@@ -76,6 +76,45 @@ public sealed class StructureControlReadModel(
         };
     }
 
+public async Task<long?> ControlLeaseGenerationAsync(
+        ClientSession session, long structureId, CancellationToken cancellationToken)
+    {
+        if (session.SessionId <= 0 || structureId <= 0
+            || session.CharacterId is not { } character)
+            return null;
+
+        await using var connection = await source.OpenConnectionAsync(cancellationToken);
+        var pilot = await pilots.GetBySessionAsync(connection, null, session.SessionId, cancellationToken);
+        return pilot is not null
+            && pilot.CharacterId == character
+            && pilot.StructureId == structureId
+            && pilot.SessionId == session.SessionId
+                ? pilot.Version
+                : null;
+    }
+
+    public async Task<IReadOnlyDictionary<long, (long OwnerCorporationId, int TypeId, long AllianceId)>> DamageTargetCorporationsOfAsync(
+        IEnumerable<long> structureIds, int solarSystemId, CancellationToken cancellationToken)
+    {
+        if (solarSystemId <= 0)
+            return new Dictionary<long, (long OwnerCorporationId, int TypeId, long AllianceId)>();
+        var requested = structureIds.Where(id => id > 0).ToHashSet();
+        if (requested.Count == 0)
+            return new Dictionary<long, (long OwnerCorporationId, int TypeId, long AllianceId)>();
+
+        await using var connection = await source.OpenConnectionAsync(cancellationToken);
+        await using var transaction = await connection.BeginTransactionAsync(IsolationLevel.RepeatableRead, cancellationToken);
+        var records = await structures.ListInSystemAsync(connection, transaction, solarSystemId, cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+        return records
+            .Where(record => requested.Contains(record.Snapshot.StructureId)
+                && record.Snapshot.DestroyedMs == 0
+                && record.OwnerCorporationId > 0)
+            .ToDictionary(
+                record => record.Snapshot.StructureId,
+                record => (OwnerCorporationId: record.OwnerCorporationId, TypeId: record.TypeId, AllianceId: record.AllianceId));
+    }
+
     private bool IsStructure(int typeId) =>
         statics.CategoryId("Structure") is { } category && statics.Type(typeId)?.CategoryId == category;
 

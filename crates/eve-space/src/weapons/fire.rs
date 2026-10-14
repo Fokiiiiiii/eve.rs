@@ -273,10 +273,8 @@ impl Scene {
             return Vec::new();
         };
         let attacker_id = self.pilots[&session].ship.spec.ship_id;
-        // the combat log, the aggression and the kill of a drone's shot are its controller's
         let reporter = self.controller_of_drone(session).unwrap_or(session);
         let aggressor_ship = if reporter == session { attacker_id } else { self.ship_id_of(reporter) };
-        // a weapon that builds up its damage shoots with the bonus it has built on this target (the ramp of its running effect); the bonus grows after the shot
         let spool = turret.spool;
         let bonus =
             spool.map_or(0.0, |spool| self.spool_bonus(session, effect.module_id, effect.target_id, spool));
@@ -287,7 +285,6 @@ impl Scene {
         } else {
             turret
         };
-        // what disrupts the shooter's turrets works on the numbers the shot is rolled with
         let (range, falloff, tracking) = self.weapon_disruption(session, turret);
         let disrupted;
         let turret = if (range, falloff, tracking) == (1.0, 1.0, 1.0) {
@@ -301,7 +298,7 @@ impl Scene {
             };
             &disrupted
         };
-        // a vorton's explosion does not roll (EVE.js resolveVortonShot); every other shot is rolled to hit
+        // A Vorton explosion does not roll (EVE.js resolveVortonShot); every other shot is rolled to hit.
         let shot = match turret.aoe {
             Some(aoe) => explosion_shot(&aoe, turret.raw_damage, turret.optimal_range, &attacker, &target),
             None => {
@@ -312,9 +309,16 @@ impl Scene {
         if let Some(spool) = spool {
             self.spool_advance(session, effect.module_id, spool);
         }
-        // the ships an arc reaches are chosen from the scene as the shot lands, before the target can leave it
-        let arc_victims = match (turret.aoe, turret.arc) {
-            (Some(_), Some(arc)) if shot.hit => self.arc_victims(session, target_session, &target, arc),
+        let structure_arc = self.controlled_structure_id(session).is_some()
+            && self.controlled_structure_id(session).is_some_and(|structure_id| {
+                self.control_lease_generation(session, structure_id).is_some()
+            })
+            && turret.aoe.is_some()
+            && turret.arc.is_some();
+        // Piloted ships retain EveJS's ordinary arc selection. A controlled structure waits for a fresh,
+        // correlated Host authorization on each link before applying its secondary damage.
+        let arc_victims = match (turret.aoe, turret.arc, structure_arc) {
+            (Some(_), Some(arc), false) if shot.hit => self.arc_victims(session, target_session, &target, arc),
             _ => Vec::new(),
         };
         let shooter = Shooter {
@@ -325,12 +329,40 @@ impl Scene {
             weapon: turret.weapon_type_id,
         };
         let (mut out, destroyed) = self.land_shot(shooter, target_session, &shot, at);
-        // the shot that took the last of the hull is told first, then the ship is gone
         if destroyed {
             out.extend(self.destroy(target_session, Some(reporter), at));
         }
-        // each ship the arc reaches takes the explosion as the target did, without a roll
-        if let Some(aoe) = turret.aoe {
+        if structure_arc && shot.hit
+            && let (Some(aoe), Some(arc)) = (turret.aoe, turret.arc)
+        {
+            let links_remaining = (arc.targets - 1).max(0) as u32;
+            if links_remaining > 0 {
+                let struck_ids = vec![attacker_id, effect.target_id];
+                let candidate_ids =
+                    self.vorton_arc_candidate_ids(at, &target, arc.range, &struck_ids);
+                out.extend(self.request_structure_damage_candidates(
+                    session,
+                    effect.module_id,
+                    effect.effect_id,
+                    0,
+                    candidate_ids,
+                    crate::modules::PendingStructureDamageOperation::VortonArcHop {
+                        anchor: target,
+                        arc,
+                        aoe,
+                        raw_damage: turret.raw_damage,
+                        shooter,
+                        links_remaining,
+                        struck_ids,
+                    },
+                    at,
+                ));
+            }
+        }
+        // Each ship a normal pilot's arc reaches takes the same explosion as the primary target, without a roll.
+        if !structure_arc
+            && let Some(aoe) = turret.aoe
+        {
             for victim in arc_victims {
                 let Some(victim_kinematics) = self.kinematics_of(victim) else { continue };
                 let struck = explosion(&aoe, turret.raw_damage, &victim_kinematics);
@@ -365,7 +397,7 @@ impl Scene {
     /// A shot lands on the ship of `target`: its damage is taken (whoever sees it is told its damage state), the shot is an offensive act (the crimewatch
     /// and the NPCs hear of it), and the pilots who see it are told the shot. Returns what was told, and whether the shot took the last of the hull: the
     /// caller destroys the ship once the shot is told.
-    pub(super) fn land_shot(
+    pub(crate) fn land_shot(
         &mut self,
         shooter: Shooter,
         target: SessionId,
@@ -463,5 +495,112 @@ impl Scene {
         };
         chosen.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
         chosen.into_iter().map(|(_, _, session)| session).collect()
+    }
+
+
+    /// Fresh Vorton arc candidates from the current scene, excluding ships already struck in this chain.
+    pub(crate) fn vorton_arc_candidate_ids(
+        &self,
+        now: i64,
+        anchor: &Kinematics,
+        range: f64,
+        struck_ids: &[i64],
+    ) -> Vec<i64> {
+        if !range.is_finite() || range <= 0.0 {
+            return Vec::new();
+        }
+        self.damageable_entity_ids(now, |target_id, position, radius| {
+            if struck_ids.contains(&target_id) || self.missiles.contains_key(&target_id) {
+                return false;
+            }
+            let signature_radius = if let Some(session) = self.session_of(target_id) {
+                self.pilots
+                    .get(&session)
+                    .map_or(radius, |pilot| pilot.ship.spec.signature_radius)
+            } else if self.structure_index(target_id).is_some() {
+                radius
+            } else {
+                return false;
+            };
+            let candidate = Kinematics {
+                position: [position.x, position.y, position.z],
+                velocity: [0.0; 3],
+                radius,
+                signature_radius,
+            };
+            surface_distance(anchor, &candidate) <= range + 1e-6
+        })
+    }
+
+    /// Orders the currently authorized Vorton targets by their surface distance to the arc anchor, then by ID.
+    pub(crate) fn vorton_arc_target_order(
+        &self,
+        anchor: &Kinematics,
+        target_ids: &[i64],
+    ) -> Vec<i64> {
+        let mut ordered: Vec<(f64, i64)> = target_ids
+            .iter()
+            .copied()
+            .filter_map(|target_id| {
+                let target = if let Some(session) = self.session_of(target_id) {
+                    self.kinematics_of(session)?
+                } else if self.structure_index(target_id).is_some() {
+                    let body = self.system().body(target_id)?;
+                    Kinematics {
+                        position: [body.position.x, body.position.y, body.position.z],
+                        velocity: [0.0; 3],
+                        radius: body.radius,
+                        signature_radius: body.radius,
+                    }
+                } else {
+                    return None;
+                };
+                Some((surface_distance(anchor, &target), target_id))
+            })
+            .filter(|(distance, _)| distance.is_finite())
+            .collect();
+        ordered.sort_by(|left, right| left.0.total_cmp(&right.0).then(left.1.cmp(&right.1)));
+        ordered.into_iter().map(|(_, target_id)| target_id).collect()
+    }
+
+    /// Lands one authorized Vorton arc link through the ordinary per-type resistance path.
+    pub(crate) fn damage_vorton_arc_target(
+        &mut self,
+        shooter: Shooter,
+        aoe: Aoe,
+        raw_damage: Damage,
+        target_id: i64,
+        now: i64,
+    ) -> Vec<Out> {
+        if let Some(target_session) = self.session_of(target_id) {
+            if self.pilots.get(&target_session).is_some_and(|pilot| pilot.protected_until > now)
+                || self.is_tethered_session(target_session, now)
+            {
+                return Vec::new();
+            }
+            let Some(target) = self.kinematics_of(target_session) else { return Vec::new() };
+            let struck = explosion(&aoe, raw_damage, &target);
+            let (mut out, destroyed) = self.land_shot(shooter, target_session, &struck, now);
+            if destroyed {
+                out.extend(self.destroy(target_session, Some(shooter.reporter), now));
+            }
+            return out;
+        }
+        if self.structure_index(target_id).is_some() {
+            let Some(body) = self.system().body(target_id) else { return Vec::new() };
+            let target = Kinematics {
+                position: [body.position.x, body.position.y, body.position.z],
+                velocity: [0.0; 3],
+                radius: body.radius,
+                signature_radius: body.radius,
+            };
+            let struck = explosion(&aoe, raw_damage, &target);
+            return if struck.hit {
+                self.damage_structure(target_id, struck.damage, now)
+            } else {
+                Vec::new()
+            };
+        }
+        Vec::new()
     }
 }

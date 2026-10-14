@@ -3,6 +3,7 @@ using Eve.Marshal;
 using Eve.Scheduler;
 using Eve.Services;
 using Eve.Structures;
+using Eve.Host.Persistence.Structures;
 using Npgsql;
 
 namespace Eve.Host;
@@ -23,13 +24,15 @@ public sealed class StructureDeploymentAuthority
     private readonly StructureStore _store;
     private readonly StructureTimers _timers;
     private readonly DurableScheduler _scheduler;
+    private readonly Eve.Events.EventBus _events;
 
-    public StructureDeploymentAuthority(NpgsqlDataSource source, StructureStore store, StructureTimers timers, DurableScheduler scheduler)
+    public StructureDeploymentAuthority(NpgsqlDataSource source, StructureStore store, StructureTimers timers, DurableScheduler scheduler, Eve.Events.EventBus events)
     {
         _source = source;
         _store = store;
         _timers = timers;
         _scheduler = scheduler;
+        _events = events;
     }
 
     /// <summary>
@@ -40,17 +43,32 @@ public sealed class StructureDeploymentAuthority
     {
         await using var connection = await _source.OpenConnectionAsync(cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        var structures = new List<(long StructureId, StructureRecord Record)>(structureIds.Count);
         foreach (var structureId in structureIds)
         {
-            await ManagedAsync(call, connection, transaction, structureId, cancellationToken);
+            structures.Add((structureId, await ManagedAsync(call, connection, transaction, structureId, cancellationToken)));
         }
-        foreach (var structureId in structureIds)
+        var changed = new List<(long CorporationId, StructureReinforcementChangedStructure Structure, long ApplyAtMs)>();
+        foreach (var (structureId, record) in structures)
         {
             var transition = await _timers.ApplyAsync(connection, transaction, structureId, new ReinforceTimeRequested(weekday, hour), cancellationToken);
             if (transition?.Refusal is { } refusal)
             {
                 throw Refusal($"Failed to update reinforcement timing: {refusal}.");
             }
+            if (transition is { Changed: true } && transition.Next.PendingEffectiveMs > 0)
+            {
+                changed.Add((record.OwnerCorporationId,
+                    new StructureReinforcementChangedStructure(structureId, record.Name, record.TypeId),
+                    transition.Next.PendingEffectiveMs));
+            }
+        }
+        foreach (var corporation in changed.GroupBy(change => change.CorporationId))
+        {
+            var first = corporation.First();
+            await _events.PublishInTransactionAsync(connection, transaction, ReinforcementChangedNotifications.Topic,
+                new StructureReinforcementChanged(corporation.Key, weekday, hour, first.ApplyAtMs,
+                    corporation.Select(change => change.Structure).ToArray()), cancellationToken: cancellationToken);
         }
         await transaction.CommitAsync(cancellationToken);
         _scheduler.Wake();

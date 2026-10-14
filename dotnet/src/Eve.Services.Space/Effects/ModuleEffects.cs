@@ -65,6 +65,7 @@ internal static class ModuleEffects
         .Register(new ConeEffect())
         .Register(new HogEffect())
         .Register(new StructureHogEffect())
+        .Register(new PointDefenseEffect())
         // the entosis link acts on a structure: refused by name until structures exist (phase 3), see StructureModuleEffects.cs
         .Register(new EntosisLinkEffect())
         // the ship compressors: a facility for the fleet while they run (CompressionModuleEffect.cs)

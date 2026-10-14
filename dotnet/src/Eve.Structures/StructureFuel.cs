@@ -31,16 +31,22 @@ public interface IServiceFuelRules
     ServiceFuelRule? RuleOf(int serviceId);
 }
 
-/// <summary>
-/// The fuel bay of a structure: the fuel blocks in it (inventory items at the structure, flag 172). The Host implements it over the item store; this module owns
-/// the rule of when fuel is taken, not where it is kept.
-/// </summary>
+/// <summary>The final and prior inventory quantities changed by a fuel-bay take.</summary>
+public sealed record StructureFuelItemChange(long ItemId, int TypeId, long OwnerId, long LocationId, int Flag, long Quantity, bool Singleton, long PreviousLocationId, int PreviousFlag, long PreviousQuantity);
+
+/// <summary>The amount and item changes from a fuel-bay take in the caller's transaction.</summary>
+public sealed record StructureFuelTake(long Taken, IReadOnlyList<StructureFuelItemChange> Changes);
+
+
+
+/// <summary>The fuel bay of a structure: the fuel blocks in it (inventory items at the structure, flag 172). The Host implements it over the item store; this module owns
+/// the rule of when fuel is taken, not where it is kept.</summary>
 public interface IStructureFuelBay
 {
     Task<long> QuantityAsync(NpgsqlConnection connection, NpgsqlTransaction? transaction, long structureId, CancellationToken cancellationToken);
 
-    /// <summary>Takes up to <paramref name="quantity"/> fuel blocks out of the bay in the caller's transaction and returns how many it took.</summary>
-    Task<long> TakeAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long structureId, long quantity, CancellationToken cancellationToken);
+    /// <summary>Takes the requested fuel in the caller's transaction; when partial takes are allowed, returns the available amount and exact item deltas.</summary>
+    Task<StructureFuelTake> TakeAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long structureId, long quantity, bool allowPartial, CancellationToken cancellationToken);
 }
 
 public enum ServiceOnlineOutcome
@@ -105,7 +111,11 @@ public sealed class StructureFuel
         {
             return ServiceOnlineOutcome.NotEnoughFuel;
         }
-        await _bay.TakeAsync(connection, transaction, structureId, rule.FuelToOnline, cancellationToken);
+        var fuel = await _bay.TakeAsync(connection, transaction, structureId, rule.FuelToOnline, allowPartial: false, cancellationToken: cancellationToken);
+        if (fuel.Taken < rule.FuelToOnline)
+        {
+            return ServiceOnlineOutcome.NotEnoughFuel;
+        }
         await _timers.SetServiceAsync(connection, transaction, structureId, serviceId, true, cancellationToken);
         await ScheduleNextHourAsync(connection, transaction, structureId, cancellationToken);
         return ServiceOnlineOutcome.Online;
@@ -140,8 +150,8 @@ public sealed class StructureFuel
         {
             return;
         }
-        var taken = await _bay.TakeAsync(connection, transaction, structureId, hourly, cancellationToken);
-        if (taken < hourly)
+        var fuel = await _bay.TakeAsync(connection, transaction, structureId, hourly, allowPartial: true, cancellationToken: cancellationToken);
+        if (fuel.Taken < hourly)
         {
             await _timers.FuelOutAsync(connection, transaction, structureId, cancellationToken);
             return;

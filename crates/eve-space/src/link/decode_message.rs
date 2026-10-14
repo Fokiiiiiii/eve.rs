@@ -206,6 +206,23 @@ pub(super) fn read_ship(reader: &mut Reader) -> Result<ShipSpec, DecodeError> {
     })
 }
 
+fn read_structure_damage_ids(reader: &mut Reader) -> Result<Vec<i64>, DecodeError> {
+    let count = reader.u32()?;
+    if count as usize > MAX_STRUCTURE_DAMAGE_CANDIDATES {
+        return Err(DecodeError::BadValue("structure-damage candidate count"));
+    }
+    let mut ids = Vec::with_capacity(count as usize);
+    let mut seen = std::collections::HashSet::with_capacity(count as usize);
+    for _ in 0..count {
+        let id = reader.i64()?;
+        if id <= 0 || !seen.insert(id) {
+            return Err(DecodeError::BadValue("structure-damage target IDs"));
+        }
+        ids.push(id);
+    }
+    Ok(ids)
+}
+
 impl Message {
     /// Reads a frame's payload.
     pub fn decode(payload: &[u8]) -> Result<Message, DecodeError> {
@@ -262,15 +279,17 @@ impl Message {
                 let structure_id = r.i64()?;
                 let character_id = r.i64()?;
                 let active = read_flag(&mut r, "control structure active")?;
+                let control_lease_generation = r.i64()?;
                 if session_id == 0
                     || solar_system_id <= 0
                     || structure_id < 0
                     || character_id < 0
-                    || (active && (structure_id == 0 || character_id == 0))
+                    || control_lease_generation < 0
+                    || (active && (structure_id == 0 || character_id == 0 || control_lease_generation == 0))
                 {
-                    return Err(DecodeError::BadValue("control structure IDs"));
+                    return Err(DecodeError::BadValue("control structure IDs or generation"));
                 }
-                Message::ControlStructure { session_id, solar_system_id, structure_id, character_id, active }
+                Message::ControlStructure { session_id, solar_system_id, structure_id, character_id, active, control_lease_generation }
             }
             kind::COMMAND => {
                 let session_id = r.u64()?;
@@ -495,6 +514,39 @@ impl Message {
                 }))
             }
             kind::REMOVE_DEPLOYED => Message::RemoveDeployed { deployable_id: r.i64()? },
+                    kind::REMOVE_CYNO_BEACON => {
+                        let solar_system_id = r.i32()?;
+                        let structure_beacon_id = r.i64()?;
+                        if solar_system_id <= 0 || structure_beacon_id <= 0 {
+                            return Err(DecodeError::BadValue("cyno beacon removal"));
+                        }
+                        Message::RemoveCynoBeacon { solar_system_id, structure_beacon_id }
+                    }
+            kind::DAMAGEABLE_ENTITY_UPSERTED => {
+                let solar_system_id = r.i32()?;
+                let entity_id = r.i64()?;
+                let type_id = r.i32()?;
+                let owner_id = r.i64()?;
+                let corporation_id = r.i64()?;
+                let alliance_id = r.i64()?;
+                let war_faction_id = r.i64()?;
+                if solar_system_id <= 0 || entity_id <= 0 || type_id <= 0 || owner_id < 0
+                    || corporation_id < 0 || alliance_id < 0 || war_faction_id < 0
+                {
+                    return Err(DecodeError::BadValue("damageable entity identity"));
+                }
+                Message::DamageableEntityUpserted {
+                    solar_system_id, entity_id, type_id, owner_id, corporation_id, alliance_id, war_faction_id,
+                }
+            }
+            kind::DAMAGEABLE_ENTITY_REMOVED => {
+                let solar_system_id = r.i32()?;
+                let entity_id = r.i64()?;
+                if solar_system_id <= 0 || entity_id <= 0 {
+                    return Err(DecodeError::BadValue("damageable entity removal"));
+                }
+                Message::DamageableEntityRemoved { solar_system_id, entity_id }
+            }
             kind::PLACE_PROBE => {
                 let probe_id = r.i64()?;
                 let solar_system_id = r.i32()?;
@@ -1043,6 +1095,33 @@ impl Message {
                 access_difficulty_bonus: r.f64()?,
                 roll: r.f64()?,
             },
+            kind::STRUCTURE_DAMAGE_CANDIDATES_REQUEST | kind::STRUCTURE_DAMAGE_CANDIDATES_RESULT => {
+                let session_id = r.u64()?;
+                let structure_id = r.i64()?;
+                let module_id = r.i64()?;
+                let effect_id = r.i32()?;
+                let activation_nonce = r.u64()?;
+                let control_lease_generation = r.i64()?;
+                let cycle_id = r.u64()?;
+                let pulse_hop_ordinal = r.u32()?;
+                if session_id == 0 || structure_id <= 0 || module_id <= 0 || effect_id <= 0 || activation_nonce == 0
+                    || control_lease_generation <= 0 || cycle_id == 0
+                {
+                    return Err(DecodeError::BadValue("structure-damage correlation"));
+                }
+                let ids = read_structure_damage_ids(&mut r)?;
+                if kind == kind::STRUCTURE_DAMAGE_CANDIDATES_REQUEST {
+                    Message::StructureDamageCandidatesRequest {
+                        session_id, structure_id, module_id, effect_id, activation_nonce, control_lease_generation,
+                        cycle_id, pulse_hop_ordinal, candidate_ids: ids,
+                    }
+                } else {
+                    Message::StructureDamageCandidatesResult {
+                        session_id, structure_id, module_id, effect_id, activation_nonce, control_lease_generation,
+                        cycle_id, pulse_hop_ordinal, allowed_target_ids: ids,
+                    }
+                }
+            }
             kind::MODULE_WORK_CYCLE => {
                 let session_id = r.u64()?;
                 let character_id = r.i64()?;

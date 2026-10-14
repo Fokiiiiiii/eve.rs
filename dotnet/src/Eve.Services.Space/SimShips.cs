@@ -103,10 +103,13 @@ public static SimHeatProfile HeatProfileOf(ShipSnapshot snapshot, DogmaStatic st
         var ship = snapshot.Ship;
         var type = statics.Type(ship.TypeId);
         var character = snapshot.Character;
+        var isStructure = type is not null && statics.CategoryId("Structure") == type.CategoryId;
+        var ownerId = isStructure ? ship.OwnerId : character.Id;
+        var corporationId = isStructure ? checked((int)ship.OwnerId) : (int)character.CorporationId;
         double Attribute(int id) => snapshot.World.Get(ship.Id, id);
         return new SimShip(
-            ship.Id, character.Id, ship.TypeId, type?.GroupId ?? 0, type?.CategoryId ?? 0, ship.CustomName ?? type?.Name ?? "", character.Id,
-            (int)character.CorporationId, (int)(character.AllianceId ?? 0), 0, securityStatus,
+            ship.Id, character.Id, ship.TypeId, type?.GroupId ?? 0, type?.CategoryId ?? 0, ship.CustomName ?? type?.Name ?? "", ownerId,
+            corporationId, isStructure ? 0 : (int)(character.AllianceId ?? 0), 0, isStructure ? 0 : securityStatus,
             Attribute(Radius), Attribute(Mass), Attribute(MaxVelocity), Attribute(Agility), WarpSpeedAu(Attribute(BaseWarpSpeed), Attribute(WarpSpeedMultiplier)), Attribute(ShieldRechargeRate),
             Attribute(MaxTargetRange), Attribute(ScanResolution), Attribute(SignatureRadius), LockLimit(Attribute(MaxLockedTargets), snapshot.World.Get(character.Id, MaxLockedTargets)),
             Attribute(CapacitorCapacity), Attribute(RechargeRate) / 1000.0,

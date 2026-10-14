@@ -234,6 +234,23 @@ impl Scene {
             });
         }
         let body = self.system().body(target)?;
+        if body.kind == BodyKind::Structure {
+            let health = self.structure_health.get(&target)?;
+            return Some(Subject {
+                id: target,
+                session: None,
+                position: body.position,
+                radius: body.radius,
+                type_id: body.type_id,
+                group_id: body.group_id,
+                signature_radius: body.radius,
+                state: health.state_at(now),
+                has_damage_state: true,
+                warping: false,
+                protected: false,
+                static_body: true,
+            });
+        }
         Some(Subject {
             id: target,
             session: None,
@@ -252,6 +269,49 @@ impl Scene {
             protected: false,
             static_body: true,
         })
+    }
+
+
+    /// IDs of unique, positive dynamic entities with live damageable health that satisfy the caller's current geometry predicate.
+    pub(crate) fn damageable_entity_ids(
+        &self,
+        now: i64,
+        mut in_range: impl FnMut(i64, Vec3, f64) -> bool,
+    ) -> Vec<i64> {
+        const MAX_CANDIDATES: usize = 4_096;
+        let mut ids: Vec<i64> = self
+            .pilots
+            .values()
+            .map(|pilot| pilot.ship.spec.ship_id)
+            .chain(self.structure_health.keys().copied())
+            .chain(
+                self.missiles
+                    .values()
+                    .filter(|missile| missile.is_flying() && missile.hit_points.is_finite() && missile.hit_points > 0.0 && missile.expires_at > now)
+                    .map(|missile| missile.id),
+            )
+            .filter(|id| *id > 0)
+            .collect();
+        ids.sort_unstable();
+        ids.dedup();
+        ids.into_iter()
+            .filter_map(|id| {
+                if let Some(subject) = self.subject(id, now) {
+                    return (subject.has_damage_state && !subject.warping)
+                        .then_some((subject.id, subject.position, subject.radius));
+                }
+                self.missiles.get(&id).and_then(|missile| {
+                    (missile.is_flying()
+                        && missile.hit_points.is_finite()
+                        && missile.hit_points > 0.0
+                        && missile.expires_at > now)
+                        .then_some((missile.id, missile.position, missile.spec.radius))
+                })
+            })
+            .filter(|(id, position, radius)| in_range(*id, *position, *radius))
+            .map(|(id, _, _)| id)
+            .take(MAX_CANDIDATES)
+            .collect()
     }
 
     fn next_sequence(&mut self) -> u64 {
@@ -274,27 +334,46 @@ impl Scene {
         vec![Out::Targets { session, command: order.code(), pending, targets }]
     }
 
-    /// What a ship has locked, in the order it locked them.
     pub(crate) fn locked_by(&self, session: SessionId) -> Vec<i64> {
-        self.pilots.get(&session).map(|p| p.targeting.targets()).unwrap_or_default()
+        self.pilots
+            .get(&session)
+            .map(|pilot| pilot.targeting.targets())
+            .or_else(|| {
+                self.controlled_structure_id(session)
+                    .and_then(|structure_id| self.structure_modules.get(&structure_id))
+                    .map(|state| state.targeting.targets())
+            })
+            .unwrap_or_default()
     }
 
-    /// The ships (and nothing else can, yet) that have `target` locked, by id.
     pub(crate) fn targeters_of(&self, target: i64) -> Vec<i64> {
         let mut by: Vec<i64> = self
             .pilots
             .values()
-            .filter(|p| p.targeting.locked.iter().any(|l| l.target == target))
-            .map(|p| p.ship.spec.ship_id)
+            .filter(|pilot| pilot.targeting.locked.iter().any(|locked| locked.target == target))
+            .map(|pilot| pilot.ship.spec.ship_id)
             .collect();
+        by.extend(self.structure_modules.iter().filter_map(|(structure_id, state)| {
+            let controller = self.controller_of_structure(*structure_id)?;
+            (!self.pilots.contains_key(&controller)
+                && state.targeting.locked.iter().any(|locked| locked.target == target))
+                .then_some(*structure_id)
+        }));
         by.sort_unstable();
+        by.dedup();
         by
     }
 
     /// A player's question or order about targets.
     pub fn target_order(&mut self, session: SessionId, order: Order, now: i64) -> Vec<Out> {
         if !self.pilots.contains_key(&session) {
-            return vec![Out::Refused { session, command: order.code(), reason: "NO_SHIP_IN_SPACE" }];
+            let Some(structure_id) = self.controlled_structure_id(session) else {
+                return vec![Out::Refused { session, command: order.code(), reason: "NO_SHIP_IN_SPACE" }];
+            };
+            if !self.structure_modules.contains_key(&structure_id) {
+                return vec![Out::Refused { session, command: order.code(), reason: "STRUCTURE_SPEC_NOT_READY" }];
+            }
+            return self.with_controlled_structure_modules(now, |scene| scene.target_order(session, order, now));
         }
         self.settle_all(now);
         let told = match &order {

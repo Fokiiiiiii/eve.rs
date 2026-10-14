@@ -101,8 +101,15 @@ public const byte UpdateEffect = 61;
 
 
 /// <summary>Protocol 46 (FP-C7): an ECM burst reached ships; the ship that ran it and each ship reached, with whether its roll jammed it (simulation to host).</summary>
-public const byte EcmBurst = 67;
+        public const byte EcmBurst = 67;
+        public const byte StructureDamageCandidatesRequest = 85;
+        public const byte StructureDamageCandidatesResult = 86;
+        public const byte RemoveCynoBeacon = 87;
+        public const byte SimDamageableEntityUpserted = 88;
+        public const byte SimDamageableEntityRemoved = 89;
     }
+
+    private const int MaxStructureDamageCandidates = 4096;
 
     private ref struct Reader(ReadOnlyMemory<byte> data)
     {

@@ -536,7 +536,6 @@ impl Scene {
         out
     }
 
-    /// Makes one Pochven NPC of the type at a place and gives it its behavior.
     fn spawn_pochven(
         &mut self,
         npc_type: &NpcType,
@@ -555,7 +554,17 @@ impl Scene {
             behavior,
             now,
         ) {
-            Ok((_, outs)) => outs,
+            Ok((_, mut outs)) => {
+                outs.insert(0, self.publish_sim_damageable_entity(
+                    ship_id,
+                    npc_type.type_id,
+                    npc_type.corporation_id,
+                    npc_type.corporation_id,
+                    0,
+                    0,
+                ));
+                outs
+            }
             Err(_) => Vec::new(),
         }
     }
@@ -827,5 +836,55 @@ mod tests {
         }
         assert!(locked_rogue, "the sentry did not lock the rogue drone");
         assert!(!locked_fellow, "the sentry locked a fellow triglavian");
+    }
+
+
+    #[test]
+    fn sim_owned_pochven_damageable_profiles_follow_insert_remove_and_teardown() {
+        let mut scene = pochven_scene(3);
+        let spawned = scene.poll(T0);
+        let registrations: Vec<(i64, i32, i64, i64, i64, i64)> = spawned
+            .iter()
+            .filter_map(|out| match out {
+                Out::SimDamageableEntityUpserted {
+                    solar_system_id,
+                    entity_id,
+                    type_id,
+                    owner_id,
+                    corporation_id,
+                    alliance_id,
+                    war_faction_id,
+                } => {
+                    assert_eq!(*solar_system_id, scene.solar_system_id());
+                    Some((*entity_id, *type_id, *owner_id, *corporation_id, *alliance_id, *war_faction_id))
+                }
+                _ => None,
+            })
+            .collect();
+        assert_eq!(registrations.len(), 5, "three gate sentries and two camp NPCs are registered");
+        assert!(registrations.iter().all(|(_, type_id, owner_id, corporation_id, alliance_id, war_faction_id)| {
+            [WERPOST.type_id, DAMAVIK.type_id].contains(type_id)
+                && owner_id == corporation_id
+                && *alliance_id == 0
+                && *war_faction_id == 0
+        }));
+
+        let removed_id = registrations[0].0;
+        let npc_session = scene.session_of(removed_id).expect("the registered entity is in the scene");
+        let removed = scene.remove_npc(npc_session, T0 + 1).expect("the NPC can leave without dying");
+        assert!(removed.iter().any(|out| matches!(
+            out,
+            Out::SimDamageableEntityRemoved { solar_system_id, entity_id }
+                if *solar_system_id == scene.solar_system_id() && *entity_id == removed_id
+        )));
+        assert!(!removed.iter().any(|out| matches!(out, Out::Destroyed { ship_id, .. } if *ship_id == removed_id)));
+
+        let teardown = scene.take_sim_damageable_entity_removals();
+        assert_eq!(teardown.len(), 4, "scene teardown unregisters all remaining Sim-owned identities");
+        assert!(!teardown.iter().any(|out| matches!(
+            out,
+            Out::SimDamageableEntityRemoved { entity_id, .. } if *entity_id == removed_id
+        )));
+        assert!(scene.take_sim_damageable_entity_removals().is_empty(), "teardown is idempotent");
     }
 }

@@ -25,6 +25,73 @@ impl Scene {
         self.controlled_structures.get(&session).map(|observer| observer.structure_id)
     }
 
+
+    /// The Host's current structure-pilot record version for this controller lease.
+    pub(crate) fn control_lease_generation(&self, session: SessionId, structure_id: i64) -> Option<i64> {
+        (self.controlled_structure_id(session) == Some(structure_id))
+            .then(|| self.control_lease_generations.get(&structure_id).copied())
+            .flatten()
+    }
+
+    pub(crate) fn with_controlled_structure_modules<R>(
+        &mut self,
+        now: i64,
+        run: impl FnOnce(&mut Self) -> R,
+    ) -> R {
+        let sessions: Vec<_> = self.controlled_structures.keys().copied().collect();
+        let mut inserted = Vec::new();
+        for session in sessions {
+            if self.pilots.contains_key(&session) {
+                continue;
+            }
+            let Some(structure_id) = self.controlled_structure_id(session) else { continue };
+            let Some(state) = self.structure_modules.get(&structure_id).cloned() else { continue };
+            let Some((position, radius)) =
+                self.structure_body(structure_id).map(|body| (body.position, body.radius))
+            else {
+                continue;
+            };
+            let Some(health) = self.structure_health.get(&structure_id).map(|health| health.health_snapshot()) else {
+                continue;
+            };
+            let Some(observer) = self.controlled_structures.get(&session) else { continue };
+            let mut spec = state.spec;
+            spec.radius = radius;
+            let ship = crate::ship::Ship {
+                spec,
+                npc: None,
+                position,
+                velocity: eve_destiny::Vec3::new(0.0, 0.0, 0.0),
+                direction: eve_destiny::Vec3::new(1.0, 0.0, 0.0),
+                speed_fraction: 0.0,
+                course: crate::ship::Course::Stop,
+                health,
+            };
+            let mut pilot = Pilot::new(ship, state.modules, structure_id as u64, now, 0);
+            pilot.targeting = state.targeting;
+            pilot.bound = observer.bound;
+            pilot.sees.clone_from(&observer.sees);
+            pilot.sees_wrecks.clone_from(&observer.sees_wrecks);
+            pilot.sees_asteroids.clone_from(&observer.sees_asteroids);
+            self.pilots.insert(session, pilot);
+            inserted.push((session, structure_id));
+        }
+
+        let result = run(self);
+        for (session, structure_id) in inserted {
+            let Some(pilot) = self.pilots.remove(&session) else { continue };
+            if let Some(state) = self.structure_modules.get_mut(&structure_id) {
+                state.spec = pilot.ship.spec.clone();
+                state.modules = pilot.modules.clone();
+                state.targeting = pilot.targeting;
+            }
+            if let Some(health) = self.structure_health.get_mut(&structure_id) {
+                health.replace_health_from_controlled_modules(pilot.ship.health);
+            }
+        }
+        result
+    }
+
     pub(crate) fn controller_of_structure(&self, structure_id: i64) -> Option<SessionId> {
         self.controlled_structures
             .iter()
@@ -39,6 +106,7 @@ impl Scene {
         structure_id: i64,
         character_id: i64,
         active: bool,
+        control_lease_generation: i64,
         now: i64,
     ) -> Vec<Out> {
         let refused =
@@ -62,6 +130,14 @@ impl Scene {
             if structure_id != 0 && structure_id != current {
                 return refused("CONTROL_STRUCTURE_MISMATCH");
             }
+            if self
+                .control_lease_generations
+                .get(&current)
+                .is_some_and(|latest| control_lease_generation < *latest)
+            {
+                return refused("CONTROL_STRUCTURE_GENERATION_STALE");
+            }
+            self.control_lease_generations.insert(current, control_lease_generation);
             let mut out = self.release_controlled_structure(session, current, now).unwrap_or_default();
             out.push(accepted());
             return out;
@@ -74,7 +150,22 @@ impl Scene {
             return refused("STRUCTURE_ALREADY_ACTIVE_AS_SHIP");
         }
         if self.controlled_structure_id(session) == Some(structure_id) {
+            if self
+                .control_lease_generations
+                .get(&structure_id)
+                .is_some_and(|latest| control_lease_generation < *latest)
+            {
+                return refused("CONTROL_STRUCTURE_GENERATION_STALE");
+            }
+            self.control_lease_generations.insert(structure_id, control_lease_generation);
             return vec![accepted()];
+        }
+        if self
+            .control_lease_generations
+            .get(&structure_id)
+            .is_some_and(|latest| control_lease_generation <= *latest)
+        {
+            return refused("CONTROL_STRUCTURE_GENERATION_STALE");
         }
 
         let mut out = Vec::new();
@@ -101,6 +192,7 @@ impl Scene {
         if previous_ship_id.is_some() {
             out.extend(self.leave(session, Departure::Boarded, now).unwrap_or_default());
         }
+        self.control_lease_generations.insert(structure_id, control_lease_generation);
         self.controlled_structures.insert(
             session,
             ControlledStructureObserver {
@@ -132,8 +224,8 @@ impl Scene {
             return None;
         }
         let previous_ship_id = observer.previous_ship_id;
+        let mut out = self.teardown_controlled_structure(session, structure_id, now);
         self.controlled_structures.remove(&session);
-        let mut out = Vec::new();
         if let Some(ship_id) = previous_ship_id
             && let Some(fake_session) = self.unpiloted.get(&ship_id).copied()
         {
@@ -160,6 +252,25 @@ impl Scene {
         }
         // A lost retained hull keeps its respawn context across control restoration and retry.
         Some(out)
+    }
+
+    pub(crate) fn teardown_controlled_structure(
+        &mut self,
+        session: SessionId,
+        structure_id: i64,
+        now: i64,
+    ) -> Vec<Out> {
+        if self.controlled_structure_id(session) != Some(structure_id) {
+            return Vec::new();
+        }
+        self.settle_modules(now);
+        self.with_controlled_structure_modules(now, |scene| {
+            let held = scene.pilots.get(&session).map(|pilot| pilot.targeting.clone()).unwrap_or_default();
+            let mut out = scene.stop_controlled_structure_modules(session, now);
+            out.extend(scene.clear_locks(session, true, now));
+            out.extend(scene.drop_targeting(structure_id, &held, now));
+            out
+        })
     }
 
     /// The client bound the system's ballpark: it is told the time, and given the ships in view (its own among them, in the order they came into
@@ -435,7 +546,34 @@ impl Scene {
     /// The numbers of a ship in space changed (a skill finished, a module went on): the client is told the ones that differ.
     pub fn respec(&mut self, session: SessionId, spec: ShipSpec, now: i64) -> Vec<Out> {
         if !self.pilots.contains_key(&session) {
-            return Vec::new();
+            let Some(structure_id) = self.controlled_structure_id(session).filter(|id| *id == spec.ship_id) else {
+                return Vec::new();
+            };
+            if self.structure_body(structure_id).is_none() || !self.structure_health.contains_key(&structure_id) {
+                return Vec::new();
+            }
+            if let Some(state) = self.structure_modules.get_mut(&structure_id) {
+                state.modules.respec_capacitor(spec.capacitor_capacity, spec.capacitor_recharge_s, now);
+            } else {
+                self.structure_modules.insert(
+                    structure_id,
+                    ControlledStructureModules {
+                        spec: spec.clone(),
+                        modules: crate::modules::Modules::with_charge(
+                            spec.capacitor_capacity,
+                            spec.capacitor_recharge_s,
+                            1.0,
+                            now,
+                        ),
+                        targeting: crate::targeting::Targeting::default(),
+                    },
+                );
+            }
+            return self.with_controlled_structure_modules(now, |scene| {
+                let mut out = scene.respec(session, spec, now);
+                out.extend(scene.stop_unfitted_structure_modules(session, now));
+                out
+            });
         }
         self.settle_pilot(session, now);
         let stamp = self.next_stamp(now);
@@ -462,6 +600,15 @@ impl Scene {
         let stance_changed = new.stance != old.stance;
         let ship_id = id(new.ship_id);
         let (owner, ship) = (new.character_id, new.ship_id);
+        let sim_profile_update = self.sim_damageable_entities.contains(&old.ship_id).then_some((
+            old.ship_id,
+            new.ship_id,
+            new.type_id,
+            new.owner_id,
+            i64::from(new.corporation_id),
+            i64::from(new.alliance_id),
+            i64::from(new.war_faction_id),
+        ));
         let mut actions = Vec::new();
         if new.mass != old.mass {
             actions.push(payload::action(stamp, "SetBallMass", [ship_id.clone(), real(new.mass)]));
@@ -483,7 +630,25 @@ impl Scene {
             let change = payload::ship_slim_item_change(stamp, ship);
             told.extend(self.tell_all(session, vec![change]));
         }
-        self.with_backlog(told)
+        let mut out = self.with_backlog(told);
+        if let Some((previous_id, entity_id, type_id, owner_id, corporation_id, alliance_id, war_faction_id)) =
+            sim_profile_update
+        {
+            if previous_id != entity_id
+                && let Some(removed) = self.remove_sim_damageable_entity(previous_id)
+            {
+                out.push(removed);
+            }
+            out.push(self.publish_sim_damageable_entity(
+                entity_id,
+                type_id,
+                owner_id,
+                corporation_id,
+                alliance_id,
+                war_faction_id,
+            ));
+        }
+        out
     }
 
     pub fn poll(&mut self, now: i64) -> Vec<Out> {

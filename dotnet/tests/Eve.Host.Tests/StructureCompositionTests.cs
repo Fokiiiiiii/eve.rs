@@ -144,7 +144,7 @@ public sealed class StructureCompositionTests : IAsyncLifetime
     }
 
     /// <summary>A character of the corporation, in the characters schema: the host reconciles corporation membership from it at start-up.</summary>
-    private async Task<long> SeedManagerAsync(string name = "Structure Manager")
+    private async Task<long> SeedManagerAsync(string name = "Structure Manager", long corporationId = Corporation)
     {
         var url = Environment.GetEnvironmentVariable("EVE_PG_URL")!;
         await using var source = NpgsqlDataSource.Create(PgConnection.ForTest(url));
@@ -153,7 +153,7 @@ public sealed class StructureCompositionTests : IAsyncLifetime
         await using var connection = await source.OpenConnectionAsync();
         await using var transaction = await connection.BeginTransactionAsync();
         var characterId = await new PgCharacterStore(source, Schema("EVE_CHARACTERS_SCHEMA")).InsertAsync(connection, transaction,
-            new NewCharacter(1, name, 0, 1, 1, 1, 11, 1376, Corporation, null, station.Id, station.SolarSystemId, station.ConstellationId, station.RegionId, null, null));
+            new NewCharacter(1, name, 0, 1, 1, 1, 11, 1376, corporationId, null, station.Id, station.SolarSystemId, station.ConstellationId, station.RegionId, null, null));
         await transaction.CommitAsync();
         return characterId;
     }
@@ -345,6 +345,129 @@ public sealed class StructureCompositionTests : IAsyncLifetime
         Assert.Equal((-1, -1, 0L), (cleared.PendingWeekday, cleared.PendingHour, cleared.PendingEffectiveMs));
         Assert.Equal((5, 18), (cleared.ReinforceWeekday, cleared.ReinforceHour));
         await host.ShutdownAsync();
+    }
+
+
+    [PgFact]
+    public async Task Reinforcement_change_notice_is_durable_formatted_and_scoped_to_the_owner_corporation()
+    {
+        var url = Environment.GetEnvironmentVariable("EVE_PG_URL")!;
+        await using var source = NpgsqlDataSource.Create(PgConnection.ForTest(url));
+        await SeedGameStoreAsync(source,
+            SeededRow(StructureId, StructureState.ShieldVulnerable, 0, 0, UpkeepState.FullPower),
+            SeededRow(StructureId + 1, StructureState.ShieldVulnerable, 0, 0, UpkeepState.FullPower));
+        var sender = await SeedManagerAsync();
+        var member = await SeedManagerAsync("Structure Member");
+        var foreign = await SeedManagerAsync("Foreign Corporation Member", Corporation + 1);
+        var store = new StructureStore(source, Schema("EVE_STRUCTURES_SCHEMA"));
+        async Task<long> ReinforcementEventCountAsync()
+        {
+            await using var connection = await source.OpenConnectionAsync();
+            await using var command = new NpgsqlCommand(
+                $"SELECT count(*) FROM {Schema("EVE_EVENTS_SCHEMA")}.outbox WHERE topic = $1", connection);
+            command.Parameters.Add(new NpgsqlParameter { Value = "structure.reinforcement_changed" });
+            return (long)(await command.ExecuteScalarAsync())!;
+        }
+        async Task<JsonObject?> ReadBoxAsync(long characterId)
+        {
+            await using var persisted = new PersistenceStore(source, Schema("EVE_GAMESTORE_SCHEMA"));
+            var notifications = await persisted.LoadTableAsync("notifications");
+            return (notifications["boxes"] as JsonObject)?[characterId.ToString(System.Globalization.CultureInfo.InvariantCulture)] as JsonObject;
+        }
+        async Task<int> RecordCountAsync(long characterId)
+        {
+            var box = await ReadBoxAsync(characterId);
+            return (box?["byID"] as JsonObject)?.Count ?? 0;
+        }
+        async Task<bool> OwnerMembersHaveOneNoticeAsync() =>
+            await RecordCountAsync(sender) == 1 && await RecordCountAsync(member) == 1;
+
+        var host = await HostComposition.BuildAsync(Settings());
+        try
+        {
+            var vulnerability = host.Registry.Lookup("structureVulnerability") ?? throw new InvalidOperationException("structureVulnerability is not registered");
+            async Task ChangeAsync(int callId, ClientSession session, long[] ids, int weekday, int hour)
+            {
+                await vulnerability.CallAsync(Call(session, "UpdateReinforceTimesFromClient", callId,
+                    new PyList(ids.Select(id => (PyValue)new PyInt(id)).ToArray()), new PyInt(weekday), new PyInt(hour)));
+            }
+
+            var before = (await store.GetAsync(StructureId))!.Snapshot;
+            var secondBefore = (await store.GetAsync(StructureId + 1))!.Snapshot;
+            var otherCorporation = await Assert.ThrowsAsync<MachoWrappedException>(async () =>
+                await ChangeAsync(1, RoleSession(sender, Corporation + 1, 2048), [StructureId], 2, 10));
+            Assert.Equal("CrpAccessDenied", Refusal(otherCorporation).Name);
+            var noRole = await Assert.ThrowsAsync<MachoWrappedException>(async () =>
+                await ChangeAsync(2, RoleSession(sender, Corporation, 0), [StructureId], 2, 10));
+            Assert.Equal("CrpAccessDenied", Refusal(noRole).Name);
+            var unknownStructure = await Assert.ThrowsAsync<MachoWrappedException>(async () =>
+                await ChangeAsync(3, ManagerSession(sender), [StructureId, StructureId + 9], 2, 10));
+            Assert.Equal("TargetingAttemptCancelled", Refusal(unknownStructure).Name);
+            Assert.Equal(before, (await store.GetAsync(StructureId))!.Snapshot);
+            Assert.Equal(secondBefore, (await store.GetAsync(StructureId + 1))!.Snapshot);
+            Assert.Equal(0L, await ReinforcementEventCountAsync());
+
+            await ChangeAsync(4, ManagerSession(sender), [StructureId, StructureId + 1], 2, 10);
+            Assert.Equal(1L, await ReinforcementEventCountAsync());
+            await ChangeAsync(5, ManagerSession(sender), [StructureId, StructureId + 1], 2, 10);
+            Assert.Equal(1L, await ReinforcementEventCountAsync());
+            var pending = (await store.GetAsync(StructureId))!.Snapshot;
+            Assert.Equal((2, 10), (pending.PendingWeekday, pending.PendingHour));
+            Assert.True(await WaitForAsync(OwnerMembersHaveOneNoticeAsync, TimeSpan.FromSeconds(5)));
+
+            var senderBox = Assert.IsType<JsonObject>(await ReadBoxAsync(sender));
+            var senderRecords = Assert.IsType<JsonObject>(senderBox["byID"]);
+            var notice = Assert.IsType<JsonObject>(Assert.Single(senderRecords).Value);
+            Assert.Equal(209, notice["typeID"]!.GetValue<int>());
+            Assert.Equal(Corporation, notice["senderID"]!.GetValue<long>());
+            Assert.Equal(sender, notice["receiverID"]!.GetValue<long>());
+            Assert.Equal(7, notice["groupID"]!.GetValue<int>());
+            Assert.False(notice["processed"]!.GetValue<bool>());
+            var data = Assert.IsType<JsonObject>(notice["data"]);
+            Assert.Equal(2, data["numStructures"]!.GetValue<int>());
+            Assert.Equal(2, data["weekday"]!.GetValue<int>());
+            Assert.Equal(10, data["hour"]!.GetValue<int>());
+            Assert.Equal(DateTimeOffset.FromUnixTimeMilliseconds(pending.PendingEffectiveMs).UtcDateTime.ToFileTimeUtc(), data["timestamp"]!.GetValue<long>());
+            var allStructureInfo = Assert.IsType<JsonArray>(data["allStructureInfo"]);
+            Assert.Equal(2, allStructureInfo.Count);
+            var structureInfo = Assert.IsType<JsonArray>(allStructureInfo[0]);
+            Assert.Equal(StructureId, structureInfo[0]!.GetValue<long>());
+            Assert.Equal("Seeded " + StructureId, structureInfo[1]!.GetValue<string>());
+            Assert.Equal(Astrahus, structureInfo[2]!.GetValue<int>());
+            var secondStructureInfo = Assert.IsType<JsonArray>(allStructureInfo[1]);
+            Assert.Equal(StructureId + 1, secondStructureInfo[0]!.GetValue<long>());
+            Assert.Equal("Seeded " + (StructureId + 1), secondStructureInfo[1]!.GetValue<string>());
+            Assert.Equal(Astrahus, secondStructureInfo[2]!.GetValue<int>());
+
+            var memberBox = Assert.IsType<JsonObject>(await ReadBoxAsync(member));
+            var memberRecords = Assert.IsType<JsonObject>(memberBox["byID"]);
+            var memberNotice = Assert.IsType<JsonObject>(Assert.Single(memberRecords).Value);
+            Assert.Equal(data.ToJsonString(), memberNotice["data"]!.ToJsonString());
+            Assert.Null(await ReadBoxAsync(foreign));
+
+            await ChangeAsync(6, ManagerSession(sender), [StructureId, StructureId + 1], 5, 18);
+            var cleared = (await store.GetAsync(StructureId))!.Snapshot;
+            Assert.Equal((-1, -1, 0L), (cleared.PendingWeekday, cleared.PendingHour, cleared.PendingEffectiveMs));
+            var secondCleared = (await store.GetAsync(StructureId + 1))!.Snapshot;
+            Assert.Equal((-1, -1, 0L), (secondCleared.PendingWeekday, secondCleared.PendingHour, secondCleared.PendingEffectiveMs));
+            Assert.Equal(1L, await ReinforcementEventCountAsync());
+        }
+        finally
+        {
+            await host.ShutdownAsync();
+        }
+
+        var restarted = await HostComposition.BuildAsync(Settings());
+        try
+        {
+            Assert.Equal(1, await RecordCountAsync(sender));
+            Assert.Equal(1, await RecordCountAsync(member));
+            Assert.Equal(0, await RecordCountAsync(foreign));
+        }
+        finally
+        {
+            await restarted.ShutdownAsync();
+        }
     }
 
     [PgFact]

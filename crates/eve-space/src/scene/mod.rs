@@ -332,6 +332,30 @@ pub enum Out {
         bonus_per_cycle: f64,
         bonus_max: f64,
     },
+/// Fresh candidates for one controlled-structure damage pulse or chain hop; Host returns an owner-corp-approved subset using the complete correlation tuple.
+    StructureDamageCandidatesRequest {
+        session: SessionId,
+        structure_id: i64,
+        module_id: i64,
+        effect_id: i32,
+        activation_nonce: u64,
+        control_lease_generation: i64,
+        cycle_id: u64,
+        pulse_hop_ordinal: u32,
+        candidate_ids: Vec<i64>,
+    },
+    /// A Sim-owned damageable entity was inserted or had its authoritative identity updated.
+    SimDamageableEntityUpserted {
+        solar_system_id: i32,
+        entity_id: i64,
+        type_id: i32,
+        owner_id: i64,
+        corporation_id: i64,
+        alliance_id: i64,
+        war_faction_id: i64,
+    },
+    /// A Sim-owned damageable entity left the scene without a death event.
+    SimDamageableEntityRemoved { solar_system_id: i32, entity_id: i64 },
     /// A work cycle of a mining laser or a salvager ended with its target there: the host decides its outcome, and the module waits (ADR 0013).
     ModuleWorkCycle {
         session: SessionId,
@@ -390,6 +414,7 @@ impl Out {
             | Out::DroneReleased { session, .. }
             | Out::DroneWorkCycle { session, .. }
             | Out::RemoteRepairCycle { session, .. }
+            | Out::StructureDamageCandidatesRequest { session, .. }
             | Out::ModuleWorkCycle { session, .. }
             | Out::ModuleEnded { session, .. }
             | Out::DroneResults { session, .. }
@@ -404,7 +429,9 @@ impl Out {
             | Out::ScanTargets { session, .. }
             | Out::DirectionalTargets { session, .. } => *session,
             // a structure's notice is for the host, not a pilot: no pilot has this session
-            Out::StructureDamaged { .. } => 0,
+            Out::StructureDamaged { .. }
+            | Out::SimDamageableEntityUpserted { .. }
+            | Out::SimDamageableEntityRemoved { .. } => 0,
         }
     }
 }
@@ -656,6 +683,14 @@ pub(crate) struct ControlledStructureObserver {
     pub(crate) sees_asteroids: BTreeSet<i64>,
 }
 
+/// State owned by a structure, retained while control changes hands.
+#[derive(Debug, Clone)]
+pub(crate) struct ControlledStructureModules {
+    pub(crate) spec: crate::ship::ShipSpec,
+    pub(crate) modules: crate::modules::Modules,
+    pub(crate) targeting: crate::targeting::Targeting,
+}
+
 /// One solar system with the ships in it.
 #[derive(Debug)]
 pub struct Scene {
@@ -712,8 +747,14 @@ pub struct Scene {
     pub(crate) unpiloted: BTreeMap<i64, SessionId>,
     /// The session viewing each controlled structure, without a second physical ship.
     pub(crate) controlled_structures: BTreeMap<SessionId, ControlledStructureObserver>,
+/// The latest Host StructurePilotRecord.Version for each controlled-structure lease; requests echo this value verbatim.
+    pub(crate) control_lease_generations: BTreeMap<i64, i64>,
+    /// IDs whose authoritative identities this Sim published for Host damage-target resolution.
+    pub(crate) sim_damageable_entities: BTreeSet<i64>,
     /// The health of each structure in space, by id (`crate::health::StructureHealth`).
     pub(crate) structure_health: BTreeMap<i64, crate::health::StructureHealth>,
+    /// Module capacitor and targeting state keyed by physical structure id.
+    pub(crate) structure_modules: BTreeMap<i64, ControlledStructureModules>,
     /// The Pochven population of the system (`crate::pochven_population`).
     pub(crate) pochven: crate::pochven_population::Population,
 }
@@ -763,7 +804,10 @@ impl Scene {
             widowed: BTreeMap::new(),
             unpiloted: BTreeMap::new(),
             controlled_structures: BTreeMap::new(),
+            control_lease_generations: BTreeMap::new(),
+            sim_damageable_entities: BTreeSet::new(),
             structure_health: BTreeMap::new(),
+            structure_modules: BTreeMap::new(),
             pochven: Default::default(),
             wreck_catalog: None,
         }
@@ -771,6 +815,48 @@ impl Scene {
 
     pub(crate) fn solar_system_id(&self) -> i32 {
         self.system.id
+    }
+
+
+    /// Publish a Sim-owned entity identity after the scene has successfully inserted it.
+    pub(crate) fn publish_sim_damageable_entity(
+        &mut self,
+        entity_id: i64,
+        type_id: i32,
+        owner_id: i64,
+        corporation_id: i64,
+        alliance_id: i64,
+        war_faction_id: i64,
+    ) -> Out {
+        self.sim_damageable_entities.insert(entity_id);
+        Out::SimDamageableEntityUpserted {
+            solar_system_id: self.solar_system_id(),
+            entity_id,
+            type_id,
+            owner_id,
+            corporation_id,
+            alliance_id,
+            war_faction_id,
+        }
+    }
+
+    /// Remove a Sim-owned profile only when this scene previously published it.
+    pub(crate) fn remove_sim_damageable_entity(&mut self, entity_id: i64) -> Option<Out> {
+        self.sim_damageable_entities.remove(&entity_id).then_some(Out::SimDamageableEntityRemoved {
+            solar_system_id: self.solar_system_id(),
+            entity_id,
+        })
+    }
+
+    /// End the lifecycle of every Sim-owned profile before its scene is discarded.
+    pub(crate) fn take_sim_damageable_entity_removals(&mut self) -> Vec<Out> {
+        std::mem::take(&mut self.sim_damageable_entities)
+            .into_iter()
+            .map(|entity_id| Out::SimDamageableEntityRemoved {
+                solar_system_id: self.solar_system_id(),
+                entity_id,
+            })
+            .collect()
     }
 
     /// Gives the scene the item types the wreck rules look up, so that a ship that is destroyed leaves the wreck of its type.

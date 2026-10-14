@@ -273,6 +273,17 @@ public static partial class SimCodec
             w.U8(1);
             w.F64(arc.Range);
             w.I32(arc.Targets);
+            if (arc.DamageLossTarget is { } damageLossTarget)
+            {
+                if (!double.IsFinite(damageLossTarget) || damageLossTarget < 0)
+                    throw new SimLinkException(SimLinkError.BadValue, "bad arc damage loss target");
+                w.U8(1);
+                w.F64(damageLossTarget);
+            }
+            else
+            {
+                w.U8(0);
+            }
         }
         else
         {
@@ -291,7 +302,37 @@ private static void WriteDeployable(Writer w, SimDeployable ball, string paramet
     w.I32(ball.ChargeTypeId); w.I32(ball.GroupId); w.Text(ball.Name); w.F64(ball.Radius);
 }
 
-private static void WriteAction(Writer w, SimAction action)
+private static void WriteStructureDamageCorrelation(
+        Writer w, ulong sessionId, long structureId, long moduleId, int effectId, ulong activationNonce,
+        long controlLeaseGeneration, ulong cycleId, uint pulseHopOrdinal)
+    {
+        if (sessionId == 0 || structureId <= 0 || moduleId <= 0 || effectId <= 0 || activationNonce == 0 || controlLeaseGeneration <= 0 || cycleId == 0)
+            throw new ArgumentException("structure-damage correlation IDs must be positive");
+        w.U64(sessionId);
+        w.I64(structureId);
+        w.I64(moduleId);
+        w.I32(effectId);
+        w.U64(activationNonce);
+        w.I64(controlLeaseGeneration);
+        w.U64(cycleId);
+        w.U32(pulseHopOrdinal);
+    }
+
+    private static void WriteStructureDamageIds(Writer w, IReadOnlyList<long> ids)
+    {
+        if (ids.Count > MaxStructureDamageCandidates)
+            throw new ArgumentException("too many structure-damage candidate IDs", nameof(ids));
+        var seen = new HashSet<long>();
+        foreach (var id in ids)
+        {
+            if (id <= 0 || !seen.Add(id))
+                throw new ArgumentException("structure-damage target IDs must be positive and unique", nameof(ids));
+        }
+        w.U32((uint)ids.Count);
+        foreach (var id in ids) w.I64(id);
+    }
+
+    private static void WriteAction(Writer w, SimAction action)
     {
         switch (action)
         {
@@ -348,6 +389,13 @@ private static void WriteAction(Writer w, SimAction action)
                     throw new ArgumentException("the invulnerability core has a reach of zero or more metres", nameof(action));
                 }
                 w.U8(29); w.F64(panic.RangeMeters);
+                break;
+            case SimAction.PointDefense pointDefense:
+                if (!pointDefense.IsValid)
+                    throw new ArgumentException("point defense needs a positive range and four finite nonnegative damage channels", nameof(action));
+                w.U8(30);
+                w.F64(pointDefense.RangeMeters);
+                foreach (var damage in pointDefense.Damage) w.F64(damage);
                 break;
             case SimAction.CommandBurst burst:
                 if (!(double.IsFinite(burst.RangeMeters) && burst.RangeMeters >= 0))
@@ -936,6 +984,30 @@ private static void WriteAction(Writer w, SimAction action)
                 w.U8(Kind.RemoveDeployed);
                 w.I64(m.DeployableId);
                 break;
+            case SimRemoveCynoBeacon m:
+                w.U8(Kind.RemoveCynoBeacon);
+                w.I32(m.SolarSystemId);
+                w.I64(m.StructureBeaconId);
+                break;
+            case SimDamageableEntityUpserted m:
+                if (m.SolarSystemId <= 0 || m.EntityId <= 0 || m.TypeId <= 0 || m.OwnerId < 0 || m.CorporationId < 0 || m.AllianceId < 0 || m.WarFactionId < 0)
+                    throw new SimLinkException(SimLinkError.BadValue, "damageable entity identity");
+                w.U8(Kind.SimDamageableEntityUpserted);
+                w.I32(m.SolarSystemId);
+                w.I64(m.EntityId);
+                w.I32(m.TypeId);
+                w.I64(m.OwnerId);
+                w.I64(m.CorporationId);
+                w.I64(m.AllianceId);
+                w.I64(m.WarFactionId);
+                break;
+            case SimDamageableEntityRemoved m:
+                if (m.SolarSystemId <= 0 || m.EntityId <= 0)
+                    throw new SimLinkException(SimLinkError.BadValue, "damageable entity removal");
+                w.U8(Kind.SimDamageableEntityRemoved);
+                w.I32(m.SolarSystemId);
+                w.I64(m.EntityId);
+                break;
             case SimPlaceProbe m:
                 w.U8(Kind.PlaceProbe);
                 w.I64(m.ProbeId);
@@ -970,7 +1042,7 @@ private static void WriteAction(Writer w, SimAction action)
                 w.I64(m.PlanetId);
                 break;
             case SimControlStructure m:
-                if (m.SolarSystemId <= 0 || m.StructureId < 0 || m.CharacterId < 0 || (m.Active && (m.StructureId == 0 || m.CharacterId == 0)))
+                if (m.SolarSystemId <= 0 || m.StructureId < 0 || m.CharacterId < 0 || m.ControlLeaseGeneration < 0 || (m.Active && (m.StructureId == 0 || m.CharacterId == 0 || m.ControlLeaseGeneration == 0)))
                     throw new SimLinkException(SimLinkError.BadValue, "structure control");
                 w.U8(Kind.ControlStructure);
                 w.U64(m.SessionId);
@@ -978,6 +1050,7 @@ private static void WriteAction(Writer w, SimAction action)
                 w.I64(m.StructureId);
                 w.I64(m.CharacterId);
                 w.U8(m.Active ? (byte)1 : (byte)0);
+                w.I64(m.ControlLeaseGeneration);
                 break;
             case SimTetherPolicy m:
                 w.U8(Kind.TetherPolicy);
@@ -1236,6 +1309,16 @@ private static void WriteAction(Writer w, SimAction action)
                 w.U8(m.Accepted ? (byte)1 : (byte)0);
                 w.Text(m.Reason);
                 w.F64(m.Amount);
+                break;
+            case SimStructureDamageCandidatesRequest m:
+                w.U8(Kind.StructureDamageCandidatesRequest);
+                WriteStructureDamageCorrelation(w, m.SessionId, m.StructureId, m.ModuleId, m.EffectId, m.ActivationNonce, m.ControlLeaseGeneration, m.CycleId, m.PulseHopOrdinal);
+                WriteStructureDamageIds(w, m.CandidateIds);
+                break;
+            case SimStructureDamageCandidatesResult m:
+                w.U8(Kind.StructureDamageCandidatesResult);
+                WriteStructureDamageCorrelation(w, m.SessionId, m.StructureId, m.ModuleId, m.EffectId, m.ActivationNonce, m.ControlLeaseGeneration, m.CycleId, m.PulseHopOrdinal);
+                WriteStructureDamageIds(w, m.AllowedTargetIds);
                 break;
             case SimMeasured m:
                 w.U8(Kind.Measured);

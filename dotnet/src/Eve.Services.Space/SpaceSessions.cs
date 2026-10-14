@@ -61,6 +61,7 @@ public sealed partial class SpaceSessions : IDisposable, ISpaceTargeting, ISpace
         /// <summary>Whether the protection is the cloak of a ship that has come through a stargate (its end is told with one more notification).</summary>
         public bool JumpCloak { get; } = jumpCloak;
 
+        /// <summary>Marks the protection ended; false when it had ended already (each ending is told once).</summary>
         public bool ProtectionEnded;
         public bool CynoJumpPending;
         public bool CynoArrival;
@@ -96,7 +97,12 @@ public sealed partial class SpaceSessions : IDisposable, ISpaceTargeting, ISpace
         /// <summary>The modules whose overheat the pilot asked for (accepted by the simulation as the request, applied at its next cycle): dogma sees them Overloaded.</summary>
         public ConcurrentDictionary<long, byte> Overheated { get; } = new();
 
-        /// <summary>Marks the protection ended; false when it had ended already (each ending is told once).</summary>
+        /// <summary>Owner IDs for fitted modules whose charge counts the simulation may report after activation.</summary>
+        public ConcurrentDictionary<long, long> ModuleChargeOwners { get; } = new();
+
+        /// <summary>Module IDs activated on a controlled structure; cleared when structure control is released.</summary>
+        public ConcurrentDictionary<long, byte> StructureModuleIds { get; } = new();
+
         public bool End()
         {
             CancelExpiry?.Invoke();
@@ -153,7 +159,14 @@ public sealed partial class SpaceSessions : IDisposable, ISpaceTargeting, ISpace
     /// <summary>Invalidates the former owner's insurance after an outsider successfully boards their ejected ship.</summary>
     public Func<ShipBoarded, CancellationToken, ValueTask>? InvalidateInsuranceForBoarding { get; set; }
 
-    private sealed record EjectedShip(long OwnerCharacterId, long OwnerCorporationId, int ShipTypeId, int SolarSystemId, ulong? StructureControlSessionId = null);
+    private sealed record EjectedShip(
+        long OwnerCharacterId,
+        long OwnerCorporationId,
+        int ShipTypeId,
+        int SolarSystemId,
+        ulong? StructureControlSessionId = null,
+        long OwnerAllianceId = 0,
+        long OwnerWarFactionId = 0);
     private readonly ConcurrentDictionary<long, EjectedShip> _ejectedShips = new();
 
 private readonly TransitionRuntime _transitions;
@@ -240,6 +253,13 @@ private readonly TransitionRuntime _transitions;
 
     /// <summary>Marks a module of a pilot as running, as an activation the simulation accepted does (the work-cycle host tests need a running module).</summary>
     internal void StartModuleForTest(ulong session, long moduleId) => _pilots[session].ActiveModules[moduleId] = ItemState.Active;
+
+internal void StartStructureDamageModuleForTest(ulong session, long moduleId, string effectName, SimEffect effect)
+    {
+        var pilot = _pilots[session];
+        pilot.ActiveModules[moduleId] = ItemState.Active;
+        pilot.RunningModules[moduleId] = RunningModule.Of(effectName, 0, Math.Max(1, effect.Repeat), null, null, effect);
+    }
 
     /// <summary>A ship has come into the scene of a solar system (an undock, a jump): what lies there that the simulation does not have yet can be put in it.</summary>
     public event Action<int>? SystemEntered;
@@ -764,10 +784,22 @@ private readonly TransitionRuntime _transitions;
 
     private void OnReceived(SimMessage message)
     {
+        if (message is SimDestroyed removedEntity)
+            RemoveSimDamageableEntity(removedEntity.ShipId);
+
         try
         {
             switch (message)
             {
+                case SimDamageableEntityUpserted upserted:
+                    UpsertSimDamageableEntity(upserted);
+                    break;
+                case SimDamageableEntityRemoved removed:
+                    RemoveSimDamageableEntity(removed.SolarSystemId, removed.EntityId);
+                    break;
+                case SimStructureDamageCandidatesRequest candidates:
+                    Background(() => ReplyToStructureDamageCandidatesAsync(candidates));
+                    break;
                 case SimTetherChanged tether:
                     HandleTetherChanged(tether);
                     break;
@@ -856,9 +888,11 @@ private readonly TransitionRuntime _transitions;
                     Background(() => PaySimNpcBountyAsync(destroyed, _pilots.Values.FirstOrDefault(pilot => pilot.ShipId == destroyed.KillerShipId)));
                     break;
                 case SimChargeSpent spent when _pilots.TryGetValue(spent.SessionId, out var shooter):
-                    _charges.Enqueue(spent.SessionId, shooter.CharacterId, spent.ModuleId, spent.RoundsLeft);
-                    // a gun that reloads from its hold and has no round left for its next cycle asks for its load (FP-C8)
-                    if (shooter.RunningModules.TryGetValue(spent.ModuleId, out var gun) && gun.Reloads && spent.RoundsLeft < gun.PerCycle)
+                    var chargeOwnerId = shooter.ModuleChargeOwners.TryGetValue(spent.ModuleId, out var moduleOwner) ? moduleOwner : shooter.CharacterId;
+                    _charges.Enqueue(spent.SessionId, chargeOwnerId, spent.ModuleId, spent.RoundsLeft);
+                    // Structure charges are persisted by owner, but the character's reload UI is for personal ships only.
+                    if (!IsStructureObserver(shooter.Session)
+                        && shooter.RunningModules.TryGetValue(spent.ModuleId, out var gun) && gun.Reloads && spent.RoundsLeft < gun.PerCycle)
                     {
                         GunRanDry?.Invoke(new SpentGun(shooter.Session, shooter.CharacterId, shooter.ShipId, spent.ModuleId, gun.ChargeTypeId));
                     }
@@ -967,6 +1001,7 @@ private readonly TransitionRuntime _transitions;
                 try { await EndStructureControlAsync(observer, true, CancellationToken.None); }
                 finally { ForgetStructureObserver(observer); observer.Close(); }
             });
+        ClearSimDamageableEntities();
         _warping.Clear();
         ForgetMutadaptiveSpools();
         foreach (var pilot in _pilots.Values.ToArray())

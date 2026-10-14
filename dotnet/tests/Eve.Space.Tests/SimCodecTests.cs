@@ -83,6 +83,10 @@ public class SimCodecTests
 
     private static SimAction ActionOf(JsonNode a)
     {
+        if ((string)a["kind"]! == "pointDefense")
+        {
+            return new SimAction.PointDefense((double)a["rangeMeters"]!, Four(a["damage"]!));
+        }
         if ((string)a["kind"]! == "mining")
         {
             var family = (string)a["family"]! switch { "ore" => SimMiningFamilies.Ore, "ice" => SimMiningFamilies.Ice, _ => SimMiningFamilies.Gas };
@@ -243,7 +247,7 @@ public class SimCodecTests
     private static SimAoe? AoeOf(JsonNode? a) => a is null ? null : new SimAoe(
         (double)a["explosionRadius"]!, (double)a["explosionVelocity"]!, (double)a["damageReductionFactor"]!, (double)a["damageReductionSensitivity"]!);
 
-    private static SimArc? ArcOf(JsonNode? a) => a is null ? null : new SimArc((double)a["range"]!, (int)a["targets"]!);
+    private static SimArc? ArcOf(JsonNode? a) => a is null ? null : new SimArc((double)a["range"]!, (int)a["targets"]!, a["damageLossTarget"] is { } loss ? (double)loss : null);
 
     private static SimMissile? MissileOf(JsonNode? m) => m is null ? null : MissileWith(m);
 
@@ -364,8 +368,19 @@ public class SimCodecTests
             "PlaceStructure" => new SimPlaceStructure(Wide(c, "structureId"), (int)c["solarSystemId"]!, (string)c["typeName"]!, (int)c["typeId"]!,
                 (int)c["groupId"]!, VectorOf(c["position"]!), (double)c["radius"]!, Wide(c, "ownerId"), (int)c["corporationId"]!, (int)c["allianceId"]!,
                 HealthOf(c), StatusOf(c["status"]!), (long)c["planetId"]!),
+            "StructureDamageCandidatesRequest" => new SimStructureDamageCandidatesRequest(
+                Session(), Wide(c, "structureId"), Wide(c, "moduleId"), (int)c["effectId"]!, (ulong)Wide(c, "activationNonce"),
+                Wide(c, "controlLeaseGeneration"), (ulong)Wide(c, "cycleId"), (uint)(int)c["pulseHopOrdinal"]!,
+                [.. ((JsonArray)c["candidateIds"]!).Select(x => long.Parse((string)x!, CultureInfo.InvariantCulture))]),
+            "StructureDamageCandidatesResult" => new SimStructureDamageCandidatesResult(
+                Session(), Wide(c, "structureId"), Wide(c, "moduleId"), (int)c["effectId"]!, (ulong)Wide(c, "activationNonce"),
+                Wide(c, "controlLeaseGeneration"), (ulong)Wide(c, "cycleId"), (uint)(int)c["pulseHopOrdinal"]!,
+                [.. ((JsonArray)c["allowedTargetIds"]!).Select(x => long.Parse((string)x!, CultureInfo.InvariantCulture))]),
+            "RemoveCynoBeacon" => new SimRemoveCynoBeacon((int)c["solarSystemId"]!, Wide(c, "structureBeaconId")),
+            "DamageableEntityUpserted" => new SimDamageableEntityUpserted((int)c["solarSystemId"]!, Wide(c, "entityId"), (int)c["typeId"]!, Wide(c, "ownerId"), Wide(c, "corporationId"), Wide(c, "allianceId"), Wide(c, "warFactionId")),
+            "DamageableEntityRemoved" => new SimDamageableEntityRemoved((int)c["solarSystemId"]!, Wide(c, "entityId")),
             "ControlStructure" => new SimControlStructure(ulong.Parse((string)c["sessionId"]!, CultureInfo.InvariantCulture),
-                (int)c["solarSystemId"]!, Wide(c, "structureId"), Wide(c, "characterId"), (bool)c["active"]!),
+                (int)c["solarSystemId"]!, Wide(c, "structureId"), Wide(c, "characterId"), (bool)c["active"]!, Wide(c, "controlLeaseGeneration")),
             "TetherPolicy" => new SimTetherPolicy(ulong.Parse((string)c["sessionId"]!, CultureInfo.InvariantCulture),
                 ulong.Parse((string)c["blockedForMs"]!, CultureInfo.InvariantCulture), ulong.Parse((string)c["leaseMs"]!, CultureInfo.InvariantCulture),
                 [.. ((JsonArray)c["candidates"]!).Select(candidate => new SimTetherCandidate(Wide(candidate!, "structureId"), (double)candidate!["range"]!))]),
@@ -422,7 +437,7 @@ public class SimCodecTests
     public void The_fixtures_cover_every_message_kind()
     {
         var kinds = ((JsonArray)Fixtures["valid"]!).Select(c => (string)c!["kind"]!).Distinct().Order().ToArray();
-                Assert.Equal(["Accepted", "Activate", "AdjustCharge", "Approaching", "Arrived", "Bind", "BuffState", "ChangeWreck", "ChargeAdjusted", "ChargeSpent", "Command", "Condition", "ContainerPlaced", "ControlStructure", "Deployed", "Destroy", "Destroyed", "DirectionalTargets", "Docked", "DroneCommand", "DroneReleased", "DroneResults", "DroneScooped", "EcmBurst", "Enter", "EnterReply", "FighterGotoPoint", "FighterLanded", "FighterOrder", "FighterReleased", "FighterResults", "FighterSize", "Hello", "HelloAck", "Jumped", "Jumping", "LaunchDrone", "LaunchFighter", "Leave", "Measured", "ModuleEnded", "ModuleWorkCycle", "ModuleWorkResult", "Notify", "PlaceAnalysisBeacon", "PlaceContainer", "PlaceCynoBeacon", "PlaceDisruptor", "PlaceInhibitor", "PlaceProbe", "PlaceStructure", "PlaceWormhole", "PlaceWreck", "Refused", "RemoveDeployed", "RemoveProbe", "RemoveStructure", "RemoveWormhole", "RemoveWreck", "Respawn", "ScanTargets", "SetAnalysisBeaconState", "SetDisruptorActive", "SetStructureState", "ShipSpec", "Spawn", "SpawnReply", "StructureDamaged", "TargetRefused", "Targets", "TetherChanged", "TetherPolicy", "UpdateEffect", "UpdateState"], kinds);
+                Assert.Equal(["Accepted", "Activate", "AdjustCharge", "Approaching", "Arrived", "Bind", "BuffState", "ChangeWreck", "ChargeAdjusted", "ChargeSpent", "Command", "Condition", "ContainerPlaced", "ControlStructure", "DamageableEntityRemoved", "DamageableEntityUpserted", "Deployed", "Destroy", "Destroyed", "DirectionalTargets", "Docked", "DroneCommand", "DroneReleased", "DroneResults", "DroneScooped", "EcmBurst", "Enter", "EnterReply", "FighterGotoPoint", "FighterLanded", "FighterOrder", "FighterReleased", "FighterResults", "FighterSize", "Hello", "HelloAck", "Jumped", "Jumping", "LaunchDrone", "LaunchFighter", "Leave", "Measured", "ModuleEnded", "ModuleWorkCycle", "ModuleWorkResult", "Notify", "PlaceAnalysisBeacon", "PlaceContainer", "PlaceCynoBeacon", "PlaceDisruptor", "PlaceInhibitor", "PlaceProbe", "PlaceStructure", "PlaceWormhole", "PlaceWreck", "Refused", "RemoveCynoBeacon", "RemoveDeployed", "RemoveProbe", "RemoveStructure", "RemoveWormhole", "RemoveWreck", "Respawn", "ScanTargets", "SetAnalysisBeaconState", "SetDisruptorActive", "SetStructureState", "ShipSpec", "Spawn", "SpawnReply", "StructureDamageCandidatesRequest", "StructureDamageCandidatesResult", "StructureDamaged", "TargetRefused", "Targets", "TetherChanged", "TetherPolicy", "UpdateEffect", "UpdateState"], kinds);
         Assert.True(((JsonArray)Fixtures["invalid"]!).Count >= 10);    }
 
     [Theory]
@@ -451,7 +466,7 @@ public class SimCodecTests
     [InlineData(false)]
     public void Structure_control_round_trips_with_the_reserved_wire_kind(bool active)
     {
-        var message = new SimControlStructure(77, 30000142, active ? 1_040_000_000_001 : 0, active ? 90000001 : 0, active);
+        var message = new SimControlStructure(77, 30000142, active ? 1_040_000_000_001 : 0, active ? 90000001 : 0, active, active ? 19 : 20);
         var frame = SimCodec.Encode(message);
         Assert.Equal(84, frame[4]);
         Assert.Equal(message, SimCodec.Decode(frame.AsMemory(4)));
@@ -465,7 +480,7 @@ public class SimCodecTests
     public void Structure_control_rejects_invalid_identities(int system, long structure, long character, bool active)
     {
         var error = Assert.Throws<SimLinkException>(() =>
-            SimCodec.Encode(new SimControlStructure(77, system, structure, character, active)));
+            SimCodec.Encode(new SimControlStructure(77, system, structure, character, active, active ? 19 : 0)));
         Assert.Equal(SimLinkError.BadValue, error.Error);
     }
 

@@ -81,6 +81,7 @@ impl Scene {
         }
         let ship = &pilot.ship;
         let ship_id = ship.spec.ship_id;
+        self.sim_damageable_entities.remove(&ship_id);
         self.unpiloted.remove(&ship_id);
         let mut out = self.drop_targeting(ship_id, &pilot.targeting, now);
         self.destroyed.push(ship_id);

@@ -211,8 +211,11 @@ internal sealed partial class CharacterServicesComposition
         // ST-0: the deadlines of the structures are durable jobs; the handler is registered here, before the foundations start
         structureControlReadModel = new StructureControlReadModel(source, structureStore, structurePilots, items, modules, dogma,
             (characterId, structureId, setting, token) => structureDirectoryReadModel.CharacterHasSettingAsync(characterId, structureId, setting, token));
+        SetupStructureModules();
         var rules = await StructureRulesSource.LoadAsync(sde);
-        structureTimers = new Eve.Structures.StructureTimers(structureStore, foundations.Scheduler, foundations.Events, rules);
+        var unanchorDrop = CreateStructureUnanchorDropAuthority();
+        structureTimers = new Eve.Structures.StructureTimers(structureStore, foundations.Scheduler, foundations.Events, rules,
+            completeUnanchor: unanchorDrop.CompleteAsync);
         structureTimers.Register();
         // ST-1 d: a system's structures are in the simulation once a pilot comes into it; the simulation's hits and the records' state changes meet here
         if (sim is not null && spaceSessions is not null)
@@ -220,11 +223,12 @@ internal sealed partial class CharacterServicesComposition
             spaceStructures = new Eve.Services.Space.SpaceStructures(sim, spaceSessions, source, structureStore, structureTimers, dogma,
                 message => Console.Error.WriteLine($"eve-host: space structures: {message}"));
             spaceStructures.Subscribe(foundations.Events);
-            spaceSessions.PlaceStructuresAsync = spaceStructures.RestoreAsync;
+            spaceSessions.PlaceStructuresAsync = RestoreStructuresAndCynoBeaconsAsync;
         }
         // ST-7: the service fuel is paid from the fuel bay (inventory) at each full hour; the rules are the SDE's service modules
-        structureFuel = new Eve.Structures.StructureFuel(structureStore, foundations.Scheduler, structureTimers, ServiceFuelRulesSource.Load(dogma), new InventoryStructureFuelBay(items, dogma));
+        structureFuel = new Eve.Structures.StructureFuel(structureStore, foundations.Scheduler, structureTimers, ServiceFuelRulesSource.Load(dogma), new InventoryStructureFuelBay(items, dogma, foundations.Events));
         structureFuel.Register();
+        SetupStructureCynoBeaconRuntime();
         // E-15: a change of the system's jammer is announced to the pilots in that system (EveJS sovNotifications broadcastCynoJammerChanged)
         foundations.Events.Subscribe("structure.cyno_jammer_notice", [Eve.Structures.StructureTimers.ServiceChangedTopic], async (context, cancellation) =>
         {
@@ -244,7 +248,7 @@ internal sealed partial class CharacterServicesComposition
             if (scheduled > 0)
                 Console.Error.WriteLine($"eve-host: {scheduled} structure deadline(s) scheduled");
         }
-        structureDirectoryReadModel = new PersistenceStructureDirectoryReadModel(ReadGameStoreTableAsync, AffiliationOfAsync, sde, SetStructureDescriptionAsync);
+        structureDirectoryReadModel = new PersistenceStructureDirectoryReadModel(ReadGameStoreTableAsync, AffiliationOfAsync, sde, SetStructureDescriptionAsync, CynoJammedAsync);
         if (spaceSessions is not null)
             spaceSessions.StructureExistsAsync = async (structureId, cancellationToken) =>
                 await structureDirectoryReadModel.GetStructureInfoAsync(structureId, cancellationToken) is { PersistentlyDeployed: true };
@@ -273,11 +277,15 @@ internal sealed partial class CharacterServicesComposition
             structureProfilesRpcBackend.GetMyHangarViewStateAsync);
         structureCompression = new StructureCompressionAuthority(source, structureStore, items, dogma, sde, skills);
         // ST-2 a: the rename and the reinforcement times of a structure (the owner's Station Manager, Director or CEO)
-        structureDeployment = new StructureDeploymentAuthority(source, structureStore, structureTimers, foundations.Scheduler);
+        structureDeployment = new StructureDeploymentAuthority(source, structureStore, structureTimers, foundations.Scheduler, foundations.Events);
         // ST-2 b: Anchor, the item consumed and the structure created in one transaction; the simulation shows it once a pilot is in the system
         structureAnchor = new StructureAnchorAuthority(source, structureStore, structureTimers, rules, foundations.Scheduler, foundations.Events, items, dogma,
             CorporationCreatedMsAsync, ShipPositionForAnchorAsync, session => spaceSessions is not null && spaceSessions.IsWarping(session),
-            async structureId => { if (spaceStructures is not null) await spaceStructures.PlaceAsync(structureId); });
+            async structureId => { if (spaceStructures is not null) await spaceStructures.PlaceAsync(structureId); },
+            profiles: structureProfilesRpcBackend.GetProfilesAsync,
+            sov: ReadStructureAnchorSovereigntyAsync,
+            anchorWithDuration: (connection, transaction, structure, anchoringMs, ct) =>
+                structureTimers.AnchorAsync(connection, transaction, structure with { AnchoringMs = anchoringMs }, ct));
         // ST-6a: the moon drill starts a chunk (StartNewExtraction); the fracture and the cancel follow in (d)
         var moonRules = await MoonRulesSource.LoadAsync(sde);
         var moonRigRules = new MoonRigReadModel(items, dogma, moonRules);
@@ -286,8 +294,11 @@ internal sealed partial class CharacterServicesComposition
         moonExtractions.Register();
         moonExtractions.Subscribe();
         if (spaceContainers is not null)
+        {
             new SpaceMoonFields(moonExtractionStore, structureStore, items, new PgSpaceItemStore(source, spaceSchema),
                 dogma, moonRules, spaceContainers).Subscribe(foundations.Events);
+            spaceContainers.SubscribeUnanchorDrops(foundations.Events);
+        }
         // ST-6a (c, d): an extraction that ended (fractured, decayed, offlined or cancelled) is announced to the corporation and to the pilots docked at the structure
         // (EVE.js sendMoonExtractionClearedToSessions)
         foundations.Events.Subscribe("moon.session_notice", [Eve.Structures.MoonExtractions.EndedTopic], (context, cancellation) =>

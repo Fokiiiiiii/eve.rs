@@ -12,8 +12,8 @@ namespace Eve.Services.Space.Effects;
 /// <c>missileDamageMultiplier</c>, how fast it flies (<c>maxVelocity</c>) and for how long before it explodes (<c>explosionDelay</c>, which with the speed is the range of the launcher), and the
 /// explosion radius, velocity and damage reduction that decide how much of the damage a target takes. The cycle and the cost are the launcher's own values; a cycle burns the launcher's
 /// <c>chargeRate</c> rounds. The pilot asks for <c>missileLaunching</c> (or <c>torpedoLaunching</c>), the effect of the charge; what runs is the launcher's own <c>useMissiles</c>, which is what the
-/// client is told. The defender missiles (they shoot down other missiles), the guided bombs and the structures' launchers are not run yet: a launcher of such a group is
-/// refused with its own reason (<see cref="RefusedLauncherEffect"/>), and <see cref="MissileEffect.RefusedLauncherGroups"/> lists them.
+/// client is told. Structure anticapital and multirole launchers use this handler; guided bombs and the festival launcher use their family handlers.
+/// Probe launchers are refused with their own reason (<see cref="RefusedLauncherEffect"/>), listed by <see cref="MissileEffect.RefusedLauncherGroups"/>.
 /// </summary>
 internal sealed class MissileEffect : ShipEffect
 {
@@ -30,6 +30,10 @@ internal sealed class MissileEffect : ShipEffect
     private const string SnowBallLaunching = "snowBallLaunching";
     private const string DefenderMissileLaunching = "defenderMissileLaunching";
     private const int FestivalLauncherGroup = 501;
+    private const int StructureAntiCapitalLauncherGroup = 1327;
+    private const int StructureGuidedBombLauncherGroup = 1328;
+    private const int StructureMultiroleLauncherGroup = 1562;
+    private const int StructureFestivalLauncherGroup = 1974;
     private const int CountermeasureLauncherGroup = 308;
     private const int DefenderChargeGroup = 88;
     /// <summary>The breacher pod launchers (SCARAB pods): the charge's firing effect is <c>dotMissileLaunching</c>, and a hit starts its damage over time.</summary>
@@ -47,6 +51,7 @@ internal sealed class MissileEffect : ShipEffect
     private static readonly IReadOnlyDictionary<int, string[]> OtherLauncherNames = new Dictionary<int, string[]>
     {
         [FestivalLauncherGroup] = [SnowBallLaunching],
+        [StructureFestivalLauncherGroup] = [SnowBallLaunching],
         [CountermeasureLauncherGroup] = ["missileLaunching", "torpedoLaunching", DefenderMissileLaunching],
         [BreacherLauncherGroup] = [DotMissileLaunching],
     };
@@ -58,6 +63,7 @@ internal sealed class MissileEffect : ShipEffect
         [512] = ["defenderMissileLaunching"],
         [589] = ["torpedoLaunching"],
         [862] = ["bombLaunching"],
+        [StructureGuidedBombLauncherGroup] = ["bombLaunching"],
     };
 
     /// <summary>Every firing effect a charge can name (the default effect of the client's request), so a launcher that is refused is refused by name, not as unknown.</summary>
@@ -89,24 +95,21 @@ internal sealed class MissileEffect : ShipEffect
     /// <summary>
     /// The groups whose launchers carry <c>useMissiles</c> in the static data but are not run yet, each with the reason it is refused (the client shows the module cannot be
     /// started). Every such group is named here, so no launcher group of the static data is left to an unexplained <c>UNSUPPORTED_EFFECT</c>.
-    /// The structure launchers (category 66) run on a structure, and no structure service exists yet (the structures are the last phase, DECISIONS); the probe launchers
-    /// need the probe lifecycle, which is not written yet. The breacher pods run (their damage over time is in the simulation, <see cref="BreacherLauncherGroup"/>).
+    /// Structure launcher groups are handled by this class and <see cref="BombEffect"/>; probe launchers still need the probe lifecycle. Breacher pods use their dedicated damage-over-time path.
     /// </summary>
     public static readonly IReadOnlyDictionary<int, string> RefusedLauncherGroups = new Dictionary<int, string>
     {
         [481] = "PROBE_LAUNCHER_NOT_IMPLEMENTED",
         [1226] = "PROBE_LAUNCHER_NOT_IMPLEMENTED",
-        [1327] = "STRUCTURE_LAUNCHER_NOT_IMPLEMENTED",
-        [1328] = "STRUCTURE_LAUNCHER_NOT_IMPLEMENTED",
-        [1562] = "STRUCTURE_LAUNCHER_NOT_IMPLEMENTED",
-        [1974] = "STRUCTURE_LAUNCHER_NOT_IMPLEMENTED",
     };
 
     /// <summary>The launchers that put a deployable in space or fire at no target (<see cref="BombEffect"/>, <see cref="InterdictionSphereEffect"/>, <see cref="DefenderEffect"/>).</summary>
     public static IReadOnlySet<int> DeployableLauncherGroups { get; } = DeployableLaunchers.Keys.ToHashSet();
 
     /// <summary>The launcher groups this effect runs: the missile family derived from the static data (<see cref="LauncherFamilies"/>).</summary>
-    public static IReadOnlySet<int> ServedLauncherGroups(DogmaStatic statics) => statics.MissileLauncherGroups;
+    private static readonly IReadOnlySet<int> StructureMissileLauncherGroups = new HashSet<int> { StructureAntiCapitalLauncherGroup, StructureMultiroleLauncherGroup };
+
+    public static IReadOnlySet<int> ServedLauncherGroups(DogmaStatic statics) => statics.MissileLauncherGroups.Concat(StructureMissileLauncherGroups).ToHashSet();
 
     /// <summary>The launchers this effect runs that are not of the missile family: the festival launcher and the countermeasure launcher (<see cref="OtherLauncherNames"/>).</summary>
     public static IReadOnlySet<int> OtherServedLauncherGroups { get; } = OtherLauncherNames.Keys.ToHashSet();
@@ -120,7 +123,7 @@ internal sealed class MissileEffect : ShipEffect
     public static EffectDef? LauncherEffectFor(TypeDef type, DogmaStatic statics, string requested)
     {
         var group = type.GroupId;
-        var names = statics.MissileLauncherGroups.Contains(group) ? ClientNames
+        var names = statics.MissileLauncherGroups.Contains(group) || StructureMissileLauncherGroups.Contains(group) ? ClientNames
             : OtherLauncherNames.GetValueOrDefault(group) ?? (RefusedLauncherGroups.ContainsKey(group) ? KnownFiringNames : DeployableLaunchers.GetValueOrDefault(group, []));
         return names.Any(n => n.Equals(requested, StringComparison.OrdinalIgnoreCase))
             ? type.EffectIds.Select(statics.Effect).FirstOrDefault(e => e is not null && e.Name.Equals(LauncherEffectName, StringComparison.OrdinalIgnoreCase))
@@ -129,7 +132,8 @@ internal sealed class MissileEffect : ShipEffect
 
     /// <summary>The missile family, the festival launcher, and the countermeasure launcher when its charge is a missile (a defender is <see cref="DefenderEffect"/>'s).</summary>
     protected override bool Handles(ModuleEffectContext module) =>
-        module.Statics.MissileLauncherGroups.Contains(module.Type.GroupId) || module.Type.GroupId == FestivalLauncherGroup
+        module.Statics.MissileLauncherGroups.Contains(module.Type.GroupId) || StructureMissileLauncherGroups.Contains(module.Type.GroupId)
+        || module.Type.GroupId is FestivalLauncherGroup or StructureFestivalLauncherGroup
         || module.Type.GroupId == BreacherLauncherGroup || module.Type.GroupId == CountermeasureLauncherGroup && !IsDefenderCharge(module);
 
     /// <summary>Whether the loaded charge of a launcher is a defender missile (its group, 88).</summary>

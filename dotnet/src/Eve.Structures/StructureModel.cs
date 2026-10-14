@@ -144,6 +144,8 @@ public sealed record StructureSnapshot
     public int State { get; init; } = StructureState.Unanchored;
     public long StateStartedMs { get; init; }
     public long StateEndsMs { get; init; }
+    /// <summary>The deployment-time anchoring duration, persisted so later TimerDue and restart retain sovereignty bonuses.</summary>
+    public long AnchoringMs { get; init; } = StructureTimes.AnchoringMs;
     public long TimerPausedMs { get; init; }
     public int Upkeep { get; init; } = UpkeepState.LowPower;
     public bool CoreInstalled { get; init; }

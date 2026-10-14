@@ -18,7 +18,7 @@ fn a_structure_observer_tracks_asteroid_visibility_and_seen_state_separately() {
     let placement = crate::scene::tests::structure_placement(&scene, NOON);
     let structure_id = placement.structure_id;
     scene.place_structure(placement, NOON);
-    scene.control_structure(A, scene.solar_system_id(), structure_id, spec().character_id, true, NOON);
+    scene.control_structure(A, scene.solar_system_id(), structure_id, spec().character_id, true, 1, NOON);
     scene.bind(A, NOON);
     let asteroid_id = 1_050_000_000_001;
     let position = scene.structure_body(structure_id).unwrap().position;

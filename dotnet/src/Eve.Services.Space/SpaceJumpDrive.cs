@@ -9,10 +9,8 @@ using Npgsql;
 namespace Eve.Services.Space;
 
 /// <summary>
-/// The capital jump drive to a cynosural field (the reference's fleet cyno jump, <c>CmdJumpToFleetModuleBeacon</c> and <c>CmdJumpToFleetDeployableBeacon</c>, and
-/// the EVE University wiki's rules for it): the field is lit, in the pilot's fleet, in another system within range and of a kind the ship may use; the drive
-/// has its fuel and is not cooling down. The fuel and the new fatigue are taken when the simulation accepts the spool; the spool and the jump are the
-/// simulation's (<see cref="SpaceSessions.CynoJumpAsync"/>).
+/// The capital jump drive for player-lit cynosural fields and accessible Pharolux beacons. Player-lit fields require fleet membership; the structure path
+/// applies its service ACL before sharing the same ship, range, fuel, fatigue, cooldown, spool, and simulation rules (<see cref="SpaceSessions.CynoJumpAsync"/>).
 /// </summary>
 public sealed class SpaceJumpDrive(
     CharacterShips ships,
@@ -33,6 +31,35 @@ public sealed class SpaceJumpDrive(
     /// The jump to a field, as the client asks it: <paramref name="fieldId"/> is the field, <paramref name="ownerId"/> the character who lit it when the client names the
     /// beacon by its module (0 when the client names a deployable), and <paramref name="solarSystemId"/> the system of the field the client chose.
     /// </summary>
+    /// <summary>
+    /// Jump to an accessible online Pharolux. The caller performs the structure service ACL and system-jammer checks;
+    /// this method applies the same ship, range, fuel, capacitor, cooldown, spool and fatigue rules as a field jump,
+    /// without the fleet-membership rule that belongs only to player-lit cynosural fields.
+    /// </summary>
+    public async Task<PyValue> JumpToStructureBeaconAsync(
+        ClientSession session, long structureId, int structureTypeId, int solarSystemId,
+        string? boundObjectId, CancellationToken cancellationToken)
+    {
+        if (structureId <= 0 || structureTypeId <= 0 || solarSystemId <= 0)
+        {
+            throw Notify("That cynosural beacon is no longer available.");
+        }
+        if (session.CharacterId is not { } character || session.GetInt("shipid") is not { } shipId || shipId <= 0)
+        {
+            throw Refusal("DeniedShipChanged");
+        }
+        var origin = (int)(session.GetInt("solarsystemid2") ?? session.GetInt("solarsystemid") ?? 0);
+        if (origin <= 0 || await space.PositionOfAsync(session, shipId, cancellationToken) is null)
+        {
+            throw Refusal("DeniedShipChanged");
+        }
+        if (origin == solarSystemId)
+        {
+            throw Notify("You are already in that solar system.");
+        }
+        return await JumpToTargetAsync(session, character, shipId, origin, structureId, structureTypeId, solarSystemId, boundObjectId, cancellationToken);
+    }
+
     public async Task<PyValue> JumpToFieldAsync(ClientSession session, long fieldId, long ownerId, int solarSystemId, string? boundObjectId, CancellationToken cancellationToken)
     {
         if (session.CharacterId is not { } character || session.GetInt("shipid") is not { } shipId || shipId <= 0)
@@ -62,6 +89,14 @@ public sealed class SpaceJumpDrive(
         {
             throw Notify("You are not in the fleet of that cynosural field.");
         }
+        return await JumpToTargetAsync(session, character, shipId, origin, fieldId, field.TypeId, field.SolarSystemId, boundObjectId, cancellationToken);
+    }
+
+    private async Task<PyValue> JumpToTargetAsync(
+        ClientSession session, long character, long shipId, int origin,
+        long targetId, int targetTypeId, int targetSolarSystemId, string? boundObjectId,
+        CancellationToken cancellationToken)
+    {
         // capitals only operate outside high-security space (the wiki, "Capital ships")
         if (systems.Get(origin) is { } place && Security.IsHighSecOrHigher(Security.ClassFromLevel(place.Security)))
         {
@@ -89,25 +124,25 @@ public sealed class SpaceJumpDrive(
         {
             throw Notify("Your ship has no jump drive.");
         }
-        if (!JumpDriveRules.MayJumpTo(JumpDriveRules.KindOf(field.TypeId), hull.GroupId))
+        if (!JumpDriveRules.MayJumpTo(JumpDriveRules.KindOf(targetTypeId), hull.GroupId))
         {
             throw Notify("That cynosural field does not take this ship.");
         }
         // a jump freighter does not jump into high-security space (the wiki's Jump Freighters page); the wording is ours
-        if (systems.Get(field.SolarSystemId) is { } destination && !JumpDriveRules.MayJumpInto(hull.GroupId, Eve.Universe.Security.ClassFromLevel(destination.Security)))
+        if (systems.Get(targetSolarSystemId) is { } destination && !JumpDriveRules.MayJumpInto(hull.GroupId, Eve.Universe.Security.ClassFromLevel(destination.Security)))
         {
             throw Notify("Jump freighters cannot jump into high-security space.");
         }
-        if (systems.Get(field.SolarSystemId) is { } entered && JumpDriveRules.EntryRefusal(entered.RegionId) is { } entry)
+        if (systems.Get(targetSolarSystemId) is { } entered && JumpDriveRules.EntryRefusal(entered.RegionId) is { } entry)
         {
             throw Notify(entry);
         }
         var state = await fatigue.GetAsync(character, cancellationToken);
-        if (state.CooldownUntilMs > now)
+        if (state.CooldownUntilMs > nowUnixMs())
         {
             throw Notify("Your jump drive is still cooling down.");
         }
-        var lightYears = systems.LightYearsBetween(origin, field.SolarSystemId) ?? throw Refusal("DeniedShipChanged");
+        var lightYears = systems.LightYearsBetween(origin, targetSolarSystemId) ?? throw Refusal("DeniedShipChanged");
         var calibration = await LevelAsync(JumpDriveRules.CalibrationSkill, character, cancellationToken);
         var calibrationPerLevel = await PerLevelAsync(JumpDriveRules.CalibrationSkill, JumpDriveRules.CalibrationPerLevelAttribute, cancellationToken);
         if (lightYears > JumpDriveRules.Range(baseRange, calibration, calibrationPerLevel))
@@ -132,20 +167,34 @@ public sealed class SpaceJumpDrive(
             hullShare,
             await LevelAsync(JumpDriveRules.OperationSkill, character, cancellationToken),
             await PerLevelAsync(JumpDriveRules.OperationSkill, JumpDriveRules.CapacitorNeedPerLevelAttribute, cancellationToken));
+        var now = nowUnixMs();
         var fatigueMultiplier = numbers.Get(shipId, JumpDriveRules.FatigueMultiplierAttribute);
         var multiplier = fatigueMultiplier > 0 ? fatigueMultiplier : 1.0;
         var (fatigueMs, cooldownMs) = JumpDriveRules.AfterJump(Math.Max(0, state.FatigueUntilMs - now), lightYears * multiplier);
         var next = new JumpFatigueState(now + fatigueMs, now + cooldownMs);
+        var pending = new JumpSpool(character, shipId, targetId, targetSolarSystemId, now + (long)spool, fuelId, quantity, state);
 
-        // the simulation is asked first: a spool it refuses takes nothing from the ship
-        var reply = await space.CynoJumpAsync(session, shipId, fieldId, field.SolarSystemId, (long)spool, capacitorShare, boundObjectId, cancellationToken);
-        var pending = new JumpSpool(character, shipId, fieldId, field.SolarSystemId, now + (long)spool, fuelId, quantity, state);
+        // Reserve the fuel and fatigue before asking the simulation. A refusal rolls this same durable spool back.
         if (!await ships.DebitJumpAsync(fatigue, spools, pending, next, cancellationToken))
         {
-            // shortcut: the fuel was checked a moment before and the ship's module cycles are the only other debit; a debit lost in that moment lets the spool stand
-            log?.Invoke($"the jump fuel of character {character} was taken by another debit after the check");
+            throw Notify("Your ship does not have enough fuel for that jump.");
         }
-        return reply;
+        try
+        {
+            return await space.CynoJumpAsync(session, shipId, targetId, targetSolarSystemId, (long)spool, capacitorShare, boundObjectId, cancellationToken);
+        }
+        catch
+        {
+            try
+            {
+                await CancelAsync(pending, "the simulation refused the jump", CancellationToken.None);
+            }
+            catch (Exception refundError)
+            {
+                log?.Invoke($"the jump spool of character {character} to system {targetSolarSystemId} could not be refunded immediately: {refundError.Message}");
+            }
+            throw;
+        }
     }
 
     /// <summary>

@@ -25,12 +25,14 @@ public class StructureFuelTests
         public Task<long> QuantityAsync(Npgsql.NpgsqlConnection connection, Npgsql.NpgsqlTransaction? transaction, long structureId, CancellationToken cancellationToken) =>
             Task.FromResult(Stock.GetValueOrDefault(structureId));
 
-        public Task<long> TakeAsync(Npgsql.NpgsqlConnection connection, Npgsql.NpgsqlTransaction transaction, long structureId, long quantity, CancellationToken cancellationToken)
+        public Task<StructureFuelTake> TakeAsync(Npgsql.NpgsqlConnection connection, Npgsql.NpgsqlTransaction transaction, long structureId, long quantity, bool allowPartial, CancellationToken cancellationToken)
         {
             var have = Stock.GetValueOrDefault(structureId);
+            if (!allowPartial && have < quantity)
+                return Task.FromResult(new StructureFuelTake(0, []));
             var taken = Math.Min(have, quantity);
             Stock[structureId] = have - taken;
-            return Task.FromResult(taken);
+            return Task.FromResult(new StructureFuelTake(taken, []));
         }
     }
 

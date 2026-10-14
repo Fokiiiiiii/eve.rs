@@ -879,8 +879,17 @@ public class ModuleEffectsTests
         var sensitivityAttribute = Attribute("aoeDamageReductionSensitivity");
         var rangeAttribute = Attribute("VortonArcRange");
         var targetsAttribute = Attribute("VortonArcTargets");
+        var lightningTargetAmountAttribute = Attribute("lightningWeaponTargetAmount");
+        var lightningTargetRangeAttribute = Attribute("lightningWeaponTargetRange");
+        var lightningDamageLossTargetAttribute = Attribute("lightningWeaponDamageLossTarget");
+        Assert.Equal(2104, lightningTargetAmountAttribute);
+        Assert.Equal(2105, lightningTargetRangeAttribute);
+        Assert.Equal(2106, lightningDamageLossTargetAttribute);
         var trackingAttribute = Attribute("trackingSpeed");
         Assert.NotEmpty(vortons);
+        var shipVortons = vortons.Where(type => type.GroupId == 4060).ToArray();
+        Assert.NotEmpty(shipVortons);
+        Assert.All(shipVortons, type => Assert.False(type.Attributes.ContainsKey(lightningDamageLossTargetAttribute)));
 
         const long characterId = 74001;
         const long shipId = 74002;
@@ -888,6 +897,7 @@ public class ModuleEffectsTests
         const long chargeId = 74004;
         const long targetId = 74005;
         const int shipTypeId = 587;
+        const int structureTypeId = 35834;
         const int moduleFlag = 11;
         await statics.EnsureTypesAsync([shipTypeId]);
         foreach (var vorton in vortons)
@@ -930,7 +940,40 @@ public class ModuleEffectsTests
                     Eve.Services.Space.Effects.ModuleAttributes.Six(world.Get(moduleId, rangeAttribute)),
                     (int)world.Get(moduleId, targetsAttribute)),
                 turret.Arc);
+            Assert.Null(turret.Arc?.DamageLossTarget);
         }
+
+        var structureWeapons = await statics.TypesInGroupsAsync(["Structure Doomsday Weapon"]);
+        var structureVorton = Assert.Single(structureWeapons, type => type.Attributes.ContainsKey(lightningDamageLossTargetAttribute));
+        Assert.Equal(35928, structureVorton.TypeId);
+        Assert.Equal(5d, structureVorton.Attributes[lightningTargetAmountAttribute]);
+        Assert.Equal(20_000d, structureVorton.Attributes[lightningTargetRangeAttribute]);
+        Assert.Equal(0.85d, structureVorton.Attributes[lightningDamageLossTargetAttribute]);
+        await statics.EnsureTypesAsync([structureTypeId, structureVorton.TypeId]);
+        var structure = new Eve.Inventory.Item(shipId, structureTypeId, characterId, 60003760, 0, 1, true, null);
+        var structureModule = new Eve.Inventory.Item(moduleId, structureVorton.TypeId, characterId, shipId, moduleFlag, 1, true, null);
+        var structureWorld = new DogmaWorld(statics, characterId, shipId);
+        structureWorld.Add(new DogmaItem(shipId, structureTypeId, characterId, structure.LocationId, structure.Flag, ItemState.Online));
+        structureWorld.Add(new DogmaItem(moduleId, structureVorton.TypeId, characterId, shipId, moduleFlag, ItemState.Online));
+        var structureSnapshot = new Eve.Ships.ShipSnapshot
+        {
+            Character = null!,
+            Ship = structure,
+            Fitted = [structureModule],
+            Charges = [],
+            Skills = [],
+            World = structureWorld,
+        };
+        var structureResult = Eve.Services.Space.ModulePackages.Of(structureSnapshot, statics, moduleId, "lightningWeapon", targetId, 1);
+        Assert.True(structureResult.Reason is null, $"SDE build {catalogBuild}, type {structureVorton.TypeId}: {structureResult.Reason}");
+        var structureTurret = Assert.IsType<Eve.Space.SimEffect>(structureResult.Effect).Turret
+            ?? throw new InvalidOperationException($"SDE build {catalogBuild}: structure type {structureVorton.TypeId} has no turret.");
+        Assert.Equal(
+            new Eve.Space.SimArc(
+                Eve.Services.Space.Effects.ModuleAttributes.Six(structureWorld.Get(moduleId, lightningTargetRangeAttribute)),
+                (int)structureWorld.Get(moduleId, lightningTargetAmountAttribute),
+                Eve.Services.Space.Effects.ModuleAttributes.Six(structureWorld.Get(moduleId, lightningDamageLossTargetAttribute))),
+            structureTurret.Arc);
     }
 
     /// <summary>

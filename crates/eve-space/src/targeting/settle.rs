@@ -1,9 +1,13 @@
 use super::*;
 
 impl Scene {
-    /// What is due at `now` among the locks: a lock that has come to its end is had; one that can no longer be had (either ship warps, the range
-    /// is more than the ship can lock at, the ship it points at is gone) is dropped.
     pub(crate) fn settle_targets(&mut self, now: i64) -> Vec<Out> {
+        self.with_controlled_structure_modules(now, |scene| scene.settle_targets_for_pilots(now))
+    }
+
+/// What is due at `now` among the locks: a lock that has come to its end is had; one that can no longer be had (either ship warps, the range
+    /// is more than the ship can lock at, the ship it points at is gone) is dropped.
+    fn settle_targets_for_pilots(&mut self, now: i64) -> Vec<Out> {
         let sessions: Vec<SessionId> =
             self.in_entry_order().into_iter().filter(|s| !self.pilots[s].targeting.is_empty()).collect();
         let mut out = Vec::new();

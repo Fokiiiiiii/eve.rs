@@ -47,11 +47,17 @@ public sealed class StructureAnchorAuthority
     private readonly Func<ClientSession, long, CancellationToken, Task<WarpCoordinates?>> _shipPosition;
     private readonly Func<ClientSession, bool> _isWarping;
     private readonly Func<long, Task> _placed;
+    private readonly Func<long, CancellationToken, ValueTask<IReadOnlyList<StructureProfileRecord>>>? _profiles;
+    private readonly Func<CancellationToken, ValueTask<(SovFwReadSnapshot Snapshot, IReadOnlyList<DevelopmentIndexRecord> DevelopmentIndices)>>? _sov;
+    private readonly Func<NpgsqlConnection, NpgsqlTransaction, NewStructure, long, CancellationToken, Task<StructureTransition?>>? _anchorWithDuration;
 
     public StructureAnchorAuthority(
         NpgsqlDataSource source, StructureStore store, StructureTimers timers, StructureRulesSource rules, DurableScheduler scheduler, EventBus events,
         PgItemStore items, DogmaStatic dogma, Func<NpgsqlConnection, NpgsqlTransaction, long, CancellationToken, Task<long?>> corporationCreatedMs,
-        Func<ClientSession, long, CancellationToken, Task<WarpCoordinates?>> shipPosition, Func<ClientSession, bool> isWarping, Func<long, Task> placed)
+        Func<ClientSession, long, CancellationToken, Task<WarpCoordinates?>> shipPosition, Func<ClientSession, bool> isWarping, Func<long, Task> placed,
+        Func<long, CancellationToken, ValueTask<IReadOnlyList<StructureProfileRecord>>>? profiles = null,
+        Func<CancellationToken, ValueTask<(SovFwReadSnapshot Snapshot, IReadOnlyList<DevelopmentIndexRecord> DevelopmentIndices)>>? sov = null,
+        Func<NpgsqlConnection, NpgsqlTransaction, NewStructure, long, CancellationToken, Task<StructureTransition?>>? anchorWithDuration = null)
     {
         _source = source;
         _store = store;
@@ -65,6 +71,9 @@ public sealed class StructureAnchorAuthority
         _shipPosition = shipPosition;
         _isWarping = isWarping;
         _placed = placed;
+        _profiles = profiles;
+        _sov = sov;
+        _anchorWithDuration = anchorWithDuration;
     }
 
     /// <summary>The anchoring of the item <c>request.ItemId</c> from the ship the pilot flies.</summary>
@@ -111,17 +120,25 @@ public sealed class StructureAnchorAuthority
         {
             throw MachoErrors.ThrowUserError("TargetingAttemptCancelled");
         }
-        if (!_rules.IsAnchorable(item.TypeId))
+        await _dogma.EnsureTypesAsync([item.TypeId], cancellationToken);
+        var type = _dogma.Type(item.TypeId);
+        var structureCategoryId = _dogma.CategoryId("Structure");
+        if (!_rules.IsAnchorable(item.TypeId) || type is null ||
+            structureCategoryId is not { } categoryId || type.CategoryId != categoryId)
         {
             throw Notice("That structure type is not supported by the current deployment service.");
         }
-        await _dogma.EnsureTypesAsync([item.TypeId], cancellationToken);
         var rules = _rules.RulesOf(item.TypeId, systemId);
+        if (_rules.IsAnchorRestricted(item.TypeId, systemId, type.GroupId, type.CategoryId))
+        {
+            throw MachoErrors.ThrowUserError("CantDeployBlocked", ("typeID", new PyInt(item.TypeId)));
+        }
         if (rules.Size == StructureSize.ExtraLarge && rules.Band == SecurityBand.HighSec)
         {
             throw MachoErrors.ThrowUserError("CantDeployBlocked", ("typeID", new PyInt(item.TypeId)));
         }
 
+        var profileId = await ResolveProfileIdAsync(corporationId, request.ProfileId, cancellationToken);
         var ship = await _shipPosition(session, shipId, cancellationToken);
         if (ship is not { } shipAt || shipAt.SolarSystemId != systemId)
         {
@@ -144,13 +161,20 @@ public sealed class StructureAnchorAuthority
         {
             name = _dogma.Type(item.TypeId)?.Name is { Length: > 0 } typeName ? typeName : $"Structure {item.TypeId}";
         }
-        var profileId = request.ProfileId ?? 0;
         var allianceId = session.GetInt("allianceID") ?? session.GetInt("allianceid") ?? 0;
+        var anchoringMs = await ResolveSovereigntyAnchoringMsAsync(rules, item.TypeId, systemId, allianceId, cancellationToken);
+        if (anchoringMs != rules.AnchoringMs && _anchorWithDuration is null)
+        {
+            throw Notice("The sovereignty anchoring delay is unavailable.");
+        }
+        var structure = new NewStructure(
+            item.Id, item.TypeId, systemId, x, y, z, request.RotationYaw ?? 0, corporationId, allianceId, name, request.Bio.Trim(), profileId,
+            (int)weekday, (int)hour, AnchoringMs: anchoringMs);
 
         await _items.DeleteAsync(connection, transaction, item.Id, cancellationToken);
-        var transition = await _timers.AnchorAsync(connection, transaction, new NewStructure(
-            item.Id, item.TypeId, systemId, x, y, z, request.RotationYaw ?? 0, corporationId, allianceId, name, request.Bio.Trim(), profileId,
-            (int)weekday, (int)hour), cancellationToken);
+        var transition = _anchorWithDuration is null
+            ? await _timers.AnchorAsync(connection, transaction, structure, cancellationToken)
+            : await _anchorWithDuration(connection, transaction, structure, anchoringMs, cancellationToken);
         if (transition is null)
         {
             throw Notice("That inventory item ID is already in use by a live structure.");
@@ -248,6 +272,91 @@ public sealed class StructureAnchorAuthority
     /// </summary>
     private static async Task<bool> IsTradeHubAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, int systemId, CancellationToken cancellationToken) =>
         await Sql.ScalarAsync(connection, transaction, "SELECT (doc->'name'->>'en') IN ('Jita', 'Amarr', 'Dodixie', 'Rens', 'Hek') FROM sde.\"mapSolarSystems\" WHERE key = $1", cancellationToken, systemId.ToString()) is true;
+
+    private async ValueTask<long> ResolveProfileIdAsync(long corporationId, long? requestedProfileId, CancellationToken cancellationToken)
+    {
+        var readProfiles = _profiles ?? throw Notice("Structure profile data is unavailable.");
+        var profiles = await readProfiles(corporationId, cancellationToken).ConfigureAwait(false);
+        if (requestedProfileId is > 0 &&
+            profiles.FirstOrDefault(profile => profile.ProfileId == requestedProfileId.Value) is { } requested)
+            return requested.ProfileId;
+        return profiles.FirstOrDefault(profile => profile.ProfileId > 0 && profile.IsDefault)?.ProfileId
+            ?? throw Notice("The corporation has no usable default structure profile.");
+    }
+
+    internal async ValueTask<long> ResolveSovereigntyAnchoringMsAsync(
+        StructureRules rules, int typeId, int systemId, long allianceId, CancellationToken cancellationToken)
+    {
+        if (rules.Band != SecurityBand.NullSec)
+            return rules.AnchoringMs;
+        var readSov = _sov ?? throw Notice("Sovereignty data is unavailable for this system.");
+        var (snapshot, developmentIndices) = await readSov(cancellationToken).ConfigureAwait(false);
+        var claimAllianceId = snapshot.ClaimsBySolarSystemId.TryGetValue(systemId, out var claim)
+            ? claim.AllianceId
+            : null;
+        var hub = snapshot.HubsBySolarSystemId.TryGetValue(systemId, out var currentHub) ? currentHub : null;
+        var ownerAllianceId = claimAllianceId ?? hub?.AllianceId;
+        var development = developmentIndices.FirstOrDefault(index => index.SolarSystemId == systemId);
+        if (ownerAllianceId is > 0 && ownerAllianceId != allianceId && rules.Size == StructureSize.Medium)
+        {
+            if (development is null)
+                throw Notice("Sovereignty development indices are unavailable for this system.");
+            // CCP says higher than 4.0; EveJS uses >= 4, so the official boundary wins.
+            if (ActivityDefenseMultiplier(development) > 4.0)
+                throw MachoErrors.ThrowUserError("CantDeployBlocked", ("typeID", new PyInt(typeId)));
+        }
+        if (hub is { HubId: > 0, AllianceId: > 0 } && hub.AllianceId != allianceId)
+        {
+            if (development is null)
+                throw Notice("Sovereignty development indices are unavailable for this system.");
+            return checked(rules.AnchoringMs + StrategicIndexLevel(development.ClaimedFor) * StructureTimes.Day);
+        }
+        return rules.AnchoringMs;
+    }
+
+    private const long DevelopmentIndexLevelWidth = 100_000L * 96;
+
+    private static double ActivityDefenseMultiplier(DevelopmentIndexRecord indices)
+    {
+        var militaryLevel = OperationalIndexLevel(indices.MilitaryPoints);
+        var industrialLevel = OperationalIndexLevel(indices.IndustrialPoints);
+        var total = 1.0 + OperationalIndexBonus(militaryLevel) + OperationalIndexBonus(industrialLevel) +
+            StrategicIndexBonus(indices.ClaimedFor);
+        return Math.Max(1.0, Math.Min(6.0, total));
+    }
+
+    private static int OperationalIndexLevel(long points) =>
+        (int)Math.Min(5, Math.Max(0, points) / DevelopmentIndexLevelWidth);
+
+    private static double OperationalIndexBonus(int level) => level switch
+    {
+        1 => 0.6,
+        2 => 1.2,
+        3 => 1.7,
+        4 => 2.1,
+        5 => 2.5,
+        _ => 0,
+    };
+
+    private static double StrategicIndexBonus(long claimedForDays) => StrategicIndexLevel(claimedForDays) switch
+    {
+        1 => 0.4,
+        2 => 0.6,
+        3 => 0.8,
+        4 => 0.9,
+        5 => 1.0,
+        _ => 0,
+    };
+
+    private static int StrategicIndexLevel(long claimedForDays) => claimedForDays switch
+    {
+        >= 100 => 5,
+        >= 65 => 4,
+        >= 35 => 3,
+        >= 21 => 2,
+        >= 7 => 1,
+        _ => 0,
+    };
 
     private ItemRow RowOf(Item item)
     {

@@ -60,8 +60,11 @@ public sealed class StructureAnchorTests
         public WarpCoordinates? ShipPlace { get; set; } = Spot;
         public bool Warping { get; set; }
         public long? CorporationCreatedMs { get; set; } = Now - 30 * StructureTimes.Day;
+        public IReadOnlyList<StructureProfileRecord> Profiles { get; set; } = [new(41, "Test default", "", true)];
+        public SovFwReadSnapshot SovSnapshot { get; set; } = SovFwReadSnapshot.Empty;
+        public IReadOnlyList<DevelopmentIndexRecord> DevelopmentIndices { get; set; } = [];
 
-        public static async Task<Route> CreateAsync(string pgUrl)
+        public static async Task<Route> CreateAsync(string pgUrl, bool enableAnchorDuration = false)
         {
             var source = NpgsqlDataSource.Create(Eve.Data.PgConnection.ForTest(pgUrl));
             var sde = new SdeReader(source);
@@ -82,11 +85,20 @@ public sealed class StructureAnchorTests
             timers.Register();
             var placed = new List<long>();
             var route = (Route)null!;
+            Func<NpgsqlConnection, NpgsqlTransaction, NewStructure, long, CancellationToken, Task<StructureTransition?>>? anchorWithDuration = null;
+            if (enableAnchorDuration)
+            {
+                anchorWithDuration = (connection, transaction, structure, anchoringMs, token) =>
+                    timers.AnchorAsync(connection, transaction, structure with { AnchoringMs = anchoringMs }, token);
+            }
             var authority = new StructureAnchorAuthority(source, structures, timers, rules, scheduler, bus, items, dogma,
                 (_, _, _, _) => Task.FromResult(route.CorporationCreatedMs),
                 (_, _, _) => Task.FromResult(route.ShipPlace),
                 _ => route.Warping,
-                id2 => { placed.Add(id2); return Task.CompletedTask; });
+                id2 => { placed.Add(id2); return Task.CompletedTask; },
+                (_, _) => ValueTask.FromResult(route.Profiles),
+                _ => ValueTask.FromResult((route.SovSnapshot, route.DevelopmentIndices)),
+                anchorWithDuration);
             route = new Route(schemas, source, items, structures, scheduler, bus, authority, placed, new Sink());
             bus.Subscribe("anchor.collector", [StructureAnchorAuthority.AnchoredTopic], (context, _) =>
             {
@@ -107,7 +119,7 @@ public sealed class StructureAnchorTests
             return id;
         }
 
-        public ClientSession Pilot(long corporation = Corporation, int roles = 2048, long? system = Tanoo, long? ship = Ship)
+        public ClientSession Pilot(long corporation = Corporation, int roles = 2048, long? system = Tanoo, long? ship = Ship, long? alliance = null)
         {
             var session = new ClientSession(Packets) { SessionId = 403 };
             session.Set("charid", new PyInt(Character));
@@ -115,11 +127,12 @@ public sealed class StructureAnchorTests
             session.Set("corprole", new PyInt(roles));
             if (system is { } systemId) session.Set("solarsystemid2", new PyInt(systemId));
             if (ship is { } shipId) session.Set("shipid", new PyLong(shipId));
+            if (alliance is { } allianceId) session.Set("allianceID", new PyInt(allianceId));
             return session;
         }
 
-        public static StructureAnchorRequest Request(long itemId, double? x = null, double? z = null, long? weekday = 2, long? hour = 10, string name = "Anchored Test") =>
-            new(itemId, x, z, 0.5, null, name, "a bio", weekday, hour, PyNone.Instance);
+        public static StructureAnchorRequest Request(long itemId, double? x = null, double? z = null, long? weekday = 2, long? hour = 10, string name = "Anchored Test", long? profileId = null) =>
+            new(itemId, x, z, 0.5, profileId, name, "a bio", weekday, hour, PyNone.Instance);
 
         public async ValueTask DisposeAsync()
         {
@@ -170,7 +183,7 @@ public sealed class StructureAnchorTests
         Assert.Null(await route.Items.GetAsync(item));
         var record = await route.Structures.GetAsync(item);
         Assert.NotNull(record);
-        Assert.Equal((Astrahus, Tanoo, Corporation, "Anchored Test"), (record.TypeId, record.SolarSystemId, record.OwnerCorporationId, record.Name));
+        Assert.Equal((Astrahus, Tanoo, Corporation, "Anchored Test", 41L), (record.TypeId, record.SolarSystemId, record.OwnerCorporationId, record.Name, record.ProfileId));
         Assert.Equal((StructureState.AnchorVulnerable, 2, 10), (record.Snapshot.State, record.Snapshot.ReinforceWeekday, record.Snapshot.ReinforceHour));
         Assert.Equal((1e13, 0.0, 1e13), (record.X, record.Y, record.Z));
         Assert.Equal(Now + StructureTimes.RepairMs, record.Snapshot.StateEndsMs);
@@ -210,6 +223,10 @@ public sealed class StructureAnchorTests
         Assert.Equal(("CustomNotify", "That structure is too far away to deploy."), (far.Name, far.Notice));
         var unsupported = await Refused(route.Pilot(), await route.GiveAsync(Tritanium, Ship));
         Assert.Equal(("CustomNotify", "That structure type is not supported by the current deployment service."), (unsupported.Name, unsupported.Notice));
+        // SDE 3396210 gives Guardian-Vexor a rigSize dogma attribute, but its category is Ship.
+        var riggedShip = await route.GiveAsync(11011, Ship);
+        var riggedShipRefusal = await Refused(route.Pilot(), riggedShip);
+        Assert.Equal(("CustomNotify", "That structure type is not supported by the current deployment service."), (riggedShipRefusal.Name, riggedShipRefusal.Notice));
 
         // a trade hub refuses the anchor, named as the blocked type
         route.ShipPlace = new WarpCoordinates(Jita, 1e13, 0, 1e13);
@@ -218,8 +235,153 @@ public sealed class StructureAnchorTests
 
         // the item is still the pilot's, and no structure was made
         Assert.NotNull(await route.Items.GetAsync(item));
+        Assert.NotNull(await route.Items.GetAsync(riggedShip));
         Assert.Null(await route.Structures.GetAsync(item));
         Assert.Empty(route.Placed);
+    }
+
+    [PgFact]
+    public async Task Pinned_SDE_anchor_restrictions_refuse_before_consumption()
+    {
+        await using var route = await Route.CreateAsync(PgUrl());
+        var systems = await new SdeReader(route.Source).ReadAsync("mapSolarSystems");
+        int SystemId(string name) => checked((int)systems.Single(row =>
+            row.Doc.GetProperty("name").GetProperty("en").GetString() == name).Key);
+
+        // Thera, starter/career systems, and trade hubs are read from the pinned SDE or the retained EveJS hub list.
+        foreach (var name in new[] { "Thera", "J015092", "Kisogo", "Amsen", "Manifest", "Jita", "Hek" })
+        {
+            var systemId = SystemId(name);
+            route.ShipPlace = new WarpCoordinates(systemId, 1e20, 1e20, 1e20);
+            var item = await route.GiveAsync(Astrahus, Ship);
+            var refusal = Refusal(await Assert.ThrowsAsync<MachoWrappedException>(() =>
+                route.Authority.AnchorAsync(Call(route.Pilot(system: systemId)), Route.Request(item))));
+
+            Assert.Equal("CantDeployBlocked", refusal.Name);
+            Assert.NotNull(await route.Items.GetAsync(item));
+            Assert.Null(await route.Structures.GetAsync(item));
+        }
+    }
+
+    [PgFact]
+    public async Task Anchor_uses_a_requested_corporation_profile_or_the_current_default()
+    {
+        await using var route = await Route.CreateAsync(PgUrl());
+        route.Profiles =
+        [
+            new StructureProfileRecord(41, "Default", "", true),
+            new StructureProfileRecord(42, "Requested", "", false),
+        ];
+
+        var requested = await route.GiveAsync(Astrahus, Ship);
+        await route.Authority.AnchorAsync(Call(route.Pilot()), Route.Request(requested, profileId: 42));
+        Assert.Equal(42, (await route.Structures.GetAsync(requested))!.ProfileId);
+
+        route.ShipPlace = Spot with { X = Spot.X + 2_000_000 };
+        var fallback = await route.GiveAsync(Astrahus, Ship);
+        await route.Authority.AnchorAsync(Call(route.Pilot()), Route.Request(fallback, profileId: 99));
+        Assert.Equal(41, (await route.Structures.GetAsync(fallback))!.ProfileId);
+
+        route.Profiles = [];
+        var missing = await route.GiveAsync(Astrahus, Ship);
+        var beforePlaced = route.Placed.Count;
+        var refusal = Refusal(await Assert.ThrowsAsync<MachoWrappedException>(() =>
+            route.Authority.AnchorAsync(Call(route.Pilot()), Route.Request(missing))));
+
+        Assert.Equal(("CustomNotify", "The corporation has no usable default structure profile."), (refusal.Name, refusal.Notice));
+        Assert.NotNull(await route.Items.GetAsync(missing));
+        Assert.Null(await route.Structures.GetAsync(missing));
+        Assert.Equal(beforePlaced, route.Placed.Count);
+    }
+
+    [PgFact]
+    public async Task Foreign_medium_deployments_allow_ADM_four_and_refuse_only_above_four()
+    {
+        const int NullSec = 30000208;
+        await using var route = await Route.CreateAsync(PgUrl());
+        route.SovSnapshot = new SovFwReadSnapshot(
+            new Dictionary<long, SovClaimRecord> { [NullSec] = new(1, Corporation, 700) },
+            new Dictionary<long, SovHubRecord>(),
+            new Dictionary<long, IReadOnlyList<SovStructureRecord>>(),
+            [],
+            new Dictionary<long, long?>());
+        route.DevelopmentIndices = [new DevelopmentIndexRecord(NullSec, 19_200_000, 19_200_000, 21)];
+
+        route.ShipPlace = new WarpCoordinates(NullSec, 1e20, 1e20, 1e20);
+        var boundary = await route.GiveAsync(Astrahus, Ship);
+        await route.Authority.AnchorAsync(Call(route.Pilot(system: NullSec, alliance: 800)), Route.Request(boundary));
+        Assert.NotNull(await route.Structures.GetAsync(boundary));
+
+        route.DevelopmentIndices = [new DevelopmentIndexRecord(NullSec, 28_800_000, 19_200_000, 21)];
+        route.ShipPlace = new WarpCoordinates(NullSec, 2e20, 1e20, 1e20);
+        var hostile = await route.GiveAsync(Astrahus, Ship);
+        var refusal = Refusal(await Assert.ThrowsAsync<MachoWrappedException>(() =>
+            route.Authority.AnchorAsync(Call(route.Pilot(system: NullSec, alliance: 800)), Route.Request(hostile))));
+        Assert.Equal("CantDeployBlocked", refusal.Name);
+        Assert.NotNull(await route.Items.GetAsync(hostile));
+        Assert.Null(await route.Structures.GetAsync(hostile));
+
+        route.ShipPlace = new WarpCoordinates(NullSec, 3e20, 1e20, 1e20);
+        var owner = await route.GiveAsync(Astrahus, Ship);
+        await route.Authority.AnchorAsync(Call(route.Pilot(system: NullSec, alliance: 700)), Route.Request(owner));
+        Assert.Null(await route.Items.GetAsync(owner));
+        Assert.NotNull(await route.Structures.GetAsync(owner));
+    }
+
+    [PgFact]
+    public async Task Foreign_IHub_delay_uses_current_strategic_index_and_refuses_when_timer_support_is_missing()
+    {
+        const int NullSec = 30000208;
+        await using var route = await Route.CreateAsync(PgUrl());
+        route.SovSnapshot = new SovFwReadSnapshot(
+            new Dictionary<long, SovClaimRecord> { [NullSec] = new(1, Corporation, 700) },
+            new Dictionary<long, SovHubRecord> { [NullSec] = new(2, Corporation, 700, null) },
+            new Dictionary<long, IReadOnlyList<SovStructureRecord>>(),
+            [],
+            new Dictionary<long, long?>());
+        route.DevelopmentIndices = [new DevelopmentIndexRecord(NullSec, 0, 0, 21)];
+
+        var baseRules = StructureRules.Of(StructureSize.Medium, SecurityBand.NullSec);
+        Assert.Equal(baseRules.AnchoringMs + 2 * StructureTimes.Day,
+            await route.Authority.ResolveSovereigntyAnchoringMsAsync(baseRules, Astrahus, NullSec, 800, default));
+
+        route.ShipPlace = new WarpCoordinates(NullSec, 1e20, 1e20, 1e20);
+        var item = await route.GiveAsync(Astrahus, Ship);
+        var refusal = Refusal(await Assert.ThrowsAsync<MachoWrappedException>(() =>
+            route.Authority.AnchorAsync(Call(route.Pilot(system: NullSec, alliance: 800)), Route.Request(item))));
+
+        Assert.Equal(("CustomNotify", "The sovereignty anchoring delay is unavailable."), (refusal.Name, refusal.Notice));
+        Assert.NotNull(await route.Items.GetAsync(item));
+        Assert.Null(await route.Structures.GetAsync(item));
+        Assert.Empty(route.Placed);
+    }
+
+
+    [PgFact]
+    public async Task Foreign_IHub_deployment_persists_the_computed_duration_on_the_structure_row()
+    {
+        const int NullSec = 30000208;
+        await using var route = await Route.CreateAsync(PgUrl(), enableAnchorDuration: true);
+        route.SovSnapshot = new SovFwReadSnapshot(
+            new Dictionary<long, SovClaimRecord> { [NullSec] = new(1, Corporation, 700) },
+            new Dictionary<long, SovHubRecord> { [NullSec] = new(2, Corporation, 700, null) },
+            new Dictionary<long, IReadOnlyList<SovStructureRecord>>(),
+            [],
+            new Dictionary<long, long?>());
+        route.DevelopmentIndices = [new DevelopmentIndexRecord(NullSec, 0, 0, 21)];
+        route.ShipPlace = new WarpCoordinates(NullSec, 1e20, 1e20, 1e20);
+        var item = await route.GiveAsync(Astrahus, Ship);
+
+        await route.Authority.AnchorAsync(Call(route.Pilot(system: NullSec, alliance: 800)), Route.Request(item));
+
+        var record = await route.Structures.GetAsync(item);
+        Assert.NotNull(record);
+        Assert.Equal(StructureTimes.AnchoringMs + 2 * StructureTimes.Day, record!.Snapshot.AnchoringMs);
+        Assert.Equal(StructureState.AnchorVulnerable, record.Snapshot.State);
+        Assert.Equal(Now + StructureTimes.RepairMs, record.Snapshot.StateEndsMs);
+        var job = await route.Scheduler.FindAsync(StructureTimers.JobKind, $"structure:{item}");
+        Assert.NotNull(job);
+        Assert.Equal(Now + StructureTimes.RepairMs, job!.RunAtMs);
     }
 
     [PgFact]

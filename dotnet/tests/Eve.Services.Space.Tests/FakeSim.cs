@@ -136,6 +136,14 @@ internal sealed class FakeSim : ISimulation
 
     public void ModuleWorkResult(SimModuleWorkResult result) => Heard.Enqueue(result);
 
+    public TaskCompletionSource<SimStructureDamageCandidatesResult>? StructureDamageCandidatesGate { get; set; }
+
+    public void StructureDamageCandidatesResult(SimStructureDamageCandidatesResult result)
+    {
+        Heard.Enqueue(result);
+        StructureDamageCandidatesGate?.TrySetResult(result);
+    }
+
     /// <summary>The buff states the host sent, in order (a command burst's, protocol 43).</summary>
     public List<SimBuffState> BuffStates { get; } = [];
 
@@ -219,6 +227,8 @@ internal sealed class FakeSim : ISimulation
 
     public void PlaceInhibitor(SimPlaceInhibitor inhibitor) => Heard.Enqueue(inhibitor);
     public void PlaceCynoBeacon(SimPlaceCynoBeacon beacon) => Heard.Enqueue(beacon);
+
+    public void RemoveCynoBeacon(int solarSystemId, long structureBeaconId) => Heard.Enqueue(new SimRemoveCynoBeacon(solarSystemId, structureBeaconId));
 
     public void Destroy(long shipId, SimCredit credit) => Heard.Enqueue(new SimDestroy(shipId, credit));
 

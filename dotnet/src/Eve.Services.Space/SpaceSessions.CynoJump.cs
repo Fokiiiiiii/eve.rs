@@ -165,12 +165,18 @@ public sealed partial class SpaceSessions
     public SpaceJumpDrive? JumpDrive { get; set; }
 
     /// <summary>
-    /// The jump drive's jump to a cynosural field (<c>CmdJumpToFleetModuleBeacon</c> and <c>CmdJumpToFleetDeployableBeacon</c>): the drive is set spooling to the
+    /// The jump drive's jump to a cynosural field or accessible structure beacon: the drive is set spooling to the
     /// system of the field, and the ship appears by the field after <paramref name="spoolMs"/>. The checks are the stargate jump's (the ship, the restrictions of
     /// the movement policy, the drive's disallowed state); the answer is the bound object and the time the ship can be used from again, as a stargate jump's.
-    /// The ship is in the other system when the simulation says it has jumped (<see cref="FinishJumpAsync"/>). The host has checked the field, the fleet, the range,
+    /// The ship is in the other system when the simulation says it has jumped (<see cref="FinishJumpAsync"/>). The host has checked the target, its applicable access rule, the range,
     /// the fuel and the cooldown first (<see cref="SpaceJumpDrive"/>).
     /// </summary>
+    /// <summary>Places the structure's published Pharolux beacon in the matching loaded solar system.</summary>
+    public void PlaceCynoBeacon(Eve.Space.SimPlaceCynoBeacon beacon) => _sim.PlaceCynoBeacon(beacon);
+
+    /// <summary>Removes only this structure beacon from its known solar-system scene.</summary>
+    public void RemoveCynoBeacon(int solarSystemId, long structureBeaconId) => _sim.RemoveCynoBeacon(solarSystemId, structureBeaconId);
+
     public async Task<PyValue> CynoJumpAsync(
         ClientSession session, long shipId, long fieldId, int destinationSystem, long spoolMs, double capacitorShare, string? boundObjectId, CancellationToken cancellationToken)
     {

@@ -237,7 +237,7 @@ public class SimClientTests
                 : [new SimRefused(control.SessionId, SimCommands.ControlStructure, "NO_STRUCTURE")] : []);
         await using var disposeSim = sim;
         await using var disposeClient = client;
-        var request = new SimControlStructure(7, 30000142, 1040000000000001, 90000001, true);
+        var request = new SimControlStructure(7, 30000142, 1040000000000001, 90000001, true, 1);
         Assert.Equal(accepted ? null : "NO_STRUCTURE", await client.ControlStructureAsync(request));
         Assert.Equal(request, Assert.Single(sim.HeardNow().OfType<SimControlStructure>()));
     }

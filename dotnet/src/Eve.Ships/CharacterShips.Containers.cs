@@ -228,16 +228,22 @@ public sealed partial class CharacterShips
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
         await LockAsync(connection, transaction, characterId, cancellationToken);
 
-        if (await LoadAsync(characterId, cancellationToken) is not { } snapshot || snapshot.Ship.Flag != InSpaceFlag
-            || await items.LockAndGetAsync(connection, transaction, itemId, cancellationToken) is not { } item)
+        if (await LoadAsync(characterId, cancellationToken) is not { } snapshot || snapshot.Ship.Flag != InSpaceFlag)
             return new NothingHappened();
         var ship = snapshot.Ship;
         var toShip = destinationId == ship.Id;
         var fromShip = sourceId == ship.Id;
-        if (toShip == fromShip || item.LocationId != sourceId || item.Id == ship.Id || item.Id == destinationId)
+        if (toShip == fromShip)
             return new NothingHappened();
         var containerId = toShip ? sourceId : destinationId;
-        if (await items.GetAsync(containerId, cancellationToken) is not { } container || container.LocationId != ship.LocationId || container.Id == ship.Id)
+        // Lock the container before the item so a concurrent scoop cannot race a move into or out of its contents.
+        if (containerId == itemId)
+            return new NothingHappened();
+        var container = await items.LockAndGetAsync(connection, transaction, containerId, cancellationToken);
+        if (container is null || container.LocationId != ship.LocationId || container.Id == ship.Id)
+            return new NothingHappened();
+        var item = await items.LockAndGetAsync(connection, transaction, itemId, cancellationToken);
+        if (item is null || item.LocationId != sourceId || item.Id == ship.Id || item.Id == destinationId)
             return new NothingHappened();
         if (fromShip && (item.OwnerId != characterId || !IsJettisonable(item.Flag)))
             return new NothingHappened();
@@ -293,7 +299,7 @@ public sealed partial class CharacterShips
         await LockAsync(connection, transaction, characterId, cancellationToken);
 
         if (quantity is <= 0 || await LoadAsync(characterId, cancellationToken) is not { } snapshot || snapshot.Ship.Flag != InSpaceFlag
-            || await items.GetAsync(containerId, cancellationToken) is not { } container || container.LocationId != snapshot.Ship.LocationId || container.Id == snapshot.Ship.Id)
+            || await items.LockAndGetAsync(connection, transaction, containerId, cancellationToken) is not { } container || container.LocationId != snapshot.Ship.LocationId || container.Id == snapshot.Ship.Id)
             return new NothingHappened();
         var ship = snapshot.Ship;
         var destinationFlag = requestedFlag ?? CargoFlag;

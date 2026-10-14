@@ -34,7 +34,8 @@ impl Scene {
             .pilots
             .iter()
             .filter(|&(session, pilot)| {
-                pilot.settled_at == now
+                !self.controlled_structures.contains_key(session)
+                    && pilot.settled_at == now
                     && !self.drones.contains_key(session)
                     && pilot.flight.is_none()
                     && pilot.docking.is_none()

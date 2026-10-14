@@ -159,7 +159,16 @@ impl Scene {
     pub fn activate(&mut self, session: SessionId, effect: Effect, now: i64) -> Vec<Out> {
         const CODE: u8 = 17;
         if !self.pilots.contains_key(&session) {
-            return vec![Out::Refused { session, command: CODE, reason: "NO_SHIP_IN_SPACE" }];
+            let Some(structure_id) = self.controlled_structure_id(session) else {
+                return vec![Out::Refused { session, command: CODE, reason: "NO_SHIP_IN_SPACE" }];
+            };
+            if self.structure_body(structure_id).is_none() || !self.structure_health.contains_key(&structure_id) {
+                return vec![Out::Refused { session, command: CODE, reason: "STRUCTURE_NOT_FOUND" }];
+            }
+            if !self.structure_modules.contains_key(&structure_id) {
+                return vec![Out::Refused { session, command: CODE, reason: "STRUCTURE_SPEC_NOT_READY" }];
+            }
+            return self.with_controlled_structure_modules(now, |scene| scene.activate(session, effect, now));
         }
         if !effect.duration_ms.is_finite() || effect.duration_ms < 1.0 || effect.repeat < 1 {
             return vec![Out::Refused { session, command: CODE, reason: "BAD_EFFECT" }];
@@ -502,6 +511,42 @@ impl Scene {
         let Some(pilot) = self.pilots.get(&session) else {
             return vec![Out::Refused { session, command: CODE, reason: "NO_SHIP_IN_SPACE" }];
         };
+        let charged_for_action = effect
+            .action
+            .as_ref()
+            .and_then(Action::charge_use)
+            .is_some_and(|(_, _, _, charges)| charges > 0);
+        let active_action = effect.action.as_ref().and_then(|action| action.with_charges(charged_for_action));
+        let controlled_structure = self.controlled_structure_id(session);
+        if let Some(Action::PointDefense { range_meters, damage }) = active_action
+            && (!range_meters.is_finite()
+                || *range_meters < 0.0
+                || damage.iter().any(|channel| !channel.is_finite() || *channel < 0.0))
+        {
+            return vec![Out::Refused { session, command: CODE, reason: "INVALID_POINT_DEFENSE_PROFILE" }];
+        }
+        if matches!(active_action, Some(Action::PointDefense { .. }))
+            && !controlled_structure.is_some_and(|structure_id| {
+                structure_id == pilot.ship.spec.ship_id
+                    && self.control_lease_generation(session, structure_id).is_some()
+            })
+        {
+            return vec![Out::Refused { session, command: CODE, reason: "STRUCTURE_CONTROL_LEASE_REQUIRED" }];
+        }
+        if matches!(active_action, Some(Action::Field { .. })) && controlled_structure.is_some() {
+            return vec![Out::Refused {
+                session,
+                command: CODE,
+                reason: "STRUCTURE_FIELD_DISPOSITION_UNRESOLVED",
+            }];
+        }
+        if matches!(active_action, Some(Action::Strike { .. }))
+            && controlled_structure.is_some_and(|structure_id| {
+                self.control_lease_generation(session, structure_id).is_none()
+            })
+        {
+            return vec![Out::Refused { session, command: CODE, reason: "STRUCTURE_CONTROL_LEASE_REQUIRED" }];
+        }
         if pilot
             .modules
             .capacitor
@@ -529,6 +574,8 @@ impl Scene {
         let charged_this_cycle = rounds.is_some_and(|left| left > 0);
         let run = Running {
             effect,
+            activation_nonce: next_work_cycle_id(),
+            cycle_id: next_work_cycle_id(),
             cycle_start: now,
             cycles: 1,
             strike_done: 0,
@@ -537,8 +584,10 @@ impl Scene {
             stopping: false,
             rounds,
             charged_this_cycle,
+            structure_damage_charge_committed: false,
             pending_remote_repair: None,
             pending_work: None,
+            pending_structure_damage: None,
             spool: SpoolState::default(),
             pending_reload: false,
             pending_update: None,
@@ -592,6 +641,17 @@ impl Scene {
         out.extend(self.act(session, &effect, Applies::CycleStart, now));
         out.extend(self.jam_told(session, &effect, now, Jam::Start));
         out.extend(self.fire_turret(session, &effect, now));
+        if self.pilots.get(&session).is_some_and(|pilot| {
+            pilot.modules.running.iter().any(|run| {
+                run.effect.module_id == effect.module_id && run.pending_structure_damage.is_some()
+            })
+        }) {
+            return out;
+        }
+        // A controlled structure's area strike commits its first charge only after pulse 0 has a correlated Host decision.
+        if self.defer_structure_damage_charge(session, &effect, charged_this_cycle) {
+            return out;
+        }
         // the round of the first shot is spent after the shot; a turret that has no round for the next cycle stops
         let (spent, goes_on) = self.spend_round(session, effect.module_id, now);
         out.extend(spent);
@@ -626,6 +686,13 @@ impl Scene {
         let answer = |running, before, after| {
             vec![Out::ChargeAdjusted { session, request_id, running, before, after }]
         };
+        if !self.pilots.contains_key(&session)
+            && self.controlled_structure_id(session).is_some_and(|id| self.structure_modules.contains_key(&id))
+        {
+            return self.with_controlled_structure_modules(now, |scene| {
+                scene.adjust_charge(request_id, session, module_id, charge_type, op, now)
+            });
+        }
         let Some(pilot) = self.pilots.get_mut(&session) else { return answer(false, 0, 0) };
         let Some(run) = pilot.modules.running.iter_mut().find(|r| r.effect.module_id == module_id) else {
             return answer(false, 0, 0);
@@ -689,6 +756,11 @@ impl Scene {
         module_id: i64,
         update: PendingUpdate,
     ) -> Vec<Out> {
+        if !self.pilots.contains_key(&session)
+            && self.controlled_structure_id(session).is_some_and(|id| self.structure_modules.contains_key(&id))
+        {
+            return self.with_controlled_structure_modules(0, |scene| scene.update_effect(session, module_id, update));
+        }
         if let Some(run) = self.running_mut(session, module_id) {
             run.pending_update = Some(update);
         }
@@ -808,9 +880,38 @@ impl Scene {
         )
     }
 
+
+    /// Keep a controlled structure's strike charge loaded until its first damage pulse is authorized.
+    pub(super) fn defer_structure_damage_charge(
+        &self,
+        session: SessionId,
+        effect: &Effect,
+        charged_this_cycle: bool,
+    ) -> bool {
+        let Some(structure_id) = self.controlled_structure_id(session) else { return false };
+        if self.control_lease_generation(session, structure_id).is_none()
+            || self.pilots.get(&session).is_none_or(|pilot| pilot.ship.spec.ship_id != structure_id)
+        {
+            return false;
+        }
+        effect
+            .action
+            .as_ref()
+            .and_then(|action| action.with_charges(charged_this_cycle))
+            .is_some_and(|action| matches!(action, Action::Strike { .. }))
+    }
+
     /// The pilot asks for an effect to stop: it does at the end of the cycle it is in. `Refused` (`NOT_ACTIVE`) when it is not running.
     pub fn deactivate(&mut self, session: SessionId, module_id: i64, now: i64) -> Vec<Out> {
         const CODE: u8 = 16;
+        if !self.pilots.contains_key(&session) {
+            if let Some(structure_id) = self.controlled_structure_id(session)
+                && self.structure_modules.contains_key(&structure_id)
+            {
+                return self.with_controlled_structure_modules(now, |scene| scene.deactivate(session, module_id, now));
+            }
+            return vec![Out::Refused { session, command: CODE, reason: "NO_SHIP_IN_SPACE" }];
+        }
         let Some(pilot) = self.pilots.get_mut(&session) else {
             return vec![Out::Refused { session, command: CODE, reason: "NO_SHIP_IN_SPACE" }];
         };
@@ -883,10 +984,63 @@ impl Scene {
         }
     }
 
-    /// What the running effects and the capacitors have come to by `now`: cycles that end (the next begins, or the effect stops), and the charge told.
+    pub(crate) fn stop_controlled_structure_modules(&mut self, session: SessionId, now: i64) -> Vec<Out> {
+        let Some(pilot) = self.pilots.get_mut(&session) else { return Vec::new() };
+        let (owner, ship_id) = (pilot.ship.spec.character_id, pilot.ship.spec.ship_id);
+        let pending = std::mem::take(&mut pilot.modules.pending_starts);
+        let running = std::mem::take(&mut pilot.modules.running);
+        let mut out: Vec<Out> = pending
+            .into_iter()
+            .map(|_| Out::Refused { session, command: 17, reason: "DEACTIVATED" })
+            .collect();
+        for run in running {
+            out.extend(self.effect_ended(session, run, owner, ship_id, now, Ending::Done));
+        }
+        out
+    }
+
+    pub(crate) fn stop_unfitted_structure_modules(&mut self, session: SessionId, now: i64) -> Vec<Out> {
+        let Some(pilot) = self.pilots.get(&session) else { return Vec::new() };
+        let fitted = |module_id: i64, module_type: i32| {
+            pilot
+                .ship
+                .spec
+                .modules
+                .iter()
+                .any(|module| module.item_id == module_id && module.type_id == module_type)
+        };
+        let pending: Vec<i64> = pilot
+            .modules
+            .pending_starts
+            .iter()
+            .filter(|start| !fitted(start.effect.module_id, start.effect.module_type))
+            .map(|start| start.effect.module_id)
+            .collect();
+        let running: Vec<i64> = pilot
+            .modules
+            .running
+            .iter()
+            .filter(|run| !fitted(run.effect.module_id, run.effect.module_type))
+            .map(|run| run.effect.module_id)
+            .collect();
+        let mut out = Vec::new();
+        for module_id in pending {
+            out.extend(self.deactivate(session, module_id, now));
+        }
+        for module_id in running {
+            out.extend(self.offline_module(session, module_id, now));
+        }
+        out
+    }
+
+    pub(crate) fn settle_modules(&mut self, now: i64) -> Vec<Out> {
+        self.with_controlled_structure_modules(now, |scene| scene.settle_modules_for_pilots(now))
+    }
+
+/// What the running effects and the capacitors have come to by `now`: cycles that end (the next begins, or the effect stops), and the charge told.
     /// At most `MAX_MOMENTS_PER_SETTLE` moments are taken for a ship in one settle, and a moment that comes back at the same tick with nothing done is a stall
     /// (the progress guarantee, M-1): the effect it belongs to is ended, so the loop always moves on.
-    pub(crate) fn settle_modules(&mut self, now: i64) -> Vec<Out> {
+    fn settle_modules_for_pilots(&mut self, now: i64) -> Vec<Out> {
         let sessions: Vec<SessionId> = self
             .in_entry_order()
             .into_iter()
@@ -943,6 +1097,7 @@ impl Scene {
         match kind {
             Moment::CycleEnd(index)
             | Moment::WorkResend(index)
+            | Moment::StructureDamageResend(index)
             | Moment::WorkStop(index)
             | Moment::StrikePulse(index)
             | Moment::DoomsdayHit(index)
@@ -962,6 +1117,7 @@ impl Scene {
         let module_id = match kind {
             Moment::CycleEnd(index)
             | Moment::WorkResend(index)
+            | Moment::StructureDamageResend(index)
             | Moment::WorkStop(index)
             | Moment::StrikePulse(index)
             | Moment::DoomsdayHit(index)
@@ -995,6 +1151,18 @@ impl Scene {
             consider(start.sent_at + WORK_RESEND_TICKS, Moment::StartResend(index));
         }
         for (index, run) in pilot.modules.running.iter().enumerate() {
+            if let Some(pending) = run.pending_structure_damage.as_ref() {
+                let lease_is_current = self.controlled_structure_id(session) == Some(pending.structure_id)
+                    && self.control_lease_generation(session, pending.structure_id)
+                        == Some(pending.control_lease_generation);
+                let next_at = if lease_is_current {
+                    pending.sent_at + WORK_RESEND_TICKS
+                } else {
+                    now
+                };
+                consider(next_at, Moment::StructureDamageResend(index));
+                continue;
+            }
             if let Some(pending) = run.pending_work {
                 // parked on the host's answer: no cycle is timed; the same id is sent again after a while, and the effect stops when its target is gone
                 let target_ok = if pending.fuel {
@@ -1028,7 +1196,12 @@ impl Scene {
             {
                 consider(run.reach_poll_at, Moment::ReachCheck(index));
             }
-            if let Some(strike) = strike_of(run.effect.action.as_ref())
+            let active_action = run
+                .effect
+                .action
+                .as_ref()
+                .and_then(|action| action.with_charges(run.charged_this_cycle));
+            if let Some(strike) = strike_of(active_action)
                 && run.strike_done < strike.pulses
             {
                 consider(
@@ -1058,6 +1231,7 @@ impl Scene {
             Moment::Shield => self.tell_shield(session, at),
             Moment::CycleEnd(index) => self.end_cycle(session, index, at),
             Moment::WorkResend(index) => self.resend_work_cycle(session, index, at),
+            Moment::StructureDamageResend(index) => self.resend_structure_damage_candidates(session, index, at),
             Moment::WorkStop(index) => self.stop_parked(session, index, at),
             Moment::StartResend(index) => self.resend_start(session, index, at),
             Moment::StrikePulse(index) => self.strike_pulse(session, index, at),

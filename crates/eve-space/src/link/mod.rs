@@ -37,7 +37,10 @@ use crate::weapons::{Aoe, Arc, Charge, Spool, Turret};
 use crate::world::StructureStatus;
 use crate::wreck::WreckKind;
 
-pub const PROTOCOL_VERSION: u16 = 67;
+pub const PROTOCOL_VERSION: u16 = 69;
+
+/// Maximum candidate or allowed target IDs in a structure-damage authorization step.
+pub const MAX_STRUCTURE_DAMAGE_CANDIDATES: usize = 4096;
 /// The message kinds.
 pub mod kind;
 
@@ -354,13 +357,14 @@ pub enum Message {
     UpdateState {
         session_id: u64,
     },
-    /// The host makes a session observe a structure in this system (protocol 64).
+    /// The host makes a session observe a structure in this system; generation is the Host's StructurePilotRecord.Version (protocol 68).
     ControlStructure {
         session_id: u64,
         solar_system_id: i32,
         structure_id: i64,
         character_id: i64,
         active: bool,
+        control_lease_generation: i64,
     },
     Command {
         session_id: u64,
@@ -639,6 +643,26 @@ pub enum Message {
     RemoveDeployed {
         deployable_id: i64,
     },
+    /// The Host removes a structure-owned cyno beacon from this specific solar-system scene (protocol 68).
+    RemoveCynoBeacon {
+        solar_system_id: i32,
+        structure_beacon_id: i64,
+    },
+    /// A Sim-created damageable entity's validated-at-Host owner identity, registered after creation (protocol 69).
+    DamageableEntityUpserted {
+        solar_system_id: i32,
+        entity_id: i64,
+        type_id: i32,
+        owner_id: i64,
+        corporation_id: i64,
+        alliance_id: i64,
+        war_faction_id: i64,
+    },
+    /// Removes a Sim-created damageable entity from the Host owner-resolution registry (protocol 69).
+    DamageableEntityRemoved {
+        solar_system_id: i32,
+        entity_id: i64,
+    },
     /// The host puts a scanner probe in space where it was launched (protocol 45).
     PlaceStructure(Box<StructurePlacement>),
     /// The host puts a wormhole end in space (protocol 63).
@@ -718,6 +742,30 @@ pub enum Message {
         accepted: bool,
         reason: String,
         amount: f64,
+    },
+    /// Fresh damageable in-range candidates for one controlled-structure pulse or ordered chain hop (protocol 68).
+    StructureDamageCandidatesRequest {
+        session_id: u64,
+        structure_id: i64,
+        module_id: i64,
+        effect_id: i32,
+        activation_nonce: u64,
+        control_lease_generation: i64,
+        cycle_id: u64,
+        pulse_hop_ordinal: u32,
+        candidate_ids: Vec<i64>,
+    },
+    /// The Host-authorized subset for exactly the same damage application and correlation tuple (protocol 68).
+    StructureDamageCandidatesResult {
+        session_id: u64,
+        structure_id: i64,
+        module_id: i64,
+        effect_id: i32,
+        activation_nonce: u64,
+        control_lease_generation: i64,
+        cycle_id: u64,
+        pulse_hop_ordinal: u32,
+        allowed_target_ids: Vec<i64>,
     },
     /// A work cycle of a module (a mining laser's or a salvager's) ended with its target there: the numbers of the cycle and the three rolls the
     /// simulation drew (waste, rounding, crit). The module is parked until a `ModuleWorkResult`, and the same `cycle_id` is sent again while it waits.
@@ -912,6 +960,8 @@ impl Message {
             Self::DroneWorkResult { .. } => kind::DRONE_WORK_RESULT,
             Self::RemoteRepairCycle { .. } => kind::REMOTE_REPAIR_CYCLE,
             Self::RemoteRepairCycleResult { .. } => kind::REMOTE_REPAIR_CYCLE_RESULT,
+            Self::StructureDamageCandidatesRequest { .. } => kind::STRUCTURE_DAMAGE_CANDIDATES_REQUEST,
+            Self::StructureDamageCandidatesResult { .. } => kind::STRUCTURE_DAMAGE_CANDIDATES_RESULT,
             Self::ModuleWorkCycle { .. } => kind::MODULE_WORK_CYCLE,
             Self::ModuleWorkResult { .. } => kind::MODULE_WORK_RESULT,
             Self::ModuleEnded { .. } => kind::MODULE_ENDED,
@@ -925,6 +975,9 @@ impl Message {
             Self::FighterSize { .. } => kind::FIGHTER_SIZE,
             Self::Deployed(_) => kind::DEPLOYED,
             Self::RemoveDeployed { .. } => kind::REMOVE_DEPLOYED,
+            Self::RemoveCynoBeacon { .. } => kind::REMOVE_CYNO_BEACON,
+            Self::DamageableEntityUpserted { .. } => kind::DAMAGEABLE_ENTITY_UPSERTED,
+            Self::DamageableEntityRemoved { .. } => kind::DAMAGEABLE_ENTITY_REMOVED,
             Self::PlaceStructure(_) => kind::PLACE_STRUCTURE,
             Self::PlaceWormhole(_) => kind::PLACE_WORMHOLE,
             Self::RemoveWormhole { .. } => kind::REMOVE_WORMHOLE,

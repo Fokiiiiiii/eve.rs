@@ -222,12 +222,16 @@ impl Scene {
         self.in_entry_order().into_iter().filter(|session| !is_npc_session(*session)).collect()
     }
 
-    /// An NPC ship leaves the scene (unspawned): those who had it in view are told. `None` when there is no such NPC.
     pub fn remove_npc(&mut self, session: SessionId, now: i64) -> Option<Vec<Out>> {
         if !is_npc_session(session) {
             return None;
         }
-        self.leave(session, crate::scene::Departure::Docked, now)
+        let entity_id = self.pilots.get(&session)?.ship.spec.ship_id;
+        let mut out = self.leave(session, crate::scene::Departure::Docked, now)?;
+        if let Some(removed) = self.remove_sim_damageable_entity(entity_id) {
+            out.push(removed);
+        }
+        Some(out)
     }
 }
 

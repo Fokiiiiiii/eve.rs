@@ -602,6 +602,25 @@ impl Scene {
             .collect()
     }
 
+
+    /// Remove the named cynosural beacon from this system. The dedicated message carries a beacon ID, so other deployables sharing a broad removal path are not touched.
+    pub(crate) fn remove_cyno_beacon(
+        &mut self,
+        solar_system_id: i32,
+        structure_beacon_id: i64,
+        at: i64,
+    ) -> Vec<Out> {
+        if solar_system_id != self.solar_system_id()
+            || !matches!(
+                self.deployables.get(&structure_beacon_id),
+                Some(deployable) if matches!(deployable.role, Role::CynoBeacon { .. })
+            )
+        {
+            return Vec::new();
+        }
+        self.remove_field(structure_beacon_id, at)
+    }
+
     /// The deployables whose lifetime is up at `now` end, in the order they were released: a probe is taken out of the scene, a bomb goes off where it is
     /// first and is taken out with the explosion played.
     pub(crate) fn advance_deployables(&mut self, now: i64) -> Vec<Out> {

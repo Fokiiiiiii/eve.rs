@@ -177,6 +177,20 @@ public sealed partial class ShipService(
     public async ValueTask<PyValue> ScoopDrone(ServiceCall call) =>
         drones is null || !_binding.Owns(call) ? None : await drones.ScoopAsync(call.Session, SpaceDrones.IdsOf(call.Arg(0)), call.Cancellation);
 
+
+    /// <summary><c>Scoop(itemID, password=)</c>: takes an eligible space artifact into the active ship cargo hold.</summary>
+    [Method("Scoop")]
+    public async ValueTask<PyValue> Scoop(ServiceCall call)
+    {
+        if (containers is null || !_binding.Owns(call) || IdOf(call.Arg(0)) is not { } itemId || itemId <= 0)
+        {
+            return None;
+        }
+        var password = call.Arg(1) is PyStr text ? text.Value : null;
+        await containers.ScoopAsync(call.Session, itemId, password, call.Cancellation);
+        return None;
+    }
+
     /// <summary><c>Undock(shipID, ignoreContraband, onlineModules=)</c>: answers the bound object and the time it can be used from again.</summary>
     /// <summary>The client call <c>Board(shipID, oldShipID)</c> used by its active-ship switch.</summary>
     /// <summary>The client call <c>LeaveShip(shipID)</c> returns the capsule made active by the session.</summary>

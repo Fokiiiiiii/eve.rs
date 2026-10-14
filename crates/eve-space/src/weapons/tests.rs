@@ -455,7 +455,7 @@ fn a_vorton_arc_strikes_the_ships_near_its_target_nearest_first_and_not_the_shoo
     let far = ship_off_the_player(&mut scene, 9_000_000_002, 8_000.0);
     let beyond = ship_off_the_player(&mut scene, 9_000_000_003, 15_000.0);
     scene.aggressions.clear();
-    let weapon = vorton(Some(Arc { range: 10_000.0, targets: 3 }));
+    let weapon = vorton(Some(Arc { range: 10_000.0, targets: 3, damage_loss_target: None }));
     scene.activate(npc, laser_effect(spec().ship_id, weapon), now);
     // the target, then the two ships within 10 km of it, the nearer first; the shooter and the ship beyond the arc's reach are not struck
     let struck: Vec<i64> = scene.aggressions.iter().map(|a| a.target_ship).collect();
@@ -471,7 +471,7 @@ fn a_vorton_arc_with_more_ships_than_it_has_links_strikes_as_many_as_it_has_draw
     let far = ship_off_the_player(&mut scene, 9_000_000_002, 8_000.0);
     scene.aggressions.clear();
     // two targets is the target and one link: of the two ships in reach, one is drawn
-    let weapon = vorton(Some(Arc { range: 10_000.0, targets: 2 }));
+    let weapon = vorton(Some(Arc { range: 10_000.0, targets: 2, damage_loss_target: None }));
     let mut expected_rolls = scene.rng.clone();
     expected_rolls.random();
     scene.activate(npc, laser_effect(spec().ship_id, weapon), now);
@@ -491,10 +491,30 @@ fn a_vorton_with_one_target_arcs_to_nobody() {
     let (mut scene, npc, now) = duel();
     let _near = ship_off_the_player(&mut scene, 9_000_000_001, 3_000.0);
     scene.aggressions.clear();
-    let weapon = vorton(Some(Arc { range: 10_000.0, targets: 1 }));
+    let weapon = vorton(Some(Arc { range: 10_000.0, targets: 1, damage_loss_target: None }));
     scene.activate(npc, laser_effect(spec().ship_id, weapon), now);
     let struck: Vec<i64> = scene.aggressions.iter().map(|a| a.target_ship).collect();
     assert_eq!(struck, [spec().ship_id]);
+}
+
+#[test]
+fn a_structure_vorton_arc_applies_attr_2106_decay_per_secondary_hop() {
+    let damage = [20.0, 30.0, 40.0, 50.0];
+    let structure_arc = crate::weapons::Arc { range: 20_000.0, targets: 5, damage_loss_target: Some(0.85) };
+    for (actual, expected) in
+        structure_arc.damage_for_hop(damage, 0).into_iter().zip([17.0, 25.5, 34.0, 42.5])
+    {
+        assert!((actual - expected).abs() < 1e-12, "first hop: {actual} != {expected}");
+    }
+    for (actual, expected) in
+        structure_arc.damage_for_hop(damage, 1).into_iter().zip([14.45, 21.675, 28.9, 36.125])
+    {
+        assert!((actual - expected).abs() < 1e-12, "second hop: {actual} != {expected}");
+    }
+
+    let ship_arc = crate::weapons::Arc { range: 20_000.0, targets: 5, damage_loss_target: None };
+    assert_eq!(ship_arc.damage_for_hop(damage, 0), damage);
+    assert_eq!(ship_arc.damage_for_hop(damage, 1), damage);
 }
 
 /// A bonus is the same to within rounding (the sums of a ramp are not exact in binary).

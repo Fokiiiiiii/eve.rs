@@ -11,6 +11,8 @@ use crate::wire::{id, int, list, real, text, tuple};
 
 /// The group of the wrecks, and their category (`Celestial`).
 pub const WRECK_GROUP: i32 = 186;
+/// The group of abandoned containers (`Abandoned Container`, SDE type 10167).
+pub const ABANDONED_CONTAINER_GROUP: i32 = 306;
 /// The group of what a pilot whose capsule is destroyed leaves (`Biomass`: the corpse), also of the category `Celestial`.
 pub const CORPSE_GROUP: i32 = 14;
 /// The group of the cans a pilot jettisons cargo into (`Cargo Container`), also of the category `Celestial`.
@@ -126,9 +128,9 @@ impl Asteroid {
 }
 
 impl Wreck {
-    /// Whether this is a can a pilot jettisoned cargo into (what it holds is the host's, and it is told as a container, not as a ship's wreck).
+    /// Whether this wreck item represents a space container. Jettisoned cargo cans and abandoned containers keep their SDE groups.
     pub fn is_container(&self) -> bool {
-        self.group_id == CONTAINER_GROUP
+        matches!(self.group_id, CONTAINER_GROUP | ABANDONED_CONTAINER_GROUP)
     }
 
     /// The ball the destiny stream describes the wreck with. A pulled wreck is a ball that follows its puller, as a pulled ship's is (`PULLED_MASS`, the
@@ -273,6 +275,26 @@ mod tests {
             velocity: Vec3::ZERO,
             expires_at: 0,
         }
+    }
+
+
+    #[test]
+    fn sde_abandoned_container_group_is_recognized_without_relabeling() {
+        let mut abandoned = recorded();
+        abandoned.group_id = ABANDONED_CONTAINER_GROUP;
+        abandoned.kind.type_id = 10_167;
+        abandoned.kind.name = "Abandoned Container".to_string();
+
+        assert!(abandoned.is_container());
+        assert_eq!(abandoned.group_id, 306);
+        assert_eq!(abandoned.kind.type_id, 10_167);
+
+        let mut jettisoned = recorded();
+        jettisoned.group_id = CONTAINER_GROUP;
+        assert!(jettisoned.is_container());
+
+        let wreck = recorded();
+        assert!(!wreck.is_container());
     }
 
     /// What the reference sent for the corpse of a pilot whose capsule was destroyed (`death.json`, the step "the victim destroys its capsule", the watcher's

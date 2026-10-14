@@ -191,11 +191,12 @@ public class SuperWeaponEffectsTests
         Assert.Equal(new long[] { 91 }, listedField.Moved.ToArray());
         Assert.Equal(new long[] { 92 }, listedField.Held.ToArray());
 
-        // the structure variant (category 66, 47068): module and wiring only, refused by name, never a success
+        // Standup type 47068 is unpublished; the engine body is shared with public 40634 but this client entry stays closed.
         await statics.EnsureTypesAsync([47068]);
+        Assert.False(statics.Type(47068)!.Published);
         var structure = FittedModule(statics, 47068);
         var structureResult = ModulePackages.Of(structure.Snapshot, statics, structure.ModuleId, "doomsdayHOG", 0, 1, [6000.0, 0.0, 8000.0]);
-        Assert.Equal("STRUCTURE_SUPERWEAPON_NOT_IMPLEMENTED", structureResult.Reason);
+        Assert.Equal("MODULE_NOT_PUBLISHED", structureResult.Reason);
         Assert.Null(structureResult.Effect);
 
         // the Bosonic Field Generator (713 16275 x 714 2000): aimed, it builds the strike of its data, and the fuel is the shared mechanism's
@@ -216,6 +217,31 @@ public class SuperWeaponEffectsTests
         Assert.Equal((10000.0, 30000.0, 300000.0), (strike.SignatureRadius, strike.ImmobileMs, strike.NoJumpMs));
         Assert.Equal((30000.0, 10000.0, 20000.0), (strike.NeutAmount, strike.NeutRadius, strike.NeutSignatureRadius));
         Assert.Equal(0, strike.Radius);
+    }
+
+[PgFact]
+    public async Task Published_module_types_are_not_rejected_by_their_unpublished_default_effects()
+    {
+        await using var source = NpgsqlDataSource.Create(PgConnection.ForTest(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
+        var statics = await DogmaStatic.LoadAsync(new SdeReader(source));
+        var publishedTypes = new (int TypeId, int EffectId)[]
+        {
+            (35926, 6443), (47327, 6443),
+            (27678, 6513), (35944, 6477), (40635, 6476), (40636, 6477),
+            (40696, 6482), (40697, 6481), (40698, 6478), (40699, 6479),
+            (47069, 6513), (47070, 6481), (47071, 6476), (47072, 6478),
+            (47073, 6482), (47074, 6479),
+        };
+        await statics.EnsureTypesAsync(publishedTypes.Select(item => item.TypeId));
+
+        foreach (var (typeId, effectId) in publishedTypes)
+        {
+            var type = statics.Type(typeId)!;
+            Assert.True(type.Published);
+            var effect = type.EffectIds.Select(statics.Effect).FirstOrDefault(candidate => candidate?.Id == effectId);
+            Assert.NotNull(effect);
+            Assert.False(effect!.Published);
+        }
     }
 
     [PgFact]
@@ -310,6 +336,81 @@ public class SuperWeaponEffectsTests
     /// <summary>
     /// A ship with each module fitted in the state given. A started module is active in the snapshot, as the space host sets it (<c>FlownShipAsync</c>).
     /// </summary>
+[PgFact]
+    public async Task Point_defense_uses_the_public_structure_fit_and_SDE_charge_damage()
+    {
+        await using var source = NpgsqlDataSource.Create(PgConnection.ForTest(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
+        var statics = await DogmaStatic.LoadAsync(new SdeReader(source));
+        await statics.EnsureTypesAsync([35_832, 35_834, 35_926, 47_327, 63_195, 16_025]);
+
+        var pointDefense = statics.Type(35_926)!;
+        Assert.True(pointDefense.Published);
+        Assert.False(statics.Effect(6_443)!.Published);
+        Assert.Equal(4_186, pointDefense.Attributes[604]);
+
+        // The matching SDE entry does not permit this battery on an Astrahus.
+        var astra = FittedStructureModule(statics, 35_832, 35_926, 63_195, 400);
+        var astraResult = ModulePackages.Of(astra.Snapshot, statics, astra.ModuleId, "pointDefense", 0, 1);
+        Assert.Equal("REFUSED", astraResult.Reason);
+        Assert.Null(astraResult.Effect);
+
+        // The Keepstar is listed by canFitShipType; the public battery works despite its effect row being unpublished.
+        var fittedI = FittedStructureModule(statics, 35_834, 35_926, 63_195, 400);
+        var resultI = ModulePackages.Of(fittedI.Snapshot, statics, fittedI.ModuleId, "pointDefense", 0, 1);
+        Assert.Null(resultI.Reason);
+        var chargedI = Assert.IsType<SimAction.Charged>(resultI.Effect!.Action);
+        var actionI = Assert.IsType<SimAction.PointDefense>(chargedI.Action);
+        Assert.True(actionI.IsValid);
+        Assert.Equal(2_500, actionI.RangeMeters);
+        Assert.Equal(new[] { 50_000d, 50_000d, 50_000d, 50_000d }, actionI.Damage);
+        Assert.Equal((63_195, 200, 400), (chargedI.ChargeTypeId, chargedI.ChargePerCycle, chargedI.Charges));
+        Assert.Equal((1_500d, 12_000d), (resultI.Effect!.CapacitorNeed, resultI.Effect.DurationMs));
+
+        var fittedII = FittedStructureModule(statics, 35_834, 47_327, 63_195, 400);
+        var resultII = ModulePackages.Of(fittedII.Snapshot, statics, fittedII.ModuleId, "pointDefense", 0, 1);
+        Assert.Null(resultII.Reason);
+        var chargedII = Assert.IsType<SimAction.Charged>(resultII.Effect!.Action);
+        var actionII = Assert.IsType<SimAction.PointDefense>(chargedII.Action);
+        Assert.Equal(3_000, actionII.RangeMeters);
+        Assert.Equal(new[] { 62_500d, 62_500d, 62_500d, 62_500d }, actionII.Damage);
+        Assert.Equal((1_800d, 12_000d), (resultII.Effect!.CapacitorNeed, resultII.Effect.DurationMs));
+
+        var shortCharge = FittedStructureModule(statics, 35_834, 35_926, 63_195, 199);
+        Assert.Equal("NO_AMMO", ModulePackages.Of(shortCharge.Snapshot, statics, shortCharge.ModuleId, "pointDefense", 0, 1).Reason);
+        var wrongGroup = FittedStructureModule(statics, 35_834, 35_926, 16_025, 400);
+        Assert.Equal("NO_AMMO", ModulePackages.Of(wrongGroup.Snapshot, statics, wrongGroup.ModuleId, "pointDefense", 0, 1).Reason);
+    }
+
+    private static (ShipSnapshot Snapshot, long ModuleId) FittedStructureModule(
+        DogmaStatic statics, int structureTypeId, int moduleTypeId, int chargeTypeId, long chargeQuantity)
+    {
+        const long characterId = 75_101;
+        const long structureId = 75_102;
+        const long moduleId = 75_103;
+        const long chargeId = 75_104;
+        const long ownerCorporationId = 1_000_001;
+        const int systemId = 30_100_034;
+        const int moduleFlag = 27;
+        var structure = new Eve.Inventory.Item(structureId, structureTypeId, ownerCorporationId, systemId, 0, 1, true, null);
+        var module = new Eve.Inventory.Item(moduleId, moduleTypeId, ownerCorporationId, structureId, moduleFlag, 1, true, null);
+        var charge = new Eve.Inventory.Item(chargeId, chargeTypeId, ownerCorporationId, structureId, moduleFlag, chargeQuantity, false, null);
+        var world = new DogmaWorld(statics, characterId, structureId);
+        world.Add(new DogmaItem(structureId, structureTypeId, characterId, systemId, structure.Flag, ItemState.Online));
+        world.Add(new DogmaItem(moduleId, moduleTypeId, characterId, structureId, moduleFlag, ItemState.Online));
+        world.Add(new DogmaItem(chargeId, chargeTypeId, characterId, structureId, moduleFlag, ItemState.Online));
+        world.SetValue(chargeId, ShipSnapshot.QuantityCharge, chargeQuantity);
+
+        return (new ShipSnapshot
+        {
+            Character = null!,
+            Ship = structure,
+            Fitted = [module],
+            Charges = [charge],
+            Skills = [],
+            World = world
+        }, moduleId);
+    }
+
     private static (ShipSnapshot Snapshot, long[] ModuleIds) FittedModules(DogmaStatic statics, params (int TypeId, ItemState State)[] modules)
     {
         const long characterId = 75001;

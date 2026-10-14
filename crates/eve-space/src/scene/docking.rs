@@ -66,7 +66,9 @@ impl Scene {
 
     pub fn leave(&mut self, session: SessionId, why: Departure, now: i64) -> Option<Vec<Out>> {
         let mut out = self.clear_tether_policy(session, now);
-        if self.controlled_structures.remove(&session).is_some() {
+        if let Some(structure_id) = self.controlled_structure_id(session) {
+            out.extend(self.teardown_controlled_structure(session, structure_id, now));
+            self.controlled_structures.remove(&session);
             if !matches!(why, Departure::Ejected | Departure::Boarded) {
                 self.widowed.remove(&session);
             }

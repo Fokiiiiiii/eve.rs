@@ -68,7 +68,9 @@ public sealed class SpaceDrones : ISpaceDrones, ISpaceDroneBays, IDisposable
     private const string NotUnderControl = "That drone is not currently under this ship's control.";
 
     /// <summary>A drone that is out: the item it is, the ship it belongs to and the pilot to tell.</summary>
-    private sealed record Launched(long ItemId, int TypeId, long CharacterId, long ShipId, int SolarSystemId, ulong Controller, ClientSession Pilot, IReadOnlyDictionary<int, double> Attributes);
+    private sealed record Launched(
+        long ItemId, int TypeId, long CharacterId, long CorporationId, long AllianceId, long WarFactionId,
+        long ShipId, int SolarSystemId, ulong Controller, ClientSession Pilot, IReadOnlyDictionary<int, double> Attributes);
 
     private readonly ISimulation _sim;
     private readonly CharacterShips _ships;
@@ -91,6 +93,17 @@ private readonly ConcurrentDictionary<long, Launched> _abandoned = new();
         _log = log;
         _sim.Received += OnReceived;
         _sim.Lost += OnLost;
+    }
+
+public (long CharacterId, int TypeId, int SolarSystemId, long CorporationId, long AllianceId, long WarFactionId)? DamageOwnerOf(long droneId)
+    {
+        if (droneId <= 0)
+            return null;
+        if (_launched.TryGetValue(droneId, out var launched))
+            return (launched.CharacterId, launched.TypeId, launched.SolarSystemId, launched.CorporationId, launched.AllianceId, launched.WarFactionId);
+        if (_abandoned.TryGetValue(droneId, out var abandoned))
+            return (abandoned.CharacterId, abandoned.TypeId, abandoned.SolarSystemId, abandoned.CorporationId, abandoned.AllianceId, abandoned.WarFactionId);
+        return null;
     }
 
     public void Dispose()
@@ -239,7 +252,10 @@ private readonly ConcurrentDictionary<long, Launched> _abandoned = new();
                     await _ships.ScoopDroneAsync(characterId, shipId, drone.Id, system, [], CancellationToken.None).ConfigureAwait(false);
                     break;
                 }
-                var entry = new Launched(drone.Id, drone.TypeId, characterId, shipId, system, controller, session, effective);
+                var entry = new Launched(
+                    drone.Id, drone.TypeId, characterId,
+                    snapshot.Character.CorporationId, snapshot.Character.AllianceId ?? 0, snapshot.Character.FactionId ?? 0,
+                    shipId, system, controller, session, effective);
                 _launched[drone.Id] = entry;
                 launchedNow.Add((entry, launch));
                 results.Add(InventoryWire.Id(drone.Id));

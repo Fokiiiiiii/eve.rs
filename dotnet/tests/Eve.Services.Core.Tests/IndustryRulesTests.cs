@@ -107,4 +107,91 @@ public sealed class IndustryRulesTests
         Assert.Equal(new HashSet<int> { IndustryRules.ResearchMaterial }, IndustryRules.StructureActivities([32]));
         Assert.Equal(new HashSet<int> { IndustryRules.Reaction }, IndustryRules.StructureActivities([42]));
     }
+
+    private static System.Text.Json.JsonElement Json(string text) => System.Text.Json.JsonDocument.Parse(text).RootElement.Clone();
+
+    [Fact]
+    public void A_rig_changes_its_structure_attribute_targets_by_one_plus_its_percentage()
+    {
+        // The basic medium ship material rig (type 37146): 2594 = -2 % on the structure attribute 2546 (medium ship groups).
+        var rig = IndustryBonuses.ParseRig(37146,
+            Json("""{"dogmaAttributes":[{"attributeID":2594,"value":-2.0},{"attributeID":2355,"value":1.0}]}"""),
+            [Json("""{"modifierInfo":[{"func":"ItemModifier","domain":"structureID","operation":6,"modifiedAttributeID":2546,"modifyingAttributeID":2594}]}""")]);
+        var bonuses = IndustryBonuses.RigBonuses(rig, 0.9);
+
+        Assert.Equal(0.98, IndustryBonuses.Multiplier(bonuses, IndustryBonusKind.Material, IndustryRules.Manufacturing, 6, 26), 10);
+        Assert.Equal(1.0, IndustryBonuses.Multiplier(bonuses, IndustryBonusKind.Material, IndustryRules.Manufacturing, 6, 25));
+        Assert.Equal(1.0, IndustryBonuses.Multiplier(bonuses, IndustryBonusKind.Time, IndustryRules.Manufacturing, 6, 26));
+        Assert.Equal(1.0, IndustryBonuses.Multiplier(bonuses, IndustryBonusKind.Material, IndustryRules.Reaction, null, 26));
+    }
+
+    [Fact]
+    public void A_rig_percentage_is_scaled_by_the_security_band_of_the_system()
+    {
+        // A time rig (2593 = -20 %) with the low-security multiplier 1.1; the high and null multipliers are absent (default 1).
+        var rig = IndustryBonuses.ParseRig(1,
+            Json("""{"dogmaAttributes":[{"attributeID":2593,"value":-20.0},{"attributeID":2356,"value":1.1}]}"""),
+            [Json("""{"modifierInfo":[{"func":"ItemModifier","domain":"structureID","operation":6,"modifiedAttributeID":2545,"modifyingAttributeID":2593}]}""")]);
+
+        Assert.Equal(0.78, IndustryBonuses.Multiplier(IndustryBonuses.RigBonuses(rig, 0.3), IndustryBonusKind.Time, IndustryRules.Manufacturing, 6, 25), 10);
+        Assert.Equal(0.8, IndustryBonuses.Multiplier(IndustryBonuses.RigBonuses(rig, 0.9), IndustryBonusKind.Time, IndustryRules.Manufacturing, 6, 25), 10);
+        Assert.Equal(0.8, IndustryBonuses.Multiplier(IndustryBonuses.RigBonuses(rig, 0.0), IndustryBonusKind.Time, IndustryRules.Manufacturing, 6, 25), 10);
+        Assert.Equal(2355, IndustryBonuses.SecurityBandAttribute(0.45));
+        Assert.Equal(2356, IndustryBonuses.SecurityBandAttribute(0.44));
+        Assert.Equal(2357, IndustryBonuses.SecurityBandAttribute(-0.5));
+    }
+
+    [Fact]
+    public void Role_bonuses_of_an_engineering_complex_and_a_refinery_follow_the_structure_type()
+    {
+        var engineering = IndustryBonuses.HullBonuses(new Dictionary<int, double> { [2600] = 0.99, [2601] = 0.97, [2602] = 0.85 });
+
+        Assert.Equal(0.99, IndustryBonuses.Multiplier(engineering, IndustryBonusKind.Material, IndustryRules.Manufacturing, null, null), 10);
+        Assert.Equal(0.85, IndustryBonuses.Multiplier(engineering, IndustryBonusKind.Time, IndustryRules.Manufacturing, null, null), 10);
+        Assert.Equal(0.85, IndustryBonuses.Multiplier(engineering, IndustryBonusKind.Time, IndustryRules.ResearchTime, null, null), 10);
+        Assert.Equal(0.97, IndustryBonuses.Multiplier(engineering, IndustryBonusKind.Cost, IndustryRules.Invention, null, null), 10);
+        Assert.Equal(1.0, IndustryBonuses.Multiplier(engineering, IndustryBonusKind.Time, IndustryRules.Reaction, null, null));
+        Assert.Equal(1.0, IndustryBonuses.Multiplier(engineering, IndustryBonusKind.Material, IndustryRules.ResearchMaterial, null, null));
+
+        var refinery = IndustryBonuses.HullBonuses(new Dictionary<int, double> { [2721] = 0.75 });
+        Assert.Equal(0.75, IndustryBonuses.Multiplier(refinery, IndustryBonusKind.Time, IndustryRules.Reaction, null, null), 10);
+        Assert.Equal(1.0, IndustryBonuses.Multiplier(refinery, IndustryBonusKind.Time, IndustryRules.Manufacturing, null, null));
+    }
+
+    [Fact]
+    public void Category_targets_apply_only_to_their_product_category_and_only_structure_effects_are_kept()
+    {
+        // Ammunition material (2540, category 8) with -5 %; the item-domain effect is not a structure bonus.
+        var rig = IndustryBonuses.ParseRig(2,
+            Json("""{"dogmaAttributes":[{"attributeID":2594,"value":-5.0}]}"""),
+            [Json("""{"modifierInfo":[{"func":"ItemModifier","domain":"structureID","operation":6,"modifiedAttributeID":2540,"modifyingAttributeID":2594},{"func":"ItemModifier","domain":"itemID","operation":4,"modifiedAttributeID":2540,"modifyingAttributeID":2594}]}""")]);
+        var bonuses = IndustryBonuses.RigBonuses(rig, 0.9);
+
+        Assert.Single(rig.Modifiers);
+        Assert.Equal(0.95, IndustryBonuses.Multiplier(bonuses, IndustryBonusKind.Material, IndustryRules.Manufacturing, 8, null), 10);
+        Assert.Equal(1.0, IndustryBonuses.Multiplier(bonuses, IndustryBonusKind.Material, IndustryRules.Manufacturing, 7, null));
+        Assert.Equal(1.0, IndustryBonuses.Multiplier(bonuses, IndustryBonusKind.Material, IndustryRules.Manufacturing, null, null));
+    }
+
+    [Fact]
+    public void Rig_slots_are_flags_92_to_99_and_each_rig_lists_the_activities_it_changes()
+    {
+        Assert.False(IndustryBonuses.IsRigSlot(91));
+        Assert.True(IndustryBonuses.IsRigSlot(92));
+        Assert.True(IndustryBonuses.IsRigSlot(99));
+        Assert.False(IndustryBonuses.IsRigSlot(100));
+
+        var bonuses = new[]
+        {
+            new IndustryBonus(IndustryBonusKind.Material, IndustryRules.Manufacturing, 0.98, IndustryBonuses.SourceRig, GroupId: 26, RigTypeId: 37146),
+            new IndustryBonus(IndustryBonusKind.Time, IndustryRules.Manufacturing, 0.8, IndustryBonuses.SourceRig, GroupId: 26, RigTypeId: 37146),
+            new IndustryBonus(IndustryBonusKind.Cost, IndustryRules.Invention, 0.9, IndustryBonuses.SourceRig, RigTypeId: 37147),
+            new IndustryBonus(IndustryBonusKind.Time, IndustryRules.Manufacturing, 0.85, IndustryBonuses.SourceHull),
+        };
+        var rigs = IndustryBonuses.RigActivities(bonuses);
+
+        Assert.Equal(2, rigs.Count);
+        Assert.Equal(new[] { IndustryRules.Manufacturing }, rigs[37146]);
+        Assert.Equal(new[] { IndustryRules.Invention }, rigs[37147]);
+    }
 }

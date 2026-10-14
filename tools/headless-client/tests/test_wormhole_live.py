@@ -29,7 +29,7 @@ pytestmark = [
     pytest.mark.skipif(os.environ.get("EVE_LIVE_SLOW") != "1", reason="the warp takes seconds: set EVE_LIVE_SLOW=1"),
 ]
 
-WORMHOLES = "wormhole"  # the world's schema (Eve.Wormholes.WormholeStore.DefaultSchema)
+WORMHOLES = os.environ.get("EVE_WORMHOLE_SCHEMA", "wormhole")  # the world's schema: the run's scratch copy, or the default (Eve.Wormholes.WormholeStore.DefaultSchema)
 WARP_SECONDS = 20.0  # the warp from the station to the near end, then the time the client gives the server to finish it
 JUMP_SECONDS = 120.0
 FLY_SECONDS = 25.0  # the flight in from about 12 km at full speed  # the time the simulation takes to put the ship in the other system
@@ -94,7 +94,15 @@ def test_a_pilot_jumps_through_a_static_wormhole_and_back_through_its_far_end():
 
             # the pilot comes out about 12 km from the junction end, outside the jump range: it binds the wormhole system's ballpark, flies to the
             # junction end, and jumps back through it
-            ballpark_j = who.call("beyonce", "MachoBindObject", junction, None)
+            # the database shows the pilot in the junction before the arrival sets the session's system: the bind is answered None until
+            # the session follows, so it is asked again (the client binds once its session change has come)
+            ballpark_j = None
+            bind_deadline = time.monotonic() + JUMP_SECONDS
+            while ballpark_j is None and time.monotonic() < bind_deadline:
+                ballpark_j = who.call("beyonce", "MachoBindObject", junction, None)
+                if ballpark_j is None:
+                    wait_quietly(who, 0.5)
+            assert ballpark_j is not None, "the junction's ballpark did not bind"
             wait_quietly(who, 2.5)
             # a warp needs 150 km (the simulation's minimum), so the pilot flies in: full speed, following the end to its range of zero
             who.call_bound(ballpark_j[0], "CmdSetSpeedFraction", 1.0)

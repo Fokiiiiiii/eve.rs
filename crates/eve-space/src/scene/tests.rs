@@ -2567,7 +2567,12 @@ fn a_structure_put_in_space_is_a_body_with_its_slim_item_and_is_in_the_bind_of_a
 #[test]
 fn a_customs_office_is_an_orbital_of_its_planet_with_the_planet_and_level_in_its_slim_item() {
     let mut scene = scene();
-    let placement = crate::link::StructurePlacement { planet_id: 40_486_618, group_id: 1_025, type_id: 2_233, ..structure_placement(&scene, NOON) };
+    let placement = crate::link::StructurePlacement {
+        planet_id: 40_486_618,
+        group_id: 1_025,
+        type_id: 2_233,
+        ..structure_placement(&scene, NOON)
+    };
     scene.place_structure(placement, NOON);
     let body = scene.system.bodies[scene.structure_index(STRUCTURE).unwrap()].clone();
     assert_eq!(body.category_id, 46, "a customs office is an orbital (categoryOrbital)");

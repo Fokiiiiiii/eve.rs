@@ -98,7 +98,8 @@ internal sealed partial class CharacterServicesComposition
         if (!double.IsFinite(timeMultiplier) || timeMultiplier <= 0)
             return null;
         return new PersistenceIndustryJobOperations.IndustryFacility(
-            facilityId, solarSystemId, ownerCorporationId, Math.Max(0, taxRate), timeMultiplier, true, null, null, activities);
+            facilityId, solarSystemId, ownerCorporationId, Math.Max(0, taxRate), timeMultiplier, true, null, null, activities,
+            await StructureBonusesAsync(facilityId, IndustryLong(structure["typeID"]), solarSystemId, token));
     }
 
     /// <summary>
@@ -111,6 +112,52 @@ internal sealed partial class CharacterServicesComposition
         if (rows.Count == 0 || !rows[0].Doc.TryGetProperty("taxRate", out var rate) || rate.ValueKind != JsonValueKind.Number)
             return 0m;
         return Math.Clamp(rate.GetDecimal(), 0m, 1m);
+    }
+
+    /// <summary>
+    /// The facility modifiers of a structure, from the SDE: its own hull (role) bonuses from its type, and the bonuses of the rigs
+    /// fitted in its rig slots (the items of its container in flags 92 to 99). The security band is the structure's system's.
+    /// </summary>
+    async ValueTask<IReadOnlyList<Eve.Services.Core.IndustryBonus>> StructureBonusesAsync(
+        long structureId, long typeId, long solarSystemId, CancellationToken token)
+    {
+        var bonuses = new List<Eve.Services.Core.IndustryBonus>();
+        if (typeId > 0)
+        {
+            var typeRows = await sde.ReadAsync("typeDogma", [typeId], token);
+            if (typeRows.Count > 0)
+                bonuses.AddRange(Eve.Services.Core.IndustryBonuses.HullBonuses(
+                    Eve.Services.Core.IndustryBonuses.ParseAttributes(typeRows[0].Doc)));
+        }
+        var systemRows = await sde.ReadAsync("mapSolarSystems", [solarSystemId], token);
+        var security = systemRows.Count > 0 && systemRows[0].Doc.TryGetProperty("securityStatus", out var status) &&
+            status.ValueKind == System.Text.Json.JsonValueKind.Number
+            ? status.GetDouble()
+            : 0d;
+        foreach (var item in await items.InContainerAsync(structureId, token))
+        {
+            if (!Eve.Services.Core.IndustryBonuses.IsRigSlot(item.Flag) ||
+                await ReadRigFitAsync(item.TypeId, token) is not { } rig)
+                continue;
+            bonuses.AddRange(Eve.Services.Core.IndustryBonuses.RigBonuses(rig, security));
+        }
+        return bonuses;
+    }
+
+    /// <summary>A fitted rig's SDE dogma: its typeDogma row and the dogmaEffects rows of its effects (null for an unknown type).</summary>
+    async ValueTask<Eve.Services.Core.RigFit?> ReadRigFitAsync(int typeId, CancellationToken token)
+    {
+        var typeRows = await sde.ReadAsync("typeDogma", [(long)typeId], token);
+        if (typeRows.Count == 0)
+            return null;
+        var effects = new List<System.Text.Json.JsonElement>();
+        foreach (var effectId in Eve.Services.Core.IndustryBonuses.EffectIds(typeRows[0].Doc))
+        {
+            var rows = await sde.ReadAsync("dogmaEffects", [(long)effectId], token);
+            if (rows.Count > 0)
+                effects.Add(rows[0].Doc);
+        }
+        return Eve.Services.Core.IndustryBonuses.ParseRig(typeId, typeRows[0].Doc, effects);
     }
 
     /// <summary>
@@ -200,6 +247,12 @@ internal sealed partial class CharacterServicesComposition
         _ => 0,
     };
 
+    /// <summary>
+    /// The corporation roles that see corporation blueprints and jobs (the client's CanSeeCorpBlueprints, blueprintSvc.py:165):
+    /// Factory Manager (1024), Rent Factory Slot (1125899906842624) and Rent Research Slot (2251799813685248), appConst.py.
+    /// </summary>
+    private const long IndustryJobViewRoles = 1024L | 1125899906842624L | 2251799813685248L;
+
     private const int FactoryServiceId = 14;
     private const int LaboratoryServiceId = 15;
 
@@ -263,19 +316,51 @@ internal sealed partial class CharacterServicesComposition
     }
 
     /// <summary>The activities as the client reads them, with the job time factor of manufacturing and of the science activities.</summary>
-    static PyValue ActivitiesPayload(IEnumerable<int> activityIds, double manufacturingFactor, double researchFactor)
+    static PyValue ActivitiesPayload(
+        IEnumerable<int> activityIds, double manufacturingFactor, double researchFactor,
+        IReadOnlyList<Eve.Services.Core.IndustryBonus>? bonuses = null)
     {
         var entries = new List<KeyValuePair<PyValue, PyValue>>();
         foreach (var activityId in activityIds)
         {
             var factor = activityId == Eve.Services.Core.IndustryRules.Manufacturing ? manufacturingFactor : researchFactor;
-            var modifiers = factor == 1d
-                ? new PyList([])
-                : new PyList([Py.Tuple(Py.Number(factor), PyNone.Instance, PyNone.Instance, PyNone.Instance, new PyInt(5))]);
-            entries.Add(new(new PyInt(activityId), Py.Tuple(modifiers, new PyList([]), new PyList([]), new PyList([]), new PyList([]), new PyList([]))));
+            var time = new List<PyValue>();
+            var material = new List<PyValue>();
+            var cost = new List<PyValue>();
+            if (factor != 1d)
+                time.Add(BonusModifierPayload(factor, null, null, 5));
+            foreach (var bonus in bonuses ?? [])
+            {
+                if (bonus.ActivityId != activityId)
+                    continue;
+                var list = bonus.Kind switch
+                {
+                    Eve.Services.Core.IndustryBonusKind.Time => time,
+                    Eve.Services.Core.IndustryBonusKind.Material => material,
+                    _ => cost,
+                };
+                list.Add(BonusModifierPayload(bonus.Amount, bonus.CategoryId, bonus.GroupId, bonus.Source));
+            }
+            entries.Add(new(new PyInt(activityId), Py.Tuple(
+                new PyList(time), new PyList(material), new PyList(cost), new PyList([]), new PyList([]), new PyList([]))));
         }
         return new PyDict(entries);
     }
+
+    /// <summary>One client modifier (amount, categoryID, groupID, invTypeID, reference) as the client's industry Facility reads it.</summary>
+    static PyValue BonusModifierPayload(double amount, int? categoryId, int? groupId, int reference) =>
+        Py.Tuple(
+            Py.Number(amount),
+            categoryId is { } category ? new PyInt(category) : (PyValue)PyNone.Instance,
+            groupId is { } group ? new PyInt(group) : (PyValue)PyNone.Instance,
+            PyNone.Instance,
+            new PyInt(reference));
+
+    /// <summary>The client's rigModifiers: each fitted rig's typeID and the activities it changes.</summary>
+    static PyValue RigModifiersPayload(IReadOnlyList<Eve.Services.Core.IndustryBonus> bonuses) =>
+        new PyDict(Eve.Services.Core.IndustryBonuses.RigActivities(bonuses).Select(rig => new KeyValuePair<PyValue, PyValue>(
+            new PyInt(rig.Key),
+            new PyList(rig.Value.Select(activityId => (PyValue)new PyInt(activityId)).ToList()))).ToList());
 
     /// <summary>The facility payload of an NPC station (the client's GetFacility shape) with its activities.</summary>
     async ValueTask<PyValue?> NpcFacilityPayloadAsync(Eve.Universe.Station station, CancellationToken token)
@@ -382,7 +467,8 @@ internal sealed partial class CharacterServicesComposition
             // An NPC station lists the activities of its SDE operation; a structure lists those its online services run.
             var operation = station is null ? null : await NpcOperationAsync(station.OperationId);
             var activities = operation is not null ? NpcActivitiesPayload(operation)
-                : ActivitiesPayload(facility.Activities ?? new HashSet<int>(), facility.TimeMultiplier, facility.ResearchFactor);
+                : ActivitiesPayload(facility.Activities ?? new HashSet<int>(), facility.TimeMultiplier, facility.ResearchFactor,
+                    facility.ModifierBonuses);
             return Py.KeyVal(
                 ("facilityID", new PyLong(facility.FacilityId)),
                 ("typeID", new PyInt(typeId)),
@@ -392,7 +478,7 @@ internal sealed partial class CharacterServicesComposition
                 ("online", PyValue.Of(facility.IsOnline)),
                 ("serviceAccess", new PyDict([])),
                 ("sccTaxModifier", Py.Number(1)),
-                ("rigModifiers", new PyDict([])),
+                ("rigModifiers", RigModifiersPayload(facility.ModifierBonuses)),
                 ("globalModifiers", Py.Dict(("faction", Py.Number(1)), ("system", new PyDict([])))),
                 ("activities", activities));
         }
@@ -494,14 +580,14 @@ internal sealed partial class CharacterServicesComposition
                 var change = context.Event.Payload<Eve.Services.Core.IndustryJobChangedEvent>();
                 if (change is null)
                     return Task.CompletedTask;
-                // The owner and the installer, and for a corporation's job the online members who hold Factory Manager (the
-                // corporation's job list is theirs; the client's Factory Manager role is 1024).
+                // The owner and the installer, and for a corporation's job the online members whose roles let them see corporation blueprints and jobs (the client's
+                // CanSeeCorpBlueprints: Factory Manager, Rent Factory Slot or Rent Research Slot).
                 var recipients = new List<Eve.Services.ClientSession>();
                 foreach (var characterId in new[] { change.OwnerId, change.InstallerId }.Distinct())
                     if (characterSessions.Of(characterId) is { } owned)
                         recipients.Add(owned);
                 foreach (var member in characterSessions.OfCorporation(change.OwnerId))
-                    if (((member.GetInt("corprole") ?? 0) & 1024) != 0)
+                    if (((member.GetInt("corprole") ?? 0) & IndustryJobViewRoles) != 0)
                         recipients.Add(member);
                 foreach (var session in recipients.Distinct())
                     session.SendNotification(

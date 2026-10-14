@@ -123,7 +123,8 @@ public sealed partial class SpaceContainers : ISpaceContainers, IDisposable
         var type = _statics.Type(item.TypeId);
         if (type is null ||
             (type.GroupId != CanGroup && type.GroupId != WreckGroup &&
-             !Eve.Structures.StructureUnanchorDrop.IsFittingsContainer(item.TypeId, item.CustomInfo)))
+             !Eve.Structures.StructureUnanchorDrop.IsFittingsContainer(item.TypeId, item.CustomInfo) &&
+             !(await IsLootedSiteContainerAsync(item.Id, item.TypeId, type.GroupId, cancellationToken))))
         {
             return null;
         }
@@ -150,10 +151,14 @@ public sealed partial class SpaceContainers : ISpaceContainers, IDisposable
     }
 
     /// <summary>Whether the pilot may take what is in the container: it is the pilot's own, or its corporation's (a can's owner is the one who jettisoned into it).</summary>
-    private async Task<bool> MayTakeFromAsync(long characterId, Item container, CancellationToken cancellationToken, SpaceItem? rights = null)
+    private async Task<bool> MayTakeFromAsync(long characterId, Item container, CancellationToken cancellationToken, SpaceItem? rights = null, IReadOnlyList<long>? itemIds = null)
     {
         if (Eve.Structures.StructureUnanchorDrop.IsFittingsContainer(container.TypeId, container.CustomInfo) ||
             _abandonedLoot.ContainsKey(container.Id) || container.OwnerId == characterId)
+        {
+            return true;
+        }
+        if (await CanTakeFromSiteContainerAsync(characterId, container, itemIds, cancellationToken))
         {
             return true;
         }
@@ -165,7 +170,6 @@ public sealed partial class SpaceContainers : ISpaceContainers, IDisposable
         return await _ships.CharacterAsync(characterId, cancellationToken) is { } pilot
             && await _ships.CharacterAsync(container.OwnerId, cancellationToken) is { } owner && owner.CorporationId == pilot.CorporationId;
     }
-
 
     /// <summary>
     /// Whether the pilot may pull the wreck or can with a tractor beam: the rights that its stored loot rights give (the same rights as taking from it:
@@ -236,7 +240,7 @@ public sealed partial class SpaceContainers : ISpaceContainers, IDisposable
     public Task<long?> MoveAsync(ClientSession session, long itemId, long sourceId, long destinationId, long? quantity, CancellationToken cancellationToken) =>
         MoveAsync(session, itemId, sourceId, destinationId, quantity, null, cancellationToken);
 
-public async Task<long?> MoveAsync(ClientSession session, long itemId, long sourceId, long destinationId, long? quantity,
+    public async Task<long?> MoveAsync(ClientSession session, long itemId, long sourceId, long destinationId, long? quantity,
         int? destinationFlag, CancellationToken cancellationToken)
     {
         if (session.CharacterId is not { } characterId || session.GetInt("shipid") is not { } shipId || !_space.IsInSpace(session))
@@ -245,7 +249,7 @@ public async Task<long?> MoveAsync(ClientSession session, long itemId, long sour
         if (toShip == (sourceId == shipId)) return null;
         var containerId = toShip ? sourceId : destinationId;
         if (await OpenAsync(session, containerId, cancellationToken) is not { } container) return null;
-        if (toShip && !await MayTakeFromAsync(characterId, container, cancellationToken))
+        if (toShip && !await MayTakeFromAsync(characterId, container, cancellationToken, itemIds: [itemId]))
             throw MachoErrors.ThrowUserError("SafetyActivated");
         var wasEmpty = (await _items.InContainerAsync(containerId, cancellationToken)).Count == 0;
         var targetFlag = toShip ? destinationFlag ?? CargoFlag : CharacterShips.ContainerFlag;
@@ -260,8 +264,6 @@ public async Task<long?> MoveAsync(ClientSession session, long itemId, long sour
                 return null;
         }
     }
-
-
 
     private async Task TellMoveAsync(ClientSession session, long shipId, Item container, bool toShip, bool wasEmpty,
         IReadOnlyList<ItemChanged> stacks, int destinationFlag, CancellationToken cancellationToken)
@@ -299,7 +301,7 @@ public async Task<long?> MoveAsync(ClientSession session, long itemId, long sour
             || destinationId != shipId || sourceId == shipId)
             return null;
         if (await OpenAsync(session, sourceId, cancellationToken) is not { } container) return null;
-        if (!await MayTakeFromAsync(characterId, container, cancellationToken))
+        if (!await MayTakeFromAsync(characterId, container, cancellationToken, itemIds: itemIds))
             throw MachoErrors.ThrowUserError("SafetyActivated");
         var flag = destinationFlag ?? CargoFlag;
         switch (await _ships.MoveAllInSpaceAsync(characterId, itemIds, sourceId, flag, cancellationToken, quantity))

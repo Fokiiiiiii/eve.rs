@@ -58,7 +58,7 @@ public sealed class SiteContainerStore
     /// <summary>The containers of a system that are still hackable.</summary>
     public async Task<IReadOnlyList<SiteContainerRecord>> InSystemAsync(int solarSystemId, CancellationToken cancellationToken = default)
     {
-        await using var command = _source.CreateCommand($"SELECT {Columns} FROM {_schema}.site_containers WHERE solar_system_id = $1 AND state = 'secure' ORDER BY container_id");
+        await using var command = _source.CreateCommand($"SELECT {Columns} FROM {_schema}.site_containers WHERE solar_system_id = $1 AND state IN ('secure', 'looted') ORDER BY container_id");
         command.Parameters.Add(new NpgsqlParameter { Value = solarSystemId });
         return await ReadAllAsync(command, cancellationToken);
     }

@@ -112,7 +112,7 @@ internal sealed class MissileEffect : ShipEffect
     public static IReadOnlySet<int> ServedLauncherGroups(DogmaStatic statics) => statics.MissileLauncherGroups;
 
     /// <summary>The launchers this effect runs that are not of the missile family: the festival launcher and the countermeasure launcher (<see cref="OtherLauncherNames"/>).</summary>
-    public static IReadOnlySet<int> OtherServedLauncherGroups { get; } = OtherLauncherNames.Keys.ToHashSet();
+    public static IReadOnlySet<int> OtherServedLauncherGroups { get; } = OtherLauncherNames.Keys.Concat(StructureMissileLauncherGroups).ToHashSet();
 
     public override IReadOnlyCollection<string> EffectNames { get; } = [LauncherEffectName];
 

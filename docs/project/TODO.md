@@ -2425,7 +2425,7 @@ Done (tests in Eve.Structures.Tests, Eve.Host.Tests, Eve.Services.Space.Tests; d
 - Fuel burn: the owner corporation gets OnItemChange when a member is online outside the structure; otherwise the fuel alert (type 181) goes to the notifications mailbox in the burn transaction (StructureFuelOwnerNotifications).
 
 NOT BUILT (open rows):
-- Corporation-office compression path: the corporation hangar take-access model is not in the repo (EveJS itemIsInDockableCorpOfficeWithTakeAccess, canTakeFromOwnerLocation).
+- Structure corporation offices (rental at a structure, EveJS officeManagerService structure branch): not built; the corporation-office compression source is built and reads the office rental rows.
 - E-15 on a sov change of the Cynosural Suppression upgrade alone (the jammer state changes but no notice is sent).
 - Group jumps and bridges to a structure beacon (refused by name).
 - The power and workforce budget of the sov upgrades (EveJS computeHubUpgradeSnapshot); the stored online flag is read instead.

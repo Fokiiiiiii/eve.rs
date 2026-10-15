@@ -19,10 +19,9 @@ internal sealed class StructureOfficeSites(
     public async Task<StructureOfficeSite?> ReadAsync(long structureId, CancellationToken cancellationToken)
     {
         await using var connection = await source.OpenConnectionAsync(cancellationToken);
-        if (await structures.GetAsync(connection, null, structureId, false, cancellationToken) is not { } record ||
-            record.Snapshot.DestroyedMs > 0 || record.OwnerCorporationId <= 0)
+        if (await structures.GetAsync(connection, null, structureId, false, cancellationToken) is not { } record || record.OwnerCorporationId <= 0)
             return null;
-        return new StructureOfficeSite(structureId, record.TypeId, record.SolarSystemId, record.OwnerCorporationId);
+        return new StructureOfficeSite(structureId, record.TypeId, record.SolarSystemId, record.OwnerCorporationId, record.Snapshot.DestroyedMs > 0);
     }
 
     public async Task<bool> MayRentAsync(long characterId, long structureId, CancellationToken cancellationToken) =>
@@ -30,6 +29,9 @@ internal sealed class StructureOfficeSites(
 
     public async Task<decimal> RentForAsync(long characterId, long structureId, CancellationToken cancellationToken) =>
         await directory.CharacterOfficeRentAsync(characterId, structureId, cancellationToken);
+
+    public async Task<decimal?> RenewalRentAsync(long structureId, CancellationToken cancellationToken) =>
+        await directory.RenewalRentAsync(structureId, cancellationToken);
 
     public Task<bool> MoveOfficeToSafetyAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, StructureOfficeSite site, long corporationId,
         CancellationToken cancellationToken) =>

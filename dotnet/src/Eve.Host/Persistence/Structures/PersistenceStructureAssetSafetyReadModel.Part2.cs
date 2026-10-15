@@ -448,10 +448,11 @@ public sealed partial class PersistenceStructureAssetSafetyReadModel : Eve.Servi
         short scope,
         long ownerId,
         long corporationId,
-        System.Threading.CancellationToken cancellationToken)
+        System.Threading.CancellationToken cancellationToken,
+        bool includeDestroyed = false)
     {
         var data = await CatalogAsync(cancellationToken);
-        var source = await ReadPersistedStructureAsync(structureId, data, cancellationToken);
+        var source = await ReadPersistedStructureAsync(structureId, data, cancellationToken, includeDestroyed);
         if (source is null)
             return (Eve.Services.Core.AssetSafetyActionState.StructureUnavailable, 0);
         if (source.SystemId != solarSystemId)
@@ -520,7 +521,7 @@ public sealed partial class PersistenceStructureAssetSafetyReadModel : Eve.Servi
     }
 
     /// <summary>
-    /// Moves a corporation's items at a structure into its corporate asset safety wrap, in the caller's transaction (ST-12: an office given up or left unpaid). False when
+    /// Moves a corporation's items at a structure into its corporate asset safety wrap, in the caller's transaction (ST-12: an office given up, left unpaid, or at a destroyed or unanchored structure). False when
     /// the wrap is refused; nothing to move is not a refusal.
     /// </summary>
     public async System.Threading.Tasks.Task<bool> CreateCorporationOfficeWrapAsync(
@@ -531,7 +532,7 @@ public sealed partial class PersistenceStructureAssetSafetyReadModel : Eve.Servi
         long corporationId,
         System.Threading.CancellationToken cancellationToken)
     {
-        var (state, _) = await WrapItemsAsync(connection, transaction, solarSystemId, structureId, Corporation, corporationId, corporationId, cancellationToken);
+        var (state, _) = await WrapItemsAsync(connection, transaction, solarSystemId, structureId, Corporation, corporationId, corporationId, cancellationToken, includeDestroyed: true);
         return state is Eve.Services.Core.AssetSafetyActionState.NoItemsToMove
             or Eve.Services.Core.AssetSafetyActionState.CorporationWrapCreated
             or Eve.Services.Core.AssetSafetyActionState.ItemsEjected;

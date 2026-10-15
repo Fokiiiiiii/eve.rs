@@ -21,13 +21,13 @@ Rules: `agent-rules.md`. Decisions and sources: DEVIATIONS "Structure corporatio
 ## Decisions to know
 
 - No fuel for the office service: the brief said "online/fuel via ST-7". The wiki lists Corporation offices as always available and SDE type 35893 has no fuel attribute. Not built as fuel.
-- Rent of a renewal stays at the signing quote (EveJS reprices). Open row.
+- Renewal repricing and the destroyed or unanchored closure are done in ST-13 (DEVIATIONS "Structure corporation offices (ST-13, 2026-10-15)").
 - Station rent: the station owner is not credited by the bill settlement (existing behaviour, a finding). Station offices have no due or impound job. Not changed.
 - The DB constraints on rent and bill amount were relaxed to `>= 0` (migration 010). The station minimum stays in code.
 
 ## Open (TODO 57)
 
-- Renewal repricing; station owner credit; station due/impound job; notices to the corporation (OnItemChange, rental change, bill refresh); a destroyed or unanchored structure with a rented office; the client acceptance (office window, structure corporate division listing, rent dialogue). No graphical client run.
+- Station owner credit; station due/impound job; notices to the corporation (OnItemChange, rental change, bill refresh); the client acceptance (office window, structure corporate division listing, rent dialogue). No graphical client run. Done in ST-13: renewal repricing and the destroyed or unanchored closure.
 
 ## Things that will bite
 

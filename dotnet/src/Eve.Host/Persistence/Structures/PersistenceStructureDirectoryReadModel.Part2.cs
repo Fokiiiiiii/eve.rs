@@ -265,6 +265,36 @@ public sealed partial class PersistenceStructureDirectoryReadModel
         return resolved is JsonValue value && value.TryGetValue<decimal>(out var rent) ? Math.Max(0, rent) : 0;
     }
 
+    /// <summary>
+    /// The rent a renewal of a structure's office takes (EVE.js processPaidOfficeRentalBill: getProfileSettingValueForStructure with no session): the group-0 value of the
+    /// profile's Corporation Office Rent setting. Null when the id is no persistently deployed structure or the profile has no such group: the rent then stays.
+    /// </summary>
+    public async ValueTask<decimal?> RenewalRentAsync(long structureId, CancellationToken cancellationToken)
+    {
+        if (structureId <= 0)
+            return null;
+        var structures = await readTable("structures", cancellationToken);
+        if (structures[structureId.ToString(System.Globalization.CultureInfo.InvariantCulture)] is not JsonObject structure || !IsPersistentlyDeployedStructure(structure, structureId))
+            return null;
+        var ownerCorporationId = Positive(Integer(structure["ownerCorpID"] ?? structure["corporationID"]));
+        var profileId = Integer(structure["profileID"]);
+        var profileState = await readTable("structureProfiles", cancellationToken);
+        var profiles = profileState["profilesByID"] as JsonObject ?? profileState;
+        var profile = profileId > 0
+            ? profiles[profileId.ToString(System.Globalization.CultureInfo.InvariantCulture)] as JsonObject
+            : profiles.Select(pair => pair.Value).OfType<JsonObject>().FirstOrDefault(candidate =>
+                Integer(candidate["corporationID"]) == ownerCorporationId && Truthy(candidate["isDefault"]));
+        if (profile?["settingsBySettingID"] is not JsonObject settings ||
+            settings[CorporationOfficeRentSettingId.ToString(System.Globalization.CultureInfo.InvariantCulture)] is not JsonArray groups)
+            return null;
+        foreach (var node in groups)
+        {
+            if (node is JsonObject row && Integer(row["groupID"], -1) == 0 && row["value"] is JsonValue value && value.TryGetValue<decimal>(out var rent))
+                return Math.Max(0, rent);
+        }
+        return null;
+    }
+
     public async ValueTask<PyValue> CharacterGetServiceAsync(
         long characterId,
         long structureId,

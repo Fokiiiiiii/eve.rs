@@ -236,6 +236,11 @@ public sealed class CorporationOfficeStore
         await transaction.CommitAsync(cancellationToken);
     }
 
+    /// <summary>
+    /// The rent a renewal of a structure's office takes now (the Host sets it from the structure profile, ST-12). A null answer keeps the rent of the paid bill.
+    /// </summary>
+    public Func<long, CancellationToken, Task<decimal?>>? RenewalRentSource { get; set; }
+
     public async Task<bool> PayBillAsync(
         long billId,
         long corporationId,
@@ -276,6 +281,8 @@ public sealed class CorporationOfficeStore
             return false;
         }
 
+        var nextAmountIsk = RenewalRentSource is null ? bill.AmountIsk
+            : (await RenewalRentSource(bill.StationId, cancellationToken)) ?? bill.AmountIsk;
         await settle(connection, transaction, bill);
         var nextDueAtMs = checked(Math.Max(nowMs, bill.DueAtMs) + RentalCycleMs);
         await using (var updateOffice = Command(connection, transaction, $"""
@@ -294,7 +301,7 @@ public sealed class CorporationOfficeStore
             INSERT INTO {_schema}.office_rent_bills
                 (office_id,corporation_id,station_id,amount_isk,issued_at_ms,due_at_ms,status,operation_key,creditor_id)
             VALUES ($1,$2,$3,$4,$5,$6,0,$7,$8)
-            """, bill.OfficeId, corporationId, bill.StationId, bill.AmountIsk, nowMs, nextDueAtMs,
+            """, bill.OfficeId, corporationId, bill.StationId, nextAmountIsk, nowMs, nextDueAtMs,
             $"office-rent:{bill.OfficeId}:renewal:{bill.BillId}", bill.CreditorId))
             await nextBill.ExecuteNonQueryAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);

@@ -443,7 +443,7 @@ public sealed partial class OfficeManagerService(
     }
 
     private async Task<StructureOfficeSite?> StructureAtAsync(long structureId, CancellationToken token) =>
-        structures is null ? null : await structures.ReadAsync(structureId, token);
+        structures is null ? null : (await structures.ReadAsync(structureId, token)) is { Gone: false } site ? site : null;
 
     private CorporationOfficeStation CurrentStation(ClientSession session)
     {

@@ -49,6 +49,9 @@ internal sealed class HostRuntime(HostServer server, ServiceRegistry registry, L
     /// <summary>The durable scheduler of the host (the expiry jobs of the market are kept in it); null when no foundations were built.</summary>
     internal Eve.Scheduler.DurableScheduler? Scheduler { get; } = foundations?.Scheduler;
 
+    /// <summary>The event bus of the host (its subscribers are the host's own); null when no foundations were built.</summary>
+    internal Eve.Events.EventBus? Events { get; } = foundations?.Events;
+
     internal async Task ShutdownAsync()
     {
         if (legacy is not null) await legacy.DisposeAsync();

@@ -1,5 +1,7 @@
 using Eve.Corporations;
+using Eve.Events;
 using Eve.Scheduler;
+using Eve.Structures;
 using Eve.Services.Corporations;
 using Eve.Wallet;
 using Npgsql;
@@ -33,12 +35,14 @@ internal sealed class StructureOfficeRentDue(
         if (await offices.OpenBillForOfficeAsync(read, null, officeId, forUpdate: false, cancellationToken) is not { } bill || bill.CreditorId is null)
             return;
         var now = scheduler.Now;
-        if (bill.DueAtMs > now)
+        // a destroyed or unanchored structure is given up at once: nothing is paid for it, and its due time does not wait
+        var gone = (await structures.ReadAsync(bill.StationId, cancellationToken))?.Gone == true;
+        if (!gone && bill.DueAtMs > now)
         {
             await ScheduleAsync(officeId, bill.DueAtMs, cancellationToken);
             return;
         }
-        if (await TryAutoPayAsync(bill, now, cancellationToken))
+        if (!gone && await TryAutoPayAsync(bill, now, cancellationToken))
         {
             // the paid bill renewed the office: the job waits for the next bill's due time
             await RescheduleAsync(officeId, cancellationToken);
@@ -81,7 +85,7 @@ internal sealed class StructureOfficeRentDue(
         var open = await offices.OpenBillForOfficeAsync(connection, transaction, officeId, forUpdate: true, cancellationToken);
         var office = await offices.GetAsync(connection, transaction, bill.CorporationId, bill.StationId, forUpdate: true, cancellationToken);
         if (open is null || office is null || office.OfficeId != officeId) return;
-        if (open.DueAtMs > now)
+        if (!site.Gone && open.DueAtMs > now)
         {
             await structures.ScheduleRentDueAsync(connection, transaction, officeId, open.DueAtMs, cancellationToken);
         }
@@ -94,6 +98,25 @@ internal sealed class StructureOfficeRentDue(
             await structures.ScheduleRentDueAsync(connection, transaction, officeId, now + RetryMs, cancellationToken);
         }
         await transaction.CommitAsync(cancellationToken);
+    }
+
+    /// <summary>
+    /// A structure that is destroyed or unanchored closes its offices (ST-12): each office's rent job is due now, in the state change's transaction, and gives the
+    /// office up (its corporation's items go to asset safety, its bills are cancelled). The job runs right after the commit.
+    /// </summary>
+    public void SubscribeClosures(EventBus events)
+    {
+        events.Subscribe("office.structure_gone", [StructureTimers.StateChangedTopic], async (context, cancellation) =>
+        {
+            var change = context.Event.Payload<StructureStateChanged>()!;
+            if (change.Removal is not ("destroyed" or "unanchored"))
+                return;
+            foreach (var corporationId in await offices.CorporationsAtStationAsync(change.StructureId, cancellation))
+            {
+                if (await offices.GetAsync(context.Connection, context.Transaction, corporationId, change.StructureId, forUpdate: false, cancellation) is { } office)
+                    await structures.ScheduleRentDueAsync(context.Connection, context.Transaction, office.OfficeId, scheduler.Now, cancellation);
+            }
+        });
     }
 
     private async Task RescheduleAsync(long officeId, CancellationToken cancellationToken)

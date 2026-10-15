@@ -269,7 +269,10 @@ internal sealed partial class CharacterServicesComposition
             now,
             structureOffices);
         // ST-12: the rent of an office at a structure falls due as a durable job (an unpaid one gives the office up)
-        new StructureOfficeRentDue(source, corporationOfficeStore, economyWallets, foundations.Scheduler, structureOffices).Register();
+        corporationOfficeStore.RenewalRentSource = structureOffices.RenewalRentAsync;
+        var rentDue = new StructureOfficeRentDue(source, corporationOfficeStore, economyWallets, foundations.Scheduler, structureOffices);
+        rentDue.Register();
+        rentDue.SubscribeClosures(foundations.Events);
         skinCosmeticsCatalog = await ShipCosmeticsCatalog.LoadAsync(sde);
     }
 }

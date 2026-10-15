@@ -446,6 +446,68 @@ public sealed class StructureOfficeTests : IAsyncLifetime
 
     /// <summary>The office hangar (CorpSAG1, flag 115) of the corporation at the structure, the reprocessing plant online, and the compression RPC of the host.</summary>
     [PgFact]
+    public async Task A_renewal_reprices_the_office_rent_from_the_structure_profile_not_the_signing_quote()
+    {
+        await using var source = NpgsqlDataSource.Create(PgConnection.ForTest(Url));
+        await SeedWorldAsync(source, await SeedPilotAsync("Repriced Renter", Outsider), CorporationRoles.RentOffice, Balance);
+        var renter = await ScalarAsync<long>($"SELECT character_id FROM {Schema("EVE_CORPORATIONS_SCHEMA")}.members WHERE corporation_id = $1", Outsider);
+        await SetAutoPayAsync(source, Outsider, enabled: true);
+
+        var host = await HostComposition.BuildAsync(Settings());
+        await (host.Registry.Lookup("officeManager") ?? throw new InvalidOperationException("officeManager is not registered"))
+            .CallAsync(Call(PilotAtStructure(renter, Outsider), "RentOffice", 1));
+        await SetRentDueAsync(Outsider);
+
+        // the renter signed at 40 000 ISK; the renewal bill takes the profile's group 0 value (25 000 ISK) at the moment it is opened
+        Assert.True(await WaitForAsync(async () => await ScalarAsync<decimal>(
+            $"SELECT COALESCE((SELECT amount_isk FROM {Schema("EVE_CORPORATIONS_SCHEMA")}.office_rent_bills WHERE corporation_id = $1 AND status = 0), -1)", Outsider) == OwnerRent,
+            TimeSpan.FromSeconds(60)));
+        await host.ShutdownAsync();
+
+        Assert.True(await OfficeActiveAsync(Outsider));
+        Assert.Equal(Balance - 2 * OutsiderRent, await BalanceAsync(Outsider));
+    }
+
+    [PgFact]
+    public async Task A_destroyed_structure_closes_its_rented_office_cancels_the_bill_and_its_items_go_to_asset_safety()
+    {
+        await using var source = NpgsqlDataSource.Create(PgConnection.ForTest(Url));
+        await SeedWorldAsync(source, await SeedPilotAsync("Renter Of A Lost Structure", Outsider), CorporationRoles.RentOffice, Balance);
+        var renter = await ScalarAsync<long>($"SELECT character_id FROM {Schema("EVE_CORPORATIONS_SCHEMA")}.members WHERE corporation_id = $1", Outsider);
+
+        var host = await HostComposition.BuildAsync(Settings());
+        await (host.Registry.Lookup("officeManager") ?? throw new InvalidOperationException("officeManager is not registered"))
+            .CallAsync(Call(PilotAtStructure(renter, Outsider), "RentOffice", 1));
+
+        // the unanchoring ended long ago: the structure's next timer removes it (unanchored), as the scheduler would deliver it
+        await using (var unanchor = source.CreateCommand($"UPDATE {Schema("EVE_STRUCTURES_SCHEMA")}.structures SET unanchor_ends_ms = 1 WHERE structure_id = $1"))
+        {
+            unanchor.Parameters.Add(new NpgsqlParameter { Value = StructureId });
+            await unanchor.ExecuteNonQueryAsync();
+        }
+        var timers = new StructureTimers(new StructureStore(source, Schema("EVE_STRUCTURES_SCHEMA")), host.Scheduler!, host.Events!, new OfficeTestRules());
+        await using (var connection = await source.OpenConnectionAsync())
+        await using (var transaction = await connection.BeginTransactionAsync())
+        {
+            var removal = await timers.ApplyAsync(connection, transaction, StructureId, new TimerDue());
+            Assert.Equal(StructureRemoval.Unanchored, removal?.Removal);
+            await transaction.CommitAsync();
+        }
+        Assert.True(await WaitForAsync(async () => !await OfficeActiveAsync(Outsider), TimeSpan.FromSeconds(60)));
+        await host.ShutdownAsync();
+
+        Assert.Equal(1L, await ScalarAsync<long>(
+            $"SELECT count(*) FROM {Schema("EVE_CORPORATIONS_SCHEMA")}.office_rent_bills WHERE corporation_id = $1 AND status = 2", Outsider));
+        Assert.Equal(1L, await WrapCountAsync(Outsider));
+        Assert.Equal(Balance - OutsiderRent, await BalanceAsync(Outsider));
+    }
+
+    private sealed class OfficeTestRules : IStructureRulesSource
+    {
+        public StructureRules RulesOf(int typeId, int solarSystemId) => StructureRules.Of(StructureSize.Medium, SecurityBand.HighSec);
+    }
+
+    [PgFact]
     public async Task A_rented_office_hangar_at_a_structure_is_the_corporation_compression_source_through_the_host()
     {
         await using var source = NpgsqlDataSource.Create(PgConnection.ForTest(Url));

@@ -39,4 +39,6 @@ Predecessor state: `handoff-ST-7.md` (fuel, compression, jammer E-03/E-15 and th
 - Full Eve.Host.Tests (dotnet build, then dotnet test --no-build, PostgreSQL database eve, EVE_PG_URL key=value): 343 passed, 0 failed, 0 skipped (11 min).
 - Focused: StructureCompositionTests 13 (incl. the two ST-7 registry tests), StructureFuelOwnerNotificationTests 3, StructureCynoSuppressionTests 5: 21 passed.
 - The Host composition tests for the space services start the host with EVE_SIM=on at an unused socket (the beyonce and structureCynoBeaconMgr services are registered only with a simulation client; no simulation answers, because these checks refuse before the simulation is asked).
-- Not run: Eve.Services.Space.Tests (only a summary comment changed there), graphical client.
+- Pharolux beacon in the simulation (open item 1, placement): StructureCynoBeaconSimTests (Eve.Services.Space.Tests, PgFact, rig fake simulation): placed as SimPlaceCynoBeacon when service 16 comes online through the event bus, taken out (SimRemoveCynoBeacon) when it goes offline. Passes 1 of 1.
+- Eve.Services.Space.Tests: StructureBeaconTravelTests, BeaconHostTests and the new test passed (22 of 23 before the new test; the new test then passed alone). Full Eve.Services.Space.Tests: 860 passed, 0 failed, 0 skipped (16 min).
+- Not run: graphical client.

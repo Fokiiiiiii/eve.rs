@@ -86,6 +86,31 @@ internal sealed class ProjectedEffect : ShipEffect
         ["fighterAbilityECM"] = v => (new SimRemote.Jam(Amount(v, FighterGravimetricStrength), Amount(v, FighterLadarStrength), Amount(v, FighterMagnetometricStrength), Amount(v, FighterRadarStrength)), false, ""),
     };
 
+    /// <summary>
+    /// What a controlled structure's burst projector (ST-8b, the doomsdayAOE families) lands on each ship in its reach: the remote effect of its family, with
+    /// the numbers of the projected effect of that family. The neutralizer's resolution is the burst's own (doomsdayAOESignatureRadius), as the reference reads it.
+    /// Null for an effect that is not a burst family.
+    /// </summary>
+    internal static SimRemote? StructureBurstWhat(string effectName, Func<int, double> value) => effectName.Trim() switch
+    {
+        "doomsdayAOEWeb" => new SimRemote.Web(Signed(value, WebSpeedFactor)),
+        "doomsdayAOEPaint" => new SimRemote.Paint(Signed(value, PainterSignatureBonus)),
+        "doomsdayAOEDamp" => new SimRemote.Damp(Signed(value, MaxTargetRangeBonus), Signed(value, ScanResolutionBonus)),
+        "doomsdayAOETrack" => new SimRemote.Disrupt(Signed(value, RangeDisruption), Signed(value, FalloffDisruption), Signed(value, TrackingDisruption)),
+        "doomsdayAOEECM" => new SimRemote.Jam(
+            Amount(value, ScanGravimetricStrengthBonus), Amount(value, ScanLadarStrengthBonus),
+            Amount(value, ScanMagnetometricStrengthBonus), Amount(value, ScanRadarStrengthBonus)),
+        "doomsdayAOENeut" => new SimRemote.Neutralize(Amount(value, EnergyNeutralizerAmount), Amount(value, DoomsdayAoeSignatureRadius)),
+        "doomsdayAOEBubble" => new SimRemote.Scramble(Amount(value, WarpScrambleStrength), false),
+        _ => null,
+    };
+
+    /// <summary>The attribute of a doomsday AOE that holds its reach (the burst projector's range, dogma 2279).</summary>
+    internal const int DoomsdayAoeRange = 2279;
+
+    /// <summary>The attribute of a doomsday AOE that holds the signature radius its neutralizer resolves against (dogma 2281).</summary>
+    internal const int DoomsdayAoeSignatureRadius = 2281;
+
     /// <summary>The focus scripts: their reach is the module's warp scramble range (attribute 103) times the script's own range bonus.</summary>
     private static readonly HashSet<string> FocusScripts = new(StringComparer.OrdinalIgnoreCase) { "shipModuleFocusedWarpDisruptionScript", "shipModuleFocusedWarpScramblingScript" };
 

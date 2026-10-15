@@ -164,6 +164,10 @@ def action(a):
                 + struct.pack("<10d", m["radius"], m["mass"], m["agility"], m["hitPoints"], m["maxVelocity"], m["flightTimeMs"],
                               m["explosionRadius"], m["explosionVelocity"], m["damageReductionFactor"], m["damageReductionSensitivity"])
                 + dot_bytes(None) + struct.pack("<4d", *a["damage"]))
+    # the SimAction tag 32 (protocol 71, ST-8b): a controlled structure's burst projector: its reach and duration in metres and milliseconds, then the remote
+    # effect of its family (the same kinds and numbers as the remote action)
+    if kind == "structureBurst":
+        return bytes([32]) + struct.pack("<2d", a["range"], a["durationMs"]) + remote_what(a)
     if kind == "stasisBurst":
         return bytes([21]) + struct.pack("<3d", a["range"], a["durationMs"], a["speedFactor"])
     if kind == "warpProbe":
@@ -241,9 +245,14 @@ def action(a):
             body += action(fallback)
         return body
 
-    what = a["what"]
     body = bytes([1, 1 if a["when"] == "end" else 0]) + struct.pack("<dd", a["optimal"], a["falloff"]) + s(a["jam"])
-    body += bytes([{"repair": 0, "transfer": 1, "neutralize": 2, "drain": 3, "web": 4, "paint": 5, "damp": 6, "scramble": 7, "jam": 8, "disrupt": 9, "guidanceDisrupt": 10}[what]])
+    return body + remote_what(a)
+
+
+def remote_what(a):
+    """A remote effect's kind and numbers (the tags of the remote action; a structure burst, tag 32, carries the same)."""
+    what = a["what"]
+    body = bytes([{"repair": 0, "transfer": 1, "neutralize": 2, "drain": 3, "web": 4, "paint": 5, "damp": 6, "scramble": 7, "jam": 8, "disrupt": 9, "guidanceDisrupt": 10}[what]])
     if what == "repair":
         body += bytes([LAYERS[a["layer"]]])
     if what in ("repair", "transfer", "neutralize", "drain"):
@@ -586,8 +595,8 @@ BARE = dict(IBIS, name="", modules=[], allianceId=99000001, securityStatus=-2.5,
             condition={"damage": 0.0, "armorDamage": 0.0, "shieldCharge": 1.0, "charge": 1.0})
 
 valid = [
-    {"name": "hello", "kind": "Hello", "version": 70},
-    {"name": "hello ack", "kind": "HelloAck", "version": 70, "pollHz": 4},
+    {"name": "hello", "kind": "Hello", "version": 71},
+    {"name": "hello ack", "kind": "HelloAck", "version": 71, "pollHz": 4},
     {"name": "enter by undocking", "kind": "Enter", "sessionId": "1790646377000015", "solarSystemId": 30100032,
      "how": 0, "stationId": "60015249", "ship": IBIS},
     {"name": "enter already in space, no modules, non-ASCII name", "kind": "Enter", "sessionId": "1",
@@ -802,6 +811,11 @@ valid = [
      "effect": {"moduleId": "9988400002813", "moduleType": 22782, "effectId": 1, "fx": "effects.TorpedoDeployment",
                 "durationMs": 10000.0, "capacitorNeed": 30.0, "repeat": 1, "targetId": "0",
                 "action": {"kind": "stasisBurst", "range": 15000.0, "durationMs": 30000.0, "speedFactor": -20.0},
+                "onChanges": [], "offChanges": []}},
+    {"name": "activate a structure ecm burst projector", "kind": "Activate", "sessionId": "1790646377000015",
+     "effect": {"moduleId": "9988400002813", "moduleType": 47069, "effectId": 1, "fx": "",
+                "durationMs": 10000.0, "capacitorNeed": 30.0, "repeat": 1, "targetId": "0",
+                "action": {"kind": "structureBurst", "range": 15000.0, "durationMs": 10000.0, "what": "jam", "strength": [3.6, 0.0, 0.0, 0.0]},
                 "onChanges": [], "offChanges": []}},
     {"name": "activate an interdiction probe", "kind": "Activate", "sessionId": "1790646377000015",
      "effect": {"moduleId": "9988400002813", "moduleType": 22782, "effectId": 1, "fx": "effects.TorpedoDeployment",

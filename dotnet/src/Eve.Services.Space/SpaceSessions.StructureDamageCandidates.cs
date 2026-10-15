@@ -26,6 +26,8 @@ public sealed partial class SpaceSessions
         "doomsdayAOETrack",
         "doomsdayAOENeut",
         "lightningWeapon",
+        // the Standup guided bomb launchers: the blast of each bomb is authorized when it goes off (the launcher's effect)
+        Eve.Services.Space.Effects.MissileEffect.LauncherEffectName,
     };
 
 private sealed record SimDamageableEntityRegistration(
@@ -499,15 +501,14 @@ private sealed record SimDamageableEntityRegistration(
             || activeState < ItemState.Active
             || !controller.RunningModules.TryGetValue(request.ModuleId, out var running)
             || !string.Equals(running.EffectName, foundEffect.Name, StringComparison.OrdinalIgnoreCase)
-            || !FitsStructureDamageModule(structure, type, controller, running))
+            || !FitsStructureDamageModule(structure, type, controller))
             return false;
 
         effect = foundEffect;
         return true;
     }
 
-    private bool FitsStructureDamageModule(
-        ShipSnapshot structure, TypeDef moduleType, Pilot controller, RunningModule running)
+    private bool FitsStructureDamageModule(ShipSnapshot structure, TypeDef moduleType, Pilot controller)
     {
         var hasStructureTypeRestriction = false;
         var fitsStructureType = false;
@@ -544,7 +545,9 @@ private sealed record SimDamageableEntityRegistration(
                 return false;
         }
 
-        return StaticAttribute(moduleType, "disallowRepeatingActivation") != 1 || running.Repeat <= 1;
+        // a module that cannot autorepeat has one cycle as its budget, whatever repeat the client asked for: the built effect carries that budget
+        // (ShipEffect.Build), so the client's repeat is no reason to refuse here
+        return true;
     }
 
     private double StaticAttribute(TypeDef type, string name) =>

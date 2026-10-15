@@ -95,6 +95,8 @@ public static class ModuleRefusals
             // the host refused the fuel for a reason that is not the lack of it: the module cannot be run
             "FUEL_REFUSED" => Notify($"{name} cannot be activated."),
             "UNSUPPORTED_EFFECT" or "EFFECT_NOT_IMPLEMENTED" => Notify($"{name} cannot be activated."),
+            // a module whose type the static data does not publish (the Standup oscillator 47068) and a structure module of a fit it may not take (REFUSED)
+            "MODULE_NOT_PUBLISHED" or "REFUSED" or "UNSUPPORTED_MODULE" => Notify($"{name} cannot be activated."),
             // the entosis link works on a sovereignty hub only (EVE.js resolveEntosisLinkActivation); the text is ours (no client string is verified)
             "ENTOSIS_TARGET_NOT_SOV_HUB" => Notify($"{name} can only act on a sovereignty hub."),
             "ALLIANCE_MEMBERSHIP_REQUIRED" => Notify($"{name} can only be used by a member of an alliance."),

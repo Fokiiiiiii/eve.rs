@@ -1158,7 +1158,7 @@ impl Message {
                 let numbers = [mining_amount_m3, waste_multiplier, crit_multiplier, access_difficulty_bonus];
                 // probabilities are at most one, the rolls below one, and every number finite and not negative; a mining cycle mines something
                 if cycle_id == 0
-                    || !matches!(command, 7..=13)
+                    || !matches!(command, 7..=14)
                     || numbers
                         .iter()
                         .chain([
@@ -1173,7 +1173,7 @@ impl Message {
                     || crit_probability > 1.0
                     || [waste_roll, rounding_roll, crit_roll].iter().any(|roll| *roll >= 1.0)
                     || (command == 7 && mining_amount_m3 <= 0.0)
-                    || (matches!(command, 9..=13)
+                    || (matches!(command, 9..=14)
                         && (mining_amount_m3 != 0.0
                             || waste_multiplier != 0.0
                             || waste_probability != 0.0

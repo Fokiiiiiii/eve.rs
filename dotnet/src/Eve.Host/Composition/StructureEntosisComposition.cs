@@ -29,9 +29,9 @@ internal sealed partial class CharacterServicesComposition
     }
 
     /// <summary>
-    /// ST-9 c: a system's Sovereignty Hub as the sovereignty records have it at a cycle. Its owner's alliance is the records' (none when neutral). The activity
+    /// ST-9 c, e: a system's Sovereignty Hub as the sovereignty records have it at a cycle. Its owner's alliance is the records' (none when neutral). The activity
     /// multiplier is the owner's system's (<see cref="StructureAnchorAuthority.ActivityDefenseMultiplier"/>); a neutral hub has none and its capture time is the
-    /// base time (EVE.js's neutral capture is not scaled), so it is 1.
+    /// base time (EVE.js's neutral capture is not scaled), so it is 1. The owner's prime hour centres its daily vulnerability window (<see cref="EntosisWindow"/>).
     /// </summary>
     private async Task<EntosisHubReading?> EntosisHubReadingAsync(int solarSystemId, CancellationToken cancellationToken)
     {
@@ -41,14 +41,16 @@ internal sealed partial class CharacterServicesComposition
             return null;
         }
         var multiplier = 1.0;
-        if (hub.AllianceId is > 0)
+        var primeHour = 0;
+        if (hub.AllianceId is { } allianceId and > 0)
         {
+            primeHour = (await corporations.AlliancePrimeTimeAsync(allianceId, cancellationToken)).CurrentHour;
             var indices = await sovereigntyReadModel.ReadAllDevelopmentIndicesAsync(cancellationToken);
             if (indices.FirstOrDefault(index => index.SolarSystemId == solarSystemId) is { } record)
             {
                 multiplier = StructureAnchorAuthority.ActivityDefenseMultiplier(record);
             }
         }
-        return new EntosisHubReading(hub.HubId, solarSystemId, hub.AllianceId, multiplier);
+        return new EntosisHubReading(hub.HubId, solarSystemId, hub.AllianceId, multiplier, primeHour);
     }
 }

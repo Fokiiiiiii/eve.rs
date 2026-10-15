@@ -216,6 +216,9 @@ internal sealed partial class CharacterServicesComposition
             source, structureStore, moonExtractionStore, characters, mailbox).Subscribe(foundations.Events);
         new Eve.Host.Persistence.Structures.ReinforcementChangedNotifications(characters, mailbox)
             .Subscribe(foundations.Events);
+        new Eve.Host.Persistence.Sovereignty.EntosisOwnerNotifications(
+            async (allianceId, ct) => (await corporations.AllianceMembersAsync(allianceId, ct)).Select(member => member.CorporationId).ToArray(),
+            characters, mailbox).Subscribe(foundations.Events);
         new Eve.Host.Persistence.Structures.StructureFuelOwnerNotifications(structureStore, characters, characterSessions, dogma,
             Eve.Host.Persistence.Structures.StructureFuelOwnerNotifications.ToMailbox(mailbox))
             .Subscribe(foundations.Events);

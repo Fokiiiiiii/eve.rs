@@ -1,4 +1,5 @@
 using Eve.Data;
+using Eve.Events;
 using Eve.Scheduler;
 using Eve.Services.Space.Entosis;
 using Npgsql;
@@ -6,8 +7,9 @@ using Npgsql;
 namespace Eve.Services.Space.Tests;
 
 /// <summary>
-/// ST-9 c, the durable capture (PostgreSQL, the real store and the real durable scheduler; the clock is the test's): the first cycle of a link is its warm-up,
-/// a capture is moved at each settled cycle and completes as a job, a defender pauses it, a link's end stops it, and a restart reads the stored progress.
+/// ST-9 c, e, the durable capture (PostgreSQL, the real store and the real durable scheduler; the clock is the test's): the first cycle of a link is its warm-up,
+/// a capture is moved at each settled cycle and completes as a job, a defender pauses it, a link's end stops it, and a restart reads the stored progress. An owned
+/// hub is refused outside its owner's window, completes into a reinforcement, and the owner is told by events (ST-9 e).
 /// </summary>
 public sealed class EntosisCaptureServiceTests
 {
@@ -36,10 +38,13 @@ public sealed class EntosisCaptureServiceTests
         public required Holder Reading { get; init; }
         public required DurableScheduler Scheduler { get; init; }
         public required EntosisCaptureService Service { get; init; }
+        public required string EventsSchema { get; init; }
+        public required EventBus Bus { get; init; }
+        public required List<object> Notices { get; init; }
 
         public async ValueTask DisposeAsync()
         {
-            await using (var command = Source.CreateCommand($"DROP SCHEMA IF EXISTS \"{Schema}\" CASCADE; DROP SCHEMA IF EXISTS \"{SchedulerSchema}\" CASCADE"))
+            await using (var command = Source.CreateCommand($"DROP SCHEMA IF EXISTS \"{Schema}\" CASCADE; DROP SCHEMA IF EXISTS \"{SchedulerSchema}\" CASCADE; DROP SCHEMA IF EXISTS \"{EventsSchema}\" CASCADE"))
             {
                 await command.ExecuteNonQueryAsync();
             }
@@ -54,23 +59,38 @@ public sealed class EntosisCaptureServiceTests
         var suffix = Guid.NewGuid().ToString("N")[..10];
         var schema = $"ent_{suffix}";
         var schedulerSchema = $"sch_{suffix}";
+        var eventsSchema = $"evt_{suffix}";
         await EntosisCaptureService.MigrateAsync(source, schema);
         await DurableScheduler.MigrateAsync(source, schedulerSchema);
+        await EventBus.MigrateAsync(source, eventsSchema);
         var clock = new Clock();
         var holder = new Holder { Value = reading };
         var scheduler = new DurableScheduler(source, () => clock.Now, null, schedulerSchema);
+        // the owner's notices: the capture's events are collected by a subscriber (started once the first pump has run)
+        var bus = new EventBus(source, scheduler, null, eventsSchema, _ => { });
+        var notices = new List<object>();
+        bus.Subscribe("test.entosis-notices", [EntosisCaptureService.CaptureStartedTopic, EntosisCaptureService.ReinforcedTopic], (context, _) =>
+        {
+            notices.Add(context.Event.Topic == EntosisCaptureService.CaptureStartedTopic
+                ? context.Event.Payload<EntosisCaptureStarted>()!
+                : context.Event.Payload<EntosisHubReinforced>()!);
+            return Task.CompletedTask;
+        });
+        await bus.PumpAsync();
         var service = new EntosisCaptureService(
-            source, scheduler, () => clock.Now, (_, _) => Task.FromResult<EntosisHubReading?>(holder.Value), handover, schema: schema);
+            source, scheduler, () => clock.Now, (_, _) => Task.FromResult<EntosisHubReading?>(holder.Value), handover, schema: schema, events: bus);
         service.Register();
         return new Harness
         {
-            Source = source, Schema = schema, SchedulerSchema = schedulerSchema, Clock = clock, Reading = holder, Scheduler = scheduler, Service = service,
+            Source = source, Schema = schema, SchedulerSchema = schedulerSchema, EventsSchema = eventsSchema, Clock = clock, Reading = holder,
+            Scheduler = scheduler, Service = service, Bus = bus, Notices = notices,
         };
     }
 
     private static EntosisHubReading Neutral() => new(Hub, System, null, 1);
 
-    private static EntosisHubReading Owned(long alliance = 7) => new(Hub, System, alliance, 1);
+    /// <summary>An owned hub whose owner's prime hour is 22:00 UTC: its window at ADM 1 is 13:00 to 07:00, and the test's clock (22:13 UTC) is inside it.</summary>
+    private static EntosisHubReading Owned(long alliance = 7) => new(Hub, System, alliance, 1, 22);
 
     private static Task<EntosisCaptureService.SettleResult> SettleAsync(Harness harness, long module, long alliance, long hub = Hub) =>
         harness.Service.SettleCycleAsync(module, Character, Corporation, alliance, hub, System, CancellationToken.None);
@@ -195,8 +215,11 @@ public sealed class EntosisCaptureServiceTests
 
         await CompleteCaptureAsync(harness);
 
-        Assert.Equal(EntosisPhase.Captured, (await harness.Service.ReadAsync(Hub, CancellationToken.None))!.Phase);
+        // the claim ends the capture: the hub is idle under its new owner, and the links of the capture are gone
+        var claimed = await harness.Service.ReadAsync(Hub, CancellationToken.None);
+        Assert.Equal((EntosisPhase.Idle, 0d), (claimed!.Phase, claimed.Progress));
         Assert.Equal("claimed", await harness.Service.HandoverAsync(Hub, CancellationToken.None));
+        Assert.Empty(await harness.Service.LinksAsync(Hub, CancellationToken.None));
         var claim = Assert.Single(claims);
         Assert.Equal((Hub, System, Corporation, 5L), (claim.HubId, claim.SolarSystemId, claim.CorporationId, claim.AllianceId));
     }
@@ -209,10 +232,11 @@ public sealed class EntosisCaptureServiceTests
         await CompleteCaptureAsync(harness);
 
         Assert.Equal("superseded", await harness.Service.HandoverAsync(Hub, CancellationToken.None));
+        Assert.Equal(EntosisPhase.Idle, (await harness.Service.ReadAsync(Hub, CancellationToken.None))!.Phase);
     }
 
     [PgFact]
-    public async Task An_owned_hub_completes_without_a_handover_because_its_reinforcement_is_not_built()
+    public async Task An_owned_hub_completes_into_reinforcement_with_its_timer_and_the_owner_is_told_once()
     {
         var calls = 0;
         await using var harness = await CreateAsync(Owned(), (_, _) =>
@@ -222,10 +246,52 @@ public sealed class EntosisCaptureServiceTests
         });
 
         await CompleteCaptureAsync(harness);
+        var completedMs = harness.Clock.Now;
 
-        Assert.Equal(EntosisPhase.Captured, (await harness.Service.ReadAsync(Hub, CancellationToken.None))!.Phase);
+        var reinforced = await harness.Service.ReadAsync(Hub, CancellationToken.None);
+        Assert.Equal(EntosisPhase.Reinforced, reinforced!.Phase);
         Assert.Equal("owned", await harness.Service.HandoverAsync(Hub, CancellationToken.None));
         Assert.Equal(0, calls);
+
+        // the reinforcement lasts 48 hours at the earliest, then it ends inside a window of the owner (the wiki)
+        await harness.Bus.PumpAsync();
+        var started = Assert.Single(harness.Notices.OfType<EntosisCaptureStarted>());
+        Assert.Equal((Hub, System, 7L, 1L), (started.HubId, started.SolarSystemId, started.DefenderAllianceId, started.ModuleId));
+        var notice = Assert.Single(harness.Notices.OfType<EntosisHubReinforced>());
+        Assert.Equal((Hub, System, 7L), (notice.HubId, notice.SolarSystemId, notice.DefenderAllianceId));
+        Assert.True(notice.ReinforcementExitMs >= completedMs + EntosisWindow.ReinforcementMs, "not before 48 hours");
+        Assert.True(EntosisWindow.IsOpen(22, 1, notice.ReinforcementExitMs), "inside the owner's window");
+
+        // the reinforced hub refuses the next cycle by name, and a replayed pump delivers nothing twice
+        Assert.Equal("SOVEREIGNTY_HUB_ALREADY_REINFORCED", (await SettleAsync(harness, 1, 5)).Reason);
+        await harness.Bus.PumpAsync();
+        Assert.Equal(2, harness.Notices.Count);
+    }
+
+    [PgFact]
+    public async Task A_cycle_outside_the_owners_vulnerability_window_is_refused_by_name_and_stores_nothing()
+    {
+        // the owner's window is centred on 12:00 UTC (03:00 to 21:00 at ADM 1); the clock is 22:13 UTC
+        await using var harness = await CreateAsync(new(Hub, System, 7, 1, 12));
+
+        var refused = await SettleAsync(harness, 1, 5);
+
+        Assert.False(refused.Accepted);
+        Assert.Equal("SOVEREIGNTY_TARGET_NOT_VULNERABLE", refused.Reason);
+        Assert.Null(await harness.Service.ReadAsync(Hub, CancellationToken.None));
+        await harness.Bus.PumpAsync();
+        Assert.Empty(harness.Notices);
+    }
+
+    [PgFact]
+    public async Task A_neutral_capture_announces_nothing_to_an_owner()
+    {
+        await using var harness = await CreateAsync(Neutral(), (_, _) => Task.FromResult(EntosisHandover.Claimed));
+
+        await CompleteCaptureAsync(harness);
+        await harness.Bus.PumpAsync();
+
+        Assert.Empty(harness.Notices);
     }
 
     [PgFact]

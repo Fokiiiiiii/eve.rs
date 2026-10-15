@@ -91,4 +91,48 @@ public sealed class EntosisCaptureTests
         Assert.Null(EntosisRules.CompletionAt(State(), defended, Start));
         Assert.Null(EntosisRules.CompletionAt(State(progress: 1), attacker, Start));
     }
+
+    private const long Day = 1_699_920_000_000; // 2023-11-14 00:00 UTC
+
+    [Fact]
+    public void The_owners_window_is_18_hours_divided_by_the_adm_and_centred_on_the_prime_hour()
+    {
+        // ADM 1: 18 hours, 13:00 to 07:00 around a 22:00 prime hour; ADM 6: 3 hours, 20:30 to 23:30
+        Assert.Equal((Day + 13 * EntosisWindow.HourMs, Day + 31 * EntosisWindow.HourMs), EntosisWindow.Of(22, 1, Day));
+        Assert.Equal((Day + 20 * EntosisWindow.HourMs + 1_800_000, Day + 23 * EntosisWindow.HourMs + 1_800_000), EntosisWindow.Of(22, 6, Day));
+
+        Assert.True(EntosisWindow.IsOpen(22, 1, Day + 13 * EntosisWindow.HourMs));
+        Assert.False(EntosisWindow.IsOpen(22, 1, Day + 13 * EntosisWindow.HourMs - 1));
+        // the window of the day before covers the early hours of the day (a window crosses midnight)
+        Assert.True(EntosisWindow.IsOpen(22, 1, Day + 3 * EntosisWindow.HourMs));
+        Assert.False(EntosisWindow.IsOpen(22, 6, Day + 12 * EntosisWindow.HourMs));
+    }
+
+    [Fact]
+    public void A_neutral_hub_has_no_window_and_a_partly_captured_owned_hub_stays_vulnerable_after_its_window()
+    {
+        var closed = Day + 23 * EntosisWindow.HourMs; // 23:00: outside a 12:00 prime hour's window (03:00 to 21:00)
+        var neutral = new EntosisHubReading(Hub, System, null, 1, 0);
+        var owned = new EntosisHubReading(Hub, System, 7, 1, 12);
+
+        Assert.True(EntosisRules.IsVulnerable(neutral, null, closed));
+        Assert.False(EntosisRules.IsVulnerable(owned, null, closed));
+        Assert.True(EntosisRules.IsVulnerable(owned, null, Day + 12 * EntosisWindow.HourMs));
+        Assert.True(EntosisRules.IsVulnerable(owned, State(progress: 0.4, owner: 7), closed));
+        Assert.False(EntosisRules.IsVulnerable(owned, State(progress: 0, owner: 7), closed));
+    }
+
+    [Fact]
+    public void A_reinforcement_ends_no_earlier_than_48_hours_at_a_point_of_the_next_window_and_is_replay_stable()
+    {
+        // completed at 10:00 on day 0 with a 12:00 prime hour (window 03:00 to 21:00): the 48 hours end at 10:00 on day 2, inside that day's window
+        var completed = Day + 10 * EntosisWindow.HourMs;
+        var earliest = completed + EntosisWindow.ReinforcementMs;
+
+        var exit = EntosisWindow.ReinforcementExit(12, 1, completed, Hub);
+
+        Assert.InRange(exit, earliest, Day + 2 * EntosisWindow.DayMs + 21 * EntosisWindow.HourMs - 1);
+        Assert.Equal(exit, EntosisWindow.ReinforcementExit(12, 1, completed, Hub));
+        Assert.True(EntosisWindow.IsOpen(12, 1, exit));
+    }
 }

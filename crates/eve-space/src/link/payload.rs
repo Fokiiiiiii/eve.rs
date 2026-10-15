@@ -1,5 +1,6 @@
 use super::*;
 
+#[allow(clippy::too_many_arguments)]
 fn write_structure_damage_correlation(
     out: &mut Vec<u8>,
     session_id: u64,

@@ -464,6 +464,7 @@ impl Sim {
     }
 
     /// Applies a host-authorized structure observer transition in the named live scene.
+    #[allow(clippy::too_many_arguments)]
     fn control_structure(
         &mut self,
         session_id: SessionId,

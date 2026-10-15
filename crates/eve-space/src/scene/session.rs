@@ -100,6 +100,7 @@ impl Scene {
     }
 
     /// Attaches a view to an existing structure body, or restores it to the session's prior ship.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn control_structure(
         &mut self,
         session: SessionId,

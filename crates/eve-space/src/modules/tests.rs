@@ -5047,6 +5047,7 @@ fn structure_bomb_effect() -> Effect {
 
 /// The controlled structure of `controlled_structure_point_defense` with its bomb launched (the bomb is released where the structure is). The ship B is in
 /// its blast (B holds still where the crowd put it, out of the structure's tether range), and the bomb's Host question is returned once it is due.
+#[allow(clippy::type_complexity)]
 fn launched_structure_bomb() -> (Scene, i64, i64, i64, (u64, i64, u64, u32, Vec<i64>)) {
     let (mut scene, structure_id, _second, now) = controlled_structure_point_defense();
     // the target is out of its undock protection, as a ship the blast may hit is (the deployable tests do the same)

@@ -635,6 +635,7 @@ impl Scene {
     }
 
     /// Park one controlled-structure damage application until the Host returns its exact owner-corp authorization result.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn request_structure_damage_candidates(
         &mut self,
         session: SessionId,
@@ -743,6 +744,7 @@ impl Scene {
     }
 
     /// Applies a Host-authorized damage step only when every field still names the live structure lease, activation, module cycle and ordinal.
+    #[allow(clippy::too_many_arguments)]
     pub fn structure_damage_candidates_result(
         &mut self,
         session: SessionId,
@@ -773,6 +775,7 @@ impl Scene {
     }
 
     /// Settles a correlated structure result with its complete per-step HOG disposition partition.
+    #[allow(clippy::too_many_arguments)]
     pub fn structure_field_damage_candidates_result(
         &mut self,
         session: SessionId,
@@ -826,6 +829,7 @@ impl Scene {
         out
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn apply_structure_damage_candidates_result(
         &mut self,
         session: SessionId,

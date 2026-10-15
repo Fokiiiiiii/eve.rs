@@ -1,13 +1,20 @@
 using System.Text.RegularExpressions;
 using Eve.Data;
+using Eve.Events;
 using Eve.Scheduler;
 using Npgsql;
 
 namespace Eve.Services.Space.Entosis;
 
-/// <summary>What the sovereignty records say about a system's Sovereignty Hub at a cycle: its item, its owner's alliance (null for a neutral hub), and the activity
-/// multiplier a capture starts with (1 for a neutral hub).</summary>
-public sealed record EntosisHubReading(long HubId, int SolarSystemId, long? DefenderAllianceId, double ActivityDefenseMultiplier);
+/// <summary>What the sovereignty records say about a system's Sovereignty Hub at a cycle: its item, its owner's alliance (null for a neutral hub), the activity
+/// multiplier a capture starts with (1 for a neutral hub) and the owner's prime hour (0 for a neutral hub; the centre of the owner's daily window).</summary>
+public sealed record EntosisHubReading(long HubId, int SolarSystemId, long? DefenderAllianceId, double ActivityDefenseMultiplier, int PrimeHour = 0);
+
+/// <summary>The payload of <see cref="EntosisCaptureService.CaptureStartedTopic"/>: the owner is told that a capture of its hub has started.</summary>
+public sealed record EntosisCaptureStarted(long HubId, int SolarSystemId, long DefenderAllianceId, long ModuleId, long AtMs);
+
+/// <summary>The payload of <see cref="EntosisCaptureService.ReinforcedTopic"/>: the owned hub is reinforced until <see cref="ReinforcementExitMs"/>.</summary>
+public sealed record EntosisHubReinforced(long HubId, int SolarSystemId, long DefenderAllianceId, long ReinforcementExitMs, long AtMs);
 
 /// <summary>A captured neutral hub and the alliance and corporation that captured it: what the handover gives the system to (ST-9 d).</summary>
 public sealed record EntosisCapturedHub(long HubId, int SolarSystemId, long CorporationId, long AllianceId);
@@ -25,8 +32,9 @@ public enum EntosisHandover : byte
 /// time the capture would complete. A link's end (its module's end report) moves the progress to that time and removes the link. Every event is one PostgreSQL
 /// transaction, so a restart keeps the progress as of the last event.
 /// A capture of a neutral hub completes into a handover: the sovereignty records give the system to the capturer (the handover callback, through the sovereignty
-/// write path), after the commit. A handover that fails is retried by a job (<see cref="HandoverDueKind"/>); an owned hub's completion records the capture and
-/// hands nothing over (its reinforcement and the command-node event are not built).
+/// write path), after the commit. A handover that fails is retried by a job (<see cref="HandoverDueKind"/>). An owned hub's completion is a reinforcement with its
+/// timer (the wiki); the command nodes that follow are not built. A cycle is refused by name outside the owner's vulnerability window (ST-9 e), and the owner's
+/// notices (capture started, reinforced) are events written in the capture's transaction (the subscriber writes them after the commit).
 /// </summary>
 public sealed class EntosisCaptureService
 {
@@ -38,6 +46,12 @@ public sealed class EntosisCaptureService
 
     /// <summary>The durable job kind of a handover's retry; its key is the hub.</summary>
     public const string HandoverDueKind = "space.entosis.handover-due";
+
+    /// <summary>The topic of a capture's start (the owner is told; ST-9 e).</summary>
+    public const string CaptureStartedTopic = "space.entosis.capture_started";
+
+    /// <summary>The topic of an owned hub's reinforcement (the owner is told; ST-9 e).</summary>
+    public const string ReinforcedTopic = "space.entosis.hub_reinforced";
 
     /// <summary>How long a failed handover waits before it is tried again: one minute.</summary>
     public const long HandoverRetryMs = 60_000;
@@ -51,12 +65,15 @@ public sealed class EntosisCaptureService
     private readonly Func<int, CancellationToken, Task<EntosisHubReading?>> _readHub;
     private readonly Func<EntosisCapturedHub, CancellationToken, Task<EntosisHandover>>? _handover;
     private readonly Action<string>? _log;
+    private readonly EventBus? _events;
 
     /// <param name="readHub">The system's Sovereignty Hub as the records have it at this moment (null when the system has none).</param>
     /// <param name="handover">The claim of a captured neutral hub by its capturer (ST-9 d). Unset, a capture completes and waits for one.</param>
+    /// <param name="events">Where the owner's notices are published (ST-9 e), in the capture's transaction. Unset, no notice is published.</param>
     public EntosisCaptureService(
         NpgsqlDataSource source, DurableScheduler scheduler, Func<long> now, Func<int, CancellationToken, Task<EntosisHubReading?>> readHub,
-        Func<EntosisCapturedHub, CancellationToken, Task<EntosisHandover>>? handover = null, string schema = DefaultSchema, Action<string>? log = null)
+        Func<EntosisCapturedHub, CancellationToken, Task<EntosisHandover>>? handover = null, string schema = DefaultSchema, Action<string>? log = null,
+        EventBus? events = null)
     {
         if (!SchemaName.IsMatch(schema))
         {
@@ -69,6 +86,7 @@ public sealed class EntosisCaptureService
         _handover = handover;
         _schema = schema;
         _log = log;
+        _events = events;
     }
 
     public static IReadOnlyList<Migration> MigrationSet() => Migrations.Embedded(typeof(EntosisCaptureService).Assembly, "EntosisMigrations");
@@ -109,22 +127,51 @@ public sealed class EntosisCaptureService
         await using (var transaction = await connection.BeginTransactionAsync(cancellationToken))
         {
             var stored = await LoadStateAsync(connection, transaction, hubId, forUpdate: true, cancellationToken);
-            var state = stored ?? new EntosisCaptureState(hubId, solarSystemId, 0, now, reading.ActivityDefenseMultiplier, reading.DefenderAllianceId, EntosisPhase.Idle);
+            var state = stored ?? new EntosisCaptureState(
+                hubId, solarSystemId, 0, now, reading.ActivityDefenseMultiplier, reading.DefenderAllianceId, EntosisPhase.Idle, reading.PrimeHour);
+            // an idle hub takes the current multiplier, owner and prime hour when a capture starts; a capture in progress keeps the ones it started with
+            if (state.Phase == EntosisPhase.Idle)
+            {
+                state = state with
+                {
+                    ActivityDefenseMultiplier = reading.ActivityDefenseMultiplier, DefenderAllianceId = reading.DefenderAllianceId, PrimeHour = reading.PrimeHour,
+                };
+            }
             if (state.Phase == EntosisPhase.Captured)
             {
                 return new SettleResult(false, "ENTOSIS_CAPTURE_COMPLETE");
             }
+            if (state.Phase == EntosisPhase.Reinforced)
+            {
+                return new SettleResult(false, "SOVEREIGNTY_HUB_ALREADY_REINFORCED");
+            }
+            if (!EntosisRules.IsVulnerable(reading, state, now))
+            {
+                return new SettleResult(false, "SOVEREIGNTY_TARGET_NOT_VULNERABLE");
+            }
             var links = await LoadLinksAsync(connection, transaction, hubId, cancellationToken);
+            // the first attacker cycle of a hub with no capture running starts it (the warm-up): the owner is told (EVE.js notifySovCaptureStarted)
+            var defenderAlliance = reading.DefenderAllianceId ?? 0;
+            var starts = side == EntosisSide.Attacker && defenderAlliance > 0 && state.Phase == EntosisPhase.Idle
+                && !links.Any(link => link.ModuleId == moduleId)
+                && !links.Any(link => link.Side == EntosisSide.Attacker && EntosisRules.IsActive(link, now));
             var advanced = EntosisRules.Advance(state with { DefenderAllianceId = reading.DefenderAllianceId }, links, now);
             await SaveStateAsync(connection, transaction, advanced, cancellationToken);
             var settling = new EntosisLink(moduleId, characterId, corporationId, allianceId, side, now, now);
             await UpsertLinkAsync(connection, transaction, hubId, settling, cancellationToken);
             await DeleteStaleLinksAsync(connection, transaction, hubId, now, cancellationToken);
             var after = await LoadLinksAsync(connection, transaction, hubId, cancellationToken);
-            completed = await CompleteAsync(connection, transaction, state, advanced, side == EntosisSide.Attacker ? settling : null, cancellationToken);
+            completed = await CompleteAsync(connection, transaction, state, advanced, side == EntosisSide.Attacker ? settling : null, now, cancellationToken);
             await ReconcileJobAsync(connection, transaction, advanced, after, now, cancellationToken);
+            if (starts && _events is not null)
+            {
+                await _events.PublishAsync(connection, transaction, CaptureStartedTopic,
+                    new EntosisCaptureStarted(hubId, solarSystemId, defenderAlliance, moduleId, now), hubId.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                    cancellationToken);
+            }
             await transaction.CommitAsync(cancellationToken);
         }
+        _events?.Wake();
         if (completed)
         {
             _log?.Invoke($"entosis: hub {hubId} of system {solarSystemId} is captured at {now}");
@@ -151,7 +198,7 @@ public sealed class EntosisCaptureService
                 await SaveStateAsync(connection, transaction, advanced, cancellationToken);
                 await DeleteLinkAsync(connection, transaction, moduleId, cancellationToken);
                 var after = await LoadLinksAsync(connection, transaction, id, cancellationToken);
-                completed = await CompleteAsync(connection, transaction, state, advanced, MostRecentAttacker(links), cancellationToken);
+                completed = await CompleteAsync(connection, transaction, state, advanced, MostRecentAttacker(links), now, cancellationToken);
                 await ReconcileJobAsync(connection, transaction, advanced, after, now, cancellationToken);
             }
             await transaction.CommitAsync(cancellationToken);
@@ -171,7 +218,7 @@ public sealed class EntosisCaptureService
         await using (var transaction = await connection.BeginTransactionAsync(cancellationToken))
         {
             var state = await LoadStateAsync(connection, transaction, hubId, forUpdate: true, cancellationToken);
-            if (state is not null && state.Phase != EntosisPhase.Captured)
+            if (state is not null && !EntosisRules.IsDone(state.Phase))
             {
                 var now = _now();
                 var links = await LoadLinksAsync(connection, transaction, hubId, cancellationToken);
@@ -179,7 +226,7 @@ public sealed class EntosisCaptureService
                 await SaveStateAsync(connection, transaction, advanced, cancellationToken);
                 await DeleteStaleLinksAsync(connection, transaction, hubId, now, cancellationToken);
                 var after = await LoadLinksAsync(connection, transaction, hubId, cancellationToken);
-                completed = await CompleteAsync(connection, transaction, state, advanced, MostRecentAttacker(links), cancellationToken);
+                completed = await CompleteAsync(connection, transaction, state, advanced, MostRecentAttacker(links), now, cancellationToken);
                 await ReconcileJobAsync(connection, transaction, advanced, after, now, cancellationToken);
             }
             await transaction.CommitAsync(cancellationToken);
@@ -221,18 +268,34 @@ public sealed class EntosisCaptureService
         links.Where(link => link.Side == EntosisSide.Attacker).OrderByDescending(link => link.LastCycleMs).FirstOrDefault();
 
     /// <summary>
-    /// The completion of a capture, in its transaction: when the hub becomes captured now, it records who captured it and what the handover is (pending to the
-    /// capturer, or owned: an owned hub changes hands in no way that is built). Returns whether it completed.
+    /// The completion of a capture, in its transaction. A neutral hub becomes captured: it records who captured it, and its handover is pending to the capturer
+    /// (or superseded when there is none). An owned hub becomes reinforced: its timer is set (the wiki: 48 hours, then the next vulnerability window) and the owner
+    /// is told; the command nodes that follow are not built. Returns whether it completed.
     /// </summary>
     private async Task<bool> CompleteAsync(
-        NpgsqlConnection connection, NpgsqlTransaction transaction, EntosisCaptureState before, EntosisCaptureState after, EntosisLink? capturer,
+        NpgsqlConnection connection, NpgsqlTransaction transaction, EntosisCaptureState before, EntosisCaptureState after, EntosisLink? capturer, long now,
         CancellationToken cancellationToken)
     {
-        if (before.Phase == EntosisPhase.Captured || after.Phase != EntosisPhase.Captured)
+        if (EntosisRules.IsDone(before.Phase) || after.Phase != EntosisPhase.Captured)
         {
             return false;
         }
-        var handover = after.DefenderAllianceId is not null ? "owned" : capturer is null ? "superseded" : "pending";
+        if (after.DefenderAllianceId is { } owner)
+        {
+            var exitMs = EntosisWindow.ReinforcementExit(after.PrimeHour, after.ActivityDefenseMultiplier, now, after.HubId);
+            await using var reinforce = Command(
+                "UPDATE {schema}.hubs SET phase = 'reinforced', handover = 'owned', reinforcement_exit_ms = $2 WHERE hub_id = $1",
+                connection, transaction, after.HubId, exitMs);
+            await reinforce.ExecuteNonQueryAsync(cancellationToken);
+            if (_events is not null)
+            {
+                await _events.PublishAsync(connection, transaction, ReinforcedTopic,
+                    new EntosisHubReinforced(after.HubId, after.SolarSystemId, owner, exitMs, now), after.HubId.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                    cancellationToken);
+            }
+            return true;
+        }
+        var handover = capturer is null ? "superseded" : "pending";
         await using var command = Command(
             "UPDATE {schema}.hubs SET handover = $2, captured_by_corporation_id = $3, captured_by_alliance_id = $4 WHERE hub_id = $1",
             connection, transaction, after.HubId, handover, capturer?.CorporationId, capturer?.AllianceId);
@@ -285,11 +348,18 @@ public sealed class EntosisCaptureService
             }, cancellationToken);
             return;
         }
+        // the answer ends this capture: the hub is idle again (under its new owner, if it was claimed) and the links of the capture are removed
         await using var writer = await _source.OpenConnectionAsync(cancellationToken);
+        await using var writerTransaction = await writer.BeginTransactionAsync(cancellationToken);
         await using var update = Command(
-            "UPDATE {schema}.hubs SET handover = $2 WHERE hub_id = $1 AND handover = 'pending'", writer, null,
+            "UPDATE {schema}.hubs SET handover = $2, phase = 'idle', progress = 0 WHERE hub_id = $1 AND handover = 'pending'", writer, writerTransaction,
             hubId, answer == EntosisHandover.Claimed ? "claimed" : "superseded");
-        await update.ExecuteNonQueryAsync(cancellationToken);
+        if (await update.ExecuteNonQueryAsync(cancellationToken) == 1)
+        {
+            await using var clear = Command("DELETE FROM {schema}.links WHERE hub_id = $1", writer, writerTransaction, hubId);
+            await clear.ExecuteNonQueryAsync(cancellationToken);
+        }
+        await writerTransaction.CommitAsync(cancellationToken);
     }
 
     private async Task ReconcileJobAsync(
@@ -321,7 +391,7 @@ public sealed class EntosisCaptureService
         NpgsqlConnection connection, NpgsqlTransaction? transaction, long hubId, bool forUpdate, CancellationToken cancellationToken)
     {
         await using var command = Command(
-            "SELECT hub_id, solar_system_id, progress, checkpoint_ms, activity_defense_multiplier, defender_alliance_id, phase FROM {schema}.hubs WHERE hub_id = $1"
+            "SELECT hub_id, solar_system_id, progress, checkpoint_ms, activity_defense_multiplier, defender_alliance_id, phase, prime_hour FROM {schema}.hubs WHERE hub_id = $1"
             + (forUpdate ? " FOR UPDATE" : ""), connection, transaction, hubId);
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         if (!await reader.ReadAsync(cancellationToken))
@@ -333,11 +403,12 @@ public sealed class EntosisCaptureService
             "idle" => EntosisPhase.Idle,
             "capturing" => EntosisPhase.Capturing,
             "captured" => EntosisPhase.Captured,
+            "reinforced" => EntosisPhase.Reinforced,
             var other => throw new InvalidOperationException($"unknown entosis phase {other}"),
         };
         return new EntosisCaptureState(
             reader.GetInt64(0), reader.GetInt32(1), reader.GetDouble(2), reader.GetInt64(3), reader.GetDouble(4),
-            reader.IsDBNull(5) ? null : reader.GetInt64(5), phase);
+            reader.IsDBNull(5) ? null : reader.GetInt64(5), phase, reader.GetInt16(7));
     }
 
     private async Task SaveStateAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, EntosisCaptureState state, CancellationToken cancellationToken)
@@ -346,13 +417,15 @@ public sealed class EntosisCaptureService
         {
             EntosisPhase.Idle => "idle",
             EntosisPhase.Capturing => "capturing",
+            EntosisPhase.Reinforced => "reinforced",
             _ => "captured",
         };
         await using var command = Command(
-            "INSERT INTO {schema}.hubs (hub_id, solar_system_id, progress, checkpoint_ms, activity_defense_multiplier, defender_alliance_id, phase) "
-            + "VALUES ($1, $2, $3, $4, $5, $6, $7) ON CONFLICT (hub_id) DO UPDATE SET progress = EXCLUDED.progress, checkpoint_ms = EXCLUDED.checkpoint_ms, "
-            + "defender_alliance_id = EXCLUDED.defender_alliance_id, phase = EXCLUDED.phase",
-            connection, transaction, state.HubId, state.SolarSystemId, state.Progress, state.CheckpointMs, state.ActivityDefenseMultiplier, state.DefenderAllianceId, phase);
+            "INSERT INTO {schema}.hubs (hub_id, solar_system_id, progress, checkpoint_ms, activity_defense_multiplier, defender_alliance_id, phase, prime_hour) "
+            + "VALUES ($1, $2, $3, $4, $5, $6, $7, $8) ON CONFLICT (hub_id) DO UPDATE SET progress = EXCLUDED.progress, checkpoint_ms = EXCLUDED.checkpoint_ms, "
+            + "defender_alliance_id = EXCLUDED.defender_alliance_id, phase = EXCLUDED.phase, prime_hour = EXCLUDED.prime_hour",
+            connection, transaction, state.HubId, state.SolarSystemId, state.Progress, state.CheckpointMs, state.ActivityDefenseMultiplier, state.DefenderAllianceId, phase,
+            state.PrimeHour);
         await command.ExecuteNonQueryAsync(cancellationToken);
     }
 

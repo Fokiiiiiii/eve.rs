@@ -245,7 +245,7 @@ internal sealed partial class CharacterServicesComposition
                 await Eve.Services.Space.Entosis.EntosisCaptureService.MigrateAsync(source);
                 var entosisCaptures = new Eve.Services.Space.Entosis.EntosisCaptureService(
                     source, foundations.Scheduler, () => foundations.Scheduler.Now, EntosisHubReadingAsync, EntosisHandoverAsync,
-                    log: message => Console.Error.WriteLine($"eve-host: entosis: {message}"));
+                    log: message => Console.Error.WriteLine($"eve-host: entosis: {message}"), events: foundations.Events);
                 entosisCaptures.Register();
                 spaceContainers.EntosisCaptures = entosisCaptures;
             }

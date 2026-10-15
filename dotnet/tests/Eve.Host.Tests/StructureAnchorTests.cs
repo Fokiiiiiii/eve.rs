@@ -1,3 +1,5 @@
+using System.Globalization;
+using System.Text.Json.Nodes;
 using Eve.Data;
 using Eve.Dogma;
 using Eve.Events;
@@ -170,6 +172,53 @@ public sealed class StructureAnchorTests
     private static string PgUrl() => Environment.GetEnvironmentVariable("EVE_PG_URL") ?? throw new InvalidOperationException("EVE_PG_URL is not set");
 
     private static ServiceCall Call(ClientSession session) => new() { Method = "Anchor", Args = [], Session = session };
+
+    [PgFact]
+    public async Task An_anchored_structure_is_dockable_by_its_owner_corporation_pilot_with_the_default_profile()
+    {
+        // the docking access of a structure the Anchor authority created with its corporation's default profile, read as the Host reads it: the
+        // structures table as the directory sees it and the profile table as the profile backend writes it (its default profile, no docking settings)
+        await using var route = await Route.CreateAsync(PgUrl());
+        var item = await route.GiveAsync(Astrahus, Ship);
+        await route.Authority.AnchorAsync(Call(route.Pilot()), Route.Request(item, x: 0, z: 0, weekday: 2, hour: 10));
+        var structure = await route.Structures.GetAsync(item);
+        Assert.NotNull(structure);
+        var profileId = structure.ProfileId;
+        var profiles = new JsonObject
+        {
+            ["meta"] = new JsonObject { ["version"] = 1 },
+            ["nextProfileID"] = profileId + 1,
+            ["profilesByID"] = new JsonObject
+            {
+                [profileId.ToString(CultureInfo.InvariantCulture)] = new JsonObject
+                {
+                    ["profileID"] = profileId,
+                    ["corporationID"] = Corporation,
+                    ["name"] = "Default Profile",
+                    ["description"] = "",
+                    ["isDefault"] = true,
+                    ["settingsBySettingID"] = new JsonObject(),
+                },
+            },
+        };
+        async Task<JsonObject> Read(string table, CancellationToken token) => table switch
+        {
+            "structures" => await route.Structures.ReadLegacyTableAsync(token),
+            "structureProfiles" => profiles,
+            _ => new JsonObject(),
+        };
+        var sde = new SdeReader(route.Source);
+        async Task<bool> MayDock(long corporation)
+        {
+            var directory = new PersistenceStructureDirectoryReadModel(Read,
+                (_, _) => Task.FromResult(new Eve.Relations.Affiliation(corporation, null, null)), sde, null);
+            var access = await directory.GetDockingAccessSnapshotsAsync(Character, corporation, 0, [item], CancellationToken.None);
+            return access.SingleOrDefault() is { } row && StructureDirectoryService.CanDock(row, item, Character, corporation, 0);
+        }
+
+        Assert.True(await MayDock(Corporation));
+        Assert.False(await MayDock(Corporation + 1));
+    }
 
     [PgFact]
     public async Task Anchoring_an_item_from_the_ship_consumes_it_and_creates_the_structure_with_its_event_and_placement()

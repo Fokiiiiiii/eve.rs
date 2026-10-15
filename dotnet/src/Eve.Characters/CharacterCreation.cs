@@ -51,7 +51,8 @@ public sealed class CharacterCreation(
     CreationCatalog catalog,
     PgModuleStateStore modules,
     bool newCharacterExperienceEnabled = false,
-    string? newCharacterExperienceMode = null)
+    string? newCharacterExperienceMode = null,
+    Func<NpgsqlConnection, NpgsqlTransaction, long, long, CancellationToken, Task>? writeCorporationMembership = null)
 {
     /// <summary>How many characters an account may have.</summary>
     public const int SlotsPerAccount = 3;
@@ -105,6 +106,10 @@ public sealed class CharacterCreation(
         {
             return new CreationRefused(CreationRefusal.NameTaken);
         }
+        // the relation store answers a character's corporation from its membership relation, which is written only when membership changes or at startup:
+        // a character made while the server runs needs its membership written here, in the same transaction
+        if (writeCorporationMembership is not null)
+            await writeCorporationMembership(connection, transaction, characterId, start.CorporationId, cancellationToken);
 
         var shipId = await items.CreateAsync(
             connection, transaction, new NewItem(race.ShipTypeId, characterId, start.StationId, ItemFlags.Hangar, Singleton: true), cancellationToken);

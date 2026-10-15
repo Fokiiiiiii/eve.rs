@@ -123,7 +123,10 @@ internal sealed partial class CharacterServicesComposition
         Console.Error.WriteLine($"eve-host: characters in PostgreSQL, schemas {characterSchema}, {inventorySchema}, {skillsSchema} and {walletSchema}; {stations.Count} stations; dogma of {dogma.AttributeCount} attributes and {dogma.EffectCount} effects; static data build {build}; new characters start at {(startStation is { } id ? $"station {id}" : "their school's headquarters")}");
         creation = new CharacterCreation(
             source, characters, items, skills, skillCatalog, wallets, startingWallet, catalog, modules,
-            newCharacterExperienceMode == "tutorial", newCharacterExperienceMode);
+            newCharacterExperienceMode == "tutorial", newCharacterExperienceMode,
+            (connection, transaction, characterId, corporationId, token) => foundations.Relations.SetAsync(
+                connection, transaction, Eve.Relations.RelationKinds.CorporationMember.Name, characterId, corporationId, 1,
+                "corporation membership", cancellationToken: token));
         return Task.CompletedTask;
     }
 

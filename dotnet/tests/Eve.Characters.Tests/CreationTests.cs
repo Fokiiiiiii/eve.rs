@@ -46,6 +46,25 @@ public class CreationTests
     }
 
     [PgFact]
+    public async Task The_new_character_gets_its_corporation_membership_written_in_the_creation_transaction()
+    {
+        // the relation store answers a character's corporation from this membership: a character made while the server runs must have it
+        await using var s = await PgSchemas.CreateAsync();
+        var membership = new List<(long Character, long Corporation)>();
+        var creation = new CharacterCreation(
+            s.Source, s.Characters, s.Items, s.Skills, Skills, s.Wallets, new StartingWallet(), Catalog, s.Modules,
+            writeCorporationMembership: (_, _, characterId, corporationId, _) =>
+            {
+                membership.Add((characterId, corporationId));
+                return Task.CompletedTask;
+            });
+
+        var created = Assert.IsType<Created>(await creation.CreateAsync(Request("Member Pilot")));
+
+        Assert.Equal([(created.CharacterId, 1000006L)], membership);
+    }
+
+    [PgFact]
     public async Task Character_creation_persists_the_configured_tutorial_entry_mode()
     {
         await using var s = await PgSchemas.CreateAsync();

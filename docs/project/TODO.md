@@ -2413,7 +2413,7 @@ Document readback observed parent main HEAD `c114dc0d8e292c056e8d71b37f496084f48
 
 ## 56. ST-7 structure services, closing pass: jammer gate, fuel owner notices, beacon and jammer Host tests (2026-10-15)
 
-Continues section 46 (the earlier ST-7 rows); the closure record is docs/project/structures-phase/handoff-ST-7-closure.md.
+Continues section 46 (the earlier ST-7 rows); the closure record is docs/project/structures-phase/handoff-ST-7-closure.md. It supersedes the E-03 and beacon rows of sections 22, 23, 25 and 35 that say the jammer callback is unassigned or the structure beacon is refused: both are built now.
 
 Done (tests in Eve.Structures.Tests, Eve.Host.Tests, Eve.Services.Space.Tests; decisions in DEVIATIONS "ST-7 structure services"):
 - Service fuel: online against the SDE charge, hourly burn from the fuel bay (StructureFuel, StructureFuelTests).

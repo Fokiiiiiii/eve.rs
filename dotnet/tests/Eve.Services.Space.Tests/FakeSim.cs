@@ -230,6 +230,10 @@ internal sealed class FakeSim : ISimulation
 
     public void RemoveCynoBeacon(int solarSystemId, long structureBeaconId) => Heard.Enqueue(new SimRemoveCynoBeacon(solarSystemId, structureBeaconId));
 
+    public void PlaceObservatory(SimPlaceObservatory observatory) => Heard.Enqueue(observatory);
+
+    public void RemoteDecloakPing(int solarSystemId, long observatoryId) => Heard.Enqueue(new SimRemoteDecloakPing(solarSystemId, observatoryId));
+
     public void Destroy(long shipId, SimCredit credit) => Heard.Enqueue(new SimDestroy(shipId, credit));
 
     public void Report(SimMessage message) => Received?.Invoke(message);

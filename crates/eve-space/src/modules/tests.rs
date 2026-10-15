@@ -5087,3 +5087,87 @@ fn a_controlled_structure_burst_reaches_nobody_once_its_controller_has_released_
     assert!(!web_lands_on(&scene, B), "a late grant to a released structure authorizes nothing");
 }
 
+const OBSERVATORY: i64 = 1_000_000_000_777;
+
+/// A Mobile Observatory the host has put in space, anchored or not (its id is the deployable's).
+fn observatory(id: i64, active: bool) -> crate::link::DisruptorPlacement {
+    crate::link::DisruptorPlacement {
+        deployable_id: id,
+        solar_system_id: 30_000_142,
+        name: "Mobile Observatory".to_string(),
+        type_id: 58_904,
+        group_id: 4_107,
+        position: [0.0, 0.0, 0.0],
+        radius: 100.0,
+        range: 0.0,
+        active,
+        owner_id: 1,
+        corporation_id: 1,
+        alliance_id: 0,
+        ship_id: 0,
+    }
+}
+
+#[test]
+fn a_ping_of_an_anchored_observatory_decloaks_a_cloaked_ship_when_its_roll_is_under_forty_percent() {
+    let (mut scene, t) = reaching(5_000.0);
+    scene.target_order(A, crate::targeting::Order::Clear, t);
+    assert!(accepted(&scene.activate(A, cloaking_device(), t)));
+    scene.place_observatory(observatory(OBSERVATORY, true), t);
+    // the ship is stabilized for fifteen minutes: the ping is not before the end of it
+    let stabilized = scene.remote_decloak_ping(OBSERVATORY, t + 14 * 60 * SECOND);
+    assert!(stabilized.is_empty(), "{:?}", labels(&stabilized));
+    assert_eq!(scene.pilots[&A].cloak, crate::visibility::CloakState::Cloaked);
+    // the roll is the scene's own: advance it until the next roll is under the chance, then the ping decloaks
+    let at = t + 16 * 60 * SECOND;
+    while scene.rng.clone().random() >= crate::scene::OBSERVATORY_DECLOAK_PROBABILITY {
+        scene.rng.random();
+    }
+    let told = scene.remote_decloak_ping(OBSERVATORY, at);
+    assert_eq!(scene.pilots[&A].cloak, crate::visibility::CloakState::Uncloaked);
+    let (id_type, args) = cloak_notice(told.last().unwrap()).unwrap();
+    assert_eq!(id_type, "shipid");
+    assert_eq!(
+        args,
+        vec![
+            Value::Str("CustomNotify".into()),
+            Value::Dict(vec![
+                (
+                    Value::Str("notify".into()),
+                    Value::Str("Your cloak has been deactivated by a Mobile Observatory decloaking ping.".into())
+                ),
+                (Value::Str("decloakReason".into()), Value::Str("mobileObservatory".into())),
+                (Value::Str("itemID".into()), Value::Long(OBSERVATORY)),
+                (Value::Str("distanceMeters".into()), Value::Real(0.0)),
+            ]),
+        ]
+    );
+}
+
+#[test]
+fn a_ping_leaves_a_cloaked_ship_cloaked_when_its_roll_is_forty_percent_or_more() {
+    let (mut scene, t) = reaching(5_000.0);
+    scene.target_order(A, crate::targeting::Order::Clear, t);
+    assert!(accepted(&scene.activate(A, cloaking_device(), t)));
+    scene.place_observatory(observatory(OBSERVATORY, true), t);
+    let at = t + 16 * 60 * SECOND;
+    while scene.rng.clone().random() < crate::scene::OBSERVATORY_DECLOAK_PROBABILITY {
+        scene.rng.random();
+    }
+    let told = scene.remote_decloak_ping(OBSERVATORY, at);
+    assert!(told.is_empty(), "{:?}", labels(&told));
+    assert_eq!(scene.pilots[&A].cloak, crate::visibility::CloakState::Cloaked);
+}
+
+#[test]
+fn an_observatory_that_is_not_anchored_pings_nothing() {
+    let (mut scene, t) = reaching(5_000.0);
+    scene.target_order(A, crate::targeting::Order::Clear, t);
+    assert!(accepted(&scene.activate(A, cloaking_device(), t)));
+    scene.place_observatory(observatory(OBSERVATORY, false), t);
+    let before = scene.rng.clone().random();
+    let told = scene.remote_decloak_ping(OBSERVATORY, t + 16 * 60 * SECOND);
+    assert!(told.is_empty());
+    assert_eq!(scene.rng.clone().random(), before, "a ping that does nothing draws no roll");
+    assert_eq!(scene.pilots[&A].cloak, crate::visibility::CloakState::Cloaked);
+}

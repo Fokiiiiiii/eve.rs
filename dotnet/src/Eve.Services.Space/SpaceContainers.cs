@@ -76,7 +76,7 @@ public sealed partial class SpaceContainers : ISpaceContainers, IDisposable
     {
         (_sim, _ships, _items, _spaceItems, _cycles, _events, _statics, _space, _nowUnixMs, _log) = (sim, ships, items, spaceItems, cycles, events, statics, space, nowUnixMs, log);
         (_deployed, _scheduler) = (deployed, scheduler);
-        _deployedExpiry = new() { [CynoFieldKind] = ExpireCynoFieldAsync, [DisruptorKind] = ExpireDisruptorAsync, [InhibitorKind] = ExpireDisruptorAsync, [BeaconKind] = ExpireBeaconAsync };
+        _deployedExpiry = new() { [CynoFieldKind] = ExpireCynoFieldAsync, [DisruptorKind] = ExpireDisruptorAsync, [InhibitorKind] = ExpireDisruptorAsync, [BeaconKind] = ExpireBeaconAsync, [ObservatoryKind] = ExpireDisruptorAsync };
         // what the simulation held is gone with it; a scene that is made gets what lies in its system, and a wreck the host puts in space is kept
         _sim.Received += OnReceived;
         _sim.Lost += Forgotten;

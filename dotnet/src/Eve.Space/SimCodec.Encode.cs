@@ -1009,6 +1009,11 @@ private static void WriteStructureDamageCorrelation(
                 w.I32(m.SolarSystemId);
                 w.I64(m.StructureBeaconId);
                 break;
+            case SimRemoteDecloakPing m:
+                w.U8(Kind.RemoteDecloakPing);
+                w.I32(m.SolarSystemId);
+                w.I64(m.ObservatoryId);
+                break;
             case SimDamageableEntityUpserted m:
                 if (m.SolarSystemId <= 0 || m.EntityId <= 0 || m.TypeId <= 0 || m.OwnerId < 0 || m.CorporationId < 0 || m.AllianceId < 0 || m.WarFactionId < 0)
                     throw new SimLinkException(SimLinkError.BadValue, "damageable entity identity");
@@ -1156,6 +1161,22 @@ private static void WriteStructureDamageCorrelation(
                 break;
             case SimPlaceCynoBeacon m:
                 w.U8(Kind.PlaceCynoBeacon);
+                w.I64(m.DeployableId);
+                w.I32(m.SolarSystemId);
+                w.Text(m.Name);
+                w.I32(m.TypeId);
+                w.I32(m.GroupId);
+                WriteVector(w, m.Position);
+                w.F64(m.Radius);
+                w.F64(0);
+                w.U8(m.Active ? (byte)1 : (byte)0);
+                w.I64(m.OwnerId);
+                w.I32(m.CorporationId);
+                w.I32(m.AllianceId);
+                w.I64(m.ShipId);
+                break;
+            case SimPlaceObservatory m:
+                w.U8(Kind.PlaceObservatory);
                 w.I64(m.DeployableId);
                 w.I32(m.SolarSystemId);
                 w.Text(m.Name);

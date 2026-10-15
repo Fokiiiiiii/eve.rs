@@ -20,7 +20,7 @@ mod tether;
 mod warping;
 mod wormholes;
 use self::collision::*;
-pub use self::decloak::{CLOAK_PROXIMITY_METERS, CloakTrigger, DecloakCause};
+pub use self::decloak::{CLOAK_PROXIMITY_METERS, CLOAK_STABILIZATION_MS, CloakTrigger, DecloakCause, OBSERVATORY_DECLOAK_PROBABILITY};
 #[cfg(test)]
 use self::heat::*;
 use self::movement::*;
@@ -596,6 +596,8 @@ pub(crate) struct Pilot {
     pub(crate) incoming: crate::ewar::Incoming,
     /// Cloak state used by target selection and public visibility.
     pub(crate) cloak: crate::visibility::CloakState,
+    /// Until when the module cloak is stabilized: a Mobile Observatory's ping cannot decloak the ship until then (`decloak::CLOAK_STABILIZATION_MS`).
+    pub(crate) cloak_stabilized_until: i64,
     /// When the post-decloak targeting delay ends: until then the ship acquires no lock (the cloak's cloakingTargetingDelay, from the decloak).
     pub(crate) targeting_blocked_until: i64,
     /// The overload state, per-rack heat and module heat damage carried by this ship.
@@ -629,6 +631,7 @@ impl Pilot {
             warp_blocked_until: 0,
             incoming: crate::ewar::Incoming::default(),
             cloak: crate::visibility::CloakState::Uncloaked,
+            cloak_stabilized_until: 0,
             targeting_blocked_until: 0,
             heat: HeatState::default(),
             tether: tether::TetherState::default(),

@@ -1136,6 +1136,15 @@ public sealed record SimPlaceCynoBeacon(
 /// <summary>Takes the named structure-owned cyno beacon out of its solar system's scene.</summary>
 public sealed record SimRemoveCynoBeacon(int SolarSystemId, long StructureBeaconId) : SimMessage;
 
+/// <summary>A Mobile Observatory the host keeps a record of, put in space where its pilot dropped it (protocol 72). The wire carries it as a disruptor's placement
+/// with a range of 0; it pings while <see cref="Active"/> (anchored).</summary>
+public sealed record SimPlaceObservatory(
+    long DeployableId, int SolarSystemId, string Name, int TypeId, int GroupId, IReadOnlyList<double> Position, double Radius, bool Active,
+    long OwnerId, int CorporationId, int AllianceId, long ShipId) : SimMessage;
+
+/// <summary>A Mobile Observatory's decloaking ping in its solar system (protocol 72): the cloaked ships there whose cloak is not stabilized may be decloaked.</summary>
+public sealed record SimRemoteDecloakPing(int SolarSystemId, long ObservatoryId) : SimMessage;
+
 /// <summary>Registers or updates a Sim-created damageable entity's creation identity for Host-side owner resolution (protocol 69). Host validates these facts against authoritative type/owner sources.</summary>
 public sealed record SimDamageableEntityUpserted(
     int SolarSystemId, long EntityId, int TypeId, long OwnerId, long CorporationId, long AllianceId, long WarFactionId) : SimMessage;

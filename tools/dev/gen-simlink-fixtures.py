@@ -21,7 +21,7 @@ KINDS = {"Hello": 1, "HelloAck": 2, "Enter": 3, "Leave": 4, "Bind": 5, "UpdateSt
          "EcmBurst": 67, "PlaceDisruptor": 68, "SetDisruptorActive": 69, "PlaceInhibitor": 70, "ScanTargets": 71, "DirectionalTargets": 72,
          "PlaceCynoBeacon": 73, "PlaceStructure": 74, "RemoveStructure": 75, "SetStructureState": 76, "StructureDamaged": 77,
          "PlaceAnalysisBeacon": 78, "SetAnalysisBeaconState": 79, "TetherPolicy": 80, "TetherChanged": 81,
-         "PlaceWormhole": 82, "RemoveWormhole": 83, "ControlStructure": 84, "StructureDamageCandidatesRequest": 85, "StructureDamageCandidatesResult": 86, "RemoveCynoBeacon": 87, "DamageableEntityUpserted": 88, "DamageableEntityRemoved": 89}
+         "PlaceWormhole": 82, "RemoveWormhole": 83, "ControlStructure": 84, "StructureDamageCandidatesRequest": 85, "StructureDamageCandidatesResult": 86, "RemoveCynoBeacon": 87, "DamageableEntityUpserted": 88, "DamageableEntityRemoved": 89, "PlaceObservatory": 90, "RemoteDecloakPing": 91}
 
 def s(text):  # u16 length + UTF-8
     data = text.encode("utf-8")
@@ -452,6 +452,8 @@ def build(m):
         return frame(k, i64(m["deployableId"]))
     if k == "RemoveCynoBeacon":
         return frame(k, struct.pack("<i", m["solarSystemId"]) + i64(m["structureBeaconId"]))
+    if k == "RemoteDecloakPing":  # protocol 72: a Mobile Observatory's ping in its system
+        return frame(k, struct.pack("<i", m["solarSystemId"]) + i64(m["observatoryId"]))
     if k == "DamageableEntityUpserted":
         return frame(k, struct.pack("<i", m["solarSystemId"]) + i64(m["entityId"]) + struct.pack("<i", m["typeId"])
                      + i64(m["ownerId"]) + i64(m["corporationId"]) + i64(m["allianceId"]) + i64(m["warFactionId"]))
@@ -498,7 +500,7 @@ def build(m):
         return frame(k, i64(m["structureId"]) + bytes([m["depleted"]]) + bytes([1 if m["overThreshold"] else 0]))
     if k == "SetStructureState":
         return frame(k, struct.pack("<i", m["solarSystemId"]) + i64(m["structureId"]) + structure_status(m["status"]))
-    if k in ("PlaceDisruptor", "PlaceInhibitor", "PlaceCynoBeacon"):  # a beacon has no range: it goes as 0
+    if k in ("PlaceDisruptor", "PlaceInhibitor", "PlaceCynoBeacon", "PlaceObservatory"):  # a beacon and an observatory have no range: they go as 0
         return frame(k, i64(m["deployableId"]) + struct.pack("<i", m["solarSystemId"]) + s(m["typeName"]) + struct.pack("<ii", m["typeId"], m["groupId"])
                      + struct.pack("<3d", *m["position"]) + struct.pack("<dd", m["radius"], m["range"]) + bytes([1 if m["active"] else 0])
                      + i64(m["ownerId"]) + struct.pack("<ii", m["corporationId"], m["allianceId"]) + i64(m["shipId"]))
@@ -595,8 +597,8 @@ BARE = dict(IBIS, name="", modules=[], allianceId=99000001, securityStatus=-2.5,
             condition={"damage": 0.0, "armorDamage": 0.0, "shieldCharge": 1.0, "charge": 1.0})
 
 valid = [
-    {"name": "hello", "kind": "Hello", "version": 71},
-    {"name": "hello ack", "kind": "HelloAck", "version": 71, "pollHz": 4},
+    {"name": "hello", "kind": "Hello", "version": 72},
+    {"name": "hello ack", "kind": "HelloAck", "version": 72, "pollHz": 4},
     {"name": "enter by undocking", "kind": "Enter", "sessionId": "1790646377000015", "solarSystemId": 30100032,
      "how": 0, "stationId": "60015249", "ship": IBIS},
     {"name": "enter already in space, no modules, non-ASCII name", "kind": "Enter", "sessionId": "1",
@@ -1160,6 +1162,13 @@ valid = [
      "solarSystemId": 30100032, "typeName": "Mobile Cynosural Beacon", "typeId": 57319, "groupId": 4093,
      "position": [311989835983.1308, -13069154020.916222, 156646308895.76187], "radius": 100.0, "range": 0.0, "active": False,
      "ownerId": "1790646377000015", "corporationId": 98000001, "allianceId": 0, "shipId": "9988400001943"},
+    {"name": "mobile observatory dropped and not yet anchored", "kind": "PlaceObservatory", "deployableId": "4250000000000012",
+     "solarSystemId": 30100032, "typeName": "Mobile Observatory", "typeId": 58904, "groupId": 4107,
+     "position": [311989835983.1308, -13069154020.916222, 156646308895.76187], "radius": 100.0, "range": 0.0, "active": False,
+     "ownerId": "1790646377000015", "corporationId": 98000001, "allianceId": 0, "shipId": "9988400001943"},
+    {"name": "mobile observatory anchored", "kind": "SetDisruptorActive", "deployableId": "4250000000000012", "active": True},
+    {"name": "mobile observatory decloaking ping in its system", "kind": "RemoteDecloakPing", "solarSystemId": 30100032,
+     "observatoryId": "4250000000000012"},
     {"name": "how far a can is", "kind": "Measured", "sessionId": "1790646377000015", "command": 20, "distance": 261.0},
     {"name": "how far a can that is not there is", "kind": "Measured", "sessionId": "1790646377000015", "command": 20, "distance": None},
     {"name": "destroy for nobody", "kind": "Destroy", "shipId": "4200000000000001", "characterId": "0",

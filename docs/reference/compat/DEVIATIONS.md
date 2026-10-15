@@ -2209,7 +2209,18 @@ answer readers), `agentMgrService.js:381-397` (the decline YesNo: five arguments
 ## ST-E: cloak proximity and forced decloak notices (2026-10-10)
 - **Proximity radius and refusal.** The cloak breaks, and activation refuses, for a ship or a non-belt body within 2 000 m of the surface of the cloaked ship. Source: EveJS `shipCloak.js:100` (`MIN_CLOAKING_DISTANCE_METERS = 2000`). It replaces the 2 km smartbomb-range check, so the activation refusal now also counts bodies, not only smartbomb targets. Belts are not counted.
 - **Notice order.** The proximity notice goes out before the module stops; the other reasons after (EveJS `forceDecloakEntity`).
-- **Custom reasons.** The CustomNotify payload (notify, decloakReason, itemID, distanceMeters rounded to mm) follows EveJS `notifyCloakModuleForceDeactivated`. No caller exists yet.
+- **Custom reasons.** The CustomNotify payload (notify, decloakReason, itemID, distanceMeters rounded to mm) follows EveJS `notifyCloakModuleForceDeactivated`. The Mobile Observatory's ping is its caller (ST-E2).
+
+## ST-E2: Mobile Observatory and the remote decloak ping (2026-10-15)
+
+- **Mechanics (wiki, "Mobile structures" section "Mobile Observatory", then EveJS `mobileObservatoryRuntime.js` and `processRemoteDecloakPing`).** Anchoring III (the SDE's requiredSkill1 11584 at level 3 on type 58904). Anchored ten minutes after the drop, 2 500 m ahead on the heading (EveJS `DEPLOY_DISTANCE_METERS`). Pings the whole system, not a range: every ten minutes, and at the anchoring. Each cloaked ship whose cloak stabilization has run out is decloaked with a 40% chance, rolled per ship. Stabilization lasts fifteen minutes from the cloak's activation.
+- **Deployment rules: wiki and EveJS differ.** Implemented: no deployment below 0.5 security (EveJS `MOBILE_OBSERVATORY_SECURITY_CUTOFF`; the wiki's "not in highsec"), not in wormhole space, not in Pochven (EveJS), not within 10 km of another observatory, surface to surface (EveJS `MOBILE_OBSERVATORY_MIN_DISTANCE_FROM_OWN_GROUP_METERS`). Not implemented: the wiki's "100 km from a player-owned starbase control tower" (no per-system tower query on the drop path yet) and EveJS's distances from stations, stargates and Upwell structures (the constant is not verified). Abyssal space is not refused here: no Abyssal detection on the drop path yet. Record for upgrade: ST-E2 handoff.
+- **Lifetime.** 100 minutes 30 seconds (EveJS `MOBILE_OBSERVATORY_LIFETIME_MS`). The wiki says "up to 2 hours", an upper bound, so the reference's figure stands.
+- **First ping.** At the anchoring (the wiki: "its first ping comes when deployment finishes"). EveJS sets its first ping ten minutes after activation; the wiki wins.
+- **Stabilization.** Every module cloak gets the default fifteen minutes. EveJS reads each module's stabilizeCloakDuration; `Action::Cloak` does not carry it yet (`shortcut` in `scene/decloak.rs`).
+- **Cloak kinds.** Any cloak the sim holds in the Cloaked state is pinged, covert ones included. The wiki does not say whether covert cloaks are affected; EveJS `isEntityNormalCloaked` checks the normal cloak state only. Not verified against the client.
+- **Notice.** The EveJS default text, reason `mobileObservatory`, distanceMeters 0 (EveJS passes `surfaceDistanceMeters: 0` for a remote ping).
+- **Wire.** Protocol 72: kinds 90 `PlaceObservatory` (a disruptor-shaped placement, range 0) and 91 `RemoteDecloakPing`. Anchoring reuses `SetDisruptorActive`, which now also sets an observatory.
 
 ## In-space compression (ST-C)
 

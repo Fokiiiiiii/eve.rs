@@ -60,6 +60,9 @@ pub enum Role {
     /// A Mobile Cynosural Beacon the host keeps a record of (protocol 58): a cynosural field a pilot may jump to while it is anchored (`active`); it is not lit before
     /// that. The host anchors it when its activation time is over and takes it out when its record's time is up.
     CynoBeacon { active: bool },
+    /// A Mobile Observatory the host keeps a record of (protocol 72): while it is anchored (`active`), its pings decloak the cloaked ships of its system (the
+    /// wiki, Mobile Observatory). The host anchors it and takes it out when its record's time is up.
+    MobileObservatory { active: bool },
     /// A jump bridge a ship opened (command 28, protocol 54): it lives until its time is up, is put in no client ball, and lets the fleet ships in 2 500 metres of
     /// the ship pass through it to the field (command 31). The field is the one the bridge targets; the destination is that field's system.
     JumpBridge { field_id: i64, destination_system: i32, range_meters: f64 },
@@ -142,7 +145,7 @@ fn release_actions(stamp: u32, deployable: &Deployable) -> Result<Vec<Value>, ev
         Role::CynoField => (Kind::Other, LegacyMode::Stop),
         Role::ScanProbe => (Kind::Other, LegacyMode::Stop),
         Role::MobileWarpSource { .. } => (Kind::WarpDisruptionProbe, LegacyMode::Stop),
-        Role::CynoInhibitor { .. } | Role::CynoBeacon { .. } => (Kind::Other, LegacyMode::Stop),
+        Role::CynoInhibitor { .. } | Role::CynoBeacon { .. } | Role::MobileObservatory { .. } => (Kind::Other, LegacyMode::Stop),
         Role::JumpBridge { .. } => (Kind::Other, LegacyMode::Stop),
         Role::AnalysisBeacon { .. } => (Kind::Container, LegacyMode::Stop),
     };
@@ -550,6 +553,39 @@ impl Scene {
         self.insert_deployable(deployable, now)
     }
 
+    /// A Mobile Observatory the host keeps a record of is put in space where it lies, anchored or not (protocol 72). Given once; its end is the host's.
+    pub(crate) fn place_observatory(
+        &mut self,
+        placement: crate::link::DisruptorPlacement,
+        now: i64,
+    ) -> Vec<Out> {
+        if self.deployables.contains_key(&placement.deployable_id) {
+            return Vec::new();
+        }
+        let [x, y, z] = placement.position;
+        let deployable = Deployable {
+            id: placement.deployable_id,
+            spec: Spec {
+                charge_type_id: placement.type_id,
+                group_id: placement.group_id,
+                name: placement.name,
+                radius: placement.radius,
+            },
+            role: Role::MobileObservatory { active: placement.active },
+            position: Vec3::new(x, y, z),
+            ends_at: i64::MAX,
+            launcher: 0,
+            ship_id: placement.ship_id,
+            owner_id: placement.owner_id,
+            corporation_id: placement.corporation_id,
+            alliance_id: placement.alliance_id,
+            module_id: 0,
+            module_type: 0,
+            watchers: BTreeSet::new(),
+        };
+        self.insert_deployable(deployable, now)
+    }
+
     /// A Mobile Cynosural Inhibitor the host keeps a record of is put in space where it lies, anchored or not (protocol 50). Given once; its end is the host's.
     pub(crate) fn place_inhibitor(
         &mut self,
@@ -598,7 +634,8 @@ impl Scene {
             role:
                 Role::MobileWarpSource { active: current, .. }
                 | Role::CynoInhibitor { active: current, .. }
-                | Role::CynoBeacon { active: current },
+                | Role::CynoBeacon { active: current }
+                | Role::MobileObservatory { active: current },
             ..
         }) = self.deployables.get_mut(&deployable_id)
         {
@@ -992,6 +1029,7 @@ impl Scene {
                 | Role::JumpBridge { .. }
                 | Role::CynoBeacon { .. }
                 | Role::CynoInhibitor { .. }
+                | Role::MobileObservatory { .. }
                 | Role::AnalysisBeacon { .. } => false,
             })
     }

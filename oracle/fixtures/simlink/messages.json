@@ -4,15 +4,15 @@
   {
    "name": "hello",
    "kind": "Hello",
-   "version": 71,
-   "hex": "03000000014700"
+   "version": 72,
+   "hex": "03000000014800"
   },
   {
    "name": "hello ack",
    "kind": "HelloAck",
-   "version": 71,
+   "version": 72,
    "pollHz": 4,
-   "hex": "0700000002470004000000"
+   "hex": "0700000002480004000000"
   },
   {
    "name": "enter by undocking",
@@ -4162,6 +4162,42 @@
    "allianceId": 0,
    "shipId": "9988400001943",
    "hex": "6f000000490ba04b3c5a190f00404acb0117004d6f62696c652043796e6f737572616c20426561636f6ee7df0000fd0f00005fc833c6022952426c5427b7db5708c285e10f7e6c3c424200000000000059400000000000000000004f2c3859955c0600815cd7050000000097b3089b15090000"
+  },
+  {
+   "name": "mobile observatory dropped and not yet anchored",
+   "kind": "PlaceObservatory",
+   "deployableId": "4250000000000012",
+   "solarSystemId": 30100032,
+   "typeName": "Mobile Observatory",
+   "typeId": 58904,
+   "groupId": 4107,
+   "position": [
+    311989835983.1308,
+    -13069154020.916222,
+    156646308895.76187
+   ],
+   "radius": 100.0,
+   "range": 0.0,
+   "active": false,
+   "ownerId": "1790646377000015",
+   "corporationId": 98000001,
+   "allianceId": 0,
+   "shipId": "9988400001943",
+   "hex": "6a0000005a0ca04b3c5a190f00404acb0112004d6f62696c65204f627365727661746f727918e600000b1000005fc833c6022952426c5427b7db5708c285e10f7e6c3c424200000000000059400000000000000000004f2c3859955c0600815cd7050000000097b3089b15090000"
+  },
+  {
+   "name": "mobile observatory anchored",
+   "kind": "SetDisruptorActive",
+   "deployableId": "4250000000000012",
+   "active": true,
+   "hex": "0a000000450ca04b3c5a190f0001"
+  },
+  {
+   "name": "mobile observatory decloaking ping in its system",
+   "kind": "RemoteDecloakPing",
+   "solarSystemId": 30100032,
+   "observatoryId": "4250000000000012",
+   "hex": "0d0000005b404acb010ca04b3c5a190f00"
   },
   {
    "name": "how far a can is",

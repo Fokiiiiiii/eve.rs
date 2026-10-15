@@ -39,7 +39,7 @@ use crate::weapons::{Aoe, Arc, Charge, Spool, Turret};
 use crate::world::StructureStatus;
 use crate::wreck::WreckKind;
 
-pub const PROTOCOL_VERSION: u16 = 71;
+pub const PROTOCOL_VERSION: u16 = 72;
 
 /// Maximum candidate or allowed target IDs in a structure-damage authorization step.
 pub const MAX_STRUCTURE_DAMAGE_CANDIDATES: usize = 4096;
@@ -712,6 +712,14 @@ pub enum Message {
     PlaceInhibitor(Box<DisruptorPlacement>),
     /// The host puts a Mobile Cynosural Beacon in space where its pilot dropped it (protocol 58); the range is 0.
     PlaceCynoBeacon(Box<DisruptorPlacement>),
+    /// The host puts a Mobile Observatory in space where its pilot dropped it (protocol 72); the range is 0.
+    PlaceObservatory(Box<DisruptorPlacement>),
+    /// A Mobile Observatory's decloaking ping in its system (protocol 72): each cloaked ship whose cloak is stabilized is not reached, the others are
+    /// decloaked with a chance of 40% (EVE.js `processRemoteDecloakPing`, the wiki's Mobile Observatory).
+    RemoteDecloakPing {
+        solar_system_id: i32,
+        observatory_id: i64,
+    },
     /// A CRAB the host keeps a record of is put in space (protocol 61).
     PlaceAnalysisBeacon(Box<AnalysisBeaconPlacement>),
     /// The host sets a CRAB's state (its activation and its link); those who see it are told its slim item again (protocol 61).
@@ -1020,6 +1028,8 @@ impl Message {
             Self::PlaceAnalysisBeacon(_) => kind::PLACE_ANALYSIS_BEACON,
             Self::PlaceInhibitor(_) => kind::PLACE_INHIBITOR,
             Self::PlaceCynoBeacon(_) => kind::PLACE_CYNO_BEACON,
+            Self::PlaceObservatory(_) => kind::PLACE_OBSERVATORY,
+            Self::RemoteDecloakPing { .. } => kind::REMOTE_DECLOAK_PING,
             Self::SetDisruptorActive { .. } => kind::SET_DISRUPTOR_ACTIVE,
             Self::TetherPolicy { .. } => kind::TETHER_POLICY,
             Self::TetherChanged { .. } => kind::TETHER_CHANGED,

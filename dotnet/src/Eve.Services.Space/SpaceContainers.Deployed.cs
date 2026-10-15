@@ -117,6 +117,14 @@ public sealed partial class SpaceContainers
                         record.ActivateAtMs <= now, record.OwnerId, record.CorporationId, record.AllianceId, record.ShipId));
                     continue;
                 }
+                if (record.Kind == ObservatoryKind)
+                {
+                    // anchored when its record says so; its ping job is durable and outlives the restart
+                    _sim.PlaceObservatory(new SimPlaceObservatory(
+                        record.DeployableId, record.SolarSystemId, record.Name, record.TypeId, record.GroupId, record.Position, record.Radius, record.ActivateAtMs <= now,
+                        record.OwnerId, record.CorporationId, record.AllianceId, record.ShipId));
+                    continue;
+                }
                 if (record.Kind == BeaconKind)
                 {
                     _sim.PlaceCynoBeacon(new SimPlaceCynoBeacon(

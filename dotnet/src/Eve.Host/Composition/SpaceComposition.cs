@@ -366,6 +366,8 @@ internal sealed partial class CharacterServicesComposition
             });
             foundations.Scheduler.Register(Eve.Services.Space.SpaceContainers.AnchorJob, async (context, token) =>
                 await spaceContainers.AnchorAsync(context.Payload<Eve.Services.Space.SpaceContainers.DisruptorAnchorDue>()!.DeployableId, token));
+foundations.Scheduler.Register(Eve.Services.Space.SpaceContainers.ObservatoryPingJob, async (context, token) =>
+await spaceContainers.PingObservatoryAsync(context.Payload<Eve.Services.Space.SpaceContainers.ObservatoryPingDue>()!.DeployableId, token));
             var containers = spaceContainers;
             var probes = new Eve.Services.Space.SpaceProbes(ships, dogma, new Eve.Ships.PgProbeStore(source, spaceSchema), spaceSessions, sim, now, message => Console.Error.WriteLine($"eve-host: probes: {message}"));
             spaceSessions.Probes = probes;

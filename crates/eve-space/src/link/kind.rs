@@ -109,6 +109,10 @@ pub const REMOVE_CYNO_BEACON: u8 = 87;
 pub const DAMAGEABLE_ENTITY_UPSERTED: u8 = 88;
 /// The simulation removes a non-destroyed damageable entity from the Host identity registry (protocol 69).
 pub const DAMAGEABLE_ENTITY_REMOVED: u8 = 89;
+/// The host puts a Mobile Observatory in space where its pilot dropped it (protocol 72); its placement is a disruptor's, with range 0.
+pub const PLACE_OBSERVATORY: u8 = 90;
+/// The host makes a Mobile Observatory's decloaking ping in its system (protocol 72).
+pub const REMOTE_DECLOAK_PING: u8 = 91;
 
 /// The host puts a wormhole end in space (protocol 63).
 pub const PLACE_WORMHOLE: u8 = 82;

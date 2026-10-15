@@ -497,6 +497,10 @@ impl Message {
                         out.extend_from_slice(&solar_system_id.to_le_bytes());
                         out.extend_from_slice(&structure_beacon_id.to_le_bytes());
                     }
+                    Self::RemoteDecloakPing { solar_system_id, observatory_id } => {
+                        out.extend_from_slice(&solar_system_id.to_le_bytes());
+                        out.extend_from_slice(&observatory_id.to_le_bytes());
+                    }
             Self::DamageableEntityUpserted { solar_system_id, entity_id, type_id, owner_id, corporation_id, alliance_id, war_faction_id } => {
                 assert!(*solar_system_id > 0 && *entity_id > 0 && *type_id > 0 && *owner_id >= 0
                     && *corporation_id >= 0 && *alliance_id >= 0 && *war_faction_id >= 0, "invalid damageable entity identity");
@@ -581,7 +585,8 @@ impl Message {
             Self::RemoveProbe { probe_id } => out.extend_from_slice(&probe_id.to_le_bytes()),
             Self::PlaceDisruptor(disruptor)
             | Self::PlaceInhibitor(disruptor)
-            | Self::PlaceCynoBeacon(disruptor) => {
+            | Self::PlaceCynoBeacon(disruptor)
+            | Self::PlaceObservatory(disruptor) => {
                 out.extend_from_slice(&disruptor.deployable_id.to_le_bytes());
                 out.extend_from_slice(&disruptor.solar_system_id.to_le_bytes());
                 put_text(&mut out, &disruptor.name);

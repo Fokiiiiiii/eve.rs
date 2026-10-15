@@ -107,6 +107,8 @@ public const byte UpdateEffect = 61;
         public const byte RemoveCynoBeacon = 87;
         public const byte SimDamageableEntityUpserted = 88;
         public const byte SimDamageableEntityRemoved = 89;
+        public const byte PlaceObservatory = 90;
+        public const byte RemoteDecloakPing = 91;
     }
 
     private const int MaxStructureDamageCandidates = 4096;

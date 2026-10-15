@@ -450,6 +450,8 @@ impl Sim {
             | Message::PlaceDisruptor(..)
             | Message::PlaceInhibitor(..)
             | Message::PlaceCynoBeacon(..)
+            | Message::PlaceObservatory(..)
+            | Message::RemoteDecloakPing { .. }
             | Message::SetDisruptorActive { .. }
             | Message::TetherPolicy { .. }
             | Message::PlaceAnalysisBeacon(..)
@@ -1274,6 +1276,18 @@ impl Sim {
                     None => Vec::new(),
                 }
             }
+            Message::PlaceObservatory(observatory) => {
+                let observatory = *observatory;
+                match self.scenes.get_mut(&observatory.solar_system_id) {
+                    Some(scene) => scene.place_observatory(observatory, now),
+                    None => Vec::new(),
+                }
+            }
+            Message::RemoteDecloakPing { solar_system_id, observatory_id } => self
+                .scenes
+                .get_mut(&solar_system_id)
+                .map(|scene| scene.remote_decloak_ping(observatory_id, now))
+                .unwrap_or_default(),
             Message::PlaceInhibitor(inhibitor) => {
                 let inhibitor = *inhibitor;
                 match self.scenes.get_mut(&inhibitor.solar_system_id) {

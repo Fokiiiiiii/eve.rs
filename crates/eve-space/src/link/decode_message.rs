@@ -522,6 +522,14 @@ impl Message {
                         }
                         Message::RemoveCynoBeacon { solar_system_id, structure_beacon_id }
                     }
+                    kind::REMOTE_DECLOAK_PING => {
+                        let solar_system_id = r.i32()?;
+                        let observatory_id = r.i64()?;
+                        if solar_system_id <= 0 || observatory_id <= 0 {
+                            return Err(DecodeError::BadValue("decloak ping"));
+                        }
+                        Message::RemoteDecloakPing { solar_system_id, observatory_id }
+                    }
             kind::DAMAGEABLE_ENTITY_UPSERTED => {
                 let solar_system_id = r.i32()?;
                 let entity_id = r.i64()?;
@@ -666,7 +674,7 @@ impl Message {
             }
             kind::REMOVE_PROBE => Message::RemoveProbe { probe_id: r.i64()? },
             // a disruptor and an inhibitor have the same placement (the kind says which of the two it is)
-            kind::PLACE_DISRUPTOR | kind::PLACE_INHIBITOR | kind::PLACE_CYNO_BEACON => {
+            kind::PLACE_DISRUPTOR | kind::PLACE_INHIBITOR | kind::PLACE_CYNO_BEACON | kind::PLACE_OBSERVATORY => {
                 let deployable_id = r.i64()?;
                 let solar_system_id = r.i32()?;
                 let name = r.text()?;
@@ -702,6 +710,8 @@ impl Message {
                     Message::PlaceInhibitor(placement)
                 } else if kind == kind::PLACE_CYNO_BEACON {
                     Message::PlaceCynoBeacon(placement)
+                } else if kind == kind::PLACE_OBSERVATORY {
+                    Message::PlaceObservatory(placement)
                 } else {
                     Message::PlaceDisruptor(placement)
                 }

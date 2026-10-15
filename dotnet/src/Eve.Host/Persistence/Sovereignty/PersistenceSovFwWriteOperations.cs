@@ -938,6 +938,71 @@ private async ValueTask<IReadOnlyList<long>> ReadCommittedAcquisitionsAsync(
         }
     }
 
+    /// <summary>
+    /// ST-9 d: a neutral Sovereignty Hub that an entosis link captured is claimed by the capturing corporation and alliance: the system, its hub's structure row and
+    /// the hub record take the owner, and the claim time is now (the hub's strategic index counts from it). Refused (false) unless the system is still neutral and
+    /// the hub is its infrastructure hub; a claim this alliance already holds is answered as done (a repeat after a lost answer). Written through the sovereignty
+    /// table like the other claims and verified in the persisted table.
+    /// </summary>
+    public async Task<bool> ClaimCapturedHubAsync(
+        long solarSystemId, long hubId, long corporationId, long allianceId, long claimFileTime, CancellationToken cancellationToken = default)
+    {
+        if (solarSystemId <= 0 || hubId <= 0 || corporationId <= 0 || allianceId <= 0 || claimFileTime <= 0)
+            return false;
+        var systemKey = solarSystemId.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        var hubKey = hubId.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        await writeGate.WaitAsync(cancellationToken);
+        try
+        {
+            var root = (JsonObject)readCacheTable("sovereignty").DeepClone();
+            if (root["systems"] is not JsonObject systems || systems[systemKey] is not JsonObject system)
+                return false;
+            if (Positive(Integer(system["infrastructureHubID"])) != hubId)
+                return false;
+            var owner = Positive(Integer(system["allianceID"]));
+            if (owner == allianceId)
+                return true;
+            if (owner > 0)
+                return false;
+
+            system["corporationID"] = corporationId;
+            system["allianceID"] = allianceId;
+            system["claimTime"] = claimFileTime;
+            if (system["structures"] is JsonArray structures)
+            {
+                foreach (var structure in structures.OfType<JsonObject>())
+                {
+                    if (Positive(Integer(structure["itemID"] ?? structure["structureID"])) != hubId)
+                        continue;
+                    structure["corporationID"] = corporationId;
+                    structure["ownerID"] = corporationId;
+                    structure["allianceID"] = allianceId;
+                }
+            }
+            if (root["hubs"] is JsonObject hubs && hubs[hubKey] is JsonObject hub)
+            {
+                hub["corporationID"] = corporationId;
+                if (hub.ContainsKey("ownerID"))
+                    hub["ownerID"] = corporationId;
+                hub["allianceID"] = allianceId;
+            }
+
+            var writeResult = write("sovereignty", null, root);
+            if (!writeResult.Success)
+                throw new InvalidOperationException($"Could not persist the entosis claim of hub {hubId}: {writeResult.ErrorMsg}");
+            await flushTableAsync("sovereignty", cancellationToken);
+            var persisted = await readPersistedTableAsync("sovereignty", cancellationToken);
+            return persisted["systems"] is JsonObject savedSystems && savedSystems[systemKey] is JsonObject saved
+                && Positive(Integer(saved["allianceID"])) == allianceId
+                && Positive(Integer(saved["corporationID"])) == corporationId
+                && Positive(Integer(saved["claimTime"])) == claimFileTime;
+        }
+        finally
+        {
+            writeGate.Release();
+        }
+    }
+
     public async Task<bool> DropAllianceSovereigntyClaimsAsync(
         long allianceId, long nowUnixMs, CancellationToken cancellationToken = default)
     {

@@ -518,6 +518,10 @@ private void OnReceived(SimMessage message)
         {
             _ = HandleWorkCycleAsync(WorkCycle.OfModule(moduleCycle));
         }
+        else if (message is SimModuleEnded ended && EntosisCaptures is not null)
+        {
+            _ = EndEntosisLinkAsync(ended.ModuleId);
+        }
         else if (message is SimArrived arrived)
         {
             _ = SeedAsteroidBeltAsync(arrived);
@@ -526,6 +530,22 @@ private void OnReceived(SimMessage message)
         else if (message is SimDeployed lit)
         {
             _ = KeepDeployedAsync(lit);
+        }
+    }
+
+    /// <summary>ST-9 c: the capture of Sovereignty Hubs by entosis links, set by the host. Without it an entosis link's cycle is refused by name.</summary>
+    public Eve.Services.Space.Entosis.EntosisCaptureService? EntosisCaptures { get; set; }
+
+    /// <summary>A module's end report: an entosis link stops counting (its capture is moved to now first). A failure is logged; the capture is then moved at its next event.</summary>
+    private async Task EndEntosisLinkAsync(long moduleId)
+    {
+        try
+        {
+            await EntosisCaptures!.LinkEndedAsync(moduleId, CancellationToken.None);
+        }
+        catch (Exception error)
+        {
+            _log?.Invoke($"entosis link of module {moduleId} was not ended: {error.Message}");
         }
     }
 

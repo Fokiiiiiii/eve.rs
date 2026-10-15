@@ -228,7 +228,17 @@ internal sealed partial class CharacterServicesComposition
             // ST-9 b: the entosis link's only target is the system's sovereignty hub, from the same records
             spaceSessions.IsSovereigntyHubAsync = async (systemId, targetId, token) =>
                 Eve.Services.Space.SpaceSovHubs.HubOf(await sovereigntyReadModel.ReadSnapshotAsync(token), systemId) is { } hub && hub.HubId == targetId;
-            _ = new Eve.Services.Space.SpaceSovHubs(sim, spaceSessions, dogma,
+            // ST-9 c: the captures are durable (the EntosisCaptureService's tables, one transaction per event) and their completion is a scheduler job
+            if (spaceContainers is not null)
+            {
+                await Eve.Services.Space.Entosis.EntosisCaptureService.MigrateAsync(source);
+                var entosisCaptures = new Eve.Services.Space.Entosis.EntosisCaptureService(
+                    source, foundations.Scheduler, () => foundations.Scheduler.Now, EntosisHubReadingAsync, EntosisHandoverAsync,
+                    log: message => Console.Error.WriteLine($"eve-host: entosis: {message}"));
+                entosisCaptures.Register();
+                spaceContainers.EntosisCaptures = entosisCaptures;
+            }
+            spaceSovHubs = new Eve.Services.Space.SpaceSovHubs(sim, spaceSessions, dogma,
                 async (systemId, token) => Eve.Services.Space.SpaceSovHubs.HubOf(await sovereigntyReadModel.ReadSnapshotAsync(token), systemId),
                 message => Console.Error.WriteLine($"eve-host: space sovereignty hubs: {message}"));
         }

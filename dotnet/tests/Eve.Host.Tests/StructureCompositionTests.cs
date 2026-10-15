@@ -114,8 +114,8 @@ public sealed class StructureCompositionTests : IAsyncLifetime
         ["hasQuantumCore"] = true,
     };
 
-    /// <summary>Writes the game store's structures and structure profile tables (the legacy tables the host reads), then lets the writer go so the host can own them.</summary>
-    private async Task SeedGameStoreAsync(NpgsqlDataSource source, params JsonObject[] rows)
+    /// <summary>Writes the game store's structures table (the legacy table the host reads), then lets the writer go so the host can own it.</summary>
+    private async Task SeedStructuresAsync(NpgsqlDataSource source, params JsonObject[] rows)
     {
         await using var store = new PersistenceStore(source, Schema("EVE_GAMESTORE_SCHEMA"));
         await store.EnsureSchemaAsync();
@@ -129,7 +129,18 @@ public sealed class StructureCompositionTests : IAsyncLifetime
             Assert.True(cache.Write("structures", "/" + row["structureID"]!.GetValue<long>(), row).Success);
         }
         await cache.FlushTableAsync("structures");
-        // the corporation already has its default profile (7): the change reuses it and writes no profile root (a root write to a table the cache did not load is refused, TABLE_NOT_FOUND, see TODO)
+    }
+
+    /// <summary>Writes the structure profile table with the corporation's default profile (7) and the structures above.</summary>
+    private async Task SeedGameStoreAsync(NpgsqlDataSource source, params JsonObject[] rows)
+    {
+        await SeedStructuresAsync(source, rows);
+        await using var store = new PersistenceStore(source, Schema("EVE_GAMESTORE_SCHEMA"));
+        await using var owner = await OwnerSession.StartAsync(store, PersistenceRoles.World, "structure-composition-" + _prefix);
+        await using var cache = new GameStoreCache(store, owner,
+            new GameStoreCacheOptions { ProcessRole = PersistenceRoles.World, FlushDelay = TimeSpan.FromHours(1) });
+        await cache.RecoverAsync();
+        // the corporation already has its default profile (7): the change reuses it
         await cache.LoadAsync("structureProfiles");
         Assert.True(cache.Write("structureProfiles", "/", new JsonObject
         {
@@ -190,6 +201,33 @@ public sealed class StructureCompositionTests : IAsyncLifetime
         Assert.Equal("a new description", Assert.IsType<PyStr>(await again.CallAsync(Call(session, "GetStructureDescription", 3, new PyInt(StructureId)))).Value);
         var row = (await new StructureStore(source, Schema("EVE_STRUCTURES_SCHEMA")).ReadLegacyTableAsync())[StructureId.ToString()]!.AsObject();
         Assert.Equal(7, row["profileID"]!.GetValue<long>());
+        await restarted.ShutdownAsync();
+    }
+
+    /// <summary>The first profile change of a corporation on a store with no structureProfiles table: the default profile is created and kept across a restart.</summary>
+    [PgFact]
+    public async Task A_fresh_store_creates_the_corporations_default_profile_on_the_first_profile_change_and_keeps_it_after_a_restart()
+    {
+        var url = Environment.GetEnvironmentVariable("EVE_PG_URL")!;
+        await using var source = NpgsqlDataSource.Create(PgConnection.ForTest(url));
+        await SeedStructuresAsync(source, SeededRow(StructureId, StructureState.ShieldVulnerable, 0, 0, UpkeepState.FullPower));
+        var session = ManagerSession(await SeedManagerAsync());
+
+        var host = await HostComposition.BuildAsync(Settings());
+        var profiles = host.Registry.Lookup("structureProfiles") ?? throw new InvalidOperationException("structureProfiles is not registered");
+        await profiles.CallAsync(Call(session, "ChangeProfiles", 1, new PyList([new PyInt(StructureId)]), new PyInt(0)));
+        await host.ShutdownAsync();
+
+        var restarted = await HostComposition.BuildAsync(Settings());
+        var again = restarted.Registry.Lookup("structureProfiles") ?? throw new InvalidOperationException("structureProfiles is not registered after the restart");
+        var listed = Assert.IsType<PyList>(await again.CallAsync(Call(session, "GetProfiles", 2)));
+        Assert.Single(listed.Items);
+        var table = await new PersistenceStore(source, Schema("EVE_GAMESTORE_SCHEMA")).LoadTableAsync("structureProfiles", createIfMissing: false, default);
+        var defaults = table["profilesByID"]!.AsObject().Select(entry => entry.Value!.AsObject()).Where(profile => profile["isDefault"]!.GetValue<bool>()).ToArray();
+        Assert.Single(defaults);
+        Assert.Equal(Corporation, defaults[0]["corporationID"]!.GetValue<long>());
+        var row = (await new StructureStore(source, Schema("EVE_STRUCTURES_SCHEMA")).ReadLegacyTableAsync())[StructureId.ToString()]!.AsObject();
+        Assert.Equal(defaults[0]["profileID"]!.GetValue<long>(), row["profileID"]!.GetValue<long>());
         await restarted.ShutdownAsync();
     }
 

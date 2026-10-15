@@ -45,6 +45,7 @@ public sealed class InventoryStructureFuelBay(PgItemStore items, DogmaStatic dog
         var remaining = Math.Min(quantity, available);
         var itemChanges = new List<ItemChanged>();
         var fuelChanges = new List<StructureFuelItemChange>();
+        var left = lockedStacks.ToDictionary(stack => stack.Id, stack => stack.Quantity);
         foreach (var locked in lockedStacks)
         {
             if (remaining <= 0)
@@ -62,6 +63,7 @@ public sealed class InventoryStructureFuelBay(PgItemStore items, DogmaStatic dog
                 await items.SetQuantityAsync(connection, transaction, locked.Id, after.Quantity, cancellationToken);
             }
             itemChanges.Add(new ItemChanged(after, structureId, locked.Flag, locked.Quantity));
+            left[locked.Id] = locked.Quantity - part;
             fuelChanges.Add(new StructureFuelItemChange(
                 after.Id,
                 after.TypeId,
@@ -82,7 +84,11 @@ public sealed class InventoryStructureFuelBay(PgItemStore items, DogmaStatic dog
                 connection,
                 transaction,
                 StructureFuelBayNotifications.Topic,
-                new StructureFuelBayItemsChanged(structureId, itemChanges),
+                new StructureFuelBayItemsChanged(structureId, itemChanges, lockedStacks
+                    .GroupBy(stack => stack.TypeId)
+                    .Select(group => new StructureFuelRemaining(group.Key, group.Sum(stack => left[stack.Id])))
+                    .Where(entry => entry.Quantity > 0)
+                    .ToArray()),
                 $"structure:{structureId}",
                 cancellationToken);
         }

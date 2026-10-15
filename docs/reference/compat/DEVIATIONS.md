@@ -3881,3 +3881,30 @@ Source: `docs/project/PI_DESIGN.md` (inventory, client contract, formulas with t
 - **Tests.** `IndustryRulesTests` (+4, pure): rig targets and percentage, the security band, the hull bonuses, category targets and the rig slot flags. `IndustryJobPersistenceTests` (+2, PostgreSQL on eve_p4): a group-23 rig and a hull bonus change the job's materials (86 to 85) and duration (600 to 408 s); a rig for another group changes nothing.
 - **Corporation job recipients (changed).** Previously the Factory Manager role only (1024). Now the owner, the installer, and the online members whose corporation roles let them see corporation blueprints and jobs: Factory Manager (1024), Rent Factory Slot and Rent Research Slot (appConst.py 358 and 359). Basis: the client's `CanSeeCorpBlueprints` (blueprintSvc.py:165) gives exactly these roles the corporation view. A member without them has no job view and receives nothing. EveJS sends to every member; that wider list is not copied, because the client gives the others no view of the job.
 
+## ST-7 structure services: cynosural jammer, structure beacon, fuel and owner notices (2026-10-15)
+
+- Cynosural Suppression upgrade (E-03). EveJS isCynoSuppressionUpgradeOnline (sovSuppressionState.js) needs the upgrade power state 2, which is
+  computed from the hub budget (sovModernState.js computeHubUpgradeSnapshot: local power and workforce against the upgrade requirements). The repo
+  has no upgrade definitions and no budget, so the read model takes the stored online flag of the upgrade 81619 in the system hub configuration
+  (hubUpgradeConfiguration). Shortcut: a suppression upgrade that is online but short of power still lights the jammer; upgrade with the sov upgrade budget.
+- Jammer state of a system (E-03) is null unless the jammer service is online and the hub upgrade is online (EveJS getCynoJammerActivationTimeMs).
+  The E-15 notice is sent on structure service changes only. A sov change of the upgrade alone does not announce the new jammer state yet (open).
+- Structure cyno beacon jump (structureCynoBeaconMgr, CmdJumpToStructureBeacon). The checks and their order follow EveJS
+  structureCynoBeaconMgrService.js resolveUsableBeacon. The jump itself differs from EveJS: EveJS moves the session with jumpSessionToSolarSystem and
+  a 30 s structure tether delay, with no spool and no fatigue, while eve.rs routes the jump through the capital jump drive
+  (SpaceJumpDrive.JumpToStructureBeaconAsync): the SDE drive range, fuel and skills, the spool, the fatigue and the high-security refusal (wiki
+  Capital ships and Jump Drive). Kept from commit 7335699; the wording of the high-security and fatigue refusals is ours (the wiki gives none).
+- Structure beacon list RPC: EveJS v0.12.9 structureCynoBeaconMgrService has no list method (its Handle_ methods are CmdJumpToStructureBeacon,
+  CmdGroupJumpToStructureBeacon and CmdBridgeToStructureBeacon only; docs/reference/spec/services.tsv agrees). Nothing to build for a list.
+- Group jumps and bridges to a structure beacon are refused by name (StructureBeaconTravel); EveJS has them (conduit and bridge settlement). Open
+  under the conduit and bridge rows of the jump drive track.
+- Fuel burn owner notices (EveJS createStructureFuelAlertNotifications: type 181, group Structures, all characters of the owner corporation, data
+  structureID, structureShowInfoData, solarsystemID, structureTypeID, listOfTypesAndQty). eve.rs: an owner corporation member online outside the
+  structure gets OnItemChange for the burnt fuel blocks; a corporation member already in the structure gets it from the existing structure fuel bay
+  notice; when no member of the owner corporation is online the alert is written to the notifications mailbox in the burn transaction with the fuel left
+  in the bay per type. The alert is written at every burn, as EveJS does after each cycle; no threshold is applied.
+- Corporation-office compression path: NOT BUILT. EveJS itemIsInStructureCompressionSource accepts corporation hangar items in a corporation office
+  at the structure (itemIsInDockableCorpOfficeWithTakeAccess), gated by canTakeFromOwnerLocation (industryAccess.js, division roles) and
+  CORP_HANGAR_FLAGS. eve.rs has no corporation hangar take-access model (StructureCompressionAuthority accepts the personal hangar and the ship only).
+  EveJS has no notification type for a compression result (notificationConstants.js), so the owner notice for this path would be OnItemChange to online
+  members only. Open: needs the division take-access model first.

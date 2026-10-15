@@ -7,7 +7,10 @@ using Eve.Services;
 
 namespace Eve.Host;
 
-internal sealed record StructureFuelBayItemsChanged(long StructureId, IReadOnlyList<ItemChanged> Changes);
+internal sealed record StructureFuelBayItemsChanged(long StructureId, IReadOnlyList<ItemChanged> Changes, IReadOnlyList<StructureFuelRemaining>? Remaining = null);
+
+/// <summary>The fuel blocks left in a structure fuel bay after a burn, per type (the EveJS fuel alert list).</summary>
+internal sealed record StructureFuelRemaining(int TypeId, long Quantity);
 
 internal static class StructureFuelBayNotifications
 {
@@ -35,7 +38,7 @@ internal static class StructureFuelBayNotifications
         });
     }
 
-    private static Eve.Services.ItemRow RowOf(Item item, DogmaStatic dogma) =>
+    internal static Eve.Services.ItemRow RowOf(Item item, DogmaStatic dogma) =>
         new(
             item.Id,
             item.TypeId,

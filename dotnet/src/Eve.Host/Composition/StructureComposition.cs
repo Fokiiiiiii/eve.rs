@@ -76,8 +76,19 @@ internal sealed partial class CharacterServicesComposition
     private async ValueTask<long?> CynoJammerOnlineSimTimeAsync(long solarSystemId, CancellationToken token)
     {
         await using var connection = await source.OpenConnectionAsync(token);
-        return Eve.Structures.StructureJammer.StateAt(
-            await structureStore.OnlineSinceAsync(connection, null, (int)solarSystemId, Eve.Structures.StructureServiceIds.CynoJammer, token), now());
+        return await JammerStateAsync(connection, null, solarSystemId, token);
+    }
+
+    /// <summary>
+    /// The jammer state of a system (E-03): its online jammer service counts only with the Cynosural Suppression upgrade of the system online (EveJS
+    /// getCynoJammerActivationTimeMs, which asks isCynoSuppressionUpgradeOnline).
+    /// </summary>
+    private async Task<long?> JammerStateAsync(NpgsqlConnection connection, NpgsqlTransaction? transaction, long solarSystemId, CancellationToken token)
+    {
+        var since = await structureStore.OnlineSinceAsync(connection, transaction, (int)solarSystemId, Eve.Structures.StructureServiceIds.CynoJammer, token);
+        if (since is null || !await sovereigntyReadModel.IsCynoSuppressionOnlineAsync(solarSystemId, token))
+            return null;
+        return Eve.Structures.StructureJammer.StateAt(since, now());
     }
 
     /// <summary>Whether standard cynosural fields are refused in the system (its jammer runs: the state is 0).</summary>
@@ -235,8 +246,7 @@ internal sealed partial class CharacterServicesComposition
             var change = context.Event.Payload<Eve.Structures.StructureServiceChanged>()!;
             if (change.ServiceId != Eve.Structures.StructureServiceIds.CynoJammer)
                 return;
-            var since = await structureStore.OnlineSinceAsync(context.Connection, context.Transaction, change.SolarSystemId, Eve.Structures.StructureServiceIds.CynoJammer, cancellation);
-            var state = Eve.Structures.StructureJammer.StateAt(since, now());
+            var state = await JammerStateAsync(context.Connection, context.Transaction, change.SolarSystemId, cancellation);
             foreach (var session in characterSessions.InSpace(change.SolarSystemId))
                 session.SendNotification("OnCynoJammerChanged", "solarsystemid2", new PyLong(change.SolarSystemId), state is { } value ? new PyLong(value) : PyNone.Instance);
         });

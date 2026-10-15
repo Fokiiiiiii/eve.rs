@@ -1,0 +1,42 @@
+# ST-7 closure: structure services (cynosural jammer, structure beacon, fuel and owner notices)
+
+Owner: structures phase, package ST-7. Worktree wt-st7b from origin/main 581f82d (pushed per increment to main).
+Predecessor state: `handoff-ST-7.md` (fuel, compression, jammer E-03/E-15 and the beacon checks were pushed earlier; the jump was open).
+
+## Verified upstream before this package (commit 7335699, Integrate structure deployment, control, beacon and per-pulse authorization)
+
+- Kind 87 RemoveCynoBeacon and kind 73 PlaceCynoBeacon are wired end to end (link, sim dispatch, SimCodec); no new protocol number was needed.
+- `SpaceStructureCynoBeacons` places the published Pharolux beacon (type 35840, service 16 online, published type, valid placement data) and removes it on service offline,
+  structure removal or unanchor; `RestoreAsync` puts the online ones back when a system scene is built.
+- `StructureBeaconTravel` (structureCynoBeaconMgr, CmdJumpToStructureBeacon) runs the EveJS resolveUsableBeacon checks in order, then `SpaceJumpDrive.JumpToStructureBeaconAsync`
+  (ship, range, fuel, fatigue, spool, high-security refusal) and `SpaceSessions.CynoJumpAsync` (sim command with the structure id as the field).
+- `AgentRpc` registers `structureCynoBeaconMgr` with `StructureBeaconAsync`, `CynoJammedAsync` and `CharacterHasServiceAsync`.
+- EveJS v0.12.9 structureCynoBeaconMgrService has no list method (Handle_ methods: CmdJumpToStructureBeacon, CmdGroupJumpToStructureBeacon, CmdBridgeToStructureBeacon).
+- Gap that remained at the start: no Host-registration test of the beacon or the jammer gate; the StructureBeaconTravel comment still said the jump was not made.
+
+## Increments of this package
+
+1. Cynosural Suppression gate (open item 2): `PersistenceSovFwReadModel.IsCynoSuppressionOnlineAsync` reads the online flag of upgrade 81619 in the system hub configuration;
+   `StructureComposition.JammerStateAsync` returns null unless the jammer service is online and that upgrade is online; the E-15 subscriber uses the same gate.
+   Shortcut recorded in DEVIATIONS: the power and workforce budget (EveJS computeHubUpgradeSnapshot) is not ported.
+2. Fuel burn owner notices (open item 3, fuel part): `StructureFuelOwnerNotifications` on the existing fuel bay topic. Online owner members outside the structure get OnItemChange;
+   when none is online the fuel alert (type 181, group Structures, EveJS createStructureFuelAlertNotifications) is written to the notifications mailbox in the burn transaction with the fuel left.
+   The burn event now carries the remaining fuel per type.
+3. Host-wiring tests (open item 4): `StructureCompositionTests` (real HostComposition, registry calls): the jammer through `beyonce` (GetCynoJammerState) with and without the sov upgrade
+   (restart between them), and the beacon jump through `structureCynoBeaconMgr`: jammed, no access, beacon offline, in that order.
+   `StructureFuelOwnerNotificationTests`: the owner notice through a real event bus (OnItemChange with a member online; alert with no member online; no alert when no fuel is left).
+
+## Open (not built; recorded in DEVIATIONS "ST-7 structure services" and TODO section 44)
+
+- Corporation-office compression path: needs the corporation hangar take-access model (EveJS itemIsInDockableCorpOfficeWithTakeAccess, canTakeFromOwnerLocation, CORP_HANGAR_FLAGS). Not in the repo; EveJS has no compression notification type, so the notice would be OnItemChange only.
+- E-15 for a sov change of the suppression upgrade alone (the jammer state changes, no notice is sent).
+- Group jumps and bridges to a structure beacon (refused by name).
+- Sov upgrade power and workforce budget.
+- Native client acceptance of the jammer notice, the beacon jump and the fuel notices (no graphical client run).
+
+## Tests
+
+- Full Eve.Host.Tests (dotnet build, then dotnet test --no-build, PostgreSQL database eve, EVE_PG_URL key=value): 343 passed, 0 failed, 0 skipped (11 min).
+- Focused: StructureCompositionTests 13 (incl. the two ST-7 registry tests), StructureFuelOwnerNotificationTests 3, StructureCynoSuppressionTests 5: 21 passed.
+- The Host composition tests for the space services start the host with EVE_SIM=on at an unused socket (the beyonce and structureCynoBeaconMgr services are registered only with a simulation client; no simulation answers, because these checks refuse before the simulation is asked).
+- Not run: Eve.Services.Space.Tests (only a summary comment changed there), graphical client.

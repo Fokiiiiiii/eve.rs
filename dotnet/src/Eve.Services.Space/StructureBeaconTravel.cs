@@ -9,8 +9,7 @@ public sealed record StructureBeaconInfo(int TypeId, long SolarSystemId, bool Se
 
 /// <summary>
 /// The structure cyno beacon (<c>structureCynoBeaconMgr</c>, EveJS <c>structureCynoBeaconMgrService.js</c> <c>resolveUsableBeacon</c>): the checks the reference
-/// makes before a jump to a Pharolux beacon, each with its notice. The jump itself is not made yet: the beacon's field is not placed in the simulation, so a
-/// beacon that passes every check is refused by name, not answered with an empty reply.
+/// makes before a jump to a Pharolux beacon, each with its notice. A beacon that passes every check is jumped through the jump drive (SpaceJumpDrive).
 /// </summary>
 public sealed class StructureBeaconTravel
 {

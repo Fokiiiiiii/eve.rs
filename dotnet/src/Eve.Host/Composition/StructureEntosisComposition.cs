@@ -5,6 +5,8 @@ namespace Eve.Host;
 
 internal sealed partial class CharacterServicesComposition
 {
+    private Eve.Host.Persistence.Sovereignty.SovereigntyClaimNotifications sovClaimNotifications = default!;
+
     /// <summary>
     /// ST-9 d: the handover of a captured neutral hub. The sovereignty records give the system to the capturer (the sovereignty write path, verified in the
     /// persisted table), and the hub's ball in space is put back with its new owner. A claim the records refuse (another alliance has the system) is superseded.
@@ -25,6 +27,14 @@ internal sealed partial class CharacterServicesComposition
         {
             await spaceSovHubs.ReplaceAsync(captured.HubId, captured.SolarSystemId, cancellationToken);
         }
+        // ST-9 e: keyed by the claim time the records hold (a retry keeps the first claim's time); a failure is retried by the handover job
+        var snapshot = await sovereigntyReadModel.ReadSnapshotAsync(cancellationToken);
+        var claimTime = snapshot.HubsBySolarSystemId.TryGetValue(captured.SolarSystemId, out var claimed0) ? claimed0.ClaimTimeFileTime : null;
+        if (claimTime is not { } claimedAt)
+        {
+            throw new InvalidOperationException($"The claim of hub {captured.HubId} has no claim time in the records; its notices are tried again.");
+        }
+        await sovClaimNotifications.WriteAsync(captured.HubId, claimedAt, executor, captured.AllianceId, cancellationToken);
         return EntosisHandover.Claimed;
     }
 

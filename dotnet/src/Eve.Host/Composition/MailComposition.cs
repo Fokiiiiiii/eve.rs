@@ -219,6 +219,9 @@ internal sealed partial class CharacterServicesComposition
         new Eve.Host.Persistence.Sovereignty.EntosisOwnerNotifications(
             async (allianceId, ct) => (await corporations.AllianceMembersAsync(allianceId, ct)).Select(member => member.CorporationId).ToArray(),
             characters, mailbox).Subscribe(foundations.Events);
+        sovClaimNotifications = new Eve.Host.Persistence.Sovereignty.SovereigntyClaimNotifications(
+            async (allianceId, ct) => (await corporations.AllianceMembersAsync(allianceId, ct)).Select(member => member.CorporationId).ToArray(),
+            characters, mailbox);
         new Eve.Host.Persistence.Structures.StructureFuelOwnerNotifications(structureStore, characters, characterSessions, dogma,
             Eve.Host.Persistence.Structures.StructureFuelOwnerNotifications.ToMailbox(mailbox))
             .Subscribe(foundations.Events);

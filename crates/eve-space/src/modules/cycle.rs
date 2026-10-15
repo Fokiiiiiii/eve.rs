@@ -1005,10 +1005,7 @@ impl Scene {
                     } else if self.structure_index(target_id).is_some() {
                         out.extend(self.damage_structure(target_id, *damage, now));
                     } else if let Some(target_session) = self.session_of(target_id)
-                        && !self
-                            .pilots
-                            .get(&target_session)
-                            .is_some_and(|target| target.protected_until > now)
+                        && self.pilots.get(&target_session).is_none_or(|target| target.protected_until <= now)
                         && !self.is_tethered_session(target_session, now)
                     {
                         out.extend(self.damage_ship(
@@ -1117,10 +1114,9 @@ impl Scene {
                 let target_id =
                     self.vorton_arc_target_order(anchor, &authorized).into_iter().find(|target_id| {
                         self.session_of(*target_id).is_none_or(|target_session| {
-                            !self
-                                .pilots
+                            self.pilots
                                 .get(&target_session)
-                                .is_some_and(|target| target.protected_until > now)
+                                .is_none_or(|target| target.protected_until <= now)
                                 && !self.is_tethered_session(target_session, now)
                         })
                     });

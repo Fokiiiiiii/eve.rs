@@ -146,18 +146,18 @@ pub(super) fn read_action(reader: &mut Reader) -> Result<Action, DecodeError> {
             Ok(Action::StructureBurst { range, duration_ms, what })
         }
         30 => {
-                    // Point defense carries per-channel ship damage, not the scalar missile-hull HP.
-                    let range_meters = reader.f64()?;
-                    let damage = [reader.f64()?, reader.f64()?, reader.f64()?, reader.f64()?];
-                    if !range_meters.is_finite()
-                        || range_meters <= 0.0
-                        || !damage.iter().all(|amount| amount.is_finite() && *amount >= 0.0)
-                    {
-                        return Err(DecodeError::BadValue("point defense action"));
-                    }
-                    Ok(Action::PointDefense { range_meters, damage })
-                }
-                29 => {
+            // Point defense carries per-channel ship damage, not the scalar missile-hull HP.
+            let range_meters = reader.f64()?;
+            let damage = [reader.f64()?, reader.f64()?, reader.f64()?, reader.f64()?];
+            if !range_meters.is_finite()
+                || range_meters <= 0.0
+                || !damage.iter().all(|amount| amount.is_finite() && *amount >= 0.0)
+            {
+                return Err(DecodeError::BadValue("point defense action"));
+            }
+            Ok(Action::PointDefense { range_meters, damage })
+        }
+        29 => {
             // the Nexus invulnerability core (protocol 43): the reach of its fleet effect in metres
             let range_meters = reader.f64()?;
             if !range_meters.is_finite() || range_meters < 0.0 {

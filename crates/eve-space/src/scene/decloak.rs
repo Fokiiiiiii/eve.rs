@@ -80,7 +80,9 @@ impl Scene {
     /// A Mobile Observatory's ping (EVE.js `processRemoteDecloakPing`): each cloaked ship of this system whose cloak is no longer stabilized is decloaked with
     /// [`OBSERVATORY_DECLOAK_PROBABILITY`], by its own roll, and told the reason `mobileObservatory`. An observatory that is not anchored here does nothing.
     pub(crate) fn remote_decloak_ping(&mut self, observatory_id: i64, now: i64) -> Vec<Out> {
-        let Some(Deployable { role: Role::MobileObservatory { active: true }, spec, .. }) = self.deployables.get(&observatory_id) else {
+        let Some(Deployable { role: Role::MobileObservatory { active: true }, spec, .. }) =
+            self.deployables.get(&observatory_id)
+        else {
             return Vec::new();
         };
         let trigger = CloakTrigger { item_id: observatory_id, type_id: spec.charge_type_id, distance: 0.0 };

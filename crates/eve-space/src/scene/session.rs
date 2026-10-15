@@ -25,7 +25,6 @@ impl Scene {
         self.controlled_structures.get(&session).map(|observer| observer.structure_id)
     }
 
-
     /// The Host's current structure-pilot record version for this controller lease.
     pub(crate) fn control_lease_generation(&self, session: SessionId, structure_id: i64) -> Option<i64> {
         (self.controlled_structure_id(session) == Some(structure_id))
@@ -51,7 +50,9 @@ impl Scene {
             else {
                 continue;
             };
-            let Some(health) = self.structure_health.get(&structure_id).map(|health| health.health_snapshot()) else {
+            let Some(health) =
+                self.structure_health.get(&structure_id).map(|health| health.health_snapshot())
+            else {
                 continue;
             };
             let Some(observer) = self.controlled_structures.get(&session) else { continue };
@@ -546,10 +547,13 @@ impl Scene {
     /// The numbers of a ship in space changed (a skill finished, a module went on): the client is told the ones that differ.
     pub fn respec(&mut self, session: SessionId, spec: ShipSpec, now: i64) -> Vec<Out> {
         if !self.pilots.contains_key(&session) {
-            let Some(structure_id) = self.controlled_structure_id(session).filter(|id| *id == spec.ship_id) else {
+            let Some(structure_id) = self.controlled_structure_id(session).filter(|id| *id == spec.ship_id)
+            else {
                 return Vec::new();
             };
-            if self.structure_body(structure_id).is_none() || !self.structure_health.contains_key(&structure_id) {
+            if self.structure_body(structure_id).is_none()
+                || !self.structure_health.contains_key(&structure_id)
+            {
                 return Vec::new();
             }
             if let Some(state) = self.structure_modules.get_mut(&structure_id) {
@@ -631,8 +635,15 @@ impl Scene {
             told.extend(self.tell_all(session, vec![change]));
         }
         let mut out = self.with_backlog(told);
-        if let Some((previous_id, entity_id, type_id, owner_id, corporation_id, alliance_id, war_faction_id)) =
-            sim_profile_update
+        if let Some((
+            previous_id,
+            entity_id,
+            type_id,
+            owner_id,
+            corporation_id,
+            alliance_id,
+            war_faction_id,
+        )) = sim_profile_update
         {
             if previous_id != entity_id
                 && let Some(removed) = self.remove_sim_damageable_entity(previous_id)

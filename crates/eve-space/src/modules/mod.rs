@@ -348,7 +348,11 @@ impl Action {
     fn is_work(&self) -> bool {
         matches!(
             self,
-            Self::Mining { .. } | Self::Salvage { .. } | Self::Scan { .. } | Self::CommandBurst { .. } | Self::Entosis { .. }
+            Self::Mining { .. }
+                | Self::Salvage { .. }
+                | Self::Scan { .. }
+                | Self::CommandBurst { .. }
+                | Self::Entosis { .. }
         )
     }
 }
@@ -412,7 +416,7 @@ pub enum Action {
         damage: crate::health::Damage,
         hurts_pilots: bool,
     },
-/// A Standup Point Defense cycle waits for Host's correlated per-target Crimewatch decision before applying this typed damage.
+    /// A Standup Point Defense cycle waits for Host's correlated per-target Crimewatch decision before applying this typed damage.
     PointDefense {
         range_meters: f64,
         damage: crate::health::Damage,
@@ -865,8 +869,15 @@ struct PendingRemoteRepairCycle {
 /// What a correlated Host authorization reply will settle for this damage step.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum PendingStructureDamageOperation {
-    PointDefense { range_meters: f64, damage: crate::health::Damage },
-    StrikePulse { origin: [f64; 3], strike: Option<crate::strike::Strike>, module_type: i32 },
+    PointDefense {
+        range_meters: f64,
+        damage: crate::health::Damage,
+    },
+    StrikePulse {
+        origin: [f64; 3],
+        strike: Option<crate::strike::Strike>,
+        module_type: i32,
+    },
     TransportFieldPulse {
         centre: eve_destiny::Vec3,
         strike: crate::strike::Strike,
@@ -908,7 +919,7 @@ pub(crate) struct PendingStructureDamageRequest {
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct Running {
     pub(crate) effect: Effect,
-/// A unique nonce for this activation, stable across its module cycles.
+    /// A unique nonce for this activation, stable across its module cycles.
     pub(crate) activation_nonce: u64,
     /// The unique id of the module cycle currently in progress.
     pub(crate) cycle_id: u64,
@@ -1109,7 +1120,7 @@ enum Moment {
     Shield,
     /// A parked work cycle is sent again (same id, same rolls).
     WorkResend(usize),
-/// A structure damage step is resent with the same full correlation tuple until Host answers.
+    /// A structure damage step is resent with the same full correlation tuple until Host answers.
     StructureDamageResend(usize),
     /// The target of a parked work cycle is gone: the effect stops.
     WorkStop(usize),

@@ -288,7 +288,9 @@ impl Scene {
                 .session_of(effect.target_id)
                 .and_then(|target| self.apart(session, target))
                 .is_some_and(|apart| reach.share(apart).is_some()),
-            Some(Action::Entosis { range_meters }) => self.entosis_target_ok(session, effect.target_id, *range_meters),
+            Some(Action::Entosis { range_meters }) => {
+                self.entosis_target_ok(session, effect.target_id, *range_meters)
+            }
             _ => true,
         };
         locked && in_reach
@@ -632,7 +634,7 @@ impl Scene {
         self.effect_ended(session, run, owner, ship_id, now, Ending::TargetLost)
     }
 
-/// Park one controlled-structure damage application until the Host returns its exact owner-corp authorization result.
+    /// Park one controlled-structure damage application until the Host returns its exact owner-corp authorization result.
     pub(crate) fn request_structure_damage_candidates(
         &mut self,
         session: SessionId,
@@ -652,9 +654,12 @@ impl Scene {
         if pilot.ship.spec.ship_id != structure_id {
             return Vec::new();
         }
-        let Some(run) = pilot.modules.running.iter_mut().find(|run| {
-            run.effect.module_id == module_id && run.effect.effect_id == effect_id
-        }) else {
+        let Some(run) = pilot
+            .modules
+            .running
+            .iter_mut()
+            .find(|run| run.effect.module_id == module_id && run.effect.effect_id == effect_id)
+        else {
             return Vec::new();
         };
         if run.pending_structure_damage.is_some() {
@@ -689,7 +694,6 @@ impl Scene {
         }]
     }
 
-
     /// Resend the same pending authorization request without changing its correlation tuple or candidate set.
     pub(super) fn resend_structure_damage_candidates(
         &mut self,
@@ -709,7 +713,8 @@ impl Scene {
         {
             return self.offline_module(session, module_id, now);
         }
-        let Some(run) = self.pilots.get_mut(&session).and_then(|pilot| pilot.modules.running.get_mut(index)) else {
+        let Some(run) = self.pilots.get_mut(&session).and_then(|pilot| pilot.modules.running.get_mut(index))
+        else {
             return Vec::new();
         };
         let Some(current) = run.pending_structure_damage.as_mut() else { return Vec::new() };
@@ -737,7 +742,7 @@ impl Scene {
         }]
     }
 
-/// Applies a Host-authorized damage step only when every field still names the live structure lease, activation, module cycle and ordinal.
+    /// Applies a Host-authorized damage step only when every field still names the live structure lease, activation, module cycle and ordinal.
     pub fn structure_damage_candidates_result(
         &mut self,
         session: SessionId,
@@ -785,7 +790,15 @@ impl Scene {
     ) -> Vec<Out> {
         if let Some(out) = self.settle_bomb_impact(
             session,
-            (structure_id, module_id, effect_id, activation_nonce, control_lease_generation, cycle_id, pulse_hop_ordinal),
+            (
+                structure_id,
+                module_id,
+                effect_id,
+                activation_nonce,
+                control_lease_generation,
+                cycle_id,
+                pulse_hop_ordinal,
+            ),
             allowed_target_ids,
             now,
         ) {
@@ -840,9 +853,12 @@ impl Scene {
         if pilot.ship.spec.ship_id != structure_id {
             return (Vec::new(), false);
         }
-        let Some(index) = pilot.modules.running.iter().position(|run| {
-            run.effect.module_id == module_id && run.effect.effect_id == effect_id
-        }) else {
+        let Some(index) = pilot
+            .modules
+            .running
+            .iter()
+            .position(|run| run.effect.module_id == module_id && run.effect.effect_id == effect_id)
+        else {
             return (Vec::new(), false);
         };
         let run = pilot.modules.running[index].clone();
@@ -884,13 +900,15 @@ impl Scene {
                 let source = pilot.ship.position;
                 self.damageable_entity_ids(now, |target_id, target, _| {
                     target_id != structure_id
-                        && (target.x - source.x).mul_add(
-                            target.x - source.x,
-                            (target.y - source.y).mul_add(
-                                target.y - source.y,
-                                (target.z - source.z) * (target.z - source.z),
-                            ),
-                        ).sqrt()
+                        && (target.x - source.x)
+                            .mul_add(
+                                target.x - source.x,
+                                (target.y - source.y).mul_add(
+                                    target.y - source.y,
+                                    (target.z - source.z) * (target.z - source.z),
+                                ),
+                            )
+                            .sqrt()
                             <= *range_meters + 1e-6
                 })
             }
@@ -920,7 +938,12 @@ impl Scene {
             }
             PendingStructureDamageOperation::StructureBurst { range_meters, .. } => {
                 let mut ids: Vec<i64> = self
-                    .ships_in_area([pilot.ship.position.x, pilot.ship.position.y, pilot.ship.position.z], *range_meters, Some(structure_id), now)
+                    .ships_in_area(
+                        [pilot.ship.position.x, pilot.ship.position.y, pilot.ship.position.z],
+                        *range_meters,
+                        Some(structure_id),
+                        now,
+                    )
                     .into_iter()
                     .map(|(_, ship_id)| ship_id)
                     .collect();
@@ -945,9 +968,9 @@ impl Scene {
         let commit_charge = !run.structure_damage_charge_committed
             && match &pending.operation {
                 PendingStructureDamageOperation::PointDefense { .. } => true,
-                PendingStructureDamageOperation::StrikePulse { .. } | PendingStructureDamageOperation::TransportFieldPulse { .. } | PendingStructureDamageOperation::StructureBurst { .. } => {
-                    pulse_hop_ordinal == 0
-                }
+                PendingStructureDamageOperation::StrikePulse { .. }
+                | PendingStructureDamageOperation::TransportFieldPulse { .. }
+                | PendingStructureDamageOperation::StructureBurst { .. } => pulse_hop_ordinal == 0,
                 PendingStructureDamageOperation::VortonArcHop { .. } => pulse_hop_ordinal == 0,
             };
         let mut out = Vec::new();
@@ -978,16 +1001,33 @@ impl Scene {
                     } else if self.structure_index(target_id).is_some() {
                         out.extend(self.damage_structure(target_id, *damage, now));
                     } else if let Some(target_session) = self.session_of(target_id)
-                        && !self.pilots.get(&target_session).is_some_and(|target| target.protected_until > now)
+                        && !self
+                            .pilots
+                            .get(&target_session)
+                            .is_some_and(|target| target.protected_until > now)
                         && !self.is_tethered_session(target_session, now)
                     {
-                        out.extend(self.damage_ship(session, module_type, (target_session, target_id), *damage, now));
+                        out.extend(self.damage_ship(
+                            session,
+                            module_type,
+                            (target_session, target_id),
+                            *damage,
+                            now,
+                        ));
                     }
                 }
             }
             PendingStructureDamageOperation::StructureBurst { duration_ms, what, .. } => {
                 let module_type = run.effect.module_type;
-                out.extend(self.apply_structure_burst(session, module_id, module_type, what, *duration_ms, &authorized, now));
+                out.extend(self.apply_structure_burst(
+                    session,
+                    module_id,
+                    module_type,
+                    what,
+                    *duration_ms,
+                    &authorized,
+                    now,
+                ));
             }
             PendingStructureDamageOperation::StrikePulse { origin, strike, module_type } => {
                 if let Some(strike) = strike {
@@ -1029,7 +1069,13 @@ impl Scene {
                     }
                     for (target_session, target_id, factor) in targets {
                         let damage = strike.damage.map(|amount| amount * factor);
-                        out.extend(self.damage_ship(session, *module_type, (target_session, target_id), damage, now));
+                        out.extend(self.damage_ship(
+                            session,
+                            *module_type,
+                            (target_session, target_id),
+                            damage,
+                            now,
+                        ));
                     }
                 }
             }
@@ -1040,16 +1086,10 @@ impl Scene {
                 warp_block_ms,
             } => {
                 let authorized: std::collections::BTreeSet<i64> = authorized.into_iter().collect();
-                let moved: Vec<i64> = field_moved_target_ids
-                    .iter()
-                    .copied()
-                    .filter(|id| authorized.contains(id))
-                    .collect();
-                let held: Vec<i64> = field_held_target_ids
-                    .iter()
-                    .copied()
-                    .filter(|id| authorized.contains(id))
-                    .collect();
+                let moved: Vec<i64> =
+                    field_moved_target_ids.iter().copied().filter(|id| authorized.contains(id)).collect();
+                let held: Vec<i64> =
+                    field_held_target_ids.iter().copied().filter(|id| authorized.contains(id)).collect();
                 out.extend(self.transport_field(
                     session,
                     *strike,
@@ -1070,12 +1110,13 @@ impl Scene {
                 links_remaining,
                 struck_ids,
             } => {
-                let target_id = self
-                    .vorton_arc_target_order(anchor, &authorized)
-                    .into_iter()
-                    .find(|target_id| {
+                let target_id =
+                    self.vorton_arc_target_order(anchor, &authorized).into_iter().find(|target_id| {
                         self.session_of(*target_id).is_none_or(|target_session| {
-                            !self.pilots.get(&target_session).is_some_and(|target| target.protected_until > now)
+                            !self
+                                .pilots
+                                .get(&target_session)
+                                .is_some_and(|target| target.protected_until > now)
                                 && !self.is_tethered_session(target_session, now)
                         })
                     });
@@ -1112,13 +1153,13 @@ impl Scene {
             }
         }
 
-        let stop_without_charge = matches!(
-            run.effect.action.as_ref(),
-            Some(Action::Charged { fallback: None, .. })
-        );
+        let stop_without_charge =
+            matches!(run.effect.action.as_ref(), Some(Action::Charged { fallback: None, .. }));
         if !goes_on && stop_without_charge {
             let ended = if let Some(pilot) = self.pilots.get_mut(&session) {
-                if let Some(index) = pilot.modules.running.iter().position(|run| run.effect.module_id == module_id) {
+                if let Some(index) =
+                    pilot.modules.running.iter().position(|run| run.effect.module_id == module_id)
+                {
                     Some((
                         pilot.modules.running.remove(index),
                         pilot.ship.spec.character_id,
@@ -1136,8 +1177,6 @@ impl Scene {
         }
         (out, true)
     }
-
-
 
     /// The host's answer to a work cycle (`ModuleWorkResult`). An accepted one ends that cycle and the effect goes on, or ends when it must; a refused one
     /// stops the effect (the host has granted nothing). An answer that matches no parked cycle (a repeat, or a cycle the module has left) does nothing.

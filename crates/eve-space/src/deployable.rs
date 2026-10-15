@@ -145,7 +145,9 @@ fn release_actions(stamp: u32, deployable: &Deployable) -> Result<Vec<Value>, ev
         Role::CynoField => (Kind::Other, LegacyMode::Stop),
         Role::ScanProbe => (Kind::Other, LegacyMode::Stop),
         Role::MobileWarpSource { .. } => (Kind::WarpDisruptionProbe, LegacyMode::Stop),
-        Role::CynoInhibitor { .. } | Role::CynoBeacon { .. } | Role::MobileObservatory { .. } => (Kind::Other, LegacyMode::Stop),
+        Role::CynoInhibitor { .. } | Role::CynoBeacon { .. } | Role::MobileObservatory { .. } => {
+            (Kind::Other, LegacyMode::Stop)
+        }
         Role::JumpBridge { .. } => (Kind::Other, LegacyMode::Stop),
         Role::AnalysisBeacon { .. } => (Kind::Container, LegacyMode::Stop),
     };
@@ -246,7 +248,10 @@ impl Scene {
             out.extend(self.field_lit(id, session, at));
         }
         // a bomb a controlled structure releases goes off only when the Host authorizes its blast; one that cannot name that authority is not let go off
-        if is_bomb && self.controlled_structure_id(session).is_some() && !self.record_bomb_impact(id, session, effect) {
+        if is_bomb
+            && self.controlled_structure_id(session).is_some()
+            && !self.record_bomb_impact(id, session, effect)
+        {
             self.deployables.remove(&id);
         }
         out
@@ -260,7 +265,9 @@ impl Scene {
     /// The correlation a structure's bomb blast is authorized under (the launching cycle of its controlled structure). False when there is none.
     fn record_bomb_impact(&mut self, id: i64, session: SessionId, effect: &Effect) -> bool {
         let Some(structure_id) = self.controlled_structure_id(session) else { return false };
-        let Some(control_lease_generation) = self.control_lease_generation(session, structure_id) else { return false };
+        let Some(control_lease_generation) = self.control_lease_generation(session, structure_id) else {
+            return false;
+        };
         let Some(run) = self.pilots.get(&session).and_then(|pilot| {
             pilot.modules.running.iter().find(|run| run.effect.module_id == effect.module_id)
         }) else {
@@ -698,7 +705,6 @@ impl Scene {
             .collect()
     }
 
-
     /// Remove the named cynosural beacon from this system. The dedicated message carries a beacon ID, so other deployables sharing a broad removal path are not touched.
     pub(crate) fn remove_cyno_beacon(
         &mut self,
@@ -779,7 +785,10 @@ impl Scene {
         let Role::Bomb { blast_radius, .. } = &deployable.role else { return Vec::new() };
         let centre = [deployable.position.x, deployable.position.y, deployable.position.z];
         let own_ship = self.bomb_own_ship(&deployable);
-        let retained = self.controlled_structures.get(&deployable.launcher).and_then(|observer| observer.previous_ship_id);
+        let retained = self
+            .controlled_structures
+            .get(&deployable.launcher)
+            .and_then(|observer| observer.previous_ship_id);
         let mut candidate_ids: Vec<i64> = self
             .ships_in_area(centre, *blast_radius, Some(own_ship), now)
             .into_iter()
@@ -787,7 +796,11 @@ impl Scene {
             .filter(|ship_id| Some(*ship_id) != retained)
             .collect();
         // the launching structure is no target of its own blast
-        candidate_ids.extend(self.structures_within(centre, *blast_radius).into_iter().filter(|structure| *structure != own_ship));
+        candidate_ids.extend(
+            self.structures_within(centre, *blast_radius)
+                .into_iter()
+                .filter(|structure| *structure != own_ship),
+        );
         candidate_ids.retain(|candidate| *candidate > 0);
         candidate_ids.sort_unstable();
         candidate_ids.dedup();
@@ -819,7 +832,15 @@ impl Scene {
         allowed: &[i64],
         now: i64,
     ) -> Option<Vec<Out>> {
-        let (structure_id, module_id, effect_id, activation_nonce, control_lease_generation, cycle_id, pulse_hop_ordinal) = correlation;
+        let (
+            structure_id,
+            module_id,
+            effect_id,
+            activation_nonce,
+            control_lease_generation,
+            cycle_id,
+            pulse_hop_ordinal,
+        ) = correlation;
         let (id, candidates) = self.bomb_impacts.iter().find_map(|(id, impact)| {
             let pending = impact.pending.as_ref()?;
             (impact.session == session
@@ -885,24 +906,38 @@ impl Scene {
             return Vec::new();
         };
         let centre = [deployable.position.x, deployable.position.y, deployable.position.z];
-        let reached = |ship_or_structure: i64| granted.is_none_or(|allowed| allowed.contains(&ship_or_structure));
+        let reached =
+            |ship_or_structure: i64| granted.is_none_or(|allowed| allowed.contains(&ship_or_structure));
         match (kind, granted) {
             (BombKind::Damage, _) => {
                 // a controlled structure's bomb hurts through the structure (its own ship is not in the scene as a pilot); the retained hull of its
                 // controller is not a target of the structure's blast
                 let own_ship = self.bomb_own_ship(deployable);
                 let structure = self.controlled_structure_id(deployable.launcher);
-                let retained = self.controlled_structures.get(&deployable.launcher).and_then(|observer| observer.previous_ship_id);
+                let retained = self
+                    .controlled_structures
+                    .get(&deployable.launcher)
+                    .and_then(|observer| observer.previous_ship_id);
                 let mut out = Vec::new();
                 for target in self.ships_in_area(centre, *blast_radius, Some(own_ship), at) {
-                    if Some(target.1) == retained || !reached(target.1) || self.pilots.get(&target.0).is_none_or(|pilot| pilot.protected_until > at) {
+                    if Some(target.1) == retained
+                        || !reached(target.1)
+                        || self.pilots.get(&target.0).is_none_or(|pilot| pilot.protected_until > at)
+                    {
                         continue;
                     }
                     out.extend(match structure {
-                        Some(structure_id) => {
-                            self.damage_ship_from_structure(deployable.launcher, structure_id, deployable.module_type, target, *damage, at)
+                        Some(structure_id) => self.damage_ship_from_structure(
+                            deployable.launcher,
+                            structure_id,
+                            deployable.module_type,
+                            target,
+                            *damage,
+                            at,
+                        ),
+                        None => {
+                            self.damage_ship(deployable.launcher, deployable.module_type, target, *damage, at)
                         }
-                        None => self.damage_ship(deployable.launcher, deployable.module_type, target, *damage, at),
                     });
                 }
                 // the structures in the blast take the damage in their layers (a structure is no pilot: no aggression)
@@ -913,7 +948,9 @@ impl Scene {
                 }
                 out
             }
-            (BombKind::Ecm, None) => self.jam_at(centre, 0.0, Some(deployable.ship_id), ecm, *blast_radius, at),
+            (BombKind::Ecm, None) => {
+                self.jam_at(centre, 0.0, Some(deployable.ship_id), ecm, *blast_radius, at)
+            }
             (BombKind::Neutralize, None) => {
                 let mut out = Vec::new();
                 for (target, _) in self.ships_in_area(centre, *blast_radius, Some(deployable.ship_id), at) {

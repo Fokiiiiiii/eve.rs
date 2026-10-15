@@ -1181,12 +1181,10 @@ fn structure_observer_health_case(from_space: bool) {
 
     let mut structure_spec = spec();
     structure_spec.ship_id = structure_id;
-    structure_spec.vitals = *simulation.scenes[&SYSTEM].structure_health[&structure_id].health_snapshot().vitals();
+    structure_spec.vitals =
+        *simulation.scenes[&SYSTEM].structure_health[&structure_id].health_snapshot().vitals();
     simulation
-        .handle(
-            Message::ShipSpec { session_id: SESSION, ship: Box::new(structure_spec) },
-            NOON,
-        )
+        .handle(Message::ShipSpec { session_id: SESSION, ship: Box::new(structure_spec) }, NOON)
         .unwrap();
 
     let expected = vec![Message::Condition {
@@ -1287,17 +1285,11 @@ fn a_controlled_structure_accepts_a_module_against_its_own_ship_spec() {
     structure_spec.capacitor_recharge_s = 100.0;
     structure_spec.modules = vec![crate::ship::ModuleSpec { item_id: 77, type_id: 21857, flag: 27 }];
     simulation
-        .handle(
-            Message::ShipSpec { session_id: SESSION, ship: Box::new(structure_spec) },
-            NOON,
-        )
+        .handle(Message::ShipSpec { session_id: SESSION, ship: Box::new(structure_spec) }, NOON)
         .unwrap();
 
     let started = simulation
-        .handle(
-            Message::Activate { session_id: SESSION, effect: Box::new(afterburner(77)) },
-            NOON,
-        )
+        .handle(Message::Activate { session_id: SESSION, effect: Box::new(afterburner(77)) }, NOON)
         .unwrap();
     assert!(
         started.contains(&Message::Accepted { session_id: SESSION, command: 17, at: NOON }),
@@ -1310,9 +1302,8 @@ fn a_controlled_structure_accepts_a_module_against_its_own_ship_spec() {
     let state = &simulation.scenes[&SYSTEM].structure_modules[&structure_id];
     assert!((state.modules.capacitor.as_ref().unwrap().charge_at(NOON) - 95.0).abs() < 1e-6);
 
-    let observed = simulation
-        .handle(Message::Command { session_id: SESSION, command: 19, args: vec![] }, NOON)
-        .unwrap();
+    let observed =
+        simulation.handle(Message::Command { session_id: SESSION, command: 19, args: vec![] }, NOON).unwrap();
     assert!(matches!(
         observed.as_slice(),
         [Message::Condition { condition, .. }] if (condition.charge - 0.95).abs() < 1e-6
@@ -1363,14 +1354,13 @@ fn a_controlled_structure_accepts_a_module_against_its_own_ship_spec() {
     structure_spec.capacitor_recharge_s = 100.0;
     structure_spec.modules = vec![crate::ship::ModuleSpec { item_id: 77, type_id: 21857, flag: 27 }];
     simulation
-        .handle(
-            Message::ShipSpec { session_id: SESSION, ship: Box::new(structure_spec) },
-            NOON + 11 * SECOND,
-        )
+        .handle(Message::ShipSpec { session_id: SESSION, ship: Box::new(structure_spec) }, NOON + 11 * SECOND)
         .unwrap();
     let state = &simulation.scenes[&SYSTEM].structure_modules[&structure_id];
     assert!(
-        (state.modules.capacitor.as_ref().unwrap().charge_at(NOON + 11 * SECOND) - charge_after_release).abs() < 1e-6,
+        (state.modules.capacitor.as_ref().unwrap().charge_at(NOON + 11 * SECOND) - charge_after_release)
+            .abs()
+            < 1e-6,
         "recontrol keeps the structure-owned charge instead of filling it again"
     );
 
@@ -1380,10 +1370,13 @@ fn a_controlled_structure_accepts_a_module_against_its_own_ship_spec() {
             NOON + 11 * SECOND,
         )
         .unwrap();
-    assert!(restarted.contains(&Message::Accepted { session_id: SESSION, command: 17, at: NOON + 11 * SECOND }));
-    let disconnected = simulation
-        .handle(Message::Leave { session_id: SESSION, why: 1 }, NOON + 12 * SECOND)
-        .unwrap();
+    assert!(restarted.contains(&Message::Accepted {
+        session_id: SESSION,
+        command: 17,
+        at: NOON + 11 * SECOND
+    }));
+    let disconnected =
+        simulation.handle(Message::Leave { session_id: SESSION, why: 1 }, NOON + 12 * SECOND).unwrap();
     assert!(disconnected.iter().any(|message| matches!(message,
         Message::ModuleEnded { session_id, module_id, .. }
             if *session_id == SESSION && *module_id == 77)));
@@ -1457,10 +1450,7 @@ fn a_controlled_structure_uses_real_locks_for_remote_neutralizers() {
         crate::ship::ModuleSpec { item_id: 90, type_id: 35_921, flag: 28 },
     ];
     simulation
-        .handle(
-            Message::ShipSpec { session_id: SESSION, ship: Box::new(structure_spec) },
-            NOON,
-        )
+        .handle(Message::ShipSpec { session_id: SESSION, ship: Box::new(structure_spec) }, NOON)
         .unwrap();
 
     let mut effect = afterburner(88);
@@ -1474,10 +1464,7 @@ fn a_controlled_structure_uses_real_locks_for_remote_neutralizers() {
         jam: "ewEnergyNeut".to_string(),
     });
     let refused = simulation
-        .handle(
-            Message::Activate { session_id: SESSION, effect: Box::new(effect.clone()) },
-            NOON + SECOND,
-        )
+        .handle(Message::Activate { session_id: SESSION, effect: Box::new(effect.clone()) }, NOON + SECOND)
         .unwrap();
     assert!(refused.iter().any(|message| matches!(message,
         Message::Refused { session_id, command: 17, reason }
@@ -1488,12 +1475,12 @@ fn a_controlled_structure_uses_real_locks_for_remote_neutralizers() {
     assert!(simulation.scenes[&SYSTEM].subject(target_id, NOON + 100 * SECOND).is_some());
     let lock_at = NOON + 100 * SECOND;
     let lock_out = simulation
-        .handle(
-            Message::Command { session_id: SESSION, command: 10, args: vec![target_id as f64] },
-            lock_at,
-        )
+        .handle(Message::Command { session_id: SESSION, command: 10, args: vec![target_id as f64] }, lock_at)
         .unwrap();
-    assert!(!lock_out.iter().any(|out| matches!(out, Message::Refused { .. } | Message::TargetRefused { .. })), "{lock_out:?}");
+    assert!(
+        !lock_out.iter().any(|out| matches!(out, Message::Refused { .. } | Message::TargetRefused { .. })),
+        "{lock_out:?}"
+    );
     let activation_at = lock_at + 1_000 * SECOND;
     let settled = simulation.scenes.get_mut(&SYSTEM).unwrap().poll(activation_at);
     assert!(simulation.scenes[&SYSTEM].locked_by(SESSION).contains(&target_id), "{lock_out:?} {settled:?}");
@@ -1508,10 +1495,7 @@ fn a_controlled_structure_uses_real_locks_for_remote_neutralizers() {
         reach.falloff = 0.0;
     }
     let range_refused = simulation
-        .handle(
-            Message::Activate { session_id: SESSION, effect: Box::new(out_of_range) },
-            activation_at,
-        )
+        .handle(Message::Activate { session_id: SESSION, effect: Box::new(out_of_range) }, activation_at)
         .unwrap();
     assert!(range_refused.iter().any(|message| matches!(message,
         Message::TargetRefused { session_id, command: 17, reason, .. }
@@ -1524,10 +1508,7 @@ fn a_controlled_structure_uses_real_locks_for_remote_neutralizers() {
         .unwrap()
         .charge_at(activation_at);
     let started = simulation
-        .handle(
-            Message::Activate { session_id: SESSION, effect: Box::new(effect) },
-            activation_at,
-        )
+        .handle(Message::Activate { session_id: SESSION, effect: Box::new(effect) }, activation_at)
         .unwrap();
     assert!(started.contains(&Message::Accepted { session_id: SESSION, command: 17, at: activation_at }));
     let after = simulation.scenes[&SYSTEM].pilots[&target_session]
@@ -1537,28 +1518,30 @@ fn a_controlled_structure_uses_real_locks_for_remote_neutralizers() {
         .unwrap()
         .charge_at(activation_at);
     assert!((before - after - 20.0).abs() < 1e-6, "the locked target loses capacitor: {before} -> {after}");
-    assert!((simulation.scenes[&SYSTEM].structure_modules[&structure_id]
-        .modules
-        .capacitor
-        .as_ref()
-        .unwrap()
-        .charge_at(activation_at)
-        - 95.0)
-        .abs() < 1e-6);
+    assert!(
+        (simulation.scenes[&SYSTEM].structure_modules[&structure_id]
+            .modules
+            .capacitor
+            .as_ref()
+            .unwrap()
+            .charge_at(activation_at)
+            - 95.0)
+            .abs()
+            < 1e-6
+    );
 
     let offlined = simulation
-        .handle(
-            Message::ModuleOffline { session_id: SESSION, module_id: 88 },
-            activation_at + SECOND,
-        )
+        .handle(Message::ModuleOffline { session_id: SESSION, module_id: 88 }, activation_at + SECOND)
         .unwrap();
     assert!(offlined.iter().any(|message| matches!(message,
         Message::ModuleEnded { session_id, module_id, .. }
             if *session_id == SESSION && *module_id == 88)));
-    assert!(!simulation.scenes[&SYSTEM].structure_modules[&structure_id]
-        .modules
-        .running_effects()
-        .any(|(effect, _)| effect.module_id == 88));
+    assert!(
+        !simulation.scenes[&SYSTEM].structure_modules[&structure_id]
+            .modules
+            .running_effects()
+            .any(|(effect, _)| effect.module_id == 88)
+    );
 
     let mut launcher = afterburner(90);
     launcher.module_type = 35_921;
@@ -1604,17 +1587,18 @@ fn a_controlled_structure_uses_real_locks_for_remote_neutralizers() {
         requires_gunnery: false,
     });
     let fired = simulation
-        .handle(
-            Message::Activate { session_id: SESSION, effect: Box::new(launcher) },
-            activation_at,
-        )
+        .handle(Message::Activate { session_id: SESSION, effect: Box::new(launcher) }, activation_at)
         .unwrap();
     assert!(fired.contains(&Message::Accepted { session_id: SESSION, command: 17, at: activation_at }));
     assert!(fired.iter().any(|message| matches!(message,
         Message::ChargeSpent { session_id, module_id, .. }
             if *session_id == SESSION && *module_id == 90)));
-    assert!(simulation.scenes[&SYSTEM].missiles.values().any(|missile|
-        missile.shooter.ship_id == structure_id && missile.target == target_id));
+    assert!(
+        simulation.scenes[&SYSTEM]
+            .missiles
+            .values()
+            .any(|missile| missile.shooter.ship_id == structure_id && missile.target == target_id)
+    );
 }
 
 fn structure_deposit_sim() -> (Sim, crate::link::StructurePlacement) {
@@ -2015,19 +1999,15 @@ fn docked_structure_control_dispatches_bind_updates_detach_and_leave() {
     assert!(!simulation.sessions.contains_key(&observer));
 }
 
-
 #[test]
 fn sim_damageable_profile_messages_round_trip_through_scene_removal() {
     let mut simulation = undocked();
     let entity_id = 77_777_777;
-    let upsert = simulation.scenes.get_mut(&SYSTEM).unwrap().publish_sim_damageable_entity(
-        entity_id,
-        12_345,
-        90_001,
-        90_001,
-        0,
-        0,
-    );
+    let upsert = simulation
+        .scenes
+        .get_mut(&SYSTEM)
+        .unwrap()
+        .publish_sim_damageable_entity(entity_id, 12_345, 90_001, 90_001, 0, 0);
     assert_eq!(
         Sim::out_message(upsert),
         Message::DamageableEntityUpserted {
@@ -2041,13 +2021,8 @@ fn sim_damageable_profile_messages_round_trip_through_scene_removal() {
         }
     );
 
-    let removed = simulation
-        .handle(Message::Leave { session_id: SESSION, why: 1 }, NOON)
-        .unwrap();
-    assert!(removed.contains(&Message::DamageableEntityRemoved {
-        solar_system_id: SYSTEM,
-        entity_id,
-    }));
+    let removed = simulation.handle(Message::Leave { session_id: SESSION, why: 1 }, NOON).unwrap();
+    assert!(removed.contains(&Message::DamageableEntityRemoved { solar_system_id: SYSTEM, entity_id }));
     assert!(!simulation.scenes.contains_key(&SYSTEM), "the empty Scene is discarded after lifecycle cleanup");
 }
 

@@ -8,9 +8,9 @@ mod decode;
 mod decode_action;
 mod decode_message;
 mod encode;
-mod payload;
 #[cfg(test)]
 mod field_partition_tests;
+mod payload;
 mod reader;
 use self::decode::*;
 use self::decode_action::*;
@@ -52,12 +52,10 @@ fn structure_field_partition_is_valid(allowed: &[i64], moved: &[i64], held: &[i6
     let allowed_set: std::collections::HashSet<i64> = allowed.iter().copied().collect();
     let mut partition = std::collections::HashSet::with_capacity(allowed.len());
     allowed_set.len() == allowed.len()
-        && moved
-            .iter()
-            .chain(held)
-            .all(|id| *id > 0 && allowed_set.contains(id) && partition.insert(*id))
+        && moved.iter().chain(held).all(|id| *id > 0 && allowed_set.contains(id) && partition.insert(*id))
         && partition.len() == allowed.len()
-}/// The message kinds.
+}
+/// The message kinds.
 pub mod kind;
 
 /// What the host changes in the rounds of a gun, in the order the simulation hears it (the host asks for it when a pilot loads or unloads a gun in space).
@@ -999,7 +997,8 @@ impl Message {
             Self::RemoteRepairCycle { .. } => kind::REMOTE_REPAIR_CYCLE,
             Self::RemoteRepairCycleResult { .. } => kind::REMOTE_REPAIR_CYCLE_RESULT,
             Self::StructureDamageCandidatesRequest { .. } => kind::STRUCTURE_DAMAGE_CANDIDATES_REQUEST,
-            Self::StructureDamageCandidatesResult { .. } | Self::StructureDamageCandidatesFieldResult { .. } => kind::STRUCTURE_DAMAGE_CANDIDATES_RESULT,
+            Self::StructureDamageCandidatesResult { .. }
+            | Self::StructureDamageCandidatesFieldResult { .. } => kind::STRUCTURE_DAMAGE_CANDIDATES_RESULT,
             Self::ModuleWorkCycle { .. } => kind::MODULE_WORK_CYCLE,
             Self::ModuleWorkResult { .. } => kind::MODULE_WORK_RESULT,
             Self::ModuleEnded { .. } => kind::MODULE_ENDED,

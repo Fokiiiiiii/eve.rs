@@ -730,7 +730,12 @@ fn beacon_state(state: &Value) -> eve_space::link::AnalysisBeaconState {
 }
 
 fn message_of(case: &Value) -> Message {
-    let number = |field: &str| case[field].as_u64().or_else(|| case[field].as_str().and_then(|value| value.parse::<u64>().ok())).unwrap_or_else(|| panic!("{field} in {case}"));
+    let number = |field: &str| {
+        case[field]
+            .as_u64()
+            .or_else(|| case[field].as_str().and_then(|value| value.parse::<u64>().ok()))
+            .unwrap_or_else(|| panic!("{field} in {case}"))
+    };
     let session_id = || wide(case, "sessionId") as u64;
     match case["kind"].as_str().unwrap() {
         "Hello" => Message::Hello { version: number("version") as u16 },
@@ -1003,8 +1008,14 @@ fn message_of(case: &Value) -> Message {
             lifetime_ms: case["lifetimeMs"].as_f64().unwrap(),
         })),
         "RemoveDeployed" => Message::RemoveDeployed { deployable_id: wide(case, "deployableId") },
-        "RemoveCynoBeacon" => Message::RemoveCynoBeacon { solar_system_id: number("solarSystemId") as i32, structure_beacon_id: wide(case, "structureBeaconId") },
-        "RemoteDecloakPing" => Message::RemoteDecloakPing { solar_system_id: number("solarSystemId") as i32, observatory_id: wide(case, "observatoryId") },
+        "RemoveCynoBeacon" => Message::RemoveCynoBeacon {
+            solar_system_id: number("solarSystemId") as i32,
+            structure_beacon_id: wide(case, "structureBeaconId"),
+        },
+        "RemoteDecloakPing" => Message::RemoteDecloakPing {
+            solar_system_id: number("solarSystemId") as i32,
+            observatory_id: wide(case, "observatoryId"),
+        },
         "PlaceProbe" => Message::PlaceProbe(Box::new(eve_space::link::ProbePlacement {
             probe_id: wide(case, "probeId"),
             solar_system_id: number("solarSystemId") as i32,
@@ -1113,7 +1124,12 @@ fn message_of(case: &Value) -> Message {
             control_lease_generation: wide(case, "controlLeaseGeneration"),
             cycle_id: number("cycleId"),
             pulse_hop_ordinal: number("pulseHopOrdinal") as u32,
-            candidate_ids: case["candidateIds"].as_array().unwrap().iter().map(|id| id.as_str().unwrap().parse().unwrap()).collect(),
+            candidate_ids: case["candidateIds"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|id| id.as_str().unwrap().parse().unwrap())
+                .collect(),
         },
         "StructureDamageCandidatesResult" => Message::StructureDamageCandidatesResult {
             session_id: session_id(),
@@ -1124,7 +1140,12 @@ fn message_of(case: &Value) -> Message {
             control_lease_generation: wide(case, "controlLeaseGeneration"),
             cycle_id: number("cycleId"),
             pulse_hop_ordinal: number("pulseHopOrdinal") as u32,
-            allowed_target_ids: case["allowedTargetIds"].as_array().unwrap().iter().map(|id| id.as_str().unwrap().parse().unwrap()).collect(),
+            allowed_target_ids: case["allowedTargetIds"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|id| id.as_str().unwrap().parse().unwrap())
+                .collect(),
         },
         "ControlStructure" => Message::ControlStructure {
             session_id: session_id(),
@@ -1682,7 +1703,10 @@ fn burst_remote(a: &serde_json::Value) -> Remote {
     let number = |key: &str| a[key].as_f64().unwrap();
     let optional = |key: &str| a.get(key).and_then(serde_json::Value::as_f64).unwrap_or(0.0);
     match a["what"].as_str().unwrap() {
-        "neutralize" => Remote::Neutralize { amount: number("amount"), signature_resolution: number("signatureResolution") },
+        "neutralize" => Remote::Neutralize {
+            amount: number("amount"),
+            signature_resolution: number("signatureResolution"),
+        },
         "web" => Remote::Web { percent: number("percent") },
         "paint" => Remote::Paint { percent: number("percent") },
         "damp" => Remote::Damp {
@@ -1698,10 +1722,9 @@ fn burst_remote(a: &serde_json::Value) -> Remote {
             falloff_percent: number("falloffPercent"),
             tracking_percent: number("trackingPercent"),
         },
-        "scramble" => Remote::Scramble {
-            strength: number("strength"),
-            blocks_mwd: a["blocksMwd"].as_bool().unwrap(),
-        },
+        "scramble" => {
+            Remote::Scramble { strength: number("strength"), blocks_mwd: a["blocksMwd"].as_bool().unwrap() }
+        }
         "jam" => Remote::Jam { strength: sensors_of(&a["strength"]) },
         other => panic!("no structure burst remote effect named {other}"),
     }

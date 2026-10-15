@@ -162,7 +162,9 @@ impl Scene {
             let Some(structure_id) = self.controlled_structure_id(session) else {
                 return vec![Out::Refused { session, command: CODE, reason: "NO_SHIP_IN_SPACE" }];
             };
-            if self.structure_body(structure_id).is_none() || !self.structure_health.contains_key(&structure_id) {
+            if self.structure_body(structure_id).is_none()
+                || !self.structure_health.contains_key(&structure_id)
+            {
                 return vec![Out::Refused { session, command: CODE, reason: "STRUCTURE_NOT_FOUND" }];
             }
             if !self.structure_modules.contains_key(&structure_id) {
@@ -359,13 +361,18 @@ impl Scene {
             if effect.target_id <= 0 {
                 return vec![Out::Refused { session, command: CODE, reason: "TARGET_REQUIRED" }];
             }
-            let Some(structure) = self.system().body(effect.target_id).filter(|body| body.kind == crate::world::BodyKind::Structure) else {
+            let Some(structure) = self
+                .system()
+                .body(effect.target_id)
+                .filter(|body| body.kind == crate::world::BodyKind::Structure)
+            else {
                 return vec![Out::Refused { session, command: CODE, reason: "TARGET_NOT_FOUND" }];
             };
             if !self.locked_by(session).contains(&effect.target_id) {
                 return vec![Out::Refused { session, command: CODE, reason: "TARGET_NOT_LOCKED" }];
             }
-            let apart = self.surface_distance_to_structure(session, effect.target_id).unwrap_or(f64::INFINITY);
+            let apart =
+                self.surface_distance_to_structure(session, effect.target_id).unwrap_or(f64::INFINITY);
             if apart > range_meters + crate::entosis::REACH_GRACE_METERS {
                 return vec![Out::TargetRefused {
                     session,
@@ -534,11 +541,8 @@ impl Scene {
         let Some(pilot) = self.pilots.get(&session) else {
             return vec![Out::Refused { session, command: CODE, reason: "NO_SHIP_IN_SPACE" }];
         };
-        let charged_for_action = effect
-            .action
-            .as_ref()
-            .and_then(Action::charge_use)
-            .is_some_and(|(_, _, _, charges)| charges > 0);
+        let charged_for_action =
+            effect.action.as_ref().and_then(Action::charge_use).is_some_and(|(_, _, _, charges)| charges > 0);
         let active_action = effect.action.as_ref().and_then(|action| action.with_charges(charged_for_action));
         let controlled_structure = self.controlled_structure_id(session);
         if let Some(Action::PointDefense { range_meters, damage }) = active_action
@@ -565,9 +569,8 @@ impl Scene {
             return vec![Out::Refused { session, command: CODE, reason: "STRUCTURE_CONTROL_LEASE_REQUIRED" }];
         }
         if matches!(active_action, Some(Action::Strike { .. }))
-            && controlled_structure.is_some_and(|structure_id| {
-                self.control_lease_generation(session, structure_id).is_none()
-            })
+            && controlled_structure
+                .is_some_and(|structure_id| self.control_lease_generation(session, structure_id).is_none())
         {
             return vec![Out::Refused { session, command: CODE, reason: "STRUCTURE_CONTROL_LEASE_REQUIRED" }];
         }
@@ -666,9 +669,11 @@ impl Scene {
         out.extend(self.jam_told(session, &effect, now, Jam::Start));
         out.extend(self.fire_turret(session, &effect, now));
         if self.pilots.get(&session).is_some_and(|pilot| {
-            pilot.modules.running.iter().any(|run| {
-                run.effect.module_id == effect.module_id && run.pending_structure_damage.is_some()
-            })
+            pilot
+                .modules
+                .running
+                .iter()
+                .any(|run| run.effect.module_id == effect.module_id && run.pending_structure_damage.is_some())
         }) {
             return out;
         }
@@ -711,7 +716,9 @@ impl Scene {
             vec![Out::ChargeAdjusted { session, request_id, running, before, after }]
         };
         if !self.pilots.contains_key(&session)
-            && self.controlled_structure_id(session).is_some_and(|id| self.structure_modules.contains_key(&id))
+            && self
+                .controlled_structure_id(session)
+                .is_some_and(|id| self.structure_modules.contains_key(&id))
         {
             return self.with_controlled_structure_modules(now, |scene| {
                 scene.adjust_charge(request_id, session, module_id, charge_type, op, now)
@@ -781,9 +788,13 @@ impl Scene {
         update: PendingUpdate,
     ) -> Vec<Out> {
         if !self.pilots.contains_key(&session)
-            && self.controlled_structure_id(session).is_some_and(|id| self.structure_modules.contains_key(&id))
+            && self
+                .controlled_structure_id(session)
+                .is_some_and(|id| self.structure_modules.contains_key(&id))
         {
-            return self.with_controlled_structure_modules(0, |scene| scene.update_effect(session, module_id, update));
+            return self.with_controlled_structure_modules(0, |scene| {
+                scene.update_effect(session, module_id, update)
+            });
         }
         if let Some(run) = self.running_mut(session, module_id) {
             run.pending_update = Some(update);
@@ -904,7 +915,6 @@ impl Scene {
         )
     }
 
-
     /// Keep a controlled structure's strike charge loaded until its first damage pulse is authorized.
     pub(super) fn defer_structure_damage_charge(
         &self,
@@ -932,7 +942,9 @@ impl Scene {
             if let Some(structure_id) = self.controlled_structure_id(session)
                 && self.structure_modules.contains_key(&structure_id)
             {
-                return self.with_controlled_structure_modules(now, |scene| scene.deactivate(session, module_id, now));
+                return self.with_controlled_structure_modules(now, |scene| {
+                    scene.deactivate(session, module_id, now)
+                });
             }
             return vec![Out::Refused { session, command: CODE, reason: "NO_SHIP_IN_SPACE" }];
         }
@@ -1061,7 +1073,7 @@ impl Scene {
         self.with_controlled_structure_modules(now, |scene| scene.settle_modules_for_pilots(now))
     }
 
-/// What the running effects and the capacitors have come to by `now`: cycles that end (the next begins, or the effect stops), and the charge told.
+    /// What the running effects and the capacitors have come to by `now`: cycles that end (the next begins, or the effect stops), and the charge told.
     /// At most `MAX_MOMENTS_PER_SETTLE` moments are taken for a ship in one settle, and a moment that comes back at the same tick with nothing done is a stall
     /// (the progress guarantee, M-1): the effect it belongs to is ended, so the loop always moves on.
     fn settle_modules_for_pilots(&mut self, now: i64) -> Vec<Out> {
@@ -1179,11 +1191,7 @@ impl Scene {
                 let lease_is_current = self.controlled_structure_id(session) == Some(pending.structure_id)
                     && self.control_lease_generation(session, pending.structure_id)
                         == Some(pending.control_lease_generation);
-                let next_at = if lease_is_current {
-                    pending.sent_at + WORK_RESEND_TICKS
-                } else {
-                    now
-                };
+                let next_at = if lease_is_current { pending.sent_at + WORK_RESEND_TICKS } else { now };
                 consider(next_at, Moment::StructureDamageResend(index));
                 continue;
             }
@@ -1220,11 +1228,8 @@ impl Scene {
             {
                 consider(run.reach_poll_at, Moment::ReachCheck(index));
             }
-            let active_action = run
-                .effect
-                .action
-                .as_ref()
-                .and_then(|action| action.with_charges(run.charged_this_cycle));
+            let active_action =
+                run.effect.action.as_ref().and_then(|action| action.with_charges(run.charged_this_cycle));
             if let Some(strike) = strike_of(active_action)
                 && run.strike_done < strike.pulses
             {
@@ -1255,7 +1260,9 @@ impl Scene {
             Moment::Shield => self.tell_shield(session, at),
             Moment::CycleEnd(index) => self.end_cycle(session, index, at),
             Moment::WorkResend(index) => self.resend_work_cycle(session, index, at),
-            Moment::StructureDamageResend(index) => self.resend_structure_damage_candidates(session, index, at),
+            Moment::StructureDamageResend(index) => {
+                self.resend_structure_damage_candidates(session, index, at)
+            }
             Moment::WorkStop(index) => self.stop_parked(session, index, at),
             Moment::StartResend(index) => self.resend_start(session, index, at),
             Moment::StrikePulse(index) => self.strike_pulse(session, index, at),

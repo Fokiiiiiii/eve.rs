@@ -20,7 +20,10 @@ mod tether;
 mod warping;
 mod wormholes;
 use self::collision::*;
-pub use self::decloak::{CLOAK_PROXIMITY_METERS, CLOAK_STABILIZATION_MS, CloakTrigger, DecloakCause, OBSERVATORY_DECLOAK_PROBABILITY};
+pub use self::decloak::{
+    CLOAK_PROXIMITY_METERS, CLOAK_STABILIZATION_MS, CloakTrigger, DecloakCause,
+    OBSERVATORY_DECLOAK_PROBABILITY,
+};
 #[cfg(test)]
 use self::heat::*;
 use self::movement::*;
@@ -332,7 +335,7 @@ pub enum Out {
         bonus_per_cycle: f64,
         bonus_max: f64,
     },
-/// Fresh candidates for one controlled-structure damage pulse or chain hop; Host returns an owner-corp-approved subset using the complete correlation tuple.
+    /// Fresh candidates for one controlled-structure damage pulse or chain hop; Host returns an owner-corp-approved subset using the complete correlation tuple.
     StructureDamageCandidatesRequest {
         session: SessionId,
         structure_id: i64,
@@ -754,7 +757,7 @@ pub struct Scene {
     pub(crate) unpiloted: BTreeMap<i64, SessionId>,
     /// The session viewing each controlled structure, without a second physical ship.
     pub(crate) controlled_structures: BTreeMap<SessionId, ControlledStructureObserver>,
-/// The latest Host StructurePilotRecord.Version for each controlled-structure lease; requests echo this value verbatim.
+    /// The latest Host StructurePilotRecord.Version for each controlled-structure lease; requests echo this value verbatim.
     pub(crate) control_lease_generations: BTreeMap<i64, i64>,
     /// IDs whose authoritative identities this Sim published for Host damage-target resolution.
     pub(crate) sim_damageable_entities: BTreeSet<i64>,
@@ -826,7 +829,6 @@ impl Scene {
         self.system.id
     }
 
-
     /// Publish a Sim-owned entity identity after the scene has successfully inserted it.
     pub(crate) fn publish_sim_damageable_entity(
         &mut self,
@@ -851,10 +853,9 @@ impl Scene {
 
     /// Remove a Sim-owned profile only when this scene previously published it.
     pub(crate) fn remove_sim_damageable_entity(&mut self, entity_id: i64) -> Option<Out> {
-        self.sim_damageable_entities.remove(&entity_id).then_some(Out::SimDamageableEntityRemoved {
-            solar_system_id: self.solar_system_id(),
-            entity_id,
-        })
+        self.sim_damageable_entities
+            .remove(&entity_id)
+            .then_some(Out::SimDamageableEntityRemoved { solar_system_id: self.solar_system_id(), entity_id })
     }
 
     /// End the lifecycle of every Sim-owned profile before its scene is discarded.

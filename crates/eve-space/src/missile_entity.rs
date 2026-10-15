@@ -506,10 +506,7 @@ impl Scene {
         if let Ok(actions) = launch_actions(stamp, &missile, target.radius) {
             out.extend(watchers.into_iter().map(|watcher| Self::update(watcher, actions.clone())));
         }
-        let war_faction_id = self
-            .pilots
-            .get(&session)
-            .map_or(0, |pilot| pilot.ship.spec.war_faction_id);
+        let war_faction_id = self.pilots.get(&session).map_or(0, |pilot| pilot.ship.spec.war_faction_id);
         let registration = self.publish_sim_damageable_entity(
             missile_id,
             missile.spec.charge_type_id,

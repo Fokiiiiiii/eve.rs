@@ -289,7 +289,14 @@ impl Message {
                 {
                     return Err(DecodeError::BadValue("control structure IDs or generation"));
                 }
-                Message::ControlStructure { session_id, solar_system_id, structure_id, character_id, active, control_lease_generation }
+                Message::ControlStructure {
+                    session_id,
+                    solar_system_id,
+                    structure_id,
+                    character_id,
+                    active,
+                    control_lease_generation,
+                }
             }
             kind::COMMAND => {
                 let session_id = r.u64()?;
@@ -514,22 +521,22 @@ impl Message {
                 }))
             }
             kind::REMOVE_DEPLOYED => Message::RemoveDeployed { deployable_id: r.i64()? },
-                    kind::REMOVE_CYNO_BEACON => {
-                        let solar_system_id = r.i32()?;
-                        let structure_beacon_id = r.i64()?;
-                        if solar_system_id <= 0 || structure_beacon_id <= 0 {
-                            return Err(DecodeError::BadValue("cyno beacon removal"));
-                        }
-                        Message::RemoveCynoBeacon { solar_system_id, structure_beacon_id }
-                    }
-                    kind::REMOTE_DECLOAK_PING => {
-                        let solar_system_id = r.i32()?;
-                        let observatory_id = r.i64()?;
-                        if solar_system_id <= 0 || observatory_id <= 0 {
-                            return Err(DecodeError::BadValue("decloak ping"));
-                        }
-                        Message::RemoteDecloakPing { solar_system_id, observatory_id }
-                    }
+            kind::REMOVE_CYNO_BEACON => {
+                let solar_system_id = r.i32()?;
+                let structure_beacon_id = r.i64()?;
+                if solar_system_id <= 0 || structure_beacon_id <= 0 {
+                    return Err(DecodeError::BadValue("cyno beacon removal"));
+                }
+                Message::RemoveCynoBeacon { solar_system_id, structure_beacon_id }
+            }
+            kind::REMOTE_DECLOAK_PING => {
+                let solar_system_id = r.i32()?;
+                let observatory_id = r.i64()?;
+                if solar_system_id <= 0 || observatory_id <= 0 {
+                    return Err(DecodeError::BadValue("decloak ping"));
+                }
+                Message::RemoteDecloakPing { solar_system_id, observatory_id }
+            }
             kind::DAMAGEABLE_ENTITY_UPSERTED => {
                 let solar_system_id = r.i32()?;
                 let entity_id = r.i64()?;
@@ -538,13 +545,24 @@ impl Message {
                 let corporation_id = r.i64()?;
                 let alliance_id = r.i64()?;
                 let war_faction_id = r.i64()?;
-                if solar_system_id <= 0 || entity_id <= 0 || type_id <= 0 || owner_id < 0
-                    || corporation_id < 0 || alliance_id < 0 || war_faction_id < 0
+                if solar_system_id <= 0
+                    || entity_id <= 0
+                    || type_id <= 0
+                    || owner_id < 0
+                    || corporation_id < 0
+                    || alliance_id < 0
+                    || war_faction_id < 0
                 {
                     return Err(DecodeError::BadValue("damageable entity identity"));
                 }
                 Message::DamageableEntityUpserted {
-                    solar_system_id, entity_id, type_id, owner_id, corporation_id, alliance_id, war_faction_id,
+                    solar_system_id,
+                    entity_id,
+                    type_id,
+                    owner_id,
+                    corporation_id,
+                    alliance_id,
+                    war_faction_id,
                 }
             }
             kind::DAMAGEABLE_ENTITY_REMOVED => {
@@ -674,7 +692,10 @@ impl Message {
             }
             kind::REMOVE_PROBE => Message::RemoveProbe { probe_id: r.i64()? },
             // a disruptor and an inhibitor have the same placement (the kind says which of the two it is)
-            kind::PLACE_DISRUPTOR | kind::PLACE_INHIBITOR | kind::PLACE_CYNO_BEACON | kind::PLACE_OBSERVATORY => {
+            kind::PLACE_DISRUPTOR
+            | kind::PLACE_INHIBITOR
+            | kind::PLACE_CYNO_BEACON
+            | kind::PLACE_OBSERVATORY => {
                 let deployable_id = r.i64()?;
                 let solar_system_id = r.i32()?;
                 let name = r.text()?;
@@ -1114,21 +1135,40 @@ impl Message {
                 let control_lease_generation = r.i64()?;
                 let cycle_id = r.u64()?;
                 let pulse_hop_ordinal = r.u32()?;
-                if session_id == 0 || structure_id <= 0 || module_id <= 0 || effect_id <= 0 || activation_nonce == 0
-                    || control_lease_generation <= 0 || cycle_id == 0
+                if session_id == 0
+                    || structure_id <= 0
+                    || module_id <= 0
+                    || effect_id <= 0
+                    || activation_nonce == 0
+                    || control_lease_generation <= 0
+                    || cycle_id == 0
                 {
                     return Err(DecodeError::BadValue("structure-damage correlation"));
                 }
                 let ids = read_structure_damage_ids(&mut r)?;
                 if kind == kind::STRUCTURE_DAMAGE_CANDIDATES_REQUEST {
                     Message::StructureDamageCandidatesRequest {
-                        session_id, structure_id, module_id, effect_id, activation_nonce, control_lease_generation,
-                        cycle_id, pulse_hop_ordinal, candidate_ids: ids,
+                        session_id,
+                        structure_id,
+                        module_id,
+                        effect_id,
+                        activation_nonce,
+                        control_lease_generation,
+                        cycle_id,
+                        pulse_hop_ordinal,
+                        candidate_ids: ids,
                     }
                 } else if r.data.is_empty() {
                     Message::StructureDamageCandidatesResult {
-                        session_id, structure_id, module_id, effect_id, activation_nonce, control_lease_generation,
-                        cycle_id, pulse_hop_ordinal, allowed_target_ids: ids,
+                        session_id,
+                        structure_id,
+                        module_id,
+                        effect_id,
+                        activation_nonce,
+                        control_lease_generation,
+                        cycle_id,
+                        pulse_hop_ordinal,
+                        allowed_target_ids: ids,
                     }
                 } else {
                     if r.u8()? != STRUCTURE_FIELD_PARTITION_EXTENSION_VERSION {
@@ -1136,13 +1176,25 @@ impl Message {
                     }
                     let field_moved_target_ids = read_structure_damage_ids(&mut r)?;
                     let field_held_target_ids = read_structure_damage_ids(&mut r)?;
-                    if !structure_field_partition_is_valid(&ids, &field_moved_target_ids, &field_held_target_ids) {
+                    if !structure_field_partition_is_valid(
+                        &ids,
+                        &field_moved_target_ids,
+                        &field_held_target_ids,
+                    ) {
                         return Err(DecodeError::BadValue("structure-field target partition"));
                     }
                     Message::StructureDamageCandidatesFieldResult {
-                        session_id, structure_id, module_id, effect_id, activation_nonce, control_lease_generation,
-                        cycle_id, pulse_hop_ordinal, allowed_target_ids: ids,
-                        field_moved_target_ids, field_held_target_ids,
+                        session_id,
+                        structure_id,
+                        module_id,
+                        effect_id,
+                        activation_nonce,
+                        control_lease_generation,
+                        cycle_id,
+                        pulse_hop_ordinal,
+                        allowed_target_ids: ids,
+                        field_moved_target_ids,
+                        field_held_target_ids,
                     }
                 }
             }

@@ -179,10 +179,8 @@ impl World {
             .collect();
         let capital_attribute_needle = format!(r#""attributeID": {ATTRIBUTE_IS_CAPITAL_SIZE}"#);
         sde.scan("typeDogma", Some(&capital_attribute_needle), |key, record| {
-            let is_capital_size = record
-                .get("dogmaAttributes")
-                .and_then(Value::as_array)
-                .is_some_and(|attributes| {
+            let is_capital_size =
+                record.get("dogmaAttributes").and_then(Value::as_array).is_some_and(|attributes| {
                     attributes.iter().any(|attribute| {
                         i(attribute, "attributeID") == Some(ATTRIBUTE_IS_CAPITAL_SIZE)
                             && f(attribute, "value").is_some_and(|value| value > 0.0)
@@ -243,7 +241,16 @@ impl World {
             operations.insert(key, record.get("operationName").map(english).unwrap_or_default());
         })?;
         let wrecks = std::sync::Arc::new(crate::wreck_types::WreckCatalog::from_sde(&sde)?);
-        Ok(Self { sde, types, field_capital_size_by_type: std::sync::Arc::new(field_capital_size_by_type), category_of_group, systems, corporations, operations, wrecks })
+        Ok(Self {
+            sde,
+            types,
+            field_capital_size_by_type: std::sync::Arc::new(field_capital_size_by_type),
+            category_of_group,
+            systems,
+            corporations,
+            operations,
+            wrecks,
+        })
     }
 
     /// The item types the wreck rules look up (`crate::wreck_types`).

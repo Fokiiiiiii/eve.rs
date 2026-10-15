@@ -869,7 +869,7 @@ fn a_strike_with_no_beacon_puts_nothing_in_space() {
     assert!(scene.deployables.is_empty());
 }
 
-    #[test]
+#[test]
 
 fn a_cyno_beacon_removal_is_scoped_to_system_and_beacon_id() {
     let (mut scene, t) = crowd();

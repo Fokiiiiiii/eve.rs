@@ -555,14 +555,17 @@ impl Scene {
             now,
         ) {
             Ok((_, mut outs)) => {
-                outs.insert(0, self.publish_sim_damageable_entity(
-                    ship_id,
-                    npc_type.type_id,
-                    npc_type.corporation_id,
-                    npc_type.corporation_id,
+                outs.insert(
                     0,
-                    0,
-                ));
+                    self.publish_sim_damageable_entity(
+                        ship_id,
+                        npc_type.type_id,
+                        npc_type.corporation_id,
+                        npc_type.corporation_id,
+                        0,
+                        0,
+                    ),
+                );
                 outs
             }
             Err(_) => Vec::new(),
@@ -838,7 +841,6 @@ mod tests {
         assert!(!locked_fellow, "the sentry locked a fellow triglavian");
     }
 
-
     #[test]
     fn sim_owned_pochven_damageable_profiles_follow_insert_remove_and_teardown() {
         let mut scene = pochven_scene(3);
@@ -862,12 +864,14 @@ mod tests {
             })
             .collect();
         assert_eq!(registrations.len(), 5, "three gate sentries and two camp NPCs are registered");
-        assert!(registrations.iter().all(|(_, type_id, owner_id, corporation_id, alliance_id, war_faction_id)| {
-            [WERPOST.type_id, DAMAVIK.type_id].contains(type_id)
-                && owner_id == corporation_id
-                && *alliance_id == 0
-                && *war_faction_id == 0
-        }));
+        assert!(registrations.iter().all(
+            |(_, type_id, owner_id, corporation_id, alliance_id, war_faction_id)| {
+                [WERPOST.type_id, DAMAVIK.type_id].contains(type_id)
+                    && owner_id == corporation_id
+                    && *alliance_id == 0
+                    && *war_faction_id == 0
+            }
+        ));
 
         let removed_id = registrations[0].0;
         let npc_session = scene.session_of(removed_id).expect("the registered entity is in the scene");
@@ -877,7 +881,11 @@ mod tests {
             Out::SimDamageableEntityRemoved { solar_system_id, entity_id }
                 if *solar_system_id == scene.solar_system_id() && *entity_id == removed_id
         )));
-        assert!(!removed.iter().any(|out| matches!(out, Out::Destroyed { ship_id, .. } if *ship_id == removed_id)));
+        assert!(
+            !removed
+                .iter()
+                .any(|out| matches!(out, Out::Destroyed { ship_id, .. } if *ship_id == removed_id))
+        );
 
         let teardown = scene.take_sim_damageable_entity_removals();
         assert_eq!(teardown.len(), 4, "scene teardown unregisters all remaining Sim-owned identities");

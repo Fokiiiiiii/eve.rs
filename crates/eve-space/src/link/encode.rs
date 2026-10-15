@@ -333,7 +333,10 @@ pub(super) fn put_turret(out: &mut Vec<u8>, turret: &Turret) {
             match arc.damage_loss_target {
                 None => out.push(0),
                 Some(damage_loss_target) => {
-                    assert!(damage_loss_target.is_finite() && damage_loss_target >= 0.0, "invalid arc damage loss target");
+                    assert!(
+                        damage_loss_target.is_finite() && damage_loss_target >= 0.0,
+                        "invalid arc damage loss target"
+                    );
                     out.push(1);
                     out.extend_from_slice(&damage_loss_target.to_le_bytes());
                 }

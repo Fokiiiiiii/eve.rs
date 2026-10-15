@@ -271,7 +271,6 @@ impl Scene {
         })
     }
 
-
     /// IDs of unique, positive dynamic entities with live damageable health that satisfy the caller's current geometry predicate.
     pub(crate) fn damageable_entity_ids(
         &self,
@@ -287,7 +286,12 @@ impl Scene {
             .chain(
                 self.missiles
                     .values()
-                    .filter(|missile| missile.is_flying() && missile.hit_points.is_finite() && missile.hit_points > 0.0 && missile.expires_at > now)
+                    .filter(|missile| {
+                        missile.is_flying()
+                            && missile.hit_points.is_finite()
+                            && missile.hit_points > 0.0
+                            && missile.expires_at > now
+                    })
                     .map(|missile| missile.id),
             )
             .filter(|id| *id > 0)
@@ -297,8 +301,11 @@ impl Scene {
         ids.into_iter()
             .filter_map(|id| {
                 if let Some(subject) = self.subject(id, now) {
-                    return (subject.has_damage_state && !subject.warping)
-                        .then_some((subject.id, subject.position, subject.radius));
+                    return (subject.has_damage_state && !subject.warping).then_some((
+                        subject.id,
+                        subject.position,
+                        subject.radius,
+                    ));
                 }
                 self.missiles.get(&id).and_then(|missile| {
                     (missile.is_flying()
@@ -357,7 +364,7 @@ impl Scene {
             let controller = self.controller_of_structure(*structure_id)?;
             (!self.pilots.contains_key(&controller)
                 && state.targeting.locked.iter().any(|locked| locked.target == target))
-                .then_some(*structure_id)
+            .then_some(*structure_id)
         }));
         by.sort_unstable();
         by.dedup();
@@ -371,9 +378,14 @@ impl Scene {
                 return vec![Out::Refused { session, command: order.code(), reason: "NO_SHIP_IN_SPACE" }];
             };
             if !self.structure_modules.contains_key(&structure_id) {
-                return vec![Out::Refused { session, command: order.code(), reason: "STRUCTURE_SPEC_NOT_READY" }];
+                return vec![Out::Refused {
+                    session,
+                    command: order.code(),
+                    reason: "STRUCTURE_SPEC_NOT_READY",
+                }];
             }
-            return self.with_controlled_structure_modules(now, |scene| scene.target_order(session, order, now));
+            return self
+                .with_controlled_structure_modules(now, |scene| scene.target_order(session, order, now));
         }
         self.settle_all(now);
         let told = match &order {

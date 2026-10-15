@@ -298,7 +298,7 @@ public sealed class StructureAnchorTests
             row.Doc.GetProperty("name").GetProperty("en").GetString() == name).Key);
 
         // Thera, starter/career systems, and trade hubs are read from the pinned SDE or the retained EveJS hub list.
-        foreach (var name in new[] { "Thera", "J015092", "Kisogo", "Amsen", "Manifest", "Jita", "Hek" })
+        foreach (var name in new[] { "Thera", "J000895", "J015092", "Kisogo", "Amsen", "Manifest", "Jita", "Hek" })
         {
             var systemId = SystemId(name);
             route.ShipPlace = new WarpCoordinates(systemId, 1e20, 1e20, 1e20);

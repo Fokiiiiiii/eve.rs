@@ -14,6 +14,9 @@
     <ProjectReference Include="../../src/Eve.Characters/Eve.Characters.csproj" />
     <ProjectReference Include="../../src/Eve.Inventory/Eve.Inventory.csproj" />
     <ProjectReference Include="../../src/Eve.Sde/Eve.Sde.csproj" />
+    <ProjectReference Include="../../src/Eve.Events/Eve.Events.csproj" />
+    <ProjectReference Include="../../src/Eve.Relations/Eve.Relations.csproj" />
+    <ProjectReference Include="../../src/Eve.Scheduler/Eve.Scheduler.csproj" />
   </ItemGroup>
   <ItemGroup>
     <Using Include="Xunit" />

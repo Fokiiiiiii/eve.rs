@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Eve.Sde;
 using Eve.Wallet;
 
 namespace Eve.Corporations.Tests;
@@ -206,6 +207,53 @@ public class CorporationTests
         }
     }
 
+
+    [PgFact]
+    public async Task Accepted_application_and_leaving_move_the_corporation_membership_relation_at_runtime()
+    {
+        // the Host wires the membership writer in AllianceApplicationDueWorker.RegisterAsync; the relation is what the sessions read
+        await using var rig = await Rig.CreateAsync();
+        var suffix = Guid.NewGuid().ToString("N")[..12];
+        var schedulerSchema = "corp_join_sched_" + suffix;
+        var eventsSchema = "corp_join_events_" + suffix;
+        var relationsSchema = "corp_join_relations_" + suffix;
+        try
+        {
+            await Eve.Scheduler.DurableScheduler.MigrateAsync(rig.Source, schedulerSchema);
+            await Eve.Events.EventBus.MigrateAsync(rig.Source, eventsSchema);
+            await Eve.Relations.RelationStore.MigrateAsync(rig.Source, relationsSchema);
+            var scheduler = new Eve.Scheduler.DurableScheduler(rig.Source, () => rig.Now, schema: schedulerSchema);
+            var events = new Eve.Events.EventBus(rig.Source, scheduler, schema: eventsSchema);
+            var relations = new Eve.Relations.RelationStore(rig.Source, scheduler, events, relationsSchema);
+            var worker = new Eve.Services.Corporations.AllianceApplicationDueWorker(
+                rig.Store, rig.Characters, scheduler, relations, events, (_, _) => Task.CompletedTask);
+            rig.Store.AllianceAffiliationWriter = worker.WriteAffiliationAsync;
+            await worker.RegisterAsync();
+            await rig.Store.SeedNpcAsync(new SdeReader(rig.Source));
+            var npc = (await rig.Store.GetAsync(1000044))!;
+            var founder = await rig.CharacterAsync("Relation Founder");
+            var member = await rig.CharacterAsync("Relation Member");
+            var corporation = await rig.Store.CreateAsync(founder, new("Relation Works", "RELW", "", "", 0.05m), "relation-foundation");
+
+            var application = await rig.Store.ApplyAsync(member, corporation.Id, "Join");
+            await rig.Store.RespondAsync(founder, application, 6, "Join", "");
+            await rig.Store.RespondAsync(member, application, 2, "Join", "");
+
+            var joined = Assert.Single(await relations.FromAsync(Eve.Relations.RelationKinds.CorporationMember.Name, member));
+            Assert.Equal(corporation.Id, joined.Object);
+            await rig.Store.LeaveAsync(member, npc.Id);
+            var left = Assert.Single(await relations.FromAsync(Eve.Relations.RelationKinds.CorporationMember.Name, member));
+            Assert.Equal(npc.Id, left.Object);
+        }
+        finally
+        {
+            foreach (var schema in new[] { schedulerSchema, eventsSchema, relationsSchema })
+            {
+                await using var command = rig.Source.CreateCommand($"DROP SCHEMA IF EXISTS {schema} CASCADE");
+                await command.ExecuteNonQueryAsync();
+            }
+        }
+    }
 
     [PgFact]
     public async Task Character_affiliation_scan_returns_bounded_npc_and_player_pages()

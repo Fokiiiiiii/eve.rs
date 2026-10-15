@@ -5,6 +5,7 @@ using Eve.Marshal;
 using Eve.Sde;
 using Eve.Services;
 using Eve.Services.Core;
+using Eve.Services.Inventory;
 using Eve.Services.Ships;
 using Eve.Ships;
 using Eve.Skills;
@@ -37,9 +38,19 @@ public sealed class StructureCompressionAuthority
     private readonly SdeReader _sde;
     private readonly PgSkillStore _skills;
     private readonly ConcurrentDictionary<int, bool> _gasGroups = new();
+    private readonly CorporationHangarAccess _hangarAccess;
+    private readonly OfficeAtStation _officeAt;
+    private readonly CharacterSessions _sessions;
     private IReadOnlyDictionary<int, int>? _sourceOf;
 
-    public StructureCompressionAuthority(NpgsqlDataSource source, StructureStore store, PgItemStore items, DogmaStatic dogma, SdeReader sde, PgSkillStore skills)
+    /// <summary>Whether the corporation has an active office rented at the station (EveJS getCorporationOfficeByInventoryID with the station check).</summary>
+    public delegate Task<bool> OfficeAtStation(NpgsqlConnection connection, NpgsqlTransaction transaction, long corporationId, long stationId, CancellationToken cancellationToken);
+
+    /// <param name="hangarAccess">The corporation division access of the inventory (the same rule as the take and deposit of the hangar).</param>
+    /// <param name="officeAt">The office rental of the corporation at the station, read in the caller transaction.</param>
+    /// <param name="sessions">The sessions of the corporation members, who are told of a change to its office hangar.</param>
+    public StructureCompressionAuthority(NpgsqlDataSource source, StructureStore store, PgItemStore items, DogmaStatic dogma, SdeReader sde, PgSkillStore skills,
+        CorporationHangarAccess hangarAccess, OfficeAtStation officeAt, CharacterSessions sessions)
     {
         _source = source;
         _store = store;
@@ -47,6 +58,9 @@ public sealed class StructureCompressionAuthority
         _dogma = dogma;
         _sde = sde;
         _skills = skills;
+        _hangarAccess = hangarAccess;
+        _officeAt = officeAt;
+        _sessions = sessions;
     }
 
     /// <summary>
@@ -59,14 +73,14 @@ public sealed class StructureCompressionAuthority
         await using var connection = await _source.OpenConnectionAsync(cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
         await GateAsync(connection, transaction, structureId, cancellationToken);
-        var item = await SourceItemAsync(connection, transaction, characterId, structureId, shipId, itemId, cancellationToken);
+        var item = await SourceItemAsync(call, connection, transaction, characterId, structureId, shipId, itemId, cancellationToken);
         await _dogma.EnsureTypesAsync([item.TypeId], cancellationToken);
         if (!await _dogma.TypeListNamesAsync(CompressionTypeList, item.TypeId, cancellationToken)
             || await _dogma.CompressedTypeOfAsync(item.TypeId, cancellationToken) is not { } compressedTypeId)
         {
             throw Refusal("That item cannot be compressed in a structure.");
         }
-        return Announce(call, await ReplaceAsync(connection, transaction, item, compressedTypeId, item.Quantity, cancellationToken));
+        return await AnnounceAsync(call, await ReplaceAsync(connection, transaction, item, compressedTypeId, item.Quantity, cancellationToken), item, structureId, cancellationToken);
     }
 
     /// <summary>
@@ -79,7 +93,7 @@ public sealed class StructureCompressionAuthority
         await using var connection = await _source.OpenConnectionAsync(cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
         var structure = await GateAsync(connection, transaction, structureId, cancellationToken);
-        var item = await SourceItemAsync(connection, transaction, characterId, structureId, shipId, itemId, cancellationToken);
+        var item = await SourceItemAsync(call, connection, transaction, characterId, structureId, shipId, itemId, cancellationToken);
         await _dogma.EnsureTypesAsync([item.TypeId], cancellationToken);
         if (await GasSourceOfAsync(item.TypeId, cancellationToken) is not { } gasTypeId)
         {
@@ -93,10 +107,10 @@ public sealed class StructureCompressionAuthority
             await _items.DeleteAsync(connection, transaction, item.Id, cancellationToken);
             var removed = item with { LocationId = CharacterShips.JunkLocation };
             await transaction.CommitAsync(cancellationToken);
-            return Announce(call, (new StructureCompressionOutcome(item.Id, item.TypeId, item.Quantity, 0, gasTypeId, 0),
-                [new ItemChanged(removed, item.LocationId, item.Flag, item.Quantity)]));
+            return await AnnounceAsync(call, (new StructureCompressionOutcome(item.Id, item.TypeId, item.Quantity, 0, gasTypeId, 0),
+                [new ItemChanged(removed, item.LocationId, item.Flag, item.Quantity)]), item, structureId, cancellationToken);
         }
-        return Announce(call, await ReplaceAsync(connection, transaction, item, gasTypeId, output, cancellationToken));
+        return await AnnounceAsync(call, await ReplaceAsync(connection, transaction, item, gasTypeId, output, cancellationToken), item, structureId, cancellationToken);
     }
 
     /// <summary>
@@ -137,24 +151,43 @@ public sealed class StructureCompressionAuthority
         return record;
     }
 
-    /// <summary>The item is the pilot's in the hangar of the structure, or in the ship it flies when that ship is docked there (EveJS <c>itemIsInStructureCompressionSource</c>).</summary>
-    private async Task<Item> SourceItemAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long characterId, long structureId, long shipId, long itemId, CancellationToken cancellationToken)
+    /// <summary>
+    /// The item is the pilot's in the hangar of the structure, or in the ship it flies when that ship is docked there, or a corporation hangar item of the
+    /// pilot's corporation in its office at the structure that the pilot may take from (EveJS <c>itemIsInStructureCompressionSource</c>, with
+    /// <c>itemIsInDockableCorpOfficeWithTakeAccess</c>).
+    /// </summary>
+    private async Task<Item> SourceItemAsync(ServiceCall call, NpgsqlConnection connection, NpgsqlTransaction transaction, long characterId, long structureId, long shipId, long itemId, CancellationToken cancellationToken)
     {
-        if (await _items.LockAndGetAsync(connection, transaction, itemId, cancellationToken) is not { } item || item.OwnerId != characterId || item.Singleton || item.Quantity <= 0)
+        var corporationId = CorporationOf(call.Session);
+        if (await _items.LockAndGetAsync(connection, transaction, itemId, cancellationToken) is not { } item || item.Singleton || item.Quantity <= 0
+            || (item.OwnerId != characterId && (corporationId <= 0 || item.OwnerId != corporationId)))
         {
             throw Refusal("That item is not yours or cannot be used here.");
         }
-        if (item.LocationId == structureId && item.Flag == HangarFlag)
+        if (item.OwnerId == characterId)
         {
-            return item;
+            if (item.LocationId == structureId && item.Flag == HangarFlag)
+            {
+                return item;
+            }
+            if (shipId > 0 && item.LocationId == shipId && await _items.LockAndGetAsync(connection, transaction, shipId, cancellationToken) is { } ship
+                && ship.LocationId == structureId && ship.OwnerId == characterId)
+            {
+                return item;
+            }
         }
-        if (shipId > 0 && item.LocationId == shipId && await _items.LockAndGetAsync(connection, transaction, shipId, cancellationToken) is { } ship
-            && ship.LocationId == structureId && ship.OwnerId == characterId)
+        else if (item.LocationId == structureId && ItemFlags.IsCorporationHangar(item.Flag)
+            && await _officeAt(connection, transaction, corporationId, structureId, cancellationToken)
+            && await _hangarAccess(characterId, corporationId, structureId, item.Flag, CorporationHangarOperation.Take, cancellationToken))
         {
             return item;
         }
         throw Refusal("That item is not in your hangar or your ship at this structure.");
     }
+
+    /// <summary>The corporation of the session (its corporationID, else its corpid, as the inventory broker reads it); 0 when none.</summary>
+    private static long CorporationOf(ClientSession session) =>
+        session.GetInt("corporationID") is { } corporationId && corporationId != 0 ? corporationId : session.GetInt("corpid") ?? 0;
 
     /// <summary>The compressed type's source in the SDE (<c>compressibleTypes</c>, read backwards), loaded once.</summary>
     private async Task<int?> SourceOfAsync(int compressedTypeId, CancellationToken cancellationToken)
@@ -244,12 +277,32 @@ public sealed class StructureCompressionAuthority
         return (new StructureCompressionOutcome(source.Id, source.TypeId, source.Quantity, outputId, typeId, quantity), changes);
     }
 
-    /// <summary>The pilot's client hears each item that changed (the stack that left, the output), as the ship's compression tells it.</summary>
-    private StructureCompressionOutcome Announce(ServiceCall call, (StructureCompressionOutcome Outcome, IReadOnlyList<ItemChanged> Changes) result)
+    /// <summary>
+    /// The pilot's client hears each item that changed (the stack that left, the output), as the ship's compression tells it. A corporation hangar item
+    /// changes the corporation's office hangar: the members online who may query that division are told too (EveJS tells the members watching it).
+    /// </summary>
+    private async Task<StructureCompressionOutcome> AnnounceAsync(ServiceCall call, (StructureCompressionOutcome Outcome, IReadOnlyList<ItemChanged> Changes) result,
+        Item source, long structureId, CancellationToken cancellationToken)
     {
         foreach (var change in result.Changes)
         {
             ShipNotifications.SendItemChange(call.Session, change, RowOf);
+        }
+        if (source.OwnerId == (call.Session.CharacterId ?? 0) || !ItemFlags.IsCorporationHangar(source.Flag))
+        {
+            return result.Outcome;
+        }
+        foreach (var session in _sessions.OfCorporation(source.OwnerId))
+        {
+            if (ReferenceEquals(session, call.Session) || session.CharacterId is not { } observer
+                || !await _hangarAccess(observer, source.OwnerId, structureId, source.Flag, CorporationHangarOperation.Query, cancellationToken))
+            {
+                continue;
+            }
+            foreach (var change in result.Changes)
+            {
+                ShipNotifications.SendItemChange(session, change, RowOf);
+            }
         }
         return result.Outcome;
     }

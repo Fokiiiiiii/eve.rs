@@ -1,0 +1,104 @@
+using System.Text.Json.Nodes;
+using Eve.GameStore;
+using Eve.Host;
+
+namespace Eve.Host.Tests;
+
+/// <summary>
+/// ST-9 d: the sovereignty claim of a captured neutral Sovereignty Hub (<see cref="PersistenceSovFwWriteOperations.ClaimCapturedHubAsync"/>), against an in-memory
+/// sovereignty table: the system, its hub's row and the hub record take the capturer; a system another alliance holds is refused, and a repeat is answered.
+/// </summary>
+public sealed class SovHubClaimTests
+{
+    private const long SystemId = 30_100_032;
+    private const long HubId = 1_040_000_000_904;
+    private const long Corporation = 98_000_010;
+    private const long Alliance = 5;
+    private const long FileTime = 133_000_000_000_000_000;
+    private const string Key = "30100032";
+
+    private static JsonObject Table(long? owner) => new()
+    {
+        ["systems"] = new JsonObject
+        {
+            [Key] = new JsonObject
+            {
+                ["solarSystemID"] = SystemId,
+                ["infrastructureHubID"] = HubId,
+                ["allianceID"] = owner is { } o ? JsonValue.Create(o) : null,
+                ["corporationID"] = owner is { } ? JsonValue.Create(99_000_001L) : null,
+                ["structures"] = new JsonArray(new JsonObject
+                {
+                    ["itemID"] = HubId, ["typeID"] = 32_458, ["corporationID"] = null, ["ownerID"] = null, ["allianceID"] = null,
+                }),
+            },
+        },
+        ["hubs"] = new JsonObject
+        {
+            [HubId.ToString(System.Globalization.CultureInfo.InvariantCulture)] = new JsonObject
+            {
+                ["hubID"] = HubId, ["corporationID"] = null, ["ownerID"] = null, ["allianceID"] = null,
+            },
+        },
+    };
+
+    private static (PersistenceSovFwWriteOperations Writer, Func<JsonObject> Saved) WriterOver(JsonObject table)
+    {
+        var tables = new Dictionary<string, JsonObject> { ["sovereignty"] = table };
+        JsonObject Read(string name) => (JsonObject)tables[name].DeepClone();
+        WriteResult Write(string name, string? path, JsonNode? data)
+        {
+            if (path is not null || data is not JsonObject root)
+                return new WriteResult(false, "unexpected path write");
+            tables[name] = (JsonObject)root.DeepClone();
+            return new WriteResult(true, null);
+        }
+        var writer = new PersistenceSovFwWriteOperations(
+            Read, Write, (_, _) => Task.FromResult(1),
+            (name, _) => Task.FromResult(Read(name)),
+            (_, _, _) => ValueTask.FromResult(false),
+            new SemaphoreSlim(1, 1),
+            (_, _) => ValueTask.FromResult(false),
+            (_, _) => ValueTask.FromResult(false));
+        return (writer, () => tables["sovereignty"]);
+    }
+
+    [Fact]
+    public async Task A_neutral_hub_captured_by_an_alliance_is_claimed_by_its_capturer_in_the_system_its_row_and_the_hub()
+    {
+        var (writer, saved) = WriterOver(Table(owner: null));
+
+        Assert.True(await writer.ClaimCapturedHubAsync(SystemId, HubId, Corporation, Alliance, FileTime));
+
+        var system = saved()["systems"]![Key]!;
+        Assert.Equal(Alliance, system["allianceID"]!.GetValue<long>());
+        Assert.Equal(Corporation, system["corporationID"]!.GetValue<long>());
+        Assert.Equal(FileTime, system["claimTime"]!.GetValue<long>());
+        var row = system["structures"]![0]!;
+        Assert.Equal((Corporation, Alliance), (row["corporationID"]!.GetValue<long>(), row["allianceID"]!.GetValue<long>()));
+        var hub = saved()["hubs"]![HubId.ToString(System.Globalization.CultureInfo.InvariantCulture)]!;
+        Assert.Equal((Corporation, Alliance), (hub["corporationID"]!.GetValue<long>(), hub["allianceID"]!.GetValue<long>()));
+    }
+
+    [Fact]
+    public async Task A_repeat_by_the_same_alliance_is_answered_as_done_and_a_system_another_alliance_holds_is_refused()
+    {
+        var (writer, saved) = WriterOver(Table(owner: null));
+        Assert.True(await writer.ClaimCapturedHubAsync(SystemId, HubId, Corporation, Alliance, FileTime));
+        Assert.True(await writer.ClaimCapturedHubAsync(SystemId, HubId, Corporation, Alliance, FileTime + 1));
+        Assert.Equal(FileTime, saved()["systems"]![Key]!["claimTime"]!.GetValue<long>());
+
+        var (other, otherSaved) = WriterOver(Table(owner: 77));
+        Assert.False(await other.ClaimCapturedHubAsync(SystemId, HubId, Corporation, Alliance, FileTime));
+        Assert.Equal(77, otherSaved()["systems"]![Key]!["allianceID"]!.GetValue<long>());
+    }
+
+    [Fact]
+    public async Task A_claim_of_a_system_whose_infrastructure_hub_is_another_item_is_refused()
+    {
+        var (writer, saved) = WriterOver(Table(owner: null));
+
+        Assert.False(await writer.ClaimCapturedHubAsync(SystemId, HubId + 1, Corporation, Alliance, FileTime));
+        Assert.Null(saved()["systems"]![Key]!["allianceID"]);
+    }
+}

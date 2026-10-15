@@ -338,8 +338,9 @@ public sealed partial class SpaceSessions
             }
         }
 
-        // Structure legality is target-specific; untargeted effects cannot safely authorize every entity they reach.
-        if (structureObserver && package.Action is (SimAction.Smartbomb or SimAction.EcmBurst or SimAction.Bomb))
+        // Structure legality of an untargeted smartbomb or ECM burst is not authorized per entity. A guided bomb's blast is: the simulation asks the Host for
+        // the ships it may reach when it goes off (StructureDamageCandidates), so the bomb is started here.
+        if (structureObserver && package.Action is (SimAction.Smartbomb or SimAction.EcmBurst))
         {
             return ModuleResult.Refusal(WeaponSafety.Refusal, made.ModuleType, made.ModuleName);
         }

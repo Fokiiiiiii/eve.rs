@@ -206,6 +206,53 @@ impl Scene {
         out
     }
 
+    /// One ship hit by a controlled structure's bomb (ST-8a): the attacker is the structure, and its messages go to the controller that runs it (a structure
+    /// has no pilot record of its own). The rest is as `damage_ship`.
+    pub(crate) fn damage_ship_from_structure(
+        &mut self,
+        controller: SessionId,
+        structure_id: i64,
+        module_type: i32,
+        target: (SessionId, i64),
+        damage: Damage,
+        at: i64,
+    ) -> Vec<Out> {
+        let (target_session, target_id) = target;
+        if self.is_tethered_session(target_session, at) {
+            return Vec::new();
+        }
+        let owner = self.combat_owner(controller);
+        let mut out = Vec::new();
+        let shot = Shot { hit: true, wrecking: false, quality: 1.0, chance_to_hit: 1.0, roll: 0.0, damage };
+        let (told, hit) = self.damage(target_id, damage, at);
+        out.extend(told);
+        let applied = hit.map_or(0.0, |hit| hit.taken.shield + hit.taken.armor + hit.taken.structure);
+        let destroyed = hit.is_some_and(|hit| hit.destroyed);
+        let target_type_id = self.pilots.get(&target_session).map_or(0, |pilot| pilot.ship.spec.type_id);
+        self.aggressions.push(Aggression {
+            attacker_ship: structure_id,
+            target_ship: target_id,
+            module_type_id: module_type,
+            source_owner_id: owner,
+            target_type_id,
+        });
+        let message = |for_the_attacker| damage_message(for_the_attacker, structure_id, target_id, module_type, applied, &shot, owner);
+        for (who, mine) in [(controller, true), (target_session, false)] {
+            if !is_npc_session(who) {
+                out.push(Out::Notify {
+                    session: who,
+                    name: "OnDamageMessage",
+                    id_type: "clientID",
+                    args: vec![message(mine)],
+                });
+            }
+        }
+        if destroyed {
+            out.extend(self.destroy(target_session, Some(controller), at));
+        }
+        out
+    }
+
     /// One ship hit by a module's area effect (a smartbomb's blast, a doomsday's pulse): the damage it takes, the aggression it is recorded as, the messages
     /// its pilot and the attacker's are told, and its destruction. `target` is the pilot's session and its ship's id.
     pub(crate) fn damage_ship(

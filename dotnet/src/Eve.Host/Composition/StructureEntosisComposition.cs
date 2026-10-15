@@ -1,0 +1,54 @@
+using Eve.Services.Space;
+using Eve.Services.Space.Entosis;
+
+namespace Eve.Host;
+
+internal sealed partial class CharacterServicesComposition
+{
+    /// <summary>
+    /// ST-9 d: the handover of a captured neutral hub. The sovereignty records give the system to the capturer (the sovereignty write path, verified in the
+    /// persisted table), and the hub's ball in space is put back with its new owner. A claim the records refuse (another alliance has the system) is superseded.
+    /// </summary>
+    private async Task<EntosisHandover> EntosisHandoverAsync(EntosisCapturedHub captured, CancellationToken cancellationToken)
+    {
+        var fileTime = DateTime.UtcNow.ToFileTimeUtc();
+        // the claim is committed for the capturing alliance's executor corporation (EVE.js commitInitialSovereigntyHubCapture: executorCorporationID); a
+        // capturing corporation stands in when the alliance has none
+        var executor = (await corporations.AllianceAsync(captured.AllianceId, cancellationToken))?.ActiveExecutorId ?? captured.CorporationId;
+        var claimed = await sovWriteOperations.ClaimCapturedHubAsync(
+            captured.SolarSystemId, captured.HubId, executor, captured.AllianceId, fileTime, cancellationToken);
+        if (!claimed)
+        {
+            return EntosisHandover.Superseded;
+        }
+        if (spaceSovHubs is not null)
+        {
+            await spaceSovHubs.ReplaceAsync(captured.HubId, captured.SolarSystemId, cancellationToken);
+        }
+        return EntosisHandover.Claimed;
+    }
+
+    /// <summary>
+    /// ST-9 c: a system's Sovereignty Hub as the sovereignty records have it at a cycle. Its owner's alliance is the records' (none when neutral). The activity
+    /// multiplier is the owner's system's (<see cref="StructureAnchorAuthority.ActivityDefenseMultiplier"/>); a neutral hub has none and its capture time is the
+    /// base time (EVE.js's neutral capture is not scaled), so it is 1.
+    /// </summary>
+    private async Task<EntosisHubReading?> EntosisHubReadingAsync(int solarSystemId, CancellationToken cancellationToken)
+    {
+        var snapshot = await sovereigntyReadModel.ReadSnapshotAsync(cancellationToken);
+        if (SpaceSovHubs.HubOf(snapshot, solarSystemId) is not { } hub)
+        {
+            return null;
+        }
+        var multiplier = 1.0;
+        if (hub.AllianceId is > 0)
+        {
+            var indices = await sovereigntyReadModel.ReadAllDevelopmentIndicesAsync(cancellationToken);
+            if (indices.FirstOrDefault(index => index.SolarSystemId == solarSystemId) is { } record)
+            {
+                multiplier = StructureAnchorAuthority.ActivityDefenseMultiplier(record);
+            }
+        }
+        return new EntosisHubReading(hub.HubId, solarSystemId, hub.AllianceId, multiplier);
+    }
+}

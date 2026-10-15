@@ -720,10 +720,33 @@ public static partial class SimCodec
                     }
                     return new SimAction.Remote(what, optimal, falloff, when == 1, jam);
                 }
+            case 32:
+                {
+                    var (range, duration) = (r.F64(), r.F64());
+                    var what = ReadBurstWhat(ref r);
+                    if (!(double.IsFinite(range) && range > 0 && double.IsFinite(duration) && duration > 0))
+                    {
+                        throw new SimLinkException(SimLinkError.BadValue, "bad structure burst");
+                    }
+                    return new SimAction.StructureBurst(range, duration, what);
+                }
             default:
                 throw new SimLinkException(SimLinkError.BadValue, "bad action");
         }
     }
+
+    /// <summary>The remote effect of a structure burst: only the kinds of the burst families (neutralize, paint, damp, web, disrupt, scramble and jam).</summary>
+    private static SimRemote ReadBurstWhat(ref Reader r) => r.U8() switch
+    {
+        2 => new SimRemote.Neutralize(r.F64(), r.F64()),
+        4 => new SimRemote.Web(r.F64()),
+        5 => new SimRemote.Paint(r.F64()),
+        6 => new SimRemote.Damp(r.F64(), r.F64(), r.F64(), r.F64(), r.F64(), r.F64()),
+        7 => ReadScramble(ref r),
+        8 => new SimRemote.Jam(r.F64(), r.F64(), r.F64(), r.F64()),
+        9 => new SimRemote.Disrupt(r.F64(), r.F64(), r.F64()),
+        _ => throw new SimLinkException(SimLinkError.BadValue, "bad structure burst effect"),
+    };
 
     private static SimRemote ReadScramble(ref Reader r)
     {

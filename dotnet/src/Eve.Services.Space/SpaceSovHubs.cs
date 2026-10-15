@@ -77,6 +77,15 @@ public sealed class SpaceSovHubs
         }
     }
 
+    /// <summary>
+    /// Puts a hub back in space after its records changed (ST-9 d: a claim changes the owner the ball shows). The simulation's ball is taken out first.
+    /// </summary>
+    public async Task ReplaceAsync(long hubId, int solarSystemId, CancellationToken cancellationToken = default)
+    {
+        _sim.RemoveStructure(hubId);
+        await RestoreAsync(solarSystemId, cancellationToken);
+    }
+
     private static SimPlaceStructure Placement(SovHubBall hub, Eve.Dogma.TypeDef type)
     {
         var attributes = type.Attributes;

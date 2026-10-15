@@ -167,6 +167,10 @@ public class SimCodecTests
         {
             return new SimAction.StasisBurst((double)a["range"]!, (double)a["durationMs"]!, (double)a["speedFactor"]!);
         }
+        if ((string)a["kind"]! == "structureBurst")
+        {
+            return new SimAction.StructureBurst((double)a["range"]!, (double)a["durationMs"]!, BurstRemote(a));
+        }
         if ((string)a["kind"]! == "panic")
         {
             return new SimAction.Panic((double)a["rangeMeters"]!);
@@ -239,6 +243,24 @@ public class SimCodecTests
             _ => new SimRemote.Scramble((double)a["strength"]!, (bool)a["blocksMwd"]!),
         };
         return new SimAction.Remote(what, (double)a["optimal"]!, (double)a["falloff"]!, end, (string)a["jam"]!);
+    }
+
+    /// <summary>The remote effect of a structure burst fixture: the kinds of the burst families, as the generator writes them.</summary>
+    private static SimRemote BurstRemote(JsonNode a)
+    {
+        double Optional(string name) => a[name] is { } value ? (double)value : 0d;
+        return (string)a["what"]! switch
+        {
+            "neutralize" => new SimRemote.Neutralize((double)a["amount"]!, (double)a["signatureResolution"]!),
+            "web" => new SimRemote.Web((double)a["percent"]!),
+            "paint" => new SimRemote.Paint((double)a["percent"]!),
+            "damp" => new SimRemote.Damp(
+                (double)a["rangePercent"]!, (double)a["resolutionPercent"]!,
+                Optional("gravimetricStrengthPercent"), Optional("ladarStrengthPercent"), Optional("magnetometricStrengthPercent"), Optional("radarStrengthPercent")),
+            "disrupt" => new SimRemote.Disrupt((double)a["rangePercent"]!, (double)a["falloffPercent"]!, (double)a["trackingPercent"]!),
+            "jam" => new SimRemote.Jam(Four(a["strength"]!)[0], Four(a["strength"]!)[1], Four(a["strength"]!)[2], Four(a["strength"]!)[3]),
+            _ => new SimRemote.Scramble((double)a["strength"]!, (bool)a["blocksMwd"]!),
+        };
     }
 
     private static SimTurret TurretOf(JsonNode t) => new(

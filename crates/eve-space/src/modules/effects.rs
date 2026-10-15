@@ -80,6 +80,9 @@ impl Scene {
             Some(Action::Strike { strike }) if when == Applies::CycleStart => {
                 self.strike_start(session, effect, *strike, at)
             }
+            Some(Action::StructureBurst { range, duration_ms, what }) if when == Applies::CycleStart => {
+                self.structure_burst_start(session, effect, *range, *duration_ms, what, at)
+            }
             Some(Action::Field { strike, .. }) if when == Applies::CycleStart => {
                 self.strike_start(session, effect, *strike, at)
             }

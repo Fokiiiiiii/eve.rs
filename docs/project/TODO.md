@@ -2411,6 +2411,18 @@ Document readback observed parent main HEAD `c114dc0d8e292c056e8d71b37f496084f48
 - VERIFIED (PG regression only): controlled structure DogmaWorld uses only Structure Doomsday Operation, Structure Electronic Systems, Structure Engineering Systems and Structure Missile Systems; mutable skill item values are independent from the retained personal snapshot. Character skill metadata and total SP are preserved. Host StructureControl subset: 12 PASS, 0 FAIL/SKIP. Evidence and source priority: docs/project/structures-phase/handoff-ST-8a-skills.md.
 - OPEN: ordinary structure module execution and full Host-to-Sim/EveJS comparison; ST-8b doomsdays and native client acceptance. This input-layer correction does not close those feature rows.
 
+## Structure ST-8 controlled-structure modules and superweapons (2026-10-15)
+
+- DONE (Sim and Host tests, not native): the Standup burst projectors 47069-47074 and 35944 (the structure's doomsdayAOE families: ECM, damp, web, paint, bubble, track, neutralization) on a controlled structure. Each cycle asks the Host, per pulse, which ships in reach the owner may affect (Kind 85/86); only the granted ships are reached (`modules/burst.rs`, `StructureBurstEffects.cs`). Tests: `modules::tests::a_controlled_structure_burst_*`, `StructureBurstAuthorizationTests`, simlink fixture `activate a structure ecm burst projector`.
+- DONE (Sim and Host tests, not native): Standup guided bomb launchers (35923, 47325) release their bombs as before; each blast is authorized per detonation, the blast reaching only the ships and structures the Host grants (a bomb not answered within 30 s goes off with no effect). Tests: `modules::tests::a_controlled_structure_bomb_*`, `a_structure_bomb_*`, `StructureBurstAuthorizationTests.A_standup_guided_bomb_launcher_*`.
+- DONE: the structure Vorton (35928, lightning, SDE hop attributes) authorizes each hop by the owner's facts (`A_standup_vorton_projector_*`); point defense authorizes each cycle (existing).
+- DONE: the Standup HOG 47068 is refused as `MODULE_NOT_PUBLISHED` (SDE publication bit kept on `TypeDef`), with nothing sent to the Sim.
+- FIXED: `FitsStructureDamageModule` refused any structure module with `disallowRepeatingActivation` when the client asked for a repeat above 1; the built effect carries the one-cycle budget, so the check is removed.
+- OPEN: the ship-fitted burst projectors (27678, 40635, 40696-40699, 40636, 41350) stay refused (no ship body; the manifest lists their effect names).
+- OPEN: native client acceptance of the structure bursts, bombs and Vorton (slim rendering, module HUD, FX), and a live Host-to-Sim walk through `run-eve-live.sh`.
+- OPEN: ST-8 not closed for the guided bomb after the controller releases the structure or the launcher is deactivated before the blast (fail closed: the blast reaches no one). See DEVIATIONS "Structure ST-8".
+
+
 ## 56. ST-7 structure services, closing pass: jammer gate, fuel owner notices, beacon and jammer Host tests (2026-10-15)
 
 Continues section 46 (the earlier ST-7 rows); the closure record is docs/project/structures-phase/handoff-ST-7-closure.md. It supersedes the E-03 and beacon rows of sections 22, 23, 25 and 35 that say the jammer callback is unassigned or the structure beacon is refused: both are built now.
@@ -2449,8 +2461,11 @@ Handoff: `docs/project/structures-phase/handoff-ST-12.md`. Decisions and sources
 ## 50. Structures phase ST-9: Entosis link and Sovereignty Hub capture (2026-10-15)
 | Status | Row | Notes |
 |---|---|---|
-| VERIFIED (PG, Host registration, Sim fake) | (a) a Sovereignty Hub is a structure ball from the sovereignty records on system entry (`SpaceSovHubs`, `SpaceSovHubsTests` 5 of 5, 0 skipped) | DEVIATIONS "Sovereignty Hub ball (ST-9 a)". Position at the origin, client state unverified. |
+| VERIFIED (PG, Host registration, Sim fake) | (a) a Sovereignty Hub is a structure ball from the sovereignty records on system entry (`SpaceSovHubs`, `SpaceSovHubsTests` 6 of 6, 0 skipped) | DEVIATIONS "Sovereignty Hub ball (ST-9 a)". Position at the origin, client state unverified. |
 | VERIFIED (Rust and C# unit, fixtures, Host build) | (b) `EntosisLinkEffect` body: protocol 70, tag 31, command 14; sov-hub target and alliance refused by name; lock and reach refused by name in the sim; package 300 000 ms, 20 000 m, fuel per cycle | DEVIATIONS "Entosis link: the body and its refusals (ST-9 b)". The command 14 cycle is refused `ENTOSIS_CAPTURE_NOT_SETTLED` until (c). |
-| OPEN | (c) capture state per hub, durable, pause and reverse, restart-safe | |
-| OPEN | (d) completion through the sovereignty write path, ADM from the indices | Command nodes are out of scope (the owned-hub completion is recorded when built). |
-| OPEN | (e) tests through Host registration and Sim; gap manifest in `ModuleEffectsTests` | |
+| VERIFIED (pure, PostgreSQL, container with the fake simulation) | (c) capture state per hub in `entosis.hubs` / `entosis.links`: warm-up on the first cycle, one attacker link scores, a defender pauses, a defender alone regenerates, the completion is a durable job, a link end moves the capture to now, restart reads the stored progress | DEVIATIONS "Entosis capture state (ST-9 c)". Tests: `EntosisCaptureTests` 6, `EntosisCaptureServiceTests` 4, `EntosisCycleHostTests` 2. Open: vulnerability window, owner notice (see below). |
+| VERIFIED (Host containers with the real rig and the fake simulation; PostgreSQL) | (e) the entosis cycle through `SpaceContainers` (`EntosisCycleHostTests`, 2), the module end report, the capture and the handover tests, and the gap manifest in `ModuleEffectsTests` (`entosisLink` leaves `currentSdeGaps`) | Native client acceptance is not run: see the open rows below and the handoff. |
+| OPEN | ST-9 c: the sovereignty vulnerability window (the wiki: an attacker links in the window) | not built; no window in eve.rs. See DEVIATIONS "Entosis capture state (ST-9 c)". |
+| OPEN | ST-9 c: the owner's "capture started" notice (EVE.js `notifySovCaptureStarted`) | not built. |
+| OPEN | ST-9 d: the owned hub's reinforcement and the command-node event (out of scope) | an owned hub at progress 1 is recorded captured with the handover `owned`; its owner is not changed. |
+| VERIFIED (pure, in-memory sovereignty tables, PostgreSQL, Host registration with the fake simulation) | (d) a neutral hub captured by an entosis link is claimed by the capturing alliance's executor corporation through the sovereignty write path; the ball is replaced with the new owner; a failed write is retried by a job | DEVIATIONS "Entosis handover of a captured Sovereignty Hub (ST-9 d)". Tests: `SovHubClaimTests` 3, `EntosisCaptureServiceTests` 8 in total, `SpaceSovHubsTests` 6. Not verified: the owner's notice, the client's view of the new owner. |

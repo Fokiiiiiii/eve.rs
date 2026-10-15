@@ -4,15 +4,15 @@
   {
    "name": "hello",
    "kind": "Hello",
-   "version": 70,
-   "hex": "03000000014600"
+   "version": 71,
+   "hex": "03000000014700"
   },
   {
    "name": "hello ack",
    "kind": "HelloAck",
-   "version": 70,
+   "version": 71,
    "pollHz": 4,
-   "hex": "0700000002460004000000"
+   "hex": "0700000002470004000000"
   },
   {
    "name": "enter by undocking",
@@ -1490,6 +1490,36 @@
     "offChanges": []
    },
    "hex": "72000000134f2c3859955c0600fdb6089b15090000fe580000010000001900656666656374732e546f727065646f4465706c6f796d656e74000000000088c3400000000000003e400100000000000000000000000800000000000000001500000000004ccd4000000000004cdd4000000000000034c0"
+  },
+  {
+   "name": "activate a structure ecm burst projector",
+   "kind": "Activate",
+   "sessionId": "1790646377000015",
+   "effect": {
+    "moduleId": "9988400002813",
+    "moduleType": 47069,
+    "effectId": 1,
+    "fx": "",
+    "durationMs": 10000.0,
+    "capacitorNeed": 30.0,
+    "repeat": 1,
+    "targetId": "0",
+    "action": {
+     "kind": "structureBurst",
+     "range": 15000.0,
+     "durationMs": 10000.0,
+     "what": "jam",
+     "strength": [
+      3.6,
+      0.0,
+      0.0,
+      0.0
+     ]
+    },
+    "onChanges": [],
+    "offChanges": []
+   },
+   "hex": "72000000134f2c3859955c0600fdb6089b15090000ddb70000010000000000000000000088c3400000000000003e400100000000000000000000000800000000000000002000000000004ccd40000000000088c34008cdcccccccccc0c40000000000000000000000000000000000000000000000000"
   },
   {
    "name": "activate an interdiction probe",

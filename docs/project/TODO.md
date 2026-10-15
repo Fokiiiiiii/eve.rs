@@ -2411,6 +2411,25 @@ Document readback observed parent main HEAD `c114dc0d8e292c056e8d71b37f496084f48
 - VERIFIED (PG regression only): controlled structure DogmaWorld uses only Structure Doomsday Operation, Structure Electronic Systems, Structure Engineering Systems and Structure Missile Systems; mutable skill item values are independent from the retained personal snapshot. Character skill metadata and total SP are preserved. Host StructureControl subset: 12 PASS, 0 FAIL/SKIP. Evidence and source priority: docs/project/structures-phase/handoff-ST-8a-skills.md.
 - OPEN: ordinary structure module execution and full Host-to-Sim/EveJS comparison; ST-8b doomsdays and native client acceptance. This input-layer correction does not close those feature rows.
 
+## 56. ST-7 structure services, closing pass: jammer gate, fuel owner notices, beacon and jammer Host tests (2026-10-15)
+
+Continues section 46 (the earlier ST-7 rows); the closure record is docs/project/structures-phase/handoff-ST-7-closure.md. It supersedes the E-03 and beacon rows of sections 22, 23, 25 and 35 that say the jammer callback is unassigned or the structure beacon is refused: both are built now.
+
+Done (tests in Eve.Structures.Tests, Eve.Host.Tests, Eve.Services.Space.Tests; decisions in DEVIATIONS "ST-7 structure services"):
+- Service fuel: online against the SDE charge, hourly burn from the fuel bay (StructureFuel, StructureFuelTests).
+- Structure compression in a personal hangar or ship (StructureCompressionAuthority, StructureCompressionTests).
+- Cynosural System Jammer (E-03): the jammer state of a system is answered by GetCynoJammerState only when the jammer service is online and the hub Cynosural Suppression upgrade is online (StructureComposition.JammerStateAsync, StructureCynoSuppressionTests, StructureCompositionTests).
+- A standard cynosural field is refused in a jammed system; the covert field is immune (CynoFieldHostTests).
+- E-15 notice (OnCynoJammerChanged) on a jammer service change.
+- Structure cyno beacon: the checks of EveJS resolveUsableBeacon, the jump through the capital jump drive, and the Pharolux beacon placed in the simulation when service 16 comes online and removed when it goes offline or the structure is gone (SpaceStructureCynoBeacons, StructureBeaconTravelTests, StructureCompositionTests).
+- Fuel burn: the owner corporation gets OnItemChange when a member is online outside the structure; otherwise the fuel alert (type 181) goes to the notifications mailbox in the burn transaction (StructureFuelOwnerNotifications).
+
+NOT BUILT (open rows):
+- Corporation-office compression path: the corporation hangar take-access model is not in the repo (EveJS itemIsInDockableCorpOfficeWithTakeAccess, canTakeFromOwnerLocation).
+- E-15 on a sov change of the Cynosural Suppression upgrade alone (the jammer state changes but no notice is sent).
+- Group jumps and bridges to a structure beacon (refused by name).
+- The power and workforce budget of the sov upgrades (EveJS computeHubUpgradeSnapshot); the stored online flag is read instead.
+- Native client acceptance of the jammer notice, the beacon jump and the fuel notices (not run; no graphical client here).
 ## 50. Structures phase ST-9: Entosis link and Sovereignty Hub capture (2026-10-15)
 | Status | Row | Notes |
 |---|---|---|

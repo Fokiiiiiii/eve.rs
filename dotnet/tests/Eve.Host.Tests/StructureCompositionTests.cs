@@ -649,4 +649,142 @@ public sealed class StructureCompositionTests : IAsyncLifetime
         Assert.Equal("Fort Knox Two", (await new StructureStore(source, Schema("EVE_STRUCTURES_SCHEMA")).GetAsync(StructureId))!.Name);
         await restarted.ShutdownAsync();
     }
+
+    /// <summary>The Pharolux cynosural beacon (SDE 35840) and the Jita sovereignty row, the hub of which runs the Cynosural Suppression upgrade (81619) online or not.</summary>
+    private const int PharoluxBeacon = 35_840, SuppressionUpgrade = 81_619;
+    private const long HubId = 1_000_200_001, ForeignCorporation = 98_000_002, OtherSystem = 30_000_001;
+
+    private async Task SeedSovereigntyAsync(NpgsqlDataSource source, bool suppressionOnline)
+    {
+        await using var store = new PersistenceStore(source, Schema("EVE_GAMESTORE_SCHEMA"));
+        await store.EnsureSchemaAsync();
+        await using var owner = await OwnerSession.StartAsync(store, PersistenceRoles.World, "structure-composition-sov-" + _prefix);
+        await using var cache = new GameStoreCache(store, owner,
+            new GameStoreCacheOptions { ProcessRole = PersistenceRoles.World, FlushDelay = TimeSpan.FromHours(1) });
+        await cache.RecoverAsync();
+        await cache.LoadAsync("sovereignty");
+        Assert.True(cache.Write("sovereignty", "/", new JsonObject
+        {
+            ["systems"] = new JsonObject
+            {
+                [Jita.ToString(System.Globalization.CultureInfo.InvariantCulture)] = new JsonObject
+                {
+                    ["solarSystemID"] = Jita,
+                    ["infrastructureHubID"] = HubId,
+                    ["hubUpgradeConfiguration"] = new JsonArray(new JsonObject
+                    {
+                        ["itemID"] = 1,
+                        ["typeID"] = SuppressionUpgrade,
+                        ["online"] = suppressionOnline,
+                        ["priority"] = 0,
+                    }),
+                },
+            },
+        }).Success);
+        await cache.FlushTableAsync("sovereignty");
+    }
+
+    /// <summary>Puts a service of the structure online (since a time long past, so the jammer warm-up is over) or offline, in the structure tables.</summary>
+    private async Task SetServiceAsync(NpgsqlDataSource source, int serviceId, int state)
+    {
+        var structures = new StructureStore(source, Schema("EVE_STRUCTURES_SCHEMA"));
+        await using var connection = await source.OpenConnectionAsync();
+        await using var transaction = await connection.BeginTransactionAsync();
+        await structures.SetServiceAsync(connection, transaction, StructureId, serviceId, state, 1_000);
+        await transaction.CommitAsync();
+    }
+
+    private static ClientSession PilotIn(long solarSystemId, long characterId, long corporationId, int sessionId)
+    {
+        var session = new ClientSession(new Sink()) { SessionId = sessionId };
+        session.Set("charid", new PyInt(characterId));
+        session.Set("corpid", new PyInt(corporationId));
+        session.Set("solarsystemid2", new PyInt(solarSystemId));
+        return session;
+    }
+
+    /// <summary>The text of the CustomNotify refusal a service answered with.</summary>
+    private static string NoticeOf(Exception exception)
+    {
+        var error = Assert.IsType<MachoWrappedException>(exception).Error;
+        Assert.Equal("CustomNotify", error.UserErrorMessage);
+        var arguments = ((PyTuple)((PyTuple)((PyObjectEx)error.Payload).Header).Items[1]).Items;
+        return ((PyStr)((PyDict)arguments[1]).Entries.Single(e => JsSemantics.StringValue(e.Key) == "notify").Value).Value;
+    }
+
+    /// <summary>
+    /// The host with the simulation switched on at a socket nobody listens on: the space services (beyonce, structureCynoBeaconMgr) are registered only with a
+    /// simulation client. These checks read the structure store and refuse before the simulation is asked, so no simulation answers in these tests.
+    /// </summary>
+    private static async Task<HostRuntime> BuildWithSpaceServicesAsync()
+    {
+        Environment.SetEnvironmentVariable("EVE_SIM", "on");
+        Environment.SetEnvironmentVariable("EVE_SIM_SOCKET", Path.Combine(Path.GetTempPath(), "eve-no-sim-" + Guid.NewGuid().ToString("N") + ".sock"));
+        try { return await HostComposition.BuildAsync(Settings()); }
+        finally { Environment.SetEnvironmentVariable("EVE_SIM", "off"); }
+    }
+
+    [PgFact]
+    public async Task The_cyno_jammer_of_a_system_is_answered_through_the_registry_only_with_the_suppression_upgrade_online()
+    {
+        var url = Environment.GetEnvironmentVariable("EVE_PG_URL")!;
+        await using var source = NpgsqlDataSource.Create(PgConnection.ForTest(url));
+        await SeedGameStoreAsync(source, SeededRow(StructureId, StructureState.ShieldVulnerable, 0, 0, UpkeepState.FullPower));
+        await SeedSovereigntyAsync(source, suppressionOnline: false);
+        var host = await BuildWithSpaceServicesAsync();
+        try
+        {
+            var beyonce = host.Registry.Lookup("beyonce") ?? throw new InvalidOperationException("beyonce is not registered");
+            // the jammer runs in the structure, but the hub of the system has no suppression upgrade online: no jammer state (EveJS isCynoSuppressionUpgradeOnline)
+            await SetServiceAsync(source, StructureServiceIds.CynoJammer, ServiceState.Online);
+            Assert.IsType<PyNone>(await beyonce.CallAsync(Call(PilotIn(Jita, 1, Corporation, 404), "GetCynoJammerState", 1)));
+        }
+        finally { await host.ShutdownAsync(); }
+
+        await SeedSovereigntyAsync(source, suppressionOnline: true);
+        var restarted = await BuildWithSpaceServicesAsync();
+        try
+        {
+            // the upgrade is online on the next start: the warm-up is over, so the state is 0 (the jammer runs)
+            var again = restarted.Registry.Lookup("beyonce") ?? throw new InvalidOperationException("beyonce is not registered after the restart");
+            Assert.Equal(new PyLong(0), await again.CallAsync(Call(PilotIn(Jita, 1, Corporation, 405), "GetCynoJammerState", 2)));
+        }
+        finally { await restarted.ShutdownAsync(); }
+    }
+
+    [PgFact]
+    public async Task A_structure_cyno_beacon_jump_is_refused_by_name_through_the_registry_for_a_jammed_system_and_for_no_access()
+    {
+        var url = Environment.GetEnvironmentVariable("EVE_PG_URL")!;
+        await using var source = NpgsqlDataSource.Create(PgConnection.ForTest(url));
+        var beacon = SeededRow(StructureId, StructureState.ShieldVulnerable, 0, 0, UpkeepState.FullPower);
+        beacon["typeID"] = PharoluxBeacon;
+        await SeedGameStoreAsync(source, beacon);
+        await SeedSovereigntyAsync(source, suppressionOnline: true);
+        var pilotId = await SeedManagerAsync("Beacon Pilot", ForeignCorporation);
+        var pilot = PilotIn(OtherSystem, pilotId, ForeignCorporation, 406);
+
+        var host = await BuildWithSpaceServicesAsync();
+        try
+        {
+            var travel = host.Registry.Lookup("structureCynoBeaconMgr") ?? throw new InvalidOperationException("structureCynoBeaconMgr is not registered");
+            await SetServiceAsync(source, StructureServiceIds.CynoBeacon, ServiceState.Online);
+            await SetServiceAsync(source, StructureServiceIds.CynoJammer, ServiceState.Online);
+
+            // the beacon is online and its system jammed: the jammer check refuses before the access check
+            Assert.Equal("That solar system is cynosural jammed.",
+                NoticeOf(await Assert.ThrowsAsync<MachoWrappedException>(() => travel.CallAsync(Call(pilot, "CmdJumpToStructureBeacon", 2, new PyLong(StructureId), new PyInt(Jita))).AsTask())));
+
+            // the jammer goes offline: the pilot has no access to the beacon Cyno Beacon service
+            await SetServiceAsync(source, StructureServiceIds.CynoJammer, ServiceState.Offline);
+            Assert.Equal("You do not have access to use that cynosural beacon.",
+                NoticeOf(await Assert.ThrowsAsync<MachoWrappedException>(() => travel.CallAsync(Call(pilot, "CmdJumpToStructureBeacon", 3, new PyLong(StructureId), new PyInt(Jita))).AsTask())));
+
+            // the beacon service goes offline: its check comes first
+            await SetServiceAsync(source, StructureServiceIds.CynoBeacon, ServiceState.Offline);
+            Assert.Equal("That cynosural beacon service is offline.",
+                NoticeOf(await Assert.ThrowsAsync<MachoWrappedException>(() => travel.CallAsync(Call(pilot, "CmdJumpToStructureBeacon", 4, new PyLong(StructureId), new PyInt(Jita))).AsTask())));
+        }
+        finally { await host.ShutdownAsync(); }
+    }
 }

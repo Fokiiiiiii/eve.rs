@@ -185,6 +185,11 @@ public sealed partial class SpaceContainers
         {
             return await SettleScanAsync(cycle);
         }
+        // an entosis link's cycle: the capture of its hub is not settled yet (ST-9 c); refused by name, so the link ends rather than counting a capture
+        if (cycle.IsModule && cycle.Command == SimModuleWorkCommands.Entosis)
+        {
+            return WorkOutcome.Refuse("ENTOSIS_CAPTURE_NOT_SETTLED");
+        }
         if (cycle.Command is not (SimDroneCommands.MineRepeatedly or SimDroneCommands.Salvage))
         {
             return WorkOutcome.Refuse("UNSUPPORTED_COMMAND");

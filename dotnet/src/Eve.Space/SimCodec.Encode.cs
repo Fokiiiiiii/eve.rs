@@ -397,6 +397,13 @@ private static void WriteStructureDamageCorrelation(
                 w.F64(pointDefense.RangeMeters);
                 foreach (var damage in pointDefense.Damage) w.F64(damage);
                 break;
+            case SimAction.Entosis entosis:
+                if (!(double.IsFinite(entosis.RangeMeters) && entosis.RangeMeters > 0))
+                {
+                    throw new ArgumentException("an entosis link reaches a positive number of metres", nameof(action));
+                }
+                w.U8(31); w.F64(entosis.RangeMeters);
+                break;
             case SimAction.CommandBurst burst:
                 if (!(double.IsFinite(burst.RangeMeters) && burst.RangeMeters >= 0))
                 {

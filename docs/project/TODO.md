@@ -2415,7 +2415,7 @@ Document readback observed parent main HEAD `c114dc0d8e292c056e8d71b37f496084f48
 | Status | Row | Notes |
 |---|---|---|
 | VERIFIED (PG, Host registration, Sim fake) | (a) a Sovereignty Hub is a structure ball from the sovereignty records on system entry (`SpaceSovHubs`, `SpaceSovHubsTests` 5 of 5, 0 skipped) | DEVIATIONS "Sovereignty Hub ball (ST-9 a)". Position at the origin, client state unverified. |
-| OPEN | (b) `EntosisLinkEffect` body: Sov Hub target only, 20 000 m range, lock, alliance membership, cycle 300 000 ms | Next increment. |
+| VERIFIED (Rust and C# unit, fixtures, Host build) | (b) `EntosisLinkEffect` body: protocol 70, tag 31, command 14; sov-hub target and alliance refused by name; lock and reach refused by name in the sim; package 300 000 ms, 20 000 m, fuel per cycle | DEVIATIONS "Entosis link: the body and its refusals (ST-9 b)". The command 14 cycle is refused `ENTOSIS_CAPTURE_NOT_SETTLED` until (c). |
 | OPEN | (c) capture state per hub, durable, pause and reverse, restart-safe | |
 | OPEN | (d) completion through the sovereignty write path, ADM from the indices | Command nodes are out of scope (the owned-hub completion is recorded when built). |
 | OPEN | (e) tests through Host registration and Sim; gap manifest in `ModuleEffectsTests` | |

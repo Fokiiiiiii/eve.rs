@@ -405,6 +405,9 @@ public static class SimModuleWorkCommands
 
     /// <summary>A P.A.N.I.C.'s start: the host grants the ships it reaches (<see cref="SimModuleWorkCycle.Recipients"/>) their buffs before the effect starts (protocol 43).</summary>
     public const byte Panic = 13;
+
+    /// <summary>An Entosis Link's cycle ended with its structure in reach (protocol 70): the host settles the capture. It carries no mining numbers.</summary>
+    public const byte Entosis = 14;
 }
 
 /// <summary>A layer of a ship's health.</summary>
@@ -509,6 +512,12 @@ public abstract record SimAction
     /// parks its start until the host grants the ships of its fleet in <paramref name="RangeMeters"/> (plus one metre) their buffs (<see cref="SimModuleWorkCommands.Panic"/>).
     /// </summary>
     public sealed record Panic(double RangeMeters) : SimAction;
+
+    /// <summary>
+    /// An Entosis Link's cycle (tag 31, protocol 70): non-offensive. Its target is a structure the pilot holds the lock on, within <paramref name="RangeMeters"/> (plus one
+    /// metre); at each cycle's end the host settles the capture (<see cref="SimModuleWorkCommands.Entosis"/>).
+    /// </summary>
+    public sealed record Entosis(double RangeMeters) : SimAction;
 
     /// <summary>A structure point-defense cycle; the host authorizes damageable candidates per cycle, and damage keeps the four SDE channels.</summary>
     public sealed record PointDefense(double RangeMeters, IReadOnlyList<double> Damage) : SimAction

@@ -27,7 +27,7 @@ public sealed class SimLinkException(SimLinkError error, string message) : Excep
 /// </summary>
 public static partial class SimCodec
 {
-    public const ushort ProtocolVersion = 69;
+    public const ushort ProtocolVersion = 70;
     /// <summary>The largest frame either side accepts (1 MiB).</summary>
     public const int MaxFrame = 1 << 20;
 
@@ -527,13 +527,14 @@ public static partial class SimCodec
                     var recipients = ReadRecipients(ref r);
                     // probabilities are at most one, the rolls below one, the numbers finite and not negative; a mining cycle mines something
                     if (cycleId == 0 || command is not (SimDroneCommands.MineRepeatedly or SimDroneCommands.Salvage or SimModuleWorkCommands.ConsumeFuel
-                            or SimModuleWorkCommands.ScanCargo or SimModuleWorkCommands.ScanShip or SimModuleWorkCommands.Burst or SimModuleWorkCommands.Panic)
+                            or SimModuleWorkCommands.ScanCargo or SimModuleWorkCommands.ScanShip or SimModuleWorkCommands.Burst or SimModuleWorkCommands.Panic
+                            or SimModuleWorkCommands.Entosis)
                         || new[] { mining, wasteMultiplier, critMultiplier, accessBonus }.Any(n => !double.IsFinite(n) || n < 0)
                         || new[] { wasteProbability, critProbability }.Any(p => !double.IsFinite(p) || p < 0 || p > 1)
                         || new[] { wasteRoll, roundingRoll, critRoll }.Any(roll => !double.IsFinite(roll) || roll < 0 || roll >= 1)
                         || (command == SimDroneCommands.MineRepeatedly && mining <= 0)
-                        // a fuel cycle and a scan carry no mining numbers: they ask for fuel or reveal a target only
-                        || (command is SimModuleWorkCommands.ConsumeFuel or SimModuleWorkCommands.ScanCargo or SimModuleWorkCommands.ScanShip or SimModuleWorkCommands.Burst or SimModuleWorkCommands.Panic
+                        // a fuel cycle, a scan and an entosis link carry no mining numbers: they ask for fuel, reveal a target or settle a capture only
+                        || (command is SimModuleWorkCommands.ConsumeFuel or SimModuleWorkCommands.ScanCargo or SimModuleWorkCommands.ScanShip or SimModuleWorkCommands.Burst or SimModuleWorkCommands.Panic or SimModuleWorkCommands.Entosis
                             && new[] { mining, wasteMultiplier, wasteProbability, critProbability, critMultiplier, accessBonus }.Any(n => n != 0))
                         // only a command burst names ships: the ships in reach of its cycle
                         || (command is not (SimModuleWorkCommands.Burst or SimModuleWorkCommands.Panic) && recipients is { Count: > 0 }))

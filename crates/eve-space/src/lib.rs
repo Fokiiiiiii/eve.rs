@@ -39,6 +39,7 @@ pub mod sim;
 pub mod slim;
 pub mod strike;
 pub mod targeting;
+pub mod entosis;
 pub mod tractor;
 pub mod visibility;
 pub mod warp;

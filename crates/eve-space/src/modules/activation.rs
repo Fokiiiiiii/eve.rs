@@ -354,6 +354,29 @@ impl Scene {
                 }];
             }
         }
+        // an entosis link works on a structure the pilot holds the lock on, within its reach (EVE.js resolveEntosisLinkActivation: the same refusal names)
+        if let Some(Action::Entosis { range_meters }) = effect.action.as_ref() {
+            if effect.target_id <= 0 {
+                return vec![Out::Refused { session, command: CODE, reason: "TARGET_REQUIRED" }];
+            }
+            let Some(structure) = self.system().body(effect.target_id).filter(|body| body.kind == crate::world::BodyKind::Structure) else {
+                return vec![Out::Refused { session, command: CODE, reason: "TARGET_NOT_FOUND" }];
+            };
+            if !self.locked_by(session).contains(&effect.target_id) {
+                return vec![Out::Refused { session, command: CODE, reason: "TARGET_NOT_LOCKED" }];
+            }
+            let apart = self.surface_distance_to_structure(session, effect.target_id).unwrap_or(f64::INFINITY);
+            if apart > range_meters + crate::entosis::REACH_GRACE_METERS {
+                return vec![Out::TargetRefused {
+                    session,
+                    command: CODE,
+                    reason: "TARGET_OUT_OF_RANGE",
+                    target_type: structure.type_id,
+                    desired_range: *range_meters,
+                    actual_distance: apart,
+                }];
+            }
+        }
         if let Some(Action::Doomsday { delay_ms, damage, immobile_ms, no_jump_ms }) = effect.action.as_ref() {
             let numbers = [*delay_ms, *immobile_ms, *no_jump_ms];
             if !numbers.iter().all(|n| n.is_finite() && *n >= 0.0)

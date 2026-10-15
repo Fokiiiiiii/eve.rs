@@ -5,6 +5,7 @@ using Eve.Macho;
 using Eve.Marshal;
 using Eve.Services;
 using Eve.Services.Core;
+using Eve.Services.Inventory;
 using Eve.Sde;
 using Eve.Skills;
 using Eve.Structures;
@@ -23,6 +24,8 @@ public sealed class StructureCompressionTests
     private const long Character = 20, Structure = 1_000_000_000_001, Station = 60015249, Ship = 1_000_000_000_050;
     private const int Veldspar = 1230, CompressedVeldspar = 62516, Tritanium = 34, Cytoserocin = 25268, CompressedCytoserocin = 62396;
     private const int Astrahus = 35832, GasDecompressionSkill = 62452;
+    private const long Corporation = 98_000_001, Outsider = 98_000_002;
+    private const int CorporationDivisionOne = 115;
 
     private sealed class Route : IAsyncDisposable
     {
@@ -48,6 +51,8 @@ public sealed class StructureCompressionTests
         public StructureCompressionAuthority Authority { get; }
         public Sink Packets { get; }
         public ClientSession Session { get; }
+        public Corporate Corporate { get; init; } = new();
+        public CharacterSessions Sessions { get; init; } = new();
 
         public static async Task<Route> CreateAsync(string pgUrl)
         {
@@ -63,8 +68,17 @@ public sealed class StructureCompressionTests
             var items = new PgItemStore(source, schemas[0]);
             var structures = new StructureStore(source, schemas[1]);
             var skills = new PgSkillStore(source, schemas[2]);
-            var authority = new StructureCompressionAuthority(source, structures, items, dogma, sde, skills);
-            return new Route(schemas, source, items, structures, skills, authority, new Sink());
+            var corporate = new Corporate();
+            var sessions = new CharacterSessions();
+            var authority = new StructureCompressionAuthority(source, structures, items, dogma, sde, skills,
+                (character, corporation, station, division, operation, token) =>
+                {
+                    corporate.Asked.Add((character, corporation, station, division, operation));
+                    return ValueTask.FromResult(corporate.Take);
+                },
+                (connection, transaction, corporation, station, token) => Task.FromResult(corporate.Office),
+                sessions);
+            return new Route(schemas, source, items, structures, skills, authority, new Sink()) { Corporate = corporate, Sessions = sessions };
         }
 
         /// <summary>A structure of the owner with its Reprocessing service online (or offline).</summary>
@@ -77,11 +91,11 @@ public sealed class StructureCompressionTests
             await transaction.CommitAsync();
         }
 
-        public async Task<long> GiveAsync(int type, long location, int flag = ItemFlags.Hangar, long quantity = 1, bool singleton = false)
+        public async Task<long> GiveAsync(int type, long location, int flag = ItemFlags.Hangar, long quantity = 1, bool singleton = false, long owner = Character)
         {
             await using var connection = await Source.OpenConnectionAsync();
             await using var transaction = await connection.BeginTransactionAsync();
-            var id = await Items.CreateAsync(connection, transaction, new NewItem(type, Character, location, flag, quantity, singleton));
+            var id = await Items.CreateAsync(connection, transaction, new NewItem(type, owner, location, flag, quantity, singleton));
             await transaction.CommitAsync();
             return id;
         }
@@ -110,6 +124,14 @@ public sealed class StructureCompressionTests
             }
             await Source.DisposeAsync();
         }
+    }
+
+    /// <summary>What the corporation rules of the test grant: an office at the structure, and the take and query access to its division.</summary>
+    public sealed class Corporate
+    {
+        public bool Office { get; set; } = true;
+        public bool Take { get; set; } = true;
+        public List<(long Character, long Corporation, long Station, int Division, CorporationHangarOperation Operation)> Asked { get; } = [];
     }
 
     /// <summary>The packets a session was sent, in order.</summary>
@@ -259,5 +281,68 @@ public sealed class StructureCompressionTests
         await route.AnchorAsync();
 
         Assert.Equal((0.0, 0.0), await route.Authority.EfficiencyAsync(route.Call(method: "GetMyGasDecompressionEfficiency")));
+    }
+
+    [PgFact]
+    public async Task A_corporation_hangar_item_in_its_office_at_the_structure_is_compressed_into_the_corporation_hangar_by_a_member_who_may_take()
+    {
+        await using var route = await Route.CreateAsync(PgUrl());
+        await route.AnchorAsync();
+        var ore = await route.GiveAsync(Veldspar, Structure, CorporationDivisionOne, 1000, owner: Corporation);
+        route.Session.Set("structureid", new PyLong(Structure));
+        route.Session.Set("corpid", new PyInt(Corporation));
+
+        var outcome = await route.Authority.CompressAsync(route.Call(), ore);
+
+        var output = await route.Items.GetAsync(outcome.OutputItemId);
+        Assert.NotNull(output);
+        Assert.Equal((Corporation, Structure, CorporationDivisionOne, CompressedVeldspar, 1000L),
+            (output!.OwnerId, output.LocationId, output.Flag, output.TypeId, output.Quantity));
+        Assert.Null(await route.Items.GetAsync(ore));
+        Assert.Contains((Character, Corporation, Structure, CorporationDivisionOne, CorporationHangarOperation.Take), route.Corporate.Asked);
+    }
+
+    [PgFact]
+    public async Task A_corporation_hangar_item_is_refused_without_take_access_or_without_an_office_and_changes_nothing()
+    {
+        await using var route = await Route.CreateAsync(PgUrl());
+        await route.AnchorAsync();
+        var ore = await route.GiveAsync(Veldspar, Structure, CorporationDivisionOne, 1000, owner: Corporation);
+        route.Session.Set("structureid", new PyLong(Structure));
+        route.Session.Set("corpid", new PyInt(Corporation));
+        const string refusal = "That item is not in your hangar or your ship at this structure.";
+
+        route.Corporate.Take = false;
+        Assert.Equal(refusal, Notice(await Assert.ThrowsAsync<MachoWrappedException>(() => route.Authority.CompressAsync(route.Call(), ore))));
+        route.Corporate.Take = true;
+        route.Corporate.Office = false;
+        Assert.Equal(refusal, Notice(await Assert.ThrowsAsync<MachoWrappedException>(() => route.Authority.CompressAsync(route.Call(), ore))));
+
+        Assert.Equal(1000, (await route.Items.GetAsync(ore))!.Quantity);
+    }
+
+    [PgFact]
+    public async Task Corporation_members_online_who_may_query_the_division_are_told_of_the_change_and_outsiders_are_not()
+    {
+        await using var route = await Route.CreateAsync(PgUrl());
+        await route.AnchorAsync();
+        var ore = await route.GiveAsync(Veldspar, Structure, CorporationDivisionOne, 1000, owner: Corporation);
+        route.Session.Set("structureid", new PyLong(Structure));
+        route.Session.Set("corpid", new PyInt(Corporation));
+        var memberSink = new Sink();
+        var member = new ClientSession(memberSink) { SessionId = 40 };
+        member.Set("charid", new PyInt(41));
+        member.Set("corpid", new PyInt(Corporation));
+        route.Sessions.Enter(41, member);
+        var outsiderSink = new Sink();
+        var outsider = new ClientSession(outsiderSink) { SessionId = 42 };
+        outsider.Set("charid", new PyInt(43));
+        outsider.Set("corpid", new PyInt(Outsider));
+        route.Sessions.Enter(43, outsider);
+
+        await route.Authority.CompressAsync(route.Call(), ore);
+
+        Assert.NotEmpty(ItemChangeNotices(memberSink));
+        Assert.Empty(ItemChangeNotices(outsiderSink));
     }
 }

@@ -294,7 +294,12 @@ internal sealed partial class CharacterServicesComposition
             ReadGameStoreTableAsync, mailCache, characterSessions, SetStructureProfileAsync);
         Eve.Host.StructureNotifications.Subscribe(foundations.Events, structureStore, characterSessions,
             structureProfilesRpcBackend.GetMyHangarViewStateAsync);
-        structureCompression = new StructureCompressionAuthority(source, structureStore, items, dogma, sde, skills);
+        // the corporation office source reads its rental and the corporation hangar access when a pilot compresses (the office store is set later in the start-up)
+        structureCompression = new StructureCompressionAuthority(source, structureStore, items, dogma, sde, skills,
+            Eve.Host.HostInventoryServiceFactory.HangarAccessOf(corporations),
+            async (connection, transaction, corporationId, stationId, token) =>
+                await corporationOfficeStore.GetAsync(connection, transaction, corporationId, stationId, false, token) is not null,
+            characterSessions);
         // ST-2 a: the rename and the reinforcement times of a structure (the owner's Station Manager, Director or CEO)
         structureDeployment = new StructureDeploymentAuthority(source, structureStore, structureTimers, foundations.Scheduler, foundations.Events);
         // ST-2 b: Anchor, the item consumed and the structure created in one transaction; the simulation shows it once a pilot is in the system

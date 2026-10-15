@@ -58,6 +58,18 @@ public sealed partial class SpaceContainers
     /// <summary>How close two observatories may be deployed, surface to surface (EveJS <c>MOBILE_OBSERVATORY_MIN_DISTANCE_FROM_OWN_GROUP_METERS</c>).</summary>
     private const double ObservatorySpacingMeters = 10_000;
 
+    /// <summary>The distance an observatory keeps from a station, stargate or Upwell structure, surface to surface (EVE.js <c>MOBILE_OBSERVATORY_MIN_DISTANCE_FROM_STATION_STARGATE_UPWELL_METERS</c>).</summary>
+    private const double ObservatoryLandmarkSpacingMeters = 1_000_000;
+
+    /// <summary>The solar system ids of the Abyssal host locations (EVE.js <c>ABYSSAL_LOCATION_ID_MIN</c> to <c>ABYSSAL_LOCATION_ID_MAX</c>): an observatory is refused there.</summary>
+    private const int AbyssalLocationMin = 32_000_001, AbyssalLocationMax = 32_000_200;
+
+    /// <summary>
+    /// The fixed bodies of a system (positions in metres) that a Mobile Observatory keeps away from: its stations, stargates and Upwell structures (EVE.js
+    /// <c>collectPlacementBlockers</c>, kind stationStargateUpwell). Null: the check is not made.
+    /// </summary>
+    public Func<int, CancellationToken, Task<IReadOnlyList<double[]>>>? ReadObservatoryLandmarks { get; set; }
+
     /// <summary>The anchoring time of an observatory: ten minutes (the wiki; EveJS <c>MOBILE_OBSERVATORY_ACTIVATION_DELAY_MS</c>; the SDE gives none for the type).</summary>
     private static readonly TimeSpan ObservatoryAnchoringTime = TimeSpan.FromMinutes(10);
 
@@ -175,6 +187,10 @@ public sealed partial class SpaceContainers
             throw Refuse("Mobile Cynosural Beacons cannot be deployed in Pochven.");
         }
         // a Mobile Observatory is not deployed in wormhole space, in Pochven or above the security cutoff (the wiki, "Mobile Observatory"; EveJS's texts)
+        if (observatory && system is >= AbyssalLocationMin and <= AbyssalLocationMax)
+        {
+            throw Refuse("Mobile Observatories cannot be deployed in Abyssal space.");
+        }
         if (observatory && Eve.Services.Core.LocatorRules.IsWormhole(system))
         {
             throw Refuse("Mobile Observatories cannot be deployed in wormhole space.");
@@ -206,6 +222,10 @@ public sealed partial class SpaceContainers
         if (observatory && await CloseToAnotherObservatoryAsync(system, position, radius, now, cancellationToken))
         {
             throw Refuse("Another Mobile Observatory is too close to deploy one here.");
+        }
+        if (observatory && await CloseToLandmarkAsync(system, position, radius, cancellationToken))
+        {
+            throw Refuse("A station, stargate or Upwell structure is too close to deploy a Mobile Observatory here.");
         }
 
         var dropped = await _ships.DropDisruptorAsync(character, shipId, itemId, system, cancellationToken)
@@ -260,6 +280,24 @@ public sealed partial class SpaceContainers
             }, cancellationToken);
         }
         return deployable.Id;
+    }
+
+    /// <summary>Whether a station, stargate or Upwell structure of the system lies within the spacing of <paramref name="position"/>, surface to surface.</summary>
+    private async Task<bool> CloseToLandmarkAsync(int system, double[] position, double radius, CancellationToken cancellationToken)
+    {
+        if (ReadObservatoryLandmarks is not { } read)
+        {
+            return false;
+        }
+        // shortcut: the landmarks' radii are not subtracted (a few km against a 1 000 km spacing), upgrade when the SDE radii are read
+        foreach (var body in await read(system, cancellationToken))
+        {
+            if (MetersBetween(body, position) - radius < ObservatoryLandmarkSpacingMeters)
+            {
+                return true;
+            }
+        }
+        return false;
     }
 
     /// <summary>Whether an observatory on record in the system lies within the spacing of <paramref name="position"/>, surface to surface (its time not up).</summary>

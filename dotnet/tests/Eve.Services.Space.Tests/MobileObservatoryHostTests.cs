@@ -19,6 +19,8 @@ public class MobileObservatoryHostTests
     private const long PochvenSystem = 30000021;
     /// <summary>Jita: high security, where an observatory is refused.</summary>
     private const long HighSecSystem = 30000142;
+    /// <summary>The first Abyssal host location (EVE.js ABYSSAL_LOCATION_ID_MIN): an observatory is refused in Abyssal space.</summary>
+    private const long AbyssalSystem = 32_000_001;
     private const long AnchoringMs = 600_000;
     private const long PingIntervalMs = 600_000;
     private const long LifetimeMs = (60 + 40) * 60_000 + 30_000;
@@ -155,6 +157,38 @@ public class MobileObservatoryHostTests
         var refused = await Assert.ThrowsAsync<MachoWrappedException>(() => rig.Containers.LaunchFromShipAsync(session, items[0], CancellationToken.None));
 
         Assert.Contains("Pochven", Texts(refused.Error.Payload));
+        Assert.Equal(CharacterShips.CargoFlag, (await rig.Items.GetAsync(items[0]))!.Flag);
+        Assert.Empty(rig.Sim.Heard.OfType<SimPlaceObservatory>());
+    }
+
+    [PgFact]
+    public async Task A_station_within_a_thousand_km_of_the_drop_point_refuses_the_observatory_and_one_beyond_it_is_dropped()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var (session, items) = await PilotWithObservatoriesAsync(rig, 2, LowSecSystem);
+        // the drop point is 2 500 m ahead of the ship (the placement test above): a station 500 km from it is too close, one 1 500 km away is not
+        rig.Containers.ReadObservatoryLandmarks = (_, _) => Task.FromResult<IReadOnlyList<double[]>>([[502_500.0, 0.0, 0.0]]);
+
+        var refused = await Assert.ThrowsAsync<MachoWrappedException>(() => rig.Containers.LaunchFromShipAsync(session, items[0], CancellationToken.None));
+
+        Assert.Contains("too close", Texts(refused.Error.Payload));
+        Assert.Equal(CharacterShips.CargoFlag, (await rig.Items.GetAsync(items[0]))!.Flag);
+        Assert.Empty(rig.Sim.Heard.OfType<SimPlaceObservatory>());
+
+        rig.Containers.ReadObservatoryLandmarks = (_, _) => Task.FromResult<IReadOnlyList<double[]>>([[1_502_500.0, 0.0, 0.0]]);
+        Assert.Equal((long?)items[0], await rig.Containers.LaunchFromShipAsync(session, items[0], CancellationToken.None));
+        Assert.Single(rig.Sim.Heard.OfType<SimPlaceObservatory>());
+    }
+
+    [PgFact]
+    public async Task An_observatory_is_not_dropped_in_abyssal_space_and_stays_in_the_hold()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var (session, items) = await PilotWithObservatoriesAsync(rig, 1, AbyssalSystem);
+
+        var refused = await Assert.ThrowsAsync<MachoWrappedException>(() => rig.Containers.LaunchFromShipAsync(session, items[0], CancellationToken.None));
+
+        Assert.Contains("Abyssal space", Texts(refused.Error.Payload));
         Assert.Equal(CharacterShips.CargoFlag, (await rig.Items.GetAsync(items[0]))!.Flag);
         Assert.Empty(rig.Sim.Heard.OfType<SimPlaceObservatory>());
     }

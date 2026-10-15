@@ -19,7 +19,7 @@ Tests run (eve_p4 under db-lock.sh; counts from the logs):
 - .NET `Eve.Services.Space.Tests`: MobileObservatoryHostTests 6 + InhibitorHostTests 4 passed (10/10) after the merge. The full suite is run once at the end (see the push report).
 
 Gaps, not done:
-- Deployment rules still missing: the wiki's 100 km from a player control tower; EveJS distances from stations, stargates and Upwell structures (constant unverified); Abyssal refusal.
+- Deployment rules still missing: the wiki's 100 km from a player control tower (eve.rs has no starbase positions). Done in ST-13: EveJS's 1 000 km from stations, stargates and Upwell structures (`ObservatoryLandmarkSource`, `SpaceContainers.CloseToLandmarkAsync`) and the Abyssal refusal (host-location range). The wiki's 'deadspace' is not modelled.
 - The observatory's slim item does not carry component_activate or the decloak emitter attributes (EveJS `hydrateMobileObservatoryEntityFromInventoryItem`); the client ball and its FX are MITM only.
 - The cloak stabilization is 15 minutes for every cloak (EveJS reads the module's stabilizeCloakDuration). Covert cloaks are pinged (see DEVIATIONS, ST-E2).
 - The Host test rig registers the ping job by hand (Rig.cs), like the anchor job; SpaceComposition's registration line compiles but no composition-level test covers it.

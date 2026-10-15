@@ -355,6 +355,9 @@ internal sealed partial class CharacterServicesComposition
             spaceContainers = new SpaceContainers(sim, ships, items, new PgSpaceItemStore(source, spaceSchema), new PgWorkCycleLedger(source, spaceSchema), new Eve.Services.Space.EventBusFacts(foundations.Events), dogma, spaceSessions, now, message => Console.Error.WriteLine($"eve-host: cans: {message}"), deployed: new PgDeployedStore(source, spaceSchema), scheduler: foundations.Scheduler);
 
             spaceContainers.SiteContainers = siteContainers;
+            // a Mobile Observatory keeps 1 000 km from the stations, stargates and Upwell structures of its system (EVE.js collectPlacementBlockers)
+            var observatoryLandmarks = new ObservatoryLandmarkSource(source, structureStore, stations, await ObservatoryLandmarkSource.LoadStargatesAsync(sde));
+            spaceContainers.ReadObservatoryLandmarks = observatoryLandmarks.ReadAsync;
             // a container clears when its loot is taken: every move is announced in its transaction, and the container's hacks hear the moves it loses
             items.Events = foundations.Events;
             var siteContainerHacks = new Eve.Services.Space.SiteContainerHacks(source, siteContainers, items, foundations.Events, () => foundations.Scheduler.Now, id => spaceContainers.RemoveSiteContainer(id));

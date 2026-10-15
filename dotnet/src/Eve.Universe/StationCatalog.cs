@@ -20,6 +20,9 @@ public sealed class StationCatalog
 
     public Station? Get(long id) => _stations.GetValueOrDefault(id);
 
+    /// <summary>The stations of a solar system (EVE.js getStationsForSystem).</summary>
+    public IEnumerable<Station> InSystem(int solarSystemId) => _stations.Values.Where(station => station.SolarSystemId == solarSystemId);
+
     public IEnumerable<Station> All => _stations.Values;
 
     /// <summary>

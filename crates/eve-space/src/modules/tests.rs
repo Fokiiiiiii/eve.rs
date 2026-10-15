@@ -5074,3 +5074,16 @@ fn a_structure_bomb_answer_under_another_lease_or_naming_a_ship_outside_its_ques
     assert!(scene.deployables.is_empty());
 }
 
+#[test]
+fn a_controlled_structure_burst_reaches_nobody_once_its_controller_has_released_the_structure() {
+    let (mut scene, structure_id, _second, now) = controlled_structure_point_defense();
+    let target = other_spec().ship_id;
+    let started = scene.activate(A, structure_burst_effect(Remote::Web { percent: -20.0 }), now);
+    let (nonce, lease, cycle, ordinal, candidates) = burst_request(&started);
+    assert!(candidates.contains(&target));
+    // the controller releases the structure before the Host answers
+    let _ = scene.control_structure(A, scene.solar_system_id(), structure_id, spec().character_id, false, 39, now + 1);
+    scene.structure_damage_candidates_result(A, structure_id, MODULE, 6_481, nonce, lease, cycle, ordinal, &[target], now + 2);
+    assert!(!web_lands_on(&scene, B), "a late grant to a released structure authorizes nothing");
+}
+

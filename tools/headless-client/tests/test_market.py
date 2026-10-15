@@ -79,8 +79,9 @@ def test_a_docked_character_reads_the_market_as_the_client_does():
         # CharGetTransactions (proxy 6582): the personal fills, none for a new character (marketSvc.py:20-26)
         assert m.plain(client.call("marketProxy", "CharGetTransactions", None)) == []
 
-        # BuyMultipleItems (proxy 6915) with no line: the empty list, which BuyMulti iterates (marketsvc.py:270-273)
-        assert m.plain(client.call("marketProxy", "BuyMultipleItems", station_id, [], False)) == []
+        # BuyMultipleItems (proxy 6915) with no line: the rowset of the orders created, empty, which BuyMulti iterates (marketsvc.py:270-273)
+        created = m.plain(client.call("marketProxy", "BuyMultipleItems", station_id, [], False))
+        assert created[0] == "eve.common.script.sys.rowset.Rowset" and created[1]["lines"] == []
 
         # PlaceMultiSellOrder with no line: no order traded, so False (proxy 6967; sellMulti.py:462-469)
         assert m.plain(client.call("marketProxy", "PlaceMultiSellOrder", [], False, 90, None)) is False

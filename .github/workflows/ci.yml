@@ -88,9 +88,17 @@ jobs:
       - run: cargo clippy --workspace --all-targets -- -D warnings
 
   dotnet:
-    name: .NET (build, test)
+    name: .NET (${{ matrix.shard.name }})
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        # one service container per shard, so the shards do not share a database; the two largest projects get a shard each
+        shard:
+          - { name: "space tests", only: "Eve.Services.Space.Tests" }
+          - { name: "host tests", only: "Eve.Host.Tests" }
+          - { name: "all other tests", only: "" }
     services:
       postgres:
         image: postgres:18
@@ -129,11 +137,26 @@ jobs:
           key: sde-${{ steps.sde-build.outputs.build }}
       - name: Load the static data into PostgreSQL
         run: cargo run -q -p eve-sde -- ensure --pg "$EVE_PG_URL"
+      - name: Build
+        working-directory: dotnet
+        run: dotnet build EveRs.slnx -c Release -nologo --verbosity minimal
       - name: Test
         working-directory: dotnet
         env:
           EVE_PG_URL: Host=127.0.0.1;Port=5432;Username=postgres;Password=postgres;Database=eve
-        run: dotnet test EveRs.slnx -c Release -nologo --verbosity minimal
+          ONLY: ${{ matrix.shard.only }}
+        run: |
+          status=0
+          for proj in tests/*/*.csproj; do
+            name="$(basename "$proj" .csproj)"
+            if [ -n "$ONLY" ]; then
+              [ "$name" = "$ONLY" ] || continue
+            else
+              [ "$name" != "Eve.Services.Space.Tests" ] && [ "$name" != "Eve.Host.Tests" ] || continue
+            fi
+            dotnet test "$proj" -c Release --no-build -nologo --verbosity minimal || status=1
+          done
+          exit $status
 
   python:
     name: Python client (golden and mock-server tests)

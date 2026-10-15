@@ -397,6 +397,13 @@ private static void WriteStructureDamageCorrelation(
                 w.F64(pointDefense.RangeMeters);
                 foreach (var damage in pointDefense.Damage) w.F64(damage);
                 break;
+            case SimAction.Entosis entosis:
+                if (!(double.IsFinite(entosis.RangeMeters) && entosis.RangeMeters > 0))
+                {
+                    throw new ArgumentException("an entosis link reaches a positive number of metres", nameof(action));
+                }
+                w.U8(31); w.F64(entosis.RangeMeters);
+                break;
             case SimAction.CommandBurst burst:
                 if (!(double.IsFinite(burst.RangeMeters) && burst.RangeMeters >= 0))
                 {
@@ -521,7 +528,7 @@ private static void WriteStructureDamageCorrelation(
                 {
                     throw new ArgumentException("a structure burst has a positive range and duration and a remote effect of a burst family", nameof(action));
                 }
-                w.U8(31); w.F64(burst.RangeMeters); w.F64(burst.DurationMs); WriteRemoteWhat(w, burst.What);
+                w.U8(32); w.F64(burst.RangeMeters); w.F64(burst.DurationMs); WriteRemoteWhat(w, burst.What);
                 break;
             case SimAction.Remote remote:
                 w.U8(1); w.U8(remote.AtCycleEnd ? (byte)1 : (byte)0); w.F64(remote.Optimal); w.F64(remote.Falloff); w.Text(remote.Jam);
@@ -530,7 +537,7 @@ private static void WriteStructureDamageCorrelation(
         }
     }
 
-    /// <summary>A remote effect's kind and numbers, as the remote action carries them (and a structure burst, tag 31).</summary>
+    /// <summary>A remote effect's kind and numbers, as the remote action carries them (and a structure burst, tag 32).</summary>
     private static void WriteRemoteWhat(Writer w, SimRemote what)
     {
         switch (what)

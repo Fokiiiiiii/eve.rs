@@ -288,6 +288,7 @@ impl Scene {
                 .session_of(effect.target_id)
                 .and_then(|target| self.apart(session, target))
                 .is_some_and(|apart| reach.share(apart).is_some()),
+            Some(Action::Entosis { range_meters }) => self.entosis_target_ok(session, effect.target_id, *range_meters),
             _ => true,
         };
         locked && in_reach
@@ -535,6 +536,7 @@ impl Scene {
                 0.0,
             ),
             Action::CommandBurst { .. } => (WORK_BURST, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0),
+            Action::Entosis { .. } => (WORK_ENTOSIS, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0),
             Action::Salvage { access_bonus } => (WORK_SALVAGE, 0.0, 0.0, 0.0, 0.0, 0.0, *access_bonus),
             // a scan carries no mining numbers: the host reads the target and decides what it reveals
             Action::Scan { cargo, .. } => {

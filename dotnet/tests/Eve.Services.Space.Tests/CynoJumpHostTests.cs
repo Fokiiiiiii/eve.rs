@@ -661,4 +661,29 @@ public class CynoJumpHostTests
         Assert.Contains("Pochven", Texts(refused.Error.Payload));
         Assert.DoesNotContain(rig.Sim.Heard.OfType<SimCommand>(), command => command.Code == SimCommands.OpenBridge);
     }
+
+    /// <summary>A Pharolux cynosural beacon of a structure (SDE 35840) in the destination system, the target of a structure jump.</summary>
+    private const long StructureBeacon = 1_000_000_050;
+    private const int PharoluxBeaconType = 35_840;
+
+    [PgFact]
+    public async Task A_revelation_jumps_to_an_accessible_structure_beacon_as_it_does_to_a_field()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var (session, character, ship, oid) = await JumperAsync(rig, fuel: 50_000);
+        var drive = Drive(rig);
+        rig.Sim.Heard.Clear();
+
+        // the host has checked the beacon, its service, the jammer and the access; the drive checks the ship, range, fuel and fatigue, then spools
+        var answer = await drive.JumpToStructureBeaconAsync(session, StructureBeacon, PharoluxBeaconType, Destination, oid, CancellationToken.None);
+
+        // the simulation is asked to jump to the beacon of the structure as to a field: the structure id, its system, the spool and the capacitor share
+        var spool = Assert.Single(rig.Sim.Heard.OfType<SimCommand>(), command => command.Code == SimCommands.CynoJump);
+        Assert.Equal(new double[] { StructureBeacon, Destination, Spool, 0.95 }, spool.Args.ToArray());
+        Assert.IsType<PyTuple>(answer);
+        // one light year: 3 000 units of helium, and the fatigue and the cooldown of two steps
+        Assert.Equal(47_000, await rig.Ships.FuelHeldAsync(character.CharacterId, ship, Helium));
+        var state = await new PgJumpFatigueStore(rig.Source, rig.SpaceSchema).GetAsync(character.CharacterId);
+        Assert.Equal((rig.Now + 20 * Minute, rig.Now + 2 * Minute), (state.FatigueUntilMs, state.CooldownUntilMs));
+    }
 }

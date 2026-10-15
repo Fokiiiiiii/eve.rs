@@ -76,8 +76,19 @@ internal sealed partial class CharacterServicesComposition
     private async ValueTask<long?> CynoJammerOnlineSimTimeAsync(long solarSystemId, CancellationToken token)
     {
         await using var connection = await source.OpenConnectionAsync(token);
-        return Eve.Structures.StructureJammer.StateAt(
-            await structureStore.OnlineSinceAsync(connection, null, (int)solarSystemId, Eve.Structures.StructureServiceIds.CynoJammer, token), now());
+        return await JammerStateAsync(connection, null, solarSystemId, token);
+    }
+
+    /// <summary>
+    /// The jammer state of a system (E-03): its online jammer service counts only with the Cynosural Suppression upgrade of the system online (EveJS
+    /// getCynoJammerActivationTimeMs, which asks isCynoSuppressionUpgradeOnline).
+    /// </summary>
+    private async Task<long?> JammerStateAsync(NpgsqlConnection connection, NpgsqlTransaction? transaction, long solarSystemId, CancellationToken token)
+    {
+        var since = await structureStore.OnlineSinceAsync(connection, transaction, (int)solarSystemId, Eve.Structures.StructureServiceIds.CynoJammer, token);
+        if (since is null || !await sovereigntyReadModel.IsCynoSuppressionOnlineAsync(solarSystemId, token))
+            return null;
+        return Eve.Structures.StructureJammer.StateAt(since, now());
     }
 
     /// <summary>Whether standard cynosural fields are refused in the system (its jammer runs: the state is 0).</summary>
@@ -224,22 +235,20 @@ internal sealed partial class CharacterServicesComposition
                 message => Console.Error.WriteLine($"eve-host: space structures: {message}"));
             spaceStructures.Subscribe(foundations.Events);
             spaceSessions.PlaceStructuresAsync = RestoreStructuresAndCynoBeaconsAsync;
+            // ST-9 a: a system's Sovereignty Hub is in the simulation once a pilot comes into the system, from the sovereignty records (inert until an entosis link targets it)
+            // ST-9 b: the entosis link's only target is the system's sovereignty hub, from the same records
+            spaceSessions.IsSovereigntyHubAsync = async (systemId, targetId, token) =>
+                Eve.Services.Space.SpaceSovHubs.HubOf(await sovereigntyReadModel.ReadSnapshotAsync(token), systemId) is { } hub && hub.HubId == targetId;
+            _ = new Eve.Services.Space.SpaceSovHubs(sim, spaceSessions, dogma,
+                async (systemId, token) => Eve.Services.Space.SpaceSovHubs.HubOf(await sovereigntyReadModel.ReadSnapshotAsync(token), systemId),
+                message => Console.Error.WriteLine($"eve-host: space sovereignty hubs: {message}"));
         }
         // ST-7: the service fuel is paid from the fuel bay (inventory) at each full hour; the rules are the SDE's service modules
         structureFuel = new Eve.Structures.StructureFuel(structureStore, foundations.Scheduler, structureTimers, ServiceFuelRulesSource.Load(dogma), new InventoryStructureFuelBay(items, dogma, foundations.Events));
         structureFuel.Register();
         SetupStructureCynoBeaconRuntime();
         // E-15: a change of the system's jammer is announced to the pilots in that system (EveJS sovNotifications broadcastCynoJammerChanged)
-        foundations.Events.Subscribe("structure.cyno_jammer_notice", [Eve.Structures.StructureTimers.ServiceChangedTopic], async (context, cancellation) =>
-        {
-            var change = context.Event.Payload<Eve.Structures.StructureServiceChanged>()!;
-            if (change.ServiceId != Eve.Structures.StructureServiceIds.CynoJammer)
-                return;
-            var since = await structureStore.OnlineSinceAsync(context.Connection, context.Transaction, change.SolarSystemId, Eve.Structures.StructureServiceIds.CynoJammer, cancellation);
-            var state = Eve.Structures.StructureJammer.StateAt(since, now());
-            foreach (var session in characterSessions.InSpace(change.SolarSystemId))
-                session.SendNotification("OnCynoJammerChanged", "solarsystemid2", new PyLong(change.SolarSystemId), state is { } value ? new PyLong(value) : PyNone.Instance);
-        });
+        new Eve.Host.Persistence.Structures.StructureCynoJammerNotifications(JammerStateAsync, characterSessions).Subscribe(foundations.Events);
         await using (var connection = await source.OpenConnectionAsync())
         await using (var transaction = await connection.BeginTransactionAsync())
         {

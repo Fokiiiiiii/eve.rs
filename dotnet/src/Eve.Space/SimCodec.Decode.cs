@@ -471,6 +471,15 @@ public static partial class SimCodec
                     }
                     return new SimAction.Panic(range);
                 }
+            case 31:
+                {
+                    var range = r.F64();
+                    if (!(double.IsFinite(range) && range > 0))
+                    {
+                        throw new SimLinkException(SimLinkError.BadValue, "bad entosis action");
+                    }
+                    return new SimAction.Entosis(range);
+                }
             case 28:
                 {
                     var range = r.F64();
@@ -711,7 +720,7 @@ public static partial class SimCodec
                     }
                     return new SimAction.Remote(what, optimal, falloff, when == 1, jam);
                 }
-            case 31:
+            case 32:
                 {
                     var (range, duration) = (r.F64(), r.F64());
                     var what = ReadBurstWhat(ref r);

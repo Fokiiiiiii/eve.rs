@@ -337,6 +337,9 @@ fn effect_of(case: &Value) -> Effect {
                     speed_factor: a["speedFactor"].as_f64().unwrap(),
                 };
             }
+            if a["kind"] == "entosis" {
+                return Action::Entosis { range_meters: a["rangeMeters"].as_f64().unwrap() };
+            }
             if a["kind"] == "structureBurst" {
                 return Action::StructureBurst {
                     range: a["range"].as_f64().unwrap(),

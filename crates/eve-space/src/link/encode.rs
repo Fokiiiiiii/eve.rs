@@ -552,6 +552,10 @@ pub(super) fn put_action(out: &mut Vec<u8>, action: &Action) {
             out.push(29);
             out.extend_from_slice(&range_meters.to_le_bytes());
         }
+        Action::Entosis { range_meters } => {
+            out.push(31);
+            out.extend_from_slice(&range_meters.to_le_bytes());
+        }
         Action::CommandBurst { range_meters } => {
             out.push(28);
             out.extend_from_slice(&range_meters.to_le_bytes());
@@ -675,7 +679,7 @@ pub(super) fn put_action(out: &mut Vec<u8>, action: &Action) {
             out.extend_from_slice(&range.to_le_bytes());
         }
         Action::StructureBurst { range, duration_ms, what } => {
-            out.push(31);
+            out.push(32);
             out.extend_from_slice(&range.to_le_bytes());
             out.extend_from_slice(&duration_ms.to_le_bytes());
             put_remote_what(out, what);
@@ -691,7 +695,7 @@ pub(super) fn put_action(out: &mut Vec<u8>, action: &Action) {
     }
 }
 
-/// The kind and numbers of a remote effect as the remote action carries them (and a structure burst, tag 31).
+/// The kind and numbers of a remote effect as the remote action carries them (and a structure burst, tag 32).
 fn put_remote_what(out: &mut Vec<u8>, what: &Remote) {
     let layer_byte = |layer: &Layer| match layer {
         Layer::Shield => 0,

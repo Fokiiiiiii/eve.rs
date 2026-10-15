@@ -177,6 +177,22 @@ public sealed partial class SpaceSessions
         {
             return ModuleResult.Refusal(warpRefusal, warpModule.TypeId, _statics.Type(warpModule.TypeId)?.Name ?? "");
         }
+        // an entosis link works on a sovereignty hub only, and only for a capsuleer of an alliance (EVE.js resolveEntosisLinkActivation: the target is
+        // checked before the membership); the simulation keeps the lock and the reach
+        if (targetId > 0 && string.Equals(effectName, Eve.Services.Space.Effects.EntosisLinkEffect.Name, StringComparison.OrdinalIgnoreCase)
+            && snapshot.Fitted.FirstOrDefault(m => m.Id == moduleId) is { } entosisModule)
+        {
+            var entosisName = _statics.Type(entosisModule.TypeId)?.Name ?? "";
+            var hub = IsSovereigntyHubAsync is { } isHub && await isHub(pilot.SolarSystemId, targetId, cancellationToken).ConfigureAwait(false);
+            if (!hub)
+            {
+                return ModuleResult.Refusal("ENTOSIS_TARGET_NOT_SOV_HUB", entosisModule.TypeId, entosisName);
+            }
+            if ((session.GetInt("allianceid") ?? 0) <= 0)
+            {
+                return ModuleResult.Refusal("ALLIANCE_MEMBERSHIP_REQUIRED", entosisModule.TypeId, entosisName);
+            }
+        }
         // a transport field carries the capsuleer ships of the system and holds the capitals among them: the host lists them (the ships of a system are its own)
         await _statics.EnsureTypesAsync(_pilots.Values.Select(other => other.TypeId), cancellationToken).ConfigureAwait(false);
         var neighbours = _pilots.Values

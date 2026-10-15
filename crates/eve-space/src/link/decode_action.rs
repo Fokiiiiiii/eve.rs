@@ -124,7 +124,7 @@ pub(super) fn read_action(reader: &mut Reader) -> Result<Action, DecodeError> {
             }
             Ok(Action::Bomb { ball, kind, lifetime_ms, blast_radius, damage, ecm, neutralize })
         }
-        31 => {
+        32 => {
             let range = reader.f64()?;
             let duration_ms = reader.f64()?;
             let what = read_remote_what(reader)?;
@@ -236,6 +236,13 @@ pub(super) fn read_action(reader: &mut Reader) -> Result<Action, DecodeError> {
                 return Err(DecodeError::BadValue("kamikaze"));
             }
             Ok(Action::Kamikaze { damage, range })
+        }
+        31 => {
+            let range_meters = reader.f64()?;
+            if !range_meters.is_finite() || range_meters <= 0.0 {
+                return Err(DecodeError::BadValue("entosis"));
+            }
+            Ok(Action::Entosis { range_meters })
         }
         25 => {
             let centre = [reader.f64()?, reader.f64()?, reader.f64()?];

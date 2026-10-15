@@ -164,10 +164,10 @@ def action(a):
                 + struct.pack("<10d", m["radius"], m["mass"], m["agility"], m["hitPoints"], m["maxVelocity"], m["flightTimeMs"],
                               m["explosionRadius"], m["explosionVelocity"], m["damageReductionFactor"], m["damageReductionSensitivity"])
                 + dot_bytes(None) + struct.pack("<4d", *a["damage"]))
-    # the SimAction tag 31 (protocol 70, ST-8b): a controlled structure's burst projector: its reach and duration in metres and milliseconds, then the remote
+    # the SimAction tag 32 (protocol 71, ST-8b): a controlled structure's burst projector: its reach and duration in metres and milliseconds, then the remote
     # effect of its family (the same kinds and numbers as the remote action)
     if kind == "structureBurst":
-        return bytes([31]) + struct.pack("<2d", a["range"], a["durationMs"]) + remote_what(a)
+        return bytes([32]) + struct.pack("<2d", a["range"], a["durationMs"]) + remote_what(a)
     if kind == "stasisBurst":
         return bytes([21]) + struct.pack("<3d", a["range"], a["durationMs"], a["speedFactor"])
     if kind == "warpProbe":
@@ -179,6 +179,9 @@ def action(a):
     # the SimAction tag 29 (protocol 43, track C6): the Pulse Activated Nexus Invulnerability Core's fleet reach, in metres
     if kind == "panic":
         return bytes([29]) + struct.pack("<d", a["rangeMeters"])
+    # the SimAction tag 31 (protocol 70): an Entosis Link's cycle, the reach of its link in metres (its target is a structure the pilot holds the lock on)
+    if kind == "entosis":
+        return bytes([31]) + struct.pack("<d", a["rangeMeters"])
     if kind == "cynoField":
         return bytes([27]) + deployable(a["ball"]) + struct.pack("<d", a["lifetimeMs"])
     if kind == "bomb":
@@ -247,7 +250,7 @@ def action(a):
 
 
 def remote_what(a):
-    """A remote effect's kind and numbers (the tags of the remote action; a structure burst, tag 31, carries the same)."""
+    """A remote effect's kind and numbers (the tags of the remote action; a structure burst, tag 32, carries the same)."""
     what = a["what"]
     body = bytes([{"repair": 0, "transfer": 1, "neutralize": 2, "drain": 3, "web": 4, "paint": 5, "damp": 6, "scramble": 7, "jam": 8, "disrupt": 9, "guidanceDisrupt": 10}[what]])
     if what == "repair":
@@ -592,8 +595,8 @@ BARE = dict(IBIS, name="", modules=[], allianceId=99000001, securityStatus=-2.5,
             condition={"damage": 0.0, "armorDamage": 0.0, "shieldCharge": 1.0, "charge": 1.0})
 
 valid = [
-    {"name": "hello", "kind": "Hello", "version": 70},
-    {"name": "hello ack", "kind": "HelloAck", "version": 70, "pollHz": 4},
+    {"name": "hello", "kind": "Hello", "version": 71},
+    {"name": "hello ack", "kind": "HelloAck", "version": 71, "pollHz": 4},
     {"name": "enter by undocking", "kind": "Enter", "sessionId": "1790646377000015", "solarSystemId": 30100032,
      "how": 0, "stationId": "60015249", "ship": IBIS},
     {"name": "enter already in space, no modules, non-ASCII name", "kind": "Enter", "sessionId": "1",
@@ -855,6 +858,12 @@ valid = [
      "effect": {"moduleId": "9988400002813", "moduleType": 42522, "effectId": 6719, "fx": "",
                 "durationMs": 240000.0, "capacitorNeed": 0.0, "repeat": 1, "targetId": "0",
                 "action": {"kind": "panic", "rangeMeters": 200000.0},
+                "onChanges": [], "offChanges": []}},
+    # protocol 70 (ST-9 b): an Entosis Link I (34593, effect 6063): one cycle of 300 s, reaching 20 km, on a structure the pilot holds the lock on (no charge, fuel per cycle)
+    {"name": "activate an entosis link (Entosis Link I, 20 km, a locked structure)", "kind": "Activate", "sessionId": "1790646377000015",
+     "effect": {"moduleId": "9988400002813", "moduleType": 34593, "effectId": 6063, "fx": "",
+                "durationMs": 300000.0, "capacitorNeed": 0.0, "repeat": 1, "targetId": "1040000000777",
+                "action": {"kind": "entosis", "rangeMeters": 20000.0},
                 "onChanges": [], "offChanges": []}},
     {"name": "activate a tracking disruptor", "kind": "Activate", "sessionId": "1790646377000015",
      "effect": {"moduleId": "9988400002812", "moduleType": 2108, "effectId": 6424, "fx": "effects.TrackingDisruption",
@@ -1177,6 +1186,12 @@ valid = [
      "wasteMultiplier": 0.0, "wasteProbability": 0.0, "critProbability": 0.0, "critMultiplier": 0.0,
      "accessDifficultyBonus": 0.0, "wasteRoll": 0.25, "roundingRoll": 0.5, "critRoll": 0.75,
      "recipients": ["9988400001939", "9988400001940"]},
+    # protocol 70 (ST-9 b): an entosis link's cycle asks the host to settle the capture (command 14); it carries no mining numbers
+    {"name": "module work cycle of an entosis link's cycle (command 14), no numbers", "kind": "ModuleWorkCycle", "sessionId": "1790646377000015",
+     "characterId": "140000342", "shipId": "9988400001939", "solarSystemId": 30100032, "moduleId": "9988400002813",
+     "targetId": "1040000000777", "cycleId": "7301444403200000006", "command": 14, "miningAmountM3": 0.0,
+     "wasteMultiplier": 0.0, "wasteProbability": 0.0, "critProbability": 0.0, "critMultiplier": 0.0,
+     "accessDifficultyBonus": 0.0, "wasteRoll": 0.0, "roundingRoll": 0.0, "critRoll": 0.0},
     {"name": "module work cycle of a command burst reaching only its own ship", "kind": "ModuleWorkCycle", "sessionId": "1790646377000015",
      "characterId": "140000342", "shipId": "9988400001939", "solarSystemId": 30100032, "moduleId": "9988400002813",
      "targetId": "0", "cycleId": "7301444403200000005", "command": 12, "miningAmountM3": 0.0,
@@ -1354,6 +1369,8 @@ burst_cycle = named("module work cycle of a command burst reaching two ships")
 burst_negative = dict(burst, effect=dict(burst["effect"], action=dict(burst["effect"]["action"], action={"kind": "commandBurst", "rangeMeters": -1.0})))
 panic = named("activate the invulnerability core (Pulse Activated Nexus Invulnerability Core, 200 km)")
 panic_negative = dict(panic, effect=dict(panic["effect"], action={"kind": "panic", "rangeMeters": -1.0}))
+entosis = named("activate an entosis link (Entosis Link I, 20 km, a locked structure)")
+entosis_negative = dict(entosis, effect=dict(entosis["effect"], action={"kind": "entosis", "rangeMeters": 0.0}))
 grant = named("module work cycle of the invulnerability core's grant, two ships in reach")
 buff_state = named("buff state of a ship: a shield resistance buff and a repair buff")
 point_defense = named("activate a Standup Point Defense Battery I (wire action sentinel)")
@@ -1491,6 +1508,7 @@ invalid = [
     {"name": "cargo scan carrying mining numbers", "reason": "bad-value",
      "hex": build(dict(named("module work cycle of a cargo scan (command 10) carrying no numbers"), miningAmountM3=20.0)).hex()},
     {"name": "invulnerability core with a negative reach", "reason": "bad-value", "hex": build(panic_negative).hex()},
+    {"name": "entosis link with a zero reach", "reason": "bad-value", "hex": build(entosis_negative).hex()},
     {"name": "invulnerability core's grant carrying mining numbers", "reason": "bad-value",
      "hex": build(dict(grant, miningAmountM3=20.0)).hex()},
     {"name": "burst recipients with a count the frame cannot hold", "reason": "truncated",

@@ -97,8 +97,9 @@ public static class ModuleRefusals
             "UNSUPPORTED_EFFECT" or "EFFECT_NOT_IMPLEMENTED" => Notify($"{name} cannot be activated."),
             // a module whose type the static data does not publish (the Standup oscillator 47068) and a structure module of a fit it may not take (REFUSED)
             "MODULE_NOT_PUBLISHED" or "REFUSED" or "UNSUPPORTED_MODULE" => Notify($"{name} cannot be activated."),
-            // a module that acts on a structure (the entosis link): no structure is in space on this server yet (phase 3)
-            "STRUCTURES_PHASE_3" => Notify($"{name} acts on a structure, and structures are not on this server yet (phase 3)."),
+            // the entosis link works on a sovereignty hub only (EVE.js resolveEntosisLinkActivation); the text is ours (no client string is verified)
+            "ENTOSIS_TARGET_NOT_SOV_HUB" => Notify($"{name} can only act on a sovereignty hub."),
+            "ALLIANCE_MEMBERSHIP_REQUIRED" => Notify($"{name} can only be used by a member of an alliance."),
             // a module of a group of which one runs at a time (the reactive armor hardeners) while another of its group runs
             "MAX_GROUP_ACTIVE" => Notify($"{name} cannot run while another module of its group is active."),
             // a launcher whose kind is not run yet names its reason (MissileEffect.RefusedLauncherGroups):

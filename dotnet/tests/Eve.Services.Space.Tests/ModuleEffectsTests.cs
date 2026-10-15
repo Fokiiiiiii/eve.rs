@@ -789,7 +789,6 @@ public class ModuleEffectsTests
             "doomsdayAOEPaint",
             "doomsdayAOETrack",
             "doomsdayAOEWeb",
-            "entosisLink",
             "microJumpPortalDrive",
             "microJumpPortalDriveCapital",
             "moduleTitanEffectGenerator",
@@ -1084,6 +1083,38 @@ public class ModuleEffectsTests
             world.SetValue(shipId, disallowCloaking, 1);
             Assert.Equal("CLOAK_DISALLOWED", Eve.Services.Space.ModulePackages.Of(snapshot, statics, moduleId, cloakEffect.Name, 0, 1).Reason);
         }
+    }
+
+    /// <summary>
+    /// ST-9 b: an entosis link is a package of a 300 s cycle reaching 20 km (attribute 54), that burns its consumption type (713) each cycle and is aimed at the
+    /// target it is given. A link with no target, or with no reach in its static data, is refused by name before any package is built.
+    /// </summary>
+    [Fact]
+    public void An_entosis_link_packages_a_300_second_cycle_of_20_km_on_its_target()
+    {
+        var (snapshot, statics, moduleId, _) = Fixture(6063, "entosisLink", Eve.Dogma.EffectDef.Target,
+            new Dictionary<int, double> { [54] = 20000, [73] = 300000, [713] = 16275, [6] = 0 });
+
+        var result = Eve.Services.Space.ModulePackages.Of(snapshot, statics, moduleId, "entosisLink", 70005L, 1);
+
+        var package = Assert.IsType<Eve.Space.SimEffect>(result.Effect);
+        Assert.Null(result.Reason);
+        Assert.Equal(300000d, package.DurationMs);
+        Assert.Equal(70005L, package.TargetId);
+        Assert.Equal(new Eve.Space.SimAction.Entosis(20000), package.Action);
+        Assert.True(package.BurnsFuel);
+    }
+
+    [Fact]
+    public void An_entosis_link_without_a_target_or_without_a_reach_is_refused_by_name()
+    {
+        var (snapshot, statics, moduleId, _) = Fixture(6063, "entosisLink", Eve.Dogma.EffectDef.Target,
+            new Dictionary<int, double> { [54] = 20000, [73] = 300000 });
+        Assert.Equal("TARGET_REQUIRED", Eve.Services.Space.ModulePackages.Of(snapshot, statics, moduleId, "entosisLink", 0L, 1).Reason);
+
+        var (noReach, noReachStatics, noReachModule, _) = Fixture(6063, "entosisLink", Eve.Dogma.EffectDef.Target,
+            new Dictionary<int, double> { [73] = 300000 });
+        Assert.Equal("UNSUPPORTED_MODULE", Eve.Services.Space.ModulePackages.Of(noReach, noReachStatics, noReachModule, "entosisLink", 70005L, 1).Reason);
     }
 
     private static (Eve.Ships.ShipSnapshot Snapshot, DogmaStatic Statics, long ModuleId, long ShipId) Fixture(

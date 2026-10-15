@@ -154,6 +154,42 @@ public sealed class PersistenceSovFwReadModel(
     }
 
 
+    /// <summary>The Cynosural Suppression upgrade (SDE 81619; EveJS TYPE_CYNO_SUPPRESSION_UPGRADE).</summary>
+    private const long CynoSuppressionUpgradeTypeId = 81619;
+
+    /// <summary>
+    /// E-03: whether the system runs its Cynosural Suppression upgrade (EveJS isCynoSuppressionUpgradeOnline): the system has a hub and the hub
+    /// has the upgrade installed and online.
+    /// shortcut: reads the stored online flag only; EveJS also needs the upgrade power state (sovModernState computeHubUpgradeSnapshot, the local power and
+    /// workforce budget), which is not ported; upgrade with the sov upgrade budget.
+    /// </summary>
+    public async ValueTask<bool> IsCynoSuppressionOnlineAsync(long solarSystemId, CancellationToken cancellationToken)
+    {
+        if (solarSystemId <= 0)
+            return false;
+        var state = await readTable("sovereignty", cancellationToken);
+        if (state["systems"] is not JsonObject systems)
+            return false;
+        foreach (var (key, node) in systems)
+        {
+            if (node is not JsonObject system)
+                continue;
+            var systemId = Positive(Integer(system["solarSystemID"]));
+            if (systemId <= 0 &&
+                !long.TryParse(key, System.Globalization.NumberStyles.Integer,
+                    System.Globalization.CultureInfo.InvariantCulture, out systemId))
+                continue;
+            if (systemId != solarSystemId)
+                continue;
+            if (NullablePositive(system["infrastructureHubID"]) is null)
+                return false;
+            return system["hubUpgradeConfiguration"] is JsonArray configured && configured.OfType<JsonObject>().Any(upgrade =>
+                Positive(Integer(upgrade["typeID"])) == CynoSuppressionUpgradeTypeId &&
+                upgrade["online"] is JsonValue flag && flag.TryGetValue(out bool isOnline) && isOnline);
+        }
+        return false;
+    }
+
     public async ValueTask<IReadOnlyList<long>> ReadAllianceSystemsAsync(
         long allianceId,
         CancellationToken cancellationToken)

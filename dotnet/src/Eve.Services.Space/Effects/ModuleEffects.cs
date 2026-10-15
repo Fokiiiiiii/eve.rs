@@ -68,7 +68,7 @@ internal static class ModuleEffects
         .Register(new PointDefenseEffect())
         // the Standup burst projectors (ST-8b): each pulse reaches the ships the Host authorizes for it (StructureBurstEffects.cs)
         .Register(new StructureBurstProjectorEffect())
-        // the entosis link acts on a structure: refused by name until structures exist (phase 3), see StructureModuleEffects.cs
+        // the entosis link works on a sovereignty hub (ST-9 b), see StructureModuleEffects.cs
         .Register(new EntosisLinkEffect())
         // the ship compressors: a facility for the fleet while they run (CompressionModuleEffect.cs)
         .Register(new CompressionModuleEffect())

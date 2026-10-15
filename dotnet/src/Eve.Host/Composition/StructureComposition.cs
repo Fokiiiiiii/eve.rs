@@ -248,15 +248,7 @@ internal sealed partial class CharacterServicesComposition
         structureFuel.Register();
         SetupStructureCynoBeaconRuntime();
         // E-15: a change of the system's jammer is announced to the pilots in that system (EveJS sovNotifications broadcastCynoJammerChanged)
-        foundations.Events.Subscribe("structure.cyno_jammer_notice", [Eve.Structures.StructureTimers.ServiceChangedTopic], async (context, cancellation) =>
-        {
-            var change = context.Event.Payload<Eve.Structures.StructureServiceChanged>()!;
-            if (change.ServiceId != Eve.Structures.StructureServiceIds.CynoJammer)
-                return;
-            var state = await JammerStateAsync(context.Connection, context.Transaction, change.SolarSystemId, cancellation);
-            foreach (var session in characterSessions.InSpace(change.SolarSystemId))
-                session.SendNotification("OnCynoJammerChanged", "solarsystemid2", new PyLong(change.SolarSystemId), state is { } value ? new PyLong(value) : PyNone.Instance);
-        });
+        new Eve.Host.Persistence.Structures.StructureCynoJammerNotifications(JammerStateAsync, characterSessions).Subscribe(foundations.Events);
         await using (var connection = await source.OpenConnectionAsync())
         await using (var transaction = await connection.BeginTransactionAsync())
         {

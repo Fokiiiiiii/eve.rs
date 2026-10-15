@@ -19,6 +19,12 @@ public sealed partial class SpaceSessions
     public Func<int, CancellationToken, Task>? PlaceStructuresAsync { get; set; }
 
     /// <summary>
+    /// Whether a structure is the sovereignty hub of its system (ST-9 b): the only target of an entosis link. Set by the host from the sovereignty records;
+    /// unset, no structure is a hub and an entosis link is refused.
+    /// </summary>
+    public Func<int, long, CancellationToken, Task<bool>>? IsSovereigntyHubAsync { get; set; }
+
+    /// <summary>
     /// <c>structureDocking.Dock(structureID, shipID)</c> (ST-3 a): the pilot asks to dock at a structure. Another ship, an unknown structure, a character
     /// without the docking access and a criminal timer are refused (EveJS structureDockingService.Handle_Dock). Out of range the ship goes to the structure
     /// on its own and the client is told the distance (DockingApproach); in range the simulation accepts the docking, and the ship is put in the structure's

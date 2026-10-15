@@ -298,7 +298,8 @@ impl Action {
             | Self::StasisBurst { .. }
             | Self::Defender { .. }
             | Self::CommandBurst { .. }
-            | Self::Panic { .. } => false,
+            | Self::Panic { .. }
+            | Self::Entosis { .. } => false,
             Self::Charged { action, fallback, .. } => {
                 action.offensive() || fallback.as_deref().is_some_and(Action::offensive)
             }
@@ -345,7 +346,7 @@ impl Action {
     fn is_work(&self) -> bool {
         matches!(
             self,
-            Self::Mining { .. } | Self::Salvage { .. } | Self::Scan { .. } | Self::CommandBurst { .. }
+            Self::Mining { .. } | Self::Salvage { .. } | Self::Scan { .. } | Self::CommandBurst { .. } | Self::Entosis { .. }
         )
     }
 }
@@ -370,6 +371,9 @@ pub(crate) const WORK_BURST: u8 = 12;
 
 /// The work command of a P.A.N.I.C.'s start (`SimModuleWorkCommands.Panic`, protocol 43): the host grants the fleet in reach its buffs before the effect starts.
 pub(crate) const WORK_PANIC: u8 = 13;
+
+/// The work command of an Entosis Link's cycle (`SimModuleWorkCommands.Entosis`, protocol 70): the host settles the capture; it carries no mining numbers.
+pub(crate) const WORK_ENTOSIS: u8 = 14;
 
 /// How long a parked work cycle waits before the same `cycle_id` is sent again (2 s of the simulation clock; DEVIATIONS.md, ADR 0013 rule 3).
 pub(crate) const WORK_RESEND_TICKS: i64 = 2 * TICKS_PER_SECOND;
@@ -471,6 +475,11 @@ pub enum Action {
     Scan {
         cargo: bool,
         reach: Reach,
+    },
+    /// An Entosis Link's cycle (tag 31, protocol 70): non-offensive (EVE.js effect 6063 `isOffensive` false). Its target is a structure the pilot holds the lock on,
+    /// within `range_meters` (plus one metre). At each cycle's end the simulation asks the host for the capture (`WORK_ENTOSIS`) and parks until it answers.
+    Entosis {
+        range_meters: f64,
     },
     /// A tractor beam (tag 9, protocol 30): it pulls the wreck or can it is locked on, at `velocity` metres a second, until it is `hold` metres off the
     /// ship's surface. `range` is the module's reach (`maxRange`): a target further off is out of reach, and the pull ends when it is out of reach

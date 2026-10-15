@@ -175,6 +175,10 @@ public class SimCodecTests
         {
             return new SimAction.CommandBurst((double)a["rangeMeters"]!);
         }
+        if ((string)a["kind"]! == "entosis")
+        {
+            return new SimAction.Entosis((double)a["rangeMeters"]!);
+        }
         if ((string)a["kind"]! == "cynoField")
         {
             return new SimAction.CynoField(DeployableOf(a["ball"]!), (double)a["lifetimeMs"]!);

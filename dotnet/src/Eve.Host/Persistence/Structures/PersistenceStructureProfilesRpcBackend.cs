@@ -272,6 +272,8 @@ public sealed class PersistenceStructureProfilesRpcBackend(
             meta["updatedAt"] = Now();
             root["meta"] = meta;
         }
+        // the cache refuses a write to a table it has not loaded (TABLE_NOT_FOUND): a corporation's first profile creates the table here
+        await gameStoreCache.LoadAsync(table, cancellationToken).ConfigureAwait(false);
         var result = gameStoreCache.Write(table, null, root);
         if (!result.Success)
             throw new InvalidOperationException($"Could not update {table}: {result.ErrorMsg}");

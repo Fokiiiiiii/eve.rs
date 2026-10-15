@@ -4755,3 +4755,106 @@ fn a_controlled_structure_vorton_arc_rechecks_and_authorizes_each_hop() {
         )));
         assert!(!scene.sim_damageable_entities.contains(&missile_id));
     }
+
+// ST-9 b: the Entosis Link (tag 31, protocol 70): a cycle on a locked structure, settled by the host as command 14 (`WORK_ENTOSIS`).
+
+/// An Entosis Link's effect (effect 6063, group 1313): a 300 s cycle, reaching `range` metres, on `target`.
+fn entosis(range: f64, target: i64) -> Effect {
+    let mut effect = repairer(Layer::Shield, 0.0, Applies::CycleEnd);
+    effect.module_type = 34593;
+    effect.effect_id = 6063;
+    effect.fx = String::new();
+    effect.duration_ms = 300_000.0;
+    effect.capacitor_need = 0.0;
+    effect.repeat = 1;
+    effect.target_id = target;
+    effect.action = Some(Action::Entosis { range_meters: range });
+    effect
+}
+
+/// A structure ball of the scene at `position` (the host puts a sovereignty hub in space this way), with the id `structure_id`.
+fn hub_at(scene: &mut Scene, structure_id: i64, position: [f64; 3], now: i64) {
+    let mut placement = crate::scene::tests::structure_placement(scene, now);
+    placement.structure_id = structure_id;
+    placement.position = position;
+    scene.place_structure(placement, now);
+}
+
+/// The reason of a refusal of an activation, if it was refused.
+fn refused_reason(out: &[Out]) -> Option<&'static str> {
+    out.iter().find_map(|item| match item {
+        Out::Refused { reason, .. } | Out::TargetRefused { reason, .. } => Some(*reason),
+        _ => None,
+    })
+}
+
+const HUB: i64 = 1_040_000_000_777;
+
+#[test]
+fn an_entosis_link_needs_a_structure_it_holds_the_lock_on_in_reach() {
+    let (mut scene, t) = crowd();
+    let here = scene.pilots[&A].ship.position;
+    hub_at(&mut scene, HUB, [here.x + 5_000.0, here.y, here.z], t);
+    assert_eq!(refused_reason(&scene.activate(A, entosis(20_000.0, 0), t)), Some("TARGET_REQUIRED"));
+    assert_eq!(refused_reason(&scene.activate(A, entosis(20_000.0, partner()), t)), Some("TARGET_NOT_FOUND"));
+    assert_eq!(refused_reason(&scene.activate(A, entosis(20_000.0, HUB), t)), Some("TARGET_NOT_LOCKED"));
+}
+
+#[test]
+fn an_entosis_link_cycle_asks_the_host_for_command_14_and_ends_when_the_answer_is_accepted() {
+    let (mut scene, t) = crowd();
+    let here = scene.pilots[&A].ship.position;
+    hub_at(&mut scene, HUB, [here.x + 5_000.0, here.y, here.z], t);
+    let asked = scene.target_order(A, crate::targeting::Order::Lock(HUB), t);
+    assert!(asked.iter().any(|o| matches!(o, Out::Targets { .. })), "{asked:?}");
+    let (_, t) = poll_until(&mut scene, t, 6.0);
+    assert_eq!(scene.locked_by(A), vec![HUB]);
+    assert!(matches!(scene.activate(A, entosis(20_000.0, HUB), t).first(), Some(Out::Accepted { .. })));
+
+    let (out, at) = poll_until(&mut scene, t, 301.0);
+    let cycles = work_cycles(&out);
+    assert_eq!(cycles.len(), 1, "one cycle of 300 s is asked of the host: {out:?}");
+    assert_eq!(cycles[0].1, 14, "an entosis cycle is command 14");
+    assert!(ended(&out).is_empty(), "the effect is parked until the host answers: {out:?}");
+
+    let answer = scene.module_work_result(
+        A,
+        MODULE,
+        ModuleWorkAnswer { target_id: HUB, cycle_id: cycles[0].0, accepted: true, reason: "", depleted: false },
+        at,
+    );
+    assert_eq!(ended(&answer), vec![1], "an accepted cycle ends the one cycle the effect has: {answer:?}");
+}
+
+#[test]
+fn a_refused_entosis_cycle_ends_the_effect_with_the_host_reason() {
+    let (mut scene, t) = crowd();
+    let here = scene.pilots[&A].ship.position;
+    hub_at(&mut scene, HUB, [here.x + 5_000.0, here.y, here.z], t);
+    scene.target_order(A, crate::targeting::Order::Lock(HUB), t);
+    let (_, t) = poll_until(&mut scene, t, 6.0);
+    assert!(matches!(scene.activate(A, entosis(20_000.0, HUB), t).first(), Some(Out::Accepted { .. })));
+    let (out, at) = poll_until(&mut scene, t, 301.0);
+    let cycle = work_cycles(&out)[0].0;
+    let refused = scene.module_work_result(
+        A,
+        MODULE,
+        ModuleWorkAnswer { target_id: HUB, cycle_id: cycle, accepted: false, reason: "ENTOSIS_TARGET_NOT_CAPTURABLE", depleted: false },
+        at,
+    );
+    assert_eq!(ended(&refused), vec![5], "a refused cycle stops the link (WorkRefused): {refused:?}");
+}
+
+#[test]
+fn an_entosis_link_refuses_a_structure_beyond_its_reach_by_name() {
+    let (mut scene, t) = crowd();
+    let here = scene.pilots[&A].ship.position;
+    // the test structure's 60 km ball, its centre 70 km off: its surface is 10 km off, beyond a 5 km link (the lock reaches that far)
+    hub_at(&mut scene, HUB, [here.x + 70_000.0, here.y, here.z], t);
+    scene.target_order(A, crate::targeting::Order::Lock(HUB), t);
+    let (_, t) = poll_until(&mut scene, t, 6.0);
+    assert_eq!(scene.locked_by(A), vec![HUB]);
+    let out = scene.activate(A, entosis(5_000.0, HUB), t);
+    assert_eq!(refused_reason(&out), Some("TARGET_OUT_OF_RANGE"), "{out:?}");
+}
+

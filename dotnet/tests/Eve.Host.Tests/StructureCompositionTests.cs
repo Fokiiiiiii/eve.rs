@@ -495,9 +495,24 @@ public sealed class StructureCompositionTests : IAsyncLifetime
             await host.ShutdownAsync();
         }
 
+        // a redelivery of the committed event (the subscriber's cursor rewound before the restart) writes no second notice
+        await using (var rewind = source.CreateCommand(
+            $"UPDATE {Schema("EVE_EVENTS_SCHEMA")}.subscribers SET cursor_id = 0 WHERE name = 'structure.reinforcement_changed.notifications'"))
+        {
+            Assert.Equal(1, await rewind.ExecuteNonQueryAsync());
+        }
         var restarted = await HostComposition.BuildAsync(Settings());
         try
         {
+            async Task<bool> RedeliveredAsync()
+            {
+                await using var connection = await source.OpenConnectionAsync();
+                await using var command = new NpgsqlCommand(
+                    $"SELECT (SELECT cursor_id FROM {Schema("EVE_EVENTS_SCHEMA")}.subscribers WHERE name = 'structure.reinforcement_changed.notifications') >= (SELECT max(id) FROM {Schema("EVE_EVENTS_SCHEMA")}.outbox)",
+                    connection);
+                return (bool)(await command.ExecuteScalarAsync())!;
+            }
+            Assert.True(await WaitForAsync(RedeliveredAsync, TimeSpan.FromSeconds(60)));
             Assert.Equal(1, await RecordCountAsync(sender));
             Assert.Equal(1, await RecordCountAsync(member));
             Assert.Equal(0, await RecordCountAsync(foreign));

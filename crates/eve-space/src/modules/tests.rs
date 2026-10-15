@@ -4755,3 +4755,220 @@ fn a_controlled_structure_vorton_arc_rechecks_and_authorizes_each_hop() {
         )));
         assert!(!scene.sim_damageable_entities.contains(&missile_id));
     }
+
+/// A Standup burst projector's effect on the controlled structure: the family's remote effect, reaching 100 km as a cycle starts (ST-8b).
+fn structure_burst_effect(what: Remote) -> Effect {
+    let mut effect = point_defense_effect();
+    effect.effect_id = 6_481;
+    effect.fx = String::new();
+    effect.action = Some(Action::StructureBurst { range: 100_000.0, duration_ms: 10_000.0, what });
+    effect
+}
+
+/// The Host request of a structure damage step: (activation nonce, lease generation, cycle id, pulse ordinal, candidate ids).
+fn burst_request(out: &[Out]) -> (u64, i64, u64, u32, Vec<i64>) {
+    match out.iter().find(|o| matches!(o, Out::StructureDamageCandidatesRequest { .. })) {
+        Some(Out::StructureDamageCandidatesRequest {
+            activation_nonce,
+            control_lease_generation,
+            cycle_id,
+            pulse_hop_ordinal,
+            candidate_ids,
+            ..
+        }) => (*activation_nonce, *control_lease_generation, *cycle_id, *pulse_hop_ordinal, candidate_ids.clone()),
+        _ => panic!("the controlled structure asks the Host for its burst's candidates"),
+    }
+}
+
+/// Whether a web (a lower top speed) lands on the ship of `session` (the ship's numbers, worked by what lands on it).
+fn web_lands_on(scene: &Scene, session: SessionId) -> bool {
+    let base = crate::ewar::Base {
+        max_velocity: 100.0,
+        signature_radius: 100.0,
+        max_target_range: 100.0,
+        scan_resolution: 100.0,
+        sensor_strength: [1.0; 4],
+    };
+    scene.pilots[&session].incoming.worked(&base).max_velocity < base.max_velocity
+}
+
+#[test]
+fn a_controlled_structure_burst_web_reaches_only_the_ships_the_host_authorizes_at_each_pulse() {
+    let (mut scene, structure_id, _second, now) = controlled_structure_point_defense();
+    let target = other_spec().ship_id;
+    let started = scene.activate(A, structure_burst_effect(Remote::Web { percent: -20.0 }), now);
+    let (nonce, lease, cycle, ordinal, candidates) = burst_request(&started);
+    assert_eq!(ordinal, 0);
+    assert!(candidates.contains(&target), "the ship in reach is a candidate: {candidates:?}");
+    assert!(!candidates.contains(&structure_id), "the structure is never its own candidate");
+    assert!(!web_lands_on(&scene, B), "nothing lands before the Host answers");
+
+    // no grant: the pulse settles and reaches nothing
+    scene.structure_damage_candidates_result(A, structure_id, MODULE, 6_481, nonce, lease, cycle, ordinal, &[], now + 1);
+    assert!(!web_lands_on(&scene, B));
+
+    // the next pulse asks afresh, a reply under a released lease is refused, the correlated grant reaches the ship
+    let next = scene.poll(now + 10 * SECOND);
+    let (next_nonce, next_lease, next_cycle, next_ordinal, fresh) = burst_request(&next);
+    assert_ne!(next_cycle, cycle, "each pulse is a new cycle for the Host");
+    assert!(fresh.contains(&target));
+    scene.structure_damage_candidates_result(
+        A,
+        structure_id,
+        MODULE,
+        6_481,
+        next_nonce,
+        next_lease + 1,
+        next_cycle,
+        next_ordinal,
+        &[target],
+        now + 10 * SECOND + 2,
+    );
+    assert!(!web_lands_on(&scene, B), "a reply under another lease generation reaches nothing");
+    scene.structure_damage_candidates_result(
+        A,
+        structure_id,
+        MODULE,
+        6_481,
+        next_nonce,
+        next_lease,
+        next_cycle,
+        next_ordinal,
+        &[target],
+        now + 10 * SECOND + 3,
+    );
+    assert!(web_lands_on(&scene, B), "the authorized ship is webbed by the pulse");
+}
+
+#[test]
+fn a_controlled_structure_burst_jam_rolls_only_for_the_ships_the_host_authorizes() {
+    let (mut scene, structure_id, _second, now) = controlled_structure_point_defense();
+    let target = other_spec().ship_id;
+    let started = scene.activate(A, structure_burst_effect(Remote::Jam { strength: [1_000.0; 4] }), now);
+    let (nonce, lease, cycle, ordinal, _) = burst_request(&started);
+    let none = scene.structure_damage_candidates_result(A, structure_id, MODULE, 6_481, nonce, lease, cycle, ordinal, &[], now + 1);
+    assert!(
+        !none.iter().any(|out| matches!(out, Out::EcmBurst { .. })),
+        "a jammer that is not granted a ship does not roll for it"
+    );
+    let next = scene.poll(now + 10 * SECOND);
+    let (next_nonce, next_lease, next_cycle, next_ordinal, _) = burst_request(&next);
+    let applied = scene.structure_damage_candidates_result(
+        A,
+        structure_id,
+        MODULE,
+        6_481,
+        next_nonce,
+        next_lease,
+        next_cycle,
+        next_ordinal,
+        &[target],
+        now + 10 * SECOND + 2,
+    );
+    assert!(applied.iter().any(|out| matches!(
+        out,
+        Out::EcmBurst { ship_id, reached, .. }
+            if *ship_id == structure_id && reached.iter().any(|(reached_ship, _)| *reached_ship == target)
+    )), "the granted ship is the one the jammer rolls for: {applied:?}");
+}
+
+/// A Standup guided bomb launcher's effect on the controlled structure: one bomb of the damage kind, which goes off 12 seconds after the launch (the cycle is
+/// longer, so the launcher releases one bomb in these tests). The blast is authorized by the Host when it goes off (ST-8a).
+fn structure_bomb_effect() -> Effect {
+    let mut effect = point_defense_effect();
+    effect.module_type = 35_923;
+    effect.effect_id = 101;
+    effect.fx = "effects.MissileDeployment".to_string();
+    effect.duration_ms = 60_000.0;
+    effect.action = Some(Action::Bomb {
+        ball: crate::deployable::Spec {
+            charge_type_id: 27_920,
+            group_id: 90,
+            name: "Electron Bomb".to_string(),
+            radius: 40.0,
+        },
+        kind: crate::deployable::BombKind::Damage,
+        lifetime_ms: 12_000.0,
+        blast_radius: 100_000.0,
+        damage: [5_800.0, 0.0, 0.0, 0.0],
+        ecm: [0.0; 4],
+        neutralize: 0.0,
+    });
+    effect
+}
+
+/// The controlled structure of `controlled_structure_point_defense` with its bomb launched (the bomb is released where the structure is). The ship B is in
+/// its blast (B holds still where the crowd put it, out of the structure's tether range), and the bomb's Host question is returned once it is due.
+fn launched_structure_bomb() -> (Scene, i64, i64, i64, (u64, i64, u64, u32, Vec<i64>)) {
+    let (mut scene, structure_id, _second, now) = controlled_structure_point_defense();
+    // the target is out of its undock protection, as a ship the blast may hit is (the deployable tests do the same)
+    scene.pilots.get_mut(&B).expect("the target is in the scene").protected_until = 0;
+    let started = scene.activate(A, structure_bomb_effect(), now);
+    assert!(
+        !started.iter().any(|out| matches!(out, Out::StructureDamageCandidatesRequest { .. })),
+        "the launch itself is not an authorized damage step"
+    );
+    let due = scene.poll(now + 13 * SECOND);
+    let request = burst_request(&due);
+    assert!(request.4.contains(&other_spec().ship_id), "the ship in the blast is asked about: {:?}", request.4);
+    assert!(!request.4.contains(&structure_id), "the launching structure is not in its own blast");
+    (scene, structure_id, now, 0, request)
+}
+
+#[test]
+fn a_controlled_structure_bomb_blasts_only_the_ships_the_host_authorizes_when_it_goes_off() {
+    let (mut scene, structure_id, now, _, (nonce, lease, cycle, ordinal, _)) = launched_structure_bomb();
+    let before = scene.pilots.get(&B).map(|pilot| pilot.ship.health.clone());
+    assert_eq!(scene.pilots.get(&B).map(|pilot| pilot.ship.health.clone()), before, "nothing is hit before the Host answers");
+    scene.structure_damage_candidates_result(
+        A,
+        structure_id,
+        MODULE,
+        101,
+        nonce,
+        lease,
+        cycle,
+        ordinal,
+        &[other_spec().ship_id],
+        now + 13 * SECOND + 1,
+    );
+    assert_ne!(scene.pilots.get(&B).map(|pilot| pilot.ship.health.clone()), before, "the granted ship takes the blast (or is destroyed by it)");
+    assert!(scene.deployables.is_empty(), "the bomb went off");
+}
+
+#[test]
+fn a_structure_bomb_the_host_does_not_grant_or_does_not_answer_hurts_no_one() {
+    let (mut scene, structure_id, now, _, (nonce, lease, cycle, ordinal, _)) = launched_structure_bomb();
+    let before = scene.pilots.get(&B).map(|pilot| pilot.ship.health.clone());
+    // a grant of nothing: the blast reaches nothing
+    scene.structure_damage_candidates_result(A, structure_id, MODULE, 101, nonce, lease, cycle, ordinal, &[], now + 13 * SECOND + 1);
+    assert_eq!(scene.pilots.get(&B).map(|pilot| pilot.ship.health.clone()), before);
+    assert!(scene.deployables.is_empty(), "the bomb goes off and is taken out");
+
+    // a second bomb whose answer never comes: after the wait it goes off with no effect
+    let (mut scene, _structure_id, now, _, _) = launched_structure_bomb();
+    let before = scene.pilots.get(&B).map(|pilot| pilot.ship.health.clone());
+    let timed_out = scene.poll(now + 13 * SECOND + 31 * SECOND);
+    assert_eq!(scene.pilots.get(&B).map(|pilot| pilot.ship.health.clone()), before, "an unanswered blast reaches nobody");
+    assert!(scene.deployables.is_empty(), "the bomb is taken out after the wait");
+    assert!(
+        !timed_out.iter().any(|out| matches!(out, Out::StructureDamageCandidatesRequest { .. })),
+        "a timed-out blast is not asked again"
+    );
+}
+
+#[test]
+fn a_structure_bomb_answer_under_another_lease_or_naming_a_ship_outside_its_question_authorizes_nothing() {
+    let (mut scene, structure_id, now, _, (nonce, lease, cycle, ordinal, _)) = launched_structure_bomb();
+    let before = scene.pilots.get(&B).map(|pilot| pilot.ship.health.clone());
+    // another lease generation, and a ship the question never named: neither goes off on the target
+    scene.structure_damage_candidates_result(A, structure_id, MODULE, 101, nonce, lease + 1, cycle, ordinal, &[other_spec().ship_id], now + 13 * SECOND + 1);
+    scene.structure_damage_candidates_result(A, structure_id, MODULE, 101, nonce, lease, cycle, ordinal, &[i64::MAX], now + 13 * SECOND + 2);
+    assert_eq!(scene.pilots.get(&B).map(|pilot| pilot.ship.health.clone()), before, "no answer that is not the correlated, asked-for one authorizes the blast");
+    assert_eq!(scene.deployables.len(), 1, "the bomb keeps waiting for its authorization");
+    // the correlated answer that the Host gives settles it
+    scene.structure_damage_candidates_result(A, structure_id, MODULE, 101, nonce, lease, cycle, ordinal, &[other_spec().ship_id], now + 13 * SECOND + 3);
+    assert_ne!(scene.pilots.get(&B).map(|pilot| pilot.ship.health.clone()), before, "the granted ship is hit");
+    assert!(scene.deployables.is_empty());
+}
+

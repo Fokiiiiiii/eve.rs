@@ -8,6 +8,7 @@
 mod activation;
 mod cycle;
 pub use cycle::ModuleWorkAnswer;
+mod burst;
 mod effects;
 
 use eve_marshal::Value;
@@ -279,6 +280,7 @@ impl Action {
             Self::Remote { what, .. } => what.hostile(),
             Self::Smartbomb { .. }
             | Self::PointDefense { .. }
+            | Self::StructureBurst { .. }
             | Self::EcmBurst { .. }
             | Self::Strike { .. }
             | Self::Field { .. }
@@ -335,7 +337,7 @@ impl Action {
     /// Whether the action names no target (a command burst reaches the ships in its range, not one): the charged wrapper is looked through.
     fn targets_nothing(&self) -> bool {
         match self {
-            Self::CommandBurst { .. } | Self::Panic { .. } => true,
+            Self::CommandBurst { .. } | Self::Panic { .. } | Self::StructureBurst { .. } => true,
             Self::Charged { action, .. } => action.targets_nothing(),
             _ => false,
         }
@@ -414,6 +416,13 @@ pub enum Action {
     EcmBurst {
         range: f64,
         strength: [f64; 4],
+    },
+    /// A controlled structure's burst projector (ST-8b): each pulse applies `what` to the ships in `range` that the Host authorizes for that pulse. The
+    /// effect is the projected effect of its family, with the same numbers as the ship effect (`Remote`).
+    StructureBurst {
+        range: f64,
+        duration_ms: f64,
+        what: Remote,
     },
     /// Engages the ship's cloaking device (tag 5). A cloak that is not warp-safe (a standard cloaking device) holds the ship out of warp (`warp_safe` false).
     /// `targeting_delay_ms` is the cloak's cloakingTargetingDelay (attribute 560, milliseconds): the ship acquires no lock for that long after it decloaks.
@@ -864,6 +873,12 @@ pub(crate) enum PendingStructureDamageOperation {
         links_remaining: u32,
         struck_ids: Vec<i64>,
     },
+    /// A structure burst pulse: the ships the Host authorizes in `range_meters` at this pulse are reached by `what` for `duration_ms`.
+    StructureBurst {
+        range_meters: f64,
+        duration_ms: f64,
+        what: Remote,
+    },
 }
 
 /// One controlled-structure damage step parked on the Host's correlated allowed-target reply.
@@ -885,9 +900,9 @@ pub(crate) struct PendingStructureDamageRequest {
 pub(crate) struct Running {
     pub(crate) effect: Effect,
 /// A unique nonce for this activation, stable across its module cycles.
-    activation_nonce: u64,
+    pub(crate) activation_nonce: u64,
     /// The unique id of the module cycle currently in progress.
-    cycle_id: u64,
+    pub(crate) cycle_id: u64,
     /// When the cycle that is on began.
     cycle_start: i64,
     cycles: i32,

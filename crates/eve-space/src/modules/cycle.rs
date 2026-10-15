@@ -781,6 +781,14 @@ impl Scene {
         field_held_target_ids: &[i64],
         now: i64,
     ) -> Vec<Out> {
+        if let Some(out) = self.settle_bomb_impact(
+            session,
+            (structure_id, module_id, effect_id, activation_nonce, control_lease_generation, cycle_id, pulse_hop_ordinal),
+            allowed_target_ids,
+            now,
+        ) {
+            return out;
+        }
         let (mut out, settled) = self.with_controlled_structure_modules(now, |scene| {
             scene.apply_structure_damage_candidates_result(
                 session,
@@ -908,6 +916,15 @@ impl Scene {
             PendingStructureDamageOperation::VortonArcHop { anchor, arc, struck_ids, .. } => {
                 self.vorton_arc_candidate_ids(now, anchor, arc.range, struck_ids)
             }
+            PendingStructureDamageOperation::StructureBurst { range_meters, .. } => {
+                let mut ids: Vec<i64> = self
+                    .ships_in_area([pilot.ship.position.x, pilot.ship.position.y, pilot.ship.position.z], *range_meters, Some(structure_id), now)
+                    .into_iter()
+                    .map(|(_, ship_id)| ship_id)
+                    .collect();
+                ids.sort_unstable();
+                ids
+            }
         };
         let authorized: Vec<i64> = pending
             .candidate_ids
@@ -926,7 +943,7 @@ impl Scene {
         let commit_charge = !run.structure_damage_charge_committed
             && match &pending.operation {
                 PendingStructureDamageOperation::PointDefense { .. } => true,
-                PendingStructureDamageOperation::StrikePulse { .. } | PendingStructureDamageOperation::TransportFieldPulse { .. } => {
+                PendingStructureDamageOperation::StrikePulse { .. } | PendingStructureDamageOperation::TransportFieldPulse { .. } | PendingStructureDamageOperation::StructureBurst { .. } => {
                     pulse_hop_ordinal == 0
                 }
                 PendingStructureDamageOperation::VortonArcHop { .. } => pulse_hop_ordinal == 0,
@@ -965,6 +982,10 @@ impl Scene {
                         out.extend(self.damage_ship(session, module_type, (target_session, target_id), *damage, now));
                     }
                 }
+            }
+            PendingStructureDamageOperation::StructureBurst { duration_ms, what, .. } => {
+                let module_type = run.effect.module_type;
+                out.extend(self.apply_structure_burst(session, module_id, module_type, what, *duration_ms, &authorized, now));
             }
             PendingStructureDamageOperation::StrikePulse { origin, strike, module_type } => {
                 if let Some(strike) = strike {

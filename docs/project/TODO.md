@@ -2410,3 +2410,15 @@ Document readback observed parent main HEAD `c114dc0d8e292c056e8d71b37f496084f48
 ## Structure ST-8a skill inputs (2026-10-13)
 - VERIFIED (PG regression only): controlled structure DogmaWorld uses only Structure Doomsday Operation, Structure Electronic Systems, Structure Engineering Systems and Structure Missile Systems; mutable skill item values are independent from the retained personal snapshot. Character skill metadata and total SP are preserved. Host StructureControl subset: 12 PASS, 0 FAIL/SKIP. Evidence and source priority: docs/project/structures-phase/handoff-ST-8a-skills.md.
 - OPEN: ordinary structure module execution and full Host-to-Sim/EveJS comparison; ST-8b doomsdays and native client acceptance. This input-layer correction does not close those feature rows.
+
+## Structure ST-8 controlled-structure modules and superweapons (2026-10-15)
+
+- DONE (Sim and Host tests, not native): the Standup burst projectors 47069-47074 and 35944 (the structure's doomsdayAOE families: ECM, damp, web, paint, bubble, track, neutralization) on a controlled structure. Each cycle asks the Host, per pulse, which ships in reach the owner may affect (Kind 85/86); only the granted ships are reached (`modules/burst.rs`, `StructureBurstEffects.cs`). Tests: `modules::tests::a_controlled_structure_burst_*`, `StructureBurstAuthorizationTests`, simlink fixture `activate a structure ecm burst projector`.
+- DONE (Sim and Host tests, not native): Standup guided bomb launchers (35923, 47325) release their bombs as before; each blast is authorized per detonation, the blast reaching only the ships and structures the Host grants (a bomb not answered within 30 s goes off with no effect). Tests: `modules::tests::a_controlled_structure_bomb_*`, `a_structure_bomb_*`, `StructureBurstAuthorizationTests.A_standup_guided_bomb_launcher_*`.
+- DONE: the structure Vorton (35928, lightning, SDE hop attributes) authorizes each hop by the owner's facts (`A_standup_vorton_projector_*`); point defense authorizes each cycle (existing).
+- DONE: the Standup HOG 47068 is refused as `MODULE_NOT_PUBLISHED` (SDE publication bit kept on `TypeDef`), with nothing sent to the Sim.
+- FIXED: `FitsStructureDamageModule` refused any structure module with `disallowRepeatingActivation` when the client asked for a repeat above 1; the built effect carries the one-cycle budget, so the check is removed.
+- OPEN: the ship-fitted burst projectors (27678, 40635, 40696-40699, 40636, 41350) stay refused (no ship body; the manifest lists their effect names).
+- OPEN: native client acceptance of the structure bursts, bombs and Vorton (slim rendering, module HUD, FX), and a live Host-to-Sim walk through `run-eve-live.sh`.
+- OPEN: ST-8 not closed for the guided bomb after the controller releases the structure or the launcher is deactivated before the blast (fail closed: the blast reaches no one). See DEVIATIONS "Structure ST-8".
+

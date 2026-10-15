@@ -517,6 +517,16 @@ public abstract record SimAction
             && Damage is { Count: 4 } && Damage.All(amount => double.IsFinite(amount) && amount >= 0);
     }
 
+    /// <summary>
+    /// A controlled structure's burst projector (ST-8b, tag 31): each pulse applies <paramref name="What"/> to the ships in <paramref name="RangeMeters"/> that
+    /// the Host authorizes for that pulse. The remote effect is the family's own (neutralizer, web, painter, damp, disruptor, scrambler or jammer).
+    /// </summary>
+    public sealed record StructureBurst(double RangeMeters, double DurationMs, SimRemote What) : SimAction
+    {
+        public bool IsValid => double.IsFinite(RangeMeters) && RangeMeters > 0 && double.IsFinite(DurationMs) && DurationMs > 0
+            && What is SimRemote.Neutralize or SimRemote.Web or SimRemote.Paint or SimRemote.Damp or SimRemote.Disrupt or SimRemote.Scramble or SimRemote.Jam;
+    }
+
     /// <summary>Spools once, then shifts the ship along its heading; cooldown begins when the spool succeeds or is interrupted.</summary>
     public sealed record MicroJumpDrive(double DistanceMeters, long CooldownMs) : SimAction;
 

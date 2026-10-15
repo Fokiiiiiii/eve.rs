@@ -337,6 +337,13 @@ fn effect_of(case: &Value) -> Effect {
                     speed_factor: a["speedFactor"].as_f64().unwrap(),
                 };
             }
+            if a["kind"] == "structureBurst" {
+                return Action::StructureBurst {
+                    range: a["range"].as_f64().unwrap(),
+                    duration_ms: a["durationMs"].as_f64().unwrap(),
+                    what: burst_remote(a),
+                };
+            }
             if a["kind"] == "warpProbe" {
                 return Action::WarpProbe {
                     ball: deployable(&a["ball"]),
@@ -1648,5 +1655,35 @@ fn structure_vitals_of(case: &serde_json::Value) -> eve_space::health::Vitals {
             structure: layer("structure"),
         },
         armor_pinned: false,
+    }
+}
+
+/// The remote effect of a structure burst fixture (the kinds of the burst families, as the generator writes them).
+fn burst_remote(a: &serde_json::Value) -> Remote {
+    let number = |key: &str| a[key].as_f64().unwrap();
+    let optional = |key: &str| a.get(key).and_then(serde_json::Value::as_f64).unwrap_or(0.0);
+    match a["what"].as_str().unwrap() {
+        "neutralize" => Remote::Neutralize { amount: number("amount"), signature_resolution: number("signatureResolution") },
+        "web" => Remote::Web { percent: number("percent") },
+        "paint" => Remote::Paint { percent: number("percent") },
+        "damp" => Remote::Damp {
+            range_percent: number("rangePercent"),
+            resolution_percent: number("resolutionPercent"),
+            gravimetric_percent: optional("gravimetricStrengthPercent"),
+            ladar_percent: optional("ladarStrengthPercent"),
+            magnetometric_percent: optional("magnetometricStrengthPercent"),
+            radar_percent: optional("radarStrengthPercent"),
+        },
+        "disrupt" => Remote::Disrupt {
+            range_percent: number("rangePercent"),
+            falloff_percent: number("falloffPercent"),
+            tracking_percent: number("trackingPercent"),
+        },
+        "scramble" => Remote::Scramble {
+            strength: number("strength"),
+            blocks_mwd: a["blocksMwd"].as_bool().unwrap(),
+        },
+        "jam" => Remote::Jam { strength: sensors_of(&a["strength"]) },
+        other => panic!("no structure burst remote effect named {other}"),
     }
 }

@@ -724,6 +724,8 @@ pub struct Scene {
     pub(crate) dot_sequence: u64,
     /// The probes and bombs in space, by id (`crate::deployable`), and how many have been released in this scene.
     pub(crate) deployables: BTreeMap<i64, crate::deployable::Deployable>,
+    /// The structures' bombs and the authorization each blast waits on (keyed by the bomb's deployable id).
+    pub(crate) bomb_impacts: BTreeMap<i64, crate::deployable::BombImpact>,
     pub(crate) deployable_sequence: u64,
     /// The drones of the scene, by the session each is known by (they are NPC-session pilots tied to the ship that controls them, `crate::drones`).
     pub(crate) drones: BTreeMap<SessionId, crate::drones::DroneAi>,
@@ -795,6 +797,7 @@ impl Scene {
             dots: BTreeMap::new(),
             dot_sequence: 0,
             deployables: BTreeMap::new(),
+            bomb_impacts: BTreeMap::new(),
             deployable_sequence: 0,
             drones: BTreeMap::new(),
             drone_threats: BTreeMap::new(),

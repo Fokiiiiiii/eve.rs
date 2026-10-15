@@ -14,10 +14,9 @@ Rules: `agent-rules.md`. Decisions and sources: DEVIATIONS "Structure corporatio
 
 ## Verified (this run)
 
-- `Eve.Host.Tests` filter `StructureOfficeTests|StructureCompositionTests|StructureCompressionTests`: see the final run in the report (31 passed before the legacy-shape change; rerun on the final code).
-- `Eve.Corporations.Tests`: 125 of 125 passed (includes the migration, the creditor column, the station rent and bill path).
-- `Eve.Structures.Tests`: 105 total; the two failures seen with the store row design (`StructureFuelTests.A_short_hour...`, `StructureTimersTests.The_import...`) were caused by the offices row and are resolved by the legacy-shape design; rerun on the final code.
-- `Eve.Services.Space.Tests` filter `Structure|Beacon|CynoJump|Cyno`: 122 of 122 on the row design; rerun on the final code.
+- After the merge with origin/main (b4426e0): `Eve.Host.Tests` full 356 of 356 (run before the merge); filter `StructureOfficeTests|StructureCompositionTests|StructureCompressionTests` 31 of 31 (after the merge).
+- `Eve.Corporations.Tests`: 125 of 125. `Eve.Structures.Tests`: 105 of 105. `Eve.Services.Space.Tests` filter `Structure|Beacon|CynoJump|Cyno`: 122 of 122.
+- Rule kept: a structure's office row is not written; the offices service is reported online in the legacy shape (`StructureStore.ToLegacy`). The first row design broke two Structures tests and was reverted.
 
 ## Decisions to know
 

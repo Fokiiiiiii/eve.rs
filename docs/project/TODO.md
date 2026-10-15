@@ -2425,11 +2425,27 @@ Done (tests in Eve.Structures.Tests, Eve.Host.Tests, Eve.Services.Space.Tests; d
 - Fuel burn: the owner corporation gets OnItemChange when a member is online outside the structure; otherwise the fuel alert (type 181) goes to the notifications mailbox in the burn transaction (StructureFuelOwnerNotifications).
 
 NOT BUILT (open rows):
-- Structure corporation offices (rental at a structure, EveJS officeManagerService structure branch): not built; the corporation-office compression source is built and reads the office rental rows.
+- Structure corporation offices (rental at a structure, EveJS officeManagerService structure branch): built in section 57 (ST-12); the compression source reads the office rental rows.
 - E-15 on a sov change of the Cynosural Suppression upgrade alone (the jammer state changes but no notice is sent).
 - Group jumps and bridges to a structure beacon (refused by name).
 - The power and workforce budget of the sov upgrades (EveJS computeHubUpgradeSnapshot); the stored online flag is read instead.
 - Native client acceptance of the jammer notice, the beacon jump and the fuel notices (not run; no graphical client here).
+## 57. Structures phase ST-12: corporation offices in Upwell structures (2026-10-15)
+
+Handoff: `docs/project/structures-phase/handoff-ST-12.md`. Decisions and sources: DEVIATIONS "Structure corporation offices (ST-12, 2026-10-15)". Tests: `dotnet/tests/Eve.Host.Tests/StructureOfficeTests.cs` (Host registration, PostgreSQL, restart).
+
+| Status | Row | Notes |
+|---|---|---|
+| VERIFIED (Host registration, PG, restart) | (a) the Corporation Offices service is reported online at every structure in the legacy shape with no module and no fuel (the wiki's "always available"; SDE type 35893 has no fuel attribute); its access is profile setting 20; the structure is an office site for `officeManager`; the quote is the profile rent for the pilot | `The_office_service_is_online...`. The brief's "fuel via ST-7" does not apply (DEVIATIONS ST-12). |
+| VERIFIED (Host registration, PG, restart) | (b) rent at a structure: the rent is charged to the renting corporation and credited to the owner in one transaction; a second rent is not charged again; an unaffordable rent is refused with nothing written; the due job (`office.rent_due`) renews a paid office by auto-pay, or gives an unpaid one up at due (its items to corporate asset safety, its bills cancelled), durable across a restart; a Director un-rents by hand, a member cannot | `Renting_an_office...`, `A_rent_paid_before_a_restart...`, `A_renter_who_cannot_pay...`, `A_due_rent_is_paid_by_auto_pay...`, `An_unpaid_office...`, `A_director_gives_an_office_up...` |
+| VERIFIED (Host registration, PG) | (c) the office hangar at the structure is the compression source: with the rented office and the plant online, the corporation's ore in its hangar is compressed through `structureCompressionMgr`; without the office it is refused | `A_rented_office_hangar_at_a_structure...` |
+| OPEN | Renewal reprices the rent from the profile (EveJS getCurrentOfficeRentalCost); ST-12 keeps the rent quoted at signing | DEVIATIONS ST-12 |
+| OPEN | Owner credit for station offices: the station rent settlement debits the renter and does not credit the station owner (existing behaviour, outside ST-12) | DEVIATIONS ST-12 |
+| OPEN | Station offices have no due or impound job (EveJS impounds at a default; eve.rs keeps the bill open) | DEVIATIONS ST-12 |
+| OPEN | Notices of an office rent or give-up to the corporation (EveJS notifyOfficeRentItemChange, notifyOfficeRentalChange, bill refresh); not built | DEVIATIONS ST-12 |
+| OPEN | A structure destroyed or unanchored while rented: the job leaves the office open | DEVIATIONS ST-12 |
+| OPEN | Client acceptance: the office window, the hangar listing of a structure's corporate division, the rent dialogue (no graphical client run) | DEVIATIONS ST-12 |
+
 ## 50. Structures phase ST-9: Entosis link and Sovereignty Hub capture (2026-10-15)
 | Status | Row | Notes |
 |---|---|---|

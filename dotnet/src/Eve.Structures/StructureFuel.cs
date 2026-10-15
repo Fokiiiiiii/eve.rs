@@ -12,6 +12,9 @@ public static class StructureServiceIds
     public const int CynoJammer = 17;
     public const int MoonMining = 14;
 
+    /// <summary>The Corporation Offices service (EVE.js OFFICES): available to an anchored structure with no service module and no fuel (EVE University wiki, Upwell structures; SDE type 35893 has no fuel attribute).</summary>
+    public const int Offices = 3;
+
     /// <summary>The service module of each service (SDE): Standup Reprocessing Facility I, the Pharolux's built-in Standup Cynosural Field Generator I, Standup Cynosural System Jammer I.</summary>
     public static readonly IReadOnlyDictionary<int, int> ModuleTypeOf = new Dictionary<int, int>
     {

@@ -41,6 +41,7 @@ public sealed partial class PersistenceStructureDirectoryReadModel
     {
         DockingServiceId => DockAccessSettingId,
         JumpBridgeServiceId => JumpBridgeAccessSettingId,
+        3 => 20,
         5 => 4,
         16 => 35,
         _ => null,
@@ -229,6 +230,39 @@ public sealed partial class PersistenceStructureDirectoryReadModel
             result.Add(new KeyValuePair<PyValue, PyValue>(new PyInt(serviceId), new PyInt(state)));
         }
         return new PyDict(result);
+    }
+
+    /// <summary>The Corporation Office Rent profile setting (EVE.js STRUCTURE_SETTING_ID.CORP_RENT_OFFICE).</summary>
+    private const int CorporationOfficeRentSettingId = 20;
+
+    /// <summary>
+    /// The rent of a corporation office at the structure for the character: the value of the profile's Corporation Office Rent setting that the character's access
+    /// resolves to (EVE.js getProfileSettingValueForStructure with the session). 0 when no group of the profile applies to the character.
+    /// </summary>
+    public async ValueTask<decimal> CharacterOfficeRentAsync(long characterId, long structureId, CancellationToken cancellationToken)
+    {
+        var context = await ReadStructureSettingsContextAsync(characterId, structureId, cancellationToken);
+        if (context is not { } access ||
+            access.Profile["settingsBySettingID"] is not JsonObject settings ||
+            settings[CorporationOfficeRentSettingId.ToString(System.Globalization.CultureInfo.InvariantCulture)] is not JsonArray groups)
+            return 0;
+        var bestRank = 0;
+        JsonNode? resolved = null;
+        foreach (var node in groups)
+        {
+            if (node is not JsonObject row) continue;
+            var groupId = Integer(row["groupID"], -1);
+            if (groupId < 0) continue;
+            var rank = groupId == 0
+                ? access.OwnerCorporationId > 0 && access.Affiliation.Corporation == access.OwnerCorporationId ? 1 : 0
+                : AccessGroupMatchRank(groupId, (access.CharacterId, access.Affiliation), access.AccessGroupState);
+            if (rank > bestRank)
+            {
+                bestRank = rank;
+                resolved = row["value"];
+            }
+        }
+        return resolved is JsonValue value && value.TryGetValue<decimal>(out var rent) ? Math.Max(0, rent) : 0;
     }
 
     public async ValueTask<PyValue> CharacterGetServiceAsync(

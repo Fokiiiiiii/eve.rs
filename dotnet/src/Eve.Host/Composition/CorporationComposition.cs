@@ -258,6 +258,7 @@ internal sealed partial class CharacterServicesComposition
     private async Task CorporationOffices()
     {
         corporationOfficeStore = new Eve.Corporations.CorporationOfficeStore(source, corporationSchema);
+        var structureOffices = new StructureOfficeSites(source, structureStore, structureDirectoryReadModel, structureAssetSafetyReadModel, foundations.Scheduler);
         officeManager = new Eve.Services.Corporations.OfficeManagerService(
             corporationOfficeStore, corporations, characters, items,
             economyWallets,
@@ -265,7 +266,10 @@ internal sealed partial class CharacterServicesComposition
                 ? new Eve.Corporations.CorporationOfficeStation(
                     station.Id, station.TypeId, station.OwnerId, station.SolarSystemId, station.Security)
                 : null,
-            now);
+            now,
+            structureOffices);
+        // ST-12: the rent of an office at a structure falls due as a durable job (an unpaid one gives the office up)
+        new StructureOfficeRentDue(source, corporationOfficeStore, economyWallets, foundations.Scheduler, structureOffices).Register();
         skinCosmeticsCatalog = await ShipCosmeticsCatalog.LoadAsync(sde);
     }
 }

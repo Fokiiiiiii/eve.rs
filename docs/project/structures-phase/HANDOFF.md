@@ -19,6 +19,7 @@ Current source priority: gameplay rules and numbers use CCP official documentati
 | ST-6a moon extraction (host) | PG verified | effective fitted SDE rig rules, start-time yield/deadline/lifetime snapshots, actor lifecycle events and durable types 202-206 owner inbox are wired; native acceptance open. |
 | ST-6b moon fields / ledger | PG and Rust verified | persisted multi-ore fields, restart/depletion, refinery observer ledger and durable field removal; native graphical acceptance open. |
 | ST-7 structure services | partly | fuel, compression plant, cyno jammer E-03/E-15 (jammer gated by the Cynosural Suppression upgrade), structure beacon (checks, placement, jump), fuel owner notices, Host tests done; corporation-office compression source built on the office rental rows and the hangar take rule; office rental at a structure still open (see handoff-ST-7-closure.md) |
+| ST-12 corporation offices in structures | done for the rent, due job and compression source; see `handoff-ST-12.md` | the Corporation Offices service (always available, profile access 20), rent/extend/cancel at a structure, owner credit, due job with auto-pay or asset safety; open: renewal repricing, station owner credit, notices |
 | ST-10 hacking | closed with 2 open rows | site completion on emptying and removal of an emptied ball need an `inventory.item_moved` event |
 | ST-11 cosmic sites | closed | NPC waves, containers via ST-10 |
 | ST-C in-space compression | done | ship module, not a structure |

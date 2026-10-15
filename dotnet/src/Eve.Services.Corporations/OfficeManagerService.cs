@@ -14,7 +14,8 @@ public sealed partial class OfficeManagerService(
     Eve.Inventory.PgItemStore items,
     Eve.Wallet.WalletTransactions wallets,
     Func<long,CorporationOfficeStation?> readStation,
-    Func<long> now)
+    Func<long> now,
+    IStructureOffices? structures = null)
 {
     private const long RentOfficeRole = CorporationRoles.RentOffice;
     // The SDE inventory flag for the station's Impounded location.
@@ -31,7 +32,8 @@ public sealed partial class OfficeManagerService(
     {
         var stationId = StationParameter(call.Arg(0));
         if (stationId is not > 0) throw new CorporationError("OFFICE_STATION_REQUIRED");
-        if (readStation(stationId.Value) is null) throw new CorporationError("OFFICE_STATION_NOT_FOUND");
+        if (readStation(stationId.Value) is null && await StructureAtAsync(stationId.Value, call.Cancellation) is null)
+            throw new CorporationError("OFFICE_STATION_NOT_FOUND");
 
         var oid = $"N={MachoMessage.ProxyNodeId}:{BoundObjectIds.Next()}";
         var bound = new PySubStruct(new PySubStream(Py.Tuple(new PyStr(oid), new PyLong(Py.FileTimeFromUnixMs(now())))));
@@ -86,6 +88,8 @@ public sealed partial class OfficeManagerService(
         var sessionCorporationId = SessionCorporationId(call.Session);
         if (corporationId <= 0 || corporationId != sessionCorporationId)
             throw new CorporationError("CORPORATION_ACCESS_DENIED");
+        if (await StructureSiteAsync(call) is { } site)
+            return new PyReal((double)await structures!.RentForAsync(call.Session.CharacterId ?? 0, site.StructureId, call.Cancellation));
         var station = LocalStation(call);
         var price = await QuoteAsync(station, call.Cancellation);
         return new PyReal((double)price);
@@ -96,6 +100,7 @@ public sealed partial class OfficeManagerService(
     {
         var actor = RequireActor(call.Session);
         var corporationId = SessionCorporationId(call.Session);
+        if (await StructureSiteAsync(call) is { } structure) return await RentStructureOfficeAsync(call, actor, corporationId, structure);
         var station = LocalStation(call);
         var authority = await RequireAuthorityAsync(actor, corporationId, station.Id, call.Cancellation);
         if ((authority.Roles.AtAll & RentOfficeRole) == 0)
@@ -140,6 +145,7 @@ public sealed partial class OfficeManagerService(
     {
         var actor = RequireActor(call.Session);
         var corporationId = SessionCorporationId(call.Session);
+        if (await StructureSiteAsync(call) is { } structure) return await UnrentStructureOfficeAsync(call, actor, corporationId, structure);
         var station = BoundStation(call);
         var authority = await RequireAuthorityAsync(actor, corporationId, station.Id, call.Cancellation);
         if (!IsCeoOrDirector(actor, authority))
@@ -170,6 +176,7 @@ public sealed partial class OfficeManagerService(
     [Method("GetItemsFromImpound")]
     public async ValueTask<PyValue> GetItemsFromImpound(ServiceCall call)
     {
+        if (await StructureSiteAsync(call) is not null) return PyNone.Instance;
         var actor = RequireActor(call.Session);
         var corporationId = SessionCorporationId(call.Session);
         var station = LocalStation(call);
@@ -226,6 +233,7 @@ public sealed partial class OfficeManagerService(
     [Method("HasCorpImpoundedItems")]
     public async ValueTask<PyValue> HasCorpImpoundedItems(ServiceCall call)
     {
+        if (await StructureSiteAsync(call) is not null) return PyBool.False; // a structure office is never impounded (EVE.js)
         var corporationId = SessionCorporationId(call.Session);
         if (corporationId <= 0) return PyBool.False;
         var corporation = await corporations.GetAsync(corporationId, call.Cancellation);
@@ -245,6 +253,7 @@ public sealed partial class OfficeManagerService(
     [Method("GetImpoundReleasePrice")]
     public async ValueTask<PyValue> GetImpoundReleasePrice(ServiceCall call)
     {
+        if (await StructureSiteAsync(call) is not null) return new PyInt(0);
         var corporationId = SessionCorporationId(call.Session);
         if (corporationId <= 0) return new PyInt(0);
         var corporation = await corporations.GetAsync(corporationId, call.Cancellation);
@@ -266,6 +275,7 @@ public sealed partial class OfficeManagerService(
     [Method("TrashImpoundedOffice")]
     public async ValueTask<PyValue> TrashImpoundedOffice(ServiceCall call)
     {
+        if (await StructureSiteAsync(call) is not null) return PyNone.Instance;
         var actor = RequireActor(call.Session);
         var corporationId = SessionCorporationId(call.Session);
         var station = BoundStation(call);
@@ -357,6 +367,83 @@ public sealed partial class OfficeManagerService(
         };
         return value is null ? null : Integral(value);
     }
+
+    /// <summary>
+    /// A corporation office at a structure (EVE.js RentOffice, structure branch): the Corporation Offices service and its access, the profile's rent charged to the
+    /// corporation and credited to the owner, and the due job, in one transaction. A structure has no office slots.
+    /// </summary>
+    private async Task<PyValue> RentStructureOfficeAsync(ServiceCall call, long actor, long corporationId, StructureOfficeSite site)
+    {
+        var authority = await RequireAuthorityAsync(actor, corporationId, site.StructureId, call.Cancellation);
+        if ((authority.Roles.AtAll & RentOfficeRole) == 0)
+            throw new CorporationError("CORPORATION_ACCESS_DENIED");
+        if (!await structures!.MayRentAsync(actor, site.StructureId, call.Cancellation))
+            throw new CorporationError("StructureCorpOfficesDenied");
+        var rent = await structures.RentForAsync(actor, site.StructureId, call.Cancellation);
+        var atStructure = now();
+        var structureStation = new CorporationOfficeStation(site.StructureId, site.TypeId, site.OwnerCorporationId, site.SolarSystemId, 0);
+        await store.WriteAsync(async (connection, transaction) =>
+        {
+            await store.LockStationAsync(connection, transaction, site.StructureId, call.Cancellation);
+            if (await store.GetAsync(connection, transaction, corporationId, site.StructureId, forUpdate: true,
+                cancellationToken: call.Cancellation) is not null)
+                return 0;
+
+            var officeFolderId = await items.CreateAsync(connection, transaction,
+                new Eve.Inventory.NewItem(CorporationOfficeStore.OfficeFolderTypeId, corporationId, site.StructureId,
+                    Eve.Inventory.ItemFlags.Hangar, Singleton: true), call.Cancellation);
+            var office = await store.RentAsync(connection, transaction, corporationId, officeFolderId, structureStation, rent, atStructure,
+                call.Cancellation, creditorId: site.OwnerCorporationId);
+            if (rent > 0)
+            {
+                await wallets.AdjustAsync(connection, transaction, new Eve.Wallet.WalletAccount(corporationId), -rent,
+                    site.OwnerCorporationId, OfficeRentReferenceType, "Corporation office rental", atStructure,
+                    $"office-rent:{office.OfficeId}:charge", "office_rental_fee", call.Cancellation);
+                await wallets.AdjustAsync(connection, transaction, new Eve.Wallet.WalletAccount(site.OwnerCorporationId), rent,
+                    corporationId, OfficeRentReferenceType, "Corporation office rental", atStructure,
+                    $"office-rent:{office.OfficeId}:credit", "office_rental_fee", call.Cancellation);
+            }
+            await structures.ScheduleRentDueAsync(connection, transaction, office.OfficeId, office.ExpiresAtMs, call.Cancellation);
+            return 0;
+        }, call.Cancellation);
+        return PyNone.Instance;
+    }
+
+    /// <summary>
+    /// A corporation office at a structure given up (EVE.js UnrentOffice, structure branch): the corporation's items there go to asset safety and the office ends, in one
+    /// transaction. A structure office is not impounded, and only a Director or the CEO may give it up.
+    /// </summary>
+    private async Task<PyValue> UnrentStructureOfficeAsync(ServiceCall call, long actor, long corporationId, StructureOfficeSite site)
+    {
+        var authority = await RequireAuthorityAsync(actor, corporationId, site.StructureId, call.Cancellation);
+        if (!IsCeoOrDirector(actor, authority))
+            throw new CorporationError("CORPORATION_ACCESS_DENIED");
+        var atStructure = now();
+        await store.WriteAsync(async (connection, transaction) =>
+        {
+            await store.LockStationAsync(connection, transaction, site.StructureId, call.Cancellation);
+            var office = await store.GetAsync(connection, transaction, corporationId, site.StructureId,
+                forUpdate: true, cancellationToken: call.Cancellation);
+            if (office is null) return 0;
+            if (!await structures!.MoveOfficeToSafetyAsync(connection, transaction, site, corporationId, call.Cancellation))
+                throw new CorporationError("STRUCTURE_ASSET_SAFETY_UNAVAILABLE");
+            await store.UnrentAsync(connection, transaction, office, atStructure, call.Cancellation);
+            return 0;
+        }, call.Cancellation);
+        return PyNone.Instance;
+    }
+
+    /// <summary>The structure this call is for (its bound id, else the session's structure), or null for a station call.</summary>
+    private async Task<StructureOfficeSite?> StructureSiteAsync(ServiceCall call)
+    {
+        var structureId = call.BoundObjectId is null
+            ? call.Session.GetInt("structureid") ?? 0
+            : StationParameter(call.BoundObjectParameters) ?? 0;
+        return structureId > 0 ? await StructureAtAsync(structureId, call.Cancellation) : null;
+    }
+
+    private async Task<StructureOfficeSite?> StructureAtAsync(long structureId, CancellationToken token) =>
+        structures is null ? null : await structures.ReadAsync(structureId, token);
 
     private CorporationOfficeStation CurrentStation(ClientSession session)
     {

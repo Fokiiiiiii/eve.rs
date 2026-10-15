@@ -422,76 +422,8 @@ public sealed partial class PersistenceStructureAssetSafetyReadModel : Eve.Servi
                 && !await IsCorporationExecutiveAsync(connection, transaction, characterId, corporationId, cancellationToken))
                 return await FinishReceiptAsync(connection, transaction, operationKey, Eve.Services.Core.AssetSafetyActionState.NotAuthorized, 0, cancellationToken);
 
-            var data = await CatalogAsync(cancellationToken);
-            var source = await ReadPersistedStructureAsync(structureId, data, cancellationToken);
-            if (source is null)
-                return await FinishReceiptAsync(connection, transaction, operationKey, Eve.Services.Core.AssetSafetyActionState.StructureUnavailable, 0, cancellationToken);
-            if (source.SystemId != solarSystemId)
-                return await FinishReceiptAsync(connection, transaction, operationKey, Eve.Services.Core.AssetSafetyActionState.SolarSystemMismatch, 0, cancellationToken);
-            if (!IsStandardUpwell(source.TypeId, data))
-                return await FinishReceiptAsync(connection, transaction, operationKey, Eve.Services.Core.AssetSafetyActionState.AssetSafetyUnavailable, 0, cancellationToken);
-
-            var ejected = IsWormholeOrPochven(source.SystemId, data);
-            if (ejected && source.Position is null)
-                return await FinishReceiptAsync(connection, transaction, operationKey, Eve.Services.Core.AssetSafetyActionState.StructureUnavailable, 0, cancellationToken);
-
-            var contents = await LockItemTreeAsync(connection, transaction, structureId, ownerId, cancellationToken);
-            var roots = contents.Where(i => i.LocationId == structureId && i.OwnerId == ownerId).ToArray();
-            if (roots.Length == 0)
-                return await FinishReceiptAsync(connection, transaction, operationKey, Eve.Services.Core.AssetSafetyActionState.NoItemsToMove, 0, cancellationToken);
-
-            var wrapName = $"{data.Systems[source.SystemId].Name} - {source.Name} Asset Safety";
-            var markerType = GetWrapMarkerType(data);
-            var markerLocation = ejected ? solarSystemId : 0;
-            var markerOwner = ejected ? 0 : ownerId;
-            var markerId = await _items.CreateAsync(
-                connection, transaction,
-                new Eve.Inventory.NewItem(markerType.TypeId, markerOwner, markerLocation, 0, Singleton: true, CustomName: wrapName),
-                cancellationToken);
-
-            if (ejected)
-            {
-                var spaceItem = new Eve.Ships.SpaceItem(
-                    markerId, checked((int)solarSystemId), source.Position!, [0, 0, 1],
-                    markerType.Radius > 0 ? markerType.Radius : 1,
-                    markerType.GroupId, 0, 0, 0, 0, 0, _now() + (long)System.TimeSpan.FromHours(2).TotalMilliseconds);
-                await _spaceItems.SaveAsync(connection, transaction, spaceItem, cancellationToken);
-                var rootIds = roots.Select(i => i.Id).ToHashSet();
-                foreach (var item in contents)
-                {
-                    var location = rootIds.Contains(item.Id) ? markerId : item.LocationId;
-                    await _items.MoveToOwnerAsync(connection, transaction, item.Id, 0, location, item.Flag, cancellationToken);
-                }
-            }
-            else
-            {
-                foreach (var item in roots)
-                    await _items.MoveAsync(connection, transaction, item.Id, markerId, item.Flag, cancellationToken);
-            }
-
-            await using (var insert = new Npgsql.NpgsqlCommand(
-                $"""
-                INSERT INTO {_schema}.asset_safety_wraps
-                    (wrap_id, scope, owner_id, corporation_id, source_structure_id, source_system_id, source_type_id,
-                     source_name, system_name, wrap_name, created_at_ms, state)
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
-                """, connection, transaction))
-            {
-                foreach (var value in new object[]
-                {
-                    markerId, scope, ownerId, corporationId, structureId, checked((int)solarSystemId), source.TypeId,
-                    source.Name, data.Systems[source.SystemId].Name, wrapName, _now(), ejected ? Ejected : Stored,
-                })
-                    insert.Parameters.Add(new Npgsql.NpgsqlParameter { Value = value });
-                await insert.ExecuteNonQueryAsync(cancellationToken);
-            }
-
-            return await FinishReceiptAsync(
-                connection, transaction, operationKey,
-                ejected ? Eve.Services.Core.AssetSafetyActionState.ItemsEjected
-                        : scope == Corporation ? Eve.Services.Core.AssetSafetyActionState.CorporationWrapCreated
-                                               : Eve.Services.Core.AssetSafetyActionState.PersonalWrapCreated,
-                markerId, cancellationToken);
+            var (state, markerId) = await WrapItemsAsync(connection, transaction, solarSystemId, structureId, scope, ownerId, corporationId, cancellationToken);
+            return await FinishReceiptAsync(connection, transaction, operationKey, state, markerId, cancellationToken);
         }
         catch (System.OperationCanceledException)
         {
@@ -502,5 +434,106 @@ public sealed partial class PersistenceStructureAssetSafetyReadModel : Eve.Servi
             _log?.Invoke($"asset safety trigger for structure {structureId} failed: {error.Message}");
             return Eve.Services.Core.AssetSafetyActionState.PersistenceFailure;
         }
+    }
+
+    /// <summary>
+    /// Wraps the owner's items at a structure into an asset safety wrap: the body of <see cref="TriggerAssetsAsync"/>, shared with the corporation office that is given up
+    /// or left unpaid (ST-12). Returns the state and the wrap's marker (0 when nothing was wrapped).
+    /// </summary>
+    private async System.Threading.Tasks.Task<(Eve.Services.Core.AssetSafetyActionState State, long MarkerId)> WrapItemsAsync(
+        Npgsql.NpgsqlConnection connection,
+        Npgsql.NpgsqlTransaction transaction,
+        long solarSystemId,
+        long structureId,
+        short scope,
+        long ownerId,
+        long corporationId,
+        System.Threading.CancellationToken cancellationToken)
+    {
+        var data = await CatalogAsync(cancellationToken);
+        var source = await ReadPersistedStructureAsync(structureId, data, cancellationToken);
+        if (source is null)
+            return (Eve.Services.Core.AssetSafetyActionState.StructureUnavailable, 0);
+        if (source.SystemId != solarSystemId)
+            return (Eve.Services.Core.AssetSafetyActionState.SolarSystemMismatch, 0);
+        if (!IsStandardUpwell(source.TypeId, data))
+            return (Eve.Services.Core.AssetSafetyActionState.AssetSafetyUnavailable, 0);
+
+        var ejected = IsWormholeOrPochven(source.SystemId, data);
+        if (ejected && source.Position is null)
+            return (Eve.Services.Core.AssetSafetyActionState.StructureUnavailable, 0);
+
+        var contents = await LockItemTreeAsync(connection, transaction, structureId, ownerId, cancellationToken);
+        var roots = contents.Where(i => i.LocationId == structureId && i.OwnerId == ownerId).ToArray();
+        if (roots.Length == 0)
+            return (Eve.Services.Core.AssetSafetyActionState.NoItemsToMove, 0);
+
+        var wrapName = $"{data.Systems[source.SystemId].Name} - {source.Name} Asset Safety";
+        var markerType = GetWrapMarkerType(data);
+        var markerLocation = ejected ? solarSystemId : 0;
+        var markerOwner = ejected ? 0 : ownerId;
+        var markerId = await _items.CreateAsync(
+            connection, transaction,
+            new Eve.Inventory.NewItem(markerType.TypeId, markerOwner, markerLocation, 0, Singleton: true, CustomName: wrapName),
+            cancellationToken);
+
+        if (ejected)
+        {
+            var spaceItem = new Eve.Ships.SpaceItem(
+                markerId, checked((int)solarSystemId), source.Position!, [0, 0, 1],
+                markerType.Radius > 0 ? markerType.Radius : 1,
+                markerType.GroupId, 0, 0, 0, 0, 0, _now() + (long)System.TimeSpan.FromHours(2).TotalMilliseconds);
+            await _spaceItems.SaveAsync(connection, transaction, spaceItem, cancellationToken);
+            var rootIds = roots.Select(i => i.Id).ToHashSet();
+            foreach (var item in contents)
+            {
+                var location = rootIds.Contains(item.Id) ? markerId : item.LocationId;
+                await _items.MoveToOwnerAsync(connection, transaction, item.Id, 0, location, item.Flag, cancellationToken);
+            }
+        }
+        else
+        {
+            foreach (var item in roots)
+                await _items.MoveAsync(connection, transaction, item.Id, markerId, item.Flag, cancellationToken);
+        }
+
+        await using (var insert = new Npgsql.NpgsqlCommand(
+            $"""
+            INSERT INTO {_schema}.asset_safety_wraps
+                (wrap_id, scope, owner_id, corporation_id, source_structure_id, source_system_id, source_type_id,
+                 source_name, system_name, wrap_name, created_at_ms, state)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+            """, connection, transaction))
+        {
+            foreach (var value in new object[]
+            {
+                markerId, scope, ownerId, corporationId, structureId, checked((int)solarSystemId), source.TypeId,
+                source.Name, data.Systems[source.SystemId].Name, wrapName, _now(), ejected ? Ejected : Stored,
+            })
+                insert.Parameters.Add(new Npgsql.NpgsqlParameter { Value = value });
+            await insert.ExecuteNonQueryAsync(cancellationToken);
+        }
+
+        return (ejected ? Eve.Services.Core.AssetSafetyActionState.ItemsEjected
+                    : scope == Corporation ? Eve.Services.Core.AssetSafetyActionState.CorporationWrapCreated
+                                           : Eve.Services.Core.AssetSafetyActionState.PersonalWrapCreated, markerId);
+    }
+
+    /// <summary>
+    /// Moves a corporation's items at a structure into its corporate asset safety wrap, in the caller's transaction (ST-12: an office given up or left unpaid). False when
+    /// the wrap is refused; nothing to move is not a refusal.
+    /// </summary>
+    public async System.Threading.Tasks.Task<bool> CreateCorporationOfficeWrapAsync(
+        Npgsql.NpgsqlConnection connection,
+        Npgsql.NpgsqlTransaction transaction,
+        long structureId,
+        long solarSystemId,
+        long corporationId,
+        System.Threading.CancellationToken cancellationToken)
+    {
+        var (state, _) = await WrapItemsAsync(connection, transaction, solarSystemId, structureId, Corporation, corporationId, corporationId, cancellationToken);
+        return state is Eve.Services.Core.AssetSafetyActionState.NoItemsToMove
+            or Eve.Services.Core.AssetSafetyActionState.CorporationWrapCreated
+            or Eve.Services.Core.AssetSafetyActionState.ItemsEjected;
     }
 }

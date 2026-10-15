@@ -28,7 +28,8 @@ public sealed record CorporationOfficeRentBill(
     long DueAtMs,
     int Status,
     long? PaidAtMs = null,
-    long? PaidByOwnerId = null);
+    long? PaidByOwnerId = null,
+    long? CreditorId = null);
 
 public sealed record CorporationBillAutomaticPaySettings(
     int DivisionId,

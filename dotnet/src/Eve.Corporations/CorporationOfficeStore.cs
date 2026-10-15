@@ -82,6 +82,14 @@ public sealed class CorporationOfficeStore
                 enabled_bill_types jsonb NOT NULL DEFAULT '{}'::jsonb
                     CHECK (jsonb_typeof(enabled_bill_types) = 'object')
             );
+            """),
+        new Migration("010_structure_offices", """
+            ALTER TABLE office_rentals DROP CONSTRAINT office_rentals_rent_isk_check;
+            ALTER TABLE office_rentals ADD CONSTRAINT office_rentals_rent_isk_check CHECK (rent_isk >= 0);
+            ALTER TABLE office_rent_bills DROP CONSTRAINT office_rent_bills_amount_isk_check;
+            ALTER TABLE office_rent_bills ADD CONSTRAINT office_rent_bills_amount_isk_check CHECK (amount_isk >= 0);
+            -- a structure's bill names the owner the rent is credited to; a station's bill has none (its owner is read from the station)
+            ALTER TABLE office_rent_bills ADD COLUMN creditor_id bigint CHECK (creditor_id > 0);
             """)
     ];
 
@@ -139,7 +147,7 @@ public sealed class CorporationOfficeStore
     {
         await using var command = _source.CreateCommand($"""
             SELECT bill_id,office_id,corporation_id,station_id,amount_isk,issued_at_ms,due_at_ms,status,
-                   paid_at_ms,paid_by_owner_id
+                   paid_at_ms,paid_by_owner_id,creditor_id
             FROM {_schema}.office_rent_bills
             WHERE corporation_id=$1 AND status=0
             ORDER BY due_at_ms,bill_id
@@ -158,7 +166,7 @@ public sealed class CorporationOfficeStore
         if (creditorId <= 0) return [];
         await using var command = _source.CreateCommand($"""
             SELECT bill_id,office_id,corporation_id,station_id,amount_isk,issued_at_ms,due_at_ms,status,
-                   paid_at_ms,paid_by_owner_id
+                   paid_at_ms,paid_by_owner_id,creditor_id
             FROM {_schema}.office_rent_bills
             WHERE status=0
             ORDER BY due_at_ms,bill_id
@@ -168,7 +176,7 @@ public sealed class CorporationOfficeStore
         while (await reader.ReadAsync(cancellationToken))
         {
             var bill = ReadRentBill(reader);
-            if (stationOwnerOf(bill.StationId) == creditorId) bills.Add(bill);
+            if ((bill.CreditorId ?? stationOwnerOf(bill.StationId)) == creditorId) bills.Add(bill);
         }
         return bills;
     }
@@ -241,7 +249,7 @@ public sealed class CorporationOfficeStore
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
         await using var billCommand = Command(connection, transaction, $"""
             SELECT bill_id,office_id,corporation_id,station_id,amount_isk,issued_at_ms,due_at_ms,status,
-                   paid_at_ms,paid_by_owner_id
+                   paid_at_ms,paid_by_owner_id,creditor_id
             FROM {_schema}.office_rent_bills
             WHERE bill_id=$1 AND corporation_id=$2 AND status=0
             FOR UPDATE
@@ -284,10 +292,10 @@ public sealed class CorporationOfficeStore
                 throw new CorporationError("BILL_NOT_PAYABLE");
         await using (var nextBill = Command(connection, transaction, $"""
             INSERT INTO {_schema}.office_rent_bills
-                (office_id,corporation_id,station_id,amount_isk,issued_at_ms,due_at_ms,status,operation_key)
-            VALUES ($1,$2,$3,$4,$5,$6,0,$7)
+                (office_id,corporation_id,station_id,amount_isk,issued_at_ms,due_at_ms,status,operation_key,creditor_id)
+            VALUES ($1,$2,$3,$4,$5,$6,0,$7,$8)
             """, bill.OfficeId, corporationId, bill.StationId, bill.AmountIsk, nowMs, nextDueAtMs,
-            $"office-rent:{bill.OfficeId}:renewal:{bill.BillId}"))
+            $"office-rent:{bill.OfficeId}:renewal:{bill.BillId}", bill.CreditorId))
             await nextBill.ExecuteNonQueryAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
         return true;
@@ -297,7 +305,25 @@ public sealed class CorporationOfficeStore
         reader.GetInt64(0), reader.GetInt64(1), reader.GetInt64(2), reader.GetInt64(3),
         reader.GetDecimal(4), reader.GetInt64(5), reader.GetInt64(6), reader.GetInt16(7),
         reader.IsDBNull(8) ? null : reader.GetInt64(8),
-        reader.IsDBNull(9) ? null : reader.GetInt64(9));
+        reader.IsDBNull(9) ? null : reader.GetInt64(9),
+        reader.IsDBNull(10) ? null : reader.GetInt64(10));
+
+    /// <summary>The open (unpaid) rent bill of an office, or null. With <paramref name="forUpdate"/> the bill stays locked until the transaction ends.</summary>
+    public async Task<CorporationOfficeRentBill?> OpenBillForOfficeAsync(NpgsqlConnection connection, NpgsqlTransaction? transaction,
+        long officeId, bool forUpdate, CancellationToken cancellationToken = default)
+    {
+        await using var command = Command(connection, transaction, $"""
+            SELECT bill_id,office_id,corporation_id,station_id,amount_isk,issued_at_ms,due_at_ms,status,
+                   paid_at_ms,paid_by_owner_id,creditor_id
+            FROM {_schema}.office_rent_bills
+            WHERE office_id=$1 AND status=0
+            ORDER BY bill_id DESC
+            LIMIT 1
+            {(forUpdate ? "FOR UPDATE" : "")}
+            """, officeId);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        return await reader.ReadAsync(cancellationToken) ? ReadRentBill(reader) : null;
+    }
 
     public async Task<IReadOnlyList<long>> CorporationsAtStationAsync(long stationId,
         CancellationToken cancellationToken = default)
@@ -378,7 +404,7 @@ public sealed class CorporationOfficeStore
 
     public async Task<CorporationOffice> RentAsync(NpgsqlConnection connection, NpgsqlTransaction transaction,
         long corporationId, long officeFolderId, CorporationOfficeStation station, decimal price, long nowMs,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default, long? creditorId = null)
     {
         await using var command = Command(connection, transaction, $"""
             INSERT INTO {_schema}.office_rentals
@@ -393,10 +419,10 @@ public sealed class CorporationOfficeStore
 
         await using var bill = Command(connection, transaction, $"""
             INSERT INTO {_schema}.office_rent_bills
-                (office_id,corporation_id,station_id,amount_isk,issued_at_ms,due_at_ms,status,operation_key)
-            VALUES ($1,$2,$3,$4,$5,$6,0,$7)
+                (office_id,corporation_id,station_id,amount_isk,issued_at_ms,due_at_ms,status,operation_key,creditor_id)
+            VALUES ($1,$2,$3,$4,$5,$6,0,$7,$8)
             """, office.OfficeId, corporationId, station.Id, price, nowMs, nowMs + RentalCycleMs,
-            $"office-rent:{office.OfficeId}:next");
+            $"office-rent:{office.OfficeId}:next", creditorId);
         await bill.ExecuteNonQueryAsync(cancellationToken);
         return office;
     }
@@ -429,12 +455,12 @@ public sealed class CorporationOfficeStore
         new(reader.GetInt64(0), reader.GetInt64(1), reader.GetInt64(2), reader.GetInt64(3), reader.GetInt64(4),
             reader.GetDecimal(5), reader.GetInt64(6), reader.GetInt64(7));
 
-    private NpgsqlCommand Command(NpgsqlConnection connection, NpgsqlTransaction transaction, string sql,
-        params object[] values)
+    private NpgsqlCommand Command(NpgsqlConnection connection, NpgsqlTransaction? transaction, string sql,
+        params object?[] values)
     {
         var command = new NpgsqlCommand(sql, connection, transaction);
         foreach (var value in values)
-            command.Parameters.Add(new NpgsqlParameter { Value = value });
+            command.Parameters.Add(new NpgsqlParameter { Value = value ?? DBNull.Value });
         return command;
     }
 }

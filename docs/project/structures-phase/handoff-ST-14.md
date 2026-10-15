@@ -32,6 +32,12 @@ anchors an Astrahus through `StructureAnchorAuthority` (the default profile, id 
 table the profile backend writes, and checks `StructureDirectoryService.CanDock`: the owner corporation's pilot may dock, another corporation may not.
 It passes with the other `StructureAnchorTests` on eve_p3 (10 passed, 0 skipped, including the pinned SDE restriction test).
 
+EveJS comparison (read, not run): `structureProfilesState.js` `characterHasDockingAccessForProfile` requires `canCharacterDockAtStructure` and the profile
+setting `HOUSING_CAN_DOCK` for the session, and the access groups match the session's corporation (specificity 300), alliance (200) or everyone (0). A
+member of the owner corporation is admitted through the corporation chain, as in `CanDock`'s owner-corporation fallback. Not checked in this pass: the
+default value of `HOUSING_CAN_DOCK` in EveJS, and the wiki's default docking rule. The Host's explicit profile-setting path (profile with settings for
+setting 19) is not exercised by any live or Host test in this pass.
+
 ### The seeded structure (what the run inserts, after the default list)
 
 ```sql

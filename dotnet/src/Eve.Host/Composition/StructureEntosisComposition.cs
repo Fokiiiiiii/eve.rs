@@ -6,6 +6,25 @@ namespace Eve.Host;
 internal sealed partial class CharacterServicesComposition
 {
     private Eve.Host.Persistence.Sovereignty.SovereigntyClaimNotifications sovClaimNotifications = default!;
+    private Eve.Services.Space.Entosis.EntosisCaptureService? entosisCaptureService;
+
+    /// <summary>
+    /// ST-17 a: the systems of a system's constellation (the static data's mapSolarSystems), where a stage's command nodes spawn. A system is its own constellation's
+    /// member when the static data has no constellation for it.
+    /// </summary>
+    private async Task<IReadOnlyList<int>> EntosisConstellationSystemsAsync(int solarSystemId, CancellationToken cancellationToken)
+    {
+        var systems = await mapSolarSystems.Value.WaitAsync(cancellationToken);
+        static long ConstellationOf(Eve.Sde.SdeRow row) =>
+            row.Doc.TryGetProperty("constellationID", out var value) && value.TryGetInt64(out var id) ? id : 0;
+        var home = systems.FirstOrDefault(row => row.Key == solarSystemId);
+        if (home is null || ConstellationOf(home) == 0)
+        {
+            return [solarSystemId];
+        }
+        var constellation = ConstellationOf(home);
+        return systems.Where(row => row.Key > 0 && ConstellationOf(row) == constellation).Select(row => (int)row.Key).ToList();
+    }
 
     /// <summary>
     /// ST-9 d: the handover of a captured neutral hub. The sovereignty records give the system to the capturer (the sovereignty write path, verified in the

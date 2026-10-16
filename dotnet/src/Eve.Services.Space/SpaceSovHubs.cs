@@ -24,6 +24,13 @@ public sealed class SpaceSovHubs
     // the hub's typeDogma has no radius attribute (162); the SDE's types.radius of 32458 is 45 000 m (pinned build 3396210)
     private const double SovereigntyHubRadiusMeters = 45_000d;
 
+    /// <summary>ST-17 a: a command node's static type (SDE 34832, group 1316) and its radius (SDE types.radius 243 m).</summary>
+    public const int TypeCommandNode = 34832;
+    private const double CommandNodeRadiusMeters = 243d;
+
+    /// <summary>ST-17 a: the live command nodes of a system, put in space when a pilot comes into it (the Host supplies them).</summary>
+    public Func<int, CancellationToken, Task<IReadOnlyList<long>>>? LiveCommandNodesOf { get; set; }
+
     private readonly ISimulation _sim;
     private readonly DogmaStatic _statics;
     private readonly Func<int, CancellationToken, Task<SovHubBall?>> _readHub;
@@ -61,6 +68,13 @@ public sealed class SpaceSovHubs
     /// </summary>
     public async Task RestoreAsync(int solarSystemId, CancellationToken cancellationToken = default)
     {
+        if (LiveCommandNodesOf is not null)
+        {
+            foreach (var nodeId in await LiveCommandNodesOf(solarSystemId, cancellationToken))
+            {
+                await PlaceCommandNodeAsync(nodeId, solarSystemId, cancellationToken);
+            }
+        }
         try
         {
             if (await _readHub(solarSystemId, cancellationToken) is not { } hub)
@@ -85,6 +99,36 @@ public sealed class SpaceSovHubs
         _sim.RemoveStructure(hubId);
         await RestoreAsync(solarSystemId, cancellationToken);
     }
+
+    /// <summary>
+    /// ST-17 a: a command node of an active stage is a structure ball in the system. Its place is a ring 40 to 60 km from the system's origin, from its id
+    /// (shortcut: EVE.js places the nodes around the system's sun; upgrade: the sun-relative spawn once the celestial data is read here).
+    /// </summary>
+    public async Task PlaceCommandNodeAsync(long nodeId, int solarSystemId, CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            await _statics.EnsureTypesAsync([TypeCommandNode], cancellationToken);
+            if (_statics.Type(TypeCommandNode) is not { } type)
+            {
+                _log?.Invoke($"command node {nodeId} of system {solarSystemId} is not in the static data and is not put in space");
+                return;
+            }
+            var angle = (nodeId % 628) / 100.0;
+            var distance = 40_000d + nodeId % 20_000;
+            _sim.PlaceStructure(new SimPlaceStructure(
+                nodeId, solarSystemId, type.Name, TypeCommandNode, type.GroupId, [distance * Math.Cos(angle), 0d, distance * Math.Sin(angle)],
+                CommandNodeRadiusMeters, 0L, 0, 0, new SimStructureHealth(0d, 0d, 0d, [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1], 0, [0, 0, 0], [0, 0, 0]),
+                new SimStructureStatus(StructureState.ShieldVulnerable, UpkeepState.FullPower, null, null, null)));
+        }
+        catch (Exception error)
+        {
+            _log?.Invoke($"command node {nodeId} of system {solarSystemId} was not put in space: {error.Message}");
+        }
+    }
+
+    /// <summary>ST-17 a: a command node that was captured or whose stage ended leaves space.</summary>
+    public void RemoveCommandNode(long nodeId) => _sim.RemoveStructure(nodeId);
 
     private static SimPlaceStructure Placement(SovHubBall hub, Eve.Dogma.TypeDef type)
     {

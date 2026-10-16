@@ -36,7 +36,7 @@ public enum EntosisHandover : byte
 /// timer (the wiki); the command nodes that follow are not built. A cycle is refused by name outside the owner's vulnerability window (ST-9 e), and the owner's
 /// notices (capture started, reinforced) are events written in the capture's transaction (the subscriber writes them after the commit).
 /// </summary>
-public sealed class EntosisCaptureService
+public sealed partial class EntosisCaptureService
 {
     /// <summary>The schema of the capture's tables (the migrations are applied to it).</summary>
     public const string DefaultSchema = "entosis";
@@ -66,6 +66,7 @@ public sealed class EntosisCaptureService
     private readonly Func<EntosisCapturedHub, CancellationToken, Task<EntosisHandover>>? _handover;
     private readonly Action<string>? _log;
     private readonly EventBus? _events;
+    private readonly Func<int, CancellationToken, Task<IReadOnlyList<int>>> _constellationSystems;
 
     /// <param name="readHub">The system's Sovereignty Hub as the records have it at this moment (null when the system has none).</param>
     /// <param name="handover">The claim of a captured neutral hub by its capturer (ST-9 d). Unset, a capture completes and waits for one.</param>
@@ -73,7 +74,7 @@ public sealed class EntosisCaptureService
     public EntosisCaptureService(
         NpgsqlDataSource source, DurableScheduler scheduler, Func<long> now, Func<int, CancellationToken, Task<EntosisHubReading?>> readHub,
         Func<EntosisCapturedHub, CancellationToken, Task<EntosisHandover>>? handover = null, string schema = DefaultSchema, Action<string>? log = null,
-        EventBus? events = null)
+        EventBus? events = null, Func<int, CancellationToken, Task<IReadOnlyList<int>>>? constellationSystems = null)
     {
         if (!SchemaName.IsMatch(schema))
         {
@@ -87,6 +88,7 @@ public sealed class EntosisCaptureService
         _schema = schema;
         _log = log;
         _events = events;
+        _constellationSystems = constellationSystems ?? ((solarSystemId, _) => Task.FromResult<IReadOnlyList<int>>(new[] { solarSystemId }));
     }
 
     public static IReadOnlyList<Migration> MigrationSet() => Migrations.Embedded(typeof(EntosisCaptureService).Assembly, "EntosisMigrations");
@@ -108,6 +110,9 @@ public sealed class EntosisCaptureService
     {
         _scheduler.Register(CaptureDueKind, (context, token) => CaptureDueAsync(context.Payload<HubDue>()!.HubId, token));
         _scheduler.Register(HandoverDueKind, (context, token) => HandoverDueAsync(context.Payload<HubDue>()!.HubId, token));
+        _scheduler.Register(CampaignStartKind, (context, token) => CampaignStartAsync(context.Payload<HubDue>()!.HubId, token));
+        _scheduler.Register(NodeSpawnKind, (context, token) => NodeSpawnDueAsync(context.Payload<HubDue>()!.HubId, token));
+        _scheduler.Register(NodeDueKind, (context, token) => NodeDueAsync(context.Payload<CommandNodeDue>()!.NodeId, token));
     }
 
     /// <summary>
@@ -120,7 +125,9 @@ public sealed class EntosisCaptureService
         var reading = await _readHub(solarSystemId, cancellationToken);
         if (reading is null || reading.HubId != hubId)
         {
-            return new SettleResult(false, "ENTOSIS_TARGET_NOT_SOV_HUB");
+            // a command node of an active stage is the other target (ST-17 a); anything else is refused by name
+            return await SettleNodeCycleAsync(moduleId, characterId, corporationId, allianceId, hubId, cancellationToken)
+                ?? new SettleResult(false, "ENTOSIS_TARGET_NOT_SOV_HUB");
         }
         var now = _now();
         var side = reading.DefenderAllianceId is { } owner && owner == allianceId ? EntosisSide.Defender : EntosisSide.Attacker;
@@ -147,6 +154,14 @@ public sealed class EntosisCaptureService
             if (state.Phase == EntosisPhase.Reinforced)
             {
                 return new SettleResult(false, "SOVEREIGNTY_HUB_ALREADY_REINFORCED");
+            }
+            if (state.Phase == EntosisPhase.Destroyed)
+            {
+                return new SettleResult(false, "SOVEREIGNTY_HUB_DESTROYED");
+            }
+            if (await ReadInvulnerableUntilAsync(connection, transaction, hubId, cancellationToken) is { } shieldedUntil && shieldedUntil > now)
+            {
+                return new SettleResult(false, "SOVEREIGNTY_TARGET_NOT_VULNERABLE");
             }
             var window = await LoadWindowAsync(connection, transaction, hubId, forUpdate: true, cancellationToken);
             var locks = await LoadLocksAsync(connection, transaction, hubId, cancellationToken);
@@ -203,6 +218,13 @@ public sealed class EntosisCaptureService
         {
             hubId = await HubOfLinkAsync(connection, transaction, moduleId, cancellationToken);
             var state = hubId is { } hub ? await LoadStateAsync(connection, transaction, hub, forUpdate: true, cancellationToken) : null;
+            if (hubId is { } nodeId && state is null)
+            {
+                // a command node's link (ST-17 a): its progress is moved to now, and the link is removed
+                await NodeLinkEndedAsync(connection, transaction, nodeId, moduleId, _now(), cancellationToken);
+                await transaction.CommitAsync(cancellationToken);
+                return;
+            }
             if (hubId is { } id && state is not null)
             {
                 var now = _now();
@@ -301,6 +323,10 @@ public sealed class EntosisCaptureService
                 "UPDATE {schema}.hubs SET phase = 'reinforced', handover = 'owned', reinforcement_exit_ms = $2 WHERE hub_id = $1",
                 connection, transaction, after.HubId, exitMs);
             await reinforce.ExecuteNonQueryAsync(cancellationToken);
+            // ST-17 a: the command node stage starts when the reinforcement ends (the wiki: nodes spawn once the reinforce timer reaches 0)
+            await _scheduler.ScheduleAsync(connection, transaction,
+                new JobSpec(CampaignStartKind, exitMs) { Key = after.HubId.ToString(System.Globalization.CultureInfo.InvariantCulture), Payload = new HubDue(after.HubId), OnDuplicate = OnDuplicate.Replace },
+                cancellationToken);
             if (_events is not null)
             {
                 await _events.PublishAsync(connection, transaction, ReinforcedTopic,
@@ -551,6 +577,7 @@ public sealed class EntosisCaptureService
             "capturing" => EntosisPhase.Capturing,
             "captured" => EntosisPhase.Captured,
             "reinforced" => EntosisPhase.Reinforced,
+            "destroyed" => EntosisPhase.Destroyed,
             var other => throw new InvalidOperationException($"unknown entosis phase {other}"),
         };
         return new EntosisCaptureState(
@@ -565,6 +592,7 @@ public sealed class EntosisCaptureService
             EntosisPhase.Idle => "idle",
             EntosisPhase.Capturing => "capturing",
             EntosisPhase.Reinforced => "reinforced",
+            EntosisPhase.Destroyed => "destroyed",
             _ => "captured",
         };
         await using var command = Command(

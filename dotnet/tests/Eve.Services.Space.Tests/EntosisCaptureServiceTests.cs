@@ -53,7 +53,8 @@ public sealed class EntosisCaptureServiceTests
     }
 
     private static async Task<Harness> CreateAsync(
-        EntosisHubReading reading, Func<EntosisCapturedHub, CancellationToken, Task<EntosisHandover>>? handover = null)
+        EntosisHubReading reading, Func<EntosisCapturedHub, CancellationToken, Task<EntosisHandover>>? handover = null,
+        Func<int, CancellationToken, Task<IReadOnlyList<int>>>? constellation = null)
     {
         var source = NpgsqlDataSource.Create(PgConnection.ForTest(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
         var suffix = Guid.NewGuid().ToString("N")[..10];
@@ -78,7 +79,8 @@ public sealed class EntosisCaptureServiceTests
         });
         await bus.PumpAsync();
         var service = new EntosisCaptureService(
-            source, scheduler, () => clock.Now, (_, _) => Task.FromResult<EntosisHubReading?>(holder.Value), handover, schema: schema, events: bus);
+            source, scheduler, () => clock.Now, (_, _) => Task.FromResult<EntosisHubReading?>(holder.Value), handover, schema: schema, events: bus,
+            constellationSystems: constellation);
         service.Register();
         return new Harness
         {
@@ -384,5 +386,119 @@ public sealed class EntosisCaptureServiceTests
         Assert.Equal("SOVEREIGNTY_HUB_NOT_OWNED", (await neutral.Service.SetHubWindowAsync(Hub, System, new EntosisWindowSetting(10, 2), CancellationToken.None)).Reason);
         await using var owned = await CreateAsync(Owned());
         Assert.Equal("SOVEREIGNTY_VULNERABILITY_WINDOW_INVALID", (await owned.Service.SetHubWindowAsync(Hub, System, new EntosisWindowSetting(24, 2), CancellationToken.None)).Reason);
+    }
+
+    /// <summary>A reinforced owned hub whose reinforcement ends at <paramref name="exitMs"/> (the state a completed owned capture leaves).</summary>
+    private static async Task InsertReinforcedHubAsync(Harness harness, long exitMs)
+    {
+        await using var command = harness.Source.CreateCommand(
+            $"INSERT INTO \"{harness.Schema}\".hubs (hub_id, solar_system_id, progress, checkpoint_ms, activity_defense_multiplier, defender_alliance_id, phase, "
+            + $"prime_hour, reinforcement_exit_ms, handover) VALUES ({Hub}, {System}, 1, {Start}, 1, 7, 'reinforced', 22, {exitMs}, 'owned')");
+        await command.ExecuteNonQueryAsync();
+    }
+
+    private static Func<int, CancellationToken, Task<IReadOnlyList<int>>> Constellation =>
+        (_, _) => Task.FromResult<IReadOnlyList<int>>([System, System + 1, System + 2]);
+
+    private static async Task<string?> ScalarTextAsync(Harness harness, string sql)
+    {
+        await using var command = harness.Source.CreateCommand(sql.Replace("{schema}", $"\"{harness.Schema}\""));
+        return (await command.ExecuteScalarAsync())?.ToString();
+    }
+
+    /// <summary>Any live node of the stage (the rows are the stage's; the constellation spreads them over the systems).</summary>
+    private static async Task<long> AnyNodeAsync(Harness harness) =>
+        long.Parse((await ScalarTextAsync(harness, "SELECT node_id FROM {schema}.nodes ORDER BY node_id LIMIT 1"))!, global::System.Globalization.CultureInfo.InvariantCulture);
+
+    private static Task<EntosisCaptureService.SettleResult> NodeSettleAsync(Harness harness, long node, long module, long alliance) =>
+        harness.Service.SettleCycleAsync(module, Character, Corporation, alliance, node, System, CancellationToken.None);
+
+    /// <summary>A node is captured by one side in two cycles: the warm-up, then a cycle of 5 minutes (the base time is 4 minutes at ADM 1).</summary>
+    private static async Task CaptureNodeAsync(Harness harness, long node, long alliance)
+    {
+        var at = harness.Clock.Now;
+        Assert.True((await NodeSettleAsync(harness, node, 1, alliance)).Accepted, "the warm-up");
+        harness.Clock.Now = at + EntosisRules.CycleMs;
+        Assert.True((await NodeSettleAsync(harness, node, 1, alliance)).Accepted, "the capturing cycle");
+    }
+
+    [PgFact]
+    public async Task A_stage_starts_at_the_reinforcement_exit_with_four_nodes_in_the_constellation()
+    {
+        await using var harness = await CreateAsync(Owned(), constellation: Constellation);
+        await InsertReinforcedHubAsync(harness, Start);
+        harness.Clock.Now = Start;
+        await harness.Service.CampaignStartAsync(Hub, CancellationToken.None);
+
+        Assert.Equal("4", await ScalarTextAsync(harness, "SELECT COUNT(*) FROM {schema}.nodes"));
+        Assert.Equal("active", await ScalarTextAsync(harness, "SELECT phase FROM {schema}.campaigns"));
+        Assert.Equal("reinforced", await ScalarTextAsync(harness, "SELECT phase FROM {schema}.hubs"));
+        Assert.NotNull(await harness.Scheduler.FindAsync(EntosisCaptureService.NodeSpawnKind, Hub.ToString()));
+        // the stage is started once: a second start leaves it as it is
+        await harness.Service.CampaignStartAsync(Hub, CancellationToken.None);
+        Assert.Equal("4", await ScalarTextAsync(harness, "SELECT COUNT(*) FROM {schema}.nodes"));
+    }
+
+    [PgFact]
+    public async Task An_attackers_node_capture_moves_the_tally_and_a_new_node_takes_its_place()
+    {
+        await using var harness = await CreateAsync(Owned(), constellation: Constellation);
+        await InsertReinforcedHubAsync(harness, Start);
+        harness.Clock.Now = Start;
+        await harness.Service.CampaignStartAsync(Hub, CancellationToken.None);
+        var node = await AnyNodeAsync(harness);
+
+        harness.Clock.Now = Start + 600_000;
+        await CaptureNodeAsync(harness, node, alliance: 5);
+
+        Assert.Equal("0", await ScalarTextAsync(harness, $"SELECT COUNT(*) FROM {{schema}}.nodes WHERE node_id = {node}"));
+        Assert.Equal("4", await ScalarTextAsync(harness, "SELECT COUNT(*) FROM {schema}.nodes"));
+        Assert.Equal("1", await ScalarTextAsync(harness, "SELECT attacker_captures FROM {schema}.campaigns"));
+        Assert.Equal("active", await ScalarTextAsync(harness, "SELECT phase FROM {schema}.campaigns"));
+    }
+
+    [PgFact]
+    public async Task Nine_attacker_captures_destroy_the_hub_and_end_the_stage()
+    {
+        await using var harness = await CreateAsync(Owned(), constellation: Constellation);
+        await InsertReinforcedHubAsync(harness, Start);
+        harness.Clock.Now = Start;
+        await harness.Service.CampaignStartAsync(Hub, CancellationToken.None);
+
+        for (var capture = 0; capture < 9; capture++)
+        {
+            harness.Clock.Now = Start + 3_600_000L * (capture + 1);
+            await CaptureNodeAsync(harness, await AnyNodeAsync(harness), alliance: 5);
+        }
+
+        Assert.Equal("destroyed", await ScalarTextAsync(harness, "SELECT phase FROM {schema}.campaigns"));
+        Assert.Equal("destroyed", await ScalarTextAsync(harness, "SELECT phase FROM {schema}.hubs"));
+        Assert.Equal("0", await ScalarTextAsync(harness, "SELECT COUNT(*) FROM {schema}.nodes"));
+        // the stage is over: a node's cycle is refused, and the hub is refused by name
+        var settled = await NodeSettleAsync(harness, 1, 1, 5);
+        Assert.False(settled.Accepted);
+    }
+
+    [PgFact]
+    public async Task Six_defender_captures_defend_the_hub_which_is_invulnerable_until_the_next_window()
+    {
+        await using var harness = await CreateAsync(Owned(), constellation: Constellation);
+        await InsertReinforcedHubAsync(harness, Start);
+        harness.Clock.Now = Start;
+        await harness.Service.CampaignStartAsync(Hub, CancellationToken.None);
+
+        for (var capture = 0; capture < 6; capture++)
+        {
+            harness.Clock.Now = Start + 3_600_000L * (capture + 1);
+            await CaptureNodeAsync(harness, await AnyNodeAsync(harness), alliance: 7);
+        }
+
+        Assert.Equal("defended", await ScalarTextAsync(harness, "SELECT phase FROM {schema}.campaigns"));
+        Assert.Equal("idle", await ScalarTextAsync(harness, "SELECT phase FROM {schema}.hubs"));
+        // the next window of the owner after the stage's end (prime hour 22, 18 hours at ADM 1: it starts at 13:00 the next day, Day+37 h)
+        var until = long.Parse((await ScalarTextAsync(harness, "SELECT invulnerable_until_ms FROM {schema}.hubs"))!, global::System.Globalization.CultureInfo.InvariantCulture);
+        Assert.Equal(Day + 37 * EntosisWindow.HourMs, until);
+        harness.Clock.Now = Start + 3_600_000L * 7;
+        Assert.Equal("SOVEREIGNTY_TARGET_NOT_VULNERABLE", (await SettleAsync(harness, 9, 5)).Reason);
     }
 }

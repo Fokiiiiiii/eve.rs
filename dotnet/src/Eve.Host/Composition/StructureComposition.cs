@@ -238,20 +238,52 @@ internal sealed partial class CharacterServicesComposition
             // ST-9 a: a system's Sovereignty Hub is in the simulation once a pilot comes into the system, from the sovereignty records (inert until an entosis link targets it)
             // ST-9 b: the entosis link's only target is the system's sovereignty hub, from the same records
             spaceSessions.IsSovereigntyHubAsync = async (systemId, targetId, token) =>
-                Eve.Services.Space.SpaceSovHubs.HubOf(await sovereigntyReadModel.ReadSnapshotAsync(token), systemId) is { } hub && hub.HubId == targetId;
+                Eve.Services.Space.SpaceSovHubs.HubOf(await sovereigntyReadModel.ReadSnapshotAsync(token), systemId) is { } hub && hub.HubId == targetId
+                // ST-17 a: a live command node of an active stage in the system is the other target
+                || (entosisCaptureService is not null && await entosisCaptureService.IsCommandNodeAsync(targetId, systemId, token));
             // ST-9 c: the captures are durable (the EntosisCaptureService's tables, one transaction per event) and their completion is a scheduler job
             if (spaceContainers is not null)
             {
                 await Eve.Services.Space.Entosis.EntosisCaptureService.MigrateAsync(source);
                 var entosisCaptures = new Eve.Services.Space.Entosis.EntosisCaptureService(
                     source, foundations.Scheduler, () => foundations.Scheduler.Now, EntosisHubReadingAsync, EntosisHandoverAsync,
-                    log: message => Console.Error.WriteLine($"eve-host: entosis: {message}"), events: foundations.Events);
+                    log: message => Console.Error.WriteLine($"eve-host: entosis: {message}"), events: foundations.Events,
+                    constellationSystems: EntosisConstellationSystemsAsync);
                 entosisCaptures.Register();
                 spaceContainers.EntosisCaptures = entosisCaptures;
+                entosisCaptureService = entosisCaptures;
             }
             spaceSovHubs = new Eve.Services.Space.SpaceSovHubs(sim, spaceSessions, dogma,
                 async (systemId, token) => Eve.Services.Space.SpaceSovHubs.HubOf(await sovereigntyReadModel.ReadSnapshotAsync(token), systemId),
                 message => Console.Error.WriteLine($"eve-host: space sovereignty hubs: {message}"));
+            // ST-17 a: the command nodes are in space from the stage's events, and in a system from the pilots' entry (SpaceSovHubs.RestoreAsync)
+            spaceSovHubs.LiveCommandNodesOf = async (systemId, token) =>
+                entosisCaptureService is null ? [] : (await entosisCaptureService.LiveNodesAsync(systemId, token)).Select(node => node.NodeId).ToList();
+            foundations.Events.Subscribe("eve.host.space.command-nodes",
+                [
+                    Eve.Services.Space.Entosis.EntosisCaptureService.NodeSpawnedTopic,
+                    Eve.Services.Space.Entosis.EntosisCaptureService.NodeCapturedTopic,
+                    Eve.Services.Space.Entosis.EntosisCaptureService.StageEndedTopic,
+                ],
+                async (context, cancellation) =>
+                {
+                    if (context.Event.Topic == Eve.Services.Space.Entosis.EntosisCaptureService.NodeSpawnedTopic)
+                    {
+                        var spawned = context.Event.Payload<Eve.Services.Space.Entosis.CommandNodeSpawned>()!;
+                        await spaceSovHubs.PlaceCommandNodeAsync(spawned.NodeId, spawned.SolarSystemId, cancellation);
+                    }
+                    else if (context.Event.Topic == Eve.Services.Space.Entosis.EntosisCaptureService.NodeCapturedTopic)
+                    {
+                        spaceSovHubs.RemoveCommandNode(context.Event.Payload<Eve.Services.Space.Entosis.CommandNodeCaptured>()!.NodeId);
+                    }
+                    else
+                    {
+                        foreach (var nodeId in context.Event.Payload<Eve.Services.Space.Entosis.CommandStageEnded>()!.RemovedNodeIds)
+                        {
+                            spaceSovHubs.RemoveCommandNode(nodeId);
+                        }
+                    }
+                });
         }
         // ST-7: the service fuel is paid from the fuel bay (inventory) at each full hour; the rules are the SDE's service modules
         structureFuel = new Eve.Structures.StructureFuel(structureStore, foundations.Scheduler, structureTimers, ServiceFuelRulesSource.Load(dogma), new InventoryStructureFuelBay(items, dogma, foundations.Events));

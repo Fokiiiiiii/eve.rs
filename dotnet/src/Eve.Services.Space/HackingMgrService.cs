@@ -87,7 +87,9 @@ public sealed class HackingMgrService : IService
         var session = call.Session;
         if (attempts.Get(characterId) is not { } window)
         {
-            Send(session, [Ack()]);
+            // EVE.js Handle_QuitHackingAttempt returns null with no open attempt and sends nothing; a tile click answers with the ACK turn
+            if (call.Method != "QuitHackingAttempt")
+                Send(session, [Ack()]);
             return PyNone.Instance;
         }
 
@@ -167,7 +169,8 @@ public sealed class HackingMgrService : IService
     private static void Send(ClientSession session, IReadOnlyList<HackingEvent> events)
     {
         if (events.Count > 0)
-            session.SendNotification("OnHackingTurnComplete", "clientID", new PyList(events.Select(e => ToPy(e)).ToArray()));
+            // EVE.js sends the turn as the array of events, which marshals as a tuple (the client reads it by iteration)
+            session.SendNotification("OnHackingTurnComplete", "clientID", new PyTuple(events.Select(e => ToPy(e)).ToArray()));
     }
 
     /// <summary>A util.KeyVal per event and per record, as the client reads them (<c>event['eventID']</c>, <c>TileData(**eventData)</c>).</summary>

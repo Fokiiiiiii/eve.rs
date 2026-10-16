@@ -139,4 +139,93 @@ public sealed class PlayerBountyStore(NpgsqlDataSource source, string schema)
             hunters.Add(new BountyHunterStat((BountyOwnerKind)row.GetInt16(0), row.GetInt64(1), row.GetInt64(2), row.GetInt64(3), row.GetDecimal(4), row.GetInt32(5)));
         return hunters;
     }
+
+    /// <summary>
+    /// The claim of a kill: the bounty pools of the victim (its pilot, then its corporation, then its alliance) pay up to a fifth of the loss, the hunter's
+    /// claimed bounties and kills move, and the payout is recorded pending and its job scheduled (<paramref name="schedule"/>), all in one transaction. A
+    /// payout id that was claimed before is answered as it was and nothing moves again. Answers the payout id, or null when no bounty was due.
+    /// </summary>
+    public async Task<string?> ClaimKillAsync(PlayerBountyClaim claim, Func<NpgsqlConnection, NpgsqlTransaction, Task> schedule, CancellationToken cancellationToken = default)
+    {
+        await using var connection = await source.OpenConnectionAsync(cancellationToken);
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        if (await Sql.ScalarAsync(connection, transaction, Q("SELECT payout_id FROM {schema}.player_bounty_payouts WHERE payout_id = $1"), cancellationToken, claim.PayoutId) is not null)
+        {
+            await transaction.CommitAsync(cancellationToken);
+            return claim.PayoutId;
+        }
+
+        var pools = new Dictionary<long, (BountyOwnerKind Kind, long Corporation, long Alliance, decimal Bounty)>();
+        await using (var command = Sql.Command(connection, transaction, Q(
+            "SELECT target_id, owner_kind, corporation_id, alliance_id, bounty FROM {schema}.player_bounty_pools WHERE target_id = ANY($1) FOR UPDATE"), claim.Targets.ToArray()))
+        {
+            await using var row = await command.ExecuteReaderAsync(cancellationToken);
+            while (await row.ReadAsync(cancellationToken))
+                pools[row.GetInt64(0)] = ((BountyOwnerKind)row.GetInt16(1), row.GetInt64(2), row.GetInt64(3), row.GetDecimal(4));
+        }
+        // the targets in their claim order, each with a bounty
+        var due = claim.Targets.Where(id => pools.TryGetValue(id, out var pool) && pool.Bounty > 0).ToArray();
+        var total = due.Sum(id => pools[id].Bounty);
+        var cap = Math.Round(claim.LossValue * PayoutRatio, 2, MidpointRounding.AwayFromZero);
+        var amount = Math.Min(cap, total);
+        if (amount <= 0)
+            return null;
+
+        var remaining = amount;
+        foreach (var id in due)
+        {
+            if (remaining <= 0)
+                break;
+            var taken = Math.Min(pools[id].Bounty, remaining);
+            remaining -= taken;
+            await Sql.ExecuteAsync(connection, transaction, Q(
+                "UPDATE {schema}.player_bounty_pools SET bounty = bounty - $2, updated_ms = $3 WHERE target_id = $1"),
+                cancellationToken, id, taken, claim.NowMs);
+        }
+
+        await AddHunterStatAsync(connection, transaction, BountyOwnerKind.Character, claim.HunterId, claim.HunterCorporationId, claim.HunterAllianceId, amount, claim.NowMs, cancellationToken);
+        if (claim.HunterCorporationId > 0)
+            await AddHunterStatAsync(connection, transaction, BountyOwnerKind.Corporation, claim.HunterCorporationId, claim.HunterCorporationId, claim.HunterAllianceId, amount, claim.NowMs, cancellationToken);
+        if (claim.HunterAllianceId > 0)
+            await AddHunterStatAsync(connection, transaction, BountyOwnerKind.Alliance, claim.HunterAllianceId, claim.HunterCorporationId, claim.HunterAllianceId, amount, claim.NowMs, cancellationToken);
+
+        await Sql.ExecuteAsync(connection, transaction, Q(
+            "INSERT INTO {schema}.player_bounty_payouts (payout_id, hunter_id, amount, loss_value, cap_amount, status, command_id, created_ms) " +
+            "VALUES ($1, $2, $3, $4, $5, 'pending', $6, $7)"),
+            cancellationToken, claim.PayoutId, claim.HunterId, amount, claim.LossValue, cap, claim.CommandId, claim.NowMs);
+        await schedule(connection, transaction);
+        await transaction.CommitAsync(cancellationToken);
+        return claim.PayoutId;
+    }
+
+    /// <summary>The payout's hunter, amount and credit command, when it is still pending (null when it is missing or paid).</summary>
+    public static async Task<(long HunterId, decimal Amount, string CommandId)?> PendingPayoutAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, string schema, string payoutId, CancellationToken cancellationToken)
+    {
+        await using var command = Sql.Command(connection, transaction, Sql.In(schema,
+            "SELECT hunter_id, amount, command_id FROM {schema}.player_bounty_payouts WHERE payout_id = $1 AND status = 'pending' FOR UPDATE"), payoutId);
+        await using var row = await command.ExecuteReaderAsync(cancellationToken);
+        return await row.ReadAsync(cancellationToken) ? (row.GetInt64(0), row.GetDecimal(1), row.GetString(2)) : null;
+    }
+
+    /// <summary>Marks the payout paid, in the caller's transaction (the credit is in the same one).</summary>
+    public async Task MarkPaidAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, string payoutId, long nowMs, CancellationToken cancellationToken = default) =>
+        await Sql.ExecuteAsync(connection, transaction, Q(
+            "UPDATE {schema}.player_bounty_payouts SET status = 'paid', paid_ms = $2 WHERE payout_id = $1"), cancellationToken, payoutId, nowMs);
+
+    /// <summary>The share of a kill's loss a hunter is paid from the bounties on the victim (EveJS <c>PLAYER_BOUNTY_PAYOUT_LOSS_RATIO</c>).</summary>
+    public const decimal PayoutRatio = 0.2m;
+
+    private async Task AddHunterStatAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, BountyOwnerKind kind, long hunterId,
+        long corporationId, long allianceId, decimal amount, long nowMs, CancellationToken cancellationToken) =>
+        await Sql.ExecuteAsync(connection, transaction, Q(
+            "INSERT INTO {schema}.player_bounty_hunters (owner_kind, hunter_id, corporation_id, alliance_id, bounties_claimed, number_of_kills, updated_ms) " +
+            "VALUES ($1, $2, $3, $4, $5, 1, $6) " +
+            "ON CONFLICT (owner_kind, hunter_id) DO UPDATE SET bounties_claimed = {schema}.player_bounty_hunters.bounties_claimed + EXCLUDED.bounties_claimed, " +
+            "number_of_kills = {schema}.player_bounty_hunters.number_of_kills + 1, corporation_id = EXCLUDED.corporation_id, alliance_id = EXCLUDED.alliance_id, updated_ms = EXCLUDED.updated_ms"),
+            cancellationToken, (short)kind, hunterId, corporationId, allianceId, amount, nowMs);
 }
+
+/// <summary>A kill's claim: the pools of the victim (in claim order), the loss, and the hunter with its affiliation.</summary>
+public sealed record PlayerBountyClaim(string PayoutId, string CommandId, long HunterId, long HunterCorporationId, long HunterAllianceId,
+    IReadOnlyList<long> Targets, decimal LossValue, long NowMs);
+

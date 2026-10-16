@@ -160,6 +160,20 @@ public sealed class PgCrimewatchStore
                 updated_ms bigint NOT NULL,
                 PRIMARY KEY (owner_kind, hunter_id)
             );
+            """),
+        new Migration("0005_player_bounty_payouts", """
+            CREATE TABLE IF NOT EXISTS player_bounty_payouts (
+                payout_id text PRIMARY KEY,
+                hunter_id bigint NOT NULL CHECK (hunter_id > 0),
+                amount numeric(20,2) NOT NULL CHECK (amount > 0),
+                loss_value numeric(20,2) NOT NULL CHECK (loss_value >= 0),
+                cap_amount numeric(20,2) NOT NULL CHECK (cap_amount >= 0),
+                status text NOT NULL CHECK (status IN ('pending', 'paid')),
+                command_id text NOT NULL UNIQUE,
+                created_ms bigint NOT NULL,
+                paid_ms bigint
+            );
+            CREATE INDEX IF NOT EXISTS player_bounty_payouts_pending ON player_bounty_payouts (status, created_ms) WHERE status = 'pending';
             """)
     ];
 

@@ -1,6 +1,8 @@
 using Eve.Characters;
 using Eve.Crimewatch;
 using Eve.Data;
+using Eve.Scheduler;
+using Eve.Services.Crimewatch;
 using Eve.Wallet;
 using Eve.Identity;
 using Eve.Marshal;
@@ -188,6 +190,57 @@ public sealed class PlayerBountyHostTests : IAsyncLifetime
             Assert.Equal(500_000m, await WalletIskAsync(source, poor));
             Assert.Equal(0L, await ScalarAsync<long>(source,
                 $"SELECT count(*) FROM {Schema("EVE_CRIMEWATCH_SCHEMA")}.player_bounty_pools WHERE target_id = {target}"));
+        }
+        finally
+        {
+            await host.ShutdownAsync();
+        }
+    }
+
+    [PgFact]
+    public async Task A_pending_payout_of_a_kill_is_credited_by_the_host_payout_job_once()
+    {
+        await using var source = NpgsqlDataSource.Create(PgConnection.ForTest(Url));
+        var host = await HostComposition.BuildAsync(Settings());
+        try
+        {
+            var characters = new PgCharacterStore(source, Schema("EVE_CHARACTERS_SCHEMA"));
+            var victim = await InsertPilotAsync(source, characters, "Payout Victim");
+            var hunter = await InsertPilotAsync(source, characters, "Payout Hunter");
+            await OpenWalletAsync(source, hunter, 0m);
+            var store = new PlayerBountyStore(source, Schema("EVE_CRIMEWATCH_SCHEMA"));
+            var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+            await using (var connection = await source.OpenConnectionAsync())
+            await using (var transaction = await connection.BeginTransactionAsync())
+            {
+                await store.RecordPlacementAsync(connection, transaction, new BountyPool(victim, BountyOwnerKind.Character, 1000006, 0, 0), hunter, 2_000_000m, "host-placement", now);
+                await transaction.CommitAsync();
+            }
+
+            // the kill claims 2,000,000 (a fifth of a 10,000,000 loss) and schedules the payout job in the claim's transaction
+            var scheduler = new DurableScheduler(source, () => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(), null, Schema("EVE_SCHEDULER_SCHEMA"));
+            var payoutId = "kill:9" + Guid.NewGuid().ToString("N")[..6];
+            var claimed = await store.ClaimKillAsync(new PlayerBountyClaim(payoutId, "player-bounty:" + payoutId + ":credit", hunter, 0, 0, [victim], 10_000_000m, now),
+                async (connection, transaction) => await scheduler.ScheduleAsync(connection, transaction, new JobSpec("player-bounty.payout", now)
+                {
+                    Key = "player-bounty:" + payoutId,
+                    Payload = new PlayerBountyPayoutDue(payoutId),
+                }));
+            Assert.Equal(payoutId, claimed);
+            Assert.Equal(0m, await ScalarAsync<decimal>(source, $"SELECT bounty FROM {Schema("EVE_CRIMEWATCH_SCHEMA")}.player_bounty_pools WHERE target_id = {victim}"));
+
+            // the host's runner credits the wallet when the job is due, and the second claim of the same kill does nothing
+            var paid = "";
+            for (var attempt = 0; attempt < 100 && paid != "paid"; attempt++)
+            {
+                await Task.Delay(100);
+                paid = await ScalarAsync<string>(source, $"SELECT status FROM {Schema("EVE_CRIMEWATCH_SCHEMA")}.player_bounty_payouts WHERE payout_id = '{payoutId}'");
+            }
+            Assert.Equal("paid", paid);
+            Assert.Equal(2_000_000m, await WalletIskAsync(source, hunter));
+            Assert.Equal(payoutId, await store.ClaimKillAsync(new PlayerBountyClaim(payoutId, "player-bounty:" + payoutId + ":credit", hunter, 0, 0, [victim], 10_000_000m, now),
+                (_, _) => throw new InvalidOperationException("a claimed kill schedules nothing again")));
+            Assert.Equal(2_000_000m, await WalletIskAsync(source, hunter));
         }
         finally
         {

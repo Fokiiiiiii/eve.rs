@@ -3,6 +3,7 @@ using Eve.Host;
 using Eve.Inventory;
 using Eve.Macho;
 using Eve.Marshal;
+using Eve.Skills;
 using Eve.Services;
 using Eve.GameStore;
 using Eve.Universe;
@@ -201,6 +202,34 @@ public sealed class CharacterHostTests
         // the cerebral accelerator is still active after a restart; the normal booster is not coming back
         await rig.RestartAsync();
         Assert.Equal(1, await ScalarAsync(rig, $"SELECT count(*) FROM {rig.SkillsSchema}.active_skill_boosters WHERE character_id = {character}"));
+    }
+
+    [PgFact]
+    public async Task An_implant_and_an_expert_system_are_kept_through_a_host_restart_and_the_expert_grant_still_applies()
+    {
+        await using var rig = await CharacterHostRig.CreateAsync();
+        var character = await rig.CreateCharacterAsync();
+        const int memoryAugmentation = 9941;
+        const int coreShipOperations = 57208; // grants Hull Upgrades at level 5 for seven days
+        await GiveItemAsync(rig, character, memoryAugmentation, character, 89, singleton: true);
+        var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        var store = new PgExpertSystemStore(rig.Source, rig.SkillsSchema);
+        await using (var connection = await rig.Source.OpenConnectionAsync())
+        await using (var transaction = await connection.BeginTransactionAsync())
+        {
+            await store.UpsertAsync(connection, transaction, new ExpertSystemEntry(character, coreShipOperations, now, now + 7 * ExpertSystemRules.Day, null, "item", now));
+            await transaction.CommitAsync();
+        }
+
+        await rig.RestartAsync();
+
+        Assert.Equal(new[] { memoryAugmentation }, await BodyImplantTypesAsync(rig, character));
+        var entries = await new PgExpertSystemStore(rig.Source, rig.SkillsSchema).ForCharacterAsync(character);
+        Assert.Equal(coreShipOperations, Assert.Single(entries).TypeId);
+        Assert.Equal(5, ExpertSystemRules.GrantsOf(ExpertSystemCatalog.LoadEmbedded(), entries, now)[3394]);
+        // the restarted host answers the pilot's list through its registry
+        var manager = Assert.IsAssignableFrom<IService>(rig.Registry.Lookup("expertSystemMgr"));
+        Assert.IsType<PyDict>(await CallAsync(manager, "GetMyExpertSystems", new ClientSession { CharacterId = character, Sink = new RecordingPacketSink() }));
     }
 
     [PgFact]

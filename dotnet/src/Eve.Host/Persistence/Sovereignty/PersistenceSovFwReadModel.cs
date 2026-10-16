@@ -154,14 +154,16 @@ public sealed class PersistenceSovFwReadModel(
     }
 
 
-    /// <summary>The Cynosural Suppression upgrade (SDE 81619; EveJS TYPE_CYNO_SUPPRESSION_UPGRADE).</summary>
-    private const long CynoSuppressionUpgradeTypeId = 81619;
+    /// <summary>The Cynosural Suppression upgrade (SDE 81619; EVE.js TYPE_CYNO_SUPPRESSION_UPGRADE).</summary>
+    private const long CynoSuppressionUpgradeTypeId = SovUpgradeBudget.CynoSuppressionTypeId;
+
+    /// <summary>The skyhook type (SDE 81080) whose workforce the hub's upgrades draw (EVE.js getSkyhookHarvestContribution).</summary>
+    private const long SkyhookTypeId = 81080;
 
     /// <summary>
-    /// E-03: whether the system runs its Cynosural Suppression upgrade (EveJS isCynoSuppressionUpgradeOnline): the system has a hub and the hub
-    /// has the upgrade installed and online.
-    /// shortcut: reads the stored online flag only; EveJS also needs the upgrade power state (sovModernState computeHubUpgradeSnapshot, the local power and
-    /// workforce budget), which is not ported; upgrade with the sov upgrade budget.
+    /// E-03, ST-17 c: whether the system runs its Cynosural Suppression upgrade: EVE.js isCynoSuppressionUpgradeOnline, the upgrade's power state is online. The
+    /// state is derived (<see cref="SovUpgradeBudget"/>) from the installed upgrades in install order, the owner's online switches, the star power (EVE.js
+    /// fallback) and the workforce of the system's active skyhooks; nothing is stored for it. No hub gives false.
     /// </summary>
     public async ValueTask<bool> IsCynoSuppressionOnlineAsync(long solarSystemId, CancellationToken cancellationToken)
     {
@@ -183,11 +185,35 @@ public sealed class PersistenceSovFwReadModel(
                 continue;
             if (NullablePositive(system["infrastructureHubID"]) is null)
                 return false;
-            return system["hubUpgradeConfiguration"] is JsonArray configured && configured.OfType<JsonObject>().Any(upgrade =>
-                Positive(Integer(upgrade["typeID"])) == CynoSuppressionUpgradeTypeId &&
-                upgrade["online"] is JsonValue flag && flag.TryGetValue(out bool isOnline) && isOnline);
+            var installed = (system["hubUpgradeConfiguration"] as JsonArray ?? [])
+                .OfType<JsonObject>()
+                .Select(upgrade => new SovUpgradeInstall(
+                    Positive(Integer(upgrade["typeID"])),
+                    upgrade["online"] is JsonValue flag && flag.TryGetValue(out bool isOnline) && isOnline))
+                .Where(install => install.TypeId > 0)
+                .ToList();
+            var supply = new SovUpgradeSupply(SovUpgradeBudget.FallbackStarPower, ActiveSkyhookWorkforce(state, solarSystemId));
+            var states = SovUpgradeBudget.PowerStates(installed, supply);
+            return states.TryGetValue(CynoSuppressionUpgradeTypeId, out var power) && power == SovUpgradeBudget.PowerStateOnline;
         }
         return false;
+    }
+
+    /// <summary>The workforce the system's active skyhooks give (EVE.js: an active skyhook gives its workforce amount; an inactive one gives nothing).</summary>
+    private static long ActiveSkyhookWorkforce(JsonObject state, long solarSystemId)
+    {
+        if (state["skyhooks"] is not JsonObject rows)
+            return 0;
+        long total = 0;
+        foreach (var (_, node) in rows)
+        {
+            if (node is not JsonObject row || Positive(Integer(row["solarSystemID"])) != solarSystemId || Positive(Integer(row["typeID"])) != SkyhookTypeId)
+                continue;
+            var active = row["productionActive"] is JsonValue flag && (flag.TryGetValue(out bool isActive) ? isActive : flag.TryGetValue(out long number) && number != 0);
+            if (active && !(row["destroyed"] is JsonValue destroyedFlag && destroyedFlag.TryGetValue(out bool destroyed) && destroyed))
+                total += Math.Max(0, Integer(row["workforce"]));
+        }
+        return total;
     }
 
     public async ValueTask<IReadOnlyList<long>> ReadAllianceSystemsAsync(

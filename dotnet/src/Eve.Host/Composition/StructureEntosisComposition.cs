@@ -9,6 +9,21 @@ internal sealed partial class CharacterServicesComposition
     private Eve.Services.Space.Entosis.EntosisCaptureService? entosisCaptureService;
 
     /// <summary>
+    /// ST-17 a: a hub destroyed by its command node stage is lost from the sovereignty records (the sovereignty write path; EVE.js
+    /// commitSovereigntyHubCampaignOutcome). The system's owner, claim, hub pointer and fuel group are cleared, and the hub's structure row and record leave.
+    /// </summary>
+    private Task<bool> EntosisHubDestroyedAsync(Eve.Services.Space.Entosis.EntosisDestroyedHub hub, CancellationToken cancellationToken) =>
+        sovWriteOperations.DestroyLostHubAsync(hub.SolarSystemId, hub.HubId, hub.DefenderAllianceId, cancellationToken);
+
+    /// <summary>ST-17 a: the constellation of a system (its static data), for the notice of a stage's start; 0 when the static data has none.</summary>
+    private async Task<int> EntosisConstellationOfAsync(int solarSystemId, CancellationToken cancellationToken)
+    {
+        var systems = await mapSolarSystems.Value.WaitAsync(cancellationToken);
+        var home = systems.FirstOrDefault(row => row.Key == solarSystemId);
+        return home is not null && home.Doc.TryGetProperty("constellationID", out var value) && value.TryGetInt32(out var id) ? id : 0;
+    }
+
+    /// <summary>
     /// ST-17 a: the systems of a system's constellation (the static data's mapSolarSystems), where a stage's command nodes spawn. A system is its own constellation's
     /// member when the static data has no constellation for it.
     /// </summary>

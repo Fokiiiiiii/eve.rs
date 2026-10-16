@@ -54,7 +54,8 @@ public sealed class EntosisCaptureServiceTests
 
     private static async Task<Harness> CreateAsync(
         EntosisHubReading reading, Func<EntosisCapturedHub, CancellationToken, Task<EntosisHandover>>? handover = null,
-        Func<int, CancellationToken, Task<IReadOnlyList<int>>>? constellation = null)
+        Func<int, CancellationToken, Task<IReadOnlyList<int>>>? constellation = null, Func<int, CancellationToken, Task<int>>? constellationOf = null,
+        Func<EntosisDestroyedHub, CancellationToken, Task<bool>>? destroy = null)
     {
         var source = NpgsqlDataSource.Create(PgConnection.ForTest(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
         var suffix = Guid.NewGuid().ToString("N")[..10];
@@ -70,17 +71,23 @@ public sealed class EntosisCaptureServiceTests
         // the owner's notices: the capture's events are collected by a subscriber (started once the first pump has run)
         var bus = new EventBus(source, scheduler, null, eventsSchema, _ => { });
         var notices = new List<object>();
-        bus.Subscribe("test.entosis-notices", [EntosisCaptureService.CaptureStartedTopic, EntosisCaptureService.ReinforcedTopic], (context, _) =>
-        {
-            notices.Add(context.Event.Topic == EntosisCaptureService.CaptureStartedTopic
-                ? context.Event.Payload<EntosisCaptureStarted>()!
-                : context.Event.Payload<EntosisHubReinforced>()!);
-            return Task.CompletedTask;
-        });
+        bus.Subscribe("test.entosis-notices",
+            [EntosisCaptureService.CaptureStartedTopic, EntosisCaptureService.ReinforcedTopic, EntosisCaptureService.StageStartedTopic, EntosisCaptureService.HubDestroyedTopic],
+            (context, _) =>
+            {
+                notices.Add(context.Event.Topic switch
+                {
+                    var topic when topic == EntosisCaptureService.CaptureStartedTopic => context.Event.Payload<EntosisCaptureStarted>()!,
+                    var topic when topic == EntosisCaptureService.StageStartedTopic => context.Event.Payload<CommandStageStarted>()!,
+                    var topic when topic == EntosisCaptureService.HubDestroyedTopic => context.Event.Payload<HubDestroyed>()!,
+                    _ => context.Event.Payload<EntosisHubReinforced>()!,
+                });
+                return Task.CompletedTask;
+            });
         await bus.PumpAsync();
         var service = new EntosisCaptureService(
             source, scheduler, () => clock.Now, (_, _) => Task.FromResult<EntosisHubReading?>(holder.Value), handover, schema: schema, events: bus,
-            constellationSystems: constellation);
+            constellationSystems: constellation, constellationOf: constellationOf, destroyHub: destroy);
         service.Register();
         return new Harness
         {
@@ -432,6 +439,9 @@ public sealed class EntosisCaptureServiceTests
 
         Assert.Equal("4", await ScalarTextAsync(harness, "SELECT COUNT(*) FROM {schema}.nodes"));
         Assert.Equal("active", await ScalarTextAsync(harness, "SELECT phase FROM {schema}.campaigns"));
+        // the defender is told that the stage has started (V24.01 161 is written from this event)
+        await harness.Bus.PumpAsync();
+        Assert.Equal(7L, harness.Notices.OfType<CommandStageStarted>().Single().DefenderAllianceId);
         Assert.Equal("reinforced", await ScalarTextAsync(harness, "SELECT phase FROM {schema}.hubs"));
         Assert.NotNull(await harness.Scheduler.FindAsync(EntosisCaptureService.NodeSpawnKind, Hub.ToString()));
         // the stage is started once: a second start leaves it as it is
@@ -500,5 +510,46 @@ public sealed class EntosisCaptureServiceTests
         Assert.Equal(Day + 37 * EntosisWindow.HourMs, until);
         harness.Clock.Now = Start + 3_600_000L * 7;
         Assert.Equal("SOVEREIGNTY_TARGET_NOT_VULNERABLE", (await SettleAsync(harness, 9, 5)).Reason);
+    }
+
+    [PgFact]
+    public async Task A_destroyed_hub_is_lost_by_the_destruction_job_which_is_retried_until_the_records_write_it()
+    {
+        var attempts = 0;
+        await using var harness = await CreateAsync(Owned(), constellation: Constellation, destroy: (hub, _) =>
+        {
+            Assert.Equal(Hub, hub.HubId);
+            attempts++;
+            if (attempts == 1)
+            {
+                throw new InvalidOperationException("the sovereignty table is busy");
+            }
+            return Task.FromResult(true);
+        });
+        await InsertReinforcedHubAsync(harness, Start);
+        harness.Clock.Now = Start;
+        await harness.Service.CampaignStartAsync(Hub, CancellationToken.None);
+        for (var capture = 0; capture < 9; capture++)
+        {
+            harness.Clock.Now = Start + 3_600_000L * (capture + 1);
+            await CaptureNodeAsync(harness, await AnyNodeAsync(harness), alliance: 5);
+        }
+        Assert.Equal("destroy-pending", await ScalarTextAsync(harness, "SELECT handover FROM {schema}.hubs"));
+        Assert.NotNull(await harness.Scheduler.FindAsync(EntosisCaptureService.HubDestroyDueKind, Hub.ToString()));
+
+        // the first write fails: the hub stays pending and the job is tried again
+        await harness.Service.HubDestroyDueAsync(Hub, CancellationToken.None);
+        Assert.Equal(1, attempts);
+        Assert.Equal("destroy-pending", await ScalarTextAsync(harness, "SELECT handover FROM {schema}.hubs"));
+
+        await harness.Service.HubDestroyDueAsync(Hub, CancellationToken.None);
+        Assert.Equal(2, attempts);
+        Assert.Equal("destroyed", await ScalarTextAsync(harness, "SELECT handover FROM {schema}.hubs"));
+        await harness.Bus.PumpAsync();
+        var destroyed = harness.Notices.OfType<HubDestroyed>().Single();
+        Assert.Equal((System, 7L), (destroyed.SolarSystemId, destroyed.DefenderAllianceId));
+        // once written, a repeat does nothing
+        await harness.Service.HubDestroyDueAsync(Hub, CancellationToken.None);
+        Assert.Equal(2, attempts);
     }
 }

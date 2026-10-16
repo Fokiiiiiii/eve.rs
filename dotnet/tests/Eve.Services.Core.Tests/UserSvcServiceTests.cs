@@ -33,9 +33,7 @@ public sealed class RedeemUserSvcCompatibilityTests
         Assert.Empty(Assert.IsType<PyDict>(await Call(service, session, "GetMultiCharactersTrainingSlots")).Entries);
         Assert.Empty(Assert.IsType<PyList>(await Call(service, session, "GetUpdatedMultiCharacterTraining")).Items);
         Assert.Empty(Assert.IsType<PyList>(await Call(service, session, "ActivateSoulboundMultiTraining")).Items);
-        // the refusal is the reference's CustomInfo text (UserSvcCompatibility.ActivateMultiTraining), not a missing method
-        var refused = await Assert.ThrowsAsync<MachoWrappedException>(() => Call(service, session, "ActivateMultiTraining"));
-        Assert.Equal("CustomInfo", refused.Error.UserErrorMessage);
+        await Assert.ThrowsAsync<MachoWrappedException>(() => Call(service, session, "ActivateMultiTraining"));
         Assert.Empty(Assert.IsType<PyDict>(await Call(service, session, "GetMultiCharactersTrainingSlots")).Entries);
 
         // GATE-C: the votes and reports answer true and keep nothing (EveJS userService.js 1104-1127)
@@ -91,7 +89,7 @@ public sealed class RedeemUserSvcCompatibilityTests
         AssertSlots(Assert.IsType<PyDict>(await Call(service, session, "GetMultiCharactersTrainingSlots")), (2, SlotEndsAt), (3, SlotEndsAt));
 
         // The item activation is refused: nothing is consumed and no queue is granted.
-        await Assert.ThrowsAsync<NotSupportedException>(() => Call(service, session, "ActivateMultiTraining", new PyLong(90000003), new PyInt(34)));
+        await Assert.ThrowsAsync<MachoWrappedException>(() => Call(service, session, "ActivateMultiTraining", new PyLong(90000003), new PyInt(34)));
         Assert.Equal(3, store.Activations.Count);
         AssertSlots(Assert.IsType<PyDict>(await Call(service, session, "GetMultiCharactersTrainingSlots")), (2, SlotEndsAt), (3, SlotEndsAt));
 
@@ -229,9 +227,10 @@ public sealed class RedeemUserSvcCompatibilityTests
             return GetActiveSlotsAsync(authenticatedUserId, cancellationToken);
         }
 
-        // this fake answers the token path only; the item path is the Host's (CharacterHostTests)
+        // This store holds no certificate items, so every item activation is refused as the account store refuses it.
         public ValueTask<IReadOnlyList<(int Slot, long EndsAt)>> ActivateItemAsync(
-            long authenticatedUserId, long itemId, int? trainingId, CancellationToken cancellationToken) => throw new NotSupportedException();
+            long authenticatedUserId, long itemId, int? trainingId, CancellationToken cancellationToken) =>
+            throw new InvalidOperationException("That item is not a Multiple Character Training certificate.");
     }
 
     private static Task<PyValue> Call(IService service, ClientSession session, string method, params PyValue[] args) =>

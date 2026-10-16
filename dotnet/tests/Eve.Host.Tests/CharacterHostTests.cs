@@ -252,6 +252,52 @@ public sealed class CharacterHostTests
     }
 
     [PgFact]
+    public async Task Deleting_a_character_of_an_npc_corporation_destroys_its_assets_instead_of_moving_them()
+    {
+        await using var rig = await CharacterHostRig.CreateAsync();
+        Assert.Equal(1, await rig.CreateAccountAsync());
+        var character = await rig.CreateCharacterAsync();
+        var session = new ClientSession { CharacterId = character, UserId = 1, Sink = new RecordingPacketSink() };
+        var service = Assert.IsAssignableFrom<IService>(rig.Registry.Lookup("charUnboundMgr"));
+        const long npcCorporation = 1000002;
+        await using (var connection = await rig.Source.OpenConnectionAsync())
+        await using (var command = new NpgsqlCommand($"UPDATE {rig.CharactersSchema}.characters SET corporation_id = $2 WHERE id = $1", connection))
+        {
+            command.Parameters.Add(new NpgsqlParameter { Value = character });
+            command.Parameters.Add(new NpgsqlParameter { Value = npcCorporation });
+            await command.ExecuteNonQueryAsync();
+        }
+        var items = new PgItemStore(rig.Source, rig.InventorySchema);
+        long shipId;
+        long cargoId;
+        await using (var connection = await rig.Source.OpenConnectionAsync())
+        await using (var transaction = await connection.BeginTransactionAsync())
+        {
+            shipId = await items.CreateAsync(connection, transaction, new NewItem(TypeId: 587, OwnerId: character, LocationId: rig.Station, Flag: 4));
+            cargoId = await items.CreateAsync(connection, transaction, new NewItem(TypeId: 34, OwnerId: character, LocationId: shipId, Flag: 4, Quantity: 500));
+            await transaction.CommitAsync();
+        }
+
+        await CallAsync(service, "PrepareCharacterForDelete", session, new PyLong(character));
+        await using (var connection = await rig.Source.OpenConnectionAsync())
+        await using (var command = new NpgsqlCommand(
+            $"UPDATE {rig.CharactersSchema}.characters SET delete_prepare_at = now() - interval '1 minute' WHERE id = $1", connection))
+        {
+            command.Parameters.Add(new NpgsqlParameter { Value = character });
+            await command.ExecuteNonQueryAsync();
+        }
+        Assert.IsType<PyNone>(await CallAsync(service, "DeleteCharacter", session, new PyLong(character)));
+
+        // the NPC corporation's assets are destroyed with the character (EveJS destroyCharacterAssets), not delivered to a corporation
+        Assert.Null(await items.GetAsync(shipId));
+        Assert.Null(await items.GetAsync(cargoId));
+        Assert.Empty(await items.OwnedByAsync(character));
+        var npcItems = await items.OwnedByAsync(npcCorporation);
+        Assert.DoesNotContain(npcItems, item => item.Id == shipId || item.Id == cargoId);
+        Assert.Equal(1000001L, (await rig.Characters.GetAsync(character))!.CorporationId);
+    }
+
+    [PgFact]
     public async Task A_granted_training_slot_schedules_its_expiry_and_the_scheduler_runs_it_through_the_host()
     {
         await using var rig = await CharacterHostRig.CreateAsync();
@@ -282,10 +328,13 @@ public sealed class CharacterHostTests
         rig.Sessions.Enter(character, session);
         Assert.Single(await rig.Scheduler.ListAsync(kind));
         var before = Notifications(sink).Count(n => n.Name == "OnMultipleCharactersTrainingUpdated");
-        // the job is due at the slot's end, days away: the test moves it to now (same key, replaces it) and the scheduler runs it
+        // the job is due at the slot's end, days away: the test moves it to now (same key, replaces it). The host's scheduler loop runs
+        // it (Foundations starts it), so the test waits, bounded, for the job to be gone; it ran once, so the account hears once.
         await rig.Scheduler.ScheduleAsync(new Eve.Scheduler.JobSpec(kind, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds())
             { Key = job.Key, Payload = new Eve.Services.Skills.MultipleTrainingSlotExpiry.AccountJob(1) });
-        Assert.Equal(1, await rig.Scheduler.RunDueAsync());
+        var deadline = DateTime.UtcNow.AddSeconds(20);
+        while (await rig.Scheduler.FindAsync(kind, job.Key!) is not null && DateTime.UtcNow < deadline)
+            await Task.Delay(50);
         Assert.Null(await rig.Scheduler.FindAsync(kind, job.Key!)); // a finished job is removed by the scheduler
         Assert.Equal(before + 1, Notifications(sink).Count(n => n.Name == "OnMultipleCharactersTrainingUpdated"));
     }

@@ -41,6 +41,7 @@ public sealed class StructureTimers
     private readonly IStructureRulesSource _rules;
     private readonly Func<double> _roll;
     private readonly Func<NpgsqlConnection, NpgsqlTransaction, StructureRecord, CancellationToken, Task<StructureUnanchorDrop>>? _completeUnanchor;
+    private readonly Func<NpgsqlConnection, NpgsqlTransaction, StructureRecord, CancellationToken, Task<StructureUnanchorDrop?>>? _completeDestruction;
 
     public StructureTimers(
         StructureStore store,
@@ -48,7 +49,8 @@ public sealed class StructureTimers
         EventBus events,
         IStructureRulesSource rules,
         Func<double>? roll = null,
-        Func<NpgsqlConnection, NpgsqlTransaction, StructureRecord, CancellationToken, Task<StructureUnanchorDrop>>? completeUnanchor = null)
+        Func<NpgsqlConnection, NpgsqlTransaction, StructureRecord, CancellationToken, Task<StructureUnanchorDrop>>? completeUnanchor = null,
+        Func<NpgsqlConnection, NpgsqlTransaction, StructureRecord, CancellationToken, Task<StructureUnanchorDrop?>>? completeDestruction = null)
     {
         _store = store;
         _scheduler = scheduler;
@@ -56,6 +58,7 @@ public sealed class StructureTimers
         _rules = rules;
         _roll = roll ?? Random.Shared.NextDouble;
         _completeUnanchor = completeUnanchor;
+        _completeDestruction = completeDestruction;
     }
 
     /// <summary>Registers the job handler. Call it once, before the foundations start.</summary>
@@ -88,6 +91,11 @@ public sealed class StructureTimers
             {
                 throw new InvalidOperationException($"Structure {structureId} produced invalid unanchor drop item IDs.");
             }
+        }
+        // ST-16: a destroyed structure's loot container is made in the same transaction (null when it has nothing to drop)
+        if (transition.Changed && transition.Removal == StructureRemoval.Destroyed && _completeDestruction is { } loot)
+        {
+            unanchorDrop = await loot(connection, transaction, record, cancellationToken);
         }
         if (transition.Changed)
         {

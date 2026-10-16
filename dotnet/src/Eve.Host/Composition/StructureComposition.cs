@@ -225,8 +225,9 @@ internal sealed partial class CharacterServicesComposition
         SetupStructureModules();
         var rules = await StructureRulesSource.LoadAsync(sde);
         var unanchorDrop = CreateStructureUnanchorDropAuthority();
+        var destructionLoot = CreateStructureDestructionLootAuthority();
         structureTimers = new Eve.Structures.StructureTimers(structureStore, foundations.Scheduler, foundations.Events, rules,
-            completeUnanchor: unanchorDrop.CompleteAsync);
+            completeUnanchor: unanchorDrop.CompleteAsync, completeDestruction: destructionLoot.CompleteAsync);
         structureTimers.Register();
         // ST-1 d: a system's structures are in the simulation once a pilot comes into it; the simulation's hits and the records' state changes meet here
         if (sim is not null && spaceSessions is not null)

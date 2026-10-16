@@ -16,6 +16,10 @@ public sealed partial class SpaceContainers
             {
                 await PlaceUnanchorDropsAsync(change, drop, cancellationToken);
             }
+            else if (change.Removal == "destroyed" && change.UnanchorDrop is { FittingsContainerItemId: > 0 } loot)
+            {
+                await PlaceUnanchorDropAsync(loot.FittingsContainerItemId, StructureDestructionLoot.ContainerMarker(change.StructureId), cancellationToken);
+            }
         });
 
     private async Task PlaceUnanchorDropsAsync(

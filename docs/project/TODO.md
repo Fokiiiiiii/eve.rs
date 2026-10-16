@@ -2471,3 +2471,20 @@ Handoff: `docs/project/structures-phase/handoff-ST-12.md`. Decisions and sources
 | VERIFIED (PostgreSQL, Host) | ST-9 e: the claim notice of a neutral hub's new owner (V24.01 43 to the capturing alliance's members, 44 to the claiming corporation's members; payload `corpID`, `allianceID`), written in the handover after the claim is persisted; a retry writes nothing twice | `SovereigntyClaimNotificationTests` (1), `SovHubClaimTests` (3) and `EntosisOwnerNotificationTests` (1) pass on eve_p3. Recipient rule and client text: DEVIATIONS "Sovereignty claim notices"; client not run. |
 | NOT IN V24.01 | ST-9 e: a notice of a capture's progress | eve-logic `notificationconst.py` names no progress type; none is written. |
 | VERIFIED (pure, in-memory sovereignty tables, PostgreSQL, Host registration with the fake simulation) | (d) a neutral hub captured by an entosis link is claimed by the capturing alliance's executor corporation through the sovereignty write path; the ball is replaced with the new owner; a failed write is retried by a job | DEVIATIONS "Entosis handover of a captured Sovereignty Hub (ST-9 d)". Tests: `SovHubClaimTests` 3, `EntosisCaptureServiceTests` 8 in total, `SpaceSovHubsTests` 6. Not verified: the owner's notice, the client's view of the new owner. |
+
+## 58. Structures phase ST-16: station rent, observatory control towers, destruction loot, customs (2026-10-16)
+
+Handoff: `docs/project/structures-phase/handoff-ST-16.md`. Decisions and sources: DEVIATIONS "Structure ST-16 (2026-10-16)". Tests: `dotnet/tests/Eve.Corporations.Tests/CorporationTests.cs` (station rent credit, impound helper, impound release credit), `dotnet/tests/Eve.Host.Tests/StructureUnanchorDropTests.cs` (destruction loot, atomic), `dotnet/tests/Eve.Services.Space.Tests/MobileObservatoryHostTests.cs` (control tower 100 km).
+
+| Status | Row | Notes |
+|---|---|---|
+| VERIFIED (PG, Corporations suite 128/128) | (3a) station rent and impound release credit the station owner; a bill payment credits the resolved creditor; the owner balance is opened when missing | DEVIATIONS ST-16 |
+| VERIFIED (PG, Corporations suite) | (3b) an unpaid station office is impounded at due time (items to the Impounded location, folder deleted, office ended); the helper is shared with the Director un-rent | `Unpaid_station_office_is_impounded...`; the due job's Host wiring is not covered by a Host test |
+| OPEN | (3c) station bills rented before this change have no creditor: their due job does nothing (no eviction, no notice) | migration of the creditor is open |
+| BUILT, NOT TESTED | (3d) rent-due and eviction notices (type 10, group Bills) through `PersistenceTransactionMailbox.WriteNotificationsAsync` after the commit | no test reads the notification back; pre-due reminder not built |
+| VERIFIED (PG, Space MobileObservatory 9/9) | (1a) Mobile Observatory refused within 100 km of a control tower (SDE group 365 structure records) and placed beyond it | `A_control_tower_within_100_km...`; no control tower deployment exists (gap) |
+| OPEN | (1b) control tower deployment (the minimal deployable kind the brief asks for): needs a sim ball kind, protocol change and deploy RPC | not built |
+| OPEN | (1c) deadspace: a Mobile Observatory is not anchored in a site's deadspace pocket | no pocket radius in the wiki, the SDE or the ST-11 record; needs a source |
+| VERIFIED (PG, Host 2/2) | (2a) destruction loot: fitted modules, fuel, cargo and the Quantum Core into one Abandoned Container at the structure's position; rigs destroyed; the container placed in space after commit | `Destruction_loot_moves...`, `Destruction_loot_is_atomic...`; the Space placement of the container is not tested |
+| OPEN | (2b) asset safety before loot (EveJS handleStructureDestroyed): owners' items wrapped first, loot only for FLEX and disabled systems or a refused wrap | DEVIATIONS ST-16 |
+| OPEN | (4) customs fines and confiscation at undock and stargate jump (EveJS contraband inspection: rule table, smuggling skill, roll, durable penalty job, custody) | DEVIATIONS ST-16; the warning exists (ST-3) |

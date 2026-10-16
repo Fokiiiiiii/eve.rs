@@ -4974,6 +4974,35 @@ fn a_controlled_structure_burst_web_reaches_only_the_ships_the_host_authorizes_a
     assert!(web_lands_on(&scene, B), "the authorized ship is webbed by the pulse");
 }
 
+/// ST-17 d: a ship-fitted burst projector (no structure under control) asks the Host for each pulse with its own ship as the source: the ship never reaches
+/// itself, the lease of a ship is 0, and the grant of the Host reaches the other ship.
+#[test]
+fn a_ship_fitted_burst_projector_asks_the_host_for_each_pulse_and_spares_its_own_ship() {
+    let (mut scene, t) = crowd();
+    let own = scene.pilots[&A].ship.spec.ship_id;
+    let target = scene.pilots[&B].ship.spec.ship_id;
+    let started = scene.activate(A, structure_burst_effect(Remote::Web { percent: -20.0 }), t);
+    let (nonce, lease, cycle, ordinal, candidates) = burst_request(&started);
+    assert_eq!(ordinal, 0);
+    assert_eq!(lease, 0, "a ship has no control lease");
+    assert!(!candidates.contains(&own), "the ship is never its own candidate: {candidates:?}");
+    assert!(candidates.contains(&target), "the other ship in reach is a candidate: {candidates:?}");
+    assert!(!web_lands_on(&scene, B), "nothing lands before the Host answers");
+    scene.structure_damage_candidates_result(
+        A,
+        own,
+        MODULE,
+        6_481,
+        nonce,
+        lease,
+        cycle,
+        ordinal,
+        &[target],
+        t + 1,
+    );
+    assert!(web_lands_on(&scene, B), "the authorized ship is webbed by the pulse");
+}
+
 #[test]
 fn a_controlled_structure_burst_jam_rolls_only_for_the_ships_the_host_authorizes() {
     let (mut scene, structure_id, _second, now) = controlled_structure_point_defense();

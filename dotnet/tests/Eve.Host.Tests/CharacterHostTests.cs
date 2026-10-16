@@ -181,6 +181,8 @@ public sealed class CharacterHostTests
             Payload = new Eve.Services.Skills.SkillBoosterLapse.BoosterJob(character, booster),
         });
         await rig.Scheduler.RunDueAsync();
+        var job = await rig.Scheduler.FindAsync(Eve.Services.Skills.SkillBoosterLapse.JobKind, $"{character}:{booster}");
+        Assert.True(job is null || job.State == "done" || job.State == "completed", $"job state {job?.State}: {job?.LastError}");
         Assert.Equal(0, await ScalarAsync(rig, $"SELECT count(*) FROM {rig.SkillsSchema}.active_skill_boosters WHERE item_id = {booster}"));
         Assert.Equal(0, await ScalarAsync(rig, $"SELECT count(*) FROM {rig.InventorySchema}.items WHERE id = {booster}"));
         Assert.Contains("OnServerBoostersChanged", Notifications(sink).Select(n => n.Name));
@@ -205,7 +207,8 @@ public sealed class CharacterHostTests
             await insert.ExecuteNonQueryAsync();
         }
 
-        // no session: the pilot is offline when the expert system runs out
+        // no session: the pilot is offline when the expert system runs out; the periodic job is made due now
+        await ScalarAsync(rig, $"UPDATE {rig.SchedulerSchema}.jobs SET run_at_ms = 0 WHERE kind = 'skills.expert-systems.expire'");
         await rig.Scheduler.RunNowAsync("skills.expert-systems.expire", "expire");
         Assert.Equal(0, await ScalarAsync(rig, $"SELECT count(*) FROM {rig.SkillsSchema}.character_expert_systems WHERE character_id = {character}"));
         var notices = await NoticesAsync(rig, character);
@@ -214,6 +217,7 @@ public sealed class CharacterHostTests
         Assert.Equal(freeAirExplorer, notice["data"]!["typeID"]!.GetValue<int>());
 
         // the job runs again: nothing lapses twice, so no second notice
+        await ScalarAsync(rig, $"UPDATE {rig.SchedulerSchema}.jobs SET run_at_ms = 0 WHERE kind = 'skills.expert-systems.expire'");
         await rig.Scheduler.RunNowAsync("skills.expert-systems.expire", "expire");
         Assert.Single(await NoticesAsync(rig, character), record => record["typeID"]!.GetValue<int>() == 253);
     }
@@ -710,6 +714,7 @@ public sealed class CharacterHostTests
         public string IdentitySchema => _schemas["EVE_IDENTITY_SCHEMA"];
         public string WalletSchema => _schemas["EVE_WALLET_SCHEMA"];
         public string GameStoreSchema => _schemas["EVE_GAMESTORE_SCHEMA"];
+        public string SchedulerSchema => _schemas["EVE_SCHEDULER_SCHEMA"];
 
         /// <summary>A fresh account in the identity schema (Omega until 2100 by the schema's default); the first one is account 1.</summary>
         public async Task<int> CreateAccountAsync()

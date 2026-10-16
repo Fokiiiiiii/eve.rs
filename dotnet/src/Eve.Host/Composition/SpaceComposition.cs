@@ -364,6 +364,20 @@ internal sealed partial class CharacterServicesComposition
             spaceContainers.ReadDeadspaceAnchors = async (system, token) => cosmicSites is { } sites
                 ? (IReadOnlyList<double[]>)(await sites.ActiveAsync(system, token)).Select(site => site.Position).ToArray()
                 : [];
+            spaceContainers.ReadDeadspaceAnchors = async (system, token) =>
+            {
+                var anchors = new List<double[]>();
+                if (cosmicSites is { } sites)
+                {
+                    anchors.AddRange((await sites.ActiveAsync(system, token)).Select(site => site.Position));
+                }
+                // a mission pocket is a dungeon instance: its origin is a deadspace anchor too (ST-19)
+                if (dungeonWavesDirector is { } dungeons)
+                {
+                    anchors.AddRange(await dungeons.ActiveOriginsAsync(system, token));
+                }
+                return anchors;
+            };
             // a container clears when its loot is taken: every move is announced in its transaction, and the container's hacks hear the moves it loses
             items.Events = foundations.Events;
             var siteContainerHacks = new Eve.Services.Space.SiteContainerHacks(source, siteContainers, items, foundations.Events, () => foundations.Scheduler.Now, id => spaceContainers.RemoveSiteContainer(id));

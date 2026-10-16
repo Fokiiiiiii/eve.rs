@@ -13,6 +13,15 @@ public sealed record CommandNodeCaptured(long HubId, long NodeId, int SolarSyste
 /// <summary>The end of a command node stage (ST-17 a): its outcome, and the nodes that were still live (they leave with it).</summary>
 public sealed record CommandStageEnded(long HubId, int SolarSystemId, CommandNodeOutcome Outcome, IReadOnlyList<long> RemovedNodeIds, long AtMs);
 
+/// <summary>The stage has started in the constellation (the notice of the defender: EVE.js notifySovCommandNodeEventStarted, V24.01 161).</summary>
+public sealed record CommandStageStarted(long HubId, int ConstellationId, int SolarSystemId, long DefenderAllianceId, long AtMs);
+
+/// <summary>The hub was destroyed and the sovereignty records have lost it (the notice of the defender: V24.01 162).</summary>
+public sealed record HubDestroyed(long HubId, int SolarSystemId, long DefenderAllianceId, long AtMs);
+
+/// <summary>The hub a destruction is written for: the sovereignty records lose it from its system and its defender.</summary>
+public sealed record EntosisDestroyedHub(long HubId, int SolarSystemId, long DefenderAllianceId);
+
 /// <summary>The payload of a node's completion job.</summary>
 public sealed record CommandNodeDue(long NodeId);
 
@@ -32,6 +41,11 @@ public sealed partial class EntosisCaptureService
     public const string NodeSpawnedTopic = "space.entosis.node_spawned";
     public const string NodeCapturedTopic = "space.entosis.node_captured";
     public const string StageEndedTopic = "space.entosis.stage_ended";
+    public const string StageStartedTopic = "space.entosis.stage_started";
+    public const string HubDestroyedTopic = "space.entosis.hub_destroyed";
+
+    /// <summary>The job that writes a destroyed hub's loss into the sovereignty records, retried until it is written.</summary>
+    public const string HubDestroyDueKind = "space.entosis.hub-destroyed-due";
 
     /// <summary>
     /// A node's id is the hub's id times this, plus the node's spawn number (shortcut: a derived id, not the item store's; a stage spawns fewer nodes than this;
@@ -102,6 +116,12 @@ public sealed partial class EntosisCaptureService
         }
         await _scheduler.ScheduleAsync(connection, transaction,
             new JobSpec(NodeSpawnKind, nextSpawn) { Key = KeyOf(hubId), Payload = new HubDue(hubId), OnDuplicate = OnDuplicate.Replace }, cancellationToken);
+        if (_events is not null)
+        {
+            var constellation = await _constellationOf(hub.SolarSystemId, cancellationToken);
+            await _events.PublishAsync(connection, transaction, StageStartedTopic,
+                new CommandStageStarted(hubId, constellation, hub.SolarSystemId, hub.DefenderAllianceId, now), KeyOf(hubId), cancellationToken);
+        }
         await transaction.CommitAsync(cancellationToken);
         _events?.Wake();
     }
@@ -311,8 +331,12 @@ public sealed partial class EntosisCaptureService
         }
         else
         {
-            await using var destroy = Command("UPDATE {schema}.hubs SET phase = 'destroyed', progress = 0 WHERE hub_id = $1", connection, transaction, hubId);
+            // the sovereignty records lose the hub in a job (HubDestroyDueKind), so a crash after this commit is answered by the job
+            await using var destroy = Command(
+                "UPDATE {schema}.hubs SET phase = 'destroyed', progress = 0, handover = 'destroy-pending' WHERE hub_id = $1", connection, transaction, hubId);
             await destroy.ExecuteNonQueryAsync(cancellationToken);
+            await _scheduler.ScheduleAsync(connection, transaction,
+                new JobSpec(HubDestroyDueKind, now) { Key = KeyOf(hubId), Payload = new HubDue(hubId), OnDuplicate = OnDuplicate.Replace }, cancellationToken);
         }
         if (_events is not null)
         {
@@ -377,6 +401,66 @@ public sealed partial class EntosisCaptureService
                 new CommandNodeSpawned(hubId, nodeId, system, now), KeyOf(nodeId), cancellationToken);
         }
         return true;
+    }
+
+    /// <summary>
+    /// The destruction of a hub (the job <see cref="HubDestroyDueKind"/>): the sovereignty records lose it (the callback), then the hub is 'destroyed' and the
+    /// event <see cref="HubDestroyedTopic"/> tells the owner and the simulation. A failed write is retried a minute later.
+    /// </summary>
+    public async Task HubDestroyDueAsync(long hubId, CancellationToken cancellationToken)
+    {
+        EntosisDestroyedHub? hub = null;
+        await using (var connection = await _source.OpenConnectionAsync(cancellationToken))
+        await using (var command = Command(
+            "SELECT solar_system_id, defender_alliance_id FROM {schema}.hubs WHERE hub_id = $1 AND handover = 'destroy-pending'", connection, null, hubId))
+        await using (var reader = await command.ExecuteReaderAsync(cancellationToken))
+        {
+            if (await reader.ReadAsync(cancellationToken) && !reader.IsDBNull(1))
+            {
+                hub = new EntosisDestroyedHub(hubId, reader.GetInt32(0), reader.GetInt64(1));
+            }
+        }
+        if (hub is null)
+        {
+            return;
+        }
+        var written = true;
+        if (_destroyHub is not null)
+        {
+            try
+            {
+                written = await _destroyHub(hub, cancellationToken);
+            }
+            catch (Exception error)
+            {
+                _log?.Invoke($"entosis: the loss of hub {hubId} was not written: {error.Message}; it is tried again");
+                written = false;
+            }
+        }
+        if (!written)
+        {
+            await _scheduler.ScheduleAsync(new JobSpec(HubDestroyDueKind, _now() + HandoverRetryMs)
+            {
+                Key = KeyOf(hubId), Payload = new HubDue(hubId), OnDuplicate = OnDuplicate.Replace,
+            }, cancellationToken);
+            return;
+        }
+        var now = _now();
+        await using (var connection = await _source.OpenConnectionAsync(cancellationToken))
+        await using (var transaction = await connection.BeginTransactionAsync(cancellationToken))
+        {
+            await using (var update = Command(
+                "UPDATE {schema}.hubs SET handover = 'destroyed' WHERE hub_id = $1 AND handover = 'destroy-pending'", connection, transaction, hubId))
+            {
+                if (await update.ExecuteNonQueryAsync(cancellationToken) == 1 && _events is not null)
+                {
+                    await _events.PublishAsync(connection, transaction, HubDestroyedTopic,
+                        new HubDestroyed(hubId, hub.SolarSystemId, hub.DefenderAllianceId, now), KeyOf(hubId), cancellationToken);
+                }
+            }
+            await transaction.CommitAsync(cancellationToken);
+        }
+        _events?.Wake();
     }
 
     private async Task ReconcileNodeJobAsync(

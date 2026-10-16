@@ -248,7 +248,8 @@ internal sealed partial class CharacterServicesComposition
                 var entosisCaptures = new Eve.Services.Space.Entosis.EntosisCaptureService(
                     source, foundations.Scheduler, () => foundations.Scheduler.Now, EntosisHubReadingAsync, EntosisHandoverAsync,
                     log: message => Console.Error.WriteLine($"eve-host: entosis: {message}"), events: foundations.Events,
-                    constellationSystems: EntosisConstellationSystemsAsync);
+                    constellationSystems: EntosisConstellationSystemsAsync, constellationOf: EntosisConstellationOfAsync,
+                    destroyHub: EntosisHubDestroyedAsync);
                 entosisCaptures.Register();
                 spaceContainers.EntosisCaptures = entosisCaptures;
                 entosisCaptureService = entosisCaptures;
@@ -264,6 +265,7 @@ internal sealed partial class CharacterServicesComposition
                     Eve.Services.Space.Entosis.EntosisCaptureService.NodeSpawnedTopic,
                     Eve.Services.Space.Entosis.EntosisCaptureService.NodeCapturedTopic,
                     Eve.Services.Space.Entosis.EntosisCaptureService.StageEndedTopic,
+                    Eve.Services.Space.Entosis.EntosisCaptureService.HubDestroyedTopic,
                 ],
                 async (context, cancellation) =>
                 {
@@ -275,6 +277,10 @@ internal sealed partial class CharacterServicesComposition
                     else if (context.Event.Topic == Eve.Services.Space.Entosis.EntosisCaptureService.NodeCapturedTopic)
                     {
                         spaceSovHubs.RemoveCommandNode(context.Event.Payload<Eve.Services.Space.Entosis.CommandNodeCaptured>()!.NodeId);
+                    }
+                    else if (context.Event.Topic == Eve.Services.Space.Entosis.EntosisCaptureService.HubDestroyedTopic)
+                    {
+                        spaceSovHubs.RemoveHub(context.Event.Payload<Eve.Services.Space.Entosis.HubDestroyed>()!.HubId);
                     }
                     else
                     {

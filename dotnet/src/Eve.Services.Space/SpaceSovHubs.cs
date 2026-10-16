@@ -127,6 +127,9 @@ public sealed class SpaceSovHubs
         }
     }
 
+    /// <summary>ST-17 a: a hub destroyed by its command node stage leaves space (its ball; the records are written by the destruction job).</summary>
+    public void RemoveHub(long hubId) => _sim.RemoveStructure(hubId);
+
     /// <summary>ST-17 a: a command node that was captured or whose stage ended leaves space.</summary>
     public void RemoveCommandNode(long nodeId) => _sim.RemoveStructure(nodeId);
 

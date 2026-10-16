@@ -20,6 +20,8 @@ internal sealed class EntosisOwnerNotifications(
 {
     private const int CaptureStartedTypeId = 147;
     private const int StructuresReinforcedTypeId = 160;
+    private const int CommandNodeEventStartedTypeId = 161;
+    private const int StructureDestroyedTypeId = 162;
     private const int SovereigntyGroupId = 6;
 
     // EVE.js sovCampaignState CAMPAIGN_EVENT_TYPE
@@ -27,9 +29,39 @@ internal sealed class EntosisOwnerNotifications(
 
     public void Subscribe(EventBus events) => events.Subscribe(
         "sov.entosis-owner-notifications",
-        [EntosisCaptureService.CaptureStartedTopic, EntosisCaptureService.ReinforcedTopic],
+        [
+            EntosisCaptureService.CaptureStartedTopic, EntosisCaptureService.ReinforcedTopic, EntosisCaptureService.StageStartedTopic,
+            EntosisCaptureService.HubDestroyedTopic,
+        ],
         async (context, cancellationToken) =>
         {
+            if (context.Event.Topic == EntosisCaptureService.StageStartedTopic)
+            {
+                // EVE.js notifySovCommandNodeEventStarted: the constellation, the source system and the campaign event type
+                var stage = context.Event.Payload<CommandStageStarted>()!;
+                // the static data gives a constellation for the systems of the campaigns; without one EVE.js writes no notice
+                if (stage.ConstellationId > 0)
+                {
+                    await WriteAsync(stage.DefenderAllianceId, CommandNodeEventStartedTypeId, context, new JsonObject
+                    {
+                        ["constellationID"] = stage.ConstellationId,
+                        ["solarSystemID"] = stage.SolarSystemId,
+                        ["campaignEventType"] = CampaignEventType,
+                    }, cancellationToken);
+                }
+                return;
+            }
+            if (context.Event.Topic == EntosisCaptureService.HubDestroyedTopic)
+            {
+                // EVE.js notifySovStructureDestroyed: the hub's type and the system
+                var destroyed = context.Event.Payload<HubDestroyed>()!;
+                await WriteAsync(destroyed.DefenderAllianceId, StructureDestroyedTypeId, context, new JsonObject
+                {
+                    ["structureTypeID"] = SpaceSovHubs.TypeSovereigntyHub,
+                    ["solarSystemID"] = destroyed.SolarSystemId,
+                }, cancellationToken);
+                return;
+            }
             if (context.Event.Topic == EntosisCaptureService.CaptureStartedTopic)
             {
                 var started = context.Event.Payload<EntosisCaptureStarted>()!;

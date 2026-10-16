@@ -67,6 +67,8 @@ public sealed partial class EntosisCaptureService
     private readonly Action<string>? _log;
     private readonly EventBus? _events;
     private readonly Func<int, CancellationToken, Task<IReadOnlyList<int>>> _constellationSystems;
+    private readonly Func<int, CancellationToken, Task<int>> _constellationOf;
+    private readonly Func<EntosisDestroyedHub, CancellationToken, Task<bool>>? _destroyHub;
 
     /// <param name="readHub">The system's Sovereignty Hub as the records have it at this moment (null when the system has none).</param>
     /// <param name="handover">The claim of a captured neutral hub by its capturer (ST-9 d). Unset, a capture completes and waits for one.</param>
@@ -74,7 +76,8 @@ public sealed partial class EntosisCaptureService
     public EntosisCaptureService(
         NpgsqlDataSource source, DurableScheduler scheduler, Func<long> now, Func<int, CancellationToken, Task<EntosisHubReading?>> readHub,
         Func<EntosisCapturedHub, CancellationToken, Task<EntosisHandover>>? handover = null, string schema = DefaultSchema, Action<string>? log = null,
-        EventBus? events = null, Func<int, CancellationToken, Task<IReadOnlyList<int>>>? constellationSystems = null)
+        EventBus? events = null, Func<int, CancellationToken, Task<IReadOnlyList<int>>>? constellationSystems = null,
+        Func<int, CancellationToken, Task<int>>? constellationOf = null, Func<EntosisDestroyedHub, CancellationToken, Task<bool>>? destroyHub = null)
     {
         if (!SchemaName.IsMatch(schema))
         {
@@ -89,6 +92,8 @@ public sealed partial class EntosisCaptureService
         _log = log;
         _events = events;
         _constellationSystems = constellationSystems ?? ((solarSystemId, _) => Task.FromResult<IReadOnlyList<int>>(new[] { solarSystemId }));
+        _constellationOf = constellationOf ?? ((_, _) => Task.FromResult(0));
+        _destroyHub = destroyHub;
     }
 
     public static IReadOnlyList<Migration> MigrationSet() => Migrations.Embedded(typeof(EntosisCaptureService).Assembly, "EntosisMigrations");
@@ -113,6 +118,7 @@ public sealed partial class EntosisCaptureService
         _scheduler.Register(CampaignStartKind, (context, token) => CampaignStartAsync(context.Payload<HubDue>()!.HubId, token));
         _scheduler.Register(NodeSpawnKind, (context, token) => NodeSpawnDueAsync(context.Payload<HubDue>()!.HubId, token));
         _scheduler.Register(NodeDueKind, (context, token) => NodeDueAsync(context.Payload<CommandNodeDue>()!.NodeId, token));
+        _scheduler.Register(HubDestroyDueKind, (context, token) => HubDestroyDueAsync(context.Payload<HubDue>()!.HubId, token));
     }
 
     /// <summary>

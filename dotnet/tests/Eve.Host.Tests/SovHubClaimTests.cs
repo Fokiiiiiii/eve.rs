@@ -101,4 +101,25 @@ public sealed class SovHubClaimTests
         Assert.False(await writer.ClaimCapturedHubAsync(SystemId, HubId + 1, Corporation, Alliance, FileTime));
         Assert.Null(saved()["systems"]![Key]!["allianceID"]);
     }
+
+    /// <summary>
+    /// ST-17 a: a hub destroyed by its command node stage leaves the sovereignty records (EVE.js commitSovereigntyHubCampaignOutcome, attacker result): the system
+    /// loses its owner and hub pointer, the hub's row and record leave. A repeat, or a system the destroyed hub no longer holds, is answered as done and changes nothing.
+    /// </summary>
+    [Fact]
+    public async Task A_hub_destroyed_by_a_command_node_stage_leaves_the_system_and_a_repeat_changes_nothing()
+    {
+        var (writer, saved) = WriterOver(Table(owner: Alliance));
+
+        Assert.True(await writer.DestroyLostHubAsync(SystemId, HubId, Alliance));
+        var system = saved()["systems"]![Key]!;
+        Assert.Null(system["allianceID"]);
+        Assert.Null(system["infrastructureHubID"]);
+        Assert.Null(system["corporationID"]);
+        Assert.Empty(system["structures"]!.AsArray());
+        Assert.False(saved()["hubs"]!.AsObject().ContainsKey(HubId.ToString(System.Globalization.CultureInfo.InvariantCulture)));
+
+        Assert.True(await writer.DestroyLostHubAsync(SystemId, HubId, Alliance), "a repeat is answered as done");
+        Assert.Null(saved()["systems"]![Key]!["allianceID"]);
+    }
 }

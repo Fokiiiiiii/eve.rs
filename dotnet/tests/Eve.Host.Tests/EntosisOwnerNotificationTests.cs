@@ -113,6 +113,90 @@ public sealed class EntosisOwnerNotificationTests
         }
     }
 
+    /// <summary>
+    /// ST-17 a: the command node stage's start (V24.01 161: the constellation, the system and the campaign event type) and the destruction of the hub (162: the
+    /// hub's type and the system) reach every member of the defending alliance once, and no foreign pilot.
+    /// </summary>
+    [PgFact]
+    public async Task The_defending_members_are_told_of_a_command_stage_start_and_of_a_destroyed_hub_once_each()
+    {
+        var url = Environment.GetEnvironmentVariable("EVE_PG_URL")!;
+        await using var source = NpgsqlDataSource.Create(PgConnection.ForTest(url));
+        var suffix = Guid.NewGuid().ToString("N")[..12];
+        var characterSchema = $"entn_char_{suffix}";
+        var mailSchema = $"entn_mail_{suffix}";
+        var eventsSchema = $"entn_evt_{suffix}";
+        var schedulerSchema = $"entn_sch_{suffix}";
+        await PgCharacterStore.MigrateAsync(source, characterSchema);
+        var characters = new PgCharacterStore(source, characterSchema);
+        long member;
+        long foreign;
+        await using (var connection = await source.OpenConnectionAsync())
+        await using (var transaction = await connection.BeginTransactionAsync())
+        {
+            member = await characters.InsertAsync(connection, transaction, NewCharacter("Defender Member", DefenderCorporation));
+            foreign = await characters.InsertAsync(connection, transaction, NewCharacter("Foreign Pilot", ForeignCorporation));
+            await transaction.CommitAsync();
+        }
+
+        var mailStore = new PersistenceStore(source, mailSchema);
+        await mailStore.EnsureSchemaAsync();
+        var mailOwner = await OwnerSession.StartAsync(
+            mailStore, "world", $"entosis-stage-test-{suffix}", new AcquireOptions(LeaseMs: 600_000), renewEvery: TimeSpan.FromHours(1));
+        var mailCache = new GameStoreCache(mailStore, mailOwner, new GameStoreCacheOptions { ProcessRole = PersistenceRoles.World });
+        await mailStore.LoadTableAsync("notifications", createIfMissing: true);
+        await mailCache.LoadAsync("notifications");
+        var mailbox = new PersistenceTransactionMailbox(
+            source, mailStore, mailCache, mailOwner, new SemaphoreSlim(1, 1), () => StartedMs, (_, _) => { });
+
+        await DurableScheduler.MigrateAsync(source, schedulerSchema);
+        await EventBus.MigrateAsync(source, eventsSchema);
+        var scheduler = new DurableScheduler(source, () => StartedMs, null, schedulerSchema);
+        var bus = new EventBus(source, scheduler, null, eventsSchema, _ => { });
+        new EntosisOwnerNotifications(
+            (allianceId, _) => Task.FromResult<IReadOnlyList<long>>(allianceId == DefenderAlliance ? [DefenderCorporation] : []),
+            characters, mailbox).Subscribe(bus);
+        await bus.PumpAsync();
+
+        var key = Hub.ToString(CultureInfo.InvariantCulture);
+        const int constellation = 20_000_020;
+        await bus.PublishAsync(EntosisCaptureService.StageStartedTopic,
+            new CommandStageStarted(Hub, constellation, SolarSystemId, DefenderAlliance, StartedMs), key);
+        await bus.PublishAsync(EntosisCaptureService.HubDestroyedTopic,
+            new HubDestroyed(Hub, SolarSystemId, DefenderAlliance, StartedMs + 1), key);
+        await bus.PumpAsync();
+
+        var records = await RecordsAsync(source, mailStore, member);
+        Assert.Equal(2, records.Length);
+        var stage = Assert.Single(records, record => record["typeID"]!.GetValue<int>() == 161);
+        Assert.Equal(DefenderAlliance, stage["senderID"]!.GetValue<long>());
+        Assert.Equal(constellation, stage["data"]!["constellationID"]!.GetValue<int>());
+        Assert.Equal(SolarSystemId, stage["data"]!["solarSystemID"]!.GetValue<int>());
+        Assert.Equal(2, stage["data"]!["campaignEventType"]!.GetValue<int>());
+        var destroyed = Assert.Single(records, record => record["typeID"]!.GetValue<int>() == 162);
+        Assert.Equal(32_458, destroyed["data"]!["structureTypeID"]!.GetValue<int>());
+        Assert.Equal(SolarSystemId, destroyed["data"]!["solarSystemID"]!.GetValue<int>());
+        Assert.Empty(await RecordsAsync(source, mailStore, foreign));
+
+        // a redelivery writes no second notice of either
+        await using (var rewind = source.CreateCommand(
+            $"UPDATE {eventsSchema}.subscribers SET cursor_id = 0 WHERE name = 'sov.entosis-owner-notifications'"))
+        {
+            Assert.Equal(1, await rewind.ExecuteNonQueryAsync());
+        }
+        await bus.PumpAsync();
+        Assert.Equal(2, (await RecordsAsync(source, mailStore, member)).Length);
+
+        await mailCache.DisposeAsync();
+        await mailOwner.DisposeAsync();
+        await using (var drop = source.CreateCommand(
+            $"DROP SCHEMA IF EXISTS \"{characterSchema}\" CASCADE; DROP SCHEMA IF EXISTS \"{mailSchema}\" CASCADE; "
+            + $"DROP SCHEMA IF EXISTS \"{eventsSchema}\" CASCADE; DROP SCHEMA IF EXISTS \"{schedulerSchema}\" CASCADE"))
+        {
+            await drop.ExecuteNonQueryAsync();
+        }
+    }
+
     private static async Task<JsonObject[]> RecordsAsync(NpgsqlDataSource source, PersistenceStore store, long recipient)
     {
         var recipientKey = recipient.ToString(CultureInfo.InvariantCulture);

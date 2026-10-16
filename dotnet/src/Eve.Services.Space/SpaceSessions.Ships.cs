@@ -33,6 +33,24 @@ public sealed partial class SpaceSessions
     /// The undock from the station or the structure the session is in (<paramref name="placeKey"/> names which): the same ship, simulation and session
     /// changes; a structure is put in the simulation first (its ball is placed when a pilot comes into its system, which the undock may precede).
     /// </summary>
+    /// <summary>
+    /// The contraband penalty at an undock or a stargate jump (EVE.js inspectContrabandForTransition): the fine goes to the wallet, the contraband leaves the hold, and the
+    /// client is told each removed item (OnItemChange with the junk location, as a merge or a removal is told).
+    /// </summary>
+    private async Task ApplyContrabandAsync(ClientSession session, long characterId, long shipId, int solarSystemId, CancellationToken cancellationToken)
+    {
+        if (ApplyContrabandPenaltyAsync is not { } apply || await apply(characterId, shipId, solarSystemId, cancellationToken) is not { } penalty)
+        {
+            return;
+        }
+        foreach (var item in penalty.Confiscated)
+        {
+            ShipNotifications.SendItemChange(session,
+                new ItemChanged(item with { LocationId = CharacterShips.JunkLocation }, item.LocationId, item.Flag, item.Quantity),
+                row => Eve.Services.Dogma.DogmaInfo.RowOf(row, _statics.Type(row.TypeId)));
+        }
+    }
+
     private async Task<PyValue> UndockFromAsync(ClientSession session, string placeKey, string? boundObjectId, CancellationToken cancellationToken, bool ignoreContraband = false)
     {
         if (session.CharacterId is not { } characterId || session.GetInt(placeKey) is not { } placeId || IsInSpace(session))
@@ -53,6 +71,7 @@ public sealed partial class SpaceSessions
         if (!ignoreContraband && InspectUndockContrabandAsync is { } inspect &&
             (await inspect(characterId, snapshot.Ship.Id, snapshot.Character.SolarSystemId, cancellationToken)).Count > 0)
             throw MachoErrors.ThrowUserError("ShipContrabandWarningUndock");
+        await ApplyContrabandAsync(session, characterId, snapshot.Ship.Id, snapshot.Character.SolarSystemId, cancellationToken);
         // a Strategic Cruiser leaves its station only with one subsystem of each class (the reference's STRATEGIC_CRUISER_FIT_INCOMPLETE)
         if (_statics.Type(snapshot.Ship.TypeId)?.GroupId == Eve.Fitting.StrategicCruisers.GroupId
             && Eve.Fitting.StrategicCruisers.IncompleteFit(snapshot.Fitted

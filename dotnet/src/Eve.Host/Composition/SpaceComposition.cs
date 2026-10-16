@@ -231,8 +231,9 @@ internal sealed partial class CharacterServicesComposition
                     "Gate toll refund", now(), key, token);
                 await transaction.CommitAsync(token);
             };
-            var undockContraband = await UndockContraband.LoadAsync(sde, items, solarSystems);
+            var undockContraband = await UndockContraband.LoadAsync(sde, items, solarSystems, source, tollWallets);
             spaceSessions.InspectUndockContrabandAsync = undockContraband.InspectAsync;
+            spaceSessions.ApplyContrabandPenaltyAsync = undockContraband.ApplyAsync;
             npcWrecks.Warm();
             // the periodic work of the space features is jobs of the shared scheduler, not timers of their own
             spaceSessions.UseBounties(new PgBountyStore(source, new WalletTransactions(source, walletSchema), npcSchema, message => Console.Error.WriteLine($"eve-host: bounty: {message}")));

@@ -99,6 +99,73 @@ public sealed class UndockContrabandTests
         }
     }
 
+    [PgFact]
+    public async Task Penalty_charges_the_fine_to_the_wallet_and_removes_the_matching_contraband_once()
+    {
+        await using var source = NpgsqlDataSource.Create(PgConnection.ForTest(Rig.Url!));
+        var itemSchema = "undock_pen_items_" + Guid.NewGuid().ToString("N");
+        var sdeSchema = "undock_pen_sde_" + Guid.NewGuid().ToString("N");
+        var walletSchema = "undock_pen_wallet_" + Guid.NewGuid().ToString("N");
+
+        try
+        {
+            await ExecuteAsync(source, $"CREATE SCHEMA {itemSchema}");
+            await ExecuteAsync(source, $"CREATE SCHEMA {sdeSchema}");
+            await ExecuteAsync(source, $"CREATE SCHEMA {walletSchema}");
+            await ExecuteAsync(source, $"CREATE TABLE {sdeSchema}.\"contrabandTypes\" (\"key\" text NOT NULL, doc jsonb NOT NULL, ord integer NOT NULL)");
+            await ExecuteAsync(source, $"CREATE TABLE {sdeSchema}.\"types\" (\"key\" text NOT NULL, doc jsonb NOT NULL, ord integer NOT NULL)");
+            await ExecuteAsync(source,
+                $"INSERT INTO {sdeSchema}.\"types\" (\"key\", doc, ord) VALUES ('{ContrabandA}', '{{\"basePrice\": 100}}'::jsonb, 0), ('{ContrabandB}', '{{\"basePrice\": 50}}'::jsonb, 1)");
+            await PgItemStore.MigrateAsync(source, itemSchema);
+            await Eve.Wallet.PgWalletStore.MigrateAsync(source, walletSchema);
+            await SeedSdeAsync(source, sdeSchema);
+
+            var wallet = new Eve.Wallet.PgWalletStore(source, walletSchema);
+            await using (var connection = await source.OpenConnectionAsync())
+            await using (var transaction = await connection.BeginTransactionAsync())
+            {
+                await wallet.OpenAsync(connection, transaction, CharacterId, 1000m, 0);
+                await transaction.CommitAsync();
+            }
+
+            var systems = new SolarSystemCatalog(
+            [
+                new SolarSystemInfo(SystemAHigh, "a-high", 1, 1, 0.6, FactionA),
+                new SolarSystemInfo(SystemNoFaction, "no-faction", 1, 1, 0.95),
+            ]);
+            var items = new PgItemStore(source, itemSchema);
+            var shipId = (await CreateItemsAsync(source, items, new NewItem(ShipType, CharacterId, SystemAHigh, 0, Singleton: true)))[0];
+            var cargo = await CreateItemsAsync(
+                source,
+                items,
+                new NewItem(ContrabandA, CharacterId, shipId, ItemFlags.Cargo, Quantity: 2, Singleton: false),
+                new NewItem(ContrabandB, CharacterId, shipId, ItemFlags.Cargo));
+            var wallets = new Eve.Wallet.WalletTransactions(source, walletSchema);
+            var inspector = await UndockContraband.LoadAsync(new SdeReader(source, sdeSchema), items, systems, source, wallets);
+
+            Assert.Null(await inspector.ApplyAsync(CharacterId, shipId, SystemNoFaction));
+
+            // two units of ContrabandA: 2 x 100 ISK base x 0.1 = 20 ISK; ContrabandB has no rule for this faction and stays
+            var penalty = await inspector.ApplyAsync(CharacterId, shipId, SystemAHigh);
+            Assert.NotNull(penalty);
+            Assert.Equal((20m, 20m), (penalty!.Fine, penalty.Charged));
+            Assert.Equal(new[] { cargo[0] }, penalty.Confiscated.Select(item => item.Id).ToArray());
+            Assert.Equal(980m, await wallets.AccountBalanceAsync(new Eve.Wallet.WalletAccount(CharacterId)) ?? 0m);
+            Assert.Null(await items.GetAsync(cargo[0]));
+            Assert.NotNull(await items.GetAsync(cargo[1]));
+
+            // the same contraband is not fined twice
+            Assert.Null(await inspector.ApplyAsync(CharacterId, shipId, SystemAHigh));
+            Assert.Equal(980m, await wallets.AccountBalanceAsync(new Eve.Wallet.WalletAccount(CharacterId)) ?? 0m);
+        }
+        finally
+        {
+            await ExecuteAsync(source, $"DROP SCHEMA IF EXISTS {walletSchema} CASCADE");
+            await ExecuteAsync(source, $"DROP SCHEMA IF EXISTS {sdeSchema} CASCADE");
+            await ExecuteAsync(source, $"DROP SCHEMA IF EXISTS {itemSchema} CASCADE");
+        }
+    }
+
     private static async Task SeedSdeAsync(NpgsqlDataSource source, string schema)
     {
         var rows = new (int TypeId, string Document)[]

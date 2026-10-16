@@ -10,6 +10,7 @@ public static class AbyssalErrorAdapter
     public static MachoWrappedException FromRule(AbyssalRuleException error, bool isGateActivation)
     {
         ArgumentNullException.ThrowIfNull(error);
+        Console.Error.WriteLine($"eve-host: abyssal.rule_refused code={(int)error.Code} gate={(isGateActivation ? 1 : 0)}");
 
         if (error.Code == AbyssalRuleCode.AdmissionConflict)
             return MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("An Abyssal run is already active.")));

@@ -532,6 +532,23 @@ internal void StartStructureDamageModuleForTest(ulong session, long moduleId, st
             ship.LocationId == character.SolarSystemId &&
             ship.Flag == CharacterShips.InSpaceFlag)
         {
+            if (FindAbyssalReconnectAsync is { } find &&
+                ship.OwnerId == characterId && ship.Singleton && ship.Quantity == 1 &&
+                await find(session, characterId, ship.Id, cancellationToken).ConfigureAwait(false) is { } reconnect)
+            {
+                if (!reconnect.Scene.IsValid || reconnect.Scene.InstanceId <= 0)
+                    throw new InvalidDataException("The Abyssal reconnect returned an invalid scene key.");
+                var system = _systems.Get(reconnect.Scene.LocationId)
+                    ?? throw new InvalidDataException($"Abyssal reconnect system {reconnect.Scene.LocationId} is absent from the location catalog.");
+                attributes.AddRange([
+                    ("stationid", None),
+                    ("stationid2", None),
+                    ("structureid", None),
+                ]);
+                attributes.AddRange(AbyssalSessionLocationAttributes(reconnect.Scene, system));
+                return attributes;
+            }
+
             var live = _pilots.TryGetValue((ulong)session.SessionId, out var pilot) &&
                 pilot.CharacterId == characterId && pilot.ShipId == ship.Id &&
                 pilot.SolarSystemId == character.SolarSystemId;

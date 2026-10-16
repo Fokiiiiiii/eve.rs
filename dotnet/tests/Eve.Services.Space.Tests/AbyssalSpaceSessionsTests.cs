@@ -223,14 +223,53 @@ public sealed class AbyssalSpaceSessionsTests
         };
         session.Close();
         await disconnected.Task.WaitAsync(TimeSpan.FromSeconds(5));
-        var reconnected = await rig.SessionAsync(created, 2);
-        reconnected.Set("stationid", Eve.Marshal.PyNone.Instance);
-        reconnected.Set("stationid2", Eve.Marshal.PyNone.Instance);
-        reconnected.Set("solarsystemid", Eve.Marshal.PyNone.Instance);
-        reconnected.Set("solarsystemid2", new Eve.Marshal.PyInt(scene.LocationId));
-        reconnected.Set("locationid", new Eve.Marshal.PyInt(scene.LocationId));
-        rig.Space.FindAbyssalReconnectAsync = (_, _, _, _) => Task.FromResult<AbyssalReconnectBinding?>(new(contentId, scene));
+        var persisted = (await rig.Characters.GetAsync(created.CharacterId))!;
+        var lastStationId = persisted.StationId;
+        var sourceSystemId = persisted.SolarSystemId;
+        var reconnectLookups = 0;
+        rig.Space.FindAbyssalReconnectAsync = (_, _, _, _) =>
+        {
+            reconnectLookups++;
+            return Task.FromResult<AbyssalReconnectBinding?>(new(contentId, scene));
+        };
+
+        await using (var connection = await rig.Source.OpenConnectionAsync())
+        await using (var transaction = await connection.BeginTransactionAsync())
+        {
+            await rig.Items.MoveAsync(connection, transaction, created.ShipId, lastStationId, Eve.Inventory.ItemFlags.Hangar);
+            await transaction.CommitAsync();
+        }
+        var docked = await rig.SessionAsync(created, 2);
+        var dockedAttributes = await rig.Space.GetSessionAttributesAsync(docked, created.CharacterId, CancellationToken.None);
+        docked.Change([..dockedAttributes]);
+        await rig.Space.OnCharacterEnteredAsync(docked, created.CharacterId, CancellationToken.None);
+        Assert.Equal((long?)lastStationId, docked.GetInt("stationid"));
+        Assert.Equal((long?)lastStationId, docked.GetInt("locationid"));
+        var stillDockedShip = (await rig.Items.GetAsync(created.ShipId))!;
+        Assert.Equal(lastStationId, stillDockedShip.LocationId);
+        Assert.Equal(Eve.Inventory.ItemFlags.Hangar, stillDockedShip.Flag);
+        Assert.Equal(0, reconnectLookups);
+
+        await using (var connection = await rig.Source.OpenConnectionAsync())
+        await using (var transaction = await connection.BeginTransactionAsync())
+        {
+            await rig.Items.MoveAsync(connection, transaction, created.ShipId, sourceSystemId, Eve.Ships.CharacterShips.InSpaceFlag);
+            await transaction.CommitAsync();
+        }
+        var reconnected = await rig.SessionAsync(created, 3);
+        var attributes = await rig.Space.GetSessionAttributesAsync(reconnected, created.CharacterId, CancellationToken.None);
+        reconnected.Change([..attributes]);
+        Assert.Null(reconnected.GetInt("stationid"));
+        Assert.Null(reconnected.GetInt("stationid2"));
+        Assert.Null(reconnected.GetInt("structureid"));
+        var restoredShip = (await rig.Items.GetAsync(created.ShipId))!;
+        Assert.Equal((long)sourceSystemId, restoredShip.LocationId);
+        Assert.Equal(Eve.Ships.CharacterShips.InSpaceFlag, restoredShip.Flag);
+        Assert.Equal((long?)scene.LocationId, reconnected.GetInt("solarsystemid"));
+        Assert.Equal((long?)scene.LocationId, reconnected.GetInt("solarsystemid2"));
+        Assert.Equal((long?)scene.LocationId, reconnected.GetInt("locationid"));
         await rig.Space.OnCharacterEnteredAsync(reconnected, created.CharacterId, CancellationToken.None);
+        Assert.True(reconnectLookups >= 2);
         Assert.Equal((long?)scene.LocationId, reconnected.GetInt("solarsystemid"));
         Assert.Equal((long?)scene.LocationId, reconnected.GetInt("solarsystemid2"));
         Assert.False(string.IsNullOrWhiteSpace(await rig.BindBeyonceAsync(reconnected)));

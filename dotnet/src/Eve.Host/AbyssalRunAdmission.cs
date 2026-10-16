@@ -82,8 +82,11 @@ public sealed class AbyssalRunAdmission(
         }
         var ship = await items.LockAndGetAsync(connection, transaction, request.ShipId, cancellationToken).ConfigureAwait(false)
             ?? throw AbyssalErrorAdapter.ClientError(7);
-        if (character.ShipId != request.ShipId || character.SolarSystemId != request.SolarSystemId || character.StationId > 0)
+        if (character.ShipId != request.ShipId || character.SolarSystemId != request.SolarSystemId)
+        {
+            Console.Error.WriteLine($"eve-host: abyssal.admission authority_refused character={character.Id} ship={character.ShipId} system={character.SolarSystemId} station={character.StationId} request_ship={request.ShipId} request_system={request.SolarSystemId}");
             throw AbyssalErrorAdapter.ClientError(22);
+        }
         if (ship.OwnerId != request.CharacterId ||
             ship.LocationId != request.SolarSystemId ||
             ship.Flag != CharacterShips.InSpaceFlag ||

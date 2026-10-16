@@ -34,7 +34,8 @@ internal sealed partial class CharacterServicesComposition
         }
         var character = await characters.GetAsync(characterId, cancellationToken).ConfigureAwait(false)
             ?? throw AbyssalErrorAdapter.ClientError(7);
-        if (character.ShipId != shipId.Value || character.SolarSystemId <= 0 || character.StationId > 0)
+        if (character.ShipId != shipId.Value || character.SolarSystemId <= 0 ||
+            call.Session.GetInt("stationid") is > 0 || call.Session.GetInt("structureid") is > 0)
             throw AbyssalErrorAdapter.ClientError(22);
 
         var space = spaceSessions

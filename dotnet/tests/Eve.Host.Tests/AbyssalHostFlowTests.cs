@@ -55,6 +55,13 @@ public sealed class AbyssalHostFlowTests
             while (!simulation.IsConnected) await Task.Delay(20, connected.Token);
             await using var rig = await Rig.Create(simulation);
             rig.Now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+            var publicSetup = await rig.CreateRun(enter: false);
+            var publicSession = await rig.ConnectPublic(publicSetup);
+            var publicPose = await rig.Space.GetAbyssalDeploymentPoseAsync(publicSetup.Data.CreatorShipId,
+                SimSceneKey.SolarSystem((int)publicSetup.Data.SourceSolarSystemId));
+            Assert.True(publicPose.Found, publicPose.Error);
+            Assert.NotNull(publicPose.Deployment);
+            await rig.Disconnect(publicSession);
             var run = await rig.CreateRun();
             var other = await rig.CreateRun();
             await rig.Materialize(run, 1);
@@ -319,11 +326,23 @@ public sealed class AbyssalHostFlowTests
         await rig.Transaction(async (c, tx) => await rig.Runtime.ExpireIfDueAsync(c, tx, setup.InstanceId));
         await rig.Drain();
         var session = await rig.ConnectPublic(setup);
+        var persistedCharacter = (await rig.Characters.GetAsync(setup.Data.CreatorCharacterId))!;
+        var lastStationId = persistedCharacter.HomeStationId;
+        await rig.Transaction((c, tx) => rig.Characters.SetStationAsync(c, tx, persistedCharacter.Id, lastStationId));
         rig.Simulator.Pose = [10, 20, 30];
         long filament = 0;
         await rig.Transaction(async (c, tx) => filament = await rig.Items.CreateAsync(c, tx,
             new NewItem(setup.Data.FilamentTypeId, setup.Data.CreatorCharacterId, setup.Data.CreatorShipId, ItemFlags.Cargo, 2)));
         var deploy = new ServiceCall { Session = session, Method = "AbyssalEntranceDeployment", Args = [new PyLong(filament), new PyInt(1)] };
+        session.Set("stationid", new PyInt(lastStationId));
+        var dockedSessionError = await Assert.ThrowsAsync<MachoWrappedException>(async () => await rig.Service.CallAsync(deploy));
+        Assert.Equal(AbyssalErrorAdapter.ClientError(22).Error.Payload, dockedSessionError.Error.Payload);
+        session.Set("stationid", PyNone.Instance);
+        await rig.Transaction(async (c, tx) => await rig.Items.MoveAsync(c, tx, setup.Data.CreatorShipId, lastStationId, ItemFlags.Hangar));
+        var dockedShipError = await Assert.ThrowsAsync<MachoWrappedException>(async () => await rig.Service.CallAsync(deploy));
+        Assert.Equal(AbyssalErrorAdapter.ClientError(5).Error.Payload, dockedShipError.Error.Payload);
+        Assert.Equal(2, (await rig.Items.GetAsync(filament))!.Quantity);
+        await rig.Transaction(async (c, tx) => await rig.Items.MoveAsync(c, tx, setup.Data.CreatorShipId, setup.Data.SourceSolarSystemId, CharacterShips.InSpaceFlag));
         await rig.Service.CallAsync(deploy);
         await rig.Drain();
         AbyssalParticipantRunBinding? binding = null;

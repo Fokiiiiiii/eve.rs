@@ -515,6 +515,7 @@ internal sealed partial class CharacterServicesComposition
         Eve.Services.ServiceCall call,
         CancellationToken cancellationToken)
     {
+        Console.Error.WriteLine($"eve-host: abyssal.rpc call={PositiveAbyssalRpcId(call.CallId)} session={call.Session.SessionId} character={call.Session.GetInt("charid") ?? call.Session.GetInt("characterID") ?? 0} ship={spaceSessions?.ShipIdOf(call.Session) ?? 0} method={call.Method}");
         return call.Method switch
         {
             "ClientIsReady" => await HandleAbyssalClientIsReadyRpcAsync(call.Session, cancellationToken).ConfigureAwait(false),
@@ -568,8 +569,12 @@ internal sealed partial class CharacterServicesComposition
         }
         var character = await characters.GetAsync(characterId, cancellationToken).ConfigureAwait(false)
             ?? throw AbyssalErrorAdapter.ClientError(7);
-        if (character.SolarSystemId <= 0)
+        if (character.SolarSystemId <= 0 || call.Session.GetInt("stationid") is > 0 ||
+            call.Session.GetInt("structureid") is > 0)
+        {
+            Console.Error.WriteLine($"eve-host: abyssal.deployment character_refused character={characterId} ship={character.ShipId} system={character.SolarSystemId} station={character.StationId} session_system={call.Session.GetInt("solarsystemid") ?? 0} session_system2={call.Session.GetInt("solarsystemid2") ?? 0}");
             throw AbyssalErrorAdapter.ClientError(22);
+        }
         ValidateAbyssalActivationSystem(character.SolarSystemId);
         await ValidateAbyssalFilamentSecurityAsync(
             filamentItemId, character.SolarSystemId, cancellationToken).ConfigureAwait(false);
@@ -583,6 +588,7 @@ internal sealed partial class CharacterServicesComposition
         if (!pose.Found || pose.ShipId != shipId.Value ||
             pose.Scene != SimSceneKey.SolarSystem(character.SolarSystemId))
         {
+            Console.Error.WriteLine($"eve-host: abyssal.deployment pose_refused character={characterId} ship={shipId.Value} filament={filamentItemId} system={character.SolarSystemId} scene={pose.Scene} error={pose.Error ?? "identity_mismatch"}");
             throw AbyssalErrorAdapter.ClientError(22);
         }
 

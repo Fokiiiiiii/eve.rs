@@ -424,14 +424,23 @@ public sealed partial class SpaceSessions
     private void ApplyAbyssalSessionHandoff(ClientSession session, SimSceneKey destination, Eve.Universe.SolarSystemInfo system)
     {
         ReleaseBoundObjects(session);
-        var systemId = new PyInt(destination.LocationId);
         _transitions.StartSessionChange((ulong)session.SessionId);
-        session.Change(
+        session.Change(AbyssalSessionLocationAttributes(destination, system));
+    }
+
+    private static (string Name, PyValue Value)[] AbyssalSessionLocationAttributes(
+        SimSceneKey destination,
+        Eve.Universe.SolarSystemInfo system)
+    {
+        var systemId = new PyInt(destination.LocationId);
+        return
+        [
             ("solarsystemid", systemId),
             ("solarsystemid2", systemId),
             ("constellationid", new PyInt(system.ConstellationId)),
             ("regionid", new PyInt(system.RegionId)),
-            ("locationid", systemId));
+            ("locationid", systemId),
+        ];
     }
 
     /// <summary>Moves a participant while carrying the authoritative pose read by the simulator from its source room.</summary>

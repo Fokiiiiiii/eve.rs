@@ -102,6 +102,12 @@ public sealed partial class SpaceContainers
                     await restore(record, now);
                     continue;
                 }
+                if (record.Kind == DeadspacePocketKind)
+                {
+                    // the body of a running dungeon's pocket goes back in the scene at its origin; the reconciling job keeps the record while the dungeon runs
+                    _sim.PlaceDeadspacePocket(new SimPlaceDeadspacePocket(record.DeployableId, record.SolarSystemId, record.Name, record.Position, record.Radius));
+                    continue;
+                }
                 if (record.Kind == ControlTowerKind)
                 {
                     // anchored when its record says so; its anchoring job is durable and outlives the restart

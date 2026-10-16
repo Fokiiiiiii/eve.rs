@@ -1191,6 +1191,23 @@ private static void WriteStructureDamageCorrelation(
                 w.I32(m.AllianceId);
                 w.I64(m.ShipId);
                 break;
+            case SimPlaceDeadspacePocket m:
+                // the disruptor layout, with no type, group, range or owner: the pocket is in no client ball (protocol 74)
+                w.U8(Kind.PlaceDeadspacePocket);
+                w.I64(m.DeployableId);
+                w.I32(m.SolarSystemId);
+                w.Text(m.Name);
+                w.I32(0);
+                w.I32(0);
+                WriteVector(w, m.Position);
+                w.F64(m.Radius);
+                w.F64(0);
+                w.U8(1);
+                w.I64(0);
+                w.I32(0);
+                w.I32(0);
+                w.I64(0);
+                break;
             case SimPlaceControlTower m:
                 w.U8(Kind.PlaceControlTower);
                 w.I64(m.DeployableId);

@@ -4229,6 +4229,28 @@
    "hex": "0a000000450da04b3c5a190f0001"
   },
   {
+   "name": "deadspace pocket of a mission placed (no client ball)",
+   "kind": "PlaceDeadspacePocket",
+   "deployableId": "4250000000000014",
+   "solarSystemId": 30100032,
+   "typeName": "Deadspace Pocket",
+   "typeId": 0,
+   "groupId": 0,
+   "position": [
+    311989835983.1308,
+    -13069154020.916222,
+    156646308895.76187
+   ],
+   "radius": 1000000000.0,
+   "range": 0.0,
+   "active": true,
+   "ownerId": "0",
+   "corporationId": 0,
+   "allianceId": 0,
+   "shipId": "0",
+   "hex": "680000005d0ea04b3c5a190f00404acb01100044656164737061636520506f636b657400000000000000005fc833c6022952426c5427b7db5708c285e10f7e6c3c42420000000065cdcd41000000000000000001000000000000000000000000000000000000000000000000"
+  },
+  {
    "name": "how far a can is",
    "kind": "Measured",
    "sessionId": "1790646377000015",

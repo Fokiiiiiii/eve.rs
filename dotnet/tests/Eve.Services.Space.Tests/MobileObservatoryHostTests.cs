@@ -1,5 +1,6 @@
 using Eve.Macho;
 using Eve.Marshal;
+using Eve.Services.Space.Waves;
 using Eve.Ships;
 using Eve.Space;
 
@@ -270,5 +271,54 @@ public class MobileObservatoryHostTests
         Assert.Contains("too close", Texts(refused.Error.Payload));
         Assert.Equal(CharacterShips.CargoFlag, (await rig.Items.GetAsync(items[1]))!.Flag);
         Assert.Single(rig.Sim.Heard.OfType<SimPlaceObservatory>());
+    }
+
+    /// <summary>
+    /// A dungeon's pocket (ST-23): the host places it in the scene at its origin with the pocket's radius, once; the record and the body go back after a restart; an
+    /// observatory is refused inside it by the record; and the pocket is taken out when its dungeon is no longer running, which frees the place.
+    /// </summary>
+    [PgFact]
+    public async Task A_dungeon_pocket_is_placed_at_its_origin_refuses_an_observatory_and_is_taken_out_when_its_dungeon_ends()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var (session, items) = await PilotWithObservatoriesAsync(rig, 2, LowSecSystem);
+        var system = (int)LowSecSystem;
+        var origin = new[] { 502_500.0, 0.0, 0.0 };
+        var pocket = SpaceContainers.PocketDeployableId(77);
+
+        await rig.Containers.PlaceDeadspacePocketAsync(system, 77, origin);
+        await rig.Containers.PlaceDeadspacePocketAsync(system, 77, origin);
+        // the body is given to the simulation on each call (it keeps the first); the record is kept once
+        var placed = rig.Sim.Heard.OfType<SimPlaceDeadspacePocket>().ToList();
+        Assert.Equal(2, placed.Count);
+        Assert.All(placed, body =>
+        {
+            Assert.Equal(pocket, body.DeployableId);
+            Assert.Equal(origin, body.Position.ToArray());
+            Assert.Equal(1_000_000_000.0, body.Radius);
+        });
+        var record = (await rig.Deployed.GetAsync(pocket))!;
+        Assert.Equal("dungeon_pocket", record.Kind);
+        Assert.Single(await rig.Deployed.ByKindAsync("dungeon_pocket"));
+
+        // the observatory is refused inside the pocket, by its record
+        var refused = await Assert.ThrowsAsync<MachoWrappedException>(() => rig.Containers.LaunchFromShipAsync(session, items[0], CancellationToken.None));
+        Assert.Contains("deadspace", Texts(refused.Error.Payload));
+        Assert.Equal(CharacterShips.CargoFlag, (await rig.Items.GetAsync(items[0]))!.Flag);
+
+        // its dungeon still runs: the reconcile keeps it; once the dungeon is not running, it is taken out and the observatory drops
+        rig.Sim.Heard.Clear();
+        await rig.Containers.ReconcileDeadspacePocketsAsync([new DungeonPocket(77, system, origin)]);
+        Assert.Empty(rig.Sim.Heard.OfType<SimRemoveDeployed>());
+        await rig.Containers.ReconcileDeadspacePocketsAsync([]);
+        Assert.Contains(rig.Sim.Heard, m => m is SimRemoveDeployed removed && removed.DeployableId == pocket);
+        Assert.Null(await rig.Deployed.GetAsync(pocket));
+        Assert.Equal((long?)items[0], await rig.Containers.LaunchFromShipAsync(session, items[0], CancellationToken.None));
+
+        // a restart puts the body of a running pocket back in the scene when a ship comes into its system
+        await rig.Containers.PlaceDeadspacePocketAsync(system, 78, origin);
+        rig.Sim.Heard.Clear();
+        await rig.Containers.RestoreDeployedAsync(system);
+        Assert.Contains(rig.Sim.Heard, m => m is SimPlaceDeadspacePocket body && body.DeployableId == SpaceContainers.PocketDeployableId(78));
     }
 }

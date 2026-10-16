@@ -314,8 +314,9 @@ public sealed class DungeonWaveTests
         Assert.True((await rig.Director.StartAsync(Pilot, SystemId, Origin, 2173)).Started);
 
         // a mission pocket is positioned where its origin is: the observatory refuses that system, and no other
-        Assert.Equal(Origin, Assert.Single(await rig.Director.ActiveOriginsAsync(SystemId)));
-        Assert.Empty(await rig.Director.ActiveOriginsAsync(SystemId + 1));
+        var pocket = Assert.Single(await rig.Director.ActivePocketsAsync());
+        Assert.Equal(SystemId, pocket.SolarSystemId);
+        Assert.Equal(Origin, pocket.Origin);
     }
 
     /// <summary>The runtime over its own schemas, the director attached, a clock the test moves; a restart makes new runtime objects over the same records.</summary>

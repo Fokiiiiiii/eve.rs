@@ -11,6 +11,18 @@ Worktree `/home/user/wt-ch-s7`, branch `ch-s7`. Push: `git fetch origin main && 
 | 3. S4 gaps | PARTIAL | Booster lapse durable job `skills.boosterLapse` (`SkillBoosterLapse`) and expert lapse persistent notice (type 253, misc group, written offline) implemented; Host tests `A_skill_booster_lapses...` and `An_expert_system_that_lapses...` were failing at the last run (job did not change state; diagnosis open). Not done: host-restart test for implants/expert systems, fitting check audit (grants are in the ShipSnapshot world, no test added). |
 | 4. CH-20 gateway, CH-21 skill plans, CH-22 titles | NOT STARTED | Host is a plain library/console app with a custom Macho TCP listener; no HTTP/2 or gRPC code. Needs a Kestrel (Microsoft.AspNetCore.App shared framework, h2c) listener, gRPC framing and the `eve_public` protobuf codecs. |
 
+## Pushed (origin/main 9d130006)
+
+- Item 1 done; full solution builds (0 errors); Services.Core 745 passed; Host subset (CharacterHostTests, JumpClone, PlayerBounty) 17 passed, all under eve_p3.
+- Merged S6's clone install settlements (origin 3b1decc6): CloneJump sits on top of `JumpCloneService` and `HostJumpCloneStore`.
+- Not run: the CH-16 live headless test (`tools/headless-client/tests/test_clone_jump_live.py`) against a running host; the Skills and Space death tests with the merged tree.
+
+## Not done (next session)
+
+- CH-20 gateway transport (Kestrel h2c, gRPC framing, eve_public codecs), CH-21, CH-22.
+- Booster ending on a jump (wiki: normal boosters end).
+- Host-restart test for implants and expert systems; fitting-check audit with expert grants (the grants are in the ShipSnapshot world; no test added).
+
 ## Decisions (read before changing)
 
 - Clone jump: only station clones exist (InstallCloneInStructure and ship installs are refused), so the jump target kind is `station`.

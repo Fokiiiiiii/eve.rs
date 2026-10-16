@@ -521,6 +521,28 @@ public sealed partial class PersistenceStructureAssetSafetyReadModel : Eve.Servi
     }
 
     /// <summary>
+    /// ST-16 B: wraps one owner's items at a structure that is being destroyed, in the destruction transaction (EVE.js handleStructureDestroyed, per owner). The state is
+    /// AssetSafetyUnavailable for a system where EVE.js has asset safety disabled (wormholes, Pochven: isAssetSafetyDisabledSolarSystem) and for a hull that is not standard
+    /// Upwell (FLEX), so the caller loots those items; any other state is the wrap's answer (NoItemsToMove or a created wrap). The owner kind is the caller's.
+    /// </summary>
+    public async System.Threading.Tasks.Task<Eve.Services.Core.AssetSafetyActionState> WrapDestroyedOwnerAsync(
+        Npgsql.NpgsqlConnection connection,
+        Npgsql.NpgsqlTransaction transaction,
+        long structureId,
+        long solarSystemId,
+        long ownerId,
+        bool corporation,
+        System.Threading.CancellationToken cancellationToken)
+    {
+        var data = await CatalogAsync(cancellationToken);
+        if (IsWormholeOrPochven(solarSystemId, data))
+            return Eve.Services.Core.AssetSafetyActionState.AssetSafetyUnavailable;
+        var (state, _) = await WrapItemsAsync(connection, transaction, solarSystemId, structureId,
+            corporation ? Corporation : Personal, ownerId, corporation ? ownerId : 0, cancellationToken, includeDestroyed: true);
+        return state;
+    }
+
+    /// <summary>
     /// Moves a corporation's items at a structure into its corporate asset safety wrap, in the caller's transaction (ST-12: an office given up, left unpaid, or at a destroyed or unanchored structure). False when
     /// the wrap is refused; nothing to move is not a refusal.
     /// </summary>

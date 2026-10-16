@@ -2486,7 +2486,7 @@ Handoff: `docs/project/structures-phase/handoff-ST-16.md`. Decisions and sources
 | OPEN | (1b) control tower deployment (the minimal deployable kind the brief asks for): needs a sim ball kind, protocol change and deploy RPC | not built |
 | VERIFIED (PG, Space MobileObservatory 12/12 filter) | (1c) deadspace: no observatory anchor within 1e9 m of an ST-11 site (EveJS DEADSPACE_SITE_RADIUS_METERS); mission pockets not positioned in the sim | `An_observatory_is_not_anchored_in_a_deadspace_pocket...`; DEVIATIONS ST-16 |
 | VERIFIED (PG, Host 2/2) | (2a) destruction loot: fitted modules, fuel, cargo and the Quantum Core into one Abandoned Container at the structure's position; rigs destroyed; the container placed in space after commit | `Destruction_loot_moves...`, `Destruction_loot_is_atomic...`; the Space placement of the container is not tested |
-| OPEN | (2b) asset safety before loot (EveJS handleStructureDestroyed): owners' items wrapped first, loot only for FLEX and disabled systems or a refused wrap | DEVIATIONS ST-16 |
+| VERIFIED (PG, Host 4/4 with the wrap fake; real wrap not tested) | (2b) asset safety first: each owner offered to the wrap in the destruction transaction; the loot takes what the wrap leaves (FLEX, wormhole, Pochven, refused) | `Destruction_wraps_each_owner_first...`; DEVIATIONS ST-16 |
 | OPEN | (4) customs fines and confiscation at undock and stargate jump (EveJS contraband inspection: rule table, smuggling skill, roll, durable penalty job, custody) | DEVIATIONS ST-16; the warning exists (ST-3) |
 
 

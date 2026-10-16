@@ -32,6 +32,16 @@ public sealed record EntosisLink(long ModuleId, long CharacterId, long Corporati
 public sealed record EntosisCaptureState(
     long HubId, int SolarSystemId, double Progress, long CheckpointMs, double ActivityDefenseMultiplier, long? DefenderAllianceId, EntosisPhase Phase, int PrimeHour = 0);
 
+/// <summary>A custom vulnerability window (ST-9 f): its centre hour (UTC, 0 to 23) and its whole length in hours (1 to 18). The wiki lets the owner change a
+/// structure's default window to a custom value; the form (centre and length) is ours (DEVIATIONS "Sovereignty vulnerability window, custom windows (ST-9 f)").</summary>
+public sealed record EntosisWindowSetting(int CentreHour, int LengthHours)
+{
+    public bool IsValid => CentreHour is >= 0 and <= 23 && LengthHours is >= 1 and <= 18;
+}
+
+/// <summary>A window's length, locked for the window centred on <see cref="CentreMs"/> (the wiki: locked at the midpoint of the window the day before).</summary>
+public sealed record EntosisWindowLock(long CentreMs, long DurationMs);
+
 /// <summary>The rules of the capture (ST-9 c): the times and the rates, and how the progress moves between two checkpoints.</summary>
 public static class EntosisRules
 {
@@ -58,9 +68,13 @@ public static class EntosisRules
     /// hub has no owner and so no window. A partly captured hub stays vulnerable after its window closes, until it is reinforced or defended (the wiki).
     /// </summary>
     public static bool IsVulnerable(EntosisHubReading reading, EntosisCaptureState? stored, long nowMs) =>
+        IsVulnerable(reading, stored, EntosisWindow.IsOpen(reading.PrimeHour, reading.ActivityDefenseMultiplier, nowMs));
+
+    /// <summary>The same rule with the owner's window already evaluated (its custom setting and locks, ST-9 f).</summary>
+    public static bool IsVulnerable(EntosisHubReading reading, EntosisCaptureState? stored, bool windowOpen) =>
         reading.DefenderAllianceId is null
         || stored is { Phase: EntosisPhase.Capturing }
-        || EntosisWindow.IsOpen(reading.PrimeHour, reading.ActivityDefenseMultiplier, nowMs);
+        || windowOpen;
 
     /// <summary>
     /// Moves a hub's progress from its checkpoint to <paramref name="nowMs"/>, with the links that were active at the checkpoint. An attacker alone scores (one
@@ -74,14 +88,20 @@ public static class EntosisRules
             return nowMs > state.CheckpointMs ? state with { CheckpointMs = nowMs } : state;
         }
         var elapsed = nowMs - state.CheckpointMs;
-        var attacking = links.Any(link => link.Side == EntosisSide.Attacker && IsActive(link, state.CheckpointMs));
+        var attackUntil = ActiveUntil(links, EntosisSide.Attacker, state.CheckpointMs);
         var defending = links.Any(link => link.Side == EntosisSide.Defender && IsActive(link, state.CheckpointMs));
         var progress = state.Progress;
-        if (attacking && !defending)
+        if (attackUntil is { } until)
         {
-            progress += elapsed / CaptureMs(state.ActivityDefenseMultiplier);
+            if (!defending)
+            {
+                // a link scores to the end of its in-progress cycle; a module that stopped without its end report scores no further
+                var scoredMs = Math.Min(elapsed, until - state.CheckpointMs);
+                progress += scoredMs / CaptureMs(state.ActivityDefenseMultiplier);
+                progress -= (elapsed - scoredMs) / RegenMs;
+            }
         }
-        else if (!attacking)
+        else
         {
             progress -= elapsed / RegenMs;
         }
@@ -89,6 +109,21 @@ public static class EntosisRules
         progress = progress >= 1 - 1e-9 ? 1 : Math.Clamp(progress, 0, 1);
         var phase = progress >= 1 ? EntosisPhase.Captured : progress > 0 ? EntosisPhase.Capturing : EntosisPhase.Idle;
         return state with { Progress = progress, CheckpointMs = nowMs, Phase = phase };
+    }
+
+    /// <summary>The end of the scoring of the attacker links active at <paramref name="at"/>: the end of their in-progress cycle (null when none is active).</summary>
+    private static long? ActiveUntil(IReadOnlyList<EntosisLink> links, EntosisSide side, long at)
+    {
+        long? until = null;
+        foreach (var link in links)
+        {
+            if (link.Side == side && IsActive(link, at))
+            {
+                var end = link.LastCycleMs + CycleMs;
+                until = until is { } known ? Math.Max(known, end) : end;
+            }
+        }
+        return until;
     }
 
     /// <summary>
@@ -124,27 +159,88 @@ public static class EntosisWindow
     /// <summary>The reinforcement after an owned hub's capture: about 48 hours (the wiki, "Reinforced period").</summary>
     public const long ReinforcementMs = 48 * HourMs;
 
-    /// <summary>The window of the day that starts at <paramref name="dayStartMs"/> (UTC midnight), as a start and an end (both in milliseconds).</summary>
-    public static (long StartMs, long EndMs) Of(int primeHour, double activityDefenseMultiplier, long dayStartMs)
+    /// <summary>The default length of a window: 18 hours divided by the activity defense multiplier, at least one hour (the wiki).</summary>
+    public static long DefaultDurationMs(double activityDefenseMultiplier) =>
+        Math.Max(HourMs, (long)Math.Round(18.0 * HourMs / Math.Clamp(activityDefenseMultiplier, 1, 6)));
+
+    /// <summary>The window of the day that starts at <paramref name="dayStartMs"/> (UTC midnight), as a start and an end (both in milliseconds), at the prime hour.</summary>
+    public static (long StartMs, long EndMs) Of(int primeHour, double activityDefenseMultiplier, long dayStartMs) =>
+        OfCentre(dayStartMs + primeHour * HourMs, DefaultDurationMs(activityDefenseMultiplier));
+
+    /// <summary>A window centred on <paramref name="centreMs"/> with the given length.</summary>
+    public static (long StartMs, long EndMs) OfCentre(long centreMs, long durationMs)
     {
-        var durationMs = Math.Max(HourMs, (long)Math.Round(18.0 * HourMs / Math.Clamp(activityDefenseMultiplier, 1, 6)));
-        var startMs = dayStartMs + primeHour * HourMs - durationMs / 2;
+        var startMs = centreMs - durationMs / 2;
         return (startMs, startMs + durationMs);
     }
 
-    /// <summary>Whether a time is inside one of the owner's windows (the day before, the day and the day after: a window can cross midnight).</summary>
-    public static bool IsOpen(int primeHour, double activityDefenseMultiplier, long nowMs)
+    /// <summary>
+    /// The length of the window centred on <paramref name="centreMs"/>. The wiki locks a day's length at the midpoint of the window the day before: the lock is
+    /// taken at the first evaluation at or after the previous window's centre, from the setting and the multiplier then (EVE.js <c>lockNextWindowIfDue</c>). A
+    /// window whose previous centre is still ahead is not locked: its length is what the setting and the multiplier give now, and nothing is stored for it.
+    /// </summary>
+    public static long DurationAt(
+        long centreMs, EntosisWindowSetting? setting, double activityDefenseMultiplier, long nowMs, IReadOnlyDictionary<long, long> locks,
+        ICollection<EntosisWindowLock> newLocks)
     {
+        if (locks.TryGetValue(centreMs, out var locked))
+        {
+            return locked;
+        }
+        var durationMs = setting is null ? DefaultDurationMs(activityDefenseMultiplier) : setting.LengthHours * HourMs;
+        if (centreMs - DayMs <= nowMs)
+        {
+            newLocks.Add(new EntosisWindowLock(centreMs, durationMs));
+        }
+        return durationMs;
+    }
+
+    /// <summary>The centre hour of the owner's windows: its custom setting's, else its prime hour.</summary>
+    private static int CentreHourOf(int primeHour, EntosisWindowSetting? setting) => setting?.CentreHour ?? primeHour;
+
+    /// <summary>Whether a time is inside one of the owner's default windows (the day before, the day and the day after: a window can cross midnight).</summary>
+    public static bool IsOpen(int primeHour, double activityDefenseMultiplier, long nowMs) =>
+        IsOpen(primeHour, activityDefenseMultiplier, nowMs, null, new Dictionary<long, long>(), new List<EntosisWindowLock>());
+
+    /// <summary>Whether a time is inside one of the owner's windows under a setting and the locks taken so far; <paramref name="newLocks"/> gets the locks this takes.</summary>
+    public static bool IsOpen(
+        int primeHour, double activityDefenseMultiplier, long nowMs, EntosisWindowSetting? setting, IReadOnlyDictionary<long, long> locks,
+        ICollection<EntosisWindowLock> newLocks)
+    {
+        var centreHour = CentreHourOf(primeHour, setting);
         var today = nowMs / DayMs * DayMs;
+        var open = false;
+        // every candidate is evaluated, not only until one is open: the window of tomorrow is locked at today's midpoint whether or not today's is open
         for (var day = -1; day <= 1; day++)
         {
-            var (startMs, endMs) = Of(primeHour, activityDefenseMultiplier, today + day * DayMs);
-            if (nowMs >= startMs && nowMs <= endMs)
+            var centreMs = today + day * DayMs + centreHour * HourMs;
+            var (startMs, endMs) = OfCentre(centreMs, DurationAt(centreMs, setting, activityDefenseMultiplier, nowMs, locks, newLocks));
+            open |= nowMs >= startMs && nowMs <= endMs;
+        }
+        return open;
+    }
+
+    /// <summary>
+    /// The end of the first window that ends after <paramref name="nowMs"/>. A change of the setting takes effect after this window (the wiki: "does not apply
+    /// immediately: it takes effect after the next vulnerability window").
+    /// </summary>
+    public static long NextWindowEnd(
+        int primeHour, double activityDefenseMultiplier, long nowMs, EntosisWindowSetting? setting, IReadOnlyDictionary<long, long> locks,
+        ICollection<EntosisWindowLock> newLocks)
+    {
+        var centreHour = CentreHourOf(primeHour, setting);
+        var today = nowMs / DayMs * DayMs;
+        long? next = null;
+        for (var day = -1; day <= 2; day++)
+        {
+            var centreMs = today + day * DayMs + centreHour * HourMs;
+            var (_, endMs) = OfCentre(centreMs, DurationAt(centreMs, setting, activityDefenseMultiplier, nowMs, locks, newLocks));
+            if (endMs > nowMs && (next is null || endMs < next))
             {
-                return true;
+                next = endMs;
             }
         }
-        return false;
+        return next ?? throw new InvalidOperationException("no vulnerability window ends after the time");
     }
 
     /// <summary>
@@ -152,13 +248,19 @@ public static class EntosisWindow
     /// first window that ends after that (the wiki: "a randomly selected time during the next vulnerability window"; EVE.js <c>scheduleReinforcementExit</c>).
     /// The point is drawn from <see cref="Draw"/>, so a replayed completion gives the same time.
     /// </summary>
-    public static long ReinforcementExit(int primeHour, double activityDefenseMultiplier, long completedMs, long hubId)
+    public static long ReinforcementExit(int primeHour, double activityDefenseMultiplier, long completedMs, long hubId) =>
+        ReinforcementExit(primeHour, activityDefenseMultiplier, completedMs, hubId, null);
+
+    /// <summary>The reinforcement exit under the owner's setting (its custom centre and length, when it has them).</summary>
+    public static long ReinforcementExit(int primeHour, double activityDefenseMultiplier, long completedMs, long hubId, EntosisWindowSetting? setting)
     {
+        var centreHour = CentreHourOf(primeHour, setting);
+        var durationMs = setting is null ? DefaultDurationMs(activityDefenseMultiplier) : setting.LengthHours * HourMs;
         var earliestMs = completedMs + ReinforcementMs;
         var today = earliestMs / DayMs * DayMs;
         for (var day = -1; day <= 2; day++)
         {
-            var (startMs, endMs) = Of(primeHour, activityDefenseMultiplier, today + day * DayMs);
+            var (startMs, endMs) = OfCentre(today + day * DayMs + centreHour * HourMs, durationMs);
             if (endMs <= earliestMs)
             {
                 continue;

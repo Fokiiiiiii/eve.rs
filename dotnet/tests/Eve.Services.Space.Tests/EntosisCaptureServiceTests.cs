@@ -321,4 +321,68 @@ public sealed class EntosisCaptureServiceTests
         Assert.Equal(2, attempts);
         Assert.Equal("claimed", await harness.Service.HandoverAsync(Hub, CancellationToken.None));
     }
+
+    /// <summary>The start of the day of <see cref="Start"/> (UTC): the test's clock is 22:13 that day.</summary>
+    private const long Day = Start / EntosisWindow.DayMs * EntosisWindow.DayMs;
+
+    [PgFact]
+    public async Task An_owners_custom_window_takes_effect_after_the_next_window_and_the_default_applies_until_then()
+    {
+        await using var harness = await CreateAsync(Owned());
+        var answer = await harness.Service.SetHubWindowAsync(Hub, System, new EntosisWindowSetting(10, 2), CancellationToken.None);
+        Assert.True(answer.Accepted, answer.Reason);
+        Assert.Equal(Day + 31 * EntosisWindow.HourMs, answer.EffectiveFromMs);
+
+        // until then the default window (13:00 to 07:00, centred on 22:00) still applies: 02:00 is inside it
+        harness.Clock.Now = Day + 26 * EntosisWindow.HourMs;
+        Assert.True((await SettleAsync(harness, 1, 5)).Accepted, "the default window is still in force");
+    }
+
+    [PgFact]
+    public async Task A_custom_window_refuses_cycles_outside_it_once_in_force_and_stores_nothing_for_them()
+    {
+        await using var harness = await CreateAsync(Owned());
+        Assert.True((await harness.Service.SetHubWindowAsync(Hub, System, new EntosisWindowSetting(10, 2), CancellationToken.None)).Accepted);
+
+        // 02:00 is inside the default window, but the owner's window (09:00 to 11:00) is in force from 07:00 the next day: refused, nothing is stored
+        harness.Clock.Now = Day + 50 * EntosisWindow.HourMs;
+        Assert.Equal("SOVEREIGNTY_TARGET_NOT_VULNERABLE", (await SettleAsync(harness, 1, 5)).Reason);
+        Assert.Null(await harness.Service.ReadAsync(Hub, CancellationToken.None));
+
+        // 10:00 of the day after the change is inside the owner's window: accepted
+        harness.Clock.Now = Day + 34 * EntosisWindow.HourMs;
+        Assert.True((await SettleAsync(harness, 1, 5)).Accepted);
+    }
+
+    [PgFact]
+    public async Task A_captured_hub_inherits_the_default_window_of_its_new_owner()
+    {
+        await using var harness = await CreateAsync(Neutral(), (_, _) => Task.FromResult(EntosisHandover.Claimed));
+        Assert.True((await harness.Service.SetAllianceWindowAsync(5, new EntosisWindowSetting(10, 2), CancellationToken.None)).Accepted);
+
+        // the capture: a warm-up, a cycle, then the completion job, as the neutral capture tests run it
+        Assert.True((await SettleAsync(harness, 1, 5)).Accepted);
+        harness.Clock.Now = Start + EntosisRules.CycleMs;
+        Assert.True((await SettleAsync(harness, 1, 5)).Accepted);
+        var job = await harness.Scheduler.FindAsync(EntosisCaptureService.CaptureDueKind, Hub.ToString());
+        harness.Clock.Now = job!.RunAtMs;
+        await harness.Service.CaptureDueAsync(Hub, CancellationToken.None);
+        Assert.Equal("claimed", await harness.Service.HandoverAsync(Hub, CancellationToken.None));
+
+        await using var command = harness.Source.CreateCommand(
+            $"SELECT centre_hour, length_hours FROM \"{harness.Schema}\".hub_windows WHERE hub_id = {Hub}");
+        await using var reader = await command.ExecuteReaderAsync();
+        Assert.True(await reader.ReadAsync(), "the claimed hub has the alliance's window");
+        Assert.Equal(10, reader.GetInt16(0));
+        Assert.Equal(2, reader.GetInt16(1));
+    }
+
+    [PgFact]
+    public async Task A_window_change_is_refused_for_a_neutral_hub_and_for_a_setting_out_of_range()
+    {
+        await using var neutral = await CreateAsync(Neutral());
+        Assert.Equal("SOVEREIGNTY_HUB_NOT_OWNED", (await neutral.Service.SetHubWindowAsync(Hub, System, new EntosisWindowSetting(10, 2), CancellationToken.None)).Reason);
+        await using var owned = await CreateAsync(Owned());
+        Assert.Equal("SOVEREIGNTY_VULNERABILITY_WINDOW_INVALID", (await owned.Service.SetHubWindowAsync(Hub, System, new EntosisWindowSetting(24, 2), CancellationToken.None)).Reason);
+    }
 }

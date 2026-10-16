@@ -100,6 +100,9 @@ public sealed class EntosisCaptureService
     /// <summary>The answer of a settled cycle: accepted, or the reason it is not (the module ends with it).</summary>
     public sealed record SettleResult(bool Accepted, string Reason);
 
+    /// <summary>The answer of a window change: accepted with the time it takes effect (0 for an alliance default, which applies at once), or the reason it is refused.</summary>
+    public sealed record WindowAnswer(bool Accepted, string Reason, long EffectiveFromMs);
+
     /// <summary>Registers the jobs' handlers. Call it before the scheduler starts.</summary>
     public void Register()
     {
@@ -145,10 +148,20 @@ public sealed class EntosisCaptureService
             {
                 return new SettleResult(false, "SOVEREIGNTY_HUB_ALREADY_REINFORCED");
             }
-            if (!EntosisRules.IsVulnerable(reading, state, now))
+            var window = await LoadWindowAsync(connection, transaction, hubId, forUpdate: true, cancellationToken);
+            var locks = await LoadLocksAsync(connection, transaction, hubId, cancellationToken);
+            var newLocks = new List<EntosisWindowLock>();
+            var windowOpen = EntosisWindow.IsOpen(reading.PrimeHour, reading.ActivityDefenseMultiplier, now, window.At(now), locks, newLocks);
+            if (!EntosisRules.IsVulnerable(reading, state, windowOpen))
             {
                 return new SettleResult(false, "SOVEREIGNTY_TARGET_NOT_VULNERABLE");
             }
+            // only an accepted cycle keeps what the evaluation took: a due change becomes the active setting, and the window lengths are locked
+            if (window.Promotes(now))
+            {
+                await WriteWindowAsync(connection, transaction, hubId, window.At(now), null, null, cancellationToken);
+            }
+            await SaveLocksAsync(connection, transaction, hubId, newLocks, now, cancellationToken);
             var links = await LoadLinksAsync(connection, transaction, hubId, cancellationToken);
             // the first attacker cycle of a hub with no capture running starts it (the warm-up): the owner is told (EVE.js notifySovCaptureStarted)
             var defenderAlliance = reading.DefenderAllianceId ?? 0;
@@ -282,7 +295,8 @@ public sealed class EntosisCaptureService
         }
         if (after.DefenderAllianceId is { } owner)
         {
-            var exitMs = EntosisWindow.ReinforcementExit(after.PrimeHour, after.ActivityDefenseMultiplier, now, after.HubId);
+            var setting = (await LoadWindowAsync(connection, transaction, after.HubId, forUpdate: false, cancellationToken)).At(now);
+            var exitMs = EntosisWindow.ReinforcementExit(after.PrimeHour, after.ActivityDefenseMultiplier, now, after.HubId, setting);
             await using var reinforce = Command(
                 "UPDATE {schema}.hubs SET phase = 'reinforced', handover = 'owned', reinforcement_exit_ms = $2 WHERE hub_id = $1",
                 connection, transaction, after.HubId, exitMs);
@@ -358,8 +372,141 @@ public sealed class EntosisCaptureService
         {
             await using var clear = Command("DELETE FROM {schema}.links WHERE hub_id = $1", writer, writerTransaction, hubId);
             await clear.ExecuteNonQueryAsync(cancellationToken);
+            if (answer == EntosisHandover.Claimed)
+            {
+                // ST-9 f: the claimed hub takes its new owner's default window and loses the old one (the wiki: captured structures inherit it)
+                await using var forget = Command("DELETE FROM {schema}.hub_windows WHERE hub_id = $1", writer, writerTransaction, hubId);
+                await forget.ExecuteNonQueryAsync(cancellationToken);
+                await using var inherit = Command(
+                    "INSERT INTO {schema}.hub_windows (hub_id, centre_hour, length_hours) SELECT $1, centre_hour, length_hours FROM {schema}.alliance_windows WHERE alliance_id = $2",
+                    writer, writerTransaction, hubId, allianceId);
+                await inherit.ExecuteNonQueryAsync(cancellationToken);
+                await using var locks = Command("DELETE FROM {schema}.window_locks WHERE hub_id = $1", writer, writerTransaction, hubId);
+                await locks.ExecuteNonQueryAsync(cancellationToken);
+            }
         }
         await writerTransaction.CommitAsync(cancellationToken);
+    }
+
+    /// <summary>
+    /// The owner's custom window of a hub (ST-9 f). Refused by name for a hub that another or no alliance owns, and for a setting out of range. The change takes
+    /// effect after the next vulnerability window (the wiki); the answer gives that time.
+    /// </summary>
+    public async Task<WindowAnswer> SetHubWindowAsync(long hubId, int solarSystemId, EntosisWindowSetting setting, CancellationToken cancellationToken)
+    {
+        var reading = await _readHub(solarSystemId, cancellationToken);
+        if (reading is null || reading.HubId != hubId)
+        {
+            return new WindowAnswer(false, "ENTOSIS_TARGET_NOT_SOV_HUB", 0);
+        }
+        if (reading.DefenderAllianceId is null)
+        {
+            return new WindowAnswer(false, "SOVEREIGNTY_HUB_NOT_OWNED", 0);
+        }
+        if (!setting.IsValid)
+        {
+            return new WindowAnswer(false, "SOVEREIGNTY_VULNERABILITY_WINDOW_INVALID", 0);
+        }
+        var now = _now();
+        long effective;
+        await using (var connection = await _source.OpenConnectionAsync(cancellationToken))
+        await using (var transaction = await connection.BeginTransactionAsync(cancellationToken))
+        {
+            var window = await LoadWindowAsync(connection, transaction, hubId, forUpdate: true, cancellationToken);
+            var locks = await LoadLocksAsync(connection, transaction, hubId, cancellationToken);
+            var newLocks = new List<EntosisWindowLock>();
+            effective = EntosisWindow.NextWindowEnd(reading.PrimeHour, reading.ActivityDefenseMultiplier, now, window.At(now), locks, newLocks);
+            await WriteWindowAsync(connection, transaction, hubId, window.At(now), setting, effective, cancellationToken);
+            await SaveLocksAsync(connection, transaction, hubId, newLocks, now, cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
+        }
+        return new WindowAnswer(true, "", effective);
+    }
+
+    /// <summary>
+    /// The default window of an alliance (ST-9 f): a hub it captures inherits it (<see cref="RunHandoverAsync"/>). It applies to hubs captured after the change.
+    /// </summary>
+    public async Task<WindowAnswer> SetAllianceWindowAsync(long allianceId, EntosisWindowSetting setting, CancellationToken cancellationToken)
+    {
+        if (allianceId <= 0 || !setting.IsValid)
+        {
+            return new WindowAnswer(false, "SOVEREIGNTY_VULNERABILITY_WINDOW_INVALID", 0);
+        }
+        await using var connection = await _source.OpenConnectionAsync(cancellationToken);
+        await using var command = Command(
+            "INSERT INTO {schema}.alliance_windows (alliance_id, centre_hour, length_hours) VALUES ($1, $2, $3) "
+            + "ON CONFLICT (alliance_id) DO UPDATE SET centre_hour = EXCLUDED.centre_hour, length_hours = EXCLUDED.length_hours",
+            connection, null, allianceId, setting.CentreHour, setting.LengthHours);
+        await command.ExecuteNonQueryAsync(cancellationToken);
+        return new WindowAnswer(true, "", 0);
+    }
+
+    /// <summary>A hub's stored window: the active setting (null: the default window), and a pending change with the time it takes effect.</summary>
+    private sealed record StoredWindow(EntosisWindowSetting? Active, EntosisWindowSetting? Pending, long? PendingFromMs)
+    {
+        /// <summary>The setting in force at a time: a pending change once it is due.</summary>
+        public EntosisWindowSetting? At(long nowMs) => Promotes(nowMs) ? Pending : Active;
+
+        public bool Promotes(long nowMs) => Pending is not null && PendingFromMs <= nowMs;
+    }
+
+    private async Task<StoredWindow> LoadWindowAsync(
+        NpgsqlConnection connection, NpgsqlTransaction? transaction, long hubId, bool forUpdate, CancellationToken cancellationToken)
+    {
+        await using var command = Command(
+            "SELECT centre_hour, length_hours, pending_centre_hour, pending_length_hours, pending_from_ms FROM {schema}.hub_windows WHERE hub_id = $1"
+            + (forUpdate ? " FOR UPDATE" : ""), connection, transaction, hubId);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        if (!await reader.ReadAsync(cancellationToken))
+        {
+            return new StoredWindow(null, null, null);
+        }
+        return new StoredWindow(
+            WindowOf(reader, 0, 1), WindowOf(reader, 2, 3), reader.IsDBNull(4) ? null : reader.GetInt64(4));
+    }
+
+    private static EntosisWindowSetting? WindowOf(NpgsqlDataReader reader, int centreColumn, int lengthColumn) =>
+        reader.IsDBNull(centreColumn) ? null : new EntosisWindowSetting(reader.GetInt16(centreColumn), reader.GetInt16(lengthColumn));
+
+    private async Task WriteWindowAsync(
+        NpgsqlConnection connection, NpgsqlTransaction transaction, long hubId, EntosisWindowSetting? active, EntosisWindowSetting? pending,
+        long? pendingFromMs, CancellationToken cancellationToken)
+    {
+        await using var command = Command(
+            "INSERT INTO {schema}.hub_windows (hub_id, centre_hour, length_hours, pending_centre_hour, pending_length_hours, pending_from_ms) "
+            + "VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT (hub_id) DO UPDATE SET centre_hour = EXCLUDED.centre_hour, length_hours = EXCLUDED.length_hours, "
+            + "pending_centre_hour = EXCLUDED.pending_centre_hour, pending_length_hours = EXCLUDED.pending_length_hours, pending_from_ms = EXCLUDED.pending_from_ms",
+            connection, transaction, hubId, active?.CentreHour, active?.LengthHours, pending?.CentreHour, pending?.LengthHours, pendingFromMs);
+        await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    private async Task<IReadOnlyDictionary<long, long>> LoadLocksAsync(
+        NpgsqlConnection connection, NpgsqlTransaction? transaction, long hubId, CancellationToken cancellationToken)
+    {
+        await using var command = Command("SELECT centre_ms, duration_ms FROM {schema}.window_locks WHERE hub_id = $1", connection, transaction, hubId);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        var locks = new Dictionary<long, long>();
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            locks[reader.GetInt64(0)] = reader.GetInt64(1);
+        }
+        return locks;
+    }
+
+    private async Task SaveLocksAsync(
+        NpgsqlConnection connection, NpgsqlTransaction transaction, long hubId, IEnumerable<EntosisWindowLock> locks, long now, CancellationToken cancellationToken)
+    {
+        foreach (var locked in locks)
+        {
+            await using var command = Command(
+                "INSERT INTO {schema}.window_locks (hub_id, centre_ms, duration_ms) VALUES ($1, $2, $3) ON CONFLICT (hub_id, centre_ms) DO NOTHING",
+                connection, transaction, hubId, locked.CentreMs, locked.DurationMs);
+            await command.ExecuteNonQueryAsync(cancellationToken);
+        }
+        // a window that ended two days ago is not evaluated again (the window of a time is within a day of it)
+        await using var prune = Command(
+            "DELETE FROM {schema}.window_locks WHERE hub_id = $1 AND centre_ms < $2", connection, transaction, hubId, now - 2 * EntosisWindow.DayMs);
+        await prune.ExecuteNonQueryAsync(cancellationToken);
     }
 
     private async Task ReconcileJobAsync(

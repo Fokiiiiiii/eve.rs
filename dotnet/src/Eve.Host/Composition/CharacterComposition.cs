@@ -130,6 +130,15 @@ internal sealed partial class CharacterServicesComposition
         return Task.CompletedTask;
     }
 
+    /// <summary>The login milestone: its progress in the characters schema, its timer in this process. One instance serves the entry hook and the service.</summary>
+    private MilestoneMgrService? milestoneMgr;
+    private MilestoneMgrService MilestoneManager => milestoneMgr ??= new MilestoneMgrService(
+        new Eve.Characters.LoginMilestoneStore(source, characterSchema, economyWallets), foundations.LocalTimers, now);
+
+    /// <summary>The achievement tracker of each character (the characters schema).</summary>
+    private AchievementTrackerStore? achievementTracker;
+    private AchievementTrackerStore AchievementTracker => achievementTracker ??= new AchievementTrackerStore(source, characterSchema);
+
     private Task EconomyAndInsurance()
     {
         economyWallets = new WalletTransactions(source, walletSchema);
@@ -205,6 +214,7 @@ internal sealed partial class CharacterServicesComposition
         if (spaceSessions is not null)
             characterEntryHooks.Add(spaceSessions);
         characterEntryHooks.Add(new SkillsLoginHook(training, skillCatalog, characterSessions, announcer, now));
+        characterEntryHooks.Add(MilestoneManager);
         characterEntryHooks.Add(corporationLogin);
         characterEntryHooks.Add(new FleetLoginHook(fleetStore.MemberForCharacterAsync));
         characterEntryHooks.Add(dogmaSync);

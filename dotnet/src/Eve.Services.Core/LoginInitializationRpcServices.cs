@@ -128,67 +128,9 @@ public static class LoginInitializationGameStoreProjection
 public sealed class AchievementTrackerMgrService(
     Func<long, CancellationToken, ValueTask<AchievementTrackerPersistedState?>>? readState = null,
     Func<long, CancellationToken, ValueTask<bool>>? hasEverWarped = null,
-    Func<ServiceCall, CancellationToken, ValueTask<PyValue?>>? rpcHandler = null) : IService
+    Func<ServiceCall, CancellationToken, ValueTask<PyValue?>>? rpcHandler = null,
+    Func<long, PyDict, PyDict, CancellationToken, ValueTask>? writeState = null) : IService
 {
-    private static readonly PyDict GoldenEventCounts = new([
-        Entry("client_activateAutopilot", new PyLong(1)),
-        Entry("client_activateSalvager", new PyInt(0)),
-        Entry("client_orbitHostileNPC", new PyInt(0)),
-        Entry("client_spinCamera", new PyLong(1)),
-        Entry("client_loadBlueprint", new PyInt(0)),
-        Entry("client_openCorpFinder", new PyLong(1)),
-        Entry("client_lockHostileNPC", new PyInt(0)),
-        Entry("client_lockAsteroid", new PyLong(1)),
-        Entry("client_openAgency", new PyInt(0)),
-        Entry("client_orbitAsteroid", new PyInt(0)),
-        Entry("client_openMap", new PyInt(0)),
-        Entry("client_mouseZoom_out", new PyLong(2)),
-        Entry("client_lootItems", new PyInt(0)),
-        Entry("client_jumpToNextSystemInRoute", new PyLong(1)),
-        Entry("client_moveItemFromCargoToHangar", new PyInt(0)),
-        Entry("client_lookAtOwnShip", new PyLong(1)),
-        Entry("client_setDestination", new PyLong(1)),
-        Entry("client_chatMessageSent", new PyLong(1)),
-        Entry("client_lookAtObject", new PyInt(0)),
-        Entry("client_mouseZoom_in", new PyLong(1)),
-        Entry("client_activateGun", new PyInt(0)),
-        Entry("client_unfitItem", new PyLong(1)),
-        Entry("client_launchProbes", new PyInt(0)),
-        Entry("client_bookmarkWormhole", new PyInt(0)),
-        Entry("client_reachPerfectScanResult", new PyInt(0)),
-        Entry("client_approach", new PyLong(1)),
-        Entry("client_doubleClickInSpace", new PyLong(1)),
-    ]);
-
-    private static readonly PyDict GoldenCompleted = new([
-        Entry(new PyInt(9), new PyLong(134273341290000000)),
-        Entry(new PyInt(10), new PyLong(134273362100000000)),
-        Entry(new PyInt(16), new PyLong(134273340850000000)),
-        Entry(new PyInt(17), new PyLong(134275738980000000)),
-        Entry(new PyInt(19), new PyLong(134273338030000000)),
-        Entry(new PyInt(23), new PyLong(134273885480000000)),
-        Entry(new PyInt(24), new PyLong(134273340010000000)),
-        Entry(new PyInt(25), new PyLong(134275807650000000)),
-        Entry(new PyInt(26), new PyLong(134275807630000000)),
-        Entry(new PyInt(32), new PyLong(134275740590000000)),
-        Entry(new PyInt(38), new PyLong(134273353790000000)),
-        Entry(new PyInt(44), new PyLong(134273340760000000)),
-        Entry(new PyInt(45), new PyLong(134273341230000000)),
-        Entry(new PyInt(46), new PyLong(134273342370000000)),
-        Entry(new PyInt(47), new PyLong(134275773470000000)),
-        Entry(new PyInt(48), new PyLong(134275740590000000)),
-        Entry(new PyInt(49), new PyLong(134275755390000000)),
-        Entry(new PyInt(50), new PyLong(134276054820000000)),
-        Entry(new PyInt(53), new PyLong(134273364720000000)),
-        Entry(new PyInt(57), new PyLong(134275751230000000)),
-        Entry(new PyInt(60), new PyLong(134273341380000000)),
-        Entry(new PyInt(61), new PyLong(134273340480000000)),
-        Entry(new PyInt(64), new PyLong(134273331600000000)),
-        Entry(new PyInt(66), new PyLong(134273331580000000)),
-        Entry(new PyInt(72), new PyLong(134275770810000000)),
-        Entry(new PyInt(73), new PyLong(134275750180000000)),
-    ]);
-
     public AchievementTrackerMgrService(Func<ServiceCall, ValueTask<PyValue?>> stateHandler)
         : this(rpcHandler: (call, _) => stateHandler(call))
     {
@@ -217,15 +159,22 @@ public sealed class AchievementTrackerMgrService(
                 : PyBool.False;
         }
 
+        // the client sends both maps whole when it stores them (its achievements and counters at logoff, and as they change)
         if (call.Method == "UpdateClientAchievmentsAndCounters")
+        {
+            if (writeState is not null && call.Session.GetInt("charid") is { } writer && writer > 0
+                && call.Arg(0) is PyDict completed && call.Arg(1) is PyDict eventCounts)
+                await writeState(writer, completed, eventCounts, call.Cancellation);
             return PyNone.Instance;
+        }
 
+        // a character with no record has empty maps (the client's own default), not a fixture
         var state = readState is not null && call.Session.GetInt("charid") is { } id && id > 0
             ? await readState(id, call.Cancellation)
             : null;
         return new PyDict([
-            Entry("eventDict", state?.EventCounts ?? GoldenEventCounts),
-            Entry("completedDict", state?.Completed ?? GoldenCompleted),
+            Entry("eventDict", state?.EventCounts ?? new PyDict([])),
+            Entry("completedDict", state?.Completed ?? new PyDict([])),
         ]);
     }
 

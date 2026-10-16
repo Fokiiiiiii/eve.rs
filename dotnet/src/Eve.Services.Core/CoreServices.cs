@@ -61,7 +61,6 @@ public static class CoreServices
             new TourneyMgrService(tourneyQueryCallback),
             new RaffleMgrService(gameRpcCallbacks.SeedRafflesAsync),
             new RaffleProxyService(),
-            new ExpertSystemMgrService(),
             new ContractProxyService(),
             new JumpCloneService(gameRpcCallbacks.JumpClones),
             new ServiceGatewayMgrService(gameRpcCallbacks.SetHijackMode, gameRpcCallbacks.IsHijackModeEnabled),

@@ -19,6 +19,12 @@ public sealed class TrainingSettings
 
     /// <summary>How many extra training queues an account has running (Multiple Character Training): each lets one more of its characters train.</summary>
     public Func<long, int> AdditionalTrainingSlots { get; init; } = _ => 0;
+
+    /// <summary>What the implants and active boosters of a character add to one of its learning attributes (dogma's modifiers); the rate adds it to the base.</summary>
+    public Func<long, int, double> LearningBonus { get; init; } = (_, _) => 0;
+
+    /// <summary>Brings the learning bonus of a character up to date. Every call that reads a rate runs it first, so a bonus is never read stale.</summary>
+    public Func<long, CancellationToken, Task> RefreshLearningBonus { get; init; } = (_, _) => Task.CompletedTask;
 }
 
 /// <summary>The queue and skills of a character as they are at a moment: the running skill has the points it has gained by then.</summary>
@@ -71,7 +77,7 @@ public sealed class CharacterTraining(
     private Func<SkillType, double> RateOf(long characterId, long accountId)
     {
         var multiplier = (settings.HasOmega(accountId) ? 1d : 0.5d) * (settings.Speed > 0 ? settings.Speed : 1d);
-        return type => Training.PointsPerMinute(type, attribute => settings.Attribute(characterId, attribute), multiplier);
+        return type => Training.PointsPerMinute(type, attribute => settings.Attribute(characterId, attribute) + settings.LearningBonus(characterId, attribute), multiplier);
     }
 
     private async Task<Dictionary<int, CharacterSkill>> SkillsOfAsync(long characterId, CancellationToken cancellationToken) =>
@@ -340,6 +346,7 @@ public sealed class CharacterTraining(
     public async Task<TrainingUpdate?> SettleAsync(long characterId, long accountId, CancellationToken cancellationToken = default)
     {
         await skills.NeuralRemapAsync(characterId, cancellationToken);
+        await settings.RefreshLearningBonus(characterId, cancellationToken);
         var probeRate = RateOf(characterId, accountId);
         var probe = await store.LoadAsync(characterId, cancellationToken);
         if (probe.Entries.Count == 0 || !Training.Settle(probe, await SkillsOfAsync(characterId, cancellationToken), catalog, probeRate, Now).QueueChanged)
@@ -486,6 +493,43 @@ public sealed class CharacterTraining(
         await store.SaveAsync(connection, transaction, characterId, stopped, cancellationToken);
         await transaction.CommitAsync(cancellationToken);
         return new TrainingUpdate(characterId, accountId, before, [], rebased, changed, BuildView(characterId, accountId, stopped, owned, now));
+    }
+
+    /// <summary>
+    /// Rebases the running skill at the rate it has now and starts its clock from now, so that a change to the learning attributes (an implant or a
+    /// booster) applies from now on and not to the time before it. Null when nothing was running.
+    /// </summary>
+    public async Task<TrainingUpdate?> RebaseRunningAsync(long characterId, long accountId, CancellationToken cancellationToken = default)
+    {
+        await SettleAsync(characterId, accountId, cancellationToken);
+
+        await using var connection = await source.OpenConnectionAsync(cancellationToken);
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        await LockAsync(connection, transaction, characterId, cancellationToken);
+        var rate = RateOf(characterId, accountId);
+        var now = Now;
+        var state = await store.LoadAsync(connection, transaction, characterId, cancellationToken);
+        if (!state.Running)
+        {
+            return null;
+        }
+        var owned = (await skills.ForCharacterAsync(connection, transaction, characterId, cancellationToken)).ToDictionary(skill => skill.TypeId);
+        var before = owned.Values.OrderBy(skill => skill.TypeId).ToList();
+        if (Training.Project(state, owned, catalog, rate, now).Entries.FirstOrDefault() is not { } line || !owned.TryGetValue(line.TypeId, out var running))
+        {
+            return null;
+        }
+        var rebased = Training.Rebase(line, running, catalog.Get(line.TypeId)?.Rank ?? 1, now);
+        var changed = rebased != running;
+        if (changed)
+        {
+            await skills.GrantAsync(connection, transaction, characterId, [rebased], cancellationToken, trackRecentChanges: true);
+            owned[line.TypeId] = rebased;
+        }
+        var next = state with { ActiveStart = now };
+        await store.SaveAsync(connection, transaction, characterId, next, cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+        return new TrainingUpdate(characterId, accountId, before, [], rebased, changed, BuildView(characterId, accountId, next, owned, now));
     }
 
     /// <summary>Applies a neural remap after settling old-rate training and rebases the active queue.</summary>

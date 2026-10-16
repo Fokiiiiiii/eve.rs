@@ -42,6 +42,8 @@ internal sealed partial class CharacterServicesComposition
         // the abyssal mutation authority (ADR 0016): the mutaplasmid catalog of the static data, the item store and its provenance, the event bus
         itemMutations = new Eve.Inventory.Mutation.ItemMutationService(
             source, items, items.Mutations, await Eve.Inventory.Mutation.MutatorCatalog.LoadAsync(sde), dogma, new BusItemMutationEvents(foundations.Events), now);
+        learningBonus = new PilotLearningBonus(dogma, characters, items, skills, now);
+        expertSystems = new ExpertSystems(ExpertSystemCatalog.LoadEmbedded(), new PgExpertSystemStore(source, skillsSchema), now);
         training = new CharacterTraining(
             source, skillCatalog, skills, new PgTrainingStore(source, skillsSchema),
             new TrainingSettings
@@ -51,8 +53,12 @@ internal sealed partial class CharacterServicesComposition
                 // each running extra queue (Multiple Character Training) lets one more of the account's characters train
                 AdditionalTrainingSlots = account => accounts.ActiveTrainingSlotCount(checked((uint)account), DateTimeOffset.FromUnixTimeMilliseconds(now())),
                 Attribute = skills.LearningAttribute,
+                // implants and active boosters add to the learning attributes the rate reads (dogma's modifiers)
+                LearningBonus = (character, attribute) => learningBonus.Of(character, attribute),
+                RefreshLearningBonus = (character, token) => learningBonus.RefreshAsync(character, token),
             },
             now);
+        pilotImplants = new PilotImplants(source, dogma, characters, items, skills, training);
     }
 
         static bool ContactWatchlisted(JsonNode? node)
@@ -108,7 +114,7 @@ internal sealed partial class CharacterServicesComposition
         return Task.CompletedTask;
     }
 
-    private Task TrainingSkillsAndCreation()
+    private async Task TrainingSkillsAndCreation()
     {
         announcer = new TrainingAnnouncer(training, skillCatalog, characterSessions, dogmaSync, now, localTimers: foundations.LocalTimers);
         announcer.Attach();
@@ -116,7 +122,12 @@ internal sealed partial class CharacterServicesComposition
         skillHandler = new SkillHandlerService(
             skills, skillCatalog, training, characters, items, dogma, announcer, now, readAugmentations,
             walletTransactions: economyWallets,
-            isAlphaClone: accountId => !omega.Resolve(new PyInt(accountId)).HasLicense);
+            isAlphaClone: accountId => !omega.Resolve(new PyInt(accountId)).HasLicense,
+            expertSystems: expertSystems);
+        expertSystemMgr = new Eve.Services.Skills.ExpertSystemMgrService(expertSystems, skills, skillCatalog, items, source, characterSessions, dogmaSync, dogma);
+        // installed expert systems lapse on their own: the expiry runs as a recurring job of the durable scheduler
+        foundations.Scheduler.Register("skills.expert-systems.expire", async (_, token) => await expertSystemMgr.ExpireDueAsync(token));
+        await foundations.Scheduler.EnsureRecurringAsync("skills.expert-systems.expire", "expire", TimeSpan.FromSeconds(10));
         startingWallet = new StartingWallet(
             decimal.Parse(Env("EVE_START_ISK", "100000"), System.Globalization.CultureInfo.InvariantCulture),
             long.Parse(Env("EVE_START_PLEX", "2222"), System.Globalization.CultureInfo.InvariantCulture));
@@ -127,7 +138,6 @@ internal sealed partial class CharacterServicesComposition
             (connection, transaction, characterId, corporationId, token) => foundations.Relations.SetAsync(
                 connection, transaction, Eve.Relations.RelationKinds.CorporationMember.Name, characterId, corporationId, 1,
                 "corporation membership", cancellationToken: token));
-        return Task.CompletedTask;
     }
 
     /// <summary>The login milestone: its progress in the characters schema, its timer in this process. One instance serves the entry hook and the service.</summary>

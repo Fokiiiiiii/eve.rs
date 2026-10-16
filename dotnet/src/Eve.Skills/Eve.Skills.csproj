@@ -5,6 +5,7 @@
   </ItemGroup>
   <ItemGroup>
     <EmbeddedResource Include="Migrations/*.sql" />
+    <EmbeddedResource Include="Data/expert-systems.v1.json" LogicalName="expert-systems.v1.json" />
   </ItemGroup>
   <ItemGroup>
     <InternalsVisibleTo Include="Eve.Skills.Tests" />

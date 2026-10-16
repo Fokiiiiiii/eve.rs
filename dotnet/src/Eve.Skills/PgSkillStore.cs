@@ -109,6 +109,19 @@ public sealed class PgSkillStore
                     next_timed_respec_filetime bigint CHECK (next_timed_respec_filetime > 0)
                 );
                 """),
+            new Migration("0008_character_expert_systems", """
+                CREATE TABLE IF NOT EXISTS character_expert_systems (
+                    character_id bigint NOT NULL CHECK (character_id > 0),
+                    type_id integer NOT NULL CHECK (type_id > 0),
+                    installed_at_ms bigint NOT NULL,
+                    expires_at_ms bigint NOT NULL,
+                    source_item_id bigint CHECK (source_item_id > 0),
+                    grant_reason text NOT NULL DEFAULT 'item',
+                    updated_at_ms bigint NOT NULL,
+                    PRIMARY KEY (character_id, type_id)
+                );
+                CREATE INDEX IF NOT EXISTS character_expert_systems_expiry ON character_expert_systems (expires_at_ms);
+                """),
         ];
 
     public static Task<IReadOnlyList<string>> MigrateAsync(NpgsqlDataSource source, string schema = DefaultSchema, CancellationToken cancellationToken = default) =>

@@ -10,6 +10,12 @@ public interface ICharacterDogmaSync
 {
     /// <summary>The character's skills went from <paramref name="before"/> to what they are now: the ship's attributes that changed, the character's attributes and its brain.</summary>
     Task SkillsChangedAsync(ClientSession session, long characterId, IReadOnlyList<CharacterSkill> before, CancellationToken cancellationToken = default);
+
+    /// <summary>The character's learning attributes changed (an implant or a booster): its attributes and its brain are told, nothing about the ships.</summary>
+    Task CharacterChangedAsync(ClientSession session, long characterId, CancellationToken cancellationToken = default);
+
+    /// <summary>The levels its expert systems grant changed (installed, removed or lapsed): the ship's attributes that changed, from the grants it had.</summary>
+    Task ExpertGrantsChangedAsync(ClientSession session, long characterId, IReadOnlyList<CharacterSkill> trainedSkills, IReadOnlyDictionary<int, int> grantsBefore, CancellationToken cancellationToken = default);
 }
 
 /// <summary>
@@ -108,7 +114,29 @@ public sealed class TrainingAnnouncer(CharacterTraining training, SkillCatalog c
         TellTheAccount(session, update.AccountId);
     }
 
-    public async Task AnnounceRemappedAsync(ClientSession session, TrainingUpdate update)
+    /// <summary>
+    /// The learning attributes of a character changed (an implant plugged in or destroyed, a booster taken): the client is told the character's attributes
+    /// and brain, then the running skill (rebased at the old rate) and the queue, as the reference orders it. A character not logged in is told nothing.
+    /// </summary>
+    public async Task AnnounceLearningChangedAsync(long characterId, TrainingUpdate? update)
+    {
+        if (sessions.Of(characterId) is not { } session)
+        {
+            return;
+        }
+        if (dogma is not null)
+        {
+            await dogma.CharacterChangedAsync(session, characterId);
+        }
+        if (update is not null)
+        {
+            // the queue is worked out again now: the change to the attributes is in force (the view the update carries was taken before it)
+            var current = update with { View = await training.ViewAsync(characterId, update.AccountId) };
+            await AnnounceRemappedAsync(session, current, withDogma: false);
+        }
+    }
+
+    public async Task AnnounceRemappedAsync(ClientSession session, TrainingUpdate update, bool withDogma = true)
     {
         Reschedule(update.CharacterId, update.AccountId, update.View);
         if (update.Finished.Count > 0)
@@ -124,7 +152,7 @@ public sealed class TrainingAnnouncer(CharacterTraining training, SkillCatalog c
             SkillNotifications.ServerSkillsChanged(session, changed, null, NowFileTime);
             SkillNotifications.SkillsChanged(session, changed);
         }
-        if (update.Finished.Count > 0 || update.RebaseChanged)
+        if (withDogma && (update.Finished.Count > 0 || update.RebaseChanged))
             await SyncDogmaAsync(session, update);
         SkillNotifications.QueueSaved(session, update.View.Queue);
         if (!update.View.State.Running)

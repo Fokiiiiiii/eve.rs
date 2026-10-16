@@ -14,7 +14,7 @@ namespace Eve.Ships;
 /// </summary>
 public sealed partial class CharacterShips(
     NpgsqlDataSource source, DogmaStatic statics, PgCharacterStore characters, PgItemStore items, PgSkillStore skills, PgModuleStateStore modules,
-    CharacterTraining? training = null)
+    CharacterTraining? training = null, ExpertSystems? expertSystems = null)
 {
     /// <summary>The inventory flags a ship's contents can be in besides its slots: the cargo hold.</summary>
     public const int CargoFlag = 5;
@@ -26,6 +26,10 @@ public sealed partial class CharacterShips(
     /// <summary>How fast the character learns as dogma shows it: its attributes times the server's training speed (the client works its estimates out from them).</summary>
     private Func<int, double>? LearningOf(long characterId) =>
         training is null ? null : attribute => training.Settings.Attribute(characterId, attribute) * training.Settings.Speed;
+
+    /// <summary>The skill levels the character's installed expert systems grant now (none without expert systems in this host).</summary>
+    private async Task<IReadOnlyDictionary<int, int>?> GrantsOfAsync(long characterId, CancellationToken cancellationToken) =>
+        expertSystems is null ? null : await expertSystems.GrantsAsync(characterId, cancellationToken);
 
     /// <summary>The character's active ship, or null when it has none. What the character's training has finished is settled into its skills first.</summary>
     public Task<ShipSnapshot?> LoadAsync(long characterId, CancellationToken cancellationToken = default) =>
@@ -41,17 +45,18 @@ public sealed partial class CharacterShips(
         {
             await training.SettleAsync(characterId, owner.AccountId, cancellationToken);
         }
-        return await ShipSnapshot.LoadAsync(statics, characters, items, skills, modules, characterId, LearningOf(characterId), null, cancellationToken, shipId, shipOwnerIdOverride);
+        return await ShipSnapshot.LoadAsync(statics, characters, items, skills, modules, characterId, LearningOf(characterId), null, cancellationToken, shipId, shipOwnerIdOverride, await GrantsOfAsync(characterId, cancellationToken));
     }
 
     /// <summary>
     /// What changed in the character's ship when its skills went from <paramref name="before"/> to what they are now: the ship's attributes
     /// that differ, in the order of the attributes.
     /// </summary>
-    public async Task<IReadOnlyList<AttributeChanged>> SkillChangesAsync(long characterId, IReadOnlyList<CharacterSkill> before, CancellationToken cancellationToken = default)
+    public async Task<IReadOnlyList<AttributeChanged>> SkillChangesAsync(long characterId, IReadOnlyList<CharacterSkill> before, IReadOnlyDictionary<int, int>? grantsBefore = null, CancellationToken cancellationToken = default)
     {
-        var now = await ShipSnapshot.LoadAsync(statics, characters, items, skills, modules, characterId, LearningOf(characterId), null, cancellationToken);
-        var was = await ShipSnapshot.LoadAsync(statics, characters, items, skills, modules, characterId, LearningOf(characterId), before, cancellationToken);
+        var grants = await GrantsOfAsync(characterId, cancellationToken);
+        var now = await ShipSnapshot.LoadAsync(statics, characters, items, skills, modules, characterId, LearningOf(characterId), null, cancellationToken, expertGrants: grants);
+        var was = await ShipSnapshot.LoadAsync(statics, characters, items, skills, modules, characterId, LearningOf(characterId), before, cancellationToken, expertGrants: grantsBefore ?? grants);
         return now is null || was is null ? [] : [.. ShipChanges(now.Ship.Id, was.World.Attributes(was.Ship.Id), now.World.Attributes(now.Ship.Id))];
     }
 

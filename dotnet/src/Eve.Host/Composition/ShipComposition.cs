@@ -39,7 +39,7 @@ internal sealed partial class CharacterServicesComposition
 {
     private async Task ShipsAndDogma()
     {
-        ships = new CharacterShips(source, dogma, characters, items, skills, modules, training);
+        ships = new CharacterShips(source, dogma, characters, items, skills, modules, training, expertSystems);
         // the simulation starts empty with this host: a ship that a host which stopped without closing its sessions left in space is put back where its character last was
         stranded = await ships.RecoverAllFromSpaceAsync(
             id => stations.Get(id) is { } station ? (station.SolarSystemId, station.ConstellationId, station.RegionId) : null,

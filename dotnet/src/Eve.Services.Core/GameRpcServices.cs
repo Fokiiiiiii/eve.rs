@@ -68,14 +68,6 @@ public sealed partial class RaffleProxyService
 }
 
 
-[Service("expertSystemMgr")]
-public sealed partial class ExpertSystemMgrService
-{
-    // shortcut: expert-system ownership is not persisted; read per-character records when that store exists.
-    [Method("GetMyExpertSystems")]
-    public PyValue GetMyExpertSystems(ServiceCall _) => new PyDict([]);
-}
-
 [Service("contractProxy")]
 public sealed partial class ContractProxyService
 {

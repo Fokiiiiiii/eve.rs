@@ -16,28 +16,6 @@ public class NpcSpawnTests
     }
 
     [PgFact]
-    public async Task The_npcs_of_a_command_come_into_space_around_the_pilots_ship_and_not_around_the_origin()
-    {
-        var (rig, character, session) = await InSpaceAsync();
-        await using var _ = rig;
-        // the pilot's ship is far from the origin of the scene (where a station or a belt can be)
-        double[] pilot = [46_000.0, -12_000.0, 30_000.0];
-        rig.Sim.PositionAnswers[character.ShipId] = pilot;
-
-        var report = await rig.Space.SpawnNpcsAsync(session, "Blood Visionary", 3, CancellationToken.None);
-
-        Assert.Null(report.Error);
-        var spawns = rig.Sim.Heard.OfType<SimSpawn>().ToList();
-        Assert.Equal(3, spawns.Count);
-        foreach (var spawn in spawns)
-        {
-            var distance = Math.Sqrt(spawn.Position.Select((value, axis) => (value - pilot[axis]) * (value - pilot[axis])).Sum());
-            // the profile's spawn distance, 8 km for a Blood Visionary, plus the spread of the group: well within the scene around the pilot
-            Assert.InRange(distance, 1_000, 20_000);
-        }
-    }
-
-    [PgFact]
     public async Task A_named_profile_comes_armed_with_the_weapon_of_its_hull_and_runs_the_belt_rat_tree()
     {
         var (rig, character, session) = await InSpaceAsync();

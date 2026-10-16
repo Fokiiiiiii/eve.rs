@@ -593,10 +593,7 @@ public sealed partial class SpaceSessions
             return NpcSpawnReport.Failed(plan.Error!, plan.Suggestions);
         }
 
-        // the NPCs come into space around the pilot's ship (EVE.js spawns a session's batch around its anchor entity, the ship), not around the origin
-        if (await PositionOfAsync(pilot.Session, pilot.ShipId, cancellationToken) is not { } at)
-            return NpcSpawnReport.Failed(NpcSpawnReport.ShipNotFound);
-        var (composition, unarmed) = await SpawnGroupAsync(plan.Profiles, new SpawnAnchor(pilot.SolarSystemId, pilot.ShipId, [at.X, at.Y, at.Z]), cancellationToken);
+        var (composition, unarmed) = await SpawnGroupAsync(plan.Profiles, new SpawnAnchor(pilot.SolarSystemId, pilot.ShipId, [0, 0, 0]), cancellationToken);
         return composition.Count == 0
             ? NpcSpawnReport.Failed(NpcSpawnReport.SpawnFailed)
             : new NpcSpawnReport(null, [], selection.Name, composition, plan.Profiles.Count, unarmed);

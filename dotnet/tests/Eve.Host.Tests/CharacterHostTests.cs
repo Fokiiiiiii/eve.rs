@@ -191,6 +191,22 @@ public sealed class CharacterHostTests
         return Assert.IsType<PyStr>(args.Entries.Single(entry => ((PyStr)entry.Key).Value == "info").Value).Value;
     }
 
+    [PgFact]
+    public async Task Skill_check_notifications_answers_an_empty_list_and_sends_nothing_as_the_reference_does()
+    {
+        await using var rig = await CharacterHostRig.CreateAsync();
+        var character = await rig.CreateCharacterAsync();
+        var sink = new RecordingPacketSink();
+        var session = new ClientSession { CharacterId = character, UserId = 1, Sink = sink };
+        var skills = Assert.IsAssignableFrom<IService>(rig.Registry.Lookup("skillHandler"));
+        Assert.True(skills.HasMethod("CheckAndSendNotifications"));
+
+        var answer = Assert.IsType<PyList>(await CallAsync(skills, "CheckAndSendNotifications", session));
+
+        Assert.Empty(answer.Items);
+        Assert.Empty(Notifications(sink));
+    }
+
     private static async Task<PyValue> CallAsync(IService service, string method, ClientSession session, params PyValue[] args) =>
         await service.CallAsync(new ServiceCall { Method = method, Args = args, Session = session });
 

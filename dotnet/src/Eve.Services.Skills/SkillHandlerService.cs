@@ -387,6 +387,13 @@ public static SkillAugmentationReader CreateAugmentationReader(
     private async ValueTask<IReadOnlyList<long>> AccountCharacters(ServiceCall call) =>
         call.Session.UserId is { } account ? [.. (await characters.ForAccountAsync((int)account, call.Cancellation)).Select(c => c.Id)] : [];
 
+    /// <summary>
+    /// <c>CheckAndSendNotifications()</c>: the reference answers an empty list and sends nothing (EveJS <c>skillMgrService.js</c> 594).
+    /// The client calls it only from a development provider (eve-logic <c>skillHistoryProvider.py</c>).
+    /// </summary>
+    [Method("CheckAndSendNotifications")]
+    public PyValue CheckAndSendNotifications(ServiceCall _) => new PyList([]);
+
     [Method("GetSkills")]
     public async ValueTask<PyValue> GetSkills(ServiceCall call) =>
         await ViewOf(call) is { } view ? SkillWire.EntryDictionary(CharacterOf(call)!.Value, catalog, view.Skills, view.InTraining) : None;

@@ -7,7 +7,8 @@ Order: CH-12, CH-1, CH-3, CH-6, CH-10, CH-15. Worktree /home/user/wt-ch-s1, bran
 - CH-12 (jump-clone store, clone state reads, rename, destroy, reset, bind): done, pushed (c31b0fa2). Tests run: dotnet Eve.Characters.Tests JumpCloneStoreTests 5 passed; Eve.Host.Tests JumpCloneHostTests 1 passed; live `test_jump_clone_live.py` 1 passed on eve_p2 port 26101 (EVE_SDE_DIR from main checkout .cache/sde).
 - CH-1 (deletion): done, pushed (4cf8c4b3). Asset move/destroy, graveyard corporation, skills and saved fittings purge added (CH-1 gap work). Still not purged: mail, notifications, notes, LP wallets, bookmarks, calendar, skill plans, expert systems, missions, research, probes, portraits. NPC destroy path untested. Tests: CharacterDeletionStoreTests 2 passed; CharacterHostTests 2 passed; live test_character_delete.py 1 passed (plus CH-12 live 1 passed). Gaps: asset transfer/destruction and private-state purge not implemented (EveJS deleteCharacter); the successful delete is not exercised live (no test clock). Wiki pages for character deletion returned 404; delay from EveJS default 600 min.
 - CH-10 (votes, reports, playtime): done. GATE-C applied (votes and reports answer true). Tests: UserSvc RedeemUserSvcCompatibilityTests 5 passed; live test_user_votes_live.py 1 passed. Playtime stays 0 (EveJS constant; no V24.01 caller, no stored source). Recorded in DEVIATIONS.
-- CH-3, CH-6, CH-15: not started. Next: CH-3 (skill notifications, bundle info), then CH-6 (multi-character training), then CH-15 (install, needs CH-12, done).
+- CH-3 (partial): CheckAndSendNotifications done (empty list, as EveJS). GetSkillBundleInfo blocked on bundle name/icon data (no SDE or static record; EveJS lacks it). Tests: CharacterHostTests 3 passed.
+- CH-6, CH-15: not started. Next: CH-3 (skill notifications, bundle info), then CH-6 (multi-character training), then CH-15 (install, needs CH-12, done).
 
 ## Decisions
 

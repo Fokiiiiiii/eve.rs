@@ -11,9 +11,14 @@ Worktree /home/user/wt-ch-s8, branch ch-s8. Push: git fetch origin main && git m
 | A3 restart, implants and expert systems | DONE | CharacterHostTests An_implant_and_an_expert_system passes |
 | A4 fitting with expert grants | DONE | Eve.Ships.Tests ExpertGrantFitTests passes |
 | A5 normal boosters end on a jump | DONE | CharacterHostTests A_clone_jump_ends_the_normal_boosters passes; live CH-16 passes |
-| CH-20 gateway | NOT STARTED | see Plan |
-| CH-21 skill plans | NOT STARTED | |
+| CH-20 gateway | DONE (Requests/Send, Ping, Events/Publish; TLS and Notices open) | PublicGatewayTests 2 passed (eve_p3); live gateway via test_skill_plan_live.py |
+| CH-21 skill plans | DONE (prerequisite canonicalization open) | test_skill_plan_live.py passed (eve_p3, exit 0) |
 | CH-22 titles | NOT STARTED | |
+
+## Live run notes
+
+- Gateway port per run: EVE_PUBLIC_GATEWAY=127.0.0.1:26125 style, a new port each run (TIME_WAIT blocks a re-bind).
+- An orphaned host from a run can hold the port: check with ps before a run.
 
 ## Open failures (not fixed)
 

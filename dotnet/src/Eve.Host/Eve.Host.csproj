@@ -10,6 +10,9 @@
     <TieredPGO>true</TieredPGO>
   </PropertyGroup>
   <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+  <ItemGroup>
     <EmbeddedResource Include="Migrations/*.sql" />
   </ItemGroup>
   <ItemGroup>

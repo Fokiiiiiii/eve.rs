@@ -58,6 +58,7 @@ internal static class HostComposition
         var online = new OnlineCharacters();
         var connected = new ConnectedSessions();
         CharacterSessions? characterSessions = null;
+        IReadOnlyDictionary<string, PublicGateway.GatewayHandler> publicGateway = new Dictionary<string, PublicGateway.GatewayHandler>();
         if (Env("EVE_PG_URL", "") is { Length: > 0 } pgUrl)
         {
             var schema = Env("EVE_IDENTITY_SCHEMA", PgAccountDirectory.DefaultSchema);
@@ -73,6 +74,8 @@ internal static class HostComposition
             foundations = await Foundations.CreateAsync(source, clock, Env, message => Console.Error.WriteLine($"eve-host: {message}"));
             legacy = await LegacyGameStoreComposition.OpenAsync(source);
             (characterServices, space, simulation, crimewatch, calendarStore, calendarAudience, gameRpcCallbacks, keeperRpcCallbacks, characterSessions) = await CharacterServicesComposition.CharacterServicesAsync(source, directory, online, clock, foundations, legacy.Store, legacy.Owner, legacy.Cache, options.NewCharacterExperienceMode, new AccountOmegaStore(directory), connected);
+            // the public gateway's skill plans: the tables are the skills module's (migration 0009, applied with its store)
+            publicGateway = PublicGateway.SkillPlanGateway.Handlers(new Eve.Skills.PgSkillPlanStore(source, Env("EVE_SKILLS_SCHEMA", Eve.Skills.PgSkillStore.DefaultSchema)));
             // every feature has registered its job handlers by now: the scheduler may start running jobs
             await foundations.StartAsync();
         }
@@ -174,6 +177,6 @@ internal static class HostComposition
             accounts,
             () => MarshalCodec.Encode(config.Current()));
 
-        return new HostRuntime(server, registry, legacy, foundations, space, crimewatch, simulation, characterSessions);
+        return new HostRuntime(server, registry, legacy, foundations, space, crimewatch, simulation, characterSessions, publicGateway);
     }
 }

@@ -105,6 +105,15 @@ public sealed class PgDeployedStore
         return await command.ExecuteNonQueryAsync(cancellationToken) > 0;
     }
 
+    /// <summary>The deployed records of one kind, by id.</summary>
+    public async Task<IReadOnlyList<DeployedRecord>> ByKindAsync(string kind, CancellationToken cancellationToken = default)
+    {
+        await using var connection = await _source.OpenConnectionAsync(cancellationToken);
+        await using var command = new NpgsqlCommand($"SELECT {Columns} FROM {_schema}.deployed WHERE kind = $1 ORDER BY deployable_id", connection);
+        command.Parameters.Add(new NpgsqlParameter { Value = kind });
+        return await ReadAllAsync(command, cancellationToken);
+    }
+
     /// <summary>What lies in a solar system, oldest first.</summary>
     public async Task<IReadOnlyList<DeployedRecord>> InSystemAsync(int solarSystemId, CancellationToken cancellationToken = default)
     {

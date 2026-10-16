@@ -355,15 +355,25 @@ public sealed partial class SpaceContainers
     /// <summary>Whether <paramref name="position"/> lies inside a deadspace pocket of the system (within <see cref="DeadspaceSiteRadiusMeters"/> of an anchor).</summary>
     private async Task<bool> InDeadspaceAsync(int system, double[] position, CancellationToken cancellationToken)
     {
-        if (ReadDeadspaceAnchors is not { } read)
+        if (ReadDeadspaceAnchors is { } read)
         {
-            return false;
-        }
-        foreach (var anchor in await read(system, cancellationToken))
-        {
-            if (MetersBetween(anchor, position) <= DeadspaceSiteRadiusMeters)
+            foreach (var anchor in await read(system, cancellationToken))
             {
-                return true;
+                if (MetersBetween(anchor, position) <= DeadspaceSiteRadiusMeters)
+                {
+                    return true;
+                }
+            }
+        }
+        // a dungeon's pocket is its record (ST-23): the body in the scene at the origin, with the pocket's radius
+        if (_deployed is not null)
+        {
+            foreach (var record in await _deployed.InSystemAsync(system, cancellationToken))
+            {
+                if (record.Kind == DeadspacePocketKind && MetersBetween(record.Position, position) <= record.Radius)
+                {
+                    return true;
+                }
             }
         }
         return false;

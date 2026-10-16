@@ -66,6 +66,9 @@ pub enum Role {
     /// A player control tower the host keeps a record of (protocol 73): a ball in space, anchored (`active`) when its anchoring time is over. It has no warp or cyno
     /// effect: the fuel and the modules are not modelled yet.
     ControlTower { active: bool },
+    /// A deadspace pocket of a dungeon the host keeps a record of (protocol 74): a region of the scene around its origin, in no client ball. It has no effect in the
+    /// simulation yet: the warp and the observatory checks read the host's record of it (DEVIATIONS, ST-23).
+    DeadspacePocket,
     /// A jump bridge a ship opened (command 28, protocol 54): it lives until its time is up, is put in no client ball, and lets the fleet ships in 2 500 metres of
     /// the ship pass through it to the field (command 31). The field is the one the bridge targets; the destination is that field's system.
     JumpBridge { field_id: i64, destination_system: i32, range_meters: f64 },
@@ -151,7 +154,8 @@ fn release_actions(stamp: u32, deployable: &Deployable) -> Result<Vec<Value>, ev
         Role::CynoInhibitor { .. }
         | Role::CynoBeacon { .. }
         | Role::MobileObservatory { .. }
-        | Role::ControlTower { .. } => (Kind::Other, LegacyMode::Stop),
+        | Role::ControlTower { .. }
+        | Role::DeadspacePocket => (Kind::Other, LegacyMode::Stop),
         Role::JumpBridge { .. } => (Kind::Other, LegacyMode::Stop),
         Role::AnalysisBeacon { .. } => (Kind::Container, LegacyMode::Stop),
     };
@@ -630,6 +634,41 @@ impl Scene {
         self.insert_deployable(deployable, now)
     }
 
+    /// A deadspace pocket the host keeps a record of is put in the scene at its origin with its radius (protocol 74). No client ball is made for it (the pocket's
+    /// rooms are the client's own), and no pilot is told of it. Given once; its end is the host's.
+    pub(crate) fn place_deadspace_pocket(
+        &mut self,
+        placement: crate::link::DisruptorPlacement,
+        _now: i64,
+    ) -> Vec<Out> {
+        if self.deployables.contains_key(&placement.deployable_id) {
+            return Vec::new();
+        }
+        let [x, y, z] = placement.position;
+        let pocket = Deployable {
+            id: placement.deployable_id,
+            spec: Spec {
+                charge_type_id: placement.type_id,
+                group_id: placement.group_id,
+                name: placement.name,
+                radius: placement.radius,
+            },
+            role: Role::DeadspacePocket,
+            position: Vec3::new(x, y, z),
+            ends_at: i64::MAX,
+            launcher: 0,
+            ship_id: 0,
+            owner_id: 0,
+            corporation_id: 0,
+            alliance_id: 0,
+            module_id: 0,
+            module_type: 0,
+            watchers: BTreeSet::new(),
+        };
+        self.deployables.insert(pocket.id, pocket);
+        Vec::new()
+    }
+
     /// A Mobile Cynosural Inhibitor the host keeps a record of is put in space where it lies, anchored or not (protocol 50). Given once; its end is the host's.
     pub(crate) fn place_inhibitor(
         &mut self,
@@ -1106,6 +1145,7 @@ impl Scene {
                 | Role::CynoInhibitor { .. }
                 | Role::MobileObservatory { .. }
                 | Role::ControlTower { .. }
+                | Role::DeadspacePocket
                 | Role::AnalysisBeacon { .. } => false,
             })
     }

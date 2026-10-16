@@ -39,7 +39,7 @@ use crate::weapons::{Aoe, Arc, Charge, Spool, Turret};
 use crate::world::StructureStatus;
 use crate::wreck::WreckKind;
 
-pub const PROTOCOL_VERSION: u16 = 73;
+pub const PROTOCOL_VERSION: u16 = 74;
 
 /// Maximum candidate or allowed target IDs in a structure-damage authorization step.
 pub const MAX_STRUCTURE_DAMAGE_CANDIDATES: usize = 4096;
@@ -714,6 +714,8 @@ pub enum Message {
     PlaceObservatory(Box<DisruptorPlacement>),
     /// The host puts a player control tower in space where its pilot launched it (protocol 73); the range is 0.
     PlaceControlTower(Box<DisruptorPlacement>),
+    /// The host puts a deadspace pocket in space at its dungeon's origin (protocol 74); the range is 0 and the pocket is in no client ball.
+    PlaceDeadspacePocket(Box<DisruptorPlacement>),
     /// A Mobile Observatory's decloaking ping in its system (protocol 72): each cloaked ship whose cloak is stabilized is not reached, the others are
     /// decloaked with a chance of 40% (EVE.js `processRemoteDecloakPing`, the wiki's Mobile Observatory).
     RemoteDecloakPing {
@@ -1031,6 +1033,7 @@ impl Message {
             Self::PlaceCynoBeacon(_) => kind::PLACE_CYNO_BEACON,
             Self::PlaceObservatory(_) => kind::PLACE_OBSERVATORY,
             Self::PlaceControlTower(_) => kind::PLACE_CONTROL_TOWER,
+            Self::PlaceDeadspacePocket(_) => kind::PLACE_DEADSPACE_POCKET,
             Self::RemoteDecloakPing { .. } => kind::REMOTE_DECLOAK_PING,
             Self::SetDisruptorActive { .. } => kind::SET_DISRUPTOR_ACTIVE,
             Self::TetherPolicy { .. } => kind::TETHER_POLICY,

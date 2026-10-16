@@ -115,6 +115,9 @@ pub const PLACE_OBSERVATORY: u8 = 90;
 pub const REMOTE_DECLOAK_PING: u8 = 91;
 /// The host puts a player control tower in space where its pilot launched it, anchored or not (protocol 73): a disruptor's placement, with range 0.
 pub const PLACE_CONTROL_TOWER: u8 = 92;
+/// The host puts a deadspace pocket of a dungeon (a mission pocket or an incursion site) in space at its origin, with its radius (protocol 74): a disruptor's
+/// placement with type, group and range 0 and no owner. It is in no client ball.
+pub const PLACE_DEADSPACE_POCKET: u8 = 93;
 
 /// The host puts a wormhole end in space (protocol 63).
 pub const PLACE_WORMHOLE: u8 = 82;

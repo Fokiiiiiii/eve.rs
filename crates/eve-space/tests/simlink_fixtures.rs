@@ -1215,6 +1215,23 @@ fn message_of(case: &Value) -> Message {
             alliance_id: number("allianceId") as i32,
             ship_id: wide(case, "shipId"),
         })),
+        "PlaceDeadspacePocket" => {
+            Message::PlaceDeadspacePocket(Box::new(eve_space::link::DisruptorPlacement {
+                deployable_id: wide(case, "deployableId"),
+                solar_system_id: number("solarSystemId") as i32,
+                name: text(case, "typeName"),
+                type_id: number("typeId") as i32,
+                group_id: number("groupId") as i32,
+                position: vector_of(case, "position"),
+                radius: case["radius"].as_f64().unwrap(),
+                range: case["range"].as_f64().unwrap(),
+                active: case["active"].as_bool().unwrap(),
+                owner_id: wide(case, "ownerId"),
+                corporation_id: number("corporationId") as i32,
+                alliance_id: number("allianceId") as i32,
+                ship_id: wide(case, "shipId"),
+            }))
+        }
         "PlaceControlTower" => Message::PlaceControlTower(Box::new(eve_space::link::DisruptorPlacement {
             deployable_id: wide(case, "deployableId"),
             solar_system_id: number("solarSystemId") as i32,

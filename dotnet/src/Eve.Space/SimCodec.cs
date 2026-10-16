@@ -27,7 +27,7 @@ public sealed class SimLinkException(SimLinkError error, string message) : Excep
 /// </summary>
 public static partial class SimCodec
 {
-    public const ushort ProtocolVersion = 73;
+    public const ushort ProtocolVersion = 74;
     /// <summary>The largest frame either side accepts (1 MiB).</summary>
     public const int MaxFrame = 1 << 20;
 
@@ -911,6 +911,7 @@ public static partial class SimCodec
             case Kind.PlaceCynoBeacon:
             case Kind.PlaceObservatory:
             case Kind.PlaceControlTower:
+            case Kind.PlaceDeadspacePocket:
                 {
                     var deployable = r.I64();
                     var system = r.I32();
@@ -935,6 +936,7 @@ public static partial class SimCodec
                         Kind.PlaceCynoBeacon => new SimPlaceCynoBeacon(deployable, system, name, type, group, position, radius, active, owner, corporation, alliance, ship),
                         Kind.PlaceObservatory => new SimPlaceObservatory(deployable, system, name, type, group, position, radius, active, owner, corporation, alliance, ship),
                         Kind.PlaceControlTower => new SimPlaceControlTower(deployable, system, name, type, group, position, radius, active, owner, corporation, alliance, ship),
+                        Kind.PlaceDeadspacePocket => new SimPlaceDeadspacePocket(deployable, system, name, position, radius),
                         _ => new SimPlaceDisruptor(deployable, system, name, type, group, position, radius, range, active, owner, corporation, alliance, ship),
                     };
                     break;

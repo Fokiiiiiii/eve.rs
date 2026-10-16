@@ -15,14 +15,14 @@ namespace Eve.Host.Tests;
 /// calls, the cache notifications, and the rows surviving a Host restart.
 /// </summary>
 [Collection("host-composition")]
-public sealed class JumpCloneHostTests
+public sealed class CharacterHostTests
 {
     private const long ProxyNode = MachoMessage.ProxyNodeId;
 
     [PgFact]
     public async Task Jump_clones_are_read_changed_and_kept_through_the_host_registry_and_a_restart()
     {
-        await using var rig = await JumpCloneRig.CreateAsync();
+        await using var rig = await CharacterHostRig.CreateAsync();
         var character = await rig.CreateCharacterAsync();
         var sink = new RecordingPacketSink();
         var session = new ClientSession { CharacterId = character, Sink = sink };
@@ -92,6 +92,73 @@ public sealed class JumpCloneHostTests
         Assert.Equal(new PyLong(0), Field(await BoundAsync(restarted, session, "GetCloneState"), "timeLastJump"));
     }
 
+    [PgFact]
+    public async Task Character_deletion_queues_waits_cancels_and_deletes_and_the_deleted_character_is_refused()
+    {
+        await using var rig = await CharacterHostRig.CreateAsync();
+        var character = await rig.CreateCharacterAsync();
+        var sink = new RecordingPacketSink();
+        var session = new ClientSession { CharacterId = character, UserId = 1, Sink = sink };
+        var service = Assert.IsAssignableFrom<IService>(rig.Registry.Lookup("charUnboundMgr"));
+        foreach (var method in new[] { "PrepareCharacterForDelete", "DeleteCharacter", "CancelCharacterDeletePrepare" })
+        {
+            Assert.True(service.HasMethod(method), method);
+        }
+
+        // delete before the queue: refused with the reference's text
+        var notQueued = await Assert.ThrowsAsync<MachoWrappedException>(() => CallAsync(service, "DeleteCharacter", session, new PyLong(character)));
+        Assert.Equal("That character is not in the biomass queue.", InfoText(notQueued));
+
+        // prepare: the answer is the FILETIME the deletion becomes possible, in the future; a second prepare returns the same time
+        var readyAt = Assert.IsType<PyLong>(await CallAsync(service, "PrepareCharacterForDelete", session, new PyLong(character))).Value;
+        Assert.True(readyAt > DateTime.UtcNow.ToFileTimeUtc());
+        Assert.Equal(new PyLong(readyAt), await CallAsync(service, "PrepareCharacterForDelete", session, new PyLong(character)));
+        var queued = Assert.IsType<Character>(await rig.Characters.GetAsync(character));
+        Assert.True(queued.IsQueuedForDeletion);
+
+        // a delete before the waiting time is refused
+        var early = await Assert.ThrowsAsync<MachoWrappedException>(() => CallAsync(service, "DeleteCharacter", session, new PyLong(character)));
+        Assert.Equal("That character is still waiting for the biomass timer to expire.", InfoText(early));
+
+        // a restart keeps the queue
+        await rig.RestartAsync();
+        var restarted = Assert.IsAssignableFrom<IService>(rig.Registry.Lookup("charUnboundMgr"));
+        Assert.True((await rig.Characters.GetAsync(character))!.IsQueuedForDeletion);
+
+        // cancel clears the queue; a delete after that is again refused as not queued
+        Assert.IsType<PyNone>(await CallAsync(restarted, "CancelCharacterDeletePrepare", session, new PyLong(character)));
+        Assert.False((await rig.Characters.GetAsync(character))!.IsQueuedForDeletion);
+        await Assert.ThrowsAsync<MachoWrappedException>(() => CallAsync(restarted, "DeleteCharacter", session, new PyLong(character)));
+
+        // prepare again, move the waiting time into the past (the test's clock), then delete
+        await CallAsync(restarted, "PrepareCharacterForDelete", session, new PyLong(character));
+        await using (var connection = await rig.Source.OpenConnectionAsync())
+        await using (var command = new NpgsqlCommand(
+            $"UPDATE {rig.CharactersSchema}.characters SET delete_prepare_at = now() - interval '1 minute' WHERE id = $1", connection))
+        {
+            command.Parameters.Add(new NpgsqlParameter { Value = character });
+            await command.ExecuteNonQueryAsync();
+        }
+        Assert.IsType<PyNone>(await CallAsync(restarted, "DeleteCharacter", session, new PyLong(character)));
+
+        // the deleted character is hidden from its account and refused at selection
+        var deleted = Assert.IsType<Character>(await rig.Characters.GetAsync(character));
+        Assert.True(deleted.IsDeleted);
+        Assert.DoesNotContain(await rig.Characters.ForAccountAsync(1), c => c.Id == character);
+        var refused = await Assert.ThrowsAsync<MachoWrappedException>(() =>
+            CallAsync(restarted, "SelectCharacterID", session, new PyLong(character), PyNone.Instance, PyBool.False));
+        Assert.Equal("That character is not available on this account.", InfoText(refused));
+    }
+
+    /// <summary>The <c>info</c> text of a CustomInfo refusal, as the client's UserError reads it.</summary>
+    private static string InfoText(MachoWrappedException error)
+    {
+        Assert.Equal("CustomInfo", error.Error.UserErrorMessage);
+        var header = Assert.IsType<PyTuple>(Assert.IsType<PyObjectEx>(error.Error.Payload).Header);
+        var args = Assert.IsType<PyDict>(Assert.IsType<PyTuple>(header.Items[1]).Items[1]);
+        return Assert.IsType<PyStr>(args.Entries.Single(entry => ((PyStr)entry.Key).Value == "info").Value).Value;
+    }
+
     private static async Task<PyValue> CallAsync(IService service, string method, ClientSession session, params PyValue[] args) =>
         await service.CallAsync(new ServiceCall { Method = method, Args = args, Session = session });
 
@@ -137,7 +204,7 @@ public sealed class JumpCloneHostTests
         public void Send(PyValue packet) => Sent.Add(packet);
     }
 
-    private sealed class JumpCloneRig : IAsyncDisposable
+    internal sealed class CharacterHostRig : IAsyncDisposable
     {
         private static readonly string[] SchemaVariables =
         [
@@ -153,7 +220,7 @@ public sealed class JumpCloneHostTests
         private HostRuntime _runtime;
         private Func<Task> _shutdown;
 
-        private JumpCloneRig(NpgsqlDataSource source, IReadOnlyDictionary<string, string> schemas, HostRuntime runtime, Func<Task> shutdown, long station)
+        private CharacterHostRig(NpgsqlDataSource source, IReadOnlyDictionary<string, string> schemas, HostRuntime runtime, Func<Task> shutdown, long station)
         {
             Source = source;
             _schemas = schemas;
@@ -164,11 +231,12 @@ public sealed class JumpCloneHostTests
 
         public NpgsqlDataSource Source { get; }
         public ServiceRegistry Registry => _runtime.Registry;
+        public PgCharacterStore Characters => new(Source, CharactersSchema);
         public long Station { get; }
         public string CharactersSchema => _schemas["EVE_CHARACTERS_SCHEMA"];
         public string SkillsSchema => _schemas["EVE_SKILLS_SCHEMA"];
 
-        public static async Task<JumpCloneRig> CreateAsync()
+        public static async Task<CharacterHostRig> CreateAsync()
         {
             var pgUrl = Environment.GetEnvironmentVariable("EVE_PG_URL")
                 ?? throw new InvalidOperationException("EVE_PG_URL is not set.");
@@ -182,7 +250,7 @@ public sealed class JumpCloneHostTests
                 var (runtime, shutdown) = await BuildHostAsync(schemas);
                 var stations = await StationCatalog.LoadAsync(new Eve.Sde.SdeReader(source));
                 var station = stations.All.OrderBy(s => s.Id).First().Id;
-                return new JumpCloneRig(source, schemas, runtime, shutdown, station);
+                return new CharacterHostRig(source, schemas, runtime, shutdown, station);
             }
             catch
             {

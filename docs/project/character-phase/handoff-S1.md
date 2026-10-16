@@ -5,7 +5,8 @@ Order: CH-12, CH-1, CH-3, CH-6, CH-10, CH-15. Worktree /home/user/wt-ch-s1, bran
 ## Status
 
 - CH-12 (jump-clone store, clone state reads, rename, destroy, reset, bind): done in code and tests. Pushed when green. Tests run: dotnet Eve.Characters.Tests JumpCloneStoreTests 5 passed; Eve.Host.Tests JumpCloneHostTests 1 passed; live `test_jump_clone_live.py` 1 passed on eve_p2 port 26101 (EVE_SDE_DIR from main checkout .cache/sde).
-- CH-1, CH-3, CH-6, CH-10, CH-15: not started.
+- CH-1 (deletion): code and tests done, not yet pushed at this line. Tests: CharacterDeletionStoreTests 2 passed; CharacterHostTests 2 passed; live test_character_delete.py 1 passed (plus CH-12 live 1 passed). Gaps: asset transfer/destruction and private-state purge not implemented (EveJS deleteCharacter); the successful delete is not exercised live (no test clock). Wiki pages for character deletion returned 404; delay from EveJS default 600 min.
+- CH-3, CH-6, CH-10, CH-15: not started.
 
 ## Decisions
 

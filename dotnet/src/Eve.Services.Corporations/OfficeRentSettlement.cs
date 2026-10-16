@@ -5,8 +5,8 @@ using Npgsql;
 namespace Eve.Services.Corporations;
 
 /// <summary>
-/// The wallet side of paying a corporation office's rent bill. The payer is debited; a bill that names its owner (a structure's) credits the owner, as EVE.js
-/// creditRentalOwner does. A station's bill keeps the debit-only settlement it has always had.
+/// The wallet side of paying a corporation office's rent bill. The payer is debited and the creditor (the structure's or the station's owner corporation, resolved by
+/// the caller) is credited, as EVE.js creditRentalOwner does.
 /// </summary>
 public static class OfficeRentSettlement
 {
@@ -18,8 +18,8 @@ public static class OfficeRentSettlement
         if (bill.AmountIsk <= 0) return;
         await wallets.AdjustAsync(connection, transaction, payer, -bill.AmountIsk, creditorId, OfficeRentReferenceType,
             "Corporation office rental", paidAtMs, $"office-rent-bill:{bill.BillId}:payment", "office_rental_fee", cancellationToken);
-        if (bill.CreditorId is { } owner)
-            await wallets.AdjustAsync(connection, transaction, new WalletAccount(owner), bill.AmountIsk, payer.OwnerId, OfficeRentReferenceType,
-                "Corporation office rental", paidAtMs, $"office-rent-bill:{bill.BillId}:credit", "office_rental_fee", cancellationToken);
+        await wallets.EnsureAsync(connection, transaction, creditorId, cancellationToken);
+        await wallets.AdjustAsync(connection, transaction, new WalletAccount(creditorId), bill.AmountIsk, payer.OwnerId, OfficeRentReferenceType,
+            "Corporation office rental", paidAtMs, $"office-rent-bill:{bill.BillId}:credit", "office_rental_fee", cancellationToken);
     }
 }

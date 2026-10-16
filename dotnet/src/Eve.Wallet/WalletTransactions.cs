@@ -96,6 +96,14 @@ public sealed partial class WalletTransactions
         return settlement;
     }
 
+    /// <summary>Opens the zero balances (the default account and the four divisions) of an owner that has none yet, as a station owner's first credit needs; a no-op for the existing ones.</summary>
+    public async Task EnsureAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long owner, CancellationToken cancellationToken = default)
+    {
+        await using var command = new NpgsqlCommand($"INSERT INTO {_schema}.balances(owner_id,account_key,isk,plex) SELECT $1,key,0,0 FROM generate_series(1000,1006) key ON CONFLICT DO NOTHING", connection, transaction);
+        command.Parameters.Add(new NpgsqlParameter { Value = owner });
+        await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
     /// <summary>Journal a mint, burn, escrow reservation or refund in the same transaction as its owning operation.</summary>
     public async Task<decimal> AdjustAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long owner,
         decimal delta, long counterparty, int refTypeId, string reason, long timeMs, string operationKey, CancellationToken cancellationToken = default,

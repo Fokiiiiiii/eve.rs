@@ -1,5 +1,8 @@
+using System.Text.Json.Nodes;
+using Eve.Characters;
 using Eve.Corporations;
 using Eve.Events;
+using Eve.Host.Persistence.Mail;
 using Eve.Scheduler;
 using Eve.Structures;
 using Eve.Services.Corporations;
@@ -11,17 +14,24 @@ namespace Eve.Host;
 /// <summary>
 /// The rent of a corporation office at a structure falls due (ST-12). The job is kept per office and runs at the open bill's due time. A bill that is paid by auto-pay
 /// renews the office; an unpaid one (auto-pay off, or short of funds) gives the office up: the corporation's items at the structure go to asset safety and the office
-/// ends, as EVE.js processUnpaidOfficeRentalBill does for a structure. A station office has no creditor named by its bill and is not handled here.
+/// ends, as EVE.js processUnpaidOfficeRentalBill does for a structure. A station office (ST-16) is impounded when unpaid, as EVE.js impoundStationOfficeForUnpaidBill
+/// does: its items go to the Impounded location and the office ends. The corporation hears of the due rent and of the eviction by a notification (type 10, group
+/// Bills). A station bill with no creditor (a rent taken before ST-16) is not handled here.
 /// </summary>
 internal sealed class StructureOfficeRentDue(
     NpgsqlDataSource source,
     CorporationOfficeStore offices,
     WalletTransactions wallets,
     DurableScheduler scheduler,
-    IStructureOffices structures)
+    IStructureOffices structures,
+    Eve.Inventory.PgItemStore items,
+    PgCharacterStore characters,
+    PersistenceTransactionMailbox mailbox)
 {
     public const string JobKind = "office.rent_due";
     private const int RentalBillTypeId = 2;
+    private const int BillNotificationTypeId = 10;
+    private const int BillsNotificationGroupId = 2;
     private const long RetryMs = 60L * 60 * 1000;
 
     private sealed record Payload(long OfficeId);
@@ -78,13 +88,18 @@ internal sealed class StructureOfficeRentDue(
         await using var read = await source.OpenConnectionAsync(cancellationToken);
         if (await offices.OpenBillForOfficeAsync(read, null, officeId, forUpdate: false, cancellationToken) is not { } bill) return;
         var site = await structures.ReadAsync(bill.StationId, cancellationToken);
-        if (site is null) return;
+        if (site is null)
+        {
+            await ImpoundStationAsync(officeId, now, cancellationToken);
+            return;
+        }
 
         await using var connection = await source.OpenConnectionAsync(cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
         var open = await offices.OpenBillForOfficeAsync(connection, transaction, officeId, forUpdate: true, cancellationToken);
         var office = await offices.GetAsync(connection, transaction, bill.CorporationId, bill.StationId, forUpdate: true, cancellationToken);
         if (open is null || office is null || office.OfficeId != officeId) return;
+        var evicted = false;
         if (!site.Gone && open.DueAtMs > now)
         {
             await structures.ScheduleRentDueAsync(connection, transaction, officeId, open.DueAtMs, cancellationToken);
@@ -92,12 +107,68 @@ internal sealed class StructureOfficeRentDue(
         else if (await structures.MoveOfficeToSafetyAsync(connection, transaction, site, bill.CorporationId, cancellationToken))
         {
             await offices.UnrentAsync(connection, transaction, office, now, cancellationToken);
+            evicted = true;
         }
         else
         {
             await structures.ScheduleRentDueAsync(connection, transaction, officeId, now + RetryMs, cancellationToken);
         }
         await transaction.CommitAsync(cancellationToken);
+        if (evicted)
+            await NotifyAsync(open, cancellationToken);
+    }
+
+    /// <summary>
+    /// An unpaid station office is impounded at its due time (EVE.js impoundStationOfficeForUnpaidBill): the corporation's hangar items at the station go to the
+    /// Impounded location, the folder goes and the office ends with its bills. Released by the release fee (GetItemsFromImpound).
+    /// </summary>
+    private async Task ImpoundStationAsync(long officeId, long now, CancellationToken cancellationToken)
+    {
+        await using var read = await source.OpenConnectionAsync(cancellationToken);
+        if (await offices.OpenBillForOfficeAsync(read, null, officeId, forUpdate: false, cancellationToken) is not { } bill) return;
+
+        await using var connection = await source.OpenConnectionAsync(cancellationToken);
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        await offices.LockStationAsync(connection, transaction, bill.StationId, cancellationToken);
+        var open = await offices.OpenBillForOfficeAsync(connection, transaction, officeId, forUpdate: true, cancellationToken);
+        var office = await offices.GetAsync(connection, transaction, bill.CorporationId, bill.StationId, forUpdate: true, cancellationToken);
+        if (open is null || office is null || office.OfficeId != officeId) return;
+        if (open.DueAtMs > now)
+        {
+            await structures.ScheduleRentDueAsync(connection, transaction, officeId, open.DueAtMs, cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
+            return;
+        }
+        await StationOfficeImpound.ImpoundAsync(items, offices, connection, transaction, office, now, cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+        await NotifyAsync(open, cancellationToken);
+    }
+
+    /// <summary>
+    /// The corporation hears that its rent fell due unpaid and that the office was given up (or impounded). The notice goes to the members, sent by the creditor;
+    /// the key makes a repeat of the job a no-op. Written after the commit: a crash between the two loses the notice, not the eviction.
+    /// </summary>
+    private async Task NotifyAsync(CorporationOfficeRentBill bill, CancellationToken cancellationToken)
+    {
+        var recipients = (await characters.ForCorporationAsync(bill.CorporationId, cancellationToken))
+            .Select(character => character.Id)
+            .Distinct()
+            .ToArray();
+        if (recipients.Length == 0 || bill.CreditorId is not { } creditor) return;
+        foreach (var (outcome, text) in new[] { ("rent-due", "unpaid"), ("evicted", "evicted") })
+        {
+            var data = new JsonObject
+            {
+                ["officeID"] = bill.OfficeId,
+                ["stationID"] = bill.StationId,
+                ["billID"] = bill.BillId,
+                ["amount"] = (double)bill.AmountIsk,
+                ["dueAtMs"] = bill.DueAtMs,
+                ["outcome"] = text,
+            };
+            await mailbox.WriteNotificationsAsync(creditor, BillNotificationTypeId, BillsNotificationGroupId, recipients,
+                $"office-rent:{bill.OfficeId}:{outcome}:{bill.BillId}", data, cancellationToken);
+        }
     }
 
     /// <summary>

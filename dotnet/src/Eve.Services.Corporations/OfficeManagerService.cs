@@ -127,10 +127,17 @@ public sealed partial class OfficeManagerService(
                 new Eve.Inventory.NewItem(CorporationOfficeStore.OfficeFolderTypeId, corporationId, station.Id,
                     Eve.Inventory.ItemFlags.Hangar, Singleton: true), call.Cancellation);
             var office = await store.RentAsync(connection, transaction, corporationId, officeFolderId, station, price, atStation,
-                call.Cancellation);
+                call.Cancellation, creditorId: station.OwnerId);
             await wallets.AdjustAsync(connection, transaction, new Eve.Wallet.WalletAccount(corporationId), -price,
                 station.OwnerId, OfficeRentReferenceType, "Corporation office rental", atStation,
                 $"office-rent:{office.OfficeId}:charge", "office_rental_fee", call.Cancellation);
+            // the rent is the station owner's income (EVE.js creditRentalOwner); the due job runs at the end of the paid cycle
+            await wallets.EnsureAsync(connection, transaction, station.OwnerId, call.Cancellation);
+            await wallets.AdjustAsync(connection, transaction, new Eve.Wallet.WalletAccount(station.OwnerId), price,
+                corporationId, OfficeRentReferenceType, "Corporation office rental", atStation,
+                $"office-rent:{office.OfficeId}:credit", "office_rental_fee", call.Cancellation);
+            if (structures is not null)
+                await structures.ScheduleRentDueAsync(connection, transaction, office.OfficeId, office.ExpiresAtMs, call.Cancellation);
 
             foreach (var item in existingItems.Where(item => item.Flag == ImpoundedFlag))
                 await MoveIfCurrentAsync(connection, transaction, item, corporationId, station.Id,
@@ -151,7 +158,6 @@ public sealed partial class OfficeManagerService(
         if (!IsCeoOrDirector(actor, authority))
             throw new CorporationError("CORPORATION_ACCESS_DENIED");
 
-        var assets = await items.InLocationAsync(station.Id, corporationId, call.Cancellation);
         var atStation = now();
         await store.WriteAsync(async (connection, transaction) =>
         {
@@ -160,14 +166,7 @@ public sealed partial class OfficeManagerService(
                 forUpdate: true, cancellationToken: call.Cancellation);
             if (office is null) return 0;
 
-            foreach (var item in assets.Where(item => Eve.Inventory.ItemFlags.IsCorporationHangar(item.Flag)))
-                await MoveIfCurrentAsync(connection, transaction, item, corporationId, station.Id,
-                    item.Flag, ImpoundedFlag, call.Cancellation);
-            var folder = await items.LockAndGetAsync(connection, transaction, office.OfficeFolderId, call.Cancellation);
-            if (folder is { OwnerId: var folderOwner, LocationId: var folderLocation, TypeId: CorporationOfficeStore.OfficeFolderTypeId } &&
-                folderOwner == corporationId && folderLocation == station.Id)
-                await items.DeleteAsync(connection, transaction, folder.Id, call.Cancellation);
-            await store.UnrentAsync(connection, transaction, office, atStation, call.Cancellation);
+            await StationOfficeImpound.ImpoundAsync(items, store, connection, transaction, office, atStation, call.Cancellation);
             return 0;
         }, call.Cancellation);
         return PyNone.Instance;
@@ -199,6 +198,11 @@ public sealed partial class OfficeManagerService(
             await wallets.AdjustAsync(connection, transaction, new Eve.Wallet.WalletAccount(corporationId), -fee,
                 station.OwnerId, ImpoundReleaseReferenceType, "Corporation impound release", atStation,
                 $"office-impound-release:{corporationId}:{station.Id}:{atStation}",
+                "office_impound_release", call.Cancellation);
+            await wallets.EnsureAsync(connection, transaction, station.OwnerId, call.Cancellation);
+            await wallets.AdjustAsync(connection, transaction, new Eve.Wallet.WalletAccount(station.OwnerId), fee,
+                corporationId, ImpoundReleaseReferenceType, "Corporation impound release", atStation,
+                $"office-impound-release:{corporationId}:{station.Id}:{atStation}:credit",
                 "office_impound_release", call.Cancellation);
             foreach (var item in impounded)
                 await MoveIfCurrentAsync(connection, transaction, item, corporationId, station.Id,
@@ -334,10 +338,7 @@ public sealed partial class OfficeManagerService(
         Eve.Inventory.Item snapshot, long corporationId, long stationId, int expectedFlag, int destinationFlag,
         CancellationToken token)
     {
-        var current = await items.LockAndGetAsync(connection, transaction, snapshot.Id, token);
-        if (current is { OwnerId: var owner, LocationId: var location, Flag: var flag } &&
-            owner == corporationId && location == stationId && flag == expectedFlag)
-            await items.MoveAsync(connection, transaction, current.Id, stationId, destinationFlag, token);
+        await StationOfficeImpound.MoveIfCurrentAsync(items, connection, transaction, snapshot, corporationId, stationId, expectedFlag, destinationFlag, token);
     }
 
     private CorporationOfficeStation BoundStation(ServiceCall call)

@@ -294,9 +294,11 @@ public sealed partial class CharUnboundMgrService(
             throw Info("That character is not available on this account.");
         if (character.IsQueuedForDeletion)
             throw Info("That character is queued for deletion and cannot enter the game.");
-        // The population cap is checked here as well as on the selection screen, because the screen's answer can be stale by now.
-        if (population is not null && character.SolarSystemId > 0 && !population.HasRoom(character.SolarSystemId, character.Id))
-            throw Info("That solar system has no room for another pilot. Try again later.");
+        // The population cap is checked here as well as on the selection screen, because the screen's answer can be stale by now. The room is
+        // checked and a seat taken in one step; the seat is given back when this call ends (the session counts from then on).
+        using var seat = population is not null && character.SolarSystemId > 0
+            ? population.TryReserve(character.SolarSystemId, character.Id) ?? throw Info("That solar system has no room for another pilot. Try again later.")
+            : null;
 
         var previousCharacterId = call.Session.CharacterId;
         var previousAttributes = call.Session.SnapshotAttributes();

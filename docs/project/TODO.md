@@ -2554,4 +2554,5 @@ Open:
 - The client's fuel-bay access to a tower's container and the owner's fuel-bay notifications (no `OnItemChange` on a fuel change).
 - The scoop of an unanchored tower from space: built on the unanchor-drop marker, not verified on the graphical client or live.
 - The anchoring charter (SDE purpose 1) and the reinforcement fuel (purpose 4); the tower's modules.
-- Mission pockets as simulation bodies (section 62 in the handoff, not started: a new sim ball kind needs protocol 74 and a client check).
+- Mission pockets as simulation bodies: not started. The simulation has no deadspace pocket body; a new ball kind needs a protocol bump and a client check (`handoff-ST-23.md`).
+- Live flows not yet live: the own-ship eject (the pilot must be within 6 500 m surface distance of the structure), the moon fracture, the extraction completion and the mailbox row (`handoff-ST-23.md`).

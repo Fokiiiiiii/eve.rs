@@ -95,12 +95,18 @@ public sealed partial class RedeemService
     }
 
     /// <summary>
-    /// The re-sculpt token is not consumed and the recustomization state is not set: no token system and no paperdoll
-    /// state change exist yet (see DEVIATIONS, "Account and social requests"). The answer is False, not an accepted activation.
+    /// <c>ActivateCharacterReSculpt(itemID)</c>: a re-sculpt certificate of the account's characters is consumed and the character's recustomization
+    /// state is set (see <see cref="ActivateReSculpt"/>). Anything else (a missing or another item) answers False and changes nothing.
     /// </summary>
     [Method("ActivateCharacterReSculpt")]
-    public async ValueTask<PyValue> ActivateCharacterReSculpt(ServiceCall call) =>
-        await OverrideUserCallAsync(call, PyBool.False);
+    public async ValueTask<PyValue> ActivateCharacterReSculpt(ServiceCall call)
+    {
+        call.Cancellation.ThrowIfCancellationRequested();
+        var itemId = call.Arg(0) switch { PyInt i => i.Value, PyLong l => l.Value, _ => 0L };
+        var activated = ActivateReSculpt is not null && itemId > 0
+            && await ActivateReSculpt(AuthenticatedUserId(call), itemId, call.Cancellation);
+        return await OverrideUserCallAsync(call, activated ? PyBool.True : PyBool.False);
+    }
 
     /// <summary>GATE-C (owner decision): answers true and keeps nothing, as the reference does (EveJS <c>userService.js</c> 1104). The client does not read the answer.</summary>
     [Method("CastUpvote")]

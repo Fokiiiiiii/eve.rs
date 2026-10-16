@@ -1029,7 +1029,7 @@ Open after slice D:
 |---|---|---|
 | OPEN | Reports: `ingamereport.*` (eight methods) and `eveguard_report.heartbeat_*` are answered and not kept (the reference keeps them in memory, lost at restart) | a support / report store (later slice) |
 | OPEN | Votes and reports: `CastUpvote`, `CastDownvote`, `ReportBot`, `ReportISKSpammer` answer False; nothing is recorded | a feedback and report store (later slice) |
-| OPEN | Re-sculpt: `ActivateCharacterReSculpt` answers False; the re-sculpt token and the paperdoll states 1 (re-sculpting) and 3 (full recustomizing) are not built | the character and items slices |
+| DONE (CH-8) | Re-sculpt: `userSvc.ActivateCharacterReSculpt` consumes a re-sculpt certificate (SDE 34132 or 89956) of the account's character in the transaction that sets the recustomization state (3 for 34132, 1 for 89956; migration 0011 `characters.paperdoll_state`); a save ends the state; `charMgr.GetPaperdollState` answers it. Tests: `CharacterReSculptHostTests` (passed, eve_p4), `CharacterStore` state test in the Host test, live `tools/headless-client/tests/test_resculpt_live.py` (1 passed). Not checked: the client's own save call with a doll payload (the live test does not save). |
 | OPEN | Redeeming codes (`kiringMgr.ActivateRedeemingCode`) answer False: no code store | the store slice (S3) |
 | OPEN | EveGuard: `ShouldKickCheater` False, `GetEveGuardServerAddress` None; no EveGuard server | anti-cheat (later) |
 | OPEN | `bannedwords`: the reference's regular-expression list is empty here; no list source | owner decision |

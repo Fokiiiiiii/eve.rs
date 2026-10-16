@@ -491,13 +491,31 @@ public sealed partial class PgCharacterStore
         return result;
     }
 
+    /// <summary>The recustomization state of the character (1 or 3), or null when it has none.</summary>
+    public async Task<int?> PaperdollStateAsync(long id, CancellationToken cancellationToken = default)
+    {
+        await using var command = _source.CreateCommand($"SELECT paperdoll_state FROM {_schema}.characters WHERE id = $1");
+        command.Parameters.Add(new NpgsqlParameter { Value = id });
+        return await command.ExecuteScalarAsync(cancellationToken) is short state ? state : null;
+    }
+
+    /// <summary>Sets the recustomization state (1 or 3) in the caller's transaction.</summary>
+    public async Task SetPaperdollStateAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long id, short state, CancellationToken cancellationToken = default)
+    {
+        await using var command = new NpgsqlCommand($"UPDATE {_schema}.characters SET paperdoll_state = $2 WHERE id = $1", connection, transaction);
+        command.Parameters.Add(new NpgsqlParameter { Value = id });
+        command.Parameters.Add(new NpgsqlParameter { Value = state });
+        await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
     /// <summary>Updates only appearance fields the client supplied; a deleted doll clears both.</summary>
     public async Task<bool> SetAppearanceAsync(long id, byte[]? doll, bool updateDoll,
         byte[]? portrait, bool updatePortrait, CancellationToken cancellationToken = default)
     {
+        // a save ends the recustomization state (the reference clears it after UpdateExistingCharacterFull/Limited)
         await using var command = _source.CreateCommand(
             $"UPDATE {_schema}.characters SET doll_info = CASE WHEN $2 THEN $3 ELSE doll_info END, " +
-            "portrait_info = CASE WHEN $4 THEN $5 ELSE portrait_info END WHERE id = $1");
+            "portrait_info = CASE WHEN $4 THEN $5 ELSE portrait_info END, paperdoll_state = NULL WHERE id = $1");
         command.Parameters.Add(new NpgsqlParameter { Value = id });
         command.Parameters.Add(new NpgsqlParameter { Value = updateDoll });
         command.Parameters.Add(new NpgsqlParameter { Value = (object?)doll ?? DBNull.Value });

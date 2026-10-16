@@ -50,7 +50,8 @@ public sealed partial class CharMgrService(
     Func<long, long, string?, CancellationToken, ValueTask>? writeActivityStatus = null,
     Func<long, PyValue, CancellationToken, ValueTask>? writeLogSettings = null,
     Func<long, CancellationToken, ValueTask<long?>>? readCorporationMemberStartedMs = null,
-    Func<IReadOnlyList<Character>, CancellationToken, ValueTask<IReadOnlyDictionary<long, CharMgrOrganizationInfo>>>? readOrganizationInfo = null)
+    Func<IReadOnlyList<Character>, CancellationToken, ValueTask<IReadOnlyDictionary<long, CharMgrOrganizationInfo>>>? readOrganizationInfo = null,
+    Func<long, CancellationToken, ValueTask<int?>>? readRecustomizationState = null)
 {
 
     /// <summary>
@@ -239,10 +240,9 @@ public sealed partial class CharMgrService(
     }
 
     /// <summary>
-    /// The recustomization state (the reference's <c>Paperdoll.State</c>): 0 (no recustomization) once the character has a
-    /// stored doll or portrait, 2 (no existing customization) before that, as the reference answers
-    /// (<c>paperDollPayloads.js</c>, <c>resolvePaperDollState</c>). Re-sculpting (1) and full recustomizing (3) need the
-    /// re-sculpt token, which does not exist yet, so they are never reported.
+    /// The recustomization state (the reference's <c>Paperdoll.State</c>): the state a re-sculpt certificate set (1 resculpting, 3 full, ended by the
+    /// next save of the appearance); otherwise 0 (no recustomization) once the character has a stored doll or portrait, and 2 (no existing
+    /// customization) before that (<c>paperDollPayloads.js</c>, <c>resolvePaperDollState</c>).
     /// </summary>
     [Method("GetPaperdollState")]
     public async ValueTask<PyValue> GetPaperdollState(ServiceCall call)
@@ -250,6 +250,8 @@ public sealed partial class CharMgrService(
         var characterId = call.Arg(0) is PyInt { Value: > 0 } given ? given.Value : call.Session.CharacterId ?? 0;
         if (characterId <= 0)
             return new PyInt(NoExistingCustomization);
+        if (readRecustomizationState is not null && await readRecustomizationState(characterId, call.Cancellation) is { } recustomizing)
+            return new PyInt(recustomizing);
         var (doll, portrait) = await characters.AppearanceAsync(characterId, call.Cancellation);
         return new PyInt(doll is not null || portrait is not null ? NoRecustomization : NoExistingCustomization);
     }

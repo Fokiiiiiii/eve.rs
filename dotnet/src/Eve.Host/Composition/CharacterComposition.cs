@@ -219,7 +219,7 @@ internal sealed partial class CharacterServicesComposition
                         Cancellation = cancellationToken,
                     });
                 }),
-            JumpClones: new HostJumpCloneStore(new Eve.Characters.PgJumpCloneStore(source, characterSchema), source, skills),
+            JumpClones: new HostJumpCloneStore(new Eve.Characters.PgJumpCloneStore(source, characterSchema), source, skills, economyWallets, wallets),
             ReadProjectDiscoveryState: ReadProjectDiscoveryStateAsync);
 
         stationGuestLedger = new Eve.Services.Station.StationGuestLedger();

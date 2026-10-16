@@ -65,6 +65,17 @@ public sealed class PgJumpCloneStore
         return clone;
     }
 
+    /// <summary>Adds a clone at a location (inside the caller's transaction). Its implants are not copied yet (CH-15 gap).</summary>
+    public async Task<long> InsertAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long characterId, long locationId, string locationKind, CancellationToken cancellationToken = default)
+    {
+        await using var command = new NpgsqlCommand(
+            $"INSERT INTO {_schema}.character_jump_clones(character_id, location_id, location_kind) VALUES ($1, $2, $3) RETURNING jump_clone_id", connection, transaction)
+        {
+            Parameters = { new() { Value = characterId }, new() { Value = locationId }, new() { Value = locationKind } },
+        };
+        return (long)(await command.ExecuteScalarAsync(cancellationToken))!;
+    }
+
     /// <summary>Sets the last clone jump time back to zero, so the next jump has no cooldown.</summary>
     public async Task ResetLastJumpAsync(long characterId, CancellationToken cancellationToken = default)
     {

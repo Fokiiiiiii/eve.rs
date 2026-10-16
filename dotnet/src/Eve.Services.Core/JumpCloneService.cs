@@ -18,6 +18,15 @@ public interface IJumpCloneStore
     ValueTask<JumpCloneRecord?> DestroyAsync(long characterId, long jumpCloneId, CancellationToken cancellationToken);
     ValueTask ResetLastJumpAsync(long characterId, CancellationToken cancellationToken);
     ValueTask<int> SkillLevelAsync(long characterId, int typeId, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Installs a clone at the location and charges the fee in one transaction. Null when the character cannot pay (nothing is
+    /// installed then).
+    /// </summary>
+    ValueTask<JumpCloneRecord?> InstallAsync(long characterId, long locationId, string locationKind, decimal fee, CancellationToken cancellationToken);
+
+    /// <summary>The character's ISK balance (for the not-enough-money answer).</summary>
+    ValueTask<decimal> IskBalanceAsync(long characterId, CancellationToken cancellationToken);
 }
 
 /// <summary>
@@ -169,6 +178,52 @@ public sealed partial class JumpCloneService(IJumpCloneStore? store = null)
             return PyNone.Instance;
         await Store().ResetLastJumpAsync(characterId, call.Cancellation);
         Invalidate(call.Session, DockedLocation(call.Session), characterId);
+        return PyNone.Instance;
+    }
+
+    /// <summary>The install fee of a clone station (EveJS <c>JUMP_CLONE_INSTALL_COST</c>, the wiki's 900,000 ISK).</summary>
+    private const decimal JumpCloneInstallFee = 900000m;
+
+    /// <summary>
+    /// <c>InstallCloneInStation()</c>: installs a clone of the character at the station it is docked in and charges the install fee
+    /// (EveJS <c>installCloneAtCurrentLocation</c>). A validation failure is refused with its label; too little ISK is the client's
+    /// NotEnoughMoney.
+    /// </summary>
+    [Method("InstallCloneInStation")]
+    public async ValueTask<PyValue> InstallCloneInStation(ServiceCall call) => await Install(call, station: true);
+
+    /// <summary>
+    /// <c>InstallCloneInStructure()</c>. shortcut: the structure's clone-service fee is set by its owner and needs the rights check
+    /// (EveJS <c>getCloneServiceCostForLocation</c>); until that exists a structure install is refused.
+    /// </summary>
+    [Method("InstallCloneInStructure")]
+    public async ValueTask<PyValue> InstallCloneInStructure(ServiceCall call) => await Install(call, station: false);
+
+    /// <summary>The fee of the install at the place the character is docked (the station fee; 0 where the fee is not modelled yet).</summary>
+    [Method("GetPriceForClone")]
+    public PyValue GetPriceForClone(ServiceCall call) =>
+        (long?)call.Session.GetInt("stationid") is > 0 ? new PyReal((double)JumpCloneInstallFee) : new PyInt(0);
+
+    private async ValueTask<PyValue> Install(ServiceCall call, bool station)
+    {
+        var location = DockedLocation(call.Session);
+        if (call.Session.CharacterId is not { } characterId || location == 0)
+            throw MachoErrors.ThrowUserError("NotAtStation");
+        if (!station)
+            throw MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("Jump clone installation in a structure is not available on this server.")));
+        if (await ValidateInstallJumpClone(call) is PyList { Items.Count: > 0 } problems)
+        {
+            var first = problems.Items[0];
+            var label = first is PyStr text ? text.Value : (first as PyTuple)?.Items[0] is PyStr tupleLabel ? tupleLabel.Value : "UI/Medical/Errors/UnknownValidationError";
+            throw MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr(label)));
+        }
+        var installed = await Store().InstallAsync(characterId, location, "station", JumpCloneInstallFee, call.Cancellation);
+        if (installed is null)
+        {
+            var balance = await Store().IskBalanceAsync(characterId, call.Cancellation);
+            throw MachoErrors.ThrowUserError("NotEnoughMoney", ("amount", new PyReal((double)JumpCloneInstallFee)), ("balance", new PyReal((double)balance)));
+        }
+        Invalidate(call.Session, location, characterId);
         return PyNone.Instance;
     }
 

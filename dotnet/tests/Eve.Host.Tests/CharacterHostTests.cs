@@ -249,6 +249,60 @@ public sealed class CharacterHostTests
         Assert.Equal(slot.Items[1], Assert.IsType<PyTuple>(Assert.Single(after.Items)).Items[1]);
     }
 
+    [PgFact]
+    public async Task Installing_a_clone_in_a_station_charges_the_fee_once_and_is_refused_without_the_money()
+    {
+        await using var rig = await CharacterHostRig.CreateAsync();
+        Assert.Equal(1, await rig.CreateAccountAsync());
+        var character = await rig.CreateCharacterAsync();
+        var session = new ClientSession { CharacterId = character, UserId = 1, Sink = new RecordingPacketSink() };
+        session.Set("stationid", new PyInt(rig.Station));
+        await rig.SetSkillLevelAsync(character, 24242, 1);
+        await rig.SetSkillLevelAsync(character, 33407, 1);
+        var clones = Assert.IsAssignableFrom<IService>(rig.Registry.Lookup("jumpCloneSvc"));
+
+        // without the money: refused with the client's NotEnoughMoney, and nothing is installed
+        var broke = await Assert.ThrowsAsync<MachoWrappedException>(() => CallAsync(clones, "InstallCloneInStation", session));
+        Assert.Equal("NotEnoughMoney", broke.Error.UserErrorMessage);
+        Assert.Equal(new PyReal(900000d), NamedArgument(broke, "amount"));
+        Assert.Empty(Rows(Field(await BoundAsync(clones, session, "GetCloneState"), "clones")));
+
+        // with the money: the fee is charged once and the clone is installed where the character is docked
+        await using (var connection = await rig.Source.OpenConnectionAsync())
+        await using (var fund = new NpgsqlCommand(
+            $"UPDATE {rig.WalletSchema}.balances SET isk = 1000000 WHERE owner_id = $1 AND account_key = 1000", connection))
+        {
+            fund.Parameters.Add(new NpgsqlParameter { Value = character });
+            Assert.Equal(1, await fund.ExecuteNonQueryAsync());
+        }
+        Assert.IsType<PyNone>(await CallAsync(clones, "InstallCloneInStation", session));
+        Assert.Equal(new[] { rig.Station }, Rows(await BoundAsync(clones, session, "GetStationCloneState"))
+            .Select(row => ((PyLong)row.Items[1]).Value).ToArray());
+        Assert.Equal(100000m, await BalanceAsync(rig, character));
+
+        // the install survives a restart
+        await rig.RestartAsync();
+        var restarted = Assert.IsAssignableFrom<IService>(rig.Registry.Lookup("jumpCloneSvc"));
+        Assert.Single(Rows(Field(await BoundAsync(restarted, session, "GetCloneState"), "clones")));
+    }
+
+    private static async Task<decimal> BalanceAsync(CharacterHostRig rig, long characterId)
+    {
+        await using var connection = await rig.Source.OpenConnectionAsync();
+        await using var command = new NpgsqlCommand(
+            $"SELECT isk FROM {rig.WalletSchema}.balances WHERE owner_id = $1 AND account_key = 1000", connection);
+        command.Parameters.Add(new NpgsqlParameter { Value = characterId });
+        return (decimal)(await command.ExecuteScalarAsync())!;
+    }
+
+    /// <summary>A named argument of a user error (the dictionary the client's UserError reads).</summary>
+    private static PyValue NamedArgument(MachoWrappedException error, string name)
+    {
+        var header = Assert.IsType<PyTuple>(Assert.IsType<PyObjectEx>(error.Error.Payload).Header);
+        var args = Assert.IsType<PyDict>(Assert.IsType<PyTuple>(header.Items[1]).Items[1]);
+        return args.Entries.Single(entry => ((PyStr)entry.Key).Value == name).Value;
+    }
+
     private static async Task<PyValue> CallAsync(IService service, string method, ClientSession session, params PyValue[] args) =>
         await service.CallAsync(new ServiceCall { Method = method, Args = args, Session = session });
 
@@ -327,6 +381,7 @@ public sealed class CharacterHostTests
         public string SkillsSchema => _schemas["EVE_SKILLS_SCHEMA"];
         public string InventorySchema => _schemas["EVE_INVENTORY_SCHEMA"];
         public string IdentitySchema => _schemas["EVE_IDENTITY_SCHEMA"];
+        public string WalletSchema => _schemas["EVE_WALLET_SCHEMA"];
 
         /// <summary>A fresh account in the identity schema (Omega until 2100 by the schema's default); the first one is account 1.</summary>
         public async Task<int> CreateAccountAsync()

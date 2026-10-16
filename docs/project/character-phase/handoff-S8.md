@@ -13,7 +13,7 @@ Worktree /home/user/wt-ch-s8, branch ch-s8. Push: git fetch origin main && git m
 | A5 normal boosters end on a jump | DONE | CharacterHostTests A_clone_jump_ends_the_normal_boosters passes; live CH-16 passes |
 | CH-20 gateway | DONE (Requests/Send, Ping, Events/Publish; TLS and Notices open) | PublicGatewayTests 2 passed (eve_p3); live gateway via test_skill_plan_live.py |
 | CH-21 skill plans | DONE (prerequisite canonicalization open) | test_skill_plan_live.py passed (eve_p3, exit 0) |
-| CH-22 titles | NOT STARTED | |
+| CH-22 titles | DONE (owned, worn, refusal; CDN definition checkpoint, notices, reward grants open) | PublicGatewayTests title test passed (eve_p3); test_title_live.py passed (eve_p3, exit 0) |
 
 ## Live run notes
 

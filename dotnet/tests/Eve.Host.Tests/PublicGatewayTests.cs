@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Http.Headers;
+using Eve.Characters;
 using Eve.Host.PublicGateway;
 using Eve.Skills;
 
@@ -92,6 +93,54 @@ public sealed class PublicGatewayTests
         Assert.Equal(404u, (await SendOneAsync(server.Port, "eve_public.character.skill.plan.NoSuchRequest", character, [])).Status);
     }
 
+    [PgFact]
+    public async Task Character_titles_are_listed_worn_and_taken_off_through_the_gateway_and_survive_a_restart()
+    {
+        await using var rig = await CharacterHostTests.CharacterHostRig.CreateAsync();
+        var character = await rig.CreateCharacterAsync();
+        const string titleApi = "eve_public.cosmetic.character.title.api.";
+        var battlecruiserSmith = Guid.Parse("00851de7-b7ca-5136-871e-d07429563c06"); // SDE characterTitles
+        var starkmanChampion = Guid.Parse("04ae6e1f-d39a-5f5b-b9f4-7a2b3e426a38"); // SDE characterTitles
+        var notOwned = Guid.Parse("0c231769-621e-53d5-bd49-ce07a7b4a544"); // an SDE title the character was not granted
+        var titles = new CharacterTitleStore(rig.Source, rig.CharactersSchema);
+        var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        await titles.GrantAsync(character, battlecruiserSmith, now);
+        await titles.GrantAsync(character, starkmanChampion, now + 1);
+        await using var server = await PublicGatewayServer.StartAsync(IPAddress.Loopback, 0, rig.Gateway);
+
+        // GetOwnedRequest pages: size 1, then the next token (the offset) gives the second title and no next page
+        var first = await SendOneAsync(server.Port, titleApi + "GetOwnedRequest", character, Message(1, Varint(1, 1)));
+        Assert.Equal(200u, first.Status);
+        Assert.Equal(new[] { battlecruiserSmith }, first.Ids());
+        var next = SkillPlanWire.Message(first.Payload, 2) ?? throw new InvalidOperationException("no next page");
+        var token = SkillPlanWire.StringOf(next, 1);
+        Assert.Equal("1", token);
+        var second = await SendOneAsync(server.Port, titleApi + "GetOwnedRequest", character, Message(1, Concat(Varint(1, 1), Str(2, token))));
+        Assert.Equal(new[] { starkmanChampion }, second.Ids());
+        Assert.Null(SkillPlanWire.Message(second.Payload, 2));
+
+        // nothing is worn yet: GetEquippedForCharacterResponse answers no_title (2)
+        var none = await SendOneAsync(server.Port, titleApi + "GetEquippedForCharacterRequest", character, []);
+        Assert.Equal(1L, SkillPlanWire.VarintOf(none.Payload, 2));
+
+        // EquipRequest (title 1) wears an owned title; a title the character does not own is refused with 409
+        Assert.Equal(200u, (await SendOneAsync(server.Port, titleApi + "EquipRequest", character, IdentifierField(1, battlecruiserSmith))).Status);
+        var worn = await SendOneAsync(server.Port, titleApi + "GetEquippedForCharacterRequest", character, []);
+        Assert.Equal(battlecruiserSmith, SkillPlanWire.IdentifierOf(SkillPlanWire.Message(worn.Payload, 1) ?? ReadOnlyMemory<byte>.Empty));
+        Assert.Equal(409u, (await SendOneAsync(server.Port, titleApi + "EquipRequest", character, IdentifierField(1, notOwned))).Status);
+        Assert.Equal(battlecruiserSmith, await titles.EquippedAsync(character));
+
+        // UnequipRequest takes it off; a restart keeps the owned titles, and the worn one is kept as well
+        Assert.Equal(200u, (await SendOneAsync(server.Port, titleApi + "UnequipRequest", character, [])).Status);
+        Assert.Null(await titles.EquippedAsync(character));
+        Assert.Equal(200u, (await SendOneAsync(server.Port, titleApi + "EquipRequest", character, IdentifierField(1, starkmanChampion))).Status);
+        await rig.RestartAsync();
+        await using var restarted = await PublicGatewayServer.StartAsync(IPAddress.Loopback, 0, rig.Gateway);
+        Assert.Equal(starkmanChampion, await new CharacterTitleStore(rig.Source, rig.CharactersSchema).EquippedAsync(character));
+        var afterRestart = await SendOneAsync(restarted.Port, titleApi + "GetOwnedRequest", character, []);
+        Assert.Equal(new[] { battlecruiserSmith, starkmanChampion }, afterRestart.Ids());
+    }
+
     // ---- encoding of the test requests (the client's messages, by field number) ------------------------------------------
 
     private sealed record Answer(uint Status, string TypeName, byte[] Payload)
@@ -141,6 +190,13 @@ public sealed class PublicGatewayTests
     {
         var writer = new ProtoWriter();
         writer.Message(field, message);
+        return writer.ToArray();
+    }
+
+    private static byte[] Varint(int number, long value)
+    {
+        var writer = new ProtoWriter();
+        writer.Uint(number, (ulong)value);
         return writer.ToArray();
     }
 

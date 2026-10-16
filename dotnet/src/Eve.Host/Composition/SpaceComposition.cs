@@ -337,18 +337,19 @@ internal sealed partial class CharacterServicesComposition
             {
                 if (loss.Cause != Eve.Services.Space.ShipLossCause.Player || loss.KillerCharacterId <= 0)
                     return;
-                var payoutId = Eve.Services.Crimewatch.PlayerBountyKills.PayoutIdOf(loss.ShipId);
-                var job = new Eve.Scheduler.JobSpec(Eve.Services.Crimewatch.PlayerBountyKills.PayoutJobKind, now())
-                {
-                    Key = $"player-bounty:{payoutId}",
-                    Payload = new Eve.Services.Crimewatch.PlayerBountyPayoutDue(payoutId),
-                };
                 try
                 {
+                    // the fleet of the killer shares the bounty (EVE University wiki: "the entire fleet shares the bounty")
+                    var sharers = FleetSharersAsync(loss.KillerCharacterId).GetAwaiter().GetResult();
                     playerBountyKills!.ClaimShipLossAsync(loss.CharacterId, loss.ShipId, loss.ShipTypeId,
                         [.. (loss.Contents ?? []).Select(item => (item.TypeId, item.Quantity))], loss.KillerCharacterId, now(),
-                        async (connection, transaction) => await foundations.Scheduler.ScheduleAsync(connection, transaction, job),
-                        CancellationToken.None).GetAwaiter().GetResult();
+                        async (connection, transaction, payoutId) => await foundations.Scheduler.ScheduleAsync(connection, transaction,
+                            new Eve.Scheduler.JobSpec(Eve.Services.Crimewatch.PlayerBountyKills.PayoutJobKind, now())
+                            {
+                                Key = $"player-bounty:{payoutId}",
+                                Payload = new Eve.Services.Crimewatch.PlayerBountyPayoutDue(payoutId),
+                            }),
+                        sharers, CancellationToken.None).GetAwaiter().GetResult();
                 }
                 catch (Exception error)
                 {
@@ -536,5 +537,14 @@ await spaceContainers.PingObservatoryAsync(context.Payload<Eve.Services.Space.Sp
             Console.Error.WriteLine($"eve-host: the space simulation is expected at {socket}");
         }
         await crimewatchRuntime.ResumeAsync();
+    }
+
+    /// <summary>The characters that share a kill's bounty: the killer's fleet (all its members), or the killer alone when it has no fleet.</summary>
+    private async Task<IReadOnlyList<long>> FleetSharersAsync(long killerCharacterId)
+    {
+        if (fleetStore is null || await fleetStore.FleetIdForCharacterAsync(killerCharacterId) is not { } fleet
+            || await fleetStore.SnapshotAsync(fleet) is not { } snapshot)
+            return [killerCharacterId];
+        return [.. snapshot.Members.Select(member => member.CharacterId).Where(id => id > 0)];
     }
 }

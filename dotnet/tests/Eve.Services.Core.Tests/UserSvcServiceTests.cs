@@ -33,7 +33,9 @@ public sealed class RedeemUserSvcCompatibilityTests
         Assert.Empty(Assert.IsType<PyDict>(await Call(service, session, "GetMultiCharactersTrainingSlots")).Entries);
         Assert.Empty(Assert.IsType<PyList>(await Call(service, session, "GetUpdatedMultiCharacterTraining")).Items);
         Assert.Empty(Assert.IsType<PyList>(await Call(service, session, "ActivateSoulboundMultiTraining")).Items);
-        await Assert.ThrowsAsync<NotSupportedException>(() => Call(service, session, "ActivateMultiTraining"));
+        // the refusal is the reference's CustomInfo text (UserSvcCompatibility.ActivateMultiTraining), not a missing method
+        var refused = await Assert.ThrowsAsync<MachoWrappedException>(() => Call(service, session, "ActivateMultiTraining"));
+        Assert.Equal("CustomInfo", refused.Error.UserErrorMessage);
         Assert.Empty(Assert.IsType<PyDict>(await Call(service, session, "GetMultiCharactersTrainingSlots")).Entries);
 
         // GATE-C: the votes and reports answer true and keep nothing (EveJS userService.js 1104-1127)

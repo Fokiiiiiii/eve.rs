@@ -2543,3 +2543,16 @@ Handoff: `docs/project/structures-phase/handoff-ST-20.md`. Lane eve_p4 (live por
 | VERIFIED (live) | (2) the live suite with `EVE_LIVE_SLOW=1` (the default list plus `test_structures.py`, eve_p4, port 26103): exit 0, one skip, the skill-speed test, which needs its own host run. No failure to fix. | `tools/dev/run-eve-live.sh` |
 | VERIFIED (live) | (2) the skill-speed test `test_login_to_character.py::test_a_queue_that_finishes_while_the_client_watches_is_told_level_by_level` with the host at `EVE_SKILL_TRAINING_SPEED=60000`: 1 passed (not skipped). | `test_login_to_character.py` |
 | VERIFIED (tests) | (3) full `Eve.Host.Tests` on eve_p4: 373 passed, 0 failed, 0 skipped, before the control change and again after it. | `dotnet test tests/Eve.Host.Tests` |
+
+## 61. Structures phase ST-23: control tower fuel and unanchoring (2026-10-16)
+
+Built and tested headless on eve_p4 (PostgreSQL): the tower's fuel per hour by SDE size and race fuel block, the hourly job that pays or takes it offline, the `posMgr.UnanchorStructure` RPC (offline and corporation rules, the SDE's one-hour delay), and the unanchored item kept and dropped in space instead of deleted. Rules and differences: DEVIATIONS "Structure ST-23". Tests: `ControlTowerHostTests` 4/4, `PosMgrServiceTests` 5/5 (Core); full Space 928/928.
+
+Open:
+
+- Manual online (the pilot's online command and its online fuel charge), and any client surfacing of the tower's online state.
+- The client's fuel-bay access to a tower's container and the owner's fuel-bay notifications (no `OnItemChange` on a fuel change).
+- The scoop of an unanchored tower from space: built on the unanchor-drop marker, not verified on the graphical client or live.
+- The anchoring charter (SDE purpose 1) and the reinforcement fuel (purpose 4); the tower's modules.
+- Mission pockets as simulation bodies: not started. The simulation has no deadspace pocket body; a new ball kind needs a protocol bump and a client check (`handoff-ST-23.md`).
+- Live flows not yet live: the own-ship eject (the pilot must be within 6 500 m surface distance of the structure), the moon fracture, the extraction completion and the mailbox row (`handoff-ST-23.md`).

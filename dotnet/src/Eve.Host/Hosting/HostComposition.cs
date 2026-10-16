@@ -120,7 +120,10 @@ internal static class HostComposition
             keeperRpcCallbacks: keeperRpcCallbacks,
             superWeaponRpcCallbacks: superWeaponCallbacks,
             spaceModules: space,
-            isShipInSpace: space is null ? null : (Func<ClientSession, bool>)space.IsInSpace))
+            isShipInSpace: space is null ? null : (Func<ClientSession, bool>)space.IsInSpace,
+            unanchorControlTower: space is null ? null : (session, itemId, cancellationToken) => space.ControlTowerUnanchor is { } unanchor
+                ? new ValueTask(unanchor(session, itemId, cancellationToken))
+                : throw new InvalidOperationException("the control towers are not wired on this server")))
         {
             registry.Register(service);
         }

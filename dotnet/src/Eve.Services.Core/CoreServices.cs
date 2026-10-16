@@ -23,6 +23,7 @@ public static class CoreServices
         ReadEscalatingPathDetailsCallback? readEscalatingPathDetails = null,
         KeeperRpcCallbacks? keeperRpcCallbacks = null,
         ReadControlTowerRowsCallback? readControlTowerRows = null,
+        UnanchorControlTowerCallback? unanchorControlTower = null,
         CustomAgencyProviderRpcCallbacks? customAgencyProviderRpcCallbacks = null,
         ReadEpicArcStatusCallback? readEpicArcStatus = null,
         SuperWeaponRpcCallbacks? superWeaponRpcCallbacks = null,
@@ -44,7 +45,7 @@ public static class CoreServices
         [
             new PingService(),
             new BrowserLockdownService(),
-            new PosMgrService(readControlTowerRows),
+            new PosMgrService(readControlTowerRows, unanchorControlTower),
             new KiringMgrService(),
             new PetitionerService(),
             new AbyssalContentManagerService(gameRpcCallbacks.AbyssalSpawnReportAsync),

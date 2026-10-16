@@ -153,7 +153,8 @@ public sealed class DogmaStatic
         }
         var name = row.Doc.TryGetProperty("name", out var names) ? SdeReader.English(names) : "";
         var graphic = row.Doc.TryGetProperty("graphicID", out var graphicId) && graphicId.ValueKind == JsonValueKind.Number ? graphicId.GetInt32() : 0;
-        _types[(int)row.Key] = new TypeDef((int)row.Key, group, _categoryOfGroup.GetValueOrDefault(group), attributes, effects, name, graphic)
+        var race = row.Doc.TryGetProperty("raceID", out var raceId) && raceId.ValueKind == JsonValueKind.Number ? raceId.GetInt32() : 0;
+        _types[(int)row.Key] = new TypeDef((int)row.Key, group, _categoryOfGroup.GetValueOrDefault(group), attributes, effects, name, graphic, race)
         {
             Published = IsPublished(row.Doc),
         };

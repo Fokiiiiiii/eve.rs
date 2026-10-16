@@ -214,6 +214,42 @@ public sealed class DurableScheduler : IAsyncDisposable
         return changed;
     }
 
+    /// <summary>
+    /// Runs the waiting job of a kind and key now, in this process, with the runner's claim and handler, for a caller that must not wait for the runner. Returns false when
+    /// no such job is due. A job that fails is tried again by the runner as usual: the caller reads what the job wrote, not this return value.
+    /// </summary>
+    public async Task<bool> RunNowAsync(string kind, string key, CancellationToken cancellationToken = default)
+    {
+        var now = _now();
+        ClaimedJob? job = null;
+        await using (var connection = await _source.OpenConnectionAsync(cancellationToken))
+        await using (var transaction = await connection.BeginTransactionAsync(cancellationToken))
+        {
+            await using (var command = Sql.Command(connection, transaction, Q("""
+                UPDATE {schema}.jobs j SET state = 'running', attempts = j.attempts + 1, lease_owner = $3, lease_until_ms = $4, updated_ms = $1
+                WHERE j.id = (SELECT id FROM {schema}.jobs WHERE kind = $2 AND key = $5 AND state = 'pending' AND run_at_ms <= $1
+                              ORDER BY id LIMIT 1 FOR UPDATE SKIP LOCKED)
+                RETURNING j.id, j.kind, j.key, j.payload::text, j.run_at_ms, j.attempts, j.max_attempts, j.every_ms
+                """), now, kind, _owner, now + _options.LeaseMs, key))
+            await using (var reader = await command.ExecuteReaderAsync(cancellationToken))
+            {
+                if (await reader.ReadAsync(cancellationToken))
+                {
+                    job = new ClaimedJob(
+                        reader.GetInt64(0), reader.GetString(1), reader.IsDBNull(2) ? null : reader.GetString(2), reader.GetString(3), reader.GetInt64(4),
+                        reader.GetInt32(5), reader.GetInt32(6), reader.IsDBNull(7) ? null : reader.GetInt64(7));
+                }
+            }
+            await transaction.CommitAsync(cancellationToken);
+        }
+        if (job is null)
+        {
+            return false;
+        }
+        await ExecuteAsync(job, cancellationToken);
+        return true;
+    }
+
     // ---- running -----------------------------------------------------------------------------------------------------------------------------------
 
     /// <summary>

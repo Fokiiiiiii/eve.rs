@@ -60,8 +60,26 @@ internal sealed partial class CharacterServicesComposition
         }
     }
 
+    /// <summary>
+    /// The customs penalty (ST-18) and its settlement job, registered with the shared scheduler whether or not the simulation runs: a process runs the kinds it has
+    /// a handler for, so a penalty scheduled by one process is settled by any process that has the handler.
+    /// </summary>
+    private UndockContraband customs = default!;
+
+    private async Task LoadCustomsPenaltyAsync()
+    {
+        var contrabandSchema = Env("EVE_CONTRABAND_SCHEMA", UndockContraband.DefaultSchema);
+        await UndockContraband.MigrateAsync(source, contrabandSchema);
+        // the pilot's smuggling chance is the attribute 445 of its implants and skills (EVE.js resolveCharacterSmugglingChance)
+        customs = await UndockContraband.LoadAsync(sde, items, solarSystems, source, new WalletTransactions(source, walletSchema),
+            scheduler: foundations.Scheduler, relations: foundations.Relations,
+            smugglingChance: (character, token) => SkillHandlerService.SmugglingChanceAsync(items, dogma, skills, character, token),
+            nowMs: now, schema: contrabandSchema);
+    }
+
     private async Task SpaceSimulation()
     {
+        await LoadCustomsPenaltyAsync();
         sim = null;
         spaceSessions = null;
         spaceContainers = null;
@@ -231,9 +249,8 @@ internal sealed partial class CharacterServicesComposition
                     "Gate toll refund", now(), key, token);
                 await transaction.CommitAsync(token);
             };
-            var undockContraband = await UndockContraband.LoadAsync(sde, items, solarSystems, source, tollWallets);
-            spaceSessions.InspectUndockContrabandAsync = undockContraband.InspectAsync;
-            spaceSessions.ApplyContrabandPenaltyAsync = undockContraband.ApplyAsync;
+            spaceSessions.InspectUndockContrabandAsync = customs.InspectAsync;
+            spaceSessions.ApplyContrabandPenaltyAsync = customs.ApplyAsync;
             npcWrecks.Warm();
             // the periodic work of the space features is jobs of the shared scheduler, not timers of their own
             spaceSessions.UseBounties(new PgBountyStore(source, new WalletTransactions(source, walletSchema), npcSchema, message => Console.Error.WriteLine($"eve-host: bounty: {message}")));

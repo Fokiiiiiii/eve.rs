@@ -70,6 +70,9 @@ internal sealed class Rig : IAsyncDisposable
     private static Eve.Dogma.DogmaStatic TestDogma() => new([], [
         new Eve.Dogma.EffectDef(7000, "implantMemory", Eve.Dogma.EffectDef.Passive,
             [new Eve.Dogma.Modifier(Eve.Dogma.ModifierFunc.Item, "charID", Eve.Dogma.Operation.ModAdd, 166, 177)]),
+        // an implant that adds its bonus (attribute 9950) to the smuggling chance (445) of its pilot
+        new Eve.Dogma.EffectDef(7003, "implantSmuggling", Eve.Dogma.EffectDef.Passive,
+            [new Eve.Dogma.Modifier(Eve.Dogma.ModifierFunc.Item, "charID", Eve.Dogma.Operation.ModAdd, 445, 9950)]),
         new Eve.Dogma.EffectDef(7001, "boosterPrimary", Eve.Dogma.EffectDef.Activation,
             [new Eve.Dogma.Modifier(Eve.Dogma.ModifierFunc.Item, "charID", Eve.Dogma.Operation.ModAdd, 164, 1126)]),
         new Eve.Dogma.EffectDef(7002, "boosterSideEffect", Eve.Dogma.EffectDef.Activation,
@@ -78,6 +81,7 @@ internal sealed class Rig : IAsyncDisposable
     ], [
         // SDE 3396210: Memory Augmentation - Basic (9941), categoryImplant, implantness=2, memoryBonus=3.
         new Eve.Dogma.TypeDef(9941, 745, 20, new Dictionary<int, double> { [331] = 2, [177] = 3 }, [7000]),
+        new Eve.Dogma.TypeDef(9942, 745, 20, new Dictionary<int, double> { [331] = 2, [9950] = 0.25 }, [7003]),
         // Pinned client dogma constants: boosterness=1087 and boosterDuration=330.
         new Eve.Dogma.TypeDef(2838, 988, 20, new Dictionary<int, double>
         {
@@ -854,6 +858,17 @@ public class SkillHandlerTests
         Assert.Equal(new PyInt(3), respec["freeRespecs"]);
         Assert.Equal(PyNone.Instance, respec["lastRespecDate"]);
         Assert.Equal(PyNone.Instance, respec["nextTimedRespec"]);
+    }
+
+    [PgFact]
+    public async Task Smuggling_chance_is_the_attribute_445_of_the_pilot_after_its_implants_and_is_zero_without_one()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var characterId = rig.CharacterId;
+        Assert.Equal(0d, await SkillHandlerService.SmugglingChanceAsync(rig.ItemStore, rig.Dogma, rig.Store, characterId, CancellationToken.None));
+
+        await rig.CreateItemAsync(new Eve.Inventory.NewItem(9942, characterId, characterId, 89, Singleton: true));
+        Assert.Equal(0.25d, await SkillHandlerService.SmugglingChanceAsync(rig.ItemStore, rig.Dogma, rig.Store, characterId, CancellationToken.None));
     }
 
     [PgFact]

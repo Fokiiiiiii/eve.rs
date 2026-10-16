@@ -35,7 +35,8 @@ public sealed class ProjectDiscoveryService(ProjectDiscoveryRpcCallbacks? callba
         "get_player_analysis_kredits" or
         "get_player_state" or
         "get_player_statistics" or
-        "get_tutorial_completion_status";
+        "get_tutorial_completion_status" or
+        "initialize_tutorial_status";
 
     public async ValueTask<PyValue> CallAsync(ServiceCall call)
     {
@@ -85,6 +86,7 @@ public sealed class ProjectDiscoveryService(ProjectDiscoveryRpcCallbacks? callba
             }
 
             case "get_tutorial_completion_status":
+            case "initialize_tutorial_status":
             {
                 var state = await ReadStateAsync(characterId, call.Cancellation);
                 return state.FinishedTutorial ? PyBool.True : PyBool.False;

@@ -30,7 +30,8 @@ public sealed record GameRpcCallbacks(
     AbyssalSpawnReportCallback? AbyssalSpawnReportAsync = null,
     ReadPeaceTreatiesCallback? ReadPeaceTreaties = null,
     PublicQaToolsRpcCallbacks? PublicQaTools = null,
-    IJumpCloneStore? JumpClones = null);
+    IJumpCloneStore? JumpClones = null,
+    Func<long, CancellationToken, ValueTask<ProjectDiscoveryPlayerState?>>? ReadProjectDiscoveryState = null);
 
 [Service("raffleMgr")]
 public sealed partial class RaffleMgrService(Func<int?, CancellationToken, ValueTask<int?>>? seedRafflesAsync = null)

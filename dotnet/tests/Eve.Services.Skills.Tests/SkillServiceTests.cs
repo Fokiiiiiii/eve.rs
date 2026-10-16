@@ -103,6 +103,8 @@ internal sealed class Rig : IAsyncDisposable
     public Eve.Characters.PgCharacterStore Characters => new(Source, _schema + "c");
     public NpgsqlDataSource Source { get; }
 
+    public string SchemaForTest => _schema;
+
     public PgSkillStore Store { get; }
 
     public Eve.Inventory.PgItemStore ItemStore { get; }
@@ -593,19 +595,54 @@ public class SkillHandlerTests
     }
 
     [PgFact]
-    public async Task Daily_alpha_injector_cooldown_is_atomic_and_expires_after_one_day()
+    public async Task Daily_alpha_injector_is_spent_until_the_next_11_utc_downtime()
     {
         await using var rig = await Rig.CreateAsync(useCurrentSdeCatalog: true);
         var typeId = rig.CatalogForTest.ItemTypeId("Daily Alpha Injector");
         Assert.NotNull(typeId);
-        const long now = 1_700_000_000_000;
+        const long day = 86_400_000;
+        const long midnight = 19_675 * day; // 2023-11-14 00:00 UTC
+        const long downtime = midnight + 11 * 3_600_000;
         Task<bool> Use(long at) => rig.Store.InTransactionAsync(
             (connection, transaction, token) => rig.Store.TryUseDailyAlphaSkillInjectorAsync(connection, transaction, rig.CharacterId, typeId.Value, at, token),
             CancellationToken.None);
 
-        Assert.True(await Use(now));
-        Assert.False(await Use(now + 86_399_999));
-        Assert.True(await Use(now + 86_400_000));
+        Assert.True(await Use(downtime - 1));           // the first use, just before the downtime: that use is spent at the downtime
+        Assert.True(await Use(downtime));                // the downtime resets it
+        Assert.False(await Use(downtime + 3_600_000));   // spent until the next downtime
+        Assert.False(await Use(downtime + day - 1));
+        Assert.True(await Use(downtime + day));
+    }
+
+    [Fact]
+    public void The_daily_downtime_is_the_first_11_utc_after_the_moment()
+    {
+        const long day = 86_400_000;
+        const long downtime = 19_675 * day + 11 * 3_600_000;
+        Assert.Equal(downtime, SkillInjectorDowntime.NextAfterMs(downtime - 1));
+        Assert.Equal(downtime + day, SkillInjectorDowntime.NextAfterMs(downtime));
+        Assert.Equal(downtime - day, SkillInjectorDowntime.PreviousAtOrBeforeMs(downtime - 1));
+        Assert.Equal(downtime, SkillInjectorDowntime.PreviousAtOrBeforeMs(downtime + 1));
+    }
+
+    [PgFact]
+    public async Task Daily_alpha_clock_answers_zero_then_the_next_downtime_after_a_use_and_keeps_it_across_a_restart()
+    {
+        await using var rig = await Rig.CreateAsync(isAlphaClone: _ => true, useCurrentSdeCatalog: true, accountId: 77_004);
+        var characterId = rig.CharacterId;
+        var session = Rig.Session(characterId, userId: 77_004).Session;
+        var clock = new AlphaInjectorMgrService(rig.Store, rig.CatalogForTest);
+        Assert.Equal(new PyLong(0), await Rig.CallAsync(clock, session, "GetNextAvailableInjection"));
+
+        var dailyAlphaType = rig.CatalogForTest.ItemTypeId("Daily Alpha Injector");
+        Assert.NotNull(dailyAlphaType);
+        var item = await rig.CreateItemAsync(new Eve.Inventory.NewItem(dailyAlphaType.Value, characterId, 60_000_001, 4, 1, true));
+        Assert.Equal(new PyInt(50_000), await Rig.CallAsync(rig.Handler, session, "InjectSkillpoints", new PyLong(item), new PyInt(1)));
+        var next = new PyLong(Py.FileTimeFromUnixMs(SkillInjectorDowntime.NextAfterMs(rig.Now)));
+        Assert.Equal(next, await Rig.CallAsync(clock, session, "GetNextAvailableInjection"));
+
+        var restarted = new AlphaInjectorMgrService(new PgSkillStore(rig.Source, rig.SchemaForTest), rig.CatalogForTest);
+        Assert.Equal(next, await Rig.CallAsync(restarted, session, "GetNextAvailableInjection"));
     }
 
     [PgFact]

@@ -22,16 +22,6 @@ public sealed partial class BannedWordsService
         CompatibilityRpc.Invoke(call, RpcHandler, static () => PyNone.Instance);
 }
 
-[Service("alphaInjectorMgr")]
-public sealed partial class AlphaInjectorMgrService
-{
-    public Func<ServiceCall, ValueTask<PyValue?>>? RpcHandler { get; set; }
-
-    [Method("GetNextAvailableInjection")]
-    public ValueTask<PyValue> GetNextAvailableInjection(ServiceCall call) =>
-        CompatibilityRpc.Invoke(call, RpcHandler, static () => new PyLong(0));
-}
-
 [Service("cache")]
 public sealed partial class CacheService
 {

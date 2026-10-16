@@ -2566,3 +2566,14 @@ Open:
 - The anchoring charter (SDE purpose 1) and the reinforcement fuel (purpose 4); the tower's modules.
 - Mission pockets: the body is in the scene (protocol 74) and the observatory check reads it; the pocket's warp rules (EveJS `deadspaceWarpPolicy` A and B) are not in the simulation (DEVIATIONS, ST-23).
 - Live: the own-ship eject, the moon fracture, the completion and the owners' rows are live (`test_structures.py`, ST-23). The tower's online state and fuel-bay notices are not on the client yet.
+
+## Character phase S2 (2026-10-16)
+
+Packages CH-11 (partial), CH-2, CH-5, CH-7, CH-9 of `docs/project/character-phase/plan.md`. Differences and sources: DEVIATIONS "Character phase S2".
+
+- **CH-2 (done, lane eve_p3).** Daily Alpha Injector: the 11:00 UTC downtime rule and `alphaInjectorMgr.GetNextAvailableInjection` (`Eve.Services.Skills/AlphaInjectorMgrService.cs`). Closes the injector row above (`DiminishedInjectorSp`, tests `Injector_preview_uses_per_item_large_and_small_bands_and_non_diminishing_uses`, `Daily_alpha_injector_is_limited_to_alpha_characters_and_once_per_day`, `Daily_alpha_injector_is_spent_until_the_next_11_utc_downtime`, `Daily_alpha_clock_answers_zero_then_the_next_downtime_after_a_use_and_keeps_it_across_a_restart`). Live: `tools/headless-client/tests/test_alpha_injector_live.py`.
+- **CH-5 (done, lane eve_p3).** Login milestone: `MilestoneMgrService`, `LoginMilestoneStore` (migration 0008). Tests: `LoginMilestoneStoreTests`, `MilestoneMgrServiceTests`. Live: `tools/headless-client/tests/test_login_milestone_live.py`.
+- **CH-7 (done, lane eve_p3).** Atomic population seat on `SelectCharacterID`. Tests: `PopulationCapTests` (`Simultaneous_entries_into_the_last_room_admit_exactly_one`, `A_seat_is_taken_in_the_same_step_as_the_room_check_and_is_given_back_when_disposed`). Live: `tools/headless-client/tests/test_population_cap_live.py`.
+- **CH-9 (done, lane eve_p3).** Achievement tracker writes and reads, no golden fixture: `AchievementTrackerStore` (migration 0009). Tests: `AchievementTrackerStoreTests`, `AchievementTrackerWriteTests`. Live: `tools/headless-client/tests/test_achievement_tracker_live.py`.
+- **CH-11 (partial).** Implants and active boosters act on the pilot's dogma attributes (`Eve.Ships/PilotAugmentations.cs`; tests `PilotAugmentationTests`). Open: the training rate reads base learning attributes; no implant-change notification (clone install, CH-15/CH-16); no live walk.
+- **CH-17 (not started in S2).** Expert systems: the catalogue is EveJS's static table (`tools/DatabaseCreator/staticTables/expertSystems/data.json`, from the client SDE 3365090; the pinned SDE copy has no expert system data).

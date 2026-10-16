@@ -130,6 +130,26 @@ internal sealed partial class CharacterServicesComposition
         return Task.CompletedTask;
     }
 
+    /// <summary>The login milestone: its progress in the characters schema, its timer in this process. One instance serves the entry hook and the service.</summary>
+    private MilestoneMgrService? milestoneMgr;
+    private MilestoneMgrService MilestoneManager => milestoneMgr ??= new MilestoneMgrService(
+        new Eve.Characters.LoginMilestoneStore(source, characterSchema, economyWallets), foundations.LocalTimers, now);
+
+    /// <summary>The achievement tracker of each character (the characters schema).</summary>
+    private AchievementTrackerStore? achievementTracker;
+    private AchievementTrackerStore AchievementTracker => achievementTracker ??= new AchievementTrackerStore(source, characterSchema);
+
+    /// <summary>The Project Discovery tutorial of each character (the characters schema).</summary>
+    private Eve.Characters.ProjectDiscoveryTutorialStore? projectDiscoveryTutorials;
+    private Eve.Characters.ProjectDiscoveryTutorialStore ProjectDiscoveryTutorials => projectDiscoveryTutorials ??= new Eve.Characters.ProjectDiscoveryTutorialStore(source, characterSchema);
+
+    /// <summary>The tutorial the client's Project Discovery reads: a character with no stored tutorial has not started (the service default).</summary>
+    private async ValueTask<ProjectDiscoveryPlayerState?> ReadProjectDiscoveryStateAsync(long characterId, CancellationToken cancellationToken)
+    {
+        var tutorial = await ProjectDiscoveryTutorials.ReadAsync(characterId, cancellationToken);
+        return tutorial is null ? null : new ProjectDiscoveryPlayerState(FinishedTutorial: tutorial.Finished, TutorialLevel: tutorial.Level);
+    }
+
     private Task EconomyAndInsurance()
     {
         economyWallets = new WalletTransactions(source, walletSchema);
@@ -199,13 +219,15 @@ internal sealed partial class CharacterServicesComposition
                         Cancellation = cancellationToken,
                     });
                 }),
-            JumpClones: new HostJumpCloneStore(new Eve.Characters.PgJumpCloneStore(source, characterSchema), source, skills));
+            JumpClones: new HostJumpCloneStore(new Eve.Characters.PgJumpCloneStore(source, characterSchema), source, skills),
+            ReadProjectDiscoveryState: ReadProjectDiscoveryStateAsync);
 
         stationGuestLedger = new Eve.Services.Station.StationGuestLedger();
         characterEntryHooks = new List<ICharacterEntryHook>();
         if (spaceSessions is not null)
             characterEntryHooks.Add(spaceSessions);
         characterEntryHooks.Add(new SkillsLoginHook(training, skillCatalog, characterSessions, announcer, now));
+        characterEntryHooks.Add(MilestoneManager);
         characterEntryHooks.Add(corporationLogin);
         characterEntryHooks.Add(new FleetLoginHook(fleetStore.MemberForCharacterAsync));
         characterEntryHooks.Add(dogmaSync);

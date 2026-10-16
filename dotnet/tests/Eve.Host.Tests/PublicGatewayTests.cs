@@ -11,6 +11,7 @@ namespace Eve.Host.Tests;
 /// with the envelopes the V24.01 client sends and reads (eve-logic skills/skillplan/grpc/message_bus/requestsMessenger.py: status 200 is
 /// success, Requests/Send carries eve_public.Request frames). The plans are kept in PostgreSQL and survive a restart of the Host.
 /// </summary>
+[Collection("host-composition")]
 public sealed class PublicGatewayTests
 {
     private const string Plan = "eve_public.character.skill.plan.";

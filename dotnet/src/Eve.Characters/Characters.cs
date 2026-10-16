@@ -196,6 +196,15 @@ public sealed partial class PgCharacterStore
         return await command.ExecuteNonQueryAsync(cancellationToken) > 0;
     }
 
+    /// <summary>Moves a character into a corporation (the deletion moves a deleted character into the graveyard corporation).</summary>
+    public async Task SetCorporationAsync(long characterId, long corporationId, CancellationToken cancellationToken = default)
+    {
+        await using var command = _source.CreateCommand($"UPDATE {_schema}.characters SET corporation_id = $2 WHERE id = $1");
+        command.Parameters.Add(new NpgsqlParameter { Value = characterId });
+        command.Parameters.Add(new NpgsqlParameter { Value = corporationId });
+        await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
     /// <summary>Queues a character for deletion at <paramref name="readyAt"/>. False when it is already queued, deleted, or not the account's.</summary>
     public async Task<bool> SetDeletePrepareAsync(long characterId, int accountId, DateTimeOffset readyAt, CancellationToken cancellationToken = default)
     {

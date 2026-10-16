@@ -29,7 +29,9 @@ public sealed partial class CharUnboundMgrService(
     Func<long, CancellationToken, Task>? sendWelcomeMailAsync = null,
     Func<long, int>? unreadMailCount = null,
     Func<long, CancellationToken, Task<double>>? securityStatusOf = null,
-    SystemPopulation? population = null)
+    SystemPopulation? population = null,
+    ICharacterDeletionPurge? deletionPurge = null,
+    Func<DateTimeOffset>? clock = null)
 {
     /// <summary>What every session's role gets on top of the account's (the client shows staff roles and the base bits alike).</summary>
     public const long SessionBaseRole = 0x6000000080000000;
@@ -455,6 +457,10 @@ public sealed partial class CharUnboundMgrService(
 
     /// <summary>The biomass queue's waiting time before a queued character can be deleted (EveJS <c>characterDeletionDelayMinutes</c>, 600).</summary>
     private static readonly TimeSpan BiomassDelay = TimeSpan.FromMinutes(600);
+    /// <summary>The graveyard corporation a deleted character is moved into (EveJS <c>DOOMHEIM_CORPORATION_ID</c>).</summary>
+    private const long DoomheimCorporationId = 1000001;
+
+    private DateTimeOffset Now() => (clock ?? (() => DateTimeOffset.UtcNow))();
 
     /// <summary>
     /// <c>PrepareCharacterForDelete(charID)</c>: queues an offline character of the account for deletion. A character already in
@@ -466,7 +472,7 @@ public sealed partial class CharUnboundMgrService(
         var (character, account) = await OwnedOfflineCharacter(call);
         if (character.DeletePrepareAt is { } queued)
             return new PyLong(FileTime(queued));
-        var readyAt = DateTimeOffset.UtcNow + BiomassDelay;
+        var readyAt = Now() + BiomassDelay;
         if (!await characters.SetDeletePrepareAsync(character.Id, account, readyAt, Token(call)))
             throw Info("Failed to queue that character for deletion.");
         return new PyLong(FileTime(readyAt));
@@ -482,11 +488,16 @@ public sealed partial class CharUnboundMgrService(
         var (character, account) = await OwnedOfflineCharacter(call);
         if (character.DeletePrepareAt is not { } readyAt)
             throw Info("That character is not in the biomass queue.");
-        var now = DateTimeOffset.UtcNow;
+        var now = Now();
         if (readyAt > now)
             throw Info("That character is still waiting for the biomass timer to expire.");
+        var originalCorporation = character.CorporationId;
         if (!await characters.MarkDeletedAsync(character.Id, account, now, Token(call)))
             throw Info("Failed to finalize that character deletion.");
+        // the graveyard corporation (EveJS DOOMHEIM_CORPORATION_ID), then the assets and the private state
+        await characters.SetCorporationAsync(character.Id, DoomheimCorporationId, Token(call));
+        if (deletionPurge is not null)
+            await deletionPurge.PurgeAsync(character.Id, originalCorporation, Token(call));
         return None;
     }
 

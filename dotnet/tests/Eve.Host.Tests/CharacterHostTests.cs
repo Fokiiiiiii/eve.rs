@@ -1,5 +1,6 @@
 using Eve.Characters;
 using Eve.Host;
+using Eve.Inventory;
 using Eve.Macho;
 using Eve.Marshal;
 using Eve.Services;
@@ -130,6 +131,20 @@ public sealed class CharacterHostTests
         Assert.False((await rig.Characters.GetAsync(character))!.IsQueuedForDeletion);
         await Assert.ThrowsAsync<MachoWrappedException>(() => CallAsync(restarted, "DeleteCharacter", session, new PyLong(character)));
 
+        // the character holds a ship with cargo in the station and a skill: the deletion moves the ship tree to the corporation's
+        // deliveries (the corporation is not an NPC corporation here) and clears the skill
+        long shipId;
+        long cargoId;
+        await using (var connection = await rig.Source.OpenConnectionAsync())
+        await using (var transaction = await connection.BeginTransactionAsync())
+        {
+            var itemStore = new PgItemStore(rig.Source, rig.InventorySchema);
+            shipId = await itemStore.CreateAsync(connection, transaction, new NewItem(TypeId: 587, OwnerId: character, LocationId: rig.Station, Flag: 4));
+            cargoId = await itemStore.CreateAsync(connection, transaction, new NewItem(TypeId: 34, OwnerId: character, LocationId: shipId, Flag: 4, Quantity: 500));
+            await transaction.CommitAsync();
+        }
+        await rig.SetSkillLevelAsync(character, 3300, 3);
+
         // prepare again, move the waiting time into the past (the test's clock), then delete
         await CallAsync(restarted, "PrepareCharacterForDelete", session, new PyLong(character));
         await using (var connection = await rig.Source.OpenConnectionAsync())
@@ -140,6 +155,23 @@ public sealed class CharacterHostTests
             await command.ExecuteNonQueryAsync();
         }
         Assert.IsType<PyNone>(await CallAsync(restarted, "DeleteCharacter", session, new PyLong(character)));
+
+        // the assets are in the corporation's deliveries (flag 62), the cargo still inside the ship, and the skills are gone
+        var corporationItems = await new PgItemStore(rig.Source, rig.InventorySchema).OwnedByAsync(900_001_001);
+        var movedShip = Assert.Single(corporationItems, item => item.Id == shipId);
+        Assert.Equal(62, movedShip.Flag);
+        Assert.Equal(rig.Station, movedShip.LocationId);
+        var movedCargo = Assert.Single(corporationItems, item => item.Id == cargoId);
+        Assert.Equal(shipId, movedCargo.LocationId);
+        Assert.Empty(await new PgItemStore(rig.Source, rig.InventorySchema).OwnedByAsync(character));
+        await using (var connection = await rig.Source.OpenConnectionAsync())
+        await using (var count = new NpgsqlCommand($"SELECT count(*) FROM {rig.SkillsSchema}.character_skills WHERE character_id = $1", connection))
+        {
+            count.Parameters.Add(new NpgsqlParameter { Value = character });
+            Assert.Equal(0L, (long)(await count.ExecuteScalarAsync())!);
+        }
+        // the graveyard corporation (EveJS DOOMHEIM_CORPORATION_ID)
+        Assert.Equal(1000001L, (await rig.Characters.GetAsync(character))!.CorporationId);
 
         // the deleted character is hidden from its account and refused at selection
         var deleted = Assert.IsType<Character>(await rig.Characters.GetAsync(character));
@@ -235,6 +267,7 @@ public sealed class CharacterHostTests
         public long Station { get; }
         public string CharactersSchema => _schemas["EVE_CHARACTERS_SCHEMA"];
         public string SkillsSchema => _schemas["EVE_SKILLS_SCHEMA"];
+        public string InventorySchema => _schemas["EVE_INVENTORY_SCHEMA"];
 
         public static async Task<CharacterHostRig> CreateAsync()
         {

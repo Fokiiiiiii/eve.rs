@@ -274,6 +274,23 @@ public sealed class PgSkillStore
         return list;
     }
 
+    /// <summary>
+    /// Removes what the skills keep about a character (its skills, queue, history, point changes and boosters), inside the caller's
+    /// transaction. Used when the character is deleted.
+    /// </summary>
+    public async Task ClearCharacterAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long characterId, CancellationToken cancellationToken = default)
+    {
+        foreach (var table in new[] { "character_skills", "skill_queue", "skill_history", "recent_skill_point_changes", "active_skill_boosters" })
+        {
+            await using var command = new NpgsqlCommand($"DELETE FROM {_schema}.{table} WHERE character_id = $1", connection, transaction)
+            {
+                Parameters = { new() { Value = characterId } },
+            };
+            await command.ExecuteNonQueryAsync(cancellationToken);
+        }
+        _neuralRemaps.TryRemove(characterId, out _);
+    }
+
     /// <summary>Read eligibility inside the caller's transaction, without a second snapshot.</summary>
     public async Task<int> LevelAsync(NpgsqlConnection connection,NpgsqlTransaction transaction,long characterId,int typeId,CancellationToken cancellationToken = default)
     {

@@ -274,6 +274,8 @@ internal sealed partial class CharacterServicesComposition
             items, characters, notificationMailbox ?? throw new InvalidOperationException("The notifications mailbox is wired before the offices."));
         rentDue.Register();
         rentDue.SubscribeClosures(foundations.Events);
+        // ST-16: the rent bills taken at a station before the creditor was recorded get the station's owner, once (a no-op from the second start)
+        await rentDue.CreditStationBillsAsync(id => stations.Get(id) is { } station ? (long?)station.OwnerId : null);
         skinCosmeticsCatalog = await ShipCosmeticsCatalog.LoadAsync(sde);
     }
 }

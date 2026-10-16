@@ -4,15 +4,15 @@
   {
    "name": "hello",
    "kind": "Hello",
-   "version": 72,
-   "hex": "03000000014800"
+   "version": 73,
+   "hex": "03000000014900"
   },
   {
    "name": "hello ack",
    "kind": "HelloAck",
-   "version": 72,
+   "version": 73,
    "pollHz": 4,
-   "hex": "0700000002480004000000"
+   "hex": "0700000002490004000000"
   },
   {
    "name": "enter by undocking",
@@ -4198,6 +4198,35 @@
    "solarSystemId": 30100032,
    "observatoryId": "4250000000000012",
    "hex": "0d0000005b404acb010ca04b3c5a190f00"
+  },
+  {
+   "name": "control tower dropped and not yet anchored",
+   "kind": "PlaceControlTower",
+   "deployableId": "4250000000000013",
+   "solarSystemId": 30100032,
+   "typeName": "Amarr Control Tower",
+   "typeId": 12235,
+   "groupId": 365,
+   "position": [
+    311989835983.1308,
+    -13069154020.916222,
+    156646308895.76187
+   ],
+   "radius": 3394.0,
+   "range": 0.0,
+   "active": false,
+   "ownerId": "1790646377000015",
+   "corporationId": 98000001,
+   "allianceId": 0,
+   "shipId": "9988400001943",
+   "hex": "6b0000005c0da04b3c5a190f00404acb011300416d61727220436f6e74726f6c20546f776572cb2f00006d0100005fc833c6022952426c5427b7db5708c285e10f7e6c3c4242000000000084aa400000000000000000004f2c3859955c0600815cd7050000000097b3089b15090000"
+  },
+  {
+   "name": "control tower anchored",
+   "kind": "SetDisruptorActive",
+   "deployableId": "4250000000000013",
+   "active": true,
+   "hex": "0a000000450da04b3c5a190f0001"
   },
   {
    "name": "how far a can is",

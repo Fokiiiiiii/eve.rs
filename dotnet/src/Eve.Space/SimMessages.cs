@@ -1142,6 +1142,12 @@ public sealed record SimPlaceObservatory(
     long DeployableId, int SolarSystemId, string Name, int TypeId, int GroupId, IReadOnlyList<double> Position, double Radius, bool Active,
     long OwnerId, int CorporationId, int AllianceId, long ShipId) : SimMessage;
 
+/// <summary>A player control tower the host keeps a record of, put in space where its pilot launched it (protocol 73). The wire carries it as a disruptor's placement
+/// with a range of 0; it is anchored while <see cref="Active"/>.</summary>
+public sealed record SimPlaceControlTower(
+    long DeployableId, int SolarSystemId, string Name, int TypeId, int GroupId, IReadOnlyList<double> Position, double Radius, bool Active,
+    long OwnerId, int CorporationId, int AllianceId, long ShipId) : SimMessage;
+
 /// <summary>A Mobile Observatory's decloaking ping in its solar system (protocol 72): the cloaked ships there whose cloak is not stabilized may be decloaked.</summary>
 public sealed record SimRemoteDecloakPing(int SolarSystemId, long ObservatoryId) : SimMessage;
 

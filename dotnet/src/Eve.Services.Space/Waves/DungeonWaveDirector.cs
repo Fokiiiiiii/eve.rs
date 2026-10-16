@@ -164,6 +164,23 @@ public sealed class DungeonWaveDirector
     }
 
 
+    /// <summary>
+    /// The origins of the active dungeons of a system: a mission pocket (its origin is 20 km ahead of the pilot) or an incursion site. Each is a deadspace pocket
+    /// that an observatory cannot be anchored in (ST-19; EveJS takes every dungeon instance as a pocket, see DEVIATIONS).
+    /// </summary>
+    public async Task<IReadOnlyList<double[]>> ActiveOriginsAsync(int solarSystemId, CancellationToken cancellationToken = default)
+    {
+        var origins = new List<double[]>();
+        foreach (var instance in await _content.ActiveByKindAsync(Kind, cancellationToken))
+        {
+            if (instance.Data<DungeonInstanceData>() is { } data && data.SolarSystemId == solarSystemId)
+            {
+                origins.Add(data.Origin);
+            }
+        }
+        return origins;
+    }
+
     /// <summary>The owner of a dungeon that belongs to no pilot (an incursion's staging site): the global owner, which no character has.</summary>
     public const long NoPilotOwner = 0;
 

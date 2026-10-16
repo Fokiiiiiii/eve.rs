@@ -241,7 +241,7 @@ public sealed class PlayerBountyHostTests : IAsyncLifetime
             Assert.Equal("paid", paid);
             Assert.Equal(2_000_000m, await WalletIskAsync(source, hunter));
             Assert.Equal(payoutId, await store.ClaimKillAsync(new PlayerBountyClaim(payoutId, "player-bounty:" + payoutId + ":credit", hunter, 0, 0, [victim], 10_000_000m, now),
-                (_, _) => throw new InvalidOperationException("a claimed kill schedules nothing again")));
+                (_, _, _) => throw new InvalidOperationException("a claimed kill schedules nothing again")));
             Assert.Equal(2_000_000m, await WalletIskAsync(source, hunter));
         }
         finally

@@ -363,7 +363,17 @@ internal sealed partial class CharacterServicesComposition
                     return;
                 try
                 {
-                    npcFactionStanding.ApplyAsync(kill.FinalBlowCharacterId, kill.Profile.FactionId, kill.SolarSystemId, CancellationToken.None).GetAwaiter().GetResult();
+                    // the pilot is told the new standing as the reference tells it (EveJS notifyStandingSet: OnStandingSet(faction, pilot, standing))
+                    var standing = npcFactionStanding.ApplyAsync(kill.FinalBlowCharacterId, kill.Profile.FactionId, kill.SolarSystemId, CancellationToken.None).GetAwaiter().GetResult();
+                    if (standing is { } changed && characterSessions?.Of(kill.FinalBlowCharacterId) is { } pilot)
+                    {
+                        pilot.SendNotification("OnStandingSet", "clientID", new Eve.Marshal.PyList(
+                        [
+                            new Eve.Marshal.PyInt(kill.Profile.FactionId),
+                            new Eve.Marshal.PyLong(kill.FinalBlowCharacterId),
+                            new Eve.Marshal.PyReal(changed),
+                        ]));
+                    }
                 }
                 catch (Exception error)
                 {

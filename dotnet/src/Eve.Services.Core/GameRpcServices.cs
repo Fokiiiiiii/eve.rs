@@ -31,7 +31,8 @@ public sealed record GameRpcCallbacks(
     ReadPeaceTreatiesCallback? ReadPeaceTreaties = null,
     PublicQaToolsRpcCallbacks? PublicQaTools = null,
     IJumpCloneStore? JumpClones = null,
-    Func<long, CancellationToken, ValueTask<ProjectDiscoveryPlayerState?>>? ReadProjectDiscoveryState = null);
+    Func<long, CancellationToken, ValueTask<ProjectDiscoveryPlayerState?>>? ReadProjectDiscoveryState = null,
+    JumpCloneSpaceLink? JumpCloneSpace = null);
 
 [Service("raffleMgr")]
 public sealed partial class RaffleMgrService(Func<int?, CancellationToken, ValueTask<int?>>? seedRafflesAsync = null)

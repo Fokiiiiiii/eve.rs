@@ -443,6 +443,14 @@ public static SkillAugmentationReader CreateAugmentationReader(
     [Method("CheckAndSendNotifications")]
     public PyValue CheckAndSendNotifications(ServiceCall _) => new PyList([]);
 
+    /// <summary>
+    /// <c>GetSkillBundleInfo(skillBundleID)</c>: the client unpacks <c>name, icon</c> for the crate's loot line (eve-logic
+    /// <c>crate/lootItem.py</c> 87). No bundle name or icon exists in the SDE, EveJS or eve-logic, so the answer is the client's
+    /// empty shape: an empty label and no icon (the client then falls back to its default icon). Recorded in DEVIATIONS.
+    /// </summary>
+    [Method("GetSkillBundleInfo")]
+    public PyValue GetSkillBundleInfo(ServiceCall _) => Py.Tuple(new PyWString(string.Empty), PyNone.Instance);
+
     [Method("GetSkills")]
     public async ValueTask<PyValue> GetSkills(ServiceCall call)
     {

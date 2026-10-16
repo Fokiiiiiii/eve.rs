@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using Eve.Macho;
 using Eve.Marshal;
 using Eve.Services;
@@ -9,6 +10,18 @@ public sealed record JumpCloneRecord(long JumpCloneId, long LocationId, string L
 
 /// <summary>What a character has installed, and the FILETIME of its last clone jump (0 when none).</summary>
 public sealed record JumpCloneSnapshot(IReadOnlyList<JumpCloneRecord> Clones, long TimeLastJumpFileTime);
+
+/// <summary>
+/// The settlement of one install (EveJS <c>jumpCloneInstallSettlements</c>): the fee the character pays, and who is paid it: the owner
+/// corporation of a structure (its wallet is credited), or the offering pilot of a ship (the journal's counterparty; no wallet is credited).
+/// </summary>
+public sealed record JumpCloneInstall(long LocationId, string LocationKind, decimal Fee, long OwnerCorporationId = 0, long OfferingCharacterId = 0);
+
+/// <summary>A structure's clone bay as one character may use it: the owner's fee and the owner corporation.</summary>
+public sealed record StructureCloneBay(long StructureId, long OwnerCorporationId, decimal Fee);
+
+/// <summary>The active ship of a pilot and its clone bay: the hull's clone capacity and operational range, and whether a Clone Vat Bay is fitted.</summary>
+public sealed record ShipCloneBay(long ShipId, bool CanReceiveCloneJumps, bool HasCloneVatBay, int Capacity, double MaxOperationalDistance);
 
 /// <summary>
 /// The outcome of a clone jump's state change. A refusal names the reason (<c>MUST_LEAVE_SHIP</c>, <c>CLONE_NOT_FOUND</c>,
@@ -30,7 +43,7 @@ public static class CloneJumpRules
         lastJumpFileTime > 0 && cooldownHours > 0 && lastJumpFileTime + cooldownHours * TimeSpan.TicksPerHour > nowFileTime;
 }
 
-/// <summary>The clone rows and the skill levels the jump clone service reads and writes (the host supplies them from PostgreSQL).</summary>
+/// <summary>The rows and the skill levels the jump clone service reads and writes (the host supplies them from PostgreSQL).</summary>
 public interface IJumpCloneStore
 {
     ValueTask<JumpCloneSnapshot> ReadAsync(long characterId, CancellationToken cancellationToken);
@@ -40,20 +53,41 @@ public interface IJumpCloneStore
     ValueTask<int> SkillLevelAsync(long characterId, int typeId, CancellationToken cancellationToken);
 
     /// <summary>
-    /// Installs a clone at the location and charges the fee in one transaction. Null when the character cannot pay (nothing is
+    /// Installs a clone and records its settlement, with the fee moved, in one transaction. Null when the character cannot pay (nothing is
     /// installed then).
     /// </summary>
-    ValueTask<JumpCloneRecord?> InstallAsync(long characterId, long locationId, string locationKind, decimal fee, CancellationToken cancellationToken);
+    ValueTask<JumpCloneRecord?> InstallAsync(long characterId, JumpCloneInstall install, CancellationToken cancellationToken);
 
     /// <summary>The character's ISK balance (for the not-enough-money answer).</summary>
     ValueTask<decimal> IskBalanceAsync(long characterId, CancellationToken cancellationToken);
-
     /// <summary>
     /// The clone jump, in one transaction: the target clone becomes the body, the body that left keeps its implants in a clone at
     /// the origin (replacing the clone there), the character is in the target's station, the cooldown starts at
     /// <paramref name="nowFileTime"/> and the fee is debited. Nothing changes on a refusal.
     /// </summary>
     ValueTask<CloneJumpResult> JumpAsync(long characterId, long targetCloneId, long originLocationId, decimal fee, long nowFileTime, CancellationToken cancellationToken);
+}
+
+/// <summary>The space side of the clone installs, supplied by the Host: the pilot's active ship, the distance of two ships, the online sessions and the structures' clone bays.</summary>
+public interface IJumpCloneSpace
+{
+    /// <summary>The pilot's active ship and its clone bay; null when the pilot has no active ship.</summary>
+    ValueTask<ShipCloneBay?> ActiveShipAsync(ClientSession session, CancellationToken cancellationToken);
+
+    /// <summary>The centre-to-centre distance in metres of two ships that are both in space in one solar system; null otherwise.</summary>
+    ValueTask<double?> DistanceAsync(ClientSession first, long firstShipId, ClientSession second, long secondShipId, CancellationToken cancellationToken);
+
+    /// <summary>The session of an online character; null when none.</summary>
+    ClientSession? SessionOf(long characterId);
+
+    /// <summary>The clone bay of a structure for the character (a medical or jump clone service it has, and the docking right); null when none.</summary>
+    ValueTask<StructureCloneBay?> StructureBayAsync(long characterId, long structureId, CancellationToken cancellationToken);
+}
+
+/// <summary>The late link to the space side: the Host sets <see cref="Space"/> once the space sessions and the structures exist.</summary>
+public sealed class JumpCloneSpaceLink
+{
+    public IJumpCloneSpace? Space { get; set; }
 }
 
 /// <summary>
@@ -63,11 +97,22 @@ public interface IJumpCloneStore
 /// Infomorph Psychology levels (wiki: Jump clone; EveJS <c>jumpCloneRules.js</c>).
 /// </summary>
 [Service("jumpCloneSvc")]
-public sealed partial class JumpCloneService(IJumpCloneStore? store = null)
+public sealed partial class JumpCloneService(IJumpCloneStore? store = null, JumpCloneSpaceLink? spaceLink = null)
 {
     /// <summary>The skills that set the clone limit: Infomorph Psychology, Advanced, Elite (one clone per level each).</summary>
     private static readonly int[] CloneLimitSkills = [24242, 33407, 73910];
     private const int CloneNameMaxLength = 100;
+
+    /// <summary>The install fee of a clone station or of a structure without its own fee (EveJS <c>JUMP_CLONE_INSTALL_COST</c>, the wiki's 900,000 ISK).</summary>
+    private const decimal JumpCloneInstallFee = 900000m;
+
+    /// <summary>
+    /// The ship clone offers, by the pilot they were made to (EveJS <c>pendingShipCloneOffers</c>). They live in memory, as the reference keeps them:
+    /// an offer does not survive a Host restart, and an installed clone does.
+    /// </summary>
+    private readonly ConcurrentDictionary<long, ShipCloneOffer> _offers = new();
+
+    private sealed record ShipCloneOffer(long OfferingCharacterId, long TargetCharacterId, long ShipId);
 
     [Method("MachoResolveObject")]
     public PyValue MachoResolveObject(ServiceCall _) => new PyInt(MachoMessage.ProxyNodeId);
@@ -164,13 +209,15 @@ public sealed partial class JumpCloneService(IJumpCloneStore? store = null)
             errors.Add(Py.Tuple(new PyStr("UI/Medical/JumpCloneUsageAndCapacity"),
                 Py.Dict(("count", new PyInt(snapshot.Clones.Count)), ("limit", new PyInt(limit)))));
         }
-        // shortcut: the structure clone-service rights check (EveJS validateInstallJumpClone) comes with the install package CH-15.
         var here = snapshot.Clones.Count(clone => clone.LocationId == location);
         if (here > 0)
         {
             errors.Add(Py.Tuple(new PyStr("UI/CharacterSheet/CharacterSheetWindow/JumpCloneScroll/InstalledCloneCount"),
                 Py.Dict(("clone_count", new PyInt(here)))));
         }
+        // a structure installs only where the character may use its clone bay (EveJS validateInstallJumpClone)
+        if (!IsStationDock(call.Session) && await StructureBay(characterId, location, call.Cancellation) is null)
+            errors.Add(new PyStr("UI/Medical/Errors/UnknownValidationError"));
         return new PyList([.. errors]);
     }
 
@@ -208,8 +255,118 @@ public sealed partial class JumpCloneService(IJumpCloneStore? store = null)
         return PyNone.Instance;
     }
 
-    /// <summary>The install fee of a clone station (EveJS <c>JUMP_CLONE_INSTALL_COST</c>, the wiki's 900,000 ISK).</summary>
-    private const decimal JumpCloneInstallFee = 900000m;
+    /// <summary>
+    /// <c>InstallCloneInStation()</c> and <c>InstallCloneInStructure()</c>: installs a clone of the character at the place it is docked in
+    /// (EveJS <c>installCloneAtCurrentLocation</c>) and charges the fee. A validation failure is refused with its label; too little ISK is
+    /// the client's NotEnoughMoney.
+    /// </summary>
+    [Method("InstallCloneInStation")]
+    public async ValueTask<PyValue> InstallCloneInStation(ServiceCall call) => await Install(call);
+
+    [Method("InstallCloneInStructure")]
+    public async ValueTask<PyValue> InstallCloneInStructure(ServiceCall call) => await Install(call);
+
+    /// <summary>
+    /// <c>GetPriceForClone()</c>: the fee of an install here: the structure's clone bay fee where the character may use it, else the install fee
+    /// (EveJS <c>getCloneServiceCostForLocation</c>, which answers the install fee outside a structure).
+    /// </summary>
+    [Method("GetPriceForClone")]
+    public async ValueTask<PyValue> GetPriceForClone(ServiceCall call)
+    {
+        var fee = JumpCloneInstallFee;
+        var structure = DockedLocation(call.Session);
+        if (call.Session.CharacterId is { } characterId && structure > 0 && !IsStationDock(call.Session)
+            && await StructureBay(characterId, structure, call.Cancellation) is { } bay)
+        {
+            fee = bay.Fee;
+        }
+        return new PyReal((double)fee);
+    }
+
+    /// <summary>
+    /// <c>OfferShipCloneInstallation(charID)</c>: the pilot of a ship with a Clone Vat Bay offers the target pilot a clone installed in the ship
+    /// (EveJS <c>offerShipCloneInstallation</c>). The target hears <c>OnShipJumpCloneInstallationOffered</c>; the offer waits in memory.
+    /// </summary>
+    [Method("OfferShipCloneInstallation")]
+    public async ValueTask<PyValue> OfferShipCloneInstallation(ServiceCall call)
+    {
+        var offering = call.Session.CharacterId ?? 0;
+        var target = Number(call.Arg(0)) ?? 0;
+        var space = Space();
+        var ship = await space.ActiveShipAsync(call.Session, call.Cancellation);
+        if (offering == 0 || target == 0 || ship is null)
+            throw MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("Clone install target unavailable")));
+        if (!ship.CanReceiveCloneJumps || !ship.HasCloneVatBay)
+            throw MachoErrors.ThrowUserError("InviteClone1");
+        if (space.SessionOf(target) is not { } targetSession)
+            throw MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("Clone install target unavailable")));
+        var targetShip = await space.ActiveShipAsync(targetSession, call.Cancellation);
+        if (!await InCloneRange(space, call.Session, ship, targetSession, targetShip, call.Cancellation))
+            throw MachoErrors.ThrowUserError("InviteClone2");
+
+        _offers[target] = new ShipCloneOffer(offering, target, ship.ShipId);
+        targetSession.SendNotification("OnShipJumpCloneInstallationOffered", "clientID", OfferPayload(offering, target, ship.ShipId));
+        return PyNone.Instance;
+    }
+
+    /// <summary>
+    /// <c>AcceptShipCloneInstallation()</c>: the target pilot accepts the offer. The clone is installed in the offering ship, the fee is paid,
+    /// and the pilot and the offering pilot hear <c>OnShipJumpCloneInstallationDone</c> (EveJS <c>acceptShipCloneInstallation</c>).
+    /// </summary>
+    [Method("AcceptShipCloneInstallation")]
+    public async ValueTask<PyValue> AcceptShipCloneInstallation(ServiceCall call)
+    {
+        var target = call.Session.CharacterId ?? 0;
+        if (!_offers.TryGetValue(target, out var offer))
+            throw MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("Clone install offer expired")));
+        var space = Space();
+        var offeringSession = space.SessionOf(offer.OfferingCharacterId);
+        var offeringShip = offeringSession is null ? null : await space.ActiveShipAsync(offeringSession, call.Cancellation);
+        var targetShip = await space.ActiveShipAsync(call.Session, call.Cancellation);
+        if (offeringSession is null || offeringShip is null || offeringShip.ShipId != offer.ShipId
+            || !await InCloneRange(space, offeringSession, offeringShip, call.Session, targetShip, call.Cancellation))
+        {
+            _offers.TryRemove(target, out _);
+            throw MachoErrors.ThrowUserError("InviteClone2");
+        }
+
+        var snapshot = await Snapshot(call);
+        if (snapshot.Clones.Count(clone => clone.LocationKind == "ship" && clone.LocationId == offer.ShipId) >= offeringShip.Capacity)
+            throw MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("Clone bay is full")));
+        if (snapshot.Clones.Count >= await CloneLimit(target, call.Cancellation))
+            throw MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("UI/Medical/JumpCloneSkillReqNotMet")));
+
+        var install = new JumpCloneInstall(offer.ShipId, "ship", JumpCloneInstallFee, 0, offer.OfferingCharacterId);
+        if (await Store().InstallAsync(target, install, call.Cancellation) is null)
+            throw await NotEnoughMoney(target, call.Cancellation);
+        _offers.TryRemove(target, out _);
+
+        // the reference's order: the pilot, then the offering pilot, then the clone caches
+        var payload = OfferPayload(offer.OfferingCharacterId, target, offer.ShipId);
+        call.Session.SendNotification("OnShipJumpCloneInstallationDone", "clientID", payload);
+        offeringSession.SendNotification("OnShipJumpCloneInstallationDone", "clientID", payload);
+        Invalidate(call.Session, offer.ShipId, target);
+        return PyNone.Instance;
+    }
+
+    /// <summary>
+    /// <c>CancelShipCloneInstallation()</c>: either pilot cancels the offer that involves it; both hear
+    /// <c>OnShipJumpCloneInstallationCanceled</c> (EveJS <c>cancelShipCloneInstallation</c>). Nothing to cancel is not an error.
+    /// </summary>
+    [Method("CancelShipCloneInstallation")]
+    public PyValue CancelShipCloneInstallation(ServiceCall call)
+    {
+        var caller = call.Session.CharacterId ?? 0;
+        var offer = _offers.Values.FirstOrDefault(candidate => candidate.TargetCharacterId == caller)
+            ?? _offers.Values.FirstOrDefault(candidate => candidate.OfferingCharacterId == caller);
+        if (offer is null)
+            return PyNone.Instance;
+        _offers.TryRemove(offer.TargetCharacterId, out _);
+        var payload = OfferPayload(offer.OfferingCharacterId, offer.TargetCharacterId, offer.ShipId);
+        call.Session.SendNotification("OnShipJumpCloneInstallationCanceled", "clientID", payload);
+        spaceLink?.Space?.SessionOf(offer.TargetCharacterId)?.SendNotification("OnShipJumpCloneInstallationCanceled", "clientID", payload);
+        return PyNone.Instance;
+    }
 
     /// <summary>The activation fee of a clone jump (EveJS <c>REF_JUMP_CLONE_ACTIVATION_FEE</c>, the same 900,000 ISK).</summary>
     private const decimal JumpCloneActivationFee = 900000m;
@@ -261,50 +418,61 @@ public sealed partial class JumpCloneService(IJumpCloneStore? store = null)
         return PyNone.Instance;
     }
 
-    /// <summary>
-    /// <c>InstallCloneInStation()</c>: installs a clone of the character at the station it is docked in and charges the install fee
-    /// (EveJS <c>installCloneAtCurrentLocation</c>). A validation failure is refused with its label; too little ISK is the client's
-    /// NotEnoughMoney.
-    /// </summary>
-    [Method("InstallCloneInStation")]
-    public async ValueTask<PyValue> InstallCloneInStation(ServiceCall call) => await Install(call, station: true);
-
-    /// <summary>
-    /// <c>InstallCloneInStructure()</c>. shortcut: the structure's clone-service fee is set by its owner and needs the rights check
-    /// (EveJS <c>getCloneServiceCostForLocation</c>); until that exists a structure install is refused.
-    /// </summary>
-    [Method("InstallCloneInStructure")]
-    public async ValueTask<PyValue> InstallCloneInStructure(ServiceCall call) => await Install(call, station: false);
-
-    /// <summary>The fee of the install at the place the character is docked (the station fee; 0 where the fee is not modelled yet).</summary>
-    [Method("GetPriceForClone")]
-    public PyValue GetPriceForClone(ServiceCall call) =>
-        (long?)call.Session.GetInt("stationid") is > 0 ? new PyReal((double)JumpCloneInstallFee) : new PyInt(0);
-
-    private async ValueTask<PyValue> Install(ServiceCall call, bool station)
+    private async ValueTask<PyValue> Install(ServiceCall call)
     {
         var location = DockedLocation(call.Session);
         if (call.Session.CharacterId is not { } characterId || location == 0)
             throw MachoErrors.ThrowUserError("NotAtStation");
-        if (!station)
-            throw MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("Jump clone installation in a structure is not available on this server.")));
         if (await ValidateInstallJumpClone(call) is PyList { Items.Count: > 0 } problems)
         {
             var first = problems.Items[0];
             var label = first is PyStr text ? text.Value : (first as PyTuple)?.Items[0] is PyStr tupleLabel ? tupleLabel.Value : "UI/Medical/Errors/UnknownValidationError";
             throw MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr(label)));
         }
-        var installed = await Store().InstallAsync(characterId, location, "station", JumpCloneInstallFee, call.Cancellation);
-        if (installed is null)
+
+        JumpCloneInstall install;
+        if (IsStationDock(call.Session))
         {
-            var balance = await Store().IskBalanceAsync(characterId, call.Cancellation);
-            throw MachoErrors.ThrowUserError("NotEnoughMoney", ("amount", new PyReal((double)JumpCloneInstallFee)), ("balance", new PyReal((double)balance)));
+            install = new JumpCloneInstall(location, "station", JumpCloneInstallFee);
         }
+        else
+        {
+            var bay = await StructureBay(characterId, location, call.Cancellation)
+                ?? throw MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("UI/Medical/Errors/UnknownValidationError")));
+            install = new JumpCloneInstall(location, "structure", bay.Fee, bay.OwnerCorporationId);
+        }
+        if (await Store().InstallAsync(characterId, install, call.Cancellation) is null)
+            throw await NotEnoughMoney(characterId, call.Cancellation);
         Invalidate(call.Session, location, characterId);
         return PyNone.Instance;
     }
 
+    /// <summary>The not-enough-money refusal with the fee and the character's balance (the client's NotEnoughMoney).</summary>
+    private async ValueTask<MachoWrappedException> NotEnoughMoney(long characterId, CancellationToken cancellationToken)
+    {
+        var balance = await Store().IskBalanceAsync(characterId, cancellationToken);
+        return MachoErrors.ThrowUserError("NotEnoughMoney", ("amount", new PyReal((double)JumpCloneInstallFee)), ("balance", new PyReal((double)balance)));
+    }
+
     private IJumpCloneStore Store() => store ?? throw new InvalidOperationException("the jump clones are not wired on this server");
+
+    private IJumpCloneSpace Space() => spaceLink?.Space ?? throw new InvalidOperationException("the ship and structure clones are not wired on this server");
+
+    private async ValueTask<StructureCloneBay?> StructureBay(long characterId, long structureId, CancellationToken cancellationToken) =>
+        spaceLink?.Space is { } space ? await space.StructureBayAsync(characterId, structureId, cancellationToken) : null;
+
+    /// <summary>EveJS <c>validateCloneVatTargetRange</c>: the offering ship has an operational range and the target is within it.</summary>
+    private static async ValueTask<bool> InCloneRange(IJumpCloneSpace space, ClientSession offering, ShipCloneBay ship, ClientSession target, ShipCloneBay? targetShip, CancellationToken cancellationToken)
+    {
+        if (ship.MaxOperationalDistance <= 0 || targetShip is null)
+            return false;
+        return await space.DistanceAsync(offering, ship.ShipId, target, targetShip.ShipId, cancellationToken) is { } distance
+            && distance <= ship.MaxOperationalDistance;
+    }
+
+    /// <summary>The ship clone notifications carry one list: the offering pilot, the target pilot, the ship, and 0 (EveJS <c>payload</c>).</summary>
+    private static PyList OfferPayload(long offeringCharacterId, long targetCharacterId, long shipId) =>
+        new([new PyLong(offeringCharacterId), new PyLong(targetCharacterId), new PyLong(shipId), new PyInt(0)]);
 
     private async ValueTask<JumpCloneSnapshot> Snapshot(ServiceCall call) =>
         call.Session.CharacterId is { } characterId
@@ -332,6 +500,8 @@ public sealed partial class JumpCloneService(IJumpCloneStore? store = null)
         var structure = (long?)session.GetInt("structureid");
         return structure is > 0 && structure != (long?)session.GetInt("shipid") ? structure.Value : 0;
     }
+
+    private static bool IsStationDock(ClientSession session) => (long?)session.GetInt("stationid") is > 0;
 
     private static PyValue CloneRows(IReadOnlyList<JumpCloneRecord> clones) => Py.Rowset(
         ["jumpCloneID", "locationID", "cloneName"],

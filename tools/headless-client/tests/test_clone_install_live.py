@@ -14,6 +14,7 @@ import pytest
 
 from evecli import marshal as m
 from evecli import packet as p
+from evecli.observe import notifications_of
 
 from tests.test_login_to_character import WALK, connect, revive
 from tests.test_market import _label_and_arguments
@@ -46,3 +47,18 @@ def test_a_character_without_the_clone_skill_is_refused_the_install_with_the_val
         assert arguments["notify"] == "UI/Medical/JumpCloneSkillReqNotMet"
 
         assert m.plain(client.call_bound(clones, "GetStationCloneState"))[1]["lines"] == []
+
+
+def test_a_ship_without_a_clone_vat_bay_is_refused_a_clone_offer_with_the_client_label():
+    """OfferShipCloneInstallation: the pilot's ship has no Clone Vat Bay, so the offer is refused with InviteClone1 and nothing is sent."""
+    run = uuid.uuid4().hex[:10]
+    with connect(f"clone-offer-{run}") as client:
+        character_id = enter_new_character(client, run)
+        clones = client.call("jumpCloneSvc", "MachoBindObject", (START_STATION, 15), None)[0]
+
+        with pytest.raises(p.MachoError) as refused:
+            client.call_bound(clones, "OfferShipCloneInstallation", character_id)
+        label, _arguments = _label_and_arguments(refused.value)
+        assert label == "InviteClone1"
+        assert "OnShipJumpCloneInstallationOffered" not in {event["name"] for event in notifications_of(client)}
+

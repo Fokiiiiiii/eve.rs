@@ -1,0 +1,63 @@
+using Eve.Services.Core;
+using Eve.Structures;
+
+namespace Eve.Host;
+
+/// <summary>
+/// The clone bays of the structures (EveJS <c>characterHasStructureCloneService</c>, <c>getCloneServiceCostForLocation</c>) and the late link of
+/// the jump clone service to the space side. The link is set once the space sessions and the structures are composed.
+/// </summary>
+internal sealed partial class CharacterServicesComposition
+{
+    /// <summary>The CLONINGBAY_TAX profile setting (EveJS <c>STRUCTURE_SETTING_ID.CLONINGBAY_TAX</c>).</summary>
+    private const int CloningBayTaxSettingId = 23;
+
+    /// <summary>EveJS <c>MAX_STRUCTURE_CLONE_BAY_COST</c>: the highest fee a structure may set.</summary>
+    private const decimal MaxStructureCloneBayFee = 100000000m;
+
+    private readonly JumpCloneSpaceLink jumpCloneSpace = new();
+
+    /// <summary>The clone installs read the space side on every server; without a space scene no ship is in space (its distance is none).</summary>
+    private void LinkJumpCloneSpace() =>
+        jumpCloneSpace.Space = new HostJumpCloneSpace(spaceSessions, ships, dogma, characterSessions, StructureCloneBayAsync);
+
+    /// <summary>
+    /// A structure's clone bay for a character: its Medical service online, or its Jump Clone service online and the character allowed to dock
+    /// there. The fee is the owner's CLONINGBAY_TAX (EveJS: the install fee when the profile has none).
+    /// </summary>
+    private async ValueTask<StructureCloneBay?> StructureCloneBayAsync(long characterId, long structureId, CancellationToken token)
+    {
+        StructureRecord? record;
+        int medical, jumpClone;
+        await using (var connection = await source.OpenConnectionAsync(token))
+        {
+            record = await structureStore.GetAsync(connection, null, structureId, false, token);
+            if (record is null || record.Snapshot.DestroyedMs > 0)
+                return null;
+            var services = await structureStore.ServicesAsync(connection, null, structureId, token);
+            medical = services.GetValueOrDefault(Eve.Structures.StructureServiceIds.Medical);
+            jumpClone = services.GetValueOrDefault(Eve.Structures.StructureServiceIds.JumpClone);
+        }
+        // shortcut: the Medical service's access (its own setting, EVE.js characterHasStructureService) is not read; the docking right is the bay's rule
+        if (medical != Eve.Structures.ServiceState.Online
+            && (jumpClone != Eve.Structures.ServiceState.Online || !await StructureDockingAllowedAsync(characterId, structureId, token)))
+            return null;
+
+        // shortcut: a structure with no profile (ProfileId 0) takes the install fee; EVE.js reads the default profile of the owner
+        var fee = 900000m;
+        if (record.ProfileId > 0
+            && (await structureProfilesRpcBackend.GetProfileSettingsAsync(record.OwnerCorporationId, record.ProfileId, token))
+                .TryGetValue(CloningBayTaxSettingId, out var groups)
+            && groups.Count > 0)
+        {
+            fee = Math.Clamp(groups[0].Value switch
+            {
+                Eve.Marshal.PyReal real => (decimal)real.Value,
+                Eve.Marshal.PyInt integer => integer.Value,
+                Eve.Marshal.PyLong longValue => longValue.Value,
+                _ => fee,
+            }, 0m, MaxStructureCloneBayFee);
+        }
+        return new StructureCloneBay(structureId, record.OwnerCorporationId, fee);
+    }
+}

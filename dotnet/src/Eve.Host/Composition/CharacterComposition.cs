@@ -249,7 +249,8 @@ internal sealed partial class CharacterServicesComposition
                 }),
             JumpClones: new HostJumpCloneStore(new Eve.Characters.PgJumpCloneStore(source, characterSchema), source, skills, economyWallets, wallets,
                 characters, items, dogma, stations),
-            ReadProjectDiscoveryState: ReadProjectDiscoveryStateAsync);
+            ReadProjectDiscoveryState: ReadProjectDiscoveryStateAsync,
+            JumpCloneSpace: jumpCloneSpace);
 
         stationGuestLedger = new Eve.Services.Station.StationGuestLedger();
         characterEntryHooks = new List<ICharacterEntryHook>();

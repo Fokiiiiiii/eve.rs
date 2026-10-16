@@ -5,6 +5,9 @@ namespace Eve.Characters;
 /// <summary>An installed jump clone: where it is, its name, and the implant types in it (slot order).</summary>
 public sealed record InstalledJumpClone(long JumpCloneId, long LocationId, string LocationKind, string Name, IReadOnlyList<int> ImplantTypeIds);
 
+/// <summary>One install as the store records it: where, the fee, and who the fee went to (0 for none).</summary>
+public sealed record JumpCloneInstallRecord(long LocationId, string LocationKind, decimal Fee, long OwnerCorporationId, long OfferingCharacterId);
+
 /// <summary>What a character has installed, and the FILETIME of its last clone jump (0 when none).</summary>
 public sealed record JumpCloneState(IReadOnlyList<InstalledJumpClone> Clones, long TimeLastJumpFileTime);
 
@@ -74,6 +77,23 @@ public sealed class PgJumpCloneStore
             Parameters = { new() { Value = characterId }, new() { Value = locationId }, new() { Value = locationKind } },
         };
         return (long)(await command.ExecuteScalarAsync(cancellationToken))!;
+    }
+
+    /// <summary>Records one install's settlement (inside the caller's transaction): the fee, the clone it made, and who was paid.</summary>
+    public async Task InsertSettlementAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, string operationId, long characterId, long jumpCloneId,
+        JumpCloneInstallRecord install, CancellationToken cancellationToken = default)
+    {
+        await using var command = new NpgsqlCommand(
+            $"INSERT INTO {_schema}.character_jump_clone_settlements(operation_id, character_id, jump_clone_id, location_id, location_kind, amount, owner_corporation_id, offering_character_id) " +
+            "VALUES ($1, $2, $3, $4, $5, $6, $7, $8)", connection, transaction)
+        {
+            Parameters =
+            {
+                new() { Value = operationId }, new() { Value = characterId }, new() { Value = jumpCloneId }, new() { Value = install.LocationId },
+                new() { Value = install.LocationKind }, new() { Value = install.Fee }, new() { Value = install.OwnerCorporationId }, new() { Value = install.OfferingCharacterId },
+            },
+        };
+        await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
     /// <summary>Sets the last clone jump time back to zero, so the next jump has no cooldown.</summary>

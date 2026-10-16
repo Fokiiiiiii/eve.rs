@@ -18,4 +18,12 @@ public interface IMultipleTrainingCallbacks
     /// </summary>
     ValueTask<IReadOnlyList<(int Slot, long EndsAt)>> ActivateCertificatesAsync(
         long authenticatedUserId, PyValue tokens, int? trainingId, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Uses one Multiple Character Training certificate item (<c>ActivateMultiTraining(itemID, trainingID)</c>): the item is consumed
+    /// and the queue gets 30 days. Refuses an item that is not such a certificate, or that no character of the account holds.
+    /// Returns the queues that run after the activation.
+    /// </summary>
+    ValueTask<IReadOnlyList<(int Slot, long EndsAt)>> ActivateItemAsync(
+        long authenticatedUserId, long itemId, int? trainingId, CancellationToken cancellationToken);
 }

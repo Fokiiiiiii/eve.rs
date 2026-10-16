@@ -26,12 +26,27 @@ public sealed partial class RedeemService
     }
 
     /// <summary>
-    /// Activates an item certificate of the account (<c>ActivateMultiTraining(itemID, trainingID)</c>). Consuming an inventory item is not
-    /// implemented yet: the call is refused, so no item is consumed and no queue is granted.
+    /// <c>ActivateMultiTraining(itemID, trainingID=...)</c>: uses a certificate item of the account. The item is consumed and the queue gets
+    /// 30 days. A refusal is the reference's CustomInfo text (EveJS and the wiki are the sources; EveJS itself only refreshes the slots).
     /// </summary>
     [Method("ActivateMultiTraining")]
-    public ValueTask<PyValue> ActivateMultiTraining(ServiceCall call) =>
-        throw new NotSupportedException("Activating a Multiple Character Training item is not implemented: the item is not consumed and no queue is granted.");
+    public async ValueTask<PyValue> ActivateMultiTraining(ServiceCall call)
+    {
+        call.Cancellation.ThrowIfCancellationRequested();
+        var requestedTraining = call.Args.Count > 1 ? call.Arg(1) : call.Kwarg("trainingID") ?? PyNone.Instance;
+        if (_multipleTraining is null)
+            throw MachoErrors.ThrowUserError("CustomInfo", ("info", new PyStr("Multiple Character Training is not available on this server.")));
+        var itemId = call.Arg(0) switch { PyInt i => i.Value, PyLong l => l.Value, _ => 0L };
+        try
+        {
+            var slots = await _multipleTraining.ActivateItemAsync(AuthenticatedUserId(call), itemId, TrainingSlotArgument(requestedTraining), call.Cancellation);
+            return new PyList([.. slots.Select(slot => (PyValue)Py.Tuple(new PyInt(slot.Slot), Py.FileTimeLong(slot.EndsAt)))]);
+        }
+        catch (InvalidOperationException error)
+        {
+            throw MachoErrors.ThrowUserError("CustomInfo", ("info", new PyStr(error.Message)));
+        }
+    }
 
     /// <summary>Activates the soulbound certificates in the tokens (<c>ActivateSoulboundMultiTraining(charID, tokens, trainingID)</c>).</summary>
     [Method("ActivateSoulboundMultiTraining")]

@@ -207,6 +207,48 @@ public sealed class CharacterHostTests
         Assert.Empty(Notifications(sink));
     }
 
+    [PgFact]
+    public async Task A_multiple_character_training_certificate_is_consumed_for_thirty_days_and_other_items_are_refused()
+    {
+        await using var rig = await CharacterHostRig.CreateAsync();
+        Assert.Equal(1, await rig.CreateAccountAsync());
+        var character = await rig.CreateCharacterAsync();
+        var sink = new RecordingPacketSink();
+        var session = new ClientSession { CharacterId = character, UserId = 1, Sink = sink };
+        var userSvc = Assert.IsAssignableFrom<IService>(rig.Registry.Lookup("userSvc"));
+        var items = new PgItemStore(rig.Source, rig.InventorySchema);
+
+        long certificate;
+        long rifter;
+        await using (var connection = await rig.Source.OpenConnectionAsync())
+        await using (var transaction = await connection.BeginTransactionAsync())
+        {
+            certificate = await items.CreateAsync(connection, transaction, new NewItem(TypeId: 34133, OwnerId: character, LocationId: rig.Station, Flag: 4));
+            rifter = await items.CreateAsync(connection, transaction, new NewItem(TypeId: 587, OwnerId: character, LocationId: rig.Station, Flag: 4));
+            await transaction.CommitAsync();
+        }
+
+        // an item that is not a certificate is refused, and stays
+        var refused = await Assert.ThrowsAsync<MachoWrappedException>(() => CallAsync(userSvc, "ActivateMultiTraining", session, new PyLong(rifter)));
+        Assert.Equal("That item is not a Multiple Character Training certificate.", InfoText(refused));
+        Assert.Contains(await items.OwnedByAsync(character), item => item.Id == rifter);
+
+        // the certificate is consumed, a queue runs for 30 days from now, and the client is told
+        var slots = Assert.IsType<PyList>(await CallAsync(userSvc, "ActivateMultiTraining", session, new PyLong(certificate)));
+        var slot = Assert.IsType<PyTuple>(Assert.Single(slots.Items));
+        Assert.Equal(new PyInt(2), slot.Items[0]);
+        var endsAt = DateTime.FromFileTimeUtc(((PyLong)slot.Items[1]).Value);
+        Assert.InRange(endsAt, DateTime.UtcNow.AddDays(29), DateTime.UtcNow.AddDays(31));
+        Assert.DoesNotContain(await items.OwnedByAsync(character), item => item.Id == certificate);
+        // the notification goes to the sessions registered with the host; this test's session is not one, so it is not checked here (gap)
+
+        // a restart keeps the queue
+        await rig.RestartAsync();
+        var restarted = Assert.IsAssignableFrom<IService>(rig.Registry.Lookup("userSvc"));
+        var after = Assert.IsType<PyList>(await CallAsync(restarted, "GetUpdatedMultiCharacterTraining", session));
+        Assert.Equal(slot.Items[1], Assert.IsType<PyTuple>(Assert.Single(after.Items)).Items[1]);
+    }
+
     private static async Task<PyValue> CallAsync(IService service, string method, ClientSession session, params PyValue[] args) =>
         await service.CallAsync(new ServiceCall { Method = method, Args = args, Session = session });
 
@@ -284,6 +326,16 @@ public sealed class CharacterHostTests
         public string CharactersSchema => _schemas["EVE_CHARACTERS_SCHEMA"];
         public string SkillsSchema => _schemas["EVE_SKILLS_SCHEMA"];
         public string InventorySchema => _schemas["EVE_INVENTORY_SCHEMA"];
+        public string IdentitySchema => _schemas["EVE_IDENTITY_SCHEMA"];
+
+        /// <summary>A fresh account in the identity schema (Omega until 2100 by the schema's default); the first one is account 1.</summary>
+        public async Task<int> CreateAccountAsync()
+        {
+            await using var connection = await Source.OpenConnectionAsync();
+            await using var command = new NpgsqlCommand(
+                $"INSERT INTO {IdentitySchema}.accounts (user_name, password_hash) VALUES ('mct-test', '\\x00'::bytea) RETURNING id", connection);
+            return (int)(await command.ExecuteScalarAsync())!;
+        }
 
         public static async Task<CharacterHostRig> CreateAsync()
         {

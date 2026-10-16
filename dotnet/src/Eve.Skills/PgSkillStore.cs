@@ -369,6 +369,10 @@ public sealed class PgSkillStore
     }
 
 
+    /// <summary>
+    /// Records a Daily Alpha Injector use unless the character already used one since the last downtime (one use per downtime).
+    /// A use before that downtime is spent, so the character may use again.
+    /// </summary>
     public async Task<bool> TryUseDailyAlphaSkillInjectorAsync(
         NpgsqlConnection connection,
         NpgsqlTransaction transaction,
@@ -383,7 +387,7 @@ public sealed class PgSkillStore
             VALUES ($1, $2, $3)
             ON CONFLICT (character_id, item_type_id) DO UPDATE
                 SET used_at_unix_ms = EXCLUDED.used_at_unix_ms
-                WHERE usage.used_at_unix_ms <= EXCLUDED.used_at_unix_ms - 86400000
+                WHERE usage.used_at_unix_ms < $4
             RETURNING 1
             """, connection, transaction)
         {
@@ -392,9 +396,20 @@ public sealed class PgSkillStore
                 new() { Value = characterId },
                 new() { Value = itemTypeId },
                 new() { Value = nowUnixMs },
+                new() { Value = SkillInjectorDowntime.PreviousAtOrBeforeMs(nowUnixMs) },
             },
         };
         return await command.ExecuteScalarAsync(cancellationToken) is not null;
+    }
+
+    /// <summary>When the character last used a Daily Alpha Injector (Unix milliseconds), or null when it never did.</summary>
+    public async Task<long?> DailyAlphaSkillInjectorUsedAtAsync(long characterId, int itemTypeId, CancellationToken cancellationToken = default)
+    {
+        await using var command = _source.CreateCommand(
+            $"SELECT used_at_unix_ms FROM {_schema}.daily_alpha_skill_injector_uses WHERE character_id = $1 AND item_type_id = $2");
+        command.Parameters.Add(new NpgsqlParameter { Value = characterId });
+        command.Parameters.Add(new NpgsqlParameter { Value = itemTypeId });
+        return await command.ExecuteScalarAsync(cancellationToken) is long usedAt ? usedAt : (long?)null;
     }
 
     /// <summary>Reads and locks the balance row, creating its zero row inside the caller's transaction if absent.</summary>

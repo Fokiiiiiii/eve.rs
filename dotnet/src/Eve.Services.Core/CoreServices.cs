@@ -73,7 +73,6 @@ public static class CoreServices
             new SurveyService(gameRpcCallbacks.ReadActiveSurveyIdAsync, gameRpcCallbacks.RecordSurveyEventAsync),
             new WarStatisticMgrService(gameRpcCallbacks.ReadKillmailAsync, nowUnixMs),
             new BannedWordsService(),
-            new AlphaInjectorMgrService(),
             new CacheService(),
               new ChatAuthenticationService(),
             new CommunityTrackMgrService(),

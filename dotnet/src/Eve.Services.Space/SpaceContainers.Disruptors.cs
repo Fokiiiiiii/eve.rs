@@ -64,6 +64,12 @@ public sealed partial class SpaceContainers
     /// <summary>The spacing from a player control tower: 100 km (the wiki, Mobile Observatory).</summary>
     private const double ObservatoryControlTowerSpacingMeters = 100_000;
 
+    /// <summary>
+    /// The radius of a deadspace pocket around its site's anchor: EveJS deadspaceWarpPolicy.js DEADSPACE_SITE_RADIUS_METERS (1e9 m). The wiki (Deadspace) gives no
+    /// pocket size and the SDE none, so the EveJS parity constant is used (DEVIATIONS, ST-16).
+    /// </summary>
+    private const double DeadspaceSiteRadiusMeters = 1_000_000_000;
+
     /// <summary>The solar system ids of the Abyssal host locations (EVE.js <c>ABYSSAL_LOCATION_ID_MIN</c> to <c>ABYSSAL_LOCATION_ID_MAX</c>): an observatory is refused there.</summary>
     private const int AbyssalLocationMin = 32_000_001, AbyssalLocationMax = 32_000_200;
 
@@ -75,6 +81,9 @@ public sealed partial class SpaceContainers
 
     /// <summary>The positions (metres) of the player control towers of a system; an observatory keeps 100 km from each.</summary>
     public Func<int, CancellationToken, Task<IReadOnlyList<double[]>>>? ReadControlTowers { get; set; }
+
+    /// <summary>The anchors (metres) of the deadspace pockets of a system: the cosmic sites' positions. An observatory cannot be anchored inside one.</summary>
+    public Func<int, CancellationToken, Task<IReadOnlyList<double[]>>>? ReadDeadspaceAnchors { get; set; }
 
     /// <summary>The anchoring time of an observatory: ten minutes (the wiki; EveJS <c>MOBILE_OBSERVATORY_ACTIVATION_DELAY_MS</c>; the SDE gives none for the type).</summary>
     private static readonly TimeSpan ObservatoryAnchoringTime = TimeSpan.FromMinutes(10);
@@ -237,6 +246,10 @@ public sealed partial class SpaceContainers
         {
             throw Refuse("A player control tower is too close to deploy a Mobile Observatory here.");
         }
+        if (observatory && await InDeadspaceAsync(system, position, cancellationToken))
+        {
+            throw Refuse("Mobile Observatories cannot be anchored in deadspace.");
+        }
 
         var dropped = await _ships.DropDisruptorAsync(character, shipId, itemId, system, cancellationToken)
             ?? throw Refuse("That item is no longer in your ship's cargo hold.");
@@ -303,6 +316,23 @@ public sealed partial class SpaceContainers
         foreach (var body in await read(system, cancellationToken))
         {
             if (MetersBetween(body, position) - radius < ObservatoryLandmarkSpacingMeters)
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /// <summary>Whether <paramref name="position"/> lies inside a deadspace pocket of the system (within <see cref="DeadspaceSiteRadiusMeters"/> of an anchor).</summary>
+    private async Task<bool> InDeadspaceAsync(int system, double[] position, CancellationToken cancellationToken)
+    {
+        if (ReadDeadspaceAnchors is not { } read)
+        {
+            return false;
+        }
+        foreach (var anchor in await read(system, cancellationToken))
+        {
+            if (MetersBetween(anchor, position) <= DeadspaceSiteRadiusMeters)
             {
                 return true;
             }

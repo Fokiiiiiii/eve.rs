@@ -200,6 +200,25 @@ public class MobileObservatoryHostTests
     }
 
     [PgFact]
+    public async Task An_observatory_is_not_anchored_in_a_deadspace_pocket_and_stays_in_the_hold()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var (session, items) = await PilotWithObservatoriesAsync(rig, 2, LowSecSystem);
+        // a site's anchor 500 km from the drop point is inside its pocket (EveJS 1e9 m); one 2 000 000 km away is not
+        rig.Containers.ReadDeadspaceAnchors = (_, _) => Task.FromResult<IReadOnlyList<double[]>>([[502_500.0, 0.0, 0.0]]);
+
+        var refused = await Assert.ThrowsAsync<MachoWrappedException>(() => rig.Containers.LaunchFromShipAsync(session, items[0], CancellationToken.None));
+
+        Assert.Contains("deadspace", Texts(refused.Error.Payload));
+        Assert.Equal(CharacterShips.CargoFlag, (await rig.Items.GetAsync(items[0]))!.Flag);
+        Assert.Empty(rig.Sim.Heard.OfType<SimPlaceObservatory>());
+
+        rig.Containers.ReadDeadspaceAnchors = (_, _) => Task.FromResult<IReadOnlyList<double[]>>([[2_000_000_000.0, 0.0, 0.0]]);
+        Assert.Equal((long?)items[0], await rig.Containers.LaunchFromShipAsync(session, items[0], CancellationToken.None));
+        Assert.Single(rig.Sim.Heard.OfType<SimPlaceObservatory>());
+    }
+
+    [PgFact]
     public async Task An_observatory_is_not_dropped_in_abyssal_space_and_stays_in_the_hold()
     {
         await using var rig = await Rig.CreateAsync();

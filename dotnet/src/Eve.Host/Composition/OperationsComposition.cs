@@ -62,6 +62,10 @@ internal sealed partial class CharacterServicesComposition
             {
                 if (spaceSessions is null || session.CharacterId is not { } characterId)
                     return null;
+                var abyssalDungeon = await abyssalDungeonReadModel
+                    .ReadCurrentDungeonForCharacterAsync(session, cancellationToken).ConfigureAwait(false);
+                if (abyssalDungeon is not null)
+                    return abyssalDungeon;
                 var shipId = spaceSessions.ShipIdOf(session);
                 if (shipId is not > 0)
                     return null;

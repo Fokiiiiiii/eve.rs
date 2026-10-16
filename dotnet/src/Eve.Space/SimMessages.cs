@@ -3,6 +3,150 @@ namespace Eve.Space;
 /// <summary>A message on the link between the service host and the simulation (docs/design/adr/0007-space-simulation-process.md).</summary>
 public abstract record SimMessage;
 
+/// <summary>Where an entity lives in the simulation: a public location, a content instance and its room.</summary>
+public readonly record struct SimSceneKey(int LocationId, long InstanceId, int RoomIndex)
+{
+    public bool IsValid => LocationId > 0 && InstanceId >= 0 &&
+        (InstanceId == 0 ? RoomIndex == 0 : RoomIndex is >= 1 and <= 3);
+
+    public static SimSceneKey SolarSystem(int systemId) => new(systemId, 0, 0);
+}
+
+public enum SimAbyssalModifierOperation : byte
+{
+    Add = 0,
+    Multiply = 1,
+}
+
+public sealed record SimAbyssalAttributeModifier(int AttributeId, SimAbyssalModifierOperation Operation, double Value);
+
+public sealed record SimAbyssalEnvironmentField(
+    IReadOnlyList<double> Center, double RadiusMeters, IReadOnlyList<SimAbyssalAttributeModifier> Modifiers);
+
+public sealed record SimAbyssalEnvironmentProfile(
+    IReadOnlyList<SimAbyssalAttributeModifier> GlobalModifiers,
+    IReadOnlyList<SimAbyssalEnvironmentField> Fields);
+
+public sealed record SimAbyssalBoundaryDamagePoint(
+    double DistanceOutsideMeters, double AppliedDamagePerSecond);
+
+public sealed record SimAbyssalBoundaryProfile(
+    IReadOnlyList<double> Center, double RadiusMeters, long TickIntervalMs,
+    IReadOnlyList<SimAbyssalBoundaryDamagePoint> DamageCurve, long TerminalExposureMs = 15_000);
+
+public sealed record SimAbyssalSceneSpec(
+    SimSceneKey Scene, SimAbyssalEnvironmentProfile Environment,
+    SimAbyssalBoundaryProfile Boundary, long ExpiryFileTime);
+
+/// <summary>A static, non-NPC Abyssal conduit ball materialized in one isolated room.</summary>
+public sealed record SimAbyssalSceneObject(
+    SimSceneKey Scene, long ItemId, int TypeId, int GroupId, int CategoryId, long OwnerId,
+    double Radius, int GraphicId, string Name, IReadOnlyList<double> Position,
+    IReadOnlyList<double> Direction, bool IsOpen);
+
+public sealed record SimEnsureAbyssalSceneObject(ulong RequestId, SimAbyssalSceneObject Object) : SimMessage;
+public sealed record SimEnsureAbyssalSceneObjectReply(ulong RequestId, string? Error) : SimMessage;
+
+/// <summary>A non-NPC, SDE-backed damageable reward cache in one private room.</summary>
+public sealed record SimEnsureAbyssalRewardCache(
+    ulong RequestId, string ContentId, SimSceneKey Scene, SimShip Entity,
+    IReadOnlyList<double> Position, IReadOnlyList<double> Direction) : SimMessage;
+public sealed record SimEnsureAbyssalRewardCacheReply(ulong RequestId, string? Error) : SimMessage;
+public sealed record SimEnsureAbyssalLootContainer(
+    ulong RequestId, string ContentId, SimPlaceWreck Container) : SimMessage;
+public sealed record SimEnsureAbyssalLootContainerReply(ulong RequestId, string? Error) : SimMessage;
+
+public sealed record SimAbyssalPointDefense(
+    long TickIntervalMs, IReadOnlyList<double> Damage, int TypeListId,
+    IReadOnlyList<int> IncludedCategories, IReadOnlyList<int> IncludedGroups, IReadOnlyList<int> IncludedTypes,
+    IReadOnlyList<int> ExcludedCategories, IReadOnlyList<int> ExcludedGroups, IReadOnlyList<int> ExcludedTypes,
+    string EffectName);
+public sealed record SimAbyssalEnvironmentObject(
+    SimAbyssalSceneObject Body, double EffectRadiusMeters, SimAbyssalPointDefense? PointDefense);
+public sealed record SimEnsureAbyssalEnvironmentObject(
+    ulong RequestId, string ContentId, SimAbyssalEnvironmentObject Object) : SimMessage;
+public sealed record SimEnsureAbyssalEnvironmentObjectReply(ulong RequestId, string? Error) : SimMessage;
+public sealed record SimAbyssalFieldMembership(
+    SimSceneKey Scene, long SourceItemId, long ShipId, ulong SessionId, bool Inside) : SimMessage;
+public sealed record SimRefreshAbyssalNpc(
+    ulong RequestId, SimSceneKey Scene, ulong SessionId, SimShip Ship, SimNpcIdentity Identity) : SimMessage;
+public sealed record SimRefreshAbyssalNpcReply(ulong RequestId, string? Error) : SimMessage;
+
+public sealed record SimEnsureAbyssalScene(ulong RequestId, SimAbyssalSceneSpec Spec) : SimMessage;
+public sealed record SimEnsureAbyssalSceneReply(ulong RequestId, string? Error) : SimMessage;
+
+public sealed record SimMoveAbyssalParticipant(
+    ulong RequestId, long ShipId, SimSceneKey Source, SimSceneKey Destination,
+    IReadOnlyList<double> Position, IReadOnlyList<double> Direction) : SimMessage
+{
+    /// <summary>The simulation carries the resident's current authoritative pose across rooms.</summary>
+    public bool PreserveSourcePose { get; init; }
+
+    /// <summary>The host will perform a client SessionChange before the simulation's movement notifications.</summary>
+    public bool SessionHandoff { get; init; }
+}
+
+public sealed record SimMoveAbyssalParticipantReply(ulong RequestId, string? Error) : SimMessage;
+
+public sealed record SimRebindAbyssalSession(
+    ulong RequestId, ulong SessionId, long ShipId, SimSceneKey Scene) : SimMessage;
+
+public sealed record SimRebindAbyssalSessionReply(ulong RequestId, string? Error) : SimMessage;
+
+public sealed record SimRemoveAbyssalScene(ulong RequestId, SimSceneKey Scene) : SimMessage
+{
+    public IReadOnlyList<long> SettledNpcIds { get; init; } = [];
+    public IReadOnlyList<long> SettledLootIds { get; init; } = [];
+}
+public sealed record SimRemoveAbyssalSceneReply(ulong RequestId, string? Error) : SimMessage;
+
+/// <summary>The persisted item and SDE metadata needed to materialize a public Abyssal trace as a dynamic space entity.</summary>
+public sealed record SimAbyssalTrace(
+    int SolarSystemId, long ItemId, int TypeId, int GroupId, int CategoryId, long OwnerId, double Radius,
+    IReadOnlyList<double> Position, IReadOnlyList<double> Velocity, IReadOnlyList<double> Direction,
+    IReadOnlyList<double>? TargetPoint, double SpeedFraction, int GameModeId, int FilamentTypeId,
+    int DifficultyTier, long ExpiresAtMs);
+
+public enum SimAbyssalTraceStatus : byte
+{
+    Created = 0,
+    AlreadyPresent = 1,
+    Removed = 2,
+    AlreadyAbsent = 3,
+    Failed = 255,
+}
+
+public sealed record SimEnsureAbyssalTracePublished(
+    ulong RequestId, ulong? ActorSessionId, SimAbyssalTrace Trace) : SimMessage;
+
+public sealed record SimEnsureAbyssalTracePublishedReply(
+    ulong RequestId, SimAbyssalTraceStatus Status, int RecipientCount, bool ActorNotified, string? Error) : SimMessage;
+
+public sealed record SimRemoveAbyssalTrace(ulong RequestId, int SolarSystemId, long ItemId) : SimMessage;
+
+public sealed record SimRemoveAbyssalTraceReply(
+    ulong RequestId, SimAbyssalTraceStatus Status, int RecipientCount, string? Error) : SimMessage;
+
+public sealed record SimRemoveAbyssalParticipant(ulong RequestId, SimSceneKey Scene, long ShipId) : SimMessage;
+
+public sealed record SimRemoveAbyssalParticipantReply(
+    ulong RequestId, bool AlreadyAbsent, string? Error) : SimMessage;
+
+public sealed record SimGetAbyssalParticipantPose(
+    ulong RequestId, SimSceneKey Scene, long ShipId) : SimMessage;
+
+public sealed record SimAbyssalDeploymentObject(long ItemId, int TypeId, double CenterDistanceMeters);
+public sealed record SimAbyssalDeploymentSnapshot(
+    bool Warping, bool Cloaked, bool CynoActive, bool UndockInvulnerable, bool WarpScrambled,
+    IReadOnlyList<SimAbyssalDeploymentObject> NearbyObjects);
+
+public sealed record SimGetAbyssalParticipantPoseReply(
+    ulong RequestId, SimSceneKey Scene, long ShipId,
+    IReadOnlyList<double> Position, IReadOnlyList<double> Direction, string? Error) : SimMessage
+{
+    public SimAbyssalDeploymentSnapshot? Deployment { get; init; }
+}
+
 public sealed record SimHello(ushort Version) : SimMessage;
 
 public sealed record SimHelloAck(ushort Version, uint PollHz) : SimMessage;
@@ -63,8 +207,8 @@ public sealed record SimSensors(double Gravimetric, double Ladar, double Magneto
     public static readonly SimSensors Plain = new(0, 0, 0, 0, 1, 1);
 }
 
-/// <summary>A ship enters a solar system.</summary>
-public sealed record SimEnter(ulong SessionId, int SolarSystemId, EnterHow How, long StationId, SimShip Ship, IReadOnlyList<double>? Position = null, IReadOnlyList<double>? Direction = null) : SimMessage;
+/// <summary>A ship enters a simulation scene.</summary>
+public sealed record SimEnter(ulong SessionId, SimSceneKey Scene, EnterHow How, long StationId, SimShip Ship, IReadOnlyList<double>? Position = null, IReadOnlyList<double>? Direction = null) : SimMessage;
 
 public sealed record SimHeatModule(
     long ModuleId, int Flag, double StructureHp, double DamageHp, double HeatDamageHp, double HeatAbsorptionRate, bool Overloadable, bool HeatImmune, bool Online);
@@ -790,8 +934,8 @@ public sealed record SimNpcIdentity(
 /// scripted tree it runs (empty for none) and what it is. Answered with <see cref="SimSpawnReply"/>.
 /// </summary>
 public sealed record SimSpawn(
-    ulong RequestId, int SolarSystemId, SimShip Ship, long AnchorShipId, IReadOnlyList<double> Position, IReadOnlyList<double> Velocity, IReadOnlyList<double> Direction,
-    string Behavior, SimNpcIdentity Identity) : SimMessage;
+    ulong RequestId, SimSceneKey Scene, SimShip Ship, long AnchorShipId, IReadOnlyList<double> Position, IReadOnlyList<double> Velocity, IReadOnlyList<double> Direction,
+    string Behavior, SimNpcIdentity Identity, string? AbyssalContentId = null) : SimMessage;
 
 /// <summary>
 /// Launches a drone beside the ship of a pilot (<paramref name="SessionId"/>): the drone's ship, the weapon it fights with (its module is the ship), the graphic of its type, how far it
@@ -994,7 +1138,7 @@ public sealed record SimRespawn(ulong SessionId, SimShip Ship, IReadOnlyList<dou
 /// corpse of a pilot whose capsule was destroyed (<see cref="GroupId"/> 14: a plain space item that has the pilot's name).
 /// </summary>
 public sealed record SimPlaceWreck(
-    int SolarSystemId, long WreckId, int GroupId, SimWreckKind Kind, IReadOnlyList<double> Position, IReadOnlyList<double> Direction, double Radius, long LauncherId, SimCredit Credit,
+    SimSceneKey Scene, long WreckId, int GroupId, SimWreckKind Kind, IReadOnlyList<double> Position, IReadOnlyList<double> Direction, double Radius, long LauncherId, SimCredit Credit,
     bool IsEmpty) : SimMessage;
 
 /// <summary>
@@ -1002,7 +1146,11 @@ public sealed record SimPlaceWreck(
 /// those who see it the ball and the effect that plays the jettison, and answers with <see cref="SimContainerPlaced"/> (or <see cref="SimRefused"/> under
 /// <see cref="SimCommands.PlaceContainer"/>).
 /// </summary>
-public sealed record SimPlaceContainer(ulong SessionId, long ContainerId, SimWreckKind Kind, double Radius, long LauncherId, SimCredit Credit, double Distance) : SimMessage;
+public sealed record SimPlaceContainer(ulong SessionId, long ContainerId, SimWreckKind Kind, double Radius, long LauncherId, SimCredit Credit, double Distance) : SimMessage
+{
+    /// <summary>Placement must still belong to this scene and LauncherId ship when supplied.</summary>
+    public SimSceneKey? ExpectedScene { get; init; }
+}
 
 /// <summary>
 /// A player's ship came to rest at an asteroid belt after a warp: the belt it warped to, or else the nearest within 250 km of where it stopped.

@@ -3,8 +3,12 @@
     <ProjectReference Include="../Eve.Data/Eve.Data.csproj" />
     <ProjectReference Include="../Eve.Scheduler/Eve.Scheduler.csproj" />
     <ProjectReference Include="../Eve.Events/Eve.Events.csproj" />
+    <ProjectReference Include="../Eve.Sde/Eve.Sde.csproj" />
   </ItemGroup>
-  <ItemGroup><EmbeddedResource Include="Migrations/*.sql" /></ItemGroup>
+  <ItemGroup>
+    <EmbeddedResource Include="Migrations/*.sql" />
+    <EmbeddedResource Include="Data/Abyssal/*.json.gz.b64" />
+  </ItemGroup>
   <ItemGroup>
     <InternalsVisibleTo Include="Eve.Content.Tests" />
   </ItemGroup>

@@ -69,7 +69,7 @@ public class NpcLootHostTests
         Assert.Equal((222, c.CharacterId, ItemFlags.Hangar, 7L, false), (held.TypeId, held.OwnerId, held.Flag, held.Quantity, held.Singleton));
 
         var character = (await rig.Characters.GetAsync(c.CharacterId))!;
-        Assert.Equal((system, 186, spawn.Ship.ShipId, false), (placed.SolarSystemId, placed.GroupId, placed.LauncherId, placed.IsEmpty));
+        Assert.Equal((system, 186, spawn.Ship.ShipId, false), (placed.Scene.LocationId, placed.GroupId, placed.LauncherId, placed.IsEmpty));
         Assert.Equal(FrigateWreck, placed.Kind);
         Assert.Equal(new SimCredit(c.CharacterId, character.CorporationId, character.AllianceId ?? 0, character.FactionId ?? 0), placed.Credit);
         Assert.Equal(Place, placed.Position);

@@ -385,6 +385,10 @@ public sealed partial class SpaceContainers : ISpaceContainers, IDisposable
         {
             return [];
         }
+        var runSpaceScope = _space.RunSpaceScopeOf(session);
+        var expectedScene = runSpaceScope is { } scope
+            ? new SimSceneKey(scope.SpaceLocationId, scope.InstanceId, scope.RoomOrdinal)
+            : SimSceneKey.SolarSystem(system);
         var now = _nowUnixMs();
         var id = (ulong)session.SessionId;
         if (_cooldownUntil.TryGetValue(id, out var until) && until > now)
@@ -397,7 +401,7 @@ public sealed partial class SpaceContainers : ISpaceContainers, IDisposable
         }
         await _statics.EnsureTypesAsync([CharacterShips.CargoContainerTypeId], cancellationToken);
         var canType = _statics.Type(CharacterShips.CargoContainerTypeId);
-        var can = await _ships.CreateCanAsync(characterId, system, cancellationToken);
+        var can = await _ships.CreateCanAsync(characterId, system, cancellationToken, runSpaceScope: runSpaceScope);
 
         // the can comes into space first (the client is told the ball and the effect), then the stacks go into it
         CommandReply placed;
@@ -406,7 +410,8 @@ public sealed partial class SpaceContainers : ISpaceContainers, IDisposable
             placed = await _sim.PlaceContainerAsync(new SimPlaceContainer(
                 id, can.Id, new SimWreckKind(CharacterShips.CargoContainerTypeId, canType?.Name ?? "Cargo Container", canType?.GraphicId ?? 0),
                 canType?.Attributes.GetValueOrDefault(162, CanRadiusFallback) ?? CanRadiusFallback, shipId,
-                new SimCredit(pilot.Id, pilot.CorporationId, pilot.AllianceId ?? 0, 0), JettisonDistance), cancellationToken);
+                new SimCredit(pilot.Id, pilot.CorporationId, pilot.AllianceId ?? 0, 0), JettisonDistance)
+                { ExpectedScene = expectedScene }, cancellationToken);
         }
         catch (SimUnavailableException error)
         {
@@ -539,13 +544,18 @@ private void OnReceived(SimMessage message)
     {
         try
         {
+            if (wreck.Scene.InstanceId > 0)
+            {
+                // Abyssal loot is owned by the run's persisted entity plan, not the normal solar-system restore table.
+                return;
+            }
             if (Eve.Structures.StructureUnanchorDrop.IsArtifact((await _items.GetAsync(wreck.WreckId))?.CustomInfo))
             {
                 // The transactional handoff wrote an unbounded space row; don't replace it with a jettison lifetime.
                 return;
             }
             var item = new SpaceItem(
-                wreck.WreckId, wreck.SolarSystemId, wreck.Position, wreck.Direction, wreck.Radius, wreck.GroupId, wreck.LauncherId, wreck.Credit.CharacterId, wreck.Credit.CorporationId,
+                wreck.WreckId, wreck.Scene.LocationId, wreck.Position, wreck.Direction, wreck.Radius, wreck.GroupId, wreck.LauncherId, wreck.Credit.CharacterId, wreck.Credit.CorporationId,
                 wreck.Credit.AllianceId, wreck.Credit.WarFactionId, _nowUnixMs() + (long)CanLifetime.TotalMilliseconds);
             var saved = _abandonedLoot.ContainsKey(wreck.WreckId) ? Abandon(item) : item;
             await _spaceItems.SaveAsync(saved);
@@ -602,6 +612,8 @@ private void OnReceived(SimMessage message)
                         await ForgetAsync(item.ItemId);
                         continue;
                     }
+                    // Private-run items are restored/settled by their exact durable run scope, never as public solar-system balls.
+                    if (stored.RunSpaceProvenance is not null) continue;
                     await _statics.EnsureTypesAsync([stored.TypeId]);
                     var type = _statics.Type(stored.TypeId);
                     if (type is not null && _statics.CategoryName(type.CategoryId) == "Asteroid")
@@ -624,7 +636,7 @@ private void OnReceived(SimMessage message)
                     }
                     var empty = (await _items.InContainerAsync(item.ItemId)).Count == 0;
                     _sim.PlaceWreck(new SimPlaceWreck(
-                        system, item.ItemId, item.GroupId,
+                        SimSceneKey.SolarSystem(system), item.ItemId, item.GroupId,
                         new SimWreckKind(stored.TypeId, stored.CustomName ?? type?.Name ?? "", type?.GraphicId ?? 0),
                         item.Position, item.Direction, item.Radius, item.LauncherId,
                         new SimCredit(item.CharacterId, item.CorporationId, item.AllianceId, item.WarFactionId), empty));

@@ -91,6 +91,7 @@ internal sealed partial class CharacterServicesComposition
         await SovereigntyWriteOperations();
         await SkyhookJobs();
         await Fleet();
+        await InitializeAbyssalRuntime();
         await IncursionsDungeonsKeeper();
         await MailSend();
         await MailingLists();

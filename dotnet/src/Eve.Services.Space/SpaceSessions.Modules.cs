@@ -205,6 +205,9 @@ public sealed partial class SpaceSessions
             return ModuleResult.Refusal(made.Reason ?? "REFUSED", made.ModuleType, made.ModuleName);
         }
 
+        if (pilot.SimulationScene.InstanceId > 0 && AbyssalRestrictedAction(package.Action) is { } abyssalRefusal)
+            return ModuleResult.Refusal(abyssalRefusal, made.ModuleType, made.ModuleName);
+
         // a mining laser mines the family of its rock only (EVE.js isFamilyCompatibleWithYield): an ore laser takes ore, an ice laser takes ice
         if (package.Action is SimAction.Mining mining && TypeOfSpaceItemAsync is { } typeOfSpaceItem
             && await typeOfSpaceItem(package.TargetId, cancellationToken).ConfigureAwait(false) is { } rockTypeId)

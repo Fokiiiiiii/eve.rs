@@ -1,5 +1,173 @@
 use super::*;
 
+fn read_wreck_placement(r: &mut Reader) -> Result<WreckPlacement, DecodeError> {
+    let scene = read_scene_key(r)?;
+    let wreck_id = r.i64()?;
+    let group_id = r.i32()?;
+    let Some(kind) = read_wreck_kind(r)? else { return Err(DecodeError::BadValue("wreck")) };
+    let position = read_vector(r)?;
+    let direction = read_vector(r)?;
+    let radius = r.f64()?;
+    let launcher_id = r.i64()?;
+    let credit = read_credit(r)?;
+    let is_empty = match r.u8()? {
+        0 => false,
+        1 => true,
+        _ => return Err(DecodeError::BadValue("is_empty")),
+    };
+    Ok(WreckPlacement {
+        scene,
+        wreck_id,
+        group_id,
+        kind,
+        position,
+        direction,
+        radius,
+        launcher_id,
+        credit,
+        is_empty,
+    })
+}
+
+
+fn read_scene_key(reader: &mut Reader) -> Result<SceneKey, DecodeError> {
+    let scene =
+        SceneKey { location_id: reader.i32()?, instance_id: reader.i64()?, room_index: reader.i32()? };
+    if !scene.is_valid() {
+        return Err(DecodeError::BadValue("scene key"));
+    }
+    Ok(scene)
+}
+
+fn read_abyssal_count(
+    reader: &mut Reader,
+    maximum: usize,
+    field: &'static str,
+) -> Result<usize, DecodeError> {
+    let count = reader.u32()? as usize;
+    if count > maximum {
+        return Err(DecodeError::BadValue(field));
+    }
+    Ok(count)
+}
+
+fn read_abyssal_modifiers(reader: &mut Reader) -> Result<Vec<AbyssalAttributeModifier>, DecodeError> {
+    let count = read_abyssal_count(reader, MAX_ABYSSAL_MODIFIERS, "Abyssal modifiers")?;
+    let mut modifiers = Vec::with_capacity(count);
+    for _ in 0..count {
+        let attribute_id = reader.i32()?;
+        let operation = match reader.u8()? {
+            0 => AbyssalModifierOperation::Add,
+            1 => AbyssalModifierOperation::Multiply,
+            _ => return Err(DecodeError::BadValue("Abyssal modifier operation")),
+        };
+        let value = reader.f64()?;
+        if attribute_id <= 0 || !value.is_finite() {
+            return Err(DecodeError::BadValue("Abyssal modifier"));
+        }
+        modifiers.push(AbyssalAttributeModifier { attribute_id, operation, value });
+    }
+    Ok(modifiers)
+}
+
+fn read_abyssal_scene_spec(reader: &mut Reader) -> Result<AbyssalSceneSpec, DecodeError> {
+    let scene = read_scene_key(reader)?;
+    let global_modifiers = read_abyssal_modifiers(reader)?;
+    let field_count = read_abyssal_count(reader, MAX_ABYSSAL_FIELDS, "Abyssal environment fields")?;
+    let mut fields = Vec::with_capacity(field_count);
+    for _ in 0..field_count {
+        let center = [reader.f64()?, reader.f64()?, reader.f64()?];
+        let radius_meters = reader.f64()?;
+        let modifiers = read_abyssal_modifiers(reader)?;
+        if center.iter().any(|value| !value.is_finite()) || !radius_meters.is_finite() || radius_meters <= 0.0
+        {
+            return Err(DecodeError::BadValue("Abyssal environment field"));
+        }
+        fields.push(AbyssalEnvironmentField { center, radius_meters, modifiers });
+    }
+    let center = [reader.f64()?, reader.f64()?, reader.f64()?];
+    let radius_meters = reader.f64()?;
+    let tick_interval_ms = reader.i64()?;
+    let point_count = read_abyssal_count(reader, MAX_ABYSSAL_BOUNDARY_POINTS, "Abyssal boundary points")?;
+    let mut damage_curve = Vec::with_capacity(point_count);
+    let mut previous_distance = -1.0;
+    for _ in 0..point_count {
+        let distance_outside_meters = reader.f64()?;
+        let applied_damage_per_second = reader.f64()?;
+        if !distance_outside_meters.is_finite()
+            || distance_outside_meters < 0.0
+            || distance_outside_meters <= previous_distance
+            || !applied_damage_per_second.is_finite()
+            || applied_damage_per_second < 0.0
+        {
+            return Err(DecodeError::BadValue("Abyssal boundary damage curve"));
+        }
+        previous_distance = distance_outside_meters;
+        damage_curve.push(AbyssalBoundaryDamagePoint { distance_outside_meters, applied_damage_per_second });
+    }
+    let terminal_exposure_ms = reader.i64()?;
+    let expiry_filetime = reader.i64()?;
+    if scene.instance_id <= 0
+        || center.iter().any(|value| !value.is_finite())
+        || !radius_meters.is_finite()
+        || radius_meters <= 0.0
+        || tick_interval_ms <= 0
+        || terminal_exposure_ms <= 0
+        || damage_curve.is_empty()
+        || expiry_filetime <= 0
+    {
+        return Err(DecodeError::BadValue("Abyssal scene specification"));
+    }
+    Ok(AbyssalSceneSpec {
+        scene,
+        environment: AbyssalEnvironmentProfile { global_modifiers, fields },
+        boundary: AbyssalBoundaryProfile {
+            center,
+            radius_meters,
+            tick_interval_ms,
+            damage_curve,
+            terminal_exposure_ms,
+        },
+        expiry_filetime,
+    })
+}
+
+fn read_abyssal_scene_object(reader: &mut Reader, conduit: bool) -> Result<AbyssalSceneObject, DecodeError> {
+    let scene_object = AbyssalSceneObject {
+        scene: read_scene_key(reader)?,
+        item_id: reader.i64()?,
+        type_id: reader.i32()?,
+        group_id: reader.i32()?,
+        category_id: reader.i32()?,
+        owner_id: reader.i64()?,
+        radius: reader.f64()?,
+        graphic_id: reader.i32()?,
+        name: reader.text()?,
+        position: [reader.f64()?, reader.f64()?, reader.f64()?],
+        direction: [reader.f64()?, reader.f64()?, reader.f64()?],
+        is_open: read_flag(reader, "Abyssal conduit open")?,
+    };
+    if conduit && !valid_abyssal_scene_object(&scene_object) {
+        return Err(DecodeError::BadValue("Abyssal scene object"));
+    }
+    Ok(scene_object)
+}
+
+fn read_abyssal_result(reader: &mut Reader) -> Result<(u64, Result<(), String>), DecodeError> {
+    let request_id = reader.u64()?;
+    let status = reader.u8()?;
+    let reason = reader.text()?;
+    if request_id == 0 {
+        return Err(DecodeError::BadValue("Abyssal request id"));
+    }
+    let outcome = match status {
+        0 => Ok(()),
+        1 => Err(reason),
+        _ => return Err(DecodeError::BadValue("Abyssal request status")),
+    };
+    Ok((request_id, outcome))
+}
+
 /// A flag byte: 0 or 1, anything else is a bad value of `what`.
 fn read_flag(reader: &mut Reader, what: &'static str) -> Result<bool, DecodeError> {
     match reader.u8()? {
@@ -231,9 +399,336 @@ impl Message {
         let message = match kind {
             kind::HELLO => Message::Hello { version: r.u16()? },
             kind::HELLO_ACK => Message::HelloAck { version: r.u16()?, poll_hz: r.u32()? },
+            kind::ENSURE_ABYSSAL_SCENE => {
+                let request_id = r.u64()?;
+                let spec = read_abyssal_scene_spec(&mut r)?;
+                if request_id == 0 {
+                    return Err(DecodeError::BadValue("Abyssal request id"));
+                }
+                Message::EnsureAbyssalScene { request_id, spec }
+            }
+            kind::ENSURE_ABYSSAL_SCENE_REPLY => {
+                let (request_id, outcome) = read_abyssal_result(&mut r)?;
+                Message::EnsureAbyssalSceneReply { request_id, outcome }
+            }
+            kind::ENSURE_ABYSSAL_SCENE_OBJECT => {
+                let request_id = r.u64()?;
+                if request_id == 0 {
+                    return Err(DecodeError::BadValue("Abyssal scene object request id"));
+                }
+                let object = read_abyssal_scene_object(&mut r, true)?;
+                Message::EnsureAbyssalSceneObject { request_id, object }
+            }
+            kind::ENSURE_ABYSSAL_SCENE_OBJECT_REPLY => {
+                let (request_id, outcome) = read_abyssal_result(&mut r)?;
+                Message::EnsureAbyssalSceneObjectReply { request_id, outcome }
+            }
+            kind::MOVE_ABYSSAL_PARTICIPANT => {
+                let request_id = r.u64()?;
+                let ship_id = r.i64()?;
+                let source = read_scene_key(&mut r)?;
+                let destination = read_scene_key(&mut r)?;
+                let move_flags = r.u8()?;
+                if move_flags > 3 {
+                    return Err(DecodeError::BadValue("Abyssal move flags"));
+                }
+                let preserve_source_pose = move_flags & 1 != 0;
+                let session_handoff = move_flags & 2 != 0;
+                let (position, direction) = if preserve_source_pose {
+                    ([0.0; 3], [0.0; 3])
+                } else {
+                    ([r.f64()?, r.f64()?, r.f64()?], [r.f64()?, r.f64()?, r.f64()?])
+                };
+                let room_transition = source.instance_id > 0
+                    && source.instance_id == destination.instance_id
+                    && source.location_id == destination.location_id
+                    && source.room_index != destination.room_index;
+                let entry = source.instance_id == 0 && destination.instance_id > 0;
+                let origin_return = source.instance_id > 0 && destination.instance_id == 0;
+                let explicit_pose_valid = position.iter().chain(&direction).all(|value| value.is_finite())
+                    && direction.iter().any(|value| *value != 0.0);
+                if request_id == 0
+                    || ship_id <= 0
+                    || !source.is_valid()
+                    || !destination.is_valid()
+                    || !(room_transition || entry || origin_return)
+                    || (preserve_source_pose && !room_transition)
+                    || (session_handoff && !(entry || origin_return))
+                    || (!preserve_source_pose && !explicit_pose_valid)
+                {
+                    return Err(DecodeError::BadValue("Abyssal participant move"));
+                }
+                Message::MoveAbyssalParticipant {
+                    request_id,
+                    ship_id,
+                    source,
+                    destination,
+                    preserve_source_pose,
+                    session_handoff,
+                    position,
+                    direction,
+                }
+            }
+            kind::MOVE_ABYSSAL_PARTICIPANT_REPLY => {
+                let (request_id, outcome) = read_abyssal_result(&mut r)?;
+                Message::MoveAbyssalParticipantReply { request_id, outcome }
+            }
+            kind::REBIND_ABYSSAL_SESSION => {
+                let request_id = r.u64()?;
+                let session_id = r.u64()?;
+                let ship_id = r.i64()?;
+                let scene = read_scene_key(&mut r)?;
+                if request_id == 0 || session_id == 0 || ship_id <= 0 {
+                    return Err(DecodeError::BadValue("Abyssal session rebind"));
+                }
+                Message::RebindAbyssalSession { request_id, session_id, ship_id, scene }
+            }
+            kind::REBIND_ABYSSAL_SESSION_REPLY => {
+                let (request_id, outcome) = read_abyssal_result(&mut r)?;
+                Message::RebindAbyssalSessionReply { request_id, outcome }
+            }
+            kind::REMOVE_ABYSSAL_SCENE => {
+                let request_id = r.u64()?;
+                let scene = read_scene_key(&mut r)?;
+                let settled_npc_ids = read_structure_damage_ids(&mut r)?;
+                let settled_loot_ids = read_structure_damage_ids(&mut r)?;
+                if request_id == 0
+                    || scene.instance_id <= 0
+                    || settled_npc_ids.iter().any(|id| settled_loot_ids.contains(id))
+                {
+                    return Err(DecodeError::BadValue("Abyssal scene removal"));
+                }
+                Message::RemoveAbyssalScene { request_id, scene, settled_npc_ids, settled_loot_ids }
+            }
+            kind::REMOVE_ABYSSAL_SCENE_REPLY => {
+                let (request_id, outcome) = read_abyssal_result(&mut r)?;
+                Message::RemoveAbyssalSceneReply { request_id, outcome }
+            }
+            kind::ENSURE_ABYSSAL_TRACE_PUBLISHED => {
+                let request_id = r.u64()?;
+                let actor_session_id = match r.u8()? {
+                    0 => None,
+                    1 => {
+                        let session = r.u64()?;
+                        if session == 0 {
+                            return Err(DecodeError::BadValue("Abyssal trace actor session"));
+                        }
+                        Some(session)
+                    }
+                    _ => return Err(DecodeError::BadValue("Abyssal trace actor flag")),
+                };
+                let solar_system_id = r.i32()?;
+                let item_id = r.i64()?;
+                let type_id = r.i32()?;
+                let group_id = r.i32()?;
+                let category_id = r.i32()?;
+                let owner_id = r.i64()?;
+                let radius = r.f64()?;
+                let position = [r.f64()?, r.f64()?, r.f64()?];
+                let velocity = [r.f64()?, r.f64()?, r.f64()?];
+                let direction = [r.f64()?, r.f64()?, r.f64()?];
+                let target_point = match r.u8()? {
+                    0 => None,
+                    1 => Some([r.f64()?, r.f64()?, r.f64()?]),
+                    _ => return Err(DecodeError::BadValue("Abyssal trace target flag")),
+                };
+                let trace = AbyssalTrace {
+                    solar_system_id,
+                    item_id,
+                    type_id,
+                    group_id,
+                    category_id,
+                    owner_id,
+                    radius,
+                    position,
+                    velocity,
+                    direction,
+                    target_point,
+                    speed_fraction: r.f64()?,
+                    game_mode_id: r.i32()?,
+                    filament_type_id: r.i32()?,
+                    difficulty_tier: r.i32()?,
+                    expires_at_ms: r.i64()?,
+                };
+                if request_id == 0 || !super::valid_abyssal_trace(&trace) {
+                    return Err(DecodeError::BadValue("Abyssal trace publication"));
+                }
+                Message::EnsureAbyssalTracePublished { request_id, actor_session_id, trace }
+            }
+            kind::ENSURE_ABYSSAL_TRACE_PUBLISHED_REPLY => {
+                let request_id = r.u64()?;
+                let status = match r.u8()? {
+                    0 => AbyssalTraceStatus::Created,
+                    1 => AbyssalTraceStatus::AlreadyPresent,
+                    2 => AbyssalTraceStatus::Removed,
+                    3 => AbyssalTraceStatus::AlreadyAbsent,
+                    255 => AbyssalTraceStatus::Failed,
+                    _ => return Err(DecodeError::BadValue("Abyssal trace publication status")),
+                };
+                let recipient_count = r.i32()?;
+                let actor_notified = match r.u8()? {
+                    0 => false,
+                    1 => true,
+                    _ => return Err(DecodeError::BadValue("Abyssal trace actor receipt")),
+                };
+                let error_text = r.text()?;
+                let error = (!error_text.is_empty()).then_some(error_text);
+                if request_id == 0
+                    || recipient_count < 0
+                    || (status == AbyssalTraceStatus::Failed) != error.is_some()
+                {
+                    return Err(DecodeError::BadValue("Abyssal trace publication receipt"));
+                }
+                Message::EnsureAbyssalTracePublishedReply {
+                    request_id,
+                    status,
+                    recipient_count,
+                    actor_notified,
+                    error,
+                }
+            }
+            kind::REMOVE_ABYSSAL_TRACE => {
+                let request_id = r.u64()?;
+                let solar_system_id = r.i32()?;
+                let item_id = r.i64()?;
+                if request_id == 0 || solar_system_id <= 0 || item_id <= 0 {
+                    return Err(DecodeError::BadValue("Abyssal trace removal"));
+                }
+                Message::RemoveAbyssalTrace { request_id, solar_system_id, item_id }
+            }
+            kind::REMOVE_ABYSSAL_TRACE_REPLY => {
+                let request_id = r.u64()?;
+                let status = match r.u8()? {
+                    0 => AbyssalTraceStatus::Created,
+                    1 => AbyssalTraceStatus::AlreadyPresent,
+                    2 => AbyssalTraceStatus::Removed,
+                    3 => AbyssalTraceStatus::AlreadyAbsent,
+                    255 => AbyssalTraceStatus::Failed,
+                    _ => return Err(DecodeError::BadValue("Abyssal trace removal status")),
+                };
+                let recipient_count = r.i32()?;
+                let error_text = r.text()?;
+                let error = (!error_text.is_empty()).then_some(error_text);
+                if request_id == 0
+                    || recipient_count < 0
+                    || (status == AbyssalTraceStatus::Failed) != error.is_some()
+                {
+                    return Err(DecodeError::BadValue("Abyssal trace removal receipt"));
+                }
+                Message::RemoveAbyssalTraceReply { request_id, status, recipient_count, error }
+            }
+            kind::REMOVE_ABYSSAL_PARTICIPANT => {
+                let request_id = r.u64()?;
+                let scene = read_scene_key(&mut r)?;
+                let ship_id = r.i64()?;
+                if request_id == 0 || !scene.is_valid() || scene.instance_id <= 0 || ship_id <= 0 {
+                    return Err(DecodeError::BadValue("Abyssal participant removal"));
+                }
+                Message::RemoveAbyssalParticipant { request_id, scene, ship_id }
+            }
+            kind::REMOVE_ABYSSAL_PARTICIPANT_REPLY => {
+                let request_id = r.u64()?;
+                let already_absent = match r.u8()? {
+                    0 => false,
+                    1 => true,
+                    _ => return Err(DecodeError::BadValue("Abyssal participant removal state")),
+                };
+                let error_text = r.text()?;
+                if request_id == 0 || (already_absent && !error_text.is_empty()) {
+                    return Err(DecodeError::BadValue("Abyssal participant removal result"));
+                }
+                Message::RemoveAbyssalParticipantReply {
+                    request_id,
+                    already_absent,
+                    error: (!error_text.is_empty()).then_some(error_text),
+                }
+            }
+            kind::GET_ABYSSAL_PARTICIPANT_POSE => {
+                let request_id = r.u64()?;
+                let scene = read_scene_key(&mut r)?;
+                let ship_id = r.i64()?;
+                if request_id == 0 || !scene.is_valid() || ship_id <= 0 {
+                    return Err(DecodeError::BadValue("resident pose request"));
+                }
+                Message::GetAbyssalParticipantPose { request_id, scene, ship_id }
+            }
+            kind::GET_ABYSSAL_PARTICIPANT_POSE_REPLY => {
+                let request_id = r.u64()?;
+                let scene = read_scene_key(&mut r)?;
+                let ship_id = r.i64()?;
+                let result = r.u8()?;
+                let outcome = match result {
+                    0 => {
+                        let position = [r.f64()?, r.f64()?, r.f64()?];
+                        let direction = [r.f64()?, r.f64()?, r.f64()?];
+                        let error = r.text()?;
+                        if !error.is_empty()
+                            || position.iter().chain(&direction).any(|value| !value.is_finite())
+                            || direction.iter().all(|value| *value == 0.0)
+                        {
+                            return Err(DecodeError::BadValue("Abyssal pose"));
+                        }
+                        Ok((position, direction))
+                    }
+                    1 => {
+                        let error = r.text()?;
+                        if error.is_empty() {
+                            return Err(DecodeError::BadValue("Abyssal pose failure"));
+                        }
+                        Err(error)
+                    }
+                    _ => return Err(DecodeError::BadValue("Abyssal pose result flag")),
+                };
+                if request_id == 0 || !scene.is_valid() || ship_id <= 0 {
+                    return Err(DecodeError::BadValue("resident pose reply identity"));
+                }
+                let deployment = if read_flag(&mut r, "deployment snapshot")? {
+                    if outcome.is_err() || scene.instance_id != 0 {
+                        return Err(DecodeError::BadValue("deployment snapshot scene"));
+                    }
+                    let warping = read_flag(&mut r, "deployment warping")?;
+                    let cloaked = read_flag(&mut r, "deployment cloaked")?;
+                    let cyno_active = read_flag(&mut r, "deployment cyno")?;
+                    let undock_invulnerable = read_flag(&mut r, "deployment invulnerability")?;
+                    let warp_scrambled = read_flag(&mut r, "deployment scramble")?;
+                    let count = r.u32()? as usize;
+                    let mut nearby_objects = Vec::new();
+                    let mut seen = std::collections::HashSet::new();
+                    for _ in 0..count {
+                        let item_id = r.i64()?;
+                        let type_id = r.i32()?;
+                        let center_distance_meters = r.f64()?;
+                        if item_id <= 0
+                            || item_id == ship_id
+                            || type_id <= 0
+                            || !seen.insert(item_id)
+                            || !center_distance_meters.is_finite()
+                            || !(0.0..=1_000_000.0).contains(&center_distance_meters)
+                        {
+                            return Err(DecodeError::BadValue("deployment object"));
+                        }
+                        nearby_objects.push(AbyssalDeploymentObject {
+                            item_id,
+                            type_id,
+                            center_distance_meters,
+                        });
+                    }
+                    Some(AbyssalDeploymentSnapshot {
+                        warping,
+                        cloaked,
+                        cyno_active,
+                        undock_invulnerable,
+                        warp_scrambled,
+                        nearby_objects,
+                    })
+                } else {
+                    None
+                };
+                Message::GetAbyssalParticipantPoseReply { request_id, scene, ship_id, outcome, deployment }
+            }
             kind::ENTER => {
                 let session_id = r.u64()?;
-                let solar_system_id = r.i32()?;
+                let scene = read_scene_key(&mut r)?;
                 let how = match r.u8()? {
                     0 => How::Undock,
                     1 => How::InSpace,
@@ -251,7 +746,7 @@ impl Message {
                 }
                 Message::Enter(Box::new(Enter {
                     session_id,
-                    solar_system_id,
+                    scene,
                     how,
                     station_id,
                     ship,
@@ -463,6 +958,11 @@ impl Message {
                     launcher_id: r.i64()?,
                     credit: read_credit(&mut r)?,
                     distance: r.f64()?,
+                    expected_scene: match r.u8()? {
+                        0 => None,
+                        1 => Some(read_scene_key(&mut r)?),
+                        _ => return Err(DecodeError::BadValue("expected scene flag")),
+                    },
                 }))
             }
             kind::CONTAINER_PLACED => Message::ContainerPlaced {
@@ -908,37 +1408,118 @@ impl Message {
                     units_remaining,
                 }))
             }
-            kind::PLACE_WRECK => {
-                let solar_system_id = r.i32()?;
-                let wreck_id = r.i64()?;
-                let group_id = r.i32()?;
-                let Some(kind) = read_wreck_kind(&mut r)? else { return Err(DecodeError::BadValue("wreck")) };
-                let position = read_vector(&mut r)?;
-                let direction = read_vector(&mut r)?;
-                let radius = r.f64()?;
-                let launcher_id = r.i64()?;
-                let credit = read_credit(&mut r)?;
-                let is_empty = match r.u8()? {
-                    0 => false,
-                    1 => true,
-                    _ => return Err(DecodeError::BadValue("is_empty")),
+            kind::PLACE_WRECK => Message::PlaceWreck(Box::new(read_wreck_placement(&mut r)?)),
+            kind::ENSURE_ABYSSAL_ENVIRONMENT_OBJECT => {
+                let request_id = r.u64()?;
+                let content_id = r.text()?;
+                let body = read_abyssal_scene_object(&mut r, false)?;
+                let effect_radius_meters = r.f64()?;
+                let point_defense = if read_flag(&mut r, "Abyssal point defense")? {
+                    let tick_interval_ms = r.i64()?;
+                    let damage = [r.f64()?, r.f64()?, r.f64()?, r.f64()?];
+                    let type_list_id = r.i32()?;
+                    let mut targets: [Vec<i32>; 6] = Default::default();
+                    for ids in &mut targets {
+                        let count = r.u32()? as usize;
+                        if count > 4096 {
+                            return Err(DecodeError::BadValue("Abyssal target count"));
+                        }
+                        for _ in 0..count {
+                            ids.push(r.i32()?);
+                        }
+                    }
+                    Some(AbyssalPointDefense {
+                        tick_interval_ms,
+                        damage,
+                        type_list_id,
+                        targets,
+                        effect_name: r.text()?,
+                    })
+                } else {
+                    None
                 };
-                Message::PlaceWreck(Box::new(WreckPlacement {
-                    solar_system_id,
-                    wreck_id,
-                    group_id,
-                    kind,
-                    position,
-                    direction,
-                    radius,
-                    launcher_id,
-                    credit,
-                    is_empty,
-                }))
+                let object =
+                    AbyssalEnvironmentObject { content_id, body, effect_radius_meters, point_defense };
+                if request_id == 0 || !valid_abyssal_environment_object(&object) {
+                    return Err(DecodeError::BadValue("Abyssal environment object"));
+                }
+                Message::EnsureAbyssalEnvironmentObject { request_id, object: Box::new(object) }
+            }
+            kind::ENSURE_ABYSSAL_ENVIRONMENT_OBJECT_REPLY => {
+                let (request_id, outcome) = read_abyssal_result(&mut r)?;
+                Message::EnsureAbyssalEnvironmentObjectReply { request_id, outcome }
+            }
+            kind::ABYSSAL_FIELD_MEMBERSHIP => {
+                let scene = read_scene_key(&mut r)?;
+                let source_item_id = r.i64()?;
+                let ship_id = r.i64()?;
+                let session_id = r.u64()?;
+                let inside = read_flag(&mut r, "Abyssal membership")?;
+                if scene.instance_id <= 0 || source_item_id <= 0 || ship_id <= 0 || session_id == 0 {
+                    return Err(DecodeError::BadValue("Abyssal field membership"));
+                }
+                Message::AbyssalFieldMembership { scene, source_item_id, ship_id, session_id, inside }
+            }
+            kind::REFRESH_ABYSSAL_NPC => {
+                let request_id = r.u64()?;
+                let scene = read_scene_key(&mut r)?;
+                let session_id = r.u64()?;
+                let ship = Box::new(read_ship(&mut r)?);
+                let identity = Box::new(read_identity(&mut r)?);
+                if request_id == 0
+                    || scene.instance_id <= 0
+                    || !crate::npc::is_npc_session(session_id)
+                    || ship.character_id != 0
+                    || identity.wreck.is_some()
+                    || identity.host_wreck
+                {
+                    return Err(DecodeError::BadValue("Abyssal NPC refresh"));
+                }
+                Message::RefreshAbyssalNpc { request_id, scene, session_id, ship, identity }
+            }
+            kind::REFRESH_ABYSSAL_NPC_REPLY => {
+                let (request_id, outcome) = read_abyssal_result(&mut r)?;
+                Message::RefreshAbyssalNpcReply { request_id, outcome }
+            }
+            kind::ENSURE_ABYSSAL_REWARD_CACHE => {
+                let request_id = r.u64()?;
+                let cache = AbyssalRewardCachePlacement {
+                    content_id: r.text()?,
+                    scene: read_scene_key(&mut r)?,
+                    ship: read_ship(&mut r)?,
+                    position: read_vector(&mut r)?,
+                    direction: read_vector(&mut r)?,
+                };
+                if request_id == 0 || !valid_abyssal_reward_cache(&cache) {
+                    return Err(DecodeError::BadValue("Abyssal cache"));
+                }
+                Message::EnsureAbyssalRewardCache { request_id, cache: Box::new(cache) }
+            }
+            kind::ENSURE_ABYSSAL_REWARD_CACHE_REPLY => {
+                let (request_id, outcome) = read_abyssal_result(&mut r)?;
+                Message::EnsureAbyssalRewardCacheReply { request_id, outcome }
+            }
+            kind::ENSURE_ABYSSAL_LOOT_CONTAINER => {
+                let request_id = r.u64()?;
+                let content_id = r.text()?;
+                let placement = read_wreck_placement(&mut r)?;
+                if request_id == 0 || !valid_abyssal_loot(&content_id, &placement) {
+                    return Err(DecodeError::BadValue("Abyssal loot"));
+                }
+                Message::EnsureAbyssalLootContainer { request_id, content_id, placement: Box::new(placement) }
+            }
+            kind::ENSURE_ABYSSAL_LOOT_CONTAINER_REPLY => {
+                let (request_id, outcome) = read_abyssal_result(&mut r)?;
+                Message::EnsureAbyssalLootContainerReply { request_id, outcome }
             }
             kind::SPAWN => {
                 let request_id = r.u64()?;
-                let solar_system_id = r.i32()?;
+                let abyssal_content_id = match r.u8()? {
+                    0 => None,
+                    1 => Some(r.text()?),
+                    _ => return Err(DecodeError::BadValue("Abyssal content id flag")),
+                };
+                let scene = read_scene_key(&mut r)?;
                 let ship = read_ship(&mut r)?;
                 let anchor_ship_id = r.i64()?;
                 let mut vectors = [[0.0; 3]; 3];
@@ -949,7 +1530,8 @@ impl Message {
                 let identity = read_identity(&mut r)?;
                 Message::Spawn(Box::new(Spawn {
                     request_id,
-                    solar_system_id,
+                    abyssal_content_id,
+                    scene,
                     ship,
                     anchor_ship_id,
                     position: vectors[0],

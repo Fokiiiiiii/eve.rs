@@ -129,7 +129,7 @@ public sealed partial class SpaceSessions
                     && _npcShips.TryGetValue(destroyed.KillerShipId, out var npc)
                     ? npc
                     : null;
-                var cause = npcKiller?.Profile.Id.Contains("concord_response", StringComparison.OrdinalIgnoreCase) == true
+                var cause = npcKiller?.Profile?.Id.Contains("concord_response", StringComparison.OrdinalIgnoreCase) == true
                     ? ShipLossCause.Concord
                     : killer is not null
                         ? ShipLossCause.Player
@@ -161,7 +161,7 @@ public sealed partial class SpaceSessions
             if (death.Wreck is { } left && destroyed.WreckKind is { } kind)
             {
                 PlaceWreck(new SimPlaceWreck(
-                    abandoned.SolarSystemId,
+                    SimSceneKey.SolarSystem(abandoned.SolarSystemId),
                     left.Id,
                     WreckGroup,
                     kind,
@@ -181,7 +181,7 @@ public sealed partial class SpaceSessions
         }
     }
 
-    private void NotifyDeathClient(Pilot pilot, ShipDeath lost, SimDestroyed destroyed, Item? recoveredCapsule = null)
+    private void NotifyDeathClient(Pilot pilot, ShipDeath lost, Item? recoveredCapsule = null)
     {
         var session = pilot.Session;
         if (lost.Capsule is { } capsule)
@@ -331,7 +331,7 @@ public sealed partial class SpaceSessions
                     if (lost.Wreck is { } wreckItem && destroyed.WreckKind is { } kind)
                     {
                         PlaceWreck(new SimPlaceWreck(
-                            pilot.SolarSystemId,
+                            SimSceneKey.SolarSystem(pilot.SolarSystemId),
                             wreckItem.Id,
                             WreckGroup,
                             kind,
@@ -360,7 +360,7 @@ public sealed partial class SpaceSessions
                             return true;
                         }
                         _pilots.TryRemove(id, out _);
-                        NotifyDeathClient(pilot, lost, destroyed, recovered.Ship);
+                        NotifyDeathClient(pilot, lost, recovered.Ship);
                         var character = recovered.Character;
                         var stationId = new PyInt(character.StationId);
                         session.Change(
@@ -386,7 +386,7 @@ public sealed partial class SpaceSessions
                         session.Close();
                         return true;
                     }
-                    NotifyDeathClient(pilot, lost, destroyed);
+                    NotifyDeathClient(pilot, lost);
                     session.Change(("shipid", new PyLong(survivor.Id)));
                     Background(() => RefreshTetherPolicyAsync(session));
                     handedOver = true;
@@ -441,7 +441,7 @@ public sealed partial class SpaceSessions
         var concord = _concordDestroyed.TryRemove(pilot.ShipId, out _)
             || (destroyed.KillerShipId != 0
                 && _npcShips.TryGetValue(destroyed.KillerShipId, out var npc)
-                && npc.Profile.Id.Contains("concord_response", StringComparison.OrdinalIgnoreCase));
+                && npc.Profile?.Id.Contains("concord_response", StringComparison.OrdinalIgnoreCase) == true);
         var cause = _deaths.ContainsKey(pilot.ShipId) ? ShipLossCause.SelfDestruct
             : concord ? ShipLossCause.Concord
             : killer is not null ? ShipLossCause.Player
@@ -515,7 +515,7 @@ public sealed partial class SpaceSessions
                     var kind = new SimWreckKind(corpse.TypeId, corpse.CustomName ?? character.Name, type?.GraphicId ?? 0);
                     var radius = type?.Attributes.GetValueOrDefault(162) ?? 0;
                     PlaceWreck(new SimPlaceWreck(
-                        pilot.SolarSystemId,
+                        SimSceneKey.SolarSystem(pilot.SolarSystemId),
                         corpse.Id,
                         CorpseGroup,
                         kind,

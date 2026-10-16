@@ -404,7 +404,7 @@ public sealed partial class SpaceContainers
             try
             {
                 _sim.PlaceWreck(new SimPlaceWreck(
-                    cycle.SolarSystemId, container.Id, containerSpace.GroupId,
+                    SimSceneKey.SolarSystem(cycle.SolarSystemId), container.Id, containerSpace.GroupId,
                     new SimWreckKind(container.TypeId, container.CustomName ?? containerType?.Name ?? "Cargo Container", containerType?.GraphicId ?? 0),
                     containerSpace.Position, containerSpace.Direction, containerSpace.Radius, containerSpace.LauncherId,
                     new SimCredit(containerSpace.CharacterId, containerSpace.CorporationId, containerSpace.AllianceId, containerSpace.WarFactionId), false));

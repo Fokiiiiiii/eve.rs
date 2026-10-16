@@ -60,6 +60,18 @@ fn a_damage_over_time_tick_goes_through_the_layers_whole_while_a_hit_is_resisted
 }
 
 #[test]
+fn a_resolved_applied_damage_depletes_layers_without_a_damage_type() {
+    let mut health = health();
+    let applied = health.apply_resolved_amount(0, 400.0).unwrap();
+
+    assert_eq!(applied.taken, Layers { shield: 220.0, armor: 137.5, structure: 42.5 });
+    assert_eq!(applied.after, Layers { shield: 0.0, armor: 0.0, structure: 158.75 });
+    assert_eq!(applied.armor_damage, (0.0, 137.5));
+    assert!(!applied.destroyed);
+    assert!(health.apply_resolved_amount(SECOND, f64::NAN).is_none());
+}
+
+#[test]
 fn what_the_shield_cannot_take_goes_on_to_the_armor_in_the_same_proportions() {
     let mut health = health();
     // 500 explosive: the shield holds 220 points and takes 0.5 of each point, so it soaks 440 of them; 60 explosive are left for the armor

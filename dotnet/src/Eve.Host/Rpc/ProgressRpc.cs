@@ -69,7 +69,7 @@ internal sealed partial class CharacterServicesComposition
                     if (characterId <= 0 || agentId <= 0) return false;
                     return (await ReadMissionTrackerContextAsync(characterId, agentId, call.Session, ct)).InActiveDungeon;
                 }),
-            new AbyssalMgrService(),
+            new AbyssalMgrService(HandleAbyssalRpcAsync),
             new VoidSpaceMgrService(),
             new AirNpeService(
                 () => newCharacterExperienceMode,

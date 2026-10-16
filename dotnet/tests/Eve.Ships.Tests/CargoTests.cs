@@ -175,6 +175,102 @@ public class SpaceCargoTests
 {
     private const int Tritanium = 34;
 
+    [PgFact]
+    public async Task Run_space_can_provenance_is_atomic_exactly_scoped_and_preserves_custom_info()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var character = await rig.NewCharacterAsync();
+        var undocked = await rig.Ships.UndockAsync(character.CharacterId);
+        var ship = undocked.Moved!.Ship;
+        var systemId = checked((int)ship.LocationId);
+
+        var firstScope = new RunSpaceItemScope(Guid.NewGuid(), 84101, 1, systemId, character.CharacterId);
+        var firstCan = await rig.Ships.CreateCanAsync(character.CharacterId, systemId, runSpaceScope: firstScope);
+        Assert.Equal(firstScope, firstCan.RunSpaceProvenance!.Scope);
+        Assert.Equal(RunSpaceItemRole.Can, firstCan.RunSpaceProvenance.Role);
+        Assert.Equal(character.CharacterId, firstCan.RunSpaceProvenance.SourceCharacterId);
+        Assert.Equal(ship.Id, firstCan.RunSpaceProvenance.SourceShipId);
+        Assert.Equal(ship.Id, firstCan.RunSpaceProvenance.SourceItemId);
+        Assert.Equal(character.CharacterId, firstCan.OwnerId);
+        Assert.Equal((long)systemId, firstCan.LocationId);
+        Assert.Null(firstCan.CustomInfo);
+
+        var secondScope = firstScope with { ContentId = Guid.NewGuid(), InstanceId = 84102 };
+        var secondCan = await rig.Ships.CreateCanAsync(character.CharacterId, systemId, runSpaceScope: secondScope);
+        var thirdScope = firstScope with { ContentId = Guid.NewGuid(), InstanceId = 84103 };
+        var thirdProvenance = new RunSpaceItemProvenance(
+            thirdScope, RunSpaceItemRole.Can, character.CharacterId, ship.Id, ship.Id);
+
+        await using (var connection = await rig.Source.OpenConnectionAsync())
+        await using (var transaction = await connection.BeginTransactionAsync())
+        {
+            var legacyCustomInfoValues = new string?[]
+            {
+                "0.375",
+                """{"schemaVersion":2,"contentId":"00000000-0000-0000-0000-000000000001","roomOrdinal":1}""",
+                "evejs:structure-unanchor:hull:60015249",
+                null,
+            };
+            foreach (var customInfo in legacyCustomInfoValues)
+            {
+                await rig.Items.SetCustomInfoAsync(connection, transaction, firstCan.Id, customInfo);
+                var reloaded = await rig.Items.LockAndGetAsync(connection, transaction, firstCan.Id);
+                Assert.NotNull(reloaded);
+                Assert.Equal(customInfo, reloaded.CustomInfo);
+                Assert.Equal(firstScope, reloaded.RunSpaceProvenance!.Scope);
+            }
+
+            var thirdCanId = await rig.Items.CreateAsync(
+                connection,
+                transaction,
+                new NewItem(
+                    firstCan.TypeId,
+                    character.CharacterId,
+                    systemId,
+                    CharacterShips.InSpaceFlag,
+                    1,
+                    Singleton: true,
+                    CustomInfo: "legacy-create-custominfo")
+                {
+                    RunSpaceProvenance = thirdProvenance,
+                });
+            await transaction.CommitAsync();
+
+            var createdWithCustomInfo = await rig.Items.GetAsync(thirdCanId);
+            Assert.NotNull(createdWithCustomInfo);
+            Assert.Equal("legacy-create-custominfo", createdWithCustomInfo.CustomInfo);
+            Assert.Equal(thirdProvenance, createdWithCustomInfo.RunSpaceProvenance);
+        }
+
+        var freshFirstCan = await rig.Items.GetAsync(firstCan.Id);
+        Assert.NotNull(freshFirstCan);
+        Assert.Null(freshFirstCan.CustomInfo);
+        Assert.Equal(firstScope, freshFirstCan.RunSpaceProvenance!.Scope);
+
+        await using (var connection = await rig.Source.OpenConnectionAsync())
+        await using (var transaction = await connection.BeginTransactionAsync())
+        {
+            var firstRunItems = await rig.Items.FindRunSpaceItemsAsync(connection, transaction, firstScope);
+            var secondRunItems = await rig.Items.FindRunSpaceItemsAsync(connection, transaction, secondScope);
+            var thirdRunItems = await rig.Items.FindRunSpaceItemsAsync(connection, transaction, thirdScope);
+            var wrongRunItems = await rig.Items.FindRunSpaceItemsAsync(
+                connection, transaction, firstScope with { InstanceId = 84999 });
+
+            Assert.Single(firstRunItems);
+            Assert.Equal(firstCan.Id, firstRunItems[0].Id);
+            Assert.Single(secondRunItems);
+            Assert.Equal(secondCan.Id, secondRunItems[0].Id);
+            Assert.Single(thirdRunItems);
+            Assert.Equal(RunSpaceItemRole.Can, thirdRunItems[0].RunSpaceProvenance!.Role);
+            Assert.Empty(wrongRunItems);
+            await transaction.CommitAsync();
+        }
+
+        var legacyCan = await rig.Ships.CreateCanAsync(character.CharacterId, systemId);
+        Assert.Null(legacyCan.RunSpaceProvenance);
+        Assert.Null(legacyCan.CustomInfo);
+    }
+
     private static async Task<(Created Character, Item Can)> InSpaceWithACanAsync(Rig rig)
     {
         var c = await rig.NewCharacterAsync();
@@ -276,6 +372,64 @@ public class SpaceCargoTests
     }
 
     [PgFact]
+    public async Task Removing_a_container_in_the_caller_transaction_recurses_and_preserves_moved_out_subtrees()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var (owner, root) = await InSpaceWithACanAsync(rig);
+        var external = await rig.Ships.CreateCanAsync(owner.CharacterId, checked((int)root.LocationId));
+        var otherOwner = await rig.NewCharacterAsync(name: $"ContainerOwner-{Guid.NewGuid():N}"[..24]);
+
+        await using (var connection = await rig.Source.OpenConnectionAsync())
+        await using (var transaction = await connection.BeginTransactionAsync())
+        {
+            var nestedId = await rig.Items.CreateAsync(connection, transaction,
+                new NewItem(CharacterShips.CargoContainerTypeId, otherOwner.CharacterId, root.Id, CharacterShips.ContainerFlag, 1, true));
+            var nestedLootId = await rig.Items.CreateAsync(connection, transaction,
+                new NewItem(Tritanium, otherOwner.CharacterId, nestedId, CharacterShips.ContainerFlag, 5, false));
+            var movedOutId = await rig.Items.CreateAsync(connection, transaction,
+                new NewItem(CharacterShips.CargoContainerTypeId, otherOwner.CharacterId, root.Id, CharacterShips.ContainerFlag, 1, true));
+            var movedOutLootId = await rig.Items.CreateAsync(connection, transaction,
+                new NewItem(Tritanium, otherOwner.CharacterId, movedOutId, CharacterShips.ContainerFlag, 3, false));
+            await rig.Items.MoveAsync(connection, transaction, movedOutId, external.Id, CharacterShips.ContainerFlag);
+
+            Assert.NotNull(await rig.Items.LockAndGetAsync(connection, transaction, root.Id));
+            var removed = await rig.Ships.RemoveContainerAsync(connection, transaction, root.Id, withContents: true);
+
+            Assert.Equal(root.Id, removed!.Id);
+            Assert.Null(await rig.Items.LockAndGetAsync(connection, transaction, root.Id));
+            Assert.Null(await rig.Items.LockAndGetAsync(connection, transaction, nestedId));
+            Assert.Null(await rig.Items.LockAndGetAsync(connection, transaction, nestedLootId));
+            Assert.NotNull(await rig.Items.LockAndGetAsync(connection, transaction, movedOutId));
+            Assert.NotNull(await rig.Items.LockAndGetAsync(connection, transaction, movedOutLootId));
+            await transaction.RollbackAsync();
+        }
+
+        Assert.NotNull(await rig.Items.GetAsync(root.Id));
+        Assert.NotNull(await rig.Items.GetAsync(external.Id));
+    }
+
+    [PgFact]
+    public async Task Removing_a_container_fails_safely_on_a_containment_cycle()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var (owner, root) = await InSpaceWithACanAsync(rig);
+        var nestedOwner = await rig.NewCharacterAsync(name: $"CycleOwner-{Guid.NewGuid():N}"[..20]);
+
+        await using var connection = await rig.Source.OpenConnectionAsync();
+        await using var transaction = await connection.BeginTransactionAsync();
+        var nestedId = await rig.Items.CreateAsync(connection, transaction,
+            new NewItem(CharacterShips.CargoContainerTypeId, nestedOwner.CharacterId, root.Id, CharacterShips.ContainerFlag, 1, true));
+        await rig.Items.MoveAsync(connection, transaction, root.Id, nestedId, CharacterShips.ContainerFlag);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            rig.Ships.RemoveContainerAsync(connection, transaction, root.Id, withContents: true));
+        await transaction.RollbackAsync();
+
+        Assert.NotNull(await rig.Items.GetAsync(root.Id));
+        Assert.Null(await rig.Items.GetAsync(nestedId));
+    }
+
+    [PgFact]
     public async Task Removing_a_can_takes_what_is_in_it_only_when_asked_to()
     {
         await using var rig = await Rig.CreateAsync();
@@ -286,6 +440,11 @@ public class SpaceCargoTests
         Assert.Null(await rig.Items.GetAsync(can.Id));
         Assert.NotNull(await rig.Items.GetAsync(inCan)); // left where it was: nothing sees it any more, which is what a can that is emptied has
         Assert.Null(await rig.Ships.RemoveContainerAsync(can.Id, withContents: true));
+
+        var populatedCan = await rig.Ships.CreateCanAsync(c.CharacterId, checked((int)can.LocationId));
+        var inPopulatedCan = await InAsync(rig, c.CharacterId, populatedCan.Id, CharacterShips.ContainerFlag, Tritanium, 5);
+        Assert.NotNull(await rig.Ships.RemoveContainerAsync(populatedCan.Id, withContents: true));
+        Assert.Null(await rig.Items.GetAsync(inPopulatedCan));
     }
 }
 

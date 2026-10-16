@@ -3,8 +3,108 @@ use crate::health::Condition;
 use crate::scene::tests::{NOON, SESSION, STATION, spec, system};
 use crate::world::SolarSystem;
 
+#[path = "abyssal_environment_tests.rs"]
+mod abyssal_environment_tests;
+
+#[path = "abyssal_cleanup_tests.rs"]
+mod abyssal_cleanup_tests;
+
 const SYSTEM: i32 = 30_000_001;
 const SECOND: i64 = 10_000_000;
+
+#[test]
+fn abyssal_reward_cache_is_non_npc_damageable_and_retries_replay_confirmed_destruction() {
+    let mut sim = sim();
+    let scene = SceneKey { location_id: SYSTEM, instance_id: 880, room_index: 1 };
+    ensure_abyssal(&mut sim, scene, NOON, 75_000.0, 0.0);
+    let mut entity = spec();
+    entity.ship_id = 8_800_001;
+    entity.character_id = 0;
+    entity.owner_id = 140_000_001;
+    entity.type_id = 47_951;
+    entity.group_id = 2_009;
+    entity.category_id = 11;
+    entity.max_velocity = 0.0;
+    entity.modules.clear();
+    let cache = crate::link::AbyssalRewardCachePlacement {
+        content_id: "12345678-1234-1234-1234-123456789abc".to_string(),
+        scene,
+        ship: entity,
+        position: [100.0, 200.0, 300.0],
+        direction: [0.0, 0.0, 1.0],
+    };
+    let request = Message::EnsureAbyssalRewardCache { request_id: 1, cache: Box::new(cache.clone()) };
+    assert_eq!(Message::decode(&request.payload()).unwrap(), request);
+    assert_eq!(
+        sim.handle(request.clone(), NOON).unwrap().last(),
+        Some(&Message::EnsureAbyssalRewardCacheReply { request_id: 1, outcome: Ok(()) })
+    );
+    let resident = sim.scenes.get_mut(&scene).unwrap();
+    let session = resident.session_of(cache.ship.ship_id).unwrap();
+    assert!(!crate::npc::is_npc_session(session));
+    assert!(resident.pilots[&session].ship.npc.is_none());
+    assert_eq!(resident.pilots[&session].ship.spec.group_id, 2_009);
+    assert_eq!(resident.unpiloted.get(&cache.ship.ship_id), Some(&session));
+    assert_eq!(
+        sim.handle(request.clone(), NOON).unwrap(),
+        [Message::EnsureAbyssalRewardCacheReply { request_id: 1, outcome: Ok(()) }]
+    );
+    let resident = sim.scenes.get_mut(&scene).unwrap();
+    let (_, hit) = resident.damage(cache.ship.ship_id, [1.0e12, 0.0, 0.0, 0.0], NOON + SECOND);
+    assert!(hit.unwrap().destroyed);
+    let destroyed = resident.destroy(session, None, NOON + SECOND);
+    assert_eq!(destroyed.iter().filter(|out| matches!(out, Out::Destroyed { .. })).count(), 1);
+    assert!(resident.wrecks.is_empty(), "source caches must never materialize reward cargo on their own");
+    assert!(resident.session_of(cache.ship.ship_id).is_none());
+    let replay = sim.handle(request.clone(), NOON + 2 * SECOND).unwrap();
+    assert!(replay.iter().any(|message| matches!(message, Message::Destroyed { ship_id, ship_type_id: 47_951, .. } if *ship_id == cache.ship.ship_id)));
+    assert!(
+        matches!(replay.last(), Some(Message::EnsureAbyssalRewardCacheReply { outcome: Err(reason), .. }) if reason == "ABYSSAL_CACHE_ALREADY_DESTROYED")
+    );
+    let mut conflict = cache;
+    conflict.content_id = "22345678-1234-1234-1234-123456789abc".to_string();
+    assert!(
+        matches!(sim.handle(Message::EnsureAbyssalRewardCache { request_id: 2, cache: Box::new(conflict) }, NOON).unwrap().last(), Some(Message::EnsureAbyssalRewardCacheReply { outcome: Err(reason), .. }) if reason == "ABYSSAL_CACHE_IDENTITY_CONFLICT")
+    );
+}
+
+#[test]
+fn abyssal_confirmed_loot_upsert_preserves_live_state_and_does_not_resurrect_removed_items() {
+    let mut sim = sim();
+    let scene = SceneKey { location_id: SYSTEM, instance_id: 881, room_index: 1 };
+    ensure_abyssal(&mut sim, scene, NOON, 75_000.0, 0.0);
+    let placement = crate::link::WreckPlacement {
+        scene,
+        wreck_id: 8_800_002,
+        group_id: 12,
+        kind: crate::wreck::WreckKind { type_id: 23, name: "Cargo Container".to_string(), graphic_id: None },
+        position: [100.0, 200.0, 300.0],
+        direction: [0.0, 0.0, 1.0],
+        radius: 10.0,
+        launcher_id: 8_800_001,
+        credit: crate::death::Credit { character_id: 140_000_001, ..Default::default() },
+        is_empty: false,
+    };
+    let request = Message::EnsureAbyssalLootContainer {
+        request_id: 1,
+        content_id: "12345678-1234-1234-1234-123456789abc".to_string(),
+        placement: Box::new(placement.clone()),
+    };
+    assert_eq!(Message::decode(&request.payload()).unwrap(), request);
+    sim.handle(request.clone(), NOON).unwrap();
+    let expires = sim.scenes[&scene].wreck(placement.wreck_id).unwrap().expires_at;
+    assert_eq!(
+        sim.handle(request.clone(), NOON + SECOND).unwrap(),
+        [Message::EnsureAbyssalLootContainerReply { request_id: 1, outcome: Ok(()) }]
+    );
+    assert_eq!(sim.scenes[&scene].wreck(placement.wreck_id).unwrap().expires_at, expires);
+    sim.scenes.get_mut(&scene).unwrap().remove_wreck(placement.wreck_id, 0, NOON + SECOND);
+    assert!(
+        matches!(sim.handle(request, NOON + 2 * SECOND).unwrap().last(), Some(Message::EnsureAbyssalLootContainerReply { outcome: Err(reason), .. }) if reason == "ABYSSAL_LOOT_ALREADY_REMOVED")
+    );
+    assert!(sim.scenes[&scene].wreck(placement.wreck_id).is_none());
+}
+
 
 /// A system whose station is big enough that a ship leaving it is at once within docking range, as in the reference.
 fn big_station() -> SolarSystem {
@@ -20,7 +120,7 @@ fn sim() -> Sim {
 fn enter(session: SessionId, station_id: i64, system: i32) -> Message {
     Message::Enter(Box::new(Enter {
         session_id: session,
-        solar_system_id: system,
+        scene: SceneKey::solar_system(system),
         how: How::Undock,
         station_id,
         ship: spec(),
@@ -51,7 +151,7 @@ fn a_wormhole_end_placed_in_a_system_nobody_is_in_is_still_there_after_a_poll() 
     sim.handle(Message::PlaceWormhole(Box::new(end)), NOON).unwrap();
     sim.poll(NOON + 5 * SECOND);
     assert!(
-        sim.scenes.get(&SYSTEM).is_some_and(|scene| scene.wormhole_index(1_050_000_001).is_some()),
+        sim.scenes.get(&SceneKey::solar_system(SYSTEM)).is_some_and(|scene| scene.wormhole_index(1_050_000_001).is_some()),
         "the end was dropped with its scene"
     );
 }
@@ -61,6 +161,56 @@ fn undocked() -> Sim {
     let reply = sim.handle(enter(SESSION, STATION, SYSTEM), NOON).unwrap();
     assert_eq!(reply, [Message::EnterReply { session_id: SESSION, outcome: Ok(()) }]);
     sim
+}
+
+#[test]
+fn a_source_system_pose_query_returns_position_and_direction_atomically_without_a_run_id() {
+    let mut sim = sim();
+    let scene = SceneKey::solar_system(SYSTEM);
+    let ship_id = 8_900_000_001;
+    let mut ship = spec();
+    ship.ship_id = ship_id;
+    ship.character_id = ship_id + 1;
+    ship.owner_id = ship_id + 1;
+    let entered = sim
+        .handle(
+            Message::Enter(Box::new(Enter {
+                session_id: SESSION,
+                scene,
+                how: How::InSpace,
+                station_id: 0,
+                ship,
+                position: Some([100.0, 200.0, 300.0]),
+                direction: Some([0.0, 0.0, 1.0]),
+            })),
+            NOON,
+        )
+        .unwrap();
+    assert!(
+        entered
+            .iter()
+            .any(|message| matches!(message, Message::EnterReply { session_id: SESSION, outcome: Ok(()) }))
+    );
+
+    let reply =
+        sim.handle(Message::GetAbyssalParticipantPose { request_id: 7, scene, ship_id }, NOON).unwrap();
+    let [
+        Message::GetAbyssalParticipantPoseReply {
+            request_id: 7,
+            scene: found,
+            ship_id: id,
+            outcome: Ok((position, direction)),
+            deployment,
+        },
+    ] = reply.as_slice()
+    else {
+        panic!("{reply:?}")
+    };
+    assert_eq!(
+        (*found, *id, *position, *direction),
+        (scene, ship_id, [100.0, 200.0, 300.0], [0.0, 0.0, 1.0])
+    );
+    assert_eq!(deployment.is_some(), scene.instance_id == 0);
 }
 
 fn afterburner(module: i64) -> crate::modules::Effect {
@@ -93,7 +243,8 @@ fn spawn(request_id: u64, system: i32, ship_id: i64, at: [f64; 3]) -> Message {
     ship.category_id = 11;
     Message::Spawn(Box::new(crate::link::Spawn {
         request_id,
-        solar_system_id: system,
+        abyssal_content_id: None,
+        scene: SceneKey::solar_system(system),
         ship,
         anchor_ship_id: 0,
         position: at,
@@ -111,14 +262,514 @@ fn spawn(request_id: u64, system: i32, ship_id: i64, at: [f64; 3]) -> Message {
     }))
 }
 
+fn abyssal_scene_spec(
+    scene: SceneKey,
+    center: [f64; 3],
+    radius: f64,
+    tick_interval_ms: i64,
+    damage: f64,
+) -> AbyssalSceneSpec {
+    AbyssalSceneSpec {
+        scene,
+        environment: crate::link::AbyssalEnvironmentProfile {
+            global_modifiers: Vec::new(),
+            fields: Vec::new(),
+        },
+        boundary: crate::link::AbyssalBoundaryProfile {
+            center,
+            radius_meters: radius,
+            tick_interval_ms,
+            damage_curve: vec![crate::link::AbyssalBoundaryDamagePoint {
+                distance_outside_meters: 0.0,
+                applied_damage_per_second: damage,
+            }],
+            terminal_exposure_ms: 15_000,
+        },
+        expiry_filetime: NOON + 20 * 60 * SECOND,
+    }
+}
+
+fn ensure_abyssal(sim: &mut Sim, scene: SceneKey, now: i64, radius: f64, damage: f64) {
+    assert_eq!(
+        sim.handle(
+            Message::EnsureAbyssalScene {
+                request_id: scene.instance_id as u64 * 10 + scene.room_index as u64,
+                spec: abyssal_scene_spec(scene, [0.0; 3], radius, 1_000, damage)
+            },
+            now
+        )
+        .unwrap(),
+        [Message::EnsureAbyssalSceneReply {
+            request_id: scene.instance_id as u64 * 10 + scene.room_index as u64,
+            outcome: Ok(())
+        }]
+    );
+}
+
+fn abyssal_enter(session: SessionId, scene: SceneKey, ship_id: i64, position: [f64; 3]) -> Message {
+    let mut ship = spec();
+    ship.ship_id = ship_id;
+    ship.character_id = ship_id + 1;
+    ship.owner_id = ship_id + 1;
+    Message::Enter(Box::new(Enter {
+        session_id: session,
+        scene,
+        how: How::InSpace,
+        station_id: 0,
+        ship,
+        position: Some(position),
+        direction: Some([0.0, 0.0, 1.0]),
+    }))
+}
+
+fn abyssal_spawn(request_id: u64, scene: SceneKey, ship_id: i64, position: [f64; 3]) -> Message {
+    abyssal_spawn_for("00000000-0000-0000-0000-000000000001", request_id, scene, ship_id, position)
+}
+
+fn abyssal_spawn_for(
+    content_id: &str,
+    request_id: u64,
+    scene: SceneKey,
+    ship_id: i64,
+    position: [f64; 3],
+) -> Message {
+    let mut ship = spec();
+    ship.ship_id = ship_id;
+    ship.character_id = 0;
+    ship.owner_id = 1_000_125;
+    ship.category_id = 11;
+    Message::Spawn(Box::new(crate::link::Spawn {
+        request_id,
+        abyssal_content_id: Some(content_id.to_string()),
+        scene,
+        ship,
+        anchor_ship_id: 0,
+        position,
+        velocity: [0.0; 3],
+        direction: [1.0, 0.0, 0.0],
+        behavior: String::new(),
+        identity: crate::ship::NpcIdentity::default(),
+    }))
+}
+
+#[test]
+fn abyssal_npc_spawn_retry_uses_content_scene_and_ship_identity_without_duplicate_balls() {
+    let mut simulation = sim();
+    let room = SceneKey { location_id: SYSTEM, instance_id: 401, room_index: 1 };
+    let other_room = SceneKey { location_id: SYSTEM, instance_id: 401, room_index: 2 };
+    let content_id = "b9294d3a-924f-4a73-9b8c-38713db70101";
+    ensure_abyssal(&mut simulation, room, NOON, 10_000.0, 0.0);
+    ensure_abyssal(&mut simulation, other_room, NOON, 10_000.0, 0.0);
+    let ship_id = 8_400_000_101;
+
+    let mut missing_content_id = abyssal_spawn_for(content_id, 49, room, ship_id, [500.0, 0.0, 0.0]);
+    if let Message::Spawn(spawn) = &mut missing_content_id {
+        spawn.abyssal_content_id = None;
+    }
+    assert_eq!(
+        simulation.handle(missing_content_id, NOON).unwrap(),
+        [Message::SpawnReply { request_id: 49, outcome: Err("ABYSSAL_CONTENT_ID_REQUIRED".to_string()) }]
+    );
+
+    let first =
+        simulation.handle(abyssal_spawn_for(content_id, 50, room, ship_id, [500.0, 0.0, 0.0]), NOON).unwrap();
+    let session = match first.first() {
+        Some(Message::SpawnReply { request_id: 50, outcome: Ok(session) }) => *session,
+        other => panic!("unexpected first spawn reply {other:?}"),
+    };
+    let retry = simulation
+        .handle(abyssal_spawn_for(content_id, 51, room, ship_id, [900.0, 0.0, 0.0]), NOON + SECOND)
+        .unwrap();
+    assert_eq!(retry, [Message::SpawnReply { request_id: 51, outcome: Ok(session) }]);
+    let residents: Vec<_> =
+        simulation.scenes[&room].pilots.values().filter(|pilot| pilot.ship.spec.ship_id == ship_id).collect();
+    assert_eq!(residents.len(), 1);
+    assert_eq!(residents[0].ship.position, Vec3::new(500.0, 0.0, 0.0));
+
+    let wrong_content = simulation
+        .handle(
+            abyssal_spawn_for("a32170aa-6d4a-4a42-8eed-2765df483202", 52, room, ship_id, [500.0, 0.0, 0.0]),
+            NOON + SECOND,
+        )
+        .unwrap();
+    assert_eq!(
+        wrong_content,
+        [Message::SpawnReply { request_id: 52, outcome: Err("ABYSSAL_NPC_IDENTITY_CONFLICT".to_string()) }]
+    );
+    let wrong_room = simulation
+        .handle(abyssal_spawn_for(content_id, 53, other_room, ship_id, [500.0, 0.0, 0.0]), NOON + SECOND)
+        .unwrap();
+    assert_eq!(
+        wrong_room,
+        [Message::SpawnReply { request_id: 53, outcome: Err("ABYSSAL_NPC_SCENE_MISMATCH".to_string()) }]
+    );
+
+    simulation.scenes.get_mut(&room).unwrap().destroy(session, None, NOON + 2 * SECOND);
+    let after_death = simulation
+        .handle(abyssal_spawn_for(content_id, 54, room, ship_id, [500.0, 0.0, 0.0]), NOON + 2 * SECOND)
+        .unwrap();
+    assert_eq!(
+        after_death,
+        [Message::SpawnReply { request_id: 54, outcome: Err("ABYSSAL_NPC_ALREADY_DESTROYED".to_string()) }]
+    );
+}
+
+#[test]
+fn abyssal_instances_and_rooms_have_private_static_free_scenes() {
+    let mut sim = sim();
+    let first = SceneKey { location_id: SYSTEM, instance_id: 101, room_index: 1 };
+    let second = SceneKey { location_id: SYSTEM, instance_id: 101, room_index: 2 };
+    let other_run = SceneKey { location_id: SYSTEM, instance_id: 102, room_index: 1 };
+    ensure_abyssal(&mut sim, first, NOON, 10_000.0, 0.0);
+    ensure_abyssal(&mut sim, second, NOON, 10_000.0, 0.0);
+    ensure_abyssal(&mut sim, other_run, NOON, 10_000.0, 0.0);
+
+    for key in [first, second, other_run] {
+        assert!(
+            sim.scenes[&key].system().bodies.is_empty(),
+            "an Abyssal scene must not hydrate the location's static bodies"
+        );
+    }
+    assert_eq!(
+        sim.handle(abyssal_enter(7, first, 8_000_000_001, [100.0, 0.0, 0.0]), NOON).unwrap().last(),
+        Some(&Message::EnterReply { session_id: 7, outcome: Ok(()) })
+    );
+    assert_eq!(
+        sim.handle(abyssal_enter(8, second, 8_000_000_002, [100.0, 0.0, 0.0]), NOON).unwrap().last(),
+        Some(&Message::EnterReply { session_id: 8, outcome: Ok(()) })
+    );
+    assert_eq!(
+        sim.handle(abyssal_enter(9, first, 8_000_000_003, [200.0, 0.0, 0.0]), NOON).unwrap().last(),
+        Some(&Message::EnterReply { session_id: 9, outcome: Ok(()) })
+    );
+    let npc_id = 8_000_000_004;
+    assert!(matches!(
+        sim.handle(abyssal_spawn(1, first, npc_id, [500.0, 0.0, 0.0]), NOON).unwrap().first(),
+        Some(Message::SpawnReply { outcome: Ok(_), .. })
+    ));
+
+    assert_eq!(sim.scenes[&first].pilots.len(), 3, "participants in the same room share one scene");
+    assert!(sim.scenes[&first].session_of(npc_id).is_some());
+    assert!(
+        sim.scenes[&second].session_of(npc_id).is_none(),
+        "a room cannot target or see a ship in another room"
+    );
+    assert!(
+        sim.scenes[&other_run].session_of(npc_id).is_none(),
+        "a second run at the same location stays isolated"
+    );
+}
+
+#[test]
+fn abyssal_static_scene_objects_materialize_idempotently_and_update_open_state() {
+    let mut simulation = sim();
+    let room = SceneKey { location_id: SYSTEM, instance_id: 305, room_index: 1 };
+    ensure_abyssal(&mut simulation, room, NOON, 75_000.0, 0.0);
+    let object = crate::link::AbyssalSceneObject {
+        scene: room,
+        item_id: 8_400_000_305,
+        type_id: 47_685,
+        group_id: 366,
+        category_id: 2,
+        owner_id: 90_001,
+        radius: 5_000.0,
+        graphic_id: 22_130,
+        name: "Transfer Conduit (Triglavian)".to_string(),
+        position: [100.0, 200.0, 35_300.0],
+        direction: [0.0, 0.0, 1.0],
+        is_open: false,
+    };
+
+    let first = simulation
+        .handle(Message::EnsureAbyssalSceneObject { request_id: 61, object: object.clone() }, NOON)
+        .unwrap();
+    assert!(matches!(
+        first.last(),
+        Some(Message::EnsureAbyssalSceneObjectReply { request_id: 61, outcome: Ok(()) })
+    ));
+    assert_eq!(simulation.scenes[&room].system().bodies.len(), 1);
+
+    let retry = simulation
+        .handle(Message::EnsureAbyssalSceneObject { request_id: 62, object: object.clone() }, NOON + SECOND)
+        .unwrap();
+    assert_eq!(retry, [Message::EnsureAbyssalSceneObjectReply { request_id: 62, outcome: Ok(()) }]);
+    assert_eq!(simulation.scenes[&room].system().bodies.len(), 1);
+
+    let opened = simulation
+        .handle(
+            Message::EnsureAbyssalSceneObject {
+                request_id: 63,
+                object: crate::link::AbyssalSceneObject { is_open: true, ..object },
+            },
+            NOON + 2 * SECOND,
+        )
+        .unwrap();
+    assert!(matches!(
+        opened.last(),
+        Some(Message::EnsureAbyssalSceneObjectReply { request_id: 63, outcome: Ok(()) })
+    ));
+    assert_eq!(simulation.scenes[&room].system().bodies.len(), 1);
+    assert!(matches!(
+        &simulation.scenes[&room].system().bodies[0].detail,
+        crate::world::Detail::AbyssalConduit { is_open: true, .. }
+    ));
+}
+
+#[test]
+fn abyssal_room_transfer_preserves_the_ship_and_rebinds_a_new_session_before_origin_return() {
+    let mut sim = sim();
+    let first = SceneKey { location_id: SYSTEM, instance_id: 201, room_index: 1 };
+    let second = SceneKey { location_id: SYSTEM, instance_id: 201, room_index: 2 };
+    ensure_abyssal(&mut sim, first, NOON, 10_000.0, 0.0);
+    ensure_abyssal(&mut sim, second, NOON, 10_000.0, 0.0);
+    let ship_id = 8_100_000_001;
+    let origin = SceneKey::solar_system(SYSTEM);
+    sim.handle(abyssal_enter(7, origin, ship_id, [100.0, 0.0, 0.0]), NOON).unwrap();
+
+    let entered = sim
+        .handle(
+            Message::MoveAbyssalParticipant {
+                request_id: 4,
+                ship_id,
+                source: origin,
+                destination: first,
+                preserve_source_pose: false,
+                session_handoff: false,
+                position: [100.0, 0.0, 0.0],
+                direction: [0.0, 0.0, 1.0],
+            },
+            NOON + SECOND,
+        )
+        .unwrap();
+    assert!(matches!(entered.last(), Some(Message::MoveAbyssalParticipantReply { outcome: Ok(()), .. })));
+
+    let wrong_location = sim
+        .handle(
+            Message::MoveAbyssalParticipant {
+                request_id: 5,
+                ship_id,
+                source: first,
+                destination: SceneKey { location_id: SYSTEM + 1, instance_id: 201, room_index: 2 },
+                preserve_source_pose: false,
+                session_handoff: false,
+                position: [400.0, 500.0, 600.0],
+                direction: [1.0, 0.0, 0.0],
+            },
+            NOON + SECOND,
+        )
+        .unwrap();
+    assert_eq!(
+        wrong_location,
+        [Message::MoveAbyssalParticipantReply {
+            request_id: 5,
+            outcome: Err("BAD_ABYSSAL_PARTICIPANT_MOVE".to_string()),
+        }]
+    );
+    assert_eq!(sim.sessions.get(&7), Some(&first));
+
+    let moved = sim
+        .handle(
+            Message::MoveAbyssalParticipant {
+                request_id: 1,
+                ship_id,
+                source: first,
+                destination: second,
+                preserve_source_pose: false,
+                session_handoff: false,
+                position: [400.0, 500.0, 600.0],
+                direction: [1.0, 0.0, 0.0],
+            },
+            NOON + SECOND,
+        )
+        .unwrap();
+    assert!(matches!(moved.last(), Some(Message::MoveAbyssalParticipantReply { outcome: Ok(()), .. })));
+    assert_eq!(sim.sessions.get(&7), Some(&second));
+    assert!(!sim.scenes[&first].pilots.contains_key(&7));
+    let moved_ship = &sim.scenes[&second].pilots[&7].ship;
+    assert_eq!(moved_ship.spec.ship_id, ship_id);
+    assert_eq!(moved_ship.position, Vec3::new(400.0, 500.0, 600.0));
+
+    assert_eq!(
+        sim.handle(
+            Message::RebindAbyssalSession { request_id: 2, session_id: 77, ship_id, scene: second },
+            NOON + 2 * SECOND
+        )
+        .unwrap(),
+        [Message::RebindAbyssalSessionReply { request_id: 2, outcome: Ok(()) }]
+    );
+    assert!(!sim.sessions.contains_key(&7));
+    assert_eq!(sim.sessions.get(&77), Some(&second));
+    assert!(!sim.scenes[&second].pilots.contains_key(&7));
+    assert_eq!(sim.scenes[&second].pilots[&77].ship.spec.ship_id, ship_id);
+    assert!(!sim.scenes[&second].pilots[&77].bound);
+    sim.handle(Message::Bind { session_id: 77 }, NOON + 2 * SECOND).unwrap();
+    assert!(sim.scenes[&second].pilots[&77].bound);
+
+    let returned = sim
+        .handle(
+            Message::MoveAbyssalParticipant {
+                request_id: 3,
+                ship_id,
+                source: second,
+                destination: origin,
+                preserve_source_pose: false,
+                session_handoff: false,
+                position: [7_000.0, 8_000.0, 9_000.0],
+                direction: [0.0, 1.0, 0.0],
+            },
+            NOON + 3 * SECOND,
+        )
+        .unwrap();
+    assert!(matches!(returned.last(), Some(Message::MoveAbyssalParticipantReply { outcome: Ok(()), .. })));
+    assert_eq!(sim.sessions.get(&77), Some(&origin));
+    assert_eq!(sim.scenes[&origin].pilots[&77].ship.spec.ship_id, ship_id);
+}
+
+#[test]
+fn abyssal_boundary_terminally_destroys_after_fifteen_continuous_seconds_outside() {
+    let mut simulation = sim();
+    let room = SceneKey { location_id: SYSTEM, instance_id: 303, room_index: 1 };
+    ensure_abyssal(&mut simulation, room, NOON, 10.0, 0.0);
+    let ship_id = 8_200_000_003;
+    simulation.handle(abyssal_enter(9, room, ship_id, [11.0, 0.0, 0.0]), NOON).unwrap();
+
+    for second in 1..15 {
+        let events = simulation.poll(NOON + second * SECOND);
+        assert!(!events.iter().any(
+            |message| matches!(message, Message::Destroyed { ship_id: destroyed, .. } if *destroyed == ship_id)
+        ));
+    }
+    let terminal = simulation.poll(NOON + 15 * SECOND);
+    assert!(terminal.iter().any(
+        |message| matches!(message, Message::Destroyed { ship_id: destroyed, .. } if *destroyed == ship_id)
+    ));
+}
+
+#[test]
+fn abyssal_boundary_terminal_exposure_resets_after_reentry() {
+    let mut simulation = sim();
+    let room = SceneKey { location_id: SYSTEM, instance_id: 304, room_index: 1 };
+    ensure_abyssal(&mut simulation, room, NOON, 10.0, 0.0);
+    let ship_id = 8_200_000_004;
+    let session = 10;
+    simulation.handle(abyssal_enter(session, room, ship_id, [11.0, 0.0, 0.0]), NOON).unwrap();
+    simulation.poll(NOON + 7 * SECOND);
+
+    simulation.scenes.get_mut(&room).unwrap().pilots.get_mut(&session).unwrap().ship.position = Vec3::ZERO;
+    let safe = simulation.poll(NOON + 8 * SECOND);
+    assert!(!safe.iter().any(
+        |message| matches!(message, Message::Destroyed { ship_id: destroyed, .. } if *destroyed == ship_id)
+    ));
+
+    simulation.scenes.get_mut(&room).unwrap().pilots.get_mut(&session).unwrap().ship.position =
+        Vec3::new(11.0, 0.0, 0.0);
+    for second in 9..=22 {
+        let events = simulation.poll(NOON + second * SECOND);
+        assert!(!events.iter().any(
+            |message| matches!(message, Message::Destroyed { ship_id: destroyed, .. } if *destroyed == ship_id)
+        ));
+    }
+    let terminal = simulation.poll(NOON + 23 * SECOND);
+    assert!(terminal.iter().any(
+        |message| matches!(message, Message::Destroyed { ship_id: destroyed, .. } if *destroyed == ship_id)
+    ));
+}
+
+#[test]
+fn abyssal_boundary_damage_ticks_against_players_and_npcs_including_residents_without_clients() {
+    let mut sim = sim();
+    let room = SceneKey { location_id: SYSTEM, instance_id: 301, room_index: 1 };
+    ensure_abyssal(&mut sim, room, NOON, 10.0, 1_000.0);
+    let player_ship = 8_200_000_001;
+    let npc_ship = 8_200_000_002;
+    sim.handle(abyssal_enter(7, room, player_ship, [100.0, 0.0, 0.0]), NOON).unwrap();
+    let npc_session = match sim.handle(abyssal_spawn(1, room, npc_ship, [200.0, 0.0, 0.0]), NOON).unwrap()[0]
+    {
+        Message::SpawnReply { outcome: Ok(session), .. } => session,
+        ref message => panic!("unexpected spawn reply {message:?}"),
+    };
+    assert!(
+        sim.sessions.contains_key(&npc_session) == false,
+        "NPCs are scene residents, not Host-owned player sessions"
+    );
+    let events = sim.poll(NOON + SECOND);
+    let destroyed: Vec<i64> = events
+        .iter()
+        .filter_map(|message| match message {
+            Message::Destroyed { ship_id, .. } => Some(*ship_id),
+            _ => None,
+        })
+        .collect();
+    assert!(destroyed.contains(&player_ship), "the boundary damage must kill an exposed participant");
+    assert!(destroyed.contains(&npc_ship), "the same boundary damage must also apply to NPCs");
+}
+
+#[test]
+fn an_abyssal_scene_is_retained_until_empty_then_can_be_removed_idempotently() {
+    let mut sim = sim();
+    let room = SceneKey { location_id: SYSTEM, instance_id: 401, room_index: 1 };
+    ensure_abyssal(&mut sim, room, NOON, 10_000.0, 0.0);
+    let ship_id = 8_300_000_001;
+    sim.handle(abyssal_enter(7, room, ship_id, [100.0, 0.0, 0.0]), NOON).unwrap();
+    assert_eq!(
+        sim.handle(
+            Message::RemoveAbyssalScene {
+                request_id: 50,
+                scene: room,
+                settled_npc_ids: Vec::new(),
+                settled_loot_ids: Vec::new()
+            },
+            NOON
+        )
+        .unwrap(),
+        [Message::RemoveAbyssalSceneReply {
+            request_id: 50,
+            outcome: Err("ABYSSAL_SCENE_NOT_EMPTY".to_string())
+        }]
+    );
+    sim.handle(Message::Leave { session_id: 7, why: 1 }, NOON).unwrap();
+    assert!(
+        sim.scenes.contains_key(&room),
+        "an empty but active run room remains addressable until Host cleanup"
+    );
+    assert_eq!(
+        sim.handle(
+            Message::RemoveAbyssalScene {
+                request_id: 51,
+                scene: room,
+                settled_npc_ids: Vec::new(),
+                settled_loot_ids: Vec::new()
+            },
+            NOON
+        )
+        .unwrap(),
+        [Message::RemoveAbyssalSceneReply { request_id: 51, outcome: Ok(()) }]
+    );
+    assert!(!sim.scenes.contains_key(&room));
+    assert_eq!(
+        sim.handle(
+            Message::RemoveAbyssalScene {
+                request_id: 52,
+                scene: room,
+                settled_npc_ids: Vec::new(),
+                settled_loot_ids: Vec::new()
+            },
+            NOON
+        )
+        .unwrap(),
+        [Message::RemoveAbyssalSceneReply { request_id: 52, outcome: Ok(()) }]
+    );
+}
+
 /// Where the player's ship is, plus 500 m along x.
 fn beside_the_player(sim: &mut Sim) -> [f64; 3] {
-    let at = sim.scenes.get_mut(&SYSTEM).unwrap().ship(SESSION, NOON).unwrap().position;
+    let at =
+        sim.scenes.get_mut(&SceneKey::solar_system(SYSTEM)).unwrap().ship(SESSION, NOON).unwrap().position;
     [at.x + 500.0, at.y, at.z]
 }
 
 fn place_player_outside_station(sim: &mut Sim) {
-    let scene = sim.scenes.get_mut(&SYSTEM).unwrap();
+    let scene = sim.scenes.get_mut(&SceneKey::solar_system(SYSTEM)).unwrap();
     let station = scene.system().body(STATION).unwrap().clone();
     let pilot = scene.pilots.get_mut(&SESSION).unwrap();
     let direction = pilot.ship.direction;
@@ -154,7 +805,7 @@ fn an_npc_the_host_places_from_a_ship_comes_that_far_from_where_the_ship_is_and_
  {
     let mut sim = undocked();
     place_player_outside_station(&mut sim);
-    let there = sim.scenes.get_mut(&SYSTEM).unwrap().ship(SESSION, NOON).unwrap().position;
+    let there = sim.scenes.get_mut(&SceneKey::solar_system(SYSTEM)).unwrap().ship(SESSION, NOON).unwrap().position;
     let Message::Spawn(mut request) = spawn(9, SYSTEM, 980_050_000_005, [0.0; 3]) else { unreachable!() };
     request.anchor_ship_id = spec().ship_id;
     request.position = [3_000.0, -200.0, 50.0];
@@ -163,7 +814,7 @@ fn an_npc_the_host_places_from_a_ship_comes_that_far_from_where_the_ship_is_and_
         matches!(reply[0], Message::SpawnReply { outcome: Ok(session), .. } if is_npc_session(session)),
         "{reply:?}"
     );
-    let scene = sim.scenes.get_mut(&SYSTEM).unwrap();
+    let scene = sim.scenes.get_mut(&SceneKey::solar_system(SYSTEM)).unwrap();
     let npc = scene.session_of(980_050_000_005).unwrap();
     let at = scene.ship(npc, NOON).unwrap().position;
     assert_eq!((at.x - there.x, at.y - there.y, at.z - there.z), (3_000.0, -200.0, 50.0));
@@ -177,7 +828,7 @@ fn an_npc_the_host_places_from_a_ship_comes_that_far_from_where_the_ship_is_and_
 fn an_npc_is_refused_in_a_system_where_nobody_is_and_a_scripted_behavior_that_is_not_there_makes_none() {
     let mut sim = sim();
     let none = sim.handle(spawn(6, SYSTEM, 980_050_000_002, [0.0; 3]), NOON).unwrap();
-    assert_eq!(none, [Message::SpawnReply { request_id: 6, outcome: Err(format!("NO_SCENE {SYSTEM}")) }]);
+    assert_eq!(none, [Message::SpawnReply { request_id: 6, outcome: Err(format!("NO_SCENE {SYSTEM}:0:0")) }]);
     let mut sim = undocked();
     let Message::Spawn(mut request) = spawn(7, SYSTEM, 980_050_000_003, [0.0; 3]) else { unreachable!() };
     request.behavior = "there is no such tree".to_string();
@@ -313,7 +964,7 @@ fn a_capsule_is_refused_to_a_session_that_did_not_lose_its_ship_and_one_that_lef
 
 fn wreck_placement(system: i32, id: i64, at: [f64; 3]) -> Message {
     Message::PlaceWreck(Box::new(crate::link::WreckPlacement {
-        solar_system_id: system,
+        scene: SceneKey::solar_system(system),
         wreck_id: id,
         group_id: crate::wreck::WRECK_GROUP,
         kind: crate::wreck::WreckKind {
@@ -343,11 +994,11 @@ fn a_wreck_the_host_made_is_put_in_space_with_its_id_for_whoever_can_see_it_and_
     let told = sim.handle(wreck_placement(SYSTEM, 9_988_400_002_417, at), NOON + 5 * SECOND).unwrap();
     assert_eq!(names(&told), ["DoDestinyUpdate"], "{told:?}");
     assert_eq!(
-        sim.scenes[&SYSTEM].wreck(9_988_400_002_417).map(|w| w.rights.character_id),
+        sim.scenes[&SceneKey::solar_system(SYSTEM)].wreck(9_988_400_002_417).map(|w| w.rights.character_id),
         Some(140_000_342)
     );
     assert_eq!(
-        sim.scenes[&SYSTEM].wreck(9_988_400_002_417).map(|w| w.expires_at),
+        sim.scenes[&SceneKey::solar_system(SYSTEM)].wreck(9_988_400_002_417).map(|w| w.expires_at),
         Some(NOON + 5 * SECOND + crate::wreck::WRECK_LIFETIME)
     );
     // a system nobody is in has no scene to put a wreck in
@@ -360,7 +1011,7 @@ fn the_remove_wreck_wire_also_removes_moon_asteroids() {
     let mut sim = undocked();
     sim.handle(Message::Bind { session_id: SESSION }, NOON).unwrap();
     let asteroid_id = spec().ship_id + 1;
-    let ship = sim.scenes[&SYSTEM].pilots[&SESSION].ship.position;
+    let ship = sim.scenes[&SceneKey::solar_system(SYSTEM)].pilots[&SESSION].ship.position;
     let placed = sim
         .handle(
             Message::PlaceAsteroid(Box::new(crate::link::AsteroidPlacement {
@@ -417,6 +1068,7 @@ fn can_placement(id: i64) -> Message {
             war_faction_id: 0,
         },
         distance: 275.0,
+        expected_scene: None,
     }))
 }
 
@@ -711,7 +1363,7 @@ fn an_undock_rejects_bad_locations_and_in_space_login_restores_the_saved_pose() 
         .handle(
             Message::Enter(Box::new(Enter {
                 session_id: 9,
-                solar_system_id: SYSTEM,
+                scene: SceneKey::solar_system(SYSTEM),
                 how: How::InSpace,
                 station_id: 0,
                 ship,
@@ -722,7 +1374,7 @@ fn an_undock_rejects_bad_locations_and_in_space_login_restores_the_saved_pose() 
         )
         .unwrap();
     assert!(matches!(messages.first(), Some(Message::EnterReply { session_id: 9, outcome: Ok(()) })));
-    let restored = sim.scenes.get_mut(&SYSTEM).unwrap().ship(9, NOON).unwrap();
+    let restored = sim.scenes.get_mut(&SceneKey::solar_system(SYSTEM)).unwrap().ship(9, NOON).unwrap();
     assert_eq!(restored.spec.ship_id, ship_id);
     assert_eq!(restored.position, Vec3::new(position[0], position[1], position[2]));
 
@@ -978,7 +1630,7 @@ fn a_jump_takes_the_ship_to_the_scene_of_the_other_system_when_it_is_due() {
         }
     );
     assert!(sim.poll(NOON + 3 * SECOND).is_empty(), "the ship is still where it was");
-    assert_eq!(sim.scenes.keys().copied().collect::<Vec<_>>(), [SYSTEM]);
+    assert_eq!(sim.scenes.keys().copied().collect::<Vec<_>>(), [SceneKey::solar_system(SYSTEM)]);
 
     let gone = sim.poll(NOON + 4 * SECOND);
     assert_eq!(
@@ -994,7 +1646,7 @@ fn a_jump_takes_the_ship_to_the_scene_of_the_other_system_when_it_is_due() {
     assert_eq!(sim.ships(), 1);
     assert_eq!(
         sim.scenes.keys().copied().collect::<Vec<_>>(),
-        [OTHER_SYSTEM],
+        [SceneKey::solar_system(OTHER_SYSTEM)],
         "the scene it left has no one in it and is dropped"
     );
     assert!(sim.poll(NOON + 9 * SECOND).is_empty(), "it goes once");
@@ -1039,7 +1691,7 @@ fn a_jump_to_a_system_that_cannot_be_built_leaves_the_ship_where_it_was_and_says
         sim.poll(NOON + 4 * SECOND),
         [Message::Refused { session_id: SESSION, command: 9, reason: "DESTINATION_UNAVAILABLE".to_string() }]
     );
-    assert_eq!((sim.ships(), sim.scenes.keys().copied().collect::<Vec<_>>()), (1, vec![SYSTEM]));
+    assert_eq!((sim.ships(), sim.scenes.keys().copied().collect::<Vec<_>>()), (1, vec![SceneKey::solar_system(SYSTEM)]));
     // the ship takes orders and may try again
     let out = sim.handle(jump_command(NEAR_GATE, ARRIVAL_GATE), NOON + 5 * SECOND).unwrap();
     assert!(matches!(out[1], Message::Jumping { .. }), "{out:?}");
@@ -1069,7 +1721,7 @@ fn other_enter() -> Message {
     ship.character_id += 1;
     Message::Enter(Box::new(Enter {
         session_id: OTHER,
-        solar_system_id: SYSTEM,
+        scene: SceneKey::solar_system(SYSTEM),
         how: How::Undock,
         station_id: STATION,
         ship,
@@ -1137,7 +1789,7 @@ fn a_ship_that_has_docked_is_taken_from_the_view_of_the_others_by_the_poll() {
 fn structure_observer_health_case(from_space: bool) {
     let mut simulation = if from_space { undocked() } else { sim() };
     let old_health = if from_space {
-        let pilot = simulation.scenes.get_mut(&SYSTEM).unwrap().pilots.get_mut(&SESSION).unwrap();
+        let pilot = simulation.scenes.get_mut(&SceneKey::solar_system(SYSTEM)).unwrap().pilots.get_mut(&SESSION).unwrap();
         pilot.ship.health = crate::health::Health::new(
             pilot.ship.spec.vitals,
             pilot.ship.spec.shield_recharge_ms,
@@ -1158,7 +1810,7 @@ fn structure_observer_health_case(from_space: bool) {
     simulation.handle(Message::PlaceStructure(Box::new(placement)), NOON).unwrap();
     simulation
         .scenes
-        .get_mut(&SYSTEM)
+        .get_mut(&SceneKey::solar_system(SYSTEM))
         .unwrap()
         .structure_health
         .get_mut(&structure_id)
@@ -1181,7 +1833,7 @@ fn structure_observer_health_case(from_space: bool) {
 
     let mut structure_spec = spec();
     structure_spec.ship_id = structure_id;
-    structure_spec.vitals = *simulation.scenes[&SYSTEM].structure_health[&structure_id].health_snapshot().vitals();
+    structure_spec.vitals = *simulation.scenes[&SceneKey::solar_system(SYSTEM)].structure_health[&structure_id].health_snapshot().vitals();
     simulation
         .handle(
             Message::ShipSpec { session_id: SESSION, ship: Box::new(structure_spec) },
@@ -1202,12 +1854,12 @@ fn structure_observer_health_case(from_space: bool) {
             &observed, old_health,
             "the structure HUD must not inherit the previous physical ship's health"
         );
-        assert!(simulation.scenes[&SYSTEM].unpiloted.contains_key(&spec().ship_id));
+        assert!(simulation.scenes[&SceneKey::solar_system(SYSTEM)].unpiloted.contains_key(&spec().ship_id));
     }
 
     simulation
         .scenes
-        .get_mut(&SYSTEM)
+        .get_mut(&SceneKey::solar_system(SYSTEM))
         .unwrap()
         .structure_health
         .get_mut(&structure_id)
@@ -1306,8 +1958,8 @@ fn a_controlled_structure_accepts_a_module_against_its_own_ship_spec() {
     let told = names(&started);
     assert!(told.iter().any(|name| name == "OnGodmaShipEffect"), "{started:?}");
     assert!(told.iter().any(|name| name == "DoDestinyUpdate"), "the structure FX is emitted: {started:?}");
-    assert!(simulation.scenes[&SYSTEM].unpiloted.contains_key(&spec().ship_id));
-    let state = &simulation.scenes[&SYSTEM].structure_modules[&structure_id];
+    assert!(simulation.scenes[&SceneKey::solar_system(SYSTEM)].unpiloted.contains_key(&spec().ship_id));
+    let state = &simulation.scenes[&SceneKey::solar_system(SYSTEM)].structure_modules[&structure_id];
     assert!((state.modules.capacitor.as_ref().unwrap().charge_at(NOON) - 95.0).abs() < 1e-6);
 
     let observed = simulation
@@ -1318,8 +1970,8 @@ fn a_controlled_structure_accepts_a_module_against_its_own_ship_spec() {
         [Message::Condition { condition, .. }] if (condition.charge - 0.95).abs() < 1e-6
     ));
 
-    let cycle = simulation.scenes.get_mut(&SYSTEM).unwrap().poll(NOON + 10 * SECOND);
-    let state = &simulation.scenes[&SYSTEM].structure_modules[&structure_id];
+    let cycle = simulation.scenes.get_mut(&SceneKey::solar_system(SYSTEM)).unwrap().poll(NOON + 10 * SECOND);
+    let state = &simulation.scenes[&SceneKey::solar_system(SYSTEM)].structure_modules[&structure_id];
     assert_eq!(state.modules.running_count(), 1, "{cycle:?}");
     let recharged = state.modules.capacitor.as_ref().unwrap().charge_at(NOON + 10 * SECOND);
     assert!(recharged > 90.0 && recharged < 95.0, "cycle cost follows real recharge: {recharged}");
@@ -1340,7 +1992,7 @@ fn a_controlled_structure_accepts_a_module_against_its_own_ship_spec() {
     assert!(released.iter().any(|message| matches!(message,
         Message::ModuleEnded { session_id, module_id, .. }
             if *session_id == SESSION && *module_id == 77)));
-    let state = &simulation.scenes[&SYSTEM].structure_modules[&structure_id];
+    let state = &simulation.scenes[&SceneKey::solar_system(SYSTEM)].structure_modules[&structure_id];
     assert!(state.modules.running.is_empty(), "release tears down the active effect");
     let charge_after_release = state.modules.capacitor.as_ref().unwrap().charge_at(NOON + 11 * SECOND);
 
@@ -1368,7 +2020,7 @@ fn a_controlled_structure_accepts_a_module_against_its_own_ship_spec() {
             NOON + 11 * SECOND,
         )
         .unwrap();
-    let state = &simulation.scenes[&SYSTEM].structure_modules[&structure_id];
+    let state = &simulation.scenes[&SceneKey::solar_system(SYSTEM)].structure_modules[&structure_id];
     assert!(
         (state.modules.capacitor.as_ref().unwrap().charge_at(NOON + 11 * SECOND) - charge_after_release).abs() < 1e-6,
         "recontrol keeps the structure-owned charge instead of filling it again"
@@ -1387,9 +2039,9 @@ fn a_controlled_structure_accepts_a_module_against_its_own_ship_spec() {
     assert!(disconnected.iter().any(|message| matches!(message,
         Message::ModuleEnded { session_id, module_id, .. }
             if *session_id == SESSION && *module_id == 77)));
-    assert!(simulation.scenes[&SYSTEM].controlled_structure_id(SESSION).is_none());
-    assert!(simulation.scenes[&SYSTEM].structure_modules[&structure_id].modules.running.is_empty());
-    assert!(simulation.scenes[&SYSTEM].unpiloted.contains_key(&spec().ship_id));
+    assert!(simulation.scenes[&SceneKey::solar_system(SYSTEM)].controlled_structure_id(SESSION).is_none());
+    assert!(simulation.scenes[&SceneKey::solar_system(SYSTEM)].structure_modules[&structure_id].modules.running.is_empty());
+    assert!(simulation.scenes[&SceneKey::solar_system(SYSTEM)].unpiloted.contains_key(&spec().ship_id));
 }
 
 #[test]
@@ -1407,7 +2059,7 @@ fn a_controlled_structure_uses_real_locks_for_remote_neutralizers() {
         .handle(
             Message::Enter(Box::new(Enter {
                 session_id: target_session,
-                solar_system_id: SYSTEM,
+                scene: SceneKey::solar_system(SYSTEM),
                 how: How::Undock,
                 station_id: STATION,
                 ship: target_spec.clone(),
@@ -1419,7 +2071,7 @@ fn a_controlled_structure_uses_real_locks_for_remote_neutralizers() {
         .unwrap();
     let target_id = target_spec.ship_id;
     {
-        let target = simulation.scenes.get_mut(&SYSTEM).unwrap().pilots.get_mut(&target_session).unwrap();
+        let target = simulation.scenes.get_mut(&SceneKey::solar_system(SYSTEM)).unwrap().pilots.get_mut(&target_session).unwrap();
         target.ship.position = eve_destiny::Vec3::new(11_000.0, 0.0, 0.0);
         target.ship.course = crate::ship::Course::Stop;
         target.ship.velocity = eve_destiny::Vec3::new(0.0, 0.0, 0.0);
@@ -1483,9 +2135,9 @@ fn a_controlled_structure_uses_real_locks_for_remote_neutralizers() {
         Message::Refused { session_id, command: 17, reason }
             if *session_id == SESSION && reason == "TARGET_NOT_LOCKED")));
 
-    assert!(simulation.scenes[&SYSTEM].pilots.contains_key(&target_session));
-    assert_eq!(simulation.scenes[&SYSTEM].pilots[&target_session].ship.spec.ship_id, target_id);
-    assert!(simulation.scenes[&SYSTEM].subject(target_id, NOON + 100 * SECOND).is_some());
+    assert!(simulation.scenes[&SceneKey::solar_system(SYSTEM)].pilots.contains_key(&target_session));
+    assert_eq!(simulation.scenes[&SceneKey::solar_system(SYSTEM)].pilots[&target_session].ship.spec.ship_id, target_id);
+    assert!(simulation.scenes[&SceneKey::solar_system(SYSTEM)].subject(target_id, NOON + 100 * SECOND).is_some());
     let lock_at = NOON + 100 * SECOND;
     let lock_out = simulation
         .handle(
@@ -1495,10 +2147,10 @@ fn a_controlled_structure_uses_real_locks_for_remote_neutralizers() {
         .unwrap();
     assert!(!lock_out.iter().any(|out| matches!(out, Message::Refused { .. } | Message::TargetRefused { .. })), "{lock_out:?}");
     let activation_at = lock_at + 1_000 * SECOND;
-    let settled = simulation.scenes.get_mut(&SYSTEM).unwrap().poll(activation_at);
-    assert!(simulation.scenes[&SYSTEM].locked_by(SESSION).contains(&target_id), "{lock_out:?} {settled:?}");
-    let source_position = simulation.scenes[&SYSTEM].structure_body(structure_id).unwrap().position;
-    simulation.scenes.get_mut(&SYSTEM).unwrap().pilots.get_mut(&target_session).unwrap().ship.position =
+    let settled = simulation.scenes.get_mut(&SceneKey::solar_system(SYSTEM)).unwrap().poll(activation_at);
+    assert!(simulation.scenes[&SceneKey::solar_system(SYSTEM)].locked_by(SESSION).contains(&target_id), "{lock_out:?} {settled:?}");
+    let source_position = simulation.scenes[&SceneKey::solar_system(SYSTEM)].structure_body(structure_id).unwrap().position;
+    simulation.scenes.get_mut(&SceneKey::solar_system(SYSTEM)).unwrap().pilots.get_mut(&target_session).unwrap().ship.position =
         eve_destiny::Vec3::new(source_position.x + 61_000.0, source_position.y, source_position.z);
 
     let mut out_of_range = effect.clone();
@@ -1517,7 +2169,7 @@ fn a_controlled_structure_uses_real_locks_for_remote_neutralizers() {
         Message::TargetRefused { session_id, command: 17, reason, .. }
             if *session_id == SESSION && reason == "TARGET_OUT_OF_RANGE")));
 
-    let before = simulation.scenes[&SYSTEM].pilots[&target_session]
+    let before = simulation.scenes[&SceneKey::solar_system(SYSTEM)].pilots[&target_session]
         .modules
         .capacitor
         .as_ref()
@@ -1530,14 +2182,14 @@ fn a_controlled_structure_uses_real_locks_for_remote_neutralizers() {
         )
         .unwrap();
     assert!(started.contains(&Message::Accepted { session_id: SESSION, command: 17, at: activation_at }));
-    let after = simulation.scenes[&SYSTEM].pilots[&target_session]
+    let after = simulation.scenes[&SceneKey::solar_system(SYSTEM)].pilots[&target_session]
         .modules
         .capacitor
         .as_ref()
         .unwrap()
         .charge_at(activation_at);
     assert!((before - after - 20.0).abs() < 1e-6, "the locked target loses capacitor: {before} -> {after}");
-    assert!((simulation.scenes[&SYSTEM].structure_modules[&structure_id]
+    assert!((simulation.scenes[&SceneKey::solar_system(SYSTEM)].structure_modules[&structure_id]
         .modules
         .capacitor
         .as_ref()
@@ -1555,7 +2207,7 @@ fn a_controlled_structure_uses_real_locks_for_remote_neutralizers() {
     assert!(offlined.iter().any(|message| matches!(message,
         Message::ModuleEnded { session_id, module_id, .. }
             if *session_id == SESSION && *module_id == 88)));
-    assert!(!simulation.scenes[&SYSTEM].structure_modules[&structure_id]
+    assert!(!simulation.scenes[&SceneKey::solar_system(SYSTEM)].structure_modules[&structure_id]
         .modules
         .running_effects()
         .any(|(effect, _)| effect.module_id == 88));
@@ -1613,13 +2265,13 @@ fn a_controlled_structure_uses_real_locks_for_remote_neutralizers() {
     assert!(fired.iter().any(|message| matches!(message,
         Message::ChargeSpent { session_id, module_id, .. }
             if *session_id == SESSION && *module_id == 90)));
-    assert!(simulation.scenes[&SYSTEM].missiles.values().any(|missile|
+    assert!(simulation.scenes[&SceneKey::solar_system(SYSTEM)].missiles.values().any(|missile|
         missile.shooter.ship_id == structure_id && missile.target == target_id));
 }
 
 fn structure_deposit_sim() -> (Sim, crate::link::StructurePlacement) {
     let mut simulation = undocked();
-    let scene = &simulation.scenes[&SYSTEM];
+    let scene = &simulation.scenes[&SceneKey::solar_system(SYSTEM)];
     let ship = &scene.pilots[&SESSION].ship;
     let mut placement = crate::scene::tests::structure_placement(scene, NOON);
     placement.position =
@@ -1649,7 +2301,7 @@ fn a_destroyed_retained_hull_releases_into_a_real_capsule_respawn_context() {
     simulation
         .handle(Message::Destroy { ship_id: old_ship_id, credit: Default::default() }, NOON + SECOND)
         .unwrap();
-    assert_eq!(simulation.scenes[&SYSTEM].controlled_structure_id(SESSION), Some(placement.structure_id));
+    assert_eq!(simulation.scenes[&SceneKey::solar_system(SYSTEM)].controlled_structure_id(SESSION), Some(placement.structure_id));
     let released = simulation
         .handle(
             Message::ControlStructure {
@@ -1716,9 +2368,9 @@ fn a_destroyed_retained_hull_releases_into_a_real_capsule_respawn_context() {
             .any(|message| matches!(message, Message::EnterReply { session_id: SESSION, outcome: Ok(..) })),
         "{respawned:?}"
     );
-    assert_eq!(simulation.scenes[&SYSTEM].pilots[&SESSION].ship.spec.ship_id, capsule_id);
-    assert!(!simulation.scenes[&SYSTEM].controlled_structures.contains_key(&SESSION));
-    assert_eq!(simulation.sessions.get(&SESSION), Some(&SYSTEM));
+    assert_eq!(simulation.scenes[&SceneKey::solar_system(SYSTEM)].pilots[&SESSION].ship.spec.ship_id, capsule_id);
+    assert!(!simulation.scenes[&SceneKey::solar_system(SYSTEM)].controlled_structures.contains_key(&SESSION));
+    assert_eq!(simulation.sessions.get(&SESSION), Some(&SceneKey::solar_system(SYSTEM)));
 }
 
 fn structure_deposit_query(simulation: &mut Sim, structure_id: i64, ship_id: i64) -> Vec<Message> {
@@ -1744,7 +2396,7 @@ fn structure_deposit_measure_uses_actual_surfaces_and_preserves_the_one_argument
         [Message::Measured { session_id: SESSION, command: 20, distance: Some(2_500.0) }]
     );
 
-    simulation.scenes.get_mut(&SYSTEM).unwrap().pilots.get_mut(&SESSION).unwrap().ship.spec.radius += 100.0;
+    simulation.scenes.get_mut(&SceneKey::solar_system(SYSTEM)).unwrap().pilots.get_mut(&SESSION).unwrap().ship.spec.radius += 100.0;
     assert_eq!(
         structure_deposit_query(&mut simulation, structure_id, ship_id),
         [Message::Measured { session_id: SESSION, command: 20, distance: Some(2_400.0) }]
@@ -1799,16 +2451,16 @@ fn structure_deposit_measure_refuses_missing_nonlocal_cloaked_warping_and_observ
     );
 
     for cloak in [crate::visibility::CloakState::Cloaking, crate::visibility::CloakState::Cloaked] {
-        simulation.scenes.get_mut(&SYSTEM).unwrap().pilots.get_mut(&SESSION).unwrap().cloak = cloak;
+        simulation.scenes.get_mut(&SceneKey::solar_system(SYSTEM)).unwrap().pilots.get_mut(&SESSION).unwrap().cloak = cloak;
         assert_eq!(structure_deposit_query(&mut simulation, structure_id, ship_id), refusal("CLOAKED"));
     }
-    let pilot = simulation.scenes.get_mut(&SYSTEM).unwrap().pilots.get_mut(&SESSION).unwrap();
+    let pilot = simulation.scenes.get_mut(&SceneKey::solar_system(SYSTEM)).unwrap().pilots.get_mut(&SESSION).unwrap();
     pilot.cloak = crate::visibility::CloakState::Uncloaked;
     let destination = Vec3::new(pilot.ship.position.x + 1.0e12, pilot.ship.position.y, pilot.ship.position.z);
     pilot.flight = Some(crate::flight::Flight::begin(NOON, destination, 0.0));
     assert_eq!(structure_deposit_query(&mut simulation, structure_id, ship_id), refusal("IN_WARP"));
 
-    let pilot = simulation.scenes.get_mut(&SYSTEM).unwrap().pilots.get_mut(&SESSION).unwrap();
+    let pilot = simulation.scenes.get_mut(&SceneKey::solar_system(SYSTEM)).unwrap().pilots.get_mut(&SESSION).unwrap();
     pilot.ship.direction = Vec3::new(1.0, 0.0, 0.0);
     pilot.ship.velocity = Vec3::new(pilot.ship.spec.max_velocity, 0.0, 0.0);
     pilot.ship.speed_fraction = 1.0;
@@ -1817,7 +2469,7 @@ fn structure_deposit_measure_refuses_missing_nonlocal_cloaked_warping_and_observ
     assert!(flight.is_warping(), "the regression reaches actual warp");
     pilot.flight = Some(flight);
     assert_eq!(structure_deposit_query(&mut simulation, structure_id, ship_id), refusal("IN_WARP"));
-    simulation.scenes.get_mut(&SYSTEM).unwrap().pilots.get_mut(&SESSION).unwrap().flight = None;
+    simulation.scenes.get_mut(&SceneKey::solar_system(SYSTEM)).unwrap().pilots.get_mut(&SESSION).unwrap().flight = None;
 
     simulation
         .handle(
@@ -1861,7 +2513,7 @@ fn docked_structure_control_dispatches_bind_updates_detach_and_leave() {
     let mut changed_status = placement.status.clone();
     changed_status.state += 1;
     simulation.handle(Message::PlaceStructure(Box::new(placement)), NOON).unwrap();
-    assert!(simulation.scenes.contains_key(&SYSTEM), "a structures-only scene is retained");
+    assert!(simulation.scenes.contains_key(&SceneKey::solar_system(SYSTEM)), "a structures-only scene is retained");
 
     let observer = 71;
     let missing = simulation
@@ -1899,8 +2551,8 @@ fn docked_structure_control_dispatches_bind_updates_detach_and_leave() {
     assert!(owner_attached.iter().any(|message| matches!(message,
         Message::Accepted { session_id, command, .. }
             if *session_id == SESSION && *command == crate::link::COMMAND_STRUCTURE_CONTROL)));
-    assert!(!simulation.scenes[&SYSTEM].pilots.contains_key(&SESSION));
-    assert!(simulation.scenes[&SYSTEM].unpiloted.contains_key(&spec().ship_id));
+    assert!(!simulation.scenes[&SceneKey::solar_system(SYSTEM)].pilots.contains_key(&SESSION));
+    assert!(simulation.scenes[&SceneKey::solar_system(SYSTEM)].unpiloted.contains_key(&spec().ship_id));
 
     let attached = simulation
         .handle(
@@ -1918,14 +2570,14 @@ fn docked_structure_control_dispatches_bind_updates_detach_and_leave() {
     assert!(attached.iter().any(|message| matches!(message,
         Message::Accepted { session_id, command, .. }
             if *session_id == observer && *command == crate::link::COMMAND_STRUCTURE_CONTROL)));
-    assert_eq!(simulation.sessions.get(&observer), Some(&SYSTEM));
+    assert_eq!(simulation.sessions.get(&observer), Some(&SceneKey::solar_system(SYSTEM)));
     assert_eq!(
         simulation.sessions.get(&SESSION),
-        Some(&SYSTEM),
+        Some(&SceneKey::solar_system(SYSTEM)),
         "transferring control restores the previous pilot mapping"
     );
-    assert!(simulation.scenes[&SYSTEM].pilots.contains_key(&SESSION));
-    assert!(!simulation.scenes[&SYSTEM].pilots.contains_key(&observer));
+    assert!(simulation.scenes[&SceneKey::solar_system(SYSTEM)].pilots.contains_key(&SESSION));
+    assert!(!simulation.scenes[&SceneKey::solar_system(SYSTEM)].pilots.contains_key(&observer));
 
     let bound = simulation.handle(Message::Bind { session_id: observer }, NOON + 3 * SECOND).unwrap();
     assert!(names(&bound).iter().any(|name| name == "DoDestinyUpdate"));
@@ -1956,7 +2608,7 @@ fn docked_structure_control_dispatches_bind_updates_detach_and_leave() {
     assert!(detached.iter().any(|message| matches!(message,
         Message::Accepted { session_id, command, .. }
             if *session_id == observer && *command == crate::link::COMMAND_STRUCTURE_CONTROL)));
-    assert!(simulation.scenes[&SYSTEM].controlled_structure_id(observer).is_none());
+    assert!(simulation.scenes[&SceneKey::solar_system(SYSTEM)].controlled_structure_id(observer).is_none());
     assert!(!simulation.sessions.contains_key(&observer));
     let repeated_detach = simulation
         .handle(
@@ -1990,9 +2642,9 @@ fn docked_structure_control_dispatches_bind_updates_detach_and_leave() {
         .unwrap();
     simulation.handle(Message::Bind { session_id: observer }, NOON + 5 * SECOND).unwrap();
     simulation.handle(Message::Leave { session_id: observer, why: 0 }, NOON + 6 * SECOND).unwrap();
-    assert!(simulation.scenes[&SYSTEM].controlled_structure_id(observer).is_none());
+    assert!(simulation.scenes[&SceneKey::solar_system(SYSTEM)].controlled_structure_id(observer).is_none());
     assert!(!simulation.sessions.contains_key(&observer));
-    assert!(simulation.scenes.contains_key(&SYSTEM), "leaving the observer does not discard the structure");
+    assert!(simulation.scenes.contains_key(&SceneKey::solar_system(SYSTEM)), "leaving the observer does not discard the structure");
 
     simulation
         .handle(
@@ -2010,8 +2662,8 @@ fn docked_structure_control_dispatches_bind_updates_detach_and_leave() {
     simulation.handle(Message::Bind { session_id: observer }, NOON + 7 * SECOND).unwrap();
     let removed = simulation.handle(Message::RemoveStructure { structure_id }, NOON + 8 * SECOND).unwrap();
     assert!(names(&removed).iter().any(|name| name == "DoDestinyUpdate"));
-    assert!(simulation.scenes[&SYSTEM].structure_index(structure_id).is_none());
-    assert!(simulation.scenes[&SYSTEM].controlled_structure_id(observer).is_none());
+    assert!(simulation.scenes[&SceneKey::solar_system(SYSTEM)].structure_index(structure_id).is_none());
+    assert!(simulation.scenes[&SceneKey::solar_system(SYSTEM)].controlled_structure_id(observer).is_none());
     assert!(!simulation.sessions.contains_key(&observer));
 }
 
@@ -2020,7 +2672,7 @@ fn docked_structure_control_dispatches_bind_updates_detach_and_leave() {
 fn sim_damageable_profile_messages_round_trip_through_scene_removal() {
     let mut simulation = undocked();
     let entity_id = 77_777_777;
-    let upsert = simulation.scenes.get_mut(&SYSTEM).unwrap().publish_sim_damageable_entity(
+    let upsert = simulation.scenes.get_mut(&SceneKey::solar_system(SYSTEM)).unwrap().publish_sim_damageable_entity(
         entity_id,
         12_345,
         90_001,
@@ -2048,7 +2700,7 @@ fn sim_damageable_profile_messages_round_trip_through_scene_removal() {
         solar_system_id: SYSTEM,
         entity_id,
     }));
-    assert!(!simulation.scenes.contains_key(&SYSTEM), "the empty Scene is discarded after lifecycle cleanup");
+    assert!(!simulation.scenes.contains_key(&SceneKey::solar_system(SYSTEM)), "the empty Scene is discarded after lifecycle cleanup");
 }
 
 #[test]
@@ -2121,11 +2773,11 @@ fn tether_codec_rejects_nonpositive_nonfinite_ranges_truncation_and_trailing_byt
 #[test]
 fn tether_host_policy_dispatches_to_the_real_scene_and_transitions_return_to_the_host() {
     let mut simulation = undocked();
-    let placement = crate::scene::tests::structure_placement(&simulation.scenes[&SYSTEM], NOON);
+    let placement = crate::scene::tests::structure_placement(&simulation.scenes[&SceneKey::solar_system(SYSTEM)], NOON);
     let structure_id = placement.structure_id;
     let position = [placement.position[0] + placement.radius + spec().radius + 500.0, 0.0, 0.0];
     simulation.handle(Message::PlaceStructure(Box::new(placement)), NOON).unwrap();
-    let pilot = simulation.scenes.get_mut(&SYSTEM).unwrap().pilots.get_mut(&SESSION).unwrap();
+    let pilot = simulation.scenes.get_mut(&SceneKey::solar_system(SYSTEM)).unwrap().pilots.get_mut(&SESSION).unwrap();
     pilot.ship.position = eve_destiny::Vec3::new(position[0], position[1], position[2]);
     pilot.ship.velocity = eve_destiny::Vec3::ZERO;
     pilot.ship.speed_fraction = 0.0;
@@ -2163,5 +2815,5 @@ fn tether_host_policy_dispatches_to_the_real_scene_and_transitions_return_to_the
         )
         .unwrap_err();
     assert!(wrong_direction.0.contains("kind 81"));
-    assert_eq!(crate::link::PROTOCOL_VERSION, 70);
+    assert_eq!(crate::link::PROTOCOL_VERSION, 71);
 }

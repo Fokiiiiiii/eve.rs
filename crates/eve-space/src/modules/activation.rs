@@ -397,6 +397,19 @@ impl Scene {
                 return vec![Out::Refused { session, command: CODE, reason }];
             }
         }
+        if self.abyssal.is_some() {
+            fn restriction(action: &Action) -> Option<&'static str> {
+                match action {
+                    Action::Cloak { .. } => Some("ABYSSAL_CLOAK_RESTRICTED"),
+                    Action::CynoField { .. } => Some("CYNOSURAL_FIELD_NOT_ALLOWED_IN_ABYSSAL_DEADSPACE"),
+                    Action::Charged { action, .. } => restriction(action),
+                    _ => None,
+                }
+            }
+            if let Some(reason) = effect.action.as_ref().and_then(restriction) {
+                return vec![Out::Refused { session, command: CODE, reason }];
+            }
+        }
         if matches!(effect.action.as_ref(), Some(Action::Cloak { .. })) {
             // a module that cannot be deactivated early (disallowEarlyDeactivation 906) runs: the ship does not cloak (EveJS CLOAK_MODULE_ACTIVE)
             if pilot.modules.running.iter().any(|r| r.effect.rules.disallow_early_deactivation) {

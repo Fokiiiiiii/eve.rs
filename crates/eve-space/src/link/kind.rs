@@ -109,6 +109,51 @@ pub const REMOVE_CYNO_BEACON: u8 = 87;
 pub const DAMAGEABLE_ENTITY_UPSERTED: u8 = 88;
 /// The simulation removes a non-destroyed damageable entity from the Host identity registry (protocol 69).
 pub const DAMAGEABLE_ENTITY_REMOVED: u8 = 89;
+/// The host creates or refreshes a static-free Abyssal room scene (protocol 71).
+pub const ENSURE_ABYSSAL_SCENE: u8 = 90;
+/// Result of ensuring an Abyssal room scene (protocol 71).
+pub const ENSURE_ABYSSAL_SCENE_REPLY: u8 = 91;
+/// The host moves a resident participant and its live state between Abyssal rooms (protocol 71).
+pub const MOVE_ABYSSAL_PARTICIPANT: u8 = 92;
+/// Result of moving an Abyssal participant (protocol 71).
+pub const MOVE_ABYSSAL_PARTICIPANT_REPLY: u8 = 93;
+/// The host rebinds a new session to a resident Abyssal ship (protocol 71).
+pub const REBIND_ABYSSAL_SESSION: u8 = 94;
+/// Result of rebinding a session to an Abyssal ship (protocol 71).
+pub const REBIND_ABYSSAL_SESSION_REPLY: u8 = 95;
+/// The host discards an empty private Abyssal room scene (protocol 71).
+pub const REMOVE_ABYSSAL_SCENE: u8 = 96;
+/// Result of removing an Abyssal scene (protocol 71).
+pub const REMOVE_ABYSSAL_SCENE_REPLY: u8 = 97;
+/// The host materializes and publishes one persisted public Abyssal trace (protocol 71).
+pub const ENSURE_ABYSSAL_TRACE_PUBLISHED: u8 = 98;
+/// Result of materializing and publishing an Abyssal trace (protocol 71).
+pub const ENSURE_ABYSSAL_TRACE_PUBLISHED_REPLY: u8 = 99;
+/// The host removes one public Abyssal trace after its Domain/item cleanup (protocol 71).
+pub const REMOVE_ABYSSAL_TRACE: u8 = 100;
+/// Result of removing a public Abyssal trace (protocol 71).
+pub const REMOVE_ABYSSAL_TRACE_REPLY: u8 = 101;
+/// The host settles a resident Abyssal participant without requiring its client session (protocol 71).
+pub const REMOVE_ABYSSAL_PARTICIPANT: u8 = 102;
+/// Result of removing a resident Abyssal participant (protocol 71).
+pub const REMOVE_ABYSSAL_PARTICIPANT_REPLY: u8 = 103;
+/// The Host reads a resident participant's authoritative Abyssal pose (protocol 71).
+pub const GET_ABYSSAL_PARTICIPANT_POSE: u8 = 104;
+/// Result of reading an Abyssal participant's authoritative pose (protocol 71).
+pub const GET_ABYSSAL_PARTICIPANT_POSE_REPLY: u8 = 105;
+/// Host request to ensure a static conduit exists as an isolated Abyssal scene body (protocol 71).
+pub const ENSURE_ABYSSAL_SCENE_OBJECT: u8 = 106;
+/// Result of ensuring a static Abyssal scene body (protocol 71).
+pub const ENSURE_ABYSSAL_SCENE_OBJECT_REPLY: u8 = 107;
+pub const ENSURE_ABYSSAL_REWARD_CACHE: u8 = 108;
+pub const ENSURE_ABYSSAL_REWARD_CACHE_REPLY: u8 = 109;
+pub const ENSURE_ABYSSAL_LOOT_CONTAINER: u8 = 110;
+pub const ENSURE_ABYSSAL_LOOT_CONTAINER_REPLY: u8 = 111;
+pub const ENSURE_ABYSSAL_ENVIRONMENT_OBJECT: u8 = 112;
+pub const ENSURE_ABYSSAL_ENVIRONMENT_OBJECT_REPLY: u8 = 113;
+pub const ABYSSAL_FIELD_MEMBERSHIP: u8 = 114;
+pub const REFRESH_ABYSSAL_NPC: u8 = 115;
+pub const REFRESH_ABYSSAL_NPC_REPLY: u8 = 116;
 
 /// The host puts a wormhole end in space (protocol 63).
 pub const PLACE_WORMHOLE: u8 = 82;

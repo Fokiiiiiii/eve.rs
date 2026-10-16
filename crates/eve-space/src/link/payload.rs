@@ -1,5 +1,19 @@
 use super::*;
 
+fn put_wreck_placement(out: &mut Vec<u8>, placement: &WreckPlacement) {
+    put_scene_key(out, placement.scene);
+    out.extend_from_slice(&placement.wreck_id.to_le_bytes());
+    out.extend_from_slice(&placement.group_id.to_le_bytes());
+    put_wreck_kind(out, Some(&placement.kind));
+    put_vector(out, &placement.position);
+    put_vector(out, &placement.direction);
+    out.extend_from_slice(&placement.radius.to_le_bytes());
+    out.extend_from_slice(&placement.launcher_id.to_le_bytes());
+    put_credit(out, &placement.credit);
+    out.push(u8::from(placement.is_empty));
+}
+
+
 fn write_structure_damage_correlation(
     out: &mut Vec<u8>,
     session_id: u64,
@@ -31,6 +45,187 @@ fn write_structure_damage_ids(out: &mut Vec<u8>, ids: &[i64]) {
     }
 }
 
+fn put_scene_key(out: &mut Vec<u8>, scene: SceneKey) {
+    assert!(scene.is_valid(), "invalid simulation scene key");
+    out.extend_from_slice(&scene.location_id.to_le_bytes());
+    out.extend_from_slice(&scene.instance_id.to_le_bytes());
+    out.extend_from_slice(&scene.room_index.to_le_bytes());
+}
+
+fn valid_abyssal_modifiers(modifiers: &[AbyssalAttributeModifier]) -> bool {
+    modifiers.len() <= MAX_ABYSSAL_MODIFIERS
+        && modifiers.iter().all(|modifier| modifier.attribute_id > 0 && modifier.value.is_finite())
+}
+
+fn put_abyssal_modifiers(out: &mut Vec<u8>, modifiers: &[AbyssalAttributeModifier]) {
+    assert!(valid_abyssal_modifiers(modifiers), "invalid Abyssal attribute modifiers");
+    out.extend_from_slice(&(modifiers.len() as u32).to_le_bytes());
+    for modifier in modifiers {
+        out.extend_from_slice(&modifier.attribute_id.to_le_bytes());
+        out.push(match modifier.operation {
+            AbyssalModifierOperation::Add => 0,
+            AbyssalModifierOperation::Multiply => 1,
+        });
+        out.extend_from_slice(&modifier.value.to_le_bytes());
+    }
+}
+
+fn valid_abyssal_scene_spec(spec: &AbyssalSceneSpec) -> bool {
+    let valid_vector = |vector: &[f64; 3]| vector.iter().all(|value| value.is_finite());
+    if !spec.scene.is_valid()
+        || spec.scene.instance_id <= 0
+        || spec.expiry_filetime <= 0
+        || spec.environment.fields.len() > MAX_ABYSSAL_FIELDS
+        || !valid_abyssal_modifiers(&spec.environment.global_modifiers)
+        || !valid_vector(&spec.boundary.center)
+        || !spec.boundary.radius_meters.is_finite()
+        || spec.boundary.radius_meters <= 0.0
+        || spec.boundary.tick_interval_ms <= 0
+        || spec.boundary.terminal_exposure_ms <= 0
+        || spec.boundary.damage_curve.is_empty()
+        || spec.boundary.damage_curve.len() > MAX_ABYSSAL_BOUNDARY_POINTS
+    {
+        return false;
+    }
+    for field in &spec.environment.fields {
+        if !valid_vector(&field.center)
+            || !field.radius_meters.is_finite()
+            || field.radius_meters <= 0.0
+            || !valid_abyssal_modifiers(&field.modifiers)
+        {
+            return false;
+        }
+    }
+    let mut previous_distance = -1.0;
+    for point in &spec.boundary.damage_curve {
+        if !point.distance_outside_meters.is_finite()
+            || point.distance_outside_meters < 0.0
+            || point.distance_outside_meters <= previous_distance
+            || !point.applied_damage_per_second.is_finite()
+            || point.applied_damage_per_second < 0.0
+        {
+            return false;
+        }
+        previous_distance = point.distance_outside_meters;
+    }
+    true
+}
+
+fn put_abyssal_scene_spec(out: &mut Vec<u8>, spec: &AbyssalSceneSpec) {
+    assert!(valid_abyssal_scene_spec(spec), "invalid Abyssal scene specification");
+    put_scene_key(out, spec.scene);
+    put_abyssal_modifiers(out, &spec.environment.global_modifiers);
+    out.extend_from_slice(&(spec.environment.fields.len() as u32).to_le_bytes());
+    for field in &spec.environment.fields {
+        for value in field.center {
+            out.extend_from_slice(&value.to_le_bytes());
+        }
+        out.extend_from_slice(&field.radius_meters.to_le_bytes());
+        put_abyssal_modifiers(out, &field.modifiers);
+    }
+    for value in spec.boundary.center {
+        out.extend_from_slice(&value.to_le_bytes());
+    }
+    out.extend_from_slice(&spec.boundary.radius_meters.to_le_bytes());
+    out.extend_from_slice(&spec.boundary.tick_interval_ms.to_le_bytes());
+    out.extend_from_slice(&(spec.boundary.damage_curve.len() as u32).to_le_bytes());
+    for point in &spec.boundary.damage_curve {
+        out.extend_from_slice(&point.distance_outside_meters.to_le_bytes());
+        out.extend_from_slice(&point.applied_damage_per_second.to_le_bytes());
+    }
+    out.extend_from_slice(&spec.boundary.terminal_exposure_ms.to_le_bytes());
+    out.extend_from_slice(&spec.expiry_filetime.to_le_bytes());
+}
+
+fn put_abyssal_scene_object(out: &mut Vec<u8>, object: &AbyssalSceneObject) {
+    put_scene_key(out, object.scene);
+    out.extend_from_slice(&object.item_id.to_le_bytes());
+    out.extend_from_slice(&object.type_id.to_le_bytes());
+    out.extend_from_slice(&object.group_id.to_le_bytes());
+    out.extend_from_slice(&object.category_id.to_le_bytes());
+    out.extend_from_slice(&object.owner_id.to_le_bytes());
+    out.extend_from_slice(&object.radius.to_le_bytes());
+    out.extend_from_slice(&object.graphic_id.to_le_bytes());
+    put_text(out, &object.name);
+    for value in object.position {
+        out.extend_from_slice(&value.to_le_bytes());
+    }
+    for value in object.direction {
+        out.extend_from_slice(&value.to_le_bytes());
+    }
+    out.push(u8::from(object.is_open));
+}
+
+fn put_abyssal_result(out: &mut Vec<u8>, request_id: u64, outcome: &Result<(), String>) {
+    assert!(request_id > 0, "invalid Abyssal request id");
+    out.extend_from_slice(&request_id.to_le_bytes());
+    match outcome {
+        Ok(()) => {
+            out.push(0);
+            put_text(out, "");
+        }
+        Err(reason) => {
+            out.push(1);
+            put_text(out, reason);
+        }
+    }
+}
+
+fn put_abyssal_trace(out: &mut Vec<u8>, trace: &AbyssalTrace) {
+    assert!(valid_abyssal_trace(trace), "invalid Abyssal trace");
+    out.extend_from_slice(&trace.solar_system_id.to_le_bytes());
+    out.extend_from_slice(&trace.item_id.to_le_bytes());
+    out.extend_from_slice(&trace.type_id.to_le_bytes());
+    out.extend_from_slice(&trace.group_id.to_le_bytes());
+    out.extend_from_slice(&trace.category_id.to_le_bytes());
+    out.extend_from_slice(&trace.owner_id.to_le_bytes());
+    out.extend_from_slice(&trace.radius.to_le_bytes());
+    for value in trace.position.iter().chain(&trace.velocity).chain(&trace.direction) {
+        out.extend_from_slice(&value.to_le_bytes());
+    }
+    match trace.target_point {
+        Some(target) => {
+            out.push(1);
+            for value in target {
+                out.extend_from_slice(&value.to_le_bytes());
+            }
+        }
+        None => out.push(0),
+    }
+    out.extend_from_slice(&trace.speed_fraction.to_le_bytes());
+    out.extend_from_slice(&trace.game_mode_id.to_le_bytes());
+    out.extend_from_slice(&trace.filament_type_id.to_le_bytes());
+    out.extend_from_slice(&trace.difficulty_tier.to_le_bytes());
+    out.extend_from_slice(&trace.expires_at_ms.to_le_bytes());
+}
+
+fn put_abyssal_trace_result(
+    out: &mut Vec<u8>,
+    request_id: u64,
+    status: AbyssalTraceStatus,
+    recipients: i32,
+    actor_notified: Option<bool>,
+    error: Option<&str>,
+) {
+    assert!(request_id > 0 && recipients >= 0, "invalid Abyssal trace receipt");
+    assert!(
+        (status == AbyssalTraceStatus::Failed) == error.is_some(),
+        "Abyssal trace failure must carry its reason"
+    );
+    if let Some(actor_notified) = actor_notified {
+        out.extend_from_slice(&request_id.to_le_bytes());
+        out.push(status as u8);
+        out.extend_from_slice(&recipients.to_le_bytes());
+        out.push(u8::from(actor_notified));
+        put_text(out, error.unwrap_or(""));
+    } else {
+        out.extend_from_slice(&request_id.to_le_bytes());
+        out.push(status as u8);
+        out.extend_from_slice(&recipients.to_le_bytes());
+        put_text(out, error.unwrap_or(""));
+    }
+}
+
 impl Message {
     /// The frame's payload: the kind and the body, without the length prefix.
     pub fn payload(&self) -> Vec<u8> {
@@ -41,9 +236,233 @@ impl Message {
                 out.extend_from_slice(&version.to_le_bytes());
                 out.extend_from_slice(&poll_hz.to_le_bytes());
             }
+            Self::EnsureAbyssalScene { request_id, spec } => {
+                assert!(*request_id > 0, "invalid Abyssal request id");
+                out.extend_from_slice(&request_id.to_le_bytes());
+                put_abyssal_scene_spec(&mut out, spec);
+            }
+            Self::EnsureAbyssalSceneObject { request_id, object } => {
+                assert!(
+                    *request_id > 0 && valid_abyssal_scene_object(object),
+                    "invalid Abyssal scene object request id"
+                );
+                out.extend_from_slice(&request_id.to_le_bytes());
+                put_abyssal_scene_object(&mut out, object);
+            }
+            Self::EnsureAbyssalSceneObjectReply { request_id, outcome }
+            | Self::EnsureAbyssalSceneReply { request_id, outcome }
+            | Self::MoveAbyssalParticipantReply { request_id, outcome }
+            | Self::RebindAbyssalSessionReply { request_id, outcome }
+            | Self::RemoveAbyssalSceneReply { request_id, outcome } => {
+                put_abyssal_result(&mut out, *request_id, outcome);
+            }
+            Self::EnsureAbyssalTracePublished { request_id, actor_session_id, trace } => {
+                assert!(
+                    *request_id > 0 && actor_session_id.is_none_or(|session| session > 0),
+                    "invalid Abyssal trace publication"
+                );
+                out.extend_from_slice(&request_id.to_le_bytes());
+                match actor_session_id {
+                    Some(session_id) => {
+                        out.push(1);
+                        out.extend_from_slice(&session_id.to_le_bytes());
+                    }
+                    None => out.push(0),
+                }
+                put_abyssal_trace(&mut out, trace);
+            }
+            Self::EnsureAbyssalTracePublishedReply {
+                request_id,
+                status,
+                recipient_count,
+                actor_notified,
+                error,
+            } => {
+                put_abyssal_trace_result(
+                    &mut out,
+                    *request_id,
+                    *status,
+                    *recipient_count,
+                    Some(*actor_notified),
+                    error.as_deref(),
+                );
+            }
+            Self::RemoveAbyssalTrace { request_id, solar_system_id, item_id } => {
+                assert!(
+                    *request_id > 0 && *solar_system_id > 0 && *item_id > 0,
+                    "invalid Abyssal trace removal"
+                );
+                out.extend_from_slice(&request_id.to_le_bytes());
+                out.extend_from_slice(&solar_system_id.to_le_bytes());
+                out.extend_from_slice(&item_id.to_le_bytes());
+            }
+            Self::RemoveAbyssalTraceReply { request_id, status, recipient_count, error } => {
+                put_abyssal_trace_result(
+                    &mut out,
+                    *request_id,
+                    *status,
+                    *recipient_count,
+                    None,
+                    error.as_deref(),
+                );
+            }
+            Self::RemoveAbyssalParticipant { request_id, scene, ship_id } => {
+                assert!(
+                    *request_id > 0 && scene.is_valid() && scene.instance_id > 0 && *ship_id > 0,
+                    "invalid Abyssal participant removal"
+                );
+                out.extend_from_slice(&request_id.to_le_bytes());
+                put_scene_key(&mut out, *scene);
+                out.extend_from_slice(&ship_id.to_le_bytes());
+            }
+            Self::RemoveAbyssalParticipantReply { request_id, already_absent, error } => {
+                assert!(
+                    *request_id > 0 && !(*already_absent && error.is_some()),
+                    "invalid Abyssal participant removal reply"
+                );
+                out.extend_from_slice(&request_id.to_le_bytes());
+                out.push(u8::from(*already_absent));
+                put_text(&mut out, error.as_deref().unwrap_or(""));
+            }
+            Self::GetAbyssalParticipantPose { request_id, scene, ship_id } => {
+                assert!(*request_id > 0 && scene.is_valid() && *ship_id > 0, "invalid resident pose request");
+                out.extend_from_slice(&request_id.to_le_bytes());
+                put_scene_key(&mut out, *scene);
+                out.extend_from_slice(&ship_id.to_le_bytes());
+            }
+            Self::GetAbyssalParticipantPoseReply { request_id, scene, ship_id, outcome, deployment } => {
+                assert!(
+                    *request_id > 0 && scene.is_valid() && *ship_id > 0,
+                    "invalid resident pose reply identity"
+                );
+                out.extend_from_slice(&request_id.to_le_bytes());
+                put_scene_key(&mut out, *scene);
+                out.extend_from_slice(&ship_id.to_le_bytes());
+                match outcome {
+                    Ok((position, direction)) => {
+                        assert!(
+                            position.iter().chain(direction).all(|value| value.is_finite())
+                                && direction.iter().any(|value| *value != 0.0),
+                            "invalid Abyssal resident pose"
+                        );
+                        out.push(0);
+                        for value in position.iter().chain(direction) {
+                            out.extend_from_slice(&value.to_le_bytes());
+                        }
+                        put_text(&mut out, "");
+                    }
+                    Err(error) => {
+                        assert!(!error.is_empty(), "empty Abyssal pose failure reason");
+                        out.push(1);
+                        put_text(&mut out, error);
+                    }
+                }
+                out.push(u8::from(deployment.is_some()));
+                if let Some(snapshot) = deployment {
+                    assert!(outcome.is_ok() && scene.instance_id == 0);
+                    for flag in [
+                        snapshot.warping,
+                        snapshot.cloaked,
+                        snapshot.cyno_active,
+                        snapshot.undock_invulnerable,
+                        snapshot.warp_scrambled,
+                    ] {
+                        out.push(u8::from(flag));
+                    }
+                    out.extend_from_slice(&(snapshot.nearby_objects.len() as u32).to_le_bytes());
+                    let mut seen = std::collections::HashSet::new();
+                    for object in &snapshot.nearby_objects {
+                        assert!(
+                            object.item_id > 0
+                                && object.item_id != *ship_id
+                                && seen.insert(object.item_id)
+                                && object.type_id > 0
+                                && object.center_distance_meters.is_finite()
+                                && (0.0..=1_000_000.0).contains(&object.center_distance_meters)
+                        );
+                        out.extend_from_slice(&object.item_id.to_le_bytes());
+                        out.extend_from_slice(&object.type_id.to_le_bytes());
+                        out.extend_from_slice(&object.center_distance_meters.to_le_bytes());
+                    }
+                }
+            }
+            Self::MoveAbyssalParticipant {
+                request_id,
+                ship_id,
+                source,
+                destination,
+                position,
+                preserve_source_pose,
+                session_handoff,
+                direction,
+            } => {
+                let room_transition = source.instance_id > 0
+                    && source.instance_id == destination.instance_id
+                    && source.room_index != destination.room_index;
+                let entry = source.instance_id == 0 && destination.instance_id > 0;
+                let origin_return = source.instance_id > 0 && destination.instance_id == 0;
+                assert!(*request_id > 0 && *ship_id > 0, "invalid Abyssal participant identity");
+                assert!(
+                    source.is_valid()
+                        && destination.is_valid()
+                        && (room_transition || entry || origin_return),
+                    "invalid Abyssal scene transition"
+                );
+                assert!(
+                    !*session_handoff || entry || origin_return,
+                    "only an Abyssal boundary move can hand off the session"
+                );
+                if *preserve_source_pose {
+                    assert!(room_transition, "only a room transition can carry the source pose");
+                    assert!(
+                        position == &[0.0; 3] && direction == &[0.0; 3],
+                        "preserved-pose moves carry no explicit pose"
+                    );
+                } else {
+                    assert!(
+                        position.iter().chain(direction).all(|value| value.is_finite())
+                            && direction.iter().any(|value| *value != 0.0),
+                        "invalid Abyssal participant pose"
+                    );
+                }
+                out.extend_from_slice(&request_id.to_le_bytes());
+                out.extend_from_slice(&ship_id.to_le_bytes());
+                put_scene_key(&mut out, *source);
+                put_scene_key(&mut out, *destination);
+                out.push((u8::from(*preserve_source_pose)) | (u8::from(*session_handoff) << 1));
+                if !preserve_source_pose {
+                    for value in position.iter().chain(direction) {
+                        out.extend_from_slice(&value.to_le_bytes());
+                    }
+                }
+            }
+            Self::RebindAbyssalSession { request_id, session_id, ship_id, scene } => {
+                assert!(
+                    *request_id > 0 && *session_id > 0 && *ship_id > 0 && scene.is_valid(),
+                    "invalid Abyssal session rebind"
+                );
+                out.extend_from_slice(&request_id.to_le_bytes());
+                out.extend_from_slice(&session_id.to_le_bytes());
+                out.extend_from_slice(&ship_id.to_le_bytes());
+                put_scene_key(&mut out, *scene);
+            }
+            Self::RemoveAbyssalScene { request_id, scene, settled_npc_ids, settled_loot_ids } => {
+                assert!(
+                    *request_id > 0 && scene.is_valid() && scene.instance_id > 0,
+                    "invalid Abyssal scene removal"
+                );
+                assert!(
+                    !settled_npc_ids.iter().any(|id| settled_loot_ids.contains(id)),
+                    "overlapping cleanup IDs"
+                );
+                out.extend_from_slice(&request_id.to_le_bytes());
+                put_scene_key(&mut out, *scene);
+                write_structure_damage_ids(&mut out, settled_npc_ids);
+                write_structure_damage_ids(&mut out, settled_loot_ids);
+            }
             Self::Enter(enter) => {
                 out.extend_from_slice(&enter.session_id.to_le_bytes());
-                out.extend_from_slice(&enter.solar_system_id.to_le_bytes());
+                put_scene_key(&mut out, enter.scene);
                 out.push(match enter.how {
                     How::Undock => 0,
                     How::InSpace => 1,
@@ -241,6 +660,10 @@ impl Message {
                 out.extend_from_slice(&can.launcher_id.to_le_bytes());
                 put_credit(&mut out, &can.credit);
                 out.extend_from_slice(&can.distance.to_le_bytes());
+                out.push(u8::from(can.expected_scene.is_some()));
+                if let Some(scene) = can.expected_scene {
+                    put_scene_key(&mut out, scene);
+                }
             }
             Self::ContainerPlaced { session_id, container_id, position, direction } => {
                 out.extend_from_slice(&session_id.to_le_bytes());
@@ -466,17 +889,64 @@ impl Message {
                 put_vector(&mut out, position);
                 put_vector(&mut out, direction);
             }
-            Self::PlaceWreck(placement) => {
-                out.extend_from_slice(&placement.solar_system_id.to_le_bytes());
-                out.extend_from_slice(&placement.wreck_id.to_le_bytes());
-                out.extend_from_slice(&placement.group_id.to_le_bytes());
-                put_wreck_kind(&mut out, Some(&placement.kind));
-                put_vector(&mut out, &placement.position);
-                put_vector(&mut out, &placement.direction);
-                out.extend_from_slice(&placement.radius.to_le_bytes());
-                out.extend_from_slice(&placement.launcher_id.to_le_bytes());
-                put_credit(&mut out, &placement.credit);
-                out.push(u8::from(placement.is_empty));
+            Self::PlaceWreck(placement) => put_wreck_placement(&mut out, placement),
+            Self::EnsureAbyssalEnvironmentObject { request_id, object } => {
+                assert!(
+                    *request_id > 0 && valid_abyssal_environment_object(object),
+                    "invalid Abyssal environment object"
+                );
+                out.extend_from_slice(&request_id.to_le_bytes());
+                put_text(&mut out, &object.content_id);
+                put_abyssal_scene_object(&mut out, &object.body);
+                out.extend_from_slice(&object.effect_radius_meters.to_le_bytes());
+                out.push(u8::from(object.point_defense.is_some()));
+                if let Some(pulse) = &object.point_defense {
+                    out.extend_from_slice(&pulse.tick_interval_ms.to_le_bytes());
+                    for channel in pulse.damage { out.extend_from_slice(&channel.to_le_bytes()); }
+                    out.extend_from_slice(&pulse.type_list_id.to_le_bytes());
+                    for ids in &pulse.targets {
+                        out.extend_from_slice(&(ids.len() as u32).to_le_bytes());
+                        for id in ids { out.extend_from_slice(&id.to_le_bytes()); }
+                    }
+                    put_text(&mut out, &pulse.effect_name);
+                }
+            }
+            Self::EnsureAbyssalEnvironmentObjectReply { request_id, outcome }
+            | Self::RefreshAbyssalNpcReply { request_id, outcome } => {
+                put_abyssal_result(&mut out, *request_id, outcome)
+            }
+            Self::AbyssalFieldMembership { scene, source_item_id, ship_id, session_id, inside } => {
+                put_scene_key(&mut out, *scene);
+                out.extend_from_slice(&source_item_id.to_le_bytes());
+                out.extend_from_slice(&ship_id.to_le_bytes());
+                out.extend_from_slice(&session_id.to_le_bytes());
+                out.push(u8::from(*inside));
+            }
+            Self::RefreshAbyssalNpc { request_id, scene, session_id, ship, identity } => {
+                out.extend_from_slice(&request_id.to_le_bytes());
+                put_scene_key(&mut out, *scene);
+                out.extend_from_slice(&session_id.to_le_bytes());
+                put_ship(&mut out, ship);
+                put_identity(&mut out, identity);
+            }
+            Self::EnsureAbyssalRewardCache { request_id, cache } => {
+                assert!(*request_id > 0 && valid_abyssal_reward_cache(cache), "invalid Abyssal cache");
+                out.extend_from_slice(&request_id.to_le_bytes());
+                put_text(&mut out, &cache.content_id);
+                put_scene_key(&mut out, cache.scene);
+                put_ship(&mut out, &cache.ship);
+                put_vector(&mut out, &cache.position);
+                put_vector(&mut out, &cache.direction);
+            }
+            Self::EnsureAbyssalLootContainer { request_id, content_id, placement } => {
+                assert!(*request_id > 0 && valid_abyssal_loot(content_id, placement), "invalid Abyssal loot");
+                out.extend_from_slice(&request_id.to_le_bytes());
+                put_text(&mut out, content_id);
+                put_wreck_placement(&mut out, placement);
+            }
+            Self::EnsureAbyssalRewardCacheReply { request_id, outcome }
+            | Self::EnsureAbyssalLootContainerReply { request_id, outcome } => {
+                put_abyssal_result(&mut out, *request_id, outcome)
             }
             Self::Deployed(placement) => {
                 out.extend_from_slice(&placement.solar_system_id.to_le_bytes());
@@ -639,7 +1109,14 @@ impl Message {
             }
             Self::Spawn(spawn) => {
                 out.extend_from_slice(&spawn.request_id.to_le_bytes());
-                out.extend_from_slice(&spawn.solar_system_id.to_le_bytes());
+                match &spawn.abyssal_content_id {
+                    Some(content_id) => {
+                        out.push(1);
+                        put_text(&mut out, content_id);
+                    }
+                    None => out.push(0),
+                }
+                put_scene_key(&mut out, spawn.scene);
                 put_ship(&mut out, &spawn.ship);
                 out.extend_from_slice(&spawn.anchor_ship_id.to_le_bytes());
                 for number in spawn.position.iter().chain(&spawn.velocity).chain(&spawn.direction) {

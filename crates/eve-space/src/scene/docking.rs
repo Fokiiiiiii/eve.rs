@@ -91,6 +91,7 @@ impl Scene {
                     bound: pilot.bound,
                     sees: pilot.sees.clone(),
                     sees_wrecks: pilot.sees_wrecks.clone(),
+                    sees_abyssal_traces: pilot.sees_abyssal_traces.clone(),
                     sees_asteroids: pilot.sees_asteroids.clone(),
                 },
             );
@@ -100,6 +101,7 @@ impl Scene {
             pilot.bound = false;
             pilot.sees.clear();
             pilot.sees_wrecks.clear();
+            pilot.sees_abyssal_traces.clear();
             pilot.sees_asteroids.clear();
             self.unpiloted.insert(ship_id, fake_session);
             self.pilots.insert(fake_session, pilot);

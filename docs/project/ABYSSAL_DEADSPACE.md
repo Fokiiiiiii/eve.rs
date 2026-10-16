@@ -1,14 +1,14 @@
 # Abyssal Deadspace Reference Contract
 
-**Status:** investigation handoff; this file records observed contracts and unresolved parity checks. It does not claim the feature is complete.
+**Status: PARTLY — final integration gates pending (2026-10-16).** This document records source contracts, verified component checks, executed headless captures, intentional differences, and unresolved acceptance gates. It does not claim feature completion. GUI/native-client launch is prohibited for this verification task; all reported execution is headless.
 
 ## Source pins and confidence
 
 - V24.01 client logic: `Fokiiiiiii/eve-logic` commit `1dbb5711a072a146e1d228365668ac05655eefe1`. The decompiled Abyss packages identify the embedded release as V24.01, build 3396210.
-- Executable EveJS reference: local `C:/Users/yutai/evejs-v0.12.9`, HEAD `828823a75f211fdecb945b087a26c225f111491f`. This is the runtime source used for local test discovery.
+- Executable EveJS reference: local `C:/Users/yutai/evejs-v0.12.9`, HEAD `828823a75f211fdecb945b087a26c225f111491f`. This is the canonical executable reference for the headless baseline, combat scenarios, and catalog batch comparisons.
 - Supplemental GitHub main snapshot: `Fokiiiiiii/evejs-v0.12.9` commit `7cc6f323c7c5c92c2738476a62768318799d8077`. It is not the local executable checkout. The selected Abyssal and dungeon files in the comparison table below have identical Git blob IDs at both commits, so their source text is shared.
 - The transition-profile source records `TQTranquilAbyssal5.txt`, segment `2026-07-15T23:20:22--2026-07-15T23:28:56`, but that raw file was not found in the repository or local captures. The profile is evidence recorded in EveJS, not a fresh packet capture in this investigation.
-- `docs/design/REFERENCE-TRACES.md` requires a same-scenario EveJS/eve.rs MITM capture and `mitm diff --ignore-volatile` before completion. No Abyssal MITM run was made; the existing procedure takes the shared heavy-run lock.
+- `docs/design/REFERENCE-TRACES.md` requires same-scenario EveJS/eve.rs capture and `mitm diff --ignore-volatile`. New headless captures and an exact invalid-entry error comparison exist; full successful transition/combat parity remains pending. See the current evidence table below.
 
 ## Game mode fields
 
@@ -22,6 +22,8 @@ The client uses two distinct numeric fields: `GameModeID` and Abyss `content_typ
 | Cruiser PvP | not in this PvE flow | `CRUISER_PVP_CONTENT = 3` | out of scope | — | — | — |
 
 `MAX_PLAYERS = 3` is a global maximum, not the participant count for every mode. The solo/co-op values above come from the scalar assignments and `AbyssSoloGameMode`, `AbyssCoOpGameMode`, and `AbyssTwoPlayerGameMode` field assignments in the client. The decompiled list-style constants such as `ABYSS_REGIONS` are not used as evidence.
+
+**High-security filament activation (0.9):** CCP’s V24.01 patch note for 2026-06-16.1 says, “Fixed a bug that had allowed the activation of Abyssal Filaments beyond tier 0 in 0.9 security status systems.” Accordingly, Tier 0 is the maximum allowed tier in a 0.9 system; Tier 1+ activation is disallowed. The Tier 0 allowance is inferred from the correction wording, while the patch explicitly identifies higher-tier activation as the bug. [CCP V24.01 patch notes](https://www.eveonline.com/news/view/patch-notes-version-24-01).
 
 ## Client RPC callsites
 
@@ -71,7 +73,7 @@ The T0 Dark transition profile records this packet/event sequence:
 5. `OnAbyssalLocationEntered`.
 6. `OnAbyssalLocationExited`.
 
-The runtime stages commit the source room, move the activating participant, move the other eligible participants, clean the source room, prepare/publish the destination, activate its controllers, and commit the transition. The stored order is a capture-derived profile; its named raw trace file was not present locally, and a new MITM replay has not been run.
+The runtime stages commit the source room, move the activating participant, move the other eligible participants, clean the source room, prepare/publish the destination, activate its controllers, and commit the transition. The stored order is a capture-derived profile whose named raw trace file remains unavailable. New headless baseline/combat captures are listed below; no successful full same-scenario transition/combat comparison has yet been accepted.
 
 ### Final Origin exit
 
@@ -102,12 +104,85 @@ For a nonterminal run, the administrative-return path records `cluster_shutdown_
 
 EveJS sends the absolute expiry as a FILETIME-like `int64`; the client calculates the warning times locally. On a committed lethal timeout, EveJS suppresses pending rewards, records `FAILED_TIMEOUT`, destroys the required participants, commits those results, sends terminal notifications when a participant session is available, then cleans up. For a live participant with an available room dungeon ID, teardown order is `OnExitingDungeon(shipid, [dungeonID])` -> `OnAbyssalLocationExited(charid, [])` -> `OnAbyssalContentFinished(charid, [contentID, ABYSSAL_TIMER_TYPE_NORMAL_PVE])`. CCP confirms ship and capsule destruction when the Abyss timer expires. This timeout path is different from server-restart administrative return.
 
+## Implementation and catalog evidence
+
+The following implementation results and test gates were supplied by the coordinating agent on 2026-10-16. This documentation pass inspected the listed baseline/combat result summaries and artifact locations; it did not rerun the server, tests, or client.
+
+- The default catalog uses the EveJS default procedural main and side content selection. The comparison matched 210 JavaScript cases / 630 rooms.
+- Resolver coverage contains 477 objects across 105 rooms, including 105 weather objects and 7 functional objects. The final catalog gate passed 6 tests, 0 failed, 0 skipped, exit 0. Node comparisons passed for all 477 objects at both allowed weather stages; the real EveJS batch test ports completed 477 create / 477 spawn operations.
+- Local mechanics use 13 SDE types, source HP, and source-declared disabled decoration. Saved weather TypeId is authoritative. Rehydration no longer rerolls seedContentId.
+- Room.Loot remains empty; saved loot belongs to each individual artifact. This avoids creating a second room-level reward source.
+- MechanicsEnabled is a boolean defaulting to true. PresentationRadiusMeters is nullable and preserves the source presentation radius independently of functional and damage boundaries. These fields are declared in dotnet/src/Eve.Content/AbyssalTypes.cs; catalog/runtime authority is in AbyssalStaticCatalog.cs and AbyssalContentRuntime.cs.
+- Host entry, room materialization/transfer, origin return, notifications, and death settlement use ContentRuntime and the existing Event Bus. Saved run/object identities and SDE data supply materialization. Duplicate EndGate draining and presentation-radius contracts are included in the latest focused Host gate.
+
 ## Test and runtime status
 
-- Local EveJS root `C:/Users/yutai/evejs-v0.12.9` exposes `npm run test:isolated -- server/tests/<file>.test.js`; the runner requires an explicit test target and creates a temporary isolated GameStore per test.
-- No Abyssal-, dungeon-, gate-, or keeper-specific `server/tests/*.test.js` exists in the local clone. No unrelated EveJS test was run.
-- No live client, process-restart, or MITM capture was run. The MITM recipe in `docs/design/REFERENCE-TRACES.md` uses the shared heavy-run lock; perform it after the competing Euler run completes and both headless scenarios are ready.
-- The trace profile references `TQTranquilAbyssal5.txt`, but the raw file was not found locally. Packet order below is therefore the checked-in profile/runtime contract, not a new raw-capture verification.
+### Latest accepted component gates
+
+| Scope | Accepted result | Evidence and limit |
+|---|---|---|
+| Domain / full Eve.Content.Tests after presentation radius | 41 PASS, 0 FAIL, 0 SKIP; exit 0; database eve_rs_test | External artifact directory: abyssal-verification/eve-content-tests-radius-20261016-fc57070844684cc88491882eca6e83ef. This supersedes the earlier 39-test and 24-test snapshots. |
+| Catalog final | 6 PASS, 0 FAIL, 0 SKIP; exit 0 | Includes the final 477-object comparisons and EveJS batch create/spawn evidence above. Keep this named gate distinct from the full Domain gate; do not assume disjoint test totals. |
+| Host focused, latest non-realSim | 52 PASS, 0 SKIP | Supersedes the earlier 46-test focused snapshot (42.019 s); further source self-review and eligibility integration remain active. |
+| Host build, earlier direction/radius snapshot | 0 warnings, 0 errors; exit 0; 13.22 s | Passed at that source snapshot. It is not the final build gate for subsequent cleanup/eligibility/main integration. |
+| Host materialization subset at the earlier Cloud source direction/radius snapshot | 1 PASS, 0 FAIL, 0 SKIP; 6.078 s | This test is part of the 46 focused tests: do not report 47 unique tests. The final direction is (0,1,0); this was a source-facing parity correction. OriginDirection had already prevented the zero-direction exception. |
+| Services.Core focused Abyssal RPC | 5 PASS | Component result supplied with the final Host gate. |
+| Host self-review / diff check | Earlier snapshot PASS; latest source self-review ongoing | Final source review/build gate is pending after the later changes. This documentation pass performed no Git operation. |
+| Space environment / field / guard / radius | Final gate pending | Earlier Rust 835 and C# 356 results predate the current changes and are not final acceptance evidence. |
+
+### Later shared-owner and Host integration evidence
+
+The coordinating agent supplied these additional results after the earlier 46-test Host gate. Source writers and final RS execution are still active; these results are not a feature-completion gate. Named suites and subsets may overlap and must not be added into a unique test total.
+
+- Shared owners: Eve.Inventory.Tests 55/55 PASS, 0 SKIP; Eve.Ships.Tests 234/234 PASS, 0 SKIP; focused Ships 6/6 PASS, 0 SKIP.
+- Typed creation preserves provenance and passes CustomInfo through. FindRunSpaceItems uses exact run scope. Recursive RemoveContainer runs in the same transaction, recovers remaining corporate/other-participant contents, and preserves claimed contents.
+- Latest non-realSim Host gate: 52 PASS, 0 SKIP. Source self-review is continuing after further cleanup/eligibility changes.
+- Real Rust simulator + PostgreSQL, own TCP0, source 339: 1 PASS, 0 SKIP, 17.8325 s. It exercised live NPC/environment state in both runs, rejected legacy empty-remove behavior, acknowledged exact settled no-death cleanup, and retained the other run.
+- Partial-scope check: 1 PASS, 5.97 s. After the late-partial-terminal change requiring all three acknowledgements, the two affected tests passed (2 PASS, 8.02 s). These are named checks, not additional unique tests inferred from the 52-test suite.
+- Intermediate Space results: PostgreSQL 38 PASS (Abyssal 20 + containers 18), C# SimLink 400 PASS, Rust 844 library tests plus integration suites of 4 / 5 / 2 / 7 PASS. Golden 9/10 and baseline-command 14 are also pre-integration snapshots. No final field/guard/radius, golden, or baseline-command acceptance is claimed from these counts.
+
+### Deployment eligibility and POS compatibility boundary
+
+EveJS findPlacementConflict uses typeList 50, excludes the activating ship, deduplicates candidates, and rejects a candidate at center distance <= 1,000,000 m with Error 8. A missing Host connection was found during integration; eligibility implementation and final regression checks are in progress. The intended transaction uses the existing per-system pg_advisory_xact_lock, a fresh snapshot from the same link, and persisted trace checks inside the same transaction before consuming filaments. The five source-defined state gates, session/tether/self-destruct, existing dungeon, Crimewatch, and system conditions are being connected; this paragraph does not mark that work complete.
+
+The latest supplied remote source reference is b474dae26d77ad10d8e7d1be736bf462927da311. Its deployable.rs / SimMessages representation has no forcefield owner information. ControlTower Active represents anchored state and hull radius only; fuel and modules are explicitly not modelled. A reachable POS forcefield therefore has no authoritative runtime representation for this eligibility check. Record this as a compatibility boundary. Do not fabricate InsideForceField=false or use placement Error 8 to conceal a missing forcefield Error 13 check, and do not add a new POS subsystem under this feature.
+
+### Executed headless captures
+
+Capture root: C:/Users/yutai/.codex/worktrees/0b7f/abyssal-verification. Raw packets, logs, credentials, and tool reasoning are kept outside this document.
+
+| Scenario / run | Observed result | Interpretation |
+|---|---|---|
+| JS baseline: js-baseline-1792079082441 | 1 PASS; 97.85 s; runner exit 0; cleanup_ok=true | Capture: js-abyssal.jsonl. This is the accepted reference baseline, not a combat-completion result. |
+| RS baseline: rs-baseline-1792079121868 | 0 PASS, 1 FAIL; 119.06 s; exit 1; cleanup_ok=true; remaining_own_schemas=0 | Stopped at Cloud unsupported because the role was not connected in this captured run. The previous cache mismatch did not recur. Subsequent Host materialization passed after the final source-direction/radius update. The historical failure does not describe an unresolved zero-direction exception; it has not yet been superseded by an accepted winning RS capture. |
+| Invalid-entry error comparison | Error-envelope tuple fully matches | Evidence: rs-baseline-1792079121868/comparison/invalid-entry-error-contract.json. Error parity does not establish happy-path sequence parity. |
+| JS combat first run: js-combat-1792123136221 | 0 PASS, 1 FAIL; 705.54 s; exit 1; cleanup_ok=true | Rooms 1/2 completed real kills, cache wreck creation, and transfer. Room 3 ran out of ammunition and ended in real ship/pod destruction and clone handoff. This is failure-path evidence; it is not a successful combat acceptance run. |
+| JS combat replenishment run: js-combat-1792124296256 | 0 PASS, 1 FAIL; 15.03 s; runner exit 1; cleanup_ok=true | Failed during setup because List returned None through the source-confirmed JS BigInt binding bug described below. It did not verify replenishment or loot. |
+| Later JS combat, fifth run (run ID not supplied) | 3 FAIL reported; no three-room Origin win | Auxiliary inactive-repair and fleet-proximity failures remain; captured placement against the same planet was 252.2907 m, correctly producing Error 8. Real reload, cache loot, and room-1 transfer have partial PASS evidence only. |
+| JS valid-placement rerun: js-valid-placement-1792128817856 | Running; no final PASS received | Existing normalized JS Inventory binding is used for setup/loot. A different planet / 100,000,000 m offset follows the source typeList-50 and 1,000,000 m minimum-clearance rule. |
+| RS final baseline / combat | Reviewed winning captures pending | Await cleanup, deployment eligibility, main integration, the environment/field/guard/radius final gate, and the coordinating agent's reviewed results. Do not promote an in-progress directory or a partial run to acceptance. |
+
+**Auxiliary Inventory binding difference (source-confirmed):** This is separate from the five Abyssal action/readiness RPC contracts. In pinned EveJS server/src/services/inventory/invBrokerService.js, GetInventoryFromId retains a raw itemid BigInt in boundContext.inventoryID. List/Add/MultiAdd evaluate a debug JSON.stringify(boundContext), which throws Do not know how to serialize a BigInt; the catch path returns null. The coordinating agent matched this source behavior to js-combat-1792124296256/server.log lines 814–822. The reference source is unchanged. JS test setup/loot uses its existing GetInventory(itemID) path, whose _normalizeInventoryId converts the ID to Number. RS uses its working GetInventoryFromId; RS GetInventory serves hangar access. These source-supported auxiliary binding paths differ, and the captures must record that difference. No claim of complete equality of all MITM traffic is made; the JS serialization bug is not ported to RS.
+
+The recipe in docs/design/REFERENCE-TRACES.md still requires the same meaningful EveJS/eve.rs scenario and mitm diff --ignore-volatile with explanations for retained differences. Captures have been executed; a successful full happy-path/combat comparison has not yet been accepted. The historical retail profile's named TQTranquilAbyssal5.txt raw file remains unavailable, independently of these new captures.
+
+### Integration and compatibility gates still open
+
+- Final deployment eligibility/cleanup source review, build, and regression gate; the POS forcefield representation boundary remains explicit.
+- Space final field/environment, guard, and radius gate.
+- Reviewed JS combat rerun and successful RS final baseline/combat captures, including actual loot transfer and final origin return.
+- Full transition/notification-order comparison, plus the remaining co-op, reconnect, expiry/death-race, and restart acceptance scenarios where not already covered by a named component gate.
+- Post-merge protocol integration remains pending. The earlier origin/main 686143bd / protocol-73 assignment is historical. A newer remote source reference b474dae26d77ad10d8e7d1be736bf462927da311 was supplied for the POS representation review; its latest protocol still requires revalidation by the coordinating agent. The local protocol-71 batch is unpublished. Protocol 74 or later remains the integration plan; numeric kind assignments, including the earlier provisional 93-or-higher plan, require a fresh collision check after merge.
+- GUI/native-client behavior remains unverified. No GUI/client launch was performed or authorized.
+
+### Intentional differences and gameplay boundaries
+
+See docs/reference/compat/DEVIATIONS.md, section "Abyssal Deadspace: intentional differences and pending acceptance (2026-10-16)".
+
+- The accepted JS baseline observed keeper.GetCurrentDungeonForCharacter returning NULL; eve.rs requires an active-run four-value dungeon tuple so the V24.01 dungeonTracking callsite can reconstruct the room. This is an explicit, evidence-based difference.
+- EveJS startup administrative return selects one owner ship per run. eve.rs returns all eligible participants while preserving committed terminal/death outcomes; this follows the per-pilot downtime return rule and the shared participant authority. Multi-participant restart acceptance remains a named pending gate.
+- The 2,500 m gate surface range is enforced and covered by dotnet/tests/Eve.Host.Tests/AbyssalTraceRangeTests.cs. EveJS's committed FOLLOW-approach reconciliation (server/src/abyssal/runtime/abyssalGateActivationRange.js) remains unconnected in the Space pose API. Keep this as a compatibility gap in approach reconciliation, not as an unsupported/no-op gate and not as an assumed EveJS workaround.
+- SDE types, source HP, disabled decoration, saved weather TypeId, stable content selection, artifact-owned loot, and independent presentation radius provide authoritative gameplay/state values. Differences from a reference fallback require source/SDE justification; none authorizes fake success or permanent implementation-readiness refusals.
 
 ## Source ledger
 
@@ -166,9 +241,11 @@ Client sources use the separate EveLogic commit and blob IDs below.
 
 ## Unverified items
 
-- No Abyssal-specific EveJS Node test exists in local `server/tests`; `npm run test:isolated` requires an explicit `server/tests/*.test.js` path. No unrelated test was substituted.
-- The stored transition profile says its evidence is captured retail, but the named raw trace file was not found; the sequence has not been independently replayed here.
-- No live disconnect/reconnect, multi-participant gate, final exit, scheduled downtime, process-crash, or MITM capture was executed.
-- A client handler for `OnAbyssalLocationExited` was not found in `AbyssalService`; its application elsewhere in the V24.01 client remains unchecked.
-- Co-op startup/downtime evacuation may be incomplete in the reference: the administrative startup path selects and moves one run owner ship, while normal gate and death paths explicitly enumerate group participants. Verify the multi-participant case before reusing that policy in eve.rs.
-- The local test-only status includes Serena's untracked `.serena/` directory. Do not use checkout/reset/cleanup operations on the reference clone.
+- Feature status remains PARTLY until the pending Space, reviewed capture/combat, full comparison, and post-merge protocol gates above are received.
+- The successful JS baseline and exact invalid-entry error-envelope match do not establish successful RS entry/materialization or full combat parity.
+- The first JS combat run failed after ammunition exhaustion and ship/pod destruction. Its real death/clone handoff is failure-path evidence only; the replenishment run then failed at setup List=None through the JS Inventory binding bug (15.03 s, exit 1, cleanup true). Later fifth-run combat still reported three failures. js-valid-placement-1792128817856 is running; no complete three-room Origin PASS has been received.
+- The old retail transition profile has not been independently reproduced as a complete successful same-scenario sequence. New headless captures exist and are listed separately.
+- A matching handler for OnAbyssalLocationExited was not found in AbyssalService; its full application elsewhere in V24.01 remains unverified.
+- Source confirms the EveJS startup path selects one owner ship. The all-participant eve.rs recovery policy is intentional; live multi-participant restart/downtime acceptance remains pending.
+- GUI/native-client acceptance is unverified; GUI/client launch is prohibited in this task.
+- Final component/capture results must be supplied with scenario identity and cleanup result. Preserve failure history and distinguish overlapping subsets from unique test counts.

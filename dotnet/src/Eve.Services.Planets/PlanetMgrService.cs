@@ -247,7 +247,7 @@ public sealed partial class PlanetMgrService(NpgsqlDataSource source, PlanetStor
         var expiresMs = nowMs() + PlanetRules.LaunchLifetime / 10_000;
         await spaceItems.SaveAsync(new SpaceItem(canId, (int)body.SolarSystemId, position, direction, radius, LaunchCanGroup, 0, owner, 0, 0, 0, expiresMs),
             cancellationToken);
-        simulation.PlaceWreck(new SimPlaceWreck((int)body.SolarSystemId, canId, LaunchCanGroup,
+        simulation.PlaceWreck(new SimPlaceWreck(SimSceneKey.SolarSystem((int)body.SolarSystemId), canId, LaunchCanGroup,
             new SimWreckKind(LaunchContainerType, type?.Name ?? "Cargo Container", type?.GraphicId ?? 0), position, direction, radius, 0,
             new SimCredit(owner, 0, 0, 0), false));
     }

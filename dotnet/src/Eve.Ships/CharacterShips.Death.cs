@@ -45,17 +45,31 @@ public sealed partial class CharacterShips
     /// (<see cref="DeathOutcome"/>, decided by <paramref name="seed"/>), the ship is gone, and the character is in a capsule where the ship was.
     /// Null when the ship is not the character's active ship, or not in space, or is a capsule. Without a <paramref name="wreckTypeId"/> nothing is left and everything is destroyed.
     /// </summary>
-    public async Task<ShipDeath?> DestroyShipAsync(long characterId, long shipId, int? wreckTypeId, string seed, CancellationToken cancellationToken = default)
+    public async Task<ShipDeath?> DestroyShipAsync(
+        long characterId,
+        long shipId,
+        int? wreckTypeId,
+        string seed,
+        CancellationToken cancellationToken = default,
+        RunSpaceItemScope? runSpaceScope = null)
     {
         await using var connection = await source.OpenConnectionAsync(cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
         await LockAsync(connection, transaction, characterId, cancellationToken);
 
-        if (await characters.GetAsync(characterId, cancellationToken) is not { } character || character.ShipId != shipId
-            || await items.GetAsync(shipId, cancellationToken) is not { } ship || ship.OwnerId != characterId
+        var character = await characters.GetAsync(characterId, cancellationToken);
+        var ship = await items.LockAndGetAsync(connection, transaction, shipId, cancellationToken);
+        if (character is null || character.ShipId != shipId
+            || ship is null || ship.OwnerId != characterId
             || ship.LocationId != character.SolarSystemId || ship.Flag != InSpaceFlag || ship.TypeId == CapsuleTypeId)
         {
             return null;
+        }
+        if (runSpaceScope is not null)
+        {
+            if (wreckTypeId is null)
+                throw new ArgumentException("A run-space wreck scope requires a wreck type.", nameof(runSpaceScope));
+            ValidateRunSpaceScope(runSpaceScope, characterId, ship.LocationId, requireSettlementKey: true);
         }
 
         var events = new List<DogmaEvent>();
@@ -92,8 +106,21 @@ public sealed partial class CharacterShips
         Item? wreck = null;
         if (wreckTypeId is { } type)
         {
-            var id = await items.CreateAsync(connection, transaction, new NewItem(type, characterId, ship.LocationId, InSpaceFlag, 1, true), cancellationToken);
-            wreck = new Item(id, type, characterId, ship.LocationId, InSpaceFlag, 1, true, null);
+            var provenance = runSpaceScope is null
+                ? null
+                : new RunSpaceItemProvenance(runSpaceScope, RunSpaceItemRole.Wreck, characterId, ship.Id, ship.Id);
+            var id = await items.CreateAsync(
+                connection,
+                transaction,
+                new NewItem(type, characterId, ship.LocationId, InSpaceFlag, 1, true)
+                {
+                    RunSpaceProvenance = provenance,
+                },
+                cancellationToken);
+            wreck = new Item(id, type, characterId, ship.LocationId, InSpaceFlag, 1, true, null)
+            {
+                RunSpaceProvenance = provenance,
+            };
         }
 
         var snapshot = new Dictionary<long, Item>();
@@ -272,24 +299,52 @@ public sealed partial class CharacterShips
     /// Null when the ship is not the character's capsule in space. A port of what <c>destroySessionCapsuleToHomeStation</c> of EVE.js does to the items.
     /// </summary>
     public async Task<PodDeath?> DestroyCapsuleAsync(
-        long characterId, long capsuleId, int? corpseTypeId, string corpseName, int rookieShipTypeId, HomePlace home, CancellationToken cancellationToken = default)
+        long characterId,
+        long capsuleId,
+        int? corpseTypeId,
+        string corpseName,
+        int rookieShipTypeId,
+        HomePlace home,
+        CancellationToken cancellationToken = default,
+        RunSpaceItemScope? runSpaceScope = null)
     {
         await using var connection = await source.OpenConnectionAsync(cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
         await LockAsync(connection, transaction, characterId, cancellationToken);
 
-        if (await characters.GetAsync(characterId, cancellationToken) is not { } character || character.ShipId != capsuleId
-            || await items.GetAsync(capsuleId, cancellationToken) is not { } capsule || capsule.OwnerId != characterId || capsule.TypeId != CapsuleTypeId
+        var character = await characters.GetAsync(characterId, cancellationToken);
+        var capsule = await items.LockAndGetAsync(connection, transaction, capsuleId, cancellationToken);
+        if (character is null || character.ShipId != capsuleId
+            || capsule is null || capsule.OwnerId != characterId || capsule.TypeId != CapsuleTypeId
             || capsule.LocationId != character.SolarSystemId || capsule.Flag != InSpaceFlag)
         {
             return null;
+        }
+        if (runSpaceScope is not null)
+        {
+            if (corpseTypeId is null)
+                throw new ArgumentException("A run-space corpse scope requires a corpse type.", nameof(runSpaceScope));
+            ValidateRunSpaceScope(runSpaceScope, characterId, capsule.LocationId, requireSettlementKey: true);
         }
 
         Item? corpse = null;
         if (corpseTypeId is { } type)
         {
-            var id = await items.CreateAsync(connection, transaction, new NewItem(type, characterId, capsule.LocationId, InSpaceFlag, 1, true, corpseName), cancellationToken);
-            corpse = new Item(id, type, characterId, capsule.LocationId, InSpaceFlag, 1, true, corpseName);
+            var provenance = runSpaceScope is null
+                ? null
+                : new RunSpaceItemProvenance(runSpaceScope, RunSpaceItemRole.Corpse, characterId, capsule.Id, capsule.Id);
+            var id = await items.CreateAsync(
+                connection,
+                transaction,
+                new NewItem(type, characterId, capsule.LocationId, InSpaceFlag, 1, true, corpseName)
+                {
+                    RunSpaceProvenance = provenance,
+                },
+                cancellationToken);
+            corpse = new Item(id, type, characterId, capsule.LocationId, InSpaceFlag, 1, true, corpseName)
+            {
+                RunSpaceProvenance = provenance,
+            };
         }
         // a pod holds nothing, and what somehow is in it is destroyed rather than left where it is about to vanish
         var held = new List<Item>();

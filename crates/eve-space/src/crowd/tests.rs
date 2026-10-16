@@ -472,6 +472,7 @@ fn can_for(session: SessionId, id: i64, distance: f64) -> crate::link::Container
         launcher_id: spec().ship_id,
         credit: credit(),
         distance,
+        expected_scene: None,
     }
 }
 

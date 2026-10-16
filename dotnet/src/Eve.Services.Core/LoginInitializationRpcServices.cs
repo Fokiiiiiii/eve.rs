@@ -673,10 +673,15 @@ public static class MissionTrackerGameStoreProjection
         node is JsonValue scalar && scalar.TryGetValue<string>(out var text) ? text : "";
 }
 
-public sealed class AbyssalMgrService(
-    Func<ServiceCall, ValueTask>? clientIsReady = null,
-    Func<ServiceCall, CancellationToken, ValueTask<PyValue?>>? rpcHandler = null) : IService
+public sealed class AbyssalMgrService : IService
 {
+    private readonly Func<ServiceCall, CancellationToken, ValueTask<PyValue>> _rpcHandler;
+
+    public AbyssalMgrService(Func<ServiceCall, CancellationToken, ValueTask<PyValue>> rpcHandler)
+    {
+        _rpcHandler = rpcHandler ?? throw new ArgumentNullException(nameof(rpcHandler));
+    }
+
     public string Name => "abyssalMgr";
 
     public bool HasMethod(string method) => method is
@@ -690,14 +695,7 @@ public sealed class AbyssalMgrService(
     {
         if (!HasMethod(call.Method)) return PyNone.Instance;
         call.Cancellation.ThrowIfCancellationRequested();
-        if (rpcHandler is not null && await rpcHandler(call, call.Cancellation) is { } handled)
-            return handled;
-        if (call.Method == "ClientIsReady" && clientIsReady is not null)
-            await clientIsReady(call);
-
-        return call.Method is "AbyssalGateActivation" or "AbyssalEndGateActivation"
-            ? throw MachoErrors.ThrowUserError("DeniedTargetAttemptFailed")
-            : PyNone.Instance;
+        return await _rpcHandler(call, call.Cancellation).ConfigureAwait(false);
     }
 }
 

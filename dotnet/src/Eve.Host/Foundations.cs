@@ -28,6 +28,7 @@ internal sealed class Foundations : IAsyncDisposable
     public EventBus Events { get; }
     public RelationStore Relations { get; }
     public ContentRuntime Content { get; }
+    public string ContentSchema { get; private init; } = ContentRuntime.DefaultSchema;
     public Eve.ReadSide.ReadSide Reads { get; }
     public Eve.Scheduler.LocalTimers LocalTimers { get; }
 
@@ -52,7 +53,7 @@ internal sealed class Foundations : IAsyncDisposable
         var localTimers = new Eve.Scheduler.LocalTimers(message => log($"local timers: {message}"));
         log($"foundations in PostgreSQL, schemas {schedulerSchema}, {eventsSchema}, {relationsSchema} and {contentSchema}");
         return new Foundations(scheduler, events, relations, content, localTimers,
-            new RowsetReaderHolder(new Eve.ReadSide.ReadSide(source, new Dictionary<string, string> { ["relations"] = relationsSchema })));
+            new RowsetReaderHolder(new Eve.ReadSide.ReadSide(source, new Dictionary<string, string> { ["relations"] = relationsSchema }))) { ContentSchema = contentSchema };
     }
 
     /// <summary>

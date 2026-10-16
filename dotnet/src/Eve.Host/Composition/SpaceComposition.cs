@@ -355,6 +355,21 @@ internal sealed partial class CharacterServicesComposition
                     Console.Error.WriteLine($"eve-host: player bounty of ship {loss.ShipId} could not be claimed: {error}");
                 }
             };
+            // a pilot that destroys a faction's NPC loses standing with the faction (EveJS factionKillStandingRuntime; the debounce is in memory)
+            var npcFactionStanding = new Eve.Services.Space.NpcFactionStanding(foundations.Relations, now);
+            spaceSessions.NpcDestroyed += kill =>
+            {
+                if (kill.FinalBlowCharacterId <= 0 || kill.Profile.FactionId <= 0)
+                    return;
+                try
+                {
+                    npcFactionStanding.ApplyAsync(kill.FinalBlowCharacterId, kill.Profile.FactionId, kill.SolarSystemId, CancellationToken.None).GetAwaiter().GetResult();
+                }
+                catch (Exception error)
+                {
+                    Console.Error.WriteLine($"eve-host: faction standing of the kill of ship {kill.ShipId} could not be applied: {error}");
+                }
+            };
             crimewatchRuntime.ConcordResponseDue += async request =>
             {
                 if (spaceSessions is not null)

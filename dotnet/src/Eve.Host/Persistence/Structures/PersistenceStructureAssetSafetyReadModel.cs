@@ -469,7 +469,7 @@ public sealed partial class PersistenceStructureAssetSafetyReadModel : Eve.Servi
             var regions = (await _sde.ReadAsync("mapRegions", cancellationToken: cancellationToken))
                 .ToDictionary(r => checked((int)r.Key), r => new RegionInfo(
                     Eve.Sde.SdeReader.English(r.Doc.GetProperty("name")),
-                    Positive(Integer(r.Doc, "wormholeClassID")) > 0));
+                    IsWormholeClass(Integer(r.Doc, "wormholeClassID"))));
             var systems = new System.Collections.Generic.Dictionary<int, SystemInfo>();
             foreach (var row in await _sde.ReadAsync("mapSolarSystems", cancellationToken: cancellationToken))
             {
@@ -531,6 +531,9 @@ public sealed partial class PersistenceStructureAssetSafetyReadModel : Eve.Servi
         }
         return best;
     }
+
+    /// <summary>A region's SDE wormhole class is a wormhole's; 7, 8 and 9 are the K-space security classes (high, low, null: WormholeSystemClasses).</summary>
+    private static bool IsWormholeClass(long classId) => classId > 0 && classId is not (7 or 8 or 9);
 
     private static bool IsWormholeOrPochven(long systemId, StaticData data) =>
         data.Systems.TryGetValue(checked((int)systemId), out var system) && (system.Wormhole || system.Pochven);

@@ -12,8 +12,12 @@ internal sealed class ObservatoryLandmarkSource(
     NpgsqlDataSource source,
     StructureStore structures,
     Eve.Universe.StationCatalog stations,
-    IReadOnlyDictionary<int, IReadOnlyList<double[]>> stargates)
+    IReadOnlyDictionary<int, IReadOnlyList<double[]>> stargates,
+    Func<int, int> groupOfType)
 {
+    /// <summary>The SDE group of the player control towers (the wiki, Mobile Observatory: 100 km from a control tower, not 1 000 km).</summary>
+    internal const int ControlTowerGroupId = 365;
+
     public async Task<IReadOnlyList<double[]>> ReadAsync(int solarSystemId, CancellationToken cancellationToken)
     {
         var bodies = new List<double[]>();
@@ -24,10 +28,26 @@ internal sealed class ObservatoryLandmarkSource(
         await using var connection = await source.OpenConnectionAsync(cancellationToken);
         foreach (var record in await structures.ListInSystemAsync(connection, null, solarSystemId, cancellationToken))
         {
-            if (record.Snapshot.DestroyedMs == 0)
+            if (record.Snapshot.DestroyedMs == 0 && groupOfType(record.TypeId) != ControlTowerGroupId)
                 bodies.Add([record.X, record.Y, record.Z]);
         }
         return bodies;
+    }
+
+    /// <summary>
+    /// The player control towers of the system: the structure records of SDE group 365 that are not destroyed. eve.rs has no control tower deployment yet, so these
+    /// are the records the store holds (a seeded or imported tower); the observatory keeps 100 km from each.
+    /// </summary>
+    public async Task<IReadOnlyList<double[]>> ReadControlTowersAsync(int solarSystemId, CancellationToken cancellationToken)
+    {
+        var towers = new List<double[]>();
+        await using var connection = await source.OpenConnectionAsync(cancellationToken);
+        foreach (var record in await structures.ListInSystemAsync(connection, null, solarSystemId, cancellationToken))
+        {
+            if (record.Snapshot.DestroyedMs == 0 && groupOfType(record.TypeId) == ControlTowerGroupId)
+                towers.Add([record.X, record.Y, record.Z]);
+        }
+        return towers;
     }
 
     /// <summary>The stargates of the static data by solar system, with their positions in metres.</summary>

@@ -356,8 +356,13 @@ internal sealed partial class CharacterServicesComposition
 
             spaceContainers.SiteContainers = siteContainers;
             // a Mobile Observatory keeps 1 000 km from the stations, stargates and Upwell structures of its system (EVE.js collectPlacementBlockers)
-            var observatoryLandmarks = new ObservatoryLandmarkSource(source, structureStore, stations, await ObservatoryLandmarkSource.LoadStargatesAsync(sde));
+            var observatoryLandmarks = new ObservatoryLandmarkSource(source, structureStore, stations, await ObservatoryLandmarkSource.LoadStargatesAsync(sde),
+                typeId => dogma.Type(typeId)?.GroupId ?? 0);
             spaceContainers.ReadObservatoryLandmarks = observatoryLandmarks.ReadAsync;
+            spaceContainers.ReadControlTowers = observatoryLandmarks.ReadControlTowersAsync;
+            spaceContainers.ReadDeadspaceAnchors = async (system, token) => cosmicSites is { } sites
+                ? (IReadOnlyList<double[]>)(await sites.ActiveAsync(system, token)).Select(site => site.Position).ToArray()
+                : [];
             // a container clears when its loot is taken: every move is announced in its transaction, and the container's hacks hear the moves it loses
             items.Events = foundations.Events;
             var siteContainerHacks = new Eve.Services.Space.SiteContainerHacks(source, siteContainers, items, foundations.Events, () => foundations.Scheduler.Now, id => spaceContainers.RemoveSiteContainer(id));

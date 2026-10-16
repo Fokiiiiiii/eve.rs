@@ -22,6 +22,53 @@ public sealed class StructureUnanchorDropTests
     private const int SmallShieldBooster = 1103;
 
     [PgFact]
+    public async Task Destruction_loot_moves_fittings_fuel_and_core_into_one_container_and_destroys_the_rigs()
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        var assets = await fixture.SeedAsync();
+
+        var drop = await fixture.CompleteDestructionAsync();
+
+        Assert.NotNull(drop);
+        Assert.Equal(0, drop!.HullItemId);
+        var container = Assert.IsType<Item>(await fixture.Items.GetAsync(drop.FittingsContainerItemId));
+        var space = Assert.IsType<SpaceItem>(await fixture.SpaceItems.GetAsync(drop.FittingsContainerItemId));
+        Assert.Equal((StructureDestructionLoot.ContainerTypeId, CorporationId), (container.TypeId, container.OwnerId));
+        Assert.Equal(StructureDestructionLoot.ContainerMarker(StructureId), container.CustomInfo);
+        Assert.Equal((306, StructureId, long.MaxValue), (space.GroupId, space.LauncherId, space.ExpiresAtMs));
+        Assert.Equal(new[] { 1.25, 2.5, -3.75 }, space.Position);
+
+        Assert.Equal(drop.FittingsContainerItemId, (await fixture.Items.GetAsync(assets.FittedModule))!.LocationId);
+        Assert.Equal(drop.FittingsContainerItemId, (await fixture.Items.GetAsync(assets.Fuel))!.LocationId);
+        Assert.Null(await fixture.Items.GetAsync(assets.Rig));
+        var coreTypeId = (int)fixture.Statics.Type(Astrahus)!.Attributes[3101];
+        Assert.Contains((await fixture.Items.InContainerAsync(drop.FittingsContainerItemId)), item => item.TypeId == coreTypeId);
+        Assert.DoesNotContain(await fixture.Items.InContainerAsync(StructureId), item => item.Flag is >= 11 and <= 172 or 92);
+    }
+
+    [PgFact]
+    public async Task Destruction_loot_is_atomic_with_the_destruction_transaction()
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        var assets = await fixture.SeedAsync();
+
+        await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+        {
+            await using var connection = await fixture.Source.OpenConnectionAsync();
+            await using var transaction = await connection.BeginTransactionAsync();
+            var record = await fixture.Structures.GetAsync(connection, transaction, StructureId, true);
+            var drop = await new StructureDestructionLootAuthority(fixture.Items, fixture.SpaceItems, fixture.Statics)
+                .CompleteAsync(connection, transaction, record!);
+            Assert.NotNull(drop);
+            throw new InvalidOperationException("simulate a later failure before the destruction commits");
+        });
+
+        Assert.Equal(StructureId, (await fixture.Items.GetAsync(assets.FittedModule))!.LocationId);
+        var rig = Assert.IsType<Item>(await fixture.Items.GetAsync(assets.Rig));
+        Assert.Equal((StructureId, 92), (rig.LocationId, rig.Flag));
+    }
+
+    [PgFact]
     public async Task Asset_handoff_is_atomic_and_uses_the_SDE_core_and_container_identity()
     {
         await using var fixture = await Fixture.CreateAsync();
@@ -155,6 +202,16 @@ public sealed class StructureUnanchorDropTests
             await using var transaction = await connection.BeginTransactionAsync();
             var record = await Structures.GetAsync(connection, transaction, StructureId, true);
             var drop = await Authority.CompleteAsync(connection, transaction, record!);
+            await transaction.CommitAsync();
+            return drop;
+        }
+
+        public async Task<StructureUnanchorDrop?> CompleteDestructionAsync()
+        {
+            await using var connection = await Source.OpenConnectionAsync();
+            await using var transaction = await connection.BeginTransactionAsync();
+            var record = await Structures.GetAsync(connection, transaction, StructureId, true);
+            var drop = await new StructureDestructionLootAuthority(Items, SpaceItems, Statics).CompleteAsync(connection, transaction, record!);
             await transaction.CommitAsync();
             return drop;
         }

@@ -215,6 +215,7 @@ public sealed class CharacterHostTests
         var character = await rig.CreateCharacterAsync();
         var sink = new RecordingPacketSink();
         var session = new ClientSession { CharacterId = character, UserId = 1, Sink = sink };
+        rig.Sessions.Enter(character, session);
         var userSvc = Assert.IsAssignableFrom<IService>(rig.Registry.Lookup("userSvc"));
         var items = new PgItemStore(rig.Source, rig.InventorySchema);
 
@@ -240,13 +241,46 @@ public sealed class CharacterHostTests
         var endsAt = DateTime.FromFileTimeUtc(((PyLong)slot.Items[1]).Value);
         Assert.InRange(endsAt, DateTime.UtcNow.AddDays(29), DateTime.UtcNow.AddDays(31));
         Assert.DoesNotContain(await items.OwnedByAsync(character), item => item.Id == certificate);
-        // the notification goes to the sessions registered with the host; this test's session is not one, so it is not checked here (gap)
+        // the account's registered session is told once, after the commit
+        Assert.Equal(["OnMultipleCharactersTrainingUpdated"], Notifications(sink).Select(n => n.Name));
 
         // a restart keeps the queue
         await rig.RestartAsync();
         var restarted = Assert.IsAssignableFrom<IService>(rig.Registry.Lookup("userSvc"));
         var after = Assert.IsType<PyList>(await CallAsync(restarted, "GetUpdatedMultiCharacterTraining", session));
         Assert.Equal(slot.Items[1], Assert.IsType<PyTuple>(Assert.Single(after.Items)).Items[1]);
+    }
+
+    [PgFact]
+    public async Task A_stack_of_multiple_character_training_certificates_gives_up_one_certificate_per_activation()
+    {
+        await using var rig = await CharacterHostRig.CreateAsync();
+        Assert.Equal(1, await rig.CreateAccountAsync());
+        var character = await rig.CreateCharacterAsync();
+        var sink = new RecordingPacketSink();
+        var session = new ClientSession { CharacterId = character, UserId = 1, Sink = sink };
+        rig.Sessions.Enter(character, session);
+        var userSvc = Assert.IsAssignableFrom<IService>(rig.Registry.Lookup("userSvc"));
+        var items = new PgItemStore(rig.Source, rig.InventorySchema);
+
+        long stack;
+        await using (var connection = await rig.Source.OpenConnectionAsync())
+        await using (var transaction = await connection.BeginTransactionAsync())
+        {
+            stack = await items.CreateAsync(connection, transaction, new NewItem(TypeId: 34133, OwnerId: character, LocationId: rig.Station, Flag: 4, Quantity: 2));
+            await transaction.CommitAsync();
+        }
+
+        Assert.Single(Assert.IsType<PyList>(await CallAsync(userSvc, "ActivateMultiTraining", session, new PyLong(stack))).Items);
+        Assert.Equal(1, (await items.GetAsync(stack))!.Quantity);
+        Assert.Equal(["OnMultipleCharactersTrainingUpdated"], Notifications(sink).Select(n => n.Name));
+
+        Assert.Equal(2, Assert.IsType<PyList>(await CallAsync(userSvc, "ActivateMultiTraining", session, new PyLong(stack))).Items.Count);
+        Assert.Null(await items.GetAsync(stack));
+        Assert.Equal(2, Notifications(sink).Count);
+
+        var refused = await Assert.ThrowsAsync<MachoWrappedException>(() => CallAsync(userSvc, "ActivateMultiTraining", session, new PyLong(stack)));
+        Assert.Equal("That item does not exist.", InfoText(refused));
     }
 
     [PgFact]
@@ -375,6 +409,7 @@ public sealed class CharacterHostTests
 
         public NpgsqlDataSource Source { get; }
         public ServiceRegistry Registry => _runtime.Registry;
+        public CharacterSessions Sessions => Assert.IsType<CharacterSessions>(_runtime.CharacterSessions);
         public PgCharacterStore Characters => new(Source, CharactersSchema);
         public long Station { get; }
         public string CharactersSchema => _schemas["EVE_CHARACTERS_SCHEMA"];

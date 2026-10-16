@@ -2512,3 +2512,17 @@ Handoff: `docs/project/structures-phase/handoff-ST-18.md`. Decisions and sources
 | VERIFIED (PG, Space) | (ST-16 4) the fine's journal ref type is 51 (eve-logic refContrabandFine), counterparty and reference the faction | `Penalty_is_settled_by_the_durable_job...` (journal line) |
 | BUILT, SHORTCUT | the penalty runs inline after its scheduling; if that run fails the undock goes on and the runner settles later, with no client removal notice until the next inventory sync | DEVIATIONS ST-18 |
 | NOT CHECKED | graphical client: the standing window, the fine's journal line and the removal notice | needs the graphical client |
+
+## 59. Structures phase ST-19: the ST-16 open items (mission pockets, control towers, destruction wrap, creditor migration) (2026-10-16)
+
+Handoff: `docs/project/structures-phase/handoff-ST-19.md`. Decisions and sources: DEVIATIONS "Structure ST-19 (2026-10-16)". Protocol 73 (kind 92), migration 0015, ADR 0013 addendum.
+
+| Status | Row | Notes |
+|---|---|---|
+| VERIFIED (PostgreSQL, Host) | (1) the destruction wrap of the composition is driven over the real asset safety read model; the test found and fixed K-space read as wormhole (`IsWormholeClass`, 7/8/9 are K-space) | `Destruction_wrap_of_the_composition_is_the_real_asset_safety_read_model...` (`StructureUnanchorDropTests`) |
+| VERIFIED (PostgreSQL, Space) | (2) a mission pocket (dungeon instance origin) is a deadspace anchor for the Mobile Observatory; the pocket is not a simulation body | `A_started_dungeon_is_a_deadspace_anchor_at_its_origin_in_its_system` (`DungeonWaveTests`) |
+| VERIFIED (PostgreSQL, Space, Rust, codec) | (3) control towers (group 365) launched from a ship: placed unanchored, anchored after the SDE anchoring delay (30 min), never end by time, a Mobile Observatory is refused within 100 km, restart keeps the anchored state; Rust `a_control_tower_is_in_space...`, simlink fixtures 204 valid / 82 invalid | `ControlTowerHostTests` (3 tests) |
+| PARTIAL | (3) no client RPC removes a deployed tower (removal is `RemoveControlTowerAsync`, the item is deleted, not returned to the hold); fuel, modules and the tower's own interface are not built | DEVIATIONS "Structure ST-19" |
+| VERIFIED (PostgreSQL, Corporations) | (4) one-time creditor migration: a station rent bill taken before ST-16 gets the station owner as creditor once; a bill with a creditor is untouched | `StationBillCreditorMigrationTests` |
+| PARTIAL | (4) the rent due job running after the migration is not exercised by a test | DEVIATIONS "Structure ST-19" |
+| FIXED (ST-19) | the live script isolates `EVE_CONTRABAND_SCHEMA` (the ST-16 customs schema was not scratch or dropped) | `LiveScriptIsolationTests` |

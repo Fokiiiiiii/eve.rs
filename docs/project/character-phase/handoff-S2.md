@@ -8,9 +8,9 @@ Worktree `/home/user/wt-ch-s2`, branch `ch-s2`, lane eve_p3 (live port 26102). P
 |---|---|---|
 | CH-11 | partial (in progress) | Implants and active boosters are in the pilot's dogma world (`Eve.Ships/PilotAugmentations.cs`, `ShipSnapshot.LoadAsync`). Open: training rate uses `TrainingSettings.Attribute` (base learning attributes only), no notification path for an implant change (clone install is CH-15/16), no live walk. |
 | CH-2 | done (eve_p3 live: test_alpha_injector_live.py passed) | `alphaInjectorMgr` is served by `Eve.Services.Skills/AlphaInjectorMgrService.cs` (the Core stub is removed). Daily Alpha Injector: once per 11:00 UTC downtime (EveJS `skillTradingAuthority.js`), replacing the 24-hour rule. |
-| CH-5 | done (eve_p3 live: test_login_milestone_live.py passed) | `MilestoneMgrService` (Core), `LoginMilestoneStore` (Characters, migration 0006), entry hook registered in `CharacterComposition`. |
+| CH-5 | done (eve_p3 live: test_login_milestone_live.py passed) | `MilestoneMgrService` (Core), `LoginMilestoneStore` (Characters, migration 0008), entry hook registered in `CharacterComposition`. |
 | CH-7 | done (eve_p3 live with EVE_SYSTEM_POPULATION_CAP=1: test_population_cap_live.py passed) | `SystemPopulation.TryReserve` (seat taken in the same step as the room check) used by `SelectCharacterID`. |
-| CH-9 | done (eve_p3 live: test_achievement_tracker_live.py passed) | `AchievementTrackerStore` (Characters, migration 0007), `UpdateClientAchievmentsAndCounters` persists, reads of no record are empty maps (golden fixture removed). |
+| CH-9 | done (eve_p3 live: test_achievement_tracker_live.py passed) | `AchievementTrackerStore` (Characters, migration 0009), `UpdateClientAchievmentsAndCounters` persists, reads of no record are empty maps (golden fixture removed). |
 | CH-17 | not started | |
 
 ## Next

@@ -1933,6 +1933,8 @@ Existing exact-name TODO evidence (same owner/work): [existing row](C:/Users/yut
 
 **CH-1 (character phase, S1):** `PrepareCharacterForDelete` queues an offline character for 600 minutes (EveJS `characterDeletionDelayMinutes`; the EVE University wiki pages tried were not found, HTTP 404), a second prepare returns the same time as the reference does, `DeleteCharacter` refuses an unqueued or not-yet-due character with the reference's CustomInfo text and otherwise sets `deleted_at` (migration `0007_character_deletion.sql`), and deleted characters are hidden from their account and refused at selection. Cancel was already present. Tests: `CharacterDeletionStoreTests` (2 facts), `CharacterHostTests` (Host registry, restart, refusals), live `tools/headless-client/tests/test_character_delete.py` (prepare, refusal while waiting, cancel, refusal). Gap: the reference's asset transfer or destruction, bookmark, calendar and private-state purge (`characterDeletionRuntime.js` `deleteCharacter`) are not implemented; the successful delete is not run live (the live server has no test clock).
 
+**CH-10 (character phase, S1):** GATE-C decided by the owner: `CastUpvote`, `CastDownvote`, `ReportBot` and `ReportISKSpammer` answer `true` and keep nothing (DEVIATIONS, "Character phase: votes, reports and playtime"). `GetSessionPlaytimeMinutes` answers 0 as the reference does; no V24.01 caller and no stored source were found. Test: `UserSvcServiceTests` (Core tests).
+
 #### Named group: keeper (1 exits)
 
 [GetOperationSpawnpointPosition (EJS-0191)](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:442).

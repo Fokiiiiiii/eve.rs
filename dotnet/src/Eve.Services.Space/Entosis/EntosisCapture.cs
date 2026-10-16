@@ -17,6 +17,7 @@ public enum EntosisPhase : byte
     Capturing = 1,
     Captured = 2,
     Reinforced = 3,
+    Destroyed = 4,
 }
 
 /// <summary>
@@ -60,8 +61,8 @@ public static class EntosisRules
     /// <summary>How long an attacker takes to capture a hub with this activity multiplier: the base time times the multiplier (the wiki's ADM rule).</summary>
     public static double CaptureMs(double activityDefenseMultiplier) => BaseCaptureMs * activityDefenseMultiplier;
 
-    /// <summary>A completed capture: a neutral hub captured, or an owned hub reinforced. Nothing more moves it.</summary>
-    public static bool IsDone(EntosisPhase phase) => phase is EntosisPhase.Captured or EntosisPhase.Reinforced;
+    /// <summary>A completed capture: a neutral hub captured, an owned hub reinforced, or a hub destroyed by its command node stage. Nothing more moves it.</summary>
+    public static bool IsDone(EntosisPhase phase) => phase is EntosisPhase.Captured or EntosisPhase.Reinforced or EntosisPhase.Destroyed;
 
     /// <summary>
     /// Whether a link may work on the hub now. The wiki: "attackers must first use an entosis link on the structure during its vulnerability window". A neutral
@@ -112,7 +113,7 @@ public static class EntosisRules
     }
 
     /// <summary>The end of the scoring of the attacker links active at <paramref name="at"/>: the end of their in-progress cycle (null when none is active).</summary>
-    private static long? ActiveUntil(IReadOnlyList<EntosisLink> links, EntosisSide side, long at)
+    internal static long? ActiveUntil(IReadOnlyList<EntosisLink> links, EntosisSide side, long at)
     {
         long? until = null;
         foreach (var link in links)
@@ -241,6 +242,24 @@ public static class EntosisWindow
             }
         }
         return next ?? throw new InvalidOperationException("no vulnerability window ends after the time");
+    }
+
+    /// <summary>The start of the first window that starts after <paramref name="nowMs"/> (the wiki: a defended structure is invulnerable until the next window).</summary>
+    public static long NextWindowStart(int primeHour, double activityDefenseMultiplier, long nowMs, EntosisWindowSetting? setting)
+    {
+        var centreHour = CentreHourOf(primeHour, setting);
+        var durationMs = setting is null ? DefaultDurationMs(activityDefenseMultiplier) : setting.LengthHours * HourMs;
+        var today = nowMs / DayMs * DayMs;
+        long? next = null;
+        for (var day = -1; day <= 2; day++)
+        {
+            var (startMs, _) = OfCentre(today + day * DayMs + centreHour * HourMs, durationMs);
+            if (startMs > nowMs && (next is null || startMs < next))
+            {
+                next = startMs;
+            }
+        }
+        return next ?? throw new InvalidOperationException("no vulnerability window starts after the time");
     }
 
     /// <summary>

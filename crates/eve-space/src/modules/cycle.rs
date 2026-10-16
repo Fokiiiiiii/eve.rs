@@ -647,10 +647,17 @@ impl Scene {
         now: i64,
     ) -> Vec<Out> {
         const MAX_CANDIDATES: usize = 4_096;
-        let Some(structure_id) = self.controlled_structure_id(session) else { return Vec::new() };
-        let Some(control_lease_generation) = self.control_lease_generation(session, structure_id) else {
-            return Vec::new();
+        // a structure burst's source is the structure or, for a ship-fitted projector, the pilot's ship (ST-17 d); the other operations need a structure
+        let is_burst = matches!(operation, PendingStructureDamageOperation::StructureBurst { .. });
+        let source =
+            if is_burst { self.burst_source_id(session) } else { self.controlled_structure_id(session) };
+        let Some(structure_id) = source else { return Vec::new() };
+        let lease = if is_burst {
+            self.burst_source_lease(session, structure_id)
+        } else {
+            self.control_lease_generation(session, structure_id)
         };
+        let Some(control_lease_generation) = lease else { return Vec::new() };
         let Some(pilot) = self.pilots.get_mut(&session) else { return Vec::new() };
         if pilot.ship.spec.ship_id != structure_id {
             return Vec::new();
@@ -708,8 +715,8 @@ impl Scene {
         }) else {
             return Vec::new();
         };
-        if self.controlled_structure_id(session) != Some(pending.structure_id)
-            || self.control_lease_generation(session, pending.structure_id)
+        if self.burst_source_id(session) != Some(pending.structure_id)
+            || self.burst_source_lease(session, pending.structure_id)
                 != Some(pending.control_lease_generation)
         {
             return self.offline_module(session, module_id, now);
@@ -846,8 +853,8 @@ impl Scene {
         now: i64,
     ) -> (Vec<Out>, bool) {
         const MAX_CANDIDATES: usize = 4_096;
-        if self.controlled_structure_id(session) != Some(structure_id)
-            || self.control_lease_generation(session, structure_id) != Some(control_lease_generation)
+        if self.burst_source_id(session) != Some(structure_id)
+            || self.burst_source_lease(session, structure_id) != Some(control_lease_generation)
             || allowed_target_ids.len() > MAX_CANDIDATES
             || allowed_target_ids.iter().any(|id| *id <= 0)
         {

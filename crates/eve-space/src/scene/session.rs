@@ -26,6 +26,20 @@ impl Scene {
     }
 
     /// The Host's current structure-pilot record version for this controller lease.
+    /// The source of a structure burst (ST-17 d): the structure the pilot controls, or else the pilot's own ship (a ship-fitted burst projector).
+    pub(crate) fn burst_source_id(&self, session: SessionId) -> Option<i64> {
+        self.controlled_structure_id(session)
+            .or_else(|| self.pilots.get(&session).map(|pilot| pilot.ship.spec.ship_id))
+    }
+
+    /// The control lease of a burst source: a structure's lease, or 0 for a ship (it has no lease; the Host authorizes its pulses by the pilot).
+    pub(crate) fn burst_source_lease(&self, session: SessionId, source_id: i64) -> Option<i64> {
+        match self.controlled_structure_id(session) {
+            Some(structure_id) => self.control_lease_generation(session, structure_id),
+            None => self.pilots.get(&session).filter(|pilot| pilot.ship.spec.ship_id == source_id).map(|_| 0),
+        }
+    }
+
     pub(crate) fn control_lease_generation(&self, session: SessionId, structure_id: i64) -> Option<i64> {
         (self.controlled_structure_id(session) == Some(structure_id))
             .then(|| self.control_lease_generations.get(&structure_id).copied())

@@ -20,7 +20,7 @@ impl Scene {
         if !range.is_finite() || range <= 0.0 || !duration_ms.is_finite() || duration_ms <= 0.0 {
             return Vec::new();
         }
-        let Some(structure_id) = self.controlled_structure_id(session) else { return Vec::new() };
+        let Some(structure_id) = self.burst_source_id(session) else { return Vec::new() };
         let Some(centre) = self.pilots.get(&session).map(|pilot| pilot.ship.position) else {
             return Vec::new();
         };
@@ -58,7 +58,7 @@ impl Scene {
         allowed: &[i64],
         now: i64,
     ) -> Vec<Out> {
-        let Some(structure_id) = self.controlled_structure_id(session) else { return Vec::new() };
+        let Some(structure_id) = self.burst_source_id(session) else { return Vec::new() };
         let owner = self.combat_owner(session);
         let reached: Vec<SessionId> = self
             .in_entry_order()

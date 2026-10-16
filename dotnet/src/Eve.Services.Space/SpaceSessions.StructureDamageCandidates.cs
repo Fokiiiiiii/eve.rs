@@ -198,6 +198,10 @@ private sealed record SimDamageableEntityRegistration(
         SimStructureDamageCandidatesRequest request,
         CancellationToken cancellationToken)
     {
+        // ST-17 d: a ship-fitted burst projector's pulse comes from the pilot's own ship (no structure, no lease)
+        if (request.SessionId != 0 && !_structureObservers.ContainsKey(request.SessionId))
+            return AuthorizeShipBurstCandidates(request);
+
         if (request.SessionId == 0
             || request.StructureId <= 0
             || request.ModuleId <= 0
@@ -597,5 +601,30 @@ private sealed record SimDamageableEntityRegistration(
             _log?.Invoke($"structure weapon legality for owner corporation {structure.Ship.OwnerId} -> target corporation {targetCorporationId} failed: {error.Message}");
             return false;
         }
+    }
+
+    /// <summary>
+    /// ST-17 d: the grant of one pulse of a ship-fitted burst projector. The source is the pilot's ship, the lease is 0, and the candidates are the ships in reach
+    /// that the simulation found (a burst is friendly fire, as the ship area effects are); the pilot's own ship is never a candidate.
+    /// </summary>
+    private StructureDamageAuthorization AuthorizeShipBurstCandidates(SimStructureDamageCandidatesRequest request)
+    {
+        if (request.StructureId <= 0 || request.ModuleId <= 0 || request.EffectId <= 0 || request.ActivationNonce == 0 || request.CycleId == 0
+            || request.ControlLeaseGeneration != 0 || request.CandidateIds is null
+            || request.CandidateIds.Count is < 1 or > MaxStructureDamageCandidates)
+            return new([], [], []);
+
+        var candidateIds = request.CandidateIds.ToArray();
+        var unique = new HashSet<long>();
+        foreach (var candidateId in candidateIds)
+            if (candidateId <= 0 || candidateId == request.StructureId || !unique.Add(candidateId))
+                return new([], [], []);
+
+        if (!_pilots.TryGetValue(request.SessionId, out var pilot)
+            || (ulong)pilot.Session.SessionId != request.SessionId
+            || pilot.ShipId != request.StructureId)
+            return new([], [], []);
+
+        return new(candidateIds, [], []);
     }
 }

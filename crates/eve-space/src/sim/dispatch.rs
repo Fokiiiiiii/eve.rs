@@ -451,6 +451,7 @@ impl Sim {
             | Message::PlaceInhibitor(..)
             | Message::PlaceCynoBeacon(..)
             | Message::PlaceObservatory(..)
+            | Message::PlaceControlTower(..)
             | Message::RemoteDecloakPing { .. }
             | Message::SetDisruptorActive { .. }
             | Message::TetherPolicy { .. }
@@ -1285,6 +1286,13 @@ impl Sim {
                 let observatory = *observatory;
                 match self.scenes.get_mut(&observatory.solar_system_id) {
                     Some(scene) => scene.place_observatory(observatory, now),
+                    None => Vec::new(),
+                }
+            }
+            Message::PlaceControlTower(tower) => {
+                let tower = *tower;
+                match self.scenes.get_mut(&tower.solar_system_id) {
+                    Some(scene) => scene.place_control_tower(tower, now),
                     None => Vec::new(),
                 }
             }

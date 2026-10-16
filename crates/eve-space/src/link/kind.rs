@@ -113,6 +113,8 @@ pub const DAMAGEABLE_ENTITY_REMOVED: u8 = 89;
 pub const PLACE_OBSERVATORY: u8 = 90;
 /// The host makes a Mobile Observatory's decloaking ping in its system (protocol 72).
 pub const REMOTE_DECLOAK_PING: u8 = 91;
+/// The host puts a player control tower in space where its pilot launched it, anchored or not (protocol 73): a disruptor's placement, with range 0.
+pub const PLACE_CONTROL_TOWER: u8 = 92;
 
 /// The host puts a wormhole end in space (protocol 63).
 pub const PLACE_WORMHOLE: u8 = 82;

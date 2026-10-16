@@ -46,6 +46,18 @@ public sealed partial class SpaceContainers
     /// <summary>The group of the Mobile Observatory (SDE 4107; its type is 58904).</summary>
     private const int MobileObservatoryGroup = 4107;
 
+    /// <summary>The group of the player control towers (SDE 365; the Amarr Control Tower is 12235).</summary>
+    private const int ControlTowerGroup = 365;
+
+    /// <summary>
+    /// The record kind of a player control tower launched from a ship (protocol 73, ST-19): anchored by its durable job when its anchoring time (the SDE's) is over,
+    /// in space until it is removed. It has no fuel or modules yet: the placing, anchoring and removal are all it does.
+    /// </summary>
+    internal const string ControlTowerKind = "control_tower";
+
+    /// <summary>A control tower's record never ends by time (its removal is the host's, see <see cref="RemoveControlTowerAsync"/>).</summary>
+    private const long NeverExpires = long.MaxValue;
+
     /// <summary>The record kind of a Mobile Observatory (protocol 72): anchored by its durable job, pinging its system while it is anchored.</summary>
     internal const string ObservatoryKind = "mobile_observatory";
 
@@ -150,7 +162,7 @@ public sealed partial class SpaceContainers
             return null;
         }
         await _statics.EnsureTypesAsync([item.TypeId], cancellationToken);
-        if (_statics.Type(item.TypeId) is not { } type || type.GroupId is not (MobileWarpDisruptorGroup or MobileCynoInhibitorGroup or MobileCynoBeaconGroup or MobileObservatoryGroup or AnalysisBeaconRules.Group))
+        if (_statics.Type(item.TypeId) is not { } type || type.GroupId is not (MobileWarpDisruptorGroup or MobileCynoInhibitorGroup or MobileCynoBeaconGroup or MobileObservatoryGroup or ControlTowerGroup or AnalysisBeaconRules.Group))
         {
             return null;
         }
@@ -162,6 +174,7 @@ public sealed partial class SpaceContainers
         var inhibitor = type.GroupId == MobileCynoInhibitorGroup;
         var beacon = type.GroupId == MobileCynoBeaconGroup;
         var observatory = type.GroupId == MobileObservatoryGroup;
+        var tower = type.GroupId == ControlTowerGroup;
         if (session.CharacterId is not { } character || session.GetInt("shipid") is not { } shipId || shipId <= 0 || _deployed is null || _scheduler is null)
         {
             throw Unavailable();
@@ -185,8 +198,8 @@ public sealed partial class SpaceContainers
         {
             throw Refuse("Mobile Warp Disruptors cannot be activated in empire space.");
         }
-        var range = inhibitor ? InhibitorRangeMeters : beacon || observatory ? 0 : type.Attributes.GetValueOrDefault(WarpScrambleRangeAttribute);
-        if (!inhibitor && !beacon && !observatory && range <= 0)
+        var range = inhibitor ? InhibitorRangeMeters : beacon || observatory || tower ? 0 : type.Attributes.GetValueOrDefault(WarpScrambleRangeAttribute);
+        if (!inhibitor && !beacon && !observatory && !tower && range <= 0)
         {
             throw Refuse("That mobile warp disruptor has no warp disruption range.");
         }
@@ -268,11 +281,12 @@ public sealed partial class SpaceContainers
                 : (long)Math.Max(0, type.Attributes.GetValueOrDefault(AnchoringDelayAttribute));
         var activateAt = now + anchoringDelayMs;
         var lifetime = inhibitor ? InhibitorLifetime : observatory ? ObservatoryLifetime : beacon ? BeaconLifetime(item.TypeId) : LifetimeOf(item.TypeId);
+        var expiresAt = tower ? NeverExpires : now + (long)lifetime.TotalMilliseconds;
         var corporation = (int)(session.GetInt("corpid") ?? 0);
         var alliance = (int)(session.GetInt("allianceid") ?? 0);
         await _deployed.SaveAsync(new DeployedRecord(
-            deployable.Id, inhibitor ? InhibitorKind : beacon ? BeaconKind : observatory ? ObservatoryKind : DisruptorKind, system, type.Name, item.TypeId, type.GroupId, position, radius, character, corporation,
-            alliance, shipId, now + (long)lifetime.TotalMilliseconds, activateAt, range), cancellationToken);
+            deployable.Id, inhibitor ? InhibitorKind : beacon ? BeaconKind : observatory ? ObservatoryKind : tower ? ControlTowerKind : DisruptorKind, system, type.Name, item.TypeId, type.GroupId, position, radius, character, corporation,
+            alliance, shipId, expiresAt, activateAt, range), cancellationToken);
         if (inhibitor)
         {
             _sim.PlaceInhibitor(new SimPlaceInhibitor(
@@ -286,6 +300,11 @@ public sealed partial class SpaceContainers
         else if (observatory)
         {
             _sim.PlaceObservatory(new SimPlaceObservatory(
+                deployable.Id, system, type.Name, item.TypeId, type.GroupId, position, radius, anchoringDelayMs <= 0, character, corporation, alliance, shipId));
+        }
+        else if (tower)
+        {
+            _sim.PlaceControlTower(new SimPlaceControlTower(
                 deployable.Id, system, type.Name, item.TypeId, type.GroupId, position, radius, anchoringDelayMs <= 0, character, corporation, alliance, shipId));
         }
         else
@@ -343,14 +362,21 @@ public sealed partial class SpaceContainers
     /// <summary>Whether a player control tower of the system lies within 100 km of <paramref name="position"/>, surface to surface.</summary>
     private async Task<bool> CloseToControlTowerAsync(int system, double[] position, double radius, CancellationToken cancellationToken)
     {
-        if (ReadControlTowers is not { } read)
-        {
-            return false;
-        }
         // shortcut: the towers' radii are not subtracted (a few km against a 100 km spacing), upgrade when the SDE radii are read
-        foreach (var tower in await read(system, cancellationToken))
+        if (ReadControlTowers is { } read)
         {
-            if (MetersBetween(tower, position) - radius < ObservatoryControlTowerSpacingMeters)
+            foreach (var tower in await read(system, cancellationToken))
+            {
+                if (MetersBetween(tower, position) - radius < ObservatoryControlTowerSpacingMeters)
+                {
+                    return true;
+                }
+            }
+        }
+        // a tower launched from a ship is a record of the host (ST-19), not a structure
+        foreach (var tower in await _deployed!.InSystemAsync(system, cancellationToken))
+        {
+            if (tower.Kind == ControlTowerKind && MetersBetween(tower.Position, position) - radius < ObservatoryControlTowerSpacingMeters)
             {
                 return true;
             }
@@ -425,7 +451,7 @@ public sealed partial class SpaceContainers
     /// </summary>
     public async Task AnchorAsync(long deployableId, CancellationToken cancellationToken = default)
     {
-        if (_deployed is null || await _deployed.GetAsync(deployableId, cancellationToken) is not { Kind: DisruptorKind or InhibitorKind or BeaconKind or ObservatoryKind } record)
+        if (_deployed is null || await _deployed.GetAsync(deployableId, cancellationToken) is not { Kind: DisruptorKind or InhibitorKind or BeaconKind or ObservatoryKind or ControlTowerKind } record)
         {
             return;
         }
@@ -501,6 +527,26 @@ public sealed partial class SpaceContainers
     {
         _sim.RemoveDeployed(due.DeployableId);
         await _ships.DeleteDisruptorAsync(due.DeployableId);
+    }
+
+    /// <summary>
+    /// Takes a player control tower out of space (ST-19): the simulation removes it, its record is forgotten and its item is deleted. A deployed tower has no way
+    /// back into the hold yet (DEVIATIONS, ST-19). Only the launching corporation's tower in the pilot's system is removed; anything else is refused.
+    /// </summary>
+    public async Task RemoveControlTowerAsync(ClientSession session, long deployableId, CancellationToken cancellationToken = default)
+    {
+        if (_deployed is null || await _deployed.GetAsync(deployableId, cancellationToken) is not { Kind: ControlTowerKind } record)
+        {
+            throw Refuse("That control tower is not in space.");
+        }
+        var system = (int)(session.GetInt("solarsystemid2") ?? session.GetInt("solarsystemid") ?? 0);
+        if (record.CorporationId != (int)(session.GetInt("corpid") ?? 0) || record.SolarSystemId != system)
+        {
+            throw Refuse("Only your corporation's control tower in your system can be removed.");
+        }
+        _sim.RemoveDeployed(deployableId);
+        await _ships.DeleteDisruptorAsync(deployableId, cancellationToken);
+        await _deployed.RemoveAsync(deployableId);
     }
 
     private static MachoWrappedException Refuse(string text) => MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr(text)));

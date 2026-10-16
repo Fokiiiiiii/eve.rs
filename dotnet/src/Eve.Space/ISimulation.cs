@@ -187,6 +187,7 @@ public interface ISimulation
 
     /// <summary>Puts a Mobile Observatory in space where its pilot dropped it, anchored or not (protocol 72).</summary>
     void PlaceObservatory(SimPlaceObservatory observatory);
+    void PlaceControlTower(SimPlaceControlTower tower);
 
     /// <summary>Removes the structure-owned cyno beacon from a specific solar-system scene.</summary>
     void RemoveCynoBeacon(int solarSystemId, long structureBeaconId);

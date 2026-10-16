@@ -18,7 +18,6 @@ public sealed partial class SkillHandlerService(
     private const int BoosterFlag = 88;
     private const int ImplantFlag = 89;
     private const int ImplantCategoryId = 20;
-    private const int ImplantSlotAttributeId = 331;
     private const int BoosterSlotAttributeId = 1087;
     private const int BoosterDurationAttributeId = 330;
     private const int SkillLevelAttributeId = 280;
@@ -192,11 +191,6 @@ public static SkillAugmentationReader CreateAugmentationReader(
         type.Attributes.TryGetValue(BoosterSlotAttributeId, out var slot) &&
         double.IsFinite(slot) && slot > 0 && slot <= int.MaxValue && slot == Math.Truncate(slot);
 
-    private static bool IsImplantType(Eve.Dogma.TypeDef? type) =>
-        type is { CategoryId: ImplantCategoryId } &&
-        type.Attributes.TryGetValue(ImplantSlotAttributeId, out var slot) &&
-        double.IsFinite(slot) && slot > 0 && slot <= int.MaxValue && slot == Math.Truncate(slot);
-
 /// <summary>The smuggling chance of a pilot (dogma attribute 445 after its implant and skill modifiers, EVE.js resolveCharacterSmugglingChance), from 0 to 1.</summary>
     public static async Task<double> SmugglingChanceAsync(
         Eve.Inventory.PgItemStore itemStore, Eve.Dogma.DogmaStatic dogma, PgSkillStore skillStore, long characterId, CancellationToken cancellationToken)
@@ -227,25 +221,12 @@ public static SkillAugmentationReader CreateAugmentationReader(
         dogmaItems[characterId] = character;
         foreach (var item in inventory)
         {
-            var type = dogma.Type(item.TypeId);
-            Eve.Dogma.DogmaItem? model = null;
-            if (item.Flag == ImplantFlag && IsImplantType(type))
+            if (Eve.Ships.PilotAugmentations.ModelOf(dogma, item, characterId, active) is not { } model)
             {
-                model = new Eve.Dogma.DogmaItem(item.Id, item.TypeId, characterId, characterId, item.Flag);
+                continue;
             }
-            else if (item.Flag == BoosterFlag && active.TryGetValue(item.Id, out var booster) &&
-                     type is not null && booster.BoosterTypeId == item.TypeId)
-            {
-                var effects = type.EffectIds.Where(effectId =>
-                    dogma.Effect(effectId) is { ChanceAttributeId: 0 } || booster.SideEffectIds.Contains(effectId)).ToHashSet();
-                model = new Eve.Dogma.DogmaItem(item.Id, item.TypeId, characterId, characterId, item.Flag,
-                    Eve.Dogma.ItemState.Active, effects);
-            }
-            if (model is not null)
-            {
-                world.Add(model);
-                dogmaItems[item.Id] = model;
-            }
+            world.Add(model);
+            dogmaItems[item.Id] = model;
         }
         var skillLevelAttributeId = dogma.AttributeId("skillLevel") ?? SkillLevelAttributeId;
         foreach (var skill in skills.Where(skill => skill.Level > 0))
@@ -530,7 +511,7 @@ public static SkillAugmentationReader CreateAugmentationReader(
 
             var type = dogmaStatic.Type(item.TypeId);
             if (type is null || type.CategoryId != ImplantCategoryId ||
-                !type.Attributes.TryGetValue(ImplantSlotAttributeId, out var slot) ||
+                !type.Attributes.TryGetValue(Eve.Ships.PilotAugmentations.ImplantSlotAttributeId, out var slot) ||
                 !double.IsFinite(slot) || slot <= 0 || slot > int.MaxValue || slot != Math.Truncate(slot))
             {
                 continue;

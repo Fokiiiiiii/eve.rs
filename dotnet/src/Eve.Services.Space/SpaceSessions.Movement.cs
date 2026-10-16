@@ -102,6 +102,54 @@ public sealed partial class SpaceSessions
         CancellationToken cancellationToken) =>
         QueryPositionAsync(session, SimCommands.PositionOf, [targetId], cancellationToken);
 
+    /// <summary>
+    /// The place of a pilot's ship as the pilot boards a structure from space (ST-23): the ship stays in the scene, and its place is saved, because the simulation
+    /// answers the pilot of a ship only and the return to the ship asks for the place later (<see cref="ScenePositionOfAsync"/>). Called while the session still pilots it.
+    /// </summary>
+    public async Task RecordBoardingPlaceAsync(ClientSession session, long shipId, CancellationToken cancellationToken)
+    {
+        if (_spaceItems is null || SolarSystemOf(session) is not { } system ||
+            await PositionOfAsync(session, shipId, cancellationToken) is not { } at || at.SolarSystemId != system)
+        {
+            return;
+        }
+        var existing = await _spaceItems.GetAsync(shipId, cancellationToken);
+        var expiresAtMs = _nowUnixMs() + 86_400_000L;
+        await _spaceItems.SaveAsync(new SpaceItem(
+            shipId, system, [at.X, at.Y, at.Z], [1d, 0d, 0d], existing?.Radius ?? 0, existing?.GroupId ?? 0, existing?.LauncherId ?? 0,
+            session.CharacterId ?? 0, session.GetInt("corpid") ?? 0, session.GetInt("allianceid") ?? 0, 0, expiresAtMs), cancellationToken);
+    }
+
+    /// <summary>
+    /// Where a ship of the scene is, asked by a session that may no longer pilot it: a structure observer's own ship, boarded from space, stays in the scene
+    /// (ST-23, the return to the ship). The session's system is the answer's.
+    /// </summary>
+    public async Task<WarpCoordinates?> ScenePositionOfAsync(ClientSession session, long shipId, CancellationToken cancellationToken)
+    {
+        if (SolarSystemOf(session) is not { } system)
+        {
+            return null;
+        }
+        CommandReply reply;
+        try
+        {
+            reply = await _sim.CommandAsync((ulong)session.SessionId, SimCommands.PositionOf, [shipId], cancellationToken);
+        }
+        catch (SimUnavailableException error)
+        {
+            _log?.Invoke($"position query of session {session.SessionId}: {error.Message}");
+            throw Notify("Space is not available right now. Try again in a moment.");
+        }
+        if (reply.Accepted && reply.Position.Count >= 3)
+        {
+            return new WarpCoordinates(system, reply.Position[0], reply.Position[1], reply.Position[2]);
+        }
+        // the simulation answers the pilot of a ship only: a boarded ship is put where its saved place is (the place its pilot left it at)
+        return _spaceItems is null || await _spaceItems.GetAsync(shipId, cancellationToken) is not { } saved || saved.SolarSystemId != system || saved.Position.Count < 3
+            ? null
+            : new WarpCoordinates(system, saved.Position[0], saved.Position[1], saved.Position[2]);
+    }
+
     private async Task<WarpCoordinates?> QueryPositionAsync(
         ClientSession session,
         byte command,

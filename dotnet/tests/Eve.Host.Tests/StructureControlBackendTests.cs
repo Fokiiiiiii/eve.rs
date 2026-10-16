@@ -24,6 +24,9 @@ public sealed class StructureControlBackendTests
     {
         public ConcurrentQueue<SimControlStructure> Heard { get; } = new();
         public Func<SimControlStructure, Task<string?>> Answer { get; set; } = _ => Task.FromResult<string?>(null);
+        /// <summary>Where the simulation puts a ship when it is asked (PositionOf); refused when <see cref="RefusePositions"/> (a boarded ship is not the pilot's).</summary>
+        public double[] PositionAnswer { get; set; } = [0d, 0d, 0d];
+        public bool RefusePositions { get; set; }
         protected override object? Invoke(MethodInfo? method, object?[]? args)
         {
             if (method!.Name == "get_IsConnected") return true;
@@ -33,7 +36,9 @@ public sealed class StructureControlBackendTests
                 Heard.Enqueue(request);
                 return Answer(request);
             }
-            if (method.Name == "CommandAsync") return Task.FromResult(new CommandReply(true, 0, null, null, System) { Position = [0d, 0d, 0d] });
+            if (method.Name == "CommandAsync") return Task.FromResult(RefusePositions
+                ? new CommandReply(false, 0, "NO_SHIP_IN_SPACE", null, System)
+                : new CommandReply(true, 0, null, null, System) { Position = PositionAnswer });
             if (method.ReturnType == typeof(Task)) return Task.CompletedTask;
             return null;
         }
@@ -54,12 +59,13 @@ public sealed class StructureControlBackendTests
         public required StructureControlBackend Backend { get; set; }
         public required string StructureSchema { get; init; }
         public required string ItemSchema { get; init; }
+        public string? SpaceSchema { get; init; }
         public required ControlSim Sim { get; init; }
         public ConnectedSessions Connected { get; } = new();
         public List<string> Order { get; } = [];
         public bool Allowed { get; set; } = true;
 
-        public static async Task<Fixture> CreateAsync()
+        public static async Task<Fixture> CreateAsync(bool withSpaceItems = false)
         {
             var suffix = Guid.NewGuid().ToString("N")[..12];
             var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
@@ -79,9 +85,19 @@ public sealed class StructureControlBackendTests
                 categoryNames: new Dictionary<int, string> { [65] = "Structure", [6] = "Ship" });
             var simulation = DispatchProxy.Create<ISimulation, ControlSim>();
             var sim = (ControlSim)(object)simulation;
-            var space = new SpaceSessions(simulation, null!, statics, null!, null!, () => 0);
+            // the space item store keeps a boarded ship's place (ST-23); the other tests have none
+            PgSpaceItemStore? spaceItems = null;
+            string? spaceSchemaName = null;
+            if (withSpaceItems)
+            {
+                var spaceSchema = "control_sp_" + suffix;
+                await PgSpaceItemStore.MigrateAsync(source, spaceSchema);
+                spaceItems = new PgSpaceItemStore(source, spaceSchema);
+                spaceSchemaName = spaceSchema;
+            }
+            var space = new SpaceSessions(simulation, null!, statics, null!, null!, () => 0, spaceItems: spaceItems);
             var f = new Fixture { Source = source, Structures = structures, Pilots = pilots, Items = items,
-                Space = space, Sim = sim, StructureSchema = structureSchema, ItemSchema = itemSchema, Backend = null! };
+                Space = space, Sim = sim, StructureSchema = structureSchema, ItemSchema = itemSchema, SpaceSchema = spaceSchemaName, Backend = null! };
             f.Backend = new StructureControlBackend(source, structures, pilots, items, statics, space,
                 (_, _, setting, _) => { Assert.Equal(17, setting); return ValueTask.FromResult(f.Allowed); }, f.Connected);
             sim.Answer = request => { f.Order.Add($"sim:{request.SessionId}:{request.Active}"); return Task.FromResult<string?>(null); };
@@ -148,7 +164,7 @@ public sealed class StructureControlBackendTests
         {
             await Space.QuiesceAsync();
             Space.Dispose();
-            foreach (var schema in new[] { StructureSchema, ItemSchema })
+            foreach (var schema in new[] { StructureSchema, ItemSchema, SpaceSchema }.OfType<string>())
             {
                 await using var command = Source.CreateCommand($"DROP SCHEMA {schema} CASCADE");
                 await command.ExecuteNonQueryAsync();
@@ -380,4 +396,57 @@ public sealed class StructureControlBackendTests
         Assert.False(f.Space.IsStructureObserver(session));
         Assert.True(f.Space.StructureControlSessionClosed(session));
     }
+
+    /// <summary>
+    /// The return to the pilot's own ship after a boarding from space (ST-23): the simulation no longer answers the pilot for its ship once it boards, so the place
+    /// the pilot's ship had when it boarded is what the return measures. Within the return distance, the ship comes back; beyond it, it is refused.
+    /// </summary>
+    [PgFact]
+    public async Task A_ship_boarded_from_space_returns_to_its_pilot_from_the_place_it_boarded_at()
+    {
+        await using var f = await Fixture.CreateAsync(withSpaceItems: true);
+        var session = await f.FlyingSessionAsync(40);
+        var ship = session.GetInt("shipid")!.Value;
+        // 2 000 m of surface from the Astrahus (radius 45 000 m) and the ship (50 m): inside the 6 500 m a ship may return from
+        f.Sim.PositionAnswer = [45_000d + 50d + 2_000d, 0d, 0d];
+        await f.Backend.BoardStructureAsync(f.Call(session), Structure);
+        Assert.Equal(Structure, session.GetInt("structureid"));
+        f.Sim.RefusePositions = true;
+
+        await f.Backend.EjectFromStructureAsync(f.Call(session), ship);
+
+        Assert.Null(await f.OwnerAsync());
+        Assert.Equal(ship, session.GetInt("shipid"));
+    }
+
+    [PgFact]
+    public async Task A_ship_boarded_from_space_far_from_its_structure_is_not_returned_to_by_the_place_it_boarded_at()
+    {
+        await using var f = await Fixture.CreateAsync(withSpaceItems: true);
+        var session = await f.FlyingSessionAsync(41);
+        var ship = session.GetInt("shipid")!.Value;
+        // 155 000 m of surface away: outside the return distance
+        f.Sim.PositionAnswer = [200_000d, 0d, 0d];
+        await f.Backend.BoardStructureAsync(f.Call(session), Structure);
+        f.Sim.RefusePositions = true;
+
+        var refused = await Assert.ThrowsAsync<MachoWrappedException>(() => f.Backend.EjectFromStructureAsync(f.Call(session), ship).AsTask());
+
+        Assert.Contains("RETURN_SHIP_NOT_BOARDABLE", Texts(refused.Error.Payload));
+        Assert.NotNull(await f.OwnerAsync());
+    }
+
+    /// <summary>Every text inside a wrapped error's payload, joined (the refusal's words).</summary>
+    private static string Texts(PyValue value) => value switch
+    {
+        PyStr text => text.Value,
+        PyWString text => text.Value,
+        PyBytes text => global::System.Text.Encoding.UTF8.GetString(text.Value.Span),
+        PyTuple tuple => string.Join("|", tuple.Items.Select(Texts)),
+        PyList list => string.Join("|", list.Items.Select(Texts)),
+        PyDict dict => string.Join("|", dict.Entries.SelectMany(entry => new[] { Texts(entry.Key), Texts(entry.Value) })),
+        PyObjectEx ex => string.Join("|", new[] { Texts(ex.Header) }.Concat(ex.List.Select(Texts)).Concat(ex.Dict.SelectMany(entry => new[] { Texts(entry.Key), Texts(entry.Value) }))),
+        PyObject obj => Texts(obj.Args),
+        _ => "",
+    };
 }

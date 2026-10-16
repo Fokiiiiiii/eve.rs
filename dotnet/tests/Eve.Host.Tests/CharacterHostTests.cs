@@ -163,6 +163,47 @@ public sealed class CharacterHostTests
     }
 
     [PgFact]
+    public async Task A_clone_jump_ends_the_normal_boosters_and_the_cerebral_accelerator_goes_on_with_the_pilot()
+    {
+        // the wiki: a jump ends a normal booster (its row and item go, the pilot is told) and keeps a cerebral accelerator
+        await using var rig = await CharacterHostRig.CreateAsync();
+        var character = await rig.CreateCharacterAsync();
+        var sink = new RecordingPacketSink();
+        var session = new ClientSession { CharacterId = character, Sink = sink };
+        session.Set("stationid", new PyInt(rig.Station));
+        rig.Sessions.Enter(character, session);
+        var service = Assert.IsAssignableFrom<IService>(rig.Registry.Lookup("jumpCloneSvc"));
+        var stations = await StationCatalog.LoadAsync(new Eve.Sde.SdeReader(rig.Source));
+        var away = stations.All.OrderBy(s => s.Id).Where(s => s.Id != rig.Station).First();
+        const int improvedCrashBooster = 10151;
+        const int standardCerebralAccelerator = 49539;
+        const int boosterFlag = 88;
+        var expiry = DateTime.UtcNow.AddHours(1).ToFileTimeUtc();
+
+        var capsule = await GiveItemAsync(rig, character, 670, rig.Station, 4, singleton: true);
+        await SetShipAsync(rig, character, capsule);
+        await FundAsync(rig, character, 1_000_000m);
+        var target = await rig.AddCloneAsync(character, away.Id, "station", "Away body", []);
+        var normal = await GiveItemAsync(rig, character, improvedCrashBooster, character, boosterFlag, singleton: true);
+        var cerebral = await GiveItemAsync(rig, character, standardCerebralAccelerator, character, boosterFlag, singleton: true);
+        await InsertBoosterAsync(rig, normal, character, improvedCrashBooster, expiry);
+        await InsertBoosterAsync(rig, cerebral, character, standardCerebralAccelerator, expiry);
+        Assert.Equal(2, await ScalarAsync(rig, $"SELECT count(*) FROM {rig.SkillsSchema}.active_skill_boosters WHERE character_id = {character}"));
+
+        await BoundAsync(service, session, "CloneJump", new PyLong(away.Id), new PyLong(target), new PyReal(900000.0), PyBool.False);
+
+        Assert.Equal(0, await ScalarAsync(rig, $"SELECT count(*) FROM {rig.InventorySchema}.items WHERE id = {normal}"));
+        Assert.Equal(0, await ScalarAsync(rig, $"SELECT count(*) FROM {rig.SkillsSchema}.active_skill_boosters WHERE item_id = {normal}"));
+        Assert.Equal(1, await ScalarAsync(rig, $"SELECT count(*) FROM {rig.SkillsSchema}.active_skill_boosters WHERE item_id = {cerebral} AND booster_type_id = {standardCerebralAccelerator}"));
+        Assert.Equal(1, await ScalarAsync(rig, $"SELECT count(*) FROM {rig.InventorySchema}.items WHERE id = {cerebral}"));
+        Assert.Contains("OnServerBoostersChanged", Notifications(sink).Select(n => n.Name));
+
+        // the cerebral accelerator is still active after a restart; the normal booster is not coming back
+        await rig.RestartAsync();
+        Assert.Equal(1, await ScalarAsync(rig, $"SELECT count(*) FROM {rig.SkillsSchema}.active_skill_boosters WHERE character_id = {character}"));
+    }
+
+    [PgFact]
     public async Task A_skill_booster_lapses_at_its_expiry_through_the_durable_job_and_an_online_pilot_is_told()
     {
         await using var rig = await CharacterHostRig.CreateAsync();

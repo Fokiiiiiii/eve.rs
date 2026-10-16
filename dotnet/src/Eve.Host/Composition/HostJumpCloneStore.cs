@@ -13,7 +13,7 @@ namespace Eve.Host;
 /// <summary>The jump clone service's store: the clone rows of the characters schema, and the character's skill levels from PostgreSQL.</summary>
 internal sealed class HostJumpCloneStore(PgJumpCloneStore clones, NpgsqlDataSource source, PgSkillStore skills,
     WalletTransactions wallet, PgWalletStore walletStore, PgCharacterStore characters, PgItemStore items, DogmaStatic statics,
-    StationCatalog stations) : IJumpCloneStore
+    StationCatalog stations, Eve.Services.Skills.SkillBoosterLapse boosters) : IJumpCloneStore
 {
     /// <summary>The wallet reference of a jump clone installation fee (EveJS <c>REF_JUMP_CLONE_INSTALLATION_FEE</c>).</summary>
     private const int JumpCloneInstallationReference = 55;
@@ -135,7 +135,11 @@ internal sealed class HostJumpCloneStore(PgJumpCloneStore clones, NpgsqlDataSour
             await items.CreateAsync(connection, transaction, new NewItem(typeId, characterId, characterId, PilotAugmentations.ImplantFlag, 1, Singleton: true), cancellationToken);
         await characters.SetStationAsync(connection, transaction, characterId, station.Id, cancellationToken);
         await characters.SetLocationAsync(connection, transaction, characterId, station.SolarSystemId, station.ConstellationId, station.RegionId, cancellationToken);
+        // a jump ends the body's normal boosters (wiki); the cerebral accelerators go on with the pilot
+        var endedBoosters = await boosters.EndNormalBoostersAsync(connection, transaction, characterId, nowFileTime, statics, cancellationToken);
         await transaction.CommitAsync(cancellationToken);
+        if (endedBoosters)
+            await boosters.AnnounceEndedAsync(characterId, cancellationToken);
         return new CloneJumpResult(null, station.Id, station.SolarSystemId, station.ConstellationId, station.RegionId);
     }
 

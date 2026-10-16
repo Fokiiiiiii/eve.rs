@@ -712,6 +712,18 @@ public sealed class PgSkillStore
         return await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
+    /// <summary>Deletes one booster row inside the caller's transaction (a booster that ends early, e.g. at a clone jump).</summary>
+    public async Task DeleteSkillBoosterAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long characterId, long itemId, CancellationToken cancellationToken = default)
+    {
+        await using var command = new NpgsqlCommand(
+            $"DELETE FROM {_schema}.active_skill_boosters WHERE character_id = $1 AND item_id = $2",
+            connection, transaction)
+        {
+            Parameters = { new() { Value = characterId }, new() { Value = itemId } },
+        };
+        await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
     private static async Task<IReadOnlyList<StoredSkillBooster>> ReadSkillBoostersAsync(
         NpgsqlCommand command,
         CancellationToken cancellationToken)

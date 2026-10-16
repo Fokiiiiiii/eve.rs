@@ -137,7 +137,7 @@ internal sealed partial class CharacterServicesComposition
                         new System.Text.Json.Nodes.JsonObject { ["typeID"] = typeId }, token);
             });
         // a skill booster ends at its expiry: a durable job per activation (SkillBoosterLapse)
-        var boosterLapse = new Eve.Services.Skills.SkillBoosterLapse(foundations.Scheduler, skills, items, source, training, announcer, characters, characterSessions, now);
+        boosterLapse = new Eve.Services.Skills.SkillBoosterLapse(foundations.Scheduler, skills, items, source, training, announcer, characters, characterSessions, now);
         skillHandler.BoosterLapse = boosterLapse;
         boosterLapse.Register();
         // installed expert systems lapse on their own: the expiry runs as a recurring job of the durable scheduler
@@ -161,6 +161,7 @@ internal sealed partial class CharacterServicesComposition
         new Eve.Characters.LoginMilestoneStore(source, characterSchema, economyWallets), foundations.LocalTimers, now);
 
     /// <summary>The achievement tracker of each character (the characters schema).</summary>
+    private Eve.Services.Skills.SkillBoosterLapse boosterLapse = default!;
     private AchievementTrackerStore? achievementTracker;
     private AchievementTrackerStore AchievementTracker => achievementTracker ??= new AchievementTrackerStore(source, characterSchema);
 
@@ -248,7 +249,7 @@ internal sealed partial class CharacterServicesComposition
                     });
                 }),
             JumpClones: new HostJumpCloneStore(new Eve.Characters.PgJumpCloneStore(source, characterSchema), source, skills, economyWallets, wallets,
-                characters, items, dogma, stations),
+                characters, items, dogma, stations, boosterLapse),
             ReadProjectDiscoveryState: ReadProjectDiscoveryStateAsync,
             JumpCloneSpace: jumpCloneSpace);
 

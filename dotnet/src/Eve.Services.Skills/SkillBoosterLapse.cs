@@ -70,4 +70,35 @@ public sealed class SkillBoosterLapse(
         sessions.Of(job.CharacterId)?.SendNotification("OnServerBoostersChanged", "clientID", new PyList([]));
         await announcer.AnnounceLearningChangedAsync(job.CharacterId, update);
     }
+
+    /// <summary>
+    /// A clone jump ends the body's normal boosters (the wiki: only the cerebral accelerators go on with the pilot). Their rows and their
+    /// items go in the caller's transaction, so the jump and the end commit together. Returns whether any booster ended; the caller then
+    /// calls <see cref="AnnounceEndedAsync"/> after the commit.
+    /// </summary>
+    public async Task<bool> EndNormalBoostersAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long characterId, long nowFileTime,
+        Eve.Dogma.DogmaStatic dogma, CancellationToken cancellationToken)
+    {
+        await skillStore.LockActiveSkillBoostersAsync(connection, transaction, characterId, cancellationToken);
+        var active = await skillStore.ActiveSkillBoostersAsync(connection, transaction, characterId, nowFileTime, cancellationToken);
+        await dogma.EnsureTypesAsync(active.Select(booster => booster.BoosterTypeId).ToArray(), cancellationToken);
+        var normal = active.Where(booster => !SkillHandlerService.IsCerebralAccelerator(dogma.Type(booster.BoosterTypeId))).ToList();
+        foreach (var booster in normal)
+        {
+            var item = await items.LockAndGetAsync(connection, transaction, booster.ItemId, cancellationToken);
+            if (item is not null && item.OwnerId == characterId && item.LocationId == characterId && item.TypeId == booster.BoosterTypeId)
+                await items.DeleteAsync(connection, transaction, item.Id, cancellationToken);
+            await skillStore.DeleteSkillBoosterAsync(connection, transaction, characterId, booster.ItemId, cancellationToken);
+        }
+        return normal.Count > 0;
+    }
+
+    /// <summary>After the commit of <see cref="EndNormalBoostersAsync"/>: the running skill is rebased at the rate it has now, and an online pilot is told.</summary>
+    public async Task AnnounceEndedAsync(long characterId, CancellationToken cancellationToken)
+    {
+        var character = await characters.GetAsync(characterId, cancellationToken);
+        var update = character is null ? null : await training.RebaseRunningAsync(characterId, character.AccountId, cancellationToken);
+        sessions.Of(characterId)?.SendNotification("OnServerBoostersChanged", "clientID", new PyList([]));
+        await announcer.AnnounceLearningChangedAsync(characterId, update);
+    }
 }

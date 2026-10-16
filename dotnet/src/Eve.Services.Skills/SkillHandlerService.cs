@@ -190,6 +190,12 @@ public static SkillAugmentationReader CreateAugmentationReader(
             .ToDictionary(booster => booster.ItemId);
     }
 
+    /// <summary>A cerebral accelerator is the booster of booster slot 10 (wiki: they share it, apart from all other boosters); it stays active through a clone jump or a pod death.</summary>
+    public const int CerebralAcceleratorSlot = 10;
+
+    public static bool IsCerebralAccelerator(Eve.Dogma.TypeDef? type) =>
+        type is not null && type.Attributes.TryGetValue(BoosterSlotAttributeId, out var slot) && slot == CerebralAcceleratorSlot;
+
     private static bool IsBoosterType(Eve.Dogma.TypeDef? type) =>
         type is { CategoryId: ImplantCategoryId } &&
         type.Attributes.TryGetValue(BoosterSlotAttributeId, out var slot) &&

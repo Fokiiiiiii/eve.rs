@@ -190,6 +190,26 @@ internal sealed class StructureOfficeRentDue(
         });
     }
 
+    /// <summary>
+    /// The one-time creditor migration (ST-16): a station's rent bills taken before ST-16 have no creditor, so their due job did nothing. Each such station's bills
+    /// get the station's owner (the owner the station's rent is credited to now), and the open ones get their due job. A station that is not in the catalog (a
+    /// structure) is left alone. A second run changes nothing.
+    /// </summary>
+    public async Task CreditStationBillsAsync(Func<long, long?> stationOwnerOf, CancellationToken cancellationToken = default)
+    {
+        foreach (var stationId in await offices.StationsWithoutCreditorAsync(cancellationToken))
+        {
+            if (stationOwnerOf(stationId) is not { } owner || owner <= 0) continue;
+            await using var connection = await source.OpenConnectionAsync(cancellationToken);
+            await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+            foreach (var bill in await offices.CreditStationBillsAsync(connection, transaction, stationId, owner, cancellationToken))
+            {
+                await structures.ScheduleRentDueAsync(connection, transaction, bill.OfficeId, bill.DueAtMs, cancellationToken);
+            }
+            await transaction.CommitAsync(cancellationToken);
+        }
+    }
+
     private async Task RescheduleAsync(long officeId, CancellationToken cancellationToken)
     {
         await using var read = await source.OpenConnectionAsync(cancellationToken);

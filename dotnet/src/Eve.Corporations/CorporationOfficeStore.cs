@@ -308,6 +308,40 @@ public sealed class CorporationOfficeStore
         return true;
     }
 
+    /// <summary>
+    /// The stations whose rent bills have no creditor: a rent taken there before ST-16, when the owner was read from the station instead of being recorded.
+    /// A structure's bill always names its owner, so it is not among them.
+    /// </summary>
+    public async Task<IReadOnlyList<long>> StationsWithoutCreditorAsync(CancellationToken cancellationToken = default)
+    {
+        await using var connection = await _source.OpenConnectionAsync(cancellationToken);
+        await using var command = Command(connection, null, $"SELECT DISTINCT station_id FROM {_schema}.office_rent_bills WHERE creditor_id IS NULL ORDER BY station_id");
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        var stations = new List<long>();
+        while (await reader.ReadAsync(cancellationToken)) stations.Add(reader.GetInt64(0));
+        return stations;
+    }
+
+    /// <summary>
+    /// The one-time creditor migration (ST-16): every rent bill of a station that has no creditor gets the station's owner as its creditor, as the bills taken
+    /// from now on do. A bill that has a creditor is not touched, so a second run changes nothing. Answers the open bills it credited, for their due jobs.
+    /// </summary>
+    public async Task<IReadOnlyList<CorporationOfficeRentBill>> CreditStationBillsAsync(NpgsqlConnection connection, NpgsqlTransaction transaction,
+        long stationId, long ownerId, CancellationToken cancellationToken = default)
+    {
+        if (stationId <= 0 || ownerId <= 0) return [];
+        await using var command = Command(connection, transaction, $"""
+            UPDATE {_schema}.office_rent_bills SET creditor_id=$2
+            WHERE station_id=$1 AND creditor_id IS NULL
+            RETURNING bill_id,office_id,corporation_id,station_id,amount_isk,issued_at_ms,due_at_ms,status,
+                   paid_at_ms,paid_by_owner_id,creditor_id
+            """, stationId, ownerId);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        var bills = new List<CorporationOfficeRentBill>();
+        while (await reader.ReadAsync(cancellationToken)) bills.Add(ReadRentBill(reader));
+        return bills.Where(bill => bill.Status == 0).ToArray();
+    }
+
     private static CorporationOfficeRentBill ReadRentBill(NpgsqlDataReader reader) => new(
         reader.GetInt64(0), reader.GetInt64(1), reader.GetInt64(2), reader.GetInt64(3),
         reader.GetDecimal(4), reader.GetInt64(5), reader.GetInt64(6), reader.GetInt16(7),

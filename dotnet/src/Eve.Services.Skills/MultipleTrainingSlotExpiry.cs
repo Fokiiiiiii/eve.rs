@@ -1,0 +1,65 @@
+using Eve.Scheduler;
+using Eve.Skills;
+using Npgsql;
+
+namespace Eve.Services.Skills;
+
+/// <summary>
+/// The end of an extra training queue (Multiple Character Training): when the account's extra slots run out, the running
+/// queues beyond the remaining slots are paused, the character with the fewest skill points first (wiki: "Multiple Character
+/// Training"). A durable job per granted slot runs at the slot's end; it is idempotent, so a late or repeated run changes nothing.
+/// </summary>
+public sealed class MultipleTrainingSlotExpiry(
+    DurableScheduler scheduler,
+    CharacterTraining training,
+    TrainingAnnouncer announcer,
+    CharacterSessions sessions,
+    Func<long, CancellationToken, Task<IReadOnlyList<long>>> accountCharacters)
+{
+    public const string JobKind = "skills.mctSlotExpiry";
+
+    public sealed record AccountJob(long AccountId);
+
+    /// <summary>Registers the job kind with the scheduler; the Host calls it once at composition.</summary>
+    public void Register() => scheduler.Register(JobKind, (job, token) => PauseOverLimitAsync(job.Payload<AccountJob>()!.AccountId, token));
+
+    /// <summary>Schedules the expiry of a slot granted in the caller's transaction, so the grant and its job commit together.</summary>
+    public Task ScheduleAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long accountId, DateTimeOffset endsAt, CancellationToken cancellationToken)
+    {
+        var endsMs = endsAt.ToUnixTimeMilliseconds();
+        return scheduler.ScheduleAsync(
+            connection, transaction,
+            new JobSpec(JobKind, endsMs) { Key = $"{accountId}:{endsMs}", Payload = new AccountJob(accountId) },
+            cancellationToken);
+    }
+
+    /// <summary>Pauses the running queues that the account's remaining slots no longer cover, then tells the account's clients.</summary>
+    public async Task PauseOverLimitAsync(long accountId, CancellationToken cancellationToken)
+    {
+        var characters = await accountCharacters(accountId, cancellationToken);
+        var running = new List<(long CharacterId, long Points)>();
+        foreach (var characterId in characters)
+        {
+            var view = await training.ViewAsync(characterId, accountId, cancellationToken);
+            if (view.State.Running)
+                running.Add((characterId, view.TotalPoints));
+        }
+
+        var allowed = 1 + training.Settings.AdditionalTrainingSlots(accountId);
+        var told = false;
+        foreach (var (characterId, _) in running.OrderBy(r => r.Points).ThenBy(r => r.CharacterId).Take(Math.Max(0, running.Count - allowed)))
+        {
+            var view = await training.ViewAsync(characterId, accountId, cancellationToken);
+            if (await training.SaveQueueAsync(characterId, accountId, view.State.Entries, activate: false, characters, cancellationToken) is QueueSaved saved
+                && sessions.Of(characterId) is { } session)
+            {
+                // the paused character's session hears it, and every client of the account is told (AnnounceSavedAsync)
+                await announcer.AnnounceSavedAsync(session, saved);
+                told = true;
+            }
+        }
+
+        if (!told)
+            announcer.AnnounceExtraSlotsChanged(accountId);
+    }
+}

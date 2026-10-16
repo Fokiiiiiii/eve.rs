@@ -155,6 +155,7 @@ internal sealed partial class CharacterServicesComposition
     private Eve.Services.Crimewatch.CrimewatchRuntime crimewatchRuntime = default!;
     private Eve.Services.Crimewatch.RelationWars relationWars = default!;
     private TrainingAnnouncer announcer = default!;
+    private MultipleTrainingSlotExpiry multipleTrainingExpiry = default!;
     private SkillAugmentationReader readAugmentations = default!;
     private SkillHandlerService skillHandler = default!;
     private StartingWallet startingWallet = default!;

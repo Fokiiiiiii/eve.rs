@@ -266,4 +266,37 @@ public class TrainingServiceTests
         Assert.Empty(Notes.Of(sink));
         Assert.Empty(((PyList)await Call(rig, session, "GetSkillQueue", [])).Items);
     }
+
+    [PgFact]
+    public async Task When_an_extra_slot_runs_out_the_queue_of_the_character_with_the_fewest_skill_points_is_paused_and_the_account_is_told()
+    {
+        var extraSlots = 1;
+        var (rig, session, sink) = await ReadyAsync(new TrainingSettings { AdditionalTrainingSlots = _ => extraSlots });
+        await using var owned = rig;
+        const long other = 140_000_039;
+        await rig.GrantAsync(other, (3301, 1, 250));
+        var (otherSession, otherSink) = Rig.Session(other);
+        rig.Sessions.Enter(other, otherSession);
+        Assert.Equal(PyNone.Instance, await Call(rig, session, "SaveNewQueue", [Queue((0, 3301, 2))]));
+        Assert.Equal(PyNone.Instance, await Call(rig, otherSession, "SaveNewQueue", [Queue((0, 3301, 2))]));
+        Assert.True((await rig.Training.ViewAsync(other, 34)).State.Running);
+
+        var expiry = new MultipleTrainingSlotExpiry(
+            new Eve.Scheduler.DurableScheduler(rig.Source, () => 0, schema: rig.SchemaForTest + "s"), rig.Training, rig.Announcer, rig.Sessions,
+            (_, _) => Task.FromResult<IReadOnlyList<long>>([Character, other]));
+        Notes.Of(otherSink); // the saves above are read (and cleared) here
+        Notes.Of(sink);
+
+        extraSlots = 0; // the extra slot has run out
+        await expiry.PauseOverLimitAsync(34, default);
+
+        Assert.False((await rig.Training.ViewAsync(other, 34)).State.Running);
+        Assert.True((await rig.Training.ViewAsync(Character, 34)).State.Running);
+        Assert.Equal(["OnNewSkillQueueSaved", "OnSkillQueuePausedServer", "OnMultipleCharactersTrainingUpdated"], Notes.Of(otherSink).Select(n => n.Name));
+        Assert.Equal(["OnMultipleCharactersTrainingUpdated"], Notes.Of(sink).Select(n => n.Name));
+
+        // a second run finds nothing over the limit: the queue of the character that still runs is kept
+        await expiry.PauseOverLimitAsync(34, default);
+        Assert.True((await rig.Training.ViewAsync(Character, 34)).State.Running);
+    }
 }

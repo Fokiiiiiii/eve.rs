@@ -156,6 +156,15 @@ public sealed class TrainingAnnouncer(CharacterTraining training, SkillCatalog c
         }
     }
 
+    /// <summary>The account's extra queues changed without a request of one of its characters (a slot ran out): every client of the account is told.</summary>
+    public void AnnounceExtraSlotsChanged(long accountId)
+    {
+        foreach (var session in sessions.OfUser(accountId))
+        {
+            SkillNotifications.MultipleCharactersTrainingUpdated(session);
+        }
+    }
+
     private void TellTheAccount(ClientSession caller, long accountId)
     {
         SkillNotifications.MultipleCharactersTrainingUpdated(caller);

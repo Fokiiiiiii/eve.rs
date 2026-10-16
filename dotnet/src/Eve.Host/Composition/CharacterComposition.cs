@@ -112,6 +112,10 @@ internal sealed partial class CharacterServicesComposition
     {
         announcer = new TrainingAnnouncer(training, skillCatalog, characterSessions, dogmaSync, now, localTimers: foundations.LocalTimers);
         announcer.Attach();
+        multipleTrainingExpiry = new MultipleTrainingSlotExpiry(
+            foundations.Scheduler, training, announcer, characterSessions,
+            async (accountId, token) => [.. (await characters.ForAccountAsync(checked((int)accountId), token)).Select(c => c.Id)]);
+        multipleTrainingExpiry.Register();
         readAugmentations = SkillHandlerService.CreateAugmentationReader(items, dogma, skills, now);
         skillHandler = new SkillHandlerService(
             skills, skillCatalog, training, characters, items, dogma, announcer, now, readAugmentations,
@@ -172,6 +176,9 @@ internal sealed partial class CharacterServicesComposition
         storeRuntime = new PersistenceNewEdenStoreRuntime(
             source, mailStore, mailStoreOwner.Fence, wallets, characters, items, itemTypes,
             characterSessions, now, _ => Task.FromResult(Eve.Services.Core.NewEdenStoreCatalog.Default.Root), accounts);
+        // a slot's end pauses the queues it no longer covers: the job is scheduled with the grant (multipleTrainingExpiry is set by TrainingSkillsAndCreation)
+        storeRuntime.ScheduleSlotExpiry = (connection, transaction, accountId, endsAt, token) =>
+            multipleTrainingExpiry.ScheduleAsync(connection, transaction, accountId, endsAt, token);
         return Task.CompletedTask;
     }
 

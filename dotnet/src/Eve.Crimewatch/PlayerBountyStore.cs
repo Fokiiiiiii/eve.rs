@@ -145,7 +145,7 @@ public sealed class PlayerBountyStore(NpgsqlDataSource source, string schema)
     /// claimed bounties and kills move, and the payout is recorded pending and its job scheduled (<paramref name="schedule"/>), all in one transaction. A
     /// payout id that was claimed before is answered as it was and nothing moves again. Answers the payout id, or null when no bounty was due.
     /// </summary>
-    public async Task<string?> ClaimKillAsync(PlayerBountyClaim claim, Func<NpgsqlConnection, NpgsqlTransaction, Task> schedule, CancellationToken cancellationToken = default)
+    public async Task<string?> ClaimKillAsync(PlayerBountyClaim claim, Func<NpgsqlConnection, NpgsqlTransaction, string, Task> schedule, CancellationToken cancellationToken = default)
     {
         await using var connection = await source.OpenConnectionAsync(cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
@@ -189,11 +189,22 @@ public sealed class PlayerBountyStore(NpgsqlDataSource source, string schema)
         if (claim.HunterAllianceId > 0)
             await AddHunterStatAsync(connection, transaction, BountyOwnerKind.Alliance, claim.HunterAllianceId, claim.HunterCorporationId, claim.HunterAllianceId, amount, claim.NowMs, cancellationToken);
 
-        await Sql.ExecuteAsync(connection, transaction, Q(
-            "INSERT INTO {schema}.player_bounty_payouts (payout_id, hunter_id, amount, loss_value, cap_amount, status, command_id, created_ms) " +
-            "VALUES ($1, $2, $3, $4, $5, 'pending', $6, $7)"),
-            cancellationToken, claim.PayoutId, claim.HunterId, amount, claim.LossValue, cap, claim.CommandId, claim.NowMs);
-        await schedule(connection, transaction);
+        // a fleet shares the bounty (EVE University wiki, Bounty Hunting System): the amount is split equally between the sharers, the hunter
+        // first, and the hunter keeps the rounding. Each sharer has its own payout, credited by its own job.
+        var sharers = claim.Sharers is { Count: > 0 } listed ? listed.Prepend(claim.HunterId).Distinct().ToArray() : [claim.HunterId];
+        var each = Math.Round(amount / sharers.Length, 2, MidpointRounding.ToZero);
+        for (var index = 0; index < sharers.Length; index++)
+        {
+            var sharer = sharers[index];
+            var share = index == 0 ? amount - each * (sharers.Length - 1) : each;
+            var payoutId = sharer == claim.HunterId ? claim.PayoutId : $"{claim.PayoutId}:{sharer}";
+            var commandId = sharer == claim.HunterId ? claim.CommandId : $"{claim.CommandId}:{sharer}";
+            await Sql.ExecuteAsync(connection, transaction, Q(
+                "INSERT INTO {schema}.player_bounty_payouts (payout_id, hunter_id, amount, loss_value, cap_amount, status, command_id, created_ms) " +
+                "VALUES ($1, $2, $3, $4, $5, 'pending', $6, $7)"),
+                cancellationToken, payoutId, sharer, share, claim.LossValue, cap, commandId, claim.NowMs);
+            await schedule(connection, transaction, payoutId);
+        }
         await transaction.CommitAsync(cancellationToken);
         return claim.PayoutId;
     }
@@ -227,5 +238,5 @@ public sealed class PlayerBountyStore(NpgsqlDataSource source, string schema)
 
 /// <summary>A kill's claim: the pools of the victim (in claim order), the loss, and the hunter with its affiliation.</summary>
 public sealed record PlayerBountyClaim(string PayoutId, string CommandId, long HunterId, long HunterCorporationId, long HunterAllianceId,
-    IReadOnlyList<long> Targets, decimal LossValue, long NowMs);
+    IReadOnlyList<long> Targets, decimal LossValue, long NowMs, IReadOnlyList<long>? Sharers = null);
 

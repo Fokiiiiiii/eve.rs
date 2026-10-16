@@ -33,7 +33,8 @@ public sealed class PlayerBountyKills(
     /// price and theirs. Answers the payout id, or null when no bounty was due or the hunter is not a pilot.
     /// </summary>
     public async Task<string?> ClaimShipLossAsync(long victimCharacterId, long shipId, int shipTypeId, IReadOnlyList<(int TypeId, long Quantity)> contents,
-        long hunterCharacterId, long nowMs, Func<NpgsqlConnection, NpgsqlTransaction, Task> schedule, CancellationToken cancellationToken = default)
+        long hunterCharacterId, long nowMs, Func<NpgsqlConnection, NpgsqlTransaction, string, Task> schedule, IReadOnlyList<long>? sharers = null,
+        CancellationToken cancellationToken = default)
     {
         if (hunterCharacterId <= 0 || hunterCharacterId == victimCharacterId)
             return null;
@@ -58,7 +59,7 @@ public sealed class PlayerBountyKills(
         var payoutId = PayoutIdOf(shipId);
         return await store.ClaimKillAsync(new PlayerBountyClaim(
                 payoutId, $"player-bounty:{payoutId}:credit", hunterCharacterId, hunter.CorporationId, hunter.AllianceId,
-                targets, loss, nowMs),
+                targets, loss, nowMs, sharers),
             schedule, cancellationToken);
     }
 

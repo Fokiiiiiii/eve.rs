@@ -45,3 +45,13 @@ After the usage reset (PostgreSQL in crash recovery): re-check `psql ... -Atc "s
 
 Tests run on eve_p2 (port 26101 for live): CharacterHostTests 11 passed; PlayerBountyHostTests 4 passed; Services.Core 745 passed; Characters StoreTests 28 passed; live test_clone_install_live.py 2 passed; live test_skill_bundle_info_live.py 1 passed.
 
+## Second round (pushed 09e19715)
+
+- CH-18 fleet sharing: DONE and pushed. A kill's claim is split equally across the killer's fleet (all members, the hunter first, who keeps the rounding); each sharer has a pending payout (`kill:{ship}` for the hunter, `kill:{ship}:{character}` for the others) credited by its own job. Tests: `PlayerBountyKillsTests` (2 passed, eve_p2), `PlayerBountyHostTests` and `CharacterHostTests` (17 passed). Division among fleet members and the requirement of proximity are NOT stated by the wiki (DEVIATIONS S6).
+- CH-18 kill and payout notifications: NOT added. EveJS sends no notification for a player claim or its payout (`playerBountyState.claimBountyPayout`, `settlePendingPayout`): the payout is a wallet journal entry only. Not invented here; the journal entry is the record.
+- CH-18 pod kills: NOT done. The wiki says the pod is a separate event with its implants' value; eve.rs raises `ShipLost` only for ships (capsule losses return early in the Host subscriber), and the capsule destruction path (`SpaceSessions.Death` / `CharacterShips.DestroyCapsuleAsync`) raises no event with a killer. Needs a new space event.
+- Live kill helper: `tools/headless-client/tests/npc_kill.py` (WIP, UNCOMMITTED, not pushed): flies at a rat, locks it, orbits, fires the gun until `OnBountyAddedToPayout`. It does not work yet (see below).
+- CH-14 live walk: WIP `tests/test_faction_standing_live.py` (UNCOMMITTED): not green. Blocker found: a spawned faction NPC (Blood Visionary 8 km spawn, Guristas Invader 5 km) is 46-54 km from the pilot; the pilot's `CmdFollowBall` is accepted (returns None) but the distance grows (46 -> 54 km) rather than shrinks, also with `CmdSetSpeedFraction(1.0)` first. Not diagnosed further.
+- CH-18 live walk (pilot kills pilot, claim, payout): NOT done. Reason: the test system 30100032 is high-security (security 1.0); pilot-on-pilot weapons are refused there by the safety, and the same pursuit problem above applies.
+- CH-15 live two-pilot ship offer: NOT done. Reason: a Clone Vat Bay must be fitted, both pilots must be in one system within the hull's operational range (the same movement problem), and the Host rig has no space simulation (`EVE_SIM` off), so positions cannot be read in a Host test. The offer, accept and cancel flow is covered by `JumpCloneShipInstallTests` (Services.Core, two client sessions with sinks, real notification order).
+

@@ -39,7 +39,7 @@ public sealed class PlayerBountyKillsTests
             }
 
             var scheduled = 0;
-            Task Schedule(NpgsqlConnection _, NpgsqlTransaction __) { scheduled++; return Task.CompletedTask; }
+            Task Schedule(NpgsqlConnection _, NpgsqlTransaction __, string ___) { scheduled++; return Task.CompletedTask; }
             var kills = Kills(source, crimewatch, walletSchema);
 
             // the ship is worth 10,000,000: a fifth is 2,000,000, which the pilot's pool (2,000,000) pays in full; the corporation keeps its 1,000,000
@@ -68,6 +68,57 @@ public sealed class PlayerBountyKillsTests
 
             // a hunter who is not a pilot claims nothing
             Assert.Null(await kills.ClaimShipLossAsync(Victim, ShipId + 1, ShipType, [], Placer + 999, 500, Schedule));
+        }
+        finally
+        {
+            await using var cleanup = source.CreateCommand($"DROP SCHEMA IF EXISTS {crimewatch} CASCADE; DROP SCHEMA IF EXISTS {walletSchema} CASCADE");
+            await cleanup.ExecuteNonQueryAsync();
+        }
+    }
+
+    [PgFact]
+    public async Task A_kill_by_a_fleet_member_is_shared_equally_across_the_fleet_and_each_share_is_credited_once()
+    {
+        var url = Environment.GetEnvironmentVariable("EVE_PG_URL")!;
+        var suffix = Guid.NewGuid().ToString("N")[..8];
+        var crimewatch = "pbk_f_" + suffix;
+        var walletSchema = "pbk_fw_" + suffix;
+        const long memberOne = 96_000_013, memberTwo = 96_000_014;
+        await using var source = NpgsqlDataSource.Create(PgConnection.ForTest(url));
+        try
+        {
+            await PgCrimewatchStore.MigrateAsync(source, crimewatch);
+            await PgWalletStore.MigrateAsync(source, walletSchema);
+            await using (var connection = await source.OpenConnectionAsync())
+            await using (var transaction = await connection.BeginTransactionAsync())
+            {
+                foreach (var owner in new[] { Hunter, memberOne, memberTwo })
+                    await new PgWalletStore(source, walletSchema).OpenAsync(connection, transaction, owner, 0m, 0);
+                await new PlayerBountyStore(source, crimewatch).RecordPlacementAsync(connection, transaction,
+                    new BountyPool(Victim, BountyOwnerKind.Character, VictimCorporation, 0, 0), Placer, 2_000_000m, "placement-fleet", 1);
+                await transaction.CommitAsync();
+            }
+
+            var scheduled = new List<string>();
+            Task Schedule(NpgsqlConnection _, NpgsqlTransaction __, string payoutId) { scheduled.Add(payoutId); return Task.CompletedTask; }
+            var kills = Kills(source, crimewatch, walletSchema);
+
+            // the fleet is the hunter and two members: a fifth of the loss (2,000,000) is split three ways; the hunter keeps the cent that does not divide
+            var payout = await kills.ClaimShipLossAsync(Victim, ShipId, ShipType, [], Hunter, 100, Schedule, [Hunter, memberOne, memberTwo]);
+            Assert.Equal("kill:" + ShipId, payout);
+            Assert.Equal(3, scheduled.Count);
+            Assert.Equal(new[] { "kill:" + ShipId, $"kill:{ShipId}:{memberOne}", $"kill:{ShipId}:{memberTwo}" }, scheduled.ToArray());
+            Assert.Equal(666_666.68m, await ScalarAsync<decimal>(source, $"SELECT amount FROM {crimewatch}.player_bounty_payouts WHERE payout_id = 'kill:{ShipId}'"));
+            Assert.Equal(666_666.66m, await ScalarAsync<decimal>(source, $"SELECT amount FROM {crimewatch}.player_bounty_payouts WHERE payout_id = 'kill:{ShipId}:{memberOne}'"));
+            Assert.Equal(2_000_000m, await ScalarAsync<decimal>(source, $"SELECT SUM(amount) FROM {crimewatch}.player_bounty_payouts"));
+
+            // each sharer's own job credits its share, once
+            foreach (var id in scheduled)
+                await SettleAsync(source, kills, id, 300, walletSchema);
+            Assert.Equal(666_666.68m, await IskAsync(source, walletSchema, Hunter));
+            Assert.Equal(666_666.66m, await IskAsync(source, walletSchema, memberOne));
+            Assert.Equal(666_666.66m, await IskAsync(source, walletSchema, memberTwo));
+            Assert.Equal(new[] { "paid", "paid", "paid" }, (await ScalarAsync<string>(source, $"SELECT string_agg(status, ',') FROM {crimewatch}.player_bounty_payouts")).Split(','));
         }
         finally
         {

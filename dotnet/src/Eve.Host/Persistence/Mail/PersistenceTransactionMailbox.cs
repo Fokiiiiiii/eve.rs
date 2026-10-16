@@ -47,7 +47,8 @@ internal sealed class PersistenceTransactionMailbox
         CancellationToken cancellationToken = default,
         EventContext? context = null)
     {
-        if (senderId <= 0) throw new ArgumentOutOfRangeException(nameof(senderId));
+        // a system notice has no sender (EveJS senderID 0, expertSystemNotifications.js)
+        if (senderId < 0) throw new ArgumentOutOfRangeException(nameof(senderId));
         if (typeId <= 0) throw new ArgumentOutOfRangeException(nameof(typeId));
         if (groupId < 0) throw new ArgumentOutOfRangeException(nameof(groupId));
         ArgumentException.ThrowIfNullOrWhiteSpace(idempotencyKey);

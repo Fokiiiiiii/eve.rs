@@ -13,6 +13,9 @@ public sealed partial class SkillHandlerService(
     PgSkillStore store, SkillCatalog catalog, CharacterTraining training, PgCharacterStore characters, Eve.Inventory.PgItemStore items, Eve.Dogma.DogmaStatic dogmaStatic, TrainingAnnouncer announcer, Func<long> nowUnixMs,
     SkillAugmentationReader readAugmentations, Func<double>? nextBoosterRoll = null, Eve.Wallet.WalletTransactions? walletTransactions = null, Func<long, bool>? isAlphaClone = null, ExpertSystems? expertSystems = null)
 {
+    /// <summary>The durable job that ends an activated booster at its expiry (set by the Host; null where no scheduler runs).</summary>
+    public SkillBoosterLapse? BoosterLapse { get; set; }
+
     /// <summary>The five attributes a character trains with (charisma, intelligence, memory, perception, willpower).</summary>
     private static readonly int[] AttributeIds = [164, 165, 166, 167, 168];
 
@@ -114,7 +117,7 @@ public static SkillAugmentationReader CreateAugmentationReader(
             modifiers);
     }
 
-    private static async Task PruneExpiredBoosterRowsAsync(
+    internal static async Task PruneExpiredBoosterRowsAsync(
         PgSkillStore skillStore,
         Eve.Inventory.PgItemStore itemStore,
         Npgsql.NpgsqlConnection connection,
@@ -410,6 +413,8 @@ public static SkillAugmentationReader CreateAugmentationReader(
             {
                 throw new InvalidOperationException("Booster activation state already exists for the consumed inventory item.");
             }
+            if (BoosterLapse is not null)
+                await BoosterLapse.ScheduleAsync(connection, transaction, characterId, activeItemId, expiryFileTime, ct);
             return (Accepted: true, ExistingTypeName: (string?)null, Changes: changes);
         }, cancellationToken);
 

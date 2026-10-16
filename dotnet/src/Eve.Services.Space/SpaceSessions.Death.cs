@@ -363,16 +363,7 @@ public sealed partial class SpaceSessions
                         _pilots.TryRemove(id, out _);
                         NotifyDeathClient(pilot, lost, destroyed, recovered.Ship);
                         var character = recovered.Character;
-                        var stationId = new PyInt(character.StationId);
-                        session.Change(
-                            ("stationid", stationId),
-                            ("stationid2", stationId),
-                            ("solarsystemid", None),
-                            ("solarsystemid2", new PyInt(character.SolarSystemId)),
-                            ("constellationid", new PyInt(character.ConstellationId)),
-                            ("regionid", new PyInt(character.RegionId)),
-                            ("shipid", new PyLong(recovered.Ship.Id)),
-                            ("locationid", stationId));
+                        CharacterSessionRelocation.Docked(session, character.StationId, character.SolarSystemId, character.ConstellationId, character.RegionId, recovered.Ship.Id);
                         handedOver = true;
                         return true;
                     }
@@ -534,16 +525,7 @@ public sealed partial class SpaceSessions
             {
                 var death = result!;
                 ReleaseBoundObjects(session);
-                var system = new PyInt(station.SolarSystemId);
-                session.Change(
-                    ("stationid", new PyInt(station.Id)),
-                    ("stationid2", new PyInt(station.Id)),
-                    ("solarsystemid", None),
-                    ("solarsystemid2", system),
-                    ("constellationid", new PyInt(station.ConstellationId)),
-                    ("regionid", new PyInt(station.RegionId)),
-                    ("shipid", new PyLong(death.Ship.Id)),
-                    ("locationid", new PyInt(station.Id)));
+                CharacterSessionRelocation.Docked(session, station.Id, station.SolarSystemId, station.ConstellationId, station.RegionId, death.Ship.Id);
                 return Task.FromResult(true);
             },
             (result, _) =>

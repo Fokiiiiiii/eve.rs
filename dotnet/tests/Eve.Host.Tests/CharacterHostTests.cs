@@ -5,6 +5,7 @@ using Eve.Macho;
 using Eve.Marshal;
 using Eve.Services;
 using Eve.Universe;
+using Eve.Wallet;
 using Npgsql;
 using Xunit;
 
@@ -91,6 +92,113 @@ public sealed class CharacterHostTests
             .Select(row => ((PyLong)row.Items[0]).Value).ToArray());
         Assert.IsType<PyNone>(await BoundAsync(restarted, session, "ResetLastCloneJumpTime"));
         Assert.Equal(new PyLong(0), Field(await BoundAsync(restarted, session, "GetCloneState"), "timeLastJump"));
+    }
+
+    [PgFact]
+    public async Task Clone_jump_moves_the_body_charges_the_fee_starts_the_cooldown_and_keeps_all_of_it_through_a_restart()
+    {
+        await using var rig = await CharacterHostRig.CreateAsync();
+        var character = await rig.CreateCharacterAsync();
+        var sink = new RecordingPacketSink();
+        var session = new ClientSession { CharacterId = character, Sink = sink };
+        session.Set("stationid", new PyInt(rig.Station));
+        var service = Assert.IsAssignableFrom<IService>(rig.Registry.Lookup("jumpCloneSvc"));
+        var stations = await StationCatalog.LoadAsync(new Eve.Sde.SdeReader(rig.Source));
+        var away = stations.All.OrderBy(s => s.Id).Where(s => s.Id != rig.Station).First();
+
+        // the pilot is in its capsule, with one implant plugged in, and 1,000,000 ISK
+        var capsule = await GiveItemAsync(rig, character, 670, rig.Station, 4, singleton: true);
+        await SetShipAsync(rig, character, capsule);
+        await GiveItemAsync(rig, character, 9941, character, 89, singleton: true);
+        await FundAsync(rig, character, 1_000_000m);
+
+        // a clone at the station it is docked in (replaced by the jump) and a clone elsewhere (the target)
+        var target = await rig.AddCloneAsync(character, away.Id, "station", "Away body", [9941]);
+        Assert.Equal(new[] { target }, Rows(Field(await BoundAsync(service, session, "GetCloneState"), "clones"))
+            .Select(row => ((PyLong)row.Items[0]).Value).ToArray());
+
+        // the jump: the clone is at another station, so the cooldown is not checked; the body leaves by the origin
+        Assert.IsType<PyNone>(await BoundAsync(service, session, "CloneJump", new PyLong(away.Id), new PyLong(target), new PyReal(900000.0), PyBool.False));
+        Assert.Equal(new PyInt(away.Id), session.Get("stationid"));
+        Assert.Equal(new PyInt(away.SolarSystemId), session.Get("solarsystemid2"));
+        Assert.Equal(new[]
+        {
+            "OnJumpCloneCacheInvalidated", "OnStationJumpCloneCacheInvalidated", "OnShipJumpCloneCacheInvalidated",
+            "OnJumpCloneCacheInvalidated", "OnStationJumpCloneCacheInvalidated", "OnShipJumpCloneCacheInvalidated",
+        }, Notifications(sink).Select(n => n.Name).ToArray());
+        var state = await BoundAsync(service, session, "GetCloneState");
+        var clones = Rows(Field(state, "clones"));
+        var left = Assert.Single(clones);
+        Assert.Equal(new PyLong(rig.Station), left.Items[1]);
+        Assert.NotEqual(new PyLong(0), Field(state, "timeLastJump"));
+        Assert.Equal(new[] { 9941 }, Rows(Field(state, "implants")).Select(row => (int)((PyInt)row.Items[1]).Value).ToArray());
+        Assert.Equal(new[] { 9941 }, await BodyImplantTypesAsync(rig, character));
+        Assert.Equal(900_000m, 1_000_000m - await BalanceAsync(rig, character));
+        Assert.Equal(away.Id, (await rig.Characters.GetAsync(character))!.StationId);
+
+        // the cooldown: a second jump within 24 hours is refused, and nothing moves
+        var replacement = left.Items[0] is PyLong replacementId ? replacementId.Value : 0;
+        await Assert.ThrowsAsync<MachoWrappedException>(() => BoundAsync(service, session, "CloneJump", new PyLong(rig.Station), new PyLong(replacement), new PyReal(900000.0), PyBool.False));
+        Assert.Equal(900_000m, 1_000_000m - await BalanceAsync(rig, character));
+        Assert.Equal(away.Id, (await rig.Characters.GetAsync(character))!.StationId);
+
+        // a restart keeps the clones, the place and the charge; the cooldown is still running
+        await rig.RestartAsync();
+        var restarted = Assert.IsAssignableFrom<IService>(rig.Registry.Lookup("jumpCloneSvc"));
+        Assert.Equal(new[] { replacement }, Rows(Field(await BoundAsync(restarted, session, "GetCloneState"), "clones"))
+            .Select(row => ((PyLong)row.Items[0]).Value).ToArray());
+        Assert.Equal(away.Id, (await rig.Characters.GetAsync(character))!.StationId);
+        await Assert.ThrowsAsync<MachoWrappedException>(() => BoundAsync(restarted, session, "CloneJump", new PyLong(rig.Station), new PyLong(replacement), new PyReal(900000.0), PyBool.False));
+
+        // a reset of the cooldown lets it jump back; with no ISK left the jump is refused with NotEnoughMoney and nothing moves
+        await BoundAsync(restarted, session, "ResetLastCloneJumpTime");
+        await FundAsync(rig, character, -(await BalanceAsync(rig, character)));
+        await Assert.ThrowsAsync<MachoWrappedException>(() => BoundAsync(restarted, session, "CloneJump", new PyLong(rig.Station), new PyLong(replacement), new PyReal(900000.0), PyBool.False));
+        Assert.Equal(away.Id, (await rig.Characters.GetAsync(character))!.StationId);
+        Assert.Equal(new[] { replacement }, Rows(Field(await BoundAsync(restarted, session, "GetCloneState"), "clones"))
+            .Select(row => ((PyLong)row.Items[0]).Value).ToArray());
+        Assert.Equal(0m, await BalanceAsync(rig, character));
+    }
+
+    private static async Task<long> GiveItemAsync(CharacterHostRig rig, long characterId, int typeId, long locationId, int flag, bool singleton)
+    {
+        await using var connection = await rig.Source.OpenConnectionAsync();
+        await using var transaction = await connection.BeginTransactionAsync();
+        var id = await new PgItemStore(rig.Source, rig.InventorySchema).CreateAsync(connection, transaction,
+            new NewItem(typeId, characterId, locationId, flag, 1, Singleton: singleton));
+        await transaction.CommitAsync();
+        return id;
+    }
+
+    private static async Task SetShipAsync(CharacterHostRig rig, long characterId, long shipId)
+    {
+        await using var connection = await rig.Source.OpenConnectionAsync();
+        await using var transaction = await connection.BeginTransactionAsync();
+        await rig.Characters.SetShipAsync(connection, transaction, characterId, shipId);
+        await transaction.CommitAsync();
+    }
+
+    private static async Task FundAsync(CharacterHostRig rig, long characterId, decimal amount)
+    {
+        await using var connection = await rig.Source.OpenConnectionAsync();
+        await using var transaction = await connection.BeginTransactionAsync();
+        var wallet = new WalletTransactions(rig.Source, rig.WalletSchema);
+        await wallet.EnsureAsync(connection, transaction, characterId);
+        await wallet.AdjustAsync(connection, transaction, characterId, amount, 0, 10, "test funds", DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(), $"test-funds:{Guid.NewGuid():N}");
+        await transaction.CommitAsync();
+    }
+
+    private static async Task<List<int>> BodyImplantTypesAsync(CharacterHostRig rig, long characterId)
+    {
+        await using var connection = await rig.Source.OpenConnectionAsync();
+        await using var command = new NpgsqlCommand(
+            $"SELECT type_id FROM {rig.InventorySchema}.items WHERE owner_id = $1 AND location_id = $1 AND flag = 89 ORDER BY id", connection);
+        command.Parameters.Add(new NpgsqlParameter { Value = characterId });
+        await using var reader = await command.ExecuteReaderAsync();
+        var types = new List<int>();
+        while (await reader.ReadAsync())
+            types.Add(reader.GetInt32(0));
+        return types;
     }
 
     [PgFact]

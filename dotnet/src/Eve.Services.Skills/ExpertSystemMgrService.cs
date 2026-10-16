@@ -15,7 +15,7 @@ namespace Eve.Services.Skills;
 [Service("expertSystemMgr")]
 public sealed partial class ExpertSystemMgrService(
     ExpertSystems expertSystems, PgSkillStore skills, SkillCatalog skillCatalog, PgItemStore items, NpgsqlDataSource source, CharacterSessions sessions,
-    ICharacterDogmaSync? dogma, Eve.Dogma.DogmaStatic statics)
+    ICharacterDogmaSync? dogma, Eve.Dogma.DogmaStatic statics, Func<long, int, CancellationToken, Task>? writeLapseNotice = null)
 {
     /// <summary>The junk location an item is taken to when it is used up (EveJS tells the client a removed item in location 6).</summary>
     private const long JunkLocation = 6;
@@ -163,6 +163,9 @@ public sealed partial class ExpertSystemMgrService(
             }
             if (removed)
             {
+                // the persistent notice is written whether or not the pilot is online (EveJS notifyExpertSystemExpired)
+                if (writeLapseNotice is not null)
+                    await writeLapseNotice(due.CharacterId, due.TypeId, cancellationToken);
                 await Told(sessions.Of(due.CharacterId), due.CharacterId, null, false, due.TypeId, false, grantsBefore, trainedBefore, cancellationToken, expired: true);
             }
         }

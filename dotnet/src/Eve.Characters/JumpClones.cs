@@ -85,6 +85,69 @@ public sealed class PgJumpCloneStore
         await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
+    /// <summary>
+    /// The clone rows of a jump, inside the caller's transaction. The target clone goes (it becomes the body), and so does the clone at
+    /// the origin, which is replaced by a clone of the body that leaves, with the implants that body wears (the wiki: they stay with the
+    /// old body); a target at the origin keeps its id. The last jump time is set to <paramref name="nowFileTime"/>. Returns the target as
+    /// it was, or null when the character has no such clone.
+    /// </summary>
+    public async Task<InstalledJumpClone?> JumpAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long characterId, long targetCloneId,
+        long originLocationId, IReadOnlyList<(int Slot, int TypeId)> bodyImplants, long nowFileTime, CancellationToken cancellationToken = default)
+    {
+        var clones = await ReadClonesAsync(connection, transaction, characterId, cancellationToken);
+        if (clones.FirstOrDefault(clone => clone.JumpCloneId == targetCloneId) is not { } target)
+        {
+            return null;
+        }
+        var origin = clones.FirstOrDefault(clone => clone.LocationId == originLocationId && clone.JumpCloneId != targetCloneId);
+        foreach (var cloneId in origin is null ? new[] { targetCloneId } : new[] { origin.JumpCloneId, targetCloneId })
+        {
+            await using var delete = new NpgsqlCommand(
+                $"DELETE FROM {_schema}.character_jump_clones WHERE jump_clone_id = $1 AND character_id = $2", connection, transaction)
+            {
+                Parameters = { new() { Value = cloneId }, new() { Value = characterId } },
+            };
+            await delete.ExecuteNonQueryAsync(cancellationToken);
+        }
+
+        var keepId = target.LocationId == originLocationId;
+        await using (var insert = new NpgsqlCommand(
+            $"INSERT INTO {_schema}.character_jump_clones(jump_clone_id, character_id, location_id, location_kind, clone_name) " +
+            "VALUES (COALESCE($1, nextval('" + _schema + ".jump_clone_ids')), $2, $3, $4, $5) RETURNING jump_clone_id", connection, transaction)
+        {
+            Parameters =
+            {
+                new() { Value = keepId ? (object)target.JumpCloneId : DBNull.Value },
+                new() { Value = characterId },
+                new() { Value = originLocationId },
+                new() { Value = "station" },
+                new() { Value = origin?.Name ?? "" },
+            },
+        })
+        {
+            var replacementId = (long)(await insert.ExecuteScalarAsync(cancellationToken))!;
+            foreach (var (slot, typeId) in bodyImplants)
+            {
+                await using var implant = new NpgsqlCommand(
+                    $"INSERT INTO {_schema}.character_jump_clone_implants(jump_clone_id, slot, type_id) VALUES ($1, $2, $3)", connection, transaction)
+                {
+                    Parameters = { new() { Value = replacementId }, new() { Value = (short)slot }, new() { Value = typeId } },
+                };
+                await implant.ExecuteNonQueryAsync(cancellationToken);
+            }
+        }
+
+        await using (var time = new NpgsqlCommand(
+            $"UPDATE {_schema}.characters SET time_last_clone_jump_filetime = $1 WHERE id = $2", connection, transaction)
+        {
+            Parameters = { new() { Value = nowFileTime }, new() { Value = characterId } },
+        })
+        {
+            await time.ExecuteNonQueryAsync(cancellationToken);
+        }
+        return target;
+    }
+
     private async Task<long> ReadLastJumpAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long characterId, CancellationToken cancellationToken)
     {
         await using var command = new NpgsqlCommand(

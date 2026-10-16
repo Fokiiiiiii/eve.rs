@@ -2154,7 +2154,7 @@ private sealed class InSpaceInventory : Eve.Services.Ships.ISpaceContainers
                         Name: Eve.Sde.SdeReader.English(row.Doc.GetProperty("name")),
                         Wormhole: row.Doc.TryGetProperty("wormholeClassID", out var classId)
                             && classId.ValueKind == System.Text.Json.JsonValueKind.Number
-                            && classId.GetInt32() > 0));
+                            && classId.GetInt32() is > 0 and not (7 or 8 or 9)));
                 var systemRows = await sde.ReadAsync("mapSolarSystems");
                 var systems = systemRows.ToDictionary(
                     row => checked((int)row.Key),

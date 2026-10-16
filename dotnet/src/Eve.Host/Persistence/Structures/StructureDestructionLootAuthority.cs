@@ -18,6 +18,15 @@ public sealed class StructureDestructionLootAuthority(
     DogmaStatic statics,
     Func<NpgsqlConnection, NpgsqlTransaction, long, long, long, bool, CancellationToken, Task<Eve.Services.Core.AssetSafetyActionState>> wrapOwner)
 {
+    /// <summary>
+    /// The asset safety wrap of a destruction over a read model that the composition creates later than the timers: the model is read when the destruction runs
+    /// (ST-19: the composition's wiring, which the Host test drives with a real model).
+    /// </summary>
+    public static Func<NpgsqlConnection, NpgsqlTransaction, long, long, long, bool, CancellationToken, Task<Eve.Services.Core.AssetSafetyActionState>> WrapWith(
+        Func<PersistenceStructureAssetSafetyReadModel> readModel) =>
+        (connection, transaction, structureId, solarSystemId, ownerId, corporation, token) =>
+            readModel().WrapDestroyedOwnerAsync(connection, transaction, structureId, solarSystemId, ownerId, corporation, token);
+
     private const int QuantumCoreTypeAttributeId = 3101;
     private const int StructureDeedFlag = 180;
     private const long NeverExpires = long.MaxValue;

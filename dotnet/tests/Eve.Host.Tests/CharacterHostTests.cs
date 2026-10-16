@@ -208,6 +208,24 @@ public sealed class CharacterHostTests
     }
 
     [PgFact]
+    public async Task Skill_bundle_info_answers_the_client_empty_shape_through_the_registry()
+    {
+        await using var rig = await CharacterHostRig.CreateAsync();
+        var character = await rig.CreateCharacterAsync();
+        var sink = new RecordingPacketSink();
+        var session = new ClientSession { CharacterId = character, UserId = 1, Sink = sink };
+        var skills = Assert.IsAssignableFrom<IService>(rig.Registry.Lookup("skillHandler"));
+        Assert.True(skills.HasMethod("GetSkillBundleInfo"));
+
+        // the client unpacks name, icon (eve-logic crate/lootItem.py 87); no bundle data exists, so the label is empty and the icon None
+        var answer = Assert.IsType<PyTuple>(await CallAsync(skills, "GetSkillBundleInfo", session, new PyInt(1)));
+        Assert.Equal(2, answer.Items.Count);
+        Assert.Equal(string.Empty, Assert.IsType<PyWString>(answer.Items[0]).Value);
+        Assert.IsType<PyNone>(answer.Items[1]);
+        Assert.Empty(Notifications(sink));
+    }
+
+    [PgFact]
     public async Task A_multiple_character_training_certificate_is_consumed_for_thirty_days_and_other_items_are_refused()
     {
         await using var rig = await CharacterHostRig.CreateAsync();

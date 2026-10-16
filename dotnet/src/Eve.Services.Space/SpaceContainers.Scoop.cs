@@ -31,7 +31,8 @@ public sealed partial class SpaceContainers
         var type = _statics.Type(item.TypeId)
             ?? throw new InvalidOperationException($"SDE type {item.TypeId} for scoop target {itemId} is missing.");
         var isFittings = StructureUnanchorDrop.IsFittingsContainer(item.TypeId, item.CustomInfo);
-        var isHull = StructureUnanchorDrop.IsHullArtifact(item.CustomInfo) && _statics.CategoryName(type.CategoryId) == "Structure";
+        // a control tower is a starbase, not a structure: its unanchor drop carries the same marker (ST-23)
+        var isHull = StructureUnanchorDrop.IsHullArtifact(item.CustomInfo) && _statics.CategoryName(type.CategoryId) is "Structure" or "Starbase";
         if (!isFittings && !isHull)
         {
             throw MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("Unable to scoop this item.")));

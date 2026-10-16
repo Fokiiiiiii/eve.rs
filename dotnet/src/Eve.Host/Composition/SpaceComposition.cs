@@ -404,6 +404,11 @@ internal sealed partial class CharacterServicesComposition
                 if (context.Event.Json().TryGetProperty("previousLocationId", out var previous) && previous.TryGetInt64(out var previousLocationId))
                     await siteContainerHacks.OnItemLeftAsync(context.Connection, context.Transaction, previousLocationId, token);
             });
+            foundations.Scheduler.Register(Eve.Services.Space.SpaceContainers.ControlTowerFuelJob, async (context, token) =>
+                await spaceContainers.ControlTowerFuelAsync(context.Connection, context.Transaction, context.Payload<Eve.Services.Space.SpaceContainers.ControlTowerFuelDue>()!.DeployableId, context.ScheduledForMs, token));
+            foundations.Scheduler.Register(Eve.Services.Space.SpaceContainers.ControlTowerUnanchorJob, async (context, token) =>
+                await spaceContainers.CompleteControlTowerUnanchorAsync(context.Payload<Eve.Services.Space.SpaceContainers.ControlTowerUnanchorDue>()!.DeployableId, token));
+            spaceSessions.ControlTowerUnanchor = spaceContainers.UnanchorControlTowerAsync;
             foundations.Scheduler.Register(Eve.Services.Space.SpaceContainers.AnchorJob, async (context, token) =>
                 await spaceContainers.AnchorAsync(context.Payload<Eve.Services.Space.SpaceContainers.DisruptorAnchorDue>()!.DeployableId, token));
 foundations.Scheduler.Register(Eve.Services.Space.SpaceContainers.ObservatoryPingJob, async (context, token) =>

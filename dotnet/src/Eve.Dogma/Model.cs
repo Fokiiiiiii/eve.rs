@@ -110,7 +110,7 @@ public sealed record EffectDef(int Id, string Name, int Category, IReadOnlyList<
 public sealed record AttributeDef(int Id, string Name, double DefaultValue, bool Stackable, bool HighIsGood, int DataType, int MaxAttributeId = 0, int MinAttributeId = 0);
 
 /// <summary>A type as dogma sees it: its attributes and the effects it has.</summary>
-public sealed record TypeDef(int TypeId, int GroupId, int CategoryId, IReadOnlyDictionary<int, double> Attributes, IReadOnlyList<int> EffectIds, string Name = "", int GraphicId = 0)
+public sealed record TypeDef(int TypeId, int GroupId, int CategoryId, IReadOnlyDictionary<int, double> Attributes, IReadOnlyList<int> EffectIds, string Name = "", int GraphicId = 0, int RaceId = 0)
 {
     /// <summary>Whether the SDE publishes this type to ordinary clients.</summary>
     public bool Published { get; init; } = true;

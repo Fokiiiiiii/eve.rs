@@ -441,6 +441,9 @@ internal void StartStructureDamageModuleForTest(ulong session, long moduleId, st
     /// <summary>The scanner probes of the ships in space (set by the composition root). A launch or a recall is refused as not wired while there are none.</summary>
     public SpaceProbes? Probes { get; set; }
 
+    /// <summary>The unanchoring of a player control tower by its corporation (posMgr.UnanchorStructure); the host's space composition sets it.</summary>
+    public Func<ClientSession, long, CancellationToken, Task>? ControlTowerUnanchor { get; set; }
+
     /// <summary>The probe scan of the probes in space (set by the composition root): the scanMgr requests answer through it.</summary>
     public SpaceProbeScans? ProbeScans { get; set; }
 

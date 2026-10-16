@@ -250,9 +250,13 @@ public sealed class CharacterHostTests
             Key = $"{character}:{booster}",
             Payload = new Eve.Services.Skills.SkillBoosterLapse.BoosterJob(character, booster),
         });
-        await rig.Scheduler.RunDueAsync();
-        var job = await rig.Scheduler.FindAsync(Eve.Services.Skills.SkillBoosterLapse.JobKind, $"{character}:{booster}");
-        Assert.True(job is null || job.State == "done" || job.State == "completed", $"job state {job?.State}: {job?.LastError}");
+        // the host's runner (Foundations starts it) claims the job when it is scheduled, so this test does not run it: wait, bounded, for the
+        // runner to finish it (a finished job is removed by the scheduler)
+        var deadline = DateTime.UtcNow.AddSeconds(20);
+        Eve.Scheduler.JobInfo? job;
+        while ((job = await rig.Scheduler.FindAsync(Eve.Services.Skills.SkillBoosterLapse.JobKind, $"{character}:{booster}")) is not null && DateTime.UtcNow < deadline)
+            await Task.Delay(50);
+        Assert.True(job is null, $"job state {job?.State}: {job?.LastError}");
         Assert.Equal(0, await ScalarAsync(rig, $"SELECT count(*) FROM {rig.SkillsSchema}.active_skill_boosters WHERE item_id = {booster}"));
         Assert.Equal(0, await ScalarAsync(rig, $"SELECT count(*) FROM {rig.InventorySchema}.items WHERE id = {booster}"));
         Assert.Contains("OnServerBoostersChanged", Notifications(sink).Select(n => n.Name));

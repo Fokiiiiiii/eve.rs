@@ -2777,8 +2777,15 @@ fn a_docked_controller_observes_the_real_structure_and_is_released_when_it_is_re
         )),
         "STRUCTURE_NOT_FOUND"
     );
-    let attached =
-        scene.control_structure(SESSION, scene.solar_system_id(), STRUCTURE, spec().character_id, true, 1, NOON);
+    let attached = scene.control_structure(
+        SESSION,
+        scene.solar_system_id(),
+        STRUCTURE,
+        spec().character_id,
+        true,
+        1,
+        NOON,
+    );
     assert!(attached.iter().any(|out| matches!(out,
         Out::Accepted { session, command: crate::link::COMMAND_STRUCTURE_CONTROL, .. } if *session == SESSION)));
     assert!(!scene.pilots.contains_key(&SESSION), "a docked observer needs no flying pilot");
@@ -2827,8 +2834,15 @@ fn boarding_a_structure_preserves_the_physical_ship_and_release_rebinds_it() {
     let placement = structure_placement(&scene, NOON);
     scene.place_structure(placement, NOON);
 
-    let attached =
-        scene.control_structure(SESSION, scene.solar_system_id(), STRUCTURE, spec().character_id, true, 1, NOON);
+    let attached = scene.control_structure(
+        SESSION,
+        scene.solar_system_id(),
+        STRUCTURE,
+        spec().character_id,
+        true,
+        1,
+        NOON,
+    );
     assert!(attached.iter().any(|out| matches!(out,
         Out::Accepted { session, command: crate::link::COMMAND_STRUCTURE_CONTROL, .. } if *session == SESSION)));
     assert!(!scene.pilots.contains_key(&SESSION));
@@ -2869,7 +2883,8 @@ fn a_structure_controller_survives_destruction_of_the_ship_it_left() {
     assert!(!scene.pilots.contains_key(&fake_session));
     assert!(!scene.unpiloted.contains_key(&ship_id));
 
-    let detached = scene.control_structure(SESSION, scene.solar_system_id(), 0, 0, false, 2, NOON + 2 * SECOND);
+    let detached =
+        scene.control_structure(SESSION, scene.solar_system_id(), 0, 0, false, 2, NOON + 2 * SECOND);
     assert!(detached.iter().any(|out| matches!(out,
         Out::Accepted { session, command: crate::link::COMMAND_STRUCTURE_CONTROL, .. } if *session == SESSION)));
     assert!(scene.controlled_structure_id(SESSION).is_none());

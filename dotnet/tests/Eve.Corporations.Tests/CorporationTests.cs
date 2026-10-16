@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Eve.Sde;
 using Eve.Wallet;
 
 namespace Eve.Corporations.Tests;
@@ -206,6 +207,53 @@ public class CorporationTests
         }
     }
 
+
+    [PgFact]
+    public async Task Accepted_application_and_leaving_move_the_corporation_membership_relation_at_runtime()
+    {
+        // the Host wires the membership writer in AllianceApplicationDueWorker.RegisterAsync; the relation is what the sessions read
+        await using var rig = await Rig.CreateAsync();
+        var suffix = Guid.NewGuid().ToString("N")[..12];
+        var schedulerSchema = "corp_join_sched_" + suffix;
+        var eventsSchema = "corp_join_events_" + suffix;
+        var relationsSchema = "corp_join_relations_" + suffix;
+        try
+        {
+            await Eve.Scheduler.DurableScheduler.MigrateAsync(rig.Source, schedulerSchema);
+            await Eve.Events.EventBus.MigrateAsync(rig.Source, eventsSchema);
+            await Eve.Relations.RelationStore.MigrateAsync(rig.Source, relationsSchema);
+            var scheduler = new Eve.Scheduler.DurableScheduler(rig.Source, () => rig.Now, schema: schedulerSchema);
+            var events = new Eve.Events.EventBus(rig.Source, scheduler, schema: eventsSchema);
+            var relations = new Eve.Relations.RelationStore(rig.Source, scheduler, events, relationsSchema);
+            var worker = new Eve.Services.Corporations.AllianceApplicationDueWorker(
+                rig.Store, rig.Characters, scheduler, relations, events, (_, _) => Task.CompletedTask);
+            rig.Store.AllianceAffiliationWriter = worker.WriteAffiliationAsync;
+            await worker.RegisterAsync();
+            await rig.Store.SeedNpcAsync(new SdeReader(rig.Source));
+            var npc = (await rig.Store.GetAsync(1000044))!;
+            var founder = await rig.CharacterAsync("Relation Founder");
+            var member = await rig.CharacterAsync("Relation Member");
+            var corporation = await rig.Store.CreateAsync(founder, new("Relation Works", "RELW", "", "", 0.05m), "relation-foundation");
+
+            var application = await rig.Store.ApplyAsync(member, corporation.Id, "Join");
+            await rig.Store.RespondAsync(founder, application, 6, "Join", "");
+            await rig.Store.RespondAsync(member, application, 2, "Join", "");
+
+            var joined = Assert.Single(await relations.FromAsync(Eve.Relations.RelationKinds.CorporationMember.Name, member));
+            Assert.Equal(corporation.Id, joined.Object);
+            await rig.Store.LeaveAsync(member, npc.Id);
+            var left = Assert.Single(await relations.FromAsync(Eve.Relations.RelationKinds.CorporationMember.Name, member));
+            Assert.Equal(npc.Id, left.Object);
+        }
+        finally
+        {
+            foreach (var schema in new[] { schedulerSchema, eventsSchema, relationsSchema })
+            {
+                await using var command = rig.Source.CreateCommand($"DROP SCHEMA IF EXISTS {schema} CASCADE");
+                await command.ExecuteNonQueryAsync();
+            }
+        }
+    }
 
     [PgFact]
     public async Task Character_affiliation_scan_returns_bounded_npc_and_player_pages()
@@ -418,12 +466,56 @@ public sealed class CorporationOfficeTests
         var quote = await service.GetImpoundReleasePrice(Call("GetImpoundReleasePrice", actor, corporation.Id));
         Assert.Equal(expectedFee, (decimal)Assert.IsType<Eve.Marshal.PyReal>(quote).Value);
         var before = (await rig.Wallets.GetAsync(corporation.Id))!.Isk;
+        var ownerBefore = (await rig.Wallets.GetAsync(Station.OwnerId))?.Isk ?? 0m;
 
         await service.GetItemsFromImpound(Call("GetItemsFromImpound", actor, corporation.Id,
             new Eve.Marshal.PyReal((double)expectedFee)));
 
         Assert.Equal(before - expectedFee, (await rig.Wallets.GetAsync(corporation.Id))!.Isk);
+        Assert.Equal(ownerBefore + expectedFee, (await rig.Wallets.GetAsync(Station.OwnerId))!.Isk);
         Assert.Equal(Eve.Inventory.ItemFlags.CorpSAG1, (await rig.Items.GetAsync(itemId))!.Flag);
+    }
+
+    [PgFact]
+    public async Task Station_rent_is_credited_to_the_station_owner_and_the_office_is_due_later()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var (actor, corporation) = await CreateCorporationAsync(rig);
+        await SetOfficeRoleAsync(rig, actor, CorporationRoles.RentOffice);
+        var service = CreateService(rig);
+        var quote = await QuoteAsync(service, actor, corporation.Id);
+        var ownerBefore = (await rig.Wallets.GetAsync(Station.OwnerId))?.Isk ?? 0m;
+
+        await service.RentOffice(Call("RentOffice", actor, corporation.Id, new Eve.Marshal.PyReal((double)quote)));
+
+        Assert.Equal(ownerBefore + quote, (await rig.Wallets.GetAsync(Station.OwnerId))!.Isk);
+        var office = Assert.Single(await rig.OfficeStore.ForCorporationAsync(corporation.Id));
+        await using var bill = rig.Source.CreateCommand(
+            $"SELECT creditor_id FROM {rig.CorporationSchema}.office_rent_bills WHERE office_id=$1 AND status=0");
+        bill.Parameters.Add(new Npgsql.NpgsqlParameter { Value = office.OfficeId });
+        Assert.Equal(Station.OwnerId, await bill.ExecuteScalarAsync());
+    }
+
+    [PgFact]
+    public async Task Unpaid_station_office_is_impounded_with_its_hangar_items_and_ends()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var (actor, corporation) = await CreateCorporationAsync(rig);
+        await SetOfficeRoleAsync(rig, actor, CorporationRoles.RentOffice);
+        var service = CreateService(rig);
+        var quote = await QuoteAsync(service, actor, corporation.Id);
+        await service.RentOffice(Call("RentOffice", actor, corporation.Id, new Eve.Marshal.PyReal((double)quote)));
+        var office = Assert.Single(await rig.OfficeStore.ForCorporationAsync(corporation.Id));
+        var itemId = await CreateItemAsync(rig, corporation.Id, Station.Id, Eve.Inventory.ItemFlags.CorpSAG1);
+
+        await using var connection = await rig.Source.OpenConnectionAsync();
+        await using var transaction = await connection.BeginTransactionAsync();
+        await Eve.Services.Corporations.StationOfficeImpound.ImpoundAsync(rig.Items, rig.OfficeStore, connection, transaction, office, rig.Now, CancellationToken.None);
+        await transaction.CommitAsync();
+
+        Assert.Equal(CorporationOfficeStore.ImpoundedFlag, (await rig.Items.GetAsync(itemId))!.Flag);
+        Assert.Empty(await rig.OfficeStore.ForCorporationAsync(corporation.Id));
+        Assert.Null(await rig.Items.GetAsync(office.OfficeFolderId));
     }
 
     [PgFact]

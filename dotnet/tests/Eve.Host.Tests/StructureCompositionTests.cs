@@ -665,6 +665,12 @@ public sealed class StructureCompositionTests : IAsyncLifetime
         await cache.LoadAsync("sovereignty");
         Assert.True(cache.Write("sovereignty", "/", new JsonObject
         {
+            // an active skyhook of the system gives the workforce the upgrade draws (ST-17 c: the online state is derived from the budget)
+            ["skyhooks"] = new JsonObject
+            {
+                ["1"] = new JsonObject { ["skyhookID"] = 1, ["typeID"] = 81080, ["solarSystemID"] = Jita, ["planetID"] = 40_000_001, ["corporationID"] = 1,
+                    ["productionActive"] = true, ["workforce"] = 5_000 },
+            },
             ["systems"] = new JsonObject
             {
                 [Jita.ToString(System.Globalization.CultureInfo.InvariantCulture)] = new JsonObject

@@ -224,8 +224,15 @@ public interface ISimulation
     /// <summary>Puts a Mobile Cynosural Beacon in space where its pilot dropped it, anchored or not (protocol 58).</summary>
     void PlaceCynoBeacon(SimPlaceCynoBeacon beacon);
 
+    /// <summary>Puts a Mobile Observatory in space where its pilot dropped it, anchored or not (protocol 72).</summary>
+    void PlaceObservatory(SimPlaceObservatory observatory);
+    void PlaceControlTower(SimPlaceControlTower tower);
+
     /// <summary>Removes the structure-owned cyno beacon from a specific solar-system scene.</summary>
     void RemoveCynoBeacon(int solarSystemId, long structureBeaconId);
+
+    /// <summary>A Mobile Observatory pings its system (protocol 72): the cloaked ships there may be decloaked.</summary>
+    void RemoteDecloakPing(int solarSystemId, long observatoryId);
 
     /// <summary>Destroys a ship: the explosion, the wreck (for <paramref name="credit"/> to loot), and (for a player's ship) a <see cref="SimDestroyed"/> that comes back through <see cref="Received"/>.</summary>
     void Destroy(long shipId, SimCredit credit);

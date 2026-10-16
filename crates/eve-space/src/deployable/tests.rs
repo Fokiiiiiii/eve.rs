@@ -364,6 +364,41 @@ fn an_anchored_cynosural_inhibitor_stops_a_field_within_200_km_but_not_a_covert_
     assert!(accepted(&covert), "{covert:?}");
 }
 
+/// A player control tower (protocol 73): the host puts it in space where it lies, unanchored until the host anchors it, given once; it stops no field.
+#[test]
+fn a_control_tower_is_in_space_unanchored_until_the_host_anchors_it_and_stops_no_field() {
+    let tower = |system: i32, a: eve_destiny::Vec3, active: bool| crate::link::DisruptorPlacement {
+        deployable_id: 990_000_000_300,
+        solar_system_id: system,
+        name: "Amarr Control Tower".to_string(),
+        type_id: 12_235,
+        group_id: 365,
+        position: [a.x + 50_000.0, a.y, a.z],
+        radius: 3_394.0,
+        range: 0.0,
+        active,
+        owner_id: 4_242,
+        corporation_id: 0,
+        alliance_id: 0,
+        ship_id: 0,
+    };
+    let field = |charge_type_id: i32| Action::CynoField {
+        ball: Spec { charge_type_id, group_id: 2_020, name: "Cynosural Field".to_string(), radius: 250.0 },
+        lifetime_ms: 600_000.0,
+    };
+    let (mut scene, t) = crowd();
+    let (a, system) = (scene.pilots[&A].ship.position, scene.solar_system_id());
+    scene.place_control_tower(tower(system, a, false), t);
+    scene.place_control_tower(tower(system, a, true), t);
+    let role = |scene: &Scene| scene.deployables[&990_000_000_300].role.clone();
+    assert_eq!(role(&scene), Role::ControlTower { active: false }, "given once: the first placement stands");
+
+    scene.set_disruptor_active(990_000_000_300, true);
+    assert_eq!(role(&scene), Role::ControlTower { active: true });
+    let lit = scene.activate(A, module(MODULE, field(21_094), 20_000.0), t);
+    assert!(accepted(&lit), "a control tower stops no field: {lit:?}");
+}
+
 /// Pochven (SDE region 10000070) is a region-wide cynosural jammer: no field lights there, a covert or an industrial one neither (the wiki, "Pochven":
 /// "stops anyone from lighting a cyno"), and the same field lights in a system of another region. Each scene is made anew from its system, as a restarted
 /// simulation makes it: the region is the static data's and nothing of the refusal is kept.
@@ -869,7 +904,7 @@ fn a_strike_with_no_beacon_puts_nothing_in_space() {
     assert!(scene.deployables.is_empty());
 }
 
-    #[test]
+#[test]
 
 fn a_cyno_beacon_removal_is_scoped_to_system_and_beacon_id() {
     let (mut scene, t) = crowd();

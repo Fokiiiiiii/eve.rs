@@ -771,6 +771,7 @@ public class ModuleEffectsTests
 
         // pending handlers (refusals) are not coverage, so their effects stay in currentSdeGaps; the built ones (the command bursts, P.A.N.I.C.,
         // the data and relic analyzers, hackOrbital, scanStrength) have left the manifest
+        // the burst projectors' families are handled on structures (StructureBurstEffects.cs) and on ships (ShipBurstProjectorEffect.cs, ST-17 d)
         var handledNames = Eve.Services.Space.Effects.ModuleEffects.Default.ImplementedNames
             .Concat(["missileLaunching", "torpedoLaunching"])
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
@@ -779,13 +780,6 @@ public class ModuleEffectsTests
         [
             "barrage",
             "cloneRespawnBay",
-            "doomsdayAOEBubble",
-            "doomsdayAOEDamp",
-            "doomsdayAOEECM",
-            "doomsdayAOENeut",
-            "doomsdayAOEPaint",
-            "doomsdayAOETrack",
-            "doomsdayAOEWeb",
             "microJumpPortalDrive",
             "microJumpPortalDriveCapital",
             "moduleTitanEffectGenerator",

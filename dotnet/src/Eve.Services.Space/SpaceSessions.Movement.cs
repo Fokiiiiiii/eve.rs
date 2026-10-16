@@ -260,6 +260,8 @@ public sealed partial class SpaceSessions
             throw JumpRefused(reply.Reason);
         }
         // leaving a restricted system ends its emanation lock; entering one through a gate locks the pilot to the gate it arrived by (the wiki)
+        // EVE.js jumpSessionViaStargate: the contraband of the ship is inspected in the system it arrives in
+        await ApplyContrabandAsync(session, pilot.CharacterId, pilot.ShipId, destination, cancellationToken);
         _emanationLocks.Left(pilot.CharacterId, pilot.SolarSystemId);
         if (GateRules?.DestinationOf(gateId) is { } arrivalGate)
         {

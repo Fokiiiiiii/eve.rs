@@ -26,16 +26,18 @@ public sealed class MoonRigReadModelTests
     {
         private readonly string _schema;
 
-        private Fixture(NpgsqlDataSource source, string schema, PgItemStore items, MoonRigReadModel readModel)
+        private Fixture(NpgsqlDataSource source, string schema, PgItemStore items, StructureStore structures, MoonRigReadModel readModel)
         {
             Source = source;
             _schema = schema;
             Items = items;
+            Structures = structures;
             ReadModel = readModel;
         }
 
         public NpgsqlDataSource Source { get; }
         public PgItemStore Items { get; }
+        public StructureStore Structures { get; }
         public MoonRigReadModel ReadModel { get; }
 
         public static async Task<Fixture> CreateAsync()
@@ -49,8 +51,10 @@ public sealed class MoonRigReadModelTests
             var rules = await MoonRulesSource.LoadAsync(sde);
             var schema = "moon_rig_" + Guid.NewGuid().ToString("N")[..12];
             await PgItemStore.MigrateAsync(source, schema);
+            await StructureStore.MigrateAsync(source, schema + "_s");
             var items = new PgItemStore(source, schema);
-            return new Fixture(source, schema, items, new MoonRigReadModel(items, dogma, rules));
+            var structures = new StructureStore(source, schema + "_s");
+            return new Fixture(source, schema, items, structures, new MoonRigReadModel(items, dogma, rules, structures));
         }
 
         public async Task<long> CreateStructureAsync(int structureTypeId = AthanorTypeId, params FittedItem[] fittings)
@@ -59,6 +63,8 @@ public sealed class MoonRigReadModelTests
             await using var transaction = await connection.BeginTransactionAsync();
             var structureId = await Items.CreateAsync(connection, transaction,
                 new NewItem(structureTypeId, Corporation, SystemId, 0, 1, true));
+            await Structures.CreateAsync(connection, transaction,
+                new NewStructure(structureId, structureTypeId, (int)SystemId, 0, 0, 0, 0, Corporation, 0, "Refinery", ""));
             foreach (var fitting in fittings)
                 await Items.CreateAsync(connection, transaction,
                     new NewItem(fitting.TypeId, fitting.OwnerId, structureId, fitting.Flag, 1, true));
@@ -78,8 +84,12 @@ public sealed class MoonRigReadModelTests
         public async ValueTask DisposeAsync()
         {
             await using (var connection = await Source.OpenConnectionAsync())
-            await using (var command = new NpgsqlCommand($"DROP SCHEMA IF EXISTS {_schema} CASCADE", connection))
-                await command.ExecuteNonQueryAsync();
+            {
+                await using (var command = new NpgsqlCommand($"DROP SCHEMA IF EXISTS {_schema} CASCADE", connection))
+                    await command.ExecuteNonQueryAsync();
+                await using (var command = new NpgsqlCommand($"DROP SCHEMA IF EXISTS {_schema}_s CASCADE", connection))
+                    await command.ExecuteNonQueryAsync();
+            }
             await Source.DisposeAsync();
         }
     }

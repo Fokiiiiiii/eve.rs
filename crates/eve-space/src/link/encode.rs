@@ -333,7 +333,10 @@ pub(super) fn put_turret(out: &mut Vec<u8>, turret: &Turret) {
             match arc.damage_loss_target {
                 None => out.push(0),
                 Some(damage_loss_target) => {
-                    assert!(damage_loss_target.is_finite() && damage_loss_target >= 0.0, "invalid arc damage loss target");
+                    assert!(
+                        damage_loss_target.is_finite() && damage_loss_target >= 0.0,
+                        "invalid arc damage loss target"
+                    );
                     out.push(1);
                     out.extend_from_slice(&damage_loss_target.to_le_bytes());
                 }
@@ -678,97 +681,113 @@ pub(super) fn put_action(out: &mut Vec<u8>, action: &Action) {
             out.push(11);
             out.extend_from_slice(&range.to_le_bytes());
         }
+        Action::StructureBurst { range, duration_ms, what } => {
+            out.push(32);
+            out.extend_from_slice(&range.to_le_bytes());
+            out.extend_from_slice(&duration_ms.to_le_bytes());
+            put_remote_what(out, what);
+        }
         Action::Remote { what, reach, when, jam } => {
             out.push(1);
             out.push(when_byte(when));
             out.extend_from_slice(&reach.optimal.to_le_bytes());
             out.extend_from_slice(&reach.falloff.to_le_bytes());
             put_text(out, jam);
-            match what {
-                Remote::Repair { layer, amount } => {
-                    out.push(0);
-                    out.push(layer_byte(layer));
-                    out.extend_from_slice(&amount.to_le_bytes());
-                }
-                Remote::MutadaptiveRepair { layer, amount, bonus_per_cycle, bonus_max } => {
-                    out.push(11);
-                    out.push(layer_byte(layer));
-                    out.extend_from_slice(&amount.to_le_bytes());
-                    out.extend_from_slice(&bonus_per_cycle.to_le_bytes());
-                    out.extend_from_slice(&bonus_max.to_le_bytes());
-                }
-                Remote::Transfer { amount } => {
-                    out.push(1);
-                    out.extend_from_slice(&amount.to_le_bytes());
-                }
-                Remote::Neutralize { amount, signature_resolution } => {
-                    out.push(2);
-                    out.extend_from_slice(&amount.to_le_bytes());
-                    out.extend_from_slice(&signature_resolution.to_le_bytes());
-                }
-                Remote::Drain { amount, signature_resolution } => {
-                    out.push(3);
-                    out.extend_from_slice(&amount.to_le_bytes());
-                    out.extend_from_slice(&signature_resolution.to_le_bytes());
-                }
-                Remote::Web { percent } => {
-                    out.push(4);
-                    out.extend_from_slice(&percent.to_le_bytes());
-                }
-                Remote::Paint { percent } => {
-                    out.push(5);
-                    out.extend_from_slice(&percent.to_le_bytes());
-                }
-                Remote::Damp {
-                    range_percent,
-                    resolution_percent,
-                    gravimetric_percent,
-                    ladar_percent,
-                    magnetometric_percent,
-                    radar_percent,
-                } => {
-                    out.push(6);
-                    out.extend_from_slice(&range_percent.to_le_bytes());
-                    out.extend_from_slice(&resolution_percent.to_le_bytes());
-                    out.extend_from_slice(&gravimetric_percent.to_le_bytes());
-                    out.extend_from_slice(&ladar_percent.to_le_bytes());
-                    out.extend_from_slice(&magnetometric_percent.to_le_bytes());
-                    out.extend_from_slice(&radar_percent.to_le_bytes());
-                }
-                Remote::Scramble { strength, blocks_mwd } => {
-                    out.push(7);
-                    out.extend_from_slice(&strength.to_le_bytes());
-                    out.push(u8::from(*blocks_mwd));
-                }
-                Remote::Tackle { strength, web_percent } => {
-                    out.push(12);
-                    out.extend_from_slice(&strength.to_le_bytes());
-                    out.extend_from_slice(&web_percent.to_le_bytes());
-                }
-                Remote::Disrupt { range_percent, falloff_percent, tracking_percent } => {
-                    out.push(9);
-                    out.extend_from_slice(&range_percent.to_le_bytes());
-                    out.extend_from_slice(&falloff_percent.to_le_bytes());
-                    out.extend_from_slice(&tracking_percent.to_le_bytes());
-                }
-                Remote::GuidanceDisrupt {
-                    velocity_percent,
-                    delay_percent,
-                    aoe_velocity_percent,
-                    aoe_cloud_percent,
-                } => {
-                    out.push(10);
-                    out.extend_from_slice(&velocity_percent.to_le_bytes());
-                    out.extend_from_slice(&delay_percent.to_le_bytes());
-                    out.extend_from_slice(&aoe_velocity_percent.to_le_bytes());
-                    out.extend_from_slice(&aoe_cloud_percent.to_le_bytes());
-                }
-                Remote::Jam { strength } => {
-                    out.push(8);
-                    for number in strength {
-                        out.extend_from_slice(&number.to_le_bytes());
-                    }
-                }
+            put_remote_what(out, what);
+        }
+    }
+}
+
+/// The kind and numbers of a remote effect as the remote action carries them (and a structure burst, tag 32).
+fn put_remote_what(out: &mut Vec<u8>, what: &Remote) {
+    let layer_byte = |layer: &Layer| match layer {
+        Layer::Shield => 0,
+        Layer::Armor => 1,
+        Layer::Structure => 2,
+    };
+    match what {
+        Remote::Repair { layer, amount } => {
+            out.push(0);
+            out.push(layer_byte(layer));
+            out.extend_from_slice(&amount.to_le_bytes());
+        }
+        Remote::MutadaptiveRepair { layer, amount, bonus_per_cycle, bonus_max } => {
+            out.push(11);
+            out.push(layer_byte(layer));
+            out.extend_from_slice(&amount.to_le_bytes());
+            out.extend_from_slice(&bonus_per_cycle.to_le_bytes());
+            out.extend_from_slice(&bonus_max.to_le_bytes());
+        }
+        Remote::Transfer { amount } => {
+            out.push(1);
+            out.extend_from_slice(&amount.to_le_bytes());
+        }
+        Remote::Neutralize { amount, signature_resolution } => {
+            out.push(2);
+            out.extend_from_slice(&amount.to_le_bytes());
+            out.extend_from_slice(&signature_resolution.to_le_bytes());
+        }
+        Remote::Drain { amount, signature_resolution } => {
+            out.push(3);
+            out.extend_from_slice(&amount.to_le_bytes());
+            out.extend_from_slice(&signature_resolution.to_le_bytes());
+        }
+        Remote::Web { percent } => {
+            out.push(4);
+            out.extend_from_slice(&percent.to_le_bytes());
+        }
+        Remote::Paint { percent } => {
+            out.push(5);
+            out.extend_from_slice(&percent.to_le_bytes());
+        }
+        Remote::Damp {
+            range_percent,
+            resolution_percent,
+            gravimetric_percent,
+            ladar_percent,
+            magnetometric_percent,
+            radar_percent,
+        } => {
+            out.push(6);
+            out.extend_from_slice(&range_percent.to_le_bytes());
+            out.extend_from_slice(&resolution_percent.to_le_bytes());
+            out.extend_from_slice(&gravimetric_percent.to_le_bytes());
+            out.extend_from_slice(&ladar_percent.to_le_bytes());
+            out.extend_from_slice(&magnetometric_percent.to_le_bytes());
+            out.extend_from_slice(&radar_percent.to_le_bytes());
+        }
+        Remote::Scramble { strength, blocks_mwd } => {
+            out.push(7);
+            out.extend_from_slice(&strength.to_le_bytes());
+            out.push(u8::from(*blocks_mwd));
+        }
+        Remote::Tackle { strength, web_percent } => {
+            out.push(12);
+            out.extend_from_slice(&strength.to_le_bytes());
+            out.extend_from_slice(&web_percent.to_le_bytes());
+        }
+        Remote::Disrupt { range_percent, falloff_percent, tracking_percent } => {
+            out.push(9);
+            out.extend_from_slice(&range_percent.to_le_bytes());
+            out.extend_from_slice(&falloff_percent.to_le_bytes());
+            out.extend_from_slice(&tracking_percent.to_le_bytes());
+        }
+        Remote::GuidanceDisrupt {
+            velocity_percent,
+            delay_percent,
+            aoe_velocity_percent,
+            aoe_cloud_percent,
+        } => {
+            out.push(10);
+            out.extend_from_slice(&velocity_percent.to_le_bytes());
+            out.extend_from_slice(&delay_percent.to_le_bytes());
+            out.extend_from_slice(&aoe_velocity_percent.to_le_bytes());
+            out.extend_from_slice(&aoe_cloud_percent.to_le_bytes());
+        }
+        Remote::Jam { strength } => {
+            out.push(8);
+            for number in strength {
+                out.extend_from_slice(&number.to_le_bytes());
             }
         }
     }

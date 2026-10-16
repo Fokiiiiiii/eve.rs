@@ -1,5 +1,6 @@
 # Build output
 /target/
+/target-*/
 **/*.rs.bk
 
 # Local caches and client-derived output

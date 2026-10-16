@@ -168,6 +168,36 @@ public sealed partial class SpaceContainers
         }
     }
 
+    /// <summary>
+    /// An entosis link's cycle with its hub in reach (the simulation checked the lock and the reach): the pilot must still be in the system, in an alliance, and
+    /// the capture service settles the hub. Its answer is the cycle's answer; a refusal by name ends the link.
+    /// </summary>
+    private async Task<WorkOutcome> SettleEntosisAsync(WorkCycle cycle)
+    {
+        if (EntosisCaptures is null)
+        {
+            return WorkOutcome.Refuse("ENTOSIS_NOT_WIRED");
+        }
+        var session = _space.ClientSessionOf(cycle.SessionId);
+        if (session is null || session.CharacterId != cycle.CharacterId || !_space.IsInSpace(session) || _space.SolarSystemOf(session) != cycle.SolarSystemId)
+        {
+            return WorkOutcome.Refuse("NO_PILOT");
+        }
+        var allianceId = session.GetInt("allianceid") ?? 0;
+        if (allianceId <= 0)
+        {
+            return WorkOutcome.Refuse("ALLIANCE_MEMBERSHIP_REQUIRED");
+        }
+        var corporationId = session.GetInt("corpid") ?? 0;
+        if (corporationId <= 0)
+        {
+            return WorkOutcome.Refuse("NO_PILOT");
+        }
+        var settled = await EntosisCaptures.SettleCycleAsync(
+            cycle.OwnerId, cycle.CharacterId, corporationId, allianceId, cycle.TargetId, cycle.SolarSystemId, CancellationToken.None);
+        return settled.Accepted ? new WorkOutcome(true, "") : WorkOutcome.Refuse(settled.Reason);
+    }
+
     /// <summary>The checks and the settlement of one work cycle: the owner must be the pilot's (a drone flown, or a module that runs), the target there, in reach.</summary>
     private async Task<WorkOutcome> SettleWorkCycleAsync(WorkCycle cycle)
     {
@@ -185,10 +215,10 @@ public sealed partial class SpaceContainers
         {
             return await SettleScanAsync(cycle);
         }
-        // an entosis link's cycle: the capture of its hub is not settled yet (ST-9 c); refused by name, so the link ends rather than counting a capture
+        // an entosis link's cycle moves the capture of its hub to now (ST-9 c, EntosisCaptureService; durable, in its own transaction)
         if (cycle.IsModule && cycle.Command == SimModuleWorkCommands.Entosis)
         {
-            return WorkOutcome.Refuse("ENTOSIS_CAPTURE_NOT_SETTLED");
+            return await SettleEntosisAsync(cycle);
         }
         if (cycle.Command is not (SimDroneCommands.MineRepeatedly or SimDroneCommands.Salvage))
         {

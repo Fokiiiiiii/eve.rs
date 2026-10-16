@@ -207,15 +207,25 @@ internal sealed partial class CharacterServicesComposition
         }
     }
 
+    /// <summary>The notifications mailbox, shared with the corporation office jobs (ST-16: rent due and eviction notices).</summary>
+    private Eve.Host.Persistence.Mail.PersistenceTransactionMailbox? notificationMailbox;
+
     private void SubscribeMoonOwnerNotifications()
     {
         var mailbox = new Eve.Host.Persistence.Mail.PersistenceTransactionMailbox(
             source, mailStore, mailCache, mailStoreOwner, mailSendWriter.MutationGate, now,
             (characterId, args) => characterSessions.Of(characterId)?.SendNotification("OnNotificationReceived", "clientID", args));
+        notificationMailbox = mailbox;
         new Eve.Host.Persistence.Structures.MoonOwnerNotifications(
             source, structureStore, moonExtractionStore, characters, mailbox).Subscribe(foundations.Events);
         new Eve.Host.Persistence.Structures.ReinforcementChangedNotifications(characters, mailbox)
             .Subscribe(foundations.Events);
+        new Eve.Host.Persistence.Sovereignty.EntosisOwnerNotifications(
+            async (allianceId, ct) => (await corporations.AllianceMembersAsync(allianceId, ct)).Select(member => member.CorporationId).ToArray(),
+            characters, mailbox).Subscribe(foundations.Events);
+        sovClaimNotifications = new Eve.Host.Persistence.Sovereignty.SovereigntyClaimNotifications(
+            async (allianceId, ct) => (await corporations.AllianceMembersAsync(allianceId, ct)).Select(member => member.CorporationId).ToArray(),
+            characters, mailbox);
         new Eve.Host.Persistence.Structures.StructureFuelOwnerNotifications(structureStore, characters, characterSessions, dogma,
             Eve.Host.Persistence.Structures.StructureFuelOwnerNotifications.ToMailbox(mailbox))
             .Subscribe(foundations.Events);

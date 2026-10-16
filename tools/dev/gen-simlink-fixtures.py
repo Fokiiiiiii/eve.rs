@@ -21,19 +21,19 @@ KINDS = {"Hello": 1, "HelloAck": 2, "Enter": 3, "Leave": 4, "Bind": 5, "UpdateSt
          "EcmBurst": 67, "PlaceDisruptor": 68, "SetDisruptorActive": 69, "PlaceInhibitor": 70, "ScanTargets": 71, "DirectionalTargets": 72,
          "PlaceCynoBeacon": 73, "PlaceStructure": 74, "RemoveStructure": 75, "SetStructureState": 76, "StructureDamaged": 77,
          "PlaceAnalysisBeacon": 78, "SetAnalysisBeaconState": 79, "TetherPolicy": 80, "TetherChanged": 81,
-         "PlaceWormhole": 82, "RemoveWormhole": 83, "ControlStructure": 84, "StructureDamageCandidatesRequest": 85, "StructureDamageCandidatesResult": 86, "RemoveCynoBeacon": 87, "DamageableEntityUpserted": 88, "DamageableEntityRemoved": 89,
-         "EnsureAbyssalScene": 90, "EnsureAbyssalSceneReply": 91, "MoveAbyssalParticipant": 92, "MoveAbyssalParticipantReply": 93,
-         "RebindAbyssalSession": 94, "RebindAbyssalSessionReply": 95,
-         "RemoveAbyssalScene": 96, "RemoveAbyssalSceneReply": 97,
-         "EnsureAbyssalTracePublished": 98, "EnsureAbyssalTracePublishedReply": 99,
-         "RemoveAbyssalTrace": 100, "RemoveAbyssalTraceReply": 101,
-         "RemoveAbyssalParticipant": 102, "RemoveAbyssalParticipantReply": 103,
-         "GetAbyssalParticipantPose": 104, "GetAbyssalParticipantPoseReply": 105,
-         "EnsureAbyssalSceneObject": 106, "EnsureAbyssalSceneObjectReply": 107,
-         "EnsureAbyssalRewardCache": 108, "EnsureAbyssalRewardCacheReply": 109,
-         "EnsureAbyssalLootContainer": 110, "EnsureAbyssalLootContainerReply": 111,
-         "EnsureAbyssalEnvironmentObject": 112, "EnsureAbyssalEnvironmentObjectReply": 113,
-         "AbyssalFieldMembership": 114, "RefreshAbyssalNpc": 115, "RefreshAbyssalNpcReply": 116}
+         "PlaceObservatory": 90, "RemoteDecloakPing": 91, "PlaceControlTower": 92, "PlaceWormhole": 82, "RemoveWormhole": 83, "ControlStructure": 84, "StructureDamageCandidatesRequest": 85, "StructureDamageCandidatesResult": 86, "RemoveCynoBeacon": 87, "DamageableEntityUpserted": 88, "DamageableEntityRemoved": 89,
+         "EnsureAbyssalScene": 93, "EnsureAbyssalSceneReply": 94, "MoveAbyssalParticipant": 95, "MoveAbyssalParticipantReply": 96,
+         "RebindAbyssalSession": 97, "RebindAbyssalSessionReply": 98,
+         "RemoveAbyssalScene": 99, "RemoveAbyssalSceneReply": 100,
+         "EnsureAbyssalTracePublished": 101, "EnsureAbyssalTracePublishedReply": 102,
+         "RemoveAbyssalTrace": 103, "RemoveAbyssalTraceReply": 104,
+         "RemoveAbyssalParticipant": 105, "RemoveAbyssalParticipantReply": 106,
+         "GetAbyssalParticipantPose": 107, "GetAbyssalParticipantPoseReply": 108,
+         "EnsureAbyssalSceneObject": 109, "EnsureAbyssalSceneObjectReply": 110,
+         "EnsureAbyssalRewardCache": 111, "EnsureAbyssalRewardCacheReply": 112,
+         "EnsureAbyssalLootContainer": 113, "EnsureAbyssalLootContainerReply": 114,
+         "EnsureAbyssalEnvironmentObject": 115, "EnsureAbyssalEnvironmentObjectReply": 116,
+         "AbyssalFieldMembership": 117, "RefreshAbyssalNpc": 118, "RefreshAbyssalNpcReply": 119}
 
 def s(text):  # u16 length + UTF-8
     data = text.encode("utf-8")
@@ -220,6 +220,10 @@ def action(a):
                 + struct.pack("<10d", m["radius"], m["mass"], m["agility"], m["hitPoints"], m["maxVelocity"], m["flightTimeMs"],
                               m["explosionRadius"], m["explosionVelocity"], m["damageReductionFactor"], m["damageReductionSensitivity"])
                 + dot_bytes(None) + struct.pack("<4d", *a["damage"]))
+    # the SimAction tag 32 (protocol 71, ST-8b): a controlled structure's burst projector: its reach and duration in metres and milliseconds, then the remote
+    # effect of its family (the same kinds and numbers as the remote action)
+    if kind == "structureBurst":
+        return bytes([32]) + struct.pack("<2d", a["range"], a["durationMs"]) + remote_what(a)
     if kind == "stasisBurst":
         return bytes([21]) + struct.pack("<3d", a["range"], a["durationMs"], a["speedFactor"])
     if kind == "warpProbe":
@@ -297,9 +301,14 @@ def action(a):
             body += action(fallback)
         return body
 
-    what = a["what"]
     body = bytes([1, 1 if a["when"] == "end" else 0]) + struct.pack("<dd", a["optimal"], a["falloff"]) + s(a["jam"])
-    body += bytes([{"repair": 0, "transfer": 1, "neutralize": 2, "drain": 3, "web": 4, "paint": 5, "damp": 6, "scramble": 7, "jam": 8, "disrupt": 9, "guidanceDisrupt": 10}[what]])
+    return body + remote_what(a)
+
+
+def remote_what(a):
+    """A remote effect's kind and numbers (the tags of the remote action; a structure burst, tag 32, carries the same)."""
+    what = a["what"]
+    body = bytes([{"repair": 0, "transfer": 1, "neutralize": 2, "drain": 3, "web": 4, "paint": 5, "damp": 6, "scramble": 7, "jam": 8, "disrupt": 9, "guidanceDisrupt": 10}[what]])
     if what == "repair":
         body += bytes([LAYERS[a["layer"]]])
     if what in ("repair", "transfer", "neutralize", "drain"):
@@ -588,6 +597,8 @@ def build(m):
         return frame(k, i64(m["deployableId"]))
     if k == "RemoveCynoBeacon":
         return frame(k, struct.pack("<i", m["solarSystemId"]) + i64(m["structureBeaconId"]))
+    if k == "RemoteDecloakPing":  # protocol 72: a Mobile Observatory's ping in its system
+        return frame(k, struct.pack("<i", m["solarSystemId"]) + i64(m["observatoryId"]))
     if k == "DamageableEntityUpserted":
         return frame(k, struct.pack("<i", m["solarSystemId"]) + i64(m["entityId"]) + struct.pack("<i", m["typeId"])
                      + i64(m["ownerId"]) + i64(m["corporationId"]) + i64(m["allianceId"]) + i64(m["warFactionId"]))
@@ -634,7 +645,7 @@ def build(m):
         return frame(k, i64(m["structureId"]) + bytes([m["depleted"]]) + bytes([1 if m["overThreshold"] else 0]))
     if k == "SetStructureState":
         return frame(k, struct.pack("<i", m["solarSystemId"]) + i64(m["structureId"]) + structure_status(m["status"]))
-    if k in ("PlaceDisruptor", "PlaceInhibitor", "PlaceCynoBeacon"):  # a beacon has no range: it goes as 0
+    if k in ("PlaceDisruptor", "PlaceInhibitor", "PlaceCynoBeacon", "PlaceObservatory", "PlaceControlTower"):  # a beacon, an observatory and a tower have no range: they go as 0
         return frame(k, i64(m["deployableId"]) + struct.pack("<i", m["solarSystemId"]) + s(m["typeName"]) + struct.pack("<ii", m["typeId"], m["groupId"])
                      + struct.pack("<3d", *m["position"]) + struct.pack("<dd", m["radius"], m["range"]) + bytes([1 if m["active"] else 0])
                      + i64(m["ownerId"]) + struct.pack("<ii", m["corporationId"], m["allianceId"]) + i64(m["shipId"]))
@@ -733,8 +744,8 @@ BARE = dict(IBIS, name="", modules=[], allianceId=99000001, securityStatus=-2.5,
             condition={"damage": 0.0, "armorDamage": 0.0, "shieldCharge": 1.0, "charge": 1.0})
 
 valid = [
-    {"name": "hello", "kind": "Hello", "version": 71},
-    {"name": "hello ack", "kind": "HelloAck", "version": 71, "pollHz": 4},
+    {"name": "hello", "kind": "Hello", "version": 74},
+    {"name": "hello ack", "kind": "HelloAck", "version": 74, "pollHz": 4},
     {"name": "ensure private Abyssal room scene", "kind": "EnsureAbyssalScene", "requestId": "41",
      "spec": {"scene": {"locationId": 30000142, "instanceId": "9000000000001", "roomIndex": 1},
               "environment": {"globalModifiers": [{"attributeId": 37, "operation": 1, "value": 1.25}],
@@ -1026,6 +1037,11 @@ valid = [
      "effect": {"moduleId": "9988400002813", "moduleType": 22782, "effectId": 1, "fx": "effects.TorpedoDeployment",
                 "durationMs": 10000.0, "capacitorNeed": 30.0, "repeat": 1, "targetId": "0",
                 "action": {"kind": "stasisBurst", "range": 15000.0, "durationMs": 30000.0, "speedFactor": -20.0},
+                "onChanges": [], "offChanges": []}},
+    {"name": "activate a structure ecm burst projector", "kind": "Activate", "sessionId": "1790646377000015",
+     "effect": {"moduleId": "9988400002813", "moduleType": 47069, "effectId": 1, "fx": "",
+                "durationMs": 10000.0, "capacitorNeed": 30.0, "repeat": 1, "targetId": "0",
+                "action": {"kind": "structureBurst", "range": 15000.0, "durationMs": 10000.0, "what": "jam", "strength": [3.6, 0.0, 0.0, 0.0]},
                 "onChanges": [], "offChanges": []}},
     {"name": "activate an interdiction probe", "kind": "Activate", "sessionId": "1790646377000015",
      "effect": {"moduleId": "9988400002813", "moduleType": 22782, "effectId": 1, "fx": "effects.TorpedoDeployment",
@@ -1391,6 +1407,18 @@ valid = [
      "solarSystemId": 30100032, "typeName": "Mobile Cynosural Beacon", "typeId": 57319, "groupId": 4093,
      "position": [311989835983.1308, -13069154020.916222, 156646308895.76187], "radius": 100.0, "range": 0.0, "active": False,
      "ownerId": "1790646377000015", "corporationId": 98000001, "allianceId": 0, "shipId": "9988400001943"},
+    {"name": "mobile observatory dropped and not yet anchored", "kind": "PlaceObservatory", "deployableId": "4250000000000012",
+     "solarSystemId": 30100032, "typeName": "Mobile Observatory", "typeId": 58904, "groupId": 4107,
+     "position": [311989835983.1308, -13069154020.916222, 156646308895.76187], "radius": 100.0, "range": 0.0, "active": False,
+     "ownerId": "1790646377000015", "corporationId": 98000001, "allianceId": 0, "shipId": "9988400001943"},
+    {"name": "mobile observatory anchored", "kind": "SetDisruptorActive", "deployableId": "4250000000000012", "active": True},
+    {"name": "mobile observatory decloaking ping in its system", "kind": "RemoteDecloakPing", "solarSystemId": 30100032,
+     "observatoryId": "4250000000000012"},
+    {"name": "control tower dropped and not yet anchored", "kind": "PlaceControlTower", "deployableId": "4250000000000013",
+     "solarSystemId": 30100032, "typeName": "Amarr Control Tower", "typeId": 12235, "groupId": 365,
+     "position": [311989835983.1308, -13069154020.916222, 156646308895.76187], "radius": 3394.0, "range": 0.0, "active": False,
+     "ownerId": "1790646377000015", "corporationId": 98000001, "allianceId": 0, "shipId": "9988400001943"},
+    {"name": "control tower anchored", "kind": "SetDisruptorActive", "deployableId": "4250000000000013", "active": True},
     {"name": "how far a can is", "kind": "Measured", "sessionId": "1790646377000015", "command": 20, "distance": 261.0},
     {"name": "how far a can that is not there is", "kind": "Measured", "sessionId": "1790646377000015", "command": 20, "distance": None},
     {"name": "destroy for nobody", "kind": "Destroy", "shipId": "4200000000000001", "characterId": "0",

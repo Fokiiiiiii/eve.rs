@@ -286,3 +286,45 @@ fn abyssal_deployment_snapshot_uses_exact_scene_deduped_centers_and_live_ship_st
     assert!(snapshot.cloaked && snapshot.undock_invulnerable && snapshot.warp_scrambled);
     assert_eq!(Message::decode(&reply[0].payload()).unwrap(), reply[0]);
 }
+
+#[test]
+fn abyssal_public_observatory_tower_and_decloak_dispatch_do_not_cross_private_scene_keys() {
+    let mut sim = sim();
+    let public = SceneKey::solar_system(SYSTEM);
+    let private = SceneKey { location_id: SYSTEM, instance_id: 892, room_index: 1 };
+    ensure_abyssal(&mut sim, private, NOON, 75_000.0, 0.0);
+    sim.handle(abyssal_enter(SESSION, public, 8_920_001, [1_000_000.0, 0.0, 0.0]), NOON).unwrap();
+    sim.handle(abyssal_enter(SESSION + 1, private, 8_920_002, [0.0; 3]), NOON).unwrap();
+    let placement = crate::link::DisruptorPlacement {
+        deployable_id: 8_920_003,
+        solar_system_id: SYSTEM,
+        name: "Mobile Observatory".into(),
+        type_id: 58_904,
+        group_id: 4_107,
+        position: [1_000_000.0, 0.0, 0.0],
+        radius: 40.0,
+        range: 0.0,
+        active: true,
+        owner_id: 140_000_342,
+        corporation_id: 1_000_006,
+        alliance_id: 0,
+        ship_id: 8_920_001,
+    };
+    sim.handle(Message::PlaceObservatory(Box::new(placement.clone())), NOON).unwrap();
+    let tower = crate::link::DisruptorPlacement {
+        deployable_id: 8_920_004,
+        type_id: 12_235,
+        group_id: 365,
+        name: "Amarr Control Tower".into(),
+        ..placement
+    };
+    sim.handle(Message::PlaceControlTower(Box::new(tower)), NOON).unwrap();
+    assert!(sim.scenes[&public].deployables.contains_key(&8_920_003));
+    assert!(sim.scenes[&public].deployables.contains_key(&8_920_004));
+    assert!(sim.scenes[&private].deployables.is_empty());
+    sim.scenes.get_mut(&private).unwrap().pilots.get_mut(&(SESSION + 1)).unwrap().cloak =
+        crate::visibility::CloakState::Cloaked;
+    sim.handle(Message::RemoteDecloakPing { solar_system_id: SYSTEM, observatory_id: 8_920_003 }, NOON)
+        .unwrap();
+    assert_eq!(sim.scenes[&private].pilots[&(SESSION + 1)].cloak, crate::visibility::CloakState::Cloaked);
+}

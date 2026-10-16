@@ -80,6 +80,9 @@ impl Scene {
             Some(Action::Strike { strike }) if when == Applies::CycleStart => {
                 self.strike_start(session, effect, *strike, at)
             }
+            Some(Action::StructureBurst { range, duration_ms, what }) if when == Applies::CycleStart => {
+                self.structure_burst_start(session, effect, *range, *duration_ms, what, at)
+            }
             Some(Action::Field { strike, .. }) if when == Applies::CycleStart => {
                 self.strike_start(session, effect, *strike, at)
             }
@@ -150,6 +153,9 @@ impl Scene {
                 let changed = if let Some(pilot) = self.pilots.get_mut(&session) {
                     let changed = pilot.cloak != crate::visibility::CloakState::Cloaked;
                     pilot.cloak = crate::visibility::CloakState::Cloaked;
+                    if changed {
+                        pilot.cloak_stabilized_until = at + crate::scene::CLOAK_STABILIZATION_MS;
+                    }
                     changed
                 } else {
                     false
@@ -162,7 +168,6 @@ impl Scene {
             _ => Vec::new(),
         }
     }
-
 
     pub(super) fn request_point_defense_candidates(
         &mut self,
@@ -562,11 +567,7 @@ impl Scene {
         for other in self.in_entry_order().into_iter().filter(|other| *other != session) {
             let Some(pilot) = self.pilots.get(&other) else { continue };
             let position = pilot.ship.position;
-            if !strike.covers(
-                sphere,
-                [position.x, position.y, position.z],
-                pilot.ship.spec.radius.max(0.0),
-            ) {
+            if !strike.covers(sphere, [position.x, position.y, position.z], pilot.ship.spec.radius.max(0.0)) {
                 continue;
             }
             let Some(is_capital_size) = capital_size_by_type.get(&pilot.ship.spec.type_id) else { continue };
@@ -634,146 +635,142 @@ impl Scene {
     }
 
     pub(super) fn strike_pulse(&mut self, session: SessionId, index: usize, at: i64) -> Vec<Out> {
-    let (module_id, effect_id, module_type, pulse, strike, centre, radius, transport) = {
-        let Some(pilot) = self.pilots.get_mut(&session) else { return Vec::new() };
-        let Some(run) = pilot.modules.running.get_mut(index) else { return Vec::new() };
-        let Some(action) = run
-            .effect
-            .action
-            .as_ref()
-            .and_then(|action| action.with_charges(run.charged_this_cycle))
-            .cloned()
-        else {
-            return Vec::new();
-        };
-        let Some(strike) = strike_of(Some(&action)) else { return Vec::new() };
-        if run.strike_done >= strike.pulses {
-            return Vec::new();
-        }
-        let pulse = run.strike_done;
-        run.strike_done += 1;
-        let transport = match action {
-            Action::Field { destination, warp_block_ms, moved, held, .. } => {
-                Some((destination, warp_block_ms, moved, held))
-            }
-            _ => None,
-        };
-        (
-            run.effect.module_id,
-            run.effect.effect_id,
-            run.effect.module_type,
-            pulse,
-            strike,
-            pilot.ship.position,
-            pilot.ship.spec.radius.max(0.0),
-            transport,
-        )
-    };
-    if let Some((destination, warp_block_ms, _activation_moved, _activation_held)) = transport {
-        if let Some(structure_id) = self.controlled_structure_id(session) {
-            if self.control_lease_generation(session, structure_id).is_none()
-                || self.pilots.get(&session).is_none_or(|pilot| pilot.ship.spec.ship_id != structure_id)
-            {
+        let (module_id, effect_id, module_type, pulse, strike, centre, radius, transport) = {
+            let Some(pilot) = self.pilots.get_mut(&session) else { return Vec::new() };
+            let Some(run) = pilot.modules.running.get_mut(index) else { return Vec::new() };
+            let Some(action) = run
+                .effect
+                .action
+                .as_ref()
+                .and_then(|action| action.with_charges(run.charged_this_cycle))
+                .cloned()
+            else {
+                return Vec::new();
+            };
+            let Some(strike) = strike_of(Some(&action)) else { return Vec::new() };
+            if run.strike_done >= strike.pulses {
                 return Vec::new();
             }
-            let sphere = [
-                centre.x + strike.direction[0] * strike.length,
-                centre.y + strike.direction[1] * strike.length,
-                centre.z + strike.direction[2] * strike.length,
-            ];
-            let candidate_ids = self.damageable_entity_ids(at, |target_id, target, target_radius| {
-                target_id != structure_id
-                    && strike.covers(sphere, [target.x, target.y, target.z], target_radius)
-            });
-            return self.request_structure_damage_candidates(
+            let pulse = run.strike_done;
+            run.strike_done += 1;
+            let transport = match action {
+                Action::Field { destination, warp_block_ms, moved, held, .. } => {
+                    Some((destination, warp_block_ms, moved, held))
+                }
+                _ => None,
+            };
+            (
+                run.effect.module_id,
+                run.effect.effect_id,
+                run.effect.module_type,
+                pulse,
+                strike,
+                pilot.ship.position,
+                pilot.ship.spec.radius.max(0.0),
+                transport,
+            )
+        };
+        if let Some((destination, warp_block_ms, _activation_moved, _activation_held)) = transport {
+            if let Some(structure_id) = self.controlled_structure_id(session) {
+                if self.control_lease_generation(session, structure_id).is_none()
+                    || self.pilots.get(&session).is_none_or(|pilot| pilot.ship.spec.ship_id != structure_id)
+                {
+                    return Vec::new();
+                }
+                let sphere = [
+                    centre.x + strike.direction[0] * strike.length,
+                    centre.y + strike.direction[1] * strike.length,
+                    centre.z + strike.direction[2] * strike.length,
+                ];
+                let candidate_ids = self.damageable_entity_ids(at, |target_id, target, target_radius| {
+                    target_id != structure_id
+                        && strike.covers(sphere, [target.x, target.y, target.z], target_radius)
+                });
+                return self.request_structure_damage_candidates(
+                    session,
+                    module_id,
+                    effect_id,
+                    pulse as u32,
+                    candidate_ids,
+                    PendingStructureDamageOperation::TransportFieldPulse {
+                        centre,
+                        strike,
+                        destination,
+                        warp_block_ms,
+                    },
+                    at,
+                );
+            }
+            let (moved, held) = if let Some(participants) =
+                self.field_participants_from_type_metadata(session, strike, centre)
+            {
+                participants
+            } else {
+                #[cfg(test)]
+                {
+                    // shortcut: hand-built unit scenes lack SDE metadata; remove when every Field fixture receives the World type map.
+                    (_activation_moved, _activation_held)
+                }
+                #[cfg(not(test))]
+                {
+                    return Vec::new();
+                }
+            };
+            return self.transport_field(
                 session,
-                module_id,
-                effect_id,
-                pulse as u32,
-                candidate_ids,
-                PendingStructureDamageOperation::TransportFieldPulse {
-                    centre,
-                    strike,
-                    destination,
-                    warp_block_ms,
-                },
+                strike,
+                centre,
+                destination,
+                warp_block_ms,
+                &moved,
+                &held,
                 at,
             );
         }
-        let (moved, held) = if let Some(participants) =
-            self.field_participants_from_type_metadata(session, strike, centre)
-        {
-            participants
-        } else {
-            #[cfg(test)]
-            {
-                // shortcut: hand-built unit scenes lack SDE metadata; remove when every Field fixture receives the World type map.
-                (_activation_moved, _activation_held)
-            }
-            #[cfg(not(test))]
-            {
-                return Vec::new();
-            }
-        };
-        return self.transport_field(
-            session,
-            strike,
-            centre,
-            destination,
-            warp_block_ms,
-            &moved,
-            &held,
-            at,
-        );
-    }
 
-    let pulse_strike = strike.at_pulse(pulse);
-    let centre = [centre.x, centre.y, centre.z];
-    let Some(structure_id) = self.controlled_structure_id(session) else {
-        let Some(strike) = pulse_strike else { return Vec::new() };
-        return self.apply_strike_pulse(session, module_type, strike, centre, radius, at);
-    };
-    if self.control_lease_generation(session, structure_id).is_none()
-        || self.pilots.get(&session).is_none_or(|pilot| pilot.ship.spec.ship_id != structure_id)
-    {
-        return Vec::new();
-    }
-    let origin = if let Some(strike) = pulse_strike {
-        if strike.sweep_end.is_some() {
-            centre
-        } else {
-            [
-                centre[0] + strike.direction[0] * radius,
-                centre[1] + strike.direction[1] * radius,
-                centre[2] + strike.direction[2] * radius,
-            ]
+        let pulse_strike = strike.at_pulse(pulse);
+        let centre = [centre.x, centre.y, centre.z];
+        let Some(structure_id) = self.controlled_structure_id(session) else {
+            let Some(strike) = pulse_strike else { return Vec::new() };
+            return self.apply_strike_pulse(session, module_type, strike, centre, radius, at);
+        };
+        if self.control_lease_generation(session, structure_id).is_none()
+            || self.pilots.get(&session).is_none_or(|pilot| pilot.ship.spec.ship_id != structure_id)
+        {
+            return Vec::new();
         }
-    } else {
-        centre
-    };
-    let candidate_ids = if let Some(strike) = pulse_strike {
-        self.damageable_entity_ids(at, |target_id, target, target_radius| {
-            target_id != structure_id
-                && self.session_of(target_id).is_some()
-                && strike.covers(origin, [target.x, target.y, target.z], target_radius)
-        })
-    } else {
-        Vec::new()
-    };
-    self.request_structure_damage_candidates(
-        session,
-        module_id,
-        effect_id,
-        pulse as u32,
-        candidate_ids,
-        PendingStructureDamageOperation::StrikePulse {
-            origin,
-            strike: pulse_strike,
-            module_type,
-        },
-        at,
-    )
-}
+        let origin = if let Some(strike) = pulse_strike {
+            if strike.sweep_end.is_some() {
+                centre
+            } else {
+                [
+                    centre[0] + strike.direction[0] * radius,
+                    centre[1] + strike.direction[1] * radius,
+                    centre[2] + strike.direction[2] * radius,
+                ]
+            }
+        } else {
+            centre
+        };
+        let candidate_ids = if let Some(strike) = pulse_strike {
+            self.damageable_entity_ids(at, |target_id, target, target_radius| {
+                target_id != structure_id
+                    && self.session_of(target_id).is_some()
+                    && strike.covers(origin, [target.x, target.y, target.z], target_radius)
+            })
+        } else {
+            Vec::new()
+        };
+        self.request_structure_damage_candidates(
+            session,
+            module_id,
+            effect_id,
+            pulse as u32,
+            candidate_ids,
+            PendingStructureDamageOperation::StrikePulse { origin, strike: pulse_strike, module_type },
+            at,
+        )
+    }
 
     fn apply_strike_pulse(
         &mut self,
@@ -1003,9 +1000,13 @@ impl Scene {
     /// The caller remains responsible for persisting the module's online state.
     pub(crate) fn offline_module(&mut self, session: SessionId, module_id: i64, now: i64) -> Vec<Out> {
         if !self.pilots.contains_key(&session)
-            && self.controlled_structure_id(session).is_some_and(|id| self.structure_modules.contains_key(&id))
+            && self
+                .controlled_structure_id(session)
+                .is_some_and(|id| self.structure_modules.contains_key(&id))
         {
-            return self.with_controlled_structure_modules(now, |scene| scene.offline_module(session, module_id, now));
+            return self.with_controlled_structure_modules(now, |scene| {
+                scene.offline_module(session, module_id, now)
+            });
         }
         let Some(pilot) = self.pilots.get_mut(&session) else { return Vec::new() };
         let (owner, ship_id) = (pilot.ship.spec.character_id, pilot.ship.spec.ship_id);

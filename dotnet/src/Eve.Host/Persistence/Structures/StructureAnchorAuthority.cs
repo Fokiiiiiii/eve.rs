@@ -316,7 +316,8 @@ public sealed class StructureAnchorAuthority
 
     private const long DevelopmentIndexLevelWidth = 100_000L * 96;
 
-    private static double ActivityDefenseMultiplier(DevelopmentIndexRecord indices)
+    /// <summary>The activity defense multiplier (ADM) of a system from its indices: 1 plus the military, industrial and strategic bonuses, from 1 to 6 (ST-9 c shares it).</summary>
+    internal static double ActivityDefenseMultiplier(DevelopmentIndexRecord indices)
     {
         var militaryLevel = OperationalIndexLevel(indices.MilitaryPoints);
         var industrialLevel = OperationalIndexLevel(indices.IndustrialPoints);

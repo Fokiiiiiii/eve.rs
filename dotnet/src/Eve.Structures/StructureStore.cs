@@ -265,15 +265,14 @@ public sealed class StructureStore
         }
         SetIfPositive(row, "unanchoring", s.UnanchorEndsMs);
         SetIfPositive(row, "destroyedAt", s.DestroyedMs);
-        if (services.Count > 0)
+        // the Corporation Offices service is always available to a structure (EVE University wiki: no module, no fuel), so it is reported online
+        // unless a stored row says otherwise
+        var states = new JsonObject { [StructureServiceIds.Offices.ToString(CultureInfo.InvariantCulture)] = ServiceState.Online };
+        foreach (var (serviceId, state) in services)
         {
-            var states = new JsonObject();
-            foreach (var (serviceId, state) in services)
-            {
-                states[serviceId.ToString(CultureInfo.InvariantCulture)] = state;
-            }
-            row["serviceStates"] = states;
+            states[serviceId.ToString(CultureInfo.InvariantCulture)] = state;
         }
+        row["serviceStates"] = states;
         return row;
     }
 

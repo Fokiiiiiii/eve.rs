@@ -102,6 +102,14 @@ public sealed partial class SpaceContainers
                     await restore(record, now);
                     continue;
                 }
+                if (record.Kind == ControlTowerKind)
+                {
+                    // anchored when its record says so; its anchoring job is durable and outlives the restart
+                    _sim.PlaceControlTower(new SimPlaceControlTower(
+                        record.DeployableId, record.SolarSystemId, record.Name, record.TypeId, record.GroupId, record.Position, record.Radius, record.ActivateAtMs <= now,
+                        record.OwnerId, record.CorporationId, record.AllianceId, record.ShipId));
+                    continue;
+                }
                 if (record.Kind == InhibitorKind)
                 {
                     _sim.PlaceInhibitor(new SimPlaceInhibitor(
@@ -115,6 +123,14 @@ public sealed partial class SpaceContainers
                     _sim.PlaceDisruptor(new SimPlaceDisruptor(
                         record.DeployableId, record.SolarSystemId, record.Name, record.TypeId, record.GroupId, record.Position, record.Radius, record.RangeMeters,
                         record.ActivateAtMs <= now, record.OwnerId, record.CorporationId, record.AllianceId, record.ShipId));
+                    continue;
+                }
+                if (record.Kind == ObservatoryKind)
+                {
+                    // anchored when its record says so; its ping job is durable and outlives the restart
+                    _sim.PlaceObservatory(new SimPlaceObservatory(
+                        record.DeployableId, record.SolarSystemId, record.Name, record.TypeId, record.GroupId, record.Position, record.Radius, record.ActivateAtMs <= now,
+                        record.OwnerId, record.CorporationId, record.AllianceId, record.ShipId));
                     continue;
                 }
                 if (record.Kind == BeaconKind)

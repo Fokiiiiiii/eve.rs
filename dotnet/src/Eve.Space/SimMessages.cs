@@ -670,6 +670,16 @@ public abstract record SimAction
             && Damage is { Count: 4 } && Damage.All(amount => double.IsFinite(amount) && amount >= 0);
     }
 
+    /// <summary>
+    /// A controlled structure's burst projector (ST-8b, tag 32): each pulse applies <paramref name="What"/> to the ships in <paramref name="RangeMeters"/> that
+    /// the Host authorizes for that pulse. The remote effect is the family's own (neutralizer, web, painter, damp, disruptor, scrambler or jammer).
+    /// </summary>
+    public sealed record StructureBurst(double RangeMeters, double DurationMs, SimRemote What) : SimAction
+    {
+        public bool IsValid => double.IsFinite(RangeMeters) && RangeMeters > 0 && double.IsFinite(DurationMs) && DurationMs > 0
+            && What is SimRemote.Neutralize or SimRemote.Web or SimRemote.Paint or SimRemote.Damp or SimRemote.Disrupt or SimRemote.Scramble or SimRemote.Jam;
+    }
+
     /// <summary>Spools once, then shifts the ship along its heading; cooldown begins when the spool succeeds or is interrupted.</summary>
     public sealed record MicroJumpDrive(double DistanceMeters, long CooldownMs) : SimAction;
 
@@ -1273,6 +1283,21 @@ public sealed record SimPlaceCynoBeacon(
 
 /// <summary>Takes the named structure-owned cyno beacon out of its solar system's scene.</summary>
 public sealed record SimRemoveCynoBeacon(int SolarSystemId, long StructureBeaconId) : SimMessage;
+
+/// <summary>A Mobile Observatory the host keeps a record of, put in space where its pilot dropped it (protocol 72). The wire carries it as a disruptor's placement
+/// with a range of 0; it pings while <see cref="Active"/> (anchored).</summary>
+public sealed record SimPlaceObservatory(
+    long DeployableId, int SolarSystemId, string Name, int TypeId, int GroupId, IReadOnlyList<double> Position, double Radius, bool Active,
+    long OwnerId, int CorporationId, int AllianceId, long ShipId) : SimMessage;
+
+/// <summary>A player control tower the host keeps a record of, put in space where its pilot launched it (protocol 73). The wire carries it as a disruptor's placement
+/// with a range of 0; it is anchored while <see cref="Active"/>.</summary>
+public sealed record SimPlaceControlTower(
+    long DeployableId, int SolarSystemId, string Name, int TypeId, int GroupId, IReadOnlyList<double> Position, double Radius, bool Active,
+    long OwnerId, int CorporationId, int AllianceId, long ShipId) : SimMessage;
+
+/// <summary>A Mobile Observatory's decloaking ping in its solar system (protocol 72): the cloaked ships there whose cloak is not stabilized may be decloaked.</summary>
+public sealed record SimRemoteDecloakPing(int SolarSystemId, long ObservatoryId) : SimMessage;
 
 /// <summary>Registers or updates a Sim-created damageable entity's creation identity for Host-side owner resolution (protocol 69). Host validates these facts against authoritative type/owner sources.</summary>
 public sealed record SimDamageableEntityUpserted(

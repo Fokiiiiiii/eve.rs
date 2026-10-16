@@ -41,7 +41,10 @@ public sealed partial class PersistenceStructureDirectoryReadModel
     {
         DockingServiceId => DockAccessSettingId,
         JumpBridgeServiceId => JumpBridgeAccessSettingId,
+        3 => 20,
         5 => 4,
+        // MOON_MINING is admitted by the control setting (EVE.js structureServiceAuthority.js SERVICE_ACCESS_SETTING_BY_ID)
+        14 => 17,
         16 => 35,
         _ => null,
     };
@@ -229,6 +232,69 @@ public sealed partial class PersistenceStructureDirectoryReadModel
             result.Add(new KeyValuePair<PyValue, PyValue>(new PyInt(serviceId), new PyInt(state)));
         }
         return new PyDict(result);
+    }
+
+    /// <summary>The Corporation Office Rent profile setting (EVE.js STRUCTURE_SETTING_ID.CORP_RENT_OFFICE).</summary>
+    private const int CorporationOfficeRentSettingId = 20;
+
+    /// <summary>
+    /// The rent of a corporation office at the structure for the character: the value of the profile's Corporation Office Rent setting that the character's access
+    /// resolves to (EVE.js getProfileSettingValueForStructure with the session). 0 when no group of the profile applies to the character.
+    /// </summary>
+    public async ValueTask<decimal> CharacterOfficeRentAsync(long characterId, long structureId, CancellationToken cancellationToken)
+    {
+        var context = await ReadStructureSettingsContextAsync(characterId, structureId, cancellationToken);
+        if (context is not { } access ||
+            access.Profile["settingsBySettingID"] is not JsonObject settings ||
+            settings[CorporationOfficeRentSettingId.ToString(System.Globalization.CultureInfo.InvariantCulture)] is not JsonArray groups)
+            return 0;
+        var bestRank = 0;
+        JsonNode? resolved = null;
+        foreach (var node in groups)
+        {
+            if (node is not JsonObject row) continue;
+            var groupId = Integer(row["groupID"], -1);
+            if (groupId < 0) continue;
+            var rank = groupId == 0
+                ? access.OwnerCorporationId > 0 && access.Affiliation.Corporation == access.OwnerCorporationId ? 1 : 0
+                : AccessGroupMatchRank(groupId, (access.CharacterId, access.Affiliation), access.AccessGroupState);
+            if (rank > bestRank)
+            {
+                bestRank = rank;
+                resolved = row["value"];
+            }
+        }
+        return resolved is JsonValue value && value.TryGetValue<decimal>(out var rent) ? Math.Max(0, rent) : 0;
+    }
+
+    /// <summary>
+    /// The rent a renewal of a structure's office takes (EVE.js processPaidOfficeRentalBill: getProfileSettingValueForStructure with no session): the group-0 value of the
+    /// profile's Corporation Office Rent setting. Null when the id is no persistently deployed structure or the profile has no such group: the rent then stays.
+    /// </summary>
+    public async ValueTask<decimal?> RenewalRentAsync(long structureId, CancellationToken cancellationToken)
+    {
+        if (structureId <= 0)
+            return null;
+        var structures = await readTable("structures", cancellationToken);
+        if (structures[structureId.ToString(System.Globalization.CultureInfo.InvariantCulture)] is not JsonObject structure || !IsPersistentlyDeployedStructure(structure, structureId))
+            return null;
+        var ownerCorporationId = Positive(Integer(structure["ownerCorpID"] ?? structure["corporationID"]));
+        var profileId = Integer(structure["profileID"]);
+        var profileState = await readTable("structureProfiles", cancellationToken);
+        var profiles = profileState["profilesByID"] as JsonObject ?? profileState;
+        var profile = profileId > 0
+            ? profiles[profileId.ToString(System.Globalization.CultureInfo.InvariantCulture)] as JsonObject
+            : profiles.Select(pair => pair.Value).OfType<JsonObject>().FirstOrDefault(candidate =>
+                Integer(candidate["corporationID"]) == ownerCorporationId && Truthy(candidate["isDefault"]));
+        if (profile?["settingsBySettingID"] is not JsonObject settings ||
+            settings[CorporationOfficeRentSettingId.ToString(System.Globalization.CultureInfo.InvariantCulture)] is not JsonArray groups)
+            return null;
+        foreach (var node in groups)
+        {
+            if (node is JsonObject row && Integer(row["groupID"], -1) == 0 && row["value"] is JsonValue value && value.TryGetValue<decimal>(out var rent))
+                return Math.Max(0, rent);
+        }
+        return null;
     }
 
     public async ValueTask<PyValue> CharacterGetServiceAsync(

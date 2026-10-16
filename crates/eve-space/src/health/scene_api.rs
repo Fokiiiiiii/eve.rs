@@ -174,10 +174,15 @@ impl Scene {
             {
                 Some(health) => {
                     let Some(modules) = self.structure_modules.get(&structure_id) else {
-                        return vec![Out::Refused { session, command: CODE, reason: "STRUCTURE_SPEC_NOT_READY" }];
+                        return vec![Out::Refused {
+                            session,
+                            command: CODE,
+                            reason: "STRUCTURE_SPEC_NOT_READY",
+                        }];
                     };
                     let mut condition = health.condition_at(now);
-                    condition.charge = modules.modules.capacitor.as_ref().map_or(1.0, |capacitor| capacitor.ratio_at(now));
+                    condition.charge =
+                        modules.modules.capacitor.as_ref().map_or(1.0, |capacitor| capacitor.ratio_at(now));
                     vec![Out::Condition { session, command: CODE, condition }]
                 }
                 None => vec![Out::Refused { session, command: CODE, reason: "STRUCTURE_NOT_FOUND" }],

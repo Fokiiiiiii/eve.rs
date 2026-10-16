@@ -144,7 +144,7 @@ public sealed class StructureUnanchorDropAuthority(
         return new StructureUnanchorDrop(hullId, fittingsId);
     }
 
-    private static SpaceItem InSpace(
+    internal static SpaceItem InSpace(
         long itemId,
         StructureRecord structure,
         TypeDef type,
@@ -153,7 +153,7 @@ public sealed class StructureUnanchorDropAuthority(
         new(itemId, structure.SolarSystemId, position, direction, RadiusOf(type), type.GroupId,
             structure.Snapshot.StructureId, 0, structure.OwnerCorporationId, structure.AllianceId, 0, NeverExpires);
 
-    private static double RadiusOf(TypeDef type)
+    internal static double RadiusOf(TypeDef type)
     {
         if (!type.Attributes.TryGetValue(StructureRadiusAttributeId, out var radius) ||
             !double.IsFinite(radius) || radius <= 0)

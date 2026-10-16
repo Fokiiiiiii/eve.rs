@@ -88,4 +88,22 @@ public sealed class SpaceSovHubsTests
 
         Assert.Empty(rig.Sim.Heard.OfType<SimPlaceStructure>());
     }
+
+    [PgFact]
+    public async Task A_replaced_hub_is_taken_out_and_put_back_with_its_new_owner()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var current = Snapshot(System, HubId, SovereigntyHub, null, null);
+        var hubs = new SpaceSovHubs(rig.Sim, rig.Space, rig.Statics, (systemId, _) => Task.FromResult(SpaceSovHubs.HubOf(current, systemId)));
+        await hubs.RestoreAsync(System);
+
+        // the claim changed the records (ST-9 d): the ball is replaced with the capturer as its owner
+        current = Snapshot(System, HubId, SovereigntyHub, Corporation, Alliance);
+        await hubs.ReplaceAsync(HubId, System);
+
+        var removed = Assert.Single(rig.Sim.Heard.OfType<SimRemoveStructure>());
+        Assert.Equal(HubId, removed.StructureId);
+        var placed = rig.Sim.Heard.OfType<SimPlaceStructure>().Last();
+        Assert.Equal((HubId, Corporation, (int)Alliance), (placed.StructureId, placed.OwnerId, placed.AllianceId));
+    }
 }

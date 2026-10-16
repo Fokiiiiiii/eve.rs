@@ -341,15 +341,18 @@ public sealed partial class SpaceSessions
             }
         }
 
-        // Structure legality is target-specific; untargeted effects cannot safely authorize every entity they reach.
-        if (structureObserver && package.Action is (SimAction.Smartbomb or SimAction.EcmBurst or SimAction.Bomb))
+        // Structure legality of an untargeted smartbomb or ECM burst is not authorized per entity. A guided bomb's blast is: the simulation asks the Host for
+        // the ships it may reach when it goes off (StructureDamageCandidates), so the bomb is started here.
+        if (structureObserver && package.Action is (SimAction.Smartbomb or SimAction.EcmBurst))
         {
             return ModuleResult.Refusal(WeaponSafety.Refusal, made.ModuleType, made.ModuleName);
         }
 
         // an ECM burst jams friends too and draws CONCORD in high security space, so it is not activated there unless the pilot's safety is set to none (red)
         // (EVE University wiki, Electronic Countermeasures; EVE.js refuses only the smartbomb here)
-        if (!structureObserver && package.Action is SimAction.EcmBurst && securityClass is { } burstWhere && Security.IsHighSecOrHigher(burstWhere))
+        // a ship-fitted ECM burst projector (ST-17 d) is the same family: the same rule
+        if (!structureObserver && package.Action is SimAction.EcmBurst or SimAction.StructureBurst { What: SimRemote.Jam }
+            && securityClass is { } burstWhere && Security.IsHighSecOrHigher(burstWhere))
         {
             var burstSafety = SafetyLevelOf is { } askSafety ? await askSafety(characterId, cancellationToken) : SafetyLevel.Full;
             if (burstSafety != SafetyLevel.None)
@@ -370,7 +373,8 @@ public sealed partial class SpaceSessions
             return ModuleResult.Refusal(WeaponSafety.Refusal, made.ModuleType, made.ModuleName);
         }
         // A structure controller never records personal crimewatch flags; the owner-corporation legality gate above still applies.
-        if (!structureObserver && securityClass is { } empire && (attack || package.Action is SimAction.Smartbomb))
+        // a ship-fitted burst projector is an area effect as the smartbomb is: its pulses hit the ships in range, friends included (ST-17 d)
+        if (!structureObserver && securityClass is { } empire && (attack || package.Action is SimAction.Smartbomb or SimAction.StructureBurst))
         {
             var level = SafetyLevelOf is { } ask ? await ask(characterId, cancellationToken) : SafetyLevel.Full;
             if (victim is not null)

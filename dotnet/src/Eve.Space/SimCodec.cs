@@ -27,7 +27,7 @@ public sealed class SimLinkException(SimLinkError error, string message) : Excep
 /// </summary>
 public static partial class SimCodec
 {
-    public const ushort ProtocolVersion = 71;
+    public const ushort ProtocolVersion = 74;
     /// <summary>The largest frame either side accepts (1 MiB).</summary>
     public const int MaxFrame = 1 << 20;
 
@@ -1069,6 +1069,15 @@ public static partial class SimCodec
                     message = new SimRemoveCynoBeacon(system, structureBeacon);
                     break;
                 }
+            case Kind.RemoteDecloakPing:
+                {
+                    var system = r.I32();
+                    var observatory = r.I64();
+                    if (system <= 0 || observatory <= 0)
+                        throw new SimLinkException(SimLinkError.BadValue, "bad decloak ping");
+                    message = new SimRemoteDecloakPing(system, observatory);
+                    break;
+                }
             case Kind.SimDamageableEntityUpserted:
                 {
                     var system = r.I32();
@@ -1232,6 +1241,8 @@ public static partial class SimCodec
             case Kind.PlaceDisruptor:
             case Kind.PlaceInhibitor:
             case Kind.PlaceCynoBeacon:
+            case Kind.PlaceObservatory:
+            case Kind.PlaceControlTower:
                 {
                     var deployable = r.I64();
                     var system = r.I32();
@@ -1254,6 +1265,8 @@ public static partial class SimCodec
                     {
                         Kind.PlaceInhibitor => new SimPlaceInhibitor(deployable, system, name, type, group, position, radius, range, active, owner, corporation, alliance, ship),
                         Kind.PlaceCynoBeacon => new SimPlaceCynoBeacon(deployable, system, name, type, group, position, radius, active, owner, corporation, alliance, ship),
+                        Kind.PlaceObservatory => new SimPlaceObservatory(deployable, system, name, type, group, position, radius, active, owner, corporation, alliance, ship),
+                        Kind.PlaceControlTower => new SimPlaceControlTower(deployable, system, name, type, group, position, radius, active, owner, corporation, alliance, ship),
                         _ => new SimPlaceDisruptor(deployable, system, name, type, group, position, radius, range, active, owner, corporation, alliance, ship),
                     };
                     break;

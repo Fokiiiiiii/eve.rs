@@ -182,14 +182,15 @@ public sealed partial class PersistenceStructureAssetSafetyReadModel : Eve.Servi
     private async System.Threading.Tasks.Task<StructureRow?> ReadPersistedStructureAsync(
         long structureId,
         StaticData data,
-        System.Threading.CancellationToken cancellationToken)
+        System.Threading.CancellationToken cancellationToken,
+        bool includeDestroyed = false)
     {
-        if (structureId <= 0 || await _structures.GetStructureInfoAsync(structureId, cancellationToken) is not { PersistentlyDeployed: true })
+        if (structureId <= 0 || (!includeDestroyed && await _structures.GetStructureInfoAsync(structureId, cancellationToken) is not { PersistentlyDeployed: true }))
             return null;
 
         var table = await _readTable("structures", cancellationToken);
         var key = structureId.ToString(System.Globalization.CultureInfo.InvariantCulture);
-        if (table[key] is not System.Text.Json.Nodes.JsonObject row || !IsPersistedStructureRow(row, structureId))
+        if (table[key] is not System.Text.Json.Nodes.JsonObject row || !IsPersistedStructureRow(row, structureId, includeDestroyed))
             return null;
         var typeId = checked((int)Positive(Integer(row["typeID"])));
         var systemId = checked((int)Positive(Integer(row["solarSystemID"])));
@@ -229,13 +230,13 @@ public sealed partial class PersistenceStructureAssetSafetyReadModel : Eve.Servi
         return rows;
     }
 
-    private static bool IsPersistedStructureRow(System.Text.Json.Nodes.JsonObject row, long structureId) =>
+    private static bool IsPersistedStructureRow(System.Text.Json.Nodes.JsonObject row, long structureId, bool includeDestroyed = false) =>
         structureId > 0
         && Positive(Integer(row["structureID"] ?? row["itemID"], structureId)) == structureId
         && Positive(Integer(row["typeID"])) > 0
         && Positive(Integer(row["solarSystemID"])) > 0
         && Positive(Integer(row["ownerCorpID"] ?? row["corporationID"])) > 0
-        && !Truthy(row["destroyedAt"]);
+        && (includeDestroyed || !Truthy(row["destroyedAt"]));
 
     private static bool IsStandardUpwell(int typeId, StaticData data)
     {
@@ -468,7 +469,7 @@ public sealed partial class PersistenceStructureAssetSafetyReadModel : Eve.Servi
             var regions = (await _sde.ReadAsync("mapRegions", cancellationToken: cancellationToken))
                 .ToDictionary(r => checked((int)r.Key), r => new RegionInfo(
                     Eve.Sde.SdeReader.English(r.Doc.GetProperty("name")),
-                    Positive(Integer(r.Doc, "wormholeClassID")) > 0));
+                    IsWormholeClass(Integer(r.Doc, "wormholeClassID"))));
             var systems = new System.Collections.Generic.Dictionary<int, SystemInfo>();
             foreach (var row in await _sde.ReadAsync("mapSolarSystems", cancellationToken: cancellationToken))
             {
@@ -530,6 +531,9 @@ public sealed partial class PersistenceStructureAssetSafetyReadModel : Eve.Servi
         }
         return best;
     }
+
+    /// <summary>A region's SDE wormhole class is a wormhole's; 7, 8 and 9 are the K-space security classes (high, low, null: WormholeSystemClasses).</summary>
+    private static bool IsWormholeClass(long classId) => classId > 0 && classId is not (7 or 8 or 9);
 
     private static bool IsWormholeOrPochven(long systemId, StaticData data) =>
         data.Systems.TryGetValue(checked((int)systemId), out var system) && (system.Wormhole || system.Pochven);

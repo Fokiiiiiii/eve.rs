@@ -144,6 +144,7 @@ private readonly Dictionary<long, ClientSession> _fleetSessions = new();
         Scheduler = new Eve.Scheduler.DurableScheduler(source, () => Now, null, _schemas[7]);
         Containers = new SpaceContainers(Sim, Ships, Items, SpaceItems, new Eve.Ships.PgWorkCycleLedger(source, _schemas[6]), new EventBusFacts(Events), statics, Space, () => Now, Log.Add, deployed: Deployed, scheduler: Scheduler);
         Scheduler.Register(SpaceContainers.AnchorJob, async (context, token) => await Containers.AnchorAsync(context.Payload<SpaceContainers.DisruptorAnchorDue>()!.DeployableId, token));
+        Scheduler.Register(SpaceContainers.ObservatoryPingJob, async (context, token) => await Containers.PingObservatoryAsync(context.Payload<SpaceContainers.ObservatoryPingDue>()!.DeployableId, token));
         Space.Probes = new Eve.Services.Space.SpaceProbes(Ships, statics, Probes, Space, Sim, () => Now);
         ProbeScans = new Eve.Services.Space.SpaceProbeScans(Space, Sim, statics, Probes, Ships, Skills, Scheduler, Space.Probes, () => Now, sites: null, random: new Random(7));
         ProbeScans.Register();

@@ -278,6 +278,9 @@ internal void StartStructureDamageModuleForTest(ulong session, long moduleId, st
 
     public Func<long, long, int, CancellationToken, Task<IReadOnlyList<int>>>? InspectUndockContrabandAsync { get; set; }
 
+    /// <summary>The contraband penalty of an undock or a stargate jump (ST-16 C): the fine charged and the contraband removed; null when there is none.</summary>
+    public Func<long, long, int, CancellationToken, Task<ContrabandPenalty?>>? ApplyContrabandPenaltyAsync { get; set; }
+
     /// <summary>The host put the wreck of a destroyed ship (or the corpse of a pilot) in space.</summary>
     public event Action<SimPlaceWreck>? WreckPlaced;
 

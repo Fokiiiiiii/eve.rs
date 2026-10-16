@@ -206,6 +206,55 @@ impl Scene {
         out
     }
 
+    /// One ship hit by a controlled structure's bomb (ST-8a): the attacker is the structure, and its messages go to the controller that runs it (a structure
+    /// has no pilot record of its own). The rest is as `damage_ship`.
+    pub(crate) fn damage_ship_from_structure(
+        &mut self,
+        controller: SessionId,
+        structure_id: i64,
+        module_type: i32,
+        target: (SessionId, i64),
+        damage: Damage,
+        at: i64,
+    ) -> Vec<Out> {
+        let (target_session, target_id) = target;
+        if self.is_tethered_session(target_session, at) {
+            return Vec::new();
+        }
+        let owner = self.combat_owner(controller);
+        let mut out = Vec::new();
+        let shot = Shot { hit: true, wrecking: false, quality: 1.0, chance_to_hit: 1.0, roll: 0.0, damage };
+        let (told, hit) = self.damage(target_id, damage, at);
+        out.extend(told);
+        let applied = hit.map_or(0.0, |hit| hit.taken.shield + hit.taken.armor + hit.taken.structure);
+        let destroyed = hit.is_some_and(|hit| hit.destroyed);
+        let target_type_id = self.pilots.get(&target_session).map_or(0, |pilot| pilot.ship.spec.type_id);
+        self.aggressions.push(Aggression {
+            attacker_ship: structure_id,
+            target_ship: target_id,
+            module_type_id: module_type,
+            source_owner_id: owner,
+            target_type_id,
+        });
+        let message = |for_the_attacker| {
+            damage_message(for_the_attacker, structure_id, target_id, module_type, applied, &shot, owner)
+        };
+        for (who, mine) in [(controller, true), (target_session, false)] {
+            if !is_npc_session(who) {
+                out.push(Out::Notify {
+                    session: who,
+                    name: "OnDamageMessage",
+                    id_type: "clientID",
+                    args: vec![message(mine)],
+                });
+            }
+        }
+        if destroyed {
+            out.extend(self.destroy(target_session, Some(controller), at));
+        }
+        out
+    }
+
     /// One ship hit by a module's area effect (a smartbomb's blast, a doomsday's pulse): the damage it takes, the aggression it is recorded as, the messages
     /// its pilot and the attacker's are told, and its destruction. `target` is the pilot's session and its ship's id.
     pub(crate) fn damage_ship(
@@ -310,15 +359,17 @@ impl Scene {
             self.spool_advance(session, effect.module_id, spool);
         }
         let structure_arc = self.controlled_structure_id(session).is_some()
-            && self.controlled_structure_id(session).is_some_and(|structure_id| {
-                self.control_lease_generation(session, structure_id).is_some()
-            })
+            && self
+                .controlled_structure_id(session)
+                .is_some_and(|structure_id| self.control_lease_generation(session, structure_id).is_some())
             && turret.aoe.is_some()
             && turret.arc.is_some();
         // Piloted ships retain EveJS's ordinary arc selection. A controlled structure waits for a fresh,
         // correlated Host authorization on each link before applying its secondary damage.
         let arc_victims = match (turret.aoe, turret.arc, structure_arc) {
-            (Some(_), Some(arc), false) if shot.hit => self.arc_victims(session, target_session, &target, arc),
+            (Some(_), Some(arc), false) if shot.hit => {
+                self.arc_victims(session, target_session, &target, arc)
+            }
             _ => Vec::new(),
         };
         let shooter = Shooter {
@@ -332,14 +383,14 @@ impl Scene {
         if destroyed {
             out.extend(self.destroy(target_session, Some(reporter), at));
         }
-        if structure_arc && shot.hit
+        if structure_arc
+            && shot.hit
             && let (Some(aoe), Some(arc)) = (turret.aoe, turret.arc)
         {
             let links_remaining = (arc.targets - 1).max(0) as u32;
             if links_remaining > 0 {
                 let struck_ids = vec![attacker_id, effect.target_id];
-                let candidate_ids =
-                    self.vorton_arc_candidate_ids(at, &target, arc.range, &struck_ids);
+                let candidate_ids = self.vorton_arc_candidate_ids(at, &target, arc.range, &struck_ids);
                 out.extend(self.request_structure_damage_candidates(
                     session,
                     effect.module_id,
@@ -360,9 +411,7 @@ impl Scene {
             }
         }
         // Each ship a normal pilot's arc reaches takes the same explosion as the primary target, without a roll.
-        if !structure_arc
-            && let Some(aoe) = turret.aoe
-        {
+        if !structure_arc && let Some(aoe) = turret.aoe {
             for victim in arc_victims {
                 let Some(victim_kinematics) = self.kinematics_of(victim) else { continue };
                 let struck = explosion(&aoe, turret.raw_damage, &victim_kinematics);
@@ -497,7 +546,6 @@ impl Scene {
         chosen.into_iter().map(|(_, _, session)| session).collect()
     }
 
-
     /// Fresh Vorton arc candidates from the current scene, excluding ships already struck in this chain.
     pub(crate) fn vorton_arc_candidate_ids(
         &self,
@@ -514,9 +562,7 @@ impl Scene {
                 return false;
             }
             let signature_radius = if let Some(session) = self.session_of(target_id) {
-                self.pilots
-                    .get(&session)
-                    .map_or(radius, |pilot| pilot.ship.spec.signature_radius)
+                self.pilots.get(&session).map_or(radius, |pilot| pilot.ship.spec.signature_radius)
             } else if self.structure_index(target_id).is_some() {
                 radius
             } else {
@@ -533,11 +579,7 @@ impl Scene {
     }
 
     /// Orders the currently authorized Vorton targets by their surface distance to the arc anchor, then by ID.
-    pub(crate) fn vorton_arc_target_order(
-        &self,
-        anchor: &Kinematics,
-        target_ids: &[i64],
-    ) -> Vec<i64> {
+    pub(crate) fn vorton_arc_target_order(&self, anchor: &Kinematics, target_ids: &[i64]) -> Vec<i64> {
         let mut ordered: Vec<(f64, i64)> = target_ids
             .iter()
             .copied()

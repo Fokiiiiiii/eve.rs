@@ -7,6 +7,7 @@ namespace Eve.Host;
 internal sealed partial class CharacterServicesComposition
 {
     private SpaceStructureCynoBeacons? spaceStructureCynoBeacons;
+    private Eve.Services.Space.SpaceSovHubs? spaceSovHubs;
 
     /// <summary>Called from structure composition after its space structures and EventBus are available.</summary>
     private void SetupStructureCynoBeaconRuntime()

@@ -258,6 +258,7 @@ internal sealed partial class CharacterServicesComposition
     private async Task CorporationOffices()
     {
         corporationOfficeStore = new Eve.Corporations.CorporationOfficeStore(source, corporationSchema);
+        var structureOffices = new StructureOfficeSites(source, structureStore, structureDirectoryReadModel, structureAssetSafetyReadModel, foundations.Scheduler);
         officeManager = new Eve.Services.Corporations.OfficeManagerService(
             corporationOfficeStore, corporations, characters, items,
             economyWallets,
@@ -265,7 +266,16 @@ internal sealed partial class CharacterServicesComposition
                 ? new Eve.Corporations.CorporationOfficeStation(
                     station.Id, station.TypeId, station.OwnerId, station.SolarSystemId, station.Security)
                 : null,
-            now);
+            now,
+            structureOffices);
+        // ST-12: the rent of an office at a structure falls due as a durable job (an unpaid one gives the office up)
+        corporationOfficeStore.RenewalRentSource = structureOffices.RenewalRentAsync;
+        var rentDue = new StructureOfficeRentDue(source, corporationOfficeStore, economyWallets, foundations.Scheduler, structureOffices,
+            items, characters, notificationMailbox ?? throw new InvalidOperationException("The notifications mailbox is wired before the offices."));
+        rentDue.Register();
+        rentDue.SubscribeClosures(foundations.Events);
+        // ST-16: the rent bills taken at a station before the creditor was recorded get the station's owner, once (a no-op from the second start)
+        await rentDue.CreditStationBillsAsync(id => stations.Get(id) is { } station ? (long?)station.OwnerId : null);
         skinCosmeticsCatalog = await ShipCosmeticsCatalog.LoadAsync(sde);
     }
 }

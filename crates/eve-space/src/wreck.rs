@@ -277,7 +277,6 @@ mod tests {
         }
     }
 
-
     #[test]
     fn sde_abandoned_container_group_is_recognized_without_relabeling() {
         let mut abandoned = recorded();

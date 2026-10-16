@@ -23,7 +23,10 @@ mod tether;
 mod warping;
 mod wormholes;
 use self::collision::*;
-pub use self::decloak::{CLOAK_PROXIMITY_METERS, CloakTrigger, DecloakCause};
+pub use self::decloak::{
+    CLOAK_PROXIMITY_METERS, CLOAK_STABILIZATION_MS, CloakTrigger, DecloakCause,
+    OBSERVATORY_DECLOAK_PROBABILITY,
+};
 #[cfg(test)]
 use self::heat::*;
 use self::movement::*;
@@ -344,7 +347,7 @@ pub enum Out {
         bonus_per_cycle: f64,
         bonus_max: f64,
     },
-/// Fresh candidates for one controlled-structure damage pulse or chain hop; Host returns an owner-corp-approved subset using the complete correlation tuple.
+    /// Fresh candidates for one controlled-structure damage pulse or chain hop; Host returns an owner-corp-approved subset using the complete correlation tuple.
     StructureDamageCandidatesRequest {
         session: SessionId,
         structure_id: i64,
@@ -610,6 +613,8 @@ pub(crate) struct Pilot {
     pub(crate) incoming: crate::ewar::Incoming,
     /// Cloak state used by target selection and public visibility.
     pub(crate) cloak: crate::visibility::CloakState,
+    /// Until when the module cloak is stabilized: a Mobile Observatory's ping cannot decloak the ship until then (`decloak::CLOAK_STABILIZATION_MS`).
+    pub(crate) cloak_stabilized_until: i64,
     /// When the post-decloak targeting delay ends: until then the ship acquires no lock (the cloak's cloakingTargetingDelay, from the decloak).
     pub(crate) targeting_blocked_until: i64,
     /// The overload state, per-rack heat and module heat damage carried by this ship.
@@ -644,6 +649,7 @@ impl Pilot {
             warp_blocked_until: 0,
             incoming: crate::ewar::Incoming::default(),
             cloak: crate::visibility::CloakState::Uncloaked,
+            cloak_stabilized_until: 0,
             targeting_blocked_until: 0,
             heat: HeatState::default(),
             tether: tether::TetherState::default(),
@@ -754,6 +760,8 @@ pub struct Scene {
     pub(crate) dot_sequence: u64,
     /// The probes and bombs in space, by id (`crate::deployable`), and how many have been released in this scene.
     pub(crate) deployables: BTreeMap<i64, crate::deployable::Deployable>,
+    /// The structures' bombs and the authorization each blast waits on (keyed by the bomb's deployable id).
+    pub(crate) bomb_impacts: BTreeMap<i64, crate::deployable::BombImpact>,
     pub(crate) deployable_sequence: u64,
     /// The drones of the scene, by the session each is known by (they are NPC-session pilots tied to the ship that controls them, `crate::drones`).
     pub(crate) drones: BTreeMap<SessionId, crate::drones::DroneAi>,
@@ -841,6 +849,7 @@ impl Scene {
             dots: BTreeMap::new(),
             dot_sequence: 0,
             deployables: BTreeMap::new(),
+            bomb_impacts: BTreeMap::new(),
             deployable_sequence: 0,
             drones: BTreeMap::new(),
             drone_threats: BTreeMap::new(),

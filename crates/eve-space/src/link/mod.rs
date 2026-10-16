@@ -39,7 +39,7 @@ use crate::weapons::{Aoe, Arc, Charge, Spool, Turret};
 use crate::world::StructureStatus;
 use crate::wreck::WreckKind;
 
-pub const PROTOCOL_VERSION: u16 = 71;
+pub const PROTOCOL_VERSION: u16 = 74;
 
 /// Maximum candidate or allowed target IDs in a structure-damage authorization step.
 pub const MAX_STRUCTURE_DAMAGE_CANDIDATES: usize = 4096;
@@ -58,7 +58,6 @@ fn structure_field_partition_is_valid(allowed: &[i64], moved: &[i64], held: &[i6
         && moved.iter().chain(held).all(|id| *id > 0 && allowed_set.contains(id) && partition.insert(*id))
         && partition.len() == allowed.len()
 }
-
 /// The message kinds.
 pub mod kind;
 
@@ -1152,6 +1151,16 @@ pub enum Message {
     PlaceInhibitor(Box<DisruptorPlacement>),
     /// The host puts a Mobile Cynosural Beacon in space where its pilot dropped it (protocol 58); the range is 0.
     PlaceCynoBeacon(Box<DisruptorPlacement>),
+    /// The host puts a Mobile Observatory in space where its pilot dropped it (protocol 72); the range is 0.
+    PlaceObservatory(Box<DisruptorPlacement>),
+    /// The host puts a player control tower in space where its pilot launched it (protocol 73); the range is 0.
+    PlaceControlTower(Box<DisruptorPlacement>),
+    /// A Mobile Observatory's decloaking ping in its system (protocol 72): each cloaked ship whose cloak is stabilized is not reached, the others are
+    /// decloaked with a chance of 40% (EVE.js `processRemoteDecloakPing`, the wiki's Mobile Observatory).
+    RemoteDecloakPing {
+        solar_system_id: i32,
+        observatory_id: i64,
+    },
     /// A CRAB the host keeps a record of is put in space (protocol 61).
     PlaceAnalysisBeacon(Box<AnalysisBeaconPlacement>),
     /// The host sets a CRAB's state (its activation and its link); those who see it are told its slim item again (protocol 61).
@@ -1458,7 +1467,8 @@ impl Message {
             Self::RemoteRepairCycle { .. } => kind::REMOTE_REPAIR_CYCLE,
             Self::RemoteRepairCycleResult { .. } => kind::REMOTE_REPAIR_CYCLE_RESULT,
             Self::StructureDamageCandidatesRequest { .. } => kind::STRUCTURE_DAMAGE_CANDIDATES_REQUEST,
-            Self::StructureDamageCandidatesResult { .. } | Self::StructureDamageCandidatesFieldResult { .. } => kind::STRUCTURE_DAMAGE_CANDIDATES_RESULT,
+            Self::StructureDamageCandidatesResult { .. }
+            | Self::StructureDamageCandidatesFieldResult { .. } => kind::STRUCTURE_DAMAGE_CANDIDATES_RESULT,
             Self::ModuleWorkCycle { .. } => kind::MODULE_WORK_CYCLE,
             Self::ModuleWorkResult { .. } => kind::MODULE_WORK_RESULT,
             Self::ModuleEnded { .. } => kind::MODULE_ENDED,
@@ -1487,6 +1497,9 @@ impl Message {
             Self::PlaceAnalysisBeacon(_) => kind::PLACE_ANALYSIS_BEACON,
             Self::PlaceInhibitor(_) => kind::PLACE_INHIBITOR,
             Self::PlaceCynoBeacon(_) => kind::PLACE_CYNO_BEACON,
+            Self::PlaceObservatory(_) => kind::PLACE_OBSERVATORY,
+            Self::PlaceControlTower(_) => kind::PLACE_CONTROL_TOWER,
+            Self::RemoteDecloakPing { .. } => kind::REMOTE_DECLOAK_PING,
             Self::SetDisruptorActive { .. } => kind::SET_DISRUPTOR_ACTIVE,
             Self::TetherPolicy { .. } => kind::TETHER_POLICY,
             Self::TetherChanged { .. } => kind::TETHER_CHANGED,

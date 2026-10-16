@@ -4055,214 +4055,213 @@ fn a_cloak_ended_for_another_reason_tells_the_custom_notice_after_the_module_has
     );
 }
 
+fn controlled_structure_point_defense() -> (Scene, i64, i64, i64) {
+    let (mut scene, now) = crowd();
+    let origin = scene.pilots[&A].ship.position;
+    let mut placement = crate::scene::tests::structure_placement(&scene, now);
+    let structure_id = placement.structure_id;
+    placement.position = [origin.x, origin.y, origin.z];
+    scene.place_structure(placement, now);
+    let structure_id_2 = structure_id + 1;
+    let mut second = crate::scene::tests::structure_placement(&scene, now);
+    second.structure_id = structure_id_2;
+    second.position = [origin.x + 12_000.0, origin.y, origin.z];
+    scene.place_structure(second, now);
+    let control =
+        scene.control_structure(A, scene.solar_system_id(), structure_id, spec().character_id, true, 39, now);
+    assert!(control.iter().any(|out| matches!(out, Out::Accepted { session, .. } if *session == A)));
 
-    fn controlled_structure_point_defense() -> (Scene, i64, i64, i64) {
-        let (mut scene, now) = crowd();
-        let origin = scene.pilots[&A].ship.position;
-        let mut placement = crate::scene::tests::structure_placement(&scene, now);
-        let structure_id = placement.structure_id;
-        placement.position = [origin.x, origin.y, origin.z];
-        scene.place_structure(placement, now);
-        let structure_id_2 = structure_id + 1;
-        let mut second = crate::scene::tests::structure_placement(&scene, now);
-        second.structure_id = structure_id_2;
-        second.position = [origin.x + 12_000.0, origin.y, origin.z];
-        scene.place_structure(second, now);
-        let control = scene.control_structure(
-            A,
-            scene.solar_system_id(),
-            structure_id,
-            spec().character_id,
-            true,
-            39,
-            now,
-        );
-        assert!(control.iter().any(|out| matches!(out, Out::Accepted { session, .. } if *session == A)));
+    let mut structure_spec = spec();
+    structure_spec.ship_id = structure_id;
+    structure_spec.capacitor_capacity = 100.0;
+    structure_spec.capacitor_recharge_s = 100.0;
+    structure_spec.modules = vec![crate::ship::ModuleSpec { item_id: MODULE, type_id: 35_926, flag: 27 }];
+    scene.respec(A, structure_spec, now);
+    (scene, structure_id, structure_id_2, now)
+}
 
-        let mut structure_spec = spec();
-        structure_spec.ship_id = structure_id;
-        structure_spec.capacitor_capacity = 100.0;
-        structure_spec.capacitor_recharge_s = 100.0;
-        structure_spec.modules = vec![crate::ship::ModuleSpec { item_id: MODULE, type_id: 35_926, flag: 27 }];
-        scene.respec(A, structure_spec, now);
-        (scene, structure_id, structure_id_2, now)
-    }
+fn point_defense_effect() -> Effect {
+    let mut effect = afterburner();
+    effect.module_type = 35_926;
+    effect.effect_id = 6_443;
+    effect.fx = "effects.PointDefense".to_string();
+    effect.duration_ms = 10_000.0;
+    effect.target_id = 0;
+    effect.on = None;
+    effect.off = None;
+    effect.on_changes.clear();
+    effect.off_changes.clear();
+    effect.action = Some(Action::Charged {
+        action: Box::new(Action::PointDefense { range_meters: 100_000.0, damage: [20.0, 30.0, 40.0, 50.0] }),
+        fallback: None,
+        charge_type_id: 4_186,
+        charge_flag: 27,
+        charge_per_cycle: 1,
+        charges: 2,
+    });
+    effect
+}
 
-    fn point_defense_effect() -> Effect {
-        let mut effect = afterburner();
-        effect.module_type = 35_926;
-        effect.effect_id = 6_443;
-        effect.fx = "effects.PointDefense".to_string();
-        effect.duration_ms = 10_000.0;
-        effect.target_id = 0;
-        effect.on = None;
-        effect.off = None;
-        effect.on_changes.clear();
-        effect.off_changes.clear();
-        effect.action = Some(Action::Charged {
-            action: Box::new(Action::PointDefense {
-                range_meters: 100_000.0,
-                damage: [20.0, 30.0, 40.0, 50.0],
-            }),
-            fallback: None,
-            charge_type_id: 4_186,
-            charge_flag: 27,
-            charge_per_cycle: 1,
-            charges: 2,
-        });
-        effect
-    }
+#[test]
+fn a_controlled_structure_point_defense_waits_for_the_correlated_authorization() {
+    let (mut scene, structure_id, second_structure_id, now) = controlled_structure_point_defense();
+    let mut npc = other_spec();
+    npc.ship_id = 7_777_777;
+    npc.type_id = 12_345;
+    npc.owner_id = 98_000_123;
+    npc.corporation_id = 98_000_123;
+    let npc_id = npc.ship_id;
+    let source_position = scene.structure_body(structure_id).unwrap().position;
+    let npc_place = crate::npc::NpcPlace::at_rest(eve_destiny::Vec3::new(
+        source_position.x + 500.0,
+        source_position.y,
+        source_position.z,
+    ));
+    let _ = scene.spawn_npc(npc, crate::ship::NpcIdentity::default(), npc_place, now);
+    let mut missile_launcher = afterburner();
+    missile_launcher.target_id = spec().ship_id;
+    missile_launcher.turret = Some(crate::weapons::Turret {
+        weapon_type_id: 35_921,
+        fx: "effects.MissileDeployment".to_string(),
+        raw_damage: [1.0, 0.0, 0.0, 0.0],
+        optimal_range: 100_000.0,
+        falloff: 0.0,
+        tracking_speed: 0.0,
+        signature_resolution: 40_000.0,
+        charge: None,
+        missile: Some(crate::missiles::Missile {
+            charge_type_id: 37_844,
+            group_id: 1_546,
+            name: "Standup XL Cruise Missile".to_string(),
+            radius: 300.0,
+            mass: 100.0,
+            agility: 5.22,
+            hit_points: 90.0,
+            max_velocity: 10_000.0,
+            flight_time_ms: 10_000.0,
+            explosion_radius: 300.0,
+            explosion_velocity: 1.0e9,
+            damage_reduction_factor: 0.5,
+            damage_reduction_sensitivity: crate::missiles::DEFAULT_REDUCTION_SENSITIVITY,
+            dot: None,
+        }),
+        spool: None,
+        aoe: None,
+        arc: None,
+        requires_gunnery: false,
+    });
+    let missile_launch = scene.launch_missile(B, &missile_launcher, now);
+    let missile_id = *scene.missiles.keys().next().expect("missile launch inserted an entity");
+    assert!(missile_launch.iter().any(|out| matches!(
+        out,
+        Out::SimDamageableEntityUpserted { entity_id, type_id: 37_844, .. }
+            if *entity_id == missile_id
+    )));
 
-    #[test]
-    fn a_controlled_structure_point_defense_waits_for_the_correlated_authorization() {
-        let (mut scene, structure_id, second_structure_id, now) = controlled_structure_point_defense();
-        let mut npc = other_spec();
-        npc.ship_id = 7_777_777;
-        npc.type_id = 12_345;
-        npc.owner_id = 98_000_123;
-        npc.corporation_id = 98_000_123;
-        let npc_id = npc.ship_id;
-        let source_position = scene.structure_body(structure_id).unwrap().position;
-        let npc_place = crate::npc::NpcPlace::at_rest(eve_destiny::Vec3::new(
-            source_position.x + 500.0,
-            source_position.y,
-            source_position.z,
-        ));
-        let _ = scene.spawn_npc(npc, crate::ship::NpcIdentity::default(), npc_place, now);
-        let mut missile_launcher = afterburner();
-        missile_launcher.target_id = spec().ship_id;
-        missile_launcher.turret = Some(crate::weapons::Turret {
-            weapon_type_id: 35_921,
-            fx: "effects.MissileDeployment".to_string(),
-            raw_damage: [1.0, 0.0, 0.0, 0.0],
-            optimal_range: 100_000.0,
-            falloff: 0.0,
-            tracking_speed: 0.0,
-            signature_resolution: 40_000.0,
-            charge: None,
-            missile: Some(crate::missiles::Missile {
-                charge_type_id: 37_844,
-                group_id: 1_546,
-                name: "Standup XL Cruise Missile".to_string(),
-                radius: 300.0,
-                mass: 100.0,
-                agility: 5.22,
-                hit_points: 90.0,
-                max_velocity: 10_000.0,
-                flight_time_ms: 10_000.0,
-                explosion_radius: 300.0,
-                explosion_velocity: 1.0e9,
-                damage_reduction_factor: 0.5,
-                damage_reduction_sensitivity: crate::missiles::DEFAULT_REDUCTION_SENSITIVITY,
-                dot: None,
-            }),
-            spool: None,
-            aoe: None,
-            arc: None,
-            requires_gunnery: false,
-        });
-        let missile_launch = scene.launch_missile(B, &missile_launcher, now);
-        let missile_id = *scene.missiles.keys().next().expect("missile launch inserted an entity");
-        assert!(missile_launch.iter().any(|out| matches!(
-            out,
-            Out::SimDamageableEntityUpserted { entity_id, type_id: 37_844, .. }
-                if *entity_id == missile_id
-        )));
-
-        let before = scene.pilots[&B].ship.health.clone();
-        let started = scene.activate(A, point_defense_effect(), now);
-        let request = started
-            .iter()
-            .find_map(|out| match out {
-                Out::StructureDamageCandidatesRequest { .. } => Some(out.clone()),
-                _ => None,
-            })
-            .expect("controlled structure asks Host for live damage candidates");
-        let (activation_nonce, lease, cycle_id, ordinal, candidate_ids) = match request {
-            Out::StructureDamageCandidatesRequest {
-                session,
-                structure_id: actual_structure,
-                module_id,
-                effect_id,
-                activation_nonce,
-                control_lease_generation,
-                cycle_id,
-                pulse_hop_ordinal,
-                candidate_ids,
-            } => {
-                assert_eq!(session, A);
-                assert_eq!(actual_structure, structure_id);
-                assert_eq!(module_id, MODULE);
-                assert_eq!(effect_id, 6_443);
-                (activation_nonce, control_lease_generation, cycle_id, pulse_hop_ordinal, candidate_ids)
-            }
-            _ => unreachable!(),
-        };
-        assert_eq!(lease, 39);
-        assert_eq!(ordinal, 0);
-        assert!(candidate_ids.contains(&other_spec().ship_id), "player hull remains a candidate: {candidate_ids:?}");
-        assert!(candidate_ids.contains(&spec().ship_id), "retained physical hull remains a candidate: {candidate_ids:?}");
-        assert!(candidate_ids.contains(&npc_id), "NPC hull remains a candidate: {candidate_ids:?}");
-        assert!(candidate_ids.contains(&missile_id), "missile projectile remains a candidate: {candidate_ids:?}");
-        assert!(candidate_ids.contains(&second_structure_id), "other structure remains a candidate: {candidate_ids:?}");
-        assert!(!started.iter().any(|out| matches!(out, Out::ChargeSpent { .. })));
-        assert_eq!(scene.structure_modules[&structure_id].modules.running[0].rounds, Some(2));
-        assert_eq!(scene.pilots[&B].ship.health, before);
-
-        let mismatch = scene.structure_damage_candidates_result(
-            A,
-            structure_id,
-            MODULE,
-            6_443,
+    let before = scene.pilots[&B].ship.health.clone();
+    let started = scene.activate(A, point_defense_effect(), now);
+    let request = started
+        .iter()
+        .find_map(|out| match out {
+            Out::StructureDamageCandidatesRequest { .. } => Some(out.clone()),
+            _ => None,
+        })
+        .expect("controlled structure asks Host for live damage candidates");
+    let (activation_nonce, lease, cycle_id, ordinal, candidate_ids) = match request {
+        Out::StructureDamageCandidatesRequest {
+            session,
+            structure_id: actual_structure,
+            module_id,
+            effect_id,
             activation_nonce,
-            lease,
-            cycle_id.wrapping_add(1),
-            ordinal,
-            &[other_spec().ship_id],
-            now + 1,
-        );
-        assert!(mismatch.is_empty(), "a stale cycle result cannot settle damage");
-        let unrequested = scene.structure_damage_candidates_result(
-            A,
-            structure_id,
-            MODULE,
-            6_443,
-            activation_nonce,
-            lease,
+            control_lease_generation,
             cycle_id,
-            ordinal,
-            &[i64::MAX],
-            now + 2,
-        );
-        assert!(unrequested.is_empty(), "Host cannot grant an ID outside the request");
-        assert_eq!(scene.structure_modules[&structure_id].modules.running[0].rounds, Some(2));
-        assert_eq!(scene.pilots[&B].ship.health, before);
+            pulse_hop_ordinal,
+            candidate_ids,
+        } => {
+            assert_eq!(session, A);
+            assert_eq!(actual_structure, structure_id);
+            assert_eq!(module_id, MODULE);
+            assert_eq!(effect_id, 6_443);
+            (activation_nonce, control_lease_generation, cycle_id, pulse_hop_ordinal, candidate_ids)
+        }
+        _ => unreachable!(),
+    };
+    assert_eq!(lease, 39);
+    assert_eq!(ordinal, 0);
+    assert!(
+        candidate_ids.contains(&other_spec().ship_id),
+        "player hull remains a candidate: {candidate_ids:?}"
+    );
+    assert!(
+        candidate_ids.contains(&spec().ship_id),
+        "retained physical hull remains a candidate: {candidate_ids:?}"
+    );
+    assert!(candidate_ids.contains(&npc_id), "NPC hull remains a candidate: {candidate_ids:?}");
+    assert!(candidate_ids.contains(&missile_id), "missile projectile remains a candidate: {candidate_ids:?}");
+    assert!(
+        candidate_ids.contains(&second_structure_id),
+        "other structure remains a candidate: {candidate_ids:?}"
+    );
+    assert!(!started.iter().any(|out| matches!(out, Out::ChargeSpent { .. })));
+    assert_eq!(scene.structure_modules[&structure_id].modules.running[0].rounds, Some(2));
+    assert_eq!(scene.pilots[&B].ship.health, before);
 
-        let applied = scene.structure_damage_candidates_result(
-            A,
-            structure_id,
-            MODULE,
-            6_443,
-            activation_nonce,
-            lease,
-            cycle_id,
-            ordinal,
-            &[other_spec().ship_id, missile_id],
-            now + 3,
-        );
-        assert!(applied.iter().any(|out| matches!(
-            out,
-            Out::ChargeSpent { session, module_id, rounds_left: 1 }
-                if *session == A && *module_id == MODULE
-        )));
-        assert!(applied.iter().any(|out| matches!(
-            out,
-            Out::SimDamageableEntityRemoved { entity_id, .. } if *entity_id == missile_id
-        )));
-        assert!(!scene.missiles.contains_key(&missile_id));
-        assert_ne!(scene.pilots[&B].ship.health, before, "only the Host-approved target is damaged");
-        let after_authorized_hit = scene.pilots[&B].ship.health.clone();
-        assert!(scene
+    let mismatch = scene.structure_damage_candidates_result(
+        A,
+        structure_id,
+        MODULE,
+        6_443,
+        activation_nonce,
+        lease,
+        cycle_id.wrapping_add(1),
+        ordinal,
+        &[other_spec().ship_id],
+        now + 1,
+    );
+    assert!(mismatch.is_empty(), "a stale cycle result cannot settle damage");
+    let unrequested = scene.structure_damage_candidates_result(
+        A,
+        structure_id,
+        MODULE,
+        6_443,
+        activation_nonce,
+        lease,
+        cycle_id,
+        ordinal,
+        &[i64::MAX],
+        now + 2,
+    );
+    assert!(unrequested.is_empty(), "Host cannot grant an ID outside the request");
+    assert_eq!(scene.structure_modules[&structure_id].modules.running[0].rounds, Some(2));
+    assert_eq!(scene.pilots[&B].ship.health, before);
+
+    let applied = scene.structure_damage_candidates_result(
+        A,
+        structure_id,
+        MODULE,
+        6_443,
+        activation_nonce,
+        lease,
+        cycle_id,
+        ordinal,
+        &[other_spec().ship_id, missile_id],
+        now + 3,
+    );
+    assert!(applied.iter().any(|out| matches!(
+        out,
+        Out::ChargeSpent { session, module_id, rounds_left: 1 }
+            if *session == A && *module_id == MODULE
+    )));
+    assert!(applied.iter().any(|out| matches!(
+        out,
+        Out::SimDamageableEntityRemoved { entity_id, .. } if *entity_id == missile_id
+    )));
+    assert!(!scene.missiles.contains_key(&missile_id));
+    assert_ne!(scene.pilots[&B].ship.health, before, "only the Host-approved target is damaged");
+    let after_authorized_hit = scene.pilots[&B].ship.health.clone();
+    assert!(
+        scene
             .structure_damage_candidates_result(
                 A,
                 structure_id,
@@ -4275,68 +4274,73 @@ fn a_cloak_ended_for_another_reason_tells_the_custom_notice_after_the_module_has
                 &[other_spec().ship_id],
                 now + 4,
             )
-            .is_empty(), "a replay has no pending operation to settle");
-        assert_eq!(scene.pilots[&B].ship.health, after_authorized_hit);
+            .is_empty(),
+        "a replay has no pending operation to settle"
+    );
+    assert_eq!(scene.pilots[&B].ship.health, after_authorized_hit);
 
-        let next_cycle = scene.poll(now + 10 * SECOND);
-        let next_request = next_cycle
-            .iter()
-            .find_map(|out| match out {
-                Out::StructureDamageCandidatesRequest { .. } => Some(out.clone()),
-                _ => None,
-            })
-            .expect("each new module cycle performs a fresh Host authorization");
-        let (next_nonce, next_lease, next_cycle_id, next_ordinal, fresh_candidates) = match next_request {
-            Out::StructureDamageCandidatesRequest {
-                activation_nonce,
-                control_lease_generation,
-                cycle_id,
-                pulse_hop_ordinal,
-                candidate_ids,
-                ..
-            } => (activation_nonce, control_lease_generation, cycle_id, pulse_hop_ordinal, candidate_ids),
-            _ => unreachable!(),
-        };
-        assert_eq!(next_nonce, activation_nonce, "one activation nonce spans its repeated cycles");
-        assert_eq!(next_lease, lease, "Host lease generation is carried unchanged");
-        assert_ne!(next_cycle_id, cycle_id, "the next parent module cycle has a new ID");
-        assert_eq!(next_ordinal, 0, "cycle-local ordinal restarts at zero");
-        assert!(fresh_candidates.contains(&other_spec().ship_id));
-        assert!(!next_cycle.iter().any(|out| matches!(out, Out::ChargeSpent { .. })));
-        let before_denied_cycle = scene.pilots[&B].ship.health.clone();
-        let denied = scene.structure_damage_candidates_result(
-            A,
-            structure_id,
-            MODULE,
-            6_443,
-            next_nonce,
-            next_lease,
-            next_cycle_id,
-            next_ordinal,
-            &[],
-            now + 10 * SECOND,
-        );
-        assert!(denied.iter().any(|out| matches!(
+    let next_cycle = scene.poll(now + 10 * SECOND);
+    let next_request = next_cycle
+        .iter()
+        .find_map(|out| match out {
+            Out::StructureDamageCandidatesRequest { .. } => Some(out.clone()),
+            _ => None,
+        })
+        .expect("each new module cycle performs a fresh Host authorization");
+    let (next_nonce, next_lease, next_cycle_id, next_ordinal, fresh_candidates) = match next_request {
+        Out::StructureDamageCandidatesRequest {
+            activation_nonce,
+            control_lease_generation,
+            cycle_id,
+            pulse_hop_ordinal,
+            candidate_ids,
+            ..
+        } => (activation_nonce, control_lease_generation, cycle_id, pulse_hop_ordinal, candidate_ids),
+        _ => unreachable!(),
+    };
+    assert_eq!(next_nonce, activation_nonce, "one activation nonce spans its repeated cycles");
+    assert_eq!(next_lease, lease, "Host lease generation is carried unchanged");
+    assert_ne!(next_cycle_id, cycle_id, "the next parent module cycle has a new ID");
+    assert_eq!(next_ordinal, 0, "cycle-local ordinal restarts at zero");
+    assert!(fresh_candidates.contains(&other_spec().ship_id));
+    assert!(!next_cycle.iter().any(|out| matches!(out, Out::ChargeSpent { .. })));
+    let before_denied_cycle = scene.pilots[&B].ship.health.clone();
+    let denied = scene.structure_damage_candidates_result(
+        A,
+        structure_id,
+        MODULE,
+        6_443,
+        next_nonce,
+        next_lease,
+        next_cycle_id,
+        next_ordinal,
+        &[],
+        now + 10 * SECOND,
+    );
+    assert!(
+        denied.iter().any(|out| matches!(
             out,
             Out::ChargeSpent { session, module_id, rounds_left: 0 }
                 if *session == A && *module_id == MODULE
-        )), "a correlated no-grant still settles the cycle's charge");
-        assert_eq!(scene.pilots[&B].ship.health, before_denied_cycle);
-    }
+        )),
+        "a correlated no-grant still settles the cycle's charge"
+    );
+    assert_eq!(scene.pilots[&B].ship.health, before_denied_cycle);
+}
 
-    #[test]
-    fn point_defense_requires_a_live_structure_control_lease() {
-        let (mut scene, now) = crowd();
-        let before = scene.pilots[&A].modules.capacitor.as_ref().unwrap().charge_at(now);
-        let refused = scene.activate(A, point_defense_effect(), now);
-        assert!(refused.iter().any(|out| matches!(
-            out,
-            Out::Refused { session, reason: "STRUCTURE_CONTROL_LEASE_REQUIRED", .. }
-                if *session == A
-        )));
-        assert!(!refused.iter().any(|out| matches!(out, Out::Accepted { .. })));
-        assert_eq!(scene.pilots[&A].modules.capacitor.as_ref().unwrap().charge_at(now), before);
-    }
+#[test]
+fn point_defense_requires_a_live_structure_control_lease() {
+    let (mut scene, now) = crowd();
+    let before = scene.pilots[&A].modules.capacitor.as_ref().unwrap().charge_at(now);
+    let refused = scene.activate(A, point_defense_effect(), now);
+    assert!(refused.iter().any(|out| matches!(
+        out,
+        Out::Refused { session, reason: "STRUCTURE_CONTROL_LEASE_REQUIRED", .. }
+            if *session == A
+    )));
+    assert!(!refused.iter().any(|out| matches!(out, Out::Accepted { .. })));
+    assert_eq!(scene.pilots[&A].modules.capacitor.as_ref().unwrap().charge_at(now), before);
+}
 
 #[test]
 fn a_controlled_structure_vorton_arc_rechecks_and_authorizes_each_hop() {
@@ -4535,226 +4539,225 @@ fn a_controlled_structure_vorton_arc_rechecks_and_authorizes_each_hop() {
     );
 }
 
+#[test]
+fn a_controlled_structure_strike_authorizes_each_pulse_with_fresh_candidates() {
+    let (mut scene, structure_id, _, now) = controlled_structure_point_defense();
+    let mut structure_spec = spec();
+    structure_spec.ship_id = structure_id;
+    structure_spec.max_target_range = 100_000.0;
+    structure_spec.max_locked_targets = 5;
+    structure_spec.capacitor_capacity = 100.0;
+    structure_spec.capacitor_recharge_s = 100.0;
+    structure_spec.modules = vec![crate::ship::ModuleSpec { item_id: MODULE, type_id: 40_634, flag: 27 }];
+    scene.respec(A, structure_spec, now);
+    let source = scene.structure_body(structure_id).unwrap().position;
+    {
+        let target = &mut scene.pilots.get_mut(&B).unwrap().ship;
+        target.position = source;
+        target.velocity = eve_destiny::Vec3::ZERO;
+        target.speed_fraction = 0.0;
+        target.course = crate::ship::Course::Stop;
+    }
 
-    #[test]
-    fn a_controlled_structure_strike_authorizes_each_pulse_with_fresh_candidates() {
-        let (mut scene, structure_id, _, now) = controlled_structure_point_defense();
-        let mut structure_spec = spec();
-        structure_spec.ship_id = structure_id;
-        structure_spec.max_target_range = 100_000.0;
-        structure_spec.max_locked_targets = 5;
-        structure_spec.capacitor_capacity = 100.0;
-        structure_spec.capacitor_recharge_s = 100.0;
-        structure_spec.modules = vec![crate::ship::ModuleSpec { item_id: MODULE, type_id: 40_634, flag: 27 }];
-        scene.respec(A, structure_spec, now);
-        let source = scene.structure_body(structure_id).unwrap().position;
-        {
-            let target = &mut scene.pilots.get_mut(&B).unwrap().ship;
-            target.position = source;
-            target.velocity = eve_destiny::Vec3::ZERO;
-            target.speed_fraction = 0.0;
-            target.course = crate::ship::Course::Stop;
+    let strike = crate::strike::Strike {
+        shape: crate::strike::StrikeShape::Sphere,
+        direction: [-1.0, 0.0, 0.0],
+        length: 100_000.0,
+        radius: 1_000_000.0,
+        warning_ms: 100.0,
+        pulse_ms: 1_000.0,
+        pulses: 2,
+        damage: [40.0, 30.0, 20.0, 10.0],
+        signature_radius: 1_000.0,
+        immobile_ms: 0.0,
+        no_jump_ms: 0.0,
+        neut_amount: 0.0,
+        neut_radius: 0.0,
+        neut_signature_radius: 0.0,
+        debuff_ms: 0.0,
+        sweep_end: None,
+        beacon: None,
+    };
+    let mut effect = afterburner();
+    effect.module_type = 40_634;
+    effect.effect_id = 6_474;
+    effect.fx = "effects.SuperweaponStrike".to_string();
+    effect.duration_ms = 2_000.0;
+    effect.capacitor_need = 0.0;
+    effect.target_id = 0;
+    effect.on = None;
+    effect.off = None;
+    effect.on_changes.clear();
+    effect.off_changes.clear();
+    effect.action = Some(Action::Charged {
+        action: Box::new(Action::Strike { strike }),
+        fallback: None,
+        charge_type_id: 4_186,
+        charge_flag: 27,
+        charge_per_cycle: 1,
+        charges: 2,
+    });
+
+    let before = scene.pilots[&B].ship.health.clone();
+    let started = scene.activate(A, effect, now);
+    assert!(!started.iter().any(|out| matches!(out, Out::ChargeSpent { .. })));
+    assert_eq!(scene.pilots[&B].ship.health, before);
+    let pulse_time = now + SECOND / 10;
+    let first_pulse = scene.poll(pulse_time);
+    let first_request = first_pulse
+        .iter()
+        .find_map(|out| match out {
+            Out::StructureDamageCandidatesRequest { .. } => Some(out.clone()),
+            _ => None,
+        })
+        .expect("each area pulse parks on a Host decision");
+    let (nonce, cycle, first_candidates) = match first_request {
+        Out::StructureDamageCandidatesRequest {
+            activation_nonce,
+            cycle_id,
+            pulse_hop_ordinal,
+            candidate_ids,
+            ..
+        } => {
+            assert_eq!(pulse_hop_ordinal, 0);
+            (activation_nonce, cycle_id, candidate_ids)
         }
+        _ => unreachable!(),
+    };
+    assert!(first_candidates.contains(&other_spec().ship_id));
+    assert!(first_candidates.contains(&spec().ship_id));
+    assert!(!first_pulse.iter().any(|out| matches!(out, Out::ChargeSpent { .. })));
+    assert_eq!(scene.pilots[&B].ship.health, before);
 
-        let strike = crate::strike::Strike {
-            shape: crate::strike::StrikeShape::Sphere,
-            direction: [-1.0, 0.0, 0.0],
-            length: 100_000.0,
-            radius: 1_000_000.0,
-            warning_ms: 100.0,
-            pulse_ms: 1_000.0,
-            pulses: 2,
-            damage: [40.0, 30.0, 20.0, 10.0],
-            signature_radius: 1_000.0,
-            immobile_ms: 0.0,
-            no_jump_ms: 0.0,
-            neut_amount: 0.0,
-            neut_radius: 0.0,
-            neut_signature_radius: 0.0,
-            debuff_ms: 0.0,
-            sweep_end: None,
-            beacon: None,
-        };
-        let mut effect = afterburner();
-        effect.module_type = 40_634;
-        effect.effect_id = 6_474;
-        effect.fx = "effects.SuperweaponStrike".to_string();
-        effect.duration_ms = 2_000.0;
-        effect.capacitor_need = 0.0;
-        effect.target_id = 0;
-        effect.on = None;
-        effect.off = None;
-        effect.on_changes.clear();
-        effect.off_changes.clear();
-        effect.action = Some(Action::Charged {
-            action: Box::new(Action::Strike { strike }),
-            fallback: None,
-            charge_type_id: 4_186,
-            charge_flag: 27,
-            charge_per_cycle: 1,
-            charges: 2,
-        });
+    let first_result = scene.structure_damage_candidates_result(
+        A,
+        structure_id,
+        MODULE,
+        6_474,
+        nonce,
+        39,
+        cycle,
+        0,
+        &[other_spec().ship_id],
+        pulse_time + 1,
+    );
+    assert!(first_result.iter().any(|out| matches!(
+        out,
+        Out::ChargeSpent { session, module_id, rounds_left: 1 }
+            if *session == A && *module_id == MODULE
+    )));
+    assert_ne!(scene.pilots[&B].ship.health, before);
 
-        let before = scene.pilots[&B].ship.health.clone();
-        let started = scene.activate(A, effect, now);
-        assert!(!started.iter().any(|out| matches!(out, Out::ChargeSpent { .. })));
-        assert_eq!(scene.pilots[&B].ship.health, before);
-        let pulse_time = now + SECOND / 10;
-        let first_pulse = scene.poll(pulse_time);
-        let first_request = first_pulse
-            .iter()
-            .find_map(|out| match out {
-                Out::StructureDamageCandidatesRequest { .. } => Some(out.clone()),
-                _ => None,
-            })
-            .expect("each area pulse parks on a Host decision");
-        let (nonce, cycle, first_candidates) = match first_request {
-            Out::StructureDamageCandidatesRequest {
-                activation_nonce,
-                cycle_id,
-                pulse_hop_ordinal,
-                candidate_ids,
-                ..
-            } => {
-                assert_eq!(pulse_hop_ordinal, 0);
-                (activation_nonce, cycle_id, candidate_ids)
-            }
-            _ => unreachable!(),
-        };
-        assert!(first_candidates.contains(&other_spec().ship_id));
-        assert!(first_candidates.contains(&spec().ship_id));
-        assert!(!first_pulse.iter().any(|out| matches!(out, Out::ChargeSpent { .. })));
-        assert_eq!(scene.pilots[&B].ship.health, before);
+    let late_id = 8_888_888;
+    let mut late_npc = other_spec();
+    late_npc.ship_id = late_id;
+    let late_place =
+        crate::npc::NpcPlace::at_rest(eve_destiny::Vec3::new(source.x, source.y + 500.0, source.z));
+    let (late_session, _) =
+        scene.spawn_npc(late_npc, crate::ship::NpcIdentity::default(), late_place, pulse_time + 1);
 
-        let first_result = scene.structure_damage_candidates_result(
-            A,
-            structure_id,
-            MODULE,
-            6_474,
-            nonce,
-            39,
-            cycle,
-            0,
-            &[other_spec().ship_id],
-            pulse_time + 1,
-        );
-        assert!(first_result.iter().any(|out| matches!(
-            out,
-            Out::ChargeSpent { session, module_id, rounds_left: 1 }
-                if *session == A && *module_id == MODULE
-        )));
-        assert_ne!(scene.pilots[&B].ship.health, before);
+    let second_pulse_time = now + 11 * SECOND / 10;
+    let second_pulse = scene.poll(second_pulse_time);
+    let second_request = second_pulse
+        .iter()
+        .find_map(|out| match out {
+            Out::StructureDamageCandidatesRequest { .. } => Some(out.clone()),
+            _ => None,
+        })
+        .expect("the next pulse scans the current scene again");
+    let (second_nonce, second_cycle, second_ordinal, second_candidates) = match second_request {
+        Out::StructureDamageCandidatesRequest {
+            activation_nonce,
+            cycle_id,
+            pulse_hop_ordinal,
+            candidate_ids,
+            ..
+        } => (activation_nonce, cycle_id, pulse_hop_ordinal, candidate_ids),
+        _ => unreachable!(),
+    };
+    assert_eq!(second_nonce, nonce);
+    assert_eq!(second_cycle, cycle);
+    assert_eq!(second_ordinal, 1);
+    assert!(second_candidates.contains(&late_id), "a later entrant is included in the fresh pulse scan");
+    assert!(!second_pulse.iter().any(|out| matches!(out, Out::ChargeSpent { .. })));
+    let before_late_hit = scene.pilots[&late_session].ship.health.clone();
+    let second_result = scene.structure_damage_candidates_result(
+        A,
+        structure_id,
+        MODULE,
+        6_474,
+        nonce,
+        39,
+        cycle,
+        1,
+        &[late_id],
+        second_pulse_time + 1,
+    );
+    assert!(!second_result.iter().any(|out| matches!(out, Out::ChargeSpent { .. })));
+    assert_ne!(scene.pilots[&late_session].ship.health, before_late_hit);
+}
 
-        let late_id = 8_888_888;
-        let mut late_npc = other_spec();
-        late_npc.ship_id = late_id;
-        let late_place = crate::npc::NpcPlace::at_rest(eve_destiny::Vec3::new(source.x, source.y + 500.0, source.z));
-        let (late_session, _) =
-            scene.spawn_npc(late_npc, crate::ship::NpcIdentity::default(), late_place, pulse_time + 1);
-
-        let second_pulse_time = now + 11 * SECOND / 10;
-        let second_pulse = scene.poll(second_pulse_time);
-        let second_request = second_pulse
-            .iter()
-            .find_map(|out| match out {
-                Out::StructureDamageCandidatesRequest { .. } => Some(out.clone()),
-                _ => None,
-            })
-            .expect("the next pulse scans the current scene again");
-        let (second_nonce, second_cycle, second_ordinal, second_candidates) = match second_request {
-            Out::StructureDamageCandidatesRequest {
-                activation_nonce,
-                cycle_id,
-                pulse_hop_ordinal,
-                candidate_ids,
-                ..
-            } => (activation_nonce, cycle_id, pulse_hop_ordinal, candidate_ids),
-            _ => unreachable!(),
-        };
-        assert_eq!(second_nonce, nonce);
-        assert_eq!(second_cycle, cycle);
-        assert_eq!(second_ordinal, 1);
-        assert!(second_candidates.contains(&late_id), "a later entrant is included in the fresh pulse scan");
-        assert!(!second_pulse.iter().any(|out| matches!(out, Out::ChargeSpent { .. })));
-        let before_late_hit = scene.pilots[&late_session].ship.health.clone();
-        let second_result = scene.structure_damage_candidates_result(
-            A,
-            structure_id,
-            MODULE,
-            6_474,
-            nonce,
-            39,
-            cycle,
-            1,
-            &[late_id],
-            second_pulse_time + 1,
-        );
-        assert!(!second_result.iter().any(|out| matches!(out, Out::ChargeSpent { .. })));
-        assert_ne!(scene.pilots[&late_session].ship.health, before_late_hit);
-    }
-
-
-    #[test]
-    fn a_sim_missile_profile_is_published_and_removed_with_its_projectile() {
-        let (mut scene, now) = crowd();
-        let mut launcher = afterburner();
-        launcher.target_id = other_spec().ship_id;
-        launcher.turret = Some(crate::weapons::Turret {
-            weapon_type_id: 35_921,
-            fx: "effects.MissileDeployment".to_string(),
-            raw_damage: [0.0, 20.0, 0.0, 0.0],
-            optimal_range: 100_000.0,
-            falloff: 0.0,
-            tracking_speed: 0.0,
-            signature_resolution: 40_000.0,
-            charge: None,
-            missile: Some(crate::missiles::Missile {
-                charge_type_id: 37_844,
-                group_id: 1_546,
-                name: "Standup XL Cruise Missile".to_string(),
-                radius: 300.0,
-                mass: 100.0,
-                agility: 5.22,
-                hit_points: 90.0,
-                max_velocity: 10_000.0,
-                flight_time_ms: 10_000.0,
-                explosion_radius: 300.0,
-                explosion_velocity: 1.0e9,
-                damage_reduction_factor: 0.5,
-                damage_reduction_sensitivity: crate::missiles::DEFAULT_REDUCTION_SENSITIVITY,
-                dot: None,
-            }),
-            spool: None,
-            aoe: None,
-            arc: None,
-            requires_gunnery: false,
-        });
-        let launched = scene.launch_missile(A, &launcher, now);
-        let missile_id = *scene.missiles.keys().next().expect("the launcher inserted a missile");
-        assert!(launched.iter().any(|out| matches!(
-            out,
-            Out::SimDamageableEntityUpserted {
-                solar_system_id,
-                entity_id,
-                type_id: 37_844,
-                owner_id,
-                ..
-            } if *solar_system_id == scene.solar_system_id()
-                && *entity_id == missile_id
-                && *owner_id == spec().character_id
-        )));
-        let removed = scene.intercept_missile(
-            missile_id,
-            crate::missile_entity::Interceptor::PointDefense { module_id: MODULE },
-            now + 1,
-        );
-        assert!(removed.iter().any(|out| matches!(
-            out,
-            Out::SimDamageableEntityRemoved { solar_system_id, entity_id }
-                if *solar_system_id == scene.solar_system_id() && *entity_id == missile_id
-        )));
-        assert!(!scene.sim_damageable_entities.contains(&missile_id));
-    }
+#[test]
+fn a_sim_missile_profile_is_published_and_removed_with_its_projectile() {
+    let (mut scene, now) = crowd();
+    let mut launcher = afterburner();
+    launcher.target_id = other_spec().ship_id;
+    launcher.turret = Some(crate::weapons::Turret {
+        weapon_type_id: 35_921,
+        fx: "effects.MissileDeployment".to_string(),
+        raw_damage: [0.0, 20.0, 0.0, 0.0],
+        optimal_range: 100_000.0,
+        falloff: 0.0,
+        tracking_speed: 0.0,
+        signature_resolution: 40_000.0,
+        charge: None,
+        missile: Some(crate::missiles::Missile {
+            charge_type_id: 37_844,
+            group_id: 1_546,
+            name: "Standup XL Cruise Missile".to_string(),
+            radius: 300.0,
+            mass: 100.0,
+            agility: 5.22,
+            hit_points: 90.0,
+            max_velocity: 10_000.0,
+            flight_time_ms: 10_000.0,
+            explosion_radius: 300.0,
+            explosion_velocity: 1.0e9,
+            damage_reduction_factor: 0.5,
+            damage_reduction_sensitivity: crate::missiles::DEFAULT_REDUCTION_SENSITIVITY,
+            dot: None,
+        }),
+        spool: None,
+        aoe: None,
+        arc: None,
+        requires_gunnery: false,
+    });
+    let launched = scene.launch_missile(A, &launcher, now);
+    let missile_id = *scene.missiles.keys().next().expect("the launcher inserted a missile");
+    assert!(launched.iter().any(|out| matches!(
+        out,
+        Out::SimDamageableEntityUpserted {
+            solar_system_id,
+            entity_id,
+            type_id: 37_844,
+            owner_id,
+            ..
+        } if *solar_system_id == scene.solar_system_id()
+            && *entity_id == missile_id
+            && *owner_id == spec().character_id
+    )));
+    let removed = scene.intercept_missile(
+        missile_id,
+        crate::missile_entity::Interceptor::PointDefense { module_id: MODULE },
+        now + 1,
+    );
+    assert!(removed.iter().any(|out| matches!(
+        out,
+        Out::SimDamageableEntityRemoved { solar_system_id, entity_id }
+            if *solar_system_id == scene.solar_system_id() && *entity_id == missile_id
+    )));
+    assert!(!scene.sim_damageable_entities.contains(&missile_id));
+}
 
 // ST-9 b: the Entosis Link (tag 31, protocol 70): a cycle on a locked structure, settled by the host as command 14 (`WORK_ENTOSIS`).
 
@@ -4820,7 +4823,13 @@ fn an_entosis_link_cycle_asks_the_host_for_command_14_and_ends_when_the_answer_i
     let answer = scene.module_work_result(
         A,
         MODULE,
-        ModuleWorkAnswer { target_id: HUB, cycle_id: cycles[0].0, accepted: true, reason: "", depleted: false },
+        ModuleWorkAnswer {
+            target_id: HUB,
+            cycle_id: cycles[0].0,
+            accepted: true,
+            reason: "",
+            depleted: false,
+        },
         at,
     );
     assert_eq!(ended(&answer), vec![1], "an accepted cycle ends the one cycle the effect has: {answer:?}");
@@ -4839,7 +4848,13 @@ fn a_refused_entosis_cycle_ends_the_effect_with_the_host_reason() {
     let refused = scene.module_work_result(
         A,
         MODULE,
-        ModuleWorkAnswer { target_id: HUB, cycle_id: cycle, accepted: false, reason: "ENTOSIS_TARGET_NOT_CAPTURABLE", depleted: false },
+        ModuleWorkAnswer {
+            target_id: HUB,
+            cycle_id: cycle,
+            accepted: false,
+            reason: "ENTOSIS_TARGET_NOT_CAPTURABLE",
+            depleted: false,
+        },
         at,
     );
     assert_eq!(ended(&refused), vec![5], "a refused cycle stops the link (WorkRefused): {refused:?}");
@@ -4858,3 +4873,466 @@ fn an_entosis_link_refuses_a_structure_beyond_its_reach_by_name() {
     assert_eq!(refused_reason(&out), Some("TARGET_OUT_OF_RANGE"), "{out:?}");
 }
 
+/// A Standup burst projector's effect on the controlled structure: the family's remote effect, reaching 100 km as a cycle starts (ST-8b).
+fn structure_burst_effect(what: Remote) -> Effect {
+    let mut effect = point_defense_effect();
+    effect.effect_id = 6_481;
+    effect.fx = String::new();
+    effect.action = Some(Action::StructureBurst { range: 100_000.0, duration_ms: 10_000.0, what });
+    effect
+}
+
+/// The Host request of a structure damage step: (activation nonce, lease generation, cycle id, pulse ordinal, candidate ids).
+fn burst_request(out: &[Out]) -> (u64, i64, u64, u32, Vec<i64>) {
+    match out.iter().find(|o| matches!(o, Out::StructureDamageCandidatesRequest { .. })) {
+        Some(Out::StructureDamageCandidatesRequest {
+            activation_nonce,
+            control_lease_generation,
+            cycle_id,
+            pulse_hop_ordinal,
+            candidate_ids,
+            ..
+        }) => (
+            *activation_nonce,
+            *control_lease_generation,
+            *cycle_id,
+            *pulse_hop_ordinal,
+            candidate_ids.clone(),
+        ),
+        _ => panic!("the controlled structure asks the Host for its burst's candidates"),
+    }
+}
+
+/// Whether a web (a lower top speed) lands on the ship of `session` (the ship's numbers, worked by what lands on it).
+fn web_lands_on(scene: &Scene, session: SessionId) -> bool {
+    let base = crate::ewar::Base {
+        max_velocity: 100.0,
+        signature_radius: 100.0,
+        max_target_range: 100.0,
+        scan_resolution: 100.0,
+        sensor_strength: [1.0; 4],
+    };
+    scene.pilots[&session].incoming.worked(&base).max_velocity < base.max_velocity
+}
+
+#[test]
+fn a_controlled_structure_burst_web_reaches_only_the_ships_the_host_authorizes_at_each_pulse() {
+    let (mut scene, structure_id, _second, now) = controlled_structure_point_defense();
+    let target = other_spec().ship_id;
+    let started = scene.activate(A, structure_burst_effect(Remote::Web { percent: -20.0 }), now);
+    let (nonce, lease, cycle, ordinal, candidates) = burst_request(&started);
+    assert_eq!(ordinal, 0);
+    assert!(candidates.contains(&target), "the ship in reach is a candidate: {candidates:?}");
+    assert!(!candidates.contains(&structure_id), "the structure is never its own candidate");
+    assert!(!web_lands_on(&scene, B), "nothing lands before the Host answers");
+
+    // no grant: the pulse settles and reaches nothing
+    scene.structure_damage_candidates_result(
+        A,
+        structure_id,
+        MODULE,
+        6_481,
+        nonce,
+        lease,
+        cycle,
+        ordinal,
+        &[],
+        now + 1,
+    );
+    assert!(!web_lands_on(&scene, B));
+
+    // the next pulse asks afresh, a reply under a released lease is refused, the correlated grant reaches the ship
+    let next = scene.poll(now + 10 * SECOND);
+    let (next_nonce, next_lease, next_cycle, next_ordinal, fresh) = burst_request(&next);
+    assert_ne!(next_cycle, cycle, "each pulse is a new cycle for the Host");
+    assert!(fresh.contains(&target));
+    scene.structure_damage_candidates_result(
+        A,
+        structure_id,
+        MODULE,
+        6_481,
+        next_nonce,
+        next_lease + 1,
+        next_cycle,
+        next_ordinal,
+        &[target],
+        now + 10 * SECOND + 2,
+    );
+    assert!(!web_lands_on(&scene, B), "a reply under another lease generation reaches nothing");
+    scene.structure_damage_candidates_result(
+        A,
+        structure_id,
+        MODULE,
+        6_481,
+        next_nonce,
+        next_lease,
+        next_cycle,
+        next_ordinal,
+        &[target],
+        now + 10 * SECOND + 3,
+    );
+    assert!(web_lands_on(&scene, B), "the authorized ship is webbed by the pulse");
+}
+
+/// ST-17 d: a ship-fitted burst projector (no structure under control) asks the Host for each pulse with its own ship as the source: the ship never reaches
+/// itself, the lease of a ship is 0, and the grant of the Host reaches the other ship.
+#[test]
+fn a_ship_fitted_burst_projector_asks_the_host_for_each_pulse_and_spares_its_own_ship() {
+    let (mut scene, t) = crowd();
+    let own = scene.pilots[&A].ship.spec.ship_id;
+    let target = scene.pilots[&B].ship.spec.ship_id;
+    let started = scene.activate(A, structure_burst_effect(Remote::Web { percent: -20.0 }), t);
+    let (nonce, lease, cycle, ordinal, candidates) = burst_request(&started);
+    assert_eq!(ordinal, 0);
+    assert_eq!(lease, 0, "a ship has no control lease");
+    assert!(!candidates.contains(&own), "the ship is never its own candidate: {candidates:?}");
+    assert!(candidates.contains(&target), "the other ship in reach is a candidate: {candidates:?}");
+    assert!(!web_lands_on(&scene, B), "nothing lands before the Host answers");
+    scene.structure_damage_candidates_result(
+        A,
+        own,
+        MODULE,
+        6_481,
+        nonce,
+        lease,
+        cycle,
+        ordinal,
+        &[target],
+        t + 1,
+    );
+    assert!(web_lands_on(&scene, B), "the authorized ship is webbed by the pulse");
+}
+
+#[test]
+fn a_controlled_structure_burst_jam_rolls_only_for_the_ships_the_host_authorizes() {
+    let (mut scene, structure_id, _second, now) = controlled_structure_point_defense();
+    let target = other_spec().ship_id;
+    let started = scene.activate(A, structure_burst_effect(Remote::Jam { strength: [1_000.0; 4] }), now);
+    let (nonce, lease, cycle, ordinal, _) = burst_request(&started);
+    let none = scene.structure_damage_candidates_result(
+        A,
+        structure_id,
+        MODULE,
+        6_481,
+        nonce,
+        lease,
+        cycle,
+        ordinal,
+        &[],
+        now + 1,
+    );
+    assert!(
+        !none.iter().any(|out| matches!(out, Out::EcmBurst { .. })),
+        "a jammer that is not granted a ship does not roll for it"
+    );
+    let next = scene.poll(now + 10 * SECOND);
+    let (next_nonce, next_lease, next_cycle, next_ordinal, _) = burst_request(&next);
+    let applied = scene.structure_damage_candidates_result(
+        A,
+        structure_id,
+        MODULE,
+        6_481,
+        next_nonce,
+        next_lease,
+        next_cycle,
+        next_ordinal,
+        &[target],
+        now + 10 * SECOND + 2,
+    );
+    assert!(
+        applied.iter().any(|out| matches!(
+            out,
+            Out::EcmBurst { ship_id, reached, .. }
+                if *ship_id == structure_id && reached.iter().any(|(reached_ship, _)| *reached_ship == target)
+        )),
+        "the granted ship is the one the jammer rolls for: {applied:?}"
+    );
+}
+
+/// A Standup guided bomb launcher's effect on the controlled structure: one bomb of the damage kind, which goes off 12 seconds after the launch (the cycle is
+/// longer, so the launcher releases one bomb in these tests). The blast is authorized by the Host when it goes off (ST-8a).
+fn structure_bomb_effect() -> Effect {
+    let mut effect = point_defense_effect();
+    effect.module_type = 35_923;
+    effect.effect_id = 101;
+    effect.fx = "effects.MissileDeployment".to_string();
+    effect.duration_ms = 60_000.0;
+    effect.action = Some(Action::Bomb {
+        ball: crate::deployable::Spec {
+            charge_type_id: 27_920,
+            group_id: 90,
+            name: "Electron Bomb".to_string(),
+            radius: 40.0,
+        },
+        kind: crate::deployable::BombKind::Damage,
+        lifetime_ms: 12_000.0,
+        blast_radius: 100_000.0,
+        damage: [5_800.0, 0.0, 0.0, 0.0],
+        ecm: [0.0; 4],
+        neutralize: 0.0,
+    });
+    effect
+}
+
+/// The controlled structure of `controlled_structure_point_defense` with its bomb launched (the bomb is released where the structure is). The ship B is in
+/// its blast (B holds still where the crowd put it, out of the structure's tether range), and the bomb's Host question is returned once it is due.
+#[allow(clippy::type_complexity)]
+fn launched_structure_bomb() -> (Scene, i64, i64, i64, (u64, i64, u64, u32, Vec<i64>)) {
+    let (mut scene, structure_id, _second, now) = controlled_structure_point_defense();
+    // the target is out of its undock protection, as a ship the blast may hit is (the deployable tests do the same)
+    scene.pilots.get_mut(&B).expect("the target is in the scene").protected_until = 0;
+    let started = scene.activate(A, structure_bomb_effect(), now);
+    assert!(
+        !started.iter().any(|out| matches!(out, Out::StructureDamageCandidatesRequest { .. })),
+        "the launch itself is not an authorized damage step"
+    );
+    let due = scene.poll(now + 13 * SECOND);
+    let request = burst_request(&due);
+    assert!(
+        request.4.contains(&other_spec().ship_id),
+        "the ship in the blast is asked about: {:?}",
+        request.4
+    );
+    assert!(!request.4.contains(&structure_id), "the launching structure is not in its own blast");
+    (scene, structure_id, now, 0, request)
+}
+
+#[test]
+fn a_controlled_structure_bomb_blasts_only_the_ships_the_host_authorizes_when_it_goes_off() {
+    let (mut scene, structure_id, now, _, (nonce, lease, cycle, ordinal, _)) = launched_structure_bomb();
+    let before = scene.pilots.get(&B).map(|pilot| pilot.ship.health.clone());
+    assert_eq!(
+        scene.pilots.get(&B).map(|pilot| pilot.ship.health.clone()),
+        before,
+        "nothing is hit before the Host answers"
+    );
+    scene.structure_damage_candidates_result(
+        A,
+        structure_id,
+        MODULE,
+        101,
+        nonce,
+        lease,
+        cycle,
+        ordinal,
+        &[other_spec().ship_id],
+        now + 13 * SECOND + 1,
+    );
+    assert_ne!(
+        scene.pilots.get(&B).map(|pilot| pilot.ship.health.clone()),
+        before,
+        "the granted ship takes the blast (or is destroyed by it)"
+    );
+    assert!(scene.deployables.is_empty(), "the bomb went off");
+}
+
+#[test]
+fn a_structure_bomb_the_host_does_not_grant_or_does_not_answer_hurts_no_one() {
+    let (mut scene, structure_id, now, _, (nonce, lease, cycle, ordinal, _)) = launched_structure_bomb();
+    let before = scene.pilots.get(&B).map(|pilot| pilot.ship.health.clone());
+    // a grant of nothing: the blast reaches nothing
+    scene.structure_damage_candidates_result(
+        A,
+        structure_id,
+        MODULE,
+        101,
+        nonce,
+        lease,
+        cycle,
+        ordinal,
+        &[],
+        now + 13 * SECOND + 1,
+    );
+    assert_eq!(scene.pilots.get(&B).map(|pilot| pilot.ship.health.clone()), before);
+    assert!(scene.deployables.is_empty(), "the bomb goes off and is taken out");
+
+    // a second bomb whose answer never comes: after the wait it goes off with no effect
+    let (mut scene, _structure_id, now, _, _) = launched_structure_bomb();
+    let before = scene.pilots.get(&B).map(|pilot| pilot.ship.health.clone());
+    let timed_out = scene.poll(now + 13 * SECOND + 31 * SECOND);
+    assert_eq!(
+        scene.pilots.get(&B).map(|pilot| pilot.ship.health.clone()),
+        before,
+        "an unanswered blast reaches nobody"
+    );
+    assert!(scene.deployables.is_empty(), "the bomb is taken out after the wait");
+    assert!(
+        !timed_out.iter().any(|out| matches!(out, Out::StructureDamageCandidatesRequest { .. })),
+        "a timed-out blast is not asked again"
+    );
+}
+
+#[test]
+fn a_structure_bomb_answer_under_another_lease_or_naming_a_ship_outside_its_question_authorizes_nothing() {
+    let (mut scene, structure_id, now, _, (nonce, lease, cycle, ordinal, _)) = launched_structure_bomb();
+    let before = scene.pilots.get(&B).map(|pilot| pilot.ship.health.clone());
+    // another lease generation, and a ship the question never named: neither goes off on the target
+    scene.structure_damage_candidates_result(
+        A,
+        structure_id,
+        MODULE,
+        101,
+        nonce,
+        lease + 1,
+        cycle,
+        ordinal,
+        &[other_spec().ship_id],
+        now + 13 * SECOND + 1,
+    );
+    scene.structure_damage_candidates_result(
+        A,
+        structure_id,
+        MODULE,
+        101,
+        nonce,
+        lease,
+        cycle,
+        ordinal,
+        &[i64::MAX],
+        now + 13 * SECOND + 2,
+    );
+    assert_eq!(
+        scene.pilots.get(&B).map(|pilot| pilot.ship.health.clone()),
+        before,
+        "no answer that is not the correlated, asked-for one authorizes the blast"
+    );
+    assert_eq!(scene.deployables.len(), 1, "the bomb keeps waiting for its authorization");
+    // the correlated answer that the Host gives settles it
+    scene.structure_damage_candidates_result(
+        A,
+        structure_id,
+        MODULE,
+        101,
+        nonce,
+        lease,
+        cycle,
+        ordinal,
+        &[other_spec().ship_id],
+        now + 13 * SECOND + 3,
+    );
+    assert_ne!(
+        scene.pilots.get(&B).map(|pilot| pilot.ship.health.clone()),
+        before,
+        "the granted ship is hit"
+    );
+    assert!(scene.deployables.is_empty());
+}
+
+#[test]
+fn a_controlled_structure_burst_reaches_nobody_once_its_controller_has_released_the_structure() {
+    let (mut scene, structure_id, _second, now) = controlled_structure_point_defense();
+    let target = other_spec().ship_id;
+    let started = scene.activate(A, structure_burst_effect(Remote::Web { percent: -20.0 }), now);
+    let (nonce, lease, cycle, ordinal, candidates) = burst_request(&started);
+    assert!(candidates.contains(&target));
+    // the controller releases the structure before the Host answers
+    let _ = scene.control_structure(
+        A,
+        scene.solar_system_id(),
+        structure_id,
+        spec().character_id,
+        false,
+        39,
+        now + 1,
+    );
+    scene.structure_damage_candidates_result(
+        A,
+        structure_id,
+        MODULE,
+        6_481,
+        nonce,
+        lease,
+        cycle,
+        ordinal,
+        &[target],
+        now + 2,
+    );
+    assert!(!web_lands_on(&scene, B), "a late grant to a released structure authorizes nothing");
+}
+
+const OBSERVATORY: i64 = 1_000_000_000_777;
+
+/// A Mobile Observatory the host has put in space, anchored or not (its id is the deployable's).
+fn observatory(id: i64, active: bool) -> crate::link::DisruptorPlacement {
+    crate::link::DisruptorPlacement {
+        deployable_id: id,
+        solar_system_id: 30_000_142,
+        name: "Mobile Observatory".to_string(),
+        type_id: 58_904,
+        group_id: 4_107,
+        position: [0.0, 0.0, 0.0],
+        radius: 100.0,
+        range: 0.0,
+        active,
+        owner_id: 1,
+        corporation_id: 1,
+        alliance_id: 0,
+        ship_id: 0,
+    }
+}
+
+#[test]
+fn a_ping_of_an_anchored_observatory_decloaks_a_cloaked_ship_when_its_roll_is_under_forty_percent() {
+    let (mut scene, t) = reaching(5_000.0);
+    scene.target_order(A, crate::targeting::Order::Clear, t);
+    assert!(accepted(&scene.activate(A, cloaking_device(), t)));
+    scene.place_observatory(observatory(OBSERVATORY, true), t);
+    // the ship is stabilized for fifteen minutes: the ping is not before the end of it
+    let stabilized = scene.remote_decloak_ping(OBSERVATORY, t + 14 * 60 * SECOND);
+    assert!(stabilized.is_empty(), "{:?}", labels(&stabilized));
+    assert_eq!(scene.pilots[&A].cloak, crate::visibility::CloakState::Cloaked);
+    // the roll is the scene's own: advance it until the next roll is under the chance, then the ping decloaks
+    let at = t + 16 * 60 * SECOND;
+    while scene.rng.clone().random() >= crate::scene::OBSERVATORY_DECLOAK_PROBABILITY {
+        scene.rng.random();
+    }
+    let told = scene.remote_decloak_ping(OBSERVATORY, at);
+    assert_eq!(scene.pilots[&A].cloak, crate::visibility::CloakState::Uncloaked);
+    let (id_type, args) = cloak_notice(told.last().unwrap()).unwrap();
+    assert_eq!(id_type, "shipid");
+    assert_eq!(
+        args,
+        vec![
+            Value::Str("CustomNotify".into()),
+            Value::Dict(vec![
+                (
+                    Value::Str("notify".into()),
+                    Value::Str(
+                        "Your cloak has been deactivated by a Mobile Observatory decloaking ping.".into()
+                    )
+                ),
+                (Value::Str("decloakReason".into()), Value::Str("mobileObservatory".into())),
+                (Value::Str("itemID".into()), Value::Long(OBSERVATORY)),
+                (Value::Str("distanceMeters".into()), Value::Real(0.0)),
+            ]),
+        ]
+    );
+}
+
+#[test]
+fn a_ping_leaves_a_cloaked_ship_cloaked_when_its_roll_is_forty_percent_or_more() {
+    let (mut scene, t) = reaching(5_000.0);
+    scene.target_order(A, crate::targeting::Order::Clear, t);
+    assert!(accepted(&scene.activate(A, cloaking_device(), t)));
+    scene.place_observatory(observatory(OBSERVATORY, true), t);
+    let at = t + 16 * 60 * SECOND;
+    while scene.rng.clone().random() < crate::scene::OBSERVATORY_DECLOAK_PROBABILITY {
+        scene.rng.random();
+    }
+    let told = scene.remote_decloak_ping(OBSERVATORY, at);
+    assert!(told.is_empty(), "{:?}", labels(&told));
+    assert_eq!(scene.pilots[&A].cloak, crate::visibility::CloakState::Cloaked);
+}
+
+#[test]
+fn an_observatory_that_is_not_anchored_pings_nothing() {
+    let (mut scene, t) = reaching(5_000.0);
+    scene.target_order(A, crate::targeting::Order::Clear, t);
+    assert!(accepted(&scene.activate(A, cloaking_device(), t)));
+    scene.place_observatory(observatory(OBSERVATORY, false), t);
+    let before = scene.rng.clone().random();
+    let told = scene.remote_decloak_ping(OBSERVATORY, t + 16 * 60 * SECOND);
+    assert!(told.is_empty());
+    assert_eq!(scene.rng.clone().random(), before, "a ping that does nothing draws no roll");
+    assert_eq!(scene.pilots[&A].cloak, crate::visibility::CloakState::Cloaked);
+}

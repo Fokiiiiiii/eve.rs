@@ -21,7 +21,6 @@ public sealed class BillMgrService(
     BillMgrRpcCallbacks? callbacks = null) : IService
 {
     private const int RentalBillTypeId = 2;
-    private const int OfficeRentReferenceType = 13;
     private const long AccountantOrJuniorRoles = CorporationRoles.Accountant | CorporationRoles.JuniorAccountant;
 
     private readonly BillMgrRpcCallbacks _callbacks = callbacks ?? new();
@@ -124,20 +123,10 @@ public sealed class BillMgrService(
               paidAtMs,
               async (connection, transaction, bill) =>
               {
-                  var creditorId = stationOwnerOf(bill.StationId);
+                  var creditorId = bill.CreditorId ?? stationOwnerOf(bill.StationId);
                   if (creditorId is not > 0) throw new CorporationError("BILL_NOT_PAYABLE");
-                  await wallets.AdjustAsync(
-                      connection,
-                      transaction,
-                      new WalletAccount(authority.Corporation.Id, accountKey),
-                      -bill.AmountIsk,
-                      creditorId.Value,
-                      OfficeRentReferenceType,
-                      "Corporation office rental",
-                      paidAtMs,
-                      $"office-rent-bill:{bill.BillId}:payment",
-                      "office_rental_fee",
-                      call.Cancellation);
+                  await OfficeRentSettlement.SettleAsync(wallets, connection, transaction, bill,
+                      new WalletAccount(authority.Corporation.Id, accountKey), creditorId.Value, paidAtMs, call.Cancellation);
               },
               call.Cancellation);
           if (!paid)
@@ -186,7 +175,7 @@ public sealed class BillMgrService(
         ("amount", Py.Number((double)bill.AmountIsk)),
         ("interest", new PyInt(0)),
         ("debtorID", Py.Number(bill.CorporationId)),
-        ("creditorID", Py.Number(stationOwnerOf(bill.StationId) ?? 0)),
+        ("creditorID", Py.Number(bill.CreditorId ?? stationOwnerOf(bill.StationId) ?? 0)),
         ("dueDateTime", new PyLong(Py.FileTimeFromUnixMs(bill.DueAtMs))),
         ("paid", bill.Status == 1 ? new PyInt(1) : new PyInt(0)),
         ("paidDateTime", bill.PaidAtMs is { } paidAt ? new PyLong(Py.FileTimeFromUnixMs(paidAt)) : PyNone.Instance),

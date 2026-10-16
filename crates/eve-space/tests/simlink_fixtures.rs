@@ -486,6 +486,16 @@ fn effect_of(case: &Value) -> Effect {
                     speed_factor: a["speedFactor"].as_f64().unwrap(),
                 };
             }
+            if a["kind"] == "entosis" {
+                return Action::Entosis { range_meters: a["rangeMeters"].as_f64().unwrap() };
+            }
+            if a["kind"] == "structureBurst" {
+                return Action::StructureBurst {
+                    range: a["range"].as_f64().unwrap(),
+                    duration_ms: a["durationMs"].as_f64().unwrap(),
+                    what: burst_remote(a),
+                };
+            }
             if a["kind"] == "warpProbe" {
                 return Action::WarpProbe {
                     ball: deployable(&a["ball"]),
@@ -1337,7 +1347,14 @@ fn message_of(case: &Value) -> Message {
             lifetime_ms: case["lifetimeMs"].as_f64().unwrap(),
         })),
         "RemoveDeployed" => Message::RemoveDeployed { deployable_id: wide(case, "deployableId") },
-        "RemoveCynoBeacon" => Message::RemoveCynoBeacon { solar_system_id: number("solarSystemId") as i32, structure_beacon_id: wide(case, "structureBeaconId") },
+        "RemoveCynoBeacon" => Message::RemoveCynoBeacon {
+            solar_system_id: number("solarSystemId") as i32,
+            structure_beacon_id: wide(case, "structureBeaconId"),
+        },
+        "RemoteDecloakPing" => Message::RemoteDecloakPing {
+            solar_system_id: number("solarSystemId") as i32,
+            observatory_id: wide(case, "observatoryId"),
+        },
         "PlaceProbe" => Message::PlaceProbe(Box::new(eve_space::link::ProbePlacement {
             probe_id: wide(case, "probeId"),
             solar_system_id: number("solarSystemId") as i32,
@@ -1446,7 +1463,12 @@ fn message_of(case: &Value) -> Message {
             control_lease_generation: wide(case, "controlLeaseGeneration"),
             cycle_id: number("cycleId"),
             pulse_hop_ordinal: number("pulseHopOrdinal") as u32,
-            candidate_ids: case["candidateIds"].as_array().unwrap().iter().map(|id| id.as_str().unwrap().parse().unwrap()).collect(),
+            candidate_ids: case["candidateIds"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|id| id.as_str().unwrap().parse().unwrap())
+                .collect(),
         },
         "StructureDamageCandidatesResult" => Message::StructureDamageCandidatesResult {
             session_id: session_id(),
@@ -1457,7 +1479,12 @@ fn message_of(case: &Value) -> Message {
             control_lease_generation: wide(case, "controlLeaseGeneration"),
             cycle_id: number("cycleId"),
             pulse_hop_ordinal: number("pulseHopOrdinal") as u32,
-            allowed_target_ids: case["allowedTargetIds"].as_array().unwrap().iter().map(|id| id.as_str().unwrap().parse().unwrap()).collect(),
+            allowed_target_ids: case["allowedTargetIds"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|id| id.as_str().unwrap().parse().unwrap())
+                .collect(),
         },
         "ControlStructure" => Message::ControlStructure {
             session_id: session_id(),
@@ -1498,6 +1525,36 @@ fn message_of(case: &Value) -> Message {
             ship_id: wide(case, "shipId"),
         })),
         "PlaceCynoBeacon" => Message::PlaceCynoBeacon(Box::new(eve_space::link::DisruptorPlacement {
+            deployable_id: wide(case, "deployableId"),
+            solar_system_id: number("solarSystemId") as i32,
+            name: text(case, "typeName"),
+            type_id: number("typeId") as i32,
+            group_id: number("groupId") as i32,
+            position: vector_of(case, "position"),
+            radius: case["radius"].as_f64().unwrap(),
+            range: case["range"].as_f64().unwrap(),
+            active: case["active"].as_bool().unwrap(),
+            owner_id: wide(case, "ownerId"),
+            corporation_id: number("corporationId") as i32,
+            alliance_id: number("allianceId") as i32,
+            ship_id: wide(case, "shipId"),
+        })),
+        "PlaceObservatory" => Message::PlaceObservatory(Box::new(eve_space::link::DisruptorPlacement {
+            deployable_id: wide(case, "deployableId"),
+            solar_system_id: number("solarSystemId") as i32,
+            name: text(case, "typeName"),
+            type_id: number("typeId") as i32,
+            group_id: number("groupId") as i32,
+            position: vector_of(case, "position"),
+            radius: case["radius"].as_f64().unwrap(),
+            range: case["range"].as_f64().unwrap(),
+            active: case["active"].as_bool().unwrap(),
+            owner_id: wide(case, "ownerId"),
+            corporation_id: number("corporationId") as i32,
+            alliance_id: number("allianceId") as i32,
+            ship_id: wide(case, "shipId"),
+        })),
+        "PlaceControlTower" => Message::PlaceControlTower(Box::new(eve_space::link::DisruptorPlacement {
             deployable_id: wide(case, "deployableId"),
             solar_system_id: number("solarSystemId") as i32,
             name: text(case, "typeName"),
@@ -2068,5 +2125,37 @@ fn abyssal_scene_object_and_content_keyed_spawn_fixtures_roundtrip() {
         let frame = hex(case["hex"].as_str().unwrap());
         assert_eq!(message.encode(), frame, "{}", case["name"]);
         assert_eq!(Message::decode(&frame[4..]).unwrap(), message, "{}", case["name"]);
+    }
+}
+
+/// The remote effect of a structure burst fixture (the kinds of the burst families, as the generator writes them).
+fn burst_remote(a: &serde_json::Value) -> Remote {
+    let number = |key: &str| a[key].as_f64().unwrap();
+    let optional = |key: &str| a.get(key).and_then(serde_json::Value::as_f64).unwrap_or(0.0);
+    match a["what"].as_str().unwrap() {
+        "neutralize" => Remote::Neutralize {
+            amount: number("amount"),
+            signature_resolution: number("signatureResolution"),
+        },
+        "web" => Remote::Web { percent: number("percent") },
+        "paint" => Remote::Paint { percent: number("percent") },
+        "damp" => Remote::Damp {
+            range_percent: number("rangePercent"),
+            resolution_percent: number("resolutionPercent"),
+            gravimetric_percent: optional("gravimetricStrengthPercent"),
+            ladar_percent: optional("ladarStrengthPercent"),
+            magnetometric_percent: optional("magnetometricStrengthPercent"),
+            radar_percent: optional("radarStrengthPercent"),
+        },
+        "disrupt" => Remote::Disrupt {
+            range_percent: number("rangePercent"),
+            falloff_percent: number("falloffPercent"),
+            tracking_percent: number("trackingPercent"),
+        },
+        "scramble" => {
+            Remote::Scramble { strength: number("strength"), blocks_mwd: a["blocksMwd"].as_bool().unwrap() }
+        }
+        "jam" => Remote::Jam { strength: sensors_of(&a["strength"]) },
+        other => panic!("no structure burst remote effect named {other}"),
     }
 }

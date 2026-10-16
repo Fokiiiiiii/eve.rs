@@ -99,7 +99,7 @@ public sealed class AbyssalSpaceSessionsTests
         await Assert.ThrowsAsync<MachoWrappedException>(async () => await rig.Space.BoardAsync(session, created.ShipId + 1, created.ShipId, default));
         Assert.Equal("ABYSSAL_SCENE_NOT_EMPTY", await rig.Space.RemoveAbyssalSceneAsync(scene, [8_889_010], [8_889_011]));
         Assert.Equal(before, rig.Sim.Heard.Count);
-        foreach (var typeId in new[] { 57_319, Eve.Services.Space.Beacons.AnalysisBeaconRules.StandardType })
+        foreach (var typeId in new[] { 57_319, Eve.Services.Space.Beacons.AnalysisBeaconRules.StandardType, 58_904, 12_235 })
         {
             var deployable = (await rig.Ships.GrantAsync(created.CharacterId, typeId, 1, singleton: true))!.Single().After;
             await Assert.ThrowsAsync<MachoWrappedException>(() => rig.Containers.LaunchFromShipAsync(session, deployable.Id, default));

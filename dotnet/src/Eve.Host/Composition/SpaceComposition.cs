@@ -60,8 +60,26 @@ internal sealed partial class CharacterServicesComposition
         }
     }
 
+    /// <summary>
+    /// The customs penalty (ST-18) and its settlement job, registered with the shared scheduler whether or not the simulation runs: a process runs the kinds it has
+    /// a handler for, so a penalty scheduled by one process is settled by any process that has the handler.
+    /// </summary>
+    private UndockContraband customs = default!;
+
+    private async Task LoadCustomsPenaltyAsync()
+    {
+        var contrabandSchema = Env("EVE_CONTRABAND_SCHEMA", UndockContraband.DefaultSchema);
+        await UndockContraband.MigrateAsync(source, contrabandSchema);
+        // the pilot's smuggling chance is the attribute 445 of its implants and skills (EVE.js resolveCharacterSmugglingChance)
+        customs = await UndockContraband.LoadAsync(sde, items, solarSystems, source, new WalletTransactions(source, walletSchema),
+            scheduler: foundations.Scheduler, relations: foundations.Relations,
+            smugglingChance: (character, token) => SkillHandlerService.SmugglingChanceAsync(items, dogma, skills, character, token),
+            nowMs: now, schema: contrabandSchema);
+    }
+
     private async Task SpaceSimulation()
     {
+        await LoadCustomsPenaltyAsync();
         sim = null;
         spaceSessions = null;
         spaceContainers = null;
@@ -231,8 +249,8 @@ internal sealed partial class CharacterServicesComposition
                     "Gate toll refund", now(), key, token);
                 await transaction.CommitAsync(token);
             };
-            var undockContraband = await UndockContraband.LoadAsync(sde, items, solarSystems);
-            spaceSessions.InspectUndockContrabandAsync = undockContraband.InspectAsync;
+            spaceSessions.InspectUndockContrabandAsync = customs.InspectAsync;
+            spaceSessions.ApplyContrabandPenaltyAsync = customs.ApplyAsync;
             npcWrecks.Warm();
             // the periodic work of the space features is jobs of the shared scheduler, not timers of their own
             spaceSessions.UseBounties(new PgBountyStore(source, new WalletTransactions(source, walletSchema), npcSchema, message => Console.Error.WriteLine($"eve-host: bounty: {message}")));
@@ -355,6 +373,28 @@ internal sealed partial class CharacterServicesComposition
             spaceContainers = new SpaceContainers(sim, ships, items, new PgSpaceItemStore(source, spaceSchema), new PgWorkCycleLedger(source, spaceSchema), new Eve.Services.Space.EventBusFacts(foundations.Events), dogma, spaceSessions, now, message => Console.Error.WriteLine($"eve-host: cans: {message}"), deployed: new PgDeployedStore(source, spaceSchema), scheduler: foundations.Scheduler);
 
             spaceContainers.SiteContainers = siteContainers;
+            // a Mobile Observatory keeps 1 000 km from the stations, stargates and Upwell structures of its system (EVE.js collectPlacementBlockers)
+            var observatoryLandmarks = new ObservatoryLandmarkSource(source, structureStore, stations, await ObservatoryLandmarkSource.LoadStargatesAsync(sde),
+                typeId => dogma.Type(typeId)?.GroupId ?? 0);
+            spaceContainers.ReadObservatoryLandmarks = observatoryLandmarks.ReadAsync;
+            spaceContainers.ReadControlTowers = observatoryLandmarks.ReadControlTowersAsync;
+            spaceContainers.ReadDeadspaceAnchors = async (system, token) => cosmicSites is { } sites
+                ? (IReadOnlyList<double[]>)(await sites.ActiveAsync(system, token)).Select(site => site.Position).ToArray()
+                : [];
+            spaceContainers.ReadDeadspaceAnchors = async (system, token) =>
+            {
+                var anchors = new List<double[]>();
+                if (cosmicSites is { } sites)
+                {
+                    anchors.AddRange((await sites.ActiveAsync(system, token)).Select(site => site.Position));
+                }
+                // a mission pocket is a dungeon instance: its origin is a deadspace anchor too (ST-19)
+                if (dungeonWavesDirector is { } dungeons)
+                {
+                    anchors.AddRange(await dungeons.ActiveOriginsAsync(system, token));
+                }
+                return anchors;
+            };
             // a container clears when its loot is taken: every move is announced in its transaction, and the container's hacks hear the moves it loses
             items.Events = foundations.Events;
             var siteContainerHacks = new Eve.Services.Space.SiteContainerHacks(source, siteContainers, items, foundations.Events, () => foundations.Scheduler.Now, id => spaceContainers.RemoveSiteContainer(id));
@@ -366,6 +406,8 @@ internal sealed partial class CharacterServicesComposition
             });
             foundations.Scheduler.Register(Eve.Services.Space.SpaceContainers.AnchorJob, async (context, token) =>
                 await spaceContainers.AnchorAsync(context.Payload<Eve.Services.Space.SpaceContainers.DisruptorAnchorDue>()!.DeployableId, token));
+foundations.Scheduler.Register(Eve.Services.Space.SpaceContainers.ObservatoryPingJob, async (context, token) =>
+await spaceContainers.PingObservatoryAsync(context.Payload<Eve.Services.Space.SpaceContainers.ObservatoryPingDue>()!.DeployableId, token));
             var containers = spaceContainers;
             var probes = new Eve.Services.Space.SpaceProbes(ships, dogma, new Eve.Ships.PgProbeStore(source, spaceSchema), spaceSessions, sim, now, message => Console.Error.WriteLine($"eve-host: probes: {message}"));
             spaceSessions.Probes = probes;

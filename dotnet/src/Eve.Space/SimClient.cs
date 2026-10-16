@@ -671,7 +671,12 @@ public sealed class SimClient : ISimulation, IAsyncDisposable
 
     public void PlaceCynoBeacon(SimPlaceCynoBeacon beacon) => Send(beacon);
 
+    public void PlaceObservatory(SimPlaceObservatory observatory) => Send(observatory);
+    public void PlaceControlTower(SimPlaceControlTower tower) => Send(tower);
+
     public void RemoveCynoBeacon(int solarSystemId, long structureBeaconId) => Send(new SimRemoveCynoBeacon(solarSystemId, structureBeaconId));
+
+    public void RemoteDecloakPing(int solarSystemId, long observatoryId) => Send(new SimRemoteDecloakPing(solarSystemId, observatoryId));
 
     public void Destroy(long shipId, SimCredit credit) => Send(new SimDestroy(shipId, credit));
 

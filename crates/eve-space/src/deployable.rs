@@ -60,6 +60,12 @@ pub enum Role {
     /// A Mobile Cynosural Beacon the host keeps a record of (protocol 58): a cynosural field a pilot may jump to while it is anchored (`active`); it is not lit before
     /// that. The host anchors it when its activation time is over and takes it out when its record's time is up.
     CynoBeacon { active: bool },
+    /// A Mobile Observatory the host keeps a record of (protocol 72): while it is anchored (`active`), its pings decloak the cloaked ships of its system (the
+    /// wiki, Mobile Observatory). The host anchors it and takes it out when its record's time is up.
+    MobileObservatory { active: bool },
+    /// A player control tower the host keeps a record of (protocol 73): a ball in space, anchored (`active`) when its anchoring time is over. It has no warp or cyno
+    /// effect: the fuel and the modules are not modelled yet.
+    ControlTower { active: bool },
     /// A jump bridge a ship opened (command 28, protocol 54): it lives until its time is up, is put in no client ball, and lets the fleet ships in 2 500 metres of
     /// the ship pass through it to the field (command 31). The field is the one the bridge targets; the destination is that field's system.
     JumpBridge { field_id: i64, destination_system: i32, range_meters: f64 },
@@ -80,6 +86,30 @@ const BEACON_CATEGORY: i32 = 2;
 const CYNO_FIELD_CATEGORY: i32 = 2;
 /// The category of a deployable (EVE.js `CATEGORY_DEPLOYABLE`, 22): a mobile warp disruptor's category.
 const DEPLOYABLE_CATEGORY: i32 = 22;
+
+/// How long a structure's bomb waits for the Host's authorization of its blast before it goes off with no effect (30 seconds of scene time).
+const BOMB_IMPACT_TICKS: i64 = 30 * crate::scene::TICKS_PER_SECOND;
+
+/// The correlation a structure's bomb blast is authorized under: the controlled structure, its launcher module, the activation and the lease that
+/// launched it, and the cycle. `pending` holds the candidates of the blast while the Host answers.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct BombImpact {
+    pub session: SessionId,
+    pub structure_id: i64,
+    pub module_id: i64,
+    pub effect_id: i32,
+    pub activation_nonce: u64,
+    pub control_lease_generation: i64,
+    pub cycle_id: u64,
+    pub pending: Option<PendingBombImpact>,
+}
+
+/// The candidates of a structure's bomb blast while the Host answers, and when the question was sent.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct PendingBombImpact {
+    pub candidate_ids: Vec<i64>,
+    pub sent_at: i64,
+}
 
 /// A deployable in space: where it is, when it ends, and who put it there (its launcher, for a bomb's blast and the aggression it makes).
 #[derive(Debug, Clone, PartialEq)]
@@ -118,7 +148,10 @@ fn release_actions(stamp: u32, deployable: &Deployable) -> Result<Vec<Value>, ev
         Role::CynoField => (Kind::Other, LegacyMode::Stop),
         Role::ScanProbe => (Kind::Other, LegacyMode::Stop),
         Role::MobileWarpSource { .. } => (Kind::WarpDisruptionProbe, LegacyMode::Stop),
-        Role::CynoInhibitor { .. } | Role::CynoBeacon { .. } => (Kind::Other, LegacyMode::Stop),
+        Role::CynoInhibitor { .. }
+        | Role::CynoBeacon { .. }
+        | Role::MobileObservatory { .. }
+        | Role::ControlTower { .. } => (Kind::Other, LegacyMode::Stop),
         Role::JumpBridge { .. } => (Kind::Other, LegacyMode::Stop),
         Role::AnalysisBeacon { .. } => (Kind::Container, LegacyMode::Stop),
     };
@@ -213,11 +246,51 @@ impl Scene {
         at: i64,
     ) -> Vec<Out> {
         let is_field = role == Role::CynoField;
+        let is_bomb = matches!(role, Role::Bomb { .. });
         let (id, mut out) = self.place_deployable(session, effect, spec, role, None, lifetime_ms, at);
         if is_field {
             out.extend(self.field_lit(id, session, at));
         }
+        // a bomb a controlled structure releases goes off only when the Host authorizes its blast; one that cannot name that authority is not let go off
+        if is_bomb
+            && self.controlled_structure_id(session).is_some()
+            && !self.record_bomb_impact(id, session, effect)
+        {
+            self.deployables.remove(&id);
+        }
         out
+    }
+
+    /// The ship a bomb is released from: the controlled structure's ship when its launcher controls one, else the ship the bomb was released by.
+    fn bomb_own_ship(&self, deployable: &Deployable) -> i64 {
+        self.controlled_structure_id(deployable.launcher).unwrap_or(deployable.ship_id)
+    }
+
+    /// The correlation a structure's bomb blast is authorized under (the launching cycle of its controlled structure). False when there is none.
+    fn record_bomb_impact(&mut self, id: i64, session: SessionId, effect: &Effect) -> bool {
+        let Some(structure_id) = self.controlled_structure_id(session) else { return false };
+        let Some(control_lease_generation) = self.control_lease_generation(session, structure_id) else {
+            return false;
+        };
+        let Some(run) = self.pilots.get(&session).and_then(|pilot| {
+            pilot.modules.running.iter().find(|run| run.effect.module_id == effect.module_id)
+        }) else {
+            return false;
+        };
+        self.bomb_impacts.insert(
+            id,
+            BombImpact {
+                session,
+                structure_id,
+                module_id: effect.module_id,
+                effect_id: effect.effect_id,
+                activation_nonce: run.activation_nonce,
+                control_lease_generation,
+                cycle_id: run.cycle_id,
+                pending: None,
+            },
+        );
+        true
     }
 
     /// A lance's beacon is put in space at `offset` from the ship that runs its strike (the strike's `beacon`), for the life of the effect (`lifetime_ms`).
@@ -491,6 +564,72 @@ impl Scene {
         self.insert_deployable(deployable, now)
     }
 
+    /// A Mobile Observatory the host keeps a record of is put in space where it lies, anchored or not (protocol 72). Given once; its end is the host's.
+    pub(crate) fn place_observatory(
+        &mut self,
+        placement: crate::link::DisruptorPlacement,
+        now: i64,
+    ) -> Vec<Out> {
+        if self.deployables.contains_key(&placement.deployable_id) {
+            return Vec::new();
+        }
+        let [x, y, z] = placement.position;
+        let deployable = Deployable {
+            id: placement.deployable_id,
+            spec: Spec {
+                charge_type_id: placement.type_id,
+                group_id: placement.group_id,
+                name: placement.name,
+                radius: placement.radius,
+            },
+            role: Role::MobileObservatory { active: placement.active },
+            position: Vec3::new(x, y, z),
+            ends_at: i64::MAX,
+            launcher: 0,
+            ship_id: placement.ship_id,
+            owner_id: placement.owner_id,
+            corporation_id: placement.corporation_id,
+            alliance_id: placement.alliance_id,
+            module_id: 0,
+            module_type: 0,
+            watchers: BTreeSet::new(),
+        };
+        self.insert_deployable(deployable, now)
+    }
+
+    /// A player control tower the host keeps a record of is put in space where it lies, anchored or not (protocol 73). Given once; its end is the host's.
+    pub(crate) fn place_control_tower(
+        &mut self,
+        placement: crate::link::DisruptorPlacement,
+        now: i64,
+    ) -> Vec<Out> {
+        if self.deployables.contains_key(&placement.deployable_id) {
+            return Vec::new();
+        }
+        let [x, y, z] = placement.position;
+        let deployable = Deployable {
+            id: placement.deployable_id,
+            spec: Spec {
+                charge_type_id: placement.type_id,
+                group_id: placement.group_id,
+                name: placement.name,
+                radius: placement.radius,
+            },
+            role: Role::ControlTower { active: placement.active },
+            position: Vec3::new(x, y, z),
+            ends_at: i64::MAX,
+            launcher: 0,
+            ship_id: placement.ship_id,
+            owner_id: placement.owner_id,
+            corporation_id: placement.corporation_id,
+            alliance_id: placement.alliance_id,
+            module_id: 0,
+            module_type: 0,
+            watchers: BTreeSet::new(),
+        };
+        self.insert_deployable(deployable, now)
+    }
+
     /// A Mobile Cynosural Inhibitor the host keeps a record of is put in space where it lies, anchored or not (protocol 50). Given once; its end is the host's.
     pub(crate) fn place_inhibitor(
         &mut self,
@@ -539,7 +678,9 @@ impl Scene {
             role:
                 Role::MobileWarpSource { active: current, .. }
                 | Role::CynoInhibitor { active: current, .. }
-                | Role::CynoBeacon { active: current },
+                | Role::CynoBeacon { active: current }
+                | Role::MobileObservatory { active: current }
+                | Role::ControlTower { active: current },
             ..
         }) = self.deployables.get_mut(&deployable_id)
         {
@@ -602,7 +743,6 @@ impl Scene {
             .collect()
     }
 
-
     /// Remove the named cynosural beacon from this system. The dedicated message carries a beacon ID, so other deployables sharing a broad removal path are not touched.
     pub(crate) fn remove_cyno_beacon(
         &mut self,
@@ -622,7 +762,7 @@ impl Scene {
     }
 
     /// The deployables whose lifetime is up at `now` end, in the order they were released: a probe is taken out of the scene, a bomb goes off where it is
-    /// first and is taken out with the explosion played.
+    /// first and is taken out with the explosion played. A structure's bomb goes off only when the Host has authorized its blast (see `await_bomb_impact`).
     pub(crate) fn advance_deployables(&mut self, now: i64) -> Vec<Out> {
         let due: Vec<i64> = self
             .deployables
@@ -632,29 +772,138 @@ impl Scene {
             .collect();
         let mut out = Vec::new();
         for deployable_id in due {
+            if self.bomb_impacts.contains_key(&deployable_id) {
+                out.extend(self.await_bomb_impact(deployable_id, now));
+                continue;
+            }
             let Some(deployable) = self.deployables.remove(&deployable_id) else { continue };
             let explode = matches!(deployable.role, Role::Bomb { .. });
             if explode {
-                out.extend(self.detonate(&deployable, now));
+                out.extend(self.detonate(&deployable, now, None));
             }
-            let stamp = self.next_stamp(now);
-            let mut actions = Vec::new();
-            if explode {
-                actions.push(payload::action(
-                    stamp,
-                    "TerminalPlayDestructionEffect",
-                    [id(deployable.id), int(crate::wreck::DESTRUCTION_EFFECT_EXPLOSION)],
-                ));
-            }
-            actions.push(payload::remove_ships(stamp, [deployable.id]));
-            out.extend(
-                deployable
-                    .watchers
-                    .iter()
-                    .filter(|watcher| self.pilots.get(watcher).is_some_and(|pilot| pilot.bound))
-                    .map(|watcher| Self::update(*watcher, actions.clone())),
-            );
+            out.extend(self.depart(&deployable, explode, now));
         }
+        out
+    }
+
+    /// A deployable is taken out of the scene: a bomb's explosion is played, and the pilots who were told of it are told it is gone.
+    fn depart(&mut self, deployable: &Deployable, explode: bool, now: i64) -> Vec<Out> {
+        let stamp = self.next_stamp(now);
+        let mut actions = Vec::new();
+        if explode {
+            actions.push(payload::action(
+                stamp,
+                "TerminalPlayDestructionEffect",
+                [id(deployable.id), int(crate::wreck::DESTRUCTION_EFFECT_EXPLOSION)],
+            ));
+        }
+        actions.push(payload::remove_ships(stamp, [deployable.id]));
+        deployable
+            .watchers
+            .iter()
+            .filter(|watcher| self.pilots.get(watcher).is_some_and(|pilot| pilot.bound))
+            .map(|watcher| Self::update(*watcher, actions.clone()))
+            .collect()
+    }
+
+    /// A structure's bomb is due: the Host is asked which of the ships and structures in its blast it may affect (a pulse of the launcher's cycle). A
+    /// request that is still unanswered after `BOMB_IMPACT_TICKS` is no grant, and the bomb goes off where it is with no effect on anyone.
+    fn await_bomb_impact(&mut self, deployable_id: i64, now: i64) -> Vec<Out> {
+        let Some(impact) = self.bomb_impacts.get(&deployable_id).cloned() else { return Vec::new() };
+        if let Some(pending) = &impact.pending {
+            if now - pending.sent_at < BOMB_IMPACT_TICKS {
+                return Vec::new();
+            }
+            return self.finish_bomb_impact(deployable_id, &BTreeSet::new(), now);
+        }
+        let Some(deployable) = self.deployables.get(&deployable_id).cloned() else {
+            self.bomb_impacts.remove(&deployable_id);
+            return Vec::new();
+        };
+        let Role::Bomb { blast_radius, .. } = &deployable.role else { return Vec::new() };
+        let centre = [deployable.position.x, deployable.position.y, deployable.position.z];
+        let own_ship = self.bomb_own_ship(&deployable);
+        let retained = self
+            .controlled_structures
+            .get(&deployable.launcher)
+            .and_then(|observer| observer.previous_ship_id);
+        let mut candidate_ids: Vec<i64> = self
+            .ships_in_area(centre, *blast_radius, Some(own_ship), now)
+            .into_iter()
+            .map(|(_, ship_id)| ship_id)
+            .filter(|ship_id| Some(*ship_id) != retained)
+            .collect();
+        // the launching structure is no target of its own blast
+        candidate_ids.extend(
+            self.structures_within(centre, *blast_radius)
+                .into_iter()
+                .filter(|structure| *structure != own_ship),
+        );
+        candidate_ids.retain(|candidate| *candidate > 0);
+        candidate_ids.sort_unstable();
+        candidate_ids.dedup();
+        if candidate_ids.is_empty() {
+            return self.finish_bomb_impact(deployable_id, &BTreeSet::new(), now);
+        }
+        if let Some(entry) = self.bomb_impacts.get_mut(&deployable_id) {
+            entry.pending = Some(PendingBombImpact { candidate_ids: candidate_ids.clone(), sent_at: now });
+        }
+        vec![Out::StructureDamageCandidatesRequest {
+            session: impact.session,
+            structure_id: impact.structure_id,
+            module_id: impact.module_id,
+            effect_id: impact.effect_id,
+            activation_nonce: impact.activation_nonce,
+            control_lease_generation: impact.control_lease_generation,
+            cycle_id: impact.cycle_id,
+            pulse_hop_ordinal: 0,
+            candidate_ids,
+        }]
+    }
+
+    /// The Host's correlated answer for a structure's bomb blast. Only the ships and structures it names, all from the request, are reached; a reply that
+    /// names anything else, or repeats an ID, authorizes nothing and the bomb keeps waiting. None when no bomb waits on this correlation.
+    pub(crate) fn settle_bomb_impact(
+        &mut self,
+        session: SessionId,
+        correlation: (i64, i64, i32, u64, i64, u64, u32),
+        allowed: &[i64],
+        now: i64,
+    ) -> Option<Vec<Out>> {
+        let (
+            structure_id,
+            module_id,
+            effect_id,
+            activation_nonce,
+            control_lease_generation,
+            cycle_id,
+            pulse_hop_ordinal,
+        ) = correlation;
+        let (id, candidates) = self.bomb_impacts.iter().find_map(|(id, impact)| {
+            let pending = impact.pending.as_ref()?;
+            (impact.session == session
+                && impact.structure_id == structure_id
+                && impact.module_id == module_id
+                && impact.effect_id == effect_id
+                && impact.activation_nonce == activation_nonce
+                && impact.control_lease_generation == control_lease_generation
+                && impact.cycle_id == cycle_id
+                && pulse_hop_ordinal == 0)
+                .then(|| (*id, pending.candidate_ids.clone()))
+        })?;
+        let granted: BTreeSet<i64> = allowed.iter().copied().collect();
+        if granted.len() != allowed.len() || granted.iter().any(|ship| !candidates.contains(ship)) {
+            return Some(Vec::new());
+        }
+        Some(self.finish_bomb_impact(id, &granted, now))
+    }
+
+    /// The bomb goes off with the blast reaching what was granted, and is taken out.
+    fn finish_bomb_impact(&mut self, deployable_id: i64, granted: &BTreeSet<i64>, now: i64) -> Vec<Out> {
+        self.bomb_impacts.remove(&deployable_id);
+        let Some(deployable) = self.deployables.remove(&deployable_id) else { return Vec::new() };
+        let mut out = self.detonate(&deployable, now, Some(granted));
+        out.extend(self.depart(&deployable, true, now));
         out
     }
 
@@ -688,41 +937,90 @@ impl Scene {
     }
 
     /// A bomb goes off: its blast reaches the ships of its area (a ship in its undock protection is spared the damage, as a smartbomb spares it), and what it
-    /// does is what its kind says. A launcher that has left the scene makes no aggression: its bomb still goes off where it is.
-    fn detonate(&mut self, deployable: &Deployable, at: i64) -> Vec<Out> {
+    /// does is what its kind says. A launcher that has left the scene makes no aggression: its bomb still goes off where it is. A structure's blast (`granted`
+    /// is the Host's authorization) reaches only the ships and structures it names.
+    fn detonate(&mut self, deployable: &Deployable, at: i64, granted: Option<&BTreeSet<i64>>) -> Vec<Out> {
         let Role::Bomb { kind, blast_radius, damage, ecm, neutralize } = &deployable.role else {
             return Vec::new();
         };
         let centre = [deployable.position.x, deployable.position.y, deployable.position.z];
-        match kind {
-            BombKind::Damage => {
+        let reached =
+            |ship_or_structure: i64| granted.is_none_or(|allowed| allowed.contains(&ship_or_structure));
+        match (kind, granted) {
+            (BombKind::Damage, _) => {
+                // a controlled structure's bomb hurts through the structure (its own ship is not in the scene as a pilot); the retained hull of its
+                // controller is not a target of the structure's blast
+                let own_ship = self.bomb_own_ship(deployable);
+                let structure = self.controlled_structure_id(deployable.launcher);
+                let retained = self
+                    .controlled_structures
+                    .get(&deployable.launcher)
+                    .and_then(|observer| observer.previous_ship_id);
                 let mut out = Vec::new();
-                for target in self.ships_in_area(centre, *blast_radius, Some(deployable.ship_id), at) {
-                    if self.pilots.get(&target.0).is_none_or(|pilot| pilot.protected_until > at) {
+                for target in self.ships_in_area(centre, *blast_radius, Some(own_ship), at) {
+                    if Some(target.1) == retained
+                        || !reached(target.1)
+                        || self.pilots.get(&target.0).is_none_or(|pilot| pilot.protected_until > at)
+                    {
                         continue;
                     }
-                    out.extend(self.damage_ship(
-                        deployable.launcher,
-                        deployable.module_type,
-                        target,
-                        *damage,
-                        at,
-                    ));
+                    out.extend(match structure {
+                        Some(structure_id) => self.damage_ship_from_structure(
+                            deployable.launcher,
+                            structure_id,
+                            deployable.module_type,
+                            target,
+                            *damage,
+                            at,
+                        ),
+                        None => {
+                            self.damage_ship(deployable.launcher, deployable.module_type, target, *damage, at)
+                        }
+                    });
                 }
                 // the structures in the blast take the damage in their layers (a structure is no pilot: no aggression)
-                for structure in self.structures_within(centre, *blast_radius) {
-                    out.extend(self.damage_structure(structure, *damage, at));
+                for structure_in_blast in self.structures_within(centre, *blast_radius) {
+                    if structure_in_blast != own_ship && reached(structure_in_blast) {
+                        out.extend(self.damage_structure(structure_in_blast, *damage, at));
+                    }
                 }
                 out
             }
-            BombKind::Ecm => self.jam_at(centre, 0.0, Some(deployable.ship_id), ecm, *blast_radius, at),
-            BombKind::Neutralize => {
+            (BombKind::Ecm, None) => {
+                self.jam_at(centre, 0.0, Some(deployable.ship_id), ecm, *blast_radius, at)
+            }
+            (BombKind::Neutralize, None) => {
                 let mut out = Vec::new();
                 for (target, _) in self.ships_in_area(centre, *blast_radius, Some(deployable.ship_id), at) {
                     let amount = neutralize * self.capacitor_warfare_multiplier(target);
                     out.extend(self.take_capacitor(target, amount, at).0);
                 }
                 out
+            }
+            // a structure's ECM or neutralizing blast is applied to the granted ships as the structure burst applies it (the same numbers and rules)
+            (BombKind::Ecm, Some(allowed)) => {
+                let allowed: Vec<i64> = allowed.iter().copied().collect();
+                self.apply_structure_burst(
+                    deployable.launcher,
+                    deployable.module_id,
+                    deployable.module_type,
+                    &crate::modules::Remote::Jam { strength: *ecm },
+                    0.0,
+                    &allowed,
+                    at,
+                )
+            }
+            (BombKind::Neutralize, Some(allowed)) => {
+                let allowed: Vec<i64> = allowed.iter().copied().collect();
+                self.apply_structure_burst(
+                    deployable.launcher,
+                    deployable.module_id,
+                    deployable.module_type,
+                    &crate::modules::Remote::Neutralize { amount: *neutralize, signature_resolution: 0.0 },
+                    0.0,
+                    &allowed,
+                    at,
+                )
             }
         }
     }
@@ -806,6 +1104,8 @@ impl Scene {
                 | Role::JumpBridge { .. }
                 | Role::CynoBeacon { .. }
                 | Role::CynoInhibitor { .. }
+                | Role::MobileObservatory { .. }
+                | Role::ControlTower { .. }
                 | Role::AnalysisBeacon { .. } => false,
             })
     }

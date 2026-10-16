@@ -113,15 +113,8 @@ fn controlled_structure_scene() -> (Scene, i64, i64, Vec3, i64, i64, i64) {
     second.position = [origin.x + 4_000.0, origin.y, origin.z];
     scene.place_structure(second, now);
 
-    let controlled = scene.control_structure(
-        A,
-        scene.solar_system_id(),
-        structure_id,
-        spec().character_id,
-        true,
-        39,
-        now,
-    );
+    let controlled =
+        scene.control_structure(A, scene.solar_system_id(), structure_id, spec().character_id, true, 39, now);
     assert!(controlled.iter().any(|out| matches!(out, Out::Accepted { session, .. } if *session == A)));
 
     let mut structure_spec = spec();
@@ -158,10 +151,8 @@ fn structure_candidate_request(out: &[Out]) -> (u64, i64, u64, u32, Vec<i64>) {
 #[test]
 fn published_ship_hog_recomputes_moved_and_held_ships_each_pulse() {
     let (mut scene, now, origin, b_id, c_id) = scene_with_three_ships();
-    scene.set_field_capital_size_by_type(Arc::new(HashMap::from([
-        (RIFTER_TYPE, false),
-        (AVATAR_TYPE, true),
-    ])));
+    scene
+        .set_field_capital_size_by_type(Arc::new(HashMap::from([(RIFTER_TYPE, false), (AVATAR_TYPE, true)])));
     let effect = field_effect(PUBLIC_HOG_TYPE, 2, Vec::new(), Vec::new());
 
     let activation = scene.activate(A, effect, now);
@@ -178,7 +169,10 @@ fn published_ship_hog_recomputes_moved_and_held_ships_each_pulse() {
     assert_eq!(scene.pilots[&C].ship.position, capital_before, "a new capital entrant is held, not carried");
     let warp = scene.command(
         C,
-        Command::WarpToPoint { destination: Vec3::new(origin.x + 1_000_000.0, origin.y, origin.z), range: 0.0 },
+        Command::WarpToPoint {
+            destination: Vec3::new(origin.x + 1_000_000.0, origin.y, origin.z),
+            range: 0.0,
+        },
         now + 3 * SECOND + 1,
     );
     assert!(warp.iter().any(|out| matches!(out, Out::Refused { reason: "WARP_BLOCKED", .. })));
@@ -188,7 +182,8 @@ fn published_ship_hog_recomputes_moved_and_held_ships_each_pulse() {
 #[test]
 fn controlled_field_uses_a_fresh_candidate_exchange_and_only_the_host_partition() {
     // The Host refuses unpublished 47068; this direct Scene test covers the already-authorized Rust Field execution path.
-    let (mut scene, structure_id, second_structure_id, origin, b_id, c_id, now) = controlled_structure_scene();
+    let (mut scene, structure_id, second_structure_id, origin, b_id, c_id, now) =
+        controlled_structure_scene();
     let effect = field_effect(STRUCTURE_HOG_TYPE, 2, vec![second_structure_id], vec![c_id]);
     let activation = scene.activate(A, effect, now);
     assert!(activation.iter().any(|out| matches!(out, Out::Accepted { session, .. } if *session == A)));
@@ -206,8 +201,18 @@ fn controlled_field_uses_a_fresh_candidate_exchange_and_only_the_host_partition(
     assert!(!first.iter().any(|out| matches!(out, Out::ChargeSpent { .. })));
 
     let moved = scene.structure_field_damage_candidates_result(
-        A, structure_id, MODULE, 6_474, activation_nonce, lease, cycle_id, ordinal,
-        &[b_id], &[b_id], &[], now + 2 * SECOND + 1,
+        A,
+        structure_id,
+        MODULE,
+        6_474,
+        activation_nonce,
+        lease,
+        cycle_id,
+        ordinal,
+        &[b_id],
+        &[b_id],
+        &[],
+        now + 2 * SECOND + 1,
     );
     assert!(!moved.iter().any(|out| matches!(out, Out::Refused { .. })));
     let expected = Vec3::new(origin.x, origin.y, origin.z + 5_000.0);
@@ -224,8 +229,18 @@ fn controlled_field_uses_a_fresh_candidate_exchange_and_only_the_host_partition(
     assert!(candidates2.contains(&second_structure_id));
 
     let held = scene.structure_field_damage_candidates_result(
-        A, structure_id, MODULE, 6_474, nonce2, lease2, cycle2, ordinal2,
-        &[c_id], &[], &[c_id], now + 3 * SECOND + 1,
+        A,
+        structure_id,
+        MODULE,
+        6_474,
+        nonce2,
+        lease2,
+        cycle2,
+        ordinal2,
+        &[c_id],
+        &[],
+        &[c_id],
+        now + 3 * SECOND + 1,
     );
     assert!(!held.iter().any(|out| matches!(out, Out::Refused { .. })));
     assert_eq!(scene.pilots[&C].ship.position, capital_at_pulse, "held targets stay where they are");

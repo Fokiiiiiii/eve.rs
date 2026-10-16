@@ -26,70 +26,7 @@ pub(super) fn read_action(reader: &mut Reader) -> Result<Action, DecodeError> {
             let when = read_applies(reader)?;
             let reach = Reach { optimal: reader.f64()?, falloff: reader.f64()? };
             let jam = reader.text()?;
-            let what = match reader.u8()? {
-                0 => {
-                    let layer = read_layer(reader)?;
-                    Remote::Repair { layer, amount: reader.f64()? }
-                }
-                11 => {
-                    let layer = read_layer(reader)?;
-                    let amount = reader.f64()?;
-                    let bonus_per_cycle = reader.f64()?;
-                    let bonus_max = reader.f64()?;
-                    if !amount.is_finite()
-                        || amount < 0.0
-                        || !bonus_per_cycle.is_finite()
-                        || bonus_per_cycle < 0.0
-                        || !bonus_max.is_finite()
-                        || bonus_max < 0.0
-                    {
-                        return Err(DecodeError::BadValue("mutadaptive repair"));
-                    }
-                    Remote::MutadaptiveRepair { layer, amount, bonus_per_cycle, bonus_max }
-                }
-                1 => Remote::Transfer { amount: reader.f64()? },
-                2 => Remote::Neutralize { amount: reader.f64()?, signature_resolution: reader.f64()? },
-                3 => Remote::Drain { amount: reader.f64()?, signature_resolution: reader.f64()? },
-                4 => Remote::Web { percent: reader.f64()? },
-                5 => Remote::Paint { percent: reader.f64()? },
-                6 => Remote::Damp {
-                    range_percent: reader.f64()?,
-                    resolution_percent: reader.f64()?,
-                    gravimetric_percent: reader.f64()?,
-                    ladar_percent: reader.f64()?,
-                    magnetometric_percent: reader.f64()?,
-                    radar_percent: reader.f64()?,
-                },
-                7 => Remote::Scramble {
-                    strength: reader.f64()?,
-                    blocks_mwd: match reader.u8()? {
-                        0 => false,
-                        1 => true,
-                        _ => return Err(DecodeError::BadValue("blocks_mwd")),
-                    },
-                },
-                12 => {
-                    let strength = reader.f64()?;
-                    let web_percent = reader.f64()?;
-                    if !strength.is_finite() || strength < 0.0 || !web_percent.is_finite() {
-                        return Err(DecodeError::BadValue("tackle"));
-                    }
-                    Remote::Tackle { strength, web_percent }
-                }
-                9 => Remote::Disrupt {
-                    range_percent: reader.f64()?,
-                    falloff_percent: reader.f64()?,
-                    tracking_percent: reader.f64()?,
-                },
-                10 => Remote::GuidanceDisrupt {
-                    velocity_percent: reader.f64()?,
-                    delay_percent: reader.f64()?,
-                    aoe_velocity_percent: reader.f64()?,
-                    aoe_cloud_percent: reader.f64()?,
-                },
-                8 => Remote::Jam { strength: [reader.f64()?, reader.f64()?, reader.f64()?, reader.f64()?] },
-                _ => return Err(DecodeError::BadValue("remote")),
-            };
+            let what = read_remote_what(reader)?;
             if matches!(&what, Remote::MutadaptiveRepair { .. }) && when != Applies::CycleEnd {
                 return Err(DecodeError::BadValue("mutadaptive repair timing"));
             }
@@ -187,19 +124,40 @@ pub(super) fn read_action(reader: &mut Reader) -> Result<Action, DecodeError> {
             }
             Ok(Action::Bomb { ball, kind, lifetime_ms, blast_radius, damage, ecm, neutralize })
         }
+        32 => {
+            let range = reader.f64()?;
+            let duration_ms = reader.f64()?;
+            let what = read_remote_what(reader)?;
+            if !range.is_finite() || range <= 0.0 || !duration_ms.is_finite() || duration_ms <= 0.0 {
+                return Err(DecodeError::BadValue("structure burst"));
+            }
+            if !matches!(
+                &what,
+                Remote::Neutralize { .. }
+                    | Remote::Web { .. }
+                    | Remote::Paint { .. }
+                    | Remote::Damp { .. }
+                    | Remote::Disrupt { .. }
+                    | Remote::Scramble { .. }
+                    | Remote::Jam { .. }
+            ) {
+                return Err(DecodeError::BadValue("structure burst effect"));
+            }
+            Ok(Action::StructureBurst { range, duration_ms, what })
+        }
         30 => {
-                    // Point defense carries per-channel ship damage, not the scalar missile-hull HP.
-                    let range_meters = reader.f64()?;
-                    let damage = [reader.f64()?, reader.f64()?, reader.f64()?, reader.f64()?];
-                    if !range_meters.is_finite()
-                        || range_meters <= 0.0
-                        || !damage.iter().all(|amount| amount.is_finite() && *amount >= 0.0)
-                    {
-                        return Err(DecodeError::BadValue("point defense action"));
-                    }
-                    Ok(Action::PointDefense { range_meters, damage })
-                }
-                29 => {
+            // Point defense carries per-channel ship damage, not the scalar missile-hull HP.
+            let range_meters = reader.f64()?;
+            let damage = [reader.f64()?, reader.f64()?, reader.f64()?, reader.f64()?];
+            if !range_meters.is_finite()
+                || range_meters <= 0.0
+                || !damage.iter().all(|amount| amount.is_finite() && *amount >= 0.0)
+            {
+                return Err(DecodeError::BadValue("point defense action"));
+            }
+            Ok(Action::PointDefense { range_meters, damage })
+        }
+        29 => {
             // the Nexus invulnerability core (protocol 43): the reach of its fleet effect in metres
             let range_meters = reader.f64()?;
             if !range_meters.is_finite() || range_meters < 0.0 {
@@ -409,4 +367,73 @@ pub(super) fn read_action(reader: &mut Reader) -> Result<Action, DecodeError> {
         }
         _ => Err(DecodeError::BadValue("action")),
     }
+}
+
+/// One remote effect's kind and numbers (the tags of a `Remote` on the wire, as the remote action carries them).
+fn read_remote_what(reader: &mut Reader) -> Result<Remote, DecodeError> {
+    let what = match reader.u8()? {
+        0 => {
+            let layer = read_layer(reader)?;
+            Remote::Repair { layer, amount: reader.f64()? }
+        }
+        11 => {
+            let layer = read_layer(reader)?;
+            let amount = reader.f64()?;
+            let bonus_per_cycle = reader.f64()?;
+            let bonus_max = reader.f64()?;
+            if !amount.is_finite()
+                || amount < 0.0
+                || !bonus_per_cycle.is_finite()
+                || bonus_per_cycle < 0.0
+                || !bonus_max.is_finite()
+                || bonus_max < 0.0
+            {
+                return Err(DecodeError::BadValue("mutadaptive repair"));
+            }
+            Remote::MutadaptiveRepair { layer, amount, bonus_per_cycle, bonus_max }
+        }
+        1 => Remote::Transfer { amount: reader.f64()? },
+        2 => Remote::Neutralize { amount: reader.f64()?, signature_resolution: reader.f64()? },
+        3 => Remote::Drain { amount: reader.f64()?, signature_resolution: reader.f64()? },
+        4 => Remote::Web { percent: reader.f64()? },
+        5 => Remote::Paint { percent: reader.f64()? },
+        6 => Remote::Damp {
+            range_percent: reader.f64()?,
+            resolution_percent: reader.f64()?,
+            gravimetric_percent: reader.f64()?,
+            ladar_percent: reader.f64()?,
+            magnetometric_percent: reader.f64()?,
+            radar_percent: reader.f64()?,
+        },
+        7 => Remote::Scramble {
+            strength: reader.f64()?,
+            blocks_mwd: match reader.u8()? {
+                0 => false,
+                1 => true,
+                _ => return Err(DecodeError::BadValue("blocks_mwd")),
+            },
+        },
+        12 => {
+            let strength = reader.f64()?;
+            let web_percent = reader.f64()?;
+            if !strength.is_finite() || strength < 0.0 || !web_percent.is_finite() {
+                return Err(DecodeError::BadValue("tackle"));
+            }
+            Remote::Tackle { strength, web_percent }
+        }
+        9 => Remote::Disrupt {
+            range_percent: reader.f64()?,
+            falloff_percent: reader.f64()?,
+            tracking_percent: reader.f64()?,
+        },
+        10 => Remote::GuidanceDisrupt {
+            velocity_percent: reader.f64()?,
+            delay_percent: reader.f64()?,
+            aoe_velocity_percent: reader.f64()?,
+            aoe_cloud_percent: reader.f64()?,
+        },
+        8 => Remote::Jam { strength: [reader.f64()?, reader.f64()?, reader.f64()?, reader.f64()?] },
+        _ => return Err(DecodeError::BadValue("remote")),
+    };
+    Ok(what)
 }

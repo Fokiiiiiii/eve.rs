@@ -466,6 +466,9 @@ impl Sim {
             | Message::PlaceDisruptor(..)
             | Message::PlaceInhibitor(..)
             | Message::PlaceCynoBeacon(..)
+            | Message::PlaceObservatory(..)
+            | Message::PlaceControlTower(..)
+            | Message::RemoteDecloakPing { .. }
             | Message::SetDisruptorActive { .. }
             | Message::TetherPolicy { .. }
             | Message::PlaceAnalysisBeacon(..)
@@ -478,6 +481,7 @@ impl Sim {
     }
 
     /// Applies a host-authorized structure observer transition in the named live scene.
+    #[allow(clippy::too_many_arguments)]
     fn control_structure(
         &mut self,
         session_id: SessionId,
@@ -803,18 +807,20 @@ impl Sim {
                 allowed_target_ids,
             } => self
                 .scene_of(session_id)
-                .map(|scene| scene.structure_damage_candidates_result(
-                    session_id,
-                    structure_id,
-                    module_id,
-                    effect_id,
-                    activation_nonce,
-                    control_lease_generation,
-                    cycle_id,
-                    pulse_hop_ordinal,
-                    &allowed_target_ids,
-                    now,
-                ))
+                .map(|scene| {
+                    scene.structure_damage_candidates_result(
+                        session_id,
+                        structure_id,
+                        module_id,
+                        effect_id,
+                        activation_nonce,
+                        control_lease_generation,
+                        cycle_id,
+                        pulse_hop_ordinal,
+                        &allowed_target_ids,
+                        now,
+                    )
+                })
                 .unwrap_or_default(),
             Message::StructureDamageCandidatesFieldResult {
                 session_id,
@@ -830,20 +836,22 @@ impl Sim {
                 field_held_target_ids,
             } => self
                 .scene_of(session_id)
-                .map(|scene| scene.structure_field_damage_candidates_result(
-                    session_id,
-                    structure_id,
-                    module_id,
-                    effect_id,
-                    activation_nonce,
-                    control_lease_generation,
-                    cycle_id,
-                    pulse_hop_ordinal,
-                    &allowed_target_ids,
-                    &field_moved_target_ids,
-                    &field_held_target_ids,
-                    now,
-                ))
+                .map(|scene| {
+                    scene.structure_field_damage_candidates_result(
+                        session_id,
+                        structure_id,
+                        module_id,
+                        effect_id,
+                        activation_nonce,
+                        control_lease_generation,
+                        cycle_id,
+                        pulse_hop_ordinal,
+                        &allowed_target_ids,
+                        &field_moved_target_ids,
+                        &field_held_target_ids,
+                        now,
+                    )
+                })
                 .unwrap_or_default(),
             Message::ModuleWorkResult {
                 session_id,
@@ -1193,27 +1201,29 @@ impl Sim {
                 .scene_of(session_id)
                 .map(|scene| scene.set_tether_policy(session_id, blocked_for_ms, lease_ms, candidates, now))
                 .unwrap_or_default(),
-            Message::PlaceAsteroid(placement) => match self.scenes.get_mut(&SceneKey::solar_system(placement.solar_system_id)) {
-                Some(scene) => {
-                    let p = *placement;
-                    scene.place_asteroid(
-                        crate::wreck::Asteroid {
-                            id: p.asteroid_id,
-                            type_id: p.type_id,
-                            group_id: p.group_id,
-                            category_id: p.category_id,
-                            name: p.name,
-                            graphic_id: p.graphic_id,
-                            position: Vec3::new(p.position[0], p.position[1], p.position[2]),
-                            direction: Vec3::new(p.direction[0], p.direction[1], p.direction[2]),
-                            radius: p.radius,
-                            units_remaining: p.units_remaining,
-                        },
-                        now,
-                    )
+            Message::PlaceAsteroid(placement) => {
+                match self.scenes.get_mut(&SceneKey::solar_system(placement.solar_system_id)) {
+                    Some(scene) => {
+                        let p = *placement;
+                        scene.place_asteroid(
+                            crate::wreck::Asteroid {
+                                id: p.asteroid_id,
+                                type_id: p.type_id,
+                                group_id: p.group_id,
+                                category_id: p.category_id,
+                                name: p.name,
+                                graphic_id: p.graphic_id,
+                                position: Vec3::new(p.position[0], p.position[1], p.position[2]),
+                                direction: Vec3::new(p.direction[0], p.direction[1], p.direction[2]),
+                                radius: p.radius,
+                                units_remaining: p.units_remaining,
+                            },
+                            now,
+                        )
+                    }
+                    None => Vec::new(),
                 }
-                None => Vec::new(),
-            },
+            }
             Message::PlaceWreck(placement) => match self.scenes.get_mut(&placement.scene) {
                 Some(scene) => {
                     let placement = *placement;
@@ -1366,6 +1376,25 @@ impl Sim {
                     None => Vec::new(),
                 }
             }
+            Message::PlaceObservatory(observatory) => {
+                let observatory = *observatory;
+                match self.scenes.get_mut(&SceneKey::solar_system(observatory.solar_system_id)) {
+                    Some(scene) => scene.place_observatory(observatory, now),
+                    None => Vec::new(),
+                }
+            }
+            Message::PlaceControlTower(tower) => {
+                let tower = *tower;
+                match self.scenes.get_mut(&SceneKey::solar_system(tower.solar_system_id)) {
+                    Some(scene) => scene.place_control_tower(tower, now),
+                    None => Vec::new(),
+                }
+            }
+            Message::RemoteDecloakPing { solar_system_id, observatory_id } => self
+                .scenes
+                .get_mut(&SceneKey::solar_system(solar_system_id))
+                .map(|scene| scene.remote_decloak_ping(observatory_id, now))
+                .unwrap_or_default(),
             Message::PlaceInhibitor(inhibitor) => {
                 let inhibitor = *inhibitor;
                 match self.scenes.get_mut(&SceneKey::solar_system(inhibitor.solar_system_id)) {

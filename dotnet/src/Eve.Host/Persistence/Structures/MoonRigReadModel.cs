@@ -20,18 +20,22 @@ public sealed class MoonRigReadModel
     private readonly PgItemStore _items;
     private readonly DogmaStatic _dogma;
     private readonly IMoonRulesSource _rules;
+    private readonly StructureStore _structures;
 
-    public MoonRigReadModel(PgItemStore items, DogmaStatic dogma, IMoonRulesSource rules)
+    // The structure's own record gives its type, owner and system: an anchored structure has no item row (the anchor consumes the item it came from).
+    public MoonRigReadModel(PgItemStore items, DogmaStatic dogma, IMoonRulesSource rules, StructureStore structures)
     {
         _items = items;
         _dogma = dogma;
         _rules = rules;
+        _structures = structures;
     }
 
     public async Task<MoonRules> ReadAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long structureId, CancellationToken cancellationToken = default)
     {
-        var structure = await _items.LockAndGetAsync(connection, transaction, structureId, cancellationToken)
-            ?? throw new InvalidOperationException("Moon rig rules require the structure item.");
+        var record = await _structures.GetAsync(connection, transaction, structureId, true, cancellationToken)
+            ?? throw new InvalidOperationException("Moon rig rules require the structure record.");
+        var structure = new Item(record.Snapshot.StructureId, record.TypeId, record.OwnerCorporationId, record.SolarSystemId, 0, 1, true, record.Name);
         var rules = _rules.RulesOf(structure.TypeId);
         var contents = await _items.LockContainerAsync(connection, transaction, structureId, cancellationToken);
         var fitted = contents.Where(item =>

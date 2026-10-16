@@ -523,38 +523,51 @@ private static void WriteStructureDamageCorrelation(
             case SimAction.Smartbomb bomb:
                 w.U8(2); w.F64(bomb.Range); foreach (var number in bomb.Damage) w.F64(number); w.U8(bomb.HurtsPilots ? (byte)1 : (byte)0);
                 break;
+            case SimAction.StructureBurst burst:
+                if (!burst.IsValid)
+                {
+                    throw new ArgumentException("a structure burst has a positive range and duration and a remote effect of a burst family", nameof(action));
+                }
+                w.U8(32); w.F64(burst.RangeMeters); w.F64(burst.DurationMs); WriteRemoteWhat(w, burst.What);
+                break;
             case SimAction.Remote remote:
                 w.U8(1); w.U8(remote.AtCycleEnd ? (byte)1 : (byte)0); w.F64(remote.Optimal); w.F64(remote.Falloff); w.Text(remote.Jam);
-                switch (remote.What)
-                {
-                    case SimRemote.Repair mend:
-                        w.U8(0); w.U8((byte)mend.Layer); w.F64(mend.Amount); break;
-                    case SimRemote.MutadaptiveRepair mend:
-                        w.U8(11); w.U8((byte)mend.Layer); w.F64(mend.Amount); w.F64(mend.RepairMultiplierBonusPerCycle); w.F64(mend.RepairMultiplierBonusMax); break;
-                    case SimRemote.Transfer transfer:
-                        w.U8(1); w.F64(transfer.Amount); break;
-                    case SimRemote.Neutralize neutralize:
-                        w.U8(2); w.F64(neutralize.Amount); w.F64(neutralize.SignatureResolution); break;
-                    case SimRemote.Drain drain:
-                        w.U8(3); w.F64(drain.Amount); w.F64(drain.SignatureResolution); break;
-                    case SimRemote.Web web:
-                        w.U8(4); w.F64(web.Percent); break;
-                    case SimRemote.Paint paint:
-                        w.U8(5); w.F64(paint.Percent); break;
-                    case SimRemote.Damp damp:
-                        w.U8(6); w.F64(damp.RangePercent); w.F64(damp.ResolutionPercent); w.F64(damp.GravimetricStrengthPercent); w.F64(damp.LadarStrengthPercent); w.F64(damp.MagnetometricStrengthPercent); w.F64(damp.RadarStrengthPercent); break;
-                    case SimRemote.Scramble scramble:
-                        w.U8(7); w.F64(scramble.Strength); w.U8(scramble.BlocksMwd ? (byte)1 : (byte)0); break;
-                    case SimRemote.Disrupt disrupt:
-                        w.U8(9); w.F64(disrupt.RangePercent); w.F64(disrupt.FalloffPercent); w.F64(disrupt.TrackingPercent); break;
-                    case SimRemote.GuidanceDisrupt guidance:
-                        w.U8(10); w.F64(guidance.VelocityPercent); w.F64(guidance.DelayPercent); w.F64(guidance.AoeVelocityPercent); w.F64(guidance.AoeCloudPercent); break;
-                    case SimRemote.Jam jam:
-                        w.U8(8); w.F64(jam.Gravimetric); w.F64(jam.Ladar); w.F64(jam.Magnetometric); w.F64(jam.Radar); break;
-                    case SimRemote.Tackle tackle:
-                        w.U8(12); w.F64(tackle.Strength); w.F64(tackle.WebPercent); break;
-                }
+                WriteRemoteWhat(w, remote.What);
                 break;
+        }
+    }
+
+    /// <summary>A remote effect's kind and numbers, as the remote action carries them (and a structure burst, tag 32).</summary>
+    private static void WriteRemoteWhat(Writer w, SimRemote what)
+    {
+        switch (what)
+        {
+            case SimRemote.Repair mend:
+                w.U8(0); w.U8((byte)mend.Layer); w.F64(mend.Amount); break;
+            case SimRemote.MutadaptiveRepair mend:
+                w.U8(11); w.U8((byte)mend.Layer); w.F64(mend.Amount); w.F64(mend.RepairMultiplierBonusPerCycle); w.F64(mend.RepairMultiplierBonusMax); break;
+            case SimRemote.Transfer transfer:
+                w.U8(1); w.F64(transfer.Amount); break;
+            case SimRemote.Neutralize neutralize:
+                w.U8(2); w.F64(neutralize.Amount); w.F64(neutralize.SignatureResolution); break;
+            case SimRemote.Drain drain:
+                w.U8(3); w.F64(drain.Amount); w.F64(drain.SignatureResolution); break;
+            case SimRemote.Web web:
+                w.U8(4); w.F64(web.Percent); break;
+            case SimRemote.Paint paint:
+                w.U8(5); w.F64(paint.Percent); break;
+            case SimRemote.Damp damp:
+                w.U8(6); w.F64(damp.RangePercent); w.F64(damp.ResolutionPercent); w.F64(damp.GravimetricStrengthPercent); w.F64(damp.LadarStrengthPercent); w.F64(damp.MagnetometricStrengthPercent); w.F64(damp.RadarStrengthPercent); break;
+            case SimRemote.Scramble scramble:
+                w.U8(7); w.F64(scramble.Strength); w.U8(scramble.BlocksMwd ? (byte)1 : (byte)0); break;
+            case SimRemote.Disrupt disrupt:
+                w.U8(9); w.F64(disrupt.RangePercent); w.F64(disrupt.FalloffPercent); w.F64(disrupt.TrackingPercent); break;
+            case SimRemote.GuidanceDisrupt guidance:
+                w.U8(10); w.F64(guidance.VelocityPercent); w.F64(guidance.DelayPercent); w.F64(guidance.AoeVelocityPercent); w.F64(guidance.AoeCloudPercent); break;
+            case SimRemote.Jam jam:
+                w.U8(8); w.F64(jam.Gravimetric); w.F64(jam.Ladar); w.F64(jam.Magnetometric); w.F64(jam.Radar); break;
+            case SimRemote.Tackle tackle:
+                w.U8(12); w.F64(tackle.Strength); w.F64(tackle.WebPercent); break;
         }
     }
 
@@ -1270,6 +1283,11 @@ private static void WriteStructureDamageCorrelation(
                 w.I32(m.SolarSystemId);
                 w.I64(m.StructureBeaconId);
                 break;
+            case SimRemoteDecloakPing m:
+                w.U8(Kind.RemoteDecloakPing);
+                w.I32(m.SolarSystemId);
+                w.I64(m.ObservatoryId);
+                break;
             case SimDamageableEntityUpserted m:
                 if (m.SolarSystemId <= 0 || m.EntityId <= 0 || m.TypeId <= 0 || m.OwnerId < 0 || m.CorporationId < 0 || m.AllianceId < 0 || m.WarFactionId < 0)
                     throw new SimLinkException(SimLinkError.BadValue, "damageable entity identity");
@@ -1417,6 +1435,38 @@ private static void WriteStructureDamageCorrelation(
                 break;
             case SimPlaceCynoBeacon m:
                 w.U8(Kind.PlaceCynoBeacon);
+                w.I64(m.DeployableId);
+                w.I32(m.SolarSystemId);
+                w.Text(m.Name);
+                w.I32(m.TypeId);
+                w.I32(m.GroupId);
+                WriteVector(w, m.Position);
+                w.F64(m.Radius);
+                w.F64(0);
+                w.U8(m.Active ? (byte)1 : (byte)0);
+                w.I64(m.OwnerId);
+                w.I32(m.CorporationId);
+                w.I32(m.AllianceId);
+                w.I64(m.ShipId);
+                break;
+            case SimPlaceObservatory m:
+                w.U8(Kind.PlaceObservatory);
+                w.I64(m.DeployableId);
+                w.I32(m.SolarSystemId);
+                w.Text(m.Name);
+                w.I32(m.TypeId);
+                w.I32(m.GroupId);
+                WriteVector(w, m.Position);
+                w.F64(m.Radius);
+                w.F64(0);
+                w.U8(m.Active ? (byte)1 : (byte)0);
+                w.I64(m.OwnerId);
+                w.I32(m.CorporationId);
+                w.I32(m.AllianceId);
+                w.I64(m.ShipId);
+                break;
+            case SimPlaceControlTower m:
+                w.U8(Kind.PlaceControlTower);
                 w.I64(m.DeployableId);
                 w.I32(m.SolarSystemId);
                 w.Text(m.Name);

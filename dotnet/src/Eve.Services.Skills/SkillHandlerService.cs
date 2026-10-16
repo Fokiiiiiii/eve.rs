@@ -197,6 +197,22 @@ public static SkillAugmentationReader CreateAugmentationReader(
         type.Attributes.TryGetValue(ImplantSlotAttributeId, out var slot) &&
         double.IsFinite(slot) && slot > 0 && slot <= int.MaxValue && slot == Math.Truncate(slot);
 
+/// <summary>The smuggling chance of a pilot (dogma attribute 445 after its implant and skill modifiers, EVE.js resolveCharacterSmugglingChance), from 0 to 1.</summary>
+    public static async Task<double> SmugglingChanceAsync(
+        Eve.Inventory.PgItemStore itemStore, Eve.Dogma.DogmaStatic dogma, PgSkillStore skillStore, long characterId, CancellationToken cancellationToken)
+    {
+        var implants = (await itemStore.InLocationAsync(characterId, characterId, cancellationToken))
+            .Where(item => item.Flag == ImplantFlag && item.OwnerId == characterId)
+            .ToList();
+        var trained = await skillStore.ForCharacterAsync(characterId, cancellationToken);
+        await dogma.EnsureTypesAsync(implants.Select(item => item.TypeId).Concat(trained.Select(skill => skill.TypeId)), cancellationToken);
+        var (world, _) = BuildAugmentationWorld(characterId, implants, trained, new Dictionary<long, StoredSkillBooster>(), dogma);
+        return Math.Clamp(world.Get(characterId, SmugglingChanceAttributeId), 0d, 1d);
+    }
+
+    /// <summary>The dogma attribute smugglingChance (445).</summary>
+    public const int SmugglingChanceAttributeId = 445;
+
     private static (Eve.Dogma.DogmaWorld World, Dictionary<long, Eve.Dogma.DogmaItem> Items) BuildAugmentationWorld(
         long characterId,
         IReadOnlyList<Eve.Inventory.Item> inventory,

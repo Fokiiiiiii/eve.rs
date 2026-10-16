@@ -167,6 +167,10 @@ public class SimCodecTests
         {
             return new SimAction.StasisBurst((double)a["range"]!, (double)a["durationMs"]!, (double)a["speedFactor"]!);
         }
+        if ((string)a["kind"]! == "structureBurst")
+        {
+            return new SimAction.StructureBurst((double)a["range"]!, (double)a["durationMs"]!, BurstRemote(a));
+        }
         if ((string)a["kind"]! == "panic")
         {
             return new SimAction.Panic((double)a["rangeMeters"]!);
@@ -239,6 +243,24 @@ public class SimCodecTests
             _ => new SimRemote.Scramble((double)a["strength"]!, (bool)a["blocksMwd"]!),
         };
         return new SimAction.Remote(what, (double)a["optimal"]!, (double)a["falloff"]!, end, (string)a["jam"]!);
+    }
+
+    /// <summary>The remote effect of a structure burst fixture: the kinds of the burst families, as the generator writes them.</summary>
+    private static SimRemote BurstRemote(JsonNode a)
+    {
+        double Optional(string name) => a[name] is { } value ? (double)value : 0d;
+        return (string)a["what"]! switch
+        {
+            "neutralize" => new SimRemote.Neutralize((double)a["amount"]!, (double)a["signatureResolution"]!),
+            "web" => new SimRemote.Web((double)a["percent"]!),
+            "paint" => new SimRemote.Paint((double)a["percent"]!),
+            "damp" => new SimRemote.Damp(
+                (double)a["rangePercent"]!, (double)a["resolutionPercent"]!,
+                Optional("gravimetricStrengthPercent"), Optional("ladarStrengthPercent"), Optional("magnetometricStrengthPercent"), Optional("radarStrengthPercent")),
+            "disrupt" => new SimRemote.Disrupt((double)a["rangePercent"]!, (double)a["falloffPercent"]!, (double)a["trackingPercent"]!),
+            "jam" => new SimRemote.Jam(Four(a["strength"]!)[0], Four(a["strength"]!)[1], Four(a["strength"]!)[2], Four(a["strength"]!)[3]),
+            _ => new SimRemote.Scramble((double)a["strength"]!, (bool)a["blocksMwd"]!),
+        };
     }
 
     private static SimTurret TurretOf(JsonNode t) => new(
@@ -564,6 +586,11 @@ public class SimCodecTests
             "PlaceCynoBeacon" => new SimPlaceCynoBeacon(Wide(c, "deployableId"), (int)c["solarSystemId"]!, (string)c["typeName"]!, (int)c["typeId"]!, (int)c["groupId"]!,
                 VectorOf(c["position"]!), (double)c["radius"]!, (bool)c["active"]!, Wide(c, "ownerId"), (int)c["corporationId"]!,
                 (int)c["allianceId"]!, Wide(c, "shipId")),
+            "PlaceObservatory" => new SimPlaceObservatory(Wide(c, "deployableId"), (int)c["solarSystemId"]!, (string)c["typeName"]!, (int)c["typeId"]!, (int)c["groupId"]!,
+                VectorOf(c["position"]!), (double)c["radius"]!, (bool)c["active"]!, Wide(c, "ownerId"), (int)c["corporationId"]!, (int)c["allianceId"]!, Wide(c, "shipId")),
+            "PlaceControlTower" => new SimPlaceControlTower(Wide(c, "deployableId"), (int)c["solarSystemId"]!, (string)c["typeName"]!, (int)c["typeId"]!, (int)c["groupId"]!,
+                VectorOf(c["position"]!), (double)c["radius"]!, (bool)c["active"]!, Wide(c, "ownerId"), (int)c["corporationId"]!, (int)c["allianceId"]!, Wide(c, "shipId")),
+            "RemoteDecloakPing" => new SimRemoteDecloakPing((int)c["solarSystemId"]!, Wide(c, "observatoryId")),
             "SetDisruptorActive" => new SimSetDisruptorActive(Wide(c, "deployableId"), (bool)c["active"]!),
             "PlaceAnalysisBeacon" => new SimPlaceAnalysisBeacon(Wide(c, "deployableId"), (int)c["solarSystemId"]!, (string)c["typeName"]!, (int)c["typeId"]!, (int)c["groupId"]!,
                 VectorOf(c["position"]!), (double)c["radius"]!, Wide(c, "ownerId"), (int)c["corporationId"]!, (int)c["allianceId"]!, Wide(c, "shipId"), BeaconStateOf(c["state"]!)),
@@ -602,7 +629,7 @@ public class SimCodecTests
     public void The_fixtures_cover_every_message_kind()
     {
         var kinds = ((JsonArray)Fixtures["valid"]!).Select(c => (string)c!["kind"]!).Distinct().Order().ToArray();
-        Assert.Equal(["AbyssalFieldMembership", "Accepted", "Activate", "AdjustCharge", "Approaching", "Arrived", "Bind", "BuffState", "ChangeWreck", "ChargeAdjusted", "ChargeSpent", "Command", "Condition", "ContainerPlaced", "ControlStructure", "DamageableEntityRemoved", "DamageableEntityUpserted", "Deployed", "Destroy", "Destroyed", "DirectionalTargets", "Docked", "DroneCommand", "DroneReleased", "DroneResults", "DroneScooped", "EcmBurst", "EnsureAbyssalEnvironmentObject", "EnsureAbyssalEnvironmentObjectReply", "EnsureAbyssalLootContainer", "EnsureAbyssalLootContainerReply", "EnsureAbyssalRewardCache", "EnsureAbyssalRewardCacheReply", "EnsureAbyssalScene", "EnsureAbyssalSceneObject", "EnsureAbyssalSceneObjectReply", "EnsureAbyssalSceneReply", "EnsureAbyssalTracePublished", "EnsureAbyssalTracePublishedReply", "Enter", "EnterReply", "FighterGotoPoint", "FighterLanded", "FighterOrder", "FighterReleased", "FighterResults", "FighterSize", "GetAbyssalParticipantPose", "GetAbyssalParticipantPoseReply", "Hello", "HelloAck", "Jumped", "Jumping", "LaunchDrone", "LaunchFighter", "Leave", "Measured", "ModuleEnded", "ModuleWorkCycle", "ModuleWorkResult", "MoveAbyssalParticipant", "MoveAbyssalParticipantReply", "Notify", "PlaceAnalysisBeacon", "PlaceContainer", "PlaceCynoBeacon", "PlaceDisruptor", "PlaceInhibitor", "PlaceProbe", "PlaceStructure", "PlaceWormhole", "PlaceWreck", "RebindAbyssalSession", "RebindAbyssalSessionReply", "RefreshAbyssalNpc", "RefreshAbyssalNpcReply", "Refused", "RemoveAbyssalParticipant", "RemoveAbyssalParticipantReply", "RemoveAbyssalScene", "RemoveAbyssalSceneReply", "RemoveAbyssalTrace", "RemoveAbyssalTraceReply", "RemoveCynoBeacon", "RemoveDeployed", "RemoveProbe", "RemoveStructure", "RemoveWormhole", "RemoveWreck", "Respawn", "ScanTargets", "SetAnalysisBeaconState", "SetDisruptorActive", "SetStructureState", "ShipSpec", "Spawn", "SpawnReply", "StructureDamageCandidatesRequest", "StructureDamageCandidatesResult", "StructureDamaged", "TargetRefused", "Targets", "TetherChanged", "TetherPolicy", "UpdateEffect", "UpdateState"], kinds);
+        Assert.Equal(["AbyssalFieldMembership", "Accepted", "Activate", "AdjustCharge", "Approaching", "Arrived", "Bind", "BuffState", "ChangeWreck", "ChargeAdjusted", "ChargeSpent", "Command", "Condition", "ContainerPlaced", "ControlStructure", "DamageableEntityRemoved", "DamageableEntityUpserted", "Deployed", "Destroy", "Destroyed", "DirectionalTargets", "Docked", "DroneCommand", "DroneReleased", "DroneResults", "DroneScooped", "EcmBurst", "EnsureAbyssalEnvironmentObject", "EnsureAbyssalEnvironmentObjectReply", "EnsureAbyssalLootContainer", "EnsureAbyssalLootContainerReply", "EnsureAbyssalRewardCache", "EnsureAbyssalRewardCacheReply", "EnsureAbyssalScene", "EnsureAbyssalSceneObject", "EnsureAbyssalSceneObjectReply", "EnsureAbyssalSceneReply", "EnsureAbyssalTracePublished", "EnsureAbyssalTracePublishedReply", "Enter", "EnterReply", "FighterGotoPoint", "FighterLanded", "FighterOrder", "FighterReleased", "FighterResults", "FighterSize", "GetAbyssalParticipantPose", "GetAbyssalParticipantPoseReply", "Hello", "HelloAck", "Jumped", "Jumping", "LaunchDrone", "LaunchFighter", "Leave", "Measured", "ModuleEnded", "ModuleWorkCycle", "ModuleWorkResult", "MoveAbyssalParticipant", "MoveAbyssalParticipantReply", "Notify", "PlaceAnalysisBeacon", "PlaceContainer", "PlaceControlTower", "PlaceCynoBeacon", "PlaceDisruptor", "PlaceInhibitor", "PlaceObservatory", "PlaceProbe", "PlaceStructure", "PlaceWormhole", "PlaceWreck", "RebindAbyssalSession", "RebindAbyssalSessionReply", "RefreshAbyssalNpc", "RefreshAbyssalNpcReply", "Refused", "RemoteDecloakPing", "RemoveAbyssalParticipant", "RemoveAbyssalParticipantReply", "RemoveAbyssalScene", "RemoveAbyssalSceneReply", "RemoveAbyssalTrace", "RemoveAbyssalTraceReply", "RemoveCynoBeacon", "RemoveDeployed", "RemoveProbe", "RemoveStructure", "RemoveWormhole", "RemoveWreck", "Respawn", "ScanTargets", "SetAnalysisBeaconState", "SetDisruptorActive", "SetStructureState", "ShipSpec", "Spawn", "SpawnReply", "StructureDamageCandidatesRequest", "StructureDamageCandidatesResult", "StructureDamaged", "TargetRefused", "Targets", "TetherChanged", "TetherPolicy", "UpdateEffect", "UpdateState"], kinds);
         Assert.True(((JsonArray)Fixtures["invalid"]!).Count >= 10);    }
 
     [Theory]

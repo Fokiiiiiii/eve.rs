@@ -8,6 +8,7 @@
 mod activation;
 mod cycle;
 pub use cycle::ModuleWorkAnswer;
+mod burst;
 mod effects;
 
 use eve_marshal::Value;
@@ -279,6 +280,7 @@ impl Action {
             Self::Remote { what, .. } => what.hostile(),
             Self::Smartbomb { .. }
             | Self::PointDefense { .. }
+            | Self::StructureBurst { .. }
             | Self::EcmBurst { .. }
             | Self::Strike { .. }
             | Self::Field { .. }
@@ -336,7 +338,7 @@ impl Action {
     /// Whether the action names no target (a command burst reaches the ships in its range, not one): the charged wrapper is looked through.
     fn targets_nothing(&self) -> bool {
         match self {
-            Self::CommandBurst { .. } | Self::Panic { .. } => true,
+            Self::CommandBurst { .. } | Self::Panic { .. } | Self::StructureBurst { .. } => true,
             Self::Charged { action, .. } => action.targets_nothing(),
             _ => false,
         }
@@ -346,7 +348,11 @@ impl Action {
     fn is_work(&self) -> bool {
         matches!(
             self,
-            Self::Mining { .. } | Self::Salvage { .. } | Self::Scan { .. } | Self::CommandBurst { .. } | Self::Entosis { .. }
+            Self::Mining { .. }
+                | Self::Salvage { .. }
+                | Self::Scan { .. }
+                | Self::CommandBurst { .. }
+                | Self::Entosis { .. }
         )
     }
 }
@@ -410,7 +416,7 @@ pub enum Action {
         damage: crate::health::Damage,
         hurts_pilots: bool,
     },
-/// A Standup Point Defense cycle waits for Host's correlated per-target Crimewatch decision before applying this typed damage.
+    /// A Standup Point Defense cycle waits for Host's correlated per-target Crimewatch decision before applying this typed damage.
     PointDefense {
         range_meters: f64,
         damage: crate::health::Damage,
@@ -418,6 +424,13 @@ pub enum Action {
     EcmBurst {
         range: f64,
         strength: [f64; 4],
+    },
+    /// A controlled structure's burst projector (ST-8b): each pulse applies `what` to the ships in `range` that the Host authorizes for that pulse. The
+    /// effect is the projected effect of its family, with the same numbers as the ship effect (`Remote`).
+    StructureBurst {
+        range: f64,
+        duration_ms: f64,
+        what: Remote,
     },
     /// Engages the ship's cloaking device (tag 5). A cloak that is not warp-safe (a standard cloaking device) holds the ship out of warp (`warp_safe` false).
     /// `targeting_delay_ms` is the cloak's cloakingTargetingDelay (attribute 560, milliseconds): the ship acquires no lock for that long after it decloaks.
@@ -856,8 +869,15 @@ struct PendingRemoteRepairCycle {
 /// What a correlated Host authorization reply will settle for this damage step.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum PendingStructureDamageOperation {
-    PointDefense { range_meters: f64, damage: crate::health::Damage },
-    StrikePulse { origin: [f64; 3], strike: Option<crate::strike::Strike>, module_type: i32 },
+    PointDefense {
+        range_meters: f64,
+        damage: crate::health::Damage,
+    },
+    StrikePulse {
+        origin: [f64; 3],
+        strike: Option<crate::strike::Strike>,
+        module_type: i32,
+    },
     TransportFieldPulse {
         centre: eve_destiny::Vec3,
         strike: crate::strike::Strike,
@@ -872,6 +892,12 @@ pub(crate) enum PendingStructureDamageOperation {
         shooter: crate::weapons::Shooter,
         links_remaining: u32,
         struck_ids: Vec<i64>,
+    },
+    /// A structure burst pulse: the ships the Host authorizes in `range_meters` at this pulse are reached by `what` for `duration_ms`.
+    StructureBurst {
+        range_meters: f64,
+        duration_ms: f64,
+        what: Remote,
     },
 }
 
@@ -893,10 +919,10 @@ pub(crate) struct PendingStructureDamageRequest {
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct Running {
     pub(crate) effect: Effect,
-/// A unique nonce for this activation, stable across its module cycles.
-    activation_nonce: u64,
+    /// A unique nonce for this activation, stable across its module cycles.
+    pub(crate) activation_nonce: u64,
     /// The unique id of the module cycle currently in progress.
-    cycle_id: u64,
+    pub(crate) cycle_id: u64,
     /// When the cycle that is on began.
     cycle_start: i64,
     cycles: i32,
@@ -1094,7 +1120,7 @@ enum Moment {
     Shield,
     /// A parked work cycle is sent again (same id, same rolls).
     WorkResend(usize),
-/// A structure damage step is resent with the same full correlation tuple until Host answers.
+    /// A structure damage step is resent with the same full correlation tuple until Host answers.
     StructureDamageResend(usize),
     /// The target of a parked work cycle is gone: the effect stops.
     WorkStop(usize),

@@ -48,7 +48,7 @@ fn burst_reaches(
 }
 
 /// A draw in `[0, 1)` is a jam when it falls under the chance.
-fn rolls_under(roll: f64, chance: f64) -> bool {
+pub(crate) fn rolls_under(roll: f64, chance: f64) -> bool {
     chance > 0.0 && roll < chance
 }
 

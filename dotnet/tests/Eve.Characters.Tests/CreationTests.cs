@@ -46,6 +46,62 @@ public class CreationTests
     }
 
     [PgFact]
+    public async Task The_new_character_gets_its_corporation_membership_written_in_the_creation_transaction()
+    {
+        // the relation store answers a character's corporation from this membership: a character made while the server runs must have it
+        await using var s = await PgSchemas.CreateAsync();
+        var membership = new List<(long Character, long Corporation)>();
+        var creation = new CharacterCreation(
+            s.Source, s.Characters, s.Items, s.Skills, Skills, s.Wallets, new StartingWallet(), Catalog, s.Modules,
+            writeCorporationMembership: (_, _, characterId, corporationId, _) =>
+            {
+                membership.Add((characterId, corporationId));
+                return Task.CompletedTask;
+            });
+
+        var created = Assert.IsType<Created>(await creation.CreateAsync(Request("Member Pilot")));
+
+        Assert.Equal([(created.CharacterId, 1000006L)], membership);
+    }
+
+    [PgFact]
+    public async Task A_character_made_while_the_server_runs_is_affiliated_with_its_school_corporation_through_the_relation_store()
+    {
+        // the Host's writer (CharacterComposition) and the read the sessions use, with no restart between the creation and the answer
+        await using var s = await PgSchemas.CreateAsync();
+        var suffix = Guid.NewGuid().ToString("N")[..12];
+        var schedulerSchema = "creation_sched_" + suffix;
+        var eventsSchema = "creation_events_" + suffix;
+        var relationsSchema = "creation_relations_" + suffix;
+        try
+        {
+            await Eve.Scheduler.DurableScheduler.MigrateAsync(s.Source, schedulerSchema);
+            await Eve.Events.EventBus.MigrateAsync(s.Source, eventsSchema);
+            await Eve.Relations.RelationStore.MigrateAsync(s.Source, relationsSchema);
+            var scheduler = new Eve.Scheduler.DurableScheduler(s.Source, () => 0L, schema: schedulerSchema);
+            var events = new Eve.Events.EventBus(s.Source, scheduler, schema: eventsSchema);
+            var relations = new Eve.Relations.RelationStore(s.Source, scheduler, events, relationsSchema);
+            var creation = new CharacterCreation(
+                s.Source, s.Characters, s.Items, s.Skills, Skills, s.Wallets, new StartingWallet(), Catalog, s.Modules,
+                writeCorporationMembership: (connection, transaction, characterId, corporationId, token) =>
+                    relations.SetAsync(connection, transaction, Eve.Relations.RelationKinds.CorporationMember.Name, characterId, corporationId, 1,
+                        "corporation membership", cancellationToken: token));
+
+            var created = Assert.IsType<Created>(await creation.CreateAsync(Request("Affiliated Pilot")));
+
+            Assert.Equal(1000006L, (await relations.AffiliationOfAsync(created.CharacterId)).Corporation);
+        }
+        finally
+        {
+            foreach (var schema in new[] { schedulerSchema, eventsSchema, relationsSchema })
+            {
+                await using var command = s.Source.CreateCommand($"DROP SCHEMA IF EXISTS {schema} CASCADE");
+                await command.ExecuteNonQueryAsync();
+            }
+        }
+    }
+
+    [PgFact]
     public async Task Character_creation_persists_the_configured_tutorial_entry_mode()
     {
         await using var s = await PgSchemas.CreateAsync();

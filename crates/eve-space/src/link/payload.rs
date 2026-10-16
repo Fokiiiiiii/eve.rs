@@ -13,7 +13,7 @@ fn put_wreck_placement(out: &mut Vec<u8>, placement: &WreckPlacement) {
     out.push(u8::from(placement.is_empty));
 }
 
-
+#[allow(clippy::too_many_arguments)]
 fn write_structure_damage_correlation(
     out: &mut Vec<u8>,
     session_id: u64,
@@ -38,7 +38,10 @@ fn write_structure_damage_correlation(
 fn write_structure_damage_ids(out: &mut Vec<u8>, ids: &[i64]) {
     assert!(ids.len() <= MAX_STRUCTURE_DAMAGE_CANDIDATES, "structure-damage ID list exceeds wire limit");
     let mut seen = std::collections::HashSet::with_capacity(ids.len());
-    assert!(ids.iter().all(|id| *id > 0 && seen.insert(*id)), "structure-damage IDs must be positive and unique");
+    assert!(
+        ids.iter().all(|id| *id > 0 && seen.insert(*id)),
+        "structure-damage IDs must be positive and unique"
+    );
     out.extend_from_slice(&(ids.len() as u32).to_le_bytes());
     for id in ids {
         out.extend_from_slice(&id.to_le_bytes());
@@ -494,7 +497,14 @@ impl Message {
             Self::Bind { session_id } | Self::UpdateState { session_id } => {
                 out.extend_from_slice(&session_id.to_le_bytes())
             }
-            Self::ControlStructure { session_id, solar_system_id, structure_id, character_id, active, control_lease_generation } => {
+            Self::ControlStructure {
+                session_id,
+                solar_system_id,
+                structure_id,
+                character_id,
+                active,
+                control_lease_generation,
+            } => {
                 out.extend_from_slice(&session_id.to_le_bytes());
                 out.extend_from_slice(&solar_system_id.to_le_bytes());
                 out.extend_from_slice(&structure_id.to_le_bytes());
@@ -719,37 +729,115 @@ impl Message {
                 out.extend_from_slice(&amount.to_le_bytes());
             }
             Self::StructureDamageCandidatesRequest {
-                session_id, structure_id, module_id, effect_id, activation_nonce, control_lease_generation, cycle_id,
-                pulse_hop_ordinal, candidate_ids,
+                session_id,
+                structure_id,
+                module_id,
+                effect_id,
+                activation_nonce,
+                control_lease_generation,
+                cycle_id,
+                pulse_hop_ordinal,
+                candidate_ids,
             } => {
-                assert!(*session_id > 0 && *structure_id > 0 && *module_id > 0 && *effect_id > 0 && *activation_nonce > 0
-                    && *control_lease_generation > 0 && *cycle_id > 0, "invalid structure-damage correlation");
-                write_structure_damage_correlation(&mut out, *session_id, *structure_id, *module_id, *effect_id, *activation_nonce,
-                    *control_lease_generation, *cycle_id, *pulse_hop_ordinal);
+                assert!(
+                    *session_id > 0
+                        && *structure_id > 0
+                        && *module_id > 0
+                        && *effect_id > 0
+                        && *activation_nonce > 0
+                        && *control_lease_generation > 0
+                        && *cycle_id > 0,
+                    "invalid structure-damage correlation"
+                );
+                write_structure_damage_correlation(
+                    &mut out,
+                    *session_id,
+                    *structure_id,
+                    *module_id,
+                    *effect_id,
+                    *activation_nonce,
+                    *control_lease_generation,
+                    *cycle_id,
+                    *pulse_hop_ordinal,
+                );
                 write_structure_damage_ids(&mut out, candidate_ids);
             }
             Self::StructureDamageCandidatesResult {
-                session_id, structure_id, module_id, effect_id, activation_nonce, control_lease_generation, cycle_id,
-                pulse_hop_ordinal, allowed_target_ids,
+                session_id,
+                structure_id,
+                module_id,
+                effect_id,
+                activation_nonce,
+                control_lease_generation,
+                cycle_id,
+                pulse_hop_ordinal,
+                allowed_target_ids,
             } => {
-                assert!(*session_id > 0 && *structure_id > 0 && *module_id > 0 && *effect_id > 0 && *activation_nonce > 0
-                    && *control_lease_generation > 0 && *cycle_id > 0, "invalid structure-damage correlation");
-                write_structure_damage_correlation(&mut out, *session_id, *structure_id, *module_id, *effect_id, *activation_nonce,
-                    *control_lease_generation, *cycle_id, *pulse_hop_ordinal);
+                assert!(
+                    *session_id > 0
+                        && *structure_id > 0
+                        && *module_id > 0
+                        && *effect_id > 0
+                        && *activation_nonce > 0
+                        && *control_lease_generation > 0
+                        && *cycle_id > 0,
+                    "invalid structure-damage correlation"
+                );
+                write_structure_damage_correlation(
+                    &mut out,
+                    *session_id,
+                    *structure_id,
+                    *module_id,
+                    *effect_id,
+                    *activation_nonce,
+                    *control_lease_generation,
+                    *cycle_id,
+                    *pulse_hop_ordinal,
+                );
                 write_structure_damage_ids(&mut out, allowed_target_ids);
             }
             Self::StructureDamageCandidatesFieldResult {
-                session_id, structure_id, module_id, effect_id, activation_nonce, control_lease_generation, cycle_id,
-                pulse_hop_ordinal, allowed_target_ids, field_moved_target_ids, field_held_target_ids,
+                session_id,
+                structure_id,
+                module_id,
+                effect_id,
+                activation_nonce,
+                control_lease_generation,
+                cycle_id,
+                pulse_hop_ordinal,
+                allowed_target_ids,
+                field_moved_target_ids,
+                field_held_target_ids,
             } => {
-                assert!(*session_id > 0 && *structure_id > 0 && *module_id > 0 && *effect_id > 0 && *activation_nonce > 0
-                    && *control_lease_generation > 0 && *cycle_id > 0, "invalid structure-damage correlation");
                 assert!(
-                    structure_field_partition_is_valid(allowed_target_ids, field_moved_target_ids, field_held_target_ids),
+                    *session_id > 0
+                        && *structure_id > 0
+                        && *module_id > 0
+                        && *effect_id > 0
+                        && *activation_nonce > 0
+                        && *control_lease_generation > 0
+                        && *cycle_id > 0,
+                    "invalid structure-damage correlation"
+                );
+                assert!(
+                    structure_field_partition_is_valid(
+                        allowed_target_ids,
+                        field_moved_target_ids,
+                        field_held_target_ids
+                    ),
                     "invalid structure-field target partition"
                 );
-                write_structure_damage_correlation(&mut out, *session_id, *structure_id, *module_id, *effect_id, *activation_nonce,
-                    *control_lease_generation, *cycle_id, *pulse_hop_ordinal);
+                write_structure_damage_correlation(
+                    &mut out,
+                    *session_id,
+                    *structure_id,
+                    *module_id,
+                    *effect_id,
+                    *activation_nonce,
+                    *control_lease_generation,
+                    *cycle_id,
+                    *pulse_hop_ordinal,
+                );
                 write_structure_damage_ids(&mut out, allowed_target_ids);
                 if !field_moved_target_ids.is_empty() || !field_held_target_ids.is_empty() {
                     out.push(STRUCTURE_FIELD_PARTITION_EXTENSION_VERSION);
@@ -902,11 +990,15 @@ impl Message {
                 out.push(u8::from(object.point_defense.is_some()));
                 if let Some(pulse) = &object.point_defense {
                     out.extend_from_slice(&pulse.tick_interval_ms.to_le_bytes());
-                    for channel in pulse.damage { out.extend_from_slice(&channel.to_le_bytes()); }
+                    for channel in pulse.damage {
+                        out.extend_from_slice(&channel.to_le_bytes());
+                    }
                     out.extend_from_slice(&pulse.type_list_id.to_le_bytes());
                     for ids in &pulse.targets {
                         out.extend_from_slice(&(ids.len() as u32).to_le_bytes());
-                        for id in ids { out.extend_from_slice(&id.to_le_bytes()); }
+                        for id in ids {
+                            out.extend_from_slice(&id.to_le_bytes());
+                        }
                     }
                     put_text(&mut out, &pulse.effect_name);
                 }
@@ -963,13 +1055,33 @@ impl Message {
                 out.extend_from_slice(&placement.lifetime_ms.to_le_bytes());
             }
             Self::RemoveDeployed { deployable_id } => out.extend_from_slice(&deployable_id.to_le_bytes()),
-                    Self::RemoveCynoBeacon { solar_system_id, structure_beacon_id } => {
-                        out.extend_from_slice(&solar_system_id.to_le_bytes());
-                        out.extend_from_slice(&structure_beacon_id.to_le_bytes());
-                    }
-            Self::DamageableEntityUpserted { solar_system_id, entity_id, type_id, owner_id, corporation_id, alliance_id, war_faction_id } => {
-                assert!(*solar_system_id > 0 && *entity_id > 0 && *type_id > 0 && *owner_id >= 0
-                    && *corporation_id >= 0 && *alliance_id >= 0 && *war_faction_id >= 0, "invalid damageable entity identity");
+            Self::RemoveCynoBeacon { solar_system_id, structure_beacon_id } => {
+                out.extend_from_slice(&solar_system_id.to_le_bytes());
+                out.extend_from_slice(&structure_beacon_id.to_le_bytes());
+            }
+            Self::RemoteDecloakPing { solar_system_id, observatory_id } => {
+                out.extend_from_slice(&solar_system_id.to_le_bytes());
+                out.extend_from_slice(&observatory_id.to_le_bytes());
+            }
+            Self::DamageableEntityUpserted {
+                solar_system_id,
+                entity_id,
+                type_id,
+                owner_id,
+                corporation_id,
+                alliance_id,
+                war_faction_id,
+            } => {
+                assert!(
+                    *solar_system_id > 0
+                        && *entity_id > 0
+                        && *type_id > 0
+                        && *owner_id >= 0
+                        && *corporation_id >= 0
+                        && *alliance_id >= 0
+                        && *war_faction_id >= 0,
+                    "invalid damageable entity identity"
+                );
                 out.extend_from_slice(&solar_system_id.to_le_bytes());
                 out.extend_from_slice(&entity_id.to_le_bytes());
                 out.extend_from_slice(&type_id.to_le_bytes());
@@ -1051,7 +1163,9 @@ impl Message {
             Self::RemoveProbe { probe_id } => out.extend_from_slice(&probe_id.to_le_bytes()),
             Self::PlaceDisruptor(disruptor)
             | Self::PlaceInhibitor(disruptor)
-            | Self::PlaceCynoBeacon(disruptor) => {
+            | Self::PlaceCynoBeacon(disruptor)
+            | Self::PlaceObservatory(disruptor)
+            | Self::PlaceControlTower(disruptor) => {
                 out.extend_from_slice(&disruptor.deployable_id.to_le_bytes());
                 out.extend_from_slice(&disruptor.solar_system_id.to_le_bytes());
                 put_text(&mut out, &disruptor.name);

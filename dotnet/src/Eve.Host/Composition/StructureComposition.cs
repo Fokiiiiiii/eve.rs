@@ -225,8 +225,9 @@ internal sealed partial class CharacterServicesComposition
         SetupStructureModules();
         var rules = await StructureRulesSource.LoadAsync(sde);
         var unanchorDrop = CreateStructureUnanchorDropAuthority();
+        var destructionLoot = CreateStructureDestructionLootAuthority();
         structureTimers = new Eve.Structures.StructureTimers(structureStore, foundations.Scheduler, foundations.Events, rules,
-            completeUnanchor: unanchorDrop.CompleteAsync);
+            completeUnanchor: unanchorDrop.CompleteAsync, completeDestruction: destructionLoot.CompleteAsync);
         structureTimers.Register();
         // ST-1 d: a system's structures are in the simulation once a pilot comes into it; the simulation's hits and the records' state changes meet here
         if (sim is not null && spaceSessions is not null)
@@ -238,25 +239,65 @@ internal sealed partial class CharacterServicesComposition
             // ST-9 a: a system's Sovereignty Hub is in the simulation once a pilot comes into the system, from the sovereignty records (inert until an entosis link targets it)
             // ST-9 b: the entosis link's only target is the system's sovereignty hub, from the same records
             spaceSessions.IsSovereigntyHubAsync = async (systemId, targetId, token) =>
-                Eve.Services.Space.SpaceSovHubs.HubOf(await sovereigntyReadModel.ReadSnapshotAsync(token), systemId) is { } hub && hub.HubId == targetId;
-            _ = new Eve.Services.Space.SpaceSovHubs(sim, spaceSessions, dogma,
+                Eve.Services.Space.SpaceSovHubs.HubOf(await sovereigntyReadModel.ReadSnapshotAsync(token), systemId) is { } hub && hub.HubId == targetId
+                // ST-17 a: a live command node of an active stage in the system is the other target
+                || (entosisCaptureService is not null && await entosisCaptureService.IsCommandNodeAsync(targetId, systemId, token));
+            // ST-9 c: the captures are durable (the EntosisCaptureService's tables, one transaction per event) and their completion is a scheduler job
+            if (spaceContainers is not null)
+            {
+                await Eve.Services.Space.Entosis.EntosisCaptureService.MigrateAsync(source);
+                var entosisCaptures = new Eve.Services.Space.Entosis.EntosisCaptureService(
+                    source, foundations.Scheduler, () => foundations.Scheduler.Now, EntosisHubReadingAsync, EntosisHandoverAsync,
+                    log: message => Console.Error.WriteLine($"eve-host: entosis: {message}"), events: foundations.Events,
+                    constellationSystems: EntosisConstellationSystemsAsync, constellationOf: EntosisConstellationOfAsync,
+                    destroyHub: EntosisHubDestroyedAsync);
+                entosisCaptures.Register();
+                spaceContainers.EntosisCaptures = entosisCaptures;
+                entosisCaptureService = entosisCaptures;
+            }
+            spaceSovHubs = new Eve.Services.Space.SpaceSovHubs(sim, spaceSessions, dogma,
                 async (systemId, token) => Eve.Services.Space.SpaceSovHubs.HubOf(await sovereigntyReadModel.ReadSnapshotAsync(token), systemId),
                 message => Console.Error.WriteLine($"eve-host: space sovereignty hubs: {message}"));
+            // ST-17 a: the command nodes are in space from the stage's events, and in a system from the pilots' entry (SpaceSovHubs.RestoreAsync)
+            spaceSovHubs.LiveCommandNodesOf = async (systemId, token) =>
+                entosisCaptureService is null ? [] : (await entosisCaptureService.LiveNodesAsync(systemId, token)).Select(node => node.NodeId).ToList();
+            foundations.Events.Subscribe("eve.host.space.command-nodes",
+                [
+                    Eve.Services.Space.Entosis.EntosisCaptureService.NodeSpawnedTopic,
+                    Eve.Services.Space.Entosis.EntosisCaptureService.NodeCapturedTopic,
+                    Eve.Services.Space.Entosis.EntosisCaptureService.StageEndedTopic,
+                    Eve.Services.Space.Entosis.EntosisCaptureService.HubDestroyedTopic,
+                ],
+                async (context, cancellation) =>
+                {
+                    if (context.Event.Topic == Eve.Services.Space.Entosis.EntosisCaptureService.NodeSpawnedTopic)
+                    {
+                        var spawned = context.Event.Payload<Eve.Services.Space.Entosis.CommandNodeSpawned>()!;
+                        await spaceSovHubs.PlaceCommandNodeAsync(spawned.NodeId, spawned.SolarSystemId, cancellation);
+                    }
+                    else if (context.Event.Topic == Eve.Services.Space.Entosis.EntosisCaptureService.NodeCapturedTopic)
+                    {
+                        spaceSovHubs.RemoveCommandNode(context.Event.Payload<Eve.Services.Space.Entosis.CommandNodeCaptured>()!.NodeId);
+                    }
+                    else if (context.Event.Topic == Eve.Services.Space.Entosis.EntosisCaptureService.HubDestroyedTopic)
+                    {
+                        spaceSovHubs.RemoveHub(context.Event.Payload<Eve.Services.Space.Entosis.HubDestroyed>()!.HubId);
+                    }
+                    else
+                    {
+                        foreach (var nodeId in context.Event.Payload<Eve.Services.Space.Entosis.CommandStageEnded>()!.RemovedNodeIds)
+                        {
+                            spaceSovHubs.RemoveCommandNode(nodeId);
+                        }
+                    }
+                });
         }
         // ST-7: the service fuel is paid from the fuel bay (inventory) at each full hour; the rules are the SDE's service modules
         structureFuel = new Eve.Structures.StructureFuel(structureStore, foundations.Scheduler, structureTimers, ServiceFuelRulesSource.Load(dogma), new InventoryStructureFuelBay(items, dogma, foundations.Events));
         structureFuel.Register();
         SetupStructureCynoBeaconRuntime();
         // E-15: a change of the system's jammer is announced to the pilots in that system (EveJS sovNotifications broadcastCynoJammerChanged)
-        foundations.Events.Subscribe("structure.cyno_jammer_notice", [Eve.Structures.StructureTimers.ServiceChangedTopic], async (context, cancellation) =>
-        {
-            var change = context.Event.Payload<Eve.Structures.StructureServiceChanged>()!;
-            if (change.ServiceId != Eve.Structures.StructureServiceIds.CynoJammer)
-                return;
-            var state = await JammerStateAsync(context.Connection, context.Transaction, change.SolarSystemId, cancellation);
-            foreach (var session in characterSessions.InSpace(change.SolarSystemId))
-                session.SendNotification("OnCynoJammerChanged", "solarsystemid2", new PyLong(change.SolarSystemId), state is { } value ? new PyLong(value) : PyNone.Instance);
-        });
+        new Eve.Host.Persistence.Structures.StructureCynoJammerNotifications(JammerStateAsync, characterSessions).Subscribe(foundations.Events);
         await using (var connection = await source.OpenConnectionAsync())
         await using (var transaction = await connection.BeginTransactionAsync())
         {
@@ -292,7 +333,12 @@ internal sealed partial class CharacterServicesComposition
             ReadGameStoreTableAsync, mailCache, characterSessions, SetStructureProfileAsync);
         Eve.Host.StructureNotifications.Subscribe(foundations.Events, structureStore, characterSessions,
             structureProfilesRpcBackend.GetMyHangarViewStateAsync);
-        structureCompression = new StructureCompressionAuthority(source, structureStore, items, dogma, sde, skills);
+        // the corporation office source reads its rental and the corporation hangar access when a pilot compresses (the office store is set later in the start-up)
+        structureCompression = new StructureCompressionAuthority(source, structureStore, items, dogma, sde, skills,
+            Eve.Host.HostInventoryServiceFactory.HangarAccessOf(corporations),
+            async (connection, transaction, corporationId, stationId, token) =>
+                await corporationOfficeStore.GetAsync(connection, transaction, corporationId, stationId, false, token) is not null,
+            characterSessions);
         // ST-2 a: the rename and the reinforcement times of a structure (the owner's Station Manager, Director or CEO)
         structureDeployment = new StructureDeploymentAuthority(source, structureStore, structureTimers, foundations.Scheduler, foundations.Events);
         // ST-2 b: Anchor, the item consumed and the structure created in one transaction; the simulation shows it once a pilot is in the system
@@ -305,7 +351,7 @@ internal sealed partial class CharacterServicesComposition
                 structureTimers.AnchorAsync(connection, transaction, structure with { AnchoringMs = anchoringMs }, ct));
         // ST-6a: the moon drill starts a chunk (StartNewExtraction); the fracture and the cancel follow in (d)
         var moonRules = await MoonRulesSource.LoadAsync(sde);
-        var moonRigRules = new MoonRigReadModel(items, dogma, moonRules);
+        var moonRigRules = new MoonRigReadModel(items, dogma, moonRules, structureStore);
         moonExtractions = new Eve.Structures.MoonExtractions(structureStore, moonExtractionStore, foundations.Scheduler, foundations.Events, moonRules,
             moonRigRules.ReadAsync);
         moonExtractions.Register();

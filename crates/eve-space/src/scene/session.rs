@@ -25,8 +25,21 @@ impl Scene {
         self.controlled_structures.get(&session).map(|observer| observer.structure_id)
     }
 
-
     /// The Host's current structure-pilot record version for this controller lease.
+    /// The source of a structure burst (ST-17 d): the structure the pilot controls, or else the pilot's own ship (a ship-fitted burst projector).
+    pub(crate) fn burst_source_id(&self, session: SessionId) -> Option<i64> {
+        self.controlled_structure_id(session)
+            .or_else(|| self.pilots.get(&session).map(|pilot| pilot.ship.spec.ship_id))
+    }
+
+    /// The control lease of a burst source: a structure's lease, or 0 for a ship (it has no lease; the Host authorizes its pulses by the pilot).
+    pub(crate) fn burst_source_lease(&self, session: SessionId, source_id: i64) -> Option<i64> {
+        match self.controlled_structure_id(session) {
+            Some(structure_id) => self.control_lease_generation(session, structure_id),
+            None => self.pilots.get(&session).filter(|pilot| pilot.ship.spec.ship_id == source_id).map(|_| 0),
+        }
+    }
+
     pub(crate) fn control_lease_generation(&self, session: SessionId, structure_id: i64) -> Option<i64> {
         (self.controlled_structure_id(session) == Some(structure_id))
             .then(|| self.control_lease_generations.get(&structure_id).copied())
@@ -51,7 +64,9 @@ impl Scene {
             else {
                 continue;
             };
-            let Some(health) = self.structure_health.get(&structure_id).map(|health| health.health_snapshot()) else {
+            let Some(health) =
+                self.structure_health.get(&structure_id).map(|health| health.health_snapshot())
+            else {
                 continue;
             };
             let Some(observer) = self.controlled_structures.get(&session) else { continue };
@@ -100,6 +115,7 @@ impl Scene {
     }
 
     /// Attaches a view to an existing structure body, or restores it to the session's prior ship.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn control_structure(
         &mut self,
         session: SessionId,
@@ -584,10 +600,13 @@ impl Scene {
     /// The numbers of a ship in space changed (a skill finished, a module went on): the client is told the ones that differ.
     pub fn respec(&mut self, session: SessionId, spec: ShipSpec, now: i64) -> Vec<Out> {
         if !self.pilots.contains_key(&session) {
-            let Some(structure_id) = self.controlled_structure_id(session).filter(|id| *id == spec.ship_id) else {
+            let Some(structure_id) = self.controlled_structure_id(session).filter(|id| *id == spec.ship_id)
+            else {
                 return Vec::new();
             };
-            if self.structure_body(structure_id).is_none() || !self.structure_health.contains_key(&structure_id) {
+            if self.structure_body(structure_id).is_none()
+                || !self.structure_health.contains_key(&structure_id)
+            {
                 return Vec::new();
             }
             if let Some(state) = self.structure_modules.get_mut(&structure_id) {
@@ -669,8 +688,15 @@ impl Scene {
             told.extend(self.tell_all(session, vec![change]));
         }
         let mut out = self.with_backlog(told);
-        if let Some((previous_id, entity_id, type_id, owner_id, corporation_id, alliance_id, war_faction_id)) =
-            sim_profile_update
+        if let Some((
+            previous_id,
+            entity_id,
+            type_id,
+            owner_id,
+            corporation_id,
+            alliance_id,
+            war_faction_id,
+        )) = sim_profile_update
         {
             if previous_id != entity_id
                 && let Some(removed) = self.remove_sim_damageable_entity(previous_id)

@@ -975,7 +975,9 @@ impl Sim {
         let empty_systems: Vec<SceneKey> = self
             .scenes
             .iter()
-            .filter_map(|(scene_key, scene)| (scene_key.instance_id == 0 && scene.is_empty()).then_some(*scene_key))
+            .filter_map(|(scene_key, scene)| {
+                (scene_key.instance_id == 0 && scene.is_empty()).then_some(*scene_key)
+            })
             .collect();
         for scene_key in empty_systems {
             if let Some(mut scene) = self.scenes.remove(&scene_key) {

@@ -43,6 +43,72 @@ public sealed partial class SpaceContainers
     /// <summary>The group of the Mobile Cynosural Inhibitor (EVE.js <c>GROUP_CYNO_INHIBITOR</c>).</summary>
     private const int MobileCynoInhibitorGroup = 1249;
 
+    /// <summary>The group of the Mobile Observatory (SDE 4107; its type is 58904).</summary>
+    private const int MobileObservatoryGroup = 4107;
+
+    /// <summary>The group of the player control towers (SDE 365; the Amarr Control Tower is 12235).</summary>
+    private const int ControlTowerGroup = 365;
+
+    /// <summary>
+    /// The record kind of a player control tower launched from a ship (protocol 73, ST-19): anchored by its durable job when its anchoring time (the SDE's) is over,
+    /// in space until it is removed. It has no fuel or modules yet: the placing, anchoring and removal are all it does.
+    /// </summary>
+    internal const string ControlTowerKind = "control_tower";
+
+    /// <summary>A control tower's record never ends by time (its removal is the host's, see <see cref="RemoveControlTowerAsync"/>).</summary>
+    private const long NeverExpires = long.MaxValue;
+
+    /// <summary>The record kind of a Mobile Observatory (protocol 72): anchored by its durable job, pinging its system while it is anchored.</summary>
+    internal const string ObservatoryKind = "mobile_observatory";
+
+    /// <summary>The durable job that pings a Mobile Observatory's system (<see cref="PingObservatoryAsync"/>).</summary>
+    public const string ObservatoryPingJob = "space.deployed.observatory_ping";
+
+    /// <summary>The security at and above which an observatory cannot be deployed (EveJS <c>MOBILE_OBSERVATORY_SECURITY_CUTOFF</c>; the wiki: not in highsec).</summary>
+    private const double ObservatorySecurityCutoff = 0.45;
+
+    /// <summary>How close two observatories may be deployed, surface to surface (EveJS <c>MOBILE_OBSERVATORY_MIN_DISTANCE_FROM_OWN_GROUP_METERS</c>).</summary>
+    private const double ObservatorySpacingMeters = 10_000;
+
+    /// <summary>The distance an observatory keeps from a station, stargate or Upwell structure, surface to surface (EVE.js <c>MOBILE_OBSERVATORY_MIN_DISTANCE_FROM_STATION_STARGATE_UPWELL_METERS</c>).</summary>
+    private const double ObservatoryLandmarkSpacingMeters = 1_000_000;
+
+    /// <summary>The spacing from a player control tower: 100 km (the wiki, Mobile Observatory).</summary>
+    private const double ObservatoryControlTowerSpacingMeters = 100_000;
+
+    /// <summary>
+    /// The radius of a deadspace pocket around its site's anchor: EveJS deadspaceWarpPolicy.js DEADSPACE_SITE_RADIUS_METERS (1e9 m). The wiki (Deadspace) gives no
+    /// pocket size and the SDE none, so the EveJS parity constant is used (DEVIATIONS, ST-16).
+    /// </summary>
+    private const double DeadspaceSiteRadiusMeters = 1_000_000_000;
+
+    /// <summary>The solar system ids of the Abyssal host locations (EVE.js <c>ABYSSAL_LOCATION_ID_MIN</c> to <c>ABYSSAL_LOCATION_ID_MAX</c>): an observatory is refused there.</summary>
+    private const int AbyssalLocationMin = 32_000_001, AbyssalLocationMax = 32_000_200;
+
+    /// <summary>
+    /// The fixed bodies of a system (positions in metres) that a Mobile Observatory keeps away from: its stations, stargates and Upwell structures (EVE.js
+    /// <c>collectPlacementBlockers</c>, kind stationStargateUpwell). Null: the check is not made.
+    /// </summary>
+    public Func<int, CancellationToken, Task<IReadOnlyList<double[]>>>? ReadObservatoryLandmarks { get; set; }
+
+    /// <summary>The positions (metres) of the player control towers of a system; an observatory keeps 100 km from each.</summary>
+    public Func<int, CancellationToken, Task<IReadOnlyList<double[]>>>? ReadControlTowers { get; set; }
+
+    /// <summary>The anchors (metres) of the deadspace pockets of a system: the cosmic sites' positions. An observatory cannot be anchored inside one.</summary>
+    public Func<int, CancellationToken, Task<IReadOnlyList<double[]>>>? ReadDeadspaceAnchors { get; set; }
+
+    /// <summary>The anchoring time of an observatory: ten minutes (the wiki; EveJS <c>MOBILE_OBSERVATORY_ACTIVATION_DELAY_MS</c>; the SDE gives none for the type).</summary>
+    private static readonly TimeSpan ObservatoryAnchoringTime = TimeSpan.FromMinutes(10);
+
+    /// <summary>The time between an anchored observatory's pings: ten minutes (the wiki, "Mobile Observatory"; EveJS <c>MOBILE_OBSERVATORY_PING_INTERVAL_MS</c>).</summary>
+    private static readonly TimeSpan ObservatoryPingInterval = TimeSpan.FromMinutes(10);
+
+    /// <summary>How long an observatory lives: 100 minutes 30 seconds (EveJS <c>MOBILE_OBSERVATORY_LIFETIME_MS</c>; the wiki gives "up to 2 hours", see DEVIATIONS).</summary>
+    private static readonly TimeSpan ObservatoryLifetime = TimeSpan.FromSeconds((60 + 40) * 60 + 30);
+
+    /// <summary>The payload of the ping job: the observatory whose system it pings.</summary>
+    public sealed record ObservatoryPingDue(long DeployableId);
+
     private const int WarpScrambleRangeAttribute = 103;
     private const int AnchoringDelayAttribute = 556;
     private const int DisallowInEmpireSpaceAttribute = 1074;
@@ -96,7 +162,7 @@ public sealed partial class SpaceContainers
             return null;
         }
         await _statics.EnsureTypesAsync([item.TypeId], cancellationToken);
-        if (_statics.Type(item.TypeId) is not { } type || type.GroupId is not (MobileWarpDisruptorGroup or MobileCynoInhibitorGroup or MobileCynoBeaconGroup or AnalysisBeaconRules.Group))
+        if (_statics.Type(item.TypeId) is not { } type || type.GroupId is not (MobileWarpDisruptorGroup or MobileCynoInhibitorGroup or MobileCynoBeaconGroup or MobileObservatoryGroup or ControlTowerGroup or AnalysisBeaconRules.Group))
         {
             return null;
         }
@@ -106,6 +172,10 @@ public sealed partial class SpaceContainers
                 throw Refuse("Mobile Analysis Beacons cannot be deployed in Abyssal space.");
             if (type.GroupId == MobileCynoBeaconGroup)
                 throw Refuse("Mobile Cynosural Beacons cannot be deployed in Abyssal space.");
+            if (type.GroupId == MobileObservatoryGroup)
+                throw Refuse("Mobile Observatories cannot be deployed in Abyssal space.");
+            if (type.GroupId == ControlTowerGroup)
+                throw Refuse("Control Towers cannot be deployed in Abyssal space.");
         }
         if (type.GroupId == AnalysisBeaconRules.Group)
         {
@@ -114,6 +184,8 @@ public sealed partial class SpaceContainers
         }
         var inhibitor = type.GroupId == MobileCynoInhibitorGroup;
         var beacon = type.GroupId == MobileCynoBeaconGroup;
+        var observatory = type.GroupId == MobileObservatoryGroup;
+        var tower = type.GroupId == ControlTowerGroup;
         if (session.CharacterId is not { } character || session.GetInt("shipid") is not { } shipId || shipId <= 0 || _deployed is null || _scheduler is null)
         {
             throw Unavailable();
@@ -137,8 +209,8 @@ public sealed partial class SpaceContainers
         {
             throw Refuse("Mobile Warp Disruptors cannot be activated in empire space.");
         }
-        var range = inhibitor ? InhibitorRangeMeters : beacon ? 0 : type.Attributes.GetValueOrDefault(WarpScrambleRangeAttribute);
-        if (!inhibitor && !beacon && range <= 0)
+        var range = inhibitor ? InhibitorRangeMeters : beacon || observatory || tower ? 0 : type.Attributes.GetValueOrDefault(WarpScrambleRangeAttribute);
+        if (!inhibitor && !beacon && !observatory && !tower && range <= 0)
         {
             throw Refuse("That mobile warp disruptor has no warp disruption range.");
         }
@@ -152,6 +224,23 @@ public sealed partial class SpaceContainers
         if (beacon && _space.RegionOfSystem(system) == JumpDriveRules.PochvenRegionId)
         {
             throw Refuse("Mobile Cynosural Beacons cannot be deployed in Pochven.");
+        }
+        // a Mobile Observatory is not deployed in wormhole space, in Pochven or above the security cutoff (the wiki, "Mobile Observatory"; EveJS's texts)
+        if (observatory && system is >= AbyssalLocationMin and <= AbyssalLocationMax)
+        {
+            throw Refuse("Mobile Observatories cannot be deployed in Abyssal space.");
+        }
+        if (observatory && Eve.Services.Core.LocatorRules.IsWormhole(system))
+        {
+            throw Refuse("Mobile Observatories cannot be deployed in wormhole space.");
+        }
+        if (observatory && _space.RegionOfSystem(system) == JumpDriveRules.PochvenRegionId)
+        {
+            throw Refuse("Mobile Observatories cannot be deployed in Pochven.");
+        }
+        if (observatory && _space.SecurityOfSystem(system) is { } observatorySecurity && observatorySecurity >= ObservatorySecurityCutoff)
+        {
+            throw Refuse("Mobile Observatories can only be deployed below 0.5 security.");
         }
         var radius = type.Attributes.GetValueOrDefault(RadiusAttribute);
         if (radius <= 0)
@@ -169,6 +258,22 @@ public sealed partial class SpaceContainers
         {
             throw Refuse("Another Mobile Cynosural Inhibitor is too close to deploy one here.");
         }
+        if (observatory && await CloseToAnotherObservatoryAsync(system, position, radius, now, cancellationToken))
+        {
+            throw Refuse("Another Mobile Observatory is too close to deploy one here.");
+        }
+        if (observatory && await CloseToLandmarkAsync(system, position, radius, cancellationToken))
+        {
+            throw Refuse("A station, stargate or Upwell structure is too close to deploy a Mobile Observatory here.");
+        }
+        if (observatory && await CloseToControlTowerAsync(system, position, radius, cancellationToken))
+        {
+            throw Refuse("A player control tower is too close to deploy a Mobile Observatory here.");
+        }
+        if (observatory && await InDeadspaceAsync(system, position, cancellationToken))
+        {
+            throw Refuse("Mobile Observatories cannot be anchored in deadspace.");
+        }
 
         var dropped = await _ships.DropDisruptorAsync(character, shipId, itemId, system, cancellationToken)
             ?? throw Refuse("That item is no longer in your ship's cargo hold.");
@@ -180,16 +285,19 @@ public sealed partial class SpaceContainers
 
         var anchoringDelayMs = inhibitor
             ? (long)InhibitorAnchoringTime.TotalMilliseconds
+            : observatory
+                ? (long)ObservatoryAnchoringTime.TotalMilliseconds
             : beacon
                 ? (long)BeaconActivationDelay(item.TypeId).TotalMilliseconds
                 : (long)Math.Max(0, type.Attributes.GetValueOrDefault(AnchoringDelayAttribute));
         var activateAt = now + anchoringDelayMs;
-        var lifetime = inhibitor ? InhibitorLifetime : beacon ? BeaconLifetime(item.TypeId) : LifetimeOf(item.TypeId);
+        var lifetime = inhibitor ? InhibitorLifetime : observatory ? ObservatoryLifetime : beacon ? BeaconLifetime(item.TypeId) : LifetimeOf(item.TypeId);
+        var expiresAt = tower ? NeverExpires : now + (long)lifetime.TotalMilliseconds;
         var corporation = (int)(session.GetInt("corpid") ?? 0);
         var alliance = (int)(session.GetInt("allianceid") ?? 0);
         await _deployed.SaveAsync(new DeployedRecord(
-            deployable.Id, inhibitor ? InhibitorKind : beacon ? BeaconKind : DisruptorKind, system, type.Name, item.TypeId, type.GroupId, position, radius, character, corporation,
-            alliance, shipId, now + (long)lifetime.TotalMilliseconds, activateAt, range), cancellationToken);
+            deployable.Id, inhibitor ? InhibitorKind : beacon ? BeaconKind : observatory ? ObservatoryKind : tower ? ControlTowerKind : DisruptorKind, system, type.Name, item.TypeId, type.GroupId, position, radius, character, corporation,
+            alliance, shipId, expiresAt, activateAt, range), cancellationToken);
         if (inhibitor)
         {
             _sim.PlaceInhibitor(new SimPlaceInhibitor(
@@ -198,6 +306,16 @@ public sealed partial class SpaceContainers
         else if (beacon)
         {
             _sim.PlaceCynoBeacon(new SimPlaceCynoBeacon(
+                deployable.Id, system, type.Name, item.TypeId, type.GroupId, position, radius, anchoringDelayMs <= 0, character, corporation, alliance, shipId));
+        }
+        else if (observatory)
+        {
+            _sim.PlaceObservatory(new SimPlaceObservatory(
+                deployable.Id, system, type.Name, item.TypeId, type.GroupId, position, radius, anchoringDelayMs <= 0, character, corporation, alliance, shipId));
+        }
+        else if (tower)
+        {
+            _sim.PlaceControlTower(new SimPlaceControlTower(
                 deployable.Id, system, type.Name, item.TypeId, type.GroupId, position, radius, anchoringDelayMs <= 0, character, corporation, alliance, shipId));
         }
         else
@@ -215,6 +333,107 @@ public sealed partial class SpaceContainers
             }, cancellationToken);
         }
         return deployable.Id;
+    }
+
+    /// <summary>Whether a station, stargate or Upwell structure of the system lies within the spacing of <paramref name="position"/>, surface to surface.</summary>
+    private async Task<bool> CloseToLandmarkAsync(int system, double[] position, double radius, CancellationToken cancellationToken)
+    {
+        if (ReadObservatoryLandmarks is not { } read)
+        {
+            return false;
+        }
+        // shortcut: the landmarks' radii are not subtracted (a few km against a 1 000 km spacing), upgrade when the SDE radii are read
+        foreach (var body in await read(system, cancellationToken))
+        {
+            if (MetersBetween(body, position) - radius < ObservatoryLandmarkSpacingMeters)
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /// <summary>Whether <paramref name="position"/> lies inside a deadspace pocket of the system (within <see cref="DeadspaceSiteRadiusMeters"/> of an anchor).</summary>
+    private async Task<bool> InDeadspaceAsync(int system, double[] position, CancellationToken cancellationToken)
+    {
+        if (ReadDeadspaceAnchors is not { } read)
+        {
+            return false;
+        }
+        foreach (var anchor in await read(system, cancellationToken))
+        {
+            if (MetersBetween(anchor, position) <= DeadspaceSiteRadiusMeters)
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /// <summary>Whether a player control tower of the system lies within 100 km of <paramref name="position"/>, surface to surface.</summary>
+    private async Task<bool> CloseToControlTowerAsync(int system, double[] position, double radius, CancellationToken cancellationToken)
+    {
+        // shortcut: the towers' radii are not subtracted (a few km against a 100 km spacing), upgrade when the SDE radii are read
+        if (ReadControlTowers is { } read)
+        {
+            foreach (var tower in await read(system, cancellationToken))
+            {
+                if (MetersBetween(tower, position) - radius < ObservatoryControlTowerSpacingMeters)
+                {
+                    return true;
+                }
+            }
+        }
+        // a tower launched from a ship is a record of the host (ST-19), not a structure
+        foreach (var tower in await _deployed!.InSystemAsync(system, cancellationToken))
+        {
+            if (tower.Kind == ControlTowerKind && MetersBetween(tower.Position, position) - radius < ObservatoryControlTowerSpacingMeters)
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /// <summary>Whether an observatory on record in the system lies within the spacing of <paramref name="position"/>, surface to surface (its time not up).</summary>
+    private async Task<bool> CloseToAnotherObservatoryAsync(int system, double[] position, double radius, long now, CancellationToken cancellationToken)
+    {
+        foreach (var other in await _deployed!.InSystemAsync(system, cancellationToken))
+        {
+            if (other.Kind == ObservatoryKind && other.ExpiresAtMs > now && MetersBetween(other.Position, position) - other.Radius - radius < ObservatorySpacingMeters)
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /// <summary>
+    /// The ping job: an anchored observatory pings its system (the simulation decloaks the cloaked ships there with a chance, see <c>remote_decloak_ping</c>) and
+    /// its next ping is due in ten minutes while its record's time is not up. A record that is gone or not anchored pings nothing.
+    /// </summary>
+    public async Task PingObservatoryAsync(long deployableId, CancellationToken cancellationToken = default)
+    {
+        if (_deployed is null || _scheduler is null || await _deployed.GetAsync(deployableId, cancellationToken) is not { Kind: ObservatoryKind } record)
+        {
+            return;
+        }
+        var now = _nowUnixMs();
+        if (record.ExpiresAtMs <= now || record.ActivateAtMs > now)
+        {
+            return;
+        }
+        _sim.RemoteDecloakPing(record.SolarSystemId, deployableId);
+        var next = now + (long)ObservatoryPingInterval.TotalMilliseconds;
+        if (next < record.ExpiresAtMs)
+        {
+            await _scheduler.ScheduleAsync(new JobSpec(ObservatoryPingJob, next)
+            {
+                Key = $"observatory:{deployableId}",
+                Payload = new ObservatoryPingDue(deployableId),
+                OnDuplicate = OnDuplicate.Replace,
+            }, cancellationToken);
+        }
     }
 
     /// <summary>Whether a Mobile Cynosural Inhibitor on record in the system lies within the spacing of <paramref name="position"/> (the record's time not up).</summary>
@@ -243,7 +462,7 @@ public sealed partial class SpaceContainers
     /// </summary>
     public async Task AnchorAsync(long deployableId, CancellationToken cancellationToken = default)
     {
-        if (_deployed is null || await _deployed.GetAsync(deployableId, cancellationToken) is not { Kind: DisruptorKind or InhibitorKind or BeaconKind } record)
+        if (_deployed is null || await _deployed.GetAsync(deployableId, cancellationToken) is not { Kind: DisruptorKind or InhibitorKind or BeaconKind or ObservatoryKind or ControlTowerKind } record)
         {
             return;
         }
@@ -255,6 +474,16 @@ public sealed partial class SpaceContainers
             return;
         }
         _sim.SetDisruptorActive(deployableId, true);
+        if (record.Kind == ObservatoryKind && _scheduler is not null)
+        {
+            // the first ping comes when the observatory is anchored (the wiki), then one every ten minutes while it is
+            await _scheduler.ScheduleAsync(new JobSpec(ObservatoryPingJob, _nowUnixMs())
+            {
+                Key = $"observatory:{deployableId}",
+                Payload = new ObservatoryPingDue(deployableId),
+                OnDuplicate = OnDuplicate.Replace,
+            }, cancellationToken);
+        }
         // a beacon that is lit is told to its fleet, as a field is when it is lit (the client's jump menu lists it)
         if (record.Kind == BeaconKind)
         {
@@ -309,6 +538,26 @@ public sealed partial class SpaceContainers
     {
         _sim.RemoveDeployed(due.DeployableId);
         await _ships.DeleteDisruptorAsync(due.DeployableId);
+    }
+
+    /// <summary>
+    /// Takes a player control tower out of space (ST-19): the simulation removes it, its record is forgotten and its item is deleted. A deployed tower has no way
+    /// back into the hold yet (DEVIATIONS, ST-19). Only the launching corporation's tower in the pilot's system is removed; anything else is refused.
+    /// </summary>
+    public async Task RemoveControlTowerAsync(ClientSession session, long deployableId, CancellationToken cancellationToken = default)
+    {
+        if (_deployed is null || await _deployed.GetAsync(deployableId, cancellationToken) is not { Kind: ControlTowerKind } record)
+        {
+            throw Refuse("That control tower is not in space.");
+        }
+        var system = (int)(session.GetInt("solarsystemid2") ?? session.GetInt("solarsystemid") ?? 0);
+        if (record.CorporationId != (int)(session.GetInt("corpid") ?? 0) || record.SolarSystemId != system)
+        {
+            throw Refuse("Only your corporation's control tower in your system can be removed.");
+        }
+        _sim.RemoveDeployed(deployableId);
+        await _ships.DeleteDisruptorAsync(deployableId, cancellationToken);
+        await _deployed.RemoveAsync(deployableId);
     }
 
     private static MachoWrappedException Refuse(string text) => MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr(text)));

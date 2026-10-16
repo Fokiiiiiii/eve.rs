@@ -55,7 +55,7 @@ public sealed partial class SpaceContainers
     /// </summary>
     internal const string ControlTowerKind = "control_tower";
 
-    /// <summary>A control tower's record never ends by time (its removal is the host's, see <see cref="RemoveControlTowerAsync"/>).</summary>
+    /// <summary>A control tower's record never ends by time (its removal is the host's, see <see cref="UnanchorControlTowerAsync"/>).</summary>
     private const long NeverExpires = long.MaxValue;
 
     /// <summary>The record kind of a Mobile Observatory (protocol 72): anchored by its durable job, pinging its system while it is anchored.</summary>
@@ -332,6 +332,16 @@ public sealed partial class SpaceContainers
                 OnDuplicate = OnDuplicate.Replace,
             }, cancellationToken);
         }
+        // a control tower's fuel period starts when it is anchored: the first hour is paid then, and an empty bay leaves it offline (ST-23)
+        if (tower && _scheduler is not null)
+        {
+            await _scheduler.ScheduleAsync(new JobSpec(ControlTowerFuelJob, activateAt)
+            {
+                Key = $"tower:{deployable.Id}",
+                Payload = new ControlTowerFuelDue(deployable.Id),
+                OnDuplicate = OnDuplicate.Replace,
+            }, cancellationToken);
+        }
         return deployable.Id;
     }
 
@@ -356,15 +366,25 @@ public sealed partial class SpaceContainers
     /// <summary>Whether <paramref name="position"/> lies inside a deadspace pocket of the system (within <see cref="DeadspaceSiteRadiusMeters"/> of an anchor).</summary>
     private async Task<bool> InDeadspaceAsync(int system, double[] position, CancellationToken cancellationToken)
     {
-        if (ReadDeadspaceAnchors is not { } read)
+        if (ReadDeadspaceAnchors is { } read)
         {
-            return false;
-        }
-        foreach (var anchor in await read(system, cancellationToken))
-        {
-            if (MetersBetween(anchor, position) <= DeadspaceSiteRadiusMeters)
+            foreach (var anchor in await read(system, cancellationToken))
             {
-                return true;
+                if (MetersBetween(anchor, position) <= DeadspaceSiteRadiusMeters)
+                {
+                    return true;
+                }
+            }
+        }
+        // a dungeon's pocket is its record (ST-23): the body in the scene at the origin, with the pocket's radius
+        if (_deployed is not null)
+        {
+            foreach (var record in await _deployed.InSystemAsync(system, cancellationToken))
+            {
+                if (record.Kind == DeadspacePocketKind && MetersBetween(record.Position, position) <= record.Radius)
+                {
+                    return true;
+                }
             }
         }
         return false;
@@ -538,26 +558,6 @@ public sealed partial class SpaceContainers
     {
         _sim.RemoveDeployed(due.DeployableId);
         await _ships.DeleteDisruptorAsync(due.DeployableId);
-    }
-
-    /// <summary>
-    /// Takes a player control tower out of space (ST-19): the simulation removes it, its record is forgotten and its item is deleted. A deployed tower has no way
-    /// back into the hold yet (DEVIATIONS, ST-19). Only the launching corporation's tower in the pilot's system is removed; anything else is refused.
-    /// </summary>
-    public async Task RemoveControlTowerAsync(ClientSession session, long deployableId, CancellationToken cancellationToken = default)
-    {
-        if (_deployed is null || await _deployed.GetAsync(deployableId, cancellationToken) is not { Kind: ControlTowerKind } record)
-        {
-            throw Refuse("That control tower is not in space.");
-        }
-        var system = (int)(session.GetInt("solarsystemid2") ?? session.GetInt("solarsystemid") ?? 0);
-        if (record.CorporationId != (int)(session.GetInt("corpid") ?? 0) || record.SolarSystemId != system)
-        {
-            throw Refuse("Only your corporation's control tower in your system can be removed.");
-        }
-        _sim.RemoveDeployed(deployableId);
-        await _ships.DeleteDisruptorAsync(deployableId, cancellationToken);
-        await _deployed.RemoveAsync(deployableId);
     }
 
     private static MachoWrappedException Refuse(string text) => MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr(text)));

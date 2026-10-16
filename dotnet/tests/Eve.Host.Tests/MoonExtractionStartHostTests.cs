@@ -279,14 +279,14 @@ public sealed class MoonExtractionStartHostTests
 
         var notDocked = new ClientSession(route.Packets);
         notDocked.Set("corpid", new PyInt(Corporation));
-        Assert.Equal("StructureDefenseDenied", Assert.IsType<MachoWrappedException>(await Assert.ThrowsAsync<MachoWrappedException>(() =>
-            route.Moon.CallAsync(route.Start(notDocked)).AsTask())).Error.UserErrorMessage);
+        Assert.Equal("You must be controlling this structure.", Notice(await Assert.ThrowsAsync<MachoWrappedException>(() =>
+            route.Moon.CallAsync(route.Start(notDocked)).AsTask())));
 
         var otherCorp = new ClientSession(route.Packets);
         otherCorp.Set("corpid", new PyInt(OtherCorporation));
         otherCorp.Set("structureid", new PyLong(Structure));
-        Assert.Equal("StructureDefenseDenied", Assert.IsType<MachoWrappedException>(await Assert.ThrowsAsync<MachoWrappedException>(() =>
-            route.Moon.CallAsync(route.Start(otherCorp)).AsTask())).Error.UserErrorMessage);
+        Assert.Equal("You must be controlling this structure.", Notice(await Assert.ThrowsAsync<MachoWrappedException>(() =>
+            route.Moon.CallAsync(route.Start(otherCorp)).AsTask())));
 
         Assert.Equal("An online Standup Moon Drill is required.", Notice(await Assert.ThrowsAsync<MachoWrappedException>(() =>
             route.Moon.CallAsync(route.Start()).AsTask())));

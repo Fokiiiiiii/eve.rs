@@ -2,6 +2,7 @@ using Eve.Macho;
 using Eve.Marshal;
 using Eve.Ships;
 using Eve.Space;
+using Eve.Structures;
 
 namespace Eve.Services.Space.Tests;
 
@@ -17,6 +18,23 @@ public class ControlTowerHostTests
     /// <summary>Asabona (Derelik, security 0.32): below the cutoff, so an observatory may be dropped there.</summary>
     private const long LowSecSystem = 30000012;
     private const long AnchoringMs = 1_800_000;
+    private const long HourMs = 3_600_000;
+
+    /// <summary>The fuel blocks of the Amarr tower's race (Helium) and of the Caldari (Nitrogen), SDE 4247 and 4051.</summary>
+    private const int HeliumFuelBlock = 4247, NitrogenFuelBlock = 4051;
+
+    /// <summary>Puts fuel blocks in a tower's fuel bay: its container, the items at its id.</summary>
+    private static async Task FuelAsync(Rig rig, long tower, int fuelType, long quantity, long owner)
+    {
+        await using var connection = await rig.Source.OpenConnectionAsync();
+        await using var transaction = await connection.BeginTransactionAsync();
+        await rig.Items.CreateAsync(connection, transaction, new Eve.Inventory.NewItem(fuelType, owner, tower, 0, quantity));
+        await transaction.CommitAsync();
+    }
+
+    /// <summary>The quantity of one fuel block type in a tower's fuel bay.</summary>
+    private static async Task<long> BayAsync(Rig rig, long tower, int fuelType) =>
+        (await rig.Items.InContainerAsync(tower)).Where(stack => stack.TypeId == fuelType).Sum(stack => stack.Quantity);
 
     /// <summary>A pilot with the given types in its hold, in space in <paramref name="system"/>, with Anchoring III.</summary>
     private static async Task<(ClientSession Session, long[] Items)> PilotWithItemsAsync(Rig rig, int[] typeIds, long system)
@@ -108,17 +126,29 @@ public class ControlTowerHostTests
         Assert.Contains("control tower", Texts(refused.Error.Payload));
         Assert.Equal(CharacterShips.CargoFlag, (await rig.Items.GetAsync(observatory))!.Flag);
 
-        // another corporation cannot take the tower out; the launching corporation can
+        // the tower is anchored after its SDE time; with no fuel it is offline, and then its corporation may unanchor it. Another corporation may not
+        rig.Now += AnchoringMs;
+        await rig.Scheduler.RunDueAsync();
         var launching = session.GetInt("corpid") ?? 0;
         session.Set("corpid", new PyInt(launching + 1));
-        await Assert.ThrowsAsync<MachoWrappedException>(() => rig.Containers.RemoveControlTowerAsync(session, tower));
-        Assert.NotNull(await rig.Deployed.GetAsync(tower));
+        await Assert.ThrowsAsync<MachoWrappedException>(() => rig.Containers.UnanchorControlTowerAsync(session, tower));
+        Assert.Equal("offline", await rig.Deployed.TowerStateAsync(tower));
         session.Set("corpid", new PyInt(launching));
         rig.Sim.Heard.Clear();
-        await rig.Containers.RemoveControlTowerAsync(session, tower);
+        await rig.Containers.UnanchorControlTowerAsync(session, tower);
+        Assert.Equal("unanchoring", await rig.Deployed.TowerStateAsync(tower));
+
+        // the unanchoring runs for the SDE's hour (attribute 676): the tower is still in space until then
+        await rig.Scheduler.RunDueAsync();
+        Assert.DoesNotContain(rig.Sim.Heard, m => m is SimRemoveDeployed);
+        rig.Now += HourMs;
+        await rig.Scheduler.RunDueAsync();
         Assert.Contains(rig.Sim.Heard, m => m is SimRemoveDeployed removed && removed.DeployableId == tower);
-        Assert.Null(await rig.Items.GetAsync(tower));
         Assert.Null(await rig.Deployed.GetAsync(tower));
+
+        // the item is not deleted: it is dropped where the tower was, as an unanchor drop (the structure rule), marked for its corporation
+        Assert.Equal(StructureUnanchorDrop.HullMarker(tower), (await rig.Items.GetAsync(tower))!.CustomInfo);
+        Assert.Contains(rig.Sim.Heard, m => m is SimPlaceWreck wreck && wreck.WreckId == tower);
 
         // with the tower gone, the observatory drops
         Assert.Equal(observatory, await rig.Containers.LaunchFromShipAsync(session, observatory, CancellationToken.None));
@@ -141,5 +171,53 @@ public class ControlTowerHostTests
         rig.Now += AnchoringMs;
         await rig.Containers.RestoreDeployedAsync(system);
         Assert.True(Assert.Single(rig.Sim.Heard.OfType<SimPlaceControlTower>()).Active);
+    }
+
+    [PgFact]
+    public async Task A_control_tower_burns_one_period_of_its_race_fuel_and_goes_offline_when_the_bay_cannot_pay()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var (session, items) = await PilotWithItemsAsync(rig, [ControlTower], LowSecSystem);
+        var tower = items[0];
+        var owner = session.GetInt("charid") ?? 0;
+
+        // the Amarr Control Tower is large: 40 Helium Fuel Blocks an hour (SDE attribute 1031 = 3). The bay holds 39 of its race's block and 40 of Nitrogen,
+        // the Caldari block, which does not fuel an Amarr tower
+        await FuelAsync(rig, tower, HeliumFuelBlock, 39, owner);
+        await FuelAsync(rig, tower, NitrogenFuelBlock, 40, owner);
+        await rig.Containers.LaunchFromShipAsync(session, tower, CancellationToken.None);
+
+        // anchored, the first period is paid at once: 39 blocks cannot pay it, so the tower is offline and nothing is taken
+        rig.Now += AnchoringMs;
+        await rig.Scheduler.RunDueAsync();
+        Assert.Equal("offline", await rig.Deployed.TowerStateAsync(tower));
+        Assert.Equal(39, await BayAsync(rig, tower, HeliumFuelBlock));
+        Assert.Equal(40, await BayAsync(rig, tower, NitrogenFuelBlock));
+
+        // fuel one more block: the next period pays the 40 and the tower is online
+        await FuelAsync(rig, tower, HeliumFuelBlock, 1, owner);
+        rig.Now += HourMs;
+        await rig.Scheduler.RunDueAsync();
+        Assert.Equal("online", await rig.Deployed.TowerStateAsync(tower));
+        Assert.Equal(0, await BayAsync(rig, tower, HeliumFuelBlock));
+        Assert.Equal(40, await BayAsync(rig, tower, NitrogenFuelBlock));
+
+        // an online tower cannot be unanchored
+        var refused = await Assert.ThrowsAsync<MachoWrappedException>(() => rig.Containers.UnanchorControlTowerAsync(session, tower));
+        Assert.Contains("offline", Texts(refused.Error.Payload));
+        Assert.Equal("online", await rig.Deployed.TowerStateAsync(tower));
+
+        // the next period finds the bay empty: offline again, and the unanchoring may be asked
+        rig.Now += HourMs;
+        await rig.Scheduler.RunDueAsync();
+        Assert.Equal("offline", await rig.Deployed.TowerStateAsync(tower));
+        await rig.Containers.UnanchorControlTowerAsync(session, tower);
+        Assert.Equal("unanchoring", await rig.Deployed.TowerStateAsync(tower));
+
+        // an unanchoring tower burns no more fuel: its next period job does nothing
+        await FuelAsync(rig, tower, HeliumFuelBlock, 40, owner);
+        rig.Now += HourMs;
+        await rig.Scheduler.RunDueAsync();
+        Assert.Equal(40, await BayAsync(rig, tower, HeliumFuelBlock));
     }
 }

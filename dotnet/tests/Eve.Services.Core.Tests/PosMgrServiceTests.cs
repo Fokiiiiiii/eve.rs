@@ -85,4 +85,45 @@ public sealed class PosMgrServiceTests
     {
         public string? GetOmegaExpiry(long accountId) => OmegaLicenses.DefaultOmegaExpiryText;
     }
+
+    [Fact]
+    public async Task UnanchorStructure_hands_the_tower_to_the_provider_with_the_session_and_answers_none()
+    {
+        var session = new ClientSession();
+        ClientSession? receivedSession = null;
+        long receivedItem = 0;
+        var service = (IService)new PosMgrService(unanchorControlTower: (actualSession, itemId, _) =>
+        {
+            receivedSession = actualSession;
+            receivedItem = itemId;
+            return ValueTask.CompletedTask;
+        });
+        using var cancellation = new CancellationTokenSource();
+
+        Assert.True(service.HasMethod("UnanchorStructure"));
+        Assert.IsType<PyNone>(await service.CallAsync(new ServiceCall
+        {
+            Method = "UnanchorStructure",
+            Args = [new PyLong(1_000_000_123)],
+            Session = session,
+            Cancellation = cancellation.Token,
+        }));
+        Assert.Same(session, receivedSession);
+        Assert.Equal(1_000_000_123, receivedItem);
+    }
+
+    [Fact]
+    public async Task UnanchorStructure_without_a_provider_or_an_item_does_nothing()
+    {
+        var service = (IService)new PosMgrService();
+        using var cancellation = new CancellationTokenSource();
+
+        Assert.IsType<PyNone>(await service.CallAsync(new ServiceCall
+        {
+            Method = "UnanchorStructure",
+            Args = [new PyInt(5)],
+            Session = new ClientSession(),
+            Cancellation = cancellation.Token,
+        }));
+    }
 }

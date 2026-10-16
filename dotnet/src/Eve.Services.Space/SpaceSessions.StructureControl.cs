@@ -286,7 +286,7 @@ public sealed partial class SpaceSessions
         int system, double x, double y, double z, double structureRadius, double shipRadius, CancellationToken token)
     {
         if (ShipIdOf(session) != shipId || SolarSystemOf(session) != system ||
-            await PositionOfAsync(session, shipId, token) is not { } position || position.SolarSystemId != system)
+            await ScenePositionOfAsync(session, shipId, token) is not { } position || position.SolarSystemId != system)
             return false;
         var dx = position.X - x;
         var dy = position.Y - y;

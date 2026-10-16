@@ -228,6 +228,9 @@ public interface ISimulation
     void PlaceObservatory(SimPlaceObservatory observatory);
     void PlaceControlTower(SimPlaceControlTower tower);
 
+    /// <summary>Puts a deadspace pocket of a dungeon in its system's scene at its origin (protocol 74).</summary>
+    void PlaceDeadspacePocket(SimPlaceDeadspacePocket pocket);
+
     /// <summary>Removes the structure-owned cyno beacon from a specific solar-system scene.</summary>
     void RemoveCynoBeacon(int solarSystemId, long structureBeaconId);
 

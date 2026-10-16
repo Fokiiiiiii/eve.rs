@@ -1296,6 +1296,10 @@ public sealed record SimPlaceControlTower(
     long DeployableId, int SolarSystemId, string Name, int TypeId, int GroupId, IReadOnlyList<double> Position, double Radius, bool Active,
     long OwnerId, int CorporationId, int AllianceId, long ShipId) : SimMessage;
 
+/// <summary>A deadspace pocket of a dungeon (a mission pocket or an incursion site) the host keeps a record of, put in the scene at its origin with its radius (protocol 74).
+/// It is in no client ball; the wire carries it as a disruptor's placement with no type, group, range or owner.</summary>
+public sealed record SimPlaceDeadspacePocket(long DeployableId, int SolarSystemId, string Name, IReadOnlyList<double> Position, double Radius) : SimMessage;
+
 /// <summary>A Mobile Observatory's decloaking ping in its solar system (protocol 72): the cloaked ships there whose cloak is not stabilized may be decloaked.</summary>
 public sealed record SimRemoteDecloakPing(int SolarSystemId, long ObservatoryId) : SimMessage;
 

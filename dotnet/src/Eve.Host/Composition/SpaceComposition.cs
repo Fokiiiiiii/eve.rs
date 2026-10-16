@@ -378,23 +378,10 @@ internal sealed partial class CharacterServicesComposition
                 typeId => dogma.Type(typeId)?.GroupId ?? 0);
             spaceContainers.ReadObservatoryLandmarks = observatoryLandmarks.ReadAsync;
             spaceContainers.ReadControlTowers = observatoryLandmarks.ReadControlTowersAsync;
+            // the cosmic sites are deadspace anchors; a dungeon's pocket is its own record (ST-23, SpaceContainers.Pockets)
             spaceContainers.ReadDeadspaceAnchors = async (system, token) => cosmicSites is { } sites
                 ? (IReadOnlyList<double[]>)(await sites.ActiveAsync(system, token)).Select(site => site.Position).ToArray()
                 : [];
-            spaceContainers.ReadDeadspaceAnchors = async (system, token) =>
-            {
-                var anchors = new List<double[]>();
-                if (cosmicSites is { } sites)
-                {
-                    anchors.AddRange((await sites.ActiveAsync(system, token)).Select(site => site.Position));
-                }
-                // a mission pocket is a dungeon instance: its origin is a deadspace anchor too (ST-19)
-                if (dungeonWavesDirector is { } dungeons)
-                {
-                    anchors.AddRange(await dungeons.ActiveOriginsAsync(system, token));
-                }
-                return anchors;
-            };
             // a container clears when its loot is taken: every move is announced in its transaction, and the container's hacks hear the moves it loses
             items.Events = foundations.Events;
             var siteContainerHacks = new Eve.Services.Space.SiteContainerHacks(source, siteContainers, items, foundations.Events, () => foundations.Scheduler.Now, id => spaceContainers.RemoveSiteContainer(id));
@@ -404,6 +391,11 @@ internal sealed partial class CharacterServicesComposition
                 if (context.Event.Json().TryGetProperty("previousLocationId", out var previous) && previous.TryGetInt64(out var previousLocationId))
                     await siteContainerHacks.OnItemLeftAsync(context.Connection, context.Transaction, previousLocationId, token);
             });
+            foundations.Scheduler.Register(Eve.Services.Space.SpaceContainers.ControlTowerFuelJob, async (context, token) =>
+                await spaceContainers.ControlTowerFuelAsync(context.Connection, context.Transaction, context.Payload<Eve.Services.Space.SpaceContainers.ControlTowerFuelDue>()!.DeployableId, context.ScheduledForMs, token));
+            foundations.Scheduler.Register(Eve.Services.Space.SpaceContainers.ControlTowerUnanchorJob, async (context, token) =>
+                await spaceContainers.CompleteControlTowerUnanchorAsync(context.Payload<Eve.Services.Space.SpaceContainers.ControlTowerUnanchorDue>()!.DeployableId, token));
+            spaceSessions.ControlTowerUnanchor = spaceContainers.UnanchorControlTowerAsync;
             foundations.Scheduler.Register(Eve.Services.Space.SpaceContainers.AnchorJob, async (context, token) =>
                 await spaceContainers.AnchorAsync(context.Payload<Eve.Services.Space.SpaceContainers.DisruptorAnchorDue>()!.DeployableId, token));
 foundations.Scheduler.Register(Eve.Services.Space.SpaceContainers.ObservatoryPingJob, async (context, token) =>
@@ -460,6 +452,13 @@ await spaceContainers.PingObservatoryAsync(context.Payload<Eve.Services.Space.Sp
             spaceDrones = new SpaceDrones(sim, ships, dogma, spaceSessions, now, message => Console.Error.WriteLine($"eve-host: {message}"));
             foundations.Scheduler.Register("space.containers.sweep", async (_, _) => await containers.SweepAsync());
             await foundations.Scheduler.EnsureRecurringAsync("space.containers.sweep", "sweep", TimeSpan.FromSeconds(30));
+            // the pockets of the running dungeons follow the dungeons: placed when one runs, taken out when it does not (every ten seconds)
+            if (dungeonWavesDirector is { } pocketDirector)
+            {
+                foundations.Scheduler.Register("space.deadspace.pockets", async (_, token) =>
+                    await spaceContainers.ReconcileDeadspacePocketsAsync(await pocketDirector.ActivePocketsAsync(token), token));
+                await foundations.Scheduler.EnsureRecurringAsync("space.deadspace.pockets", "reconcile", TimeSpan.FromSeconds(10));
+            }
             Console.Error.WriteLine($"eve-host: the space simulation is expected at {socket}");
         }
         await crimewatchRuntime.ResumeAsync();

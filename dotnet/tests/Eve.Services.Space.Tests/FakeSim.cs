@@ -322,6 +322,7 @@ internal sealed class FakeSim : ISimulation
 
     public void PlaceObservatory(SimPlaceObservatory observatory) => Heard.Enqueue(observatory);
     public void PlaceControlTower(SimPlaceControlTower tower) => Heard.Enqueue(tower);
+    public void PlaceDeadspacePocket(SimPlaceDeadspacePocket pocket) => Heard.Enqueue(pocket);
 
     public void RemoteDecloakPing(int solarSystemId, long observatoryId) => Heard.Enqueue(new SimRemoteDecloakPing(solarSystemId, observatoryId));
 

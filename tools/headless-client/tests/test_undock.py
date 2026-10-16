@@ -13,9 +13,10 @@ Skipped unless EVE_LIVE_HOST is set. tools/dev/run-eve-live.sh starts eve.rs (wi
 from __future__ import annotations
 
 import re
-import uuid
 
 import pytest
+
+from tests.runid import run_token
 
 from evecli import marshal as m
 from evecli import packet as p
@@ -237,7 +238,7 @@ def outcome(call):
 
 @pytest.mark.parametrize("race", UNDOCK["races"], ids=lambda r: f"race-{r['raceID']}")
 def test_a_ship_undocks_flies_and_docks_as_the_reference_did(race):
-    run = uuid.uuid4().hex[:10]
+    run = run_token()
     problems: list[str] = []
     with base.connect(f"walk-undock-{run}") as who:
         _, ship_id, fitted, mapping = arrive(who, race, run)

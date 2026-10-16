@@ -1166,3 +1166,37 @@ fn a_bomb_takes_a_structure_in_its_blast_in_its_layers_and_one_out_of_it_is_left
     );
     assert!(!told(98_100_003), "a structure beyond the blast is left alone");
 }
+
+/// A deadspace pocket of a dungeon (protocol 74): the host puts it in the scene at its origin with its radius. It is in no client ball and no scan, and it stops
+/// no field; given once.
+#[test]
+fn a_deadspace_pocket_is_in_the_scene_in_no_client_ball_and_stops_no_field() {
+    let pocket = |system: i32, a: eve_destiny::Vec3| crate::link::DisruptorPlacement {
+        deployable_id: 990_000_000_400,
+        solar_system_id: system,
+        name: "Deadspace Pocket".to_string(),
+        type_id: 0,
+        group_id: 0,
+        position: [a.x + 20_000.0, a.y, a.z],
+        radius: 1_000_000_000.0,
+        range: 0.0,
+        active: true,
+        owner_id: 0,
+        corporation_id: 0,
+        alliance_id: 0,
+        ship_id: 0,
+    };
+    let field = |charge_type_id: i32| Action::CynoField {
+        ball: Spec { charge_type_id, group_id: 2_020, name: "Cynosural Field".to_string(), radius: 250.0 },
+        lifetime_ms: 600_000.0,
+    };
+    let (mut scene, t) = crowd();
+    let (a, system) = (scene.pilots[&A].ship.position, scene.solar_system_id());
+    let out = scene.place_deadspace_pocket(pocket(system, a), t);
+    assert!(out.is_empty(), "a pocket is in no client ball: {out:?}");
+    assert_eq!(scene.deployables[&990_000_000_400].role, Role::DeadspacePocket);
+    assert!(scene.place_deadspace_pocket(pocket(system, a), t).is_empty());
+
+    let lit = scene.activate(A, module(MODULE, field(21_094), 20_000.0), t);
+    assert!(accepted(&lit), "a deadspace pocket stops no field: {lit:?}");
+}

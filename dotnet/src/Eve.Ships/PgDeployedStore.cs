@@ -68,6 +68,34 @@ public sealed class PgDeployedStore
         await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
+    /// <summary>The fuel state of a control tower (<c>offline</c>, <c>online</c> or <c>unanchoring</c>), or null when it is not recorded.</summary>
+    public async Task<string?> TowerStateAsync(long deployableId, CancellationToken cancellationToken = default)
+    {
+        await using var connection = await _source.OpenConnectionAsync(cancellationToken);
+        await using var command = new NpgsqlCommand($"SELECT tower_state FROM {_schema}.deployed WHERE deployable_id = $1", connection);
+        command.Parameters.Add(new NpgsqlParameter { Value = deployableId });
+        return await command.ExecuteScalarAsync(cancellationToken) as string;
+    }
+
+    /// <summary>Sets the fuel state of a control tower (a tower that is not recorded is left alone).</summary>
+    public async Task SetTowerStateAsync(long deployableId, string state, CancellationToken cancellationToken = default)
+    {
+        await using var connection = await _source.OpenConnectionAsync(cancellationToken);
+        await using var command = new NpgsqlCommand($"UPDATE {_schema}.deployed SET tower_state = $2 WHERE deployable_id = $1", connection);
+        command.Parameters.Add(new NpgsqlParameter { Value = deployableId });
+        command.Parameters.Add(new NpgsqlParameter { Value = state });
+        await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    /// <summary>The same as <see cref="SetTowerStateAsync(long, string, CancellationToken)"/>, inside the caller's transaction (a durable job's).</summary>
+    public async Task SetTowerStateAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long deployableId, string state, CancellationToken cancellationToken = default)
+    {
+        await using var command = new NpgsqlCommand($"UPDATE {_schema}.deployed SET tower_state = $2 WHERE deployable_id = $1", connection, transaction);
+        command.Parameters.Add(new NpgsqlParameter { Value = deployableId });
+        command.Parameters.Add(new NpgsqlParameter { Value = state });
+        await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
     /// <summary>Forgets a deployable (it is gone). Returns whether it was recorded.</summary>
     public async Task<bool> RemoveAsync(long deployableId, CancellationToken cancellationToken = default)
     {
@@ -75,6 +103,15 @@ public sealed class PgDeployedStore
         await using var command = new NpgsqlCommand($"DELETE FROM {_schema}.deployed WHERE deployable_id = $1", connection);
         command.Parameters.Add(new NpgsqlParameter { Value = deployableId });
         return await command.ExecuteNonQueryAsync(cancellationToken) > 0;
+    }
+
+    /// <summary>The deployed records of one kind, by id.</summary>
+    public async Task<IReadOnlyList<DeployedRecord>> ByKindAsync(string kind, CancellationToken cancellationToken = default)
+    {
+        await using var connection = await _source.OpenConnectionAsync(cancellationToken);
+        await using var command = new NpgsqlCommand($"SELECT {Columns} FROM {_schema}.deployed WHERE kind = $1 ORDER BY deployable_id", connection);
+        command.Parameters.Add(new NpgsqlParameter { Value = kind });
+        return await ReadAllAsync(command, cancellationToken);
     }
 
     /// <summary>What lies in a solar system, oldest first.</summary>

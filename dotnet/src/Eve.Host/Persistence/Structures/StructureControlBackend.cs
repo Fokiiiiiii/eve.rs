@@ -79,6 +79,7 @@ public sealed class StructureControlBackend
                 }
             }
             var originalShip = owned?.OriginalShipId ?? session.GetInt("shipid") ?? 0;
+            if (owned is null && fromSpace) await _space.RecordBoardingPlaceAsync(session, originalShip, call.Cancellation);
             if (owned is null) await PhysicalShipAsync(session, originalShip, fromSpace, system, structureId, call.Cancellation);
             var request = new StructurePilotRequest(structureId, character, session.SessionId, originalShip,
                 owned?.OriginalLocationId ?? session.GetInt("locationid"), owned?.FromSpace ?? fromSpace);

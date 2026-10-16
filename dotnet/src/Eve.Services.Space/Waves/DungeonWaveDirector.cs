@@ -35,6 +35,9 @@ public sealed record DungeonWaveData(int WaveIndex, string SpawnQuery, int Amoun
 /// <summary>The answer of <see cref="DungeonWaveDirector.StartAsync"/>: started (or the instance the pilot already has), or refused with the reason.</summary>
 public sealed record DungeonStart(bool Started, long? InstanceId, string? Refusal);
 
+/// <summary>An active dungeon as a deadspace pocket: its instance, its system and its origin in the scene (metres).</summary>
+public sealed record DungeonPocket(long InstanceId, int SolarSystemId, double[] Origin);
+
 /// <summary>
 /// Runs the NPC waves of a dungeon in order, on the shared content runtime (<c>Eve.Content</c>): one definition per dungeon, one sequential objective per wave whose target is the
 /// number of its NPCs. A wave's objective spawns its NPCs in a scheduler job when it becomes the one to do (at once, or after its delay, so a timer wave is a delayed job), and each
@@ -165,20 +168,20 @@ public sealed class DungeonWaveDirector
 
 
     /// <summary>
-    /// The origins of the active dungeons of a system: a mission pocket (its origin is 20 km ahead of the pilot) or an incursion site. Each is a deadspace pocket
-    /// that an observatory cannot be anchored in (ST-19; EveJS takes every dungeon instance as a pocket, see DEVIATIONS).
+    /// The active dungeons: a mission pocket (its origin is 20 km ahead of the pilot) or an incursion site. Each is a deadspace pocket in the scene at its origin
+    /// (ST-23; EveJS takes every dungeon instance as a pocket, see DEVIATIONS), kept by the host's pocket job.
     /// </summary>
-    public async Task<IReadOnlyList<double[]>> ActiveOriginsAsync(int solarSystemId, CancellationToken cancellationToken = default)
+    public async Task<IReadOnlyList<DungeonPocket>> ActivePocketsAsync(CancellationToken cancellationToken = default)
     {
-        var origins = new List<double[]>();
+        var pockets = new List<DungeonPocket>();
         foreach (var instance in await _content.ActiveByKindAsync(Kind, cancellationToken))
         {
-            if (instance.Data<DungeonInstanceData>() is { } data && data.SolarSystemId == solarSystemId)
+            if (instance.Data<DungeonInstanceData>() is { } data)
             {
-                origins.Add(data.Origin);
+                pockets.Add(new DungeonPocket(instance.Id, data.SolarSystemId, data.Origin));
             }
         }
-        return origins;
+        return pockets;
     }
 
     /// <summary>The owner of a dungeon that belongs to no pilot (an incursion's staging site): the global owner, which no character has.</summary>

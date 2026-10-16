@@ -468,6 +468,7 @@ impl Sim {
             | Message::PlaceCynoBeacon(..)
             | Message::PlaceObservatory(..)
             | Message::PlaceControlTower(..)
+            | Message::PlaceDeadspacePocket(..)
             | Message::RemoteDecloakPing { .. }
             | Message::SetDisruptorActive { .. }
             | Message::TetherPolicy { .. }
@@ -1387,6 +1388,13 @@ impl Sim {
                 let tower = *tower;
                 match self.scenes.get_mut(&SceneKey::solar_system(tower.solar_system_id)) {
                     Some(scene) => scene.place_control_tower(tower, now),
+                    None => Vec::new(),
+                }
+            }
+            Message::PlaceDeadspacePocket(pocket) => {
+                let pocket = *pocket;
+                match self.scenes.get_mut(&SceneKey::solar_system(pocket.solar_system_id)) {
+                    Some(scene) => scene.place_deadspace_pocket(pocket, now),
                     None => Vec::new(),
                 }
             }

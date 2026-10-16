@@ -115,51 +115,54 @@ pub const PLACE_OBSERVATORY: u8 = 90;
 pub const REMOTE_DECLOAK_PING: u8 = 91;
 /// The host puts a player control tower in space where its pilot launched it, anchored or not (protocol 73): a disruptor's placement, with range 0.
 pub const PLACE_CONTROL_TOWER: u8 = 92;
-/// The host creates or refreshes a static-free Abyssal room scene (protocol 74).
-pub const ENSURE_ABYSSAL_SCENE: u8 = 93;
-/// Result of ensuring an Abyssal room scene (protocol 74).
-pub const ENSURE_ABYSSAL_SCENE_REPLY: u8 = 94;
-/// The host moves a resident participant and its live state between Abyssal rooms (protocol 74).
-pub const MOVE_ABYSSAL_PARTICIPANT: u8 = 95;
-/// Result of moving an Abyssal participant (protocol 74).
-pub const MOVE_ABYSSAL_PARTICIPANT_REPLY: u8 = 96;
-/// The host rebinds a new session to a resident Abyssal ship (protocol 74).
-pub const REBIND_ABYSSAL_SESSION: u8 = 97;
-/// Result of rebinding a session to an Abyssal ship (protocol 74).
-pub const REBIND_ABYSSAL_SESSION_REPLY: u8 = 98;
-/// The host discards an empty private Abyssal room scene (protocol 74).
-pub const REMOVE_ABYSSAL_SCENE: u8 = 99;
-/// Result of removing an Abyssal scene (protocol 74).
-pub const REMOVE_ABYSSAL_SCENE_REPLY: u8 = 100;
-/// The host materializes and publishes one persisted public Abyssal trace (protocol 74).
-pub const ENSURE_ABYSSAL_TRACE_PUBLISHED: u8 = 101;
-/// Result of materializing and publishing an Abyssal trace (protocol 74).
-pub const ENSURE_ABYSSAL_TRACE_PUBLISHED_REPLY: u8 = 102;
-/// The host removes one public Abyssal trace after its Domain/item cleanup (protocol 74).
-pub const REMOVE_ABYSSAL_TRACE: u8 = 103;
-/// Result of removing a public Abyssal trace (protocol 74).
-pub const REMOVE_ABYSSAL_TRACE_REPLY: u8 = 104;
-/// The host settles a resident Abyssal participant without requiring its client session (protocol 74).
-pub const REMOVE_ABYSSAL_PARTICIPANT: u8 = 105;
-/// Result of removing a resident Abyssal participant (protocol 74).
-pub const REMOVE_ABYSSAL_PARTICIPANT_REPLY: u8 = 106;
-/// The Host reads a resident participant's authoritative Abyssal pose (protocol 74).
-pub const GET_ABYSSAL_PARTICIPANT_POSE: u8 = 107;
-/// Result of reading an Abyssal participant's authoritative pose (protocol 74).
-pub const GET_ABYSSAL_PARTICIPANT_POSE_REPLY: u8 = 108;
-/// Host request to ensure a static conduit exists as an isolated Abyssal scene body (protocol 74).
-pub const ENSURE_ABYSSAL_SCENE_OBJECT: u8 = 109;
-/// Result of ensuring a static Abyssal scene body (protocol 74).
-pub const ENSURE_ABYSSAL_SCENE_OBJECT_REPLY: u8 = 110;
-pub const ENSURE_ABYSSAL_REWARD_CACHE: u8 = 111;
-pub const ENSURE_ABYSSAL_REWARD_CACHE_REPLY: u8 = 112;
-pub const ENSURE_ABYSSAL_LOOT_CONTAINER: u8 = 113;
-pub const ENSURE_ABYSSAL_LOOT_CONTAINER_REPLY: u8 = 114;
-pub const ENSURE_ABYSSAL_ENVIRONMENT_OBJECT: u8 = 115;
-pub const ENSURE_ABYSSAL_ENVIRONMENT_OBJECT_REPLY: u8 = 116;
-pub const ABYSSAL_FIELD_MEMBERSHIP: u8 = 117;
-pub const REFRESH_ABYSSAL_NPC: u8 = 118;
-pub const REFRESH_ABYSSAL_NPC_REPLY: u8 = 119;
+/// The host puts a deadspace pocket of a dungeon (a mission pocket or an incursion site) in space at its origin, with its radius (protocol 74): a disruptor's
+/// placement with type, group and range 0 and no owner. It is in no client ball.
+pub const PLACE_DEADSPACE_POCKET: u8 = 93;
+/// The host creates or refreshes a static-free Abyssal room scene (protocol 75).
+pub const ENSURE_ABYSSAL_SCENE: u8 = 94;
+/// Result of ensuring an Abyssal room scene (protocol 75).
+pub const ENSURE_ABYSSAL_SCENE_REPLY: u8 = 95;
+/// The host moves a resident participant and its live state between Abyssal rooms (protocol 75).
+pub const MOVE_ABYSSAL_PARTICIPANT: u8 = 96;
+/// Result of moving an Abyssal participant (protocol 75).
+pub const MOVE_ABYSSAL_PARTICIPANT_REPLY: u8 = 97;
+/// The host rebinds a new session to a resident Abyssal ship (protocol 75).
+pub const REBIND_ABYSSAL_SESSION: u8 = 98;
+/// Result of rebinding a session to an Abyssal ship (protocol 75).
+pub const REBIND_ABYSSAL_SESSION_REPLY: u8 = 99;
+/// The host discards an empty private Abyssal room scene (protocol 75).
+pub const REMOVE_ABYSSAL_SCENE: u8 = 100;
+/// Result of removing an Abyssal scene (protocol 75).
+pub const REMOVE_ABYSSAL_SCENE_REPLY: u8 = 101;
+/// The host materializes and publishes one persisted public Abyssal trace (protocol 75).
+pub const ENSURE_ABYSSAL_TRACE_PUBLISHED: u8 = 102;
+/// Result of materializing and publishing an Abyssal trace (protocol 75).
+pub const ENSURE_ABYSSAL_TRACE_PUBLISHED_REPLY: u8 = 103;
+/// The host removes one public Abyssal trace after its Domain/item cleanup (protocol 75).
+pub const REMOVE_ABYSSAL_TRACE: u8 = 104;
+/// Result of removing an Abyssal trace (protocol 75).
+pub const REMOVE_ABYSSAL_TRACE_REPLY: u8 = 105;
+/// The host settles a resident Abyssal participant without requiring its client session (protocol 75).
+pub const REMOVE_ABYSSAL_PARTICIPANT: u8 = 106;
+/// Result of removing an Abyssal participant (protocol 75).
+pub const REMOVE_ABYSSAL_PARTICIPANT_REPLY: u8 = 107;
+/// The Host reads a resident participant's authoritative Abyssal pose (protocol 75).
+pub const GET_ABYSSAL_PARTICIPANT_POSE: u8 = 108;
+/// Result of reading an Abyssal participant's pose (protocol 75).
+pub const GET_ABYSSAL_PARTICIPANT_POSE_REPLY: u8 = 109;
+/// Host request to ensure a static conduit exists as an isolated Abyssal scene body (protocol 75).
+pub const ENSURE_ABYSSAL_SCENE_OBJECT: u8 = 110;
+/// Result of ensuring a static Abyssal scene body (protocol 75).
+pub const ENSURE_ABYSSAL_SCENE_OBJECT_REPLY: u8 = 111;
+pub const ENSURE_ABYSSAL_REWARD_CACHE: u8 = 112;
+pub const ENSURE_ABYSSAL_REWARD_CACHE_REPLY: u8 = 113;
+pub const ENSURE_ABYSSAL_LOOT_CONTAINER: u8 = 114;
+pub const ENSURE_ABYSSAL_LOOT_CONTAINER_REPLY: u8 = 115;
+pub const ENSURE_ABYSSAL_ENVIRONMENT_OBJECT: u8 = 116;
+pub const ENSURE_ABYSSAL_ENVIRONMENT_OBJECT_REPLY: u8 = 117;
+pub const ABYSSAL_FIELD_MEMBERSHIP: u8 = 118;
+pub const REFRESH_ABYSSAL_NPC: u8 = 119;
+pub const REFRESH_ABYSSAL_NPC_REPLY: u8 = 120;
 
 /// The host puts a wormhole end in space (protocol 63).
 pub const PLACE_WORMHOLE: u8 = 82;

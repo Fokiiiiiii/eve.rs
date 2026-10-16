@@ -46,7 +46,7 @@ public sealed class HackingMgrServiceTests
     private static PyValue Tile(int x, int y) => Py.Tuple(new PyInt(x), new PyInt(y));
 
     private static IReadOnlyList<int> EventIds(Events.Event note) =>
-        ((PyList)note.Args[0]).Items.Select(item => (int)Number(Field(item, "eventID"))).ToArray();
+        ((PyTuple)note.Args[0]).Items.Select(item => (int)Number(Field(item, "eventID"))).ToArray();
 
     private static PyValue Field(PyValue keyVal, string key) =>
         ((PyDict)((PyObject)keyVal).Args).Entries.Single(entry => JsSemantics.StringValue(entry.Key) == key).Value;
@@ -104,6 +104,18 @@ public sealed class HackingMgrServiceTests
 
         await service.CallAsync(Call("ClickedOnTile", session, Tile(9, 0)));
 
+        Assert.Equal(new[] { HackingWire.EventAck }, EventIds(Assert.Single(Events.Of(session))));
+    }
+
+    [Fact]
+    public async Task With_no_attempt_open_a_quit_sends_nothing_and_a_tile_click_sends_the_ack()
+    {
+        var (service, _, _, session) = Rig();
+
+        Assert.IsType<PyNone>(await service.CallAsync(Call("QuitHackingAttempt", session)));
+        Assert.Empty(Events.Of(session));
+
+        await service.CallAsync(Call("ClickedOnTile", session, Tile(0, 0)));
         Assert.Equal(new[] { HackingWire.EventAck }, EventIds(Assert.Single(Events.Of(session))));
     }
 

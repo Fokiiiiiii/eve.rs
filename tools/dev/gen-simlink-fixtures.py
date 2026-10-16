@@ -21,20 +21,19 @@ KINDS = {"Hello": 1, "HelloAck": 2, "Enter": 3, "Leave": 4, "Bind": 5, "UpdateSt
          "EcmBurst": 67, "PlaceDisruptor": 68, "SetDisruptorActive": 69, "PlaceInhibitor": 70, "ScanTargets": 71, "DirectionalTargets": 72,
          "PlaceCynoBeacon": 73, "PlaceStructure": 74, "RemoveStructure": 75, "SetStructureState": 76, "StructureDamaged": 77,
          "PlaceAnalysisBeacon": 78, "SetAnalysisBeaconState": 79, "TetherPolicy": 80, "TetherChanged": 81,
-         "PlaceObservatory": 90, "RemoteDecloakPing": 91, "PlaceControlTower": 92, "PlaceWormhole": 82, "RemoveWormhole": 83, "ControlStructure": 84, "StructureDamageCandidatesRequest": 85, "StructureDamageCandidatesResult": 86, "RemoveCynoBeacon": 87, "DamageableEntityUpserted": 88, "DamageableEntityRemoved": 89,
-         "EnsureAbyssalScene": 93, "EnsureAbyssalSceneReply": 94, "MoveAbyssalParticipant": 95, "MoveAbyssalParticipantReply": 96,
-         "RebindAbyssalSession": 97, "RebindAbyssalSessionReply": 98,
-         "RemoveAbyssalScene": 99, "RemoveAbyssalSceneReply": 100,
-         "EnsureAbyssalTracePublished": 101, "EnsureAbyssalTracePublishedReply": 102,
-         "RemoveAbyssalTrace": 103, "RemoveAbyssalTraceReply": 104,
-         "RemoveAbyssalParticipant": 105, "RemoveAbyssalParticipantReply": 106,
-         "GetAbyssalParticipantPose": 107, "GetAbyssalParticipantPoseReply": 108,
-         "EnsureAbyssalSceneObject": 109, "EnsureAbyssalSceneObjectReply": 110,
-         "EnsureAbyssalRewardCache": 111, "EnsureAbyssalRewardCacheReply": 112,
-         "EnsureAbyssalLootContainer": 113, "EnsureAbyssalLootContainerReply": 114,
-         "EnsureAbyssalEnvironmentObject": 115, "EnsureAbyssalEnvironmentObjectReply": 116,
-         "AbyssalFieldMembership": 117, "RefreshAbyssalNpc": 118, "RefreshAbyssalNpcReply": 119}
-
+         "PlaceObservatory": 90, "RemoteDecloakPing": 91, "PlaceControlTower": 92, "PlaceDeadspacePocket": 93, "PlaceWormhole": 82, "RemoveWormhole": 83, "ControlStructure": 84, "StructureDamageCandidatesRequest": 85, "StructureDamageCandidatesResult": 86, "RemoveCynoBeacon": 87, "DamageableEntityUpserted": 88, "DamageableEntityRemoved": 89,
+         "EnsureAbyssalScene": 94, "EnsureAbyssalSceneReply": 95, "MoveAbyssalParticipant": 96, "MoveAbyssalParticipantReply": 97,
+         "RebindAbyssalSession": 98, "RebindAbyssalSessionReply": 99,
+         "RemoveAbyssalScene": 100, "RemoveAbyssalSceneReply": 101,
+         "EnsureAbyssalTracePublished": 102, "EnsureAbyssalTracePublishedReply": 103,
+         "RemoveAbyssalTrace": 104, "RemoveAbyssalTraceReply": 105,
+         "RemoveAbyssalParticipant": 106, "RemoveAbyssalParticipantReply": 107,
+         "GetAbyssalParticipantPose": 108, "GetAbyssalParticipantPoseReply": 109,
+         "EnsureAbyssalSceneObject": 110, "EnsureAbyssalSceneObjectReply": 111,
+         "EnsureAbyssalRewardCache": 112, "EnsureAbyssalRewardCacheReply": 113,
+         "EnsureAbyssalLootContainer": 114, "EnsureAbyssalLootContainerReply": 115,
+         "EnsureAbyssalEnvironmentObject": 116, "EnsureAbyssalEnvironmentObjectReply": 117,
+         "AbyssalFieldMembership": 118, "RefreshAbyssalNpc": 119, "RefreshAbyssalNpcReply": 120}
 def s(text):  # u16 length + UTF-8
     data = text.encode("utf-8")
     return struct.pack("<H", len(data)) + data
@@ -645,7 +644,7 @@ def build(m):
         return frame(k, i64(m["structureId"]) + bytes([m["depleted"]]) + bytes([1 if m["overThreshold"] else 0]))
     if k == "SetStructureState":
         return frame(k, struct.pack("<i", m["solarSystemId"]) + i64(m["structureId"]) + structure_status(m["status"]))
-    if k in ("PlaceDisruptor", "PlaceInhibitor", "PlaceCynoBeacon", "PlaceObservatory", "PlaceControlTower"):  # a beacon, an observatory and a tower have no range: they go as 0
+    if k in ("PlaceDisruptor", "PlaceInhibitor", "PlaceCynoBeacon", "PlaceObservatory", "PlaceControlTower", "PlaceDeadspacePocket"):  # a beacon, an observatory, a tower and a pocket have no range: they go as 0
         return frame(k, i64(m["deployableId"]) + struct.pack("<i", m["solarSystemId"]) + s(m["typeName"]) + struct.pack("<ii", m["typeId"], m["groupId"])
                      + struct.pack("<3d", *m["position"]) + struct.pack("<dd", m["radius"], m["range"]) + bytes([1 if m["active"] else 0])
                      + i64(m["ownerId"]) + struct.pack("<ii", m["corporationId"], m["allianceId"]) + i64(m["shipId"]))
@@ -744,8 +743,8 @@ BARE = dict(IBIS, name="", modules=[], allianceId=99000001, securityStatus=-2.5,
             condition={"damage": 0.0, "armorDamage": 0.0, "shieldCharge": 1.0, "charge": 1.0})
 
 valid = [
-    {"name": "hello", "kind": "Hello", "version": 74},
-    {"name": "hello ack", "kind": "HelloAck", "version": 74, "pollHz": 4},
+    {"name": "hello", "kind": "Hello", "version": 75},
+    {"name": "hello ack", "kind": "HelloAck", "version": 75, "pollHz": 4},
     {"name": "ensure private Abyssal room scene", "kind": "EnsureAbyssalScene", "requestId": "41",
      "spec": {"scene": {"locationId": 30000142, "instanceId": "9000000000001", "roomIndex": 1},
               "environment": {"globalModifiers": [{"attributeId": 37, "operation": 1, "value": 1.25}],
@@ -1419,6 +1418,10 @@ valid = [
      "position": [311989835983.1308, -13069154020.916222, 156646308895.76187], "radius": 3394.0, "range": 0.0, "active": False,
      "ownerId": "1790646377000015", "corporationId": 98000001, "allianceId": 0, "shipId": "9988400001943"},
     {"name": "control tower anchored", "kind": "SetDisruptorActive", "deployableId": "4250000000000013", "active": True},
+    {"name": "deadspace pocket of a mission placed (no client ball)", "kind": "PlaceDeadspacePocket", "deployableId": "4250000000000014",
+     "solarSystemId": 30100032, "typeName": "Deadspace Pocket", "typeId": 0, "groupId": 0,
+     "position": [311989835983.1308, -13069154020.916222, 156646308895.76187], "radius": 1000000000.0, "range": 0.0, "active": True,
+     "ownerId": "0", "corporationId": 0, "allianceId": 0, "shipId": "0"},
     {"name": "how far a can is", "kind": "Measured", "sessionId": "1790646377000015", "command": 20, "distance": 261.0},
     {"name": "how far a can that is not there is", "kind": "Measured", "sessionId": "1790646377000015", "command": 20, "distance": None},
     {"name": "destroy for nobody", "kind": "Destroy", "shipId": "4200000000000001", "characterId": "0",

@@ -33,3 +33,15 @@ After the usage reset (PostgreSQL in crash recovery): re-check `psql ... -Atc "s
 
 - The live tests are run by tools/dev/run-eve-live.sh (EVE_RUN for one file) under db-lock.sh with EVE_PG_URL=Host=...Database=eve_p2.
 - The release build for the live front and sim: private target, started in background (log in the worktree, not committed).
+
+## Final state (pushed to origin main, last commit 9b7612b5)
+
+- CH-3 GetSkillBundleInfo: done (empty name and icon pair; no source; DEVIATIONS S6).
+- CH-15: structure install (Medical or Jump Clone + docking; fee to the owner corporation) and ship offer/accept/cancel are implemented and tested (Host, unit, live refusal). Open: a live offer accepted between two pilots (needs a fitted Clone Vat Bay in space).
+- CH-13: placement notifications 112-114 done and Host-tested; no live placement notification test yet.
+- CH-14: OnStandingSet to the killer after a faction kill standing loss is sent; not yet tested (no Host or live kill).
+- CH-18: NOT done: kill and payout notifications, fleet sharing, pod kills.
+- Live kill helper in tools/headless-client: NOT built. Existing walks (test_npc.py, test_reload.py) fire real weapons and can be the base.
+
+Tests run on eve_p2 (port 26101 for live): CharacterHostTests 11 passed; PlayerBountyHostTests 4 passed; Services.Core 745 passed; Characters StoreTests 28 passed; live test_clone_install_live.py 2 passed; live test_skill_bundle_info_live.py 1 passed.
+

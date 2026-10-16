@@ -49,6 +49,7 @@ internal sealed partial class CharacterServicesComposition
         return [
             new SkillMgr2Service(),
             skillHandler,
+            expertSystemMgr,
             new AlphaInjectorMgrService(skills, skillCatalog),
             new CharMgrService(
                 characters,

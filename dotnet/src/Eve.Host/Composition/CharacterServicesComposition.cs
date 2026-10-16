@@ -145,6 +145,10 @@ internal sealed partial class CharacterServicesComposition
     private Eve.Inventory.Mutation.ItemMutationService itemMutations = default!;
     private OmegaLicenses omega = default!;
     private CharacterTraining training = default!;
+    private ExpertSystems expertSystems = default!;
+    private Eve.Services.Skills.ExpertSystemMgrService expertSystemMgr = default!;
+    private PilotLearningBonus learningBonus = default!;
+    private PilotImplants pilotImplants = default!;
     private CharacterShips ships = default!;
     private int stranded;
     private CharacterDogmaSync dogmaSync = default!;

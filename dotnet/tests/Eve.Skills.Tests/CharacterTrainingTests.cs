@@ -28,6 +28,8 @@ internal sealed class TrainingRig : IAsyncDisposable
             HasOmega = settings.HasOmega,
             AdditionalTrainingSlots = settings.AdditionalTrainingSlots,
             Attribute = schema.Store.LearningAttribute,
+            LearningBonus = settings.LearningBonus,
+            RefreshLearningBonus = settings.RefreshLearningBonus,
         }, () => ClockMs);
         Training.Settled += update =>
         {

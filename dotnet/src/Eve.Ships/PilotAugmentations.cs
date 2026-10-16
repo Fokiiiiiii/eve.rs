@@ -34,6 +34,9 @@ public static class PilotAugmentations
         return null;
     }
 
+    /// <summary>The implant slot (1 to 10) of an implant type, or 0 for a type that is not an implant.</summary>
+    public static int SlotOf(TypeDef? type) => IsImplantType(type) ? (int)type!.Attributes[ImplantSlotAttributeId] : 0;
+
     public static bool IsImplantType(TypeDef? type) =>
         type is { CategoryId: ImplantCategoryId } &&
         type.Attributes.TryGetValue(ImplantSlotAttributeId, out var slot) &&

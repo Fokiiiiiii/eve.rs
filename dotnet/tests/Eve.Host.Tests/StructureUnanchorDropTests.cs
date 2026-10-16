@@ -47,6 +47,40 @@ public sealed class StructureUnanchorDropTests
     }
 
     [PgFact]
+    public async Task Destruction_wraps_each_owner_first_and_loots_only_what_the_wrap_leaves()
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        var assets = await fixture.SeedAsync();
+        var asked = new List<(long Owner, bool Corporation)>();
+        // a wrap that takes the corporation's items at the structure into one marker item
+        async Task<Eve.Services.Core.AssetSafetyActionState> Wrap(NpgsqlConnection c, NpgsqlTransaction t, long structureId, long system, long owner, bool corporation, CancellationToken ct)
+        {
+            asked.Add((owner, corporation));
+            var marker = await fixture.Items.CreateAsync(c, t, new NewItem(StructureUnanchorDrop.FittingsContainerTypeId, owner, 0, 0, Quantity: 1, Singleton: true, CustomName: "wrap"), ct);
+            foreach (var item in await fixture.Items.InContainerAsync(c, t, structureId, ct))
+            {
+                if (item.OwnerId == owner)
+                    await fixture.Items.MoveAsync(c, t, item.Id, marker, item.Flag, ct);
+            }
+            return Eve.Services.Core.AssetSafetyActionState.CorporationWrapCreated;
+        }
+
+        var drop = await fixture.CompleteDestructionAsync(Wrap);
+
+        Assert.Equal([(CorporationId, true)], asked);
+        Assert.NotNull(drop);
+        var wrapped = (await fixture.Items.GetAsync(assets.FittedModule))!.LocationId;
+        Assert.NotEqual(StructureId, wrapped);
+        Assert.NotEqual(drop!.FittingsContainerItemId, wrapped);
+        Assert.Equal(wrapped, (await fixture.Items.GetAsync(assets.Fuel))!.LocationId);
+        Assert.Null(await fixture.Items.GetAsync(assets.Rig));
+        // the wrap took the fitted items and fuel; the loot container holds only the Quantum Core that the installed core makes
+        var coreTypeId = (int)fixture.Statics.Type(Astrahus)!.Attributes[3101];
+        var inLoot = await fixture.Items.InContainerAsync(drop.FittingsContainerItemId);
+        Assert.Equal([coreTypeId], inLoot.Select(item => item.TypeId).ToArray());
+    }
+
+    [PgFact]
     public async Task Destruction_loot_is_atomic_with_the_destruction_transaction()
     {
         await using var fixture = await Fixture.CreateAsync();
@@ -57,7 +91,7 @@ public sealed class StructureUnanchorDropTests
             await using var connection = await fixture.Source.OpenConnectionAsync();
             await using var transaction = await connection.BeginTransactionAsync();
             var record = await fixture.Structures.GetAsync(connection, transaction, StructureId, true);
-            var drop = await new StructureDestructionLootAuthority(fixture.Items, fixture.SpaceItems, fixture.Statics)
+            var drop = await new StructureDestructionLootAuthority(fixture.Items, fixture.SpaceItems, fixture.Statics, Fixture.RefusedWrap)
                 .CompleteAsync(connection, transaction, record!);
             Assert.NotNull(drop);
             throw new InvalidOperationException("simulate a later failure before the destruction commits");
@@ -206,12 +240,18 @@ public sealed class StructureUnanchorDropTests
             return drop;
         }
 
-        public async Task<StructureUnanchorDrop?> CompleteDestructionAsync()
+        /// <summary>An asset safety wrap that refuses every owner: the destruction loots their items.</summary>
+        public static readonly Func<NpgsqlConnection, NpgsqlTransaction, long, long, long, bool, CancellationToken, Task<Eve.Services.Core.AssetSafetyActionState>> RefusedWrap =
+            (_, _, _, _, _, _, _) => Task.FromResult(Eve.Services.Core.AssetSafetyActionState.AssetSafetyUnavailable);
+
+        public async Task<StructureUnanchorDrop?> CompleteDestructionAsync(
+            Func<NpgsqlConnection, NpgsqlTransaction, long, long, long, bool, CancellationToken, Task<Eve.Services.Core.AssetSafetyActionState>>? wrap = null)
         {
             await using var connection = await Source.OpenConnectionAsync();
             await using var transaction = await connection.BeginTransactionAsync();
             var record = await Structures.GetAsync(connection, transaction, StructureId, true);
-            var drop = await new StructureDestructionLootAuthority(Items, SpaceItems, Statics).CompleteAsync(connection, transaction, record!);
+            var drop = await new StructureDestructionLootAuthority(Items, SpaceItems, Statics, wrap ?? RefusedWrap)
+                .CompleteAsync(connection, transaction, record!);
             await transaction.CommitAsync();
             return drop;
         }

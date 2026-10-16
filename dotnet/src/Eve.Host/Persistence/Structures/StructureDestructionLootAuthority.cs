@@ -7,17 +7,24 @@ using Npgsql;
 namespace Eve.Host.Persistence.Structures;
 
 /// <summary>
-/// The destruction loot of a structure (ST-16; EVE.js handleStructureDestroyedLoot). In the destruction transaction: the rigs are destroyed; the fitted modules, fuel
-/// and cargo (every item at the structure outside the corporation hangars, which the office and asset safety paths own) and the Quantum Core move into one
-/// Abandoned Container at the structure's position. An installed core with no matching item is created in the container. Nothing to drop returns null.
+/// The destruction of a structure's contents (ST-16; EVE.js handleStructureDestroyed and handleStructureDestroyedLoot). In the destruction transaction: the rigs are
+/// destroyed; each owner's items at the structure are offered to its asset safety wrap first (EVE.js, per owner); whatever is still at the structure, the items of an owner
+/// the wrap did not take (a FLEX hull, a wormhole or Pochven system, a refused wrap), and the Quantum Core move into one Abandoned Container at the structure's position.
+/// Nothing to drop returns null. A refused wrap loots the owner's items (EVE.js would leave them at the destroyed structure: DEVIATIONS, ST-16).
 /// </summary>
 public sealed class StructureDestructionLootAuthority(
     PgItemStore items,
     PgSpaceItemStore spaceItems,
-    DogmaStatic statics)
+    DogmaStatic statics,
+    Func<NpgsqlConnection, NpgsqlTransaction, long, long, long, bool, CancellationToken, Task<Eve.Services.Core.AssetSafetyActionState>> wrapOwner)
 {
     private const int QuantumCoreTypeAttributeId = 3101;
     private const int StructureDeedFlag = 180;
+    private const long NeverExpires = long.MaxValue;
+
+    // EVE.js getOwnerKindForAssetSafety: the character ids are 140000000 to 199999999, everything else is a corporation
+    private const long CharacterOwnerMin = 140_000_000;
+    private const long CharacterOwnerMaxExclusive = 200_000_000;
 
     public async Task<StructureUnanchorDrop?> CompleteAsync(
         NpgsqlConnection connection,
@@ -33,32 +40,7 @@ public sealed class StructureDestructionLootAuthority(
             throw new InvalidOperationException($"Structure {structureId} has invalid destruction loot data.");
         }
 
-        var rigs = new List<Item>();
-        var loot = new List<Item>();
-        foreach (var candidate in (await items.InContainerAsync(connection, transaction, structureId, cancellationToken)).OrderBy(item => item.Id))
-        {
-            var item = await items.LockAndGetAsync(connection, transaction, candidate.Id, cancellationToken);
-            if (item is null || item.LocationId != structureId)
-            {
-                continue;
-            }
-            if (IsRigFlag(item.Flag))
-            {
-                rigs.Add(item);
-            }
-            else if (!ItemFlags.IsCorporationHangar(item.Flag))
-            {
-                loot.Add(item);
-            }
-        }
-
-        foreach (var rig in rigs)
-        {
-            await items.DeleteAsync(connection, transaction, rig.Id, cancellationToken);
-        }
-
         long coreTypeId = 0;
-        var createCore = false;
         if (structure.Snapshot.CoreInstalled)
         {
             var hullType = statics.Type(structure.TypeId)
@@ -70,9 +52,27 @@ public sealed class StructureDestructionLootAuthority(
                     $"SDE type {structure.TypeId} has no valid Quantum Core type attribute ({QuantumCoreTypeAttributeId}).");
             }
             coreTypeId = (long)value;
-            createCore = !loot.Any(item => item.Flag == StructureDeedFlag && item.TypeId == coreTypeId && item.Singleton && item.Quantity == 1);
         }
 
+        // the rigs are destroyed before any wrap, so no owner's wrap takes them
+        foreach (var rig in await LockedAtStructureAsync(connection, transaction, structureId, IsRigFlag, cancellationToken))
+        {
+            await items.DeleteAsync(connection, transaction, rig.Id, cancellationToken);
+        }
+
+        var contents = await items.InContainerAsync(connection, transaction, structureId, cancellationToken);
+        var hadCore = coreTypeId > 0 && contents.Any(item =>
+            item.Flag == StructureDeedFlag && item.TypeId == coreTypeId && item.Singleton && item.Quantity == 1);
+
+        foreach (var owner in contents.Select(item => item.OwnerId).Where(owner => owner > 0).Distinct().OrderBy(owner => owner))
+        {
+            var corporation = owner < CharacterOwnerMin || owner >= CharacterOwnerMaxExclusive;
+            // the wrap's state does not decide the loot: whatever it left at the structure is looted below
+            await wrapOwner(connection, transaction, structureId, structure.SolarSystemId, owner, corporation, cancellationToken);
+        }
+
+        var loot = await LockedAtStructureAsync(connection, transaction, structureId, _ => true, cancellationToken);
+        var createCore = coreTypeId > 0 && !hadCore;
         if (loot.Count == 0 && !createCore)
         {
             return null;
@@ -104,6 +104,22 @@ public sealed class StructureDestructionLootAuthority(
                 cancellationToken);
         }
         return new StructureUnanchorDrop(0, containerId);
+    }
+
+    /// <summary>The items still at the structure that match, each locked and checked to be there.</summary>
+    private async Task<List<Item>> LockedAtStructureAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long structureId,
+        Func<int, bool> match, CancellationToken cancellationToken)
+    {
+        var found = new List<Item>();
+        foreach (var candidate in (await items.InContainerAsync(connection, transaction, structureId, cancellationToken)).OrderBy(item => item.Id))
+        {
+            var item = await items.LockAndGetAsync(connection, transaction, candidate.Id, cancellationToken);
+            if (item is not null && item.LocationId == structureId && match(item.Flag))
+            {
+                found.Add(item);
+            }
+        }
+        return found;
     }
 
     private static bool IsRigFlag(int flag) => flag is >= 92 and <= 99;

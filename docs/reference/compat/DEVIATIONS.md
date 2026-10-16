@@ -4205,3 +4205,14 @@ Sources: EveJS `services/skills/trading/skillTradingAuthority.js` and `skillTrad
 - **Bounty placement notifications (S6, CH-13).** EveJS `services/bounty/bountyNotifications.js`: BountyPlacedChar 112 to the target (not to the placer), BountyPlacedCorp 113 to each member of the corporation, BountyPlacedAlliance 114 to each member of each alliance corporation; sender is the placer, group BOUNTIES (10), data `bountyPlacerID` and `bounty`. eve.rs sends them after the placement commits, keyed per placement and recipient so a retry sends once (EveJS sends them inside the placement call with no key).
 - **NPC kill standing notification (S6, CH-14).** EveJS `standingRuntime.notifyStandingSet` sends `OnStandingSet(faction, pilot, standing)` to the pilot's session after the standing is written; the client's `standingsvc.py` 48-55 turns it into `OnNPCStandingChange` when the pilot holds a war faction. eve.rs sends the same to the killer after `NpcFactionStanding.ApplyAsync` writes the new standing. Untested by a Host or live test so far.
 
+## Character phase S7 (clone jump, lapses)
+
+- **Clone jump implants (CH-16).** The body that jumps keeps all its implants in a clone at the origin (wiki, Jump clone: implants stay with the old body). EveJS `followsJumpClones` has no SDE attribute in this data, so no implant is exempt. Test: `CharacterHostTests.Clone_jump_moves_the_body...`.
+- **Clone jump boosters (CH-16, not done).** The wiki says normal boosters end on a jump; eve.rs does not end them yet (the jump only moves the body and its implants). Cerebral accelerators stay active (DEVIATIONS S4).
+- **Clone jump destinations (CH-16).** Only station clones are jumped to: structure and ship clones are not installed in this data path (CH-15 open).
+- **Cooldown.** 24 h less the Infomorph Synchronizing level (skill 33399), checked when the destination is not the current place (EveJS `jumpCloneRuntime.js` 1809-1850).
+- **Activation fee.** 900,000 ISK, wallet reference 128, no counterparty (the same shortcut as the install, which the S6 settlement records).
+- **Death respawn (CH-16).** Unchanged: the home station. A jump does not change the home station (EveJS sets `cloneStationID` only on a home station change). Not checked with a live kill.
+- **Expert system lapse notice (S4).** A lapse writes the persistent notice (type 253, misc group, sender 0) whether or not the pilot is online (EveJS `notifyExpertSystemExpired`). The mailbox now accepts sender 0 for system notices.
+- **Booster lapse (S4).** A durable job per activated booster (`skills.boosterLapse`) ends the booster at its expiry (EveJS `boosterRuntime.js` times it only for online pilots; the durable job also covers offline pilots).
+

@@ -23,6 +23,26 @@ public sealed record StructureCloneBay(long StructureId, long OwnerCorporationId
 /// <summary>The active ship of a pilot and its clone bay: the hull's clone capacity and operational range, and whether a Clone Vat Bay is fitted.</summary>
 public sealed record ShipCloneBay(long ShipId, bool CanReceiveCloneJumps, bool HasCloneVatBay, int Capacity, double MaxOperationalDistance);
 
+/// <summary>
+/// The outcome of a clone jump's state change. A refusal names the reason (<c>MUST_LEAVE_SHIP</c>, <c>CLONE_NOT_FOUND</c>,
+/// <c>INSUFFICIENT_FUNDS</c>); otherwise the station the character is in now, with its solar system, constellation and region.
+/// </summary>
+public sealed record CloneJumpResult(string? Refusal, long StationId = 0, int SolarSystemId = 0, int ConstellationId = 0, int RegionId = 0);
+
+/// <summary>The clone jump rules that are not state: the cooldown (wiki: Jump clones; EveJS <c>jumpCloneRules.js</c>).</summary>
+public static class CloneJumpRules
+{
+    /// <summary>The Infomorph Synchronizing skill: each level takes an hour off the cooldown.</summary>
+    public const int SynchronizingSkillId = 33399;
+
+    /// <summary>A jump starts a cooldown of 24 hours, less the Infomorph Synchronizing level.</summary>
+    public static int CooldownHours(int synchronizingLevel) => Math.Max(0, 24 - synchronizingLevel);
+
+    /// <summary>True while the cooldown from the last jump (a FILETIME, 0 when none) runs at <paramref name="nowFileTime"/>.</summary>
+    public static bool CooldownActive(long lastJumpFileTime, int cooldownHours, long nowFileTime) =>
+        lastJumpFileTime > 0 && cooldownHours > 0 && lastJumpFileTime + cooldownHours * TimeSpan.TicksPerHour > nowFileTime;
+}
+
 /// <summary>The rows and the skill levels the jump clone service reads and writes (the host supplies them from PostgreSQL).</summary>
 public interface IJumpCloneStore
 {
@@ -40,6 +60,12 @@ public interface IJumpCloneStore
 
     /// <summary>The character's ISK balance (for the not-enough-money answer).</summary>
     ValueTask<decimal> IskBalanceAsync(long characterId, CancellationToken cancellationToken);
+    /// <summary>
+    /// The clone jump, in one transaction: the target clone becomes the body, the body that left keeps its implants in a clone at
+    /// the origin (replacing the clone there), the character is in the target's station, the cooldown starts at
+    /// <paramref name="nowFileTime"/> and the fee is debited. Nothing changes on a refusal.
+    /// </summary>
+    ValueTask<CloneJumpResult> JumpAsync(long characterId, long targetCloneId, long originLocationId, decimal fee, long nowFileTime, CancellationToken cancellationToken);
 }
 
 /// <summary>The space side of the clone installs, supplied by the Host: the pilot's active ship, the distance of two ships, the online sessions and the structures' clone bays.</summary>
@@ -339,6 +365,56 @@ public sealed partial class JumpCloneService(IJumpCloneStore? store = null, Jump
         var payload = OfferPayload(offer.OfferingCharacterId, offer.TargetCharacterId, offer.ShipId);
         call.Session.SendNotification("OnShipJumpCloneInstallationCanceled", "clientID", payload);
         spaceLink?.Space?.SessionOf(offer.TargetCharacterId)?.SendNotification("OnShipJumpCloneInstallationCanceled", "clientID", payload);
+        return PyNone.Instance;
+    }
+
+    /// <summary>The activation fee of a clone jump (EveJS <c>REF_JUMP_CLONE_ACTIVATION_FEE</c>, the same 900,000 ISK).</summary>
+    private const decimal JumpCloneActivationFee = 900000m;
+
+    /// <summary>
+    /// <c>CloneJump(destLocationID, cloneID, cost, confirmed)</c>: the character leaves for the place of an installed clone (EveJS
+    /// <c>performCloneJump</c>, <c>buildCloneJumpState</c>). The cooldown is checked when the clone is not where the character is, a
+    /// clone at the current place is replaced unless the client confirmed it, and the activation fee is charged once.
+    /// </summary>
+    [Method("CloneJump")]
+    public async ValueTask<PyValue> CloneJump(ServiceCall call)
+    {
+        var current = DockedLocation(call.Session);
+        if (call.Session.CharacterId is not { } characterId || characterId <= 0 || current == 0)
+            throw MachoErrors.ThrowUserError("NotAtStation");
+        var destination = Number(call.Arg(0)) ?? 0;
+        var cloneId = Number(call.Arg(1)) ?? 0;
+        var confirmed = call.Arg(3) is PyBool { Value: true };
+        var snapshot = await Snapshot(call);
+        var target = snapshot.Clones.FirstOrDefault(clone => clone.JumpCloneId == cloneId && (destination == 0 || clone.LocationId == destination))
+            ?? throw MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("Jump clone not found")));
+        var now = Py.FileTimeFromUnixMs(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+        if (target.LocationId != current)
+        {
+            var level = await Store().SkillLevelAsync(characterId, CloneJumpRules.SynchronizingSkillId, call.Cancellation);
+            if (CloneJumpRules.CooldownActive(snapshot.TimeLastJumpFileTime, CloneJumpRules.CooldownHours(level), now))
+                throw MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("UI/CharacterSheet/CharacterSheetWindow/JumpCloneScroll/JumpCooldownError")));
+        }
+        if (!confirmed && snapshot.Clones.Any(clone => clone.LocationId == current && clone.JumpCloneId != target.JumpCloneId))
+            throw MachoErrors.ThrowUserError("JumpCheckWillLoseExistingClone", ("locationID", new PyLong(current)));
+
+        var result = await Store().JumpAsync(characterId, target.JumpCloneId, current, JumpCloneActivationFee, now, call.Cancellation);
+        switch (result.Refusal)
+        {
+            case null:
+                break;
+            case "MUST_LEAVE_SHIP":
+                throw MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("You must leave your ship before jumping clones")));
+            case "INSUFFICIENT_FUNDS":
+                var balance = await Store().IskBalanceAsync(characterId, call.Cancellation);
+                throw MachoErrors.ThrowUserError("NotEnoughMoney", ("amount", new PyReal((double)JumpCloneActivationFee)), ("balance", new PyReal((double)balance)));
+            default:
+                throw MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("Jump clone not found")));
+        }
+        CharacterSessionRelocation.Docked(call.Session, result.StationId, result.SolarSystemId, result.ConstellationId, result.RegionId, call.Session.GetInt("shipid"));
+        Invalidate(call.Session, current, characterId);
+        if (target.LocationId != current)
+            Invalidate(call.Session, target.LocationId, characterId);
         return PyNone.Instance;
     }
 

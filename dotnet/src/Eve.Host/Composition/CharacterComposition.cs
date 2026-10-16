@@ -128,7 +128,18 @@ internal sealed partial class CharacterServicesComposition
             walletTransactions: economyWallets,
             isAlphaClone: accountId => !omega.Resolve(new PyInt(accountId)).HasLicense,
             expertSystems: expertSystems);
-        expertSystemMgr = new Eve.Services.Skills.ExpertSystemMgrService(expertSystems, skills, skillCatalog, items, source, characterSessions, dogmaSync, dogma);
+        expertSystemMgr = new Eve.Services.Skills.ExpertSystemMgrService(expertSystems, skills, skillCatalog, items, source, characterSessions, dogmaSync, dogma,
+            // the persistent notice of a lapse (type 253, the misc group), written whether or not the pilot is online
+            async (characterId, typeId, token) =>
+            {
+                if (notificationMailbox is { } mailbox)
+                    await mailbox.WriteNotificationsAsync(0, 253, 4, [characterId], $"expert-expired:{typeId}:{now()}",
+                        new System.Text.Json.Nodes.JsonObject { ["typeID"] = typeId }, token);
+            });
+        // a skill booster ends at its expiry: a durable job per activation (SkillBoosterLapse)
+        var boosterLapse = new Eve.Services.Skills.SkillBoosterLapse(foundations.Scheduler, skills, items, source, training, announcer, characters, characterSessions, now);
+        skillHandler.BoosterLapse = boosterLapse;
+        boosterLapse.Register();
         // installed expert systems lapse on their own: the expiry runs as a recurring job of the durable scheduler
         foundations.Scheduler.Register("skills.expert-systems.expire", async (_, token) => await expertSystemMgr.ExpireDueAsync(token));
         await foundations.Scheduler.EnsureRecurringAsync("skills.expert-systems.expire", "expire", TimeSpan.FromSeconds(10));
@@ -236,7 +247,8 @@ internal sealed partial class CharacterServicesComposition
                         Cancellation = cancellationToken,
                     });
                 }),
-            JumpClones: new HostJumpCloneStore(new Eve.Characters.PgJumpCloneStore(source, characterSchema), source, skills, economyWallets, wallets),
+            JumpClones: new HostJumpCloneStore(new Eve.Characters.PgJumpCloneStore(source, characterSchema), source, skills, economyWallets, wallets,
+                characters, items, dogma, stations),
             ReadProjectDiscoveryState: ReadProjectDiscoveryStateAsync,
             JumpCloneSpace: jumpCloneSpace);
 

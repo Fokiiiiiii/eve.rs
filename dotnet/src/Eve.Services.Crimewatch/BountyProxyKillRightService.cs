@@ -72,12 +72,15 @@ public sealed class BountyProxyKillRightService(
 
     private async ValueTask<PyValue> GetBountiesAndKillRightsAsync(ServiceCall call)
     {
-        if (bountyRpcHandler is not null &&
-            await bountyRpcHandler(call).ConfigureAwait(false) is { } wired)
+        var bountyCall = new ServiceCall
         {
-            return wired;
-        }
-        var bountyRows = BountyRows(call.Arg(0), call.Session);
+            Method = "GetBounties",
+            Args = [call.Arg(0)],
+            Session = call.Session,
+            CallId = call.CallId,
+            Cancellation = call.Cancellation,
+        };
+        var bountyRows = await BountyResponseAsync(bountyCall, BountyRows(call.Arg(0), call.Session)).ConfigureAwait(false);
         var killRights = await ReadAvailableKillRightsAsync(call, call.Arg(1)).ConfigureAwait(false);
         return Py.Tuple(bountyRows, killRights);
     }

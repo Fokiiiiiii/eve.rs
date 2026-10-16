@@ -37,7 +37,31 @@ namespace Eve.Host;
 
 internal sealed partial class CharacterServicesComposition
 {
-    /// <summary>Crimewatch: the service, kill rights and the bounty proxy kill right.</summary>
+    /// <summary>The player bounties: the pools in the crimewatch schema, the placement debit in the economy.</summary>
+    private Eve.Services.Crimewatch.PlayerBountyRpc? playerBounties;
+    private Eve.Services.Crimewatch.PlayerBountyRpc PlayerBounties => playerBounties ??= new Eve.Services.Crimewatch.PlayerBountyRpc(
+        new Eve.Crimewatch.PlayerBountyStore(source, crimewatchSchema), source, economyWallets, wallets, ResolveBountyOwnerAsync, now);
+
+    /// <summary>What a bounty target is (EveJS <c>inferOwnerKind</c>): a known pilot, corporation or alliance, else the id range of its kind.</summary>
+    private async ValueTask<Eve.Services.Crimewatch.PlayerBountyOwner> ResolveBountyOwnerAsync(long targetId, CancellationToken cancellationToken)
+    {
+        if (await characters.GetAsync(targetId, cancellationToken) is { } character)
+            return new(Eve.Crimewatch.BountyOwnerKind.Character, character.CorporationId, character.AllianceId ?? 0);
+        if (await corporations.GetAsync(targetId, cancellationToken) is { } corporation)
+            return new(Eve.Crimewatch.BountyOwnerKind.Corporation, targetId, corporation.AllianceId ?? 0);
+        if (await corporations.AllianceAsync(targetId, cancellationToken) is not null)
+            return new(Eve.Crimewatch.BountyOwnerKind.Alliance, 0, targetId);
+        var kind = targetId switch
+        {
+            (>= 90_000_000 and <= 97_999_999) or (>= 2_100_000_000 and <= 2_129_999_999) => Eve.Crimewatch.BountyOwnerKind.Character,
+            >= 98_000_000 and <= 98_999_999 => Eve.Crimewatch.BountyOwnerKind.Corporation,
+            >= 99_000_000 and <= 99_999_999 => Eve.Crimewatch.BountyOwnerKind.Alliance,
+            _ => Eve.Crimewatch.BountyOwnerKind.Unknown,
+        };
+        return new(kind, kind == Eve.Crimewatch.BountyOwnerKind.Corporation ? targetId : 0, kind == Eve.Crimewatch.BountyOwnerKind.Alliance ? targetId : 0);
+    }
+
+    /// <summary>Crimewatch: the service, kill rights and the bounty proxy (kill rights and the player bounties).</summary>
     private IReadOnlyList<IService> CrimewatchRpc() =>
     [
             // security status is the character's relation of that kind (Eve.Relations); crimewatch only asks for it
@@ -57,6 +81,7 @@ internal sealed partial class CharacterServicesComposition
             new Eve.Services.Crimewatch.BountyProxyKillRightService(
                 store: crimewatchStore,
                 notificationWriter: mailSendWriter.WriteKillRightNotificationAsync,
-                nowUnixMs: now),
+                nowUnixMs: now,
+                bountyRpcHandler: PlayerBounties.HandleAsync),
     ];
 }

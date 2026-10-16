@@ -142,7 +142,8 @@ public sealed partial class SpaceSessions
                     death.Ship.TypeId,
                     cause,
                     abandoned.SolarSystemId,
-                    cause == ShipLossCause.Player ? killer!.CharacterId : 0);
+                    cause == ShipLossCause.Player ? killer!.CharacterId : 0,
+                    [.. death.Changes.Select(change => new ShipLossItem(change.Item.TypeId, change.Item.Quantity))]);
                 Raise(ShipLost, loss, nameof(ShipLost));
                 Announce(
                     "ship.lost",
@@ -447,7 +448,8 @@ public sealed partial class SpaceSessions
             : killer is not null ? ShipLossCause.Player
             : destroyed.KillerShipId != 0 && _npcShips.ContainsKey(destroyed.KillerShipId) ? ShipLossCause.Npc
             : ShipLossCause.Unknown;
-        var loss = new ShipLoss(pilot.CharacterId, death.Ship.Id, death.Ship.TypeId, cause, pilot.SolarSystemId, cause == ShipLossCause.Player ? killer!.CharacterId : 0);
+        var loss = new ShipLoss(pilot.CharacterId, death.Ship.Id, death.Ship.TypeId, cause, pilot.SolarSystemId, cause == ShipLossCause.Player ? killer!.CharacterId : 0,
+            [.. death.Changes.Select(change => new ShipLossItem(change.Item.TypeId, change.Item.Quantity))]);
         Raise(ShipLost, loss, nameof(ShipLost));
         Announce("ship.lost", new { characterId = loss.CharacterId, shipId = loss.ShipId, shipTypeId = loss.ShipTypeId, cause = loss.Cause.ToString(), solarSystemId = loss.SolarSystemId, killerCharacterId = loss.KillerCharacterId }, $"char:{loss.CharacterId}");
     }

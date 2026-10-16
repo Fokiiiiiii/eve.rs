@@ -102,12 +102,16 @@ public sealed class StructureMoonAuthority
     private async Task<StructureRecord> GateAsync(ServiceCall call, NpgsqlConnection connection, NpgsqlTransaction transaction, long structureId)
     {
         var record = structureId > 0 ? await _structures.GetAsync(connection, transaction, structureId, true, call.Cancellation) : null;
-        if (record is null || record.Snapshot.DestroyedMs > 0 || call.Session.GetInt("structureid") != structureId ||
-            call.Session.GetInt("shipid") != structureId || call.Session.CharacterId is not { } characterId ||
-            call.Session.SessionId <= 0)
+        if (record is null || record.Snapshot.DestroyedMs > 0)
             throw StructureDefenseDenied();
         if (_rules.IsPochven(record.SolarSystemId))
             throw Refusal("Moon mining is not available in Pochven.");
+        // EVE.js isControllingStructureSession: the session is docked in this structure and its ship is the structure (else a named notice)
+        if (call.Session.GetInt("structureid") != structureId || call.Session.GetInt("shipid") != structureId)
+            throw Refusal("You must be controlling this structure.");
+        if (call.Session.CharacterId is not { } characterId || call.Session.SessionId <= 0)
+            throw StructureDefenseDenied();
+        // the persistent pilot record (ST-5) must agree with the session: a forged or released session changes nothing
         var pilot = await _pilots.GetBySessionAsync(connection, transaction, call.Session.SessionId, call.Cancellation, forUpdate: true);
         if (pilot is null || pilot.CharacterId != characterId || pilot.StructureId != structureId ||
             !await _hasMoonAccess(characterId, structureId, call.Cancellation))

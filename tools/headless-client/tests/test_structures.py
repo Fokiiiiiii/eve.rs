@@ -287,13 +287,15 @@ def test_a_moon_extraction_for_a_duration_that_is_not_positive_is_refused_by_nam
         assert label == "MoonminingEventTooShort"
 
 
-def test_a_moon_extraction_started_from_space_is_refused_as_a_structure_defense_denial():
-    """moonExtractions.StartNewExtraction by a pilot who is not docked in the structure: `StructureDefenseDenied` (EVE.js
-    moonExtractionsService.js validateMoonExtractionMutationAccess)."""
+def test_a_moon_extraction_started_from_space_is_refused_as_not_controlling():
+    """moonExtractions.StartNewExtraction by a pilot who is not docked in the structure: the named notice "You must be controlling this
+    structure." (EVE.js moonExtractionsService.js validateMoonExtractionMutationAccess, NOT_CONTROLLING_STRUCTURE; ST-22 corrected the
+    refusal the test used to expect, which EVE.js does not send)."""
     with base.connect(f"walk-moon-{run_token()}") as client:
         _undocked_pilot(client)
-        label, _ = _refused(lambda: client.call("moonExtractions", "StartNewExtraction", STRUCTURE, 518460, False))
-        assert label == "StructureDefenseDenied"
+        label, payload = _refused(lambda: client.call("moonExtractions", "StartNewExtraction", STRUCTURE, 518460, False))
+        assert label == "CustomNotify"
+        assert "You must be controlling this structure." in payload
 
 
 def _docked_pilot(client, structure: int = STRUCTURE) -> tuple[int, int]:

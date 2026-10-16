@@ -29,7 +29,8 @@ public sealed record GameRpcCallbacks(
     ReadMiningScanResultsCallback? ReadMiningScanResultsAsync = null,
     AbyssalSpawnReportCallback? AbyssalSpawnReportAsync = null,
     ReadPeaceTreatiesCallback? ReadPeaceTreaties = null,
-    PublicQaToolsRpcCallbacks? PublicQaTools = null);
+    PublicQaToolsRpcCallbacks? PublicQaTools = null,
+    IJumpCloneStore? JumpClones = null);
 
 [Service("raffleMgr")]
 public sealed partial class RaffleMgrService(Func<int?, CancellationToken, ValueTask<int?>>? seedRafflesAsync = null)
@@ -83,14 +84,6 @@ public sealed partial class ContractProxyService
         Eve.Services.Py.KeyVal(
             ("iskEscrow", Eve.Services.Py.Number(0d)),
             ("itemsEscrow", new PyInt(0)));
-}
-
-[Service("jumpCloneSvc")]
-public sealed partial class JumpCloneService
-{
-    [Method("MachoResolveObject")]
-    public PyValue MachoResolveObject(ServiceCall _) =>
-        new PyInt(Eve.Macho.MachoMessage.ProxyNodeId);
 }
 
 [Service("serviceGatewayMgr")]

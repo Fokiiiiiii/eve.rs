@@ -36,7 +36,11 @@ public sealed class RedeemUserSvcCompatibilityTests
         await Assert.ThrowsAsync<NotSupportedException>(() => Call(service, session, "ActivateMultiTraining"));
         Assert.Empty(Assert.IsType<PyDict>(await Call(service, session, "GetMultiCharactersTrainingSlots")).Entries);
 
-        Assert.Same(PyBool.False, await Call(service, session, "ReportBot", new PyInt(90000004)));
+        // GATE-C: the votes and reports answer true and keep nothing (EveJS userService.js 1104-1127)
+        Assert.Same(PyBool.True, await Call(service, session, "CastUpvote"));
+        Assert.Same(PyBool.True, await Call(service, session, "CastDownvote", new PyStr("feedback")));
+        Assert.Same(PyBool.True, await Call(service, session, "ReportBot", new PyInt(90000004)));
+        Assert.Same(PyBool.True, await Call(service, session, "ReportISKSpammer", new PyInt(90000004)));
         Assert.Same(PyBool.False, await Call(service, session, "CreateRedeemTokenQA"));
     }
 

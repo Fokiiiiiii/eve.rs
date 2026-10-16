@@ -207,7 +207,8 @@ internal sealed partial class CharacterServicesComposition
                         CallId = request.CallId,
                         Cancellation = cancellationToken,
                     });
-                }));
+                }),
+            JumpClones: new HostJumpCloneStore(new Eve.Characters.PgJumpCloneStore(source, characterSchema), source, skills));
 
         stationGuestLedger = new Eve.Services.Station.StationGuestLedger();
         characterEntryHooks = new List<ICharacterEntryHook>();

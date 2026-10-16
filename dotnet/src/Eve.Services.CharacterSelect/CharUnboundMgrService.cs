@@ -29,7 +29,9 @@ public sealed partial class CharUnboundMgrService(
     Func<long, CancellationToken, Task>? sendWelcomeMailAsync = null,
     Func<long, int>? unreadMailCount = null,
     Func<long, CancellationToken, Task<double>>? securityStatusOf = null,
-    SystemPopulation? population = null)
+    SystemPopulation? population = null,
+    ICharacterDeletionPurge? deletionPurge = null,
+    Func<DateTimeOffset>? clock = null)
 {
     /// <summary>What every session's role gets on top of the account's (the client shows staff roles and the base bits alike).</summary>
     public const long SessionBaseRole = 0x6000000080000000;
@@ -290,7 +292,7 @@ public sealed partial class CharUnboundMgrService(
         var character = await characters.GetAsync(characterId, Token(call));
         if (character is null)
             return None;
-        if (character.AccountId != account)
+        if (character.AccountId != account || character.IsDeleted)
             throw Info("That character is not available on this account.");
         if (character.IsQueuedForDeletion)
             throw Info("That character is queued for deletion and cannot enter the game.");
@@ -453,6 +455,67 @@ public sealed partial class CharUnboundMgrService(
             throw Info("That character no longer exists.");
         }
         return None;
+    }
+
+    /// <summary>The biomass queue's waiting time before a queued character can be deleted (EveJS <c>characterDeletionDelayMinutes</c>, 600).</summary>
+    private static readonly TimeSpan BiomassDelay = TimeSpan.FromMinutes(600);
+    /// <summary>The graveyard corporation a deleted character is moved into (EveJS <c>DOOMHEIM_CORPORATION_ID</c>).</summary>
+    private const long DoomheimCorporationId = 1000001;
+
+    private DateTimeOffset Now() => (clock ?? (() => DateTimeOffset.UtcNow))();
+
+    /// <summary>
+    /// <c>PrepareCharacterForDelete(charID)</c>: queues an offline character of the account for deletion. A character already in
+    /// the queue keeps its time (the reference returns it). The answer is the FILETIME the deletion becomes possible.
+    /// </summary>
+    [Method("PrepareCharacterForDelete")]
+    public async ValueTask<PyValue> PrepareCharacterForDelete(ServiceCall call)
+    {
+        var (character, account) = await OwnedOfflineCharacter(call);
+        if (character.DeletePrepareAt is { } queued)
+            return new PyLong(FileTime(queued));
+        var readyAt = Now() + BiomassDelay;
+        if (!await characters.SetDeletePrepareAsync(character.Id, account, readyAt, Token(call)))
+            throw Info("Failed to queue that character for deletion.");
+        return new PyLong(FileTime(readyAt));
+    }
+
+    /// <summary>
+    /// <c>DeleteCharacter(charID)</c>: deletes a queued character once its waiting time has passed. The character is then hidden
+    /// from its account. Its assets and private state are not moved or purged yet (CH-1 gap, see the handoff).
+    /// </summary>
+    [Method("DeleteCharacter")]
+    public async ValueTask<PyValue> DeleteCharacter(ServiceCall call)
+    {
+        var (character, account) = await OwnedOfflineCharacter(call);
+        if (character.DeletePrepareAt is not { } readyAt)
+            throw Info("That character is not in the biomass queue.");
+        var now = Now();
+        if (readyAt > now)
+            throw Info("That character is still waiting for the biomass timer to expire.");
+        var originalCorporation = character.CorporationId;
+        if (!await characters.MarkDeletedAsync(character.Id, account, now, Token(call)))
+            throw Info("Failed to finalize that character deletion.");
+        // the graveyard corporation (EveJS DOOMHEIM_CORPORATION_ID), then the assets and the private state
+        await characters.SetCorporationAsync(character.Id, DoomheimCorporationId, Token(call));
+        if (deletionPurge is not null)
+            await deletionPurge.PurgeAsync(character.Id, originalCorporation, Token(call));
+        return None;
+    }
+
+    private async ValueTask<(Character Character, int Account)> OwnedOfflineCharacter(ServiceCall call)
+    {
+        var characterId = RequestCharacterId(call);
+        var character = await characters.GetAsync(characterId, Token(call));
+        if (character is null)
+            throw Info("That character no longer exists.");
+        if (AccountOf(call) is not { } account)
+            throw Info("Character deletion requires a valid authenticated account.");
+        if (character.AccountId != account || character.IsDeleted)
+            throw Info("That character is not available on this account.");
+        if (online.IsOnline(characterId))
+            throw Info("That character is currently online and cannot be deleted.");
+        return (character, account);
     }
 
     private static MachoWrappedException Info(string text) => MachoErrors.ThrowUserError("CustomInfo", ("info", new PyStr(text)));

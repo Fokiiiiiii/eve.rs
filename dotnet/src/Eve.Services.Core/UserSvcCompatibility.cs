@@ -87,25 +87,25 @@ public sealed partial class RedeemService
     public async ValueTask<PyValue> ActivateCharacterReSculpt(ServiceCall call) =>
         await OverrideUserCallAsync(call, PyBool.False);
 
-    /// <summary>The vote is not recorded: there is no feedback store yet. The client does not read the answer.</summary>
+    /// <summary>GATE-C (owner decision): answers true and keeps nothing, as the reference does (EveJS <c>userService.js</c> 1104). The client does not read the answer.</summary>
     [Method("CastUpvote")]
     public async ValueTask<PyValue> CastUpvote(ServiceCall call) =>
-        await OverrideUserCallAsync(call, PyBool.False);
+        await OverrideUserCallAsync(call, PyBool.True);
 
-    /// <summary>The vote is not recorded: there is no feedback store yet. The client does not read the answer.</summary>
+    /// <summary>GATE-C (owner decision): answers true and keeps nothing, as the reference does (EveJS <c>userService.js</c> 1109). The client does not read the answer.</summary>
     [Method("CastDownvote")]
     public async ValueTask<PyValue> CastDownvote(ServiceCall call) =>
-        await OverrideUserCallAsync(call, PyBool.False);
+        await OverrideUserCallAsync(call, PyBool.True);
 
-    /// <summary>The report is not stored: there is no report review store yet. The client does not read the answer.</summary>
+    /// <summary>GATE-C (owner decision): answers true and keeps nothing, as the reference does (EveJS <c>userService.js</c> 1115). The client does not read the answer.</summary>
     [Method("ReportBot")]
     public async ValueTask<PyValue> ReportBot(ServiceCall call) =>
-        await OverrideUserCallAsync(call, PyBool.False);
+        await OverrideUserCallAsync(call, PyBool.True);
 
-    /// <summary>The report is not stored: there is no report review store yet. The client does not read the answer.</summary>
+    /// <summary>GATE-C (owner decision): answers true and keeps nothing, as the reference does (EveJS <c>userService.js</c> 1122). The client does not read the answer.</summary>
     [Method("ReportISKSpammer")]
     public async ValueTask<PyValue> ReportISKSpammer(ServiceCall call) =>
-        await OverrideUserCallAsync(call, PyBool.False);
+        await OverrideUserCallAsync(call, PyBool.True);
 
     /// <summary>
     /// The character logs off in the host (<c>CharacterLogoff</c>). Without that callback no session can be logged off, so the

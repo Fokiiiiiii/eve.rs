@@ -215,6 +215,7 @@ public sealed class CharacterHostTests
         var character = await rig.CreateCharacterAsync();
         var sink = new RecordingPacketSink();
         var session = new ClientSession { CharacterId = character, UserId = 1, Sink = sink };
+        rig.Sessions.Enter(character, session);
         var userSvc = Assert.IsAssignableFrom<IService>(rig.Registry.Lookup("userSvc"));
         var items = new PgItemStore(rig.Source, rig.InventorySchema);
 
@@ -240,13 +241,134 @@ public sealed class CharacterHostTests
         var endsAt = DateTime.FromFileTimeUtc(((PyLong)slot.Items[1]).Value);
         Assert.InRange(endsAt, DateTime.UtcNow.AddDays(29), DateTime.UtcNow.AddDays(31));
         Assert.DoesNotContain(await items.OwnedByAsync(character), item => item.Id == certificate);
-        // the notification goes to the sessions registered with the host; this test's session is not one, so it is not checked here (gap)
+        // the account's registered session is told once, after the commit
+        Assert.Equal(["OnMultipleCharactersTrainingUpdated"], Notifications(sink).Select(n => n.Name));
 
         // a restart keeps the queue
         await rig.RestartAsync();
         var restarted = Assert.IsAssignableFrom<IService>(rig.Registry.Lookup("userSvc"));
         var after = Assert.IsType<PyList>(await CallAsync(restarted, "GetUpdatedMultiCharacterTraining", session));
         Assert.Equal(slot.Items[1], Assert.IsType<PyTuple>(Assert.Single(after.Items)).Items[1]);
+    }
+
+    [PgFact]
+    public async Task Deleting_a_character_of_an_npc_corporation_destroys_its_assets_instead_of_moving_them()
+    {
+        await using var rig = await CharacterHostRig.CreateAsync();
+        Assert.Equal(1, await rig.CreateAccountAsync());
+        var character = await rig.CreateCharacterAsync();
+        var session = new ClientSession { CharacterId = character, UserId = 1, Sink = new RecordingPacketSink() };
+        var service = Assert.IsAssignableFrom<IService>(rig.Registry.Lookup("charUnboundMgr"));
+        const long npcCorporation = 1000002;
+        await using (var connection = await rig.Source.OpenConnectionAsync())
+        await using (var command = new NpgsqlCommand($"UPDATE {rig.CharactersSchema}.characters SET corporation_id = $2 WHERE id = $1", connection))
+        {
+            command.Parameters.Add(new NpgsqlParameter { Value = character });
+            command.Parameters.Add(new NpgsqlParameter { Value = npcCorporation });
+            await command.ExecuteNonQueryAsync();
+        }
+        var items = new PgItemStore(rig.Source, rig.InventorySchema);
+        long shipId;
+        long cargoId;
+        await using (var connection = await rig.Source.OpenConnectionAsync())
+        await using (var transaction = await connection.BeginTransactionAsync())
+        {
+            shipId = await items.CreateAsync(connection, transaction, new NewItem(TypeId: 587, OwnerId: character, LocationId: rig.Station, Flag: 4));
+            cargoId = await items.CreateAsync(connection, transaction, new NewItem(TypeId: 34, OwnerId: character, LocationId: shipId, Flag: 4, Quantity: 500));
+            await transaction.CommitAsync();
+        }
+
+        await CallAsync(service, "PrepareCharacterForDelete", session, new PyLong(character));
+        await using (var connection = await rig.Source.OpenConnectionAsync())
+        await using (var command = new NpgsqlCommand(
+            $"UPDATE {rig.CharactersSchema}.characters SET delete_prepare_at = now() - interval '1 minute' WHERE id = $1", connection))
+        {
+            command.Parameters.Add(new NpgsqlParameter { Value = character });
+            await command.ExecuteNonQueryAsync();
+        }
+        Assert.IsType<PyNone>(await CallAsync(service, "DeleteCharacter", session, new PyLong(character)));
+
+        // the NPC corporation's assets are destroyed with the character (EveJS destroyCharacterAssets), not delivered to a corporation
+        Assert.Null(await items.GetAsync(shipId));
+        Assert.Null(await items.GetAsync(cargoId));
+        Assert.Empty(await items.OwnedByAsync(character));
+        var npcItems = await items.OwnedByAsync(npcCorporation);
+        Assert.DoesNotContain(npcItems, item => item.Id == shipId || item.Id == cargoId);
+        Assert.Equal(1000001L, (await rig.Characters.GetAsync(character))!.CorporationId);
+    }
+
+    [PgFact]
+    public async Task A_granted_training_slot_schedules_its_expiry_and_the_scheduler_runs_it_through_the_host()
+    {
+        await using var rig = await CharacterHostRig.CreateAsync();
+        Assert.Equal(1, await rig.CreateAccountAsync());
+        var character = await rig.CreateCharacterAsync();
+        var sink = new RecordingPacketSink();
+        var session = new ClientSession { CharacterId = character, UserId = 1, Sink = sink };
+        rig.Sessions.Enter(character, session);
+        var userSvc = Assert.IsAssignableFrom<IService>(rig.Registry.Lookup("userSvc"));
+        var items = new PgItemStore(rig.Source, rig.InventorySchema);
+        long certificate;
+        await using (var connection = await rig.Source.OpenConnectionAsync())
+        await using (var transaction = await connection.BeginTransactionAsync())
+        {
+            certificate = await items.CreateAsync(connection, transaction, new NewItem(TypeId: 34133, OwnerId: character, LocationId: rig.Station, Flag: 4));
+            await transaction.CommitAsync();
+        }
+        var kind = Eve.Services.Skills.MultipleTrainingSlotExpiry.JobKind;
+        Assert.Contains(kind, rig.Scheduler.Kinds);
+
+        var slot = Assert.IsType<PyTuple>(Assert.Single(Assert.IsType<PyList>(await CallAsync(userSvc, "ActivateMultiTraining", session, new PyLong(certificate))).Items));
+        var endsAt = new DateTimeOffset(DateTime.FromFileTimeUtc(((PyLong)slot.Items[1]).Value), TimeSpan.Zero);
+        var job = Assert.Single(await rig.Scheduler.ListAsync(kind));
+        Assert.InRange(job.RunAtMs, endsAt.ToUnixTimeMilliseconds() - 1, endsAt.ToUnixTimeMilliseconds() + 1);
+
+        // a restart keeps the job; the scheduler then dispatches it to the registered handler of the restarted host
+        await rig.RestartAsync();
+        rig.Sessions.Enter(character, session);
+        Assert.Single(await rig.Scheduler.ListAsync(kind));
+        var before = Notifications(sink).Count(n => n.Name == "OnMultipleCharactersTrainingUpdated");
+        // the job is due at the slot's end, days away: the test moves it to now (same key, replaces it). The host's scheduler loop runs
+        // it (Foundations starts it), so the test waits, bounded, for the job to be gone; it ran once, so the account hears once.
+        await rig.Scheduler.ScheduleAsync(new Eve.Scheduler.JobSpec(kind, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds())
+            { Key = job.Key, Payload = new Eve.Services.Skills.MultipleTrainingSlotExpiry.AccountJob(1) });
+        var deadline = DateTime.UtcNow.AddSeconds(20);
+        while (await rig.Scheduler.FindAsync(kind, job.Key!) is not null && DateTime.UtcNow < deadline)
+            await Task.Delay(50);
+        Assert.Null(await rig.Scheduler.FindAsync(kind, job.Key!)); // a finished job is removed by the scheduler
+        Assert.Equal(before + 1, Notifications(sink).Count(n => n.Name == "OnMultipleCharactersTrainingUpdated"));
+    }
+
+    [PgFact]
+    public async Task A_stack_of_multiple_character_training_certificates_gives_up_one_certificate_per_activation()
+    {
+        await using var rig = await CharacterHostRig.CreateAsync();
+        Assert.Equal(1, await rig.CreateAccountAsync());
+        var character = await rig.CreateCharacterAsync();
+        var sink = new RecordingPacketSink();
+        var session = new ClientSession { CharacterId = character, UserId = 1, Sink = sink };
+        rig.Sessions.Enter(character, session);
+        var userSvc = Assert.IsAssignableFrom<IService>(rig.Registry.Lookup("userSvc"));
+        var items = new PgItemStore(rig.Source, rig.InventorySchema);
+
+        long stack;
+        await using (var connection = await rig.Source.OpenConnectionAsync())
+        await using (var transaction = await connection.BeginTransactionAsync())
+        {
+            stack = await items.CreateAsync(connection, transaction, new NewItem(TypeId: 34133, OwnerId: character, LocationId: rig.Station, Flag: 4, Quantity: 2));
+            await transaction.CommitAsync();
+        }
+
+        Assert.Single(Assert.IsType<PyList>(await CallAsync(userSvc, "ActivateMultiTraining", session, new PyLong(stack))).Items);
+        Assert.Equal(1, (await items.GetAsync(stack))!.Quantity);
+        Assert.Equal(["OnMultipleCharactersTrainingUpdated"], Notifications(sink).Select(n => n.Name));
+
+        Assert.Equal(2, Assert.IsType<PyList>(await CallAsync(userSvc, "ActivateMultiTraining", session, new PyLong(stack))).Items.Count);
+        Assert.Null(await items.GetAsync(stack));
+        Assert.Equal(2, Notifications(sink).Count);
+
+        var refused = await Assert.ThrowsAsync<MachoWrappedException>(() => CallAsync(userSvc, "ActivateMultiTraining", session, new PyLong(stack)));
+        Assert.Equal("That item does not exist.", InfoText(refused));
     }
 
     [PgFact]
@@ -375,6 +497,8 @@ public sealed class CharacterHostTests
 
         public NpgsqlDataSource Source { get; }
         public ServiceRegistry Registry => _runtime.Registry;
+        public CharacterSessions Sessions => Assert.IsType<CharacterSessions>(_runtime.CharacterSessions);
+        public Eve.Scheduler.DurableScheduler Scheduler => _runtime.Scheduler ?? throw new InvalidOperationException("the scheduler is not composed");
         public PgCharacterStore Characters => new(Source, CharactersSchema);
         public long Station { get; }
         public string CharactersSchema => _schemas["EVE_CHARACTERS_SCHEMA"];

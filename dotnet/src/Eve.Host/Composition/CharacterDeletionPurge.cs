@@ -13,7 +13,7 @@ namespace Eve.Host;
 /// </summary>
 internal sealed class HostCharacterDeletionPurge(
     NpgsqlDataSource source, PgItemStore items, PgSkillStore skills, string fittingSchema,
-    Func<long, CancellationToken, Task<bool>> isNpcCorporation) : ICharacterDeletionPurge
+    Func<long, CancellationToken, Task<bool>> isNpcCorporation, CharacterPrivateStatePurge privateState) : ICharacterDeletionPurge
 {
     /// <summary>The corporation deliveries hangar (EveJS <c>CORPORATION_DELIVERIES_FLAG_ID</c>).</summary>
     private const int CorporationDeliveriesFlag = 62;
@@ -52,7 +52,9 @@ internal sealed class HostCharacterDeletionPurge(
             Parameters = { new() { Value = (short)FittingOwnerScope.Character }, new() { Value = characterId } },
         };
         await fittings.ExecuteNonQueryAsync(cancellationToken);
+        await privateState.PurgePostgresAsync(connection, transaction, characterId, cancellationToken);
         await transaction.CommitAsync(cancellationToken);
+        await privateState.PurgeGameStoreAsync(characterId, cancellationToken);
     }
 
     /// <summary>The root and every item inside it, parents before their contents.</summary>

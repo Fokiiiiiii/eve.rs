@@ -293,7 +293,11 @@ public sealed class PgSkillStore
     /// </summary>
     public async Task ClearCharacterAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long characterId, CancellationToken cancellationToken = default)
     {
-        foreach (var table in new[] { "character_skills", "skill_queue", "skill_history", "recent_skill_point_changes", "active_skill_boosters" })
+        foreach (var table in new[]
+                 {
+                     "character_skills", "skill_queue", "skill_history", "recent_skill_point_changes", "active_skill_boosters",
+                     "training_state", "character_free_skill_points", "daily_alpha_skill_injector_uses", "skill_isis_fetch_budget", "character_neural_remaps",
+                 })
         {
             await using var command = new NpgsqlCommand($"DELETE FROM {_schema}.{table} WHERE character_id = $1", connection, transaction)
             {

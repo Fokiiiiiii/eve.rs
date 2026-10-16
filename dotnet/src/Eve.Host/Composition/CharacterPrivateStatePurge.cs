@@ -1,0 +1,70 @@
+using Eve.GameStore;
+using Npgsql;
+
+namespace Eve.Host;
+
+/// <summary>
+/// The private state a deleted character leaves behind, removed as EveJS <c>purgePrivateCharacterState</c> does. The PostgreSQL rows
+/// go in the deletion's transaction. The game-store paths go through the cache: a row removed underneath the cache would be written
+/// back by its next flush. Only rows that belong to the character are removed; corporation-owned data stays.
+/// </summary>
+internal sealed class CharacterPrivateStatePurge(GameStoreCache cache, string agentsSchema, string bookmarksSchema, string spaceSchema)
+{
+    private const string CalendarSchema = Eve.Calendar.CalendarStore.DefaultSchema;
+
+    /// <summary>The character's rows: agents' missions, journal, storyline counters, research projects and locate requests; its scanned probes.</summary>
+    private string[] PostgresStatements() =>
+    [
+        $"DELETE FROM {agentsSchema}.missions WHERE character_id = $1",
+        $"DELETE FROM {agentsSchema}.journal WHERE character_id = $1",
+        $"DELETE FROM {agentsSchema}.storyline_counters WHERE character_id = $1",
+        $"DELETE FROM {agentsSchema}.research_projects WHERE character_id = $1",
+        $"DELETE FROM {agentsSchema}.locate_requests WHERE character_id = $1",
+        $"DELETE FROM {spaceSchema}.scan_probes WHERE character_id = $1",
+        // the bookmark folders the character owns (their bookmarks and subfolders cascade); the calendar events it owns (their responses cascade)
+        $"DELETE FROM {bookmarksSchema}.folders WHERE owner_id = $1",
+        $"DELETE FROM {CalendarSchema}.events WHERE owner_id = $1",
+        $"DELETE FROM {CalendarSchema}.responses WHERE character_id = $1",
+    ];
+
+    /// <summary>The game-store paths of the character (EveJS <c>removeTablePathIfPresent</c>), in the reference's order.</summary>
+    private static (string Table, string Path)[] GameStorePaths(long id) =>
+    [
+        ("mail", $"/mailboxes/{id}"),
+        ("notifications", $"/boxes/{id}"),
+        ("lpWallets", $"/characterWallets/{id}"),
+        ("characterNotes", $"/characters/{id}"),
+        ("characters", $"/{id}/characterSettings"),
+        ("characterExpertSystems", $"/{id}"),
+        ("missionRuntimeState", $"/charactersByID/{id}"),
+        ("researchRuntimeState", $"/charactersByID/{id}"),
+        ("probeRuntimeState", $"/charactersByID/{id}"),
+    ];
+
+    public async Task PurgePostgresAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long characterId, CancellationToken cancellationToken)
+    {
+        foreach (var statement in PostgresStatements())
+        {
+            await using var command = new NpgsqlCommand(statement, connection, transaction)
+            {
+                Parameters = { new() { Value = characterId } },
+            };
+            await command.ExecuteNonQueryAsync(cancellationToken);
+        }
+    }
+
+    public async Task PurgeGameStoreAsync(long characterId, CancellationToken cancellationToken)
+    {
+        var tables = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var (table, path) in GameStorePaths(characterId))
+        {
+            await cache.LoadAsync(table, cancellationToken);
+            var removed = cache.Remove(table, path);
+            if (!removed.Success && removed.ErrorMsg != "ENTRY_NOT_FOUND")
+                throw new InvalidOperationException($"Could not purge {table}{path}: {removed.ErrorMsg}");
+            tables.Add(table);
+        }
+        foreach (var table in tables)
+            await cache.FlushTableAsync(table, cancellationToken);
+    }
+}

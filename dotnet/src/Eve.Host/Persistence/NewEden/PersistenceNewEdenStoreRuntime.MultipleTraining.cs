@@ -21,6 +21,18 @@ public sealed partial class PersistenceNewEdenStoreRuntime
     /// </summary>
     private static readonly int[] TrainingCertificateTypeIds = [34133, 63188];
 
+    /// <summary>Schedules the expiry of each slot granted (in the caller's transaction); see <see cref="Eve.Services.Skills.MultipleTrainingSlotExpiry"/>.</summary>
+    public Func<Npgsql.NpgsqlConnection, Npgsql.NpgsqlTransaction, long, DateTimeOffset, CancellationToken, Task>? ScheduleSlotExpiry { get; set; }
+
+    private async Task<(int Slot, DateTimeOffset EndsAt)> GrantTrainingSlotAsync(
+        Npgsql.NpgsqlConnection connection, Npgsql.NpgsqlTransaction transaction, long accountId, int? requested, TimeSpan duration, DateTimeOffset now, CancellationToken cancellationToken)
+    {
+        var granted = await accountDirectory.ExtendTrainingSlotAsync(connection, transaction, checked((uint)accountId), requested, duration, now, cancellationToken);
+        if (ScheduleSlotExpiry is { } schedule)
+            await schedule(connection, transaction, accountId, granted.EndsAt, cancellationToken);
+        return granted;
+    }
+
     public async ValueTask<IReadOnlyList<(int Slot, long EndsAt)>> GetActiveSlotsAsync(long authenticatedUserId, CancellationToken cancellationToken)
     {
         RequireAccount(authenticatedUserId);
@@ -81,7 +93,7 @@ public sealed partial class PersistenceNewEdenStoreRuntime
             await using (var transaction = await connection.BeginTransactionAsync(cancellationToken))
             {
                 for (var unit = 0L; unit < units; unit++)
-                    await accountDirectory.ExtendTrainingSlotAsync(
+                    await GrantTrainingSlotAsync(
                         connection, transaction, accountId, trainingId, TimeSpan.FromDays(MultipleTrainingRules.CertificateDays), now, cancellationToken);
                 foreach (var key in consumedKeys)
                     accountTokens.Remove(key);
@@ -114,9 +126,6 @@ public sealed partial class PersistenceNewEdenStoreRuntime
             throw new InvalidOperationException("That item is not held by a character of this account.");
         if (Array.IndexOf(TrainingCertificateTypeIds, item.TypeId) < 0)
             throw new InvalidOperationException("That item is not a Multiple Character Training certificate.");
-        // shortcut: a stack is not split; one activation uses a single certificate, so a stack of several is refused until stacks are split.
-        if (item.Quantity != 1)
-            throw new InvalidOperationException("Only a single Multiple Character Training certificate can be activated at a time.");
 
         await _gate.WaitAsync(cancellationToken);
         try
@@ -130,10 +139,14 @@ public sealed partial class PersistenceNewEdenStoreRuntime
             await using var connection = await source.OpenConnectionAsync(cancellationToken);
             await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
             var current = await items.LockAndGetAsync(connection, transaction, itemId, cancellationToken);
-            if (current is null || current.OwnerId != owner.Id || current.TypeId != item.TypeId)
+            if (current is null || current.OwnerId != owner.Id || current.TypeId != item.TypeId || current.Quantity < 1)
                 throw new InvalidOperationException("That item is no longer there.");
-            await items.DeleteAsync(connection, transaction, itemId, cancellationToken);
-            await accountDirectory.ExtendTrainingSlotAsync(
+            // One certificate is used from the stack; the rest of the stack stays in place.
+            if (current.Quantity > 1)
+                await items.SetQuantityAsync(connection, transaction, itemId, current.Quantity - 1, cancellationToken);
+            else
+                await items.DeleteAsync(connection, transaction, itemId, cancellationToken);
+            await GrantTrainingSlotAsync(
                 connection, transaction, accountId, trainingId, TimeSpan.FromDays(MultipleTrainingRules.CertificateDays), now, cancellationToken);
             await transaction.CommitAsync(cancellationToken);
         }

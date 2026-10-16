@@ -101,4 +101,49 @@ public sealed partial class PersistenceNewEdenStoreRuntime
             SkillNotifications.MultipleCharactersTrainingUpdated(session);
         return await GetActiveSlotsAsync(authenticatedUserId, cancellationToken);
     }
+
+    public async ValueTask<IReadOnlyList<(int Slot, long EndsAt)>> ActivateItemAsync(
+        long authenticatedUserId, long itemId, int? trainingId, CancellationToken cancellationToken)
+    {
+        RequireAccount(authenticatedUserId);
+        var accountId = checked((uint)authenticatedUserId);
+        var item = await items.GetAsync(itemId, cancellationToken)
+            ?? throw new InvalidOperationException("That item does not exist.");
+        var owner = await characters.GetAsync(item.OwnerId, cancellationToken);
+        if (owner is null || owner.AccountId != checked((int)authenticatedUserId))
+            throw new InvalidOperationException("That item is not held by a character of this account.");
+        if (Array.IndexOf(TrainingCertificateTypeIds, item.TypeId) < 0)
+            throw new InvalidOperationException("That item is not a Multiple Character Training certificate.");
+        // shortcut: a stack is not split; one activation uses a single certificate, so a stack of several is refused until stacks are split.
+        if (item.Quantity != 1)
+            throw new InvalidOperationException("Only a single Multiple Character Training certificate can be activated at a time.");
+
+        await _gate.WaitAsync(cancellationToken);
+        try
+        {
+            var now = DateTimeOffset.FromUnixTimeMilliseconds(nowUnixMs());
+            var endsAt = await accountDirectory.SubscriptionEndsAtAsync(accountId, cancellationToken)
+                ?? throw new InvalidOperationException($"Account {accountId} does not exist.");
+            if (endsAt <= now)
+                throw new InvalidOperationException("Multiple Character Training can only be activated on an Omega clone.");
+
+            await using var connection = await source.OpenConnectionAsync(cancellationToken);
+            await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+            var current = await items.LockAndGetAsync(connection, transaction, itemId, cancellationToken);
+            if (current is null || current.OwnerId != owner.Id || current.TypeId != item.TypeId)
+                throw new InvalidOperationException("That item is no longer there.");
+            await items.DeleteAsync(connection, transaction, itemId, cancellationToken);
+            await accountDirectory.ExtendTrainingSlotAsync(
+                connection, transaction, accountId, trainingId, TimeSpan.FromDays(MultipleTrainingRules.CertificateDays), now, cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
+        }
+        finally
+        {
+            _gate.Release();
+        }
+
+        foreach (var session in sessions.OfUser(authenticatedUserId))
+            SkillNotifications.MultipleCharactersTrainingUpdated(session);
+        return await GetActiveSlotsAsync(authenticatedUserId, cancellationToken);
+    }
 }

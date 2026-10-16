@@ -424,6 +424,67 @@ public sealed class CharacterHostTests
         await rig.RestartAsync();
         var restarted = Assert.IsAssignableFrom<IService>(rig.Registry.Lookup("jumpCloneSvc"));
         Assert.Single(Rows(Field(await BoundAsync(restarted, session, "GetCloneState"), "clones")));
+        // the settlement is kept with the clone: the fee, the place, and no owner (a station has none)
+        Assert.Equal(new[] { ("station", 900000m, 0L, 0L) }, (await SettlementsAsync(rig, character)).ToArray());
+    }
+
+    [PgFact]
+    public async Task Installing_a_clone_at_a_structure_pays_its_owner_corporation_and_needs_its_clone_service()
+    {
+        await using var rig = await CharacterHostRig.CreateAsync();
+        Assert.Equal(1, await rig.CreateAccountAsync());
+        var character = await rig.CreateCharacterAsync();
+        var session = new ClientSession { CharacterId = character, UserId = 1, Sink = new RecordingPacketSink() };
+        const long structure = 1_000_000_000_071;
+        session.Set("structureid", new PyLong(structure));
+        await rig.SetSkillLevelAsync(character, 24242, 1);
+        await rig.SetSkillLevelAsync(character, 33407, 1);
+        await rig.FundAsync(character, 1_000_000m);
+        var clones = Assert.IsAssignableFrom<IService>(rig.Registry.Lookup("jumpCloneSvc"));
+
+        // a structure that is not there (no clone service) refuses the install with the validation label, and installs nothing
+        var refused = await Assert.ThrowsAsync<MachoWrappedException>(() => CallAsync(clones, "InstallCloneInStructure", session));
+        Assert.Equal("UI/Medical/Errors/UnknownValidationError", NotifyText(refused));
+        Assert.Empty(Rows(Field(await BoundAsync(clones, session, "GetCloneState"), "clones")));
+
+        // its Medical service online: the install goes ahead, the fee moves to the owner corporation's wallet, and the clone survives a restart
+        await rig.AddStructureAsync(structure, Eve.Structures.StructureServiceIds.Medical);
+        Assert.Empty(Assert.IsType<PyList>(await BoundAsync(clones, session, "ValidateInstallJumpClone")).Items);
+        Assert.IsType<PyNone>(await CallAsync(clones, "InstallCloneInStructure", session));
+        Assert.Equal(new[] { structure }, Rows(await BoundAsync(clones, session, "GetStationCloneState")).Select(row => ((PyLong)row.Items[1]).Value).ToArray());
+        Assert.Equal(100000m, await BalanceAsync(rig, character));
+        Assert.Equal(900000m, await BalanceAsync(rig, CharacterHostRigCorporation));
+
+        await rig.RestartAsync();
+        var restarted = Assert.IsAssignableFrom<IService>(rig.Registry.Lookup("jumpCloneSvc"));
+        Assert.Equal(new[] { structure }, Rows(Field(await BoundAsync(restarted, session, "GetCloneState"), "clones")).Select(row => ((PyLong)row.Items[1]).Value).ToArray());
+        Assert.Equal(new[] { ("structure", 900000m, CharacterHostRigCorporation, 0L) }, (await SettlementsAsync(rig, character)).ToArray());
+    }
+
+    /// <summary>The corporation the rig's structures belong to (it is paid the structure clone bay's fee).</summary>
+    private const long CharacterHostRigCorporation = 900_001_001;
+
+    /// <summary>The settlements of a character: (location kind, amount, owner corporation, offering character).</summary>
+    private static async Task<List<(string Kind, decimal Amount, long OwnerCorporation, long Offering)>> SettlementsAsync(CharacterHostRig rig, long characterId)
+    {
+        await using var connection = await rig.Source.OpenConnectionAsync();
+        await using var command = new NpgsqlCommand(
+            $"SELECT location_kind, amount, owner_corporation_id, offering_character_id FROM {rig.CharactersSchema}.character_jump_clone_settlements WHERE character_id = $1", connection);
+        command.Parameters.Add(new NpgsqlParameter { Value = characterId });
+        var rows = new List<(string Kind, decimal Amount, long OwnerCorporation, long Offering)>();
+        await using var reader = await command.ExecuteReaderAsync();
+        while (await reader.ReadAsync())
+            rows.Add((reader.GetString(0), reader.GetDecimal(1), reader.GetInt64(2), reader.GetInt64(3)));
+        return rows;
+    }
+
+    /// <summary>The text of a CustomNotify refusal (its <c>notify</c> argument), as the client's UserError reads it.</summary>
+    private static string NotifyText(MachoWrappedException error)
+    {
+        Assert.Equal("CustomNotify", error.Error.UserErrorMessage);
+        var header = Assert.IsType<PyTuple>(Assert.IsType<PyObjectEx>(error.Error.Payload).Header);
+        var args = Assert.IsType<PyDict>(Assert.IsType<PyTuple>(header.Items[1]).Items[1]);
+        return Assert.IsType<PyStr>(args.Entries.Single(entry => ((PyStr)entry.Key).Value == "notify").Value).Value;
     }
 
     private static async Task<decimal> BalanceAsync(CharacterHostRig rig, long characterId)
@@ -524,6 +585,32 @@ public sealed class CharacterHostTests
         public string InventorySchema => _schemas["EVE_INVENTORY_SCHEMA"];
         public string IdentitySchema => _schemas["EVE_IDENTITY_SCHEMA"];
         public string WalletSchema => _schemas["EVE_WALLET_SCHEMA"];
+        public string StructuresSchema => _schemas["EVE_STRUCTURES_SCHEMA"];
+
+        /// <summary>A structure of the rig's corporation, with the given services online (the clone bay reads them).</summary>
+        public async Task AddStructureAsync(long structureId, params int[] onlineServices)
+        {
+            await using var connection = await Source.OpenConnectionAsync();
+            await using var transaction = await connection.BeginTransactionAsync();
+            var structures = new Eve.Structures.StructureStore(Source, StructuresSchema);
+            Assert.True(await structures.CreateAsync(connection, transaction, new Eve.Structures.NewStructure(structureId, 35832, 30000142, 0, 0, 0, 0,
+                CorporationId, 0, "Clone bay", "")));
+            foreach (var service in onlineServices)
+                await structures.SetServiceAsync(connection, transaction, structureId, service, Eve.Structures.ServiceState.Online, 1_000);
+            await transaction.CommitAsync();
+        }
+
+        /// <summary>Sets a character's ISK balance (the wallet row is opened here if the character has none yet).</summary>
+        public async Task FundAsync(long characterId, decimal isk)
+        {
+            await using var connection = await Source.OpenConnectionAsync();
+            await using var fund = new NpgsqlCommand(
+                $"INSERT INTO {WalletSchema}.balances(owner_id, account_key, isk, plex) VALUES ($1, 1000, $2, 0) " +
+                "ON CONFLICT (owner_id, account_key) DO UPDATE SET isk = EXCLUDED.isk", connection);
+            fund.Parameters.Add(new NpgsqlParameter { Value = characterId });
+            fund.Parameters.Add(new NpgsqlParameter { Value = isk });
+            await fund.ExecuteNonQueryAsync();
+        }
 
         /// <summary>A fresh account in the identity schema (Omega until 2100 by the schema's default); the first one is account 1.</summary>
         public async Task<int> CreateAccountAsync()

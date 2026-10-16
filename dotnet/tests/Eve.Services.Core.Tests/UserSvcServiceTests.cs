@@ -226,6 +226,10 @@ public sealed class RedeemUserSvcCompatibilityTests
             _slots.Add((slot, SlotEndsAt));
             return GetActiveSlotsAsync(authenticatedUserId, cancellationToken);
         }
+
+        // this fake answers the token path only; the item path is the Host's (CharacterHostTests)
+        public ValueTask<IReadOnlyList<(int Slot, long EndsAt)>> ActivateItemAsync(
+            long authenticatedUserId, long itemId, int? trainingId, CancellationToken cancellationToken) => throw new NotSupportedException();
     }
 
     private static Task<PyValue> Call(IService service, ClientSession session, string method, params PyValue[] args) =>

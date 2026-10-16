@@ -63,7 +63,7 @@ public static class CoreServices
             new RaffleProxyService(),
             new ExpertSystemMgrService(),
             new ContractProxyService(),
-            new JumpCloneService(gameRpcCallbacks.JumpClones),
+            new JumpCloneService(gameRpcCallbacks.JumpClones, gameRpcCallbacks.JumpCloneSpace),
             new ServiceGatewayMgrService(gameRpcCallbacks.SetHijackMode, gameRpcCallbacks.IsHijackModeEnabled),
             new SharedSettingsMgrService(gameRpcCallbacks.ReadSharedSettings, gameRpcCallbacks.WriteSharedSettingsAsync, nowUnixMs),
             new OverviewPresetMgrService(gameRpcCallbacks.ReadOverviewPresets, gameRpcCallbacks.WriteOverviewPresets),

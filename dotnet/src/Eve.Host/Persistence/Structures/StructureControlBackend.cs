@@ -59,11 +59,13 @@ public sealed class StructureControlBackend
             if (character <= 0 || session.SessionId <= 0 || _space.StructureControlSessionClosed(session)) throw Denied("INVALID_SESSION");
             _space.WatchStructureControlSession(session);
             var structure = await TargetAsync(structureId, call.Cancellation);
-            if (!await _hasSetting(character, structureId, DefenseCanControlStructure, call.Cancellation)) throw Denied("STRUCTURE_CONTROL_DENIED");
             var system = structure.SolarSystemId;
-            if ((session.GetInt("solarsystemid2") ?? session.GetInt("solarsystemid")) != system) throw Denied("STRUCTURE_NOT_IN_SYSTEM");
             await using var connection = await _source.OpenConnectionAsync(call.Cancellation);
             var owned = await _pilots.GetBySessionAsync(connection, null, session.SessionId, call.Cancellation);
+            // the order of the reference (structureControlService.js TakeControl, BoardStructure): docked before the setting, system before the setting
+            if (owned is null && !fromSpace && (_space.IsInSpace(session) || session.GetInt("structureid") != structureId)) throw Denied("NOT_DOCKED_IN_STRUCTURE");
+            if ((session.GetInt("solarsystemid2") ?? session.GetInt("solarsystemid")) != system) throw Denied("STRUCTURE_NOT_IN_SYSTEM");
+            if (!await _hasSetting(character, structureId, DefenseCanControlStructure, call.Cancellation)) throw Denied("STRUCTURE_CONTROL_DENIED");
             if (owned is not null && owned.StructureId != structureId) throw Denied("IDENTITY_IN_USE");
             if (owned is null)
             {
@@ -75,7 +77,6 @@ public sealed class StructureControlBackend
                     if (structure.Snapshot.State is not (StructureState.ShieldVulnerable or StructureState.ArmorReinforce or
                         StructureState.ArmorVulnerable or StructureState.HullReinforce or StructureState.HullVulnerable)) throw Denied("STRUCTURE_NOT_ONLINE");
                 }
-                else if (_space.IsInSpace(session) || session.GetInt("structureid") != structureId) throw Denied("NOT_DOCKED_IN_STRUCTURE");
             }
             var originalShip = owned?.OriginalShipId ?? session.GetInt("shipid") ?? 0;
             if (owned is null) await PhysicalShipAsync(session, originalShip, fromSpace, system, structureId, call.Cancellation);
@@ -387,5 +388,13 @@ public sealed class StructureControlBackend
         finally { _gate.Release(); }
     }
 
-    private static MachoWrappedException Denied(string reason) => MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr($"Structure control refused: {reason}")));
+    /// <summary>The refusals the reference sends for these reasons (structureControlService.js throwControlDenied); the others keep the reason in the text.</summary>
+    private static MachoWrappedException Denied(string reason) => reason switch
+    {
+        "STRUCTURE_CONTROL_DENIED" => MachoErrors.ThrowUserError("StructureDefenseDenied"),
+        "STRUCTURE_NOT_FOUND" => MachoErrors.ThrowUserError("TargetingAttemptCancelled"),
+        "NOT_DOCKED_IN_STRUCTURE" => MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("You must be docked in this structure to take control."))),
+        "STRUCTURE_NOT_IN_SYSTEM" => MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("That structure is not in your current solar system."))),
+        _ => MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr($"Structure control refused: {reason}"))),
+    };
 }

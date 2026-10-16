@@ -11,11 +11,11 @@ Current source priority: gameplay rules and numbers use CCP official documentati
 | Package | State | Notes |
 |---|---|---|
 | ST-0 structure record owner, state machine, timers | done | `Eve.Structures`; GameStore `structures` imported once and frozen |
-| ST-1 structure ball in the sim | code complete | kinds 74-77, protocol 59/60; headless `test_structures.py` never ran live |
+| ST-1 structure ball in the sim | code complete | kinds 74-77, protocol 59/60; headless `test_structures.py` runs live (ST-14, and ST-20: 11 passed on eve_p4) |
 | ST-2 deployment / vulnerability RPCs | partly | rename, reinforce times, Anchor, Unanchor/Cancel, 3 notices done; unanchor-completion drop, some Anchor refusals, reinforcement-change mail are open (see its handoff) |
-| ST-3 structure docking / hangars | PG verified | Dock, Undock, hangar listing, guest lifecycle, OnHangarViewStateUpdated and SDE/cargo confirmation gate pass PG tests. Customs fines/confiscation are a separate flow; graphical and live headless acceptance remain open (see its handoff) |
+| ST-3 structure docking / hangars | PG verified | Dock, Undock, hangar listing, guest lifecycle, OnHangarViewStateUpdated and SDE/cargo confirmation gate pass PG tests. Customs fines/confiscation are a separate flow; live headless docking and undock are verified (ST-14); graphical acceptance remains open (see its handoff) |
 | ST-4 tether | PG and Rust verified | protocol 62; leased core/ACL/FW permissions, immunity, engage-only repair, cyno/ship/disconnect lifecycle, FX replay and fleet-compression refusal. Rust 773 and Space PG 735 checks pass; native graphical/grid acceptance remains open. |
-| ST-5 control / boarding / deliveries | PG and Rust verified | protocol 65 observer, safe takeover/release, structure inventory/dogma reads, same-transaction delivery inbox, authoritative cargo range; native acceptance and ST-8 execution remain open. |
+| ST-5 control / boarding / deliveries | PG and Rust verified | protocol 65 observer, safe takeover/release, structure inventory/dogma reads, same-transaction delivery inbox, authoritative cargo range; live refusals of the control calls are verified (ST-20); a live takeover, board, eject and a successful delivery are not; native acceptance and ST-8 execution remain open. |
 | ST-6a moon extraction (host) | PG verified | effective fitted SDE rig rules, start-time yield/deadline/lifetime snapshots, actor lifecycle events and durable types 202-206 owner inbox are wired; native acceptance open. |
 | ST-6b moon fields / ledger | PG and Rust verified | persisted multi-ore fields, restart/depletion, refinery observer ledger and durable field removal; native graphical acceptance open. |
 | ST-7 structure services | partly | fuel, compression plant, cyno jammer E-03/E-15 (jammer gated by the Cynosural Suppression upgrade), structure beacon (checks, placement, jump), fuel owner notices, Host tests done; corporation-office compression source built on the office rental rows and the hangar take rule; office rental at a structure still open (see handoff-ST-7-closure.md) |
@@ -27,6 +27,10 @@ Current source priority: gameplay rules and numbers use CCP official documentati
 
 ST-5 core control/boarding/deliveries is implemented and verified by PG/Rust regression tests (protocol 65); retained-hull destruction now persists a replacement capsule and supports failed-transaction/release retries. Native graphical acceptance remains open. ST-6a rig rules/owner notifications and ST-6b moon ore fields/ledger/decay are now wired and regression-tested. Next: ST-8a/8b structure modules and doomsdays, ST-9 entosis
 (depends on a Sovereignty Hub ball). Order and dependencies: `plan.md` section 5.
+
+## ST-20 live check (2026-10-16)
+
+Live on eve_p4 (port 26103): the default live run with `EVE_LIVE_SLOW=1` (now including `tests/test_structures.py`, which seeds its Astrahus) exits 0 with one skip, the skill-speed test; that test passes alone with the host at `EVE_SKILL_TRAINING_SPEED=60000`. Full `Eve.Host.Tests`: 373 of 373, before and after the change below. New live scenarios: Anchor refusals by name (`DropNeedsPlayerCorp`, `CrpAccessDenied`), `structureControl` (None for an uncontrolled structure, the docked notice, `TargetingAttemptCancelled`), `hackingMgr` with no attempt, `structureDeliveries.Deliver` from space, and `moonExtractions` (`MoonminingEventTooShort`, `StructureDefenseDenied`). The server change: `StructureControlBackend` refuses in the reference's order and labels. Still not live: a successful take, board, eject, delivery, moon start and its answer shape. See `handoff-ST-20.md`.
 
 ## ST-5 implementation (2026-10-12)
 

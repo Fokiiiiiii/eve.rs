@@ -81,7 +81,7 @@ public static class CoreServices
                 new JumpTimersService(readJumpTimers),
               new InGameReportService(submitInGameReport),
               new NonDiminishingInjectionMgrService(readNonDiminishingInjections),
-            new ProjectDiscoveryService(),
+            new ProjectDiscoveryService(new ProjectDiscoveryRpcCallbacks(ReadPlayerStateAsync: gameRpcCallbacks.ReadProjectDiscoveryState)),
             new LocalizationServerService(),
               new SeasonManagerService(),
             authentication ?? new AuthenticationRpcService(),

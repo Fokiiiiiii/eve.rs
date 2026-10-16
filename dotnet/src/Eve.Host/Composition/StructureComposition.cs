@@ -351,7 +351,7 @@ internal sealed partial class CharacterServicesComposition
                 structureTimers.AnchorAsync(connection, transaction, structure with { AnchoringMs = anchoringMs }, ct));
         // ST-6a: the moon drill starts a chunk (StartNewExtraction); the fracture and the cancel follow in (d)
         var moonRules = await MoonRulesSource.LoadAsync(sde);
-        var moonRigRules = new MoonRigReadModel(items, dogma, moonRules);
+        var moonRigRules = new MoonRigReadModel(items, dogma, moonRules, structureStore);
         moonExtractions = new Eve.Structures.MoonExtractions(structureStore, moonExtractionStore, foundations.Scheduler, foundations.Events, moonRules,
             moonRigRules.ReadAsync);
         moonExtractions.Register();

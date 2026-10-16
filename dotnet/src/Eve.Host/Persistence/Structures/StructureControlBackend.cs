@@ -71,9 +71,9 @@ public sealed class StructureControlBackend
             {
                 if (fromSpace)
                 {
-                    var type = _statics.Type(structure.TypeId)!;
-                    if (type.Attributes.GetValueOrDefault(1547) >= 2 || !_space.IsInSpace(session) || session.GetInt("structureid") is not null
-                        || _space.SolarSystemOf(session) != system) throw Denied("NOT_BOARDABLE_FLEX_STRUCTURE");
+                    // EVE.js boardStructureControlFromSpace has no size gate (a medium structure has rigSize 2): only the state, the place and the ship are checked
+                    if (!_space.IsInSpace(session) || session.GetInt("structureid") is not null
+                        || _space.SolarSystemOf(session) != system) throw Denied("NOT_BOARDABLE_FROM_SPACE");
                     if (structure.Snapshot.State is not (StructureState.ShieldVulnerable or StructureState.ArmorReinforce or
                         StructureState.ArmorVulnerable or StructureState.HullReinforce or StructureState.HullVulnerable)) throw Denied("STRUCTURE_NOT_ONLINE");
                 }

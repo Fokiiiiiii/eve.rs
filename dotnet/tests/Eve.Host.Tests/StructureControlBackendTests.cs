@@ -319,6 +319,21 @@ public sealed class StructureControlBackendTests
     }
 
     [PgFact]
+    public async Task A_medium_upwell_structure_is_boarded_from_space_as_the_reference_allows()
+    {
+        // EVE.js boardStructureControlFromSpace has no size gate: the Astrahus (rigSize 2, a medium structure) takes a pilot in space
+        await using var f = await Fixture.CreateAsync();
+        var session = await f.FlyingSessionAsync(30);
+        var ship = session.GetInt("shipid")!.Value;
+        await f.Backend.BoardStructureAsync(f.Call(session), Structure);
+        Assert.Equal(Structure, session.GetInt("structureid"));
+        var owner = (await f.OwnerAsync())!;
+        Assert.Equal((30L, ship), (owner.CharacterId, owner.OriginalShipId));
+        await f.Backend.EjectFromStructureAsync(f.Call(session), ship);
+        Assert.Null(await f.OwnerAsync());
+    }
+
+    [PgFact]
     public async Task None_return_from_a_capsule_restores_that_real_capsule()
     {
         await using var f = await Fixture.CreateAsync();

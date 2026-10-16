@@ -146,6 +146,11 @@ def hi_slot_count(type_id: int) -> int:
     return int(float(rows))
 
 
+def location_of(item: int) -> int:
+    """The location of an item row (inventory.items): a station or structure id, or a ship's id."""
+    return int(sql(f"select location_id from {schema('INVENTORY')}.items where id = {int(item)}"))
+
+
 def owner_of(item: int) -> int:
     """The owner of an item row (inventory.items)."""
     return int(sql(f"select owner_id from {schema('INVENTORY')}.items where id = {int(item)}"))

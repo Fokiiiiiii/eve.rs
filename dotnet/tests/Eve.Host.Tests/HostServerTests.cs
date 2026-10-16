@@ -3085,6 +3085,41 @@ private sealed class InSpaceInventory : Eve.Services.Ships.ISpaceContainers
     }
 
     [Fact]
+    public async Task Moon_mining_service_is_admitted_by_the_control_setting_of_the_owner_corporation()
+    {
+        // the moon service's mutations gate on CharacterHasServiceAsync(MoonMining); EVE.js admits the owner corporation through setting 17
+        const long structureId = 88000014;
+        const long ownerCorporationId = 98000005;
+        const long ownerCharacterId = 90000005;
+        const long otherCharacterId = 90000006;
+        var tables = new Dictionary<string, System.Text.Json.Nodes.JsonObject>
+        {
+            ["structures"] = new()
+            {
+                [structureId.ToString(System.Globalization.CultureInfo.InvariantCulture)] = new System.Text.Json.Nodes.JsonObject
+                {
+                    ["structureID"] = structureId,
+                    ["typeID"] = 35835,
+                    ["solarSystemID"] = 30000142,
+                    ["ownerCorpID"] = ownerCorporationId,
+                    ["profileID"] = 0,
+                    ["serviceStates"] = new System.Text.Json.Nodes.JsonObject { ["14"] = 1 },
+                },
+            },
+        };
+        Task<System.Text.Json.Nodes.JsonObject> ReadTable(string name, CancellationToken _) =>
+            Task.FromResult((System.Text.Json.Nodes.JsonObject)tables.GetValueOrDefault(name, new()).DeepClone());
+        Task<Eve.Relations.Affiliation> Affiliation(long characterId, CancellationToken _) =>
+            Task.FromResult(characterId == ownerCharacterId
+                ? new Eve.Relations.Affiliation(ownerCorporationId, null, null)
+                : new Eve.Relations.Affiliation(98000007, null, null));
+        var model = new PersistenceStructureDirectoryReadModel(ReadTable, Affiliation, null!, null!);
+
+        Assert.True(await model.CharacterHasServiceAsync(ownerCharacterId, structureId, 14, CancellationToken.None));
+        Assert.False(await model.CharacterHasServiceAsync(otherCharacterId, structureId, 14, CancellationToken.None));
+    }
+
+    [Fact]
     public async Task Incursion_and_scan_host_read_models_read_active_content_and_dungeon_state()
     {
         const long systemId = 30000142;

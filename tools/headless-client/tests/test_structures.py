@@ -39,7 +39,14 @@ TRITANIUM = 34
 CARGO_FLAG = 5  # the ship's cargo hold (CharacterShips ship-hold flags)
 DELIVERIES_FLAG = 173  # ITEM_FLAGS.DELIVERIES (structureDeliveriesService.js)
 ASTRAHUS = 35832
+# a system where Upwell structures can be anchored (its pinned SDE record does not forbid category 65 or the Astrahus group): low security, not a
+# trade hub, one station and no asteroid belt (mapSolarSystems, npcStations, mapAsteroidBelts in the pinned SDE)
+LEGAL_SYSTEM, LEGAL_STATION = 30000903, 60014062
+LEGAL_CONSTELLATION, LEGAL_REGION = 20000132, 10000011
+LEGAL_STATION_POSITION = (-1121428807680.0, 197508833280.0, 1232634716160.0)
+WARP_OFF = 2_000_000.0  # metres from the station: the anchor needs 1000 km from every station, belt and structure
 ANCHOR_STATE = 115  # StructureState.AnchorVulnerable: the state a new anchor is left in (StructureModel.cs)
+ONLINE_STATE = 110  # StructureState.ShieldVulnerable: an online structure, which may be unanchored
 STATE_CHANGED = "OnStructureStateChanged"
 MOON_DAYS = 518460  # six days and a minute: the client's extraction duration, clamped to 6 to 56 days by the server
 
@@ -107,11 +114,11 @@ def _reenter(client, character: int) -> None:
     assert base.attempt(client, "charUnboundMgr", "SelectCharacterID", character, None, False) == ("ok", None)
 
 
-def _undock(client, ship_id: int, fitted: list) -> None:
+def _undock(client, ship_id: int, fitted: list, station: int = STATION, system: int = SYSTEM) -> None:
     """The pilot leaves its station with its ship and is bound to the system's ballpark."""
-    ship = client.call("ship", "MachoBindObject", (STATION, 15), None)
+    ship = client.call("ship", "MachoBindObject", (station, 15), None)
     client.call_bound(ship[0], "Undock", ship_id, False, onlineModules=m.List(fitted))
-    client.call("beyonce", "MachoBindObject", SYSTEM, None)
+    client.call("beyonce", "MachoBindObject", system, None)
 
 
 def _undocked_pilot(client) -> tuple[int, int]:
@@ -456,3 +463,55 @@ def test_a_director_is_refused_the_anchor_of_an_astrahus_in_this_system_by_name(
         assert label == "CantDeployBlocked"
         assert f"'typeID', {ASTRAHUS}" in text or f"typeID', {{'$long': {ASTRAHUS}}}" in text or f"['typeID', {ASTRAHUS}]" in text, text
         assert dbseed.sql(f"select count(*) from {dbseed.schema('INVENTORY')}.items where id = {item}") == "1", "the refused item was consumed"
+
+
+def _relocate(character: int, ship_id: int) -> None:
+    """Puts the character and its ship in the legal system's station (the characters' location and the ship's hangar), as a pilot who docked
+    there would be: the next selection of the character reads it."""
+    dbseed.sql(f"update {dbseed.schema('CHARACTERS')}.characters set station_id = {LEGAL_STATION}, home_station_id = {LEGAL_STATION}, "
+               f"solar_system_id = {LEGAL_SYSTEM}, constellation_id = {LEGAL_CONSTELLATION}, region_id = {LEGAL_REGION} where id = {character}")
+    dbseed.sql(f"update {dbseed.schema('INVENTORY')}.items set location_id = {LEGAL_STATION}, flag = {dbseed.HANGAR} where id = {ship_id}")
+
+
+def test_a_director_anchors_an_astrahus_from_its_ship_in_a_legal_system_and_the_structure_is_placed_and_told():
+    """structureDeployment.Anchor by a Director of a player corporation at least seven days old, in a system the pinned SDE allows (V24.01
+    sovPlayerDeployment.js; the wiki's Anchoring structures): the Astrahus leaves the ship (the item is consumed), the structure is created in the
+    corporation in its anchoring state (AnchorVulnerable) with its default profile, the simulation places it in the system (the pilot sees it in
+    the ballpark), and the corporation's sessions hear OnStructureStateChanged. The pilot warps 2000 km from the station first (the free-space rule),
+    and the anchor is asked again until the warp is over, as in the warp test. Then the Director unanchors and cancels the unanchoring."""
+    run = uuid.uuid4().hex[:8]
+    with base.connect(f"walk-anchor-ok-{run}") as client:
+        character, ship_id, fitted, _ = arrive(client, RACE, run)
+        corporation = dbseed.found_corporation(LEGAL_STATION, LEGAL_SYSTEM, character, run)
+        dbseed.join_corporation(character, corporation, DIRECTOR)
+        dbseed.sql(f"update {dbseed.schema('CORPORATIONS')}.corporations set created_ms = {int(time.time() * 1000) - 8 * 86_400_000} where id = {corporation}")
+        _relocate(character, ship_id)
+        _reenter(client, character)
+        _undock(client, ship_id, fitted, LEGAL_STATION, LEGAL_SYSTEM)
+        ballpark = client.call("beyonce", "MachoBindObject", LEGAL_SYSTEM, None)
+        x, y, z = LEGAL_STATION_POSITION
+        client.call_bound(ballpark[0], "CmdWarpToStuff", "position", (x + WARP_OFF, y, z), minRange=0)
+        item = dbseed.new_item(ASTRAHUS, owner=character, location=ship_id, flag=CARGO_FLAG, singleton=True)
+        deadline = time.time() + 300
+        while True:
+            try:
+                assert client.call("structureDeployment", "Anchor", item, 1000.0, 1000.0, 0.0, None, "Live anchor", "", None, None, None) is None
+                break
+            except p.MachoError as failure:
+                if _refusal(failure)[0] != "ShipInWarp" or time.time() > deadline:
+                    pytest.fail(f"the anchor was refused: {_refusal(failure)[0]}: {describe(failure.payload)}")
+            # a stop once the warp is over clears it on the server (refused while the ship is still in warp), as a pilot's stop does
+            client.call_bound(ballpark[0], "CmdStop")
+            client.call_bound(ballpark[0], "UpdateStateRequest")
+            timed_events(client, 3.0)
+        assert dbseed.sql(f"select count(*) from {dbseed.schema('INVENTORY')}.items where id = {item}") == "0", "the anchored item was not consumed"
+        row = dbseed.sql(f"select owner_corporation_id, solar_system_id, state from {dbseed.schema('STRUCTURES')}.structures where structure_id = {item}")
+        assert row == f"{corporation}|{LEGAL_SYSTEM}|{ANCHOR_STATE}", f"the structure row is {row!r}"
+        told = timed_events(client, 30.0, until=lambda seen: _named(seen, STATE_CHANGED) != [] and _structure_slim(seen, item) is not None)
+        assert _named(told, STATE_CHANGED), f"no {STATE_CHANGED} within 30 s"
+        assert _structure_slim(told, item) is not None, f"the anchored structure {item} is not in the ballpark within 30 s"
+        # the repair of an anchor runs in real time, so the structure is put in its online state (ShieldVulnerable): the state an anchored
+        # structure is in once it is online. EVE.js refuses an unanchoring in the states of STRUCTURE_UNANCHOR_CANCEL_STATES (AnchorVulnerable among them)
+        dbseed.sql(f"update {dbseed.schema('STRUCTURES')}.structures set state = {ONLINE_STATE} where structure_id = {item}")
+        assert called(client, "structureDeployment", "Unanchor", item) is None
+        assert called(client, "structureDeployment", "CancelUnanchor", item) is None

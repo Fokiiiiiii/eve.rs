@@ -187,10 +187,10 @@ def write(path, records):
     return path
 
 
-def diff(tmp_path, reference, candidate, *, ignore):
+def diff(tmp_path, reference, candidate, *, ignore, extra=()):
     a = write(tmp_path / "a.jsonl", reference)
     b = write(tmp_path / "b.jsonl", candidate)
-    args = ["diff", str(a), str(b)] + (["--ignore-volatile"] if ignore else [])
+    args = ["diff", str(a), str(b)] + (["--ignore-volatile"] if ignore else []) + list(extra)
     return mitm.main(args)
 
 
@@ -271,3 +271,39 @@ def test_a_login_and_a_call_through_the_proxy_are_logged_and_answered(tmp_path):
     assert any(r.get("type") == "CallReq" and r.get("method") == "GetTime" and r["dir"] == "c2s" for r in records)
     assert any(r.get("type") == "CallRsp" and r["dir"] == "s2c" for r in records)
     assert [r for r in records if r["stage"] == "undecoded"] == []
+
+
+def test_key_order_of_a_dictionary_is_a_divergence_unless_ignored(tmp_path, capsys):
+    a = [call(1, "Logon"), result(2, {"$dict": [["userid", 1], ["role", {"$long": 4}]]})]
+    b = [call(1, "Logon"), result(2, {"$dict": [["role", {"$long": 4}], ["userid", 1]]})]
+    assert diff(tmp_path, a, b, ignore=False) == 1
+    assert diff(tmp_path, a, b, ignore=False, extra=["--ignore-key-order"]) == 0
+    assert "identical" in capsys.readouterr().out
+
+
+def test_key_order_does_not_hide_a_changed_value(tmp_path):
+    a = [call(1, "Logon"), result(2, {"$dict": [["userid", 1], ["role", {"$long": 4}]]})]
+    b = [call(1, "Logon"), result(2, {"$dict": [["role", {"$long": 8}], ["userid", 1]]})]
+    assert diff(tmp_path, a, b, ignore=False, extra=["--ignore-key-order"]) == 1
+
+
+def test_notices_in_another_order_are_a_divergence_unless_compared_as_a_set(tmp_path, capsys):
+    def notice(seq, method, value):
+        return {"seq": seq, "dir": "s2c", "conn": 1, "stage": "macho", "type": "Notification", "service": "notificationMgr",
+                "method": method, "args": {"$tuple": [value]}}
+
+    a = [call(1, "GetInitVals"), result(2, {"$dict": []}), notice(3, "OnA", {"$long": 1}), notice(4, "OnB", {"$long": 2})]
+    b = [call(1, "GetInitVals"), result(2, {"$dict": []}), notice(3, "OnB", {"$long": 2}), notice(4, "OnA", {"$long": 1})]
+    assert diff(tmp_path, a, b, ignore=False) == 1
+    assert diff(tmp_path, a, b, ignore=False, extra=["--ignore-notification-order"]) == 0
+    assert "identical" in capsys.readouterr().out
+
+
+def test_a_missing_notice_is_still_a_divergence_when_notices_are_a_set(tmp_path):
+    def notice(seq, method):
+        return {"seq": seq, "dir": "s2c", "conn": 1, "stage": "macho", "type": "Notification", "service": "notificationMgr",
+                "method": method, "args": {"$tuple": []}}
+
+    a = [call(1, "GetInitVals"), result(2, {"$dict": []}), notice(3, "OnA"), notice(4, "OnB")]
+    b = [call(1, "GetInitVals"), result(2, {"$dict": []}), notice(3, "OnA")]
+    assert diff(tmp_path, a, b, ignore=False, extra=["--ignore-notification-order"]) == 1

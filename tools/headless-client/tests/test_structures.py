@@ -14,7 +14,6 @@ The refusals are the ones the reference sends (EVE.js, cited per test); a test t
 
 import os
 import time
-import uuid
 
 import pytest
 
@@ -23,6 +22,7 @@ from evecli import packet as p
 from evecli.describe import describe
 from evecli.observe import _plain_name, timed_events
 from tests import dbseed
+from tests.runid import run_token
 from tests import test_login_to_character as base
 from tests.test_undock import STATION, UNDOCK, arrive, number
 
@@ -66,6 +66,8 @@ def seeded_structure():
     """The refinery the scenarios use: an Athanor row of the structures schema (its owner is an NPC corporation, so the owner-corporation access
     rule admits the pilots of the other tests), with its docking and moon mining services online and a moon's resources, inserted once per run.
     The run drops its schema at the end."""
+    if os.environ.get("EVE_LIVE_SERVER") == "evejs":
+        return  # the reference's refinery is seeded in its data root (ST-22 scratch seed), not by SQL
     if not (os.environ.get("EVE_PG_URL") and os.environ.get("EVE_STRUCTURES_SCHEMA")):
         pytest.skip("EVE_PG_URL and EVE_STRUCTURES_SCHEMA come from tools/dev/run-eve-live.sh, which seeds the structure")
     schema = dbseed.schema("STRUCTURES")
@@ -123,7 +125,7 @@ def _undock(client, ship_id: int, fitted: list, station: int = STATION, system: 
 
 def _undocked_pilot(client) -> tuple[int, int]:
     """A new character of the recorded race, undocked at its station and bound to the system's ballpark: (character id, its active ship's id)."""
-    character, ship_id, fitted, _ = arrive(client, RACE, uuid.uuid4().hex[:10])
+    character, ship_id, fitted, _ = arrive(client, RACE, run_token())
     _undock(client, ship_id, fitted)
     return character, ship_id
 
@@ -131,7 +133,7 @@ def _undocked_pilot(client) -> tuple[int, int]:
 def _pilot_without_role(ceo, pilot) -> tuple[int, int, int]:
     """A member of a player corporation with no role, undocked: (its corporation, character id, its ship id). The corporation's chief executive is
     the character of `ceo`; the pilot's session takes the membership by a log off and select."""
-    run = uuid.uuid4().hex[:8]
+    run = run_token()
     director, _, _, _ = arrive(ceo, RACE, run + "d")
     character, ship_id, fitted, _ = arrive(pilot, RACE, run + "p")
     corporation = dbseed.found_corporation(STATION, SYSTEM, director, run)
@@ -163,7 +165,7 @@ def _anchor(client, item_id: int):
 
 
 def test_a_pilot_in_the_system_sees_the_structure_with_its_state_and_timer():
-    with base.connect(f"walk-structure-{uuid.uuid4().hex[:10]}") as client:
+    with base.connect(f"walk-structure-{run_token()}") as client:
         _undocked_pilot(client)
         seen = timed_events(client, 30.0, until=lambda events: _structure_slim(events) is not None)
         slim = _structure_slim(seen)
@@ -180,7 +182,7 @@ def test_a_pilot_docks_at_the_structure_and_undocks_from_it():
     The ship is undocked a few kilometres from the structure: a dock asked for from outside the docking range makes the ship fly to it on its own
     (scene/docking.rs), so the answer is the docking, not an approach refusal.
     """
-    with base.connect(f"walk-structure-{uuid.uuid4().hex[:10]}") as client:
+    with base.connect(f"walk-structure-{run_token()}") as client:
         _, ship_id = _undocked_pilot(client)
         seen = timed_events(client, 30.0, until=lambda events: _structure_slim(events) is not None)
         assert _structure_slim(seen) is not None, f"the structure {STRUCTURE} is not in the ballpark"
@@ -209,8 +211,8 @@ def test_a_pilot_docks_at_the_structure_and_undocks_from_it():
 def test_an_npc_corporation_pilot_is_refused_the_anchor_by_name():
     """structureDeployment.Anchor from an NPC corporation: `DropNeedsPlayerCorp` (EVE.js sovPlayerDeployment.js; the server's
     StructureAnchorAuthority gate, which runs before the role check). The item is the ship, in space, so only the corporation gate can refuse."""
-    with base.connect(f"walk-anchor-npc-{uuid.uuid4().hex[:10]}") as client:
-        character, ship_id, fitted, _ = arrive(client, RACE, uuid.uuid4().hex[:10])
+    with base.connect(f"walk-anchor-npc-{run_token()}") as client:
+        character, ship_id, fitted, _ = arrive(client, RACE, run_token())
         corporation = dbseed.corporation_of(character)
         assert corporation in NPC_CORPORATIONS, f"the new pilot is in corporation {corporation}, not an NPC corporation: the premise of the refusal"
         _undock(client, ship_id, fitted)
@@ -221,7 +223,7 @@ def test_an_npc_corporation_pilot_is_refused_the_anchor_by_name():
 def test_a_pilot_without_the_station_manager_or_director_role_is_refused_the_anchor_by_name():
     """structureDeployment.Anchor by a member of a player corporation with no role: `CrpAccessDenied` with the reason `Insufficient roles`
     (EVE.js sovPlayerDeployment.js, the wiki's \"Anchoring structures\": a Station Manager, a Director or the CEO)."""
-    run = uuid.uuid4().hex[:8]
+    run = run_token()
     with base.connect(f"walk-anchor-ceo-{run}") as ceo, base.connect(f"walk-anchor-plain-{run}") as pilot:
         corporation, character, ship_id = _pilot_without_role(ceo, pilot)
         assert dbseed.corporation_of(character) == corporation, "the pilot's session has its corporation"
@@ -232,7 +234,7 @@ def test_a_pilot_without_the_station_manager_or_director_role_is_refused_the_anc
 
 def test_a_structure_with_no_pilot_answers_none_for_its_pilot():
     """structureControl.GetStructurePilot of a structure no pilot controls: None (EVE.js structureControlService.js GetStructurePilot)."""
-    with base.connect(f"walk-control-{uuid.uuid4().hex[:10]}") as client:
+    with base.connect(f"walk-control-{run_token()}") as client:
         _undocked_pilot(client)
         assert client.call("structureControl", "GetStructurePilot", STRUCTURE) is None
 
@@ -240,7 +242,7 @@ def test_a_structure_with_no_pilot_answers_none_for_its_pilot():
 def test_taking_control_from_space_is_refused_until_the_pilot_is_docked_in_the_structure():
     """structureControl.TakeControl by a pilot in space: CustomNotify `You must be docked in this structure to take control.` (EVE.js
     structureControlService.js TakeControl, the docking check before the structure's setting)."""
-    with base.connect(f"walk-control-{uuid.uuid4().hex[:10]}") as client:
+    with base.connect(f"walk-control-{run_token()}") as client:
         _undocked_pilot(client)
         label, text = _refused(lambda: client.call("structureControl", "TakeControl", STRUCTURE))
         assert label == "CustomNotify"
@@ -249,7 +251,7 @@ def test_taking_control_from_space_is_refused_until_the_pilot_is_docked_in_the_s
 
 def test_boarding_a_structure_that_does_not_exist_is_refused_as_a_cancelled_targeting():
     """structureControl.BoardStructure of an unknown id: `TargetingAttemptCancelled` (EVE.js structureControlService.js, STRUCTURE_NOT_FOUND)."""
-    with base.connect(f"walk-control-{uuid.uuid4().hex[:10]}") as client:
+    with base.connect(f"walk-control-{run_token()}") as client:
         _undocked_pilot(client)
         label, _ = _refused(lambda: client.call("structureControl", "BoardStructure", UNKNOWN_STRUCTURE))
         assert label == "TargetingAttemptCancelled"
@@ -258,7 +260,7 @@ def test_boarding_a_structure_that_does_not_exist_is_refused_as_a_cancelled_targ
 def test_hacking_calls_with_no_open_attempt_answer_none_and_an_ack():
     """hackingMgr.QuitHackingAttempt and ClickedOnTile with no attempt open: None (EVE.js hackingMgrService.js returns null); a tile click
     answers the turn with an ACK event (OnHackingTurnComplete), the quit sends nothing."""
-    with base.connect(f"walk-hacking-{uuid.uuid4().hex[:10]}") as client:
+    with base.connect(f"walk-hacking-{run_token()}") as client:
         _undocked_pilot(client)
         assert client.call("hackingMgr", "QuitHackingAttempt") is None
         assert client.call("hackingMgr", "ClickedOnTile", (0, 0)) is None
@@ -269,7 +271,7 @@ def test_hacking_calls_with_no_open_attempt_answer_none_and_an_ack():
 def test_delivering_from_space_is_refused_until_the_pilot_is_inside_the_structure():
     """structureDeliveries.Deliver from outside the structure: CustomNotify `You must be inside the structure to deliver items.` (EVE.js
     structureDeliveriesService.js Handle_Deliver, checked before the recipient)."""
-    with base.connect(f"walk-deliver-{uuid.uuid4().hex[:10]}") as client:
+    with base.connect(f"walk-deliver-{run_token()}") as client:
         character, ship_id = _undocked_pilot(client)
         label, text = _refused(lambda: client.call("structureDeliveries", "Deliver", STRUCTURE, character, [ship_id]))
         assert label == "CustomNotify"
@@ -279,7 +281,7 @@ def test_delivering_from_space_is_refused_until_the_pilot_is_inside_the_structur
 def test_a_moon_extraction_for_a_duration_that_is_not_positive_is_refused_by_name():
     """moonExtractions.StartNewExtraction with a duration of 0: `MoonminingEventTooShort` (the server's refusal, DEVIATIONS: the reference
     answers None, the client reads that as success)."""
-    with base.connect(f"walk-moon-{uuid.uuid4().hex[:10]}") as client:
+    with base.connect(f"walk-moon-{run_token()}") as client:
         _undocked_pilot(client)
         label, _ = _refused(lambda: client.call("moonExtractions", "StartNewExtraction", STRUCTURE, 0, False))
         assert label == "MoonminingEventTooShort"
@@ -288,7 +290,7 @@ def test_a_moon_extraction_for_a_duration_that_is_not_positive_is_refused_by_nam
 def test_a_moon_extraction_started_from_space_is_refused_as_a_structure_defense_denial():
     """moonExtractions.StartNewExtraction by a pilot who is not docked in the structure: `StructureDefenseDenied` (EVE.js
     moonExtractionsService.js validateMoonExtractionMutationAccess)."""
-    with base.connect(f"walk-moon-{uuid.uuid4().hex[:10]}") as client:
+    with base.connect(f"walk-moon-{run_token()}") as client:
         _undocked_pilot(client)
         label, _ = _refused(lambda: client.call("moonExtractions", "StartNewExtraction", STRUCTURE, 518460, False))
         assert label == "StructureDefenseDenied"
@@ -344,7 +346,7 @@ def test_a_docked_pilot_takes_control_of_the_structure_and_the_structure_names_i
     """structureControl.TakeControl by a pilot docked in the structure (V24.01 structureControlService.js Handle_TakeControl, which returns
     None): the structure's pilot is the character from then on. The reference's assumeStructureControl changes the session's shipid to the
     structure and tells the client the cosmetics of the ship it left (OnShipCosmeticsChanged)."""
-    with base.connect(f"walk-control-{uuid.uuid4().hex[:10]}") as client:
+    with base.connect(f"walk-control-{run_token()}") as client:
         character, _ship_id = _docked_pilot(client)
         assert client.call("structureControl", "TakeControl", STRUCTURE) is None
         assert client.call("structureControl", "GetStructurePilot", STRUCTURE) == character
@@ -357,8 +359,8 @@ def test_a_docked_pilot_takes_control_of_the_structure_and_the_structure_names_i
 def test_a_pilot_in_space_boards_the_structure_and_ejects_into_a_capsule():
     """structureControl.BoardStructure from space (V24.01 Handle_BoardStructure, which returns None) makes the pilot the structure's pilot, and
     EjectFromStructure with no ship to return to leaves the structure with a capsule (the pilot is no longer its pilot)."""
-    with base.connect(f"walk-control-{uuid.uuid4().hex[:10]}") as client:
-        character, ship_id, fitted, _ = arrive(client, RACE, uuid.uuid4().hex[:10])
+    with base.connect(f"walk-control-{run_token()}") as client:
+        character, ship_id, fitted, _ = arrive(client, RACE, run_token())
         _undock(client, ship_id, fitted)
         seen = timed_events(client, 30.0, until=lambda events: _structure_slim(events) is not None)
         assert _structure_slim(seen) is not None, f"the structure {STRUCTURE} is not in the ballpark of system {SYSTEM} within 30 s"
@@ -372,7 +374,7 @@ def test_a_second_pilot_taking_control_displaces_the_first_as_the_reference_does
     """Exclusivity: one pilot controls a structure at a time. The reference's assumeStructureControl relinquishes the previous controller
     (reason `override`) and binds the new one (scene sessions.js lets the previous controller through), so a second docked pilot's TakeControl
     succeeds and the structure names the second pilot; the first pilot is no longer its pilot."""
-    run = uuid.uuid4().hex[:8]
+    run = run_token()
     with base.connect(f"walk-control-{run}a") as first, base.connect(f"walk-control-{run}b") as second:
         first_character, _ = _docked_pilot(first)
         assert first.call("structureControl", "TakeControl", STRUCTURE) is None
@@ -387,7 +389,7 @@ def test_a_docked_pilot_delivers_items_from_the_structure_hangar_and_the_recipie
     """structureDeliveries.Deliver by a pilot docked in the structure (V24.01 structureDeliveriesService.js Handle_Deliver, which returns None):
     the items of the sender in the structure's hangar move to the recipient, into the deliveries bay (flag 173) of the structure, and the
     recipient is sent the StructureItemsDelivered notice (type 199, the quantity and type of each item)."""
-    run = uuid.uuid4().hex[:8]
+    run = run_token()
     with base.connect(f"walk-deliver-{run}s") as sender, base.connect(f"walk-deliver-{run}r") as recipient_client:
         character, _ship_id = _docked_pilot(sender)
         recipient, _, _, _ = arrive(recipient_client, RACE, run + "r")
@@ -405,8 +407,8 @@ def test_a_docked_pilot_delivers_items_from_the_structure_hangar_and_the_recipie
 def test_a_pilot_in_space_drops_cargo_at_the_structure_and_is_answered_the_moved_ids():
     """structureCargoDelivery.DropOffItems from a ship in space within Cargo Deposit range (V24.01 Handle_DropOffItems): the cargo of the ship
     moves into the structure's deliveries bay of the pilot, and the answer is the list of the item ids that moved."""
-    with base.connect(f"walk-dropoff-{uuid.uuid4().hex[:10]}") as client:
-        character, ship_id, fitted, _ = arrive(client, RACE, uuid.uuid4().hex[:10])
+    with base.connect(f"walk-dropoff-{run_token()}") as client:
+        character, ship_id, fitted, _ = arrive(client, RACE, run_token())
         _undock(client, ship_id, fitted)
         seen = timed_events(client, 30.0, until=lambda events: _structure_slim(events) is not None)
         assert _structure_slim(seen) is not None, f"the structure {STRUCTURE} is not in the ballpark of system {SYSTEM} within 30 s"
@@ -424,7 +426,7 @@ def test_the_controlling_pilot_starts_a_moon_extraction_at_the_refinery_and_the_
     """moonExtractions.StartNewExtraction by the pilot in control of the refinery (V24.01 moonExtractionsService.js Handle_StartNewExtraction): the
     answer is the extraction (a KeyVal of its id, structure, moon, system, owner, times, duration and yield), the pilot is sent
     OnMoonExtractionUpdate with it, and a second start while it runs answers that extraction as it is."""
-    with base.connect(f"walk-moon-{uuid.uuid4().hex[:10]}") as client:
+    with base.connect(f"walk-moon-{run_token()}") as client:
         _docked_pilot(client, STRUCTURE)
         assert client.call("structureControl", "TakeControl", STRUCTURE) is None
         answer = keyval(describe(called(client, "moonExtractions", "StartNewExtraction", STRUCTURE, MOON_DAYS, False)))
@@ -450,7 +452,7 @@ def test_a_director_is_refused_the_anchor_of_an_astrahus_in_this_system_by_name(
     refusal `CantDeployBlocked` with the item's type (EVE.js sovPlayerDeployment.js; the wiki's Anchoring structures). The system's pinned SDE
     record (mapSolarSystems disallowedAnchorCategories) forbids Upwell structures (category 65) here, so the refusal comes after the Director gate
     and before any placement. A successful anchor is not live: the recorded pilots only undock in this system; the Host tests cover it."""
-    run = uuid.uuid4().hex[:8]
+    run = run_token()
     with base.connect(f"walk-anchor-{run}") as client:
         character, ship_id, fitted, _ = arrive(client, RACE, run)
         corporation = dbseed.found_corporation(STATION, SYSTEM, character, run)
@@ -479,7 +481,7 @@ def test_a_director_anchors_an_astrahus_from_its_ship_in_a_legal_system_and_the_
     corporation in its anchoring state (AnchorVulnerable) with its default profile, the simulation places it in the system (the pilot sees it in
     the ballpark), and the corporation's sessions hear OnStructureStateChanged. The pilot warps 2000 km from the station first (the free-space rule),
     and the anchor is asked again until the warp is over, as in the warp test. Then the Director unanchors and cancels the unanchoring."""
-    run = uuid.uuid4().hex[:8]
+    run = run_token()
     with base.connect(f"walk-anchor-ok-{run}") as client:
         character, ship_id, fitted, _ = arrive(client, RACE, run)
         corporation = dbseed.found_corporation(LEGAL_STATION, LEGAL_SYSTEM, character, run)

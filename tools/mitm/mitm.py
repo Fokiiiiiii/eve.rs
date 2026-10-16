@@ -304,7 +304,23 @@ def _normal_service(name, ignore_volatile):
     return re.sub(r"OID[+-]\d+", "OID", name) if (ignore_volatile and name) else name
 
 
-def events(records, ignore_volatile):
+def _sort_dicts(value):
+    """The same value with every marshal dictionary's pairs sorted by key (the client reads a dictionary by key)."""
+    if isinstance(value, dict):
+        if isinstance(value.get("$dict"), list):
+            pairs = [[k, _sort_dicts(v)] for k, v in value["$dict"]]
+            return {"$dict": sorted(pairs, key=lambda pair: json.dumps(pair[0], sort_keys=True))}
+        return {k: _sort_dicts(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_sort_dicts(v) for v in value]
+    return value
+
+
+def _is_notification(category):
+    return category == "notification" or (isinstance(category, str) and category.endswith("Notification"))
+
+
+def events(records, ignore_volatile, ignore_key_order=False, ignore_notification_order=False):
     """Two streams, each in capture order: the calls the client made, and what the server sent.
 
     The two directions are not interleaved: a server notification can race the client's first call on a new
@@ -335,6 +351,14 @@ def events(records, ignore_volatile):
                 # the payload leads with the session id: (sessionID, changeKind, changes)
                 value = {"$tuple": [shape(value["$tuple"][0]), *value["$tuple"][1:]]}
             server.append((kind, None, None, value))
+    if ignore_key_order:
+        client = [(c, s, m, _sort_dicts(v)) for c, s, m, v in client]
+        server = [(c, s, m, _sort_dicts(v)) for c, s, m, v in server]
+    if ignore_notification_order:
+        # the notices are compared as a set, after the results: independent notices may arrive in any order
+        notices = [e for e in server if _is_notification(e[0])]
+        server = [e for e in server if not _is_notification(e[0])]
+        server += sorted(notices, key=lambda e: json.dumps(list(e), sort_keys=True, default=str))
     return client, server
 
 
@@ -369,7 +393,9 @@ def compare(reference, candidate, ignore_volatile):
 
 
 def cmd_diff(args):
-    reference, candidate = events(load(args.reference), args.ignore_volatile), events(load(args.candidate), args.ignore_volatile)
+    options = {"ignore_key_order": args.ignore_key_order, "ignore_notification_order": args.ignore_notification_order}
+    reference = events(load(args.reference), args.ignore_volatile, **options)
+    candidate = events(load(args.candidate), args.ignore_volatile, **options)
     mode = "volatile fields ignored" if args.ignore_volatile else "exact values"
     found = compare(reference, candidate, args.ignore_volatile)
     if found is None:
@@ -412,6 +438,10 @@ def main(argv=None):
     diff.add_argument("candidate", help="the capture to check (eve.rs)")
     diff.add_argument("--ignore-volatile", action="store_true",
                       help="ignore ids, session ids, times, random seeds and bound-object ids (see README)")
+    diff.add_argument("--ignore-key-order", action="store_true",
+                      help="compare marshal dictionaries by key, not by the order of their pairs (the client reads them by key)")
+    diff.add_argument("--ignore-notification-order", action="store_true",
+                      help="compare the server's notifications as a set, after the results (independent notices may race)")
     diff.set_defaults(run=cmd_diff)
 
     args = parser.parse_args(argv)

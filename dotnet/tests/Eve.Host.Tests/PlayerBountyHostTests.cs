@@ -1,4 +1,6 @@
+using System.Text.Json.Nodes;
 using Eve.Characters;
+using Eve.GameStore;
 using Eve.Crimewatch;
 using Eve.Data;
 using Eve.Scheduler;
@@ -272,6 +274,66 @@ public sealed class PlayerBountyHostTests : IAsyncLifetime
 
     private async Task<decimal> WalletIskAsync(NpgsqlDataSource source, long owner) =>
         (await new PgWalletStore(source, Schema("EVE_WALLET_SCHEMA")).GetAsync(owner))?.Isk ?? 0m;
+
+    [PgFact]
+    public async Task A_placed_bounty_tells_the_target_pilot_or_the_members_of_its_corporation_once_and_never_the_placer()
+    {
+        await using var source = NpgsqlDataSource.Create(PgConnection.ForTest(Url));
+        var host = await HostComposition.BuildAsync(Settings());
+        var characters = new PgCharacterStore(source, Schema("EVE_CHARACTERS_SCHEMA"));
+        var placer = await InsertPilotAsync(source, characters, "Notice Placer");
+        var target = await InsertPilotAsync(source, characters, "Notice Target");
+        const long corporation = 98_000_001;
+        var member = await InsertPilotInCorporationAsync(source, characters, "Corporation Member", corporation);
+        var otherMember = await InsertPilotInCorporationAsync(source, characters, "Other Corporation Member", corporation);
+        await OpenWalletAsync(source, placer, 100_000_000m);
+        var bounty = host.Registry.Lookup("bountyProxy")!;
+
+        async Task<PyValue> PlaceAsync(long targetId, double amount, int callId) => await bounty.CallAsync(new ServiceCall
+        {
+            Args = [new PyInt(targetId), new PyReal(amount)],
+            Method = "AddToBounty",
+            Session = new ClientSession { CharacterId = placer },
+            CallId = new PyInt(callId),
+        });
+        async Task<List<JsonObject>> RecordsAsync(long recipient)
+        {
+            await using var persisted = new PersistenceStore(source, Schema("EVE_GAMESTORE_SCHEMA"));
+            var boxes = (await persisted.LoadTableAsync("notifications"))["boxes"] as JsonObject;
+            var rows = (boxes?[recipient.ToString(System.Globalization.CultureInfo.InvariantCulture)] as JsonObject)?["byID"] as JsonObject;
+            return rows?.Select(row => (JsonObject)row.Value!).ToList() ?? [];
+        }
+
+        // a pilot: the target is told (112) with the placer and the amount, once, even when the placement is retried; the placer is not told
+        await PlaceAsync(target, 2_000_000, 21);
+        await PlaceAsync(target, 2_000_000, 21);
+        var toTarget = Assert.Single(await RecordsAsync(target));
+        Assert.Equal(112, toTarget["typeID"]!.GetValue<int>());
+        Assert.Equal(placer, toTarget["senderID"]!.GetValue<long>());
+        Assert.Equal(10, toTarget["groupID"]!.GetValue<int>());
+        Assert.Equal(placer, toTarget["data"]!["bountyPlacerID"]!.GetValue<long>());
+        Assert.Equal(2_000_000d, toTarget["data"]!["bounty"]!.GetValue<double>());
+        Assert.Empty(await RecordsAsync(placer));
+
+        // a corporation: each member is told (113), the placer is not, and the members are told once each
+        await PlaceAsync(corporation, 20_000_000, 22);
+        Assert.Equal(113, Assert.Single(await RecordsAsync(member))["typeID"]!.GetValue<int>());
+        Assert.Equal(113, Assert.Single(await RecordsAsync(otherMember))["typeID"]!.GetValue<int>());
+        Assert.Empty(await RecordsAsync(placer));
+        Assert.Single(await RecordsAsync(target));
+    }
+
+    private static async Task<long> InsertPilotInCorporationAsync(NpgsqlDataSource source, PgCharacterStore characters, string name, long corporationId)
+    {
+        var pilot = new NewCharacter(1, name, Gender: 1, RaceId: 1, BloodlineId: 1, AncestryId: 10, SchoolId: 35, TypeId: 1373,
+            CorporationId: corporationId, FactionId: 500001, StationId: 60000610, SolarSystemId: 30002775, ConstellationId: 20000406, RegionId: 10000033,
+            DollInfo: null, PortraitInfo: null);
+        await using var connection = await source.OpenConnectionAsync();
+        await using var transaction = await connection.BeginTransactionAsync();
+        var id = await characters.InsertAsync(connection, transaction, pilot);
+        await transaction.CommitAsync();
+        return id;
+    }
 
     private static async Task<long> InsertPilotAsync(NpgsqlDataSource source, PgCharacterStore characters, string name)
     {

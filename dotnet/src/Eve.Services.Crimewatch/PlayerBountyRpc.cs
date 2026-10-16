@@ -10,6 +10,9 @@ namespace Eve.Services.Crimewatch;
 /// <summary>What the host knows of a bounty target: its kind, and its corporation and alliance (0 when none).</summary>
 public sealed record PlayerBountyOwner(BountyOwnerKind Kind, long CorporationId = 0, long AllianceId = 0);
 
+/// <summary>A bounty placement that is recorded: who placed it, on what, how much, and the operation key that makes its retries one placement.</summary>
+public sealed record BountyPlacement(long PlacerId, long TargetId, BountyOwnerKind Kind, long CorporationId, long AllianceId, decimal Amount, string Key);
+
 /// <summary>
 /// The player bounty methods of <c>bountyProxy</c> (EveJS <c>bountyProxyService.js</c> and <c>playerBountyState.js</c>): placing a bounty debits the
 /// placer's wallet once, in the same transaction that records it; the reads answer the stored pools, contributions and rankings. Methods this
@@ -21,7 +24,8 @@ public sealed class PlayerBountyRpc(
     WalletTransactions wallets,
     PgWalletStore walletStore,
     Func<long, CancellationToken, ValueTask<PlayerBountyOwner>> resolveOwner,
-    Func<long> nowUnixMs)
+    Func<long> nowUnixMs,
+    Func<BountyPlacement, CancellationToken, ValueTask>? notifyPlaced = null)
 {
     /// <summary>The journal entry type of a bounty placement (EveJS <c>JOURNAL_ENTRY_TYPE.BOUNTY</c>).</summary>
     private const int BountyJournalEntryType = 16;
@@ -71,10 +75,12 @@ public sealed class PlayerBountyRpc(
         var key = OperationKey(placer, call.CallId);
         await using var connection = await source.OpenConnectionAsync(call.Cancellation);
         await using var transaction = await connection.BeginTransactionAsync(call.Cancellation);
-        // a retried placement answers the pool it already changed, and debits nothing again
+        var placement = new BountyPlacement(placer, targetId, owner.Kind, owner.CorporationId, owner.AllianceId, amount, key);
+        // a retried placement answers the pool it already changed, and debits nothing again (its notifications are keyed, so they are sent once)
         if (await store.PlacementPoolAsync(connection, transaction, key, call.Cancellation) is { } placed)
         {
             await transaction.CommitAsync(call.Cancellation);
+            await NotifyPlacedAsync(placement, call.Cancellation);
             return Payload(placed);
         }
         var now = nowUnixMs();
@@ -92,7 +98,15 @@ public sealed class PlayerBountyRpc(
         var pool = await store.RecordPlacementAsync(connection, transaction,
             new BountyPool(targetId, owner.Kind, owner.CorporationId, owner.AllianceId, 0), placer, amount, key, now, call.Cancellation);
         await transaction.CommitAsync(call.Cancellation);
+        await NotifyPlacedAsync(placement, call.Cancellation);
         return Payload(pool);
+    }
+
+    /// <summary>The placement is told to its recipients after it is recorded (EveJS <c>bountyNotifications.js</c>); none when the host has no notifier.</summary>
+    private async ValueTask NotifyPlacedAsync(BountyPlacement placement, CancellationToken cancellationToken)
+    {
+        if (notifyPlaced is not null)
+            await notifyPlaced(placement, cancellationToken);
     }
 
     private async ValueTask<PyValue> GetBountiesAsync(ServiceCall call)

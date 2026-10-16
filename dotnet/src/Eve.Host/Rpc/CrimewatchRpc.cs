@@ -40,7 +40,46 @@ internal sealed partial class CharacterServicesComposition
     /// <summary>The player bounties: the pools in the crimewatch schema, the placement debit in the economy.</summary>
     private Eve.Services.Crimewatch.PlayerBountyRpc? playerBounties;
     private Eve.Services.Crimewatch.PlayerBountyRpc PlayerBounties => playerBounties ??= new Eve.Services.Crimewatch.PlayerBountyRpc(
-        new Eve.Crimewatch.PlayerBountyStore(source, crimewatchSchema), source, economyWallets, wallets, ResolveBountyOwnerAsync, now);
+        new Eve.Crimewatch.PlayerBountyStore(source, crimewatchSchema), source, economyWallets, wallets, ResolveBountyOwnerAsync, now, NotifyBountyPlacedAsync);
+
+    /// <summary>
+    /// The placement notifications (EveJS <c>bountyNotifications.js</c>): a pilot is told (112) when a bounty is placed on it, each member of a
+    /// corporation (113) and of an alliance's corporations (114) too. The placer is never told, and each recipient gets one notification per placement.
+    /// </summary>
+    private async ValueTask NotifyBountyPlacedAsync(Eve.Services.Crimewatch.BountyPlacement placement, CancellationToken cancellationToken)
+    {
+        var recipients = new List<long>();
+        switch (placement.Kind)
+        {
+            case Eve.Crimewatch.BountyOwnerKind.Character:
+                recipients.Add(placement.TargetId);
+                break;
+            case Eve.Crimewatch.BountyOwnerKind.Corporation:
+                recipients.AddRange((await characters.ForCorporationAsync(placement.TargetId, cancellationToken)).Select(member => member.Id));
+                break;
+            case Eve.Crimewatch.BountyOwnerKind.Alliance:
+                foreach (var member in await corporations.AllianceMembersAsync(placement.TargetId, cancellationToken))
+                    recipients.AddRange((await characters.ForCorporationAsync(member.CorporationId, cancellationToken)).Select(pilot => pilot.Id));
+                break;
+            default:
+                return;
+        }
+        var typeId = placement.Kind switch
+        {
+            Eve.Crimewatch.BountyOwnerKind.Character => BountyPlacedCharTypeId,
+            Eve.Crimewatch.BountyOwnerKind.Corporation => BountyPlacedCorpTypeId,
+            _ => BountyPlacedAllianceTypeId,
+        };
+        var data = new System.Text.Json.Nodes.JsonObject { ["bountyPlacerID"] = placement.PlacerId, ["bounty"] = (double)placement.Amount };
+        foreach (var recipient in recipients.Distinct().Where(id => id > 0 && id != placement.PlacerId).OrderBy(id => id))
+        {
+            await mailSendWriter.WriteBountyPlacedNotificationAsync(recipient, placement.PlacerId, typeId, data,
+                $"bounty-placed:{placement.Key}:receiver:{recipient}", cancellationToken);
+        }
+    }
+
+    /// <summary>The notification types of a bounty placement (EveJS <c>NOTIFICATION_TYPE.BOUNTY_PLACED_*</c>).</summary>
+    private const int BountyPlacedCharTypeId = 112, BountyPlacedCorpTypeId = 113, BountyPlacedAllianceTypeId = 114;
 
     /// <summary>What a bounty target is (EveJS <c>inferOwnerKind</c>): a known pilot, corporation or alliance, else the id range of its kind.</summary>
     private async ValueTask<Eve.Services.Crimewatch.PlayerBountyOwner> ResolveBountyOwnerAsync(long targetId, CancellationToken cancellationToken)

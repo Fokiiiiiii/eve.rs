@@ -2144,6 +2144,25 @@ price and the purchase); the SDE types and `typeDogma` (dogma attribute 182 = re
 - **Gaps.** Research missions (the agent's daily mission, one day's RP as the reward) are not offered; the mission pool does not
   carry them. EveJS grants the datacores through `researchDatacoreItemCustody`, which was not read; one stack is the rule used here.
 
+## Agents slice AG-4, research fields per agent and closed prompts (slice 7, 2026-10-17)
+
+Supersedes the field rule of A6 above, which gave every R&amp;D agent all 24 fields.
+
+- **Fields per agent (decided).** Each R&amp;D agent (agentTypeID 4, 244 in the pinned SDE) offers its own `npcCharacters.skills`, in
+  ascending skill type id, as the reference's `researchAuthority` does. Code: `AgentResearchFields.FieldsByAgent`; tests
+  `AgentResearchFieldsTests`, `AgentResearchSdeTests`.
+- **Datacore per field (decided).** A datacore is a published group 333 type whose dogma attribute 182 names the skill. When two
+  datacores name one skill, the **higher type id wins** (the reference's last-wins order over the type ids). No CCP source names
+  the winner; the rule follows the reference. A field with no datacore stays offered, and buying it is refused as invalid input
+  (the reference's `buildDatacoreQuantityPrompt` returns no prompt). Test `When_two_datacores_name_one_skill_the_higher_type_id_wins`.
+- **Closed prompts (decided).** A closed box answers nothing (the client's None). Start, Cancel and Buy Datacores then answer the
+  invalid-input line and change no state, as the reference does (`researchDialogue.js` readChoiceIndex, readYesNo, readQuantity and
+  their callers). Test `A_closed_prompt_gives_no_answer_and_changes_nothing`.
+- **OnDatacoreBought (decided: sent).** The client handles `OnDatacoreBought(characterID, agentID, balance)` (`agents.py`): it
+  refreshes the research view and the cash balance. eve.rs sends it to the buyer after the purchase commits, with the ISK balance
+  after the debit. EveJS sends no such notification (its purchase emits the wallet and item changes only), so this follows the
+  client, not the reference. The item grant is announced with `OnItemChange` as before, and the wallet with `OnAccountChange`.
+
 ## Agents slice AG-4, A7: locator buttons 15 to 17 (2026-10-11)
 
 Sources. eve-logic `appConst.py:146-164` (buttons 15 to 17), `eve/common/script/util/notificationconst.py:73, 423` (type 69, the
@@ -4241,3 +4260,46 @@ Sources: EveJS `services/skills/trading/skillTradingAuthority.js` and `skillTrad
 - **Title notices (CH-22, S9).** `SetNotice` is published to the character's notice streams on equip and on unequip (EveJS `achievementGatewayService.js`, the `title-set` event). Not done: `GrantedNotice` and `RevokedNotice` (EveJS publishes them on the `title-granted` and `title-revoked` events, which a reward claim raises; eve.rs has no reward claim through the gateway yet).
 - **Skill plan canonical form (CH-21, S9).** `SkillPlanCanonical` is EveJS `skillPlanState.js` `canonicalizeSkillRequirements`: each skill once at its highest level (1 to 5), the published prerequisites absorbed at the level they need, and every level of each skill listed after the skills it needs. It runs on create and on the requirement update (EveJS `normalizePlanRecord` serves both). A plan therefore lists every level of each skill, one entry each.
 - **Pod death (CH-16, S9).** The survivor and the wreck enter the simulation after the session change, the cosmetics and the skin, and the wreck's item change comes before the wreck's ball, as in the reference recording (`oracle/fixtures/scenarios/death.json`). See rows 50 and 51.
+
+## Factional warfare and corporation LP tax: what the server applies (2026-10-17)
+
+Sources: eve-logic `marketutil/skilllimits.py`, `marketutil/brokerFee.py`, `marketutil/const.py`,
+`eve/common/script/util/facwarCommon.py` (GetAdjustedFeePercentage, GetSolarSystemUpgradeLevel, GetLPUpgradeLevel,
+GetDonationTax), `appConst.py:1053-1055` (upgrade thresholds `[4, 379, 380, 381, 382, 383, 384]`, max level 5),
+`industry/npsStationTaxModifier.py`; EveJS v0.12.9 (no factional-warfare system upgrade, no corporation LP tax applied to a credit).
+
+- **Applied (existing).** The Zarzakh pirate-alignment sales-tax discount (50 percent for the pirate factions 500018 and 500019
+  in system 30100000, `marketutil/skilllimits.py` GetLocationDiscount) is in `MarketRules.Context`. EveJS has the same rule.
+- **Not applied: the factional warfare solar-system upgrade on the broker fee.** The client reduces the broker commission by
+  10 percent per upgrade level of the system for the character's warfaction (`GetAdjustedFeePercentage`). The level comes from the
+  system's factional-warfare LP (`facWarMgr.GetSolarSystemLPsEx`) and its occupier. eve.rs has no system LP store and no
+  `facWarMgr`; the pinned SDE has no factional-warfare or LP-per-system table. EveJS does not apply it either. Status: OPEN, the
+  source is missing (not a rule decision).
+- **Not applied: the infrastructure hub donation tax** (`GetDonationTax`, from the zone's controlled points). The zone points are
+  not in eve.rs (factional warfare zones answer the empty shape). Status: OPEN, source missing.
+- **Not applied: the NPC station tax modifier per war faction** (`npsStationTaxModifier.py`, built data). The built file is not in
+  the pinned SDE (no `npcStationTaxModifier` table). Industry uses the SDE `npcCorporations.taxRate` only. Status: OPEN, source missing.
+- **Loyalty point store: no tax in the client.** `lpStoreSvc.py` reads no tax rate; the store's offer and take rules carry no
+  factional tax. Nothing to serve. Offers themselves are OPEN (no offer rows in build 3396210).
+- **Corporation LP tax (`loyaltyPointTaxRate`).** The corporation stores and shows it (the corporation sheet, `corp_ui_home.py`).
+  The client applies no LP tax in its own code, and neither does EveJS: no credit path reads the rate. eve.rs keeps the same
+  behaviour: the rate is stored and reported, and no credit is taxed. The tax is for LP credited to members, so it can be applied only when an LP credit
+  source exists (missions, factional warfare and insurgency are OPEN, TODO AG-1). Status: OPEN; the rule is not checked against CCP here.
+
+## Bookmarks: shared (access group) folders, not built (2026-10-17)
+
+Sources: eve-logic `eve/client/script/ui/shared/bookmarks/bookmarkSvc.py` (the `accessGroupBookmarkMgr` calls: AddFolder with
+`isPersonal` false and four access group ids, UpdateFolder, the subfolder and bookmark writes, `SearchFoldersWithAdminAccess`),
+`bookmarkContainerWindow.py` (the access group choices come from `structureControllers.GetAccessGroupController()`, with
+`fetchToServer=True`).
+
+- **Decided.** A shared folder needs access groups (admin, manage, use, view). Their ids come from the access group controller,
+  which the owner group service (`ownerGroupManager`) backs. eve.rs has no access group store and no `ownerGroupManager`
+  (structure track), so there is no group to grant and no admin, use or view rule to check. `AddFolder` with `isPersonal` false is
+  therefore refused with the notice `SharedFoldersNotBuilt` (`BookmarkStore.AddFolderAsync`) rather than answered with a folder.
+- **What the client reads without shared folders.** The personal folders, their bookmarks and subfolders; the shared folders list
+  is empty, which is the true state (none can exist). `SearchFoldersWithAdminAccess` returns the personal folders only.
+- **Not built, by the same cause.** Shared folder writes, the shared folder change notifications (`OnSharedBookmarksFolderUpdated`,
+  `OnSharedBookmarksFolderDeleted`, `OnSharedBookmarksFoldersAccessLost`, `OnSharedBookmarksFoldersAccessChanged`), and the
+  `BookmarkLocation` in space (needs the space scene; refused with the notice).
+- **Status.** OPEN, blocked on `ownerGroupManager` (TODO, VERIFY list and the structure track). Not a rule decision.

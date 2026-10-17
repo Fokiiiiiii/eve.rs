@@ -95,6 +95,10 @@ public sealed class PersistenceAgentResearch(
             InventoryWire.PackedRow(new ItemRow(itemId, (int)field.DatacoreTypeId, characterId, stationId, ItemFlags.Hangar, quantity,
                 type?.GroupId ?? 0, type?.CategoryId ?? 0)),
             new Eve.Marshal.PyDict([]), Eve.Marshal.PyNone.Instance);
+        // The client's agents.py OnDatacoreBought(characterID, agentID, balance): it refreshes the research view and the cash.
+        if (settlement.Entries.LastOrDefault(entry => entry.OwnerId == characterId && entry.AccountKey == 1000) is { } cash)
+            sessions.Of(characterId)?.SendNotification("OnDatacoreBought", "clientID",
+                new Eve.Marshal.PyInt(characterId), new Eve.Marshal.PyInt(agentId), new Eve.Marshal.PyReal((double)cash.Balance));
         return new AgentDatacorePurchase(AgentDatacoreRefusal.None, quantity);
     }
 

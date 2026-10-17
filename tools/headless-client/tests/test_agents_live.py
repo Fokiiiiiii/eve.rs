@@ -173,6 +173,12 @@ def test_research_start_cancel_and_datacores_over_the_dialogs():
         seed_standing(agent["agentID"], character_id)
         handle = client.call("agentMgr", "MachoBindObject", agent["agentID"])
 
+        # a closed field box (the client answers None) starts nothing and offers no cancel
+        client.answer("SingleChoiceBox", None)
+        says, actions, _ = do_action(client, handle, START_RESEARCH)
+        assert (CANCEL_RESEARCH, 13) not in actions and psql(
+            f"SELECT count(*) FROM {schema('EVE_AGENTS_SCHEMA')}.research_projects WHERE character_id = {character_id}") == "0"
+
         # start: the client picks the first field, and the project runs
         client.answer("SingleChoiceBox", (True, "radioboxOption1Selected"))
         says, actions, _ = do_action(client, handle, START_RESEARCH)
@@ -190,6 +196,13 @@ def test_research_start_cancel_and_datacores_over_the_dialogs():
         says, actions, _ = do_action(client, handle, BUY_DATACORES)
         assert "BoughtDatacores" in says_label(says)
         assert isk_before - isk_of(character_id) == 10_000
+        # the client's OnDatacoreBought(characterID, agentID, balance) reaches the buyer after the commit
+        assert "OnDatacoreBought" in names(client), sorted(names(client))
+
+        # a closed cancel question (None) keeps the project
+        client.answer("YesNo", None)
+        do_action(client, handle, CANCEL_RESEARCH)
+        assert psql(f"SELECT count(*) FROM {schema('EVE_AGENTS_SCHEMA')}.research_projects WHERE character_id = {character_id}") == "1"
 
         # cancel: a yes ends the project and the idle buttons offer to start again
         client.answer("YesNo", True)

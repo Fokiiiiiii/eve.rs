@@ -189,6 +189,28 @@ public sealed class DungeonWaveTests
     }
 
     [PgFact]
+    public async Task A_wave_that_comes_due_while_its_pilot_is_away_waits_and_spawns_when_the_pilot_is_back()
+    {
+        await using var rig = await WaveRig.CreateAsync();
+        await rig.Director.StartAsync(Pilot, SystemId, Origin, 2173);
+
+        // the first wave comes due while the pilot is out of the system: it is not refused, failed or spawned yet
+        rig.Spawner.Present = false;
+        await rig.RunDueAndDeliverAsync();
+        Assert.Empty(rig.Spawner.Batches);
+        Assert.Single(await rig.Content.ActiveByKindAsync(DungeonWaveDirector.Kind));
+        Assert.Empty(rig.Completions);
+
+        // back in the system: the wave is retried and spawns its NPCs once
+        rig.Spawner.Present = true;
+        rig.Advance(TimeSpan.FromSeconds(15));
+        await rig.RunDueAndDeliverAsync();
+        Assert.Single(rig.Spawner.Batches);
+        Assert.NotEmpty(Assert.Single(rig.Spawner.Batches).Ships);
+        Assert.Single(await rig.Content.ActiveByKindAsync(DungeonWaveDirector.Kind));
+    }
+
+    [PgFact]
     public async Task A_pilot_who_leaves_after_a_wave_came_has_that_wave_taken_out_by_the_sweep()
     {
         await using var rig = await WaveRig.CreateAsync();

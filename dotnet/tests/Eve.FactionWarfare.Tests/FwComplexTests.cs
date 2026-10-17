@@ -81,20 +81,31 @@ public sealed class FwComplexTickerTests
         Assert.True(rig.Now - closedAt >= (long)FwComplexes.Respawn.TotalMilliseconds);
     }
 
-    /// <summary>Runs <paramref name="ticks"/> ticks of 10 s with the given war factions present; returns what resolved.</summary>
+    /// <summary>Runs <paramref name="ticks"/> ticks of 10 s with the given war factions inside every complex; returns what resolved.</summary>
     private static async Task<List<FwComplexResolution>> TicksAsync(FwRig rig, int ticks, long[] factions)
     {
         var resolved = new List<FwComplexResolution>();
-        Func<long, CancellationToken, Task<IReadOnlyList<long>>> presence = (_, _) => Task.FromResult<IReadOnlyList<long>>(factions);
+        var sites = new FakeSites(factions);
         for (int i = 0; i < ticks; i++)
         {
             rig.Now += 10_000;
             await using var connection = await rig.Source.OpenConnectionAsync();
             await using var transaction = await connection.BeginTransactionAsync();
-            resolved.AddRange(await FwComplexTicker.TickAsync(rig.Store, connection, transaction, rig.Now, presence, CancellationToken.None));
+            resolved.AddRange(await FwComplexTicker.TickAsync(rig.Store, sites, connection, transaction, rig.Now, CancellationToken.None));
             await transaction.CommitAsync();
         }
         return resolved;
+    }
+
+    /// <summary>The sites of the test: each complex's site is its complex id, the defenders are cleared, and the pilots are the given factions.</summary>
+    private sealed class FakeSites(long[] factions) : IFwComplexSites
+    {
+        public Task<long> StartAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long solarSystemId, ComplexSize size, long complexId, CancellationToken cancellationToken) =>
+            Task.FromResult(complexId + 1_000_000);
+        public Task<bool> DefendersClearedAsync(long instanceId, CancellationToken cancellationToken) => Task.FromResult(true);
+        public Task<IReadOnlyList<long>> FactionsInsideAsync(long solarSystemId, long instanceId, CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyList<long>>(factions);
+        public Task EndAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long instanceId, CancellationToken cancellationToken) => Task.CompletedTask;
     }
 
     private static async Task<FwComplex?> OpenSizeAsync(FwRig rig, long systemId, ComplexSize size)

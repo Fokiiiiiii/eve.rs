@@ -59,6 +59,9 @@ public sealed class DungeonWaveDirector
     /// <summary>How long a dungeon lasts when it is not finished (its content expires then, and its NPCs are taken out by the sweep).</summary>
     public static readonly TimeSpan Lifetime = TimeSpan.FromMinutes(30);
 
+    /// <summary>How long a wave waits before it looks again for its pilot in the system.</summary>
+    private const long WaveRetryMs = 15_000;
+
     /// <summary>How often the sweep looks at the pilots and the NPCs of the dungeons.</summary>
     public static readonly TimeSpan Sweep = TimeSpan.FromSeconds(10);
 
@@ -313,6 +316,12 @@ public sealed class DungeonWaveDirector
         if (selection is null)
         {
             await _content.FailAsync(context.Connection, context.Transaction, instance.Id, $"wave {due.WaveIndex}: {refusal}", cancellationToken);
+            return;
+        }
+        // the simulation keeps a system's scene only while a pilot is in it: a wave that comes due with its pilot away waits for it (it is not refused and failed)
+        if (!_spawner.IsPilotInSystem(instance.Owner, data.SolarSystemId))
+        {
+            context.RunAgainAt(context.NowMs + WaveRetryMs);
             return;
         }
         DungeonSpawnResult result = await _spawner.SpawnAsync(data.SolarSystemId, data.Origin, selection, wave.Amount, cancellationToken);

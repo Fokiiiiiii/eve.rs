@@ -4314,8 +4314,10 @@ donation sections it marks outdated. Design: `docs/project/FW_DESIGN.md`.
 - **Not applied: victory points and kills.** No complex victory point and no ship-kill LP producer exists. The wiki gives complex points, and the
   ship-kill LP as 3.25 times (hull value minus insurance value plus fittings) over 10,000, capped at 50,000 LP, shared among participants; the
   multiplier is flagged "needs testing" by the wiki. Status: open.
-- **Not applied: capture.** The wiki's capture is the destruction of the infrastructure hub (25 million HP) after vulnerability. No FW hub
-  combat path exists. The occupier does not change. Status: open.
+- **Built, trigger open: capture.** `FwService.CaptureAsync` is the state transition: a vulnerable system (at 75,000 attacker points, wiki) passes to
+  the occupier's enemy (`FwFactions.OccupationEnemyOf`), and its points and LP pool reset (the wiki: a capture removes the upgrades). A contested or
+  unoccupied system is refused. Tests: `FwCaptureTests` (2). The trigger is the destruction of the infrastructure hub (wiki: 25 million HP), which
+  has no combat path in eve.rs yet, so no capture happens in a running server. Status: open (trigger).
 - **Served: the character and corporation statistics** (`GetStats_Character`, `GetStats_Corp`: the six client keys, from the daily rows of migration 0002).
   **Not served:** `GetStats_FactionInfo`, `GetStats_Militia`, `GetStats_Alliance`, `GetStats_CorpPilots`, `GetStats_TopAndAllKillsAndVPs` (they need
   the alliance grouping and the faction member counts, which eve.rs does not store yet) and the rank overview methods. A client call to them fails

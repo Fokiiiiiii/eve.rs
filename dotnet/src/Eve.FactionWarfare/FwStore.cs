@@ -166,6 +166,13 @@ public sealed class FwStore
         return new FwStatsWindow(reader.GetInt64(0), reader.GetInt64(1), reader.GetInt64(2), reader.GetInt64(3), reader.GetInt64(4), reader.GetInt64(5));
     }
 
+    /// <summary>Hands an occupied system to a new occupier: its attacker points and LP pool reset to zero (a capture removes the upgrades).</summary>
+    public Task SetOccupierAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long solarSystemId, long occupierId, long nowMs,
+        CancellationToken cancellationToken = default) =>
+        Sql.ExecuteAsync(connection, transaction, Q(
+            "UPDATE {schema}.fw_systems SET occupier_id = $2, attacker_points = 0, lp_pool = 0, updated_ms = $3 WHERE solar_system_id = $1"),
+            cancellationToken, solarSystemId, occupierId, nowMs);
+
     /// <summary>Adds victory points to the attacking side of an occupied system (null when the system is not occupied).</summary>
     public async Task<long?> AddAttackerPointsAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long solarSystemId, long points, long nowMs,
         CancellationToken cancellationToken = default)

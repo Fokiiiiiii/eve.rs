@@ -13,6 +13,14 @@ public enum EnlistOutcome
     NothingToWithdraw,
 }
 
+/// <summary>The outcome of a capture attempt.</summary>
+public enum CaptureOutcome
+{
+    Captured,
+    NotOccupied,
+    NotVulnerable,
+}
+
 /// <summary>The outcome of an LP donation. <c>TaxChanged</c> names the tax now in percent, <c>PoolOverloaded</c> the LP that still fit, <c>BelowMinimum</c> the minimum.</summary>
 public enum DonateOutcome
 {
@@ -133,6 +141,28 @@ public sealed class FwService
     {
         await using var connection = await _store.Source.OpenConnectionAsync(cancellationToken);
         return await _store.CorporationStatsAsync(connection, null, corporationId, FwRules.DayOf(nowMs), cancellationToken);
+    }
+
+    /// <summary>
+    /// Captures a vulnerable system: its occupier becomes the occupier's enemy (<see cref="FwFactions.OccupationEnemyOf"/>), and its attacker points and
+    /// LP pool reset. Only a vulnerable system (at the vulnerability points) can change hands. The hub-destruction trigger is not connected yet
+    /// (TODO, DEVIATIONS "Factional warfare"); this is the state transition it will call.
+    /// </summary>
+    public async Task<CaptureOutcome> CaptureAsync(long solarSystemId, long nowMs, CancellationToken cancellationToken = default)
+    {
+        await using var connection = await _store.Source.OpenConnectionAsync(cancellationToken);
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        var system = await _store.SystemAsync(connection, transaction, solarSystemId, true, cancellationToken);
+        if (system is null)
+            return CaptureOutcome.NotOccupied;
+        if (FwRules.Contest(system.AttackerPoints) != ContestState.Vulnerable)
+            return CaptureOutcome.NotVulnerable;
+        var newOccupier = FwFactions.OccupationEnemyOf(system.OccupierId);
+        if (newOccupier == 0)
+            return CaptureOutcome.NotOccupied;
+        await _store.SetOccupierAsync(connection, transaction, solarSystemId, newOccupier, nowMs, cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+        return CaptureOutcome.Captured;
     }
 
     /// <summary>

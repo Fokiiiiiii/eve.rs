@@ -97,6 +97,24 @@ public sealed class AccelerationGateTests
     }
 
     [Fact]
+    public async Task A_gate_into_the_entry_room_is_open_before_any_wave_is_cleared()
+    {
+        // the complex's gate (one room, the entry): the pilot walks in from the site's ring, no room has been cleared yet (the waves are inside)
+        var room = new RoomPlacement(0, "room:entry", null, Origin, DungeonRoomLayout.EntryPointOf(Origin, Origin));
+        var single = new DungeonLayout([room], [new GatePlacement(0, "gate:1", DungeonRoomLayout.AccelerationGateTypeId, "room:entry", "room:entry", [], 12_706, Origin)]);
+        var gateId = SpaceContainers.AccelerationGateDeployableId(Instance, 0);
+        var rig = new Rig(new ShipClass(GroupId: 25, RaceId: 1), new CommandReply(true, 0, null));
+        rig.Build(Instance, Instance, single);
+        rig.Cleared = new HashSet<string>(StringComparer.Ordinal);
+
+        var answer = await rig.Gates.ActivateAsync(rig.Session, gateId, CancellationToken.None);
+
+        Assert.IsType<PyNone>(answer);
+        Assert.Equal(room.EntryPoint, Assert.Single(rig.Transits).Point);
+        Assert.Equal((Instance, "room:entry", 0L), Assert.Single(rig.Rooms));
+    }
+
+    [Fact]
     public async Task A_capital_hull_is_barred_by_the_blacklist_when_the_gate_names_no_race_and_a_race_list_decides_otherwise()
     {
         var layout = LayoutOf(Dungeon283);

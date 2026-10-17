@@ -32,6 +32,9 @@ public interface IFwComplexSites
     /// <summary>Whether the site's NPC defenders are all destroyed (the site is completed).</summary>
     Task<bool> DefendersClearedAsync(long instanceId, CancellationToken cancellationToken);
 
+    /// <summary>Whether a pilot is in the system now: a complex's site starts with its first pilot (its waves spawn into that pilot's scene).</summary>
+    bool PilotsIn(long solarSystemId);
+
     /// <summary>The war factions of the pilots in the complex now (0 for a pilot with none).</summary>
     Task<IReadOnlyList<long>> FactionsInsideAsync(long solarSystemId, long instanceId, CancellationToken cancellationToken);
 
@@ -114,10 +117,18 @@ public static class FwComplexTicker
                 if (lastClosed.TryGetValue((system.SolarSystemId, spec.Size), out long closedMs) && nowMs < closedMs + respawnMs)
                     continue;
                 long id = await store.InsertComplexAsync(connection, transaction, system.SolarSystemId, spec.Size, nowMs, cancellationToken);
-                long instance = await sites.StartAsync(connection, transaction, system.SolarSystemId, spec.Size, id, cancellationToken);
-                await store.SetComplexInstanceAsync(connection, transaction, id, instance, cancellationToken);
-                open.Add(new FwComplex(id, system.SolarSystemId, spec.Size, 0, nowMs, nowMs, instance));
+                open.Add(new FwComplex(id, system.SolarSystemId, spec.Size, 0, nowMs, nowMs, 0));
             }
+        }
+        // a complex without its site starts it when a pilot is in its system (a site with no pilot has no scene for its NPCs: its wave would fail)
+        for (int index = 0; index < open.Count; index++)
+        {
+            var complex = open[index];
+            if (complex.InstanceId > 0 || !sites.PilotsIn(complex.SolarSystemId))
+                continue;
+            long instance = await sites.StartAsync(connection, transaction, complex.SolarSystemId, complex.Size, complex.ComplexId, cancellationToken);
+            await store.SetComplexInstanceAsync(connection, transaction, complex.ComplexId, instance, cancellationToken);
+            open[index] = complex with { InstanceId = instance };
         }
         var results = new List<FwComplexResolution>();
         foreach (var complex in open.OrderBy(complex => complex.SolarSystemId).ThenBy(complex => complex.Size))

@@ -19,7 +19,8 @@ internal sealed class FwComplexSites(
     ContentRuntime content,
     Func<int, IReadOnlyList<ClientSession>> sessionsInSystem,
     Func<ClientSession, CancellationToken, Task<WarpCoordinates?>> positionOf,
-    Func<long, CancellationToken, Task<long>> warFactionOfCharacter) : IFwComplexSites
+    Func<long, CancellationToken, Task<long>> warFactionOfCharacter,
+    Func<long, CancellationToken, Task<IReadOnlyList<long>>> openInstancesIn) : IFwComplexSites
 {
     /// <summary>The site templates of each complex size: the dungeons of its archetype that can start (ids in order).</summary>
     public IReadOnlyDictionary<ComplexSize, IReadOnlyList<long>> Templates { get; } = FwComplexes.Specs.ToDictionary(
@@ -35,10 +36,37 @@ internal sealed class FwComplexSites(
         if (templates.Count == 0)
             throw new InvalidOperationException($"the owner data has no {size} complex site");
         long dungeon = templates[(int)(complexId % templates.Count)];
-        // shortcut: the site sits at the system's origin; the scene gives no complex position (DungeonRoomLayout places the rooms around it)
-        var start = await sites.StartForSystemAsync((int)solarSystemId, [0d, 0d, 0d], dungeon, $"factionwarfare:{complexId}", FwComplexes.Lifetime,
+        // the site sits outside its system's star (the star is at the origin: a site at its centre puts its pilots inside the star's collision)
+        var origin = await SiteOriginAsync(connection, transaction, solarSystemId, cancellationToken);
+        var start = await sites.StartForSystemAsync((int)solarSystemId, origin, dungeon, $"factionwarfare:{complexId}", FwComplexes.Lifetime,
             connection, transaction, cancellationToken);
         return start.InstanceId ?? throw new InvalidOperationException($"complex {complexId} ({size}, dungeon {dungeon}): {start.Refusal}");
+    }
+
+    /// <summary>How far outside its star's surface a complex site sits, metres (shortcut: the planets are not checked; a site is 1e9 m out of the star).</summary>
+    public const double SiteClearanceMeters = 1_000_000_000;
+
+    /// <summary>The site's point: on the system's axis, outside the star's surface (the SDE mapStars radius of the system's star).</summary>
+    public static async Task<double[]> SiteOriginAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long solarSystemId, CancellationToken cancellationToken)
+    {
+        await using var command = new NpgsqlCommand("SELECT (doc::jsonb ->> 'radius')::double precision FROM sde.\"mapStars\" WHERE doc::jsonb ->> 'solarSystemID' = $1", connection, transaction);
+        command.Parameters.AddWithValue(solarSystemId.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        var radius = await command.ExecuteScalarAsync(cancellationToken) as double? ?? throw new InvalidOperationException($"system {solarSystemId} has no star in the SDE");
+        return [0d, 0d, radius + SiteClearanceMeters];
+    }
+
+    /// <summary>The point a complex's site was started at (its dungeon instance's origin).</summary>
+    private async Task<double[]> OriginOfAsync(long instanceId, CancellationToken cancellationToken) =>
+        await content.GetAsync(instanceId, cancellationToken) is { } instance && instance.Data<DungeonInstanceData>() is { } data
+            ? data.Origin
+            : [0d, 0d, 0d];
+
+    /// <summary>Whether a pilot's point is within the capture radius of a complex's site point.</summary>
+    private async Task<bool> WithinCaptureAsync(WarpCoordinates at, long instanceId, CancellationToken cancellationToken)
+    {
+        var origin = await OriginOfAsync(instanceId, cancellationToken);
+        var (dx, dy, dz) = (at.X - origin[0], at.Y - origin[1], at.Z - origin[2]);
+        return Math.Sqrt(dx * dx + dy * dy + dz * dz) <= CaptureRadiusMeters;
     }
 
     public async Task<bool> DefendersClearedAsync(long instanceId, CancellationToken cancellationToken) =>
@@ -55,11 +83,29 @@ internal sealed class FwComplexSites(
         {
             if (session.CharacterId is not { } characterId || await positionOf(session, cancellationToken) is not { } at || at.SolarSystemId != solarSystemId)
                 continue;
-            if (Math.Sqrt(at.X * at.X + at.Y * at.Y + at.Z * at.Z) > CaptureRadiusMeters)
+            if (!await WithinCaptureAsync(at, instanceId, cancellationToken))
                 continue;
             factions.Add(await warFactionOfCharacter(characterId, cancellationToken));
         }
         return factions;
+    }
+
+    public bool PilotsIn(long solarSystemId) => sessionsInSystem((int)solarSystemId).Count > 0;
+
+    /// <summary>
+    /// The open complex a pilot is inside (within the capture radius of the site's point), or null: the keeper's current dungeon of a complex pilot.
+    /// shortcut: every complex of a system is at the origin, so a pilot inside one is inside all of them; the lowest instance answers.
+    /// </summary>
+    public async Task<long?> InstanceOfAsync(ClientSession session, CancellationToken cancellationToken)
+    {
+        if (await positionOf(session, cancellationToken) is not { } at)
+            return null;
+        foreach (var instance in await openInstancesIn(at.SolarSystemId, cancellationToken))
+        {
+            if (await WithinCaptureAsync(at, instance, cancellationToken))
+                return instance;
+        }
+        return null;
     }
 
     public Task EndAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long instanceId, CancellationToken cancellationToken) =>

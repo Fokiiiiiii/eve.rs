@@ -520,7 +520,14 @@ await spaceContainers.PingObservatoryAsync(context.Payload<Eve.Services.Space.Sp
             await dungeonWaves.AttachAsync();
             dungeonWavesDirector = dungeonWaves;
             // the acceleration gates of the dungeon rooms (keeper.ActivateAccelerationGate): a pilot walks the gate of its room into the room it leads to
-            accelerationGates = new Eve.Services.Space.Gates.SpaceAccelerationGates(dungeonWaves.ActivePocketsAsync, CurrentDungeonInstanceAsync,
+            accelerationGates = new Eve.Services.Space.Gates.SpaceAccelerationGates(dungeonWaves.ActivePocketsAsync,
+                async (session, token) =>
+                {
+                    // the mission dungeon the pilot is in, else the complex it is inside (the current-dungeon answer has no instance when it has none)
+                    if (await CurrentDungeonInstanceAsync(session, token) is > 0 and var mission)
+                        return mission;
+                    return complexInstanceOfPilot is { } complexOf ? await complexOf(session, token) : null;
+                },
                 dungeonWaves.ClearedRoomKeysAsync,
                 async (session, token) =>
                 {

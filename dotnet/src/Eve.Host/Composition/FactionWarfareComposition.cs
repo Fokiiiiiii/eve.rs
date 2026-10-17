@@ -13,6 +13,8 @@ internal sealed partial class CharacterServicesComposition
 {
     private FwStore factionWarfareStore = default!;
     private FwService factionWarfare = default!;
+    /// <summary>The open complex a pilot is inside (the keeper's current dungeon of a complex pilot); set when the complexes start (FactionWarfare).</summary>
+    private Func<ClientSession, CancellationToken, Task<long?>>? complexInstanceOfPilot;
 
     /// <summary>
     /// The factional warfare state (schema <c>factionwarfare</c>): the store, and on the first start the occupied systems of the two warzones, seeded
@@ -198,7 +200,17 @@ internal sealed partial class CharacterServicesComposition
             (session, cancellationToken) => spaceSessions is { } space && space.ShipIdOf(session) is > 0 and var ship
                 ? space.PositionOfAsync(session, ship, cancellationToken)
                 : Task.FromResult<WarpCoordinates?>(null),
-            async (characterId, cancellationToken) => await WarFactionOfAsync(characterId, cancellationToken));
+            async (characterId, cancellationToken) => await WarFactionOfAsync(characterId, cancellationToken),
+            async (solarSystemId, cancellationToken) =>
+            {
+                await using var connection = await source.OpenConnectionAsync(cancellationToken);
+                return (await factionWarfareStore.OpenComplexesAsync(connection, null, cancellationToken))
+                    .Where(complex => complex.SolarSystemId == solarSystemId && complex.InstanceId > 0)
+                    .OrderBy(complex => complex.InstanceId)
+                    .Select(complex => complex.InstanceId)
+                    .ToList();
+            });
+        complexInstanceOfPilot = sites.InstanceOfAsync;
         var complexes = new FwComplexDirector(factionWarfareStore, foundations.Scheduler, foundations.Events, sites);
         await complexes.AttachAsync();
         foundations.Events.Subscribe("factionwarfare.complex-notices", [FwComplexDirector.ResolvedTopic],

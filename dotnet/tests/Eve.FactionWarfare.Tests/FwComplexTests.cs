@@ -81,6 +81,37 @@ public sealed class FwComplexTickerTests
         Assert.True(rig.Now - closedAt >= (long)FwComplexes.Respawn.TotalMilliseconds);
     }
 
+    [PgFact]
+    public async Task A_complex_starts_its_site_only_when_a_pilot_is_in_its_system()
+    {
+        await using var rig = await FwRig.CreateAsync();
+        await rig.OccupyWarzoneAsync(FwWarzones.AmarrMinmatar, FwFactions.AmarrEmpire);
+        var sites = new FakeSites([]) { Pilots = false };
+        await TickWithAsync(rig, sites, 3);
+        // the complex is open with no site: nobody is there to spawn its NPCs into
+        var scout = await OpenSizeAsync(rig, SystemId, ComplexSize.Scout);
+        Assert.NotNull(scout);
+        Assert.Equal(0, scout.InstanceId);
+        Assert.Equal(0, sites.Starts);
+
+        sites.Pilots = true;
+        await TickWithAsync(rig, sites, 1);
+        Assert.True(sites.Starts > 0, "the sites start once a pilot is in the system");
+        Assert.Equal(scout.ComplexId + 1_000_000, (await OpenSizeAsync(rig, SystemId, ComplexSize.Scout))!.InstanceId);
+    }
+
+    private static async Task TickWithAsync(FwRig rig, IFwComplexSites sites, int ticks)
+    {
+        for (int i = 0; i < ticks; i++)
+        {
+            rig.Now += 10_000;
+            await using var connection = await rig.Source.OpenConnectionAsync();
+            await using var transaction = await connection.BeginTransactionAsync();
+            await FwComplexTicker.TickAsync(rig.Store, sites, connection, transaction, rig.Now, CancellationToken.None);
+            await transaction.CommitAsync();
+        }
+    }
+
     /// <summary>Runs <paramref name="ticks"/> ticks of 10 s with the given war factions inside every complex; returns what resolved.</summary>
     private static async Task<List<FwComplexResolution>> TicksAsync(FwRig rig, int ticks, long[] factions)
     {
@@ -100,8 +131,16 @@ public sealed class FwComplexTickerTests
     /// <summary>The sites of the test: each complex's site is its complex id, the defenders are cleared, and the pilots are the given factions.</summary>
     private sealed class FakeSites(long[] factions) : IFwComplexSites
     {
-        public Task<long> StartAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long solarSystemId, ComplexSize size, long complexId, CancellationToken cancellationToken) =>
-            Task.FromResult(complexId + 1_000_000);
+        public bool Pilots { get; set; } = true;
+        public int Starts { get; private set; }
+
+        public bool PilotsIn(long solarSystemId) => Pilots;
+
+        public Task<long> StartAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long solarSystemId, ComplexSize size, long complexId, CancellationToken cancellationToken)
+        {
+            Starts++;
+            return Task.FromResult(complexId + 1_000_000);
+        }
         public Task<bool> DefendersClearedAsync(long instanceId, CancellationToken cancellationToken) => Task.FromResult(true);
         public Task<IReadOnlyList<long>> FactionsInsideAsync(long solarSystemId, long instanceId, CancellationToken cancellationToken) =>
             Task.FromResult<IReadOnlyList<long>>(factions);

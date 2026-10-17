@@ -32,5 +32,6 @@ CREATE TABLE fw_enlistments (
     faction_id       bigint   NOT NULL DEFAULT 0,
     next_faction_id  bigint   NOT NULL DEFAULT 0,
     effective_ms     bigint   NOT NULL DEFAULT 0,
+    changed_ms       bigint   NOT NULL DEFAULT 0,
     PRIMARY KEY (owner_kind, owner_id)
 );

@@ -88,6 +88,7 @@ internal sealed partial class CharacterServicesComposition
         await Structures();
         LinkJumpCloneSpace();
         await Insurgency();
+        await FactionWarfare();
         await Planets();
         await SovereigntyWriteOperations();
         await SkyhookJobs();

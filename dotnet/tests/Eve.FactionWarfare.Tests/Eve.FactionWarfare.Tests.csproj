@@ -10,6 +10,7 @@
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="../../src/Eve.FactionWarfare/Eve.FactionWarfare.csproj" />
+    <ProjectReference Include="../../src/Eve.Services.Core/Eve.Services.Core.csproj" />
   </ItemGroup>
   <ItemGroup>
     <Using Include="Xunit" />

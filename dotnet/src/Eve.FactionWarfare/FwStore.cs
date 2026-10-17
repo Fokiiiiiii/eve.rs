@@ -7,7 +7,7 @@ namespace Eve.FactionWarfare;
 public sealed record FwSystem(long SolarSystemId, long WarzoneId, long OccupierId, long LpPool, long AttackerPoints, long UpdatedMs);
 
 /// <summary>A corporation's or alliance's enlistment: the faction it is in (0: none) and the change that takes effect at <see cref="EffectiveMs"/> (0: none pending).</summary>
-public sealed record FwEnlistment(int OwnerKind, long OwnerId, long FactionId, long NextFactionId, long EffectiveMs);
+public sealed record FwEnlistment(int OwnerKind, long OwnerId, long FactionId, long NextFactionId, long EffectiveMs, long ChangedMs);
 
 /// <summary>
 /// The factional warfare state in PostgreSQL (schema <c>factionwarfare</c>, migration 0001). Every method takes the caller's connection and
@@ -90,20 +90,37 @@ public sealed class FwStore
     public async Task<FwEnlistment?> EnlistmentAsync(NpgsqlConnection connection, NpgsqlTransaction? transaction, int ownerKind, long ownerId, bool forUpdate, CancellationToken cancellationToken = default)
     {
         await using var command = Sql.Command(connection, transaction,
-            Q("SELECT owner_kind, owner_id, faction_id, next_faction_id, effective_ms FROM {schema}.fw_enlistments WHERE owner_kind = $1 AND owner_id = $2" +
+            Q("SELECT owner_kind, owner_id, faction_id, next_faction_id, effective_ms, changed_ms FROM {schema}.fw_enlistments WHERE owner_kind = $1 AND owner_id = $2" +
               (forUpdate ? " FOR UPDATE" : "")), ownerKind, ownerId);
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         if (!await reader.ReadAsync(cancellationToken))
             return null;
-        return new FwEnlistment(reader.GetInt16(0), reader.GetInt64(1), reader.GetInt64(2), reader.GetInt64(3), reader.GetInt64(4));
+        return ReadEnlistment(reader);
+    }
+
+    /// <summary>The corporations whose faction at <paramref name="nowMs"/> is <paramref name="factionId"/> (a join due by then counts, a leave due by then does not).</summary>
+    public async Task<IReadOnlyList<long>> CorporationsInFactionAsync(NpgsqlConnection connection, NpgsqlTransaction? transaction, long factionId, long nowMs, CancellationToken cancellationToken = default)
+    {
+        await using var command = Sql.Command(connection, transaction,
+            Q("SELECT owner_id FROM {schema}.fw_enlistments WHERE owner_kind = $1 AND (CASE WHEN effective_ms > 0 AND effective_ms <= $3 THEN next_faction_id ELSE faction_id END) = $2 ORDER BY owner_id"),
+            CorporationKind, factionId, nowMs);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        var ids = new List<long>();
+        while (await reader.ReadAsync(cancellationToken))
+            ids.Add(reader.GetInt64(0));
+        return ids;
     }
 
     /// <summary>Writes an enlistment row (insert or replace).</summary>
     public Task SaveEnlistmentAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, FwEnlistment enlistment, CancellationToken cancellationToken = default) =>
         Sql.ExecuteAsync(connection, transaction, Q(
-            "INSERT INTO {schema}.fw_enlistments (owner_kind, owner_id, faction_id, next_faction_id, effective_ms) VALUES ($1, $2, $3, $4, $5) " +
-            "ON CONFLICT (owner_kind, owner_id) DO UPDATE SET faction_id = EXCLUDED.faction_id, next_faction_id = EXCLUDED.next_faction_id, effective_ms = EXCLUDED.effective_ms"),
-            cancellationToken, enlistment.OwnerKind, enlistment.OwnerId, enlistment.FactionId, enlistment.NextFactionId, enlistment.EffectiveMs);
+            "INSERT INTO {schema}.fw_enlistments (owner_kind, owner_id, faction_id, next_faction_id, effective_ms, changed_ms) VALUES ($1, $2, $3, $4, $5, $6) " +
+            "ON CONFLICT (owner_kind, owner_id) DO UPDATE SET faction_id = EXCLUDED.faction_id, next_faction_id = EXCLUDED.next_faction_id, " +
+            "effective_ms = EXCLUDED.effective_ms, changed_ms = EXCLUDED.changed_ms"),
+            cancellationToken, enlistment.OwnerKind, enlistment.OwnerId, enlistment.FactionId, enlistment.NextFactionId, enlistment.EffectiveMs, enlistment.ChangedMs);
+
+    private static FwEnlistment ReadEnlistment(NpgsqlDataReader reader) =>
+        new(reader.GetInt16(0), reader.GetInt64(1), reader.GetInt64(2), reader.GetInt64(3), reader.GetInt64(4), reader.GetInt64(5));
 
     private static FwSystem ReadSystem(NpgsqlDataReader reader) =>
         new(reader.GetInt64(0), reader.GetInt64(1), reader.GetInt64(2), reader.GetInt64(3), reader.GetInt64(4), reader.GetInt64(5));

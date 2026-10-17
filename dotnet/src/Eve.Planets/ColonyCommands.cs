@@ -395,6 +395,9 @@ public sealed partial class Colony
     public void InstallProgram(long pinId, int? typeId, double headRadius)
     {
         var ecu = EcuOf(pinId);
+        // a program is refused until its install cooldown ends, for a change and for a stop alike (ecuPin.CanInstallProgram)
+        if (ecu.ProgramType is not null && ecu.ExpiryTime > CurrentSimTime && ecu.InstallTime + PlanetRules.ProgramInstallCooldown > CurrentSimTime)
+            throw new PlanetRefusal("CantInstallProgramNeedsCooldown");
         if (ecu.Heads.Count < 1) typeId = null;
         if (headRadius < PlanetRules.RadiusMin || headRadius > PlanetRules.RadiusMax) throw new PlanetRefusal("InvalidProgramRadius");
 

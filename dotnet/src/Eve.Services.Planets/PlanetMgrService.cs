@@ -21,7 +21,7 @@ namespace Eve.Services.Planets;
 /// </summary>
 [Service("planetMgr")]
 public sealed partial class PlanetMgrService(NpgsqlDataSource source, PlanetStore store, PlanetCatalog catalog, IResourceField field,
-    PgItemStore items, WalletTransactions wallets, PgSkillStore skills, Func<long> nowMs, Func<long, PyValue?, Task> notify, string inventorySchema,
+    PgItemStore items, WalletTransactions wallets, PgSkillStore skills, Func<long> nowMs, Func<long, PyValue?, Task> notify, Func<long, Task> notifyLaunches, string inventorySchema,
     ISimulation? simulation = null, PgSpaceItemStore? spaceItems = null, DogmaStatic? dogma = null)
     : Eve.Services.Inventory.ICustomsOffices
 {
@@ -229,6 +229,8 @@ public sealed partial class PlanetMgrService(NpgsqlDataSource source, PlanetStor
                 call.Cancellation);
         });
         await PlaceLaunchCanAsync(body, canId, owner, call.Cancellation);
+        // the owner's launches list reloads and the neocom blinks (planetUISvc.OnPILaunchesChange)
+        await notifyLaunches(owner);
         return new PyLong(launchTime);
     }
 

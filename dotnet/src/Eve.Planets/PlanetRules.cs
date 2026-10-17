@@ -21,6 +21,8 @@ public static class PlanetRules
     public const double MaxResourceValue = 1.21;
     /// <summary>A command center's launch cycle (spaceportPin.py:28: 60 SEC).</summary>
     public const long LaunchCooldown = 60 * Sec;
+    /// <summary>PROGRAM_INSTALLATION_COOLDOWN (ecuPin.py:14): an installed program cannot be changed or stopped before it.</summary>
+    public const long ProgramInstallCooldown = 1 * Min;
     public const long ExpeditedMinTime = 5 * Min;
     /// <summary>Uncollected launches are lost when their timer ends (EVE University wiki, Planetary Interaction): 5 days.</summary>
     public const long LaunchLifetime = 5L * 24 * Hour;

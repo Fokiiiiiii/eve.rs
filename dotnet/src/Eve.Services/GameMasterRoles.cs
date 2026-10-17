@@ -22,6 +22,33 @@ public static class GameMasterRoles
     /// <summary>Every staff role that may use the in-game GM tools (the slash commands, the QA helpers).</summary>
     public const long Staff = Admin | Content | Gml | Gmh | Qa | ExtGm1 | ExtGm2 | ExtGm3 | ExtGm4;
 
+    private static readonly Dictionary<string, long> RoleNames = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["GML"] = Gml, ["GMH"] = Gmh, ["QA"] = Qa, ["PROGRAMMER"] = Programmer, ["CONTENT"] = Content, ["ADMIN"] = Admin,
+        ["EXT_GM1"] = ExtGm1, ["EXT_GM2"] = ExtGm2, ["EXT_GM3"] = ExtGm3, ["EXT_GM4"] = ExtGm4,
+    };
+
+    /// <summary>
+    /// Parses the grants of EVE_GM_ACCOUNTS: <c>user=ROLE+ROLE,other=ROLE</c>, with the names of <see cref="RoleNames"/>. An unknown
+    /// name or an empty grant is a format error (the host does not start with a grant it cannot read).
+    /// </summary>
+    public static IReadOnlyList<(string UserName, long Mask)> ParseGrants(string spec)
+    {
+        var grants = new List<(string, long)>();
+        foreach (var entry in spec.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            var parts = entry.Split('=', 2);
+            if (parts.Length != 2 || parts[0].Trim().Length == 0)
+                throw new FormatException($"EVE_GM_ACCOUNTS entry \"{entry}\": expected user=ROLE+ROLE");
+            long mask = 0;
+            foreach (var role in parts[1].Split('+', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+                mask |= RoleNames.TryGetValue(role, out var bit) ? bit : throw new FormatException($"EVE_GM_ACCOUNTS: unknown role \"{role}\"");
+            if (mask == 0) throw new FormatException($"EVE_GM_ACCOUNTS entry \"{entry}\": no role");
+            grants.Add((parts[0].Trim(), mask));
+        }
+        return grants;
+    }
+
     /// <summary>True when the session's account holds any bit of <paramref name="mask"/>.</summary>
     public static bool Has(ClientSession session, long mask) => ((session.GetInt("accountRole") ?? 0) & mask) != 0;
 }

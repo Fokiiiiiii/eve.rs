@@ -211,6 +211,49 @@ public sealed partial class PlanetMgrService(NpgsqlDataSource source, PlanetStor
         return PyNone.Instance;
     }
 
+    /// <summary>GMAddCommodity(pinID, typeID, quantity): the game master's commodity on a pin of the caller's colony (ROLE_GML only).</summary>
+    [Method("GMAddCommodity")]
+    public async ValueTask<PyValue> GMAddCommodity(ServiceCall call)
+    {
+        RequireGameMaster(call);
+        var planetId = PlanetOf(call);
+        var owner = RequireOwner(call);
+        var pinId = Integral(call.Arg(0)) ?? 0;
+        var typeId = (int)(Integral(call.Arg(1)) ?? 0);
+        var quantity = Integral(call.Arg(2)) ?? 0;
+        await ChangeAsync(owner, planetId, (_, _) => Task.FromResult<List<ColonyCommand>>([new GmAddCommodityCommand(pinId, typeId, quantity)]), call.Cancellation);
+        return PyNone.Instance;
+    }
+
+    /// <summary>GMConvertCommandCenter(pinID): the command center takes the type of its planet (ROLE_GML only).</summary>
+    [Method("GMConvertCommandCenter")]
+    public async ValueTask<PyValue> GMConvertCommandCenter(ServiceCall call)
+    {
+        RequireGameMaster(call);
+        var planetId = PlanetOf(call);
+        var owner = RequireOwner(call);
+        var pinId = Integral(call.Arg(0)) ?? 0;
+        await ChangeAsync(owner, planetId, (_, _) => Task.FromResult<List<ColonyCommand>>([new GmConvertCommandCenterCommand(pinId)]), call.Cancellation);
+        return PyNone.Instance;
+    }
+
+    /// <summary>
+    /// GMGetSynchedServerState(ownerID): (duration, colony) for the client's simulation check (clientPlanet.GMVerifySimulation). The colony is
+    /// the stored one run to now, as GetFullNetworkForOwner reads it; the duration is the server's time to read it, in 100 ns ticks.
+    /// </summary>
+    [Method("GMGetSynchedServerState")]
+    public async ValueTask<PyValue> GMGetSynchedServerState(ServiceCall call)
+    {
+        RequireGameMaster(call);
+        var planetId = PlanetOf(call);
+        var owner = Integral(call.Arg(0)) ?? call.Session.CharacterId ?? 0;
+        var started = System.Diagnostics.Stopwatch.GetTimestamp();
+        var colony = owner == 0 ? null : await SnapshotAsync(owner, planetId, call.Cancellation);
+        var duration = System.Diagnostics.Stopwatch.GetElapsedTime(started).Ticks;
+        var fields = colony?.Fields ?? [("level", new PyInt(0)), ("currentSimTime", new PyLong(0)), ("pins", new PyList([]))];
+        return Py.Tuple(new PyLong(duration), Py.KeyVal([.. fields]));
+    }
+
     private static void RequireGameMaster(ServiceCall call)
     {
         if (!GameMasterRoles.Has(call.Session, GameMasterRoles.Gml))

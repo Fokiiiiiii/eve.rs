@@ -65,6 +65,8 @@ internal static class HostConfiguration
     //   EVE_CRIMEWATCH_SCHEMA  the schema of crimewatch (ship safety levels)                          (default crimewatch)
     //   EVE_DEV_SKIP_PASSWORD  1 accepts any password (development only)                          (default 0)
     //   EVE_DEV_AUTO_CREATE    0 refuses unknown user names                                       (default 0)
+    //   EVE_GM_ACCOUNTS        user=ROLE+ROLE,... adds game-master role bits (GML, GMH, QA, PROGRAMMER, CONTENT, ADMIN,
+    //                          EXT_GM1..EXT_GM4) to existing accounts at start-up; a grant never takes a bit away (default none)
     //   EVE_STRICT_RPC         1 answers an unknown service or method, an unhandled exception or a call with no service
     //                          with a Macho error (naming a correlation id) and logs its stack trace to stderr; the default
     //                          answers None and logs one line (what the reference does)                  (default 0)

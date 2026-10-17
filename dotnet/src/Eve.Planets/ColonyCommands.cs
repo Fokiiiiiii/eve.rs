@@ -22,6 +22,8 @@ public sealed record AddExtractorHeadCommand(long PinId, int HeadId, double Lati
 public sealed record KillExtractorHeadCommand(long PinId, int HeadId) : ColonyCommand;
 public sealed record MoveExtractorHeadCommand(long PinId, int HeadId, double Latitude, double Longitude) : ColonyCommand;
 public sealed record InstallProgramCommand(long PinId, int? TypeId, double HeadRadius) : ColonyCommand;
+public sealed record GmAddCommodityCommand(long PinId, int TypeId, long Quantity) : ColonyCommand;
+public sealed record GmConvertCommandCenterCommand(long PinId) : ColonyCommand;
 public sealed record GmForceInstallProgramCommand(long PinId, int TypeId, long CycleTime, long LifetimeTicks, long QtyPerCycle, double HeadRadius) : ColonyCommand;
 
 /// <summary>The result of a batch: the ISK it costs (non-command pins, command center upgrades) and whether the command center went.</summary>
@@ -81,6 +83,12 @@ public sealed partial class Colony
                     break;
                 case InstallProgramCommand c:
                     InstallProgram(c.PinId, c.TypeId, c.HeadRadius);
+                    break;
+                case GmAddCommodityCommand c:
+                    GmAddCommodity(c.PinId, c.TypeId, c.Quantity);
+                    break;
+                case GmConvertCommandCenterCommand c:
+                    GmConvertCommandCenter(c.PinId);
                     break;
                 case GmForceInstallProgramCommand c:
                     GmForceInstallProgram(c.PinId, c.TypeId, c.CycleTime, c.LifetimeTicks, c.QtyPerCycle, c.HeadRadius);
@@ -496,6 +504,34 @@ public sealed partial class Colony
         ecu.InstallTime = null;
         ecu.CycleTime = 0;
         ecu.State = 0;
+    }
+
+    /// <summary>
+    /// GMAddCommodity (the client's processor container, shown to ROLE_GML only): the pin takes what its own rules accept
+    /// (<c>CanAccept</c>: the free volume of storage or the demand of a processor). Nothing taken is refused.
+    /// </summary>
+    public void GmAddCommodity(long pinId, int typeId, long quantity)
+    {
+        var pin = PinOf(pinId);
+        if (!Catalog.Exists(typeId) || quantity <= 0) throw new PlanetRefusal("InvalidCommand");
+        var added = CanAccept(pin, typeId, quantity);
+        if (added <= 0) throw new PlanetRefusal("CannotImportCapacityExceeded");
+        pin.Contents[typeId] = pin.Contents.GetValueOrDefault(typeId) + added;
+    }
+
+    /// <summary>
+    /// GMConvertCommandCenter (the client's pin menu, ROLE_GML only): the command center becomes the command center type of this
+    /// planet's type. The SDE gives each command center type its planet type (the planetRestriction attribute), the same rule the
+    /// placement check uses. A planet type with no such command center is refused.
+    /// </summary>
+    public void GmConvertCommandCenter(long pinId)
+    {
+        var pin = PinOf(pinId);
+        if (pin.Kind != PinKind.CommandCenter) throw new PlanetRefusal("InvalidPinType");
+        var target = Catalog.TypesInGroup(PlanetGroups.CommandCenter)
+            .FirstOrDefault(t => t.HasAttr(PlanetAttr.PlanetRestriction) && (int)t.Attr(PlanetAttr.PlanetRestriction) == PlanetTypeId)
+            ?? throw new PlanetRefusal("InvalidPinType");
+        pin.TypeId = target.TypeId;
     }
 
     /// <summary>

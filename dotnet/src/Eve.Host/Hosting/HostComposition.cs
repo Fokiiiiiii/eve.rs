@@ -79,6 +79,14 @@ internal static class HostComposition
             Console.Error.WriteLine($"eve-host: accounts in PostgreSQL, schema {schema}{(applied.Count > 0 ? "; applied " + string.Join(", ", applied) : "")}");
             var directory = new PgAccountDirectory(source, accountOptions, schema);
             accounts = directory;
+            if (Env("EVE_GM_ACCOUNTS", "") is { Length: > 0 } gmGrants)
+            {
+                foreach (var (user, mask) in Eve.Services.GameMasterRoles.ParseGrants(gmGrants))
+                {
+                    var granted = await directory.GrantRolesAsync(user, mask);
+                    Console.Error.WriteLine($"eve-host: EVE_GM_ACCOUNTS {user}: {(granted ? $"role bits 0x{mask:X} added" : "no such account (it is created by its first login)")}");
+                }
+            }
             var configSchema = Env("EVE_GLOBAL_CONFIG_SCHEMA", PgGlobalConfigPersistence.DefaultSchema);
             await PgGlobalConfigPersistence.MigrateAsync(source, configSchema);
             globalConfigPersistence = new PgGlobalConfigPersistence(source, configSchema);

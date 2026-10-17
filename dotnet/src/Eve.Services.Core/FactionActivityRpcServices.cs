@@ -261,7 +261,7 @@ public sealed class FwVictoryPointMgrService(FwVictoryPointRpcCallbacks? callbac
         double.IsFinite(state.Score) ? Math.Max(0, state.Score) : 0,
         double.IsFinite(state.Threshold) ? Math.Max(1, state.Threshold) : DefaultThreshold);
 
-    private static PyValue StatePayload(FwVictoryPointState state) => new PyObjectEx(
+    public static PyValue StatePayload(FwVictoryPointState state) => new PyObjectEx(
         ObjectExKind.Ex1,
         new PyTuple([new PyToken(VictoryPointStateClass), new PyList([Number(state.Score), Number(state.Threshold)])]),
         [],

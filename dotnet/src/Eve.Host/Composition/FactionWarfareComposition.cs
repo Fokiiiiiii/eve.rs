@@ -127,5 +127,39 @@ internal sealed partial class CharacterServicesComposition
         await using var transaction = await connection.BeginTransactionAsync();
         await factionWarfareStore.SeedSystemsAsync(connection, transaction, systems);
         await transaction.CommitAsync();
+        var complexes = new FwComplexDirector(factionWarfareStore, foundations.Scheduler, foundations.Events, FactionsInSystemAsync);
+        await complexes.AttachAsync();
+        foundations.Events.Subscribe("factionwarfare.complex-notices", [FwComplexDirector.ResolvedTopic],
+            (context, cancellation) =>
+            {
+                NotifyComplexResolved(context.Event.Payload<FwComplexResolution>()!);
+                return Task.CompletedTask;
+            });
+    }
+
+    /// <summary>The victory point state of every occupied system (the client's fwVictoryPointMgr: the attacker points against the vulnerability threshold).</summary>
+    private async ValueTask<IReadOnlyDictionary<long, Eve.Services.Core.FwVictoryPointState>> VictoryPointStatesAsync(CancellationToken cancellationToken) =>
+        (await factionWarfare.OccupiedSystemsAsync(cancellationToken))
+            .ToDictionary(system => system.SolarSystemId, system => new Eve.Services.Core.FwVictoryPointState(system.AttackerPoints));
+
+    /// <summary>The war faction of each character in the system now (0 for a pilot with none): the presence a complex's capture timer counts.</summary>
+    private async Task<IReadOnlyList<long>> FactionsInSystemAsync(long solarSystemId, CancellationToken cancellationToken)
+    {
+        var factions = new List<long>();
+        foreach (long characterId in spaceSessions?.CharacterIdsInSystem((int)solarSystemId) ?? [])
+            factions.Add(await WarFactionOfAsync(characterId, cancellationToken));
+        return factions;
+    }
+
+    /// <summary>
+    /// A complex resolved: the pilots in its system get OnFacWarDungeonCompleted (the client's hero notice: the side that conquered it, or the side that defended it),
+    /// and the system's victory point state is updated for them.
+    /// </summary>
+    private void NotifyComplexResolved(FwComplexResolution resolution)
+    {
+        long faction = resolution.AttackersWon ? resolution.AttackerId : resolution.OccupierId;
+        SendAtSystems([resolution.SolarSystemId], "OnFacWarDungeonCompleted", resolution.AttackersWon ? PyBool.True : PyBool.False, new PyInt(faction));
+        SendAtSystems([resolution.SolarSystemId], "OnVictoryPointStateUpdated", new PyInt(resolution.SolarSystemId),
+            Eve.Services.Core.FwVictoryPointMgrService.StatePayload(new Eve.Services.Core.FwVictoryPointState(resolution.AttackerPoints)));
     }
 }

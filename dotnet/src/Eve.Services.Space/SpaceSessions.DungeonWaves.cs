@@ -39,6 +39,10 @@ public sealed partial class SpaceSessions
     public bool IsPilotInSystem(long characterId, int solarSystemId) =>
         _pilots.Values.Any(pilot => pilot.CharacterId == characterId && pilot.SolarSystemId == solarSystemId);
 
+    /// <summary>The characters in space in the solar system (the pilots a complex's capture timer counts).</summary>
+    public IReadOnlyList<long> CharacterIdsInSystem(int solarSystemId) =>
+        _pilots.Values.Where(pilot => pilot.SolarSystemId == solarSystemId).Select(pilot => pilot.CharacterId).ToArray();
+
     /// <summary>
     /// Takes NPCs out of space. The host forgets them first, so their death is not announced as a kill; the simulation destroys them (it has no other way to take a ship out).
     /// </summary>

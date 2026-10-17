@@ -183,6 +183,59 @@ public sealed class FwStore
         return total is long value ? value : null;
     }
 
+    /// <summary>The open complexes of every system (a complex is open until it is captured).</summary>
+    public async Task<IReadOnlyList<FwComplex>> OpenComplexesAsync(NpgsqlConnection connection, NpgsqlTransaction? transaction, CancellationToken cancellationToken = default)
+    {
+        await using var command = Sql.Command(connection, transaction, Q(
+            "SELECT complex_id, solar_system_id, size, progress_ms, progress_updated_ms, spawned_ms FROM {schema}.fw_complexes WHERE closed_ms IS NULL ORDER BY solar_system_id, size"));
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        var rows = new List<FwComplex>();
+        while (await reader.ReadAsync(cancellationToken))
+            rows.Add(new FwComplex(reader.GetInt64(0), reader.GetInt64(1), (ComplexSize)reader.GetInt16(2), reader.GetInt64(3), reader.GetInt64(4), reader.GetInt64(5)));
+        return rows;
+    }
+
+    /// <summary>The closing time of the last captured complex of each system and size (only the sizes that were captured).</summary>
+    public async Task<IReadOnlyDictionary<(long SolarSystemId, ComplexSize Size), long>> LastClosedBySystemAsync(NpgsqlConnection connection, NpgsqlTransaction? transaction,
+        CancellationToken cancellationToken = default)
+    {
+        await using var command = Sql.Command(connection, transaction, Q(
+            "SELECT solar_system_id, size, MAX(closed_ms) FROM {schema}.fw_complexes WHERE closed_ms IS NOT NULL GROUP BY solar_system_id, size"));
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        var result = new Dictionary<(long, ComplexSize), long>();
+        while (await reader.ReadAsync(cancellationToken))
+            result[(reader.GetInt64(0), (ComplexSize)reader.GetInt16(1))] = reader.GetInt64(2);
+        return result;
+    }
+
+    /// <summary>Opens a complex of a size in a system (its timer starts at zero) and returns its id.</summary>
+    public async Task<long> InsertComplexAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long solarSystemId, ComplexSize size, long nowMs,
+        CancellationToken cancellationToken = default) =>
+        (long)(await Sql.ScalarAsync(connection, transaction, Q(
+            "INSERT INTO {schema}.fw_complexes (solar_system_id, size, progress_ms, progress_updated_ms, spawned_ms) VALUES ($1, $2, 0, $3, $3) RETURNING complex_id"),
+            cancellationToken, solarSystemId, (short)size, nowMs))!;
+
+    /// <summary>Stores the signed capture timer of an open complex, and the time it was counted to.</summary>
+    public Task SetComplexProgressAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long complexId, long progressMs, long nowMs,
+        CancellationToken cancellationToken = default) =>
+        Sql.ExecuteAsync(connection, transaction, Q("UPDATE {schema}.fw_complexes SET progress_ms = $2, progress_updated_ms = $3 WHERE complex_id = $1 AND closed_ms IS NULL"),
+            cancellationToken, complexId, progressMs, nowMs);
+
+    /// <summary>Closes a complex (captured by either side).</summary>
+    public Task CloseComplexAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long complexId, long nowMs, CancellationToken cancellationToken = default) =>
+        Sql.ExecuteAsync(connection, transaction, Q("UPDATE {schema}.fw_complexes SET closed_ms = $2, progress_ms = 0 WHERE complex_id = $1 AND closed_ms IS NULL"),
+            cancellationToken, complexId, nowMs);
+
+    /// <summary>Adds a signed amount of victory points to the attacking side of an occupied system, never below zero; returns the new total.</summary>
+    public async Task<long> AddAttackerPointsSignedAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long solarSystemId, long points, long nowMs,
+        CancellationToken cancellationToken = default)
+    {
+        var total = await Sql.ScalarAsync(connection, transaction, Q(
+            "UPDATE {schema}.fw_systems SET attacker_points = GREATEST(0, attacker_points + $2), updated_ms = $3 WHERE solar_system_id = $1 RETURNING attacker_points"),
+            cancellationToken, solarSystemId, points, nowMs);
+        return total is long value ? value : throw new InvalidOperationException($"solar system {solarSystemId} is not occupied");
+    }
+
     private static FwSystem ReadSystem(NpgsqlDataReader reader) =>
         new(reader.GetInt64(0), reader.GetInt64(1), reader.GetInt64(2), reader.GetInt64(3), reader.GetInt64(4), reader.GetInt64(5));
 }

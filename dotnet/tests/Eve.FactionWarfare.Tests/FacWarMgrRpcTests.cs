@@ -122,6 +122,25 @@ public sealed class FacWarMgrRpcTests
         Assert.Equal(900, await rig.BalanceAsync(Character, FwFactions.MilitiaCorporationOf(Amarr)));
     }
 
+    [PgFact]
+    public async Task Stats_calls_return_the_six_client_keys_for_the_pilot_and_the_corporation()
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        await fixture.Rig.Service.RecordActivityAsync(Character, Corporation, 2, 30, fixture.Rig.Now - 86_400_000L);
+        var session = Pilot();
+        PyDict Expected(long kills, long points) => new(
+        [
+            new KeyValuePair<PyValue, PyValue>(new PyStr("killsY"), new PyInt(kills)),
+            new KeyValuePair<PyValue, PyValue>(new PyStr("killsLW"), new PyInt(kills)),
+            new KeyValuePair<PyValue, PyValue>(new PyStr("killsTotal"), new PyInt(kills)),
+            new KeyValuePair<PyValue, PyValue>(new PyStr("vpY"), new PyInt(points)),
+            new KeyValuePair<PyValue, PyValue>(new PyStr("vpLW"), new PyInt(points)),
+            new KeyValuePair<PyValue, PyValue>(new PyStr("vpTotal"), new PyInt(points)),
+        ]);
+        Assert.Equal(Expected(2, 30), await fixture.Service.CallAsync(Call("GetStats_Character", session)));
+        Assert.Equal(Expected(2, 30), await fixture.Service.CallAsync(Call("GetStats_Corp", session)));
+    }
+
     private static ValueTask<PyValue> DonateAsync(Fixture fixture, ClientSession session, long donated, long hub) =>
         fixture.Service.CallAsync(Call("DonateLPsToSolarSystem", session, new PyInt(donated), new PyInt(hub)));
 }

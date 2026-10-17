@@ -112,5 +112,8 @@ public static class FwRules
         return candidate > nowMs ? candidate : candidate + day;
     }
 
+    /// <summary>The UTC day of a unix time in milliseconds: the key of the daily statistics rows.</summary>
+    public static int DayOf(long unixMs) => (int)(unixMs / 86_400_000L);
+
     private static long Mod(long value, long modulus) => ((value % modulus) + modulus) % modulus;
 }

@@ -24,8 +24,8 @@ public sealed class FacWarMgrUserErrorException(string messageKey, params (strin
 
 /// <summary>
 /// facWarMgr (V24.01 client <c>facWarSvc.py</c> calls): corporation and alliance enlistment, character enlistment, the militia rank from the
-/// standing, the system LP pools and the LP donation. The statistics methods are not served: no kill or victory-point producer exists yet
-/// (TODO, DEVIATIONS "Factional warfare").
+/// standing, the system LP pools and the LP donation, and the character and corporation statistics. The faction, militia, alliance, top and
+/// rank-overview statistics are not served (TODO, DEVIATIONS "Factional warfare"); the kill producer that fills the statistics is not connected.
 /// </summary>
 public sealed class FacWarMgrService(FwService factionWarfare, FacWarMgrCallbacks callbacks) : IService
 {
@@ -37,7 +37,7 @@ public sealed class FacWarMgrService(FwService factionWarfare, FacWarMgrCallback
     [
         "CheckForRankChange", "DonateLPsToSolarSystem", "GetAllianceWarFactionID", "GetCharacterRankInfo", "GetControlBunkerIDInSystem",
         "GetCorpFactionalWarStatus", "GetCorporationWarFactionID", "GetFactionCorporations", "GetFactionMilitiaCorporation", "GetMyCharacterRankInfo",
-        "GetSolarSystemLPs", "GetSolarSystemLPsEx", "JoinFactionAsAlliance", "JoinFactionAsCharacter", "JoinFactionAsCorporation",
+        "GetSolarSystemLPs", "GetSolarSystemLPsEx", "GetStats_Character", "GetStats_Corp", "JoinFactionAsAlliance", "JoinFactionAsCharacter", "JoinFactionAsCorporation",
         "LeaveFactionAsAlliance", "LeaveFactionAsCorporation", "RefreshCorps", "WithdrawJoinFactionAsAlliance", "WithdrawJoinFactionAsCorporation",
         "WithdrawLeaveFactionAsAlliance", "WithdrawLeaveFactionAsCorporation",
     ];
@@ -119,6 +119,10 @@ public sealed class FacWarMgrService(FwService factionWarfare, FacWarMgrCallback
                 var state = await callbacks.ReadCharacterAsync(Id(call, 0), cancellation);
                 return await RankInfoAsync(Id(call, 0), state?.DirectFactionId ?? 0, cancellation);
             }
+            case "GetStats_Character":
+                return StatsPayload(await factionWarfare.PilotStatsAsync(characterId, now, cancellation));
+            case "GetStats_Corp":
+                return StatsPayload(await factionWarfare.CorporationStatsAsync(corporationId, now, cancellation));
             case "CheckForRankChange":
                 return PyNone.Instance;
             case "GetSolarSystemLPs":
@@ -200,6 +204,17 @@ public sealed class FacWarMgrService(FwService factionWarfare, FacWarMgrCallback
         if (((session.GetInt("corprole") ?? 0) & CorporationRoleDirector) == 0)
             throw Notice("UI/FactionWarfare/DirectorRequired");
     }
+
+    /// <summary>The statistics dict the client reads by key (killsY, killsLW, killsTotal, vpY, vpLW, vpTotal).</summary>
+    private static PyDict StatsPayload(FwStatsWindow window) => new(
+    [
+        new KeyValuePair<PyValue, PyValue>(new PyStr("killsY"), new PyInt(window.KillsYesterday)),
+        new KeyValuePair<PyValue, PyValue>(new PyStr("killsLW"), new PyInt(window.KillsLastWeek)),
+        new KeyValuePair<PyValue, PyValue>(new PyStr("killsTotal"), new PyInt(window.KillsTotal)),
+        new KeyValuePair<PyValue, PyValue>(new PyStr("vpY"), new PyInt(window.VictoryPointsYesterday)),
+        new KeyValuePair<PyValue, PyValue>(new PyStr("vpLW"), new PyInt(window.VictoryPointsLastWeek)),
+        new KeyValuePair<PyValue, PyValue>(new PyStr("vpTotal"), new PyInt(window.VictoryPointsTotal)),
+    ]);
 
     private static FacWarMgrUserErrorException Notice(string text) =>
         new("CustomInfo", ("info", new PyStr(text)));

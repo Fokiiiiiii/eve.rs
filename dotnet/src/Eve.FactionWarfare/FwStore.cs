@@ -9,6 +9,9 @@ public sealed record FwSystem(long SolarSystemId, long WarzoneId, long OccupierI
 /// <summary>A corporation's or alliance's enlistment: the faction it is in (0: none) and the change that takes effect at <see cref="EffectiveMs"/> (0: none pending).</summary>
 public sealed record FwEnlistment(int OwnerKind, long OwnerId, long FactionId, long NextFactionId, long EffectiveMs, long ChangedMs);
 
+/// <summary>The kills and victory points of an owner over the client's windows: yesterday, the seven days before today, and all days.</summary>
+public sealed record FwStatsWindow(long KillsYesterday, long KillsLastWeek, long KillsTotal, long VictoryPointsYesterday, long VictoryPointsLastWeek, long VictoryPointsTotal);
+
 /// <summary>
 /// The factional warfare state in PostgreSQL (schema <c>factionwarfare</c>, migration 0001). Every method takes the caller's connection and
 /// transaction; the rules and the transactions are in <see cref="FwService"/>.
@@ -121,6 +124,57 @@ public sealed class FwStore
 
     private static FwEnlistment ReadEnlistment(NpgsqlDataReader reader) =>
         new(reader.GetInt16(0), reader.GetInt64(1), reader.GetInt64(2), reader.GetInt64(3), reader.GetInt64(4), reader.GetInt64(5));
+
+    /// <summary>Adds kills and victory points to a pilot's row of a day (the row is created on the first addition).</summary>
+    public Task AddPilotDailyAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long characterId, int day, int kills, long victoryPoints,
+        CancellationToken cancellationToken = default) =>
+        AddDailyAsync(connection, transaction, "fw_pilot_daily", "character_id", characterId, day, kills, victoryPoints, cancellationToken);
+
+    /// <summary>Adds kills and victory points to a corporation's row of a day (the row is created on the first addition).</summary>
+    public Task AddCorporationDailyAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long corporationId, int day, int kills, long victoryPoints,
+        CancellationToken cancellationToken = default) =>
+        AddDailyAsync(connection, transaction, "fw_corporation_daily", "corporation_id", corporationId, day, kills, victoryPoints, cancellationToken);
+
+    private Task AddDailyAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, string table, string column, long ownerId, int day, int kills,
+        long victoryPoints, CancellationToken cancellationToken) =>
+        Sql.ExecuteAsync(connection, transaction, Q(
+            $"INSERT INTO {{schema}}.{table} ({column}, day, kills, victory_points) VALUES ($1, $2, $3, $4) " +
+            $"ON CONFLICT ({column}, day) DO UPDATE SET kills = {table}.kills + EXCLUDED.kills, victory_points = {table}.victory_points + EXCLUDED.victory_points"),
+            cancellationToken, ownerId, day, kills, victoryPoints);
+
+    /// <summary>
+    /// The kills and victory points of a pilot or a corporation over the three windows the client shows: yesterday, the seven days before today
+    /// (yesterday included), and all days. <paramref name="day"/> is today.
+    /// </summary>
+    public async Task<FwStatsWindow> PilotStatsAsync(NpgsqlConnection connection, NpgsqlTransaction? transaction, long characterId, int day, CancellationToken cancellationToken = default) =>
+        await StatsWindowAsync(connection, transaction, "fw_pilot_daily", "character_id", characterId, day, cancellationToken);
+
+    public async Task<FwStatsWindow> CorporationStatsAsync(NpgsqlConnection connection, NpgsqlTransaction? transaction, long corporationId, int day, CancellationToken cancellationToken = default) =>
+        await StatsWindowAsync(connection, transaction, "fw_corporation_daily", "corporation_id", corporationId, day, cancellationToken);
+
+    private async Task<FwStatsWindow> StatsWindowAsync(NpgsqlConnection connection, NpgsqlTransaction? transaction, string table, string column, long ownerId, int day,
+        CancellationToken cancellationToken)
+    {
+        await using var command = Sql.Command(connection, transaction, Q(
+            $"SELECT COALESCE(SUM(CASE WHEN day = $2 - 1 THEN kills END), 0)::bigint, " +
+            $"COALESCE(SUM(CASE WHEN day BETWEEN $2 - 7 AND $2 - 1 THEN kills END), 0)::bigint, COALESCE(SUM(kills), 0)::bigint, " +
+            $"COALESCE(SUM(CASE WHEN day = $2 - 1 THEN victory_points END), 0)::bigint, " +
+            $"COALESCE(SUM(CASE WHEN day BETWEEN $2 - 7 AND $2 - 1 THEN victory_points END), 0)::bigint, COALESCE(SUM(victory_points), 0)::bigint " +
+            $"FROM {{schema}}.{table} WHERE {column} = $1"), ownerId, day);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        await reader.ReadAsync(cancellationToken);
+        return new FwStatsWindow(reader.GetInt64(0), reader.GetInt64(1), reader.GetInt64(2), reader.GetInt64(3), reader.GetInt64(4), reader.GetInt64(5));
+    }
+
+    /// <summary>Adds victory points to the attacking side of an occupied system (null when the system is not occupied).</summary>
+    public async Task<long?> AddAttackerPointsAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long solarSystemId, long points, long nowMs,
+        CancellationToken cancellationToken = default)
+    {
+        var total = await Sql.ScalarAsync(connection, transaction, Q(
+            "UPDATE {schema}.fw_systems SET attacker_points = attacker_points + $2, updated_ms = $3 WHERE solar_system_id = $1 RETURNING attacker_points"),
+            cancellationToken, solarSystemId, points, nowMs);
+        return total is long value ? value : null;
+    }
 
     private static FwSystem ReadSystem(NpgsqlDataReader reader) =>
         new(reader.GetInt64(0), reader.GetInt64(1), reader.GetInt64(2), reader.GetInt64(3), reader.GetInt64(4), reader.GetInt64(5));

@@ -147,7 +147,7 @@ internal sealed partial class CharacterServicesComposition
                 continue;
             if (fwDungeons.GetDungeon(data.DungeonID) is not DungeonFound found)
                 continue;
-            var layout = DungeonRoomLayout.Build(found.Dungeon, data.Origin, dungeonWavesDirector?.GateRadii ?? new Dictionary<long, double>());
+            var layout = DungeonRoomLayout.Build(found.Dungeon, data.Origin, dungeonWavesDirector!.GateRadii);
             var target = layout.Gates.Count > 0 ? SpaceContainers.AccelerationGateDeployableId(instance.Id, layout.Gates[0].GateIndex).ToString() : "";
             rows.Add(new System.Text.Json.Nodes.JsonObject
             {

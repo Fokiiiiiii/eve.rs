@@ -154,6 +154,18 @@ public class ValidationTests
     }
 
     [Fact]
+    public void A_game_master_program_starts_at_once_with_its_lifetime_and_ignores_the_cooldown()
+    {
+        var colony = Fixtures.Chain();
+        colony.ApplyCommands([new GmForceInstallProgramCommand(3, TestCatalog.AqueousLiquids, PlanetRules.Sec * 60, 2 * PlanetRules.Hour, 100, 1.0)], Fixtures.Ctx());
+        Assert.Equal(TestCatalog.AqueousLiquids, colony.Pins[3].ProgramType);
+        Assert.Equal(100, colony.Pins[3].QtyPerCycle);
+        Assert.Equal(PlanetRules.Sec * 60, colony.Pins[3].CycleTime);
+        Assert.Equal(colony.CurrentSimTime + 2 * PlanetRules.Hour, colony.Pins[3].ExpiryTime);
+        Assert.Equal("InvalidCommand", Refusal(() => colony.ApplyCommands([new GmForceInstallProgramCommand(3, TestCatalog.AqueousLiquids, 0, PlanetRules.Hour, 1, 1.0)], Fixtures.Ctx())));
+    }
+
+    [Fact]
     public void An_expedited_transfer_takes_the_minimum_transfer_time_and_locks_the_source()
     {
         var colony = Fixtures.Chain();

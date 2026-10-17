@@ -17,12 +17,18 @@ public class SlashCatalogTests
             items ? new ItemCommands(null!, null!, null!, () => 0) : null,
             skills ? new SkillCommands(null!, null!, null!, null, () => 0) : null);
 
+    private static ClientSession Gm(ClientSession session)
+    {
+        session.Set("accountRole", new PyLong(GameMasterRoles.Gml));
+        return session;
+    }
+
     private static async Task<PyValue> CallAsync(SlashService service, string command, ClientSession? session = null) =>
         await ((IService)service).CallAsync(new ServiceCall
         {
             Method = "SlashCmd",
             Args = [new PyStr(command)],
-            Session = session ?? new ClientSession(),
+            Session = session ?? Gm(new ClientSession()),
             CallId = new PyInt(1),
         });
 
@@ -87,13 +93,22 @@ public class SlashCatalogTests
             Assert.IsType<PyStr>(await CallAsync(Service(), command)).Value);
     }
 
+    [Theory]
+    [InlineData("/")]
+    [InlineData("/dmg heavy")]
+    [InlineData("/giveskill me all 5")]
+    public async Task A_session_without_a_game_master_role_is_refused(string command)
+    {
+        Assert.Equal(SlashService.NotGameMaster, Assert.IsType<PyStr>(await CallAsync(Service(skills: true), command, new ClientSession())).Value);
+    }
+
     [Fact]
     public async Task Registered_commands_keep_the_existing_dispatch_and_self_target_guards()
     {
         var service = Service(skills: true);
         Assert.Equal("Select a character before using /dmg.",
             Assert.IsType<PyStr>(await CallAsync(service, "/DMG Heavy")).Value);
-        var session = new ClientSession { CharacterId = 90000001 };
+        var session = Gm(new ClientSession { CharacterId = 90000001 });
         Assert.Equal("Character not found: 90000002. Use me, a character ID, or an exact character name.",
             Assert.IsType<PyStr>(await CallAsync(service, "/giveskill 90000002 3300 5", session)).Value);
     }

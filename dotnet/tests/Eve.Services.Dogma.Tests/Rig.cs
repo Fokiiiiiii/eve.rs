@@ -200,6 +200,7 @@ internal sealed class Rig : IAsyncDisposable
     public static ClientSession Session(long? character, long id = 1, long? station = Station)
     {
         var session = new ClientSession(new Sink()) { SessionId = id, ClientId = id, UserId = 34, NodeId = 65450 };
+        session.Set("accountRole", new PyLong(GameMasterRoles.Gml)); // the slash commands are the game masters' tools
         if (station is { } s)
         {
             session.Set("stationid", new PyInt(s));

@@ -116,6 +116,11 @@ def agents(client) -> list:
     return [dict(zip(names, line)) for line in rowset["lines"]]
 
 
+def research_skill_count(agent_id: int) -> int:
+    """The distinct skills an R&D agent offers in the SDE (npcCharacters.skills of its agentTypeID 4 record)."""
+    return int(psql(f"SELECT count(DISTINCT s->>'typeID') FROM sde.\"npcCharacters\", jsonb_array_elements(doc->'skills') s WHERE key = {agent_id}"))
+
+
 def character_name(character_id: int) -> str:
     return psql(f"SELECT name FROM {schema('EVE_CHARACTERS_SCHEMA')}.characters WHERE id = {character_id}")
 
@@ -173,6 +178,9 @@ def test_research_start_cancel_and_datacores_over_the_dialogs():
         says, actions, _ = do_action(client, handle, START_RESEARCH)
         assert (BUY_DATACORES, 14) in actions and (CANCEL_RESEARCH, 13) in actions, (says_label(says), actions, client.dialogs)
         assert "ResearchStarted" in says_label(says), (says_label(says), client.dialogs)
+        # the field list is the agent's own skills (npcCharacters.skills of the SDE), one choice each: all five by /giveskill
+        choices = [args for method, args in client.dialogs if method == "SingleChoiceBox"][-1][2]
+        assert len(choices) == research_skill_count(agent["agentID"]), (len(choices), client.dialogs)
 
         # the points accrue: two days in, a datacore costs 100 RP and 10,000 ISK, and the affordable quantity is asked
         psql(f"UPDATE {schema('EVE_AGENTS_SCHEMA')}.research_projects SET started_at_ms = started_at_ms - {2 * DAY_MS} "

@@ -20,6 +20,8 @@ public class AgentResearchDialogueTests
 
     private sealed class FakePort(ResearchProjectStore projects) : IAgentResearchPort
     {
+        public IReadOnlyList<AgentResearchField> FieldsFor(long agentId) => Fields;
+
         public IReadOnlyList<AgentResearchField> Fields { get; } =
         [
             new AgentResearchField(Quantum, 20414, "Datacore - Quantum Physics"),

@@ -204,5 +204,12 @@ R&D research agents: built, with two gaps (correction: the first text of this sl
 - `AgentDialogueMachine` raises the Start Research `SingleChoiceBox`, Cancel Research `YesNo` and Buy Datacores `GetQuantity` prompts through `AgentMissionService` (the client round trip). `PersistenceAgentResearch` (Host) implements `IAgentResearchPort`: the projects in `ResearchProjectStore` and the datacore purchase (RP, ISK and datacores in one transaction).
 - Gap 1: the field list is every SDE datacore's required skill (name prefix "Datacore - ", Science excluded), the same for every agent. EveJS and the SDE give each R&D agent its own `npcCharacters.skills` (agentTypeID 4).
 - Gap 2: the datacore map matches the name prefix. EveJS maps published group 333 datacores by dogma attribute 182 (`build-research-field-authority.js`).
-- Gaps 1 and 2 are the work of slice 7 (see the next commit). The headless walk of the dialogue is not run yet.
+- Gaps 1 and 2 are fixed in slice 7. The field list is each agent's `npcCharacters.skills` (agentTypeID 4, 244 agents in the pinned
+  SDE), ascending by skill. A datacore is a published group 333 type that names the skill through dogma attribute 182; when two
+  name one skill the higher type id wins (the reference's last-wins order). A skill with no datacore stays listed, and buying it
+  is refused as invalid input (the reference's `buildDatacoreQuantityPrompt` returns no prompt).
+- Tests: `AgentResearchFieldsTests` (6, pure), `AgentResearchSdeTests` (2, the pinned SDE: agent 3009318 offers 11448 and 11450,
+  datacores 20417 and 20410; 244 agents), `AgentResearchDialogueTests` and `AgentDialogueTests` (27 with PostgreSQL on eve_p4).
+  The live walk `test_research_start_cancel_and_datacores_over_the_dialogs` now also asserts that the choice list has one entry per
+  SDE skill of the agent.
 

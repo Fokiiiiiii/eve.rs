@@ -4361,6 +4361,18 @@ donation sections it marks outdated. Design: `docs/project/FW_DESIGN.md`.
   The step is capped at one tick. The timers are additive and signed (wiki). Enemy NPCs outside the site do not pause the timer (not modelled).
   Entry: the complex's gate, when the template has rooms, is the acceleration gate of `DungeonRoomLayout`; a single-room site needs none (EVE:
   the wiki's acceleration gate of a complex is not reproduced by a room layout).
+- **Battlefield and objective: project rules (not built yet).** The SDE carries the archetypes 67 (objectives) and 68 (battlefield) with dungeon
+  names only, no room or objective data (`dungeons.jsonl`, 9 battlefield and 6 objective templates in the owner catalog with combat waves only).
+  The rules come from the wiki "Battlefields" section and the client's `fwCapturePoint.py` / `fwScoreboard.py`:
+  - Objective (capture point): held by the complex timer of its size (no new number); pilots of one side within 30 km, the defenders dead first,
+    enemy NPCs within 30 km pause it (wiki, and `FWCapturePoint.GetState`).
+  - Battlefield: three capture points (one central, two about 80 km either side, wiki); holding a point builds the holder's progress. Project rule: a
+    point completes in 900 s of uncontested holding (the wiki gives no hold time; the Medium complex timer is used as the scale).
+  - Battlefield completion: 2,000 victory points to the system (wiki) and LP to the winners: project rule of 150,000 LP split evenly over the first 30
+    participants (5,000 each, wiki "up to 150,000 LP for up to 30 participants"); pilots beyond 30 receive nothing (the wiki says "reduced"; the reduced
+    value is not given, so 0 is the project's choice).
+  - Spawn: frontline systems only, up to two battlefields at a time, a new one three hours after one completes (wiki).
+  - Gate: 10 to 20 km from the beacon, T1 and Navy ships only (wiki); non-enrolled capsuleers land 75 to 125 km from the points (wiki).
 - **Complexes: scan visibility.** An open complex is listed in the system's anomaly overlay (`map`, `scanMgr` and `taleMgr` GetAnomalies path) with the
   `CosmicAnomalyInfo` fields of EveJS `buildAnomalySiteInfo` (siteID and instanceID = the site's instance, dungeonID, archetypeID, difficulty, targetID =
   the first gate of its layout or empty, position at the origin). The position is not the complex's real place (no SDE coordinates).

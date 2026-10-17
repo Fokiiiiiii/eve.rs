@@ -213,6 +213,11 @@ def test_a_colony_runs_in_time_launches_and_trades_at_customs():
         assert len(survey) == 4 and all(0 < quality <= 1.21 * 127.5 for quality in survey.values()), survey
         assert colony["level"] == 5
         assert [route["commodityTypeID"] for route in colony["routes"]] == [AQUEOUS]
+        # the program was installed by this batch: a stop is refused until its install cooldown (one minute) has passed, and it keeps running
+        with pytest.raises(Exception):
+            client.call_bound(handle, "UserUpdateNetwork", [(13, (ecu, None, 0.01))])
+        running = next(p for p in colony_doc(pilot, PLANET)["Pins"] if p["Id"] == ecu)
+        assert running["ProgramType"] == AQUEOUS
 
         # the colony runs in time: the program's cycles since the install are simulated when it is read
         move_colony_back(pilot, PLANET, 3)
@@ -242,7 +247,8 @@ def test_a_colony_runs_in_time_launches_and_trades_at_customs():
         assert psql(f"SELECT group_id || '|' || character_id FROM {schema('EVE_SPACE_SCHEMA')}.space_items WHERE item_id = {can}") == f"12|{pilot}"
         # its ball is told to the pilots who can see its place: this pilot is about 1.9e10 m from the planet (the walk's pose), so the ball is not
         # checked here; the simulation's wreck placement is checked in eve-space (the watchers of a placed wreck)
-        wait_quietly(client, 2.0)
+        # the owner is told of the launch: its launches list reloads and the neocom blinks (planetUISvc.OnPILaunchesChange)
+        assert "OnPILaunchesChange" in json.dumps(wait_quietly(client, 2.0), default=str), "the launch is not announced to the owner"
 
         # customs: the office is the planet's (its id). The planet is in system 31000604 (wormhole space): the NPC rate outside high-security is 17%
         registry = client.call("planetOrbitalRegistryBroker", "MachoBindObject", system, None)[0]

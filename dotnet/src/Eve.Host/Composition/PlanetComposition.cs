@@ -21,7 +21,7 @@ internal sealed partial class CharacterServicesComposition
         await PlanetStore.MigrateAsync(source, schema);
         var catalog = await PlanetCatalogLoader.LoadAsync(source);
         planetMgr = new PlanetMgrService(source, new PlanetStore(source, schema), catalog, new DeterministicResourceField(), items, economyWallets,
-            skills, now, NotifyPlanetChanged, Env("EVE_INVENTORY_SCHEMA", PgItemStore.DefaultSchema), sim, spaceItemStore, dogma);
+            skills, now, NotifyPlanetChanged, NotifyLaunchesChanged, Env("EVE_INVENTORY_SCHEMA", PgItemStore.DefaultSchema), sim, spaceItemStore, dogma);
         await planetMgr.PlaceOfficesAsync();
         // a pilot that enters a system brings its offices back into the simulation's scene (as the cans and the structures are)
         if (spaceSessions is not null)
@@ -40,6 +40,14 @@ internal sealed partial class CharacterServicesComposition
     {
         if (characterSessions.Of(owner) is { } session)
             session.SendNotification("OnMajorPlanetStateUpdate", "clientID", planet ?? PyNone.Instance, PyValue.Of(false));
+        return Task.CompletedTask;
+    }
+
+    /// <summary>OnPILaunchesChange: a launch was made or ended; the client reloads its launches (no arguments on the wire).</summary>
+    private Task NotifyLaunchesChanged(long owner)
+    {
+        if (characterSessions.Of(owner) is { } session)
+            session.SendNotification("OnPILaunchesChange", "clientID");
         return Task.CompletedTask;
     }
 }

@@ -24,7 +24,7 @@ Summary of this file, as of 2026-10-13. The task list with the same areas is the
 | Structures (sections "Structure ..." and ST-0 to ST-11) | Partly built; owner decision 8 limits new structure work. | Structure rules as cited in each section. | Anchoring, control, deliveries and structure compression (open in TODO section 43 to 48). |
 | Market (sections "Market slice M1" to "M9") | Built and live-walked (M9). | The 7.5% sales tax on the server; rules replayed from the decided fixture. | The client's own tax flag cannot be served (M2). |
 | Agents and LP (sections "Agents slice AG-1" to "AG-5") | Partly built; LP store offers and research rates have no source in build 3396210. | Sources cited per slice (ESI and the EVE University wiki). | CONCORD LP exchange refused (no CCP source); research rates and datacore price (no source read). |
-| Missions (sections "Mission static data", "Epic arc availability", "Mission execution X1" to "X16") | Built; arc 29 is not flipped on. | Owner decision 2: arcs with generic kill sites are held back unless `EVE_MISSION_INCLUDE_GENERIC_ARCS=1`. Owner decision 3: 51 mission level tags are rule-derived (provenance `rule`). Owner decision 1: an in-space agent is placed by rule (no coordinates in the SDE). | Courier and fetch objectives of the 1,130 non-arc courier missions (Mission execution X11, X13b); bonus window and LP of kill missions (Mission execution X1); name-based level tags (X12). |
+| Missions (sections "Mission static data", "Epic arc availability", "Mission execution X1" to "X16") | Built; arc 29 is not flipped on. | Owner decision 2: arcs with generic kill sites are held back unless `EVE_MISSION_INCLUDE_GENERIC_ARCS=1`. Owner decision 3: 414 mission level tags are rule-derived (provenance `rule`: 51 owner rules and 363 kill missions by dungeon difficulty, see "Mission level tags: kill missions by dungeon difficulty"). Owner decision 1: an in-space agent is placed by rule (no coordinates in the SDE). | Courier and fetch objectives of the 1,130 non-arc courier missions (Mission execution X11, X13b); bonus window and LP of kill missions (Mission execution X1); name-based level tags (X12). |
 | Insurgency (section "Insurgency campaigns (C-M1, C-S1)") | Campaign and site points built; the public gateway is not built. | Owner decision 4: option (a); the corruption and suppression bars are not served. | Public gateway (C-G1), recorded in this section; the client's gateway call fails on the client side and is logged. |
 | CRAB (section "CRAB (track D ...)") | First cut built, figures owner-decided. | Wave and reward amounts are project rule constants, not CCP data; owner decision 5 asks for a wiki check. | Second wave at scan progress 0.5 is not built (the cut line). |
 | Encounter Surveillance System (sections "Encounter Surveillance System ..." ESS-1 to ESS-3) | Built; live walk open. | Owner decisions in the ESS-2 section. | Single-transaction key consumption (open); live walk. |
@@ -3689,6 +3689,13 @@ Owner decisions (X9, X10). The courier rules below are eve.rs's project rules, n
 - **Courier exclusions.** A trade mission is never a courier: its objective record is excluded from the cargo at acceptance, the docked delivery, the courier expiry and the quit take-back.
 - **Name-based level tags.** Not done here; another agent's job, which edits only the tag file.
 
+## Mission level tags: kill missions by dungeon difficulty (2026-10-17)
+
+- **Basis.** A kill mission's level is the difficulty of its dungeon (the committed dungeon catalog, `Eve.Dungeons/Data/catalog/v1`: `killMissionDungeons` maps the mission to its dungeon, and the dungeon's `difficulty` is 1 to 5). The committed `client` tags already follow this rule: 1,014 of 1,019 agree. The `wiki` tags of kill missions agree in 81 of 81. The 5 disagreeing `client` tags are not explained by the difficulty; they stay as the owner recorded them.
+- **Result.** 363 untagged kill missions are tagged with that difficulty, provenance `rule`, confidence `medium` (levels 1: 134, 2: 27, 3: 64, 4: 122, 5: 16). They are kept apart from the owner's `client` rows: the owner's approval (2026-10-11) covers the values already in that file. The `rule` provenance class now describes this basis as well.
+- **Not tagged.** The 275 kill missions of the 21 epic arcs (an arc step has no level in the official build: the arc is the offer). Three kill missions with a dungeon that has no difficulty (17134, 17135, 17192), and 17183, whose dungeon is not in the catalog. Courier, storyline and other records: no client or deterministic basis; a wiki basis needs matching by name, which this file does not do. Totals: 1,792 tagged of 2,892 official missions; 1,100 without a tag.
+- **Not checked.** No live walk of the new offers was run; the headless tests check the file's counts and the level answers (`MissionLevelTagsTests`, `MissionSdeDataTests`).
+
 ## Mission execution X14: the storyline offer counter (2026-10-12)
 
 - **The rule (wiki).** EVE University, Storyline missions: one storyline mission for every 16 completed missions of the same level and faction (any corporation); Faction Warfare missions do not count; the offer comes from the nearest storyline agent of that faction.
@@ -3895,6 +3902,9 @@ Source: `docs/project/PI_DESIGN.md` (inventory, client contract, formulas with t
 - **D6 Lazy simulation.** A colony is stored with its time and is run to now on each read and write. The result depends only on the stored state and the time, the client does the same, so no periodic job is kept. The durable scheduler is not used for PI.
 - **D7 Pin ids.** A pin is an item row of the inventory store (location: the planet), created with the pin and deleted with it. The command center uses the id of the hold item the client sends.
 - **D9 Resource survey.** Two parts. (a) The resource list (`GetPlanetResourceInfo`) is the project's rule: each planet carries four of the raw resources (SDE groups 1032, 1033, 1035: 17 types), chosen by the planet id; the quality is the deterministic field's largest value over a 16 x 32 sample grid, on the client's display scale (value x 255 / 2; the client divides by planetResourceMaxValue x 255 / 2). CCP's set per planet is not in the snapshot (`planetResources` holds power and workforce only). (b) The band data (`GetResourceData`) answers no data. The client decodes it in the native module `_eveplanetresources` (`builder.CreateSHFromBuffer`, clientPlanet.py:736 and planetUISvc.py:673); its format is not in the snapshot and the native binaries are excluded (`inventories/resource-index.jsonl.gz` lists none). The client also cannot reach that call with this snapshot: `clientPlanet.CreateResourceInfo` unpacks `const.planetResourceProximityLimits[proximity]` into two values (clientPlanet.py:781), but `eve/common/lib/appConst.py:1580` defines it as five scalars (1139 to 1143), so the unpacking raises TypeError whenever Remote Sensing is trained and the planet is in range. The Remote Sensing and Planetology effects (range, the bands per skill, clientPlanet.py:751-786) are the client's and run before that line; the server takes no part in them. Upgrade path: the client's appConst values for the bands (pairs in the shipped build, or the source), then the native format from the client binary.
+- **D10 Program install cooldown (2026-10-17).** The client refuses a program change or stop within `PROGRAM_INSTALLATION_COOLDOWN` (one minute, `ecuPin.py:14`, `CanInstallProgram`; the survey's stop button is disabled for the same span). The server had no such check. `InstallProgram` now refuses `CantInstallProgramNeedsCooldown` in the colony's transaction. The refusal carries the key only: the planet refusals do not send their arguments (the existing `ChangeAsync` behaviour). Checked: `A_program_cannot_be_changed_or_stopped_inside_its_install_cooldown` (Eve.Planets.Tests) and `test_planet_walk.py` (a stop in the same batch as the install is refused, and the program keeps running).
+- **D11 Launch notification (2026-10-17).** A launch sends `OnPILaunchesChange` to the owner after its commit: the client's `planetUISvc.OnPILaunchesChange` reloads the launches and blinks the neocom, and the launches window rebuilds. `DeleteLaunch` sends nothing: the client reloads its own list (`journal.py:465`). Checked: `test_planet_walk.py` asserts the notification after a launch. EveJS has no planet code, so there is no reference for it.
+- **Pin skill requirements (checked, no gate).** `clientColony.PostValidateCreatePin` checks the required skills of a pin type (`GetRequiredSkills`, the requiredSkill attributes 182 to 184 with their levels 277 to 279). None of the 60 planet pin types (groups 1027 to 1030, 1036 and 1063) carries those attributes in build 3396210, so the client's check never refuses. The server adds no gate. Upgrade path: a later SDE with the attributes.
 - **Not called by the client (no path to build).** Corporation colonies (planetSvc and clientPlanet use the character id throughout); obsolete extractors (group 1026, `ObsoletePinContainer`, containersByPinType.py:15): a CreatePin of such a type is refused as `InvalidPinType`.
 - **Cuts.** POCO taxes with an owner (the orbital registry of a player's office, `planetOrbitalRegistryBroker` with a corporation: the structure track); `GetCommandPinsForPlanet` and `GetExtractorsForPlanet` answer the caller's own colony on the planet (the client asks for other owners' pins only in planet views). Planet blocklist (`IsPlanetTypeBlackListed`) not applied. Launchpad imports from the ship hold (the client's window moves only between the office and the launchpad).
 - **GM planet calls, not served (2026-10-13).** The client calls `GMForceInstallProgram`, `GMConvertCommandCenter`, `GMAddCommodity` and `GMGetSynchedServerState` on the planet object (clientPlanet.py:639-700). The client shows them only to a session with ROLE_GML (planetUIPins.py:535 and 852, ProcessorContainer.py:271, planetNavigation.py:263). eve.rs has no GM role in its session or authority model, so there is no basis to authorize these calls and no handler is added. Upgrade path: a GM role in the session model, then the four handlers.
@@ -4303,3 +4313,55 @@ Sources: eve-logic `eve/client/script/ui/shared/bookmarks/bookmarkSvc.py` (the `
   `OnSharedBookmarksFolderDeleted`, `OnSharedBookmarksFoldersAccessLost`, `OnSharedBookmarksFoldersAccessChanged`), and the
   `BookmarkLocation` in space (needs the space scene; refused with the notice).
 - **Status.** OPEN, blocked on `ownerGroupManager` (TODO, VERIFY list and the structure track). Not a rule decision.
+
+## Owner groups: ownerGroupManager (access lists), built 2026-10-17
+
+Sources: eve-logic `ownergroups/ownergroupConst.py` (membership types none -1, member 0, manager 1, admin 2, excluded 3; the group
+change codes 1-8; `PUBLIC_MEMBER_ID` 0); `eve/client/script/ui/structure/accessGroups/accessGroupsController.py` (the remote calls
+`GetMyGroups, GetGroup, GetGroupsMany, GetMembers, GetMembersForMultipleGroups, Create, Delete, UpdateName, UpdateDescription,
+AddMembers, DeleteMembers, UpdateMembershipTypes, GetGroupLogs`; the `OnOwnerGroupsUpdated(changedGroups)` handler); `auditLogEntry.py`
+(log fields `logDate, actionID, characterID, ownerID, oldMembershipType, newMembershipType, oldText, newText`). Rules: EVE University
+wiki "Access Lists" (https://wiki.eveuniversity.org/Access_Lists): the creator is the admin; admins edit and delete the list and
+manage every entry; managers add members and remove or change only member and blocked entries; alliances and corporations cannot be
+admin or manager; member types are everyone, alliances, corporations and characters, and the most granular entry governs; members
+cannot see the list or its members; every change is logged. EveJS `ownerGroupManagerService.js` was read as a reference only.
+
+- **Built.** The store (`dotnet/src/Eve.AccessGroups`, schema `access_groups`, or `EVE_ACCESS_GROUPS_SCHEMA`) keeps the groups, their
+  entries and the change log. The service is `OwnerGroupManagerService` (Eve.Services.Core), registered in `CharacterServiceList`.
+  Each change runs in one transaction under the group's advisory lock. Changes reach the sessions their audience names, after the
+  response, as `OnOwnerGroupsUpdated` (one dict: group id to change codes); member add, type change and removal also send code 8
+  (`GROUP_CHANGED_FOR_LISTENER`) so the affected clients refresh their group list.
+- **Choice: rename, description and delete are admin only.** The wiki says "Admins can edit and delete the list" and does not give
+  managers that right. EveJS let a manager rename (`UpdateName` required the manager type); the wiki is the higher source, so the
+  manager is refused.
+- **Choice: who sees a list.** `GetMyGroups`, `GetGroup`, `GetGroupsMany` and the member and log reads show a list to its admins and
+  managers only (the wiki: members cannot see the list). A member of a list gets no list in its group reads, and its members and logs
+  answer empty or are refused. The picker's own groups are therefore the lists the character manages.
+- **Choice: the corporation's built-in list.** The wiki says each corporation has a built-in list named after it, with the
+  corporation as admin, that cannot be modified and that all corporation members may use. It takes the corporation's id as its group id
+  (no sequence value; the sequence starts at 2000000001 above every character, corporation and alliance id), is created on the first
+  list read by one of its members, answers `membershipType` member to its corporation's members, and refuses changes with the notice
+  "This access group cannot be changed." Its `admins` list is the corporation.
+- **Choice: precedence and kinds.** The role is the most specific entry that names the character: character, then corporation, then
+  alliance, then everyone (id 0, a member entry for every character). A blocked (excluded) role gives no access. A corporation,
+  alliance or everyone entry is member or blocked only (the wiki: alliances and corporations cannot be admin or manager).
+- **Choice: manager limits.** A manager adds only member or blocked entries, removes only member or blocked entries and changes
+  only member or blocked entries to member or blocked (the wiki). An admin does any of these, including demoting and removing itself.
+  The creator is an admin entry, removable like any other admin entry (the wiki gives no lock on the last admin).
+- **Failure reasons.** `AddMembers`, `DeleteMembers` and `UpdateMembershipTypes` answer the refused entries as (member id, reason):
+  `AlreadyMember`, `NotAMember`, `NotAllowed`, `InvalidMember` (the id names no character, corporation, alliance or everyone). These
+  are eve.rs keys. The client's per-error text table (`ownergroupsUIUtil.errorDict`) cannot be read from the decompiled file (its keys
+  are not recoverable there), so a reason the table does not hold shows no warning in the client. Not checked with the graphical client.
+- **Refusal notices.** The notice texts are the server's: "You do not have permission to manage this access group." (the EveJS text),
+  "This access group cannot be changed.", "This access group no longer exists.", "Access groups need a character." The client shows them
+  as `CustomNotify`.
+- **Limits.** A name is trimmed and cut to 100 characters (an empty name keeps the old one, or "New Group" for a new list); a
+  description is cut to 3900 characters. Both limits are EveJS's payload builder (`buildBookmarkText`); the client has no check of its
+  own that could be compared.
+- **Not built.** `CreateProfile` and `SaveProfileSettings` are the structure profile calls (`structureProfileController.py`), not
+  owner groups: the structure track (owner decision 8). `GetPublicGroupInfo`, `SearchGroups`, `GetMyGroupsAndMembers`,
+  `GetMyGroupsToUseForBookmarks` and `UpdateMemberships` are EveJS aliases or a no-op; the V24.01 client has no callsite for them, so
+  they are not registered. No role gate (director, personnel manager) is applied to corporation lists: the client and the wiki's list
+  rules gate by list membership, and no corporate role is named for list creation.
+- **Status.** Store and service tests pass (`Eve.AccessGroups.Tests`, PostgreSQL lane). Not checked with the graphical client; the
+  shared bookmark folders that use these lists are still open (the `accessGroupBookmarkMgr` section above).

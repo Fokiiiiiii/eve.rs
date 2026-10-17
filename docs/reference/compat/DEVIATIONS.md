@@ -4441,19 +4441,30 @@ as reference. The client's `bookmarkSvc.py` (`OnSharedBookmarksFolderUpdated`, `
   and a manager deletes the sub-folder with all its contents.
 - **Choice: the user's bulk delete and move skip what it may not touch.** `DeleteBookmarks` and the move answer the ids that went; a bookmark
   the user did not make is left alone (the reference's answer for this case is not read here). The copy needs view on the source and use on the target.
-- **Expiry.** The personal expiry options of the code are used for shared bookmarks too (4 hours, 2 days, 24 hours: the option set of `BookmarkRules`). The wiki lists "In 3 Hours" and "In 2 Days" with "Never"; this difference is not resolved here and is recorded as
-  open. An expired bookmark is removed on the next read of the bookmarks; the viewers are not told of that removal (open).
+- **Expiry.** The client's own option set is the wire contract and the one used here (`bookmarkConst.py`: none, 4 hours, 2 days, 24 hours,
+  with the client's labels `ExpireNever`, `ExpireIn4Hours`, `ExpireIn2Days`, `ExpireIn24Hours`). The wiki's "In 3 Hours" is not offered by the
+  client and is not used. An expired bookmark is removed at its time: by a one-minute timer (`bookmarks.expiry`, LocalTimers) and by any read,
+  and the characters that have its folder active hear of it (`bookmarksRemoved`).
+- **Access changes.** After an owner group change (a list deleted, a member added, removed or changed), each connected character whose
+  folders use the list is told, after the response: `OnSharedBookmarksFoldersAccessLost` (folder ids it can no longer view) and
+  `OnSharedBookmarksFoldersAccessChanged` (folder to its new level). The levels are recomputed from the character's lists at that time; the
+  connection row stays, so a restored list shows the folder again at the next read of the folders.
+- **Limits and refusals.** `TooManyKnownFolders` and `TooManyActiveFolders` carry the client's named limits (`maxKnownFolders`;
+  `maxPersonalFolders`, `maxSharedFolders`), and their text is the client's. A character may create 30 folders counting its default one
+  (`MAX_CREATED_BOOKMARK_FOLDERS`); the client has no error key for it, so `TooManyCreatedFolders` carries the notice of this server.
 - **Notifications.** After a commit, `OnSharedBookmarksFolderUpdated` goes to each connected character that has the folder active and whose
   lists still give it a level to view (checked live), but not to the actor. One update per notification, as the reference sends them
   (`[[updateTuple]]`). The update tuple is `[[folderID], type, args]`: `bookmarksAdded`, `bookmarksUpdated`, `bookmarksRemoved`,
   `bookmarksMoved` (old folder, new folder, bookmarks; sent to both folders), `folderUpdated`, `subfolderAdded`, `subfolderUpdated`,
   `subfolderRemoved`. `OnSharedBookmarksFolderDeleted` goes to the characters that had the folder active at the deletion.
-- **Not built.** The revocation notifications (`OnSharedBookmarksFoldersAccessLost`, `OnSharedBookmarksFoldersAccessChanged`): a character
-  whose lists are changed sees the change at its next read of the folders, not by a push. The expiry removal is not pushed (above). The
-  created-folder limit (`MAX_CREATED_BOOKMARK_FOLDERS`, 30) is not enforced. The live-client walk for shared folders has not been run.
+- **Not built.** A corporation or alliance changing its membership (a character leaving a corporation, a corporation leaving an alliance)
+  is not pushed to shared folders: the access change reaches a character at its next read. The live-client walk of shared folders is
+  described in the design document (`docs/project/SHARED_BOOKMARKS_DESIGN.md`) and is not run yet.
 - **Structures and roles.** No structure is an access holder here (owner decision 8: structures are touched only when required). The
-  wiki names no corporate role for a shared folder, so no role gate (director or personnel manager) is applied; a corporation's folder is
-  one whose list is the corporation's built-in list, and the alliance folder one whose list has an alliance entry.
+  wiki names no corporate role for a shared folder, and the client's bookmark code has no role check (`bookmarkSvc.py`,
+  `bookmarkContainerWindow.py` read none). The role inputs are the list membership types (member, manager, admin, excluded) and the
+  corporation's built-in list; no role gate (director or personnel manager) is applied. A corporation's folder is one whose list is the
+  corporation's built-in list, and an alliance's folder one whose list has an alliance entry.
 - **Status.** Store and service tests pass on the PostgreSQL lane (`Eve.Bookmarks.Tests`, including the 500-bookmark limit and the
   notifications). Not checked with the graphical client.
 

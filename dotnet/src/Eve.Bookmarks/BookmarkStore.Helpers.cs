@@ -103,6 +103,17 @@ public sealed partial class BookmarkStore
         return views;
     }
 
+    /// <summary>Removes the bookmarks whose expiry has come and answers them: the expiry is absolute, so no character's read decides it.</summary>
+    private async Task<IReadOnlyList<(long FolderId, long BookmarkId)>> DeleteExpiredAsync(NpgsqlConnection connection, NpgsqlTransaction? tx, CancellationToken token)
+    {
+        await using var command = Command(connection, tx!,
+            $"DELETE FROM {_schema}.bookmarks WHERE expiry_ms IS NOT NULL AND expiry_ms <= $1 RETURNING folder_id, bookmark_id", _nowMs());
+        await using var reader = await command.ExecuteReaderAsync(token);
+        var removed = new List<(long FolderId, long BookmarkId)>();
+        while (await reader.ReadAsync(token)) removed.Add((reader.GetInt64(0), reader.GetInt64(1)));
+        return removed;
+    }
+
     private async Task<bool> ConnectionActiveAsync(NpgsqlConnection connection, NpgsqlTransaction tx, long folderId, long characterId, CancellationToken token)
     {
         await using var command = Command(connection, tx, $"SELECT is_active FROM {_schema}.connections WHERE folder_id=$1 AND character_id=$2", folderId, characterId);

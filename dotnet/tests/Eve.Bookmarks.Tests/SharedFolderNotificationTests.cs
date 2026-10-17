@@ -90,6 +90,79 @@ public sealed class SharedFolderNotificationTests
         Assert.Empty(Notifications(aliceSink));
     }
 
+    [PgFact]
+    public async Task A_list_change_tells_a_connected_character_it_lost_the_folder_or_its_new_level()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var lists = new Dictionary<long, AccessLists>
+        {
+            [Alice] = new(new Dictionary<long, int> { [AdminList] = 2, [ManageList] = 2, [UseList] = 2, [ViewList] = 2 }),
+            [Bob] = new(new Dictionary<long, int> { [ViewList] = 0 }),
+            [Carol] = new(new Dictionary<long, int> { [ViewList] = 0 }),
+        };
+        var sessions = new CharacterSessions();
+        var bobSink = new Sink();
+        var carolSink = new Sink();
+        Connect(sessions, Alice, new Sink());
+        Connect(sessions, Bob, bobSink);
+        Connect(sessions, Carol, carolSink);
+        var folder = await rig.Store.AddFolderAsync(Alice, false, "Shared", "", new SharedGroups(AdminList, ManageList, UseList, ViewList),
+            lists[Alice]);
+        await rig.Store.AddKnownFolderAsync(Bob, folder.Folder.FolderId, true, lists[Bob]);
+        await rig.Store.AddKnownFolderAsync(Carol, folder.Folder.FolderId, true, lists[Carol]);
+        var notifier = new SharedFolderNotifier(rig.Store, (who, _) => ValueTask.FromResult(lists.TryGetValue(who.CharacterId, out var found) ? found : AccessLists.Empty), sessions);
+
+        lists[Bob] = new(new Dictionary<long, int>());
+        (await notifier.PlanAccessChangesAsync(ViewList))!.Invoke();
+        var lost = Assert.Single(Notifications(bobSink));
+        Assert.Equal("OnSharedBookmarksFoldersAccessLost", lost.Name);
+        Assert.Equal(folder.Folder.FolderId, Num(Assert.Single(Assert.IsType<PyList>(Assert.IsType<PyTuple>(lost.Args).Items[0]).Items)));
+        // Carol still views the folder, so it hears its level (never a loss)
+        Assert.DoesNotContain(Notifications(carolSink), heard => heard.Name == "OnSharedBookmarksFoldersAccessLost");
+
+        lists[Carol] = new(new Dictionary<long, int> { [UseList] = 0 });
+        (await notifier.PlanAccessChangesAsync(UseList))!.Invoke();
+        var changed = Notifications(carolSink).Last();
+        Assert.Equal("OnSharedBookmarksFoldersAccessChanged", changed.Name);
+        var levels = Assert.IsType<PyDict>(Assert.IsType<PyTuple>(changed.Args).Items[0]);
+        var entry = Assert.Single(levels.Entries);
+        Assert.Equal(folder.Folder.FolderId, Num(entry.Key));
+        Assert.Equal(FolderAccess.Use, Num(entry.Value));
+    }
+
+    [PgFact]
+    public async Task An_expired_shared_bookmark_is_removed_for_the_connected_viewers_who_hold_a_view()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var lists = new Dictionary<long, AccessLists>
+        {
+            [Alice] = new(new Dictionary<long, int> { [AdminList] = 2, [ManageList] = 2, [UseList] = 2, [ViewList] = 2 }),
+            [Bob] = new(new Dictionary<long, int> { [ViewList] = 0 }),
+        };
+        var sessions = new CharacterSessions();
+        var aliceSink = new Sink();
+        var bobSink = new Sink();
+        Connect(sessions, Alice, aliceSink);
+        Connect(sessions, Bob, bobSink);
+        var folder = (await rig.Store.AddFolderAsync(Alice, false, "Shared", "", new SharedGroups(AdminList, ManageList, UseList, ViewList),
+            lists[Alice])).Folder.FolderId;
+        await rig.Store.AddKnownFolderAsync(Bob, folder, true, lists[Bob]);
+        var bookmark = await rig.Store.CreateBookmarkAsync(Alice, folder, Station, "short", "", BookmarkRules.Expiry4Hours, null, lists[Alice]);
+        var notifier = new SharedFolderNotifier(rig.Store, (who, _) => ValueTask.FromResult(lists.TryGetValue(who.CharacterId, out var found) ? found : AccessLists.Empty), sessions);
+
+        rig.Now += 5L * 3_600_000;
+        await notifier.ExpireAsync();
+
+        var heard = Assert.Single(Notifications(bobSink));
+        Assert.Equal("OnSharedBookmarksFolderUpdated", heard.Name);
+        var update = Assert.IsType<PyList>(Assert.Single(Assert.IsType<PyList>(Assert.IsType<PyTuple>(heard.Args).Items[0]).Items));
+        Assert.Equal(folder, Num(Assert.Single(Assert.IsType<PyList>(update.Items[0]).Items)));
+        Assert.Equal("bookmarksRemoved", Text(update.Items[1]));
+        Assert.Equal(bookmark.BookmarkId, Num(Assert.Single(Assert.IsType<PyList>(update.Items[2]).Items)));
+        // the creator holds the folder active too, so it hears the removal as well
+        Assert.Equal("OnSharedBookmarksFolderUpdated", Assert.Single(Notifications(aliceSink)).Name);
+    }
+
     private static IService Service(Rig rig, CharacterSessions sessions, Dictionary<long, AccessLists> lists) =>
         new BookmarkRefusals(new AccessGroupBookmarkMgrService(rig.Store, id => id == Station.ItemId ? Station : null,
             (who, _) => ValueTask.FromResult(lists.TryGetValue(who.CharacterId, out var found) ? found : AccessLists.Empty), sessions));

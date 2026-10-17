@@ -15,7 +15,7 @@ namespace Eve.Services.Core;
 /// </summary>
 [Service("accessGroupBookmarkMgr")]
 public sealed partial class AccessGroupBookmarkMgrService(BookmarkStore store, Func<long, BookmarkTarget?> resolveStaticTarget,
-    Func<Affiliation, CancellationToken, ValueTask<AccessLists>> listsOf, CharacterSessions? sessions)
+    Func<Affiliation, CancellationToken, ValueTask<AccessLists>> listsOf, CharacterSessions? sessions, SharedFolderNotifier? notifier = null)
 {
     private const string DefaultFolderName = "My Locations";
     private const int StationTypeFallback = 5; // TYPE_SOLAR_SYSTEM, the reference's fallback type
@@ -23,7 +23,11 @@ public sealed partial class AccessGroupBookmarkMgrService(BookmarkStore store, F
     [Method("GetMyActiveBookmarks")]
     public async ValueTask<PyValue> GetMyActiveBookmarks(ServiceCall call)
     {
-        var active = await store.ActiveAsync(Character(call), await Lists(call), call.Cancellation);
+        var character = Character(call);
+        var active = await store.ActiveAsync(character, await Lists(call), call.Cancellation);
+        if (notifier is not null && active.Expired is { Count: > 0 } expired &&
+            await notifier.PlanRemovalsAsync(expired, character, call.Cancellation) is { } send)
+            call.Session.AfterResponse(send);
         return new PyList([
             new PyList([.. active.Folders.Select(FolderPayload)]),
             new PyList([.. active.Bookmarks.Select(BookmarkPayload)]),
@@ -262,13 +266,13 @@ public sealed partial class AccessGroupBookmarkMgrService(BookmarkStore store, F
     }
 
     /// <summary>One folder update: the target folder list, the update type, its arguments (the reference's <c>buildFolderUpdateTuple</c>).</summary>
-    private static PyValue Update(long folderId, string type, PyValue arguments) =>
+    internal static PyValue Update(long folderId, string type, PyValue arguments) =>
         new PyList([new PyList([InventoryWire.Id(folderId)]), new PyStr(type), arguments]);
 
     private static PyValue Moved(IEnumerable<Bookmark> bookmarks, long fromFolder, long toFolder) =>
         new PyList([new PyList([.. bookmarks.Select(BookmarkPayload)]), InventoryWire.Id(fromFolder), InventoryWire.Id(toFolder)]);
 
-    private static PyList Ids(IEnumerable<long> ids) => new([.. ids.Select(id => InventoryWire.Id(id))]);
+    internal static PyList Ids(IEnumerable<long> ids) => new([.. ids.Select(id => InventoryWire.Id(id))]);
 
     private static long? OptionalPositive(PyValue value)
     {
@@ -385,8 +389,20 @@ public sealed class BookmarkRefusals(IService inner) : IService
         catch (BookmarkError error)
         {
             throw error.Notice is null
-                ? MachoErrors.ThrowUserError(error.Code)
+                ? MachoErrors.ThrowUserError(error.Code, LimitValues(error.Code))
                 : MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr(error.Notice)));
         }
     }
+
+    /// <summary>The limits the client's own text of a refusal names (its <c>UserError</c> arguments).</summary>
+    private static (string Name, PyValue Value)[] LimitValues(string code) => code switch
+    {
+        "TooManyKnownFolders" => [("maxKnownFolders", new PyInt(BookmarkRules.MaxKnownFolders))],
+        "TooManyActiveFolders" =>
+        [
+            ("maxPersonalFolders", new PyInt(BookmarkRules.MaxActivePersonalFolders)),
+            ("maxSharedFolders", new PyInt(BookmarkRules.MaxActiveSharedFolders)),
+        ],
+        _ => [],
+    };
 }

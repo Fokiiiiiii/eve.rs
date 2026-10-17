@@ -30,7 +30,9 @@ public sealed record BookmarkTarget(long ItemId, int TypeId, long LocationId);
 /// <summary>A folder with what the client shows of it: the character's access level to it, its active state.</summary>
 public sealed record FolderView(BookmarkFolder Folder, int AccessLevel, bool IsActive);
 
-public sealed record ActiveBookmarks(IReadOnlyList<FolderView> Folders, IReadOnlyList<Bookmark> Bookmarks, IReadOnlyList<BookmarkSubfolder> Subfolders);
+/// <summary>The character's active view; <see cref="Expired"/> lists the bookmarks the read removed as expired (folder and bookmark ids).</summary>
+public sealed record ActiveBookmarks(IReadOnlyList<FolderView> Folders, IReadOnlyList<Bookmark> Bookmarks, IReadOnlyList<BookmarkSubfolder> Subfolders,
+    IReadOnlyList<(long FolderId, long BookmarkId)>? Expired = null);
 
 /// <summary>What a folder change answers the client with: the folder and, when it is active, its bookmarks and subfolders.</summary>
 public sealed record FolderOpened(FolderView Folder, IReadOnlyList<Bookmark> Bookmarks, IReadOnlyList<BookmarkSubfolder> Subfolders);
@@ -41,6 +43,7 @@ public static class BookmarkRules
     public const int MaxActivePersonalFolders = 5;
     public const int MaxActiveSharedFolders = 3;
     public const int MaxKnownFolders = 30;
+    public const int MaxCreatedFolders = 30;
     public const int MaxSubfolders = 30;
     public const int MaxBookmarksInPersonalFolder = 3000;
     public const int MaxBookmarksInSharedFolder = 500;
@@ -119,12 +122,12 @@ public sealed partial class BookmarkStore
     public Task<ActiveBookmarks> ActiveAsync(long characterId, AccessLists? lists = null, CancellationToken token = default) =>
         InTransactionAsync(characterId, async (connection, tx) =>
         {
-            await Execute(connection, tx, $"DELETE FROM {_schema}.bookmarks WHERE expiry_ms IS NOT NULL AND expiry_ms <= $1", token, _nowMs());
+            var expired = await DeleteExpiredAsync(connection, tx, token);
             var active = (await ViewsAsync(connection, tx, characterId, lists ?? AccessLists.Empty,
                     "(f.is_personal AND f.owner_id=$1 AND f.known) OR c.character_id IS NOT NULL", token))
                 .Where(view => view.IsActive).ToArray();
             var ids = active.Select(view => view.Folder.FolderId).ToArray();
-            return new ActiveBookmarks(active, await BookmarksInAsync(connection, tx, ids, token), await SubfoldersInAsync(connection, tx, ids, token));
+            return new ActiveBookmarks(active, await BookmarksInAsync(connection, tx, ids, token), await SubfoldersInAsync(connection, tx, ids, token), expired);
         }, token);
 
     /// <summary>The folders the character searches as admin: its personal folders and the shared folders whose admin list it holds.</summary>
@@ -162,8 +165,10 @@ public sealed partial class BookmarkStore
         }
         return InTransactionAsync(characterId, async (connection, tx) =>
         {
+            if (await CountAsync(connection, tx, $"SELECT count(*) FROM {_schema}.folders WHERE owner_id=$1", token, characterId) >= BookmarkRules.MaxCreatedFolders)
+                throw new BookmarkError("TooManyCreatedFolders", "You have created too many bookmark folders.");
             if (await KnownCountAsync(connection, tx, characterId, token) >= BookmarkRules.MaxKnownFolders)
-                throw new BookmarkError("TooManyKnownFolders", "You have too many bookmark folders.");
+                throw new BookmarkError("TooManyKnownFolders");
             var folderId = await NextIdAsync(connection, tx, token);
             var now = _nowMs();
             var folderName = BookmarkRules.Name(name, BookmarkRules.MaxFolderNameLength, BookmarkRules.DefaultFolderName);
@@ -252,7 +257,7 @@ public sealed partial class BookmarkStore
             }
             var already = await ConnectionActiveAsync(connection, tx, folderId, characterId, token);
             if (!already && await KnownCountAsync(connection, tx, characterId, token) >= BookmarkRules.MaxKnownFolders)
-                throw new BookmarkError("TooManyKnownFolders", "You have too many bookmark folders.");
+                throw new BookmarkError("TooManyKnownFolders");
             var connected = isActive && (already || await SharedActiveCountAsync(connection, tx, characterId, token) < BookmarkRules.MaxActiveSharedFolders);
             await Execute(connection, tx,
                 $"INSERT INTO {_schema}.connections(folder_id,character_id,is_active) VALUES($1,$2,$3) ON CONFLICT (folder_id, character_id) DO UPDATE SET is_active=EXCLUDED.is_active",
@@ -286,13 +291,13 @@ public sealed partial class BookmarkStore
             if (folder.IsPersonal)
             {
                 if (isActive && await ActiveCountAsync(connection, tx, characterId, token) >= BookmarkRules.MaxActivePersonalFolders)
-                    throw new BookmarkError("TooManyActiveFolders", "You have too many active bookmark folders.");
+                    throw new BookmarkError("TooManyActiveFolders");
                 await Execute(connection, tx, $"UPDATE {_schema}.folders SET known=true, is_active=$2 WHERE folder_id=$1", token, folderId, isActive);
                 return await OpenedAsync(connection, tx, folder with { IsActive = isActive }, level, isActive, token);
             }
             var already = await ConnectionActiveAsync(connection, tx, folderId, characterId, token);
             if (isActive && !already && await SharedActiveCountAsync(connection, tx, characterId, token) >= BookmarkRules.MaxActiveSharedFolders)
-                throw new BookmarkError("TooManyActiveFolders", "You have too many active bookmark folders.");
+                throw new BookmarkError("TooManyActiveFolders");
             await Execute(connection, tx,
                 $"INSERT INTO {_schema}.connections(folder_id,character_id,is_active) VALUES($1,$2,$3) ON CONFLICT (folder_id, character_id) DO UPDATE SET is_active=EXCLUDED.is_active",
                 token, folderId, characterId, isActive);
@@ -478,6 +483,26 @@ public sealed partial class BookmarkStore
             }
             return (IReadOnlyList<Bookmark>)copies;
         }, token);
+
+    /// <summary>Removes the expired bookmarks of every folder; answers the folder and bookmark ids that went (the shared folders' viewers hear of them).</summary>
+    public async Task<IReadOnlyList<(long FolderId, long BookmarkId)>> ExpireAsync(CancellationToken token = default)
+    {
+        await using var connection = await _source.OpenConnectionAsync(token);
+        return await DeleteExpiredAsync(connection, null!, token);
+    }
+
+    /// <summary>The characters with a connection to any of the shared folders whose lists include the group (their state is what a list change can change).</summary>
+    public async Task<IReadOnlyList<(long FolderId, long CharacterId)>> ConnectedFoldersUsingAsync(long groupId, CancellationToken token = default)
+    {
+        await using var connection = await _source.OpenConnectionAsync(token);
+        await using var command = Command(connection, null!,
+            $"SELECT f.folder_id, c.character_id FROM {_schema}.connections c JOIN {_schema}.folders f ON f.folder_id=c.folder_id " +
+            "WHERE f.admin_group_id=$1 OR f.manage_group_id=$1 OR f.use_group_id=$1 OR f.view_group_id=$1 ORDER BY f.folder_id, c.character_id", groupId);
+        await using var reader = await command.ExecuteReaderAsync(token);
+        var pairs = new List<(long, long)>();
+        while (await reader.ReadAsync(token)) pairs.Add((reader.GetInt64(0), reader.GetInt64(1)));
+        return pairs;
+    }
 
     /// <summary>The characters that have the folder active (other than the given one): who hears of a change to a shared folder.</summary>
     public async Task<IReadOnlyList<long>> ActiveViewersAsync(long folderId, long excludeCharacterId, CancellationToken token = default)

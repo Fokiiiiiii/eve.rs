@@ -42,7 +42,9 @@ lane. The graphical-client walk and the revocation notifications are not built. 
   use on the target; copy needs view on the source and use on the target). Capacity 500 per shared folder; 3 active shared folders; 30 known.
 - Notifications: `OnSharedBookmarksFolderUpdated` (one update per notification, `[[folderID], type, args]`) to the connected characters that
   have the folder active and still have a view level, after the response, not to the actor; `OnSharedBookmarksFolderDeleted` to the
-  characters that had it active at deletion.
+  characters that had it active at deletion. After an owner group change, `OnSharedBookmarksFoldersAccessLost` and
+  `OnSharedBookmarksFoldersAccessChanged` go to the connected characters whose folders use the group (`SharedFolderNotifier`). Expired
+  bookmarks are removed by a one-minute timer and by reads, and the viewers hear `bookmarksRemoved`.
 
 ## Tests
 
@@ -54,8 +56,8 @@ lane. The graphical-client walk and the revocation notifications are not built. 
 
 ## Open
 
-- The revocation notifications (`OnSharedBookmarksFoldersAccessLost`, `OnSharedBookmarksFoldersAccessChanged`).
-- Expiry removal of shared bookmarks is not pushed to viewers; the expiry option set differs from the wiki's list (recorded).
-- The created-folder limit (30) is not enforced.
-- Live client walk of the owner groups and shared folders against a running server with a MITM capture (not run).
-- Structure access (owner decision 8: not touched).
+- Corporation or alliance membership changes (a character leaving a corporation, a corporation leaving an alliance) are not pushed to the
+  shared folders; the change reaches the character at its next read.
+- The live client walk (`tools/headless-client/tests/test_walk_shared_bookmarks.py`, two pilots, a list each, a shared folder, the
+  notices) against a running server with a MITM capture is not run yet.
+- The expiry timer and the access notices are checked by the PostgreSQL tests (`SharedFolderNotificationTests`), not by a live run.

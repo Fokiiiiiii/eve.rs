@@ -29,6 +29,48 @@ public sealed class SharedFolderTests
     /// <summary>Alice holds all four lists as admin, so she may put each on the folder she makes.</summary>
     private static AccessLists AliceLists() => Lists((AdminList, 2), (ManageList, 2), (UseList, 2), (ViewList, 2));
 
+    [PgFact]
+    public async Task A_character_creates_at_most_30_folders_counting_its_default_folder()
+    {
+        await using var rig = await Rig.CreateAsync();
+        for (var i = 0; i < BookmarkRules.MaxCreatedFolders - 1; i++)
+            await rig.Store.AddFolderAsync(Bob, true, $"Folder {i}", "");
+
+        var refused = await Assert.ThrowsAsync<BookmarkError>(() => rig.Store.AddFolderAsync(Bob, true, "one too many", ""));
+        Assert.Equal("TooManyCreatedFolders", refused.Code);
+        Assert.Equal(BookmarkRules.MaxCreatedFolders, (await rig.Store.AdminFoldersAsync(Bob)).Count);
+    }
+
+    [PgFact]
+    public async Task Expiry_removes_a_shared_bookmark_on_its_time_and_answers_the_removed_ids()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var folder = await SharedFolderAsync(rig);
+        var short_ = await rig.Store.CreateBookmarkAsync(Alice, folder, Station, "short", "", BookmarkRules.Expiry4Hours, null, AliceLists());
+        var kept = await rig.Store.CreateBookmarkAsync(Alice, folder, Station, "kept", "", BookmarkRules.ExpiryNone, null, AliceLists());
+
+        Assert.Empty(await rig.Store.ExpireAsync());
+        rig.Now += 5L * 3_600_000;
+        var removed = await rig.Store.ExpireAsync();
+
+        Assert.Equal([(folder, short_.BookmarkId)], removed);
+        var remaining = await rig.Store.ActiveAsync(Alice, AliceLists());
+        Assert.Equal([kept.BookmarkId], remaining.Bookmarks.Where(bookmark => bookmark.FolderId == folder).Select(bookmark => bookmark.BookmarkId));
+    }
+
+    [PgFact]
+    public async Task Connected_folders_of_a_group_are_the_ones_whose_lists_include_it()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var folder = await SharedFolderAsync(rig);
+        await rig.Store.AddKnownFolderAsync(Bob, folder, true, Lists((ViewList, 0)));
+
+        // the creator is connected too (its folder is active for it)
+        Assert.Equal([(folder, Alice), (folder, Bob)], await rig.Store.ConnectedFoldersUsingAsync(ViewList));
+        Assert.Equal([(folder, Alice), (folder, Bob)], await rig.Store.ConnectedFoldersUsingAsync(AdminList));
+        Assert.Empty(await rig.Store.ConnectedFoldersUsingAsync(3000000009));
+    }
+
     /// <summary>The shared folders in an active view (each character also has its default personal folder).</summary>
     private static List<FolderView> Shared(ActiveBookmarks active) => active.Folders.Where(view => !view.Folder.IsPersonal).ToList();
 

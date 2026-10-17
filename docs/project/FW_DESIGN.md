@@ -68,9 +68,13 @@ Served (each has a test): `GetCorporationWarFactionID`, `GetAllianceWarFactionID
 `GetSolarSystemLPs`, `GetSolarSystemLPsEx`, `DonateLPsToSolarSystem`, `GetControlBunkerIDInSystem` (None: eve.rs has
 no control bunker structures), `RefreshCorps` (None: the state is always current).
 
-Not served: `GetMyCharacterRankOverview`, `GetCharacterRankOverview`, and the statistics methods `GetStats_FactionInfo`,
-`GetStats_Character`, `GetStats_Corp`, `GetStats_Alliance`, `GetStats_Militia`, `GetStats_CorpPilots`,
-`GetStats_TopAndAllKillsAndVPs`. They need kill and victory-point producers that do not exist yet (see "Not built").
+Statistics, served from the daily rows and the faction and alliance data (slice 2): `GetStats_Character`, `GetStats_Corp`,
+`GetStats_Alliance` (the sum over the corporations that are members of the caller's alliance now), `GetStats_Militia` (header: the occupier factions;
+per key one value per faction, summed over its enlisted corporations), `GetStats_FactionInfo` (per faction: `totalMembersCount`,
+`militiaMembersCount`, `topMemberCount`, `systemsCount` as util.KeyVal), `GetStats_TopAndAllKillsAndVPs` (two dicts keyed by group 1, 2, 32: the top
+and the sum). Rank overview: `GetMyCharacterRankOverview` and `GetCharacterRankOverview` (a list of util.KeyVal `factionID`, `currentRank` for each
+occupier where the rank is above 0). Not served: `GetStats_CorpPilots` (no client consumer found; the dashboard derives the same numbers from
+`GetStats_FactionInfo`).
 
 Refusals reach the client as `CustomInfo` notices (text keys of the client's localization), `FacWarDonationTaxChanged`
 (with `taxNow` in percent, the client's retry key) and not as localized pool messages.
@@ -127,14 +131,12 @@ Refusals reach the client as `CustomInfo` notices (text keys of the client's loc
 
 ## Not built
 
-- **Kill producer.** `PayBountyAsync` in `dotnet/src/Eve.Services.Space/SpaceSessions.Npc.cs` sees the killer, the system and the NPC
-  type, but not the NPC's faction or the killer's war faction; it also returns early for an NPC with no bounty. A FW kill needs the NPC's
-  faction (from the NPC type's corporation), an enemy check against the pilot's faction, a Host callback into the space runtime, and a
-  decision for pilot-versus-pilot kills (no event for them was found). Without it the statistics stay at zero.
+- **Pilot-versus-pilot kills**: not counted. The NPC kill producer (`RecordFactionWarfareNpcKill`) is built; a player kill has no
+  statistics or victory-point path yet (no event for it was found).
 - **Victory points from complexes**: built (Complexes, slice 1); the gate, the NPC defenders and the battlefield are not. The ship-kill LP formula (wiki: 3.25 times hull, insurance and fitting value over 10,000,
   capped at 50,000 LP).
 - **Capture trigger**: infrastructure hub destruction (25 million HP, wiki); no FW hub combat path exists.
-- **Statistics not served**: faction, militia, alliance, top and rank overview methods (DEVIATIONS "Factional warfare").
+- **Statistics**: built in slice 2 (above). `GetStats_CorpPilots` is not served (no consumer).
 - **Mission and incursion LP credits**: no credit source in eve.rs, so the corporation LP tax applies to insurgency payouts only.
 - **Live walk**: no headless-client FW walk and no live server run for this work. The live runner needs a Rust build (several GB of
   target output) and a quiet PostgreSQL cluster; the shared cluster hit its connection limit during the Host suite.

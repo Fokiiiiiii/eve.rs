@@ -125,8 +125,9 @@ Refusals reach the client as `CustomInfo` notices (text keys of the client's loc
   time), advances the timers from the pilots present, and resolves a complex at its capture time. Resolutions are published in the job transaction
   (`factionwarfare.complex_resolved`) and notified after the commit (`OnFacWarDungeonCompleted`, `OnVictoryPointStateUpdated`).
 - Victory point state: `fwVictoryPointMgr` reads the store (attacker points against 75,000).
-- Not built: the acceleration gate and the warp into a complex, NPC defenders, the battlefield (archetype 68) and the objectives (67), the
-  complexes in the scan data, the per-pilot victory points of a capture, a live walk.
+- Dungeon sites: each complex is a dungeon instance (`FwComplexSites`, host); its waves are the NPC defenders; presence is the pilots whose
+  current dungeon is that instance; the timer waits for the defenders. Open complexes are in the system anomaly overlay (scan visibility).
+- Not built: the battlefield (archetype 68) and the objectives (67), the per-pilot victory points of a capture, and a live walk (see DEVIATIONS).
 - Tests: `FwComplexTests.cs` (5). Eve.FactionWarfare.Tests: 83 passed on eve_p4.
 
 ## Not built

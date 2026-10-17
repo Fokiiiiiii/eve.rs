@@ -4353,19 +4353,23 @@ donation sections it marks outdated. Design: `docs/project/FW_DESIGN.md`.
   Respawn: 30 minutes after a complex of a size is captured in its system (wiki, "about 30 minutes"). Advanced, Frontline and Command Operations
   names of the task brief are the wiki's ADV/ELT/BSC variants, not separate sizes; the SDE archetypes 67 (Factional Warfare Objectives) and 68
   (Factional Warfare Battlefield) are not built (a battlefield has three capture points, 2000 VP and 150k LP, wiki "Battlefields").
-- **Complexes: capture timer and presence (project rule).** One tick every 10 seconds (job `factionwarfare.complexes.tick`). A side alone in the
-  complex advances its timer by the tick (attackers up, the occupier down); both sides or neither pause it (wiki: the timer pauses until one faction
-  remains). The step is capped at one tick, so downtime is never credited. Presence is the pilots in space in the system (`SpaceSessions.CharacterIdsInSystem`)
-  with their war faction: the simulation has no per-complex position, so a pilot in the system counts as in the complex. Enemy NPCs do not pause
-  the timer and no NPC defenders are spawned: the defenders of the wiki are not modelled. The timers are additive and signed, so a defender's
-  progress undoes an attacker's (wiki: "the timers for both factions are additive").
+- **Complexes: capture timer and presence (project rule).** Each complex is a dungeon site of its size's SDE archetype (33 to 36; the first startable
+  template by complex id), started at the system origin with lifetime 24 h (shortcut: the wiki gives no site lifetime). Its NPC defenders are its waves;
+  the timer advances only once the site is completed (all defenders destroyed; the wiki: the defending NPC must be killed first). Presence is the pilots
+  whose current dungeon is the site (the keeper's read of the session, `CurrentDungeonInstanceAsync`). One tick every 10 s (job
+  `factionwarfare.complexes.tick`). A side alone inside advances the timer by the tick (attackers up, occupier down); both or neither pause it (wiki).
+  The step is capped at one tick. The timers are additive and signed (wiki). Enemy NPCs outside the site do not pause the timer (not modelled).
+  Entry: the complex's gate, when the template has rooms, is the acceleration gate of `DungeonRoomLayout`; a single-room site needs none (EVE:
+  the wiki's acceleration gate of a complex is not reproduced by a room layout).
+- **Complexes: scan visibility.** An open complex is listed in the system's anomaly overlay (`map`, `scanMgr` and `taleMgr` GetAnomalies path) with the
+  `CosmicAnomalyInfo` fields of EveJS `buildAnomalySiteInfo` (siteID and instanceID = the site's instance, dungeonID, archetypeID, difficulty, targetID =
+  the first gate of its layout or empty, position at the origin). The position is not the complex's real place (no SDE coordinates).
 - **Complexes: victory points.** A capture by the attackers adds the size's victory points to the system's attacker points; a capture by the
   defenders subtracts them (never below 0; wiki: the defenders' capture subtracts). The capture by the attackers notifies the pilots in the system
   with `OnFacWarDungeonCompleted(true, attackerFaction)`, the defenders' capture with `(false, occupier)` (client `fwWarzoneSvc.py`), and the
   victory point state (`OnVictoryPointStateUpdated`, client `fwVictoryPointSvc.py`) with the attacker points against the 75,000 threshold.
   `fwVictoryPointMgr.GetAllVictoryPointStates` and `GetLocalVictoryPointState` now read the store (before: empty).
-  Not built: the statistics of the pilots who captured (no per-pilot victory points for complexes), the complexes in the system scan data
-  (the client does not see them), and the acceleration gate that warps pilots into a complex.
+  Not built: the statistics of the pilots who captured (no per-pilot victory points for complexes).
 - **Complexes: tests.** `FwComplexRulesTests` (3, pure), `FwComplexTickerTests` (2, eve_p4: capture by the attackers after 31 ticks with the
   victory points, capture by the defenders with the subtraction floor at 0 and the respawn after 30 minutes).
 

@@ -125,8 +125,12 @@ Refusals reach the client as `CustomInfo` notices (text keys of the client's loc
   time), advances the timers from the pilots present, and resolves a complex at its capture time. Resolutions are published in the job transaction
   (`factionwarfare.complex_resolved`) and notified after the commit (`OnFacWarDungeonCompleted`, `OnVictoryPointStateUpdated`).
 - Victory point state: `fwVictoryPointMgr` reads the store (attacker points against 75,000).
-- Not built: the acceleration gate and the warp into a complex, NPC defenders, the battlefield (archetype 68) and the objectives (67), the
-  complexes in the scan data, the per-pilot victory points of a capture, a live walk.
+- Dungeon sites: each complex is a dungeon instance (`FwComplexSites`, host); its waves are the NPC defenders; presence is the pilots whose
+  current dungeon is that instance; the timer waits for the defenders. Open complexes are in the system anomaly overlay (scan visibility).
+- Live walk (eve_p4 lane, live port 26103): `tools/headless-client/tests/test_fw_complex_walk.py` passes (1 of 1): every occupied system has a
+  victory point state at the 75,000 threshold with no points on a fresh server. Not walked: a pilot entering a complex, killing its defenders, a
+  capture, and the notifications; the capture walk is open.
+- Not built: the battlefield (archetype 68) and the objectives (67), and the per-pilot victory points of a capture.
 - Tests: `FwComplexTests.cs` (5). Eve.FactionWarfare.Tests: 83 passed on eve_p4.
 
 ## Not built
@@ -141,3 +145,8 @@ Refusals reach the client as `CustomInfo` notices (text keys of the client's loc
 - **Live walk**: no headless-client FW walk and no live server run for this work. The live runner needs a Rust build (several GB of
   target output) and a quiet PostgreSQL cluster; the shared cluster hit its connection limit during the Host suite.
 - **Host suite**: 58 of 406 failed on connection exhaustion (see the testing section above); not a FW logic failure, but not green.
+## Acceleration gates (pointer)
+
+Pilots enter a complex's rooms through acceleration gates. The API for the FW complex director is in
+`docs/project/ACCELERATION_GATES.md` (`DungeonRoomLayout`, `SpaceContainers.AccelerationGateDeployableId`,
+`SpaceAccelerationGates`). Single-room complexes need no gate.

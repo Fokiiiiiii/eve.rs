@@ -39,7 +39,8 @@ public sealed class PersistenceIncursionAnomalyReadModel(
     Func<string, long, CancellationToken, Task<IReadOnlyList<Eve.Content.ContentInstance>>> activeOf,
     Func<string, CancellationToken, Task<JsonObject>> readGameStoreTable,
     Func<long> nowUnixMs,
-    Func<CancellationToken, Task<IReadOnlyList<JsonObject>>>? activeIncursions = null)
+    Func<CancellationToken, Task<IReadOnlyList<JsonObject>>>? activeIncursions = null,
+    Func<long, CancellationToken, Task<IReadOnlyList<JsonObject>>>? activeComplexes = null)
 {
     private const long GlobalOwnerId = 0;
     private static readonly HashSet<string> ActiveDungeonStates = new(StringComparer.OrdinalIgnoreCase)
@@ -75,6 +76,16 @@ public sealed class PersistenceIncursionAnomalyReadModel(
             if (data["instanceID"] is null)
                 data["instanceID"] = instance.Id;
             result[siteId] = data;
+        }
+
+        // the factional warfare complexes of the system (their dungeon sites), listed by their site id
+        if (activeComplexes is not null)
+        {
+            foreach (var complex in await activeComplexes(solarSystemId, cancellationToken))
+            {
+                if (Positive(Integer(complex["siteID"])) is var complexSite and > 0)
+                    result[complexSite] = complex;
+            }
         }
 
         var dungeonState = await readGameStoreTable("dungeonRuntimeState", cancellationToken);

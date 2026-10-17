@@ -18,8 +18,10 @@ public sealed record ShipClass(int GroupId, int RaceId);
 public sealed class SpaceAccelerationGates(
     Func<CancellationToken, Task<IReadOnlyList<DungeonPocket>>> activePockets,
     Func<ClientSession, CancellationToken, Task<long?>> currentInstanceOf,
+    Func<long, CancellationToken, Task<IReadOnlySet<string>>> clearedRooms,
     Func<ClientSession, CancellationToken, Task<ShipClass?>> shipClassOf,
-    Func<ClientSession, long, double[], CancellationToken, Task<CommandReply>> transit)
+    Func<ClientSession, long, double[], CancellationToken, Task<CommandReply>> transit,
+    Func<long, string, long, CancellationToken, Task> recordRoom)
 {
     /// <summary>The ship groups a gate bars when it names no race (EveJS <c>ACCELERATION_GATE_BLACKLISTED_GROUP_IDS</c>: capsules and the capital hulls).</summary>
     public static readonly IReadOnlySet<int> BlacklistedGroups = new HashSet<int> { 29, 30, 485, 513, 547, 659, 883, 902, 1538, 4594, 5120 };
@@ -47,6 +49,11 @@ public sealed class SpaceAccelerationGates(
         {
             throw MachoErrors.ThrowUserError("DeniedTargetAttemptFailed");
         }
+        // a gate out of a room is locked until the room's waves are done (EveJS: "The acceleration gate is locked.")
+        if (!(await clearedRooms(where.InstanceId, cancellationToken)).Contains(gate.SourceRoomKey))
+        {
+            throw MachoErrors.ThrowUserError("CustomInfo", ("info", new PyStr("The acceleration gate is locked.")));
+        }
         if (await shipClassOf(session, cancellationToken) is not { } ship)
         {
             throw MachoErrors.ThrowUserError("DeniedShipChanged");
@@ -71,6 +78,8 @@ public sealed class SpaceAccelerationGates(
         {
             throw Refused(reply.Reason);
         }
+        // the pilot is in the room it leads to: the site's game state keeps it (the keeper's current dungeon and the presence queries read it)
+        await recordRoom(where.InstanceId, room.Key, room.RoomId ?? 0, cancellationToken);
         return PyNone.Instance;
     }
 

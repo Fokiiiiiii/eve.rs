@@ -38,7 +38,7 @@ namespace Eve.Host;
 /// <summary>What the host runs after composition: the server and the registry, and the disposables shut down in the original order.</summary>
 internal sealed class HostRuntime(HostServer server, ServiceRegistry registry, LegacyGameStore? legacy, Foundations? foundations,
     SpaceSessions? space, Eve.Services.Crimewatch.CrimewatchRuntime? crimewatch, SimClient? simulation, CharacterSessions? characterSessions = null,
-    PublicGateway.PublicGatewayRoutes? publicGateway = null)
+    PublicGateway.PublicGatewayRoutes? publicGateway = null, NpgsqlDataSource? dataSource = null)
 {
     internal HostServer Server { get; } = server;
 
@@ -71,5 +71,6 @@ internal sealed class HostRuntime(HostServer server, ServiceRegistry registry, L
         {
             await simulation.DisposeAsync();
         }
+        if (dataSource is not null) await dataSource.DisposeAsync();
     }
 }

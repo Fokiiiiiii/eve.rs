@@ -67,6 +67,7 @@ internal static class LegacyGameStoreComposition
         });
         await mailCache.RecoverAsync();
         await mailCache.LoadAsync("mail");
+        await mailCache.LoadAsync("dungeonRuntimeState");
         await mailCache.LoadAsync("notifications");
         await mailCache.LoadAsync("crimewatchRuntime");
         await mailCache.LoadAsync("characters");

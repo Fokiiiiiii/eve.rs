@@ -4657,3 +4657,8 @@ as reference. The client's `bookmarkSvc.py` (`OnSharedBookmarksFolderUpdated`, `
 - **Words are EveJS's** (`itemSeeding.js` `handleShipSpawn`): `/ship <ship name|typeID>` makes one hull of a ship category (6) in the docked pilot's station hangar; `/giveme` is its alias. Anything that is not a ship is `Ship not found`; an undocked pilot is told to dock (`DOCK_REQUIRED`). The reply names the hull and says where it went; EveJS's note that the hull is unfitted is not repeated.
 - **Checked:** `ShipCommandTests` (database-backed): a hull appears in the station hangar, a non-ship and no argument are refused, an undocked pilot gets nothing made.
 
+## GM tools, slice G6: /repair (2026-10-17)
+
+- **`/repair` is `/heal`.** EveJS has no `/repair` command; the owner's list names it beside `/heal`. The real game's repair (the station repair service) mends the ship's armour and structure, which `/heal` already does for a docked or an in-space ship, so `/repair` runs the same handler and answers the same. Upgrade path: a repair of damaged items in a station hangar, when a walk needs one.
+- **Checked:** `ShipCommandTests.Repair_answers_what_heal_answers_for_the_docked_pilot` (database-backed).
+

@@ -31,5 +31,16 @@ public class ShipCommandTests
         Assert.DoesNotContain((await rig.Items.OwnedByAsync(pilot.CharacterId)), item => item.TypeId == Rig.Ibis && item.LocationId == Station);
     }
 
+    [PgFact]
+    public async Task Repair_answers_what_heal_answers_for_the_docked_pilot()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var pilot = await rig.NewCharacterAsync("Repair Pilot");
+        var session = Rig.Session(pilot.CharacterId);
+        var repaired = await rig.SlashAsync(session, "/repair");
+        Assert.Equal(await rig.SlashAsync(session, "/heal"), repaired);
+        Assert.DoesNotContain("Unknown command", repaired);
+    }
+
     private const long Station = Rig.Station;
 }

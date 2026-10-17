@@ -15,12 +15,11 @@ public sealed class FwComplexDirector
     private readonly FwStore _store;
     private readonly DurableScheduler _scheduler;
     private readonly EventBus _bus;
-    private readonly Func<long, CancellationToken, Task<IReadOnlyList<long>>> _factionsInSystem;
+    private readonly IFwComplexSites _sites;
 
-    /// <param name="factionsInSystem">The war faction of each pilot in the system now (0 for a pilot with none).</param>
-    public FwComplexDirector(FwStore store, DurableScheduler scheduler, EventBus bus, Func<long, CancellationToken, Task<IReadOnlyList<long>>> factionsInSystem)
+    public FwComplexDirector(FwStore store, DurableScheduler scheduler, EventBus bus, IFwComplexSites sites)
     {
-        (_store, _scheduler, _bus, _factionsInSystem) = (store, scheduler, bus, factionsInSystem);
+        (_store, _scheduler, _bus, _sites) = (store, scheduler, bus, sites);
     }
 
     /// <summary>Registers the tick job and schedules it. Call it before the scheduler starts.</summary>
@@ -32,7 +31,7 @@ public sealed class FwComplexDirector
 
     private async Task TickAsync(JobContext context, CancellationToken cancellationToken)
     {
-        var resolved = await FwComplexTicker.TickAsync(_store, context.Connection, context.Transaction, context.NowMs, _factionsInSystem, cancellationToken);
+        var resolved = await FwComplexTicker.TickAsync(_store, _sites, context.Connection, context.Transaction, context.NowMs, cancellationToken);
         foreach (var resolution in resolved)
             await _bus.PublishInTransactionAsync(context.Connection, context.Transaction, ResolvedTopic, resolution, resolution.ComplexId.ToString(), cancellationToken);
     }

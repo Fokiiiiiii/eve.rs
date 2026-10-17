@@ -144,7 +144,17 @@ internal sealed partial class CharacterServicesComposition
         await using var transaction = await connection.BeginTransactionAsync();
         await factionWarfareStore.SeedSystemsAsync(connection, transaction, systems);
         await transaction.CommitAsync();
-        var complexes = new FwComplexDirector(factionWarfareStore, foundations.Scheduler, foundations.Events, FactionsInSystemAsync);
+        // the complexes are dungeon sites on the space runtime: without it there are none (the owner data and the pilots' sites are the space's)
+        if (dungeonWavesDirector is null)
+        {
+            Console.Error.WriteLine("eve-host: factional warfare complexes need the space runtime; none are started");
+            return;
+        }
+        var sites = new FwComplexSites(dungeonWavesDirector, Eve.Dungeons.DungeonCatalog.LoadEmbedded(), foundations.Content,
+            system => spaceSessions?.SessionsInSystem(system) ?? [],
+            CurrentDungeonInstanceAsync,
+            async (characterId, cancellationToken) => await WarFactionOfAsync(characterId, cancellationToken));
+        var complexes = new FwComplexDirector(factionWarfareStore, foundations.Scheduler, foundations.Events, sites);
         await complexes.AttachAsync();
         foundations.Events.Subscribe("factionwarfare.complex-notices", [FwComplexDirector.ResolvedTopic],
             (context, cancellation) =>
@@ -158,15 +168,6 @@ internal sealed partial class CharacterServicesComposition
     private async ValueTask<IReadOnlyDictionary<long, Eve.Services.Core.FwVictoryPointState>> VictoryPointStatesAsync(CancellationToken cancellationToken) =>
         (await factionWarfare.OccupiedSystemsAsync(cancellationToken))
             .ToDictionary(system => system.SolarSystemId, system => new Eve.Services.Core.FwVictoryPointState(system.AttackerPoints));
-
-    /// <summary>The war faction of each character in the system now (0 for a pilot with none): the presence a complex's capture timer counts.</summary>
-    private async Task<IReadOnlyList<long>> FactionsInSystemAsync(long solarSystemId, CancellationToken cancellationToken)
-    {
-        var factions = new List<long>();
-        foreach (long characterId in spaceSessions?.CharacterIdsInSystem((int)solarSystemId) ?? [])
-            factions.Add(await WarFactionOfAsync(characterId, cancellationToken));
-        return factions;
-    }
 
     /// <summary>
     /// A complex resolved: the pilots in its system get OnFacWarDungeonCompleted (the client's hero notice: the side that conquered it, or the side that defended it),

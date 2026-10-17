@@ -63,7 +63,7 @@ internal sealed partial class CharacterServicesComposition
                         made.SourceItemId, made.SourceTypeId, made.SourceQuantity, made.OutputItemId, made.OutputTypeId, made.OutputQuantity);
                 }),
             .. Eve.Services.Core.SovFwService.Create(
-                sovereigntyReadModel.ReadSnapshotAsync,
+                FactionWarfareSnapshotAsync,
                 sovereigntyReadModel.IsOnLocalFuelAccessGroupAsync,
                 new Eve.Services.Core.SovHubWriteOperations(
                     sovWriteOperations.CanManageHubAsync,

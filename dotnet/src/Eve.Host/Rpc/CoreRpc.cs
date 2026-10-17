@@ -106,8 +106,10 @@ internal sealed partial class CharacterServicesComposition
                     await corporations.SetFactionWarfareAllowedEnlistmentFactionsAsync(characterId, corporationId, factions, cancellationToken),
                 SaveCharacterStateAsync: async (characterId, factionId, cooldown, cancellationToken) =>
                     await characters.SetFactionWarfareStateAsync(characterId, factionId, cooldown, cancellationToken))),
-            new Eve.Services.Core.FwVictoryPointMgrService(),
+            new Eve.Services.Core.FwVictoryPointMgrService(new Eve.Services.Core.FwVictoryPointRpcCallbacks(VictoryPointStatesAsync)),
             new Eve.Services.Core.FacWarMgrService(factionWarfare, new Eve.Services.Core.FacWarMgrCallbacks(
+                FactionMembersAsync: FactionMembersAsync,
+                AffiliationsAsync: AffiliationsAsync,
                 ReadCharacterAsync: async (characterId, cancellationToken) =>
                 {
                     var character = await characters.GetAsync(characterId, cancellationToken);

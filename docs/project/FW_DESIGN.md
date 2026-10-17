@@ -68,9 +68,13 @@ Served (each has a test): `GetCorporationWarFactionID`, `GetAllianceWarFactionID
 `GetSolarSystemLPs`, `GetSolarSystemLPsEx`, `DonateLPsToSolarSystem`, `GetControlBunkerIDInSystem` (None: eve.rs has
 no control bunker structures), `RefreshCorps` (None: the state is always current).
 
-Not served: `GetMyCharacterRankOverview`, `GetCharacterRankOverview`, and the statistics methods `GetStats_FactionInfo`,
-`GetStats_Character`, `GetStats_Corp`, `GetStats_Alliance`, `GetStats_Militia`, `GetStats_CorpPilots`,
-`GetStats_TopAndAllKillsAndVPs`. They need kill and victory-point producers that do not exist yet (see "Not built").
+Statistics, served from the daily rows and the faction and alliance data (slice 2): `GetStats_Character`, `GetStats_Corp`,
+`GetStats_Alliance` (the sum over the corporations that are members of the caller's alliance now), `GetStats_Militia` (header: the occupier factions;
+per key one value per faction, summed over its enlisted corporations), `GetStats_FactionInfo` (per faction: `totalMembersCount`,
+`militiaMembersCount`, `topMemberCount`, `systemsCount` as util.KeyVal), `GetStats_TopAndAllKillsAndVPs` (two dicts keyed by group 1, 2, 32: the top
+and the sum). Rank overview: `GetMyCharacterRankOverview` and `GetCharacterRankOverview` (a list of util.KeyVal `factionID`, `currentRank` for each
+occupier where the rank is above 0). Not served: `GetStats_CorpPilots` (no client consumer found; the dashboard derives the same numbers from
+`GetStats_FactionInfo`).
 
 Refusals reach the client as `CustomInfo` notices (text keys of the client's localization), `FacWarDonationTaxChanged`
 (with `taxNow` in percent, the client's retry key) and not as localized pool messages.
@@ -102,21 +106,38 @@ Refusals reach the client as `CustomInfo` notices (text keys of the client's loc
 - Market: `Eve.Market.Tests` has 5 failures in `MarketCoherenceTests` (PyList expected, PyTuple received, from origin/main
   commit 88256991, server-to-client call arguments became tuples). Owned by the fix agent; not changed here.
 
+## Built since the first slice
+
+- **Statistics** (migration 0002): `GetStats_Character` and `GetStats_Corp` serve the six client keys from daily rows. The
+  producers `FwService.RecordActivityAsync` and `FwService.AddVictoryPointsAsync` fill them; no combat event calls them yet.
+- **Capture** (`FwService.CaptureAsync`): a vulnerable system (75,000 attacker points) passes to the occupier's enemy, its points
+  and LP pool reset. The trigger (hub destruction) is not connected.
+- **NPC station war-faction factor**: applied to the NPC station facility tax of industry jobs for the pilot's war faction.
+- **Corporation LP tax**: `LoyaltyPointStore.CreditMemberAsync` takes the member's corporation rate of an LP credit into the
+  corporation's own balance. Applied to the insurgency victory payout; the Viridian expansion notes give the scope.
+
+## Complexes (slice 1)
+
+- Rules: `dotnet/src/Eve.FactionWarfare/FwComplexes.cs` (sizes, capture times, hull limits, victory points, the timer, the resolution).
+  The sources and the project rules are in DEVIATIONS "Factional warfare" (Complexes).
+- State: `fw_complexes` (migration 0003): one open complex per size in each occupied system; `progress_ms` is signed (attackers positive).
+- Tick: `FwComplexDirector` registers `factionwarfare.complexes.tick` (every 10 s). `FwComplexTicker` spawns the missing complexes (after the respawn
+  time), advances the timers from the pilots present, and resolves a complex at its capture time. Resolutions are published in the job transaction
+  (`factionwarfare.complex_resolved`) and notified after the commit (`OnFacWarDungeonCompleted`, `OnVictoryPointStateUpdated`).
+- Victory point state: `fwVictoryPointMgr` reads the store (attacker points against 75,000).
+- Not built: the acceleration gate and the warp into a complex, NPC defenders, the battlefield (archetype 68) and the objectives (67), the
+  complexes in the scan data, the per-pilot victory points of a capture, a live walk.
+- Tests: `FwComplexTests.cs` (5). Eve.FactionWarfare.Tests: 83 passed on eve_p4.
+
 ## Not built
 
-- **Victory-point and kill producers.** Nothing adds victory points to a system or records a FW kill. The contest state
-  and the statistics read the stored values, which are zero until a producer exists. Wiki: complex victory points and the
-  ship-kill LP formula (3.25 times the hull, insurance and fitting value over 10,000, capped at 50,000 LP).
-- **Vulnerability, capture and the infrastructure hub.** Capture needs the hub's 25 million HP and combat on a structure;
-  no hub structure path exists for FW. The occupier never changes in this build.
-- **Statistics and rank overview** (served by the methods listed above).
-- **NPC station war-faction modifier.** The data is in the client extract (`native/npcstationtaxmodifier.jsonl.gz`: one
-  station, 60015187, with 0.1 for Guristas and Angel). No caller in the client snapshot and no industry path passes the
-  war faction, so the modifier is not applied.
-- **Corporation LP tax** (`loyaltyPointTaxRate`). No credit path of loyalty points exists for FW, missions or insurgency
-  yet, so there is nothing to tax.
-- **Corporation enlistment standing.** The corporation's standing toward the faction is the relation store value of the
-  corporation; the wiki's average over members is not computed.
-- **Session push at the downtime.** A corporation enlistment that takes effect at the downtime does not push a session
-  change to the members; they see it at their next session.
-- **Live walk.** No headless-client walk of FW exists yet, and no live server run was made for this slice.
+- **Pilot-versus-pilot kills**: not counted. The NPC kill producer (`RecordFactionWarfareNpcKill`) is built; a player kill has no
+  statistics or victory-point path yet (no event for it was found).
+- **Victory points from complexes**: built (Complexes, slice 1); the gate, the NPC defenders and the battlefield are not. The ship-kill LP formula (wiki: 3.25 times hull, insurance and fitting value over 10,000,
+  capped at 50,000 LP).
+- **Capture trigger**: infrastructure hub destruction (25 million HP, wiki); no FW hub combat path exists.
+- **Statistics**: built in slice 2 (above). `GetStats_CorpPilots` is not served (no consumer).
+- **Mission and incursion LP credits**: no credit source in eve.rs, so the corporation LP tax applies to insurgency payouts only.
+- **Live walk**: no headless-client FW walk and no live server run for this work. The live runner needs a Rust build (several GB of
+  target output) and a quiet PostgreSQL cluster; the shared cluster hit its connection limit during the Host suite.
+- **Host suite**: 58 of 406 failed on connection exhaustion (see the testing section above); not a FW logic failure, but not green.

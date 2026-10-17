@@ -54,6 +54,40 @@ internal sealed partial class CharacterServicesComposition
     /// The factional warfare upgrade level of a system for a character's market orders: the system's LP pool, unless its occupier is an enemy of the
     /// character's war faction (the direct enlistment, else the corporation's). Read in the caller's transaction.
     /// </summary>
+    /// <summary>
+    /// The corporation of a character and its loyalty point tax rate, for the member credits of the LP payouts (0 and 0 when the character is unknown).
+    /// </summary>
+    private async ValueTask<(long CorporationId, decimal TaxRate)> MemberLpTermsAsync(long characterId, CancellationToken cancellationToken)
+    {
+        var character = await characters.GetAsync(characterId, cancellationToken);
+        if (character is null)
+            return (0, 0m);
+        var corporation = await corporations.GetAsync(character.CorporationId, cancellationToken);
+        return corporation is null ? (0, 0m) : (corporation.Id, corporation.LoyaltyPointTaxRate);
+    }
+
+    /// <summary>
+    /// A pilot's kill of an NPC of a faction that fights the pilot's war faction, in a warzone system, is one kill on the pilot's and its corporation's
+    /// factional warfare rows. The wiki gives no victory points for kills (complexes only) and the ship-kill LP is not built, so only the kill count is
+    /// recorded (DEVIATIONS "Factional warfare"). The check is the client's IsCombatEnemyFaction.
+    /// </summary>
+    private void RecordFactionWarfareNpcKill(Eve.Services.Space.NpcKill kill)
+    {
+        if (kill.FinalBlowCharacterId <= 0 || kill.Profile.FactionId <= 0 || FwWarzones.WarzoneOf(kill.SolarSystemId) == 0)
+            return;
+        RecordFactionWarfareNpcKillAsync(kill.FinalBlowCharacterId, kill.Profile.FactionId, kill.SolarSystemId, CancellationToken.None).GetAwaiter().GetResult();
+    }
+
+    private async Task RecordFactionWarfareNpcKillAsync(long characterId, long npcFactionId, long solarSystemId, CancellationToken cancellationToken)
+    {
+        var warFaction = await WarFactionOfAsync(characterId, cancellationToken);
+        var character = await characters.GetAsync(characterId, cancellationToken);
+        if (character is null)
+            return;
+        await factionWarfare.RecordNpcKillAsync(characterId, character.CorporationId, warFaction, npcFactionId, solarSystemId, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+            cancellationToken);
+    }
+
     /// <summary>The war faction of a character: its direct enlistment, else its corporation's faction (0: none, or no such character).</summary>
     private async ValueTask<long> WarFactionOfAsync(long characterId, CancellationToken cancellationToken)
     {
@@ -71,6 +105,23 @@ internal sealed partial class CharacterServicesComposition
         var system = await factionWarfareStore.SystemAsync(connection, transaction, solarSystemId, false, cancellationToken);
         return system is null ? 0 : FwRules.EffectiveUpgradeLevel(system.LpPool, system.OccupierId, warFaction);
     }
+
+    /// <summary>
+    /// The members of a war faction for the faction statistics: the characters whose war faction it is, the members of its militia corporation, and the
+    /// largest enlisted corporation's members (characters per corporation).
+    /// </summary>
+    private async ValueTask<Eve.Services.Core.FwFactionMembers> FactionMembersAsync(long factionId, IReadOnlyList<long> enlisted, CancellationToken cancellationToken)
+    {
+        var militia = FwFactions.MilitiaCorporationOf(factionId);
+        var total = await characters.CountWarFactionMembersAsync(factionId, enlisted, cancellationToken);
+        var counts = await characters.CountByCorporationAsync([.. enlisted, militia], cancellationToken);
+        long top = enlisted.Select(corporation => counts.GetValueOrDefault(corporation)).DefaultIfEmpty(0).Max();
+        return new Eve.Services.Core.FwFactionMembers(total, counts.GetValueOrDefault(militia), top);
+    }
+
+    /// <summary>The alliance affiliation of each corporation that is in an alliance now (the alliance statistics group the corporations by it).</summary>
+    private async ValueTask<IReadOnlyList<(long CorporationId, long AllianceId)>> AffiliationsAsync(CancellationToken cancellationToken) =>
+        await corporations.CurrentAllianceAffiliationsAsync(cancellationToken);
 
     private async Task FactionWarfare()
     {
@@ -93,5 +144,39 @@ internal sealed partial class CharacterServicesComposition
         await using var transaction = await connection.BeginTransactionAsync();
         await factionWarfareStore.SeedSystemsAsync(connection, transaction, systems);
         await transaction.CommitAsync();
+        var complexes = new FwComplexDirector(factionWarfareStore, foundations.Scheduler, foundations.Events, FactionsInSystemAsync);
+        await complexes.AttachAsync();
+        foundations.Events.Subscribe("factionwarfare.complex-notices", [FwComplexDirector.ResolvedTopic],
+            (context, cancellation) =>
+            {
+                NotifyComplexResolved(context.Event.Payload<FwComplexResolution>()!);
+                return Task.CompletedTask;
+            });
+    }
+
+    /// <summary>The victory point state of every occupied system (the client's fwVictoryPointMgr: the attacker points against the vulnerability threshold).</summary>
+    private async ValueTask<IReadOnlyDictionary<long, Eve.Services.Core.FwVictoryPointState>> VictoryPointStatesAsync(CancellationToken cancellationToken) =>
+        (await factionWarfare.OccupiedSystemsAsync(cancellationToken))
+            .ToDictionary(system => system.SolarSystemId, system => new Eve.Services.Core.FwVictoryPointState(system.AttackerPoints));
+
+    /// <summary>The war faction of each character in the system now (0 for a pilot with none): the presence a complex's capture timer counts.</summary>
+    private async Task<IReadOnlyList<long>> FactionsInSystemAsync(long solarSystemId, CancellationToken cancellationToken)
+    {
+        var factions = new List<long>();
+        foreach (long characterId in spaceSessions?.CharacterIdsInSystem((int)solarSystemId) ?? [])
+            factions.Add(await WarFactionOfAsync(characterId, cancellationToken));
+        return factions;
+    }
+
+    /// <summary>
+    /// A complex resolved: the pilots in its system get OnFacWarDungeonCompleted (the client's hero notice: the side that conquered it, or the side that defended it),
+    /// and the system's victory point state is updated for them.
+    /// </summary>
+    private void NotifyComplexResolved(FwComplexResolution resolution)
+    {
+        long faction = resolution.AttackersWon ? resolution.AttackerId : resolution.OccupierId;
+        SendAtSystems([resolution.SolarSystemId], "OnFacWarDungeonCompleted", resolution.AttackersWon ? PyBool.True : PyBool.False, new PyInt(faction));
+        SendAtSystems([resolution.SolarSystemId], "OnVictoryPointStateUpdated", new PyInt(resolution.SolarSystemId),
+            Eve.Services.Core.FwVictoryPointMgrService.StatePayload(new Eve.Services.Core.FwVictoryPointState(resolution.AttackerPoints)));
     }
 }

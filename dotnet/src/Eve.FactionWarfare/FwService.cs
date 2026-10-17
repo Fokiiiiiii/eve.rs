@@ -13,6 +13,14 @@ public enum EnlistOutcome
     NothingToWithdraw,
 }
 
+/// <summary>The outcome of a capture attempt.</summary>
+public enum CaptureOutcome
+{
+    Captured,
+    NotOccupied,
+    NotVulnerable,
+}
+
 /// <summary>The outcome of an LP donation. <c>TaxChanged</c> names the tax now in percent, <c>PoolOverloaded</c> the LP that still fit, <c>BelowMinimum</c> the minimum.</summary>
 public enum DonateOutcome
 {
@@ -105,6 +113,19 @@ public sealed class FwService
     }
 
     /// <summary>
+    /// Records a pilot's kill of an NPC of <paramref name="npcFactionId"/> in a warzone system, when that faction fights the pilot's war faction
+    /// (<see cref="FwFactions.IsCombatEnemy"/>). Returns whether it counted. The wiki gives no victory points for kills, so the kill is one count.
+    /// </summary>
+    public async Task<bool> RecordNpcKillAsync(long characterId, long corporationId, long warFactionId, long npcFactionId, long solarSystemId, long nowMs,
+        CancellationToken cancellationToken = default)
+    {
+        if (FwWarzones.WarzoneOf(solarSystemId) == 0 || !FwFactions.IsCombatEnemy(warFactionId, npcFactionId))
+            return false;
+        await RecordActivityAsync(characterId, corporationId, 1, 0, nowMs, cancellationToken);
+        return true;
+    }
+
+    /// <summary>
     /// Records a pilot's kills and victory points for today, and the same on its corporation's row (a corporation of 0 is not recorded). The
     /// kill producer calls this; until one is connected to the simulation, the rows stay empty.
     /// </summary>
@@ -121,6 +142,13 @@ public sealed class FwService
         await transaction.CommitAsync(cancellationToken);
     }
 
+    /// <summary>The window of every pilot (or corporation) with rows, at <paramref name="nowMs"/> (the statistics' top and all values, and the sums by faction and alliance).</summary>
+    public async Task<IReadOnlyList<(long OwnerId, FwStatsWindow Window)>> OwnerWindowsAsync(bool corporations, long nowMs, CancellationToken cancellationToken = default)
+    {
+        await using var connection = await _store.Source.OpenConnectionAsync(cancellationToken);
+        return await _store.OwnerWindowsAsync(connection, null, corporations, FwRules.DayOf(nowMs), cancellationToken);
+    }
+
     /// <summary>The kills and victory points of a pilot over the client's windows, at <paramref name="nowMs"/>.</summary>
     public async Task<FwStatsWindow> PilotStatsAsync(long characterId, long nowMs, CancellationToken cancellationToken = default)
     {
@@ -133,6 +161,28 @@ public sealed class FwService
     {
         await using var connection = await _store.Source.OpenConnectionAsync(cancellationToken);
         return await _store.CorporationStatsAsync(connection, null, corporationId, FwRules.DayOf(nowMs), cancellationToken);
+    }
+
+    /// <summary>
+    /// Captures a vulnerable system: its occupier becomes the occupier's enemy (<see cref="FwFactions.OccupationEnemyOf"/>), and its attacker points and
+    /// LP pool reset. Only a vulnerable system (at the vulnerability points) can change hands. The hub-destruction trigger is not connected yet
+    /// (TODO, DEVIATIONS "Factional warfare"); this is the state transition it will call.
+    /// </summary>
+    public async Task<CaptureOutcome> CaptureAsync(long solarSystemId, long nowMs, CancellationToken cancellationToken = default)
+    {
+        await using var connection = await _store.Source.OpenConnectionAsync(cancellationToken);
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        var system = await _store.SystemAsync(connection, transaction, solarSystemId, true, cancellationToken);
+        if (system is null)
+            return CaptureOutcome.NotOccupied;
+        if (FwRules.Contest(system.AttackerPoints) != ContestState.Vulnerable)
+            return CaptureOutcome.NotVulnerable;
+        var newOccupier = FwFactions.OccupationEnemyOf(system.OccupierId);
+        if (newOccupier == 0)
+            return CaptureOutcome.NotOccupied;
+        await _store.SetOccupierAsync(connection, transaction, solarSystemId, newOccupier, nowMs, cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+        return CaptureOutcome.Captured;
     }
 
     /// <summary>

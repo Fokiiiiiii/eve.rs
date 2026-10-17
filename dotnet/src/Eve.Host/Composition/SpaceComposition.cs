@@ -380,6 +380,7 @@ internal sealed partial class CharacterServicesComposition
             };
             // a pilot that destroys a faction's NPC loses standing with the faction (EveJS factionKillStandingRuntime; the debounce is in memory)
             var npcFactionStanding = new Eve.Services.Space.NpcFactionStanding(foundations.Relations, now);
+            spaceSessions.NpcDestroyed += RecordFactionWarfareNpcKill;
             spaceSessions.NpcDestroyed += kill =>
             {
                 if (kill.FinalBlowCharacterId <= 0 || kill.Profile.FactionId <= 0)

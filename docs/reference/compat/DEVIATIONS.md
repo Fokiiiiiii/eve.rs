@@ -4311,21 +4311,63 @@ donation sections it marks outdated. Design: `docs/project/FW_DESIGN.md`.
   a warzone's occupation only for its own warzone pair.
 - **Decision: contest.** The attacker's points are kept per system; the state is stable at 0, contested below 75,000 and vulnerable at 75,000
   (wiki). The points have no producer yet, so every system stays stable.
-- **Not applied: victory points and kills.** No complex victory point and no ship-kill LP producer exists. The wiki gives complex points, and the
-  ship-kill LP as 3.25 times (hull value minus insurance value plus fittings) over 10,000, capped at 50,000 LP, shared among participants; the
-  multiplier is flagged "needs testing" by the wiki. Status: open.
-- **Not applied: capture.** The wiki's capture is the destruction of the infrastructure hub (25 million HP) after vulnerability. No FW hub
-  combat path exists. The occupier does not change. Status: open.
-- **Not served: the statistics methods** (`GetStats_*`, `GetStats_TopAndAllKillsAndVPs`) and the rank overview methods. They are not registered,
-  so a client call to them fails, until kill and victory-point producers exist. Status: open.
-- **Not applied: the NPC station war-faction modifier** (`npsStationTaxModifier.py`). The client extract holds one station (60015187) with 0.1 for
-  500010 and 500011. No client caller or server industry path reads the war faction, so the modifier is not applied. Status: open, the data is
-  known.
-- **Not applied: the corporation LP tax** (`loyaltyPointTaxRate`). The corporation stores and shows it; no loyalty-point credit path taxes it
-  (missions and insurgency have none yet, and neither has the client). Status: open, no credit source.
-- **Client-facing gaps.** `CheckForRankChange` returns None (no rank-change notice). `GetControlBunkerIDInSystem` returns None (eve.rs has no
+- **Decision: victory points come from complexes only.** The wiki's victory-point rules: complex captures give VP (its table: Scout BSC 50,
+  Scout NVY 25, Small NVY 50, Small ADV 75, Small Interceptor 150, FRF Small ELT about 300, Moderate NVY 600, Large NVY 250, Large ADV 300, Open 350,
+  Battlefield 2,000); killing enemy militia pilots, NPCs and ship kills give no VP (the wiki states loyalty points for kills, not VP). The contest
+  percentage counts only the attacker's VP; kills do not move it. The complex producer is open (below).
+- **Built: the NPC kill count.** A pilot's kill of an NPC of a faction that fights the pilot's war faction (`FwFactions.IsCombatEnemy`), in a
+  warzone system, adds one kill to the pilot's and its corporation's rows (`FwService.RecordNpcKillAsync`, fed by the NPC destroyed event in
+  `SpaceComposition`). The wiki gives no source for the kill counting rule beyond the enemy militia; this is the project's choice. Tests:
+  `FwKillTests` (2). Pilot-versus-pilot kills: no event in the space runtime reports them yet, so they are not counted. Status: partly open.
+- **Not built: the ship-kill LP** (wiki: 3.25 times hull, insurance and fitting value over 10,000, capped at 50,000 LP, shared). Status: open.
+- **Built, trigger open: capture.** `FwService.CaptureAsync` is the state transition: a vulnerable system (at 75,000 attacker points, wiki) passes to
+  the occupier's enemy (`FwFactions.OccupationEnemyOf`), and its points and LP pool reset (the wiki: a capture removes the upgrades). A contested or
+  unoccupied system is refused. Tests: `FwCaptureTests` (2). The trigger is the destruction of the infrastructure hub (wiki: 25 million HP), which
+  has no combat path in eve.rs yet, so no capture happens in a running server. Status: open (trigger).
+- **Served: the character and corporation statistics** (`GetStats_Character`, `GetStats_Corp`: the six client keys, from the daily rows of migration 0002).
+  **Not served:** `GetStats_FactionInfo`, `GetStats_Militia`, `GetStats_Alliance`, `GetStats_CorpPilots`, `GetStats_TopAndAllKillsAndVPs` (they need
+  the alliance grouping and the faction member counts, which eve.rs does not store yet) and the rank overview methods. A client call to them fails
+  until they are built. The rows are filled by the producers `FwService.RecordActivityAsync` and `AddVictoryPointsAsync`, which no combat event
+  calls yet (below). Status: partly open.
+- **Applied: the NPC station war-faction modifier** (`npsStationTaxModifier.py`). The client extract holds one station (60015187) with 0.1 for
+  500010 and 500011 (`FwRules.NpcStationTaxModifier`). The NPC station facility tax of an industry job is multiplied by it for the pilot's war faction
+  (direct enlistment, else the corporation's; `IndustryComposition.ResolveIndustryFacilityAsync`). The client snapshot has no caller of its own, so the
+  server applies the table itself. Tests: `FwNpcStationTaxTests` (5).
+- **Applied: the corporation LP tax** (`loyaltyPointTaxRate`) on member LP credits. Source: the Viridian expansion notes (EVE Online news, "Viridian:
+  Expansion Notes"): corporation tax applies to member LP from factional warfare, incursions and missions; the corporation sets the rate; EverMarks
+  are excluded; the taxed LP goes to the corporation's own LP wallet. eve.rs applies it to the insurgency victory payout (`LoyaltyPointStore.CreditMemberAsync`,
+  `LoyaltyTax.TaxOf`): the member keeps the amount minus the tax (rounded down), and the corporation balance gets the tax with the same issuer.
+  Decision: a rate above 1 is a percentage (the convention of the corporation tax fields in IndustryComposition); 0 or less is no tax.
+  Not applied yet: mission payouts (no credit source in eve.rs) and the incursion payouts. The wiki copy of these notes marks some LP items as to
+  be determined, so the exact rate and rounding are the decision above, not CCP's published formula. Tests: `LoyaltyMemberCreditTests` (3, eve_p4),
+  `InsurgencyCampaignTests` (18 run, all pass).
   control bunker structures). The donation refusals are `CustomInfo` notices with localization keys, not the client's pool text.
   A corporation enlistment that takes effect at the downtime does not push a session change to its members.
+- **Complexes: sizes, capture times, hull limits and victory points** (`FwComplexes`, `FwComplexTicker`, `FwComplexDirector`, migration 0003).
+  Source: the wiki's "Complex types" table (Rank/Size: Scout 10 min, frigates and smaller; Small 10 min, destroyers and smaller; Medium 15 min,
+  cruisers and smaller; Large 15 min, battleships and smaller) and its "Victory points" table. The SDE archetypes of the complexes are 33 (Scout),
+  34 (Small), 35 (Medium), 36 (Large) (client titles 660881 to 660887). The wiki names several variants per size (BSC, NVY, ADV, ELT); eve.rs uses
+  one per size: Scout BSC (300 s, 50 VP, the wiki's "5 min for basic plexes"), Small NVY (600 s, 50 VP), Large NVY (900 s, 250 VP).
+  Medium: the wiki's table has no Medium victory-point value; project rule 150 VP (between Small NVY and Large NVY), 900 s from the table.
+  Hull limits (frigate 1, destroyer 2, cruiser 3, battleship 5) are stored; the entry gate that enforces them is not built.
+  Respawn: 30 minutes after a complex of a size is captured in its system (wiki, "about 30 minutes"). Advanced, Frontline and Command Operations
+  names of the task brief are the wiki's ADV/ELT/BSC variants, not separate sizes; the SDE archetypes 67 (Factional Warfare Objectives) and 68
+  (Factional Warfare Battlefield) are not built (a battlefield has three capture points, 2000 VP and 150k LP, wiki "Battlefields").
+- **Complexes: capture timer and presence (project rule).** One tick every 10 seconds (job `factionwarfare.complexes.tick`). A side alone in the
+  complex advances its timer by the tick (attackers up, the occupier down); both sides or neither pause it (wiki: the timer pauses until one faction
+  remains). The step is capped at one tick, so downtime is never credited. Presence is the pilots in space in the system (`SpaceSessions.CharacterIdsInSystem`)
+  with their war faction: the simulation has no per-complex position, so a pilot in the system counts as in the complex. Enemy NPCs do not pause
+  the timer and no NPC defenders are spawned: the defenders of the wiki are not modelled. The timers are additive and signed, so a defender's
+  progress undoes an attacker's (wiki: "the timers for both factions are additive").
+- **Complexes: victory points.** A capture by the attackers adds the size's victory points to the system's attacker points; a capture by the
+  defenders subtracts them (never below 0; wiki: the defenders' capture subtracts). The capture by the attackers notifies the pilots in the system
+  with `OnFacWarDungeonCompleted(true, attackerFaction)`, the defenders' capture with `(false, occupier)` (client `fwWarzoneSvc.py`), and the
+  victory point state (`OnVictoryPointStateUpdated`, client `fwVictoryPointSvc.py`) with the attacker points against the 75,000 threshold.
+  `fwVictoryPointMgr.GetAllVictoryPointStates` and `GetLocalVictoryPointState` now read the store (before: empty).
+  Not built: the statistics of the pilots who captured (no per-pilot victory points for complexes), the complexes in the system scan data
+  (the client does not see them), and the acceleration gate that warps pilots into a complex.
+- **Complexes: tests.** `FwComplexRulesTests` (3, pure), `FwComplexTickerTests` (2, eve_p4: capture by the attackers after 31 ticks with the
+  victory points, capture by the defenders with the subtraction floor at 0 and the respawn after 30 minutes).
 
 ## Bookmarks: shared (access group) folders, not built (2026-10-17; superseded by the next section)
 

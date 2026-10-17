@@ -45,6 +45,23 @@ public sealed partial class AccessGroupStore
             return (IReadOnlyList<GroupView>)visible;
         }, token);
 
+    /// <summary>
+    /// The lists the character holds a member, manager or admin role in (the role by list id). A blocked role and no role are left out. A
+    /// corporation's built-in list counts for its members.
+    /// </summary>
+    public Task<IReadOnlyDictionary<long, int>> MemberRolesAsync(Affiliation who, CancellationToken token = default) =>
+        InTransactionAsync(0, async (connection, tx) =>
+        {
+            await EnsureCorporationGroupAsync(connection, tx, who.CorporationId, token);
+            var roles = new Dictionary<long, int>();
+            foreach (var group in await TouchingAsync(connection, tx, who, token))
+            {
+                var role = AccessRules.RoleOf(group, await MembersOfAsync(connection, tx, group.GroupId, token), who);
+                if (role is MembershipType.Member or MembershipType.Manager or MembershipType.Admin) roles[group.GroupId] = (int)role;
+            }
+            return (IReadOnlyDictionary<long, int>)roles;
+        }, token);
+
     /// <summary>One group the character can see, or null when it does not exist or is not visible to the character.</summary>
     public Task<GroupView?> VisibleGroupAsync(Affiliation who, long groupId, CancellationToken token = default) =>
         InTransactionAsync(0, async (connection, tx) =>

@@ -69,7 +69,7 @@ internal sealed partial class CharacterServicesComposition
               now)];
         services = [.. services, allianceRegistry];
         services = [.. services, new Eve.Services.Core.OwnerGroupRefusals(new Eve.Services.Core.OwnerGroupManagerService(accessGroups, OwnerKind, characterSessions))];
-        services = [.. services, new Eve.Services.Core.BookmarkRefusals(new Eve.Services.Core.AccessGroupBookmarkMgrService(bookmarks, StaticBookmarkTarget))];
+        services = [.. services, new Eve.Services.Core.BookmarkRefusals(new Eve.Services.Core.AccessGroupBookmarkMgrService(bookmarks, StaticBookmarkTarget, MemberLists, characterSessions))];
         return Task.CompletedTask;
     }
 }

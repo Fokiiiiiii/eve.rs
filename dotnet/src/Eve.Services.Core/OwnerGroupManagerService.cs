@@ -149,7 +149,7 @@ public sealed partial class OwnerGroupManagerService(AccessGroupStore store, Fun
                 if (heard.Count == 0) continue;
                 var payload = new PyDict(heard.Select(change => new KeyValuePair<PyValue, PyValue>(InventoryWire.Id(change.GroupId),
                     new PyList([.. change.Codes.Select(code => (PyValue)new PyInt(code))]))).ToArray());
-                session.SendNotification("OnOwnerGroupsUpdated", "clientID", Py.Tuple(payload));
+                session.SendNotification("OnOwnerGroupsUpdated", "clientID", payload);
             }
         });
     }

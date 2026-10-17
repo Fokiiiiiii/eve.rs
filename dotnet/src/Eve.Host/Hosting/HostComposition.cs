@@ -87,11 +87,11 @@ internal static class HostComposition
             (characterServices, space, simulation, crimewatch, calendarStore, calendarAudience, gameRpcCallbacks, keeperRpcCallbacks, characterSessions) = await CharacterServicesComposition.CharacterServicesAsync(source, directory, online, clock, foundations, legacy.Store, legacy.Owner, legacy.Cache, options.NewCharacterExperienceMode, new AccountOmegaStore(directory), connected);
             // the public gateway's skill plans: the tables are the skills module's (migration 0009, applied with its store)
             var gateway = new Dictionary<string, PublicGateway.GatewayHandler>(StringComparer.Ordinal);
-            var skillCatalog = await Eve.Skills.SkillCatalog.LoadAsync(new Eve.Sde.SdeReader(source, Env("EVE_SDE_SCHEMA", Eve.Sde.SdeReader.DefaultSchema)));
+            var skillCatalog = await Eve.Skills.SkillCatalog.LoadAsync(new Eve.Sde.SdeReader(source));
             foreach (var (name, handler) in PublicGateway.SkillPlanGateway.Handlers(new Eve.Skills.PgSkillPlanStore(source, Env("EVE_SKILLS_SCHEMA", Eve.Skills.PgSkillStore.DefaultSchema)), skillCatalog))
                 gateway[name] = handler;
             // the character titles: the SDE's title ids, and the owned and worn titles of the characters schema
-            var titles = await LoadCharacterTitleIdsAsync(source, Env("EVE_SDE_SCHEMA", Eve.Sde.SdeReader.DefaultSchema));
+            var titles = await LoadCharacterTitleIdsAsync(source, Eve.Sde.SdeReader.DefaultSchema);
             var titleStore = new Eve.Characters.CharacterTitleStore(source, Env("EVE_CHARACTERS_SCHEMA", Eve.Characters.PgCharacterStore.DefaultSchema));
             var notices = new PublicGateway.NoticeHub();
             foreach (var (name, handler) in PublicGateway.TitleGateway.Handlers(titleStore, titles, notices))

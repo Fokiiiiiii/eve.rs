@@ -4316,14 +4316,23 @@ donation sections it marks outdated. Design: `docs/project/FW_DESIGN.md`.
   multiplier is flagged "needs testing" by the wiki. Status: open.
 - **Not applied: capture.** The wiki's capture is the destruction of the infrastructure hub (25 million HP) after vulnerability. No FW hub
   combat path exists. The occupier does not change. Status: open.
-- **Not served: the statistics methods** (`GetStats_*`, `GetStats_TopAndAllKillsAndVPs`) and the rank overview methods. They are not registered,
-  so a client call to them fails, until kill and victory-point producers exist. Status: open.
-- **Not applied: the NPC station war-faction modifier** (`npsStationTaxModifier.py`). The client extract holds one station (60015187) with 0.1 for
-  500010 and 500011. No client caller or server industry path reads the war faction, so the modifier is not applied. Status: open, the data is
-  known.
-- **Not applied: the corporation LP tax** (`loyaltyPointTaxRate`). The corporation stores and shows it; no loyalty-point credit path taxes it
-  (missions and insurgency have none yet, and neither has the client). Status: open, no credit source.
-- **Client-facing gaps.** `CheckForRankChange` returns None (no rank-change notice). `GetControlBunkerIDInSystem` returns None (eve.rs has no
+- **Served: the character and corporation statistics** (`GetStats_Character`, `GetStats_Corp`: the six client keys, from the daily rows of migration 0002).
+  **Not served:** `GetStats_FactionInfo`, `GetStats_Militia`, `GetStats_Alliance`, `GetStats_CorpPilots`, `GetStats_TopAndAllKillsAndVPs` (they need
+  the alliance grouping and the faction member counts, which eve.rs does not store yet) and the rank overview methods. A client call to them fails
+  until they are built. The rows are filled by the producers `FwService.RecordActivityAsync` and `AddVictoryPointsAsync`, which no combat event
+  calls yet (below). Status: partly open.
+- **Applied: the NPC station war-faction modifier** (`npsStationTaxModifier.py`). The client extract holds one station (60015187) with 0.1 for
+  500010 and 500011 (`FwRules.NpcStationTaxModifier`). The NPC station facility tax of an industry job is multiplied by it for the pilot's war faction
+  (direct enlistment, else the corporation's; `IndustryComposition.ResolveIndustryFacilityAsync`). The client snapshot has no caller of its own, so the
+  server applies the table itself. Tests: `FwNpcStationTaxTests` (5).
+- **Applied: the corporation LP tax** (`loyaltyPointTaxRate`) on member LP credits. Source: the Viridian expansion notes (EVE Online news, "Viridian:
+  Expansion Notes"): corporation tax applies to member LP from factional warfare, incursions and missions; the corporation sets the rate; EverMarks
+  are excluded; the taxed LP goes to the corporation's own LP wallet. eve.rs applies it to the insurgency victory payout (`LoyaltyPointStore.CreditMemberAsync`,
+  `LoyaltyTax.TaxOf`): the member keeps the amount minus the tax (rounded down), and the corporation balance gets the tax with the same issuer.
+  Decision: a rate above 1 is a percentage (the convention of the corporation tax fields in IndustryComposition); 0 or less is no tax.
+  Not applied yet: mission payouts (no credit source in eve.rs) and the incursion payouts. The wiki copy of these notes marks some LP items as to
+  be determined, so the exact rate and rounding are the decision above, not CCP's published formula. Tests: `LoyaltyMemberCreditTests` (3, eve_p4),
+  `InsurgencyCampaignTests` (18 run, all pass).
   control bunker structures). The donation refusals are `CustomInfo` notices with localization keys, not the client's pool text.
   A corporation enlistment that takes effect at the downtime does not push a session change to its members.
 

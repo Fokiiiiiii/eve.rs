@@ -54,6 +54,18 @@ internal sealed partial class CharacterServicesComposition
     /// The factional warfare upgrade level of a system for a character's market orders: the system's LP pool, unless its occupier is an enemy of the
     /// character's war faction (the direct enlistment, else the corporation's). Read in the caller's transaction.
     /// </summary>
+    /// <summary>
+    /// The corporation of a character and its loyalty point tax rate, for the member credits of the LP payouts (0 and 0 when the character is unknown).
+    /// </summary>
+    private async ValueTask<(long CorporationId, decimal TaxRate)> MemberLpTermsAsync(long characterId, CancellationToken cancellationToken)
+    {
+        var character = await characters.GetAsync(characterId, cancellationToken);
+        if (character is null)
+            return (0, 0m);
+        var corporation = await corporations.GetAsync(character.CorporationId, cancellationToken);
+        return corporation is null ? (0, 0m) : (corporation.Id, corporation.LoyaltyPointTaxRate);
+    }
+
     /// <summary>The war faction of a character: its direct enlistment, else its corporation's faction (0: none, or no such character).</summary>
     private async ValueTask<long> WarFactionOfAsync(long characterId, CancellationToken cancellationToken)
     {

@@ -4313,3 +4313,94 @@ Sources: eve-logic `eve/client/script/ui/shared/bookmarks/bookmarkSvc.py` (the `
   `OnSharedBookmarksFolderDeleted`, `OnSharedBookmarksFoldersAccessLost`, `OnSharedBookmarksFoldersAccessChanged`), and the
   `BookmarkLocation` in space (needs the space scene; refused with the notice).
 - **Status.** OPEN, blocked on `ownerGroupManager` (TODO, VERIFY list and the structure track). Not a rule decision.
+
+## Research dialogue against EveJS: MITM diff (slice 8, 2026-10-17)
+
+Run: `tools/headless-client/tests/test_agents_live.py -k research` on eve.rs (lane `eve_p2`, live 26101, MITM 26211) and on
+EVE.js v0.12.9 (`tools/dev/run-evejs-live.sh`, live 26100, MITM 26210), both through `tools/mitm`, captures
+`captures/eve-rs-research.jsonl` and `captures/evejs-research.jsonl` (git-ignored). Both walks: 1 passed. Compared: the
+research segment from the first `SingleChoiceBox` to the last call response.
+
+- **Same on both sides.** The call names and argument contents (SingleChoiceBox title, body, choices and agent id; YesNo title,
+  body and agent id; GetQuantity kwargs `maxvalue`, `minvalue`, `setvalue`, `caption`, `label`, `digits`), every `DoAction`
+  answer (the agent's say, the actions with their buttons, and `lastActionInfo`) for the closed field box, start, closed
+  purchase, purchase, closed cancel and cancel, the `OnAccountChange` and `OnItemChange` notifications, and their order. The
+  choice list is the agent's two skills (SDE `npcCharacters`, agent 3009318).
+- **Fixed in eve.rs: client call arguments are a tuple.** eve.rs sent the argument list of every server-to-client call as a
+  list. The engine builds the call body from `*args`, `payload = (1, method, args, kw2)` (eve-logic
+  `carbon/common/script/net/ServiceCallGPCS.py`, `RemoteServiceCall`), so the arguments are a tuple; EVE.js sends a tuple too.
+  `ClientCallRequest.Build` now sends a tuple (`dotnet/src/Eve.Services/ClientCallRequest.cs`), pinned by the test
+  `The_call_arguments_are_a_tuple_as_the_engine_sends_them`. The V24.01 client unpacks the arguments by index and applies them
+  (`ServiceCallGPCS.CallUp`), so that path does not reject the list form; the tuple is the engine's shape. Not checked on the
+  graphical client.
+- **Intended: `OnDatacoreBought` is sent by eve.rs, not by EVE.js.** The client defines the handler
+  (eve-logic `eve/client/script/ui/station/agents/agents.py`, `OnDatacoreBought`: it refreshes the research view and the
+  agent's points per day). eve.rs sends it to the buyer after the commit, with the balance after the debit
+  (`PersistenceAgentResearch.BuyDatacoresAsync`). Kept. The eve.rs walk asserts it; the EVE.js walk does not (`if not REFERENCE`
+  in the test).
+- **Intended: the `OnItemChange` of a bought datacore has an empty change map on eve.rs.** EVE.js sends its old values,
+  `{3: 0, 9: 0}` (`ixLocationID`, `ixStackSize`, eve-logic `const.py` and `inventorycommon/const.py`). eve.rs sends `{}` for a
+  created item, as the other created items do (`LpStoreMgrService.Differences`, `TradeMgrService.Differences`). The client's
+  `invCache.OnItemChange` (`eve/client/script/environment/invCache.py`) puts an item owned by the pilot in its station hangar
+  from either map, so the hangar result is the same. Kept; not a client difference.
+- **Harness differences (the walks, not the servers).** eve.rs adds 1,000,000 ISK to the pilot's balance in PostgreSQL; EVE.js
+  sets it to 1,000,000 with `/setisk`. Both debit 10,000 ISK for one datacore. The agent's standing is set with `/setstanding`
+  by the agent's name on EVE.js (a numeric agent id does not resolve there); the corporation's by its id. Skills: `/giveskill me
+  all 5` on both. Research time: eve.rs moves the project's start two days back in PostgreSQL; EVE.js's research clock is moved
+  two days by a preload that shifts only the research runtime's `Date.now` (`tools/dev/evejs-timeshift.js`; the persistence
+  owner lease reads the same clock and would expire, which is why only that caller is shifted). Both accrue two days, so one
+  datacore (100 RP) is affordable on both.
+- **Not compared.** The graphical client, the station's Laboratory, and the other agent walks (the locator, the LP store and
+  the decline dialogue are eve.rs-only: their seeds are PostgreSQL rows, and the EVE.js walk runs the research test only).
+
+## Owner groups: ownerGroupManager (access lists), built 2026-10-17
+
+Sources: eve-logic `ownergroups/ownergroupConst.py` (membership types none -1, member 0, manager 1, admin 2, excluded 3; the group
+change codes 1-8; `PUBLIC_MEMBER_ID` 0); `eve/client/script/ui/structure/accessGroups/accessGroupsController.py` (the remote calls
+`GetMyGroups, GetGroup, GetGroupsMany, GetMembers, GetMembersForMultipleGroups, Create, Delete, UpdateName, UpdateDescription,
+AddMembers, DeleteMembers, UpdateMembershipTypes, GetGroupLogs`; the `OnOwnerGroupsUpdated(changedGroups)` handler); `auditLogEntry.py`
+(log fields `logDate, actionID, characterID, ownerID, oldMembershipType, newMembershipType, oldText, newText`). Rules: EVE University
+wiki "Access Lists" (https://wiki.eveuniversity.org/Access_Lists): the creator is the admin; admins edit and delete the list and
+manage every entry; managers add members and remove or change only member and blocked entries; alliances and corporations cannot be
+admin or manager; member types are everyone, alliances, corporations and characters, and the most granular entry governs; members
+cannot see the list or its members; every change is logged. EveJS `ownerGroupManagerService.js` was read as a reference only.
+
+- **Built.** The store (`dotnet/src/Eve.AccessGroups`, schema `access_groups`, or `EVE_ACCESS_GROUPS_SCHEMA`) keeps the groups, their
+  entries and the change log. The service is `OwnerGroupManagerService` (Eve.Services.Core), registered in `CharacterServiceList`.
+  Each change runs in one transaction under the group's advisory lock. Changes reach the sessions their audience names, after the
+  response, as `OnOwnerGroupsUpdated` (one dict: group id to change codes); member add, type change and removal also send code 8
+  (`GROUP_CHANGED_FOR_LISTENER`) so the affected clients refresh their group list.
+- **Choice: rename, description and delete are admin only.** The wiki says "Admins can edit and delete the list" and does not give
+  managers that right. EveJS let a manager rename (`UpdateName` required the manager type); the wiki is the higher source, so the
+  manager is refused.
+- **Choice: who sees a list.** `GetMyGroups`, `GetGroup`, `GetGroupsMany` and the member and log reads show a list to its admins and
+  managers only (the wiki: members cannot see the list). A member of a list gets no list in its group reads, and its members and logs
+  answer empty or are refused. The picker's own groups are therefore the lists the character manages.
+- **Choice: the corporation's built-in list.** The wiki says each corporation has a built-in list named after it, with the
+  corporation as admin, that cannot be modified and that all corporation members may use. It takes the corporation's id as its group id
+  (no sequence value; the sequence starts at 2000000001 above every character, corporation and alliance id), is created on the first
+  list read by one of its members, answers `membershipType` member to its corporation's members, and refuses changes with the notice
+  "This access group cannot be changed." Its `admins` list is the corporation.
+- **Choice: precedence and kinds.** The role is the most specific entry that names the character: character, then corporation, then
+  alliance, then everyone (id 0, a member entry for every character). A blocked (excluded) role gives no access. A corporation,
+  alliance or everyone entry is member or blocked only (the wiki: alliances and corporations cannot be admin or manager).
+- **Choice: manager limits.** A manager adds only member or blocked entries, removes only member or blocked entries and changes
+  only member or blocked entries to member or blocked (the wiki). An admin does any of these, including demoting and removing itself.
+  The creator is an admin entry, removable like any other admin entry (the wiki gives no lock on the last admin).
+- **Failure reasons.** `AddMembers`, `DeleteMembers` and `UpdateMembershipTypes` answer the refused entries as (member id, reason):
+  `AlreadyMember`, `NotAMember`, `NotAllowed`, `InvalidMember` (the id names no character, corporation, alliance or everyone). These
+  are eve.rs keys. The client's per-error text table (`ownergroupsUIUtil.errorDict`) cannot be read from the decompiled file (its keys
+  are not recoverable there), so a reason the table does not hold shows no warning in the client. Not checked with the graphical client.
+- **Refusal notices.** The notice texts are the server's: "You do not have permission to manage this access group." (the EveJS text),
+  "This access group cannot be changed.", "This access group no longer exists.", "Access groups need a character." The client shows them
+  as `CustomNotify`.
+- **Limits.** A name is trimmed and cut to 100 characters (an empty name keeps the old one, or "New Group" for a new list); a
+  description is cut to 3900 characters. Both limits are EveJS's payload builder (`buildBookmarkText`); the client has no check of its
+  own that could be compared.
+- **Not built.** `CreateProfile` and `SaveProfileSettings` are the structure profile calls (`structureProfileController.py`), not
+  owner groups: the structure track (owner decision 8). `GetPublicGroupInfo`, `SearchGroups`, `GetMyGroupsAndMembers`,
+  `GetMyGroupsToUseForBookmarks` and `UpdateMemberships` are EveJS aliases or a no-op; the V24.01 client has no callsite for them, so
+  they are not registered. No role gate (director, personnel manager) is applied to corporation lists: the client and the wiki's list
+  rules gate by list membership, and no corporate role is named for list creation.
+- **Status.** Store and service tests pass (`Eve.AccessGroups.Tests`, PostgreSQL lane). Not checked with the graphical client; the
+  shared bookmark folders that use these lists are still open (the `accessGroupBookmarkMgr` section above).

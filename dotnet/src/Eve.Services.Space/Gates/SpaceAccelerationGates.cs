@@ -49,8 +49,9 @@ public sealed class SpaceAccelerationGates(
         {
             throw MachoErrors.ThrowUserError("DeniedTargetAttemptFailed");
         }
-        // a gate out of a room is locked until the room's waves are done (EveJS: "The acceleration gate is locked.")
-        if (!(await clearedRooms(where.InstanceId, cancellationToken)).Contains(gate.SourceRoomKey))
+        // a gate out of a room is locked until the room's waves are done (EveJS: "The acceleration gate is locked."); the gate into the entry room is the
+        // site's own and is open (the layout numbers its source as the entry room, which is not a room to clear first)
+        if (layout.Room(gate.DestinationRoomKey)?.Index != 0 && !(await clearedRooms(where.InstanceId, cancellationToken)).Contains(gate.SourceRoomKey))
         {
             throw MachoErrors.ThrowUserError("CustomInfo", ("info", new PyStr("The acceleration gate is locked.")));
         }

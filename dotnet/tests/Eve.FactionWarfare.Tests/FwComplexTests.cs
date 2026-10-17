@@ -62,6 +62,26 @@ public sealed class FwComplexTickerTests
     }
 
     [PgFact]
+    public async Task The_winning_pilots_split_the_victory_points_on_their_stats_rows()
+    {
+        await using var rig = await FwRig.CreateAsync();
+        await rig.OccupyWarzoneAsync(FwWarzones.AmarrMinmatar, FwFactions.AmarrEmpire);
+        var attackers = FwFactions.OccupationEnemyOf(FwFactions.AmarrEmpire);
+        var resolved = await TicksAsync(rig, 31, [attackers, attackers]);
+        var scout = Assert.Single(resolved, r => r.Size == ComplexSize.Scout && r.SolarSystemId == SystemId);
+        Assert.Equal(new long[] { 1000, 1001 }, scout.WinnerIds);
+        Assert.Equal(25, scout.PilotShare);
+        // the pilots are in every occupied system of the warzone, so each system's scout credits them: the rows hold the sum of the shares won
+        await using var connection = await rig.Source.OpenConnectionAsync();
+        foreach (long characterId in new long[] { 1000, 1001 })
+        {
+            long won = resolved.Where(r => r.Size == ComplexSize.Scout && r.WinnerIds.Contains(characterId)).Sum(r => r.PilotShare);
+            Assert.Equal(won, (await rig.Store.PilotStatsAsync(connection, null, characterId, FwRules.DayOf(rig.Now))).VictoryPointsTotal);
+            Assert.True(won > 0);
+        }
+    }
+
+    [PgFact]
     public async Task Defenders_capture_subtracts_the_points_and_the_complex_respawns_after_thirty_minutes()
     {
         await using var rig = await FwRig.CreateAsync();
@@ -79,6 +99,37 @@ public sealed class FwComplexTickerTests
         await TicksAsync(rig, 1, []);
         Assert.NotNull(await OpenSizeAsync(rig, SystemId, ComplexSize.Scout));
         Assert.True(rig.Now - closedAt >= (long)FwComplexes.Respawn.TotalMilliseconds);
+    }
+
+    [PgFact]
+    public async Task A_complex_starts_its_site_only_when_a_pilot_is_in_its_system()
+    {
+        await using var rig = await FwRig.CreateAsync();
+        await rig.OccupyWarzoneAsync(FwWarzones.AmarrMinmatar, FwFactions.AmarrEmpire);
+        var sites = new FakeSites([]) { Pilots = false };
+        await TickWithAsync(rig, sites, 3);
+        // the complex is open with no site: nobody is there to spawn its NPCs into
+        var scout = await OpenSizeAsync(rig, SystemId, ComplexSize.Scout);
+        Assert.NotNull(scout);
+        Assert.Equal(0, scout.InstanceId);
+        Assert.Equal(0, sites.Starts);
+
+        sites.Pilots = true;
+        await TickWithAsync(rig, sites, 1);
+        Assert.True(sites.Starts > 0, "the sites start once a pilot is in the system");
+        Assert.Equal(scout.ComplexId + 1_000_000, (await OpenSizeAsync(rig, SystemId, ComplexSize.Scout))!.InstanceId);
+    }
+
+    private static async Task TickWithAsync(FwRig rig, IFwComplexSites sites, int ticks)
+    {
+        for (int i = 0; i < ticks; i++)
+        {
+            rig.Now += 10_000;
+            await using var connection = await rig.Source.OpenConnectionAsync();
+            await using var transaction = await connection.BeginTransactionAsync();
+            await FwComplexTicker.TickAsync(rig.Store, sites, connection, transaction, rig.Now, CancellationToken.None);
+            await transaction.CommitAsync();
+        }
     }
 
     /// <summary>Runs <paramref name="ticks"/> ticks of 10 s with the given war factions inside every complex; returns what resolved.</summary>
@@ -100,11 +151,19 @@ public sealed class FwComplexTickerTests
     /// <summary>The sites of the test: each complex's site is its complex id, the defenders are cleared, and the pilots are the given factions.</summary>
     private sealed class FakeSites(long[] factions) : IFwComplexSites
     {
-        public Task<long> StartAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long solarSystemId, ComplexSize size, long complexId, CancellationToken cancellationToken) =>
-            Task.FromResult(complexId + 1_000_000);
+        public bool Pilots { get; set; } = true;
+        public int Starts { get; private set; }
+
+        public bool PilotsIn(long solarSystemId) => Pilots;
+
+        public Task<long> StartAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long solarSystemId, ComplexSize size, long complexId, CancellationToken cancellationToken)
+        {
+            Starts++;
+            return Task.FromResult(complexId + 1_000_000);
+        }
         public Task<bool> DefendersClearedAsync(long instanceId, CancellationToken cancellationToken) => Task.FromResult(true);
-        public Task<IReadOnlyList<long>> FactionsInsideAsync(long solarSystemId, long instanceId, CancellationToken cancellationToken) =>
-            Task.FromResult<IReadOnlyList<long>>(factions);
+        public Task<IReadOnlyList<FwComplexPilot>> PilotsInsideAsync(long solarSystemId, long instanceId, CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyList<FwComplexPilot>>(factions.Select((faction, index) => new FwComplexPilot(1000 + index, faction)).ToList());
         public Task EndAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long instanceId, CancellationToken cancellationToken) => Task.CompletedTask;
     }
 

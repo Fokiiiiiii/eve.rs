@@ -41,6 +41,21 @@ impl Scene {
         stop: f64,
         now: i64,
     ) -> Vec<Out> {
+        self.begin_warp_min(session, code, target_id, raw, stop, now, warp::MINIMUM_WARP_DISTANCE)
+    }
+
+    /// A warp that must cover at least `minimum` metres. A player's warp covers the minimum; a dungeon's gate transit (a teleport into the room of the same site) does not.
+    #[allow(clippy::too_many_arguments)] // the warp's own arguments (the code, the target and the point) plus the minimum
+    pub(super) fn begin_warp_min(
+        &mut self,
+        session: SessionId,
+        code: u8,
+        target_id: Option<i64>,
+        raw: Vec3,
+        stop: f64,
+        now: i64,
+        minimum: f64,
+    ) -> Vec<Out> {
         let refused = |reason| vec![Out::Refused { session, command: code, reason }];
         let Some(pilot) = self.pilots.get(&session) else { return refused("NO_SHIP_IN_SPACE") };
         if pilot.docking.is_some() {
@@ -81,7 +96,7 @@ impl Scene {
             + (end.y - ship.position.y).powi(2)
             + (end.z - ship.position.z).powi(2))
         .sqrt();
-        if total < warp::MINIMUM_WARP_DISTANCE {
+        if total < minimum {
             return refused("WARP_DISTANCE_TOO_CLOSE");
         }
         // the reference's order: a bubble holds the ship unless it is immune to bubbles (the bubble is tested where the ship is), then a cloak that is not
@@ -180,6 +195,15 @@ impl Scene {
             });
         }
 
+        // a dungeon room's acceleration gate is a deployable ball of the scene: a warp to it ends at the range from its centre (the gate's radius is its
+        // reach for a transit, not a stop: a stop a radius away would leave the pilot outside the complex's presence)
+        if let Some(gate) = self
+            .deployables
+            .get(&target_id)
+            .filter(|gate| gate.role == crate::deployable::Role::AccelerationGate)
+        {
+            return Some((gate.position, range.max(0.0) + pilot.ship.spec.radius));
+        }
         self.pilots.values().find(|target| target.ship.spec.ship_id == target_id).map(|target| {
             (target.ship.position, range.max(0.0) + target.ship.spec.radius + pilot.ship.spec.radius)
         })

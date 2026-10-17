@@ -1,8 +1,8 @@
 # Acceleration gates and dungeon rooms
 
 Status: the sim transit (protocol 75, command 34), the Host room layout, the room and gate placement in
-running dungeons, and the `keeper.ActivateAccelerationGate` walk are built and unit-tested. Not yet done:
-the live headless walk and MITM capture,  none of the SDE gaps remain.
+running dungeons, and the `keeper.ActivateAccelerationGate` walk are built and unit-tested. The live walk into a complex's gate passes
+(`tests/test_fw_capture_walk.py`, MITM capture): the warp to the gate, the entry gate and the room transit. None of the SDE gaps remain.
 
 ## Model
 

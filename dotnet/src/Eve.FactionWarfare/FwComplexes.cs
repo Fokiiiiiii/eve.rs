@@ -32,16 +32,25 @@ public interface IFwComplexSites
     /// <summary>Whether the site's NPC defenders are all destroyed (the site is completed).</summary>
     Task<bool> DefendersClearedAsync(long instanceId, CancellationToken cancellationToken);
 
-    /// <summary>The war factions of the pilots in the complex now (0 for a pilot with none).</summary>
-    Task<IReadOnlyList<long>> FactionsInsideAsync(long solarSystemId, long instanceId, CancellationToken cancellationToken);
+    /// <summary>Whether a pilot is in the system now: a complex's site starts with its first pilot (its waves spawn into that pilot's scene).</summary>
+    bool PilotsIn(long solarSystemId);
+
+    /// <summary>The pilots in the complex now, with their war factions (0 for a pilot with none).</summary>
+    Task<IReadOnlyList<FwComplexPilot>> PilotsInsideAsync(long solarSystemId, long instanceId, CancellationToken cancellationToken);
 
     /// <summary>Ends the complex's site (its pilots are taken out and its NPCs removed).</summary>
     Task EndAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long instanceId, CancellationToken cancellationToken);
 }
 
-/// <summary>What one tick resolved: a complex captured by the attackers (its victory points added) or by the defenders (subtracted).</summary>
+/// <summary>A pilot inside a complex: its character and its war faction (0 for none).</summary>
+public sealed record FwComplexPilot(long CharacterId, long WarFactionId);
+
+/// <summary>
+/// What one tick resolved: a complex captured by the attackers (its victory points added) or by the defenders (subtracted). The winning side's pilots inside
+/// it at the end split the complex's victory points evenly (<see cref="PilotShare"/> each, rounded down), and are credited in the tick's transaction.
+/// </summary>
 public sealed record FwComplexResolution(long ComplexId, long SolarSystemId, ComplexSize Size, long OccupierId, long AttackerId, bool AttackersWon,
-    long VictoryPoints, long AttackerPoints);
+    long VictoryPoints, long AttackerPoints, IReadOnlyList<long> WinnerIds, long PilotShare);
 
 /// <summary>
 /// The complex rules of factional warfare (wiki "Faction warfare": Complexes, Complex types, Victory points). The sizes, capture times and hull limits are the
@@ -114,23 +123,33 @@ public static class FwComplexTicker
                 if (lastClosed.TryGetValue((system.SolarSystemId, spec.Size), out long closedMs) && nowMs < closedMs + respawnMs)
                     continue;
                 long id = await store.InsertComplexAsync(connection, transaction, system.SolarSystemId, spec.Size, nowMs, cancellationToken);
-                long instance = await sites.StartAsync(connection, transaction, system.SolarSystemId, spec.Size, id, cancellationToken);
-                await store.SetComplexInstanceAsync(connection, transaction, id, instance, cancellationToken);
-                open.Add(new FwComplex(id, system.SolarSystemId, spec.Size, 0, nowMs, nowMs, instance));
+                open.Add(new FwComplex(id, system.SolarSystemId, spec.Size, 0, nowMs, nowMs, 0));
             }
         }
+        // a complex without its site starts it when a pilot is in its system (a site with no pilot has no scene for its NPCs: its wave would fail)
+        for (int index = 0; index < open.Count; index++)
+        {
+            var complex = open[index];
+            if (complex.InstanceId > 0 || !sites.PilotsIn(complex.SolarSystemId))
+                continue;
+            long instance = await sites.StartAsync(connection, transaction, complex.SolarSystemId, complex.Size, complex.ComplexId, cancellationToken);
+            await store.SetComplexInstanceAsync(connection, transaction, complex.ComplexId, instance, cancellationToken);
+            open[index] = complex with { InstanceId = instance };
+        }
         var results = new List<FwComplexResolution>();
+        int day = FwRules.DayOf(nowMs);
         foreach (var complex in open.OrderBy(complex => complex.SolarSystemId).ThenBy(complex => complex.Size))
         {
             var system = systems.Single(s => s.SolarSystemId == complex.SolarSystemId);
             var spec = FwComplexes.SpecOf(complex.Size);
             long elapsed = nowMs - complex.ProgressUpdatedMs;
             long progress = complex.ProgressMs;
+            IReadOnlyList<FwComplexPilot> inside = [];
             if (await sites.DefendersClearedAsync(complex.InstanceId, cancellationToken))
             {
-                var present = await sites.FactionsInsideAsync(complex.SolarSystemId, complex.InstanceId, cancellationToken);
-                bool attackers = present.Contains(FwFactions.OccupationEnemyOf(system.OccupierId));
-                bool defenders = present.Contains(system.OccupierId);
+                inside = await sites.PilotsInsideAsync(complex.SolarSystemId, complex.InstanceId, cancellationToken);
+                bool attackers = inside.Any(pilot => pilot.WarFactionId == FwFactions.OccupationEnemyOf(system.OccupierId));
+                bool defenders = inside.Any(pilot => pilot.WarFactionId == system.OccupierId);
                 progress = FwComplexes.Advance(progress, attackers, defenders, elapsed, (long)FwComplexes.Tick.TotalMilliseconds);
             }
             var won = FwComplexes.Resolved(progress, spec);
@@ -142,10 +161,19 @@ public static class FwComplexTicker
             long attackerFaction = FwFactions.OccupationEnemyOf(system.OccupierId);
             long points = await store.AddAttackerPointsSignedAsync(connection, transaction, system.SolarSystemId, won.Value ? spec.VictoryPoints : -spec.VictoryPoints,
                 nowMs, cancellationToken);
+            // the winning side's pilots inside split the complex's victory points (the wiki gives the points to the complex, not to a pilot)
+            long winningFaction = won.Value ? attackerFaction : system.OccupierId;
+            var winners = inside.Where(pilot => pilot.WarFactionId == winningFaction).Select(pilot => pilot.CharacterId).Distinct().ToList();
+            long share = winners.Count == 0 ? 0 : spec.VictoryPoints / winners.Count;
+            if (share > 0)
+            {
+                foreach (long characterId in winners)
+                    await store.AddPilotDailyAsync(connection, transaction, characterId, day, 0, share, cancellationToken);
+            }
             await store.CloseComplexAsync(connection, transaction, complex.ComplexId, nowMs, cancellationToken);
             await sites.EndAsync(connection, transaction, complex.InstanceId, cancellationToken);
             results.Add(new FwComplexResolution(complex.ComplexId, system.SolarSystemId, complex.Size, system.OccupierId, attackerFaction, won.Value,
-                spec.VictoryPoints, points));
+                spec.VictoryPoints, points, winners, share));
         }
         return results;
     }

@@ -35,8 +35,17 @@ impl Scene {
             return refused("TOO_FAR_FROM_GATE");
         }
         // the warp answers under its own code (21): the host asked for this transit, so its answer is under 34
+        // the room is the same site: the transit is not a player's warp, so no minimum distance applies to it
         let warp: Vec<Out> = self
-            .warp_to_point(session, destination, 0.0, now)
+            .begin_warp_min(
+                session,
+                Command::WarpToPoint { destination, range: 0.0 }.code(),
+                None,
+                destination,
+                0.0,
+                now,
+                0.0,
+            )
             .into_iter()
             .map(|out| match out {
                 Out::Accepted { session, command: 21, at } => Out::Accepted { session, command: code, at },
@@ -106,6 +115,60 @@ mod tests {
             [Out::Refused { command: 34, reason, .. }] => reason,
             other => panic!("{other:?}"),
         }
+    }
+
+    #[test]
+    fn a_warp_to_a_placed_gate_starts_and_is_not_refused_as_a_missing_target() {
+        // the pilot warps to its room's gate (CmdWarpToStuff): the gate is a deployable ball, so the warp finds it and starts
+        // 200 km: a warp that ends nearer than the 150 km minimum is refused as too close (warp.rs MINIMUM_WARP_DISTANCE)
+        let (mut scene, _) = scene_with_gate(200_000.0);
+        let out = scene.command(SESSION, Command::WarpTo { target_id: GATE, range: 0.0 }, NOON);
+        assert!(
+            !out.iter().any(|o| matches!(o, Out::Refused { .. })),
+            "a warp to a placed gate is refused: {out:?}"
+        );
+        assert!(scene.pilots[&SESSION].flight.is_some(), "the warp to the gate starts");
+    }
+
+    #[test]
+    fn a_warp_to_a_placed_gate_ends_next_to_it() {
+        // the pilot flies a while, then warps to the gate 200 km away: the warp ends at the gate's centre (the range is 0), not a gate's radius short of it
+        let (mut scene, ship0) = scene_with_gate(200_000.0);
+        let gate = scene.deployables[&GATE].position;
+        scene.command(SESSION, Command::SetSpeedFraction(1.0), NOON);
+        scene.command(SESSION, Command::GotoDirection(Vec3::new(ship0.x + 1.0, ship0.y, ship0.z)), NOON);
+        let mut now = NOON;
+        for _ in 0..5 {
+            now += crate::scene::TICKS_PER_SECOND;
+            scene.update_state(SESSION, now);
+        }
+        let out = scene.command(SESSION, Command::WarpTo { target_id: GATE, range: 0.0 }, now);
+        assert!(
+            !out.iter().any(|o| matches!(o, Out::Refused { .. })),
+            "the warp to the gate is refused: {out:?}"
+        );
+        for _ in 0..60 {
+            now += crate::scene::TICKS_PER_SECOND;
+            scene.update_state(SESSION, now);
+        }
+        let at = scene.pilots[&SESSION].ship.position;
+        let distance = ((at.x - gate.x).powi(2) + (at.y - gate.y).powi(2) + (at.z - gate.z).powi(2)).sqrt();
+        assert!(scene.pilots[&SESSION].flight.is_none(), "the warp is over");
+        assert!(distance < 1_000.0, "the pilot is {distance:.0} m from the gate after the warp");
+    }
+
+    #[test]
+    fn a_transit_into_a_room_nearer_than_the_minimum_warp_distance_is_still_walked() {
+        // the room's entry is a few km away (the site is one point): the transit is not a player's warp, so the 150 km minimum does not refuse it
+        let (mut scene, ship) = scene_with_gate(2_000.0);
+        let near = Vec3::new(ship.x + 7_000.0, ship.y, ship.z);
+        let out = scene.command(
+            SESSION,
+            Command::AccelerationGateTransit { gate_id: GATE, destination: near },
+            NOON,
+        );
+        assert!(!out.iter().any(|o| matches!(o, Out::Refused { .. })), "the transit is refused: {out:?}");
+        assert!(scene.pilots[&SESSION].flight.is_some(), "the pilot is warping to the room");
     }
 
     #[test]

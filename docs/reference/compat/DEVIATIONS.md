@@ -4361,6 +4361,18 @@ donation sections it marks outdated. Design: `docs/project/FW_DESIGN.md`.
   The step is capped at one tick. The timers are additive and signed (wiki). Enemy NPCs outside the site do not pause the timer (not modelled).
   Entry: the complex's gate, when the template has rooms, is the acceleration gate of `DungeonRoomLayout`; a single-room site needs none (EVE:
   the wiki's acceleration gate of a complex is not reproduced by a room layout).
+- **Battlefield and objective: project rules (not built yet).** The SDE carries the archetypes 67 (objectives) and 68 (battlefield) with dungeon
+  names only, no room or objective data (`dungeons.jsonl`, 9 battlefield and 6 objective templates in the owner catalog with combat waves only).
+  The rules come from the wiki "Battlefields" section and the client's `fwCapturePoint.py` / `fwScoreboard.py`:
+  - Objective (capture point): held by the complex timer of its size (no new number); pilots of one side within 30 km, the defenders dead first,
+    enemy NPCs within 30 km pause it (wiki, and `FWCapturePoint.GetState`).
+  - Battlefield: three capture points (one central, two about 80 km either side, wiki); holding a point builds the holder's progress. Project rule: a
+    point completes in 900 s of uncontested holding (the wiki gives no hold time; the Medium complex timer is used as the scale).
+  - Battlefield completion: 2,000 victory points to the system (wiki) and LP to the winners: project rule of 150,000 LP split evenly over the first 30
+    participants (5,000 each, wiki "up to 150,000 LP for up to 30 participants"); pilots beyond 30 receive nothing (the wiki says "reduced"; the reduced
+    value is not given, so 0 is the project's choice).
+  - Spawn: frontline systems only, up to two battlefields at a time, a new one three hours after one completes (wiki).
+  - Gate: 10 to 20 km from the beacon, T1 and Navy ships only (wiki); non-enrolled capsuleers land 75 to 125 km from the points (wiki).
 - **Complexes: scan visibility.** An open complex is listed in the system's anomaly overlay (`map`, `scanMgr` and `taleMgr` GetAnomalies path) with the
   `CosmicAnomalyInfo` fields of EveJS `buildAnomalySiteInfo` (siteID and instanceID = the site's instance, dungeonID, archetypeID, difficulty, targetID =
   the first gate of its layout or empty, position at the origin). The position is not the complex's real place (no SDE coordinates).
@@ -4369,9 +4381,35 @@ donation sections it marks outdated. Design: `docs/project/FW_DESIGN.md`.
   with `OnFacWarDungeonCompleted(true, attackerFaction)`, the defenders' capture with `(false, occupier)` (client `fwWarzoneSvc.py`), and the
   victory point state (`OnVictoryPointStateUpdated`, client `fwVictoryPointSvc.py`) with the attacker points against the 75,000 threshold.
   `fwVictoryPointMgr.GetAllVictoryPointStates` and `GetLocalVictoryPointState` now read the store (before: empty).
-  Not built: the statistics of the pilots who captured (no per-pilot victory points for complexes).
-- **Complexes: tests.** `FwComplexRulesTests` (3, pure), `FwComplexTickerTests` (2, eve_p4: capture by the attackers after 31 ticks with the
-  victory points, capture by the defenders with the subtraction floor at 0 and the respawn after 30 minutes).
+   Per-pilot credit (project rule): the winning side's pilots inside the complex when its timer ends (the same presence as the timer) split the
+   complex's victory points evenly, rounded down, and each row is added to `fw_pilot_daily` in the tick's transaction (`GetStats_Character` reads it).
+   A defenders' capture credits the defending pilots the same way. The wiki gives the points to the complex, not to a pilot; the split is ours.
+   Not built: the LP share of a complex (the wiki text read gives no complex LP amount, so no LP is paid) and the corporation rows for complex
+   points (`fw_corporation_daily` is not written by the capture).
+- **Complexes: tests.** `FwComplexRulesTests` (3, pure), `FwComplexTickerTests` (3, eve_p4: capture by the attackers after 31 ticks with the
+  victory points, the pilot split of the points on the stats rows, capture by the defenders with the subtraction floor at 0 and the respawn after 30 minutes).
+
+
+- **Complexes: live capture walk (2026-10-17).** `tools/headless-client/tests/test_fw_capture_walk.py` passes on the eve_p4 lane through tools/mitm: the pilot
+  undocks, flies four gates to the nearest occupied system with an open scout complex, enlists in the occupier's enemy, warps to the complex gate, takes it,
+  clears the three waves with the QA Smartbomb, and the capture timer completes; `OnFacWarDungeonCompleted (True, enemy)` is sent. Not checked: the EVE.js
+  reference run (EveJS has no FW), the graphical client, and the per-pilot victory points.
+- **Complexes: site origin outside the star.** The system origin is the star's centre (SDE mapStars radius 298,500,000 m in the walked system). A site
+  there put its pilots inside the star's collision, which pushed the ship back to the surface. A site now starts 1e9 m outside the star's surface on the
+  system axis (`FwComplexSites.SiteOriginAsync`). Shortcut: the planets are not checked against the origin; upgrade if a site lands near a planet.
+- **Complexes: presence and the complex gate measure from the site's origin** (the dungeon instance's origin), not the system origin.
+- **Complexes: a site starts with the first pilot in its system.** A site started with no pilot has no scene for its NPC waves: the spawn is refused
+  (`NO_SCENE`) and the wave fails the whole instance (the probe found every complex `failed`). The tick starts a complex's site once a pilot is in the system;
+  until then the complex is open without a site (no scan row, no gate).
+- **Complexes: the current dungeon of a complex pilot** is the open complex inside its capture radius (the lowest instance). Shortcut: all complexes of a
+  system share one origin, so the pilot is inside all of them.
+- **Acceleration gates: the entry gate is open.** The gate into the entry room of a site is not locked by the room's waves (the layout numbers its source as
+  the entry room, which would lock it forever).
+- **Acceleration gates: a warp to a gate ends at the ship's range from the gate's centre.** The gate's radius (12,706 m) is its reach for a transit, not a stop.
+- **Acceleration gates: the room transit has no 150 km minimum.** The transit into a room of the same site is a teleport, not a player's warp
+  (`MINIMUM_WARP_DISTANCE` applies to player warps only).
+- **Walk: the room move is 12 s** (about 15 km at 1,265 m/s), which keeps the pilot inside the 30 km presence and 18 km from the gate (the smartbomb's
+  6 km surface rule).
 
 ## Bookmarks: shared (access group) folders, not built (2026-10-17; superseded by the next section)
 

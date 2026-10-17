@@ -128,17 +128,19 @@ Refusals reach the client as `CustomInfo` notices (text keys of the client's loc
 - Dungeon sites: each complex is a dungeon instance (`FwComplexSites`, host); its waves are the NPC defenders; presence is the pilots whose
   current dungeon is that instance; the timer waits for the defenders. Open complexes are in the system anomaly overlay (scan visibility).
 - Live walk (eve_p4 lane, live port 26103): `tools/headless-client/tests/test_fw_complex_walk.py` passes (1 of 1): every occupied system has a
-  victory point state at the 75,000 threshold with no points on a fresh server. Not walked: a pilot entering a complex, killing its defenders, a
-  capture, and the notifications; the capture walk is open.
-- Not built: the battlefield (archetype 68) and the objectives (67), and the per-pilot victory points of a capture.
+  victory point state at the 75,000 threshold with no points on a fresh server.
+- Capture walk: `tools/headless-client/tests/test_fw_capture_walk.py` passes (eve_p4, MITM capture): enter the gate, clear the defenders with the QA
+  Smartbomb, the timer runs, `OnFacWarDungeonCompleted` is sent. The helpers are `tests/fw_complex_live.py`. Per-pilot victory points: the winning side's pilots inside split the victory points evenly (rounded down) on `fw_pilot_daily`
+  (`FwComplexes.cs`, DEVIATIONS "Complexes: victory points"); the walk asserts the pilot's row and `GetStats_Character`.
+- Not built: the battlefield (archetype 68) and the objectives (67) (see the plan below).
 - Tests: `FwComplexTests.cs` (5). Eve.FactionWarfare.Tests: 83 passed on eve_p4.
 
 ## Not built
 
 - **Pilot-versus-pilot kills**: not counted. The NPC kill producer (`RecordFactionWarfareNpcKill`) is built; a player kill has no
   statistics or victory-point path yet (no event for it was found).
-- **Victory points from complexes**: built (Complexes, slice 1); the gate, the NPC defenders and the battlefield are not. The ship-kill LP formula (wiki: 3.25 times hull, insurance and fitting value over 10,000,
-  capped at 50,000 LP).
+- **Victory points from complexes**: built (gate, NPC defenders, per-pilot split). The battlefield is not. The ship-kill LP formula (wiki: 3.25 times hull, insurance and fitting value over 10,000,
+  capped at 50,000 LP) is not built.
 - **Capture trigger**: infrastructure hub destruction (25 million HP, wiki); no FW hub combat path exists.
 - **Statistics**: built in slice 2 (above). `GetStats_CorpPilots` is not served (no consumer).
 - **Mission and incursion LP credits**: no credit source in eve.rs, so the corporation LP tax applies to insurgency payouts only.
@@ -150,3 +152,16 @@ Refusals reach the client as `CustomInfo` notices (text keys of the client's loc
 Pilots enter a complex's rooms through acceleration gates. The API for the FW complex director is in
 `docs/project/ACCELERATION_GATES.md` (`DungeonRoomLayout`, `SpaceContainers.AccelerationGateDeployableId`,
 `SpaceAccelerationGates`). Single-room complexes need no gate.
+
+## Plan: objectives and battlefields (not built)
+
+Client contract: `spacecomponents/client/components/fwCapturePoint.py` (the capture point: slim fields `component_fwCapturePoint_factionInfo`
+(attacker, occupier) and `component_fwCapturePoint_nextPointTime`; a point is contested when enemy blocking NPCs are within its range) and
+`fwScoreboard.py` (a battlefield's score field `component_fwScoreboard_score`, `fwWarzoneSvc.BattleFieldAdded`). The SDE has the types
+(capture point types in group 922, spawners in group 227, scoreboards 73447 to 73450) but no room data for archetypes 67 and 68.
+
+Rule (wiki "Complexes", "Battlefields"): a complex's objective is its capture point, held for the timer by pilots of one side within 30 km with the
+defenders dead; a battlefield has three capture points, pays 2,000 VP, and up to 150,000 LP to the winners for up to 30 participants.
+
+Sub-slices: C2 simulation body type and slim fields (protocol bump, golden fixtures via `tools/dev/gen-simlink-fixtures.py`); C3 Host battlefield
+runtime; C4 tests and live walk assertions. Each is recorded in DEVIATIONS when built.

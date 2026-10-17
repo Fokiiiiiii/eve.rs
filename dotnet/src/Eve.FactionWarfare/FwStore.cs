@@ -210,7 +210,7 @@ public sealed class FwStore
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         var rows = new List<FwComplex>();
         while (await reader.ReadAsync(cancellationToken))
-            rows.Add(new FwComplex(reader.GetInt64(0), reader.GetInt64(1), (ComplexSize)reader.GetInt16(2), reader.GetInt64(3), reader.GetInt64(4), reader.GetInt64(5), reader.GetInt64(6)));
+            rows.Add(new FwComplex(reader.GetInt64(0), reader.GetInt64(1), (ComplexSize)reader.GetInt16(2), reader.GetInt64(3), reader.GetInt64(4), reader.GetInt64(5), (reader.IsDBNull(6) ? 0 : reader.GetInt64(6))));
         return rows;
     }
 

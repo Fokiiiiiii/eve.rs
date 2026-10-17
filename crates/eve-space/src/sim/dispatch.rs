@@ -86,7 +86,7 @@ pub(super) fn command_of(code: u8, args: &[f64]) -> Option<Command> {
             Some(Command::Jump { gate_id: *gate as i64, destination_gate: *leads_to as i64 })
         }
         // the transit through an acceleration gate of a dungeon room: the gate's id and the point the pilot warps to in the other room (protocol 75)
-        (33, [gate, x, y, z]) if is_id(*gate) && [*x, *y, *z].iter().all(|v| v.is_finite()) => {
+        (34, [gate, x, y, z]) if is_id(*gate) && [*x, *y, *z].iter().all(|v| v.is_finite()) => {
             Some(Command::AccelerationGateTransit {
                 gate_id: *gate as i64,
                 destination: Vec3::new(*x, *y, *z),

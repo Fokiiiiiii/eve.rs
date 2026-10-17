@@ -1,4 +1,4 @@
-//! The walk through an acceleration gate of a dungeon room into another room of its site (command 33, protocol 75).
+//! The walk through an acceleration gate of a dungeon room into another room of its site (command 34, protocol 75).
 //!
 //! The rules are EVE.js `activateAccelerationGateForSession`: the ship must be within the gate's reach (the gate's and the ship's radius plus
 //! [`GATE_ACTIVATION_RANGE`], at least that range), and the transit is a warp to the other room's entry point, the client's own warp sequence. The
@@ -34,7 +34,7 @@ impl Scene {
         if distance(pilot.ship.position, gate_position) > reach {
             return refused("TOO_FAR_FROM_GATE");
         }
-        // the warp answers under its own code (21): the host asked for this transit, so its answer is under 33
+        // the warp answers under its own code (21): the host asked for this transit, so its answer is under 34
         let warp: Vec<Out> = self
             .warp_to_point(session, destination, 0.0, now)
             .into_iter()
@@ -103,7 +103,7 @@ mod tests {
 
     fn refusal(out: &[Out]) -> &'static str {
         match out {
-            [Out::Refused { command: 33, reason, .. }] => reason,
+            [Out::Refused { command: 34, reason, .. }] => reason,
             other => panic!("{other:?}"),
         }
     }
@@ -140,7 +140,7 @@ mod tests {
             NOON,
         );
         assert!(
-            out.iter().any(|o| matches!(o, Out::Accepted { command: 33, .. })),
+            out.iter().any(|o| matches!(o, Out::Accepted { command: 34, .. })),
             "the transit is accepted: {out:?}"
         );
         assert!(scene.pilots[&SESSION].flight.is_some(), "the pilot is set to warp to the other room");

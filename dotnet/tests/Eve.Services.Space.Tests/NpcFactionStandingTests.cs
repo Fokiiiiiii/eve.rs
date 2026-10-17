@@ -37,14 +37,14 @@ public sealed class NpcFactionStandingTests
             // the first kill: standing 0 moves to -0.00006875 * (10 + 0) = -0.0006875 (EveJS's formula, rounded to thousandths by the store)
             var first = await standing.ApplyAsync(Pilot, Faction, System);
             Assert.NotNull(first);
-            var stored = await relations.ValueAsync(RelationKinds.Standing.Name, Pilot, Faction, 0);
+            var stored = await relations.ValueAsync(RelationKinds.Standing.Name, Faction, Pilot, 0);
             Assert.Equal(first!.Value, stored, 6);
             Assert.True(stored < 0);
 
             // another kill inside the ten-minute window moves nothing; a kill in another system is its own window
             now += 60_000;
             Assert.Null(await standing.ApplyAsync(Pilot, Faction, System));
-            Assert.Equal(stored, await relations.ValueAsync(RelationKinds.Standing.Name, Pilot, Faction, 0));
+            Assert.Equal(stored, await relations.ValueAsync(RelationKinds.Standing.Name, Faction, Pilot, 0));
             Assert.NotNull(await standing.ApplyAsync(Pilot, Faction, System + 1));
 
             // after the window the next kill applies again, and a restart (a new service over the same store) keeps the standing it stored
@@ -56,7 +56,7 @@ public sealed class NpcFactionStandingTests
             var restartedScheduler = new DurableScheduler(source, () => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(), new SchedulerOptions { Concurrency = 1 }, schemas[0]);
             var restartedEvents = new EventBus(source, restartedScheduler, new EventBusOptions { BackoffBaseMs = 1, BackoffMaxMs = 1 }, schemas[1]);
             var restarted = new NpcFactionStanding(new RelationStore(source, restartedScheduler, restartedEvents, schemas[2]), () => now);
-            Assert.Equal(after!.Value, await relations.ValueAsync(RelationKinds.Standing.Name, Pilot, Faction, 0), 6);
+            Assert.Equal(after!.Value, await relations.ValueAsync(RelationKinds.Standing.Name, Faction, Pilot, 0), 6);
             Assert.Null(await restarted.ApplyAsync(0, Faction, System));
         }
         finally

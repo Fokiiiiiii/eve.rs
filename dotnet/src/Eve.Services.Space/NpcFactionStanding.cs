@@ -30,11 +30,11 @@ public sealed class NpcFactionStanding(RelationStore relations, Func<long> nowMs
                 return null;
         }
 
-        var standing = await relations.ValueAsync(RelationKinds.Standing.Name, characterId, factionId, 0, cancellationToken: cancellationToken);
+        var standing = await relations.ValueAsync(RelationKinds.Standing.Name, factionId, characterId, 0, cancellationToken: cancellationToken);
         var next = UndockContraband.StandingAfter(standing, LossPerKillRaw);
         if (next == standing)
             return null;
-        await relations.SetAsync(RelationKinds.Standing.Name, characterId, factionId, next, Reason, cancellationToken);
+        await relations.SetAsync(RelationKinds.Standing.Name, factionId, characterId, next, Reason, cancellationToken);
         lock (_gate)
         {
             _lastApplied[key] = now;

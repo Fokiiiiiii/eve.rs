@@ -120,7 +120,7 @@ internal sealed partial class CharacterServicesComposition
                 SaveCharacterAsync: async (characterId, factionId, cooldown, cancellationToken) =>
                     await characters.SetFactionWarfareStateAsync(characterId, factionId, cooldown, cancellationToken),
                 ReadStandingAsync: async (subjectId, factionOrCorporationId, cancellationToken) =>
-                    await foundations.Relations.ValueAsync("standing", subjectId, factionOrCorporationId, 0, cancellationToken: cancellationToken))),
+                    await foundations.Relations.ValueAsync("standing", factionOrCorporationId, subjectId, 0, cancellationToken: cancellationToken))),
             new Eve.Services.Core.InsurgencySolarsystemService(new Eve.Services.Core.InsurgencySolarsystemRpcCallbacks(ReadInsurgencyCampaignsAsync)),
             new Eve.Services.Core.AlertService(),
             new Eve.Services.Core.FighterMgrService { Provider = FighterProvider() },

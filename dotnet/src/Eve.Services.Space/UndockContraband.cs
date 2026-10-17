@@ -338,11 +338,11 @@ public sealed class UndockContraband
         var loss = taken.Sum(line => line.StandingLoss);
         if (loss > 0)
         {
-            var standing = await _relations!.ValueAsync(Standing, settlement.CharacterId, settlement.FactionId, 0, connection, transaction, ct);
+            var standing = await _relations!.ValueAsync(Standing, settlement.FactionId, settlement.CharacterId, 0, connection, transaction, ct);
             var next = StandingAfter(standing, -loss);
             if (next != standing)
             {
-                await _relations.SetAsync(connection, transaction, Standing, settlement.CharacterId, settlement.FactionId, next,
+                await _relations.SetAsync(connection, transaction, Standing, settlement.FactionId, settlement.CharacterId, next,
                     StandingReason(settlement, taken, -loss), cancellationToken: ct);
             }
         }

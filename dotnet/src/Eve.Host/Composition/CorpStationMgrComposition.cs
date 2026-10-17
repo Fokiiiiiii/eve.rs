@@ -15,10 +15,10 @@ internal sealed partial class CharacterServicesComposition
     /// </summary>
     private async ValueTask<double> StandingTowardAsync(long character, long owner, CancellationToken cancellationToken)
     {
-        var personal = await foundations.Relations.ValueAsync(RelationKinds.Standing.Name, character, owner, 0, cancellationToken: cancellationToken);
+        var personal = await foundations.Relations.ValueAsync(RelationKinds.Standing.Name, owner, character, 0, cancellationToken: cancellationToken);
         var affiliation = await foundations.Relations.AffiliationOfAsync(character, cancellationToken: cancellationToken);
         var corporate = affiliation.Corporation is { } corporation
-            ? await foundations.Relations.ValueAsync(RelationKinds.Standing.Name, corporation, owner, 0, cancellationToken: cancellationToken)
+            ? await foundations.Relations.ValueAsync(RelationKinds.Standing.Name, owner, corporation, 0, cancellationToken: cancellationToken)
             : 0;
         return Math.Max(personal, corporate);
     }

@@ -2633,3 +2633,10 @@ Lane eve_p3, branch ch-s9 (merged with origin/main). Results (nothing skipped un
 
 - Live headless walk through a multi-room site with a MITM capture (eve_p2 lane).
 - Gate lock state in the slim item (the client's gate display).
+
+## GM tools backlog (2026-10-17)
+
+- Direct tests for the corporation-office tax and reprocessing tax reads of a standing (owner as subject; DEVIATIONS G4).
+- Stored standing rows written in the old direction (subject = character) before DEVIATIONS G4: a migration to swap them.
+- `/ship` spawn, `/tele` and `/solar` teleport, `/repair`, agent and mission control (`/missioncomplete`), PI and FW helpers (`/fw`), dbseed.py GM helper, DB-backed tests for the PI GM calls and the role grant, the MITM headless walk against EveJS, and docs/project/GM_QA_DESIGN.md.
+

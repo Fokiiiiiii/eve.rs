@@ -20,7 +20,8 @@ public static class ClientCallRequest
 
     public static PyValue Build(long clientId, long userId, string service, string method, IReadOnlyList<PyValue> args, long callId, PyDict? kwargs = null)
     {
-        var body = new PyTuple([new PyInt(1), new PyStr(method), new PyList([.. args]), kwargs ?? new PyDict([])]);
+        // the engine sends the arguments as a tuple (carbon ServiceCallGPCS.RemoteServiceCall: payload = (1, method, args, kw2) with *args)
+        var body = new PyTuple([new PyInt(1), new PyStr(method), new PyTuple([.. args]), kwargs ?? new PyDict([])]);
         var source = new MachoAddress(AddressKind.Node, NodeId: new PyInt(MachoMessage.ProxyNodeId), CallId: new PyInt(callId));
         var destination = new MachoAddress(AddressKind.Client, ClientId: new PyInt(clientId), Service: service);
         PyValue[] packet =

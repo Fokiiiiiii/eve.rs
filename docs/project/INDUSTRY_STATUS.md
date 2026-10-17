@@ -136,11 +136,9 @@ Slice 3:
   are client-side. Not built: corporation jobs, structure facilities beyond the existing structure lookup.
 
 Known differences, not closed:
-- The MITM capture against the real client and the EveJS reference run (`docs/project/MITM_COMPARE.md`) were not run in
-  slice 3; no client session was available to capture.
-- The MITM capture against the real client and the EveJS reference run (`docs/project/MITM_COMPARE.md`) were not run for the
-  industry walks; the shapes were compared by reading the code (InstallJob returns the job ID in both; cancel and
-  complete return nothing in both).
+- Open: no MITM capture against the real client for slice 3 (no client session was available to capture).
+- Open: no MITM capture of the industry walks against the real client or EveJS. The shapes were compared by reading the code
+  (InstallJob returns the job ID in both; cancel and complete return nothing in both).
 - Station Laboratory: the walk's station (60015249) has no Laboratory (service 15), so research there is refused by the SDE
   service list; the walks run research at the nearest Laboratory station, with the Scientific Networking level that reaches it.
 
@@ -230,10 +228,6 @@ R&D research agents: built, with two gaps (correction: the first text of this sl
   eve_p4 live port 26103, `tools/dev/run-eve-live.sh` under `/tmp/eve-heavy-eve_p4.lock`, capture `captures/eve-rs-research.jsonl`,
   git-ignored): 1 passed. The walk covers the closed field box, start with the agent's own choice list, the closed cancel question,
   the datacore purchase (10,000 ISK debited), `OnDatacoreBought`, and the cancel.
-- **EveJS diff: not run.** The walk seeds ISK, standings and skills with `psql` on the eve.rs PostgreSQL database (`seed_isk`,
-  `seed_standing`, `research_skill_count`), and EVE.js has no equivalent seed in the harness. Running the same scenario on EVE.js
-  needs that seeding written for its data files first. Status: NOT RUN; the reference shapes were compared by reading the code
-  (`researchDialogue.js`, `researchRuntime.js`): SingleChoiceBox, YesNo and GetQuantity argument shapes, the 1-based radio option
-  answer, the invalid-input line for dismissed boxes, and the purchase notifications (EveJS: wallet and item only).
+- **EveJS diff: run.** The same walk runs on EVE.js through `tools/mitm` (`docs/project/MITM_COMPARE.md`; EVE.js ports 26100, 26110, 26210; eve.rs lane `eve_p2`, 26101, 26111, 26211). The EVE.js side is seeded through its game-master commands (`/setisk`, `/setstanding`, `/giveskill`) by `tests/dbseed_evejs.py`, and its research clock through `tools/dev/evejs-timeshift.js`. Both walks passed. The research segment matches in call names, argument contents, answers, labels and notification order; the differences were the client-call argument container (eve.rs sent a list, now a tuple as the engine sends it), `OnDatacoreBought` (eve.rs sends it, EVE.js does not; kept, the client handles it) and the `OnItemChange` change map of the bought datacores (kept, equivalent for the client). Recorded in DEVIATIONS "Research dialogue against EveJS: MITM diff (slice 8, 2026-10-17)".
 - **Test counts.** Core: `dotnet test dotnet/tests/Eve.Services.Core.Tests --filter AgentResearch`, 12 passed, 0 failed (eve_p4).
   Host builds (`dotnet build dotnet/src/Eve.Host`, 0 warnings, 0 errors).

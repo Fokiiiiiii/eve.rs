@@ -20,11 +20,14 @@ import pytest
 from evecli import marshal as m
 from evecli.observe import notifications_of
 
+from tests import dbseed_evejs as evejs
 from tests.test_login_to_character import WALK, connect, revive
 
 LIVE = os.environ.get("EVE_LIVE_HOST", "")
 PG_URL = os.environ.get("EVE_PG_URL", "")
-pytestmark = pytest.mark.skipif(not (LIVE and PG_URL), reason="set EVE_LIVE_HOST=host:port and EVE_PG_URL to test against a running server")
+# the EVE.js reference (EVE_LIVE_SERVER=reference) takes its seeds from its game-master commands and reads from its SQLite file
+REFERENCE = os.environ.get("EVE_LIVE_SERVER", "") == "reference"
+pytestmark = pytest.mark.skipif(not (LIVE and (PG_URL or REFERENCE)), reason="set EVE_LIVE_HOST=host:port and EVE_PG_URL (or EVE_LIVE_SERVER=reference) to test against a running server")
 
 STORE_CORPORATION = 1000125  # an NPC corporation: the store the offer belongs to
 OFFER = 990001
@@ -34,6 +37,7 @@ COCKROACH = 11019  # the GM frigate (the pinned SDE's "Cockroach"): the standard
 START_RESEARCH, CANCEL_RESEARCH, BUY_DATACORES = 830, 831, 832  # the action tokens (AgentDialogueToken)
 REQUEST, ACCEPT, DECLINE = 376, 377, 378
 DAY_MS = 86_400_000
+SKIP_REFERENCE = pytest.mark.skipif(REFERENCE, reason="the EVE.js reference walk covers the research dialogue only")
 
 
 def new_pilot(client, run: str) -> int:
@@ -45,12 +49,14 @@ def new_pilot(client, run: str) -> int:
     creation = next(step for step in WALK["steps"] if step["call"][1] == "CreateCharacterWithDoll" and "ok" in step)
     service, method, described = creation["call"]
     character_id = m.plain(client.call(service, method, *[revive(value, run) for value in described]))
-    seed_ship(character_id)
+    if not REFERENCE:
+        seed_ship(character_id)
     client.notifications.clear()
     client.call("charUnboundMgr", "SelectCharacterID", charID=character_id, secondChoiceID=None, skipTutorial=False)
     # the pilot's active ship is the Cockroach, in the station hangar
-    ship = int(psql(f"SELECT ship_id FROM {schema('EVE_CHARACTERS_SCHEMA')}.characters WHERE id = {character_id}"))
-    assert int(psql(f"SELECT type_id FROM {schema('EVE_INVENTORY_SCHEMA')}.items WHERE id = {ship} AND flag = 4")) == COCKROACH
+    if not REFERENCE:
+        ship = int(psql(f"SELECT ship_id FROM {schema('EVE_CHARACTERS_SCHEMA')}.characters WHERE id = {character_id}"))
+        assert int(psql(f"SELECT type_id FROM {schema('EVE_INVENTORY_SCHEMA')}.items WHERE id = {ship} AND flag = 4")) == COCKROACH
     return character_id
 
 
@@ -117,6 +123,8 @@ def agents(client) -> list:
 
 
 def research_skill_count(agent_id: int) -> int:
+    if REFERENCE:
+        return evejs.research_skill_count(agent_id)
     """The distinct skills an R&D agent offers in the SDE (npcCharacters.skills of its agentTypeID 4 record)."""
     return int(psql(f"SELECT count(DISTINCT s->>'typeID') FROM sde.\"npcCharacters\", jsonb_array_elements(doc->'skills') s WHERE key = '{agent_id}'"))
 
@@ -141,10 +149,53 @@ def says_label(says) -> str:
     return message[0] if isinstance(message, (tuple, list)) else str(message)
 
 
+def seed_wallet(client, character_id, amount):
+    """The pilot's ISK: the reference takes the absolute amount through its /setisk, eve.rs adds it in the database."""
+    if REFERENCE:
+        evejs.set_isk(client, amount)
+    else:
+        seed_isk(character_id, amount)
+
+
+def seed_agent_standing(client, subject, character_id):
+    """A standing toward an agent or its corporation: /setstanding on the reference, the relations rows on eve.rs."""
+    if REFERENCE:
+        evejs.set_standing(client, subject)
+    else:
+        seed_standing(subject, character_id)
+
+
+def seed_personal_standing(client, agent, character_id):
+    """The pilot's own standing toward an agent (the agent's personal standing, not its corporation's)."""
+    if REFERENCE:
+        evejs.set_agent_standing(client, agent)
+    else:
+        seed_standing(agent, character_id)
+
+
+def balance_of(client, character_id):
+    return evejs.cash_balance(client, character_id) if REFERENCE else isk_of(character_id)
+
+
+def project_count(character_id, expected=None):
+    if REFERENCE:
+        return evejs.research_project_count(character_id, until=expected)
+    return int(psql(f"SELECT count(*) FROM {schema('EVE_AGENTS_SCHEMA')}.research_projects WHERE character_id = {character_id}"))
+
+
+def age_projects(character_id, milliseconds):
+    """Time passes for the project: eve.rs moves its start back in the database, the reference moves its clock forward."""
+    if REFERENCE:
+        evejs.advance_clock(milliseconds)
+    else:
+        psql(f"UPDATE {schema('EVE_AGENTS_SCHEMA')}.research_projects SET started_at_ms = started_at_ms - {milliseconds} WHERE character_id = {character_id}")
+
+
 def run_id() -> str:
     return uuid.uuid4().hex[:10]
 
 
+@SKIP_REFERENCE
 def test_lp_store_purchase_takes_lp_and_isk_and_grants_the_item():
     wallet = schema("EVE_WALLET_SCHEMA")
     with connect(f"lp-{run_id()}") as client:
@@ -167,17 +218,16 @@ def test_research_start_cancel_and_datacores_over_the_dialogs():
     with connect(f"rnd-{run_id()}") as client:
         character_id = new_pilot(client, run_id())
         client.call("slash", "SlashCmd", "/giveskill me all 5")
-        seed_isk(character_id, 1_000_000)
+        seed_wallet(client, character_id, 1_000_000)
         agent = next(row for row in agents(client) if row["agentTypeID"] == RESEARCH_AGENT_TYPE and not row["isInSpace"])
-        seed_standing(agent["corporationID"], character_id)
-        seed_standing(agent["agentID"], character_id)
+        seed_agent_standing(client, agent["corporationID"], character_id)
+        seed_personal_standing(client, agent["agentID"], character_id)
         handle = client.call("agentMgr", "MachoBindObject", agent["agentID"])
 
         # a closed field box (the client answers None) starts nothing and offers no cancel
         client.answer("SingleChoiceBox", None)
         says, actions, _ = do_action(client, handle, START_RESEARCH)
-        assert (CANCEL_RESEARCH, 13) not in actions and psql(
-            f"SELECT count(*) FROM {schema('EVE_AGENTS_SCHEMA')}.research_projects WHERE character_id = {character_id}") == "0"
+        assert (CANCEL_RESEARCH, 13) not in actions and project_count(character_id, 0) == 0
 
         # start: the client picks the first field, and the project runs
         client.answer("SingleChoiceBox", (True, "radioboxOption1Selected"))
@@ -189,29 +239,31 @@ def test_research_start_cancel_and_datacores_over_the_dialogs():
         assert len(choices) == research_skill_count(agent["agentID"]), (len(choices), client.dialogs)
 
         # the points accrue: two days in, a datacore costs 100 RP and 10,000 ISK, and the affordable quantity is asked
-        psql(f"UPDATE {schema('EVE_AGENTS_SCHEMA')}.research_projects SET started_at_ms = started_at_ms - {2 * DAY_MS} "
-             f"WHERE character_id = {character_id}")
-        isk_before = isk_of(character_id)
+        age_projects(character_id, 2 * DAY_MS)
+        isk_before = balance_of(client, character_id)
         client.answer("GetQuantity", 1)
         says, actions, _ = do_action(client, handle, BUY_DATACORES)
         assert "BoughtDatacores" in says_label(says)
-        assert isk_before - isk_of(character_id) == 10_000
+        assert isk_before - balance_of(client, character_id) == 10_000
         # the client's OnDatacoreBought(characterID, agentID, balance) reaches the buyer after the commit
-        assert "OnDatacoreBought" in names(client), sorted(names(client))
+        # EVE.js sends no OnDatacoreBought (a recorded difference, DEVIATIONS: the client handles it, agents.py), so the reference walk does not wait for it
+        if not REFERENCE:
+            assert "OnDatacoreBought" in names(client), sorted(names(client))
 
         # a closed cancel question (None) keeps the project
         client.answer("YesNo", None)
         do_action(client, handle, CANCEL_RESEARCH)
-        assert psql(f"SELECT count(*) FROM {schema('EVE_AGENTS_SCHEMA')}.research_projects WHERE character_id = {character_id}") == "1"
+        assert project_count(character_id, 1) == 1
 
         # cancel: a yes ends the project and the idle buttons offer to start again
         client.answer("YesNo", True)
         says, actions, _ = do_action(client, handle, CANCEL_RESEARCH)
         assert "ResearchCancelled" in says_label(says)
         assert (START_RESEARCH, 12) in actions
-        assert psql(f"SELECT count(*) FROM {schema('EVE_AGENTS_SCHEMA')}.research_projects WHERE character_id = {character_id}") == "0"
+        assert project_count(character_id, 0) == 0
 
 
+@SKIP_REFERENCE
 def test_locator_locates_a_second_pilot_charges_the_fee_and_tells_the_requester():
     run = run_id()
     with connect(f"loc-{run}") as requester, connect(f"target-{run}") as target:
@@ -244,6 +296,7 @@ def test_locator_locates_a_second_pilot_charges_the_fee_and_tells_the_requester(
         assert "OnNotificationReceived" in seen
 
 
+@SKIP_REFERENCE
 def test_agent_decline_asks_first_and_a_yes_declines_the_offer():
     with connect(f"dec-{run_id()}") as client:
         character_id = new_pilot(client, run_id())

@@ -4314,6 +4314,45 @@ Sources: eve-logic `eve/client/script/ui/shared/bookmarks/bookmarkSvc.py` (the `
   `BookmarkLocation` in space (needs the space scene; refused with the notice).
 - **Status.** Superseded: the shared folders are built (next section).
 
+## Research dialogue against EveJS: MITM diff (slice 8, 2026-10-17)
+
+Run: `tools/headless-client/tests/test_agents_live.py -k research` on eve.rs (lane `eve_p2`, live 26101, MITM 26211) and on
+EVE.js v0.12.9 (`tools/dev/run-evejs-live.sh`, live 26100, MITM 26210), both through `tools/mitm`, captures
+`captures/eve-rs-research.jsonl` and `captures/evejs-research.jsonl` (git-ignored). Both walks: 1 passed. Compared: the
+research segment from the first `SingleChoiceBox` to the last call response.
+
+- **Same on both sides.** The call names and argument contents (SingleChoiceBox title, body, choices and agent id; YesNo title,
+  body and agent id; GetQuantity kwargs `maxvalue`, `minvalue`, `setvalue`, `caption`, `label`, `digits`), every `DoAction`
+  answer (the agent's say, the actions with their buttons, and `lastActionInfo`) for the closed field box, start, closed
+  purchase, purchase, closed cancel and cancel, the `OnAccountChange` and `OnItemChange` notifications, and their order. The
+  choice list is the agent's two skills (SDE `npcCharacters`, agent 3009318).
+- **Fixed in eve.rs: client call arguments are a tuple.** eve.rs sent the argument list of every server-to-client call as a
+  list. The engine builds the call body from `*args`, `payload = (1, method, args, kw2)` (eve-logic
+  `carbon/common/script/net/ServiceCallGPCS.py`, `RemoteServiceCall`), so the arguments are a tuple; EVE.js sends a tuple too.
+  `ClientCallRequest.Build` now sends a tuple (`dotnet/src/Eve.Services/ClientCallRequest.cs`), pinned by the test
+  `The_call_arguments_are_a_tuple_as_the_engine_sends_them`. The V24.01 client unpacks the arguments by index and applies them
+  (`ServiceCallGPCS.CallUp`), so that path does not reject the list form; the tuple is the engine's shape. Not checked on the
+  graphical client.
+- **Intended: `OnDatacoreBought` is sent by eve.rs, not by EVE.js.** The client defines the handler
+  (eve-logic `eve/client/script/ui/station/agents/agents.py`, `OnDatacoreBought`: it refreshes the research view and the
+  agent's points per day). eve.rs sends it to the buyer after the commit, with the balance after the debit
+  (`PersistenceAgentResearch.BuyDatacoresAsync`). Kept. The eve.rs walk asserts it; the EVE.js walk does not (`if not REFERENCE`
+  in the test).
+- **Intended: the `OnItemChange` of a bought datacore has an empty change map on eve.rs.** EVE.js sends its old values,
+  `{3: 0, 9: 0}` (`ixLocationID`, `ixStackSize`, eve-logic `const.py` and `inventorycommon/const.py`). eve.rs sends `{}` for a
+  created item, as the other created items do (`LpStoreMgrService.Differences`, `TradeMgrService.Differences`). The client's
+  `invCache.OnItemChange` (`eve/client/script/environment/invCache.py`) puts an item owned by the pilot in its station hangar
+  from either map, so the hangar result is the same. Kept; not a client difference.
+- **Harness differences (the walks, not the servers).** eve.rs adds 1,000,000 ISK to the pilot's balance in PostgreSQL; EVE.js
+  sets it to 1,000,000 with `/setisk`. Both debit 10,000 ISK for one datacore. The agent's standing is set with `/setstanding`
+  by the agent's name on EVE.js (a numeric agent id does not resolve there); the corporation's by its id. Skills: `/giveskill me
+  all 5` on both. Research time: eve.rs moves the project's start two days back in PostgreSQL; EVE.js's research clock is moved
+  two days by a preload that shifts only the research runtime's `Date.now` (`tools/dev/evejs-timeshift.js`; the persistence
+  owner lease reads the same clock and would expire, which is why only that caller is shifted). Both accrue two days, so one
+  datacore (100 RP) is affordable on both.
+- **Not compared.** The graphical client, the station's Laboratory, and the other agent walks (the locator, the LP store and
+  the decline dialogue are eve.rs-only: their seeds are PostgreSQL rows, and the EVE.js walk runs the research test only).
+
 ## Owner groups: ownerGroupManager (access lists), built 2026-10-17
 
 Sources: eve-logic `ownergroups/ownergroupConst.py` (membership types none -1, member 0, manager 1, admin 2, excluded 3; the group

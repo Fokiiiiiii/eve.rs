@@ -15,7 +15,7 @@ public sealed class PgFactAttribute : FactAttribute
 
 public sealed class StoreTests
 {
-    private static NpgsqlDataSource Source() => NpgsqlDataSource.Create(Environment.GetEnvironmentVariable("EVE_PG_URL")!);
+    private static NpgsqlDataSource Source() => NpgsqlDataSource.Create(Eve.Data.PgConnection.ForTest(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
 
     private static string Schema() => "pl_" + Guid.NewGuid().ToString("N")[..12];
 

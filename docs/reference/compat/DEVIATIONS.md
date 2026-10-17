@@ -4614,3 +4614,9 @@ as reference. The client's `bookmarkSvc.py` (`OnSharedBookmarksFolderUpdated`, `
 - Tests: `simlink_fixtures` (8 tests; the golden frames add 6 valid and 8 invalid SetSlimField cases), `deployable::tests::a_dynamic_slim_field...`,
   `SimCodecTests` (replays the frames in C#), `Eve.Services.Space.Tests` (the beacon host tests, eve_p4).
 
+
+## GM tools, slice G1: /isk wired and its journal reference (2026-10-17)
+
+- **`/isk` was registered but not served.** `IskCommands` existed, and `SlashService` took it, but the host never built it, so `/isk` answered `Unknown command`. It is now constructed in `AgentRpc` on the economy wallet and announces the balance change after the commit (cash account 1000, as the skill purchase does).
+- **Journal reference of `/isk` is 3, not 10.** ESI names `gm_cash_transfer` as id 10. The V24.01 client's journal labels come from `appConst.refGMCashTransfer = 3` (eve-logic `appConst.py:645`, grouped with the transfer reference of corporation withdrawals), and the client's wallet shows that label. The project's choice is the client's value: a 10 would be a reference the client does not name. EveJS also writes 3 (`GM_CASH_TRANSFER`, see the ST-18 fine note above).
+- **Checked:** `IskCommandTests` (Eve.Services.Dogma.Tests, database-backed): a give and a take each write one journal entry with reference 3 and the balance after it, the announcement fires once with the new balance, a session without a staff role is refused and the wallet does not move, a session without a character and a zero amount get their answers. Run on the eve_p2 lane.

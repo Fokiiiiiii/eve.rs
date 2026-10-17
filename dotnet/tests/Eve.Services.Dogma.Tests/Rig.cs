@@ -89,7 +89,9 @@ internal sealed class Rig : IAsyncDisposable
         Timers = new Eve.Scheduler.LocalTimers(delay: Delay.WaitAsync);
         var boosterActivation = activateBooster ?? ((long _, long _, string _, long? _, long? _, CancellationToken _) => ValueTask.FromResult<bool?>(null));
         Service = new DogmaIMService(statics, Ships, () => ClockMs, boosterActivation, null, Targeting, SpaceModules, Health, Rounds, Delay.WaitAsync, localTimers: Timers).ListeningForDryGuns();
-        Slash = new SlashService(new ShipHealthCommands(Ships, statics, () => ClockMs, Health));
+        Transactions = new WalletTransactions(source, _schemas[3]);
+        Wallets = new PgWalletStore(source, _schemas[3]);
+        Slash = new SlashService(new ShipHealthCommands(Ships, statics, () => ClockMs, Health), isk: new IskCommands(Transactions, source, () => ClockMs));
         Inventory = new InvBrokerService(Items, new ItemTypeCatalog(sde), new Eve.Universe.StationCatalog([]), Ships, statics, () => ClockMs);
     }
 
@@ -110,6 +112,11 @@ internal sealed class Rig : IAsyncDisposable
 
     /// <summary>The game master's commands.</summary>
     public SlashService Slash { get; }
+
+    /// <summary>The wallets, the same schema the character's ISK lives in.</summary>
+    public PgWalletStore Wallets { get; }
+
+    public WalletTransactions Transactions { get; }
 
     public NpgsqlDataSource Source { get; }
 

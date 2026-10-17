@@ -748,6 +748,15 @@ impl Message {
                 out.extend_from_slice(&point.occupier_faction.to_le_bytes());
                 out.extend_from_slice(&point.next_point_time.to_le_bytes());
             }
+            Self::PlaceBattlefieldScoreboard(scoreboard) => {
+                out.extend_from_slice(&scoreboard.deployable_id.to_le_bytes());
+                out.extend_from_slice(&scoreboard.solar_system_id.to_le_bytes());
+                put_text(&mut out, &scoreboard.name);
+                out.extend_from_slice(&scoreboard.type_id.to_le_bytes());
+                out.extend_from_slice(&scoreboard.group_id.to_le_bytes());
+                put_vector(&mut out, &scoreboard.position);
+                out.extend_from_slice(&scoreboard.radius.to_le_bytes());
+            }
             Self::PlaceAsteroid(asteroid) => {
                 out.extend_from_slice(&asteroid.solar_system_id.to_le_bytes());
                 out.extend_from_slice(&asteroid.asteroid_id.to_le_bytes());

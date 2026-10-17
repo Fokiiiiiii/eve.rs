@@ -200,6 +200,9 @@ public interface ISimulation
     /// <summary>Puts a battlefield's capture point in its system's space (protocol 77).</summary>
     void PlaceCapturePoint(SimPlaceCapturePoint point);
 
+    /// <summary>Puts a battlefield's scoreboard in its system's space (protocol 78).</summary>
+    void PlaceBattlefieldScoreboard(SimPlaceBattlefieldScoreboard scoreboard);
+
     /// <summary>Removes the structure-owned cyno beacon from a specific solar-system scene.</summary>
     void RemoveCynoBeacon(int solarSystemId, long structureBeaconId);
 

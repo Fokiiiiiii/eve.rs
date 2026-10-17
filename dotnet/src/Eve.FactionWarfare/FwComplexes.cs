@@ -40,6 +40,12 @@ public interface IFwComplexSites
 
     /// <summary>Ends the complex's site (its pilots are taken out and its NPCs removed).</summary>
     Task EndAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long instanceId, CancellationToken cancellationToken);
+
+    /// <summary>The point a battlefield of a system is laid out from (outside the system's star, as the complex sites are).</summary>
+    Task<double[]> OriginAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long solarSystemId, CancellationToken cancellationToken);
+
+    /// <summary>The pilots of a system within a radius of a point, with their war factions (0 for none).</summary>
+    Task<IReadOnlyList<FwComplexPilot>> PilotsNearAsync(long solarSystemId, double[] at, double radius, CancellationToken cancellationToken);
 }
 
 /// <summary>A pilot inside a complex: its character and its war faction (0 for none).</summary>

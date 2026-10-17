@@ -16,7 +16,7 @@ public sealed record FwStatsWindow(long KillsYesterday, long KillsLastWeek, long
 /// The factional warfare state in PostgreSQL (schema <c>factionwarfare</c>, migration 0001). Every method takes the caller's connection and
 /// transaction; the rules and the transactions are in <see cref="FwService"/>.
 /// </summary>
-public sealed class FwStore
+public sealed partial class FwStore
 {
     public const string DefaultSchema = "factionwarfare";
     public const int CorporationKind = 1;

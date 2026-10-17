@@ -462,6 +462,7 @@ impl Sim {
             | Message::PlaceDeadspacePocket(..)
             | Message::PlaceAccelerationGate(..)
             | Message::PlaceCapturePoint(..)
+            | Message::PlaceBattlefieldScoreboard(..)
             | Message::RemoteDecloakPing { .. }
             | Message::SetDisruptorActive { .. }
             | Message::TetherPolicy { .. }
@@ -1331,6 +1332,13 @@ impl Sim {
                 let point = *point;
                 match self.scenes.get_mut(&point.solar_system_id) {
                     Some(scene) => scene.place_capture_point(point, now),
+                    None => Vec::new(),
+                }
+            }
+            Message::PlaceBattlefieldScoreboard(scoreboard) => {
+                let scoreboard = *scoreboard;
+                match self.scenes.get_mut(&scoreboard.solar_system_id) {
+                    Some(scene) => scene.place_battlefield_scoreboard(scoreboard, now),
                     None => Vec::new(),
                 }
             }

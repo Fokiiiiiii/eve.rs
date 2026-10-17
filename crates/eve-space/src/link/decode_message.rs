@@ -827,6 +827,27 @@ impl Message {
                     next_point_time,
                 }))
             }
+            kind::PLACE_BATTLEFIELD_SCOREBOARD => {
+                let deployable_id = r.i64()?;
+                let solar_system_id = r.i32()?;
+                let name = r.text()?;
+                let type_id = r.i32()?;
+                let group_id = r.i32()?;
+                let position = read_vector(&mut r)?;
+                let radius = r.f64()?;
+                if !(radius.is_finite() && radius >= 0.0) {
+                    return Err(DecodeError::BadValue("scoreboard"));
+                }
+                Message::PlaceBattlefieldScoreboard(Box::new(ScoreboardPlacement {
+                    deployable_id,
+                    solar_system_id,
+                    name,
+                    type_id,
+                    group_id,
+                    position,
+                    radius,
+                }))
+            }
             kind::DRONE_WORK_RESULT => {
                 let session_id = r.u64()?;
                 let drone_id = r.i64()?;

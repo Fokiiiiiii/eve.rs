@@ -1064,11 +1064,11 @@ fn a_capture_point_is_put_in_space_once_with_the_factions_and_next_point_time_th
     let point = crate::link::CapturePointPlacement {
         deployable_id: CRAB + 10,
         solar_system_id: 30_100_032,
-        name: "30km Caldari Capture Point".to_string(),
-        type_id: 29_421,
-        group_id: 922,
+        name: "Caldari Control Zone A".to_string(),
+        type_id: 73_445,
+        group_id: 4_494,
         position: [a.x + 1_000.0, a.y, a.z],
-        radius: 300.0,
+        radius: 231.0,
         attacker_faction: 500_004,
         occupier_faction: 500_001,
         next_point_time: 133_900_000_000_000_000,
@@ -1086,6 +1086,28 @@ fn a_capture_point_is_put_in_space_once_with_the_factions_and_next_point_time_th
     );
     assert_eq!(scene.deployables[&(CRAB + 10)].role, Role::CapturePoint);
     assert!(scene.place_capture_point(point, t).is_empty(), "given once");
+}
+
+#[test]
+fn a_battlefield_scoreboard_is_put_in_space_once_with_no_score_until_the_host_sets_one() {
+    let (mut scene, t) = crowd();
+    let a = scene.pilots[&A].ship.position;
+    let board = crate::link::ScoreboardPlacement {
+        deployable_id: CRAB + 11,
+        solar_system_id: 30_100_032,
+        name: "Caldari Scoreboard".to_string(),
+        type_id: 73_449,
+        group_id: 227,
+        position: [a.x + 1_000.0, a.y, a.z],
+        radius: 0.0,
+    };
+    let told = format!("{:?}", scene.place_battlefield_scoreboard(board.clone(), t));
+    assert!(
+        told.contains("AddBalls2") && !told.contains("component_fwScoreboard_score"),
+        "the ball is told with no score field"
+    );
+    assert_eq!(scene.deployables[&(CRAB + 11)].role, Role::BattlefieldScoreboard);
+    assert!(scene.place_battlefield_scoreboard(board, t).is_empty(), "given once");
 }
 
 #[test]

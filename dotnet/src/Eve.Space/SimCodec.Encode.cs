@@ -1274,6 +1274,16 @@ private static void WriteStructureDamageCorrelation(
                 w.I32(0);
                 w.I64(0);
                 break;
+            case SimPlaceBattlefieldScoreboard m:
+                w.U8(Kind.PlaceBattlefieldScoreboard);
+                w.I64(m.DeployableId);
+                w.I32(m.SolarSystemId);
+                w.Text(m.Name);
+                w.I32(m.TypeId);
+                w.I32(m.GroupId);
+                WriteVector(w, m.Position);
+                w.F64(m.Radius);
+                break;
             case SimPlaceCapturePoint m:
                 w.U8(Kind.PlaceCapturePoint);
                 w.I64(m.DeployableId);

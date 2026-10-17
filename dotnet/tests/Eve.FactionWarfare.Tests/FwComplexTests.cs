@@ -165,6 +165,10 @@ public sealed class FwComplexTickerTests
         public Task<IReadOnlyList<FwComplexPilot>> PilotsInsideAsync(long solarSystemId, long instanceId, CancellationToken cancellationToken) =>
             Task.FromResult<IReadOnlyList<FwComplexPilot>>(factions.Select((faction, index) => new FwComplexPilot(1000 + index, faction)).ToList());
         public Task EndAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long instanceId, CancellationToken cancellationToken) => Task.CompletedTask;
+        public Task<double[]> OriginAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long solarSystemId, CancellationToken cancellationToken) =>
+            Task.FromResult<double[]>([0d, 0d, 1e9]);
+        public Task<IReadOnlyList<FwComplexPilot>> PilotsNearAsync(long solarSystemId, double[] at, double radius, CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyList<FwComplexPilot>>(factions.Select((faction, index) => new FwComplexPilot(1000 + index, faction)).ToList());
     }
 
     private static async Task<FwComplex?> OpenSizeAsync(FwRig rig, long systemId, ComplexSize size)

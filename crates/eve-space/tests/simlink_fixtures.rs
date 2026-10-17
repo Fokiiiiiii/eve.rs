@@ -1248,6 +1248,17 @@ fn message_of(case: &Value) -> Message {
                 ship_id: wide(case, "shipId"),
             }))
         }
+        "PlaceBattlefieldScoreboard" => {
+            Message::PlaceBattlefieldScoreboard(Box::new(eve_space::link::ScoreboardPlacement {
+                deployable_id: wide(case, "deployableId"),
+                solar_system_id: number("solarSystemId") as i32,
+                name: text(case, "typeName"),
+                type_id: number("typeId") as i32,
+                group_id: number("groupId") as i32,
+                position: vector_of(case, "position"),
+                radius: case["radius"].as_f64().unwrap(),
+            }))
+        }
         "PlaceCapturePoint" => Message::PlaceCapturePoint(Box::new(eve_space::link::CapturePointPlacement {
             deployable_id: wide(case, "deployableId"),
             solar_system_id: number("solarSystemId") as i32,

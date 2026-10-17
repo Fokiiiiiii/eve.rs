@@ -3,6 +3,7 @@ using Eve.FactionWarfare;
 using Eve.Services.Space;
 using Eve.Services.Space.Waves;
 using Eve.Marshal;
+using Eve.Wallet;
 using Eve.Services;
 using Npgsql;
 using static Eve.Host.HostConfiguration;
@@ -211,7 +212,8 @@ internal sealed partial class CharacterServicesComposition
                     .ToList();
             });
         complexInstanceOfPilot = sites.InstanceOfAsync;
-        var complexes = new FwComplexDirector(factionWarfareStore, foundations.Scheduler, foundations.Events, sites);
+        var complexes = new FwComplexDirector(factionWarfareStore, foundations.Scheduler, foundations.Events, sites,
+            new FwLoyaltyRewards(() => loyaltyPoints, MemberLpTermsAsync));
         await complexes.AttachAsync();
         foundations.Events.Subscribe("factionwarfare.complex-notices", [FwComplexDirector.ResolvedTopic],
             (context, cancellation) =>
@@ -219,6 +221,67 @@ internal sealed partial class CharacterServicesComposition
                 NotifyComplexResolved(context.Event.Payload<FwComplexResolution>()!);
                 return Task.CompletedTask;
             });
+        foundations.Events.Subscribe("factionwarfare.battlefield-balls", [FwComplexDirector.BattlefieldStateTopic],
+            (context, cancellation) =>
+            {
+                NotifyBattlefieldState(context.Event.Payload<FwBattlefieldState>()!);
+                return Task.CompletedTask;
+            });
+        foundations.Events.Subscribe("factionwarfare.battlefield-notices", [FwComplexDirector.BattlefieldWonTopic],
+            (context, cancellation) =>
+            {
+                NotifyBattlefieldWon(context.Event.Payload<FwBattlefieldWon>()!);
+                return Task.CompletedTask;
+            });
+    }
+
+    /// <summary>
+    /// A battlefield's balls after a tick: each point and the scoreboard are placed (the simulation keeps the first placement), a point's next tick and the
+    /// scoreboard's score are set, and a closed battlefield's balls are taken out.
+    /// </summary>
+    private void NotifyBattlefieldState(FwBattlefieldState state)
+    {
+        if (spaceContainers is not { } space)
+            return;
+        if (state.Closed)
+        {
+            foreach (var point in state.Points)
+                space.RemoveBattlefieldBall(point.PointId);
+            space.RemoveBattlefieldBall(state.ScoreboardId);
+            return;
+        }
+        foreach (var point in state.Points)
+        {
+            space.PlaceBattlefieldPoint(point.PointId, (int)state.SolarSystemId, point.Name, point.TypeId, FwBattlefields.PointGroupId, point.Position,
+                FwBattlefields.PointRadiusMeters, state.AttackerId, state.OccupierId);
+            space.SetBattlefieldPointNextTick(point.PointId, point.NextTickMs == 0 ? 0 : DateTimeOffset.FromUnixTimeMilliseconds(point.NextTickMs).UtcDateTime.ToFileTimeUtc());
+        }
+        space.PlaceBattlefieldScoreboard(state.ScoreboardId, (int)state.SolarSystemId, state.ScoreboardName, state.ScoreboardTypeId, FwBattlefields.ScoreboardGroupId,
+            state.Points[0].Position);
+        space.SetBattlefieldScore(state.ScoreboardId, state.Score);
+    }
+
+    /// <summary>A battlefield won: the pilots in its system get OnFwScoreboardWon (the client's hero notice: the winning faction), and the system's victory points.</summary>
+    private void NotifyBattlefieldWon(FwBattlefieldWon win)
+    {
+        SendAtSystems([win.SolarSystemId], "OnFwScoreboardWon", new PyInt(win.SolarSystemId), new PyInt(win.ScoreboardId), new PyInt(win.WinnerId));
+        SendAtSystems([win.SolarSystemId], "OnVictoryPointStateUpdated", new PyInt(win.SolarSystemId),
+            Eve.Services.Core.FwVictoryPointMgrService.StatePayload(new Eve.Services.Core.FwVictoryPointState(win.AttackerPoints)));
+    }
+
+    /// <summary>
+    /// The loyalty points of a battlefield win, credited in the ticking transaction through the loyalty store: the member's corporation takes its tax
+    /// (the insurgency payout's rule), and the winning side's militia is the issuer.
+    /// </summary>
+    private sealed class FwLoyaltyRewards(Func<LoyaltyPointStore> loyalty, Func<long, CancellationToken, ValueTask<(long CorporationId, decimal TaxRate)>> termsOf) : IFwRewards
+    {
+        public async Task CreditLpAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long characterId, long issuerCorpId, long amount, string reference,
+            CancellationToken cancellationToken)
+        {
+            var (corporationId, taxRate) = await termsOf(characterId, cancellationToken);
+            await loyalty().CreditMemberAsync(connection, transaction, characterId, corporationId, taxRate, issuerCorpId, amount, "factionwarfare_battlefield", reference,
+                cancellationToken);
+        }
     }
 
     /// <summary>The victory point state of every occupied system (the client's fwVictoryPointMgr: the attacker points against the vulnerability threshold).</summary>

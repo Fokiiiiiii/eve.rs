@@ -75,6 +75,9 @@ pub enum Role {
     /// A battlefield's capture point the host keeps a record of (protocol 77): a ball the pilots of its system see, with its factions and next point time
     /// as its dynamic slim fields. It has no effect in the simulation: the host decides who holds it.
     CapturePoint,
+    /// A battlefield's scoreboard the host keeps a record of (protocol 78): a ball the pilots of its system see, whose score is its dynamic slim field.
+    /// It has no effect in the simulation.
+    BattlefieldScoreboard,
     /// A jump bridge a ship opened (command 28, protocol 54): it lives until its time is up, is put in no client ball, and lets the fleet ships in 2 500 metres of
     /// the ship pass through it to the field (command 31). The field is the one the bridge targets; the destination is that field's system.
     JumpBridge { field_id: i64, destination_system: i32, range_meters: f64 },
@@ -99,6 +102,8 @@ const DEPLOYABLE_CATEGORY: i32 = 22;
 const ACCELERATION_GATE_CATEGORY: i32 = 2;
 /// The category of a capture point's ball (the SDE group 922, "Capture Point", is category 11).
 const CAPTURE_POINT_CATEGORY: i32 = 11;
+/// The category of a battlefield scoreboard's ball (the SDE group 227 of the scoreboard types is category 2).
+const BATTLEFIELD_SCOREBOARD_CATEGORY: i32 = 2;
 
 /// How long a structure's bomb waits for the Host's authorization of its blast before it goes off with no effect (30 seconds of scene time).
 const BOMB_IMPACT_TICKS: i64 = 30 * crate::scene::TICKS_PER_SECOND;
@@ -169,7 +174,7 @@ fn release_actions(stamp: u32, deployable: &Deployable) -> Result<Vec<Value>, ev
         | Role::ControlTower { .. }
         | Role::DeadspacePocket => (Kind::Other, LegacyMode::Stop),
         Role::AccelerationGate => (Kind::Stargate, LegacyMode::Stop),
-        Role::CapturePoint => (Kind::Other, LegacyMode::Stop),
+        Role::CapturePoint | Role::BattlefieldScoreboard => (Kind::Other, LegacyMode::Stop),
         Role::JumpBridge { .. } => (Kind::Other, LegacyMode::Stop),
         Role::AnalysisBeacon { .. } => (Kind::Container, LegacyMode::Stop),
     };
@@ -230,6 +235,7 @@ fn category_of(role: &Role) -> i32 {
         | Role::AnalysisBeacon { .. } => DEPLOYABLE_CATEGORY,
         Role::AccelerationGate => ACCELERATION_GATE_CATEGORY,
         Role::CapturePoint => CAPTURE_POINT_CATEGORY,
+        Role::BattlefieldScoreboard => BATTLEFIELD_SCOREBOARD_CATEGORY,
         _ => CHARGE_CATEGORY,
     }
 }
@@ -804,6 +810,40 @@ impl Scene {
         self.insert_deployable(deployable, now)
     }
 
+    /// A battlefield's scoreboard is put in space (protocol 78). Its score starts at none (the client reads none as 0) and the host sets it. Given once.
+    pub(crate) fn place_battlefield_scoreboard(
+        &mut self,
+        placement: crate::link::ScoreboardPlacement,
+        now: i64,
+    ) -> Vec<Out> {
+        if self.deployables.contains_key(&placement.deployable_id) {
+            return Vec::new();
+        }
+        let [x, y, z] = placement.position;
+        let deployable = Deployable {
+            id: placement.deployable_id,
+            spec: Spec {
+                charge_type_id: placement.type_id,
+                group_id: placement.group_id,
+                name: placement.name,
+                radius: placement.radius,
+            },
+            role: Role::BattlefieldScoreboard,
+            position: Vec3::new(x, y, z),
+            ends_at: i64::MAX,
+            launcher: 0,
+            ship_id: 0,
+            owner_id: 0,
+            corporation_id: 0,
+            alliance_id: 0,
+            module_id: 0,
+            module_type: 0,
+            watchers: BTreeSet::new(),
+            slim_fields: BTreeMap::new(),
+        };
+        self.insert_deployable(deployable, now)
+    }
+
     /// A Mobile Cynosural Inhibitor the host keeps a record of is put in space where it lies, anchored or not (protocol 50). Given once; its end is the host's.
     pub(crate) fn place_inhibitor(
         &mut self,
@@ -1285,6 +1325,7 @@ impl Scene {
                 | Role::DeadspacePocket
                 | Role::AccelerationGate
                 | Role::CapturePoint
+                | Role::BattlefieldScoreboard
                 | Role::AnalysisBeacon { .. } => false,
             })
     }

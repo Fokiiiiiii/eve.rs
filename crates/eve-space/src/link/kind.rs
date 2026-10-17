@@ -126,6 +126,9 @@ pub const SET_SLIM_FIELD: u8 = 95;
 /// The host puts a battlefield's capture point in space (protocol 77).
 pub const PLACE_CAPTURE_POINT: u8 = 96;
 
+/// The host puts a battlefield's scoreboard in space (protocol 78).
+pub const PLACE_BATTLEFIELD_SCOREBOARD: u8 = 97;
+
 /// The host puts a wormhole end in space (protocol 63).
 pub const PLACE_WORMHOLE: u8 = 82;
 /// The host takes a wormhole end out of space (protocol 63).

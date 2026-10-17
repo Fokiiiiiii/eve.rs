@@ -492,6 +492,7 @@ public sealed class SimClient : ISimulation, IAsyncDisposable
     public void PlaceDeadspacePocket(SimPlaceDeadspacePocket pocket) => Send(pocket);
     public void PlaceAccelerationGate(SimPlaceAccelerationGate gate) => Send(gate);
     public void PlaceCapturePoint(SimPlaceCapturePoint point) => Send(point);
+    public void PlaceBattlefieldScoreboard(SimPlaceBattlefieldScoreboard scoreboard) => Send(scoreboard);
 
     public void RemoveCynoBeacon(int solarSystemId, long structureBeaconId) => Send(new SimRemoveCynoBeacon(solarSystemId, structureBeaconId));
 

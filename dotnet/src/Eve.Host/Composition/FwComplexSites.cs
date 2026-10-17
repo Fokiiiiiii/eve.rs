@@ -78,12 +78,23 @@ internal sealed class FwComplexSites(
     public async Task<IReadOnlyList<FwComplexPilot>> PilotsInsideAsync(long solarSystemId, long instanceId, CancellationToken cancellationToken)
     {
         // shortcut: the server's read of the current dungeon knows the mission dungeons only, so presence is the distance to the site's point
+        return await PilotsNearAsync(solarSystemId, await OriginOfAsync(instanceId, cancellationToken), CaptureRadiusMeters, cancellationToken);
+    }
+
+    /// <summary>The origin of a battlefield in a system: the same point the complex sites sit at (outside the system's star).</summary>
+    public Task<double[]> OriginAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long solarSystemId, CancellationToken cancellationToken) =>
+        SiteOriginAsync(connection, transaction, solarSystemId, cancellationToken);
+
+    /// <summary>The pilots of a system within a radius of a point, with their war factions (the pilots with a ship in space and a position).</summary>
+    public async Task<IReadOnlyList<FwComplexPilot>> PilotsNearAsync(long solarSystemId, double[] at, double radius, CancellationToken cancellationToken)
+    {
         var pilots = new List<FwComplexPilot>();
         foreach (var session in sessionsInSystem((int)solarSystemId))
         {
-            if (session.CharacterId is not { } characterId || await positionOf(session, cancellationToken) is not { } at || at.SolarSystemId != solarSystemId)
+            if (session.CharacterId is not { } characterId || await positionOf(session, cancellationToken) is not { } where || where.SolarSystemId != solarSystemId)
                 continue;
-            if (!await WithinCaptureAsync(at, instanceId, cancellationToken))
+            var (dx, dy, dz) = (where.X - at[0], where.Y - at[1], where.Z - at[2]);
+            if (Math.Sqrt(dx * dx + dy * dy + dz * dz) > radius)
                 continue;
             pilots.Add(new FwComplexPilot(characterId, await warFactionOfCharacter(characterId, cancellationToken)));
         }

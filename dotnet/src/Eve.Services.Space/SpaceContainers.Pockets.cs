@@ -58,7 +58,7 @@ public sealed partial class SpaceContainers
         await PlacePocketAsync(solarSystemId, PocketDeployableId(instanceId), origin, cancellationToken);
 
     /// <summary>Places an acceleration gate of a dungeon room at its position in the system (the record kept once; the ball is given again on each call).</summary>
-    public async Task PlaceAccelerationGateAsync(int solarSystemId, long deployableId, long typeId, double[] position, CancellationToken cancellationToken = default)
+    public async Task PlaceAccelerationGateAsync(int solarSystemId, long deployableId, long typeId, double radius, double[] position, CancellationToken cancellationToken = default)
     {
         if (_deployed is null)
         {
@@ -68,9 +68,9 @@ public sealed partial class SpaceContainers
         if (await _deployed.GetAsync(deployableId, cancellationToken) is null)
         {
             await _deployed.SaveAsync(new DeployedRecord(
-                deployableId, AccelerationGateKind, solarSystemId, AccelerationGateName, type, AccelerationGateGroupId, position, 0, 0, 0, 0, 0, NeverExpires), cancellationToken);
+                deployableId, AccelerationGateKind, solarSystemId, AccelerationGateName, type, AccelerationGateGroupId, position, radius, 0, 0, 0, 0, NeverExpires), cancellationToken);
         }
-        _sim.PlaceAccelerationGate(new SimPlaceAccelerationGate(deployableId, solarSystemId, AccelerationGateName, type, AccelerationGateGroupId, position, 0));
+        _sim.PlaceAccelerationGate(new SimPlaceAccelerationGate(deployableId, solarSystemId, AccelerationGateName, type, AccelerationGateGroupId, position, radius));
     }
 
     /// <summary>
@@ -118,7 +118,7 @@ public sealed partial class SpaceContainers
         {
             var id = AccelerationGateDeployableId(pocket.InstanceId, gate.GateIndex);
             running.Add(id);
-            await PlaceAccelerationGateAsync(pocket.SolarSystemId, id, gate.TypeId, gate.Position, cancellationToken);
+            await PlaceAccelerationGateAsync(pocket.SolarSystemId, id, gate.TypeId, gate.Radius, gate.Position, cancellationToken);
         }
     }
 

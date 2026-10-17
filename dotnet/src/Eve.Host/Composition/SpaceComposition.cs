@@ -515,6 +515,8 @@ await spaceContainers.PingObservatoryAsync(context.Payload<Eve.Services.Space.Sp
             var dungeonWaves = new Eve.Services.Space.Waves.DungeonWaveDirector(source, foundations.Content, foundations.Scheduler, foundations.Events,
                 Eve.Dungeons.DungeonCatalog.LoadEmbedded(), Eve.Dungeons.WaveRules.LoadEmbedded(), new NpcSelector(npcAuthority),
                 new Eve.Services.Space.SpaceDungeonNpcs(spaceSessions), spaceSchema, message => Console.Error.WriteLine($"eve-host: space: {message}"));
+            // the gate types' radii come from the SDE (17831, and the large gate 35776 of the owner data)
+            dungeonWaves.GateRadii = (await sde.ReadAsync("types", [17831L, 35776L])).ToDictionary(row => row.Key, row => row.Doc.GetProperty("radius").GetDouble());
             await dungeonWaves.AttachAsync();
             dungeonWavesDirector = dungeonWaves;
             // the acceleration gates of the dungeon rooms (keeper.ActivateAccelerationGate): a pilot walks the gate of its room into the room it leads to

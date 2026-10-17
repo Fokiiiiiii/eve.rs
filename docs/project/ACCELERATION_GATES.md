@@ -3,7 +3,7 @@
 Status: the sim transit (protocol 75, command 34), the Host room layout, the room and gate placement in
 running dungeons, and the `keeper.ActivateAccelerationGate` walk are built and unit-tested. Not yet done:
 the live headless walk and MITM capture, the room-state writer (`currentRoomID`), room locks until
-objectives are cleared, the SDE radius of the gate type, and the 3 gates of type 35776.
+objectives are cleared, none of the SDE gaps remain.
 
 ## Model
 
@@ -34,5 +34,5 @@ objectives are cleared, the SDE radius of the gate type, and the 3 gates of type
 ## Limits (see DEVIATIONS)
 
 No room locks, no objective gating, no room tracking for `GetCurrentDungeonForCharacter`, gate radius 0,
-the 35776 gates are not placed. Sources: EveJS `keeperService.js`, `dungeonUniverseSiteService.js`; owner data in
+gate radii come from the SDE. Sources: EveJS `keeperService.js`, `dungeonUniverseSiteService.js`; owner data in
 `dotnet/src/Eve.Dungeons/Data/catalog/v1`.

@@ -7,6 +7,7 @@ public sealed class DungeonRoomLayoutTests
     private static readonly Lazy<DungeonCatalog> Shared = new(DungeonCatalog.LoadEmbedded);
 
     private static readonly double[] Origin = [1.0e11, 2.0e9, -3.0e10];
+    private static readonly Dictionary<long, double> Radii = new() { [17831] = 12706, [35776] = 14000 };
 
     private static Dungeon Template(long id) => Shared.Value.GetDungeon(id) is DungeonFound found
         ? found.Dungeon
@@ -19,7 +20,7 @@ public sealed class DungeonRoomLayoutTests
     public void A_single_room_site_has_its_gates_on_the_ring_around_the_site_and_the_pilot_arrives_15_km_out()
     {
         // dungeon 47: one room (the entry), gates into the entry room
-        var layout = DungeonRoomLayout.Build(Template(47), Origin);
+        var layout = DungeonRoomLayout.Build(Template(47), Origin, Radii);
 
         var room = Assert.Single(layout.Rooms);
         Assert.Equal(0, room.Index);
@@ -39,7 +40,7 @@ public sealed class DungeonRoomLayoutTests
     {
         // dungeon 283: rooms 13849 and 13850, the one gate leads from the first room into the second
         var template = Template(283);
-        var layout = DungeonRoomLayout.Build(template, Origin);
+        var layout = DungeonRoomLayout.Build(template, Origin, Radii);
 
         Assert.Equal(["room:13849", "room:13850"], layout.Rooms.Select(room => room.Key).ToArray());
         var second = layout.Room("room:13850")!;
@@ -59,16 +60,25 @@ public sealed class DungeonRoomLayoutTests
         Assert.NotEmpty(multi);
         foreach (var dungeon in multi.Concat(Shared.Value.Dungeons.Take(200)))
         {
-            var first = DungeonRoomLayout.Build(dungeon, Origin);
+            var first = DungeonRoomLayout.Build(dungeon, Origin, Radii);
             Assert.Equal(dungeon.Rooms.Count, first.Rooms.Count);
             foreach (var gate in first.Gates)
             {
                 Assert.NotNull(first.Room(gate.DestinationRoomKey));
                 Assert.All(gate.Position, value => Assert.True(double.IsFinite(value)));
             }
-            var again = DungeonRoomLayout.Build(dungeon, Origin);
+            var again = DungeonRoomLayout.Build(dungeon, Origin, Radii);
             Assert.Equal(first.Gates.Select(g => g.Position), again.Gates.Select(g => g.Position));
         }
+    }
+
+    [Fact]
+    public void A_large_acceleration_gate_is_placed_with_its_own_radius()
+    {
+        // the owner data's large gates (type 35776, radius 14 000 m in the SDE)
+        var dungeon = Shared.Value.Dungeons.First(d => d.Gates.Any(g => g.TypeID == 35776 && g.DestinationRoomKey is not null));
+        var layout = DungeonRoomLayout.Build(dungeon, Origin, Radii);
+        Assert.Contains(layout.Gates, g => g.TypeId == 35776 && g.Radius == 14_000);
     }
 
     [Fact]

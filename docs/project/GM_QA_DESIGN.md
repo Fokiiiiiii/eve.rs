@@ -29,6 +29,6 @@ Headless tests and QA runs need the same game-master actions a human GM uses in 
 - Lanes: database tests run under the database's lock (`flock /tmp/eve-heavy-eve_p2.lock`) with `--blame-hang-timeout 120s`, one lane at a time.
 
 ## Open
-- The headless walk against EveJS for the shared commands (MITM capture on the eve_p2 lane, docs/project/MITM_COMPARE.md) has not run.
+- The headless walk against EveJS for the shared commands (MITM capture on the eve_p2 lane, docs/project/MITM_COMPARE.md) is not yet built.
 - `/tele` and `/solar` need a relocation of a session that the host does not have yet.
 - Agent and mission control, the FW helpers and the PI helpers are not built.

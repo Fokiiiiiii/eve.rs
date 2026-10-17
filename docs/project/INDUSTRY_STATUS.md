@@ -211,5 +211,7 @@ R&D research agents: built, with two gaps (correction: the first text of this sl
 - Tests: `AgentResearchFieldsTests` (6, pure), `AgentResearchSdeTests` (2, the pinned SDE: agent 3009318 offers 11448 and 11450,
   datacores 20417 and 20410; 244 agents), `AgentResearchDialogueTests` and `AgentDialogueTests` (27 with PostgreSQL on eve_p4).
   The live walk `test_research_start_cancel_and_datacores_over_the_dialogs` now also asserts that the choice list has one entry per
-  SDE skill of the agent.
+  SDE skill of the agent. It passed through the live server on eve_p4 (2026-10-17, `tools/dev/run-eve-live.sh`, the SDE JSONL of
+  the pinned archive, sha256 checked against `sde/lock.json`). Not done: the EveJS wire comparison through `tools/mitm` for the
+  research dialogue.
 

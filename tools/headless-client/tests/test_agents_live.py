@@ -118,7 +118,7 @@ def agents(client) -> list:
 
 def research_skill_count(agent_id: int) -> int:
     """The distinct skills an R&D agent offers in the SDE (npcCharacters.skills of its agentTypeID 4 record)."""
-    return int(psql(f"SELECT count(DISTINCT s->>'typeID') FROM sde.\"npcCharacters\", jsonb_array_elements(doc->'skills') s WHERE key = {agent_id}"))
+    return int(psql(f"SELECT count(DISTINCT s->>'typeID') FROM sde.\"npcCharacters\", jsonb_array_elements(doc->'skills') s WHERE key = '{agent_id}'"))
 
 
 def character_name(character_id: int) -> str:

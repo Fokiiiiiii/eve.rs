@@ -4271,30 +4271,61 @@ Sources: EveJS `services/skills/trading/skillTradingAuthority.js` and `skillTrad
 - **Skill plan canonical form (CH-21, S9).** `SkillPlanCanonical` is EveJS `skillPlanState.js` `canonicalizeSkillRequirements`: each skill once at its highest level (1 to 5), the published prerequisites absorbed at the level they need, and every level of each skill listed after the skills it needs. It runs on create and on the requirement update (EveJS `normalizePlanRecord` serves both). A plan therefore lists every level of each skill, one entry each.
 - **Pod death (CH-16, S9).** The survivor and the wreck enter the simulation after the session change, the cosmetics and the skin, and the wreck's item change comes before the wreck's ball, as in the reference recording (`oracle/fixtures/scenarios/death.json`). See rows 50 and 51.
 
-## Factional warfare and corporation LP tax: what the server applies (2026-10-17)
+## Factional warfare: state, rules and decisions (2026-10-17)
 
-Sources: eve-logic `marketutil/skilllimits.py`, `marketutil/brokerFee.py`, `marketutil/const.py`,
-`eve/common/script/util/facwarCommon.py` (GetAdjustedFeePercentage, GetSolarSystemUpgradeLevel, GetLPUpgradeLevel,
-GetDonationTax), `appConst.py:1053-1055` (upgrade thresholds `[4, 379, 380, 381, 382, 383, 384]`, max level 5),
-`industry/npsStationTaxModifier.py`; EveJS v0.12.9 (no factional-warfare system upgrade, no corporation LP tax applied to a credit).
+Sources: eve-logic `eve/common/script/util/facwarCommon.py`, `eve/common/lib/appConst.py` (1047-1059, 316), `marketutil/brokerFee.py`,
+`marketutil/skilllimits.py`, `eve/client/script/ui/services/facWarSvc.py`, `eve/client/script/ui/shared/factionalWarfare/infrastructureHub.py`,
+`eve/client/script/ui/services/fwWarzoneSvc.py`, `industry/npsStationTaxModifier.py`; SDE build 3396210 (`factions.militiaCorporationID`,
+`mapSolarSystems.factionID`); client extract `native/warzonespositiondata` (warzone 1: 103 systems, warzone 2: 149) and
+`native/npcstationtaxmodifier`; EVE University wiki "Faction warfare" (`https://wiki.eveuniversity.org/Faction_warfare`), whose upgrade and
+donation sections it marks outdated. Design: `docs/project/FW_DESIGN.md`.
 
-- **Applied (existing).** The Zarzakh pirate-alignment sales-tax discount (50 percent for the pirate factions 500018 and 500019
-  in system 30100000, `marketutil/skilllimits.py` GetLocationDiscount) is in `MarketRules.Context`. EveJS has the same rule.
-- **Not applied: the factional warfare solar-system upgrade on the broker fee.** The client reduces the broker commission by
-  10 percent per upgrade level of the system for the character's warfaction (`GetAdjustedFeePercentage`). The level comes from the
-  system's factional-warfare LP (`facWarMgr.GetSolarSystemLPsEx`) and its occupier. eve.rs has no system LP store and no
-  `facWarMgr`; the pinned SDE has no factional-warfare or LP-per-system table. EveJS does not apply it either. Status: OPEN, the
-  source is missing (not a rule decision).
-- **Not applied: the infrastructure hub donation tax** (`GetDonationTax`, from the zone's controlled points). The zone points are
-  not in eve.rs (factional warfare zones answer the empty shape). Status: OPEN, source missing.
-- **Not applied: the NPC station tax modifier per war faction** (`npsStationTaxModifier.py`, built data). The built file is not in
-  the pinned SDE (no `npcStationTaxModifier` table). Industry uses the SDE `npcCorporations.taxRate` only. Status: OPEN, source missing.
-- **Loyalty point store: no tax in the client.** `lpStoreSvc.py` reads no tax rate; the store's offer and take rules carry no
-  factional tax. Nothing to serve. Offers themselves are OPEN (no offer rows in build 3396210).
-- **Corporation LP tax (`loyaltyPointTaxRate`).** The corporation stores and shows it (the corporation sheet, `corp_ui_home.py`).
-  The client applies no LP tax in its own code, and neither does EveJS: no credit path reads the rate. eve.rs keeps the same
-  behaviour: the rate is stored and reported, and no credit is taxed. The tax is for LP credited to members, so it can be applied only when an LP credit
-  source exists (missions, factional warfare and insurgency are OPEN, TODO AG-1). Status: OPEN; the rule is not checked against CCP here.
+- **Applied: the factional warfare system upgrade on the broker fee.** The commission is 3 percent, less the Broker Relations skill, times
+  `1 - 0.1 * level`, less the station owner's standing (the client's order). The level is `FwRules.UpgradeLevel(pool)` of the system; a system
+  held by an enemy of the pilot's faction gives that pilot no level (`EffectiveUpgradeLevel`). Tests: `FactionWarfareBrokerFeeTests`.
+  Contract fees (`contractscommon.py`) are not changed in this slice.
+- **Decision: upgrade thresholds.** The wiki gives pool levels of 40,000 to 200,000 and calls the section outdated. The V24.01 client uses
+  `facwarSolarSystemUpgradeThresholds = [4, 379, 380, 381, 382, 383, 384]` (max pool 384, max level 5), so the server uses the client's values,
+  which are what the client shows and computes. Reason: the client and the server must agree on the level a pilot sees.
+- **Decision: a pool of 1 to 3 is level 0.** The client's `GetLPUpgradeLevel` returns -1 for those pools, which would raise the broker fee by
+  10 percent. The server clamps to 0 (`FwRules.UpgradeLevel`), tested.
+- **Applied: the infrastructure hub donation tax.** `FwRules.DonationTax` is the client's formula (`5 * p^3`, then `1 - 1/(1+x)`, rounded to two
+  places) on p = systems the faction holds / systems in the warzone. The client divides the zone's points; the server uses systems as the points
+  (`factionPoints` and `maxWarZonePoints` in `map.GetFacWarZoneInfo`), because the wiki and the client give no points source. Decision: systems.
+  Decision: the wiki says the tax reaches "about 75 percent", the client formula reaches 0.83 at full control; the client formula is applied.
+  A donation must quote the tax the server computes: a stale quote is refused with `FacWarDonationTaxChanged` (`taxNow` in percent), the
+  client's retry key. Tests: `FwRulesTests` (donation tax), `FwDatabaseTests` (quote, debit, refusals), `FacWarMgrRpcTests`.
+- **Applied: the LP donation.** The donor's LP is debited from the militia corporation's LP balance of the faction (the client's
+  `DonateLPsToSolarSystem` checks the same balance), in the transaction that adds the hub share to the system's pool. A pool above 384 is refused
+  with the room left (`FacWarPoolOverloaded`). Minimum 10 LP (`facwarMinLPDonation`). Decision: the donor must be enlisted in an occupier faction.
+- **Applied: corporation and alliance enlistment.** The join needs standing at least -0.0001 (`facwarMinStandingsToJoinDefault`, the client's
+  value; the wiki says 0.0 or greater). A join or leave takes effect at the next downtime. Decision: the downtime is 11:00 UTC; the wiki does not
+  state it. The change is applied when read after that time, so no job runs it. Director role required (`corpRoleDirector` = 1). Alliance
+  enlistment is also checked against the session corporation's director role (the wiki says the alliance executor; the executor is not read).
+- **Applied: character enlistment.** The standing (toward the faction) at least -0.0001, no existing enlistment, the 24-hour cooldown after a
+  direct enlistment is removed (wiki: 24 hours; the client's `IsCharacterInFwCooldown` uses the same day). Stored in the Characters store.
+- **Applied: the militia rank.** The rank is the whole part of the standing toward the militia corporation, clamped to 0 to 9 (the client's
+  `OnNPCStandingChange` rule). Standing comes from the relation store (`standing`, character to militia corporation).
+- **Applied: system occupation at the start.** Each warzone system whose SDE faction is one of its two factions starts occupied by that faction;
+  other systems start unoccupied (3 systems of warzone 1 are Gallente, 1 is Caldari, 3 of warzone 2 have no faction). Decision: a system is in
+  a warzone's occupation only for its own warzone pair.
+- **Decision: contest.** The attacker's points are kept per system; the state is stable at 0, contested below 75,000 and vulnerable at 75,000
+  (wiki). The points have no producer yet, so every system stays stable.
+- **Not applied: victory points and kills.** No complex victory point and no ship-kill LP producer exists. The wiki gives complex points, and the
+  ship-kill LP as 3.25 times (hull value minus insurance value plus fittings) over 10,000, capped at 50,000 LP, shared among participants; the
+  multiplier is flagged "needs testing" by the wiki. Status: open.
+- **Not applied: capture.** The wiki's capture is the destruction of the infrastructure hub (25 million HP) after vulnerability. No FW hub
+  combat path exists. The occupier does not change. Status: open.
+- **Not served: the statistics methods** (`GetStats_*`, `GetStats_TopAndAllKillsAndVPs`) and the rank overview methods. They are not registered,
+  so a client call to them fails, until kill and victory-point producers exist. Status: open.
+- **Not applied: the NPC station war-faction modifier** (`npsStationTaxModifier.py`). The client extract holds one station (60015187) with 0.1 for
+  500010 and 500011. No client caller or server industry path reads the war faction, so the modifier is not applied. Status: open, the data is
+  known.
+- **Not applied: the corporation LP tax** (`loyaltyPointTaxRate`). The corporation stores and shows it; no loyalty-point credit path taxes it
+  (missions and insurgency have none yet, and neither has the client). Status: open, no credit source.
+- **Client-facing gaps.** `CheckForRankChange` returns None (no rank-change notice). `GetControlBunkerIDInSystem` returns None (eve.rs has no
+  control bunker structures). The donation refusals are `CustomInfo` notices with localization keys, not the client's pool text.
+  A corporation enlistment that takes effect at the downtime does not push a session change to its members.
 
 ## Bookmarks: shared (access group) folders, not built (2026-10-17)
 

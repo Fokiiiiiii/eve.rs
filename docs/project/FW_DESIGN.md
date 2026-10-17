@@ -153,15 +153,26 @@ Pilots enter a complex's rooms through acceleration gates. The API for the FW co
 `docs/project/ACCELERATION_GATES.md` (`DungeonRoomLayout`, `SpaceContainers.AccelerationGateDeployableId`,
 `SpaceAccelerationGates`). Single-room complexes need no gate.
 
-## Plan: objectives and battlefields (not built)
+## Battlefields (built, C3a to C3b)
 
-Client contract: `spacecomponents/client/components/fwCapturePoint.py` (the capture point: slim fields `component_fwCapturePoint_factionInfo`
-(attacker, occupier) and `component_fwCapturePoint_nextPointTime`; a point is contested when enemy blocking NPCs are within its range) and
-`fwScoreboard.py` (a battlefield's score field `component_fwScoreboard_score`, `fwWarzoneSvc.BattleFieldAdded`). The SDE has the types
-(capture point types in group 922, spawners in group 227, scoreboards 73447 to 73450) but no room data for archetypes 67 and 68.
-
-Rule (wiki "Complexes", "Battlefields"): a complex's objective is its capture point, held for the timer by pilots of one side within 30 km with the
-defenders dead; a battlefield has three capture points, pays 2,000 VP, and up to 150,000 LP to the winners for up to 30 participants.
-
-Sub-slices: C2 simulation body type and slim fields (protocol bump, golden fixtures via `tools/dev/gen-simlink-fixtures.py`); C3 Host battlefield
-runtime; C4 tests and live walk assertions. Each is recorded in DEVIATIONS when built.
+- Client contract: `spacecomponents/client/components/fwCapturePoint.py` (the point's slim fields `component_fwCapturePoint_factionInfo` (attacker,
+  occupier) and `component_fwCapturePoint_nextPointTime`; the point is contested when both sides' pilots are within its range) and `fwScoreboard.py`
+  (`component_fwScoreboard_score`, signed: negative for the occupier, positive for the attackers, between the thresholds of the SDE scoreboard).
+- SDE: the control zone types (`{Faction} Control Zone A/B/C`, group 4494) carry `fwCapturePoint` (numberOfSeconds 20, pointValue 1, range 30 km); the
+  scoreboards (types 73447 to 73450, group 227) carry `fwScoreboard` (thresholds -150 and 150).
+- Rules: `dotnet/src/Eve.FactionWarfare/FwBattlefields.cs` (`FwBattlefieldTicker`). Up to two open battlefields, one per occupied system, a new one
+  three hours after a completion. Three points at the centre and 80 km either side; one side present holds a point and its hold timer runs (a tick of
+  20 s gives the holder one point of score); both or neither pause it. A score of +/-150 wins the battle: 2,000 victory points move the system's attacker
+  points, and the first 30 winning pilots (by character id) get 5,000 LP each, issued by the winning militia (`IFwRewards`, the loyalty store with the
+  member's corporation tax).
+- State: migration 0005 (`fw_battlefields`, `fw_battlefield_points`, `fw_battlefield_pilots`), `FwStore.Battlefields.cs`. The director
+  (`FwComplexDirector`) ticks it in the complex tick's transaction and publishes `factionwarfare.battlefield_state` and `factionwarfare.battlefield_won`.
+- Host: `NotifyBattlefieldState` places the points (`PlaceCapturePoint`, protocol 77), the scoreboard (`PlaceBattlefieldScoreboard`, protocol 78), sets
+  the next tick and the score (`SetSlimField`), and takes the balls out when the battle is over. `NotifyBattlefieldWon` sends `OnFwScoreboardWon` and
+  `OnVictoryPointStateUpdated` to the system's pilots.
+- Tests: `FwBattlefieldRulesTests` (pure), `FwBattlefieldTickerTests` (eve_p4: a side's win with the awards, the occupier's win, the pause under contest),
+  `SimCodecTests` and the golden frames for protocols 77 and 78, `a_capture_point_...` and `a_battlefield_scoreboard_...` (Rust).
+- Not built: the battlefield's NPC blockers (enemy NPCs do not pause a point), the defenders of a point, the frontline choice (every occupied
+  system is a candidate), the objectives (archetype 67) and their `OnFwObjectiveCompletedInSolarSystem`, and the gate of a battlefield.
+- Live walk: not run. No headless walk exists for a battlefield (the complex walk is `tests/test_fw_capture_walk.py`); the points' and scoreboard's
+  slim fields are covered by the codec and simulation tests, and the awards by the ticker tests on eve_p4.

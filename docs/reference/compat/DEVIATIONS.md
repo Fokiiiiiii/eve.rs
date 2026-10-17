@@ -4271,32 +4271,105 @@ Sources: EveJS `services/skills/trading/skillTradingAuthority.js` and `skillTrad
 - **Skill plan canonical form (CH-21, S9).** `SkillPlanCanonical` is EveJS `skillPlanState.js` `canonicalizeSkillRequirements`: each skill once at its highest level (1 to 5), the published prerequisites absorbed at the level they need, and every level of each skill listed after the skills it needs. It runs on create and on the requirement update (EveJS `normalizePlanRecord` serves both). A plan therefore lists every level of each skill, one entry each.
 - **Pod death (CH-16, S9).** The survivor and the wreck enter the simulation after the session change, the cosmetics and the skin, and the wreck's item change comes before the wreck's ball, as in the reference recording (`oracle/fixtures/scenarios/death.json`). See rows 50 and 51.
 
-## Factional warfare and corporation LP tax: what the server applies (2026-10-17)
+## Factional warfare: state, rules and decisions (2026-10-17)
 
-Sources: eve-logic `marketutil/skilllimits.py`, `marketutil/brokerFee.py`, `marketutil/const.py`,
-`eve/common/script/util/facwarCommon.py` (GetAdjustedFeePercentage, GetSolarSystemUpgradeLevel, GetLPUpgradeLevel,
-GetDonationTax), `appConst.py:1053-1055` (upgrade thresholds `[4, 379, 380, 381, 382, 383, 384]`, max level 5),
-`industry/npsStationTaxModifier.py`; EveJS v0.12.9 (no factional-warfare system upgrade, no corporation LP tax applied to a credit).
+Sources: eve-logic `eve/common/script/util/facwarCommon.py`, `eve/common/lib/appConst.py` (1047-1059, 316), `marketutil/brokerFee.py`,
+`marketutil/skilllimits.py`, `eve/client/script/ui/services/facWarSvc.py`, `eve/client/script/ui/shared/factionalWarfare/infrastructureHub.py`,
+`eve/client/script/ui/services/fwWarzoneSvc.py`, `industry/npsStationTaxModifier.py`; SDE build 3396210 (`factions.militiaCorporationID`,
+`mapSolarSystems.factionID`); client extract `native/warzonespositiondata` (warzone 1: 103 systems, warzone 2: 149) and
+`native/npcstationtaxmodifier`; EVE University wiki "Faction warfare" (`https://wiki.eveuniversity.org/Faction_warfare`), whose upgrade and
+donation sections it marks outdated. Design: `docs/project/FW_DESIGN.md`.
 
-- **Applied (existing).** The Zarzakh pirate-alignment sales-tax discount (50 percent for the pirate factions 500018 and 500019
-  in system 30100000, `marketutil/skilllimits.py` GetLocationDiscount) is in `MarketRules.Context`. EveJS has the same rule.
-- **Not applied: the factional warfare solar-system upgrade on the broker fee.** The client reduces the broker commission by
-  10 percent per upgrade level of the system for the character's warfaction (`GetAdjustedFeePercentage`). The level comes from the
-  system's factional-warfare LP (`facWarMgr.GetSolarSystemLPsEx`) and its occupier. eve.rs has no system LP store and no
-  `facWarMgr`; the pinned SDE has no factional-warfare or LP-per-system table. EveJS does not apply it either. Status: OPEN, the
-  source is missing (not a rule decision).
-- **Not applied: the infrastructure hub donation tax** (`GetDonationTax`, from the zone's controlled points). The zone points are
-  not in eve.rs (factional warfare zones answer the empty shape). Status: OPEN, source missing.
-- **Not applied: the NPC station tax modifier per war faction** (`npsStationTaxModifier.py`, built data). The built file is not in
-  the pinned SDE (no `npcStationTaxModifier` table). Industry uses the SDE `npcCorporations.taxRate` only. Status: OPEN, source missing.
-- **Loyalty point store: no tax in the client.** `lpStoreSvc.py` reads no tax rate; the store's offer and take rules carry no
-  factional tax. Nothing to serve. Offers themselves are OPEN (no offer rows in build 3396210).
-- **Corporation LP tax (`loyaltyPointTaxRate`).** The corporation stores and shows it (the corporation sheet, `corp_ui_home.py`).
-  The client applies no LP tax in its own code, and neither does EveJS: no credit path reads the rate. eve.rs keeps the same
-  behaviour: the rate is stored and reported, and no credit is taxed. The tax is for LP credited to members, so it can be applied only when an LP credit
-  source exists (missions, factional warfare and insurgency are OPEN, TODO AG-1). Status: OPEN; the rule is not checked against CCP here.
+- **Applied: the factional warfare system upgrade on the broker fee.** The commission is 3 percent, less the Broker Relations skill, times
+  `1 - 0.1 * level`, less the station owner's standing (the client's order). The level is `FwRules.UpgradeLevel(pool)` of the system; a system
+  held by an enemy of the pilot's faction gives that pilot no level (`EffectiveUpgradeLevel`). Tests: `FactionWarfareBrokerFeeTests`.
+  Contract fees (`contractscommon.py`) are not changed in this slice.
+- **Decision: upgrade thresholds.** The wiki gives pool levels of 40,000 to 200,000 and calls the section outdated. The V24.01 client uses
+  `facwarSolarSystemUpgradeThresholds = [4, 379, 380, 381, 382, 383, 384]` (max pool 384, max level 5), so the server uses the client's values,
+  which are what the client shows and computes. Reason: the client and the server must agree on the level a pilot sees.
+- **Decision: a pool of 1 to 3 is level 0.** The client's `GetLPUpgradeLevel` returns -1 for those pools, which would raise the broker fee by
+  10 percent. The server clamps to 0 (`FwRules.UpgradeLevel`), tested.
+- **Applied: the infrastructure hub donation tax.** `FwRules.DonationTax` is the client's formula (`5 * p^3`, then `1 - 1/(1+x)`, rounded to two
+  places) on p = systems the faction holds / systems in the warzone. The client divides the zone's points; the server uses systems as the points
+  (`factionPoints` and `maxWarZonePoints` in `map.GetFacWarZoneInfo`), because the wiki and the client give no points source. Decision: systems.
+  Decision: the wiki says the tax reaches "about 75 percent", the client formula reaches 0.83 at full control; the client formula is applied.
+  A donation must quote the tax the server computes: a stale quote is refused with `FacWarDonationTaxChanged` (`taxNow` in percent), the
+  client's retry key. Tests: `FwRulesTests` (donation tax), `FwDatabaseTests` (quote, debit, refusals), `FacWarMgrRpcTests`.
+- **Applied: the LP donation.** The donor's LP is debited from the militia corporation's LP balance of the faction (the client's
+  `DonateLPsToSolarSystem` checks the same balance), in the transaction that adds the hub share to the system's pool. A pool above 384 is refused
+  with the room left (`FacWarPoolOverloaded`). Minimum 10 LP (`facwarMinLPDonation`). Decision: the donor must be enlisted in an occupier faction.
+- **Applied: corporation and alliance enlistment.** The join needs standing at least -0.0001 (`facwarMinStandingsToJoinDefault`, the client's
+  value; the wiki says 0.0 or greater). A join or leave takes effect at the next downtime. Decision: the downtime is 11:00 UTC; the wiki does not
+  state it. The change is applied when read after that time, so no job runs it. Director role required (`corpRoleDirector` = 1). Alliance
+  enlistment is also checked against the session corporation's director role (the wiki says the alliance executor; the executor is not read).
+- **Applied: character enlistment.** The standing (toward the faction) at least -0.0001, no existing enlistment, the 24-hour cooldown after a
+  direct enlistment is removed (wiki: 24 hours; the client's `IsCharacterInFwCooldown` uses the same day). Stored in the Characters store.
+- **Applied: the militia rank.** The rank is the whole part of the standing toward the militia corporation, clamped to 0 to 9 (the client's
+  `OnNPCStandingChange` rule). Standing comes from the relation store (`standing`, character to militia corporation).
+- **Applied: system occupation at the start.** Each warzone system whose SDE faction is one of its two factions starts occupied by that faction;
+  other systems start unoccupied (3 systems of warzone 1 are Gallente, 1 is Caldari, 3 of warzone 2 have no faction). Decision: a system is in
+  a warzone's occupation only for its own warzone pair.
+- **Decision: contest.** The attacker's points are kept per system; the state is stable at 0, contested below 75,000 and vulnerable at 75,000
+  (wiki). The points have no producer yet, so every system stays stable.
+- **Decision: victory points come from complexes only.** The wiki's victory-point rules: complex captures give VP (its table: Scout BSC 50,
+  Scout NVY 25, Small NVY 50, Small ADV 75, Small Interceptor 150, FRF Small ELT about 300, Moderate NVY 600, Large NVY 250, Large ADV 300, Open 350,
+  Battlefield 2,000); killing enemy militia pilots, NPCs and ship kills give no VP (the wiki states loyalty points for kills, not VP). The contest
+  percentage counts only the attacker's VP; kills do not move it. The complex producer is open (below).
+- **Built: the NPC kill count.** A pilot's kill of an NPC of a faction that fights the pilot's war faction (`FwFactions.IsCombatEnemy`), in a
+  warzone system, adds one kill to the pilot's and its corporation's rows (`FwService.RecordNpcKillAsync`, fed by the NPC destroyed event in
+  `SpaceComposition`). The wiki gives no source for the kill counting rule beyond the enemy militia; this is the project's choice. Tests:
+  `FwKillTests` (2). Pilot-versus-pilot kills: no event in the space runtime reports them yet, so they are not counted. Status: partly open.
+- **Not built: the ship-kill LP** (wiki: 3.25 times hull, insurance and fitting value over 10,000, capped at 50,000 LP, shared). Status: open.
+- **Built, trigger open: capture.** `FwService.CaptureAsync` is the state transition: a vulnerable system (at 75,000 attacker points, wiki) passes to
+  the occupier's enemy (`FwFactions.OccupationEnemyOf`), and its points and LP pool reset (the wiki: a capture removes the upgrades). A contested or
+  unoccupied system is refused. Tests: `FwCaptureTests` (2). The trigger is the destruction of the infrastructure hub (wiki: 25 million HP), which
+  has no combat path in eve.rs yet, so no capture happens in a running server. Status: open (trigger).
+- **Served: the character and corporation statistics** (`GetStats_Character`, `GetStats_Corp`: the six client keys, from the daily rows of migration 0002).
+  **Not served:** `GetStats_FactionInfo`, `GetStats_Militia`, `GetStats_Alliance`, `GetStats_CorpPilots`, `GetStats_TopAndAllKillsAndVPs` (they need
+  the alliance grouping and the faction member counts, which eve.rs does not store yet) and the rank overview methods. A client call to them fails
+  until they are built. The rows are filled by the producers `FwService.RecordActivityAsync` and `AddVictoryPointsAsync`, which no combat event
+  calls yet (below). Status: partly open.
+- **Applied: the NPC station war-faction modifier** (`npsStationTaxModifier.py`). The client extract holds one station (60015187) with 0.1 for
+  500010 and 500011 (`FwRules.NpcStationTaxModifier`). The NPC station facility tax of an industry job is multiplied by it for the pilot's war faction
+  (direct enlistment, else the corporation's; `IndustryComposition.ResolveIndustryFacilityAsync`). The client snapshot has no caller of its own, so the
+  server applies the table itself. Tests: `FwNpcStationTaxTests` (5).
+- **Applied: the corporation LP tax** (`loyaltyPointTaxRate`) on member LP credits. Source: the Viridian expansion notes (EVE Online news, "Viridian:
+  Expansion Notes"): corporation tax applies to member LP from factional warfare, incursions and missions; the corporation sets the rate; EverMarks
+  are excluded; the taxed LP goes to the corporation's own LP wallet. eve.rs applies it to the insurgency victory payout (`LoyaltyPointStore.CreditMemberAsync`,
+  `LoyaltyTax.TaxOf`): the member keeps the amount minus the tax (rounded down), and the corporation balance gets the tax with the same issuer.
+  Decision: a rate above 1 is a percentage (the convention of the corporation tax fields in IndustryComposition); 0 or less is no tax.
+  Not applied yet: mission payouts (no credit source in eve.rs) and the incursion payouts. The wiki copy of these notes marks some LP items as to
+  be determined, so the exact rate and rounding are the decision above, not CCP's published formula. Tests: `LoyaltyMemberCreditTests` (3, eve_p4),
+  `InsurgencyCampaignTests` (18 run, all pass).
+  control bunker structures). The donation refusals are `CustomInfo` notices with localization keys, not the client's pool text.
+  A corporation enlistment that takes effect at the downtime does not push a session change to its members.
+- **Complexes: sizes, capture times, hull limits and victory points** (`FwComplexes`, `FwComplexTicker`, `FwComplexDirector`, migration 0003).
+  Source: the wiki's "Complex types" table (Rank/Size: Scout 10 min, frigates and smaller; Small 10 min, destroyers and smaller; Medium 15 min,
+  cruisers and smaller; Large 15 min, battleships and smaller) and its "Victory points" table. The SDE archetypes of the complexes are 33 (Scout),
+  34 (Small), 35 (Medium), 36 (Large) (client titles 660881 to 660887). The wiki names several variants per size (BSC, NVY, ADV, ELT); eve.rs uses
+  one per size: Scout BSC (300 s, 50 VP, the wiki's "5 min for basic plexes"), Small NVY (600 s, 50 VP), Large NVY (900 s, 250 VP).
+  Medium: the wiki's table has no Medium victory-point value; project rule 150 VP (between Small NVY and Large NVY), 900 s from the table.
+  Hull limits (frigate 1, destroyer 2, cruiser 3, battleship 5) are stored; the entry gate that enforces them is not built.
+  Respawn: 30 minutes after a complex of a size is captured in its system (wiki, "about 30 minutes"). Advanced, Frontline and Command Operations
+  names of the task brief are the wiki's ADV/ELT/BSC variants, not separate sizes; the SDE archetypes 67 (Factional Warfare Objectives) and 68
+  (Factional Warfare Battlefield) are not built (a battlefield has three capture points, 2000 VP and 150k LP, wiki "Battlefields").
+- **Complexes: capture timer and presence (project rule).** One tick every 10 seconds (job `factionwarfare.complexes.tick`). A side alone in the
+  complex advances its timer by the tick (attackers up, the occupier down); both sides or neither pause it (wiki: the timer pauses until one faction
+  remains). The step is capped at one tick, so downtime is never credited. Presence is the pilots in space in the system (`SpaceSessions.CharacterIdsInSystem`)
+  with their war faction: the simulation has no per-complex position, so a pilot in the system counts as in the complex. Enemy NPCs do not pause
+  the timer and no NPC defenders are spawned: the defenders of the wiki are not modelled. The timers are additive and signed, so a defender's
+  progress undoes an attacker's (wiki: "the timers for both factions are additive").
+- **Complexes: victory points.** A capture by the attackers adds the size's victory points to the system's attacker points; a capture by the
+  defenders subtracts them (never below 0; wiki: the defenders' capture subtracts). The capture by the attackers notifies the pilots in the system
+  with `OnFacWarDungeonCompleted(true, attackerFaction)`, the defenders' capture with `(false, occupier)` (client `fwWarzoneSvc.py`), and the
+  victory point state (`OnVictoryPointStateUpdated`, client `fwVictoryPointSvc.py`) with the attacker points against the 75,000 threshold.
+  `fwVictoryPointMgr.GetAllVictoryPointStates` and `GetLocalVictoryPointState` now read the store (before: empty).
+  Not built: the statistics of the pilots who captured (no per-pilot victory points for complexes), the complexes in the system scan data
+  (the client does not see them), and the acceleration gate that warps pilots into a complex.
+- **Complexes: tests.** `FwComplexRulesTests` (3, pure), `FwComplexTickerTests` (2, eve_p4: capture by the attackers after 31 ticks with the
+  victory points, capture by the defenders with the subtraction floor at 0 and the respawn after 30 minutes).
 
-## Bookmarks: shared (access group) folders, not built (2026-10-17)
+## Bookmarks: shared (access group) folders, not built (2026-10-17; superseded by the next section)
 
 Sources: eve-logic `eve/client/script/ui/shared/bookmarks/bookmarkSvc.py` (the `accessGroupBookmarkMgr` calls: AddFolder with
 `isPersonal` false and four access group ids, UpdateFolder, the subfolder and bookmark writes, `SearchFoldersWithAdminAccess`),
@@ -4312,7 +4385,7 @@ Sources: eve-logic `eve/client/script/ui/shared/bookmarks/bookmarkSvc.py` (the `
 - **Not built, by the same cause.** Shared folder writes, the shared folder change notifications (`OnSharedBookmarksFolderUpdated`,
   `OnSharedBookmarksFolderDeleted`, `OnSharedBookmarksFoldersAccessLost`, `OnSharedBookmarksFoldersAccessChanged`), and the
   `BookmarkLocation` in space (needs the space scene; refused with the notice).
-- **Status.** OPEN, blocked on `ownerGroupManager` (TODO, VERIFY list and the structure track). Not a rule decision.
+- **Status.** Superseded: the shared folders are built (next section).
 
 ## Research dialogue against EveJS: MITM diff (slice 8, 2026-10-17)
 
@@ -4404,3 +4477,67 @@ cannot see the list or its members; every change is logged. EveJS `ownerGroupMan
   rules gate by list membership, and no corporate role is named for list creation.
 - **Status.** Store and service tests pass (`Eve.AccessGroups.Tests`, PostgreSQL lane). Not checked with the graphical client; the
   shared bookmark folders that use these lists are still open (the `accessGroupBookmarkMgr` section above).
+
+## Bookmarks: shared (access group) folders, built (2026-10-17)
+
+Sources: EVE University wiki "Bookmarks" (https://wiki.eveuniversity.org/Bookmarks), its Share, Limits, Sub-folders, Edit and Folder
+status sections: the access levels (view, use, manage, admin: "Higher levels include everything the lower levels allow"), an access
+list for admin access is required, "Only admins and managers can assign a list", changes take up to 5 minutes to apply, 500 bookmarks
+per shared folder, 30 folders connected, three shared folders online at once, sub-folders need use and their all-edit needs manage,
+deleting a folder deletes its bookmarks. The levels and limits also match the client's constants (`appConst.py`: `ACCESS_*`,
+`MAX_BOOKMARKS_IN_SHARED_FOLDER` 500, `MAX_ACTIVE_SHARED_BOOKMARK_FOLDERS` 3, `MAX_KNOWN_BOOKMARK_FOLDERS` 30, `MAX_SUBFOLDERS` 30).
+EveJS `accessGroupBookmarkMgrService.js`, `bookmarkRuntimeAccess.js` (the level is the highest list the character is in; codes
+`AdminAccessRequired`, `FolderAccessDenied`, `CouldNotDeleteBookmarksInSubfolder`) and `bookmarkNotifications.js` (update tuples) were read
+as reference. The client's `bookmarkSvc.py` (`OnSharedBookmarksFolderUpdated`, `OnSharedBookmarksFolderDeleted`) is the wire contract.
+
+- **Built.** A shared folder is a row of the `bookmarks` schema with its four list ids (migration 002); a character's connection to it
+  (`connections`: known, active) is its list state. The access level is computed from the character's lists (`AccessLists`, from the owner
+  groups of `Eve.AccessGroups`): the highest of the folder's four lists the character is a member, manager or admin of. Personal folders keep
+  their behaviour: the owner has the personal level, with the rights of manage and admin.
+- **Rights (wiki).** View: see the folder and its bookmarks, copy from it. Use: add locations, create sub-folders, edit and delete one's own
+  locations and sub-folders. Manage: edit and delete every location and sub-folder. Admin: rename, describe, set the lists, delete the
+  folder. A character with no level is refused as `FolderAccessDenied`; a use or manage level asked to do admin work is refused as
+  `AdminAccessRequired`.
+- **Choice: the creator needs an admin list, and the lists must be assignable.** A shared folder without an admin list is refused as
+  `AdminAccessRequired` (the wiki: "An access list for Admin access is required"). Each list put on a folder must be one the character
+  holds as manager or admin (the wiki: "Only admins and managers can assign a list"); a list the character does not hold is refused with
+  the notice "Only an admin or a manager of an access list can put it on a shared folder." The wiki does not say how the corporation's
+  built-in list may be assigned: a member of the corporation may assign its built-in list, the choice "when in doubt, allow" (decision 9).
+- **Choice: a shared folder's writes serialise per folder.** Capacity and the sub-folder check hold under concurrent calls from several
+  characters (a per-folder advisory lock); the personal folder keeps the per-owner lock.
+- **Limits.** 500 bookmarks per shared folder (3000 personal, unchanged); 3 active shared folders (the active check of the client); 30
+  known folders counting personal and shared together; 30 sub-folders per folder. A move or copy into a full folder is refused as
+  `FolderCapacityExceeded` (the reference's code; a move into a full personal folder is now refused too, which the reference's code
+  implies).
+- **Choice: a user deletes its own sub-folder only when every bookmark in it is its own.** Deleting a sub-folder deletes its bookmarks (the
+  wiki); a user that would delete another character's bookmark is refused as `CouldNotDeleteBookmarksInSubfolder` (the reference's code),
+  and a manager deletes the sub-folder with all its contents.
+- **Choice: the user's bulk delete and move skip what it may not touch.** `DeleteBookmarks` and the move answer the ids that went; a bookmark
+  the user did not make is left alone (the reference's answer for this case is not read here). The copy needs view on the source and use on the target.
+- **Expiry.** The client's own option set is the wire contract and the one used here (`bookmarkConst.py`: none, 4 hours, 2 days, 24 hours,
+  with the client's labels `ExpireNever`, `ExpireIn4Hours`, `ExpireIn2Days`, `ExpireIn24Hours`). The wiki's "In 3 Hours" is not offered by the
+  client and is not used. An expired bookmark is removed at its time: by a one-minute timer (`bookmarks.expiry`, LocalTimers) and by any read,
+  and the characters that have its folder active hear of it (`bookmarksRemoved`).
+- **Access changes.** After an owner group change (a list deleted, a member added, removed or changed), each connected character whose
+  folders use the list is told, after the response: `OnSharedBookmarksFoldersAccessLost` (folder ids it can no longer view) and
+  `OnSharedBookmarksFoldersAccessChanged` (folder to its new level). The levels are recomputed from the character's lists at that time; the
+  connection row stays, so a restored list shows the folder again at the next read of the folders.
+- **Limits and refusals.** `TooManyKnownFolders` and `TooManyActiveFolders` carry the client's named limits (`maxKnownFolders`;
+  `maxPersonalFolders`, `maxSharedFolders`), and their text is the client's. A character may create 30 folders counting its default one
+  (`MAX_CREATED_BOOKMARK_FOLDERS`); the client has no error key for it, so `TooManyCreatedFolders` carries the notice of this server.
+- **Notifications.** After a commit, `OnSharedBookmarksFolderUpdated` goes to each connected character that has the folder active and whose
+  lists still give it a level to view (checked live), but not to the actor. One update per notification, as the reference sends them
+  (`[[updateTuple]]`). The update tuple is `[[folderID], type, args]`: `bookmarksAdded`, `bookmarksUpdated`, `bookmarksRemoved`,
+  `bookmarksMoved` (old folder, new folder, bookmarks; sent to both folders), `folderUpdated`, `subfolderAdded`, `subfolderUpdated`,
+  `subfolderRemoved`. `OnSharedBookmarksFolderDeleted` goes to the characters that had the folder active at the deletion.
+- **Not built.** A corporation or alliance changing its membership (a character leaving a corporation, a corporation leaving an alliance)
+  is not pushed to shared folders: the access change reaches a character at its next read. The live-client walk of shared folders is
+  described in the design document (`docs/project/SHARED_BOOKMARKS_DESIGN.md`) and is not run yet.
+- **Structures and roles.** No structure is an access holder here (owner decision 8: structures are touched only when required). The
+  wiki names no corporate role for a shared folder, and the client's bookmark code has no role check (`bookmarkSvc.py`,
+  `bookmarkContainerWindow.py` read none). The role inputs are the list membership types (member, manager, admin, excluded) and the
+  corporation's built-in list; no role gate (director or personnel manager) is applied. A corporation's folder is one whose list is the
+  corporation's built-in list, and an alliance's folder one whose list has an alliance entry.
+- **Status.** Store and service tests pass on the PostgreSQL lane (`Eve.Bookmarks.Tests`, including the 500-bookmark limit and the
+  notifications). Not checked with the graphical client.
+

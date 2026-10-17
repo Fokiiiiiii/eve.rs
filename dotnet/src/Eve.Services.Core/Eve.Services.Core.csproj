@@ -6,6 +6,7 @@
     <ProjectReference Include="../Eve.Bookmarks/Eve.Bookmarks.csproj" />
     <ProjectReference Include="../Eve.AccessGroups/Eve.AccessGroups.csproj" />
     <ProjectReference Include="../Eve.Calendar/Eve.Calendar.csproj" />
+    <ProjectReference Include="../Eve.FactionWarfare/Eve.FactionWarfare.csproj" />
     <ProjectReference Include="../Eve.ReadSide/Eve.ReadSide.csproj" />
     <ProjectReference Include="../Eve.Ships/Eve.Ships.csproj" />
     <ProjectReference Include="../Eve.Universe/Eve.Universe.csproj" />

@@ -136,7 +136,7 @@ internal sealed partial class CharacterServicesComposition
             Console.Error.WriteLine($"eve-host: native market v4 seed already loaded for SDE build {build}");
         }
         marketTopology = await Eve.Market.MarketTopology.LoadAsync(sde);
-        marketTrading = new Eve.Market.MarketTrading(source, market, characters, corporations, skills, items, economyWallets, stations, marketTopology, now, new Eve.Services.Market.DurableExpiryJobs(foundations.Scheduler));
+        marketTrading = new Eve.Market.MarketTrading(source, market, characters, corporations, skills, items, economyWallets, stations, marketTopology, now, new Eve.Services.Market.DurableExpiryJobs(foundations.Scheduler)) { FactionWarfareUpgradeLevel = FactionWarfareUpgradeLevelAsync };
         // M3: resting orders expire as durable jobs; the minute sweep and the restart reschedule are started with the market
         var marketNotifier = new Eve.Services.Market.MarketNotifier(economyWallets, characterSessions);
         // M8: the minute sweep runs the market's invariants (escrow, item custody, fill journal) and logs any mismatch

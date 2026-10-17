@@ -59,6 +59,8 @@ internal sealed partial class CharacterServicesComposition
             if (await ReadNpcStationOperationAsync(station.Id, token) is not { } operation)
                 return null;
             var tax = await ReadNpcStationTaxAsync(station.OwnerId, token);
+            // the factional warfare factor of this station for the pilot's war faction (the client's npsStationTaxModifier)
+            tax *= (decimal)Eve.FactionWarfare.FwRules.NpcStationTaxModifier(station.Id, await WarFactionOfAsync(characterId, token));
             return new PersistenceIndustryJobOperations.IndustryFacility(
                 station.Id, station.SolarSystemId, station.OwnerId, tax, operation.ManufacturingFactor,
                 true, operation.ResearchFactor, operation.Services);
@@ -550,6 +552,8 @@ internal sealed partial class CharacterServicesComposition
                     PositiveMapRpcId(call.Arg(0)),
                     await mapSolarSystems.Value.WaitAsync(call.Cancellation),
                     call.Cancellation);
+            case "GetFacWarZoneInfo":
+                return await FactionWarfareZoneInfoAsync(PositiveMapRpcId(call.Arg(0)), call.Cancellation);
             case "GetRecentSovActivity":
                 return await sovereigntyReadModel.ReadRecentSovActivityAsync(call.Cancellation);
             case "GetIndustryCostModifier":

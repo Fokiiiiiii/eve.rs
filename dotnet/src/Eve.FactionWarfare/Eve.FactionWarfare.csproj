@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <ProjectReference Include="../Eve.Data/Eve.Data.csproj" />
+    <ProjectReference Include="../Eve.Wallet/Eve.Wallet.csproj" />
+    <ProjectReference Include="../Eve.Events/Eve.Events.csproj" />
+    <ProjectReference Include="../Eve.Scheduler/Eve.Scheduler.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <EmbeddedResource Include="Migrations/*.sql" />
+    <!-- The client's Faction Warfare warzone map (warzonespositiondata), shared with Eve.Insurgency: warzone id -> solar systems. -->
+    <EmbeddedResource Include="../Eve.Insurgency/Data/warzone-systems.json" LogicalName="fw-warzone-systems.json" />
+  </ItemGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="Eve.FactionWarfare.Tests" />
+  </ItemGroup>
+</Project>

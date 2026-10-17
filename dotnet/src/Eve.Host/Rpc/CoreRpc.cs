@@ -106,7 +106,21 @@ internal sealed partial class CharacterServicesComposition
                     await corporations.SetFactionWarfareAllowedEnlistmentFactionsAsync(characterId, corporationId, factions, cancellationToken),
                 SaveCharacterStateAsync: async (characterId, factionId, cooldown, cancellationToken) =>
                     await characters.SetFactionWarfareStateAsync(characterId, factionId, cooldown, cancellationToken))),
-            new Eve.Services.Core.FwVictoryPointMgrService(),
+            new Eve.Services.Core.FwVictoryPointMgrService(new Eve.Services.Core.FwVictoryPointRpcCallbacks(VictoryPointStatesAsync)),
+            new Eve.Services.Core.FacWarMgrService(factionWarfare, new Eve.Services.Core.FacWarMgrCallbacks(
+                FactionMembersAsync: FactionMembersAsync,
+                AffiliationsAsync: AffiliationsAsync,
+                ReadCharacterAsync: async (characterId, cancellationToken) =>
+                {
+                    var character = await characters.GetAsync(characterId, cancellationToken);
+                    return character is null
+                        ? null
+                        : new Eve.Services.Core.FwCharacterWarfareState(character.DirectFactionId, character.DirectEnlistmentCooldownFileTime);
+                },
+                SaveCharacterAsync: async (characterId, factionId, cooldown, cancellationToken) =>
+                    await characters.SetFactionWarfareStateAsync(characterId, factionId, cooldown, cancellationToken),
+                ReadStandingAsync: async (subjectId, factionOrCorporationId, cancellationToken) =>
+                    await foundations.Relations.ValueAsync("standing", subjectId, factionOrCorporationId, 0, cancellationToken: cancellationToken))),
             new Eve.Services.Core.InsurgencySolarsystemService(new Eve.Services.Core.InsurgencySolarsystemRpcCallbacks(ReadInsurgencyCampaignsAsync)),
             new Eve.Services.Core.AlertService(),
             new Eve.Services.Core.FighterMgrService { Provider = FighterProvider() },

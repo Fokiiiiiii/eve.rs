@@ -253,6 +253,30 @@ public sealed partial class PgCharacterStore
         return await command.ExecuteNonQueryAsync(cancellationToken) > 0;
     }
 
+    /// <summary>
+    /// The members of a war faction: a character whose direct factional warfare enlistment is the faction, or, with none, whose corporation is one of
+    /// <paramref name="enlistedCorporationIds"/> (the corporations enlisted in the faction). Factional warfare statistics (facWarMgr FactionInfo).
+    /// </summary>
+    public async Task<long> CountWarFactionMembersAsync(long factionId, IReadOnlyList<long> enlistedCorporationIds, CancellationToken cancellationToken = default)
+    {
+        await using var command = _source.CreateCommand($"SELECT count(*) FROM {_schema}.characters WHERE deleted_at IS NULL AND (direct_faction_id = $1 OR (direct_faction_id IS NULL AND corporation_id = ANY($2)))");
+        command.Parameters.Add(new NpgsqlParameter { Value = factionId });
+        command.Parameters.Add(new NpgsqlParameter { Value = enlistedCorporationIds.ToArray() });
+        return (long)(await command.ExecuteScalarAsync(cancellationToken))!;
+    }
+
+    /// <summary>The number of characters of each corporation of the list (a corporation with none is absent).</summary>
+    public async Task<IReadOnlyDictionary<long, long>> CountByCorporationAsync(IReadOnlyList<long> corporationIds, CancellationToken cancellationToken = default)
+    {
+        await using var command = _source.CreateCommand($"SELECT corporation_id, count(*) FROM {_schema}.characters WHERE deleted_at IS NULL AND corporation_id = ANY($1) GROUP BY corporation_id");
+        command.Parameters.Add(new NpgsqlParameter { Value = corporationIds.ToArray() });
+        var counts = new Dictionary<long, long>();
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+            counts[reader.GetInt64(0)] = reader.GetInt64(1);
+        return counts;
+    }
+
     public async Task<int> CountForAccountAsync(int accountId, CancellationToken cancellationToken = default)
     {
         await using var command = _source.CreateCommand($"SELECT count(*) FROM {_schema}.characters WHERE account_id = $1 AND deleted_at IS NULL");

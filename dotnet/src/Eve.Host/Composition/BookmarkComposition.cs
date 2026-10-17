@@ -15,6 +15,16 @@ internal sealed partial class CharacterServicesComposition
         bookmarks = new BookmarkStore(source, schema, now);
     }
 
+    /// <summary>Removes the expired shared bookmarks every minute and tells their viewers; the timer re-arms itself.</summary>
+    private void ExpireSharedBookmarks(Eve.Services.Core.SharedFolderNotifier notifier)
+    {
+        foundations.LocalTimers.Set("bookmarks.expiry", TimeSpan.FromMinutes(1), () =>
+        {
+            ExpireSharedBookmarks(notifier);
+            return notifier.ExpireAsync();
+        });
+    }
+
     /// <summary>
     /// The place a static bookmark points at, from the static data: a station (its type and its solar system) or a solar system (its
     /// own location). Other ids are not places the store can bookmark here (structures, celestials), so they are refused.

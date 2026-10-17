@@ -49,6 +49,7 @@ internal sealed partial class CharacterServicesComposition
             },
             ReadGameStoreTableAsync,
             now,
+            activeComplexes: (system, token) => ComplexAnomaliesAsync(system, token),
             activeIncursions: async token => incursionDirector is { } directorOfIncursions
                 ? await directorOfIncursions.ReadActiveAsync(token)
                 : Array.Empty<JsonObject>());

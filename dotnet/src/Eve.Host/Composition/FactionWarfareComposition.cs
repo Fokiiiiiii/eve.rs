@@ -1,4 +1,7 @@
+using Eve.Dungeons;
 using Eve.FactionWarfare;
+using Eve.Services.Space;
+using Eve.Services.Space.Waves;
 using Eve.Marshal;
 using Eve.Services;
 using Npgsql;
@@ -123,6 +126,45 @@ internal sealed partial class CharacterServicesComposition
     private async ValueTask<IReadOnlyList<(long CorporationId, long AllianceId)>> AffiliationsAsync(CancellationToken cancellationToken) =>
         await corporations.CurrentAllianceAffiliationsAsync(cancellationToken);
 
+    /// <summary>The dungeon catalog of the complexes' sites (set when the complexes start).</summary>
+    private Eve.Dungeons.DungeonCatalog? fwDungeons;
+
+    /// <summary>
+    /// The open complexes of a system as the system scanner's anomaly overlay lists them (the <c>CosmicAnomalyInfo</c> fields of EveJS
+    /// <c>buildAnomalySiteInfo</c>): the site is the complex's dungeon instance, the dungeon its template, and the target the first acceleration gate of its rooms.
+    /// </summary>
+    private async Task<IReadOnlyList<System.Text.Json.Nodes.JsonObject>> ComplexAnomaliesAsync(long solarSystemId, CancellationToken cancellationToken)
+    {
+        if (factionWarfareStore is null || fwDungeons is null || solarSystemId <= 0)
+            return [];
+        await using var connection = await source.OpenConnectionAsync(cancellationToken);
+        var rows = new List<System.Text.Json.Nodes.JsonObject>();
+        foreach (var complex in await factionWarfareStore.OpenComplexesAsync(connection, null, cancellationToken))
+        {
+            if (complex.SolarSystemId != solarSystemId || complex.InstanceId <= 0)
+                continue;
+            if (await foundations.Content.GetAsync(complex.InstanceId, cancellationToken) is not { } instance || instance.Data<DungeonInstanceData>() is not { } data)
+                continue;
+            if (fwDungeons.GetDungeon(data.DungeonID) is not DungeonFound found)
+                continue;
+            var layout = DungeonRoomLayout.Build(found.Dungeon, data.Origin);
+            var target = layout.Gates.Count > 0 ? SpaceContainers.AccelerationGateDeployableId(instance.Id, layout.Gates[0].GateIndex).ToString() : "";
+            rows.Add(new System.Text.Json.Nodes.JsonObject
+            {
+                ["siteID"] = instance.Id,
+                ["instanceID"] = instance.Id,
+                ["solarSystemID"] = solarSystemId,
+                ["targetID"] = target,
+                ["difficulty"] = found.Dungeon.Difficulty ?? 1,
+                ["dungeonID"] = data.DungeonID,
+                ["archetypeID"] = found.Dungeon.ArchetypeID,
+                ["position"] = new System.Text.Json.Nodes.JsonArray(0.0, 0.0, 0.0),
+                ["allowedTypes"] = new System.Text.Json.Nodes.JsonArray(),
+            });
+        }
+        return rows;
+    }
+
     private async Task FactionWarfare()
     {
         var schema = Env("EVE_FACTIONWARFARE_SCHEMA", FwStore.DefaultSchema);
@@ -150,7 +192,8 @@ internal sealed partial class CharacterServicesComposition
             Console.Error.WriteLine("eve-host: factional warfare complexes need the space runtime; none are started");
             return;
         }
-        var sites = new FwComplexSites(dungeonWavesDirector, Eve.Dungeons.DungeonCatalog.LoadEmbedded(), foundations.Content,
+        fwDungeons = Eve.Dungeons.DungeonCatalog.LoadEmbedded();
+        var sites = new FwComplexSites(dungeonWavesDirector, fwDungeons, foundations.Content,
             system => spaceSessions?.SessionsInSystem(system) ?? [],
             CurrentDungeonInstanceAsync,
             async (characterId, cancellationToken) => await WarFactionOfAsync(characterId, cancellationToken));

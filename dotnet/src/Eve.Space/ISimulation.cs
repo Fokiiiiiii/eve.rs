@@ -197,6 +197,9 @@ public interface ISimulation
     /// <summary>Puts an acceleration gate of a dungeon room in its system's space (protocol 75).</summary>
     void PlaceAccelerationGate(SimPlaceAccelerationGate gate);
 
+    /// <summary>Puts a battlefield's capture point in its system's space (protocol 77).</summary>
+    void PlaceCapturePoint(SimPlaceCapturePoint point);
+
     /// <summary>Removes the structure-owned cyno beacon from a specific solar-system scene.</summary>
     void RemoveCynoBeacon(int solarSystemId, long structureBeaconId);
 

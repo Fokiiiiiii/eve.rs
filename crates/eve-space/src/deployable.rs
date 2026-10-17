@@ -72,6 +72,9 @@ pub enum Role {
     /// An acceleration gate of a dungeon room the host keeps a record of (protocol 75): a stargate-kind ball the pilots of its system see, interactive
     /// (EVE.js `abyssalRoomEntity`: `ballInteractive`, group 366). Its transit is the scene's `AccelerationGateTransit` command.
     AccelerationGate,
+    /// A battlefield's capture point the host keeps a record of (protocol 77): a ball the pilots of its system see, with its factions and next point time
+    /// as its dynamic slim fields. It has no effect in the simulation: the host decides who holds it.
+    CapturePoint,
     /// A jump bridge a ship opened (command 28, protocol 54): it lives until its time is up, is put in no client ball, and lets the fleet ships in 2 500 metres of
     /// the ship pass through it to the field (command 31). The field is the one the bridge targets; the destination is that field's system.
     JumpBridge { field_id: i64, destination_system: i32, range_meters: f64 },
@@ -94,6 +97,8 @@ const CYNO_FIELD_CATEGORY: i32 = 2;
 const DEPLOYABLE_CATEGORY: i32 = 22;
 /// The category of an acceleration gate's ball (EVE.js's acceleration gate record: type 17831, group 366, category 2).
 const ACCELERATION_GATE_CATEGORY: i32 = 2;
+/// The category of a capture point's ball (the SDE group 922, "Capture Point", is category 11).
+const CAPTURE_POINT_CATEGORY: i32 = 11;
 
 /// How long a structure's bomb waits for the Host's authorization of its blast before it goes off with no effect (30 seconds of scene time).
 const BOMB_IMPACT_TICKS: i64 = 30 * crate::scene::TICKS_PER_SECOND;
@@ -164,6 +169,7 @@ fn release_actions(stamp: u32, deployable: &Deployable) -> Result<Vec<Value>, ev
         | Role::ControlTower { .. }
         | Role::DeadspacePocket => (Kind::Other, LegacyMode::Stop),
         Role::AccelerationGate => (Kind::Stargate, LegacyMode::Stop),
+        Role::CapturePoint => (Kind::Other, LegacyMode::Stop),
         Role::JumpBridge { .. } => (Kind::Other, LegacyMode::Stop),
         Role::AnalysisBeacon { .. } => (Kind::Container, LegacyMode::Stop),
     };
@@ -205,7 +211,7 @@ fn slim_item(deployable: &Deployable, category: i32) -> Value {
 fn slim_value(value: &SlimValue) -> Value {
     match value {
         SlimValue::None => Value::None,
-        SlimValue::Int(number) => int(*number),
+        SlimValue::Int(number) => id(*number),
         SlimValue::Real(number) => real(*number),
         SlimValue::Bool(flag) => Value::Bool(*flag),
         SlimValue::Text(text_value) => text(text_value.clone()),
@@ -223,6 +229,7 @@ fn category_of(role: &Role) -> i32 {
         | Role::CynoBeacon { .. }
         | Role::AnalysisBeacon { .. } => DEPLOYABLE_CATEGORY,
         Role::AccelerationGate => ACCELERATION_GATE_CATEGORY,
+        Role::CapturePoint => CAPTURE_POINT_CATEGORY,
         _ => CHARGE_CATEGORY,
     }
 }
@@ -746,6 +753,57 @@ impl Scene {
         self.insert_deployable(gate, now)
     }
 
+    /// A capture point of a battlefield is put in space (protocol 77). Its factions (0 is none) and its next point time (0 is none) are its dynamic slim
+    /// fields, as the client reads them. Given once; its end is the host's.
+    pub(crate) fn place_capture_point(
+        &mut self,
+        placement: crate::link::CapturePointPlacement,
+        now: i64,
+    ) -> Vec<Out> {
+        if self.deployables.contains_key(&placement.deployable_id) {
+            return Vec::new();
+        }
+        let [x, y, z] = placement.position;
+        let faction =
+            |value: i32| if value == 0 { SlimValue::None } else { SlimValue::Int(i64::from(value)) };
+        let mut slim_fields = BTreeMap::new();
+        if placement.attacker_faction != 0 || placement.occupier_faction != 0 {
+            let factions = SlimValue::Tuple(vec![
+                faction(placement.attacker_faction),
+                faction(placement.occupier_faction),
+            ]);
+            slim_fields.insert("component_fwCapturePoint_factionInfo".to_string(), factions);
+        }
+        if placement.next_point_time != 0 {
+            slim_fields.insert(
+                "component_fwCapturePoint_nextPointTime".to_string(),
+                SlimValue::Int(placement.next_point_time),
+            );
+        }
+        let deployable = Deployable {
+            id: placement.deployable_id,
+            spec: Spec {
+                charge_type_id: placement.type_id,
+                group_id: placement.group_id,
+                name: placement.name,
+                radius: placement.radius,
+            },
+            role: Role::CapturePoint,
+            position: Vec3::new(x, y, z),
+            ends_at: i64::MAX,
+            launcher: 0,
+            ship_id: 0,
+            owner_id: 0,
+            corporation_id: 0,
+            alliance_id: 0,
+            module_id: 0,
+            module_type: 0,
+            watchers: BTreeSet::new(),
+            slim_fields,
+        };
+        self.insert_deployable(deployable, now)
+    }
+
     /// A Mobile Cynosural Inhibitor the host keeps a record of is put in space where it lies, anchored or not (protocol 50). Given once; its end is the host's.
     pub(crate) fn place_inhibitor(
         &mut self,
@@ -1226,6 +1284,7 @@ impl Scene {
                 | Role::ControlTower { .. }
                 | Role::DeadspacePocket
                 | Role::AccelerationGate
+                | Role::CapturePoint
                 | Role::AnalysisBeacon { .. } => false,
             })
     }

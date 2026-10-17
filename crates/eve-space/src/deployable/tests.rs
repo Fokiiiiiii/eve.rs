@@ -1058,6 +1058,37 @@ fn a_dynamic_slim_field_the_host_sets_is_told_with_the_slim_item_only_when_it_ch
 }
 
 #[test]
+fn a_capture_point_is_put_in_space_once_with_the_factions_and_next_point_time_the_host_gives() {
+    let (mut scene, t) = crowd();
+    let a = scene.pilots[&A].ship.position;
+    let point = crate::link::CapturePointPlacement {
+        deployable_id: CRAB + 10,
+        solar_system_id: 30_100_032,
+        name: "30km Caldari Capture Point".to_string(),
+        type_id: 29_421,
+        group_id: 922,
+        position: [a.x + 1_000.0, a.y, a.z],
+        radius: 300.0,
+        attacker_faction: 500_004,
+        occupier_faction: 500_001,
+        next_point_time: 133_900_000_000_000_000,
+    };
+    let told = scene.place_capture_point(point.clone(), t);
+    let text = format!("{told:?}");
+    assert!(text.contains("AddBalls2"), "the capture point is put in a client ball");
+    assert!(
+        text.contains("component_fwCapturePoint_factionInfo")
+            && text.contains("Int(500004)")
+            && text.contains("Int(500001)")
+    );
+    assert!(
+        text.contains("component_fwCapturePoint_nextPointTime") && text.contains("Long(133900000000000000)")
+    );
+    assert_eq!(scene.deployables[&(CRAB + 10)].role, Role::CapturePoint);
+    assert!(scene.place_capture_point(point, t).is_empty(), "given once");
+}
+
+#[test]
 fn a_crab_is_put_in_space_once_and_the_state_the_host_sets_is_told_only_when_it_changes() {
     let (mut scene, t) = crowd();
     let idle = AnalysisBeaconState {

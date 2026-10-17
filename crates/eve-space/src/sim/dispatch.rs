@@ -461,6 +461,7 @@ impl Sim {
             | Message::PlaceControlTower(..)
             | Message::PlaceDeadspacePocket(..)
             | Message::PlaceAccelerationGate(..)
+            | Message::PlaceCapturePoint(..)
             | Message::RemoteDecloakPing { .. }
             | Message::SetDisruptorActive { .. }
             | Message::TetherPolicy { .. }
@@ -1323,6 +1324,13 @@ impl Sim {
                 let gate = *gate;
                 match self.scenes.get_mut(&gate.solar_system_id) {
                     Some(scene) => scene.place_acceleration_gate(gate, now),
+                    None => Vec::new(),
+                }
+            }
+            Message::PlaceCapturePoint(point) => {
+                let point = *point;
+                match self.scenes.get_mut(&point.solar_system_id) {
+                    Some(scene) => scene.place_capture_point(point, now),
                     None => Vec::new(),
                 }
             }

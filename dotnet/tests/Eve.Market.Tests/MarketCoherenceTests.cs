@@ -91,7 +91,8 @@ public class MarketCoherenceTests
             var stream = Assert.IsType<PySubStream>(entry.Items[1]);
             var body = Assert.IsType<PyTuple>(stream.Decoded ?? MarshalCodec.Decode(stream.Raw));
             if (JsSemantics.PlainText(body.Items[1]) != "InvalidateCachedMethodCall") continue;
-            found.Add(string.Join(" ", Assert.IsType<PyList>(body.Items[2]).Items.Select(Text)));
+            // the invalidated call's arguments: a tuple, as the engine's *args gives them (ClientCallRequest)
+            found.Add(string.Join(" ", Assert.IsType<PyTuple>(body.Items[2]).Items.Select(Text)));
         }
         return found;
     }

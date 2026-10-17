@@ -8,15 +8,15 @@ namespace Eve.Services.Slash;
 /// commands the modules that exist can carry out are here: <c>/dmg</c> and <c>/heal</c> (<see cref="ShipHealthCommands"/>) <c>/deathtest</c> (<see cref="DeathTestCommands"/>), <c>/suicide</c> (<see cref="SuicideCommands"/>), <c>/npc</c> (<see cref="NpcCommands"/>) and the item commands <c>/giveitem</c>, <c>/fit</c> and <c>/unfit</c> (<see cref="ItemCommands"/>) and <c>/giveskill</c> (<see cref="SkillCommands"/>); any other is answered as unknown.
 /// </summary>
 [Service("slash")]
-public sealed partial class SlashService(ShipHealthCommands health, DeathTestCommands? death = null, SuicideCommands? suicide = null, NpcCommands? npcs = null, ItemCommands? items = null, SkillCommands? skills = null, IskCommands? isk = null, StandingCommands? standings = null, LoyaltyCommands? loyalty = null)
+public sealed partial class SlashService(ShipHealthCommands health, DeathTestCommands? death = null, SuicideCommands? suicide = null, NpcCommands? npcs = null, ItemCommands? items = null, SkillCommands? skills = null, IskCommands? isk = null, LoyaltyCommands? loyalty = null, StandingCommands? standings = null)
 {
     private readonly Dictionary<string, Func<ServiceCall, string, Task<string>>> _commands =
-        Commands(health, death, suicide, npcs, items, skills, isk, standings, loyalty);
+        Commands(health, death, suicide, npcs, items, skills, isk, loyalty, standings);
 
     // Dispatch and discovery share the same registrations; absent providers expose no command.
     private static Dictionary<string, Func<ServiceCall, string, Task<string>>> Commands(
         ShipHealthCommands health, DeathTestCommands? death, SuicideCommands? suicide,
-        NpcCommands? npcs, ItemCommands? items, SkillCommands? skills, IskCommands? isk, StandingCommands? standings, LoyaltyCommands? loyalty)
+        NpcCommands? npcs, ItemCommands? items, SkillCommands? skills, IskCommands? isk, LoyaltyCommands? loyalty, StandingCommands? standings)
     {
         var commands = new Dictionary<string, Func<ServiceCall, string, Task<string>>>(StringComparer.Ordinal)
         {

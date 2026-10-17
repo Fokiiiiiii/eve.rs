@@ -5,8 +5,9 @@ namespace Eve.Host.PublicGateway;
 /// <summary>
 /// The character title namespace of the public gateway (eve_public.cosmetic.character.title.api): the titles a character owns, the one it
 /// wears, and wearing and taking off (EveJS achievementGatewayService.js). A title is the SDE's (its id must be a character title of the
-/// SDE); an owned title comes from a reward (not yet claimed through the gateway, so a character owns the titles it was granted). Equipping
-/// a title the character does not own is refused with 409, as the reference does. The definition's CDN checkpoint is not served yet.
+/// SDE); an owned title comes from a reward (the reward claims are not served yet, so a character owns the titles it was granted). Equipping
+/// a title the character does not own is refused with 409, as the reference does. Equipping and taking off publish the character's
+/// SetNotice to its notice streams (EveJS achievementGatewayService.js, the title-set event). The definition's CDN checkpoint is not served yet.
 /// </summary>
 internal static class TitleGateway
 {
@@ -14,7 +15,9 @@ internal static class TitleGateway
     private const int DefaultPageSize = 50;
     private const int MaxPageSize = 200;
 
-    public static IReadOnlyDictionary<string, GatewayHandler> Handlers(CharacterTitleStore store, IReadOnlySet<Guid> knownTitles)
+    private const string SetNoticeType = "eve_public.cosmetic.character.title.api.SetNotice";
+
+    public static IReadOnlyDictionary<string, GatewayHandler> Handlers(CharacterTitleStore store, IReadOnlySet<Guid> knownTitles, NoticeHub notices)
     {
         var handlers = new Dictionary<string, GatewayHandler>(StringComparer.Ordinal);
 
@@ -42,12 +45,14 @@ internal static class TitleGateway
             var title = SkillPlanWire.IdentifierOf(SkillPlanWire.Message(request.Payload, 1) ?? ReadOnlyMemory<byte>.Empty);
             if (!knownTitles.Contains(title) || !await store.EquipAsync(request.CharacterId!.Value, title, ct))
                 throw new TitleRefusal("title equip failed");
+            PublishSet(notices, request.CharacterId!.Value, title);
             return [];
         });
 
         Add(handlers, "UnequipRequest", "UnequipResponse", async (request, ct) =>
         {
             await store.UnequipAsync(request.CharacterId!.Value, ct);
+            PublishSet(notices, request.CharacterId!.Value, null);
             return [];
         });
 
@@ -65,6 +70,20 @@ internal static class TitleGateway
         });
 
         return handlers;
+    }
+
+    /// <summary>The character's SetNotice: the title it wears, or no title (eve_public.cosmetic.character.title.api.SetNotice).</summary>
+    private static void PublishSet(NoticeHub notices, long characterId, Guid? title)
+    {
+        var character = new ProtoWriter();
+        character.Uint(1, (ulong)characterId);
+        var notice = new ProtoWriter();
+        notice.Message(1, character.ToArray());
+        if (title is { } worn)
+            notice.Message(2, SkillPlanWire.EncodeIdentifier(worn));
+        else
+            notice.Bool(3, true);
+        notices.Publish(SetNoticeType, notice.ToArray(), characterId);
     }
 
     /// <summary>A refusal the client reads as a 409 (EveJS: the title is not owned).</summary>

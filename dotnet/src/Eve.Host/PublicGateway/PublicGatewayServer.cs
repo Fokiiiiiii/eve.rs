@@ -15,11 +15,16 @@ internal sealed record GatewayAnswer(uint StatusCode, string StatusMessage, stri
 /// <summary>Answers one request type; the request is the decoded envelope (its character is the active identity).</summary>
 internal delegate Task<GatewayAnswer> GatewayHandler(GatewayRequest request, CancellationToken cancellationToken);
 
+/// <summary>What the listener serves: the answers by request type, the notices of the open Notices.Consume streams, and who a request is for.</summary>
+internal sealed record PublicGatewayRoutes(IReadOnlyDictionary<string, GatewayHandler> Handlers, NoticeHub Notices, GatewayAuthority Authority);
+
 /// <summary>
 /// The public protobuf gateway of the V24.01 client, served on an HTTP/2 listener without TLS (h2c; the client reaches it through
 /// EVE_PUBLIC_GATEWAY_ADDRESS). The routes are those of EveJS publicGatewayLocal.js: Requests/Send answers one response frame per request
 /// frame, in order; the Ping calls answer an empty frame; Events/Publish is acknowledged and not stored (the reference keeps no events either).
-/// Notices/Consume is not served yet: it answers the gRPC status UNIMPLEMENTED.
+/// Notices/Consume is a stream the client keeps open: the request frames name the active character, and the notices routed to it (or to the
+/// token's account) are written to it. A request's character is trusted only when the account of the request's bearer token owns it
+/// (<see cref="GatewayAuthority"/>); without a token the request is refused with 401.
 /// </summary>
 internal sealed class PublicGatewayServer : IAsyncDisposable
 {
@@ -37,13 +42,13 @@ internal sealed class PublicGatewayServer : IAsyncDisposable
     /// <summary>The port the listener is bound to (the one asked for, or the one the system chose for 0).</summary>
     public int Port { get; }
 
-    public static async Task<PublicGatewayServer> StartAsync(IPAddress address, int port, IReadOnlyDictionary<string, GatewayHandler> handlers, CancellationToken cancellationToken = default)
+    public static async Task<PublicGatewayServer> StartAsync(IPAddress address, int port, PublicGatewayRoutes routes, CancellationToken cancellationToken = default)
     {
         var builder = WebApplication.CreateEmptyBuilder(new WebApplicationOptions());
         builder.WebHost.UseKestrelCore();
         builder.WebHost.ConfigureKestrel(options => options.Listen(address, port, listen => listen.Protocols = HttpProtocols.Http2));
         var app = builder.Build();
-        app.Run(context => Route(context, handlers));
+        app.Run(context => Route(context, routes));
         await app.StartAsync(cancellationToken);
         var url = app.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>()!.Addresses.First();
         return new PublicGatewayServer(app, new Uri(url).Port);
@@ -55,10 +60,11 @@ internal sealed class PublicGatewayServer : IAsyncDisposable
         await _app.DisposeAsync();
     }
 
-    private static Task Route(HttpContext context, IReadOnlyDictionary<string, GatewayHandler> handlers) => context.Request.Path.Value switch
+    private static Task Route(HttpContext context, PublicGatewayRoutes routes) => context.Request.Path.Value switch
     {
         "/eve_public.gateway.Requests/Ping" or "/eve_public.gateway.Notices/Ping" or "/eve_public.gateway.Events/Ping" => Guard(context, () => AnswerEmpty(context, false)),
-        "/eve_public.gateway.Requests/Send" => Guard(context, () => Send(context, handlers)),
+        "/eve_public.gateway.Requests/Send" => Guard(context, () => Send(context, routes)),
+        "/eve_public.gateway.Notices/Consume" => Guard(context, () => Consume(context, routes)),
         "/eve_public.gateway.Events/Publish" => Guard(context, () => AnswerEmpty(context, true)),
         _ => Unimplemented(context),
     };
@@ -77,9 +83,10 @@ internal sealed class PublicGatewayServer : IAsyncDisposable
         }
     }
 
-    private static async Task Send(HttpContext context, IReadOnlyDictionary<string, GatewayHandler> handlers)
+    private static async Task Send(HttpContext context, PublicGatewayRoutes routes)
     {
         await StartGrpc(context);
+        var account = routes.Authority.AccountOf(context.Request.Headers["authorization"]);
         var pending = new List<byte>();
         var reader = context.Request.BodyReader;
         while (true)
@@ -90,7 +97,7 @@ internal sealed class PublicGatewayServer : IAsyncDisposable
             reader.AdvanceTo(read.Buffer.End);
             foreach (var frame in GatewayEnvelope.TakeFrames(pending))
             {
-                var response = await Answer(frame, handlers, context.RequestAborted);
+                var response = await Answer(frame, routes, account, context.RequestAborted);
                 await context.Response.BodyWriter.WriteAsync(GatewayEnvelope.Frame(response), context.RequestAborted);
             }
             if (read.IsCompleted)
@@ -133,7 +140,56 @@ internal sealed class PublicGatewayServer : IAsyncDisposable
         return Task.CompletedTask;
     }
 
-    private static async Task<byte[]> Answer(byte[] frame, IReadOnlyDictionary<string, GatewayHandler> handlers, CancellationToken cancellationToken)
+    /// <summary>
+    /// Notices/Consume: the stream stays open until the client goes. The request frames are read beside it (each names the active character,
+    /// which counts only when the token's account owns it); the notices routed to the stream are written as they come.
+    /// </summary>
+    private static async Task Consume(HttpContext context, PublicGatewayRoutes routes)
+    {
+        await StartGrpc(context);
+        // StartAsync leaves the headers of a stream that has no body yet unflushed; the client waits for them before it reads a notice
+        await context.Response.BodyWriter.FlushAsync(context.RequestAborted);
+        var subscriber = routes.Notices.Subscribe(routes.Authority.AccountOf(context.Request.Headers["authorization"]));
+        var identifying = IdentifyAsync(context, subscriber, routes.Authority);
+        try
+        {
+            await foreach (var frame in subscriber.Frames.Reader.ReadAllAsync(context.RequestAborted))
+                await context.Response.BodyWriter.WriteAsync(frame, context.RequestAborted);
+        }
+        catch (OperationCanceledException) when (context.RequestAborted.IsCancellationRequested)
+        {
+        }
+        finally
+        {
+            routes.Notices.Unsubscribe(subscriber);
+        }
+        await identifying.ContinueWith(_ => { }, TaskScheduler.Default);
+    }
+
+    private static async Task IdentifyAsync(HttpContext context, NoticeSubscriber subscriber, GatewayAuthority authority)
+    {
+        var reader = context.Request.BodyReader;
+        var pending = new List<byte>();
+        while (true)
+        {
+            var read = await reader.ReadAsync(context.RequestAborted);
+            foreach (var segment in read.Buffer)
+                pending.AddRange(segment.ToArray());
+            reader.AdvanceTo(read.Buffer.End);
+            foreach (var frame in GatewayEnvelope.TakeFrames(pending))
+            {
+                var request = GatewayEnvelope.DecodeRequest(frame);
+                subscriber.Character = request.CharacterId is { } character && subscriber.Account is { } account
+                    && await authority.OwnsAsync(account, character, context.RequestAborted)
+                    ? character
+                    : null;
+            }
+            if (read.IsCompleted)
+                break;
+        }
+    }
+
+    private static async Task<byte[]> Answer(byte[] frame, PublicGatewayRoutes routes, long? account, CancellationToken cancellationToken)
     {
         GatewayRequest request;
         try
@@ -146,9 +202,13 @@ internal sealed class PublicGatewayServer : IAsyncDisposable
             throw;
         }
         GatewayAnswer answer;
-        if (!handlers.TryGetValue(request.TypeName, out var handler))
+        if (!routes.Handlers.TryGetValue(request.TypeName, out var handler))
         {
             answer = new GatewayAnswer(404, $"no public gateway answer for {request.TypeName}", "", []);
+        }
+        else if (await routes.Authority.RefusalAsync(account, request.CharacterId, cancellationToken) is { } refusal)
+        {
+            answer = refusal;
         }
         else
         {

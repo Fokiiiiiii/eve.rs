@@ -1,3 +1,5 @@
+using System.Buffers.Binary;
+using System.IO.Pipelines;
 using System.Net;
 using System.Net.Http.Headers;
 using Eve.Characters;
@@ -18,6 +20,11 @@ public sealed class PublicGatewayTests
     private const string Milestone = "eve_public.character.skill.plan.milestone.";
     private const int Gunnery = 3300;
 
+    // the login JWT of account 1 (the characters the rig creates belong to it) and of account 2, as the client sends them: the subject names the
+    // account; the signature is not checked by the gateway (DEVIATIONS, character phase S9)
+    private const string UserToken = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJVU0VSOkVWRToxIiwidGVuYW50IjoiZXZlLXRlc3QiLCJ0aWVyIjoiZGV2IiwiZXhwIjo0MTAyNDQ0ODAwfQ.dW5zaWduZWQtdGVzdC1zaWduYXR1cmU";
+    private const string OtherUserToken = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJVU0VSOkVWRToyIiwidGVuYW50IjoiZXZlLXRlc3QiLCJ0aWVyIjoiZGV2IiwiZXhwIjo0MTAyNDQ0ODAwfQ.dW5zaWduZWQtdGVzdC1zaWduYXR1cmU";
+
     [PgFact]
     public async Task Skill_plans_are_created_read_changed_activated_and_deleted_through_the_gateway_and_survive_a_restart()
     {
@@ -37,14 +44,18 @@ public sealed class PublicGatewayTests
         var read = await SendOneAsync(server.Port, Plan + "GetRequest", character, IdentifierField(1, plan));
         Assert.Equal(200u, read.Status);
         var attributes = Plans(read.Payload);
-        Assert.Equal(("Gunnery", "Guns", (Gunnery, 4)), (attributes.Name, attributes.Description, attributes.Requirement));
+        // the plan keeps the reference's canonical form: every level of the skill, one entry each
+        Assert.Equal("Gunnery", attributes.Name);
+        Assert.Equal("Guns", attributes.Description);
+        Assert.Equal(Levels(Gunnery, 4), attributes.Requirements);
 
         // SetNameRequest (skill_plan 1, name 2) and SetSkillRequirementsRequest (skill_plan 1, requirements 2) change the plan
         Assert.Equal(200u, (await SendOneAsync(server.Port, Plan + "SetNameRequest", character, Concat(IdentifierField(1, plan), Str(2, "Gunnery II")))).Status);
         Assert.Equal(200u, (await SendOneAsync(server.Port, Plan + "SetSkillRequirementsRequest", character,
             Concat(IdentifierField(1, plan), Requirement(2, Gunnery, 5)))).Status);
         var changed = Plans((await SendOneAsync(server.Port, Plan + "GetRequest", character, IdentifierField(1, plan))).Payload);
-        Assert.Equal(("Gunnery II", (Gunnery, 5)), (changed.Name, changed.Requirement));
+        Assert.Equal("Gunnery II", changed.Name);
+        Assert.Equal(Levels(Gunnery, 5), changed.Requirements);
 
         // a milestone of the plan: train to a type (milestone.CreateRequest, milestone 1: skill_plan 1, train_to_type 2)
         var train = new ProtoWriter();
@@ -142,7 +153,99 @@ public sealed class PublicGatewayTests
         Assert.Equal(new[] { battlecruiserSmith, starkmanChampion }, afterRestart.Ids());
     }
 
+    [PgFact]
+    public async Task A_request_without_a_token_or_for_a_character_of_another_account_is_refused()
+    {
+        await using var rig = await CharacterHostTests.CharacterHostRig.CreateAsync();
+        var character = await rig.CreateCharacterAsync();
+        await using var server = await PublicGatewayServer.StartAsync(IPAddress.Loopback, 0, rig.Gateway);
+
+        // no token is 401; a token of account 2 does not own account 1's character (403); the owner's token is answered
+        Assert.Equal(401u, (await SendOneAsync(server.Port, Plan + "GetAllRequest", character, [], authorization: null)).Status);
+        Assert.Equal(403u, (await SendOneAsync(server.Port, Plan + "GetAllRequest", character, [], authorization: OtherUserToken)).Status);
+        Assert.Equal(200u, (await SendOneAsync(server.Port, Plan + "GetAllRequest", character, [])).Status);
+    }
+
+    [PgFact]
+    public async Task A_title_the_character_puts_on_is_announced_on_the_notice_stream_of_its_account()
+    {
+        await using var rig = await CharacterHostTests.CharacterHostRig.CreateAsync();
+        var character = await rig.CreateCharacterAsync();
+        const string titleApi = "eve_public.cosmetic.character.title.api.";
+        var battlecruiserSmith = Guid.Parse("00851de7-b7ca-5136-871e-d07429563c06"); // SDE characterTitles
+        await new CharacterTitleStore(rig.Source, rig.CharactersSchema).GrantAsync(character, battlecruiserSmith, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+        await using var server = await PublicGatewayServer.StartAsync(IPAddress.Loopback, 0, rig.Gateway);
+
+        // the Consume stream: its first request frame names the active character; the response keeps streaming after the request ends
+        using var http = new HttpClient(new SocketsHttpHandler())
+        {
+            DefaultRequestVersion = HttpVersion.Version20,
+            DefaultVersionPolicy = HttpVersionPolicy.RequestVersionExact,
+        };
+        var identity = new ByteArrayContent(GatewayEnvelope.Frame(RequestFrame(Plan + "GetAllRequest", character, [])));
+        identity.Headers.ContentType = new MediaTypeHeaderValue("application/grpc+proto");
+        using var request = new HttpRequestMessage(HttpMethod.Post, $"http://127.0.0.1:{server.Port}/eve_public.gateway.Notices/Consume")
+        {
+            Content = identity,
+            Version = HttpVersion.Version20,
+            VersionPolicy = HttpVersionPolicy.RequestVersionExact,
+        };
+        request.Headers.TryAddWithoutValidation("authorization", UserToken);
+        using var response = await http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        using var notices = await response.Content.ReadAsStreamAsync();
+        // the server reads the identity frame beside the stream; a short wait lets it take the character before the notice is published
+        await Task.Delay(500);
+
+        // the character wears a title (Equip answers through Requests/Send): its SetNotice reaches the stream
+        Assert.Equal(200u, (await SendOneAsync(server.Port, titleApi + "EquipRequest", character, IdentifierField(1, battlecruiserSmith))).Status);
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+        var notice = await ReadFrameAsync(notices, deadline.Token);
+        var any = SkillPlanWire.Message(notice, 5) ?? throw new InvalidOperationException("no payload in the notice");
+        var typeUrl = SkillPlanWire.StringOf(any, 1);
+        Assert.Equal(titleApi + "SetNotice", typeUrl[(typeUrl.LastIndexOf('/') + 1)..]);
+        Assert.Equal((long)character, SkillPlanWire.VarintOf(SkillPlanWire.Message(notice, 6) ?? ReadOnlyMemory<byte>.Empty, 4));
+        var setNotice = SkillPlanWire.Message(any, 2) ?? throw new InvalidOperationException("no value in the notice");
+        Assert.Equal(battlecruiserSmith, SkillPlanWire.IdentifierOf(SkillPlanWire.Message(setNotice, 2) ?? ReadOnlyMemory<byte>.Empty));
+    }
+
     // ---- encoding of the test requests (the client's messages, by field number) ------------------------------------------
+
+    /// <summary>The canonical requirements of one skill: its levels 1 to <paramref name="level"/>, one entry each.</summary>
+    private static (int TypeId, int Level)[] Levels(int typeId, int level) => Enumerable.Range(1, level).Select(i => (typeId, i)).ToArray();
+
+    /// <summary>One gRPC message frame read from a stream (the length after the compression flag).</summary>
+    private static async Task<byte[]> ReadFrameAsync(Stream stream, CancellationToken cancellationToken)
+    {
+        var header = new byte[5];
+        await stream.ReadExactlyAsync(header, cancellationToken);
+        var length = BinaryPrimitives.ReadUInt32BigEndian(header.AsSpan(1, 4));
+        var message = new byte[length];
+        await stream.ReadExactlyAsync(message, cancellationToken);
+        return message;
+    }
+
+    /// <summary>The request envelope of a request type for a character (its identity), without the gRPC framing.</summary>
+    private static byte[] RequestFrame(string requestName, long? character, byte[] payload)
+    {
+        var request = new ProtoWriter();
+        request.Bytes(2, Guid.NewGuid().ToByteArray(bigEndian: true));
+        var any = new ProtoWriter();
+        any.String(1, "type.evetech.net/" + requestName);
+        any.Bytes(2, payload);
+        request.Message(3, any.ToArray());
+        if (character is { } id)
+        {
+            var identifier = new ProtoWriter();
+            identifier.Uint(1, (ulong)id);
+            var active = new ProtoWriter();
+            active.Message(1, identifier.ToArray());
+            var context = new ProtoWriter();
+            context.Message(10, active.ToArray());
+            request.Message(6, context.ToArray());
+        }
+        return request.ToArray();
+    }
 
     private sealed record Answer(uint Status, string TypeName, byte[] Payload)
     {
@@ -206,42 +309,33 @@ public sealed class PublicGatewayTests
     private static Guid IdOf(byte[] payload) => SkillPlanWire.IdentifierOf(SkillPlanWire.Message(payload, 1) ?? ReadOnlyMemory<byte>.Empty);
 
     /// <summary>The attributes of a plan message at a field (1 for GetResponse, 2 for GetActiveResponse's info).</summary>
-    private static (string Name, string Description, (int TypeId, int Level) Requirement) Plans(byte[] payload, int field = 1)
+    private static (string Name, string Description, (int TypeId, int Level)[] Requirements) Plans(byte[] payload, int field = 1)
     {
         var attributes = SkillPlanWire.Message(payload, field) ?? throw new InvalidOperationException("no plan in the answer");
         var (name, description, requirements) = SkillPlanWire.DecodePlan(attributes);
-        var first = Assert.Single(requirements);
-        return (name, description, (first.SkillTypeId, first.Level));
+        return (name, description, requirements.Select(requirement => (requirement.SkillTypeId, requirement.Level)).ToArray());
     }
 
     /// <summary>Sends one request frame on a new HTTP/2 connection and reads its answer frame and the gRPC status trailer.</summary>
-    private static async Task<Answer> SendOneAsync(int port, string requestName, long? character, byte[] payload)
+    private static async Task<Answer> SendOneAsync(int port, string requestName, long? character, byte[] payload, string? authorization = UserToken)
     {
         using var http = new HttpClient(new SocketsHttpHandler())
         {
             DefaultRequestVersion = HttpVersion.Version20,
             DefaultVersionPolicy = HttpVersionPolicy.RequestVersionExact,
         };
-        var request = new ProtoWriter();
-        request.Bytes(2, Guid.NewGuid().ToByteArray(bigEndian: true));
-        var any = new ProtoWriter();
-        any.String(1, "type.evetech.net/" + requestName);
-        any.Bytes(2, payload);
-        request.Message(3, any.ToArray());
-        if (character is { } id)
-        {
-            var identifier = new ProtoWriter();
-            identifier.Uint(1, (ulong)id);
-            var active = new ProtoWriter();
-            active.Message(1, identifier.ToArray());
-            var context = new ProtoWriter();
-            context.Message(10, active.ToArray());
-            request.Message(6, context.ToArray());
-        }
-        var body = GatewayEnvelope.Frame(request.ToArray());
+        var body = GatewayEnvelope.Frame(RequestFrame(requestName, character, payload));
         using var content = new ByteArrayContent(body);
         content.Headers.ContentType = new MediaTypeHeaderValue("application/grpc+proto");
-        using var response = await http.PostAsync($"http://127.0.0.1:{port}/eve_public.gateway.Requests/Send", content);
+        using var request = new HttpRequestMessage(HttpMethod.Post, $"http://127.0.0.1:{port}/eve_public.gateway.Requests/Send")
+        {
+            Content = content,
+            Version = HttpVersion.Version20,
+            VersionPolicy = HttpVersionPolicy.RequestVersionExact,
+        };
+        if (authorization is not null)
+            request.Headers.TryAddWithoutValidation("authorization", authorization);
+        using var response = await http.SendAsync(request);
         Assert.Equal(HttpVersion.Version20, response.Version);
         Assert.Equal("0", response.TrailingHeaders.GetValues("grpc-status").Single());
         var bytes = (await response.Content.ReadAsByteArrayAsync()).ToList();

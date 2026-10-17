@@ -45,11 +45,7 @@ internal static class GatewayEnvelope
     public static byte[] EncodeResponse(byte[] correlationUuid, uint statusCode, string statusMessage, string payloadTypeName, byte[] payload, DateTimeOffset dispatched)
     {
         var writer = new ProtoWriter();
-        var timestamp = new ProtoWriter();
-        var ticks = dispatched.UtcTicks - DateTimeOffset.UnixEpoch.UtcTicks;
-        timestamp.Uint(1, (ulong)(ticks / TimeSpan.TicksPerSecond));
-        timestamp.Uint(2, (ulong)(ticks % TimeSpan.TicksPerSecond * 100));
-        writer.Message(1, timestamp.ToArray());
+        writer.Message(1, Timestamp(dispatched));
         writer.Bytes(2, correlationUuid);
         writer.Uint(3, statusCode);
         writer.String(4, statusMessage);
@@ -62,6 +58,39 @@ internal static class GatewayEnvelope
         }
         writer.String(6, "eve.rs");
         return writer.ToArray();
+    }
+
+    /// <summary>
+    /// Encodes eve_public.Notice: dispatched 1, uuid 2, internal_origin 3, payload Any 5 and target_group 6 (character 4 or user 3, the
+    /// reference's TargetGroup fields). The character or the account routes it; a notice with neither is not sent by the host.
+    /// </summary>
+    public static byte[] EncodeNotice(string payloadTypeName, ReadOnlySpan<byte> payload, long? character, long? account, DateTimeOffset dispatched)
+    {
+        var writer = new ProtoWriter();
+        writer.Message(1, Timestamp(dispatched));
+        writer.Bytes(2, Guid.NewGuid().ToByteArray());
+        writer.String(3, "eve.rs");
+        var any = new ProtoWriter();
+        any.String(1, TypeUrlPrefix + payloadTypeName);
+        any.Bytes(2, payload.ToArray());
+        writer.Message(5, any.ToArray());
+        var target = new ProtoWriter();
+        if (character is { } id)
+            target.Uint(4, (ulong)id);
+        else
+            target.Uint(3, (ulong)(account ?? 0));
+        writer.Message(6, target.ToArray());
+        return writer.ToArray();
+    }
+
+    /// <summary>A google.protobuf.Timestamp: seconds 1 and the fraction of a second in nanoseconds 2 (as the reference writes it).</summary>
+    private static byte[] Timestamp(DateTimeOffset at)
+    {
+        var timestamp = new ProtoWriter();
+        var ticks = at.UtcTicks - DateTimeOffset.UnixEpoch.UtcTicks;
+        timestamp.Uint(1, (ulong)(ticks / TimeSpan.TicksPerSecond));
+        timestamp.Uint(2, (ulong)(ticks % TimeSpan.TicksPerSecond * 100));
+        return timestamp.ToArray();
     }
 
     /// <summary>One gRPC message frame: the compression flag (0), the length as a big-endian uint32, then the message.</summary>

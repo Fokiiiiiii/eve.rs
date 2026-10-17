@@ -209,7 +209,8 @@ def test_a_pilot_who_destroys_its_own_ship_is_left_in_a_capsule_as_in_the_refere
         mine, theirs = pod_view(pod["events"]), pod_view(pod_step["events"])
         if mine != theirs:
             problems.append(f"{pod_label}: the victim was told {mine} in place of {theirs}")
-        mine, theirs = [names(e) for e in pod["seen"]], [names(e) for e in pod_step["seen"]]
+        mine = [names(e) for e in pod["seen"] if not set(names(e)) <= KEEP_ALIVE]
+        theirs = [names(e) for e in pod_step["seen"] if not set(names(e)) <= KEEP_ALIVE]
         if mine != theirs:
             problems.append(f"{pod_label}: the watcher was sent {mine} in place of {theirs}")
     assert problems == [], "\n".join(problems[:40])
@@ -227,9 +228,11 @@ def pod_view(events: list) -> list:
     view = []
     for event in events:
         name = event["name"]
+        if name == "DoDestinyUpdate" and set(names(event)) <= KEEP_ALIVE:
+            # the capsule's and the watchers' position repeats are left out, as in the ship's view (DEVIATIONS #50)
+            continue
         if name == "$sessionchange":
-            # DEVIATION #51: the reference announces `stationid2` (from nothing to the station); eve.rs kept it since the pilot chose the character
-            view.append((name, tuple(key for key, _ in event["args"]["$tuple"][4]["$tuple"][1]["$tuple"][1]["$dict"] if key != "stationid2")))
+            view.append((name, tuple(key for key, _ in event["args"]["$tuple"][4]["$tuple"][1]["$tuple"][1]["$dict"])))
         elif name == "OnItemChange":
             row, changed = _row(event)
             place = lambda value: "junkyard" if value == 6 else ("space" if value == SYSTEM else value)  # noqa: E731

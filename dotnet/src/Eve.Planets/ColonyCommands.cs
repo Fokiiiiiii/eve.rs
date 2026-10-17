@@ -22,6 +22,7 @@ public sealed record AddExtractorHeadCommand(long PinId, int HeadId, double Lati
 public sealed record KillExtractorHeadCommand(long PinId, int HeadId) : ColonyCommand;
 public sealed record MoveExtractorHeadCommand(long PinId, int HeadId, double Latitude, double Longitude) : ColonyCommand;
 public sealed record InstallProgramCommand(long PinId, int? TypeId, double HeadRadius) : ColonyCommand;
+public sealed record GmForceInstallProgramCommand(long PinId, int TypeId, long CycleTime, long LifetimeTicks, long QtyPerCycle, double HeadRadius) : ColonyCommand;
 
 /// <summary>The result of a batch: the ISK it costs (non-command pins, command center upgrades) and whether the command center went.</summary>
 public sealed record CommandOutcome(long IskCost, bool Abandoned);
@@ -80,6 +81,9 @@ public sealed partial class Colony
                     break;
                 case InstallProgramCommand c:
                     InstallProgram(c.PinId, c.TypeId, c.HeadRadius);
+                    break;
+                case GmForceInstallProgramCommand c:
+                    GmForceInstallProgram(c.PinId, c.TypeId, c.CycleTime, c.LifetimeTicks, c.QtyPerCycle, c.HeadRadius);
                     break;
                 default:
                     throw new PlanetRefusal("InvalidCommand");
@@ -492,6 +496,19 @@ public sealed partial class Colony
         ecu.InstallTime = null;
         ecu.CycleTime = 0;
         ecu.State = 0;
+    }
+
+    /// <summary>
+    /// GMForceInstallProgram (the client's GM deposit designer, clientPlanet.GMInstallProgram): the program starts now with the given cycle,
+    /// output and lifetime. No head, install cooldown or resource check applies; routes of another commodity from this unit are removed.
+    /// </summary>
+    public void GmForceInstallProgram(long pinId, int typeId, long cycleTime, long lifetimeTicks, long qtyPerCycle, double headRadius)
+    {
+        var ecu = EcuOf(pinId);
+        if (cycleTime <= 0 || lifetimeTicks <= 0 || qtyPerCycle < 0 || headRadius <= 0) throw new PlanetRefusal("InvalidCommand");
+        foreach (var route in Routes.Values.Where(r => r.Source == pinId && r.TypeId != typeId).OrderBy(r => r.Id).ToList()) RemoveRoute(route.Id);
+        InstallProgramOn(ecu, typeId, headRadius, qtyPerCycle, cycleTime, 0);
+        ecu.ExpiryTime = CurrentSimTime + lifetimeTicks;
     }
 
     private void InstallProgramOn(Pin ecu, int type, double headRadius, long qtyPerCycle, long cycle, int numCycles)

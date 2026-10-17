@@ -190,6 +190,33 @@ public sealed partial class PlanetMgrService(NpgsqlDataSource source, PlanetStor
         return Py.KeyVal([.. snapshot.Snapshot]);
     }
 
+    /// <summary>
+    /// GMForceInstallProgram(pinID, typeID, cycleTime, lifetimeHours, qtyPerCycle, headRadius): the game master's program on an extractor
+    /// control unit of the caller's colony. Served to ROLE_GML only (the client shows the deposit designer to that role alone).
+    /// </summary>
+    [Method("GMForceInstallProgram")]
+    public async ValueTask<PyValue> GMForceInstallProgram(ServiceCall call)
+    {
+        RequireGameMaster(call);
+        var planetId = PlanetOf(call);
+        var owner = RequireOwner(call);
+        var pinId = Integral(call.Arg(0)) ?? 0;
+        var typeId = (int)(Integral(call.Arg(1)) ?? 0);
+        var cycleTime = Integral(call.Arg(2)) ?? 0;
+        var hours = Math.Min(Integral(call.Arg(3)) ?? 0, long.MaxValue / PlanetRules.Hour);
+        var qtyPerCycle = Integral(call.Arg(4)) ?? 0;
+        var headRadius = Number(call.Arg(5));
+        await ChangeAsync(owner, planetId, (_, _) => Task.FromResult<List<ColonyCommand>>(
+            [new GmForceInstallProgramCommand(pinId, typeId, cycleTime, hours * PlanetRules.Hour, qtyPerCycle, headRadius)]), call.Cancellation);
+        return PyNone.Instance;
+    }
+
+    private static void RequireGameMaster(ServiceCall call)
+    {
+        if (!GameMasterRoles.Has(call.Session, GameMasterRoles.Gml))
+            throw MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("ROLE_GML is required")));
+    }
+
     /// <summary>UserAbandonPlanet: the colony goes; its pins' items go with it.</summary>
     [Method("UserAbandonPlanet")]
     public async ValueTask<PyValue> UserAbandonPlanet(ServiceCall call)

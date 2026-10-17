@@ -36,6 +36,9 @@ public sealed partial class SlashService(ShipHealthCommands health, DeathTestCom
         return commands;
     }
 
+    /// <summary>The answer to a session without a GM role: the commands are the game masters' tools only.</summary>
+    public const string NotGameMaster = "Command requires a game master role.";
+
     /// <summary><c>ReportSlashCommandUsage(command)</c>: the client says a command was used; nothing is kept.</summary>
     [Method("ReportSlashCommandUsage")]
     public ValueTask<PyValue> ReportSlashCommandUsage(ServiceCall call) => ValueTask.FromResult<PyValue>(PyNone.Instance);
@@ -44,6 +47,7 @@ public sealed partial class SlashService(ShipHealthCommands health, DeathTestCom
     [Method("SlashCmd")]
     public async ValueTask<PyValue> SlashCmd(ServiceCall call)
     {
+        if (!GameMasterRoles.Has(call.Session, GameMasterRoles.Staff)) return new PyStr(NotGameMaster);
         var text = (JsSemantics.StringValue(call.Arg(0)) ?? "").Trim();
         if (text == "/")
         {

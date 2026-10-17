@@ -330,7 +330,7 @@ public sealed record PublicQaToolsRpcCallbacks(
 [Service("publicQaToolsServer")]
 public sealed partial class PublicQaToolsServerService(PublicQaToolsRpcCallbacks? callbacks = null)
 {
-    private const long StaffRoleMask = 140_667_119_611_150_336L;
+    private const long StaffRoleMask = GameMasterRoles.Staff;
 
     public static bool HasStaffAccountRole(ClientSession session)
     {

@@ -356,6 +356,28 @@ internal sealed partial class CharacterServicesComposition
                     Console.Error.WriteLine($"eve-host: player bounty of ship {loss.ShipId} could not be claimed: {error}");
                 }
             };
+            // the capsule is a loss of its own: a pilot that shoots a pod dead claims the pod's value (the capsule's base price; the wiki's implant value is not tracked yet)
+            spaceSessions.PodLost += loss =>
+            {
+                if (loss.Cause != Eve.Services.Space.ShipLossCause.Player || loss.KillerCharacterId <= 0)
+                    return;
+                try
+                {
+                    var sharers = FleetSharersAsync(loss.KillerCharacterId).GetAwaiter().GetResult();
+                    playerBountyKills!.ClaimShipLossAsync(loss.CharacterId, loss.CapsuleId, Eve.Ships.CharacterShips.CapsuleTypeId, [], loss.KillerCharacterId, now(),
+                        async (connection, transaction, payoutId) => await foundations.Scheduler.ScheduleAsync(connection, transaction,
+                            new Eve.Scheduler.JobSpec(Eve.Services.Crimewatch.PlayerBountyKills.PayoutJobKind, now())
+                            {
+                                Key = $"player-bounty:{payoutId}",
+                                Payload = new Eve.Services.Crimewatch.PlayerBountyPayoutDue(payoutId),
+                            }),
+                        sharers, CancellationToken.None).GetAwaiter().GetResult();
+                }
+                catch (Exception error)
+                {
+                    Console.Error.WriteLine($"eve-host: player bounty of pod {loss.CapsuleId} could not be claimed: {error}");
+                }
+            };
             // a pilot that destroys a faction's NPC loses standing with the faction (EveJS factionKillStandingRuntime; the debounce is in memory)
             var npcFactionStanding = new Eve.Services.Space.NpcFactionStanding(foundations.Relations, now);
             spaceSessions.NpcDestroyed += kill =>

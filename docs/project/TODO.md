@@ -2632,5 +2632,4 @@ Lane eve_p3, branch ch-s9 (merged with origin/main). Results (nothing skipped un
 ## Acceleration gates (ACCEL-1, open)
 
 - Live headless walk through a multi-room site with a MITM capture (eve_p2 lane).
-- Room-state writer (`currentRoomID`) so the client's current room is right.
-- Room locks and objective gating (runtime state per room).
+- Gate lock state in the slim item (the client's gate display).

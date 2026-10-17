@@ -223,6 +223,8 @@ internal sealed class FakeSim : ISimulation
 
     public void PlaceAnalysisBeacon(SimPlaceAnalysisBeacon beacon) => Heard.Enqueue(beacon);
 
+    public void SetSlimField(long itemId, string fieldName, SimSlimValue value) => Heard.Enqueue(new SimSetSlimField(itemId, fieldName, value));
+
     public void SetAnalysisBeaconState(long deployableId, SimAnalysisBeaconState state) => Heard.Enqueue(new SimSetAnalysisBeaconState(deployableId, state));
 
     public void PlaceInhibitor(SimPlaceInhibitor inhibitor) => Heard.Enqueue(inhibitor);

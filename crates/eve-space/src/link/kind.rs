@@ -121,6 +121,7 @@ pub const PLACE_DEADSPACE_POCKET: u8 = 93;
 
 /// The host puts an acceleration gate of a dungeon room in space (protocol 75).
 pub const PLACE_ACCELERATION_GATE: u8 = 94;
+pub const SET_SLIM_FIELD: u8 = 95;
 
 /// The host puts a wormhole end in space (protocol 63).
 pub const PLACE_WORMHOLE: u8 = 82;

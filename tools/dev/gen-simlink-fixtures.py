@@ -21,7 +21,25 @@ KINDS = {"Hello": 1, "HelloAck": 2, "Enter": 3, "Leave": 4, "Bind": 5, "UpdateSt
          "EcmBurst": 67, "PlaceDisruptor": 68, "SetDisruptorActive": 69, "PlaceInhibitor": 70, "ScanTargets": 71, "DirectionalTargets": 72,
          "PlaceCynoBeacon": 73, "PlaceStructure": 74, "RemoveStructure": 75, "SetStructureState": 76, "StructureDamaged": 77,
          "PlaceAnalysisBeacon": 78, "SetAnalysisBeaconState": 79, "TetherPolicy": 80, "TetherChanged": 81,
-         "PlaceWormhole": 82, "RemoveWormhole": 83, "ControlStructure": 84, "StructureDamageCandidatesRequest": 85, "StructureDamageCandidatesResult": 86, "RemoveCynoBeacon": 87, "DamageableEntityUpserted": 88, "DamageableEntityRemoved": 89, "PlaceObservatory": 90, "RemoteDecloakPing": 91, "PlaceControlTower": 92, "PlaceDeadspacePocket": 93, "PlaceAccelerationGate": 94}
+         "PlaceWormhole": 82, "RemoveWormhole": 83, "ControlStructure": 84, "StructureDamageCandidatesRequest": 85, "StructureDamageCandidatesResult": 86, "RemoveCynoBeacon": 87, "DamageableEntityUpserted": 88, "DamageableEntityRemoved": 89, "PlaceObservatory": 90, "RemoteDecloakPing": 91, "PlaceControlTower": 92, "PlaceDeadspacePocket": 93, "PlaceAccelerationGate": 94,
+         "SetSlimField": 95}
+
+def slim_value(v):  # a dynamic slim-item field value (protocol 76): a tag (0 none, 1 int, 2 real, 3 bool, 4 text, 5 tuple), then its payload
+    tag = v["tag"]
+    if tag == "none":
+        return bytes([0])
+    if tag == "int":
+        return bytes([1]) + i64(v["value"])
+    if tag == "real":
+        return bytes([2]) + struct.pack("<d", v["value"])
+    if tag == "bool":
+        return bytes([3, 1 if v["value"] else 0])
+    if tag == "text":
+        return bytes([4]) + s(v["value"])
+    if tag == "tuple":
+        return bytes([5]) + struct.pack("<H", len(v["items"])) + b"".join(slim_value(item) for item in v["items"])
+    raise ValueError(tag)
+
 
 def s(text):  # u16 length + UTF-8
     data = text.encode("utf-8")
@@ -498,6 +516,8 @@ def build(m):
         return frame(k, u64(m["sessionId"]) + i64(m["previousStructureId"]) + i64(m["structureId"]) + bytes([1 if m["repairing"] else 0]))
     if k == "StructureDamaged":  # sent by the simulation: the layer a hit emptied (0 none, 1 shield, 2 armor, 3 hull) and whether a repair is paused
         return frame(k, i64(m["structureId"]) + bytes([m["depleted"]]) + bytes([1 if m["overThreshold"] else 0]))
+    if k == "SetSlimField":
+        return frame(k, i64(m["itemId"]) + s(m["fieldName"]) + slim_value(m["value"]))
     if k == "SetStructureState":
         return frame(k, struct.pack("<i", m["solarSystemId"]) + i64(m["structureId"]) + structure_status(m["status"]))
     if k in ("PlaceDisruptor", "PlaceInhibitor", "PlaceCynoBeacon", "PlaceObservatory", "PlaceControlTower", "PlaceDeadspacePocket", "PlaceAccelerationGate"):  # a beacon, an observatory, a tower, a pocket and a gate have no range: they go as 0
@@ -1111,6 +1131,12 @@ valid = [
      "shieldRechargeMs": 110000.0, "perSecond": [14400000.0, 5000.0, 5000.0], "repairPause": [500.0, 500.0, 500.0],
      "status": {"state": 110, "upkeepState": 3, "timer": [132000000000000000, 132000860000000000, None], "unanchoring": None, "repairing": None}},
     {"name": "customs office of a planet put in orbit by the host (protocol 67)", "kind": "PlaceStructure", "structureId": "1200000040486618", "solarSystemId": 30100032, "typeName": "Customs Office", "typeId": 2233, "groupId": 1025, "planetId": 40486618, "position": [311989835983.1308, -13069154020.916222, 156646308895.76187], "radius": 8000.0, "ownerId": "1000125", "corporationId": 0, "allianceId": 0, "vitals": {"shieldCapacity": 0.0, "armorHp": 0.0, "structureHp": 0.0, "resonances": {"shield": [1.0, 1.0, 1.0, 1.0], "armor": [1.0, 1.0, 1.0, 1.0], "structure": [1.0, 1.0, 1.0, 1.0]}}, "shieldRechargeMs": 0.0, "perSecond": [0.0, 0.0, 0.0], "repairPause": [0.0, 0.0, 0.0], "status": {"state": 110, "upkeepState": 3, "timer": None, "unanchoring": None, "repairing": None}},
+    {"name": "host sets a text slim field of a deployable (fwAttackMethod)", "kind": "SetSlimField", "itemId": "4250000000000016", "fieldName": "fwAttackMethod", "value": {"tag": "text", "value": "attackFwAllEnemies"}},
+    {"name": "host sets a capture point's faction tuple (attacker, occupier)", "kind": "SetSlimField", "itemId": "4250000000000016", "fieldName": "component_fwCapturePoint_factionInfo", "value": {"tag": "tuple", "items": [{"tag": "int", "value": "500003"}, {"tag": "int", "value": "500001"}]}},
+    {"name": "host sets a real threshold slim field", "kind": "SetSlimField", "itemId": "4250000000000016", "fieldName": "hostile_response_threshold", "value": {"tag": "real", "value": -5.0}},
+    {"name": "host sets a bool slim field", "kind": "SetSlimField", "itemId": "4250000000000016", "fieldName": "group_standings_disabled", "value": {"tag": "bool", "value": True}},
+    {"name": "host clears a slim field to none", "kind": "SetSlimField", "itemId": "4250000000000016", "fieldName": "fwAttackMethod", "value": {"tag": "none"}},
+    {"name": "host sets a tuple nested four deep (the limit)", "kind": "SetSlimField", "itemId": "4250000000000016", "fieldName": "nested", "value": {"tag": "tuple", "items": [{"tag": "tuple", "items": [{"tag": "tuple", "items": [{"tag": "tuple", "items": [{"tag": "none"}]}]}]}]}},
     {"name": "structure state set by the host: paused timer, unanchoring, repairing", "kind": "SetStructureState", "solarSystemId": 30100032,
      "structureId": "1040000000000001",
      "status": {"state": 111, "upkeepState": 3, "timer": [132000000000000000, 132000860000000000, 132000100000000000], "unanchoring": 132000900000000000, "repairing": True}},
@@ -1405,7 +1431,18 @@ damage_over_limit = dict(damage_request, candidateIds=[str(500000 + index) for i
 damage_bad_generation = dict(damage_request, controlLeaseGeneration="0")
 damage_result = named("Host authorization for the same pulse allows one candidate")
 damage_duplicate_grant = dict(damage_result, allowedTargetIds=["9988400001940", "9988400001940"])
+deep_tuple = {"tag": "none"}
+for _ in range(5):
+    deep_tuple = {"tag": "tuple", "items": [deep_tuple]}
 invalid = [
+    {"name": "slim field with an empty name", "reason": "bad-value", "hex": frame("SetSlimField", i64("4250000000000016") + s("") + bytes([0])).hex()},
+    {"name": "slim field name of 65 bytes", "reason": "bad-value", "hex": frame("SetSlimField", i64("4250000000000016") + s("x" * 65) + bytes([0])).hex()},
+    {"name": "slim field real that is not finite", "reason": "bad-value", "hex": frame("SetSlimField", i64("4250000000000016") + s("hostile_response_threshold") + bytes([2]) + struct.pack("<d", float("nan"))).hex()},
+    {"name": "slim field value with an unknown tag", "reason": "bad-value", "hex": frame("SetSlimField", i64("4250000000000016") + s("fwAttackMethod") + bytes([9])).hex()},
+    {"name": "slim field tuple nested five deep (over the limit)", "reason": "bad-value", "hex": frame("SetSlimField", i64("4250000000000016") + s("nested") + slim_value(deep_tuple)).hex()},
+    {"name": "slim field tuple of 17 items (over the limit)", "reason": "bad-value", "hex": frame("SetSlimField", i64("4250000000000016") + s("nested") + bytes([5]) + struct.pack("<H", 17) + bytes([0]) * 17).hex()},
+    {"name": "slim field text of 257 bytes (over the limit)", "reason": "bad-value", "hex": frame("SetSlimField", i64("4250000000000016") + s("fwAttackMethod") + bytes([4]) + s("x" * 257)).hex()},
+    {"name": "slim field text cut short", "reason": "truncated", "hex": frame("SetSlimField", i64("4250000000000016") + s("fwAttackMethod") + bytes([4]) + struct.pack("<H", 5) + b"ab").hex()},
     {"name": "structure control active flag is not boolean", "reason": "bad-value", "hex": frame("ControlStructure", u64("77") + struct.pack("<i", 30000142) + i64("1040000000000001") + i64("90000001") + bytes([2]) + i64("19")).hex()},
     {"name": "structure control cannot bind a zero structure", "reason": "bad-value", "hex": frame("ControlStructure", u64("77") + struct.pack("<i", 30000142) + i64("0") + i64("90000001") + bytes([1]) + i64("19")).hex()},
     {"name": "structure control cannot use a negative character", "reason": "bad-value", "hex": frame("ControlStructure", u64("77") + struct.pack("<i", 30000142) + i64("1040000000000001") + i64("-1") + bytes([0]) + i64("19")).hex()},

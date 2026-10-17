@@ -3861,6 +3861,99 @@
    "hex": "180100004adac624c864430400404acb010e00437573746f6d73204f6666696365b9080000010400005fc833c6022952426c5427b7db5708c285e10f7e6c3c4242000000000040bf40bd420f00000000000000000000000000000000000000000000000000000000000000000000000000000000000000f03f000000000000f03f000000000000f03f000000000000f03f000000000000f03f000000000000f03f000000000000f03f000000000000f03f000000000000f03f000000000000f03f000000000000f03f000000000000f03f00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000006e00000003000000000000dac6690200000000"
   },
   {
+   "name": "host sets a text slim field of a deployable (fwAttackMethod)",
+   "kind": "SetSlimField",
+   "itemId": "4250000000000016",
+   "fieldName": "fwAttackMethod",
+   "value": {
+    "tag": "text",
+    "value": "attackFwAllEnemies"
+   },
+   "hex": "2e0000005f10a04b3c5a190f000e00667741747461636b4d6574686f6404120061747461636b4677416c6c456e656d696573"
+  },
+  {
+   "name": "host sets a capture point's faction tuple (attacker, occupier)",
+   "kind": "SetSlimField",
+   "itemId": "4250000000000016",
+   "fieldName": "component_fwCapturePoint_factionInfo",
+   "value": {
+    "tag": "tuple",
+    "items": [
+     {
+      "tag": "int",
+      "value": "500003"
+     },
+     {
+      "tag": "int",
+      "value": "500001"
+     }
+    ]
+   },
+   "hex": "440000005f10a04b3c5a190f002400636f6d706f6e656e745f667743617074757265506f696e745f66616374696f6e496e666f0502000123a10700000000000121a1070000000000"
+  },
+  {
+   "name": "host sets a real threshold slim field",
+   "kind": "SetSlimField",
+   "itemId": "4250000000000016",
+   "fieldName": "hostile_response_threshold",
+   "value": {
+    "tag": "real",
+    "value": -5.0
+   },
+   "hex": "2e0000005f10a04b3c5a190f001a00686f7374696c655f726573706f6e73655f7468726573686f6c640200000000000014c0"
+  },
+  {
+   "name": "host sets a bool slim field",
+   "kind": "SetSlimField",
+   "itemId": "4250000000000016",
+   "fieldName": "group_standings_disabled",
+   "value": {
+    "tag": "bool",
+    "value": true
+   },
+   "hex": "250000005f10a04b3c5a190f00180067726f75705f7374616e64696e67735f64697361626c65640301"
+  },
+  {
+   "name": "host clears a slim field to none",
+   "kind": "SetSlimField",
+   "itemId": "4250000000000016",
+   "fieldName": "fwAttackMethod",
+   "value": {
+    "tag": "none"
+   },
+   "hex": "1a0000005f10a04b3c5a190f000e00667741747461636b4d6574686f6400"
+  },
+  {
+   "name": "host sets a tuple nested four deep (the limit)",
+   "kind": "SetSlimField",
+   "itemId": "4250000000000016",
+   "fieldName": "nested",
+   "value": {
+    "tag": "tuple",
+    "items": [
+     {
+      "tag": "tuple",
+      "items": [
+       {
+        "tag": "tuple",
+        "items": [
+         {
+          "tag": "tuple",
+          "items": [
+           {
+            "tag": "none"
+           }
+          ]
+         }
+        ]
+       }
+      ]
+     }
+    ]
+   },
+   "hex": "1e0000005f10a04b3c5a190f0006006e657374656405010005010005010005010000"
+  },
+  {
    "name": "structure state set by the host: paused timer, unanchoring, repairing",
    "kind": "SetStructureState",
    "solarSystemId": 30100032,
@@ -5186,6 +5279,46 @@
   }
  ],
  "invalid": [
+  {
+   "name": "slim field with an empty name",
+   "reason": "bad-value",
+   "hex": "0c0000005f10a04b3c5a190f00000000"
+  },
+  {
+   "name": "slim field name of 65 bytes",
+   "reason": "bad-value",
+   "hex": "4d0000005f10a04b3c5a190f004100787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787800"
+  },
+  {
+   "name": "slim field real that is not finite",
+   "reason": "bad-value",
+   "hex": "2e0000005f10a04b3c5a190f001a00686f7374696c655f726573706f6e73655f7468726573686f6c6402000000000000f87f"
+  },
+  {
+   "name": "slim field value with an unknown tag",
+   "reason": "bad-value",
+   "hex": "1a0000005f10a04b3c5a190f000e00667741747461636b4d6574686f6409"
+  },
+  {
+   "name": "slim field tuple nested five deep (over the limit)",
+   "reason": "bad-value",
+   "hex": "210000005f10a04b3c5a190f0006006e657374656405010005010005010005010005010000"
+  },
+  {
+   "name": "slim field tuple of 17 items (over the limit)",
+   "reason": "bad-value",
+   "hex": "250000005f10a04b3c5a190f0006006e65737465640511000000000000000000000000000000000000"
+  },
+  {
+   "name": "slim field text of 257 bytes (over the limit)",
+   "reason": "bad-value",
+   "hex": "1d0100005f10a04b3c5a190f000e00667741747461636b4d6574686f640401017878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878"
+  },
+  {
+   "name": "slim field text cut short",
+   "reason": "truncated",
+   "hex": "1e0000005f10a04b3c5a190f000e00667741747461636b4d6574686f640405006162"
+  },
   {
    "name": "structure control active flag is not boolean",
    "reason": "bad-value",

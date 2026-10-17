@@ -50,6 +50,54 @@ public static partial class SimCodec
 
     private static double[] ReadVector(ref Reader r) => [r.F64(), r.F64(), r.F64()];
 
+    /// <summary>A dynamic slim-item field value (protocol 76): a tag (0 none, 1 int, 2 real, 3 bool, 4 text, 5 tuple), then its payload.</summary>
+    private static SimSlimValue ReadSlimValue(ref Reader r, int depth)
+    {
+        switch (r.U8())
+        {
+            case 0:
+                return new SimSlimNone();
+            case 1:
+                return new SimSlimInt(r.I64());
+            case 2:
+                {
+                    var number = r.F64();
+                    if (!double.IsFinite(number))
+                    {
+                        throw new SimLinkException(SimLinkError.BadValue, "bad slim field real");
+                    }
+                    return new SimSlimReal(number);
+                }
+            case 3:
+                return new SimSlimBool(ReadFlag(ref r, "slim field bool"));
+            case 4:
+                {
+                    var text = r.Text();
+                    if (Encoding.UTF8.GetByteCount(text) > SlimFieldTextMax)
+                    {
+                        throw new SimLinkException(SimLinkError.BadValue, "bad slim field text");
+                    }
+                    return new SimSlimText(text);
+                }
+            case 5:
+                {
+                    var count = r.U16();
+                    if (depth >= SlimFieldDepthMax || count > SlimFieldTupleMax)
+                    {
+                        throw new SimLinkException(SimLinkError.BadValue, "bad slim field tuple");
+                    }
+                    var items = new List<SimSlimValue>(count);
+                    for (var index = 0; index < count; index++)
+                    {
+                        items.Add(ReadSlimValue(ref r, depth + 1));
+                    }
+                    return new SimSlimTuple(items);
+                }
+            default:
+                throw new SimLinkException(SimLinkError.BadValue, "bad slim field value");
+        }
+    }
+
     /// <summary>A CRAB's state (protocol 61): the activation flag, the FILETIME times, the wait in seconds, the link state (1 to 4) and the linked ship.</summary>
     private static SimAnalysisBeaconState ReadAnalysisBeaconState(ref Reader r)
     {

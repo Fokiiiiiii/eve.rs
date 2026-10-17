@@ -39,7 +39,27 @@ use crate::weapons::{Aoe, Arc, Charge, Spool, Turret};
 use crate::world::StructureStatus;
 use crate::wreck::WreckKind;
 
-pub const PROTOCOL_VERSION: u16 = 75;
+pub const PROTOCOL_VERSION: u16 = 76;
+
+/// The longest name of a dynamic slim-item field, in bytes (`SetSlimField`).
+pub const SLIM_FIELD_NAME_MAX: usize = 64;
+/// The longest text of a dynamic slim-item field value, in bytes.
+pub const SLIM_FIELD_TEXT_MAX: usize = 256;
+/// The most items of a tuple value of a dynamic slim-item field.
+pub const SLIM_FIELD_TUPLE_MAX: usize = 16;
+/// How deep a tuple value of a dynamic slim-item field may nest.
+pub const SLIM_FIELD_DEPTH_MAX: usize = 4;
+
+/// The value of a dynamic slim-item field: the Python values a slim item carries (`None`, an int, a real, a bool, a text, a tuple).
+#[derive(Debug, Clone, PartialEq)]
+pub enum SlimValue {
+    None,
+    Int(i64),
+    Real(f64),
+    Bool(bool),
+    Text(String),
+    Tuple(Vec<SlimValue>),
+}
 
 /// Maximum candidate or allowed target IDs in a structure-damage authorization step.
 pub const MAX_STRUCTURE_DAMAGE_CANDIDATES: usize = 4096;
@@ -732,6 +752,13 @@ pub enum Message {
         deployable_id: i64,
         state: AnalysisBeaconState,
     },
+    /// The host sets a dynamic field of a deployable's slim item (protocol 76). The client reads it on the slim item, so whoever has the deployable
+    /// in view is told the whole slim item again (`OnSlimItemChange`). A value already set is not told again; a deployable not in space is left alone.
+    SetSlimField {
+        item_id: i64,
+        name: String,
+        value: SlimValue,
+    },
     /// The host says a mobile warp disruptor is anchored (`active`) or not (protocol 48); one not in space is left alone.
     SetDisruptorActive {
         deployable_id: i64,
@@ -1042,6 +1069,7 @@ impl Message {
             Self::TetherPolicy { .. } => kind::TETHER_POLICY,
             Self::TetherChanged { .. } => kind::TETHER_CHANGED,
             Self::SetAnalysisBeaconState { .. } => kind::SET_ANALYSIS_BEACON_STATE,
+            Self::SetSlimField { .. } => kind::SET_SLIM_FIELD,
             Self::PlaceAccelerationGate(_) => kind::PLACE_ACCELERATION_GATE,
         }
     }

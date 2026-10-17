@@ -3,6 +3,7 @@
 //! radius but not its launcher.
 
 use super::*;
+use crate::link::SlimValue;
 use crate::modules::{Action, Effect};
 use crate::scene::tests::{NOON, STATION, spec, system};
 use crate::scene::{Command, Out, Scene};
@@ -1015,6 +1016,45 @@ fn crab_placement(scene: &Scene, state: AnalysisBeaconState) -> crate::link::Ana
         ship_id: 9_988_400_001_943,
         state,
     }
+}
+
+#[test]
+fn a_dynamic_slim_field_the_host_sets_is_told_with_the_slim_item_only_when_it_changes() {
+    let (mut scene, t) = crowd();
+    let idle = AnalysisBeaconState {
+        active: false,
+        activate_at: 133_900_000_000_000_000,
+        deployed_at: 133_899_999_000_000_000,
+        activation_seconds: 20,
+        link_state: 1,
+        link_complete_at: 0,
+        linked_ship_id: 0,
+    };
+    scene.place_analysis_beacon(crab_placement(&scene, idle), t);
+    let name = "component_fwCapturePoint_factionInfo".to_string();
+    let factions = SlimValue::Tuple(vec![SlimValue::Int(500_003), SlimValue::Int(500_001)]);
+
+    let told = scene.set_slim_field(CRAB, name.clone(), factions.clone(), t);
+    let text = format!("{told:?}");
+    assert!(
+        !told.is_empty() && text.contains("OnSlimItemChange"),
+        "those who see it are told its slim item again"
+    );
+    assert!(text.contains(&name), "the slim item carries the field");
+    assert!(
+        text.contains("Int(500003)") && text.contains("Int(500001)"),
+        "the tuple is told as the host set it"
+    );
+    assert!(
+        scene.set_slim_field(CRAB, name.clone(), factions, t).is_empty(),
+        "a value already set is not told again"
+    );
+    let told = scene.set_slim_field(CRAB, name.clone(), SlimValue::None, t);
+    assert!(!told.is_empty(), "a new value (none) is told");
+    assert!(
+        scene.set_slim_field(CRAB + 1, name, SlimValue::Bool(true), t).is_empty(),
+        "a deployable that is not in space is left alone"
+    );
 }
 
 #[test]

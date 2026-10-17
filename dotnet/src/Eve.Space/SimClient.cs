@@ -481,6 +481,8 @@ public sealed class SimClient : ISimulation, IAsyncDisposable
 
     public void SetAnalysisBeaconState(long deployableId, SimAnalysisBeaconState state) => Send(new SimSetAnalysisBeaconState(deployableId, state));
 
+    public void SetSlimField(long itemId, string fieldName, SimSlimValue value) => Send(new SimSetSlimField(itemId, fieldName, value));
+
     public void PlaceInhibitor(SimPlaceInhibitor inhibitor) => Send(inhibitor);
 
     public void PlaceCynoBeacon(SimPlaceCynoBeacon beacon) => Send(beacon);

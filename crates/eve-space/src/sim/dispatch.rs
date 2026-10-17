@@ -465,7 +465,8 @@ impl Sim {
             | Message::SetDisruptorActive { .. }
             | Message::TetherPolicy { .. }
             | Message::PlaceAnalysisBeacon(..)
-            | Message::SetAnalysisBeaconState { .. } => self.handle_world(message, now),
+            | Message::SetAnalysisBeaconState { .. }
+            | Message::SetSlimField { .. } => self.handle_world(message, now),
             other => Err(ProtocolError(format!(
                 "a message of kind {} is for the host, not the simulation",
                 other.kind()
@@ -1283,6 +1284,12 @@ impl Sim {
                 .values_mut()
                 .find(|scene| scene.deployables.contains_key(&deployable_id))
                 .map(|scene| scene.set_analysis_beacon_state(deployable_id, state, now))
+                .unwrap_or_default(),
+            Message::SetSlimField { item_id, name, value } => self
+                .scenes
+                .values_mut()
+                .find(|scene| scene.deployables.contains_key(&item_id))
+                .map(|scene| scene.set_slim_field(item_id, name, value, now))
                 .unwrap_or_default(),
             Message::PlaceCynoBeacon(beacon) => {
                 let beacon = *beacon;

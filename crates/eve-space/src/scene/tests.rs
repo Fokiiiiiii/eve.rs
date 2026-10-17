@@ -2255,6 +2255,7 @@ fn interdiction_at(scene: &mut Scene, at: Vec3, now: i64) {
         module_id: 0,
         module_type: 0,
         watchers: std::collections::BTreeSet::new(),
+        slim_fields: std::collections::BTreeMap::new(),
     };
     scene.deployables.insert(probe.id, probe);
 }

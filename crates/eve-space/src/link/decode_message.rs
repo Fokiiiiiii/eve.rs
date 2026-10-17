@@ -787,6 +787,15 @@ impl Message {
                 let state = read_analysis_beacon_state(&mut r)?;
                 Message::SetAnalysisBeaconState { deployable_id, state }
             }
+            kind::SET_SLIM_FIELD => {
+                let item_id = r.i64()?;
+                let name = r.text()?;
+                if name.is_empty() || name.len() > SLIM_FIELD_NAME_MAX {
+                    return Err(DecodeError::BadValue("slim field name"));
+                }
+                let value = read_slim_value(&mut r, 0)?;
+                Message::SetSlimField { item_id, name, value }
+            }
             kind::DRONE_WORK_RESULT => {
                 let session_id = r.u64()?;
                 let drone_id = r.i64()?;
@@ -1427,6 +1436,41 @@ impl Message {
 }
 
 /// A CRAB's state (see `put_analysis_beacon_state`): the link state must be one the client knows (1 to 4).
+/// A dynamic slim-item field value (see `put_slim_value`): finite reals, texts and tuples within their limits.
+fn read_slim_value(reader: &mut Reader, depth: usize) -> Result<SlimValue, DecodeError> {
+    Ok(match reader.u8()? {
+        0 => SlimValue::None,
+        1 => SlimValue::Int(reader.i64()?),
+        2 => {
+            let number = reader.f64()?;
+            if !number.is_finite() {
+                return Err(DecodeError::BadValue("slim field real"));
+            }
+            SlimValue::Real(number)
+        }
+        3 => SlimValue::Bool(read_flag(reader, "slim field bool")?),
+        4 => {
+            let text = reader.text()?;
+            if text.len() > SLIM_FIELD_TEXT_MAX {
+                return Err(DecodeError::BadValue("slim field text"));
+            }
+            SlimValue::Text(text)
+        }
+        5 => {
+            let count = reader.u16()? as usize;
+            if depth >= SLIM_FIELD_DEPTH_MAX || count > SLIM_FIELD_TUPLE_MAX {
+                return Err(DecodeError::BadValue("slim field tuple"));
+            }
+            let mut items = Vec::with_capacity(count);
+            for _ in 0..count {
+                items.push(read_slim_value(reader, depth + 1)?);
+            }
+            SlimValue::Tuple(items)
+        }
+        _ => return Err(DecodeError::BadValue("slim field value")),
+    })
+}
+
 fn read_analysis_beacon_state(reader: &mut Reader) -> Result<AnalysisBeaconState, DecodeError> {
     let active = read_flag(reader, "analysis beacon")?;
     let activate_at = reader.i64()?;

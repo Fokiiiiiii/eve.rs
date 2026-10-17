@@ -27,7 +27,16 @@ public sealed class SimLinkException(SimLinkError error, string message) : Excep
 /// </summary>
 public static partial class SimCodec
 {
-    public const ushort ProtocolVersion = 75;
+    public const ushort ProtocolVersion = 76;
+
+    /// <summary>The longest name of a dynamic slim-item field, in bytes (protocol 76).</summary>
+    public const int SlimFieldNameMax = 64;
+    /// <summary>The longest text of a dynamic slim-item field value, in bytes.</summary>
+    public const int SlimFieldTextMax = 256;
+    /// <summary>The most items of a tuple value of a dynamic slim-item field.</summary>
+    public const int SlimFieldTupleMax = 16;
+    /// <summary>How deep a tuple value of a dynamic slim-item field may nest.</summary>
+    public const int SlimFieldDepthMax = 4;
     /// <summary>The largest frame either side accepts (1 MiB).</summary>
     public const int MaxFrame = 1 << 20;
 
@@ -970,6 +979,17 @@ public static partial class SimCodec
             case Kind.SetAnalysisBeaconState:
                 message = new SimSetAnalysisBeaconState(r.I64(), ReadAnalysisBeaconState(ref r));
                 break;
+            case Kind.SetSlimField:
+                {
+                    var itemId = r.I64();
+                    var name = r.Text();
+                    if (name.Length == 0 || Encoding.UTF8.GetByteCount(name) > SlimFieldNameMax)
+                    {
+                        throw new SimLinkException(SimLinkError.BadValue, "bad slim field name");
+                    }
+                    message = new SimSetSlimField(itemId, name, ReadSlimValue(ref r, 0));
+                    break;
+                }
             case Kind.Measured:
                 {
                     var session = r.U64();

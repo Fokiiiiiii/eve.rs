@@ -1124,6 +1124,27 @@ public sealed record SimPlaceAnalysisBeacon(
 /// <summary>The host sets a CRAB's state (protocol 61); one not in space is left alone.</summary>
 public sealed record SimSetAnalysisBeaconState(long DeployableId, SimAnalysisBeaconState State) : SimMessage;
 
+/// <summary>A value of a dynamic slim-item field (protocol 76): none, an int, a real, a bool, a text, or a tuple of those.</summary>
+public abstract record SimSlimValue;
+
+public sealed record SimSlimNone : SimSlimValue;
+
+public sealed record SimSlimInt(long Value) : SimSlimValue;
+
+public sealed record SimSlimReal(double Value) : SimSlimValue;
+
+public sealed record SimSlimBool(bool Value) : SimSlimValue;
+
+public sealed record SimSlimText(string Value) : SimSlimValue;
+
+public sealed record SimSlimTuple(IReadOnlyList<SimSlimValue> Items) : SimSlimValue;
+
+/// <summary>
+/// The host sets a dynamic field of a deployable's slim item (protocol 76). The client reads it on the slim item, so whoever has the deployable in view is
+/// told the whole slim item again; a value already set is not told again, and an item not in space is left alone.
+/// </summary>
+public sealed record SimSetSlimField(long ItemId, string FieldName, SimSlimValue Value) : SimMessage;
+
 /// <summary>A Mobile Cynosural Inhibitor the host keeps a record of, put in space where its pilot dropped it (protocol 50): the same placement as a disruptor's,
 /// with the inhibitor's range in metres (no cynosural field lights within it while it is anchored).</summary>
 public sealed record SimPlaceInhibitor(

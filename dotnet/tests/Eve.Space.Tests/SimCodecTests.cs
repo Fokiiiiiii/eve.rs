@@ -21,6 +21,18 @@ public class SimCodecTests
 
     private static byte[] Hex(string text) => Convert.FromHexString(text);
 
+    /// <summary>A dynamic slim-item field value of a case: <c>{"tag": ..., "value": ...}</c>, or <c>{"tag": "tuple", "items": [...]}</c>.</summary>
+    private static SimSlimValue SlimValueOf(JsonNode value) => (string)value["tag"]! switch
+    {
+        "none" => new SimSlimNone(),
+        "int" => new SimSlimInt(Wide(value, "value")),
+        "real" => new SimSlimReal((double)value["value"]!),
+        "bool" => new SimSlimBool((bool)value["value"]!),
+        "text" => new SimSlimText((string)value["value"]!),
+        "tuple" => new SimSlimTuple(((JsonArray)value["items"]!).Select(item => SlimValueOf(item!)).ToList()),
+        var other => throw new InvalidOperationException($"slim value tag {other}"),
+    };
+
     private static long Wide(JsonNode node, string field) => long.Parse((string)node[field]!, CultureInfo.InvariantCulture);
 
     /// <summary>The ships a command burst's cycle reaches (protocol 43): the fixture's ids are strings, as the other ids are; none for another command.</summary>
@@ -437,6 +449,7 @@ public class SimCodecTests
             "PlaceAnalysisBeacon" => new SimPlaceAnalysisBeacon(Wide(c, "deployableId"), (int)c["solarSystemId"]!, (string)c["typeName"]!, (int)c["typeId"]!, (int)c["groupId"]!,
                 VectorOf(c["position"]!), (double)c["radius"]!, Wide(c, "ownerId"), (int)c["corporationId"]!, (int)c["allianceId"]!, Wide(c, "shipId"), BeaconStateOf(c["state"]!)),
             "SetAnalysisBeaconState" => new SimSetAnalysisBeaconState(Wide(c, "deployableId"), BeaconStateOf(c["state"]!)),
+            "SetSlimField" => new SimSetSlimField(Wide(c, "itemId"), (string)c["fieldName"]!, SlimValueOf(c["value"]!)),
             "PlaceInhibitor" => new SimPlaceInhibitor(Wide(c, "deployableId"), (int)c["solarSystemId"]!, (string)c["typeName"]!, (int)c["typeId"]!, (int)c["groupId"]!,
                 VectorOf(c["position"]!), (double)c["radius"]!, (double)c["range"]!, (bool)c["active"]!, Wide(c, "ownerId"), (int)c["corporationId"]!,
                 (int)c["allianceId"]!, Wide(c, "shipId")),
@@ -471,7 +484,7 @@ public class SimCodecTests
     public void The_fixtures_cover_every_message_kind()
     {
         var kinds = ((JsonArray)Fixtures["valid"]!).Select(c => (string)c!["kind"]!).Distinct().Order().ToArray();
-                Assert.Equal(["Accepted", "Activate", "AdjustCharge", "Approaching", "Arrived", "Bind", "BuffState", "ChangeWreck", "ChargeAdjusted", "ChargeSpent", "Command", "Condition", "ContainerPlaced", "ControlStructure", "DamageableEntityRemoved", "DamageableEntityUpserted", "Deployed", "Destroy", "Destroyed", "DirectionalTargets", "Docked", "DroneCommand", "DroneReleased", "DroneResults", "DroneScooped", "EcmBurst", "Enter", "EnterReply", "FighterGotoPoint", "FighterLanded", "FighterOrder", "FighterReleased", "FighterResults", "FighterSize", "Hello", "HelloAck", "Jumped", "Jumping", "LaunchDrone", "LaunchFighter", "Leave", "Measured", "ModuleEnded", "ModuleWorkCycle", "ModuleWorkResult", "Notify", "PlaceAccelerationGate", "PlaceAnalysisBeacon", "PlaceContainer", "PlaceControlTower", "PlaceCynoBeacon", "PlaceDeadspacePocket", "PlaceDisruptor", "PlaceInhibitor", "PlaceObservatory", "PlaceProbe", "PlaceStructure", "PlaceWormhole", "PlaceWreck", "Refused", "RemoteDecloakPing", "RemoveCynoBeacon", "RemoveDeployed", "RemoveProbe", "RemoveStructure", "RemoveWormhole", "RemoveWreck", "Respawn", "ScanTargets", "SetAnalysisBeaconState", "SetDisruptorActive", "SetStructureState", "ShipSpec", "Spawn", "SpawnReply", "StructureDamageCandidatesRequest", "StructureDamageCandidatesResult", "StructureDamaged", "TargetRefused", "Targets", "TetherChanged", "TetherPolicy", "UpdateEffect", "UpdateState"], kinds);
+                Assert.Equal(["Accepted", "Activate", "AdjustCharge", "Approaching", "Arrived", "Bind", "BuffState", "ChangeWreck", "ChargeAdjusted", "ChargeSpent", "Command", "Condition", "ContainerPlaced", "ControlStructure", "DamageableEntityRemoved", "DamageableEntityUpserted", "Deployed", "Destroy", "Destroyed", "DirectionalTargets", "Docked", "DroneCommand", "DroneReleased", "DroneResults", "DroneScooped", "EcmBurst", "Enter", "EnterReply", "FighterGotoPoint", "FighterLanded", "FighterOrder", "FighterReleased", "FighterResults", "FighterSize", "Hello", "HelloAck", "Jumped", "Jumping", "LaunchDrone", "LaunchFighter", "Leave", "Measured", "ModuleEnded", "ModuleWorkCycle", "ModuleWorkResult", "Notify", "PlaceAccelerationGate", "PlaceAnalysisBeacon", "PlaceContainer", "PlaceControlTower", "PlaceCynoBeacon", "PlaceDeadspacePocket", "PlaceDisruptor", "PlaceInhibitor", "PlaceObservatory", "PlaceProbe", "PlaceStructure", "PlaceWormhole", "PlaceWreck", "Refused", "RemoteDecloakPing", "RemoveCynoBeacon", "RemoveDeployed", "RemoveProbe", "RemoveStructure", "RemoveWormhole", "RemoveWreck", "Respawn", "ScanTargets", "SetAnalysisBeaconState", "SetDisruptorActive", "SetSlimField", "SetStructureState", "ShipSpec", "Spawn", "SpawnReply", "StructureDamageCandidatesRequest", "StructureDamageCandidatesResult", "StructureDamaged", "TargetRefused", "Targets", "TetherChanged", "TetherPolicy", "UpdateEffect", "UpdateState"], kinds);
         Assert.True(((JsonArray)Fixtures["invalid"]!).Count >= 10);    }
 
     [Theory]

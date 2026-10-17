@@ -4597,3 +4597,20 @@ as reference. The client's `bookmarkSvc.py` (`OnSharedBookmarksFolderUpdated`, `
 - **Room locks: a gate out of a room is locked until the room's waves are done** (objectives `wave{n}` of the site run). The refusal is EveJS's "The acceleration gate is locked." The gate's slim item does not carry a lock state yet (the client UI shows the refusal, not a locked gate).
 - **Room state is written** to the game store (`dungeonRuntimeState`, `currentRoomID` and `currentRoomKey`) when a transit is accepted. A room without a catalog room id is stored as 0; the pilot's entry on arrival is not tracked separately.
 - **Gate transit clears locks and stops modules** as the warp begins (EveJS does the same for a gate transit).
+
+## Slim item fields (protocol 76)
+
+- **Dynamic slim-item field path (`SetSlimField`, kind 95).** The host sets a named field of a deployable's slim item (a value of None, int,
+  real, bool, text or a tuple of those, up to 4 levels deep, 16 items per tuple, names up to 64 bytes, texts up to 256 bytes). The simulation
+  keeps it on the deployable, and tells whoever has the deployable in view its whole slim item again (`OnSlimItemChange`, the client's
+  `michelle.OnSlimItemChange` replaces the slim item and scatters it). A value already set is not told again. Source: the client's
+  `spacecomponents/client/components/fwCapturePoint.py` reads `component_fwCapturePoint_*` from the slim item; the server's form of the
+  update is EveJS `broadcastSlimItemChanges` (the whole slim item). Limits and tags are project rules of the wire format (`link/mod.rs`).
+- **Behaviour hook.** `UpdateSlimItemField` and `UpdateSlimItemFieldMulti` of a behaviour tree reach the scene for deployables. A set or a dict
+  value has no slim form and is not sent (shortcut: none of the behaviour trees sets one).
+- **Not built: ships and bodies.** A ship or a body keeps no dynamic field: the behaviour hook is a no-op for them. `fwAttackMethod` and
+  `group_standings_disabled` are set by behaviours on NPC ships (`actions/entities.rs`), so those fields do not reach the client yet. Upgrade:
+  a field store on the ship and body entries (the same overlay as the deployable's `slim_dict`).
+- Tests: `simlink_fixtures` (8 tests; the golden frames add 6 valid and 8 invalid SetSlimField cases), `deployable::tests::a_dynamic_slim_field...`,
+  `SimCodecTests` (replays the frames in C#), `Eve.Services.Space.Tests` (the beacon host tests, eve_p4).
+

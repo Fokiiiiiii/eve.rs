@@ -4,6 +4,7 @@
 use eve_space::death::Credit;
 use eve_space::drones::DroneEffect;
 use eve_space::health::{Condition, Layer, Resonances, Vitals};
+use eve_space::link::SlimValue;
 use eve_space::link::{
     ChargeOp, ContainerPlacement, DecodeError, DirectionalTarget, Enter, How, LaunchDrone, Message,
     ScanTarget, Spawn, WreckPlacement,
@@ -729,6 +730,21 @@ fn beacon_state(state: &Value) -> eve_space::link::AnalysisBeaconState {
     }
 }
 
+/// A dynamic slim-item field value of a case: `{"tag": ..., "value": ...}` or `{"tag": "tuple", "items": [...]}`.
+fn slim_value_of_case(value: &Value) -> SlimValue {
+    match value["tag"].as_str().unwrap() {
+        "none" => SlimValue::None,
+        "int" => SlimValue::Int(wide(value, "value")),
+        "real" => SlimValue::Real(value["value"].as_f64().unwrap()),
+        "bool" => SlimValue::Bool(value["value"].as_bool().unwrap()),
+        "text" => SlimValue::Text(text(value, "value")),
+        "tuple" => {
+            SlimValue::Tuple(value["items"].as_array().unwrap().iter().map(slim_value_of_case).collect())
+        }
+        other => panic!("slim value tag {other}"),
+    }
+}
+
 fn message_of(case: &Value) -> Message {
     let number = |field: &str| {
         case[field]
@@ -1284,6 +1300,11 @@ fn message_of(case: &Value) -> Message {
                 state: beacon_state(&case["state"]),
             }))
         }
+        "SetSlimField" => Message::SetSlimField {
+            item_id: wide(case, "itemId"),
+            name: text(case, "fieldName"),
+            value: slim_value_of_case(&case["value"]),
+        },
         "SetAnalysisBeaconState" => Message::SetAnalysisBeaconState {
             deployable_id: wide(case, "deployableId"),
             state: beacon_state(&case["state"]),

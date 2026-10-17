@@ -6,19 +6,19 @@
 //! A bomb's blast is one `Area` (ADR 0011, its addendum of 2026-10-09): the centre is where the bomb is, the radius is the charge's blast radius, and
 //! the recipients are the ships of the scene within that surface distance, but the ship that launched it (as a smartbomb spares its own).
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use eve_destiny::ball::LegacyMode;
 use eve_destiny::{BallEntity, IdRef, Kind, Vec3};
 use eve_marshal::Value;
 
 use crate::health::Damage;
-use crate::link::AnalysisBeaconState;
+use crate::link::{AnalysisBeaconState, SlimValue};
 use crate::missile_entity::CHARGE_CATEGORY;
 use crate::modules::Effect;
 use crate::payload;
 use crate::scene::{Command, Out, Scene, SessionId, TICKS_PER_SECOND};
-use crate::wire::{filetime, id, int, list, slim_object, text, tuple, word};
+use crate::wire::{filetime, id, int, list, real, text, tuple, word};
 
 /// The id of the first deployable a scene makes (its own range, apart from the missiles and the wrecks).
 pub const DEPLOYABLE_ID_BASE: i64 = 4_250_000_000_000_000;
@@ -137,6 +137,8 @@ pub struct Deployable {
     pub module_type: i32,
     /// The pilots that were told of it (they are told it is gone).
     pub watchers: BTreeSet<SessionId>,
+    /// The dynamic slim-item fields the host set (`SetSlimField`), by name.
+    pub slim_fields: BTreeMap<String, SlimValue>,
 }
 
 fn ticks(milliseconds: f64) -> i64 {
@@ -182,9 +184,33 @@ fn release_actions(stamp: u32, deployable: &Deployable) -> Result<Vec<Value>, ev
         ..BallEntity::default()
     };
     let buffer = payload::add_balls_buffer(stamp, &[ball])?;
-    let slim =
-        Value::Dict(slim_entries(deployable, category).into_iter().map(|(k, v)| (word(k), v)).collect());
+    let slim = slim_dict(deployable, category);
     Ok(vec![payload::action(stamp, "AddBalls2", [tuple([buffer, list([slim])])])])
+}
+
+/// The slim item of a deployable as the client reads it: the entries of its category, then the dynamic fields the host set.
+fn slim_dict(deployable: &Deployable, category: i32) -> Value {
+    let mut pairs: Vec<(Value, Value)> =
+        slim_entries(deployable, category).into_iter().map(|(k, v)| (word(k), v)).collect();
+    pairs.extend(deployable.slim_fields.iter().map(|(name, value)| (text(name.clone()), slim_value(value))));
+    Value::Dict(pairs)
+}
+
+/// The slim item of a deployable as an object (`foo.SlimItem`), the form `OnSlimItemChange` carries.
+fn slim_item(deployable: &Deployable, category: i32) -> Value {
+    Value::Object { name: Box::new(word("foo.SlimItem")), args: Box::new(slim_dict(deployable, category)) }
+}
+
+/// A dynamic slim-item field's value as the client reads it.
+fn slim_value(value: &SlimValue) -> Value {
+    match value {
+        SlimValue::None => Value::None,
+        SlimValue::Int(number) => int(*number),
+        SlimValue::Real(number) => real(*number),
+        SlimValue::Bool(flag) => Value::Bool(*flag),
+        SlimValue::Text(text_value) => text(text_value.clone()),
+        SlimValue::Tuple(items) => tuple(items.iter().map(slim_value)),
+    }
 }
 
 /// The category of a deployable's ball (EVE.js: a mobile deployable is category 22, a beacon and a field keep their own).
@@ -385,6 +411,7 @@ impl Scene {
             module_id: 0,
             module_type: 0,
             watchers: BTreeSet::new(),
+            slim_fields: BTreeMap::new(),
         };
         self.deployable_sequence += 1;
         self.deployables.insert(bridge.id, bridge);
@@ -423,6 +450,7 @@ impl Scene {
             module_id: effect.module_id,
             module_type: effect.module_type,
             watchers: BTreeSet::new(),
+            slim_fields: BTreeMap::new(),
         };
         (deployable_id, self.insert_deployable(deployable, at))
     }
@@ -489,6 +517,7 @@ impl Scene {
             module_id: 0,
             module_type: 0,
             watchers: BTreeSet::new(),
+            slim_fields: BTreeMap::new(),
         };
         self.insert_deployable(deployable, now)
     }
@@ -539,6 +568,7 @@ impl Scene {
             module_id: 0,
             module_type: 0,
             watchers: BTreeSet::new(),
+            slim_fields: BTreeMap::new(),
         };
         self.insert_deployable(deployable, now)
     }
@@ -572,6 +602,7 @@ impl Scene {
             module_id: 0,
             module_type: 0,
             watchers: BTreeSet::new(),
+            slim_fields: BTreeMap::new(),
         };
         self.insert_deployable(deployable, now)
     }
@@ -605,6 +636,7 @@ impl Scene {
             module_id: 0,
             module_type: 0,
             watchers: BTreeSet::new(),
+            slim_fields: BTreeMap::new(),
         };
         self.insert_deployable(deployable, now)
     }
@@ -638,6 +670,7 @@ impl Scene {
             module_id: 0,
             module_type: 0,
             watchers: BTreeSet::new(),
+            slim_fields: BTreeMap::new(),
         };
         self.insert_deployable(deployable, now)
     }
@@ -672,6 +705,7 @@ impl Scene {
             module_id: 0,
             module_type: 0,
             watchers: BTreeSet::new(),
+            slim_fields: BTreeMap::new(),
         };
         self.deployables.insert(pocket.id, pocket);
         Vec::new()
@@ -707,6 +741,7 @@ impl Scene {
             module_id: 0,
             module_type: 0,
             watchers: BTreeSet::new(),
+            slim_fields: BTreeMap::new(),
         };
         self.insert_deployable(gate, now)
     }
@@ -740,6 +775,7 @@ impl Scene {
             module_id: 0,
             module_type: 0,
             watchers: BTreeSet::new(),
+            slim_fields: BTreeMap::new(),
         };
         self.insert_deployable(deployable, now)
     }
@@ -802,6 +838,7 @@ impl Scene {
             module_id: 0,
             module_type: 0,
             watchers: BTreeSet::new(),
+            slim_fields: BTreeMap::new(),
         };
         self.insert_deployable(deployable, now)
     }
@@ -1227,6 +1264,7 @@ impl Scene {
             module_id: 0,
             module_type: 0,
             watchers: BTreeSet::new(),
+            slim_fields: BTreeMap::new(),
         };
         self.insert_deployable(deployable, now)
     }
@@ -1262,6 +1300,33 @@ impl Scene {
         }
     }
 
+    /// The host sets a dynamic slim-item field of a deployable (`SetSlimField`). Those who have it in view are told its slim item again
+    /// (`OnSlimItemChange`, the whole slim item). A value already set is not told again; a deployable not in space is left alone.
+    pub(crate) fn set_slim_field(
+        &mut self,
+        deployable_id: i64,
+        name: String,
+        value: SlimValue,
+        at: i64,
+    ) -> Vec<Out> {
+        let Some(deployable) = self.deployables.get_mut(&deployable_id) else { return Vec::new() };
+        if deployable.slim_fields.get(&name) == Some(&value) {
+            return Vec::new();
+        }
+        deployable.slim_fields.insert(name, value);
+        let changed = deployable.clone();
+        let stamp = self.next_stamp(at);
+        let change = payload::action(
+            stamp,
+            "OnSlimItemChange",
+            [id(changed.id), slim_item(&changed, category_of(&changed.role))],
+        );
+        self.missile_audience(changed.position)
+            .into_iter()
+            .map(|session| Self::update(session, vec![change.clone()]))
+            .collect()
+    }
+
     pub(crate) fn set_analysis_beacon_state(
         &mut self,
         deployable_id: i64,
@@ -1279,7 +1344,7 @@ impl Scene {
         let change = payload::action(
             stamp,
             "OnSlimItemChange",
-            [id(changed.id), slim_object(slim_entries(&changed, category_of(&changed.role)))],
+            [id(changed.id), slim_item(&changed, category_of(&changed.role))],
         );
         self.missile_audience(changed.position)
             .into_iter()

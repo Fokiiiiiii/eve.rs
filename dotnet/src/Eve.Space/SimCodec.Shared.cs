@@ -81,6 +81,7 @@ public const byte UpdateEffect = 61;
         public const byte SetDisruptorActive = 69;
         public const byte PlaceAnalysisBeacon = 78;
         public const byte SetAnalysisBeaconState = 79;
+        public const byte SetSlimField = 95;
         public const byte PlaceInhibitor = 70;
         public const byte ScanTargets = 71;
         public const byte DirectionalTargets = 72;

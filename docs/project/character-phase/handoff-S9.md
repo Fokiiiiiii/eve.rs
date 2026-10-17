@@ -1,25 +1,37 @@
 # Handoff S9 (pod death walk, booster lapse, public gateway leftovers, full suite; database lane eve_p3, live port 26102)
 
-Worktree /home/user/wt-ch-s9, branch ch-s9 (from origin/main e0b388ff). Push: git fetch origin main && git merge origin/main, then git push origin HEAD:main.
-Build output is private: CARGO_TARGET_DIR=/home/user/wt-ch-s9/target-s9 (gitignored), dotnet bin/obj in the worktree (delete at the end).
+Worktree /home/user/wt-ch-s9, branch ch-s9. Push: git fetch origin main && git merge origin/main, then git push origin HEAD:main.
+Build output is private: CARGO_TARGET_DIR=/home/user/wt-ch-s9/target-s9 (gitignored); dotnet bin/obj in the worktree (delete at the end).
+The headless venv is /home/user/eve.rs/tools/headless-client/.venv (grpcio and protobuf installed in S9).
 
 ## Status
 
 | Item | State | Verified (eve_p3) |
 |---|---|---|
-| 2. A_skill_booster_lapses | DONE (test fix) | CharacterHostTests 15 passed (serial class run) |
-| 1. test_death.py live walk | IN PROGRESS | |
-| 3. Public gateway leftovers | NOT STARTED | |
-| 4. Full .NET suite serialised, fmt, clippy | NOT STARTED | |
+| 2. A_skill_booster_lapses | DONE, pushed (c6ca79ec) | CharacterHostTests 15 passed (serial class run) |
+| 1. test_death.py live walk | PARTLY | suicide walk PASSES (live, EVE_LIVE_SLOW=1); hull walk FAILS (open, diagnosed below). Space Death tests 15 passed |
+| 3. Public gateway leftovers | PARTLY | PublicGatewayTests 5 passed; live test_skill_plan_live.py and test_title_live.py passed (gateway on, token) |
+| 3a. skill plan canonical form | DONE | Eve.Skills.Tests SkillPlanCanonicalTests 2 passed; live skill plan walk |
+| 3b. JWT check | DONE, signature open | 401 without token, 403 for another account's character |
+| 3c. Notices/Consume | DONE for character and account targets | PublicGatewayTests notice stream test |
+| 3d. title notices | SetNotice DONE; GrantedNotice/RevokedNotice open | |
+| 3e. reward grants | NOT DONE (no achievement reward claim in eve.rs) | |
+| 3f. TLS | NOT SERVED (documented, DEVIATIONS S9) | |
+| 4. full .NET suite serialised, fmt/clippy | RUNNING (see below) | |
 
-## Item 2 root cause
+## Open: hull walk (test_death.py::test_a_hull_that_blows_up...)
 
-Foundations.StartAsync starts the scheduler runner in the composed host. ScheduleAsync wakes it, so it claims the job first;
-RunDueAsync then claims nothing and the test read the job while the handler was still running (the job is left running for a
-few milliseconds, and the test read it then). Reproduced 2 of 2 failing; with a diagnostic log in ExecuteAsync the same run passed,
-which is the race. Fix: the test waits, bounded (20 s), for the job to be removed, as MultipleTrainingSlotExpiry's test does.
+- Two pilots undock from the same undock point (`scene/docking.rs` `undock_place`). `collision.rs` `bump_ships` bumps them every tick, so the victim and the watcher get `SetBallPosition/Velocity/SpeedFraction/Stop` at about 4 Hz; the recording has none in that step. Cause of the repeat not isolated.
+- The hull's arrival is sent 0.25 s after the command; the recording's is 3.36 s after it.
 
-## Notes
+## Decisions (read before changing)
 
-- The worktree needs EVE_SDE_DIR=/home/user/eve.rs/.cache/sde/eve-online-static-data-3396210-jsonl for the live run (the worktree has no .cache).
-- The headless venv is only in /home/user/eve.rs/tools/headless-client/.venv (use that python for live walks).
+- Undock clears `stationid2` silently (EveJS applyTqDockingTransitionSessionChangeShape + characterState undock); the death relocation announces it.
+- The survivor and wreck enter the simulation after the session change, the cosmetics and the skin (recording order).
+- Gateway identity: the bearer token (`authorization` metadata, subject `USER:EVE:<id>`) names the account; the character must belong to it. Signature not verified (no identity key in repo).
+- Canonical skill plans list every level of each skill (EveJS normalizePlanRecord).
+
+## Pushes
+
+- c6ca79ec booster lapse test (and S9 handoff)
+- later pushes: see git log of ch-s9

@@ -39,7 +39,23 @@ use crate::weapons::{Aoe, Arc, Charge, Spool, Turret};
 use crate::world::StructureStatus;
 use crate::wreck::WreckKind;
 
-pub const PROTOCOL_VERSION: u16 = 76;
+pub const PROTOCOL_VERSION: u16 = 77;
+
+/// A battlefield's capture point the host puts in space (protocol 77): a ball the pilots of its system see. Its factions (the attacker and the
+/// occupier, 0 for none) and its next point time (a FILETIME, 0 for none) are the dynamic slim fields the client reads from it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CapturePointPlacement {
+    pub deployable_id: i64,
+    pub solar_system_id: i32,
+    pub name: String,
+    pub type_id: i32,
+    pub group_id: i32,
+    pub position: [f64; 3],
+    pub radius: f64,
+    pub attacker_faction: i32,
+    pub occupier_faction: i32,
+    pub next_point_time: i64,
+}
 
 /// The longest name of a dynamic slim-item field, in bytes (`SetSlimField`).
 pub const SLIM_FIELD_NAME_MAX: usize = 64;
@@ -739,6 +755,8 @@ pub enum Message {
     /// The host puts an acceleration gate of a dungeon room in space (protocol 75): a stargate-kind ball in the system's space, interactive, that the
     /// pilots of the system see. The range is 0. Its transit is the scene's `AccelerationGateTransit` command.
     PlaceAccelerationGate(Box<DisruptorPlacement>),
+    /// The host puts a battlefield's capture point in space (protocol 77); see `CapturePointPlacement`.
+    PlaceCapturePoint(Box<CapturePointPlacement>),
     /// A Mobile Observatory's decloaking ping in its system (protocol 72): each cloaked ship whose cloak is stabilized is not reached, the others are
     /// decloaked with a chance of 40% (EVE.js `processRemoteDecloakPing`, the wiki's Mobile Observatory).
     RemoteDecloakPing {
@@ -1071,6 +1089,7 @@ impl Message {
             Self::SetAnalysisBeaconState { .. } => kind::SET_ANALYSIS_BEACON_STATE,
             Self::SetSlimField { .. } => kind::SET_SLIM_FIELD,
             Self::PlaceAccelerationGate(_) => kind::PLACE_ACCELERATION_GATE,
+            Self::PlaceCapturePoint(_) => kind::PLACE_CAPTURE_POINT,
         }
     }
 }

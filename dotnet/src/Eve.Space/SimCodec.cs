@@ -27,7 +27,7 @@ public sealed class SimLinkException(SimLinkError error, string message) : Excep
 /// </summary>
 public static partial class SimCodec
 {
-    public const ushort ProtocolVersion = 76;
+    public const ushort ProtocolVersion = 77;
 
     /// <summary>The longest name of a dynamic slim-item field, in bytes (protocol 76).</summary>
     public const int SlimFieldNameMax = 64;
@@ -950,6 +950,25 @@ public static partial class SimCodec
                         Kind.PlaceAccelerationGate => new SimPlaceAccelerationGate(deployable, system, name, type, group, position, radius),
                         _ => new SimPlaceDisruptor(deployable, system, name, type, group, position, radius, range, active, owner, corporation, alliance, ship),
                     };
+                    break;
+                }
+            case Kind.PlaceCapturePoint:
+                {
+                    var deployable = r.I64();
+                    var system = r.I32();
+                    var name = r.Text();
+                    var type = r.I32();
+                    var group = r.I32();
+                    var position = ReadVector(ref r);
+                    var radius = r.F64();
+                    var attacker = r.I32();
+                    var occupier = r.I32();
+                    var nextPointTime = r.I64();
+                    if (!(double.IsFinite(radius) && radius >= 0) || attacker < 0 || occupier < 0 || nextPointTime < 0)
+                    {
+                        throw new SimLinkException(SimLinkError.BadValue, "bad capture point");
+                    }
+                    message = new SimPlaceCapturePoint(deployable, system, name, type, group, position, radius, attacker, occupier, nextPointTime);
                     break;
                 }
             case Kind.SetDisruptorActive:

@@ -736,6 +736,18 @@ impl Message {
                 put_text(&mut out, name);
                 put_slim_value(&mut out, value);
             }
+            Self::PlaceCapturePoint(point) => {
+                out.extend_from_slice(&point.deployable_id.to_le_bytes());
+                out.extend_from_slice(&point.solar_system_id.to_le_bytes());
+                put_text(&mut out, &point.name);
+                out.extend_from_slice(&point.type_id.to_le_bytes());
+                out.extend_from_slice(&point.group_id.to_le_bytes());
+                put_vector(&mut out, &point.position);
+                out.extend_from_slice(&point.radius.to_le_bytes());
+                out.extend_from_slice(&point.attacker_faction.to_le_bytes());
+                out.extend_from_slice(&point.occupier_faction.to_le_bytes());
+                out.extend_from_slice(&point.next_point_time.to_le_bytes());
+            }
             Self::PlaceAsteroid(asteroid) => {
                 out.extend_from_slice(&asteroid.solar_system_id.to_le_bytes());
                 out.extend_from_slice(&asteroid.asteroid_id.to_le_bytes());

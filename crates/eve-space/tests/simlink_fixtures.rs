@@ -1248,6 +1248,18 @@ fn message_of(case: &Value) -> Message {
                 ship_id: wide(case, "shipId"),
             }))
         }
+        "PlaceCapturePoint" => Message::PlaceCapturePoint(Box::new(eve_space::link::CapturePointPlacement {
+            deployable_id: wide(case, "deployableId"),
+            solar_system_id: number("solarSystemId") as i32,
+            name: text(case, "typeName"),
+            type_id: number("typeId") as i32,
+            group_id: number("groupId") as i32,
+            position: vector_of(case, "position"),
+            radius: case["radius"].as_f64().unwrap(),
+            attacker_faction: number("attackerFaction") as i32,
+            occupier_faction: number("occupierFaction") as i32,
+            next_point_time: wide(case, "nextPointTime"),
+        })),
         "PlaceAccelerationGate" => {
             Message::PlaceAccelerationGate(Box::new(eve_space::link::DisruptorPlacement {
                 deployable_id: wide(case, "deployableId"),

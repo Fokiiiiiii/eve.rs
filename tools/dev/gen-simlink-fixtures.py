@@ -22,7 +22,7 @@ KINDS = {"Hello": 1, "HelloAck": 2, "Enter": 3, "Leave": 4, "Bind": 5, "UpdateSt
          "PlaceCynoBeacon": 73, "PlaceStructure": 74, "RemoveStructure": 75, "SetStructureState": 76, "StructureDamaged": 77,
          "PlaceAnalysisBeacon": 78, "SetAnalysisBeaconState": 79, "TetherPolicy": 80, "TetherChanged": 81,
          "PlaceWormhole": 82, "RemoveWormhole": 83, "ControlStructure": 84, "StructureDamageCandidatesRequest": 85, "StructureDamageCandidatesResult": 86, "RemoveCynoBeacon": 87, "DamageableEntityUpserted": 88, "DamageableEntityRemoved": 89, "PlaceObservatory": 90, "RemoteDecloakPing": 91, "PlaceControlTower": 92, "PlaceDeadspacePocket": 93, "PlaceAccelerationGate": 94,
-         "SetSlimField": 95}
+         "SetSlimField": 95, "PlaceCapturePoint": 96}
 
 def slim_value(v):  # a dynamic slim-item field value (protocol 76): a tag (0 none, 1 int, 2 real, 3 bool, 4 text, 5 tuple), then its payload
     tag = v["tag"]
@@ -516,6 +516,10 @@ def build(m):
         return frame(k, u64(m["sessionId"]) + i64(m["previousStructureId"]) + i64(m["structureId"]) + bytes([1 if m["repairing"] else 0]))
     if k == "StructureDamaged":  # sent by the simulation: the layer a hit emptied (0 none, 1 shield, 2 armor, 3 hull) and whether a repair is paused
         return frame(k, i64(m["structureId"]) + bytes([m["depleted"]]) + bytes([1 if m["overThreshold"] else 0]))
+    if k == "PlaceCapturePoint":  # a battlefield's capture point (protocol 77): its ball, its attacker and occupier factions (0 none), its next point time (FILETIME, 0 none)
+        return frame(k, i64(m["deployableId"]) + struct.pack("<i", m["solarSystemId"]) + s(m["typeName"]) + struct.pack("<ii", m["typeId"], m["groupId"])
+                     + struct.pack("<3d", *m["position"]) + struct.pack("<d", m["radius"]) + struct.pack("<ii", m["attackerFaction"], m["occupierFaction"])
+                     + i64(m["nextPointTime"]))
     if k == "SetSlimField":
         return frame(k, i64(m["itemId"]) + s(m["fieldName"]) + slim_value(m["value"]))
     if k == "SetStructureState":
@@ -1137,6 +1141,9 @@ valid = [
     {"name": "host sets a bool slim field", "kind": "SetSlimField", "itemId": "4250000000000016", "fieldName": "group_standings_disabled", "value": {"tag": "bool", "value": True}},
     {"name": "host clears a slim field to none", "kind": "SetSlimField", "itemId": "4250000000000016", "fieldName": "fwAttackMethod", "value": {"tag": "none"}},
     {"name": "host sets a tuple nested four deep (the limit)", "kind": "SetSlimField", "itemId": "4250000000000016", "fieldName": "nested", "value": {"tag": "tuple", "items": [{"tag": "tuple", "items": [{"tag": "tuple", "items": [{"tag": "tuple", "items": [{"tag": "none"}]}]}]}]}},
+    {"name": "capture point with an attacker and an occupier, and its next point time (protocol 77)", "kind": "PlaceCapturePoint", **json.loads('{"kind": "PlaceCapturePoint", "deployableId": "4250000000000020", "solarSystemId": 30100032, "typeName": "30km Caldari Capture Point", "typeId": 29421, "groupId": 922, "position": [1.0e9, 2.0e8, -3.0e8], "radius": 300.0, "attackerFaction": 500004, "occupierFaction": 500001, "nextPointTime": "133900000000000000"}')},
+    {"name": "capture point with no faction yet and no next point time", "kind": "PlaceCapturePoint", **dict(json.loads('{"kind": "PlaceCapturePoint", "deployableId": "4250000000000020", "solarSystemId": 30100032, "typeName": "30km Caldari Capture Point", "typeId": 29421, "groupId": 922, "position": [1.0e9, 2.0e8, -3.0e8], "radius": 300.0, "attackerFaction": 500004, "occupierFaction": 500001, "nextPointTime": "133900000000000000"}'), attackerFaction=0, occupierFaction=0, nextPointTime="0")},
+    {"name": "capture point with only an occupier", "kind": "PlaceCapturePoint", **dict(json.loads('{"kind": "PlaceCapturePoint", "deployableId": "4250000000000020", "solarSystemId": 30100032, "typeName": "30km Caldari Capture Point", "typeId": 29421, "groupId": 922, "position": [1.0e9, 2.0e8, -3.0e8], "radius": 300.0, "attackerFaction": 500004, "occupierFaction": 500001, "nextPointTime": "133900000000000000"}'), attackerFaction=0)},
     {"name": "structure state set by the host: paused timer, unanchoring, repairing", "kind": "SetStructureState", "solarSystemId": 30100032,
      "structureId": "1040000000000001",
      "status": {"state": 111, "upkeepState": 3, "timer": [132000000000000000, 132000860000000000, 132000100000000000], "unanchoring": 132000900000000000, "repairing": True}},
@@ -1435,6 +1442,10 @@ deep_tuple = {"tag": "none"}
 for _ in range(5):
     deep_tuple = {"tag": "tuple", "items": [deep_tuple]}
 invalid = [
+    {"name": "capture point with a negative attacker faction", "reason": "bad-value", "hex": build(dict(json.loads('{"kind": "PlaceCapturePoint", "deployableId": "4250000000000020", "solarSystemId": 30100032, "typeName": "30km Caldari Capture Point", "typeId": 29421, "groupId": 922, "position": [1.0e9, 2.0e8, -3.0e8], "radius": 300.0, "attackerFaction": 500004, "occupierFaction": 500001, "nextPointTime": "133900000000000000"}'), attackerFaction=-1)).hex()},
+    {"name": "capture point with a negative next point time", "reason": "bad-value", "hex": build(dict(json.loads('{"kind": "PlaceCapturePoint", "deployableId": "4250000000000020", "solarSystemId": 30100032, "typeName": "30km Caldari Capture Point", "typeId": 29421, "groupId": 922, "position": [1.0e9, 2.0e8, -3.0e8], "radius": 300.0, "attackerFaction": 500004, "occupierFaction": 500001, "nextPointTime": "133900000000000000"}'), nextPointTime="-1")).hex()},
+    {"name": "capture point with a negative radius", "reason": "bad-value", "hex": build(dict(json.loads('{"kind": "PlaceCapturePoint", "deployableId": "4250000000000020", "solarSystemId": 30100032, "typeName": "30km Caldari Capture Point", "typeId": 29421, "groupId": 922, "position": [1.0e9, 2.0e8, -3.0e8], "radius": 300.0, "attackerFaction": 500004, "occupierFaction": 500001, "nextPointTime": "133900000000000000"}'), radius=-1.0)).hex()},
+    {"name": "capture point cut short before its next point time", "reason": "truncated", "hex": build(json.loads('{"kind": "PlaceCapturePoint", "deployableId": "4250000000000020", "solarSystemId": 30100032, "typeName": "30km Caldari Capture Point", "typeId": 29421, "groupId": 922, "position": [1.0e9, 2.0e8, -3.0e8], "radius": 300.0, "attackerFaction": 500004, "occupierFaction": 500001, "nextPointTime": "133900000000000000"}')).hex()[:-16]},
     {"name": "slim field with an empty name", "reason": "bad-value", "hex": frame("SetSlimField", i64("4250000000000016") + s("") + bytes([0])).hex()},
     {"name": "slim field name of 65 bytes", "reason": "bad-value", "hex": frame("SetSlimField", i64("4250000000000016") + s("x" * 65) + bytes([0])).hex()},
     {"name": "slim field real that is not finite", "reason": "bad-value", "hex": frame("SetSlimField", i64("4250000000000016") + s("hostile_response_threshold") + bytes([2]) + struct.pack("<d", float("nan"))).hex()},

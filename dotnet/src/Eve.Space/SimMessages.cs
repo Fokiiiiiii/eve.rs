@@ -1182,6 +1182,12 @@ public sealed record SimPlaceDeadspacePocket(long DeployableId, int SolarSystemI
 /// </summary>
 public sealed record SimPlaceAccelerationGate(long DeployableId, int SolarSystemId, string Name, int TypeId, int GroupId, IReadOnlyList<double> Position, double Radius) : SimMessage;
 
+/// <summary>A battlefield's capture point put in its system's space (protocol 77): a ball the pilots of the system see. Its attacker and occupier factions
+/// (0 for none) and its next point time (a FILETIME, 0 for none) are the dynamic slim fields the client reads (<c>component_fwCapturePoint_factionInfo</c>,
+/// <c>component_fwCapturePoint_nextPointTime</c>).</summary>
+public sealed record SimPlaceCapturePoint(long DeployableId, int SolarSystemId, string Name, int TypeId, int GroupId, IReadOnlyList<double> Position, double Radius,
+    int AttackerFaction, int OccupierFaction, long NextPointTime) : SimMessage;
+
 /// <summary>A Mobile Observatory's decloaking ping in its solar system (protocol 72): the cloaked ships there whose cloak is not stabilized may be decloaked.</summary>
 public sealed record SimRemoteDecloakPing(int SolarSystemId, long ObservatoryId) : SimMessage;
 

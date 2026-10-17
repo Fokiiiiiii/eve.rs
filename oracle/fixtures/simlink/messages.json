@@ -3954,6 +3954,63 @@
    "hex": "1e0000005f10a04b3c5a190f0006006e657374656405010005010005010005010000"
   },
   {
+   "name": "capture point with an attacker and an occupier, and its next point time (protocol 77)",
+   "kind": "PlaceCapturePoint",
+   "deployableId": "4250000000000020",
+   "solarSystemId": 30100032,
+   "typeName": "30km Caldari Capture Point",
+   "typeId": 29421,
+   "groupId": 922,
+   "position": [
+    1000000000.0,
+    200000000.0,
+    -300000000.0
+   ],
+   "radius": 300.0,
+   "attackerFaction": 500004,
+   "occupierFaction": 500001,
+   "nextPointTime": "133900000000000000",
+   "hex": "610000006014a04b3c5a190f00404acb011a0033306b6d2043616c64617269204361707475726520506f696e74ed7200009a0300000000000065cdcd410000000084d7a74100000000a3e1b1c10000000000c0724024a1070021a1070000c06c2f57b5db01"
+  },
+  {
+   "name": "capture point with no faction yet and no next point time",
+   "kind": "PlaceCapturePoint",
+   "deployableId": "4250000000000020",
+   "solarSystemId": 30100032,
+   "typeName": "30km Caldari Capture Point",
+   "typeId": 29421,
+   "groupId": 922,
+   "position": [
+    1000000000.0,
+    200000000.0,
+    -300000000.0
+   ],
+   "radius": 300.0,
+   "attackerFaction": 0,
+   "occupierFaction": 0,
+   "nextPointTime": "0",
+   "hex": "610000006014a04b3c5a190f00404acb011a0033306b6d2043616c64617269204361707475726520506f696e74ed7200009a0300000000000065cdcd410000000084d7a74100000000a3e1b1c10000000000c0724000000000000000000000000000000000"
+  },
+  {
+   "name": "capture point with only an occupier",
+   "kind": "PlaceCapturePoint",
+   "deployableId": "4250000000000020",
+   "solarSystemId": 30100032,
+   "typeName": "30km Caldari Capture Point",
+   "typeId": 29421,
+   "groupId": 922,
+   "position": [
+    1000000000.0,
+    200000000.0,
+    -300000000.0
+   ],
+   "radius": 300.0,
+   "attackerFaction": 0,
+   "occupierFaction": 500001,
+   "nextPointTime": "133900000000000000",
+   "hex": "610000006014a04b3c5a190f00404acb011a0033306b6d2043616c64617269204361707475726520506f696e74ed7200009a0300000000000065cdcd410000000084d7a74100000000a3e1b1c10000000000c072400000000021a1070000c06c2f57b5db01"
+  },
+  {
    "name": "structure state set by the host: paused timer, unanchoring, repairing",
    "kind": "SetStructureState",
    "solarSystemId": 30100032,
@@ -5279,6 +5336,26 @@
   }
  ],
  "invalid": [
+  {
+   "name": "capture point with a negative attacker faction",
+   "reason": "bad-value",
+   "hex": "610000006014a04b3c5a190f00404acb011a0033306b6d2043616c64617269204361707475726520506f696e74ed7200009a0300000000000065cdcd410000000084d7a74100000000a3e1b1c10000000000c07240ffffffff21a1070000c06c2f57b5db01"
+  },
+  {
+   "name": "capture point with a negative next point time",
+   "reason": "bad-value",
+   "hex": "610000006014a04b3c5a190f00404acb011a0033306b6d2043616c64617269204361707475726520506f696e74ed7200009a0300000000000065cdcd410000000084d7a74100000000a3e1b1c10000000000c0724024a1070021a10700ffffffffffffffff"
+  },
+  {
+   "name": "capture point with a negative radius",
+   "reason": "bad-value",
+   "hex": "610000006014a04b3c5a190f00404acb011a0033306b6d2043616c64617269204361707475726520506f696e74ed7200009a0300000000000065cdcd410000000084d7a74100000000a3e1b1c1000000000000f0bf24a1070021a1070000c06c2f57b5db01"
+  },
+  {
+   "name": "capture point cut short before its next point time",
+   "reason": "truncated",
+   "hex": "610000006014a04b3c5a190f00404acb011a0033306b6d2043616c64617269204361707475726520506f696e74ed7200009a0300000000000065cdcd410000000084d7a74100000000a3e1b1c10000000000c0724024a1070021a10700"
+  },
   {
    "name": "slim field with an empty name",
    "reason": "bad-value",

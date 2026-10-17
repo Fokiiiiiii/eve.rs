@@ -4611,6 +4611,14 @@ as reference. The client's `bookmarkSvc.py` (`OnSharedBookmarksFolderUpdated`, `
 - **Not built: ships and bodies.** A ship or a body keeps no dynamic field: the behaviour hook is a no-op for them. `fwAttackMethod` and
   `group_standings_disabled` are set by behaviours on NPC ships (`actions/entities.rs`), so those fields do not reach the client yet. Upgrade:
   a field store on the ship and body entries (the same overlay as the deployable's `slim_dict`).
+- **Capture point placement (protocol 77, C3a).** `PlaceCapturePoint` (kind 96) puts a battlefield's capture point in space as a ball of its SDE type
+  (group 922, "Capture Point", category 11 in the SDE). The wire: deployable id, system, type name, type id, group id, position, radius, the attacker and the
+  occupier faction (0 for none) and the next point time (a FILETIME, 0 for none). The factions go in `component_fwCapturePoint_factionInfo` as the tuple
+  (attacker, occupier) with a none for 0, and the next point time in `component_fwCapturePoint_nextPointTime`: the two fields the client's
+  `fwCapturePoint.py` reads. The point's range and list ids are type attributes the client reads itself. Given once. Project rule: the point's type is the
+  30 km capture point of its occupier's faction (SDE 29311 Amarr, 29421 Caldari, 29422 Gallente, 29423 Minmatar).
+  Protocol-level change: a slim item's whole-number field is sent as an int, or as a long when it does not fit 32 bits (the marshal rule of `wire::id`),
+  so a FILETIME is a long. Tests: `a_capture_point_is_put_in_space_once...` (Rust), the golden frames (3 valid, 4 invalid), `SimCodecTests`.
 - Tests: `simlink_fixtures` (8 tests; the golden frames add 6 valid and 8 invalid SetSlimField cases), `deployable::tests::a_dynamic_slim_field...`,
   `SimCodecTests` (replays the frames in C#), `Eve.Services.Space.Tests` (the beacon host tests, eve_p4).
 

@@ -3,6 +3,7 @@ using Eve.Dungeons;
 using Eve.FactionWarfare;
 using Eve.Services.Space.Waves;
 using Eve.Services;
+using Eve.Services.Space;
 using Npgsql;
 
 namespace Eve.Host;
@@ -10,14 +11,14 @@ namespace Eve.Host;
 /// <summary>
 /// The dungeon sites of the factional warfare complexes on the space runtime. A complex's site is a dungeon of its size's SDE archetype (the first
 /// startable template is picked by the complex id), started for the complex; its NPC defenders are its waves, and the site is completed when they are all
-/// destroyed. The pilots inside a complex are the pilots whose current dungeon is its site (the keeper's read of the session).
+/// destroyed. The pilots inside a complex are the pilots within its capture radius of the site's point (the wiki: 30 km of the capture point).
 /// </summary>
 internal sealed class FwComplexSites(
     DungeonWaveDirector sites,
     DungeonCatalog catalog,
     ContentRuntime content,
     Func<int, IReadOnlyList<ClientSession>> sessionsInSystem,
-    Func<ClientSession, CancellationToken, Task<long?>> currentInstanceOf,
+    Func<ClientSession, CancellationToken, Task<WarpCoordinates?>> positionOf,
     Func<long, CancellationToken, Task<long>> warFactionOfCharacter) : IFwComplexSites
 {
     /// <summary>The site templates of each complex size: the dungeons of its archetype that can start (ids in order).</summary>
@@ -43,12 +44,18 @@ internal sealed class FwComplexSites(
     public async Task<bool> DefendersClearedAsync(long instanceId, CancellationToken cancellationToken) =>
         await content.GetAsync(instanceId, cancellationToken) is { State: "completed" };
 
+    /// <summary>The capture radius of a complex, metres (the wiki: a pilot must stay within 30 km of the capture point).</summary>
+    public const double CaptureRadiusMeters = 30_000;
+
     public async Task<IReadOnlyList<long>> FactionsInsideAsync(long solarSystemId, long instanceId, CancellationToken cancellationToken)
     {
+        // shortcut: the server's read of the current dungeon knows the mission dungeons only, so presence is the distance to the site's point
         var factions = new List<long>();
         foreach (var session in sessionsInSystem((int)solarSystemId))
         {
-            if (session.CharacterId is not { } characterId || await currentInstanceOf(session, cancellationToken) != instanceId)
+            if (session.CharacterId is not { } characterId || await positionOf(session, cancellationToken) is not { } at || at.SolarSystemId != solarSystemId)
+                continue;
+            if (Math.Sqrt(at.X * at.X + at.Y * at.Y + at.Z * at.Z) > CaptureRadiusMeters)
                 continue;
             factions.Add(await warFactionOfCharacter(characterId, cancellationToken));
         }

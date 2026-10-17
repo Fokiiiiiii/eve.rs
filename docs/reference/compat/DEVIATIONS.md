@@ -4356,7 +4356,7 @@ donation sections it marks outdated. Design: `docs/project/FW_DESIGN.md`.
 - **Complexes: capture timer and presence (project rule).** Each complex is a dungeon site of its size's SDE archetype (33 to 36; the first startable
   template by complex id), started at the system origin with lifetime 24 h (shortcut: the wiki gives no site lifetime). Its NPC defenders are its waves;
   the timer advances only once the site is completed (all defenders destroyed; the wiki: the defending NPC must be killed first). Presence is the pilots
-  whose current dungeon is the site (the keeper's read of the session, `CurrentDungeonInstanceAsync`). One tick every 10 s (job
+  within 30 km of the site's point (wiki: the capture radius; the server's current-dungeon read knows only mission dungeons, so it is not used). One tick every 10 s (job
   `factionwarfare.complexes.tick`). A side alone inside advances the timer by the tick (attackers up, occupier down); both or neither pause it (wiki).
   The step is capped at one tick. The timers are additive and signed (wiki). Enemy NPCs outside the site do not pause the timer (not modelled).
   Entry: the complex's gate, when the template has rooms, is the acceleration gate of `DungeonRoomLayout`; a single-room site needs none (EVE:

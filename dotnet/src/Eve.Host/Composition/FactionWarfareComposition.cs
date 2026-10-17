@@ -195,7 +195,9 @@ internal sealed partial class CharacterServicesComposition
         fwDungeons = Eve.Dungeons.DungeonCatalog.LoadEmbedded();
         var sites = new FwComplexSites(dungeonWavesDirector, fwDungeons, foundations.Content,
             system => spaceSessions?.SessionsInSystem(system) ?? [],
-            CurrentDungeonInstanceAsync,
+            (session, cancellationToken) => spaceSessions is { } space && space.ShipIdOf(session) is > 0 and var ship
+                ? space.PositionOfAsync(session, ship, cancellationToken)
+                : Task.FromResult<WarpCoordinates?>(null),
             async (characterId, cancellationToken) => await WarFactionOfAsync(characterId, cancellationToken));
         var complexes = new FwComplexDirector(factionWarfareStore, foundations.Scheduler, foundations.Events, sites);
         await complexes.AttachAsync();

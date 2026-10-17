@@ -166,6 +166,33 @@ public class ValidationTests
     }
 
     [Fact]
+    public void A_game_master_commodity_is_taken_only_as_far_as_the_pin_accepts()
+    {
+        var colony = Fixtures.Chain();
+        colony.ApplyCommands([new GmAddCommodityCommand(2, TestCatalog.AqueousLiquids, 100)], Fixtures.Ctx());
+        Assert.Equal(100, colony.Pins[2].Contents[TestCatalog.AqueousLiquids]);
+        // a large amount is taken up to the free volume of the pin, and a full pin takes nothing more
+        colony.ApplyCommands([new GmAddCommodityCommand(2, TestCatalog.AqueousLiquids, 10_000_000)], Fixtures.Ctx());
+        var full = colony.Pins[2].Contents[TestCatalog.AqueousLiquids];
+        Assert.True(full > 100);
+        Assert.Equal("CannotImportCapacityExceeded",
+            Refusal(() => colony.ApplyCommands([new GmAddCommodityCommand(2, TestCatalog.AqueousLiquids, 10_000_000)], Fixtures.Ctx())));
+        Assert.Equal(full, colony.Pins[2].Contents[TestCatalog.AqueousLiquids]);
+    }
+
+    [Fact]
+    public void A_game_master_command_center_takes_the_command_center_type_of_its_planet()
+    {
+        // a temperate planet (type 11): its command center type is the one whose planetRestriction is 11
+        var temperate = new Colony(TestCatalog.Build(), new TestCatalog.ConstantField(1.0), TestCatalog.PlanetId, 11, TestCatalog.Radius, TestCatalog.ColonyOwner)
+        { CurrentSimTime = Fixtures.Now };
+        temperate.ApplyCommands([new CreatePinCommand(1, TestCatalog.TemperateCommandCenter, 0.5, 1.0)], Fixtures.Ctx());
+        temperate.Pins[1].TypeId = TestCatalog.CommandCenter; // a command center of another planet type
+        temperate.ApplyCommands([new GmConvertCommandCenterCommand(1)], Fixtures.Ctx());
+        Assert.Equal(TestCatalog.TemperateCommandCenter, temperate.Pins[1].TypeId);
+    }
+
+    [Fact]
     public void An_expedited_transfer_takes_the_minimum_transfer_time_and_locks_the_source()
     {
         var colony = Fixtures.Chain();

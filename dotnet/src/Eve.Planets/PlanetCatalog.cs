@@ -69,6 +69,9 @@ public sealed class PlanetCatalog(IReadOnlyDictionary<int, TypeInfo> types, IRea
 
     public bool Exists(int typeId) => types.ContainsKey(typeId);
 
+    /// <summary>The types of one group (the command centers are group 1027: one per planet type).</summary>
+    public IEnumerable<TypeInfo> TypesInGroup(int groupId) => types.Values.Where(t => t.GroupId == groupId);
+
     public Schematic? Schematic(int schematicId) => schematics.TryGetValue(schematicId, out var s) ? s : null;
 
     /// <summary>The kind of pin a type is, or null when it is not a pin of this model (obsolete extractors, POCO, other).</summary>

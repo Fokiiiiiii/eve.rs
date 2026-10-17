@@ -39,6 +39,16 @@ public sealed partial class PgAccountDirectory : IAccountDirectory, IAccountLook
 
     public string Schema { get; }
 
+    /// <summary>Adds role bits to an existing account (the operator's grant; nothing is taken away). False when no account has the name.</summary>
+    public async Task<bool> GrantRolesAsync(string userName, long roles, CancellationToken cancellationToken = default)
+    {
+        await using var connection = await _source.OpenConnectionAsync(cancellationToken);
+        await using var command = new NpgsqlCommand($"UPDATE {Schema}.accounts SET role = role | @roles WHERE user_name = @name", connection);
+        command.Parameters.AddWithValue("roles", roles);
+        command.Parameters.AddWithValue("name", userName);
+        return await command.ExecuteNonQueryAsync(cancellationToken) == 1;
+    }
+
     /// <summary>The migrations of this module.</summary>
     public static IReadOnlyList<Migration> MigrationSet() => Migrations.Embedded(typeof(PgAccountDirectory).Assembly, "Migrations");
 

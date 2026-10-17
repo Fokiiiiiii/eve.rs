@@ -4373,6 +4373,28 @@ donation sections it marks outdated. Design: `docs/project/FW_DESIGN.md`.
 - **Complexes: tests.** `FwComplexRulesTests` (3, pure), `FwComplexTickerTests` (2, eve_p4: capture by the attackers after 31 ticks with the
   victory points, capture by the defenders with the subtraction floor at 0 and the respawn after 30 minutes).
 
+
+- **Complexes: live capture walk (2026-10-17).** `tools/headless-client/tests/test_fw_capture_walk.py` passes on the eve_p4 lane through tools/mitm: the pilot
+  undocks, flies four gates to the nearest occupied system with an open scout complex, enlists in the occupier's enemy, warps to the complex gate, takes it,
+  clears the three waves with the QA Smartbomb, and the capture timer completes; `OnFacWarDungeonCompleted (True, enemy)` is sent. Not checked: the EVE.js
+  reference run (EveJS has no FW), the graphical client, and the per-pilot victory points.
+- **Complexes: site origin outside the star.** The system origin is the star's centre (SDE mapStars radius 298,500,000 m in the walked system). A site
+  there put its pilots inside the star's collision, which pushed the ship back to the surface. A site now starts 1e9 m outside the star's surface on the
+  system axis (`FwComplexSites.SiteOriginAsync`). Shortcut: the planets are not checked against the origin; upgrade if a site lands near a planet.
+- **Complexes: presence and the complex gate measure from the site's origin** (the dungeon instance's origin), not the system origin.
+- **Complexes: a site starts with the first pilot in its system.** A site started with no pilot has no scene for its NPC waves: the spawn is refused
+  (`NO_SCENE`) and the wave fails the whole instance (the probe found every complex `failed`). The tick starts a complex's site once a pilot is in the system;
+  until then the complex is open without a site (no scan row, no gate).
+- **Complexes: the current dungeon of a complex pilot** is the open complex inside its capture radius (the lowest instance). Shortcut: all complexes of a
+  system share one origin, so the pilot is inside all of them.
+- **Acceleration gates: the entry gate is open.** The gate into the entry room of a site is not locked by the room's waves (the layout numbers its source as
+  the entry room, which would lock it forever).
+- **Acceleration gates: a warp to a gate ends at the ship's range from the gate's centre.** The gate's radius (12,706 m) is its reach for a transit, not a stop.
+- **Acceleration gates: the room transit has no 150 km minimum.** The transit into a room of the same site is a teleport, not a player's warp
+  (`MINIMUM_WARP_DISTANCE` applies to player warps only).
+- **Walk: the room move is 12 s** (about 15 km at 1,265 m/s), which keeps the pilot inside the 30 km presence and 18 km from the gate (the smartbomb's
+  6 km surface rule).
+
 ## Bookmarks: shared (access group) folders, not built (2026-10-17; superseded by the next section)
 
 Sources: eve-logic `eve/client/script/ui/shared/bookmarks/bookmarkSvc.py` (the `accessGroupBookmarkMgr` calls: AddFolder with

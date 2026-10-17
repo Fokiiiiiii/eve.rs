@@ -158,8 +158,7 @@ public sealed class OwnerGroupManagerServiceTests
     /// <summary>The change codes a notification names for one group.</summary>
     private static int[] Codes(PyValue arguments, long group)
     {
-        // the arguments hold the payload tuple, whose first item is the changed-groups dict
-        var dict = Assert.IsType<PyDict>(Assert.IsType<PyTuple>(Assert.IsType<PyTuple>(arguments).Items[0]).Items[0]);
+        var dict = Assert.IsType<PyDict>(Assert.IsType<PyTuple>(arguments).Items[0]);
         var entry = Assert.Single(dict.Entries, e => Num(e.Key) == group);
         return ((PyList)entry.Value).Items.Select(code => (int)Num(code)).ToArray();
     }

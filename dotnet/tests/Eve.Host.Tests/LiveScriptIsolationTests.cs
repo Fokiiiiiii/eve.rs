@@ -57,11 +57,25 @@ public class LiveScriptIsolationTests
         Assert.Contains("\"$EVE_GAMESTORE_SCHEMA\"", script, StringComparison.Ordinal);
     }
 
+    /// <summary>
+    /// The static data schema (<c>EVE_SDE_SCHEMA</c>) is not scratch: <c>eve-sde ensure</c> imports the pinned data once, and the host
+    /// only reads it (<see cref="The_shared_static_data_reader_writes_nothing"/>), so no run can inherit rows from another.
+    /// </summary>
+    private static readonly string[] SharedStaticSchemas = ["EVE_SDE_SCHEMA"];
+
+    [Fact]
+    public void The_shared_static_data_reader_writes_nothing()
+    {
+        var reader = File.ReadAllText(Path.Combine(RepoRoot, "dotnet", "src", "Eve.Sde", "SdeReader.cs"));
+
+        Assert.DoesNotMatch(new Regex(@"\b(INSERT|UPDATE|DELETE|CREATE|DROP|ALTER|TRUNCATE)\b", RegexOptions.CultureInvariant), reader);
+    }
+
     [Fact]
     public void Every_schema_the_host_reads_is_scratch_in_the_live_script_and_dropped_at_its_end()
     {
         var script = LiveScript();
-        var names = SchemaVariablesOfTheHost();
+        var names = SchemaVariablesOfTheHost().Where(name => !SharedStaticSchemas.Contains(name)).ToHashSet(StringComparer.Ordinal);
 
         Assert.True(names.Count >= 20, $"only {names.Count} schema variables were found in the host");
         var unisolated = names

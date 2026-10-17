@@ -11,7 +11,8 @@ namespace Eve.Services.Core;
 /// character, corporation, alliance or everyone entry the change names (<c>OnOwnerGroupsUpdated</c>, one dict of group id to change codes).
 /// </summary>
 [Service("ownerGroupManager")]
-public sealed partial class OwnerGroupManagerService(AccessGroupStore store, Func<long, ValueTask<MemberKind?>> kindOf, CharacterSessions? sessions)
+public sealed partial class OwnerGroupManagerService(AccessGroupStore store, Func<long, ValueTask<MemberKind?>> kindOf, CharacterSessions? sessions,
+    SharedFolderNotifier? folders = null)
 {
     [Method("GetMyGroups")]
     public async ValueTask<PyValue> GetMyGroups(ServiceCall call)
@@ -66,7 +67,9 @@ public sealed partial class OwnerGroupManagerService(AccessGroupStore store, Fun
     [Method("Delete")]
     public async ValueTask<PyValue> Delete(ServiceCall call)
     {
-        Broadcast(call, (await store.DeleteAsync(Who(call), Integral(call.Arg(0)) ?? 0, call.Cancellation)).Changes);
+        var groupId = Integral(call.Arg(0)) ?? 0;
+        Broadcast(call, (await store.DeleteAsync(Who(call), groupId, call.Cancellation)).Changes);
+        await AccessChanged(call, groupId);
         return PyNone.Instance;
     }
 
@@ -100,6 +103,7 @@ public sealed partial class OwnerGroupManagerService(AccessGroupStore store, Fun
         }
         var mutation = await store.AddMembersAsync(who, groupId, entries, call.Cancellation);
         Broadcast(call, mutation.Changes);
+        await AccessChanged(call, groupId);
         return Failures(failures.Concat(mutation.Result));
     }
 
@@ -107,8 +111,10 @@ public sealed partial class OwnerGroupManagerService(AccessGroupStore store, Fun
     [Method("DeleteMembers")]
     public async ValueTask<PyValue> DeleteMembers(ServiceCall call)
     {
-        var mutation = await store.DeleteMembersAsync(Who(call), Integral(call.Arg(0)) ?? 0, IdsOf(call.Arg(1)), call.Cancellation);
+        var groupId = Integral(call.Arg(0)) ?? 0;
+        var mutation = await store.DeleteMembersAsync(Who(call), groupId, IdsOf(call.Arg(1)), call.Cancellation);
         Broadcast(call, mutation.Changes);
+        await AccessChanged(call, groupId);
         return Failures(mutation.Result);
     }
 
@@ -123,12 +129,20 @@ public sealed partial class OwnerGroupManagerService(AccessGroupStore store, Fun
             return Failures(memberIds.Select(id => new MemberFailure(id, "NotAllowed")));
         var mutation = await store.ChangeMembershipTypesAsync(who, groupId, memberIds, type, call.Cancellation);
         Broadcast(call, mutation.Changes);
+        await AccessChanged(call, groupId);
         return Failures(mutation.Result);
     }
 
     [Method("GetGroupLogs")]
     public async ValueTask<PyValue> GetGroupLogs(ServiceCall call) =>
         new PyList([.. (await store.LogsAsync(Who(call), Integral(call.Arg(0)) ?? 0, call.Cancellation)).Select(LogPayload)]);
+
+    /// <summary>After the response, the shared folders that use the group tell their connected characters what the change did to them.</summary>
+    private async Task AccessChanged(ServiceCall call, long groupId)
+    {
+        if (folders is not null && await folders.PlanAccessChangesAsync(groupId, call.Cancellation) is { } send)
+            call.Session.AfterResponse(send);
+    }
 
     private static Affiliation Who(ServiceCall call)
     {
@@ -149,7 +163,7 @@ public sealed partial class OwnerGroupManagerService(AccessGroupStore store, Fun
                 if (heard.Count == 0) continue;
                 var payload = new PyDict(heard.Select(change => new KeyValuePair<PyValue, PyValue>(InventoryWire.Id(change.GroupId),
                     new PyList([.. change.Codes.Select(code => (PyValue)new PyInt(code))]))).ToArray());
-                session.SendNotification("OnOwnerGroupsUpdated", "clientID", Py.Tuple(payload));
+                session.SendNotification("OnOwnerGroupsUpdated", "clientID", payload);
             }
         });
     }

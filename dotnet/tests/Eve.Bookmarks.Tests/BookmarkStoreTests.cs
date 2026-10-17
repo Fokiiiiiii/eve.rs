@@ -40,14 +40,13 @@ public sealed class BookmarkStoreTests
     }
 
     [PgFact]
-    public async Task A_shared_folder_is_refused_because_the_access_group_store_is_not_built()
+    public async Task A_shared_folder_without_an_admin_list_is_refused()
     {
         await using var rig = await Rig.CreateAsync();
 
         var error = await Assert.ThrowsAsync<BookmarkError>(async () => await rig.Store.AddFolderAsync(CharacterId, false, "Corp", ""));
 
-        Assert.Equal("SharedFoldersNotBuilt", error.Code);
-        Assert.NotNull(error.Notice);
+        Assert.Equal("AdminAccessRequired", error.Code);
     }
 
     [PgFact]

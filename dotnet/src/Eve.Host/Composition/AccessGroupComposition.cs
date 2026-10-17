@@ -1,4 +1,5 @@
 using Eve.AccessGroups;
+using Eve.Bookmarks;
 using static Eve.Host.HostConfiguration;
 
 namespace Eve.Host;
@@ -14,6 +15,10 @@ internal sealed partial class CharacterServicesComposition
         await AccessGroupStore.MigrateAsync(source, schema);
         accessGroups = new AccessGroupStore(source, schema, now);
     }
+
+    /// <summary>The access lists the character holds a role in, for the shared bookmark folders.</summary>
+    private async ValueTask<AccessLists> MemberLists(Affiliation who, CancellationToken token) =>
+        new(await accessGroups.MemberRolesAsync(who, token), who.CorporationId);
 
     /// <summary>
     /// What a member id of an access group is: everyone (id 0), a corporation, an alliance or a character. Null when the id is none of them.

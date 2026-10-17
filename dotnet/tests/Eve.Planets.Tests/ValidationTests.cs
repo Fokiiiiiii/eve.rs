@@ -75,7 +75,8 @@ public class ValidationTests
         // power caps a 1-planet colony at level 0 (6000 PG): ten heads need the level-5 command center (19000 PG)
         var colony = Fixtures.Chain();
         colony.ApplyCommands([new UpgradeCommandCenterCommand(1, 5)], Fixtures.Ctx(ccSkill: 5));
-        // heads cannot change while a program runs (the client refuses it too): clear the program first
+        // heads cannot change while a program runs (the client refuses it too): clear the program after its install cooldown
+        colony.RunTo(colony.CurrentSimTime + PlanetRules.ProgramInstallCooldown);
         colony.ApplyCommands([new InstallProgramCommand(3, null, 0.01)], Fixtures.Ctx());
         Assert.Equal("CannotPlaceHeadTooFarAway",
             Refusal(() => colony.ApplyCommands([new AddExtractorHeadCommand(3, 1, 0.5, 2.0)], Fixtures.Ctx())));
@@ -132,6 +133,24 @@ public class ValidationTests
         colony.RunTo(colony.CurrentSimTime + PlanetRules.LaunchCooldown);
         colony.Launch(1, new Dictionary<int, long> { [TestCatalog.Water] = 5 });
         Assert.Equal(40, colony.Pins[1].Contents[TestCatalog.Water]);
+    }
+
+    [Fact]
+    public void A_program_cannot_be_changed_or_stopped_inside_its_install_cooldown()
+    {
+        // Chain installs the program at the colony's start: a stop or a new program is refused until the cooldown ends (ecuPin.CanInstallProgram)
+        var colony = Fixtures.Chain();
+        Assert.Equal("CantInstallProgramNeedsCooldown",
+            Refusal(() => colony.ApplyCommands([new InstallProgramCommand(3, null, 0.01)], Fixtures.Ctx())));
+        Assert.Equal("CantInstallProgramNeedsCooldown",
+            Refusal(() => colony.ApplyCommands([new InstallProgramCommand(3, TestCatalog.AqueousLiquids, 0.02)], Fixtures.Ctx())));
+        Assert.Equal(TestCatalog.AqueousLiquids, colony.Pins[3].ProgramType);
+        colony.RunTo(colony.CurrentSimTime + PlanetRules.ProgramInstallCooldown - 1);
+        Assert.Equal("CantInstallProgramNeedsCooldown",
+            Refusal(() => colony.ApplyCommands([new InstallProgramCommand(3, null, 0.01)], Fixtures.Ctx())));
+        colony.RunTo(colony.CurrentSimTime + 1);
+        colony.ApplyCommands([new InstallProgramCommand(3, null, 0.01)], Fixtures.Ctx());
+        Assert.Null(colony.Pins[3].ProgramType);
     }
 
     [Fact]

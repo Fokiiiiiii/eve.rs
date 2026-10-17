@@ -69,4 +69,24 @@ public class IskCommandTests
         Assert.Equal(start, (await rig.Wallets.GetAsync(pilot.CharacterId))!.Isk);
         Assert.DoesNotContain((await rig.Transactions.JournalAsync(pilot.CharacterId)), e => e.Reason == "gm isk");
     }
+
+    [PgFact]
+    public async Task Wallet_and_isk_with_no_amount_show_the_balance_and_setisk_makes_the_balance_the_amount()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var pilot = await rig.NewCharacterAsync("Wallet Pilot");
+        var session = Rig.Session(pilot.CharacterId);
+        var balance = (await rig.Wallets.GetAsync(pilot.CharacterId))!;
+        var shown = $"ISK: {balance.Isk.ToString("N2", CultureInfo.InvariantCulture)}. PLEX: {balance.Plex}.";
+        Assert.Equal(shown, await rig.SlashAsync(session, "/wallet"));
+        Assert.Equal(shown, await rig.SlashAsync(session, "/isk"));
+
+        Assert.Equal($"ISK for character {pilot.CharacterId} set to 250,000.00. Balance: 250,000.00 ISK.", await rig.SlashAsync(session, "/setisk 250000"));
+        Assert.Equal(250000m, (await rig.Wallets.GetAsync(pilot.CharacterId))!.Isk);
+        Assert.Equal($"ISK for character {pilot.CharacterId} is already 250,000.00.", await rig.SlashAsync(session, "/setisk 250000"));
+        Assert.Equal(IskCommands.SetUsage, await rig.SlashAsync(session, "/setisk -5"));
+        Assert.Equal(250000m, (await rig.Wallets.GetAsync(pilot.CharacterId))!.Isk);
+        var sets = (await rig.Transactions.JournalAsync(pilot.CharacterId)).Where(e => e.Reason == "gm isk").ToList();
+        Assert.Equal(250000m - balance.Isk, Assert.Single(sets).Amount);
+    }
 }

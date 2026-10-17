@@ -94,6 +94,9 @@ public sealed class DogmaStatic
 
     public string FactionName(int factionId) => _factionNames.GetValueOrDefault(factionId, "");
 
+    /// <summary>Every faction's name by its ID (the SDE's <c>factions</c>).</summary>
+    public IReadOnlyDictionary<int, string> FactionNames => _factionNames;
+
     /// <summary>The SDE identifier for a category name.</summary>
     public int? CategoryId(string name) => _categoryNames
         .Where(pair => pair.Value.Equals(name, StringComparison.OrdinalIgnoreCase))

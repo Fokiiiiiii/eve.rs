@@ -56,8 +56,7 @@ lane. The graphical-client walk and the revocation notifications are not built. 
 
 ## Open
 
-- Corporation or alliance membership changes (a character leaving a corporation, a corporation leaving an alliance) are not pushed to the
-  shared folders; the change reaches the character at its next read.
-- The live client walk (`tools/headless-client/tests/test_walk_shared_bookmarks.py`, two pilots, a list each, a shared folder, the
-  notices) against a running server with a MITM capture is not run yet.
-- The expiry timer and the access notices are checked by the PostgreSQL tests (`SharedFolderNotificationTests`), not by a live run.
+- The corporation and alliance changes are checked by the upkeep timer every minute from the character store; the live client walk of
+  them is not run yet.
+- The live walk `tools/headless-client/tests/test_walk_shared_bookmarks.py` (two pilots, owner groups, a shared folder, the member's
+  notices and the revocation) passes against the eve.rs live server through `tools/mitm` (capture kept outside the repository).

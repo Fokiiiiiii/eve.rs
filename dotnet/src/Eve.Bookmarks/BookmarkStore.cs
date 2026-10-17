@@ -491,6 +491,17 @@ public sealed partial class BookmarkStore
         return await DeleteExpiredAsync(connection, null!, token);
     }
 
+    /// <summary>The shared folders the character has a connection to (any state): what a change to its affiliation can change.</summary>
+    public async Task<IReadOnlyList<long>> ConnectedFoldersOfAsync(long characterId, CancellationToken token = default)
+    {
+        await using var connection = await _source.OpenConnectionAsync(token);
+        await using var command = Command(connection, null!, $"SELECT folder_id FROM {_schema}.connections WHERE character_id=$1 ORDER BY folder_id", characterId);
+        await using var reader = await command.ExecuteReaderAsync(token);
+        var folders = new List<long>();
+        while (await reader.ReadAsync(token)) folders.Add(reader.GetInt64(0));
+        return folders;
+    }
+
     /// <summary>The characters with a connection to any of the shared folders whose lists include the group (their state is what a list change can change).</summary>
     public async Task<IReadOnlyList<(long FolderId, long CharacterId)>> ConnectedFoldersUsingAsync(long groupId, CancellationToken token = default)
     {

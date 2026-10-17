@@ -184,3 +184,37 @@ Known differences, not closed:
 - **Tests.** Unit: `IndustryRulesTests` (18 pass, filter `IndustryRulesTests`, includes the 4 bonus tests). PostgreSQL on eve_p4 (under the lane lock): `dotnet test tests/Eve.Host.Tests --filter Industry`, 27 of 27 pass (includes 2 bonus install tests).
 - **Not done.** A player fitting a rig through the client is not walked. No live walk with a fitted rig or hull bonus (no client session). The corporation notification is not walked for the new role set. Stacking penalties are not applied (basis: the client's arithmetic, DEVIATIONS I4).
 
+## Slice 7: research audit against the client and EveJS (2026-10-17)
+
+Audit of the research side (copying, ME and TE research, invention, reaction, install and delivery, job slots, R&D agents)
+against eve-logic V24.01 (`industry/const.py`, `industry/job.py`), the pinned SDE and EveJS. Code changed: a comment only.
+
+Matches the client, no change needed:
+- Activity ids and constants (`const.py`: 1, 3, 4, 5, 8, 9; `IndustryRules` carries the same values, the ten `RESEARCH_TIMES`).
+- Base cost: rounded once, then the cost, tax, SCC and security parts as in `job.py:127-133`. The SCC surcharge is halved for
+  research only (`job.py:144-145`), as `IndustryRules.CostParts` does.
+- Reverse engineering is not an activity of the V24.01 client (`ACTIVITIES` holds manufacturing, ME and TE research, copying,
+  invention and reaction), so no job type exists to serve it. Not built.
+- The system cost index is no longer missing. The ESI loader (`Eve.Market` `IndustryCostIndexes`: `EsiIndustrySystems`, the
+  stored rows, the daily cache, `EVE_INDUSTRY_INDEX_SEED=skip` for offline runs) feeds `IIndustryCostIndexSource`; a system or
+  activity that ESI does not list uses the configured rule `EVE_INDUSTRY_COST_INDEX`. The earlier "ESI cost index loader: not
+  done" lines in this file are stale.
+
+R&D research agents: open.
+- The rate `ResearchRules.PointsPerDay` is the EveJS `computePointsPerDay` formula, (1 + (20 + 5 x negotiation + standing) / 100)
+  x (specialty + agent level)^2. EveJS cites the EVE University "Research missions" page for it, the datacore price (100 RP and
+  10,000 ISK), the concurrency rule (one project, plus one per Research Project Management level) and the qualification (Science V,
+  specialty at the agent level). `ResearchProjectStore` holds the projects in the ESI shape. Nothing calls `StartAsync` yet.
+- `AgentDialogueMachine` refuses Start Research (12), Cancel Research (13) and Buy Datacores (14) with the CustomInfo "This agent
+  service is not available on this server yet."
+- The client's flow is a round trip per button (EveJS `researchDialogue.js`; eve-logic `agents.py`): the server raises
+  `SingleChoiceBox` (the field), `YesNo` (cancel) or `GetQuantity` (datacores) on the client's `agents` service, reads the answer
+  (a radio answer `radioboxOption<n>Selected`, 1-based; `GetQuantity` returns `qty`), then acts and returns the conversation.
+  `ClientSession.SendClientCall` sends such a call with a callback; no path awaits the answer inside the agent RPC yet.
+- Missing: the field list, the three dialogue round trips, the start, cancel and datacore purchase (the ISK debit, the RP
+  debit, the datacore items in the hangar, `OnDatacoreBought`), and the research state in the conversation. The walk needs a
+  client session; the headless client can drive the dialogue.
+
+Verification this slice: `IndustryJobPersistenceTests` 7 of 7 passed on eve_p4 under `/tmp/eve-heavy-eve_p4.lock` (install,
+completion, material research, cancel, insufficient materials, the slot, the structure bonuses).
+

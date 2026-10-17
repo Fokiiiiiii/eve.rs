@@ -697,7 +697,8 @@ impl Message {
             | kind::PLACE_CYNO_BEACON
             | kind::PLACE_OBSERVATORY
             | kind::PLACE_CONTROL_TOWER
-            | kind::PLACE_DEADSPACE_POCKET => {
+            | kind::PLACE_DEADSPACE_POCKET
+            | kind::PLACE_ACCELERATION_GATE => {
                 let deployable_id = r.i64()?;
                 let solar_system_id = r.i32()?;
                 let name = r.text()?;
@@ -739,6 +740,8 @@ impl Message {
                     Message::PlaceControlTower(placement)
                 } else if kind == kind::PLACE_DEADSPACE_POCKET {
                     Message::PlaceDeadspacePocket(placement)
+                } else if kind == kind::PLACE_ACCELERATION_GATE {
+                    Message::PlaceAccelerationGate(placement)
                 } else {
                     Message::PlaceDisruptor(placement)
                 }

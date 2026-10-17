@@ -69,6 +69,9 @@ pub enum Role {
     /// A deadspace pocket of a dungeon the host keeps a record of (protocol 74): a region of the scene around its origin, in no client ball. It has no effect in the
     /// simulation yet: the warp and the observatory checks read the host's record of it (DEVIATIONS, ST-23).
     DeadspacePocket,
+    /// An acceleration gate of a dungeon room the host keeps a record of (protocol 75): a stargate-kind ball the pilots of its system see, interactive
+    /// (EVE.js `abyssalRoomEntity`: `ballInteractive`, group 366). Its transit is the scene's `AccelerationGateTransit` command.
+    AccelerationGate,
     /// A jump bridge a ship opened (command 28, protocol 54): it lives until its time is up, is put in no client ball, and lets the fleet ships in 2 500 metres of
     /// the ship pass through it to the field (command 31). The field is the one the bridge targets; the destination is that field's system.
     JumpBridge { field_id: i64, destination_system: i32, range_meters: f64 },
@@ -89,6 +92,8 @@ const BEACON_CATEGORY: i32 = 2;
 const CYNO_FIELD_CATEGORY: i32 = 2;
 /// The category of a deployable (EVE.js `CATEGORY_DEPLOYABLE`, 22): a mobile warp disruptor's category.
 const DEPLOYABLE_CATEGORY: i32 = 22;
+/// The category of an acceleration gate's ball (EVE.js's acceleration gate record: type 17831, group 366, category 2).
+const ACCELERATION_GATE_CATEGORY: i32 = 2;
 
 /// How long a structure's bomb waits for the Host's authorization of its blast before it goes off with no effect (30 seconds of scene time).
 const BOMB_IMPACT_TICKS: i64 = 30 * crate::scene::TICKS_PER_SECOND;
@@ -156,6 +161,7 @@ fn release_actions(stamp: u32, deployable: &Deployable) -> Result<Vec<Value>, ev
         | Role::MobileObservatory { .. }
         | Role::ControlTower { .. }
         | Role::DeadspacePocket => (Kind::Other, LegacyMode::Stop),
+        Role::AccelerationGate => (Kind::Stargate, LegacyMode::Stop),
         Role::JumpBridge { .. } => (Kind::Other, LegacyMode::Stop),
         Role::AnalysisBeacon { .. } => (Kind::Container, LegacyMode::Stop),
     };
@@ -169,6 +175,7 @@ fn release_actions(stamp: u32, deployable: &Deployable) -> Result<Vec<Value>, ev
         position: deployable.position,
         target_point: Some(deployable.position),
         mass: Some(1.0),
+        destiny_force_interactive: (deployable.role == Role::AccelerationGate).then_some(true),
         corporation_id: IdRef::Valid(i64::from(deployable.corporation_id)),
         alliance_id: IdRef::Valid(i64::from(deployable.alliance_id)),
         mode_owner: IdRef::Valid(deployable.ship_id),
@@ -189,6 +196,7 @@ fn category_of(role: &Role) -> i32 {
         | Role::CynoInhibitor { .. }
         | Role::CynoBeacon { .. }
         | Role::AnalysisBeacon { .. } => DEPLOYABLE_CATEGORY,
+        Role::AccelerationGate => ACCELERATION_GATE_CATEGORY,
         _ => CHARGE_CATEGORY,
     }
 }
@@ -669,6 +677,40 @@ impl Scene {
         Vec::new()
     }
 
+    /// An acceleration gate of a dungeon room is put in space at the point the host gives (protocol 75). Its ball goes to the pilots that see it, as any
+    /// deployable's does. Given once; its end is the host's.
+    pub(crate) fn place_acceleration_gate(
+        &mut self,
+        placement: crate::link::DisruptorPlacement,
+        now: i64,
+    ) -> Vec<Out> {
+        if self.deployables.contains_key(&placement.deployable_id) {
+            return Vec::new();
+        }
+        let [x, y, z] = placement.position;
+        let gate = Deployable {
+            id: placement.deployable_id,
+            spec: Spec {
+                charge_type_id: placement.type_id,
+                group_id: placement.group_id,
+                name: placement.name,
+                radius: placement.radius,
+            },
+            role: Role::AccelerationGate,
+            position: Vec3::new(x, y, z),
+            ends_at: i64::MAX,
+            launcher: 0,
+            ship_id: 0,
+            owner_id: 0,
+            corporation_id: 0,
+            alliance_id: 0,
+            module_id: 0,
+            module_type: 0,
+            watchers: BTreeSet::new(),
+        };
+        self.insert_deployable(gate, now)
+    }
+
     /// A Mobile Cynosural Inhibitor the host keeps a record of is put in space where it lies, anchored or not (protocol 50). Given once; its end is the host's.
     pub(crate) fn place_inhibitor(
         &mut self,
@@ -1146,6 +1188,7 @@ impl Scene {
                 | Role::MobileObservatory { .. }
                 | Role::ControlTower { .. }
                 | Role::DeadspacePocket
+                | Role::AccelerationGate
                 | Role::AnalysisBeacon { .. } => false,
             })
     }

@@ -119,6 +119,9 @@ pub const PLACE_CONTROL_TOWER: u8 = 92;
 /// placement with type, group and range 0 and no owner. It is in no client ball.
 pub const PLACE_DEADSPACE_POCKET: u8 = 93;
 
+/// The host puts an acceleration gate of a dungeon room in space (protocol 75).
+pub const PLACE_ACCELERATION_GATE: u8 = 94;
+
 /// The host puts a wormhole end in space (protocol 63).
 pub const PLACE_WORMHOLE: u8 = 82;
 /// The host takes a wormhole end out of space (protocol 63).

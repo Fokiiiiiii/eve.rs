@@ -192,6 +192,9 @@ public interface ISimulation
     /// <summary>Puts a deadspace pocket of a dungeon in its system's scene at its origin (protocol 74).</summary>
     void PlaceDeadspacePocket(SimPlaceDeadspacePocket pocket);
 
+    /// <summary>Puts an acceleration gate of a dungeon room in its system's space (protocol 75).</summary>
+    void PlaceAccelerationGate(SimPlaceAccelerationGate gate);
+
     /// <summary>Removes the structure-owned cyno beacon from a specific solar-system scene.</summary>
     void RemoveCynoBeacon(int solarSystemId, long structureBeaconId);
 

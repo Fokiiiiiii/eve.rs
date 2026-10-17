@@ -13,13 +13,14 @@ public class AccelerationGateContainersTests
     private const int System = 30_100_032;
     private const long Instance = 88;
     private static readonly double[] Origin = [5.0e11, 0.0, 2.0e11];
+    private static readonly Dictionary<long, double> Radii = new() { [17831] = 12706, [35776] = 14000 };
 
     [PgFact]
     public async Task A_running_site_places_its_gates_and_room_pockets_and_takes_them_out_when_it_ends()
     {
         await using var rig = await Rig.CreateAsync();
         var dungeon = ((DungeonFound)DungeonCatalog.LoadEmbedded().GetDungeon(283)).Dungeon;
-        var layout = DungeonRoomLayout.Build(dungeon, Origin);
+        var layout = DungeonRoomLayout.Build(dungeon, Origin, Radii);
         var pocket = new DungeonPocket(Instance, System, Origin, layout);
         var gateId = SpaceContainers.AccelerationGateDeployableId(Instance, layout.Gates[0].GateIndex);
         var roomPocket = SpaceContainers.RoomPocketDeployableId(Instance, 1);

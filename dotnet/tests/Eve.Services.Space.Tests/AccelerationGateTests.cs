@@ -11,12 +11,13 @@ namespace Eve.Services.Space.Tests;
 public sealed class AccelerationGateTests
 {
     private static readonly double[] Origin = [5.0e11, 0.0, 2.0e11];
+    private static readonly Dictionary<long, double> Radii = new() { [17831] = 12706, [35776] = 14000 };
     private static readonly DungeonCatalog Catalog = DungeonCatalog.LoadEmbedded();
     private const long Instance = 4_242;
     private const long Dungeon283 = 283;
 
     private static DungeonLayout LayoutOf(long dungeonId) =>
-        DungeonRoomLayout.Build(((DungeonFound)Catalog.GetDungeon(dungeonId)).Dungeon, Origin);
+        DungeonRoomLayout.Build(((DungeonFound)Catalog.GetDungeon(dungeonId)).Dungeon, Origin, Radii);
 
     private static (string Name, Dictionary<string, PyValue> Values) UserError(MachoWrappedException error)
     {
@@ -88,7 +89,7 @@ public sealed class AccelerationGateTests
     {
         // the gate lists race 4 only: a capsule of race 4 may walk it, a frigate of race 1 may not
         var room = new RoomPlacement(0, "room:entry", null, Origin, DungeonRoomLayout.EntryPointOf(Origin, Origin));
-        var raced = new DungeonLayout([room], [new GatePlacement(0, "gate:1", DungeonRoomLayout.AccelerationGateTypeId, "room:entry", [4], Origin)]);
+        var raced = new DungeonLayout([room], [new GatePlacement(0, "gate:1", DungeonRoomLayout.AccelerationGateTypeId, "room:entry", [4], 12_706, Origin)]);
         var gateId = SpaceContainers.AccelerationGateDeployableId(Instance, 0);
 
         var outsider = new Rig(new ShipClass(GroupId: 25, RaceId: 1), new CommandReply(true, 0, null));

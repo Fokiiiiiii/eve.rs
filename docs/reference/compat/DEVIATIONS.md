@@ -4554,8 +4554,8 @@ as reference. The client's `bookmarkSvc.py` (`OnSharedBookmarksFolderUpdated`, `
 ## Acceleration gates and dungeon rooms (ACCEL-1)
 
 - **Room and gate placement is a rule, not data.** The owner data has no coordinates. Anchors use EveJS's distances, gates sit 22 km from their room, entry points 15 km out away from the site; EveJS hashes its offsets, this layout spaces them evenly. Consistent across restarts.
-- **Gate ball radius is 0.** The SDE type radius for 17831 could not be read in this sandbox. Reach is therefore 2 500 m plus the ship radius (EveJS adds the gate radius).
-- **Gates typed 35776 (3 in the owner data) are not placed.** Their type record is not available here.
+- **Gate radius from the SDE** (17831: 12 706 m; 35776 large gate: 14 000 m), read at startup from the `types` table.
+- **Gates typed 35776 (large gate, race 4 in the SDE) are placed** with their SDE radius, as 17831 gates are.
 - **No room locks or objective gating.** Gates are unlocked (the owner data has no key lock for them). EveJS locks gates via runtime state; not built.
 - **Room tracking not written.** `currentRoomID` has no writer, so `GetCurrentDungeonForCharacter` returns no room.
 - **Gate transit clears locks and stops modules** as the warp begins (EveJS does the same for a gate transit).

@@ -167,6 +167,9 @@ public sealed class DungeonWaveDirector
     }
 
 
+    /// <summary>The radius of each gate type, from the SDE (type id to metres): the gates of a type not here are not placed.</summary>
+    public IReadOnlyDictionary<long, double> GateRadii { get; set; } = new Dictionary<long, double>();
+
     /// <summary>
     /// The active dungeons: a mission pocket (its origin is 20 km ahead of the pilot) or an incursion site. Each is a deadspace pocket in the scene at its origin
     /// (ST-23; EveJS takes every dungeon instance as a pocket, see DEVIATIONS), kept by the host's pocket job.
@@ -179,7 +182,7 @@ public sealed class DungeonWaveDirector
             if (instance.Data<DungeonInstanceData>() is { } data)
             {
                 var layout = _catalog.GetDungeon(data.DungeonID) is DungeonFound found
-                    ? Eve.Dungeons.DungeonRoomLayout.Build(found.Dungeon, data.Origin)
+                    ? Eve.Dungeons.DungeonRoomLayout.Build(found.Dungeon, data.Origin, GateRadii)
                     : null;
                 pockets.Add(new DungeonPocket(instance.Id, data.SolarSystemId, data.Origin, layout));
             }

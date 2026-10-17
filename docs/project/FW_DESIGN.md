@@ -112,13 +112,26 @@ Refusals reach the client as `CustomInfo` notices (text keys of the client's loc
 - **Corporation LP tax**: `LoyaltyPointStore.CreditMemberAsync` takes the member's corporation rate of an LP credit into the
   corporation's own balance. Applied to the insurgency victory payout; the Viridian expansion notes give the scope.
 
+## Complexes (slice 1)
+
+- Rules: `dotnet/src/Eve.FactionWarfare/FwComplexes.cs` (sizes, capture times, hull limits, victory points, the timer, the resolution).
+  The sources and the project rules are in DEVIATIONS "Factional warfare" (Complexes).
+- State: `fw_complexes` (migration 0003): one open complex per size in each occupied system; `progress_ms` is signed (attackers positive).
+- Tick: `FwComplexDirector` registers `factionwarfare.complexes.tick` (every 10 s). `FwComplexTicker` spawns the missing complexes (after the respawn
+  time), advances the timers from the pilots present, and resolves a complex at its capture time. Resolutions are published in the job transaction
+  (`factionwarfare.complex_resolved`) and notified after the commit (`OnFacWarDungeonCompleted`, `OnVictoryPointStateUpdated`).
+- Victory point state: `fwVictoryPointMgr` reads the store (attacker points against 75,000).
+- Not built: the acceleration gate and the warp into a complex, NPC defenders, the battlefield (archetype 68) and the objectives (67), the
+  complexes in the scan data, the per-pilot victory points of a capture, a live walk.
+- Tests: `FwComplexTests.cs` (5). Eve.FactionWarfare.Tests: 83 passed on eve_p4.
+
 ## Not built
 
 - **Kill producer.** `PayBountyAsync` in `dotnet/src/Eve.Services.Space/SpaceSessions.Npc.cs` sees the killer, the system and the NPC
   type, but not the NPC's faction or the killer's war faction; it also returns early for an NPC with no bounty. A FW kill needs the NPC's
   faction (from the NPC type's corporation), an enemy check against the pilot's faction, a Host callback into the space runtime, and a
   decision for pilot-versus-pilot kills (no event for them was found). Without it the statistics stay at zero.
-- **Victory points from complexes** and the ship-kill LP formula (wiki: 3.25 times hull, insurance and fitting value over 10,000,
+- **Victory points from complexes**: built (Complexes, slice 1); the gate, the NPC defenders and the battlefield are not. The ship-kill LP formula (wiki: 3.25 times hull, insurance and fitting value over 10,000,
   capped at 50,000 LP).
 - **Capture trigger**: infrastructure hub destruction (25 million HP, wiki); no FW hub combat path exists.
 - **Statistics not served**: faction, militia, alliance, top and rank overview methods (DEVIATIONS "Factional warfare").

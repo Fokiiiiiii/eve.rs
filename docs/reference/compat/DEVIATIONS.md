@@ -4343,6 +4343,31 @@ donation sections it marks outdated. Design: `docs/project/FW_DESIGN.md`.
   `InsurgencyCampaignTests` (18 run, all pass).
   control bunker structures). The donation refusals are `CustomInfo` notices with localization keys, not the client's pool text.
   A corporation enlistment that takes effect at the downtime does not push a session change to its members.
+- **Complexes: sizes, capture times, hull limits and victory points** (`FwComplexes`, `FwComplexTicker`, `FwComplexDirector`, migration 0003).
+  Source: the wiki's "Complex types" table (Rank/Size: Scout 10 min, frigates and smaller; Small 10 min, destroyers and smaller; Medium 15 min,
+  cruisers and smaller; Large 15 min, battleships and smaller) and its "Victory points" table. The SDE archetypes of the complexes are 33 (Scout),
+  34 (Small), 35 (Medium), 36 (Large) (client titles 660881 to 660887). The wiki names several variants per size (BSC, NVY, ADV, ELT); eve.rs uses
+  one per size: Scout BSC (300 s, 50 VP, the wiki's "5 min for basic plexes"), Small NVY (600 s, 50 VP), Large NVY (900 s, 250 VP).
+  Medium: the wiki's table has no Medium victory-point value; project rule 150 VP (between Small NVY and Large NVY), 900 s from the table.
+  Hull limits (frigate 1, destroyer 2, cruiser 3, battleship 5) are stored; the entry gate that enforces them is not built.
+  Respawn: 30 minutes after a complex of a size is captured in its system (wiki, "about 30 minutes"). Advanced, Frontline and Command Operations
+  names of the task brief are the wiki's ADV/ELT/BSC variants, not separate sizes; the SDE archetypes 67 (Factional Warfare Objectives) and 68
+  (Factional Warfare Battlefield) are not built (a battlefield has three capture points, 2000 VP and 150k LP, wiki "Battlefields").
+- **Complexes: capture timer and presence (project rule).** One tick every 10 seconds (job `factionwarfare.complexes.tick`). A side alone in the
+  complex advances its timer by the tick (attackers up, the occupier down); both sides or neither pause it (wiki: the timer pauses until one faction
+  remains). The step is capped at one tick, so downtime is never credited. Presence is the pilots in space in the system (`SpaceSessions.CharacterIdsInSystem`)
+  with their war faction: the simulation has no per-complex position, so a pilot in the system counts as in the complex. Enemy NPCs do not pause
+  the timer and no NPC defenders are spawned: the defenders of the wiki are not modelled. The timers are additive and signed, so a defender's
+  progress undoes an attacker's (wiki: "the timers for both factions are additive").
+- **Complexes: victory points.** A capture by the attackers adds the size's victory points to the system's attacker points; a capture by the
+  defenders subtracts them (never below 0; wiki: the defenders' capture subtracts). The capture by the attackers notifies the pilots in the system
+  with `OnFacWarDungeonCompleted(true, attackerFaction)`, the defenders' capture with `(false, occupier)` (client `fwWarzoneSvc.py`), and the
+  victory point state (`OnVictoryPointStateUpdated`, client `fwVictoryPointSvc.py`) with the attacker points against the 75,000 threshold.
+  `fwVictoryPointMgr.GetAllVictoryPointStates` and `GetLocalVictoryPointState` now read the store (before: empty).
+  Not built: the statistics of the pilots who captured (no per-pilot victory points for complexes), the complexes in the system scan data
+  (the client does not see them), and the acceleration gate that warps pilots into a complex.
+- **Complexes: tests.** `FwComplexRulesTests` (3, pure), `FwComplexTickerTests` (2, eve_p4: capture by the attackers after 31 ticks with the
+  victory points, capture by the defenders with the subtraction floor at 0 and the respawn after 30 minutes).
 
 ## Bookmarks: shared (access group) folders, not built (2026-10-17; superseded by the next section)
 

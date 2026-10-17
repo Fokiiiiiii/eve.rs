@@ -95,7 +95,12 @@ Refusals reach the client as `CustomInfo` notices (text keys of the client's loc
 - `dotnet/tests/Eve.Market.Tests/FactionWarfareBrokerFeeTests.cs`: 3 tests of the broker discount and its order.
 - `Eve.Services.Core.Tests` (752) and `Eve.Market.Tests` (111, one benchmark skipped as before) pass.
 - Host: `Eve.Host.Tests` runs the composition and the live-script isolation test (`EVE_FACTIONWARFARE_SCHEMA` is in
-  `tools/dev/run-eve-live.sh`).
+  `tools/dev/run-eve-live.sh`). Result on the merged tree (2026-10-17): 348 passed, 58 failed of 406. All 58 failures are
+  PostgreSQL error 53300 "sorry, too many clients already" on the shared cluster (max_connections 100, other agents connected),
+  not a factional-warfare logic failure. Not hidden: the Host gate is not green on this cluster. Rerun on a quiet cluster or with
+  fewer concurrent rigs before treating the Host suite as passing.
+- Market: `Eve.Market.Tests` has 5 failures in `MarketCoherenceTests` (PyList expected, PyTuple received, from origin/main
+  commit 88256991, server-to-client call arguments became tuples). Owned by the fix agent; not changed here.
 
 ## Not built
 

@@ -24,7 +24,7 @@ LIVE = os.environ.get("EVE_LIVE_HOST", "")
 GATEWAY = os.environ.get("EVE_PUBLIC_GATEWAY", "")
 pytestmark = pytest.mark.skipif(not (LIVE and GATEWAY), reason="set EVE_LIVE_HOST and EVE_PUBLIC_GATEWAY to test against a running server")
 
-from tests.gateway_wire import REQUEST_PING, REQUEST_SEND, answer, field, identifier, number_field, plan_attributes, read_fields, requirement, request, send, type_identifier
+from tests.gateway_wire import as_user, REQUEST_PING, REQUEST_SEND, answer, field, identifier, number_field, plan_attributes, read_fields, requirement, request, send, type_identifier
 
 PLAN = "eve_public.character.skill.plan."
 MILESTONE = "eve_public.character.skill.plan.milestone."
@@ -36,7 +36,8 @@ def test_a_skill_plan_is_created_read_changed_with_a_milestone_activated_and_del
     run = uuid.uuid4().hex[:10]
     with connect(f"skillplan-{run}") as client:
         character = enter_new_character(client, run)
-        with grpc.insecure_channel(GATEWAY) as channel:
+        with grpc.insecure_channel(GATEWAY) as raw:
+            channel = as_user(raw, client.session.user_id)
             # the Ping calls answer an empty frame
             assert channel.unary_unary(REQUEST_PING)(b"") == b""
 
@@ -54,8 +55,8 @@ def test_a_skill_plan_is_created_read_changed_with_a_milestone_activated_and_del
             assert status == 200 and name == PLAN + "GetResponse"
             attributes = read_fields(read_fields(payload)[1][0])
             assert attributes[1][0] == b"Gunnery" and attributes[3][0] == b"Guns first"
-            skill = read_fields(read_fields(attributes[2][0])[1][0])
-            assert (skill[1][0], read_fields(attributes[2][0])[2][0]) == (GUNNERY, 4)
+            # the canonical form: every level of the skill, one entry each (levels 1 to 4)
+            assert [(read_fields(read_fields(entry)[1][0])[1][0], read_fields(entry)[2][0]) for entry in attributes[2]] == [(GUNNERY, level) for level in range(1, 5)]
 
             # SetNameRequest and SetSkillRequirementsRequest change it; the next read shows both
             status, _, _ = send(channel, [request(PLAN + "SetNameRequest", character, field(1, identifier(plan_id)) + field(2, b"Gunnery II"))])[0]
@@ -67,7 +68,8 @@ def test_a_skill_plan_is_created_read_changed_with_a_milestone_activated_and_del
             attributes = read_fields(read_fields(payload)[1][0])
             assert attributes[1][0] == b"Gunnery II"
             requirements = [(read_fields(read_fields(entry)[1][0])[1][0], read_fields(entry)[2][0]) for entry in attributes[2]]
-            assert requirements == [(GUNNERY, 5), (SMALL_HYBRID_TURRET, 3)]
+            # the plan is kept in the reference's canonical form: Small Hybrid Turret needs Gunnery 2, so every level of Gunnery comes first
+            assert requirements == [(GUNNERY, level) for level in range(1, 6)] + [(SMALL_HYBRID_TURRET, level) for level in range(1, 4)]
 
             # a milestone (milestone.CreateRequest: milestone's skill_plan 1, train_to_type 2) and its list
             milestone_attributes = field(1, identifier(plan_id)) + field(2, type_identifier(GUNNERY)) + field(4, b"Train the gun")

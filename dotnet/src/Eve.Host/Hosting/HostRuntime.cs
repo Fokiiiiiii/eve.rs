@@ -38,7 +38,7 @@ namespace Eve.Host;
 /// <summary>What the host runs after composition: the server and the registry, and the disposables shut down in the original order.</summary>
 internal sealed class HostRuntime(HostServer server, ServiceRegistry registry, LegacyGameStore? legacy, Foundations? foundations,
     SpaceSessions? space, Eve.Services.Crimewatch.CrimewatchRuntime? crimewatch, SimClient? simulation, CharacterSessions? characterSessions = null,
-    IReadOnlyDictionary<string, PublicGateway.GatewayHandler>? publicGateway = null)
+    PublicGateway.PublicGatewayRoutes? publicGateway = null)
 {
     internal HostServer Server { get; } = server;
 
@@ -47,8 +47,10 @@ internal sealed class HostRuntime(HostServer server, ServiceRegistry registry, L
 
     internal ServiceRegistry Registry { get; } = registry;
 
-    /// <summary>The answers of the public protobuf gateway by request type (empty without PostgreSQL: no characters, no plans).</summary>
-    internal IReadOnlyDictionary<string, PublicGateway.GatewayHandler> PublicGateway { get; } = publicGateway ?? new Dictionary<string, PublicGateway.GatewayHandler>();
+    /// <summary>The public protobuf gateway: the answers by request type, the notice streams and the authority of requests (no answers without PostgreSQL: no characters, no plans).</summary>
+    internal PublicGateway.PublicGatewayRoutes PublicGateway { get; } = publicGateway ?? new PublicGateway.PublicGatewayRoutes(
+        new Dictionary<string, PublicGateway.GatewayHandler>(), new PublicGateway.NoticeHub(),
+        new PublicGateway.GatewayAuthority((_, _) => Task.FromResult<long?>(null), () => DateTimeOffset.UtcNow));
 
     /// <summary>The durable scheduler of the host (the expiry jobs of the market are kept in it); null when no foundations were built.</summary>
     internal Eve.Scheduler.DurableScheduler? Scheduler { get; } = foundations?.Scheduler;

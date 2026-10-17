@@ -69,7 +69,7 @@ internal static class HostComposition
         var online = new OnlineCharacters();
         var connected = new ConnectedSessions();
         CharacterSessions? characterSessions = null;
-        IReadOnlyDictionary<string, PublicGateway.GatewayHandler> publicGateway = new Dictionary<string, PublicGateway.GatewayHandler>();
+        PublicGateway.PublicGatewayRoutes? publicGateway = null;
         if (Env("EVE_PG_URL", "") is { Length: > 0 } pgUrl)
         {
             var schema = Env("EVE_IDENTITY_SCHEMA", PgAccountDirectory.DefaultSchema);
@@ -87,14 +87,20 @@ internal static class HostComposition
             (characterServices, space, simulation, crimewatch, calendarStore, calendarAudience, gameRpcCallbacks, keeperRpcCallbacks, characterSessions) = await CharacterServicesComposition.CharacterServicesAsync(source, directory, online, clock, foundations, legacy.Store, legacy.Owner, legacy.Cache, options.NewCharacterExperienceMode, new AccountOmegaStore(directory), connected);
             // the public gateway's skill plans: the tables are the skills module's (migration 0009, applied with its store)
             var gateway = new Dictionary<string, PublicGateway.GatewayHandler>(StringComparer.Ordinal);
-            foreach (var (name, handler) in PublicGateway.SkillPlanGateway.Handlers(new Eve.Skills.PgSkillPlanStore(source, Env("EVE_SKILLS_SCHEMA", Eve.Skills.PgSkillStore.DefaultSchema))))
+            var skillCatalog = await Eve.Skills.SkillCatalog.LoadAsync(new Eve.Sde.SdeReader(source, Env("EVE_SDE_SCHEMA", Eve.Sde.SdeReader.DefaultSchema)));
+            foreach (var (name, handler) in PublicGateway.SkillPlanGateway.Handlers(new Eve.Skills.PgSkillPlanStore(source, Env("EVE_SKILLS_SCHEMA", Eve.Skills.PgSkillStore.DefaultSchema)), skillCatalog))
                 gateway[name] = handler;
             // the character titles: the SDE's title ids, and the owned and worn titles of the characters schema
             var titles = await LoadCharacterTitleIdsAsync(source, Env("EVE_SDE_SCHEMA", Eve.Sde.SdeReader.DefaultSchema));
             var titleStore = new Eve.Characters.CharacterTitleStore(source, Env("EVE_CHARACTERS_SCHEMA", Eve.Characters.PgCharacterStore.DefaultSchema));
-            foreach (var (name, handler) in PublicGateway.TitleGateway.Handlers(titleStore, titles))
+            var notices = new PublicGateway.NoticeHub();
+            foreach (var (name, handler) in PublicGateway.TitleGateway.Handlers(titleStore, titles, notices))
                 gateway[name] = handler;
-            publicGateway = gateway;
+            // a request's character counts only when the token's account owns it (the login JWT names the account)
+            var gatewayCharacters = new Eve.Characters.PgCharacterStore(source, Env("EVE_CHARACTERS_SCHEMA", Eve.Characters.PgCharacterStore.DefaultSchema));
+            var authority = new PublicGateway.GatewayAuthority(
+                async (character, token) => (await gatewayCharacters.GetAsync(character, token))?.AccountId, () => DateTimeOffset.UtcNow);
+            publicGateway = new PublicGateway.PublicGatewayRoutes(gateway, notices, authority);
             // every feature has registered its job handlers by now: the scheduler may start running jobs
             await foundations.StartAsync();
         }

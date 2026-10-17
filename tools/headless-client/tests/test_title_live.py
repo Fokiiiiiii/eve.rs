@@ -15,7 +15,7 @@ import grpc
 import pytest
 
 from tests import dbseed
-from tests.gateway_wire import answer, field, identifier, read_fields, request, send
+from tests.gateway_wire import as_user, answer, field, identifier, read_fields, request, send
 from tests.test_jump_clone_live import enter_new_character
 from tests.test_login_to_character import connect
 
@@ -34,7 +34,8 @@ def test_a_title_is_listed_worn_refused_when_not_owned_and_taken_off_through_the
         character = enter_new_character(client, run)
         titles = f"{dbseed.schema('CHARACTERS')}.character_titles"
         dbseed.sql(f"insert into {titles} (character_id, title_id, granted_ms) values ({character}, '{BATTLECRUISER_SMITH}', 0)")
-        with grpc.insecure_channel(GATEWAY) as channel:
+        with grpc.insecure_channel(GATEWAY) as raw:
+            channel = as_user(raw, client.session.user_id)
             # GetOwnedRequest lists the granted title (the page is empty: the default page)
             status, name, payload = send(channel, [request(TITLE_API + "GetOwnedRequest", character, b"")])[0]
             assert (status, name) == (200, TITLE_API + "GetOwnedResponse")

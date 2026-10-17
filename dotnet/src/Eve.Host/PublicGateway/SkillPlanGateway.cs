@@ -6,14 +6,14 @@ namespace Eve.Host.PublicGateway;
 /// The skill plan namespace of the public gateway (eve_public.character.skill.plan, the plan and milestone requests): the personal plans of
 /// the active character, kept by <see cref="PgSkillPlanStore"/>. The answers are those of the EveJS skill plan gateway
 /// (services/skills/plans/skillPlanState.js): a missing plan is 404, a refused write 400, and an unknown request is not answered here.
-/// Plans do not train skills.
+/// The requirements are stored in the reference's canonical form (prerequisites absorbed and listed first). Plans do not train skills.
 /// </summary>
 internal static class SkillPlanGateway
 {
     private const string PlanPrefix = "eve_public.character.skill.plan.";
     private const string MilestonePrefix = "eve_public.character.skill.plan.milestone.";
 
-    public static IReadOnlyDictionary<string, GatewayHandler> Handlers(PgSkillPlanStore store)
+    public static IReadOnlyDictionary<string, GatewayHandler> Handlers(PgSkillPlanStore store, SkillCatalog catalog)
     {
         var handlers = new Dictionary<string, GatewayHandler>(StringComparer.Ordinal);
 
@@ -38,7 +38,7 @@ internal static class SkillPlanGateway
         {
             var plan = SkillPlanWire.Message(request.Payload, 1) ?? ReadOnlyMemory<byte>.Empty;
             var (name, description, requirements) = SkillPlanWire.DecodePlan(plan);
-            var id = await store.CreateAsync(request.CharacterId!.Value, name, description, requirements, ct);
+            var id = await store.CreateAsync(request.CharacterId!.Value, name, description, SkillPlanCanonical.Canonicalize(requirements, catalog).ToList(), ct);
             var writer = new ProtoWriter();
             writer.Message(1, SkillPlanWire.EncodeIdentifier(id));
             return writer.ToArray();
@@ -60,8 +60,9 @@ internal static class SkillPlanGateway
         });
         Add(handlers, PlanPrefix, "SetSkillRequirementsRequest", "SetSkillRequirementsResponse", async (request, ct) =>
         {
-            var requirements = SkillPlanWire.Messages(request.Payload, 2).Select(SkillPlanWire.DecodeRequirement).ToList();
-            await store.UpdateAsync(request.CharacterId!.Value, IdentifierField(request.Payload), requirements: requirements, cancellationToken: ct);
+            var requirements = SkillPlanWire.Messages(request.Payload, 2).Select(SkillPlanWire.DecodeRequirement);
+            await store.UpdateAsync(request.CharacterId!.Value, IdentifierField(request.Payload),
+                requirements: SkillPlanCanonical.Canonicalize(requirements, catalog).ToList(), cancellationToken: ct);
             return [];
         });
         Add(handlers, PlanPrefix, "GetActiveRequest", "GetActiveResponse", async (request, ct) =>

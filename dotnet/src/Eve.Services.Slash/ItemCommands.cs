@@ -89,6 +89,41 @@ public sealed class ItemCommands(ItemTypeNames names, CharacterShips ships, Dogm
         return $"{summary}{(type.Published ? "" : " [unpublished]")} was added to your station hangar.";
     }
 
+    /// <summary><c>/ship &lt;ship name|typeID&gt;</c> (EveJS <c>handleShipSpawn</c>): one ship hull of the pilot's, made in the station hangar. Only ships are made.</summary>
+    public async Task<string> ShipAsync(ClientSession session, string argument, CancellationToken cancellationToken)
+    {
+        var text = argument.Trim();
+        if (text.Length == 0)
+        {
+            return "Usage: /ship <ship name|typeID>";
+        }
+        var found = await names.FindAsync(text, cancellationToken);
+        if (found.Type is not { CategoryId: ShipCategory } type)
+        {
+            return found.Type is null
+                ? (found.Error == "ITEM_NOT_FOUND" ? $"Ship not found: {text}.{Suggestions(found.Suggestions)}" : $"Ship name is ambiguous: {text}.{Suggestions(found.Suggestions)}").Trim()
+                : $"Ship not found: {text}.";
+        }
+        if (session.CharacterId is not { } character)
+        {
+            return "Select a character before spawning ships.";
+        }
+        if (session.GetInt("stationid") is null)
+        {
+            return "You must be docked before spawning ships into your hangar.";
+        }
+        await statics.EnsureTypesAsync([type.TypeId], cancellationToken);
+        if (await ships.GrantAsync(character, type.TypeId, 1, singleton: true, cancellationToken) is not { } changes)
+        {
+            return "You must be docked before spawning ships into your hangar.";
+        }
+        foreach (var change in changes)
+        {
+            ShipNotifications.SendItemChange(session, change, item => DogmaInfoRow(item));
+        }
+        return $"{type.Name}{(type.Published ? "" : " [unpublished]")} was added to your station hangar.";
+    }
+
     private Eve.Services.ItemRow DogmaInfoRow(Item item)
     {
         var type = statics.Type(item.TypeId);

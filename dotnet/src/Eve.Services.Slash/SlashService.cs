@@ -29,6 +29,8 @@ public sealed partial class SlashService(ShipHealthCommands health, DeathTestCom
         if (items is not null)
         {
             commands["/giveitem"] = (call, argument) => items.GiveAsync(call.Session, argument, call.Cancellation);
+            commands["/ship"] = (call, argument) => items.ShipAsync(call.Session, argument, call.Cancellation);
+            commands["/giveme"] = (call, argument) => items.ShipAsync(call.Session, argument, call.Cancellation);
             commands["/fit"] = (call, argument) => items.FitAsync(call.Session, argument, call.Cancellation);
             commands["/unfit"] = (call, argument) => items.UnfitAsync(call.Session, argument, call.Cancellation);
         }

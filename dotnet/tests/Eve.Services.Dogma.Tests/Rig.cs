@@ -95,7 +95,7 @@ internal sealed class Rig : IAsyncDisposable
         Scheduler = new Eve.Scheduler.DurableScheduler(source, () => ClockMs, new Eve.Scheduler.SchedulerOptions { Concurrency = 1 }, _schemas[5]);
         Bus = new Eve.Events.EventBus(source, Scheduler, null, _schemas[6]);
         Relations = new Eve.Relations.RelationStore(source, Scheduler, Bus, _schemas[7]);
-        Slash = new SlashService(new ShipHealthCommands(Ships, statics, () => ClockMs, Health), isk: new IskCommands(Transactions, source, () => ClockMs, Wallets),
+        Slash = new SlashService(new ShipHealthCommands(Ships, statics, () => ClockMs, Health), items: new ItemCommands(new ItemTypeNames(sde), Ships, statics, () => ClockMs), isk: new IskCommands(Transactions, source, () => ClockMs, Wallets),
             loyalty: new LoyaltyCommands(Loyalty, StandingDirectory, () => ClockMs),
             standings: new StandingCommands(StandingDirectory, Relations, (character, owner, standing) => StandingNotices.Add((character, owner, standing))));
         Inventory = new InvBrokerService(Items, new ItemTypeCatalog(sde), new Eve.Universe.StationCatalog([]), Ships, statics, () => ClockMs);

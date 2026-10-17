@@ -4652,3 +4652,8 @@ as reference. The client's `bookmarkSvc.py` (`OnSharedBookmarksFolderUpdated`, `
 - **Stored rows of the old direction are not moved.** A database written before this change holds the reverse rows; a migration would have to swap them and is not made here (the tests run on empty schemas). Upgrade path: swap the `subject`/`object` of `kind = 'standing'` rows where the subject is a character.
 - **Checked:** `NpcFactionStandingTests`, `UndockContrabandTests` (the loss and the restart), `CustomsPenaltyHostTests` (the fine's standing row), database-backed. The corporation-office and reprocessing reads have no direct test; they follow the same convention, and the coverage gap is in TODO.
 
+## GM tools, slice G5: /ship and /giveme (2026-10-17)
+
+- **Words are EveJS's** (`itemSeeding.js` `handleShipSpawn`): `/ship <ship name|typeID>` makes one hull of a ship category (6) in the docked pilot's station hangar; `/giveme` is its alias. Anything that is not a ship is `Ship not found`; an undocked pilot is told to dock (`DOCK_REQUIRED`). The reply names the hull and says where it went; EveJS's note that the hull is unfitted is not repeated.
+- **Checked:** `ShipCommandTests` (database-backed): a hull appears in the station hangar, a non-ship and no argument are refused, an undocked pilot gets nothing made.
+

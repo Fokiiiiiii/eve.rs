@@ -1208,6 +1208,23 @@ private static void WriteStructureDamageCorrelation(
                 w.I32(0);
                 w.I64(0);
                 break;
+            case SimPlaceAccelerationGate m:
+                // the disruptor layout with no range, owner or ship; the gate is in a client ball (protocol 75)
+                w.U8(Kind.PlaceAccelerationGate);
+                w.I64(m.DeployableId);
+                w.I32(m.SolarSystemId);
+                w.Text(m.Name);
+                w.I32(m.TypeId);
+                w.I32(m.GroupId);
+                WriteVector(w, m.Position);
+                w.F64(m.Radius);
+                w.F64(0);
+                w.U8(1);
+                w.I64(0);
+                w.I32(0);
+                w.I32(0);
+                w.I64(0);
+                break;
             case SimPlaceControlTower m:
                 w.U8(Kind.PlaceControlTower);
                 w.I64(m.DeployableId);

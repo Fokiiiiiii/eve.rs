@@ -693,7 +693,8 @@ impl Message {
             | Self::PlaceCynoBeacon(disruptor)
             | Self::PlaceObservatory(disruptor)
             | Self::PlaceControlTower(disruptor)
-            | Self::PlaceDeadspacePocket(disruptor) => {
+            | Self::PlaceDeadspacePocket(disruptor)
+            | Self::PlaceAccelerationGate(disruptor) => {
                 out.extend_from_slice(&disruptor.deployable_id.to_le_bytes());
                 out.extend_from_slice(&disruptor.solar_system_id.to_le_bytes());
                 put_text(&mut out, &disruptor.name);

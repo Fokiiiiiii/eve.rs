@@ -111,6 +111,7 @@ public const byte UpdateEffect = 61;
         public const byte RemoteDecloakPing = 91;
         public const byte PlaceControlTower = 92;
         public const byte PlaceDeadspacePocket = 93;
+        public const byte PlaceAccelerationGate = 94;
     }
 
     private const int MaxStructureDamageCandidates = 4096;

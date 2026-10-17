@@ -21,7 +21,7 @@ KINDS = {"Hello": 1, "HelloAck": 2, "Enter": 3, "Leave": 4, "Bind": 5, "UpdateSt
          "EcmBurst": 67, "PlaceDisruptor": 68, "SetDisruptorActive": 69, "PlaceInhibitor": 70, "ScanTargets": 71, "DirectionalTargets": 72,
          "PlaceCynoBeacon": 73, "PlaceStructure": 74, "RemoveStructure": 75, "SetStructureState": 76, "StructureDamaged": 77,
          "PlaceAnalysisBeacon": 78, "SetAnalysisBeaconState": 79, "TetherPolicy": 80, "TetherChanged": 81,
-         "PlaceWormhole": 82, "RemoveWormhole": 83, "ControlStructure": 84, "StructureDamageCandidatesRequest": 85, "StructureDamageCandidatesResult": 86, "RemoveCynoBeacon": 87, "DamageableEntityUpserted": 88, "DamageableEntityRemoved": 89, "PlaceObservatory": 90, "RemoteDecloakPing": 91, "PlaceControlTower": 92, "PlaceDeadspacePocket": 93}
+         "PlaceWormhole": 82, "RemoveWormhole": 83, "ControlStructure": 84, "StructureDamageCandidatesRequest": 85, "StructureDamageCandidatesResult": 86, "RemoveCynoBeacon": 87, "DamageableEntityUpserted": 88, "DamageableEntityRemoved": 89, "PlaceObservatory": 90, "RemoteDecloakPing": 91, "PlaceControlTower": 92, "PlaceDeadspacePocket": 93, "PlaceAccelerationGate": 94}
 
 def s(text):  # u16 length + UTF-8
     data = text.encode("utf-8")
@@ -500,7 +500,7 @@ def build(m):
         return frame(k, i64(m["structureId"]) + bytes([m["depleted"]]) + bytes([1 if m["overThreshold"] else 0]))
     if k == "SetStructureState":
         return frame(k, struct.pack("<i", m["solarSystemId"]) + i64(m["structureId"]) + structure_status(m["status"]))
-    if k in ("PlaceDisruptor", "PlaceInhibitor", "PlaceCynoBeacon", "PlaceObservatory", "PlaceControlTower", "PlaceDeadspacePocket"):  # a beacon, an observatory, a tower and a pocket have no range: they go as 0
+    if k in ("PlaceDisruptor", "PlaceInhibitor", "PlaceCynoBeacon", "PlaceObservatory", "PlaceControlTower", "PlaceDeadspacePocket", "PlaceAccelerationGate"):  # a beacon, an observatory, a tower, a pocket and a gate have no range: they go as 0
         return frame(k, i64(m["deployableId"]) + struct.pack("<i", m["solarSystemId"]) + s(m["typeName"]) + struct.pack("<ii", m["typeId"], m["groupId"])
                      + struct.pack("<3d", *m["position"]) + struct.pack("<dd", m["radius"], m["range"]) + bytes([1 if m["active"] else 0])
                      + i64(m["ownerId"]) + struct.pack("<ii", m["corporationId"], m["allianceId"]) + i64(m["shipId"]))
@@ -1177,6 +1177,10 @@ valid = [
     {"name": "deadspace pocket of a mission placed (no client ball)", "kind": "PlaceDeadspacePocket", "deployableId": "4250000000000014",
      "solarSystemId": 30100032, "typeName": "Deadspace Pocket", "typeId": 0, "groupId": 0,
      "position": [311989835983.1308, -13069154020.916222, 156646308895.76187], "radius": 1000000000.0, "range": 0.0, "active": True,
+     "ownerId": "0", "corporationId": 0, "allianceId": 0, "shipId": "0"},
+    {"name": "acceleration gate of a room placed (a stargate ball)", "kind": "PlaceAccelerationGate", "deployableId": "4250000000000015",
+     "solarSystemId": 30100032, "typeName": "Acceleration Gate", "typeId": 17831, "groupId": 366,
+     "position": [311989835983.1308, -13069154020.916222, 156646308895.76187], "radius": 0.0, "range": 0.0, "active": True,
      "ownerId": "0", "corporationId": 0, "allianceId": 0, "shipId": "0"},
     {"name": "how far a can is", "kind": "Measured", "sessionId": "1790646377000015", "command": 20, "distance": 261.0},
     {"name": "how far a can that is not there is", "kind": "Measured", "sessionId": "1790646377000015", "command": 20, "distance": None},

@@ -39,7 +39,7 @@ use crate::weapons::{Aoe, Arc, Charge, Spool, Turret};
 use crate::world::StructureStatus;
 use crate::wreck::WreckKind;
 
-pub const PROTOCOL_VERSION: u16 = 74;
+pub const PROTOCOL_VERSION: u16 = 75;
 
 /// Maximum candidate or allowed target IDs in a structure-damage authorization step.
 pub const MAX_STRUCTURE_DAMAGE_CANDIDATES: usize = 4096;
@@ -716,6 +716,9 @@ pub enum Message {
     PlaceControlTower(Box<DisruptorPlacement>),
     /// The host puts a deadspace pocket in space at its dungeon's origin (protocol 74); the range is 0 and the pocket is in no client ball.
     PlaceDeadspacePocket(Box<DisruptorPlacement>),
+    /// The host puts an acceleration gate of a dungeon room in space (protocol 75): a stargate-kind ball in the system's space, interactive, that the
+    /// pilots of the system see. The range is 0. Its transit is the scene's `AccelerationGateTransit` command.
+    PlaceAccelerationGate(Box<DisruptorPlacement>),
     /// A Mobile Observatory's decloaking ping in its system (protocol 72): each cloaked ship whose cloak is stabilized is not reached, the others are
     /// decloaked with a chance of 40% (EVE.js `processRemoteDecloakPing`, the wiki's Mobile Observatory).
     RemoteDecloakPing {
@@ -1039,6 +1042,7 @@ impl Message {
             Self::TetherPolicy { .. } => kind::TETHER_POLICY,
             Self::TetherChanged { .. } => kind::TETHER_CHANGED,
             Self::SetAnalysisBeaconState { .. } => kind::SET_ANALYSIS_BEACON_STATE,
+            Self::PlaceAccelerationGate(_) => kind::PLACE_ACCELERATION_GATE,
         }
     }
 }

@@ -1152,6 +1152,12 @@ public sealed record SimPlaceControlTower(
 /// It is in no client ball; the wire carries it as a disruptor's placement with no type, group, range or owner.</summary>
 public sealed record SimPlaceDeadspacePocket(long DeployableId, int SolarSystemId, string Name, IReadOnlyList<double> Position, double Radius) : SimMessage;
 
+/// <summary>
+/// An acceleration gate of a dungeon room, put in its system's space at the point the host gives (protocol 75): a stargate-kind ball, interactive, that the
+/// pilots of the system see. The wire carries it as a disruptor's placement with no range, owner or ship.
+/// </summary>
+public sealed record SimPlaceAccelerationGate(long DeployableId, int SolarSystemId, string Name, int TypeId, int GroupId, IReadOnlyList<double> Position, double Radius) : SimMessage;
+
 /// <summary>A Mobile Observatory's decloaking ping in its solar system (protocol 72): the cloaked ships there whose cloak is not stabilized may be decloaked.</summary>
 public sealed record SimRemoteDecloakPing(int SolarSystemId, long ObservatoryId) : SimMessage;
 

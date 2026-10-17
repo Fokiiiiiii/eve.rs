@@ -62,6 +62,26 @@ public sealed class FwComplexTickerTests
     }
 
     [PgFact]
+    public async Task The_winning_pilots_split_the_victory_points_on_their_stats_rows()
+    {
+        await using var rig = await FwRig.CreateAsync();
+        await rig.OccupyWarzoneAsync(FwWarzones.AmarrMinmatar, FwFactions.AmarrEmpire);
+        var attackers = FwFactions.OccupationEnemyOf(FwFactions.AmarrEmpire);
+        var resolved = await TicksAsync(rig, 31, [attackers, attackers]);
+        var scout = Assert.Single(resolved, r => r.Size == ComplexSize.Scout && r.SolarSystemId == SystemId);
+        Assert.Equal(new long[] { 1000, 1001 }, scout.WinnerIds);
+        Assert.Equal(25, scout.PilotShare);
+        // the pilots are in every occupied system of the warzone, so each system's scout credits them: the rows hold the sum of the shares won
+        await using var connection = await rig.Source.OpenConnectionAsync();
+        foreach (long characterId in new long[] { 1000, 1001 })
+        {
+            long won = resolved.Where(r => r.Size == ComplexSize.Scout && r.WinnerIds.Contains(characterId)).Sum(r => r.PilotShare);
+            Assert.Equal(won, (await rig.Store.PilotStatsAsync(connection, null, characterId, FwRules.DayOf(rig.Now))).VictoryPointsTotal);
+            Assert.True(won > 0);
+        }
+    }
+
+    [PgFact]
     public async Task Defenders_capture_subtracts_the_points_and_the_complex_respawns_after_thirty_minutes()
     {
         await using var rig = await FwRig.CreateAsync();
@@ -142,8 +162,8 @@ public sealed class FwComplexTickerTests
             return Task.FromResult(complexId + 1_000_000);
         }
         public Task<bool> DefendersClearedAsync(long instanceId, CancellationToken cancellationToken) => Task.FromResult(true);
-        public Task<IReadOnlyList<long>> FactionsInsideAsync(long solarSystemId, long instanceId, CancellationToken cancellationToken) =>
-            Task.FromResult<IReadOnlyList<long>>(factions);
+        public Task<IReadOnlyList<FwComplexPilot>> PilotsInsideAsync(long solarSystemId, long instanceId, CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyList<FwComplexPilot>>(factions.Select((faction, index) => new FwComplexPilot(1000 + index, faction)).ToList());
         public Task EndAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long instanceId, CancellationToken cancellationToken) => Task.CompletedTask;
     }
 

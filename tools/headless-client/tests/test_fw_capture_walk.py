@@ -7,7 +7,7 @@ system that has an open scout complex (the complexes are spawned by the server's
 warps to the complex's acceleration gate and takes it (keeper.ActivateAccelerationGate), then moves to 18 km or more from the gate (the smartbomb's
 surface rule, DEVIATIONS "Smartbomb near a station or stargate") and inside the complex's 30 km presence. The smartbomb clears the defenders; the capture
 timer then runs while the pilot stays in the complex. When the scout is captured the system's attacker points rise by its 50 victory points, the pilot is
-told OnFacWarDungeonCompleted and OnVictoryPointStateUpdated, and fwVictoryPointMgr shows the points. The server's state is read through the run's database
+told OnFacWarDungeonCompleted and OnVictoryPointStateUpdated, fwVictoryPointMgr shows the points, and the pilot's statistics (facWarMgr.GetStats_Character) hold the 50 points. The server's state is read through the run's database
 (tests/fw_complex_live.py). Run it through tools/mitm to keep the capture.
 """
 
@@ -21,6 +21,7 @@ import uuid
 
 import pytest
 
+from evecli import marshal as m
 from evecli import packet
 from evecli.describe import describe
 from evecli.observe import wait_quietly
@@ -100,7 +101,7 @@ def test_a_pilot_takes_a_scout_complex_in_space_and_captures_it_for_its_faction(
 
     race = plain_race(DEATH["races"][0], "victim")
     with base.connect(f"walk-fw-capture-{run}") as who:
-        _, ship_id, _, _ = arrive(who, race, run)
+        character, ship_id, _, _ = arrive(who, race, run)
         bomb = seed_cockroach(ship_id)
         _, error = outcome(lambda: who.call("facWarMgr", "JoinFactionAsCharacter", enemy))
         assert error is None, f"enlisting in the enemy faction {enemy}: {base.brief(error)}"
@@ -152,3 +153,9 @@ def test_a_pilot_takes_a_scout_complex_in_space_and_captures_it_for_its_faction(
         assert names.index("OnFacWarDungeonCompleted") < names.index("OnVictoryPointStateUpdated"), names
         states = dict(_states(who.call("fwVictoryPointMgr", "GetAllVictoryPointStates")))
         assert points_after in states.get(target, []), f"the system's victory point state: {states.get(target)}"
+        # the pilot was alone in the complex when the timer ended, so it takes the whole 50 points; its own row and the client's statistics read it back
+        # (the pilot may also have passed other complexes on the way, so the rows hold at least this capture)
+        row_points = int(fw.psql(f"SELECT COALESCE(SUM(victory_points), 0) FROM {fw.fw('fw_pilot_daily')} WHERE character_id = {character}"))
+        assert row_points >= SCOUT_VICTORY_POINTS, (character, row_points)
+        stats = m.plain(who.call("facWarMgr", "GetStats_Character"))
+        assert stats["vpTotal"] >= SCOUT_VICTORY_POINTS and stats["vpTotal"] == row_points, (stats, row_points)

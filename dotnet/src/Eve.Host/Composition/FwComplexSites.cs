@@ -75,19 +75,19 @@ internal sealed class FwComplexSites(
     /// <summary>The capture radius of a complex, metres (the wiki: a pilot must stay within 30 km of the capture point).</summary>
     public const double CaptureRadiusMeters = 30_000;
 
-    public async Task<IReadOnlyList<long>> FactionsInsideAsync(long solarSystemId, long instanceId, CancellationToken cancellationToken)
+    public async Task<IReadOnlyList<FwComplexPilot>> PilotsInsideAsync(long solarSystemId, long instanceId, CancellationToken cancellationToken)
     {
         // shortcut: the server's read of the current dungeon knows the mission dungeons only, so presence is the distance to the site's point
-        var factions = new List<long>();
+        var pilots = new List<FwComplexPilot>();
         foreach (var session in sessionsInSystem((int)solarSystemId))
         {
             if (session.CharacterId is not { } characterId || await positionOf(session, cancellationToken) is not { } at || at.SolarSystemId != solarSystemId)
                 continue;
             if (!await WithinCaptureAsync(at, instanceId, cancellationToken))
                 continue;
-            factions.Add(await warFactionOfCharacter(characterId, cancellationToken));
+            pilots.Add(new FwComplexPilot(characterId, await warFactionOfCharacter(characterId, cancellationToken)));
         }
-        return factions;
+        return pilots;
     }
 
     public bool PilotsIn(long solarSystemId) => sessionsInSystem((int)solarSystemId).Count > 0;

@@ -4369,9 +4369,13 @@ donation sections it marks outdated. Design: `docs/project/FW_DESIGN.md`.
   with `OnFacWarDungeonCompleted(true, attackerFaction)`, the defenders' capture with `(false, occupier)` (client `fwWarzoneSvc.py`), and the
   victory point state (`OnVictoryPointStateUpdated`, client `fwVictoryPointSvc.py`) with the attacker points against the 75,000 threshold.
   `fwVictoryPointMgr.GetAllVictoryPointStates` and `GetLocalVictoryPointState` now read the store (before: empty).
-  Not built: the statistics of the pilots who captured (no per-pilot victory points for complexes).
-- **Complexes: tests.** `FwComplexRulesTests` (3, pure), `FwComplexTickerTests` (2, eve_p4: capture by the attackers after 31 ticks with the
-  victory points, capture by the defenders with the subtraction floor at 0 and the respawn after 30 minutes).
+   Per-pilot credit (project rule): the winning side's pilots inside the complex when its timer ends (the same presence as the timer) split the
+   complex's victory points evenly, rounded down, and each row is added to `fw_pilot_daily` in the tick's transaction (`GetStats_Character` reads it).
+   A defenders' capture credits the defending pilots the same way. The wiki gives the points to the complex, not to a pilot; the split is ours.
+   Not built: the LP share of a complex (the wiki text read gives no complex LP amount, so no LP is paid) and the corporation rows for complex
+   points (`fw_corporation_daily` is not written by the capture).
+- **Complexes: tests.** `FwComplexRulesTests` (3, pure), `FwComplexTickerTests` (3, eve_p4: capture by the attackers after 31 ticks with the
+  victory points, the pilot split of the points on the stats rows, capture by the defenders with the subtraction floor at 0 and the respawn after 30 minutes).
 
 
 - **Complexes: live capture walk (2026-10-17).** `tools/headless-client/tests/test_fw_capture_walk.py` passes on the eve_p4 lane through tools/mitm: the pilot

@@ -1,4 +1,7 @@
 using Eve.FactionWarfare;
+using Eve.Marshal;
+using Eve.Services;
+using Npgsql;
 using static Eve.Host.HostConfiguration;
 
 namespace Eve.Host;
@@ -25,6 +28,42 @@ internal sealed partial class CharacterServicesComposition
         {
             FwOccupationStates = occupied.Select(system => new Eve.Services.Core.FwOccupationRecord(system.WarzoneId, system.SolarSystemId, system.OccupierId)).ToArray(),
         };
+    }
+
+    /// <summary>
+    /// map.GetFacWarZoneInfo: the points a faction holds in its warzone (the systems it occupies), the warzone's size (the points that make 100
+    /// percent, which the hub donation tax reads) and the upgrade level of each system it holds. Null for a non-occupier (the caller's fallback).
+    /// </summary>
+    private async ValueTask<PyValue?> FactionWarfareZoneInfoAsync(long factionId, CancellationToken cancellationToken)
+    {
+        if (!FwFactions.IsOccupier(factionId))
+            return null;
+        var warzoneId = FwWarzones.Ids.First(id => FwWarzones.FactionsOf(id).Contains(factionId));
+        var held = (await factionWarfare.OccupiedSystemsAsync(cancellationToken))
+            .Where(system => system.WarzoneId == warzoneId && system.OccupierId == factionId)
+            .ToArray();
+        var levels = held.Select(system => new KeyValuePair<PyValue, PyValue>(new PyInt(system.SolarSystemId), new PyInt(FwRules.UpgradeLevel(system.LpPool))));
+        return Py.KeyVal(
+            ("factionID", new PyInt(factionId)),
+            ("factionPoints", new PyInt(held.Length)),
+            ("maxWarZonePoints", new PyInt(FwWarzones.SystemsOf(warzoneId).Count)),
+            ("systemUpgradeLevel", new PyDict([.. levels])));
+    }
+
+    /// <summary>
+    /// The factional warfare upgrade level of a system for a character's market orders: the system's LP pool, unless its occupier is an enemy of the
+    /// character's war faction (the direct enlistment, else the corporation's). Read in the caller's transaction.
+    /// </summary>
+    private async ValueTask<int> FactionWarfareUpgradeLevelAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long characterId, long solarSystemId,
+        CancellationToken cancellationToken)
+    {
+        var character = await characters.GetAsync(characterId, cancellationToken);
+        if (character is null)
+            return 0;
+        var corporationFaction = Eve.Services.Corporations.CorporationWire.FactionId(await corporations.GetAsync(character.CorporationId, cancellationToken));
+        var warFaction = character.DirectFactionId ?? corporationFaction ?? 0;
+        var system = await factionWarfareStore.SystemAsync(connection, transaction, solarSystemId, false, cancellationToken);
+        return system is null ? 0 : FwRules.EffectiveUpgradeLevel(system.LpPool, system.OccupierId, warFaction);
     }
 
     private async Task FactionWarfare()

@@ -79,12 +79,19 @@ public sealed class MarketTrading(NpgsqlDataSource source,MarketStore store,PgCh
             }
         }
     }
+    /// <summary>
+    /// The factional warfare upgrade level of a system for a character's orders, read in the caller's transaction (the host supplies it; null: no
+    /// factional warfare state, the level is 0).
+    /// </summary>
+    public Func<NpgsqlConnection,NpgsqlTransaction,long,long,CancellationToken,ValueTask<int>>? FactionWarfareUpgradeLevel { get; init; }
+
     private async Task<MarketContext> Context(NpgsqlConnection c,NpgsqlTransaction tx,long actor,Station station,CancellationToken token)
     {
         var levels = (await skills.ForCharacterAsync(c,tx,actor,token)).ToDictionary(s => s.TypeId,s => s.Level);
         int Level(int id) => levels.GetValueOrDefault(id);
+        var upgrade = FactionWarfareUpgradeLevel is null ? 0 : await FactionWarfareUpgradeLevel(c,tx,actor,station.SolarSystemId,token);
         return MarketRules.Context(new(Level(3443),Level(3444),Level(3446),Level(3447),Level(16595),Level(16596),Level(16597),
-            Level(16598),Level(16594),Level(16622),Level(18580)),true,solarSystem:station.SolarSystemId);
+            Level(16598),Level(16594),Level(16622),Level(18580)),true,solarSystem:station.SolarSystemId,factionWarfareUpgradeLevel:upgrade);
     }
     /// <summary>
     /// The resting orders a request can meet, and the fills planned over them (M7). The book is read in book order (price, then issue time,

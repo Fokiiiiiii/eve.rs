@@ -550,6 +550,8 @@ internal sealed partial class CharacterServicesComposition
                     PositiveMapRpcId(call.Arg(0)),
                     await mapSolarSystems.Value.WaitAsync(call.Cancellation),
                     call.Cancellation);
+            case "GetFacWarZoneInfo":
+                return await FactionWarfareZoneInfoAsync(PositiveMapRpcId(call.Arg(0)), call.Cancellation);
             case "GetRecentSovActivity":
                 return await sovereigntyReadModel.ReadRecentSovActivityAsync(call.Cancellation);
             case "GetIndustryCostModifier":

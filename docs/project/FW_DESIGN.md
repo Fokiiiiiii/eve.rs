@@ -141,3 +141,8 @@ Refusals reach the client as `CustomInfo` notices (text keys of the client's loc
 - **Live walk**: no headless-client FW walk and no live server run for this work. The live runner needs a Rust build (several GB of
   target output) and a quiet PostgreSQL cluster; the shared cluster hit its connection limit during the Host suite.
 - **Host suite**: 58 of 406 failed on connection exhaustion (see the testing section above); not a FW logic failure, but not green.
+## Acceleration gates (pointer)
+
+Pilots enter a complex's rooms through acceleration gates. The API for the FW complex director is in
+`docs/project/ACCELERATION_GATES.md` (`DungeonRoomLayout`, `SpaceContainers.AccelerationGateDeployableId`,
+`SpaceAccelerationGates`). Single-room complexes need no gate.

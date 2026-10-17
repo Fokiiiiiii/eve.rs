@@ -112,6 +112,16 @@ public static class FwRules
         return candidate > nowMs ? candidate : candidate + day;
     }
 
+    /// <summary>The NPC station that the client's npcStationTaxModifier table names (native/npcstationtaxmodifier, one record).</summary>
+    public const long TaxModifiedStation = 60015187;
+
+    /// <summary>
+    /// The facility tax factor of an NPC station for a war faction (the client's <c>GetTaxModifierForStation</c>): 0.1 at station 60015187 for
+    /// the pirate factions 500010 and 500011, else 1 (the client's default).
+    /// </summary>
+    public static double NpcStationTaxModifier(long stationId, long warFactionId) =>
+        stationId == TaxModifiedStation && warFactionId is FwFactions.GuristasPirates or FwFactions.AngelCartel ? 0.1 : 1.0;
+
     /// <summary>The UTC day of a unix time in milliseconds: the key of the daily statistics rows.</summary>
     public static int DayOf(long unixMs) => (int)(unixMs / 86_400_000L);
 

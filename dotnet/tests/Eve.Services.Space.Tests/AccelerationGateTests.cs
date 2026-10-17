@@ -29,6 +29,9 @@ public sealed class AccelerationGateTests
     private sealed class Rig(ShipClass? ship, CommandReply reply)
     {
         public List<(long GateId, double[] Point)> Transits { get; } = [];
+        public List<(long Instance, string Room, long RoomId)> Rooms { get; } = [];
+        /// <summary>The rooms whose waves are done (the first room of dungeon 283 is cleared by default).</summary>
+        public HashSet<string> Cleared { get; set; } = new(StringComparer.Ordinal) { "room:13849", "room:entry" };
         public ClientSession Session { get; } = new(new Sink());
         public SpaceAccelerationGates Gates { get; private set; } = null!;
 
@@ -38,11 +41,17 @@ public sealed class AccelerationGateTests
             Gates = new SpaceAccelerationGates(
                 _ => Task.FromResult<IReadOnlyList<DungeonPocket>>(pockets),
                 (_, _) => Task.FromResult<long?>(currentInstance),
+                (_, _) => Task.FromResult<IReadOnlySet<string>>(Cleared),
                 (_, _) => Task.FromResult(ship),
                 (_, gateId, point, _) =>
                 {
                     Transits.Add((gateId, point));
                     return Task.FromResult(reply);
+                },
+                (instance, room, roomId, _) =>
+                {
+                    Rooms.Add((instance, room, roomId));
+                    return Task.CompletedTask;
                 });
         }
     }
@@ -72,6 +81,22 @@ public sealed class AccelerationGateTests
     }
 
     [Fact]
+    public async Task A_gate_out_of_a_room_whose_waves_are_not_done_is_locked_and_nothing_is_sent()
+    {
+        var rig = new Rig(new ShipClass(GroupId: 25, RaceId: 1), new CommandReply(true, 0, null));
+        rig.Build(Instance, Instance);
+        rig.Cleared = new HashSet<string>(StringComparer.Ordinal);
+
+        var error = await Assert.ThrowsAsync<MachoWrappedException>(() =>
+            rig.Gates.ActivateAsync(rig.Session, GateIdOf(LayoutOf(Dungeon283)), CancellationToken.None));
+        var (name, values) = UserError(error);
+        Assert.Equal("CustomInfo", name);
+        Assert.Equal("The acceleration gate is locked.", ((PyStr)values["info"]).Value);
+        Assert.Empty(rig.Transits);
+        Assert.Empty(rig.Rooms);
+    }
+
+    [Fact]
     public async Task A_capital_hull_is_barred_by_the_blacklist_when_the_gate_names_no_race_and_a_race_list_decides_otherwise()
     {
         var layout = LayoutOf(Dungeon283);
@@ -89,7 +114,7 @@ public sealed class AccelerationGateTests
     {
         // the gate lists race 4 only: a capsule of race 4 may walk it, a frigate of race 1 may not
         var room = new RoomPlacement(0, "room:entry", null, Origin, DungeonRoomLayout.EntryPointOf(Origin, Origin));
-        var raced = new DungeonLayout([room], [new GatePlacement(0, "gate:1", DungeonRoomLayout.AccelerationGateTypeId, "room:entry", [4], 12_706, Origin)]);
+        var raced = new DungeonLayout([room], [new GatePlacement(0, "gate:1", DungeonRoomLayout.AccelerationGateTypeId, "room:entry", "room:entry", [4], 12_706, Origin)]);
         var gateId = SpaceContainers.AccelerationGateDeployableId(Instance, 0);
 
         var outsider = new Rig(new ShipClass(GroupId: 25, RaceId: 1), new CommandReply(true, 0, null));
@@ -116,6 +141,8 @@ public sealed class AccelerationGateTests
         var (gateId, point) = Assert.Single(rig.Transits);
         Assert.Equal(GateIdOf(layout), gateId);
         Assert.Equal(layout.Room("room:13850")!.EntryPoint, point);
+        // the pilot is recorded in the room it leads to
+        Assert.Equal((Instance, "room:13850", 13850L), Assert.Single(rig.Rooms));
     }
 
     [Fact]

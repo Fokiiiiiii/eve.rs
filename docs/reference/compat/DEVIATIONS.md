@@ -4556,6 +4556,6 @@ as reference. The client's `bookmarkSvc.py` (`OnSharedBookmarksFolderUpdated`, `
 - **Room and gate placement is a rule, not data.** The owner data has no coordinates. Anchors use EveJS's distances, gates sit 22 km from their room, entry points 15 km out away from the site; EveJS hashes its offsets, this layout spaces them evenly. Consistent across restarts.
 - **Gate radius from the SDE** (17831: 12 706 m; 35776 large gate: 14 000 m), read at startup from the `types` table.
 - **Gates typed 35776 (large gate, race 4 in the SDE) are placed** with their SDE radius, as 17831 gates are.
-- **No room locks or objective gating.** Gates are unlocked (the owner data has no key lock for them). EveJS locks gates via runtime state; not built.
-- **Room tracking not written.** `currentRoomID` has no writer, so `GetCurrentDungeonForCharacter` returns no room.
+- **Room locks: a gate out of a room is locked until the room's waves are done** (objectives `wave{n}` of the site run). The refusal is EveJS's "The acceleration gate is locked." The gate's slim item does not carry a lock state yet (the client UI shows the refusal, not a locked gate).
+- **Room state is written** to the game store (`dungeonRuntimeState`, `currentRoomID` and `currentRoomKey`) when a transit is accepted. A room without a catalog room id is stored as 0; the pilot's entry on arrival is not tracked separately.
 - **Gate transit clears locks and stops modules** as the warp begins (EveJS does the same for a gate transit).

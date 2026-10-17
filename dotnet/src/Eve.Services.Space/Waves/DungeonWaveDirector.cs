@@ -167,6 +167,34 @@ public sealed class DungeonWaveDirector
     }
 
 
+    /// <summary>
+    /// The rooms of a running site whose waves are all done (a room with no wave in the run is cleared). An acceleration gate out of a room is locked until
+    /// the room is cleared (the owner data: rooms are locked until their objectives are cleared).
+    /// </summary>
+    public async Task<IReadOnlySet<string>> ClearedRoomKeysAsync(long instanceId, CancellationToken cancellationToken = default)
+    {
+        var instance = (await _content.ActiveByKindAsync(Kind, cancellationToken)).FirstOrDefault(i => i.Id == instanceId);
+        if (instance?.Data<DungeonInstanceData>() is not { } data || _catalog.GetDungeon(data.DungeonID) is not DungeonFound found)
+        {
+            return new HashSet<string>(StringComparer.Ordinal);
+        }
+        var layout = Eve.Dungeons.DungeonRoomLayout.Build(found.Dungeon, data.Origin, GateRadii);
+        var objectives = await _content.ObjectivesOfAsync(instanceId, cancellationToken);
+        var planned = objectives.Where(o => o.Type == WaveObjectiveName).Select(o => o.Id).ToHashSet(StringComparer.Ordinal);
+        var done = objectives.Where(o => o.Type == WaveObjectiveName && o.State == "done").Select(o => o.Id).ToHashSet(StringComparer.Ordinal);
+        var cleared = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var room in layout.Rooms)
+        {
+            var waves = found.Dungeon.Waves.Where(wave => wave.WaveIndex is { } index && planned.Contains(ObjectiveOf(index))
+                && (wave.RoomKey ?? layout.Rooms[0].Key) == room.Key);
+            if (waves.All(wave => done.Contains(ObjectiveOf(wave.WaveIndex!.Value))))
+            {
+                cleared.Add(room.Key);
+            }
+        }
+        return cleared;
+    }
+
     /// <summary>The radius of each gate type, from the SDE (type id to metres): the gates of a type not here are not placed.</summary>
     public IReadOnlyDictionary<long, double> GateRadii { get; set; } = new Dictionary<long, double>();
 

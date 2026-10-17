@@ -200,21 +200,9 @@ Matches the client, no change needed:
   activity that ESI does not list uses the configured rule `EVE_INDUSTRY_COST_INDEX`. The earlier "ESI cost index loader: not
   done" lines in this file are stale.
 
-R&D research agents: open.
-- The rate `ResearchRules.PointsPerDay` is the EveJS `computePointsPerDay` formula, (1 + (20 + 5 x negotiation + standing) / 100)
-  x (specialty + agent level)^2. EveJS cites the EVE University "Research missions" page for it, the datacore price (100 RP and
-  10,000 ISK), the concurrency rule (one project, plus one per Research Project Management level) and the qualification (Science V,
-  specialty at the agent level). `ResearchProjectStore` holds the projects in the ESI shape. Nothing calls `StartAsync` yet.
-- `AgentDialogueMachine` refuses Start Research (12), Cancel Research (13) and Buy Datacores (14) with the CustomInfo "This agent
-  service is not available on this server yet."
-- The client's flow is a round trip per button (EveJS `researchDialogue.js`; eve-logic `agents.py`): the server raises
-  `SingleChoiceBox` (the field), `YesNo` (cancel) or `GetQuantity` (datacores) on the client's `agents` service, reads the answer
-  (a radio answer `radioboxOption<n>Selected`, 1-based; `GetQuantity` returns `qty`), then acts and returns the conversation.
-  `ClientSession.SendClientCall` sends such a call with a callback; no path awaits the answer inside the agent RPC yet.
-- Missing: the field list, the three dialogue round trips, the start, cancel and datacore purchase (the ISK debit, the RP
-  debit, the datacore items in the hangar, `OnDatacoreBought`), and the research state in the conversation. The walk needs a
-  client session; the headless client can drive the dialogue.
-
-Verification this slice: `IndustryJobPersistenceTests` 7 of 7 passed on eve_p4 under `/tmp/eve-heavy-eve_p4.lock` (install,
-completion, material research, cancel, insufficient materials, the slot, the structure bonuses).
+R&D research agents: built, with two gaps (correction: the first text of this slice said the dialogue buttons were refused; that came from a stale code index and is wrong).
+- `AgentDialogueMachine` raises the Start Research `SingleChoiceBox`, Cancel Research `YesNo` and Buy Datacores `GetQuantity` prompts through `AgentMissionService` (the client round trip). `PersistenceAgentResearch` (Host) implements `IAgentResearchPort`: the projects in `ResearchProjectStore` and the datacore purchase (RP, ISK and datacores in one transaction).
+- Gap 1: the field list is every SDE datacore's required skill (name prefix "Datacore - ", Science excluded), the same for every agent. EveJS and the SDE give each R&D agent its own `npcCharacters.skills` (agentTypeID 4).
+- Gap 2: the datacore map matches the name prefix. EveJS maps published group 333 datacores by dogma attribute 182 (`build-research-field-authority.js`).
+- Gaps 1 and 2 are the work of slice 7 (see the next commit). The headless walk of the dialogue is not run yet.
 

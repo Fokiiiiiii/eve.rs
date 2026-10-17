@@ -1899,7 +1899,7 @@ tables, but no table rows are in the export), so offer data is a source gap for 
 
 Research (A6). ESI gives the shape (`points_per_day`, `remainder_points`, `started_at`); no CCP or wiki text gives the points
 rate, the datacore price or the remainder rule that was read. A6 implements the stored state and the ESI arithmetic
-(`remainder_points + points_per_day * days`); the rates come from the data the server holds, and the datacore price is a gap. Later note (2026-10-17, industry audit): the rate, the datacore price (100 RP and 10,000 ISK), the concurrency rule and the qualification are now the values EveJS takes from EVE University's "Research missions" page (`ResearchRules`); the dialogue round trips that start, cancel and buy research are still open (INDUSTRY_STATUS slice 7).
+(`remainder_points + points_per_day * days`); the rates come from the data the server holds, and the datacore price is a gap. Later note (2026-10-17, industry audit): the rate, the datacore price (100 RP and 10,000 ISK), the concurrency rule and the qualification are now the values EveJS takes from EVE University's "Research missions" page (`ResearchRules`); the dialogue round trips are built (`AgentDialogueMachine`, `PersistenceAgentResearch`); the per-agent field list and the group 333 datacore map are fixed in INDUSTRY_STATUS slice 7.
 
 Status: the sources are recorded; the rule matches them; the open items are Q-AG-7 (R&D missions), the LP offer data (A9),
 the research rates (A6) and the locator fee timing (A7).

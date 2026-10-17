@@ -350,7 +350,7 @@ public sealed class DungeonWaveDirector
             return;
         }
         // the simulation keeps a system's scene only while a pilot is in it: a wave that comes due with its pilot away waits for it (it is not refused and failed)
-        if (!_spawner.IsPilotInSystem(instance.Owner, data.SolarSystemId))
+        if (instance.Owner != NoPilotOwner && !_spawner.IsPilotInSystem(instance.Owner, data.SolarSystemId))
         {
             context.RunAgainAt(context.NowMs + WaveRetryMs);
             return;

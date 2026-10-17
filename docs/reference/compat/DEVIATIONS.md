@@ -2144,6 +2144,25 @@ price and the purchase); the SDE types and `typeDogma` (dogma attribute 182 = re
 - **Gaps.** Research missions (the agent's daily mission, one day's RP as the reward) are not offered; the mission pool does not
   carry them. EveJS grants the datacores through `researchDatacoreItemCustody`, which was not read; one stack is the rule used here.
 
+## Agents slice AG-4, research fields per agent and closed prompts (slice 7, 2026-10-17)
+
+Supersedes the field rule of A6 above, which gave every R&amp;D agent all 24 fields.
+
+- **Fields per agent (decided).** Each R&amp;D agent (agentTypeID 4, 244 in the pinned SDE) offers its own `npcCharacters.skills`, in
+  ascending skill type id, as the reference's `researchAuthority` does. Code: `AgentResearchFields.FieldsByAgent`; tests
+  `AgentResearchFieldsTests`, `AgentResearchSdeTests`.
+- **Datacore per field (decided).** A datacore is a published group 333 type whose dogma attribute 182 names the skill. When two
+  datacores name one skill, the **higher type id wins** (the reference's last-wins order over the type ids). No CCP source names
+  the winner; the rule follows the reference. A field with no datacore stays offered, and buying it is refused as invalid input
+  (the reference's `buildDatacoreQuantityPrompt` returns no prompt). Test `When_two_datacores_name_one_skill_the_higher_type_id_wins`.
+- **Closed prompts (decided).** A closed box answers nothing (the client's None). Start, Cancel and Buy Datacores then answer the
+  invalid-input line and change no state, as the reference does (`researchDialogue.js` readChoiceIndex, readYesNo, readQuantity and
+  their callers). Test `A_closed_prompt_gives_no_answer_and_changes_nothing`.
+- **OnDatacoreBought (decided: sent).** The client handles `OnDatacoreBought(characterID, agentID, balance)` (`agents.py`): it
+  refreshes the research view and the cash balance. eve.rs sends it to the buyer after the purchase commits, with the ISK balance
+  after the debit. EveJS sends no such notification (its purchase emits the wallet and item changes only), so this follows the
+  client, not the reference. The item grant is announced with `OnItemChange` as before, and the wallet with `OnAccountChange`.
+
 ## Agents slice AG-4, A7: locator buttons 15 to 17 (2026-10-11)
 
 Sources. eve-logic `appConst.py:146-164` (buttons 15 to 17), `eve/common/script/util/notificationconst.py:73, 423` (type 69, the

@@ -178,4 +178,29 @@ public class AgentResearchDialogueTests
         Assert.Null(step.Prompt);
         Assert.Empty(world.Port.Bought);
     }
+
+    [AgentsPgFact]
+    public async Task A_closed_prompt_gives_no_answer_and_changes_nothing()
+    {
+        // The client returns no answer when a box is closed. The reference answers the invalid-input line for each of
+        // the three prompts (researchDialogue.js), so nothing is started, cancelled or bought.
+        await using var world = await World.CreateAsync();
+        var machine = world.Machine();
+
+        var pick = await machine.StepAsync(Pilot, ResearchAgent(), Button(AgentDialogueToken.StartResearch), false, default);
+        Assert.Null((await pick.Prompt!.Then(null)).Prompt);
+        Assert.Empty(await world.Projects.ReadAllAsync(Pilot));
+
+        await world.Projects.StartAsync(new ResearchProject(Pilot, Agent, Quantum, Start.AddDays(-10), 100.0, 0), 1);
+        var cancel = await machine.StepAsync(Pilot, ResearchAgent(), Button(AgentDialogueToken.CancelResearch), false, default);
+        Assert.Null((await cancel.Prompt!.Then(null)).Prompt);
+        Assert.NotNull(await world.Projects.ReadAsync(Pilot, Agent));
+
+        world.Now = Start;
+        var datacores = await machine.StepAsync(Pilot, ResearchAgent(), Button(AgentDialogueToken.BuyDatacores), false, default, Station);
+        Assert.Equal("GetQuantity", datacores.Prompt!.Method);
+        Assert.Null((await datacores.Prompt.Then(null)).Prompt);
+        Assert.Empty(world.Port.Bought);
+        Assert.NotNull(await world.Projects.ReadAsync(Pilot, Agent));
+    }
 }

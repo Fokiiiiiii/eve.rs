@@ -12,7 +12,12 @@ public sealed record FacWarMgrCallbacks(
     Func<long, CancellationToken, ValueTask<FwCharacterWarfareState?>> ReadCharacterAsync,
     Func<long, long?, long, CancellationToken, ValueTask<bool>> SaveCharacterAsync,
     Func<long, long, CancellationToken, ValueTask<double>> ReadStandingAsync,
-    Func<long>? NowMs = null);
+    Func<long>? NowMs = null,
+    Func<long, IReadOnlyList<long>, CancellationToken, ValueTask<FwFactionMembers>>? FactionMembersAsync = null,
+    Func<CancellationToken, ValueTask<IReadOnlyList<(long CorporationId, long AllianceId)>>>? AffiliationsAsync = null);
+
+/// <summary>The members of a war faction: all of them, those of its militia corporation, and the largest enlisted corporation's members.</summary>
+public sealed record FwFactionMembers(long Total, long Militia, long Top);
 
 /// <summary>A refusal the client shows: the message key and its entries (the same shape as the other services' user errors).</summary>
 public sealed class FacWarMgrUserErrorException(string messageKey, params (string Name, PyValue Value)[] entries) : Exception(messageKey)
@@ -38,6 +43,7 @@ public sealed class FacWarMgrService(FwService factionWarfare, FacWarMgrCallback
         "CheckForRankChange", "DonateLPsToSolarSystem", "GetAllianceWarFactionID", "GetCharacterRankInfo", "GetControlBunkerIDInSystem",
         "GetCorpFactionalWarStatus", "GetCorporationWarFactionID", "GetFactionCorporations", "GetFactionMilitiaCorporation", "GetMyCharacterRankInfo",
         "GetSolarSystemLPs", "GetSolarSystemLPsEx", "GetStats_Character", "GetStats_Corp", "JoinFactionAsAlliance", "JoinFactionAsCharacter", "JoinFactionAsCorporation",
+        "GetStats_FactionInfo", "GetStats_Militia", "GetStats_Alliance", "GetStats_TopAndAllKillsAndVPs", "GetMyCharacterRankOverview", "GetCharacterRankOverview",
         "LeaveFactionAsAlliance", "LeaveFactionAsCorporation", "RefreshCorps", "WithdrawJoinFactionAsAlliance", "WithdrawJoinFactionAsCorporation",
         "WithdrawLeaveFactionAsAlliance", "WithdrawLeaveFactionAsCorporation",
     ];
@@ -123,6 +129,18 @@ public sealed class FacWarMgrService(FwService factionWarfare, FacWarMgrCallback
                 return StatsPayload(await factionWarfare.PilotStatsAsync(characterId, now, cancellation));
             case "GetStats_Corp":
                 return StatsPayload(await factionWarfare.CorporationStatsAsync(corporationId, now, cancellation));
+            case "GetStats_FactionInfo":
+                return await FactionInfoAsync(now, cancellation);
+            case "GetStats_Militia":
+                return await MilitiaAsync(now, cancellation);
+            case "GetStats_Alliance":
+                return StatsPayload(await AllianceWindowAsync(session.GetInt("allianceid") ?? 0, now, cancellation));
+            case "GetStats_TopAndAllKillsAndVPs":
+                return await TopAndAllAsync(now, cancellation);
+            case "GetMyCharacterRankOverview":
+                return await RankOverviewAsync(characterId, cancellation);
+            case "GetCharacterRankOverview":
+                return await RankOverviewAsync(Id(call, 0), cancellation);
             case "CheckForRankChange":
                 return PyNone.Instance;
             case "GetSolarSystemLPs":
@@ -138,6 +156,122 @@ public sealed class FacWarMgrService(FwService factionWarfare, FacWarMgrCallback
                 return PyNone.Instance;
         }
     }
+
+    /// <summary>
+    /// The faction statistics (the client's dashboard): per occupier faction, its members, its militia members, the largest enlisted corporation's members and the
+    /// systems it holds. Each entry is read by attribute (util.KeyVal).
+    /// </summary>
+    private async ValueTask<PyValue> FactionInfoAsync(long now, CancellationToken cancellation)
+    {
+        var members = callbacks.FactionMembersAsync ?? throw new InvalidOperationException("the faction members are not wired");
+        var systems = await factionWarfare.OccupiedSystemsAsync(cancellation);
+        var entries = new List<KeyValuePair<PyValue, PyValue>>();
+        foreach (var faction in FwFactions.Occupiers)
+        {
+            var corporations = await factionWarfare.CorporationsInFactionAsync(faction, now, cancellation);
+            var count = await members(faction, corporations, cancellation);
+            var held = systems.Count(system => system.OccupierId == faction);
+            entries.Add(new KeyValuePair<PyValue, PyValue>(new PyInt(faction), Py.KeyVal(
+                ("totalMembersCount", new PyInt(count.Total)),
+                ("militiaMembersCount", new PyInt(count.Militia)),
+                ("topMemberCount", new PyInt(count.Top)),
+                ("systemsCount", new PyInt(held)))));
+        }
+        return new PyDict([.. entries]);
+    }
+
+    /// <summary>The militia statistics: the header is the occupier factions, and each key's data holds one value per faction (its enlisted corporations' sum).</summary>
+    private async ValueTask<PyValue> MilitiaAsync(long now, CancellationToken cancellation)
+    {
+        var windows = await factionWarfare.OwnerWindowsAsync(corporations: true, now, cancellation);
+        var perFaction = new List<(long Faction, FwStatsWindow Window)>();
+        foreach (var faction in FwFactions.Occupiers)
+        {
+            var enlisted = (await factionWarfare.CorporationsInFactionAsync(faction, now, cancellation)).ToHashSet();
+            perFaction.Add((faction, FwStore.Sum(windows.Where(row => enlisted.Contains(row.OwnerId)).Select(row => row.Window))));
+        }
+        var header = new PyList([.. FwFactions.Occupiers.Select(faction => (PyValue)new PyInt(faction))]);
+        PyDict PerFaction(Func<FwStatsWindow, long> value) => new([.. perFaction.Select(entry => new KeyValuePair<PyValue, PyValue>(new PyInt(entry.Faction), new PyInt(value(entry.Window))))]);
+        var data = new PyDict(
+        [
+            new KeyValuePair<PyValue, PyValue>(new PyStr("killsY"), PerFaction(w => w.KillsYesterday)),
+            new KeyValuePair<PyValue, PyValue>(new PyStr("killsLW"), PerFaction(w => w.KillsLastWeek)),
+            new KeyValuePair<PyValue, PyValue>(new PyStr("killsTotal"), PerFaction(w => w.KillsTotal)),
+            new KeyValuePair<PyValue, PyValue>(new PyStr("vpY"), PerFaction(w => w.VictoryPointsYesterday)),
+            new KeyValuePair<PyValue, PyValue>(new PyStr("vpLW"), PerFaction(w => w.VictoryPointsLastWeek)),
+            new KeyValuePair<PyValue, PyValue>(new PyStr("vpTotal"), PerFaction(w => w.VictoryPointsTotal)),
+        ]);
+        return new PyDict(
+        [
+            new KeyValuePair<PyValue, PyValue>(new PyStr("header"), header),
+            new KeyValuePair<PyValue, PyValue>(new PyStr("data"), data),
+        ]);
+    }
+
+    /// <summary>The window of an alliance: the sum over the corporations that are members of it now (an alliance of 0 has none).</summary>
+    private async ValueTask<FwStatsWindow> AllianceWindowAsync(long allianceId, long now, CancellationToken cancellation)
+    {
+        if (allianceId <= 0)
+            return FwStore.Sum([]);
+        var members = await MemberCorporationsAsync(allianceId, cancellation);
+        var windows = await factionWarfare.OwnerWindowsAsync(corporations: true, now, cancellation);
+        return FwStore.Sum(windows.Where(row => members.Contains(row.OwnerId)).Select(row => row.Window));
+    }
+
+    private async ValueTask<HashSet<long>> MemberCorporationsAsync(long allianceId, CancellationToken cancellation)
+    {
+        var affiliations = callbacks.AffiliationsAsync ?? throw new InvalidOperationException("the alliance affiliations are not wired");
+        return (await affiliations(cancellation)).Where(row => row.AllianceId == allianceId).Select(row => row.CorporationId).ToHashSet();
+    }
+
+    /// <summary>
+    /// The top and all values of the characters, the corporations and the alliances: the top is the largest window of an owner, the all is the sum over the
+    /// owners. Two dicts, keyed by the group (1 character, 2 corporation, 32 alliance), each with the six keys of the statistics.
+    /// </summary>
+    private async ValueTask<PyValue> TopAndAllAsync(long now, CancellationToken cancellation)
+    {
+        var pilots = (await factionWarfare.OwnerWindowsAsync(corporations: false, now, cancellation)).Select(row => row.Window).ToList();
+        var corporations = await factionWarfare.OwnerWindowsAsync(corporations: true, now, cancellation);
+        var affiliations = callbacks.AffiliationsAsync ?? throw new InvalidOperationException("the alliance affiliations are not wired");
+        var allianceOf = (await affiliations(cancellation)).Where(row => row.AllianceId > 0).ToDictionary(row => row.CorporationId, row => row.AllianceId);
+        var alliances = corporations.Where(row => allianceOf.ContainsKey(row.OwnerId))
+            .GroupBy(row => allianceOf[row.OwnerId], row => row.Window)
+            .Select(group => FwStore.Sum(group)).ToList();
+        var corporationWindows = corporations.Select(row => row.Window).ToList();
+        var top = new PyDict(
+        [
+            new KeyValuePair<PyValue, PyValue>(new PyInt(GroupCharacter), StatsPayload(FwStore.Max(pilots))),
+            new KeyValuePair<PyValue, PyValue>(new PyInt(GroupCorporation), StatsPayload(FwStore.Max(corporationWindows))),
+            new KeyValuePair<PyValue, PyValue>(new PyInt(GroupAlliance), StatsPayload(FwStore.Max(alliances))),
+        ]);
+        var all = new PyDict(
+        [
+            new KeyValuePair<PyValue, PyValue>(new PyInt(GroupCharacter), StatsPayload(FwStore.Sum(pilots))),
+            new KeyValuePair<PyValue, PyValue>(new PyInt(GroupCorporation), StatsPayload(FwStore.Sum(corporationWindows))),
+            new KeyValuePair<PyValue, PyValue>(new PyInt(GroupAlliance), StatsPayload(FwStore.Sum(alliances))),
+        ]);
+        return new PyTuple([top, all]);
+    }
+
+    /// <summary>The factions a character holds a rank in (the rank from its standing with the militia corporation), as util.KeyVal entries.</summary>
+    private async ValueTask<PyValue> RankOverviewAsync(long characterId, CancellationToken cancellation)
+    {
+        var ranks = new List<PyValue>();
+        if (characterId <= 0)
+            return new PyList(ranks);
+        foreach (var faction in FwFactions.Occupiers)
+        {
+            var standing = await callbacks.ReadStandingAsync(characterId, FwFactions.MilitiaCorporationOf(faction), cancellation);
+            var rank = FwRules.RankOf(standing);
+            if (rank > 0)
+                ranks.Add(Py.KeyVal(("factionID", new PyInt(faction)), ("currentRank", new PyInt(rank))));
+        }
+        return new PyList(ranks);
+    }
+
+    private const long GroupCharacter = 1;
+    private const long GroupCorporation = 2;
+    private const long GroupAlliance = 32;
 
     private async ValueTask<PyValue> JoinAsync(long kind, long ownerId, long factionId, long now, CancellationToken cancellation)
     {

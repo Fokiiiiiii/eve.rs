@@ -152,6 +152,25 @@ public sealed class FwStore
     public async Task<FwStatsWindow> CorporationStatsAsync(NpgsqlConnection connection, NpgsqlTransaction? transaction, long corporationId, int day, CancellationToken cancellationToken = default) =>
         await StatsWindowAsync(connection, transaction, "fw_corporation_daily", "corporation_id", corporationId, day, cancellationToken);
 
+    /// <summary>The window of every pilot (or corporation) with a row, over the same three windows as <see cref="PilotStatsAsync"/>.</summary>
+    public async Task<IReadOnlyList<(long OwnerId, FwStatsWindow Window)>> OwnerWindowsAsync(NpgsqlConnection connection, NpgsqlTransaction? transaction, bool corporations,
+        int day, CancellationToken cancellationToken = default)
+    {
+        string table = corporations ? "fw_corporation_daily" : "fw_pilot_daily";
+        string column = corporations ? "corporation_id" : "character_id";
+        await using var command = Sql.Command(connection, transaction, Q(
+            $"SELECT {column}, COALESCE(SUM(CASE WHEN day = $1 - 1 THEN kills END), 0)::bigint, " +
+            $"COALESCE(SUM(CASE WHEN day BETWEEN $1 - 7 AND $1 - 1 THEN kills END), 0)::bigint, COALESCE(SUM(kills), 0)::bigint, " +
+            $"COALESCE(SUM(CASE WHEN day = $1 - 1 THEN victory_points END), 0)::bigint, " +
+            $"COALESCE(SUM(CASE WHEN day BETWEEN $1 - 7 AND $1 - 1 THEN victory_points END), 0)::bigint, COALESCE(SUM(victory_points), 0)::bigint " +
+            $"FROM {{schema}}.{table} GROUP BY {column}"), day);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        var rows = new List<(long, FwStatsWindow)>();
+        while (await reader.ReadAsync(cancellationToken))
+            rows.Add((reader.GetInt64(0), new FwStatsWindow(reader.GetInt64(1), reader.GetInt64(2), reader.GetInt64(3), reader.GetInt64(4), reader.GetInt64(5), reader.GetInt64(6))));
+        return rows;
+    }
+
     private async Task<FwStatsWindow> StatsWindowAsync(NpgsqlConnection connection, NpgsqlTransaction? transaction, string table, string column, long ownerId, int day,
         CancellationToken cancellationToken)
     {
@@ -235,6 +254,18 @@ public sealed class FwStore
             cancellationToken, solarSystemId, points, nowMs);
         return total is long value ? value : throw new InvalidOperationException($"solar system {solarSystemId} is not occupied");
     }
+
+    /// <summary>Every window summed (the all value of a statistic).</summary>
+    public static FwStatsWindow Sum(IEnumerable<FwStatsWindow> windows) =>
+        windows.Aggregate(new FwStatsWindow(0, 0, 0, 0, 0, 0), (total, next) => new FwStatsWindow(total.KillsYesterday + next.KillsYesterday, total.KillsLastWeek + next.KillsLastWeek,
+            total.KillsTotal + next.KillsTotal, total.VictoryPointsYesterday + next.VictoryPointsYesterday, total.VictoryPointsLastWeek + next.VictoryPointsLastWeek,
+            total.VictoryPointsTotal + next.VictoryPointsTotal));
+
+    /// <summary>The largest of each value of the windows (the top value of a statistic).</summary>
+    public static FwStatsWindow Max(IEnumerable<FwStatsWindow> windows) =>
+        windows.Aggregate(new FwStatsWindow(0, 0, 0, 0, 0, 0), (top, next) => new FwStatsWindow(Math.Max(top.KillsYesterday, next.KillsYesterday), Math.Max(top.KillsLastWeek, next.KillsLastWeek),
+            Math.Max(top.KillsTotal, next.KillsTotal), Math.Max(top.VictoryPointsYesterday, next.VictoryPointsYesterday), Math.Max(top.VictoryPointsLastWeek, next.VictoryPointsLastWeek),
+            Math.Max(top.VictoryPointsTotal, next.VictoryPointsTotal)));
 
     private static FwSystem ReadSystem(NpgsqlDataReader reader) =>
         new(reader.GetInt64(0), reader.GetInt64(1), reader.GetInt64(2), reader.GetInt64(3), reader.GetInt64(4), reader.GetInt64(5));

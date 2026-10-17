@@ -142,6 +142,13 @@ public sealed class FwService
         await transaction.CommitAsync(cancellationToken);
     }
 
+    /// <summary>The window of every pilot (or corporation) with rows, at <paramref name="nowMs"/> (the statistics' top and all values, and the sums by faction and alliance).</summary>
+    public async Task<IReadOnlyList<(long OwnerId, FwStatsWindow Window)>> OwnerWindowsAsync(bool corporations, long nowMs, CancellationToken cancellationToken = default)
+    {
+        await using var connection = await _store.Source.OpenConnectionAsync(cancellationToken);
+        return await _store.OwnerWindowsAsync(connection, null, corporations, FwRules.DayOf(nowMs), cancellationToken);
+    }
+
     /// <summary>The kills and victory points of a pilot over the client's windows, at <paramref name="nowMs"/>.</summary>
     public async Task<FwStatsWindow> PilotStatsAsync(long characterId, long nowMs, CancellationToken cancellationToken = default)
     {

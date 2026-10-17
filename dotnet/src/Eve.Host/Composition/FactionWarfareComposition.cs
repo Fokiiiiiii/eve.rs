@@ -106,6 +106,23 @@ internal sealed partial class CharacterServicesComposition
         return system is null ? 0 : FwRules.EffectiveUpgradeLevel(system.LpPool, system.OccupierId, warFaction);
     }
 
+    /// <summary>
+    /// The members of a war faction for the faction statistics: the characters whose war faction it is, the members of its militia corporation, and the
+    /// largest enlisted corporation's members (characters per corporation).
+    /// </summary>
+    private async ValueTask<Eve.Services.Core.FwFactionMembers> FactionMembersAsync(long factionId, IReadOnlyList<long> enlisted, CancellationToken cancellationToken)
+    {
+        var militia = FwFactions.MilitiaCorporationOf(factionId);
+        var total = await characters.CountWarFactionMembersAsync(factionId, enlisted, cancellationToken);
+        var counts = await characters.CountByCorporationAsync([.. enlisted, militia], cancellationToken);
+        long top = enlisted.Select(corporation => counts.GetValueOrDefault(corporation)).DefaultIfEmpty(0).Max();
+        return new Eve.Services.Core.FwFactionMembers(total, counts.GetValueOrDefault(militia), top);
+    }
+
+    /// <summary>The alliance affiliation of each corporation that is in an alliance now (the alliance statistics group the corporations by it).</summary>
+    private async ValueTask<IReadOnlyList<(long CorporationId, long AllianceId)>> AffiliationsAsync(CancellationToken cancellationToken) =>
+        await corporations.CurrentAllianceAffiliationsAsync(cancellationToken);
+
     private async Task FactionWarfare()
     {
         var schema = Env("EVE_FACTIONWARFARE_SCHEMA", FwStore.DefaultSchema);

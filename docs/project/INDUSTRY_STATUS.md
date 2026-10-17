@@ -215,3 +215,25 @@ R&D research agents: built, with two gaps (correction: the first text of this sl
   the pinned archive, sha256 checked against `sde/lock.json`). Not done: the EveJS wire comparison through `tools/mitm` for the
   research dialogue.
 
+## Slice 8: research wrap-up, closed prompts, MITM walk (2026-10-17)
+
+- **Field tie-break and per-agent fields.** Recorded in DEVIATIONS "Agents slice AG-4, research fields per agent and closed prompts
+  (slice 7, 2026-10-17)": each agent's own fields, the higher datacore type id wins a tie.
+- **Closed prompts.** A closed field box, cancel question or quantity box answers nothing and changes no state, as the reference
+  does. Unit test `A_closed_prompt_gives_no_answer_and_changes_nothing` (PostgreSQL, eve_p4), in the 12 tests that
+  `dotnet test dotnet/tests/Eve.Services.Core.Tests --filter AgentResearch` passed.
+- **Client notification after Buy Datacores.** The client handles `OnDatacoreBought(characterID, agentID, balance)` (`agents.py`),
+  which refreshes the research view and the cash. The reference (EveJS) sends no such notification; eve.rs now sends it to the buyer
+  after the commit, with the ISK balance after the debit (`PersistenceAgentResearch.BuyDatacoresAsync`). The item grant is still
+  `OnItemChange` and the wallet `OnAccountChange`. Live check: the research walk asserts it.
+- **MITM walk (eve.rs side).** `tools/headless-client/tests/test_agents_live.py -k research` through `tools/mitm` (proxy 26213 to the
+  eve_p4 live port 26103, `tools/dev/run-eve-live.sh` under `/tmp/eve-heavy-eve_p4.lock`, capture `captures/eve-rs-research.jsonl`,
+  git-ignored): 1 passed. The walk covers the closed field box, start with the agent's own choice list, the closed cancel question,
+  the datacore purchase (10,000 ISK debited), `OnDatacoreBought`, and the cancel.
+- **EveJS diff: not run.** The walk seeds ISK, standings and skills with `psql` on the eve.rs PostgreSQL database (`seed_isk`,
+  `seed_standing`, `research_skill_count`), and EVE.js has no equivalent seed in the harness. Running the same scenario on EVE.js
+  needs that seeding written for its data files first. Status: NOT RUN; the reference shapes were compared by reading the code
+  (`researchDialogue.js`, `researchRuntime.js`): SingleChoiceBox, YesNo and GetQuantity argument shapes, the 1-based radio option
+  answer, the invalid-input line for dismissed boxes, and the purchase notifications (EveJS: wallet and item only).
+- **Test counts.** Core: `dotnet test dotnet/tests/Eve.Services.Core.Tests --filter AgentResearch`, 12 passed, 0 failed (eve_p4).
+  Host builds (`dotnet build dotnet/src/Eve.Host`, 0 warnings, 0 errors).

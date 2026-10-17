@@ -49,6 +49,7 @@ internal sealed partial class CharacterServicesComposition
             },
             ReadGameStoreTableAsync,
             now,
+            activeComplexes: (system, token) => ComplexAnomaliesAsync(system, token),
             activeIncursions: async token => incursionDirector is { } directorOfIncursions
                 ? await directorOfIncursions.ReadActiveAsync(token)
                 : Array.Empty<JsonObject>());
@@ -94,6 +95,22 @@ internal sealed partial class CharacterServicesComposition
             characterId, shipId.Value, currentSystemId,
             position?.X, position?.Y, position?.Z,
             spaceSessions.IsWarping(session), cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Writes the room a dungeon instance's pilot is in to the game store's dungeon state (<c>currentRoomID</c>, the room's id, 0 for a room without one, and
+    /// <c>currentRoomKey</c>), which the keeper's current-dungeon answer and the presence queries read.
+    /// </summary>
+    private async Task WriteCurrentRoomAsync(long instanceId, string roomKey, long roomId, CancellationToken cancellationToken)
+    {
+        var path = $"instancesByID/{instanceId.ToString(System.Globalization.CultureInfo.InvariantCulture)}";
+        var id = mailCache.Write("dungeonRuntimeState", $"{path}/currentRoomID", System.Text.Json.Nodes.JsonValue.Create(roomId));
+        var key = mailCache.Write("dungeonRuntimeState", $"{path}/currentRoomKey", System.Text.Json.Nodes.JsonValue.Create(roomKey));
+        if (!id.Success || !key.Success)
+        {
+            throw new InvalidOperationException($"the dungeon state of instance {instanceId} was not written: {id.ErrorMsg ?? key.ErrorMsg}");
+        }
+        await mailCache.FlushTableAsync("dungeonRuntimeState", cancellationToken);
     }
 
     /// <summary>The instance of the dungeon the session is in, or null (the instance id is the third item of the keeper's answer).</summary>

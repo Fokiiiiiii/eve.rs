@@ -12,7 +12,8 @@ public sealed record RoomPlacement(int Index, string Key, long? RoomId, double[]
 /// An acceleration gate of a dungeon: <paramref name="GateIndex"/> is its place in the dungeon's gate list (its id within the instance), the room it leads
 /// to, the ids it may be used by (<paramref name="AllowedRaces"/>, empty for none), and its position in the system.
 /// </summary>
-public sealed record GatePlacement(int GateIndex, string Key, long TypeId, string DestinationRoomKey, IReadOnlyList<long> AllowedRaces, double[] Position);
+/// <summary>The room the gate is in (its <paramref name="SourceRoomKey"/>): it is locked until that room is cleared.</summary>
+public sealed record GatePlacement(int GateIndex, string Key, long TypeId, string DestinationRoomKey, string SourceRoomKey, IReadOnlyList<long> AllowedRaces, double Radius, double[] Position);
 
 /// <summary>The rooms and the placed gates of one dungeon instance in its system.</summary>
 public sealed record DungeonLayout(IReadOnlyList<RoomPlacement> Rooms, IReadOnlyList<GatePlacement> Gates)
@@ -29,7 +30,7 @@ public sealed record DungeonLayout(IReadOnlyList<RoomPlacement> Rooms, IReadOnly
 /// </summary>
 public static class DungeonRoomLayout
 {
-    /// <summary>The acceleration gate type (the client's gate, group 366). A gate of another type is not placed (see the owner data's gaps).</summary>
+    /// <summary>The acceleration gate type (the client's gate, group 366, radius from the SDE). A gate whose type has no radius in the SDE is not placed.</summary>
     public const long AccelerationGateTypeId = 17_831;
 
     /// <summary>The distance of the first room from the site, metres (EveJS <c>ROOM_ENTRY_BASE_DISTANCE_METERS</c>).</summary>
@@ -51,8 +52,9 @@ public static class DungeonRoomLayout
     private const double GoldenAngle = 2.399963229728653;
 
     /// <summary>Lays out a dungeon's rooms and gates around <paramref name="origin"/> (the site's position in its system, metres).</summary>
-    public static DungeonLayout Build(Dungeon dungeon, double[] origin)
+    public static DungeonLayout Build(Dungeon dungeon, double[] origin, IReadOnlyDictionary<long, double> gateRadii)
     {
+        ArgumentNullException.ThrowIfNull(gateRadii);
         ArgumentNullException.ThrowIfNull(dungeon);
         ArgumentNullException.ThrowIfNull(origin);
         if (origin.Length != 3)
@@ -73,7 +75,7 @@ public static class DungeonRoomLayout
         for (var gateIndex = 0; gateIndex < dungeon.Gates.Count; gateIndex++)
         {
             var gate = dungeon.Gates[gateIndex];
-            if (gate.TypeID != AccelerationGateTypeId || gate.DestinationRoomKey is null || !indexOf.TryGetValue(gate.DestinationRoomKey, out var destination))
+            if (gate.TypeID is not { } typeId || !gateRadii.ContainsKey(typeId) || gate.DestinationRoomKey is null || !indexOf.TryGetValue(gate.DestinationRoomKey, out var destination))
             {
                 continue;
             }
@@ -95,7 +97,7 @@ public static class DungeonRoomLayout
                 anchor[1],
                 anchor[2] + Math.Sin(angle) * GateRingMeters,
             };
-            gates[i] = new GatePlacement(gateIndex, gate.Key, AccelerationGateTypeId, gate.DestinationRoomKey!, gate.AllowedRaces, position);
+            gates[i] = new GatePlacement(gateIndex, gate.Key, gate.TypeID!.Value, gate.DestinationRoomKey!, rooms[source].Key, gate.AllowedRaces, gateRadii[gate.TypeID!.Value], position);
         }
         return new DungeonLayout(rooms, gates);
     }

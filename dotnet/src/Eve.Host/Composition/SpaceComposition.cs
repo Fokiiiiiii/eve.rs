@@ -515,10 +515,13 @@ await spaceContainers.PingObservatoryAsync(context.Payload<Eve.Services.Space.Sp
             var dungeonWaves = new Eve.Services.Space.Waves.DungeonWaveDirector(source, foundations.Content, foundations.Scheduler, foundations.Events,
                 Eve.Dungeons.DungeonCatalog.LoadEmbedded(), Eve.Dungeons.WaveRules.LoadEmbedded(), new NpcSelector(npcAuthority),
                 new Eve.Services.Space.SpaceDungeonNpcs(spaceSessions), spaceSchema, message => Console.Error.WriteLine($"eve-host: space: {message}"));
+            // the gate types' radii come from the SDE (17831, and the large gate 35776 of the owner data)
+            dungeonWaves.GateRadii = (await sde.ReadAsync("types", [17831L, 35776L])).ToDictionary(row => row.Key, row => row.Doc.GetProperty("radius").GetDouble());
             await dungeonWaves.AttachAsync();
             dungeonWavesDirector = dungeonWaves;
             // the acceleration gates of the dungeon rooms (keeper.ActivateAccelerationGate): a pilot walks the gate of its room into the room it leads to
             accelerationGates = new Eve.Services.Space.Gates.SpaceAccelerationGates(dungeonWaves.ActivePocketsAsync, CurrentDungeonInstanceAsync,
+                dungeonWaves.ClearedRoomKeysAsync,
                 async (session, token) =>
                 {
                     if (spaceSessions.ShipTypeIdOf(session) is not { } typeId)
@@ -528,7 +531,8 @@ await spaceContainers.PingObservatoryAsync(context.Payload<Eve.Services.Space.Sp
                     await dogma.EnsureTypesAsync([typeId], token);
                     return dogma.Type(typeId) is { } type ? new Eve.Services.Space.Gates.ShipClass(type.GroupId, type.RaceId) : null;
                 },
-                (session, gateId, point, token) => spaceSessions.AccelerationGateTransitAsync(session, gateId, point, token));
+                (session, gateId, point, token) => spaceSessions.AccelerationGateTransitAsync(session, gateId, point, token),
+                WriteCurrentRoomAsync);
             // the CONCORD Rogue Analysis Beacon (CRAB, D-L1 and D-S1): deployed from the hold, linked, scanned, expired by its own record kind
             await Eve.Services.Space.Beacons.AnalysisBeaconDirector.MigrateAsync(source, spaceSchema);
             var beacons = new Eve.Services.Space.Beacons.AnalysisBeaconDirector(

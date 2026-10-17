@@ -206,11 +206,11 @@ public sealed class FwStore
     public async Task<IReadOnlyList<FwComplex>> OpenComplexesAsync(NpgsqlConnection connection, NpgsqlTransaction? transaction, CancellationToken cancellationToken = default)
     {
         await using var command = Sql.Command(connection, transaction, Q(
-            "SELECT complex_id, solar_system_id, size, progress_ms, progress_updated_ms, spawned_ms FROM {schema}.fw_complexes WHERE closed_ms IS NULL ORDER BY solar_system_id, size"));
+            "SELECT complex_id, solar_system_id, size, progress_ms, progress_updated_ms, spawned_ms, instance_id FROM {schema}.fw_complexes WHERE closed_ms IS NULL ORDER BY solar_system_id, size"));
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         var rows = new List<FwComplex>();
         while (await reader.ReadAsync(cancellationToken))
-            rows.Add(new FwComplex(reader.GetInt64(0), reader.GetInt64(1), (ComplexSize)reader.GetInt16(2), reader.GetInt64(3), reader.GetInt64(4), reader.GetInt64(5)));
+            rows.Add(new FwComplex(reader.GetInt64(0), reader.GetInt64(1), (ComplexSize)reader.GetInt16(2), reader.GetInt64(3), reader.GetInt64(4), reader.GetInt64(5), reader.GetInt64(6)));
         return rows;
     }
 
@@ -233,6 +233,10 @@ public sealed class FwStore
         (long)(await Sql.ScalarAsync(connection, transaction, Q(
             "INSERT INTO {schema}.fw_complexes (solar_system_id, size, progress_ms, progress_updated_ms, spawned_ms) VALUES ($1, $2, 0, $3, $3) RETURNING complex_id"),
             cancellationToken, solarSystemId, (short)size, nowMs))!;
+
+    /// <summary>Records the dungeon site of a complex.</summary>
+    public Task SetComplexInstanceAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long complexId, long instanceId, CancellationToken cancellationToken = default) =>
+        Sql.ExecuteAsync(connection, transaction, Q("UPDATE {schema}.fw_complexes SET instance_id = $2 WHERE complex_id = $1"), cancellationToken, complexId, instanceId);
 
     /// <summary>Stores the signed capture timer of an open complex, and the time it was counted to.</summary>
     public Task SetComplexProgressAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long complexId, long progressMs, long nowMs,

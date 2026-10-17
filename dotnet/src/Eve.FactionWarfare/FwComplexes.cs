@@ -18,7 +18,26 @@ public enum ComplexSize : short
 public sealed record ComplexSpec(ComplexSize Size, long ArchetypeId, int CaptureSeconds, int MaxHullSize, long VictoryPoints);
 
 /// <summary>An open complex of an occupied system: its progress is signed (positive: the attacking side, negative: the defending side), in milliseconds.</summary>
-public sealed record FwComplex(long ComplexId, long SolarSystemId, ComplexSize Size, long ProgressMs, long ProgressUpdatedMs, long SpawnedMs);
+public sealed record FwComplex(long ComplexId, long SolarSystemId, ComplexSize Size, long ProgressMs, long ProgressUpdatedMs, long SpawnedMs, long InstanceId);
+
+/// <summary>
+/// The dungeon site of a complex (the NPC defenders and the room the pilots are in). Implemented by the host on the space runtime: the site is a dungeon
+/// instance started for the complex, its pilots are the pilots whose current dungeon is that instance.
+/// </summary>
+public interface IFwComplexSites
+{
+    /// <summary>Starts the complex's site in the system (in the caller's transaction) and returns its instance id.</summary>
+    Task<long> StartAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long solarSystemId, ComplexSize size, long complexId, CancellationToken cancellationToken);
+
+    /// <summary>Whether the site's NPC defenders are all destroyed (the site is completed).</summary>
+    Task<bool> DefendersClearedAsync(long instanceId, CancellationToken cancellationToken);
+
+    /// <summary>The war factions of the pilots in the complex now (0 for a pilot with none).</summary>
+    Task<IReadOnlyList<long>> FactionsInsideAsync(long solarSystemId, long instanceId, CancellationToken cancellationToken);
+
+    /// <summary>Ends the complex's site (its pilots are taken out and its NPCs removed).</summary>
+    Task EndAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long instanceId, CancellationToken cancellationToken);
+}
 
 /// <summary>What one tick resolved: a complex captured by the attackers (its victory points added) or by the defenders (subtracted).</summary>
 public sealed record FwComplexResolution(long ComplexId, long SolarSystemId, ComplexSize Size, long OccupierId, long AttackerId, bool AttackersWon,
@@ -45,6 +64,9 @@ public static class FwComplexes
     /// <summary>How often the complexes are ticked. shortcut: the wiki gives no tick; the capture timers are advanced by at most one tick per run.</summary>
     public static readonly TimeSpan Tick = TimeSpan.FromSeconds(10);
 
+    /// <summary>How long a complex's dungeon site lasts. shortcut: the wiki gives no site lifetime; a site that is not completed by then is never resolved.</summary>
+    public static readonly TimeSpan Lifetime = TimeSpan.FromHours(24);
+
     public static ComplexSpec SpecOf(ComplexSize size) => Specs.Single(spec => spec.Size == size);
 
     /// <summary>
@@ -70,13 +92,14 @@ public static class FwComplexes
 }
 
 /// <summary>
-/// One tick of the complexes in one transaction: a complex is spawned in each occupied system for each size that has none open (after its respawn time), the
-/// capture timers advance by the pilots present (the presence is the pilots' war factions in the system), and a resolved complex moves victory points.
+/// One tick of the complexes in one transaction: a complex (with its dungeon site) is spawned in each occupied system for each size that has none open (after
+/// its respawn time). A complex's capture timer advances only once its NPC defenders are destroyed (the wiki: the defending NPC must be killed first), by the
+/// pilots inside it (their war factions): the attackers' side up, the occupier's down. A resolved complex moves victory points and ends its site.
 /// </summary>
 public static class FwComplexTicker
 {
-    public static async Task<IReadOnlyList<FwComplexResolution>> TickAsync(FwStore store, NpgsqlConnection connection, NpgsqlTransaction transaction, long nowMs,
-        Func<long, CancellationToken, Task<IReadOnlyList<long>>> factionsInSystem, CancellationToken cancellationToken)
+    public static async Task<IReadOnlyList<FwComplexResolution>> TickAsync(FwStore store, IFwComplexSites sites, NpgsqlConnection connection, NpgsqlTransaction transaction,
+        long nowMs, CancellationToken cancellationToken)
     {
         var systems = await store.SystemsAsync(connection, transaction, cancellationToken);
         var open = (await store.OpenComplexesAsync(connection, transaction, cancellationToken)).ToList();
@@ -91,33 +114,38 @@ public static class FwComplexTicker
                 if (lastClosed.TryGetValue((system.SolarSystemId, spec.Size), out long closedMs) && nowMs < closedMs + respawnMs)
                     continue;
                 long id = await store.InsertComplexAsync(connection, transaction, system.SolarSystemId, spec.Size, nowMs, cancellationToken);
-                open.Add(new FwComplex(id, system.SolarSystemId, spec.Size, 0, nowMs, nowMs));
+                long instance = await sites.StartAsync(connection, transaction, system.SolarSystemId, spec.Size, id, cancellationToken);
+                await store.SetComplexInstanceAsync(connection, transaction, id, instance, cancellationToken);
+                open.Add(new FwComplex(id, system.SolarSystemId, spec.Size, 0, nowMs, nowMs, instance));
             }
         }
         var results = new List<FwComplexResolution>();
-        foreach (var systemGroup in open.GroupBy(complex => complex.SolarSystemId).OrderBy(group => group.Key))
+        foreach (var complex in open.OrderBy(complex => complex.SolarSystemId).ThenBy(complex => complex.Size))
         {
-            var system = systems.Single(s => s.SolarSystemId == systemGroup.Key);
-            var present = await factionsInSystem(system.SolarSystemId, cancellationToken);
-            long attackerFaction = FwFactions.OccupationEnemyOf(system.OccupierId);
-            bool attackers = present.Contains(attackerFaction);
-            bool defenders = present.Contains(system.OccupierId);
-            foreach (var complex in systemGroup)
+            var system = systems.Single(s => s.SolarSystemId == complex.SolarSystemId);
+            var spec = FwComplexes.SpecOf(complex.Size);
+            long elapsed = nowMs - complex.ProgressUpdatedMs;
+            long progress = complex.ProgressMs;
+            if (await sites.DefendersClearedAsync(complex.InstanceId, cancellationToken))
             {
-                var spec = FwComplexes.SpecOf(complex.Size);
-                long progress = FwComplexes.Advance(complex.ProgressMs, attackers, defenders, nowMs - complex.ProgressUpdatedMs, (long)FwComplexes.Tick.TotalMilliseconds);
-                var won = FwComplexes.Resolved(progress, spec);
-                if (won is null)
-                {
-                    await store.SetComplexProgressAsync(connection, transaction, complex.ComplexId, progress, nowMs, cancellationToken);
-                    continue;
-                }
-                long points = await store.AddAttackerPointsSignedAsync(connection, transaction, system.SolarSystemId, won.Value ? spec.VictoryPoints : -spec.VictoryPoints,
-                    nowMs, cancellationToken);
-                await store.CloseComplexAsync(connection, transaction, complex.ComplexId, nowMs, cancellationToken);
-                results.Add(new FwComplexResolution(complex.ComplexId, system.SolarSystemId, complex.Size, system.OccupierId, attackerFaction, won.Value,
-                    spec.VictoryPoints, points));
+                var present = await sites.FactionsInsideAsync(complex.SolarSystemId, complex.InstanceId, cancellationToken);
+                bool attackers = present.Contains(FwFactions.OccupationEnemyOf(system.OccupierId));
+                bool defenders = present.Contains(system.OccupierId);
+                progress = FwComplexes.Advance(progress, attackers, defenders, elapsed, (long)FwComplexes.Tick.TotalMilliseconds);
             }
+            var won = FwComplexes.Resolved(progress, spec);
+            if (won is null)
+            {
+                await store.SetComplexProgressAsync(connection, transaction, complex.ComplexId, progress, nowMs, cancellationToken);
+                continue;
+            }
+            long attackerFaction = FwFactions.OccupationEnemyOf(system.OccupierId);
+            long points = await store.AddAttackerPointsSignedAsync(connection, transaction, system.SolarSystemId, won.Value ? spec.VictoryPoints : -spec.VictoryPoints,
+                nowMs, cancellationToken);
+            await store.CloseComplexAsync(connection, transaction, complex.ComplexId, nowMs, cancellationToken);
+            await sites.EndAsync(connection, transaction, complex.InstanceId, cancellationToken);
+            results.Add(new FwComplexResolution(complex.ComplexId, system.SolarSystemId, complex.Size, system.OccupierId, attackerFaction, won.Value,
+                spec.VictoryPoints, points));
         }
         return results;
     }

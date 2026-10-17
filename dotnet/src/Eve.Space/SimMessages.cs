@@ -124,6 +124,9 @@ public static class SimCommands
     public const byte BridgeJump = 31;
     /// <summary>A Black Ops conduit jump (protocol 57): the anchor and the ships of the passenger list jump to the field at once, within the conduit's range.</summary>
     public const byte ConduitJump = 32;
+
+    /// <summary>Walks the ship through an acceleration gate of a dungeon room to a point of the other room (protocol 75): args are the gate, then x, y, z.</summary>
+    public const byte AccelerationGateTransit = 34;
     public const byte ControlStructure = 33;
 
     /// <summary>The scan targets of the scene for a probe scan (protocol 52).</summary>

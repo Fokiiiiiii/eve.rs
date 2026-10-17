@@ -2628,3 +2628,10 @@ Lane eve_p3, branch ch-s9 (merged with origin/main). Results (nothing skipped un
 - **TLS (not served, DEVIATIONS S9).** The client uses TLS only for the discovered production address; eve.rs serves h2c on `EVE_PUBLIC_GATEWAY`. A TLS proxy in front is not in this repository.
 - **Full .NET suite (S9 run, merged tree):** {SUITE}
 
+
+## Acceleration gates (ACCEL-1, open)
+
+- Live headless walk through a multi-room site with a MITM capture (eve_p2 lane).
+- Room-state writer (`currentRoomID`) so the client's current room is right.
+- Room locks and objective gating (runtime state per room).
+- SDE gate radius (type 17831) and the 3 gates of type 35776.

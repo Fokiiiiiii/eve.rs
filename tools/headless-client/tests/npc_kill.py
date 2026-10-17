@@ -34,8 +34,8 @@ def kill_with_gun(who, ballpark, dogma, gun: int, rat: int, seconds: float = 240
         return rat in [t if not isinstance(t, dict) else t["$long"]
                        for t in map(lambda x: getattr(x, "value", x), who.call_bound(dogma[0], "GetTargets"))]
 
-    # the pilot moves: the rat comes to a ship that moves (the reference's belt rats do the same)
-    who.call_bound(ballpark[0], "CmdSetSpeedFraction", 0.5)
+    # the pilot moves at full speed: at half speed it cannot keep up with a rat that flies at 250 m/s or more (SDE max velocity)
+    who.call_bound(ballpark[0], "CmdSetSpeedFraction", 1.0)
     events: list = []
     refusal = None
     while not locked():
@@ -56,7 +56,9 @@ def kill_with_gun(who, ballpark, dogma, gun: int, rat: int, seconds: float = 240
             who.call_bound(ballpark[0], "CmdFollowBall", rat, 1000)
             events.extend(watch({"events": who}, 3.0)["events"])
     while time.monotonic() < deadline:
-        events.extend(watch({"events": who}, 5.0)["events"])
+        # the hit chance falls off past the gun's optimal range (4800 m) and its falloff (2000 m): the pilot closes again while the rat moves
+        who.call_bound(ballpark[0], "CmdFollowBall", rat, 1000)
+        events.extend(watch({"events": who}, 3.0)["events"])
         if any(e["name"] == "OnBountyAddedToPayout" for e in events) or removed(events, rat):
             return events
     from tests.test_undock import args_of

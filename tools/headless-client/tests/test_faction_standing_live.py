@@ -51,12 +51,7 @@ def test_a_pilot_that_shoots_a_faction_npc_dead_is_told_its_new_standing_with_th
         rat = rat_of(arrived, ship_id)
         assert rat, ("the rat did not come into space", text, sorted({e["name"] for e in arrived})[:40], str(arrived)[:600])
 
-        try:
-            events = kill_with_gun(who, ballpark, dogma, gun, rat)
-        except AssertionError:
-            from tests.test_undock import args_of
-            msgs = [{k: v for k, v in args_of(e)["$tuple"][0]["$dict"]} for e in who.notifications_seen if False] if False else []
-            raise
+        events = kill_with_gun(who, ballpark, dogma, gun, rat)
         names = [e["name"] for e in events]
         standing = [e for e in events + watch({"events": who}, 3.0)["events"] if e["name"] == "OnStandingSet"]
         assert standing, ("the pilot was not told its standing with the faction", sorted(set(names)))

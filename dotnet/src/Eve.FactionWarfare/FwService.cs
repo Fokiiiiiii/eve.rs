@@ -104,6 +104,52 @@ public sealed class FwService
         return await _store.SystemsAsync(connection, null, cancellationToken);
     }
 
+    /// <summary>
+    /// Records a pilot's kills and victory points for today, and the same on its corporation's row (a corporation of 0 is not recorded). The
+    /// kill producer calls this; until one is connected to the simulation, the rows stay empty.
+    /// </summary>
+    public async Task RecordActivityAsync(long characterId, long corporationId, int kills, long victoryPoints, long nowMs, CancellationToken cancellationToken = default)
+    {
+        if (characterId <= 0 || kills < 0 || victoryPoints < 0)
+            throw new ArgumentOutOfRangeException(nameof(characterId), "a pilot and non-negative counts are required");
+        var day = FwRules.DayOf(nowMs);
+        await using var connection = await _store.Source.OpenConnectionAsync(cancellationToken);
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        await _store.AddPilotDailyAsync(connection, transaction, characterId, day, kills, victoryPoints, cancellationToken);
+        if (corporationId > 0)
+            await _store.AddCorporationDailyAsync(connection, transaction, corporationId, day, kills, victoryPoints, cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+    }
+
+    /// <summary>The kills and victory points of a pilot over the client's windows, at <paramref name="nowMs"/>.</summary>
+    public async Task<FwStatsWindow> PilotStatsAsync(long characterId, long nowMs, CancellationToken cancellationToken = default)
+    {
+        await using var connection = await _store.Source.OpenConnectionAsync(cancellationToken);
+        return await _store.PilotStatsAsync(connection, null, characterId, FwRules.DayOf(nowMs), cancellationToken);
+    }
+
+    /// <summary>The kills and victory points of a corporation over the client's windows, at <paramref name="nowMs"/>.</summary>
+    public async Task<FwStatsWindow> CorporationStatsAsync(long corporationId, long nowMs, CancellationToken cancellationToken = default)
+    {
+        await using var connection = await _store.Source.OpenConnectionAsync(cancellationToken);
+        return await _store.CorporationStatsAsync(connection, null, corporationId, FwRules.DayOf(nowMs), cancellationToken);
+    }
+
+    /// <summary>
+    /// Adds victory points to the attacking side of an occupied system and returns the system's new attacker points (null when the system is not
+    /// occupied). The victory-point producer calls this; until one is connected, the points stay at their stored value.
+    /// </summary>
+    public async Task<long?> AddVictoryPointsAsync(long solarSystemId, long points, long nowMs, CancellationToken cancellationToken = default)
+    {
+        if (points <= 0)
+            throw new ArgumentOutOfRangeException(nameof(points), "victory points are added in positive amounts");
+        await using var connection = await _store.Source.OpenConnectionAsync(cancellationToken);
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        var total = await _store.AddAttackerPointsAsync(connection, transaction, solarSystemId, points, nowMs, cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+        return total;
+    }
+
     /// <summary>The donation tax of an occupier now: the client's formula on the faction's systems of its warzone, out of the warzone's systems.</summary>
     public async Task<double> DonationTaxAsync(NpgsqlConnection connection, NpgsqlTransaction? transaction, long factionId, CancellationToken cancellationToken = default)
     {

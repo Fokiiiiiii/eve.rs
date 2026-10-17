@@ -54,14 +54,20 @@ internal sealed partial class CharacterServicesComposition
     /// The factional warfare upgrade level of a system for a character's market orders: the system's LP pool, unless its occupier is an enemy of the
     /// character's war faction (the direct enlistment, else the corporation's). Read in the caller's transaction.
     /// </summary>
-    private async ValueTask<int> FactionWarfareUpgradeLevelAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long characterId, long solarSystemId,
-        CancellationToken cancellationToken)
+    /// <summary>The war faction of a character: its direct enlistment, else its corporation's faction (0: none, or no such character).</summary>
+    private async ValueTask<long> WarFactionOfAsync(long characterId, CancellationToken cancellationToken)
     {
         var character = await characters.GetAsync(characterId, cancellationToken);
         if (character is null)
             return 0;
         var corporationFaction = Eve.Services.Corporations.CorporationWire.FactionId(await corporations.GetAsync(character.CorporationId, cancellationToken));
-        var warFaction = character.DirectFactionId ?? corporationFaction ?? 0;
+        return character.DirectFactionId ?? corporationFaction ?? 0;
+    }
+
+    private async ValueTask<int> FactionWarfareUpgradeLevelAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long characterId, long solarSystemId,
+        CancellationToken cancellationToken)
+    {
+        var warFaction = await WarFactionOfAsync(characterId, cancellationToken);
         var system = await factionWarfareStore.SystemAsync(connection, transaction, solarSystemId, false, cancellationToken);
         return system is null ? 0 : FwRules.EffectiveUpgradeLevel(system.LpPool, system.OccupierId, warFaction);
     }

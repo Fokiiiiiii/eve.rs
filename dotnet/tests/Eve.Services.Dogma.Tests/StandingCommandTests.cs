@@ -14,8 +14,8 @@ public sealed class FakeStandingDirectory : IStandingDirectory
     private static readonly StandingOwner[] Owners =
     [
         new(CaldariState, "Caldari State", true),
-        new(CaldariCorp, "Caldari Test Corp"),
-        new(OtherAgency, "Other Agency"),
+        new(CaldariCorp, "Caldari Test Corp", IsCorporation: true),
+        new(OtherAgency, "Other Agency", IsCorporation: true),
     ];
 
     public Task<StandingOwner?> FindOwnerAsync(string token, CancellationToken cancellationToken) =>

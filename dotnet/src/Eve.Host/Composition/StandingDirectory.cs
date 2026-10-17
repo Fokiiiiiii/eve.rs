@@ -19,7 +19,7 @@ internal sealed class HostStandingDirectory(DogmaStatic statics, Eve.Corporation
         if (long.TryParse(text, NumberStyles.None, CultureInfo.InvariantCulture, out var id) && id > 0)
         {
             if (id <= int.MaxValue && statics.FactionName((int)id) is { Length: > 0 } faction) return new StandingOwner(id, faction, true);
-            if (await corporations.GetAsync(id, cancellationToken) is { } corporation) return new StandingOwner(id, corporation.Name);
+            if (await corporations.GetAsync(id, cancellationToken) is { } corporation) return new StandingOwner(id, corporation.Name, IsCorporation: true);
             return agents.ContainsKey(id) ? new StandingOwner(id, "") : null;
         }
         var key = Normalize(text);
@@ -32,7 +32,7 @@ internal sealed class HostStandingDirectory(DogmaStatic statics, Eve.Corporation
         var owners = new List<StandingOwner>();
         foreach (var corporationId in agents.Values.Select(agent => agent.CorporationId).Where(id => id > 0).Distinct().Order())
         {
-            if (await corporations.GetAsync(corporationId, cancellationToken) is { } corporation) owners.Add(new StandingOwner(corporationId, corporation.Name));
+            if (await corporations.GetAsync(corporationId, cancellationToken) is { } corporation) owners.Add(new StandingOwner(corporationId, corporation.Name, IsCorporation: true));
         }
         return owners;
     }

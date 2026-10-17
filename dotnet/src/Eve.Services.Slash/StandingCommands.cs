@@ -5,7 +5,7 @@ using Eve.Relations;
 namespace Eve.Services.Slash;
 
 /// <summary>An owner a standing is held toward: a corporation, a faction or an agent. The name is empty when the directory does not know it.</summary>
-public sealed record StandingOwner(long Id, string Name, bool IsFaction = false);
+public sealed record StandingOwner(long Id, string Name, bool IsFaction = false, bool IsCorporation = false);
 
 /// <summary>What the standing commands look up: the owner a token names, the agents' owners, and a character by its ID or exact name.</summary>
 public interface IStandingDirectory

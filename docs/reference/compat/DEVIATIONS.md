@@ -4530,9 +4530,14 @@ as reference. The client's `bookmarkSvc.py` (`OnSharedBookmarksFolderUpdated`, `
   (`[[updateTuple]]`). The update tuple is `[[folderID], type, args]`: `bookmarksAdded`, `bookmarksUpdated`, `bookmarksRemoved`,
   `bookmarksMoved` (old folder, new folder, bookmarks; sent to both folders), `folderUpdated`, `subfolderAdded`, `subfolderUpdated`,
   `subfolderRemoved`. `OnSharedBookmarksFolderDeleted` goes to the characters that had the folder active at the deletion.
-- **Not built.** A corporation or alliance changing its membership (a character leaving a corporation, a corporation leaving an alliance)
-  is not pushed to shared folders: the access change reaches a character at its next read. The live-client walk of shared folders is
-  described in the design document (`docs/project/SHARED_BOOKMARKS_DESIGN.md`) and is not run yet.
+- **Corporation and alliance changes.** A character that joins or leaves a corporation, or whose corporation joins or leaves an alliance,
+  changes what its shared folders give it (a corporation's built-in list, an alliance entry). The upkeep timer (`bookmarks.upkeep`, one
+  minute, LocalTimers) compares each connected character's corporation and alliance, read from the character store, with the last check;
+  a change sends `OnSharedBookmarksFoldersAccessLost` or `OnSharedBookmarksFoldersAccessChanged` for its folders with the lists of its new
+  affiliation. The wiki says changes take up to five minutes to apply; this is one minute at most. The first check of a character only
+  records its affiliation, so a change made between its login and that first check is picked up at its next change.
+- **Not built.** The live-client walk of the corporation and alliance changes is not run (the shared-folder walk is in
+  `tools/headless-client/tests/test_walk_shared_bookmarks.py`).
 - **Structures and roles.** No structure is an access holder here (owner decision 8: structures are touched only when required). The
   wiki names no corporate role for a shared folder, and the client's bookmark code has no role check (`bookmarkSvc.py`,
   `bookmarkContainerWindow.py` read none). The role inputs are the list membership types (member, manager, admin, excluded) and the

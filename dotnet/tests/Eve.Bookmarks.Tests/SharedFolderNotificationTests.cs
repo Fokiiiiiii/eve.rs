@@ -151,7 +151,7 @@ public sealed class SharedFolderNotificationTests
         var notifier = new SharedFolderNotifier(rig.Store, (who, _) => ValueTask.FromResult(lists.TryGetValue(who.CharacterId, out var found) ? found : AccessLists.Empty), sessions);
 
         rig.Now += 5L * 3_600_000;
-        await notifier.ExpireAsync();
+        await notifier.UpkeepAsync();
 
         var heard = Assert.Single(Notifications(bobSink));
         Assert.Equal("OnSharedBookmarksFolderUpdated", heard.Name);
@@ -161,6 +161,41 @@ public sealed class SharedFolderNotificationTests
         Assert.Equal(bookmark.BookmarkId, Num(Assert.Single(Assert.IsType<PyList>(update.Items[2]).Items)));
         // the creator holds the folder active too, so it hears the removal as well
         Assert.Equal("OnSharedBookmarksFolderUpdated", Assert.Single(Notifications(aliceSink)).Name);
+    }
+
+    [PgFact]
+    public async Task A_character_that_leaves_its_corporation_loses_the_folder_its_corporations_list_gave_it()
+    {
+        await using var rig = await Rig.CreateAsync();
+        const long corporation = 98000007;
+        var affiliation = new Dictionary<long, (long CorporationId, long AllianceId)> { [Bob] = (corporation, 0) };
+        var sessions = new CharacterSessions();
+        var bobSink = new Sink();
+        Connect(sessions, Bob, bobSink);
+        var corporationLists = new AccessLists(new Dictionary<long, int> { [corporation] = 0 }, corporation);
+        var folder = await rig.Store.AddFolderAsync(Alice, false, "Corporation", "",
+            new SharedGroups(AdminList, ManageList, UseList, corporation),
+            new AccessLists(new Dictionary<long, int> { [AdminList] = 2, [ManageList] = 2, [UseList] = 2 }, corporation));
+        await rig.Store.AddKnownFolderAsync(Bob, folder.Folder.FolderId, true, corporationLists);
+        var notifier = new SharedFolderNotifier(rig.Store,
+            (who, _) => ValueTask.FromResult(who.CorporationId == corporation ? corporationLists : AccessLists.Empty),
+            sessions,
+            (ids, _) => Task.FromResult<IReadOnlyDictionary<long, (long CorporationId, long AllianceId)>>(
+                ids.Where(id => affiliation.ContainsKey(id)).ToDictionary(id => id, id => affiliation[id])));
+
+        // the first check only records where the character is
+        Assert.Null(await notifier.PlanAffiliationChangesAsync());
+        Assert.Empty(Notifications(bobSink));
+
+        affiliation[Bob] = (0, 0);
+        (await notifier.PlanAffiliationChangesAsync())!.Invoke();
+        var lost = Assert.Single(Notifications(bobSink));
+        Assert.Equal("OnSharedBookmarksFoldersAccessLost", lost.Name);
+        Assert.Equal(folder.Folder.FolderId, Num(Assert.Single(Assert.IsType<PyList>(Assert.IsType<PyTuple>(lost.Args).Items[0]).Items)));
+
+        // nothing changed since: no further notice
+        Assert.Null(await notifier.PlanAffiliationChangesAsync());
+        Assert.Single(Notifications(bobSink));
     }
 
     private static IService Service(Rig rig, CharacterSessions sessions, Dictionary<long, AccessLists> lists) =>

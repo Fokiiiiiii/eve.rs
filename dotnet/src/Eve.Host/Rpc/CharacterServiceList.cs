@@ -68,8 +68,8 @@ internal sealed partial class CharacterServicesComposition
               stationId => stations.Get(stationId)?.OwnerId,
               now)];
         services = [.. services, allianceRegistry];
-        var sharedNotifier = new Eve.Services.Core.SharedFolderNotifier(bookmarks, MemberLists, characterSessions);
-        ExpireSharedBookmarks(sharedNotifier);
+        var sharedNotifier = new Eve.Services.Core.SharedFolderNotifier(bookmarks, MemberLists, characterSessions, AffiliationsOf);
+        UpkeepSharedFolders(sharedNotifier);
         services = [.. services, new Eve.Services.Core.OwnerGroupRefusals(new Eve.Services.Core.OwnerGroupManagerService(accessGroups, OwnerKind, characterSessions, sharedNotifier))];
         services = [.. services, new Eve.Services.Core.BookmarkRefusals(new Eve.Services.Core.AccessGroupBookmarkMgrService(bookmarks, StaticBookmarkTarget, MemberLists, characterSessions, sharedNotifier))];
         return Task.CompletedTask;

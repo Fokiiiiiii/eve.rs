@@ -16,6 +16,15 @@ internal sealed partial class CharacterServicesComposition
         accessGroups = new AccessGroupStore(source, schema, now);
     }
 
+    /// <summary>The corporation and alliance (0 for none) each character is in now, from the character store.</summary>
+    private async Task<IReadOnlyDictionary<long, (long CorporationId, long AllianceId)>> AffiliationsOf(IReadOnlyList<long> characterIds, CancellationToken token)
+    {
+        var found = new Dictionary<long, (long CorporationId, long AllianceId)>();
+        foreach (var character in await characters.GetManyAsync(characterIds, token))
+            found[character.Id] = (character.CorporationId, character.AllianceId ?? 0);
+        return found;
+    }
+
     /// <summary>The access lists the character holds a role in, for the shared bookmark folders.</summary>
     private async ValueTask<AccessLists> MemberLists(Affiliation who, CancellationToken token) =>
         new(await accessGroups.MemberRolesAsync(who, token), who.CorporationId);

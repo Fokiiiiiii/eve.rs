@@ -15,13 +15,16 @@ internal sealed partial class CharacterServicesComposition
         bookmarks = new BookmarkStore(source, schema, now);
     }
 
-    /// <summary>Removes the expired shared bookmarks every minute and tells their viewers; the timer re-arms itself.</summary>
-    private void ExpireSharedBookmarks(Eve.Services.Core.SharedFolderNotifier notifier)
+    /// <summary>
+    /// Every minute: removes the expired shared bookmarks and tells their viewers, and tells the characters whose corporation or alliance
+    /// changed what their shared folders now give them (the wiki: changes apply within five minutes). The timer re-arms itself.
+    /// </summary>
+    private void UpkeepSharedFolders(Eve.Services.Core.SharedFolderNotifier notifier)
     {
-        foundations.LocalTimers.Set("bookmarks.expiry", TimeSpan.FromMinutes(1), () =>
+        foundations.LocalTimers.Set("bookmarks.upkeep", TimeSpan.FromMinutes(1), () =>
         {
-            ExpireSharedBookmarks(notifier);
-            return notifier.ExpireAsync();
+            UpkeepSharedFolders(notifier);
+            return notifier.UpkeepAsync();
         });
     }
 

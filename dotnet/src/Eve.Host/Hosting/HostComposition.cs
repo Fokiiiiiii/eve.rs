@@ -70,10 +70,11 @@ internal static class HostComposition
         var connected = new ConnectedSessions();
         CharacterSessions? characterSessions = null;
         PublicGateway.PublicGatewayRoutes? publicGateway = null;
+        NpgsqlDataSource? dataSource = null; // owned by the runtime: shut down with it, so its pooled connections return to the server
         if (Env("EVE_PG_URL", "") is { Length: > 0 } pgUrl)
         {
             var schema = Env("EVE_IDENTITY_SCHEMA", PgAccountDirectory.DefaultSchema);
-            var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(pgUrl));
+            var source = dataSource = NpgsqlDataSource.Create(PgConnection.ToConnectionString(pgUrl));
             var applied = await PgAccountDirectory.MigrateAsync(source, schema);
             Console.Error.WriteLine($"eve-host: accounts in PostgreSQL, schema {schema}{(applied.Count > 0 ? "; applied " + string.Join(", ", applied) : "")}");
             var directory = new PgAccountDirectory(source, accountOptions, schema);
@@ -202,6 +203,6 @@ internal static class HostComposition
             accounts,
             () => MarshalCodec.Encode(config.Current()));
 
-        return new HostRuntime(server, registry, legacy, foundations, space, crimewatch, simulation, characterSessions, publicGateway);
+        return new HostRuntime(server, registry, legacy, foundations, space, crimewatch, simulation, characterSessions, publicGateway, dataSource);
     }
 }

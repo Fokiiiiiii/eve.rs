@@ -39,6 +39,17 @@ namespace Eve.Host;
 /// The order is the original order of Program.cs; every step of it is observable (log lines, scheduler registration, RPC registration).</summary>
 internal static class HostComposition
 {
+    /// <summary>The ids of the SDE's character titles (characterTitles, keyed by uuid text).</summary>
+    private static async Task<IReadOnlySet<Guid>> LoadCharacterTitleIdsAsync(NpgsqlDataSource source, string sdeSchema)
+    {
+        await using var command = source.CreateCommand($"SELECT key FROM {sdeSchema}.\"characterTitles\"");
+        await using var reader = await command.ExecuteReaderAsync();
+        var titles = new HashSet<Guid>();
+        while (await reader.ReadAsync())
+            titles.Add(Guid.Parse(reader.GetString(0)));
+        return titles;
+    }
+
     internal static async Task<HostRuntime> BuildAsync(HostSettings settings)
     {
         var accountOptions = settings.AccountOptions;
@@ -58,6 +69,7 @@ internal static class HostComposition
         var online = new OnlineCharacters();
         var connected = new ConnectedSessions();
         CharacterSessions? characterSessions = null;
+        IReadOnlyDictionary<string, PublicGateway.GatewayHandler> publicGateway = new Dictionary<string, PublicGateway.GatewayHandler>();
         if (Env("EVE_PG_URL", "") is { Length: > 0 } pgUrl)
         {
             var schema = Env("EVE_IDENTITY_SCHEMA", PgAccountDirectory.DefaultSchema);
@@ -73,6 +85,16 @@ internal static class HostComposition
             foundations = await Foundations.CreateAsync(source, clock, Env, message => Console.Error.WriteLine($"eve-host: {message}"));
             legacy = await LegacyGameStoreComposition.OpenAsync(source);
             (characterServices, space, simulation, crimewatch, calendarStore, calendarAudience, gameRpcCallbacks, keeperRpcCallbacks, characterSessions) = await CharacterServicesComposition.CharacterServicesAsync(source, directory, online, clock, foundations, legacy.Store, legacy.Owner, legacy.Cache, options.NewCharacterExperienceMode, new AccountOmegaStore(directory), connected);
+            // the public gateway's skill plans: the tables are the skills module's (migration 0009, applied with its store)
+            var gateway = new Dictionary<string, PublicGateway.GatewayHandler>(StringComparer.Ordinal);
+            foreach (var (name, handler) in PublicGateway.SkillPlanGateway.Handlers(new Eve.Skills.PgSkillPlanStore(source, Env("EVE_SKILLS_SCHEMA", Eve.Skills.PgSkillStore.DefaultSchema))))
+                gateway[name] = handler;
+            // the character titles: the SDE's title ids, and the owned and worn titles of the characters schema
+            var titles = await LoadCharacterTitleIdsAsync(source, Env("EVE_SDE_SCHEMA", Eve.Sde.SdeReader.DefaultSchema));
+            var titleStore = new Eve.Characters.CharacterTitleStore(source, Env("EVE_CHARACTERS_SCHEMA", Eve.Characters.PgCharacterStore.DefaultSchema));
+            foreach (var (name, handler) in PublicGateway.TitleGateway.Handlers(titleStore, titles))
+                gateway[name] = handler;
+            publicGateway = gateway;
             // every feature has registered its job handlers by now: the scheduler may start running jobs
             await foundations.StartAsync();
         }
@@ -174,6 +196,6 @@ internal static class HostComposition
             accounts,
             () => MarshalCodec.Encode(config.Current()));
 
-        return new HostRuntime(server, registry, legacy, foundations, space, crimewatch, simulation, characterSessions);
+        return new HostRuntime(server, registry, legacy, foundations, space, crimewatch, simulation, characterSessions, publicGateway);
     }
 }

@@ -122,6 +122,38 @@ public sealed class PgSkillStore
                 );
                 CREATE INDEX IF NOT EXISTS character_expert_systems_expiry ON character_expert_systems (expires_at_ms);
                 """),
+            new Migration("0009_skill_plans", """
+                CREATE TABLE IF NOT EXISTS skill_plans (
+                    plan_id uuid PRIMARY KEY,
+                    character_id bigint NOT NULL CHECK (character_id > 0),
+                    name text NOT NULL CHECK (char_length(name) BETWEEN 1 AND 50),
+                    description text NOT NULL DEFAULT '' CHECK (char_length(description) <= 1000),
+                    created_seq bigint GENERATED ALWAYS AS IDENTITY
+                );
+                CREATE INDEX IF NOT EXISTS skill_plans_character ON skill_plans (character_id, created_seq);
+                CREATE TABLE IF NOT EXISTS skill_plan_requirements (
+                    plan_id uuid NOT NULL REFERENCES skill_plans (plan_id) ON DELETE CASCADE,
+                    position integer NOT NULL CHECK (position >= 0),
+                    skill_type_id integer NOT NULL CHECK (skill_type_id > 0),
+                    level smallint NOT NULL CHECK (level BETWEEN 0 AND 5),
+                    PRIMARY KEY (plan_id, position)
+                );
+                CREATE TABLE IF NOT EXISTS skill_plan_milestones (
+                    milestone_id uuid PRIMARY KEY,
+                    plan_id uuid NOT NULL REFERENCES skill_plans (plan_id) ON DELETE CASCADE,
+                    description text NOT NULL DEFAULT '' CHECK (char_length(description) <= 1000),
+                    train_to_type_id integer CHECK (train_to_type_id > 0),
+                    skill_type_id integer CHECK (skill_type_id > 0),
+                    level smallint CHECK (level BETWEEN 0 AND 5),
+                    created_seq bigint GENERATED ALWAYS AS IDENTITY,
+                    CHECK ((train_to_type_id IS NOT NULL) <> (skill_type_id IS NOT NULL))
+                );
+                CREATE INDEX IF NOT EXISTS skill_plan_milestones_plan ON skill_plan_milestones (plan_id, created_seq);
+                CREATE TABLE IF NOT EXISTS skill_plan_active (
+                    character_id bigint PRIMARY KEY CHECK (character_id > 0),
+                    plan_id uuid REFERENCES skill_plans (plan_id) ON DELETE SET NULL
+                );
+                """),
         ];
 
     public static Task<IReadOnlyList<string>> MigrateAsync(NpgsqlDataSource source, string schema = DefaultSchema, CancellationToken cancellationToken = default) =>
@@ -710,6 +742,18 @@ public sealed class PgSkillStore
             Parameters = { new() { Value = characterId }, new() { Value = nowFileTime } },
         };
         return await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    /// <summary>Deletes one booster row inside the caller's transaction (a booster that ends early, e.g. at a clone jump).</summary>
+    public async Task DeleteSkillBoosterAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long characterId, long itemId, CancellationToken cancellationToken = default)
+    {
+        await using var command = new NpgsqlCommand(
+            $"DELETE FROM {_schema}.active_skill_boosters WHERE character_id = $1 AND item_id = $2",
+            connection, transaction)
+        {
+            Parameters = { new() { Value = characterId }, new() { Value = itemId } },
+        };
+        await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
     private static async Task<IReadOnlyList<StoredSkillBooster>> ReadSkillBoostersAsync(

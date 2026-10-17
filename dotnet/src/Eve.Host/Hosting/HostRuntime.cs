@@ -37,7 +37,8 @@ namespace Eve.Host;
 
 /// <summary>What the host runs after composition: the server and the registry, and the disposables shut down in the original order.</summary>
 internal sealed class HostRuntime(HostServer server, ServiceRegistry registry, LegacyGameStore? legacy, Foundations? foundations,
-    SpaceSessions? space, Eve.Services.Crimewatch.CrimewatchRuntime? crimewatch, SimClient? simulation, CharacterSessions? characterSessions = null)
+    SpaceSessions? space, Eve.Services.Crimewatch.CrimewatchRuntime? crimewatch, SimClient? simulation, CharacterSessions? characterSessions = null,
+    IReadOnlyDictionary<string, PublicGateway.GatewayHandler>? publicGateway = null)
 {
     internal HostServer Server { get; } = server;
 
@@ -45,6 +46,9 @@ internal sealed class HostRuntime(HostServer server, ServiceRegistry registry, L
     internal CharacterSessions? CharacterSessions { get; } = characterSessions;
 
     internal ServiceRegistry Registry { get; } = registry;
+
+    /// <summary>The answers of the public protobuf gateway by request type (empty without PostgreSQL: no characters, no plans).</summary>
+    internal IReadOnlyDictionary<string, PublicGateway.GatewayHandler> PublicGateway { get; } = publicGateway ?? new Dictionary<string, PublicGateway.GatewayHandler>();
 
     /// <summary>The durable scheduler of the host (the expiry jobs of the market are kept in it); null when no foundations were built.</summary>
     internal Eve.Scheduler.DurableScheduler? Scheduler { get; } = foundations?.Scheduler;

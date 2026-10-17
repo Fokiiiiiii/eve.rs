@@ -157,8 +157,8 @@ def owner_of(item: int) -> int:
 
 
 def isk_of(character: int) -> float:
-    """The ISK balance of a character (wallet.balances)."""
-    return float(sql(f"select isk from {schema('WALLET')}.balances where owner_id = {int(character)}") or 0)
+    """The ISK balance of a character's main wallet (wallet.balances, account 1000; the other divisions are separate rows)."""
+    return float(sql(f"select isk from {schema('WALLET')}.balances where owner_id = {int(character)} and account_key = 1000") or 0)
 
 
 def corporation_of(character: int) -> int:

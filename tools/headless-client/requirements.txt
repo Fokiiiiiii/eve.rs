@@ -2,3 +2,6 @@
 # optional encrypted-transport path (AES-256-CBC), which the Placebo handshake
 # does not need.
 pycryptodome>=3.23.0
+# the public gateway live walk (tests/test_skill_plan_live.py) speaks gRPC
+grpcio>=1.66
+protobuf>=5.28

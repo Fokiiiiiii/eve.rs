@@ -3,6 +3,7 @@ using Eve.Host;
 using Eve.Inventory;
 using Eve.Macho;
 using Eve.Marshal;
+using Eve.Skills;
 using Eve.Services;
 using Eve.GameStore;
 using Eve.Universe;
@@ -163,6 +164,75 @@ public sealed class CharacterHostTests
     }
 
     [PgFact]
+    public async Task A_clone_jump_ends_the_normal_boosters_and_the_cerebral_accelerator_goes_on_with_the_pilot()
+    {
+        // the wiki: a jump ends a normal booster (its row and item go, the pilot is told) and keeps a cerebral accelerator
+        await using var rig = await CharacterHostRig.CreateAsync();
+        var character = await rig.CreateCharacterAsync();
+        var sink = new RecordingPacketSink();
+        var session = new ClientSession { CharacterId = character, Sink = sink };
+        session.Set("stationid", new PyInt(rig.Station));
+        rig.Sessions.Enter(character, session);
+        var service = Assert.IsAssignableFrom<IService>(rig.Registry.Lookup("jumpCloneSvc"));
+        var stations = await StationCatalog.LoadAsync(new Eve.Sde.SdeReader(rig.Source));
+        var away = stations.All.OrderBy(s => s.Id).Where(s => s.Id != rig.Station).First();
+        const int improvedCrashBooster = 10151;
+        const int standardCerebralAccelerator = 49539;
+        const int boosterFlag = 88;
+        var expiry = DateTime.UtcNow.AddHours(1).ToFileTimeUtc();
+
+        var capsule = await GiveItemAsync(rig, character, 670, rig.Station, 4, singleton: true);
+        await SetShipAsync(rig, character, capsule);
+        await FundAsync(rig, character, 1_000_000m);
+        var target = await rig.AddCloneAsync(character, away.Id, "station", "Away body", []);
+        var normal = await GiveItemAsync(rig, character, improvedCrashBooster, character, boosterFlag, singleton: true);
+        var cerebral = await GiveItemAsync(rig, character, standardCerebralAccelerator, character, boosterFlag, singleton: true);
+        await InsertBoosterAsync(rig, normal, character, improvedCrashBooster, expiry);
+        await InsertBoosterAsync(rig, cerebral, character, standardCerebralAccelerator, expiry);
+        Assert.Equal(2, await ScalarAsync(rig, $"SELECT count(*) FROM {rig.SkillsSchema}.active_skill_boosters WHERE character_id = {character}"));
+
+        await BoundAsync(service, session, "CloneJump", new PyLong(away.Id), new PyLong(target), new PyReal(900000.0), PyBool.False);
+
+        Assert.Equal(0, await ScalarAsync(rig, $"SELECT count(*) FROM {rig.InventorySchema}.items WHERE id = {normal}"));
+        Assert.Equal(0, await ScalarAsync(rig, $"SELECT count(*) FROM {rig.SkillsSchema}.active_skill_boosters WHERE item_id = {normal}"));
+        Assert.Equal(1, await ScalarAsync(rig, $"SELECT count(*) FROM {rig.SkillsSchema}.active_skill_boosters WHERE item_id = {cerebral} AND booster_type_id = {standardCerebralAccelerator}"));
+        Assert.Equal(1, await ScalarAsync(rig, $"SELECT count(*) FROM {rig.InventorySchema}.items WHERE id = {cerebral}"));
+        Assert.Contains("OnServerBoostersChanged", Notifications(sink).Select(n => n.Name));
+
+        // the cerebral accelerator is still active after a restart; the normal booster is not coming back
+        await rig.RestartAsync();
+        Assert.Equal(1, await ScalarAsync(rig, $"SELECT count(*) FROM {rig.SkillsSchema}.active_skill_boosters WHERE character_id = {character}"));
+    }
+
+    [PgFact]
+    public async Task An_implant_and_an_expert_system_are_kept_through_a_host_restart_and_the_expert_grant_still_applies()
+    {
+        await using var rig = await CharacterHostRig.CreateAsync();
+        var character = await rig.CreateCharacterAsync();
+        const int memoryAugmentation = 9941;
+        const int coreShipOperations = 57208; // grants Hull Upgrades at level 5 for seven days
+        await GiveItemAsync(rig, character, memoryAugmentation, character, 89, singleton: true);
+        var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        var store = new PgExpertSystemStore(rig.Source, rig.SkillsSchema);
+        await using (var connection = await rig.Source.OpenConnectionAsync())
+        await using (var transaction = await connection.BeginTransactionAsync())
+        {
+            await store.UpsertAsync(connection, transaction, new ExpertSystemEntry(character, coreShipOperations, now, now + 7 * ExpertSystemRules.Day, null, "item", now));
+            await transaction.CommitAsync();
+        }
+
+        await rig.RestartAsync();
+
+        Assert.Equal(new[] { memoryAugmentation }, await BodyImplantTypesAsync(rig, character));
+        var entries = await new PgExpertSystemStore(rig.Source, rig.SkillsSchema).ForCharacterAsync(character);
+        Assert.Equal(coreShipOperations, Assert.Single(entries).TypeId);
+        Assert.Equal(5, ExpertSystemRules.GrantsOf(ExpertSystemCatalog.LoadEmbedded(), entries, now)[3394]);
+        // the restarted host answers the pilot's list through its registry
+        var manager = Assert.IsAssignableFrom<IService>(rig.Registry.Lookup("expertSystemMgr"));
+        Assert.IsType<PyDict>(await CallAsync(manager, "GetMyExpertSystems", new ClientSession { CharacterId = character, Sink = new RecordingPacketSink() }));
+    }
+
+    [PgFact]
     public async Task A_skill_booster_lapses_at_its_expiry_through_the_durable_job_and_an_online_pilot_is_told()
     {
         await using var rig = await CharacterHostRig.CreateAsync();
@@ -180,9 +250,13 @@ public sealed class CharacterHostTests
             Key = $"{character}:{booster}",
             Payload = new Eve.Services.Skills.SkillBoosterLapse.BoosterJob(character, booster),
         });
-        await rig.Scheduler.RunDueAsync();
-        var job = await rig.Scheduler.FindAsync(Eve.Services.Skills.SkillBoosterLapse.JobKind, $"{character}:{booster}");
-        Assert.True(job is null || job.State == "done" || job.State == "completed", $"job state {job?.State}: {job?.LastError}");
+        // the host's runner (Foundations starts it) claims the job when it is scheduled, so this test does not run it: wait, bounded, for the
+        // runner to finish it (a finished job is removed by the scheduler)
+        var deadline = DateTime.UtcNow.AddSeconds(20);
+        Eve.Scheduler.JobInfo? job;
+        while ((job = await rig.Scheduler.FindAsync(Eve.Services.Skills.SkillBoosterLapse.JobKind, $"{character}:{booster}")) is not null && DateTime.UtcNow < deadline)
+            await Task.Delay(50);
+        Assert.True(job is null, $"job state {job?.State}: {job?.LastError}");
         Assert.Equal(0, await ScalarAsync(rig, $"SELECT count(*) FROM {rig.SkillsSchema}.active_skill_boosters WHERE item_id = {booster}"));
         Assert.Equal(0, await ScalarAsync(rig, $"SELECT count(*) FROM {rig.InventorySchema}.items WHERE id = {booster}"));
         Assert.Contains("OnServerBoostersChanged", Notifications(sink).Select(n => n.Name));
@@ -783,6 +857,7 @@ public sealed class CharacterHostTests
 
         public NpgsqlDataSource Source { get; }
         public ServiceRegistry Registry => _runtime.Registry;
+        internal IReadOnlyDictionary<string, Eve.Host.PublicGateway.GatewayHandler> Gateway => _runtime.PublicGateway;
         public CharacterSessions Sessions => Assert.IsType<CharacterSessions>(_runtime.CharacterSessions);
         public Eve.Scheduler.DurableScheduler Scheduler => _runtime.Scheduler ?? throw new InvalidOperationException("the scheduler is not composed");
         public PgCharacterStore Characters => new(Source, CharactersSchema);

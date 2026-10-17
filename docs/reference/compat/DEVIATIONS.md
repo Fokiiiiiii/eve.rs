@@ -4311,9 +4311,15 @@ donation sections it marks outdated. Design: `docs/project/FW_DESIGN.md`.
   a warzone's occupation only for its own warzone pair.
 - **Decision: contest.** The attacker's points are kept per system; the state is stable at 0, contested below 75,000 and vulnerable at 75,000
   (wiki). The points have no producer yet, so every system stays stable.
-- **Not applied: victory points and kills.** No complex victory point and no ship-kill LP producer exists. The wiki gives complex points, and the
-  ship-kill LP as 3.25 times (hull value minus insurance value plus fittings) over 10,000, capped at 50,000 LP, shared among participants; the
-  multiplier is flagged "needs testing" by the wiki. Status: open.
+- **Decision: victory points come from complexes only.** The wiki's victory-point rules: complex captures give VP (its table: Scout BSC 50,
+  Scout NVY 25, Small NVY 50, Small ADV 75, Small Interceptor 150, FRF Small ELT about 300, Moderate NVY 600, Large NVY 250, Large ADV 300, Open 350,
+  Battlefield 2,000); killing enemy militia pilots, NPCs and ship kills give no VP (the wiki states loyalty points for kills, not VP). The contest
+  percentage counts only the attacker's VP; kills do not move it. The complex producer is open (below).
+- **Built: the NPC kill count.** A pilot's kill of an NPC of a faction that fights the pilot's war faction (`FwFactions.IsCombatEnemy`), in a
+  warzone system, adds one kill to the pilot's and its corporation's rows (`FwService.RecordNpcKillAsync`, fed by the NPC destroyed event in
+  `SpaceComposition`). The wiki gives no source for the kill counting rule beyond the enemy militia; this is the project's choice. Tests:
+  `FwKillTests` (2). Pilot-versus-pilot kills: no event in the space runtime reports them yet, so they are not counted. Status: partly open.
+- **Not built: the ship-kill LP** (wiki: 3.25 times hull, insurance and fitting value over 10,000, capped at 50,000 LP, shared). Status: open.
 - **Built, trigger open: capture.** `FwService.CaptureAsync` is the state transition: a vulnerable system (at 75,000 attacker points, wiki) passes to
   the occupier's enemy (`FwFactions.OccupationEnemyOf`), and its points and LP pool reset (the wiki: a capture removes the upgrades). A contested or
   unoccupied system is refused. Tests: `FwCaptureTests` (2). The trigger is the destruction of the infrastructure hub (wiki: 25 million HP), which

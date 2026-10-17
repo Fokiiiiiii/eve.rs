@@ -66,6 +66,28 @@ internal sealed partial class CharacterServicesComposition
         return corporation is null ? (0, 0m) : (corporation.Id, corporation.LoyaltyPointTaxRate);
     }
 
+    /// <summary>
+    /// A pilot's kill of an NPC of a faction that fights the pilot's war faction, in a warzone system, is one kill on the pilot's and its corporation's
+    /// factional warfare rows. The wiki gives no victory points for kills (complexes only) and the ship-kill LP is not built, so only the kill count is
+    /// recorded (DEVIATIONS "Factional warfare"). The check is the client's IsCombatEnemyFaction.
+    /// </summary>
+    private void RecordFactionWarfareNpcKill(Eve.Services.Space.NpcKill kill)
+    {
+        if (kill.FinalBlowCharacterId <= 0 || kill.Profile.FactionId <= 0 || FwWarzones.WarzoneOf(kill.SolarSystemId) == 0)
+            return;
+        RecordFactionWarfareNpcKillAsync(kill.FinalBlowCharacterId, kill.Profile.FactionId, kill.SolarSystemId, CancellationToken.None).GetAwaiter().GetResult();
+    }
+
+    private async Task RecordFactionWarfareNpcKillAsync(long characterId, long npcFactionId, long solarSystemId, CancellationToken cancellationToken)
+    {
+        var warFaction = await WarFactionOfAsync(characterId, cancellationToken);
+        var character = await characters.GetAsync(characterId, cancellationToken);
+        if (character is null)
+            return;
+        await factionWarfare.RecordNpcKillAsync(characterId, character.CorporationId, warFaction, npcFactionId, solarSystemId, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+            cancellationToken);
+    }
+
     /// <summary>The war faction of a character: its direct enlistment, else its corporation's faction (0: none, or no such character).</summary>
     private async ValueTask<long> WarFactionOfAsync(long characterId, CancellationToken cancellationToken)
     {

@@ -113,6 +113,19 @@ public sealed class FwService
     }
 
     /// <summary>
+    /// Records a pilot's kill of an NPC of <paramref name="npcFactionId"/> in a warzone system, when that faction fights the pilot's war faction
+    /// (<see cref="FwFactions.IsCombatEnemy"/>). Returns whether it counted. The wiki gives no victory points for kills, so the kill is one count.
+    /// </summary>
+    public async Task<bool> RecordNpcKillAsync(long characterId, long corporationId, long warFactionId, long npcFactionId, long solarSystemId, long nowMs,
+        CancellationToken cancellationToken = default)
+    {
+        if (FwWarzones.WarzoneOf(solarSystemId) == 0 || !FwFactions.IsCombatEnemy(warFactionId, npcFactionId))
+            return false;
+        await RecordActivityAsync(characterId, corporationId, 1, 0, nowMs, cancellationToken);
+        return true;
+    }
+
+    /// <summary>
     /// Records a pilot's kills and victory points for today, and the same on its corporation's row (a corporation of 0 is not recorded). The
     /// kill producer calls this; until one is connected to the simulation, the rows stay empty.
     /// </summary>

@@ -366,6 +366,49 @@ private static PyValue RowField(PyValue value,string key)
     }
 
     [PgFact]
+    public async Task Wallet_division_info_lists_persisted_readable_balances()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var founder = await rig.CharacterAsync("Founder One");
+        var member = await rig.CharacterAsync("Member One");
+        var corp = await rig.Store.CreateAsync(founder, new("Orbital Works", "ORBIT", "", "", 0.05m), "first");
+        var application = await rig.Store.ApplyAsync(member, corp.Id, "Join");
+        await rig.Store.RespondAsync(founder, application, 6, "Join", "");
+        await rig.Store.RespondAsync(member, application, 2, "Join", "");
+
+        await using (var connection = await rig.Source.OpenConnectionAsync())
+        await using (var transaction = await connection.BeginTransactionAsync())
+        {
+            await rig.Transactions.TransferAsync(connection, transaction, new Eve.Wallet.WalletAccount(founder),
+                new Eve.Wallet.WalletAccount(corp.Id, 1006), 123.45m, 10, "Deposit", rig.Now, "deposit", "test");
+            await transaction.CommitAsync();
+        }
+
+        var service = new Eve.Services.Wallet.AccountService(rig.Wallets, rig.Store, rig.Transactions);
+        var session = new ClientSession();
+        session.Set("charid", new PyInt(founder));
+        session.Set("corpid", new PyInt(corp.Id));
+        var founderRows = Assert.IsType<PyList>(await service.GetWalletDivisionsInfo(Call(session, "GetWalletDivisionsInfo")));
+        Assert.Equal(7, founderRows.Items.Count);
+        Assert.Equal(WalletDivisionRow(1006, 123.45), founderRows.Items[6]);
+
+        session.Set("charid", new PyInt(member));
+        var memberRows = Assert.IsType<PyList>(await service.GetWalletDivisionsInfo(Call(session, "GetWalletDivisionsInfo")));
+        Assert.Empty(memberRows.Items);
+
+        var persisted = (await rig.Store.MemberAsync(member))!;
+        await rig.Store.UpdateMemberAsync(founder, persisted with { Masks = new RoleMasks(CorporationRoles.WalletTakeRole(1006)) });
+        memberRows = Assert.IsType<PyList>(await service.GetWalletDivisionsInfo(Call(session, "GetWalletDivisionsInfo")));
+        Assert.Single(memberRows.Items);
+        Assert.Equal(WalletDivisionRow(1006, 123.45), memberRows.Items[0]);
+    }
+
+    private static PyValue WalletDivisionRow(int key, double balance) => Py.KeyVal([
+        new KeyValuePair<PyValue, PyValue>(new PyStr("key"), new PyInt(key)),
+        new KeyValuePair<PyValue, PyValue>(new PyStr("balance"), new PyReal(balance)),
+    ]);
+
+    [PgFact]
     public async Task Corporate_balances_use_the_selected_division_and_persisted_read_and_take_roles()
     {
         await using var rig = await Rig.CreateAsync();

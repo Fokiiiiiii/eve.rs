@@ -9,6 +9,41 @@ namespace Eve.Services.Wallet;
 public sealed partial class AccountService(PgWalletStore wallets, Eve.Corporations.CorporationStore? corporations = null, WalletTransactions? transactions = null)
 {
     /// <summary><c>GetCashBalance(corporation=0)</c>: the ISK the character has, as a real number.</summary>
+    /// <summary>Lists wallet divisions the persisted corporation membership permits the character to read.</summary>
+    [Method("GetWalletDivisionsInfo")]
+    public async ValueTask<PyValue> GetWalletDivisionsInfo(ServiceCall call)
+    {
+        if (call.Session.CharacterId is not { } characterId || corporations is not { } corporationStore ||
+            transactions is not { } walletTransactions)
+            return PyNone.Instance;
+
+        var divisions = new List<PyValue>();
+        if (call.Session.GetInt("corpid") is { } corporationId && corporationId > 0)
+        {
+            for (var accountKey = 1000; accountKey <= 1006; accountKey++)
+            {
+                if (!await corporationStore.CanReadWalletDivisionAsync(characterId, accountKey, call.Cancellation))
+                    continue;
+
+                var account = await corporationStore.WalletAccountAsync(characterId, accountKey, false, call.Cancellation);
+                var balance = await walletTransactions.AccountBalanceAsync(account, call.Cancellation) ?? 0m;
+                divisions.Add(WalletDivisionInfo(accountKey, balance));
+            }
+
+            return new PyList(divisions);
+        }
+
+        var personal = await wallets.GetAsync(characterId, call.Cancellation);
+        if (personal is not null)
+            divisions.Add(WalletDivisionInfo(1000, personal.Isk));
+        return new PyList(divisions);
+    }
+
+    private static PyValue WalletDivisionInfo(int accountKey, decimal balance) => Py.KeyVal([
+        new KeyValuePair<PyValue, PyValue>(new PyStr("key"), new PyInt(accountKey)),
+        new KeyValuePair<PyValue, PyValue>(new PyStr("balance"), new PyReal((double)balance)),
+    ]);
+
     [Method("GetCashBalance")]
     public async ValueTask<PyValue> GetCashBalance(ServiceCall call)
     {

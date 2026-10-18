@@ -72,7 +72,69 @@ internal sealed partial class CharacterServicesComposition
                     var notifications = await ReadGameStoreTableAsync("notifications", ct);
                     return (notifications["boxes"] as JsonObject)?[characterId.ToString(System.Globalization.CultureInfo.InvariantCulture)] as JsonObject;
                 },
-                now),
+                now,
+                mutate: async (characterId, operation, _, notificationIds, requestingSession, ct) =>
+                {
+                    ct.ThrowIfCancellationRequested();
+                    var boxPath = $"/boxes/{characterId}";
+                    if (mailCache.Read("notifications", boxPath).Data is not JsonObject box
+                        || box["byID"] is not JsonObject records)
+                        return;
+
+                    var requested = notificationIds.ToHashSet();
+                    var changed = new List<long>();
+                    foreach (var (key, node) in records.ToArray())
+                    {
+                        if (node is not JsonObject record
+                            || !long.TryParse(key, System.Globalization.NumberStyles.None,
+                                System.Globalization.CultureInfo.InvariantCulture, out var id)
+                            || id <= 0)
+                            continue;
+                        var selected = operation switch
+                        {
+                            "MarkAllAsProcessed" => true,
+                            "MarkAsProcessed" or "DeleteNotifications" => requested.Contains(id),
+                            _ => false,
+                        };
+                        if (!selected)
+                            continue;
+                        if (operation is "MarkAllAsProcessed" or "MarkAsProcessed")
+                        {
+                            if (record["processed"]?.GetValueKind() == JsonValueKind.True)
+                                continue;
+                            record["processed"] = true;
+                        }
+                        else
+                        {
+                            records.Remove(key);
+                        }
+                        changed.Add(id);
+                    }
+                    if (changed.Count == 0)
+                        return;
+                    if (operation == "DeleteNotifications" && box["order"] is JsonArray order)
+                    {
+                        var removed = changed.ToHashSet();
+                        for (var index = order.Count - 1; index >= 0; index--)
+                        {
+                            if (long.TryParse(order[index]?.ToString(),
+                                System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture,
+                                out var id) && removed.Contains(id))
+                                order.RemoveAt(index);
+                        }
+                    }
+                    var write = mailCache.Write("notifications", boxPath, box);
+                    if (!write.Success)
+                        throw new InvalidOperationException($"Could not mutate notifications for {characterId}: {write.ErrorMsg}");
+                    await mailCache.FlushTableAsync("notifications", ct);
+                    if (operation == "DeleteNotifications"
+                        && characterSessions.Of(characterId) is { } otherSession
+                        && !ReferenceEquals(otherSession, requestingSession))
+                    {
+                        otherSession.SendNotification("OnNotificationDeleted", "clientID",
+                            new PyTuple([new PyList([.. changed.Select(id => (PyValue)new PyInt(id))])]));
+                    }
+                }),
             new MailingListService(
                 async ct =>
                 {

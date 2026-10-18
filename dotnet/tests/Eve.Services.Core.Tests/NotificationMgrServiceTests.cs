@@ -239,6 +239,40 @@ public class NotificationMgrServiceTests
         await Assert.ThrowsAsync<IOException>(async () => await service.CallAsync(call));
     }
 
+[Fact]
+    public async Task Client_used_mutators_forward_the_operation_and_ids_to_the_host()
+    {
+        var seen = new List<(string Operation, long[] Ids)>();
+        var service = new NotificationMgrService(
+            (_, _) => ValueTask.FromResult<JsonObject?>(null),
+            () => ClockUnixMs,
+            mutate: (characterId, operation, _, ids, _, _) =>
+            {
+                Assert.Equal(CharacterId, characterId);
+                seen.Add((operation, ids.ToArray()));
+                return ValueTask.CompletedTask;
+            });
+        var calls = new[]
+        {
+            Call("MarkAllAsProcessed"),
+            Call("MarkAsProcessed", null, new PyList([new PyInt(5), new PyInt(5), new PyInt(-1)])),
+            Call("DeleteNotifications", null, new PyList([new PyInt(6), new PyInt(7)])),
+        };
+        foreach (var call in calls)
+        {
+            Assert.True(service.HasMethod(call.Method));
+            Assert.IsType<PyNone>(await service.CallAsync(call));
+        }
+        Assert.Equal(new[]
+        {
+            ("MarkAllAsProcessed", Array.Empty<long>()),
+            ("MarkAsProcessed", new long[] { 5 }),
+            ("DeleteNotifications", new long[] { 6, 7 }),
+        }, seen);
+        foreach (var method in new[] { "MarkGroupAsProcessed", "DeleteGroupNotifications", "DeleteAllNotifications" })
+            Assert.False(service.HasMethod(method));
+    }
+
     [Fact]
     public async Task Unknown_mutators_are_not_exposed_and_interaction_log_is_a_noop()
     {

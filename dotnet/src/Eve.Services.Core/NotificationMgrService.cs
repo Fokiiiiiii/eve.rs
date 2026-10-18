@@ -23,11 +23,13 @@ namespace Eve.Services.Core;
 public sealed class NotificationMgrService(
     Func<long, CancellationToken, ValueTask<JsonObject?>> readBox,
     Func<long> nowUnixMs,
-    NotificationInteractionCallback? logInteraction = null) : IService
+    NotificationInteractionCallback? logInteraction = null,
+    NotificationMutationCallback? mutate = null) : IService
 {
     public string Name => "notificationMgr";
 
-    public bool HasMethod(string method) => method is "GetAllNotifications" or "GetByGroupID" or "GetUnprocessed" or "LogNotificationInteraction";
+    public bool HasMethod(string method) => method is "GetAllNotifications" or "GetByGroupID" or "GetUnprocessed" or "LogNotificationInteraction"
+        || mutate is not null && method is "MarkAllAsProcessed" or "MarkAsProcessed" or "DeleteNotifications";
 
     public ValueTask<PyValue> CallAsync(ServiceCall call) => call.Method switch
     {
@@ -35,8 +37,25 @@ public sealed class NotificationMgrService(
         "GetByGroupID" => ReadAsync(call, groupId: Argument(call, "groupID")),
         "GetUnprocessed" => ReadAsync(call, unprocessed: true),
         "LogNotificationInteraction" => LogInteractionAsync(call),
+        "MarkAllAsProcessed" or "MarkAsProcessed" or "DeleteNotifications" when mutate is not null => MutateAsync(call),
         _ => ValueTask.FromResult<PyValue>(PyNone.Instance),
     };
+
+    private async ValueTask<PyValue> MutateAsync(ServiceCall call)
+    {
+        call.Cancellation.ThrowIfCancellationRequested();
+        var character = Positive(call.Session.Get("charid"));
+        if (character <= 0) return PyNone.Instance;
+        var ids = call.Method is "MarkAsProcessed" or "DeleteNotifications"
+            ? Ids(call.Arg(0))
+            : [];
+        await mutate!(character, call.Method, null, ids, call.Session, call.Cancellation);
+        return PyNone.Instance;
+    }
+
+    private static IReadOnlyList<long> Ids(PyValue? value) => value is PyList list
+        ? [.. list.Items.Select(Positive).Where(id => id > 0).Distinct()]
+        : [];
 
     private async ValueTask<PyValue> LogInteractionAsync(ServiceCall call)
     {
@@ -186,5 +205,14 @@ public sealed class NotificationMgrService(
 
 public delegate ValueTask NotificationInteractionCallback(
     long referenceId,
+    ClientSession session,
+    CancellationToken cancellationToken);
+
+
+public delegate ValueTask NotificationMutationCallback(
+    long characterId,
+    string operation,
+    long? groupId,
+    IReadOnlyList<long> notificationIds,
     ClientSession session,
     CancellationToken cancellationToken);

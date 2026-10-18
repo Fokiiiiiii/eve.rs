@@ -61,7 +61,7 @@ public class SlashCatalogTests
     public async Task Catalog_lists_only_commands_with_wired_handlers()
     {
         var service = Service(death: true, suicide: true, npcs: true, items: true, skills: true);
-        Assert.Equal("Commands: ['createitem', 'deathtest', 'dmg', 'fit', 'giveitem', 'giveme', 'giveskill', 'heal', 'npc', 'removeskill', 'repair', 'ship', 'suicide', 'unfit']",
+        Assert.Equal("Commands: ['createitem', 'deathtest', 'dmg', 'fit', 'giveitem', 'giveme', 'giveskill', 'heal', 'npc', 'online', 'removeskill', 'repair', 'ship', 'suicide', 'unfit']",
             await CatalogAsync(service));
     }
 
@@ -69,7 +69,7 @@ public class SlashCatalogTests
     [InlineData(true, false, false, false, false, "Commands: ['deathtest', 'dmg', 'heal', 'repair']")]
     [InlineData(false, true, false, false, false, "Commands: ['dmg', 'heal', 'repair', 'suicide']")]
     [InlineData(false, false, true, false, false, "Commands: ['dmg', 'heal', 'npc', 'repair']")]
-    [InlineData(false, false, false, true, false, "Commands: ['createitem', 'dmg', 'fit', 'giveitem', 'giveme', 'heal', 'repair', 'ship', 'unfit']")]
+    [InlineData(false, false, false, true, false, "Commands: ['createitem', 'dmg', 'fit', 'giveitem', 'giveme', 'heal', 'online', 'repair', 'ship', 'unfit']")]
     [InlineData(false, false, false, false, true, "Commands: ['dmg', 'giveskill', 'heal', 'removeskill', 'repair']")]
     public async Task Catalog_follows_each_optional_registration(bool death, bool suicide, bool npcs, bool items, bool skills, string expected)
     {
@@ -99,6 +99,15 @@ public class SlashCatalogTests
     public async Task A_session_without_a_game_master_role_is_refused(string command)
     {
         Assert.Equal(SlashService.NotGameMaster, Assert.IsType<PyStr>(await CallAsync(Service(skills: true), command, new ClientSession())).Value);
+    }
+
+    [Theory]
+    [InlineData("dmg Heavy")]
+    [InlineData("/DMG Heavy")]
+    [InlineData("  dmg   Heavy  ")]
+    public async Task Bare_and_slashed_names_dispatch_alike(string command)
+    {
+        Assert.Equal("Select a character before using /dmg.", Assert.IsType<PyStr>(await CallAsync(Service(), command)).Value);
     }
 
     [Fact]

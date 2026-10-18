@@ -13,7 +13,7 @@ namespace Eve.Services.Slash;
 /// Their words are the reference's (<c>services/chat/commands/itemSeeding.js</c> and <c>fitModule.js</c>, ADR 0009). The reference also serves a pilot in space; here the
 /// pilot must be docked (<c>docs/reference/compat/DEVIATIONS.md</c>).
 /// </summary>
-public sealed class ItemCommands(ItemTypeNames names, CharacterShips ships, DogmaStatic statics, Func<long> nowUnixMs)
+public sealed class ItemCommands(ItemTypeNames names, CharacterShips ships, DogmaStatic statics, Func<long> nowUnixMs, ISpaceModules? modules = null)
 {
     /// <summary>The categories the command makes one item of for each in the amount: ships and blueprints.</summary>
     private static readonly HashSet<int> SingletonCategories = [6, 9];
@@ -242,6 +242,48 @@ public sealed class ItemCommands(ItemTypeNames names, CharacterShips ships, Dogm
     }
 
     /// <summary><c>/unfit me &lt;module name|typeID|itemID|all&gt;</c>.</summary>
+    /// <summary>
+    /// <c>/online &lt;me|shipID&gt;</c>: every fitted module of the ship that has the online effect is put online, as the client's own online-all does
+    /// (the loop of <c>cmd_online</c>). A module that is already online is left as it is; a module that cannot go online says why.
+    /// In space the simulation is told (<see cref="ISpaceModules.RefreshShipAsync"/>), as a module switch tells it.
+    /// </summary>
+    public async Task<string> OnlineAsync(ClientSession session, string argument, CancellationToken cancellationToken)
+    {
+        if (session.CharacterId is not { } character) return "Select a character before using /online.";
+        var target = argument.Trim();
+        if (target.Length == 0) return "Usage: /online <me|shipID>";
+        if (await ships.LoadAsync(character, cancellationToken) is not { } snapshot) return "Active ship not found for this character.";
+        if (!target.Equals("me", StringComparison.OrdinalIgnoreCase) && target != snapshot.Ship.Id.ToString(CultureInfo.InvariantCulture))
+            return $"Ship not found: {target}.";
+
+        var candidates = snapshot.Fitted.Where(module => statics.Type(module.TypeId)?.EffectIds.Contains(BuiltInEffects.Online) == true).ToList();
+        if (candidates.Count == 0) return "No fitted module of the ship has an online effect.";
+        var online = new List<string>();
+        var refused = new List<string>();
+        foreach (var module in candidates)
+        {
+            if (snapshot.World.Item(module.Id) is { State: >= ItemState.Online }) continue;
+            var name = statics.Type(module.TypeId)?.Name ?? module.TypeId.ToString(CultureInfo.InvariantCulture);
+            switch (await ships.SetOnlineAsync(character, snapshot.Ship.Id, module.Id, true, cancellationToken))
+            {
+                case ShipChanged changed:
+                    ShipNotifications.Send(session, character, changed, item => DogmaInfoRow(item), Py.FileTimeFromUnixMs(nowUnixMs()));
+                    online.Add(name);
+                    break;
+                case ShipRefused refusal:
+                    refused.Add($"{name}: {refusal.Reason.ToString().ToUpperInvariant()}");
+                    break;
+            }
+        }
+        if (online.Count > 0 && modules is not null)
+            await modules.RefreshShipAsync(session, cancellationToken);
+
+        var lines = new List<string>();
+        if (online.Count > 0) lines.Add($"Online: {string.Join(", ", online)}.");
+        if (refused.Count > 0) lines.Add($"Not online: {string.Join("; ", refused)}.");
+        return lines.Count == 0 ? "Every fitted module with an online effect is online already." : string.Join(" ", lines);
+    }
+
     public async Task<string> UnfitAsync(ClientSession session, string argument, CancellationToken cancellationToken)
     {
         var text = argument.Trim();

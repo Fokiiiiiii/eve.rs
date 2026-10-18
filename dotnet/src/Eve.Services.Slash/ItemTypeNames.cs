@@ -43,6 +43,17 @@ public sealed class ItemTypeNames(SdeReader sde)
 
     private static string Label(ItemTypeEntry entry) => $"{entry.Name} ({entry.TypeId}{(entry.Published ? "" : ", unpublished")})";
 
+    /// <summary>Every type whose name is the query (case and punctuation aside), in type order; empty when none is.</summary>
+    public async Task<IReadOnlyList<ItemTypeEntry>> ExactAsync(string query, CancellationToken cancellationToken = default)
+    {
+        var normalized = ShipTypeNames.Normalize(query);
+        if (normalized.Length == 0)
+        {
+            return [];
+        }
+        return (await TypesAsync(cancellationToken)).Where(entry => ShipTypeNames.Normalize(entry.Name) == normalized).ToArray();
+    }
+
     /// <summary>The item type a name (or a type id) is; <see cref="ItemMatch.Error"/> says why there is none.</summary>
     public async Task<ItemMatch> FindAsync(string query, CancellationToken cancellationToken = default)
     {

@@ -32,6 +32,9 @@ public interface IGmRelocation
     /// </summary>
     Task<GmDestination?> PlaceOfAsync(ClientSession pilot, CancellationToken cancellationToken);
 
+    /// <summary>Where an item of the caller's solar system is (a celestial or a pilot's ship), or null when the simulation does not know it there.</summary>
+    Task<GmDestination?> ItemPlaceAsync(ClientSession caller, long itemId, CancellationToken cancellationToken);
+
     /// <summary>Moves the session's pilot to the destination; null when it is there, else the words of the refusal.</summary>
     Task<string?> MoveAsync(ClientSession session, GmDestination destination, CancellationToken cancellationToken);
 }
@@ -46,6 +49,10 @@ public sealed class TeleportCommands(IGmRelocation relocation)
     public const string SolarUsage = "Usage: /solar <system name>";
     public const string TeleUsage = "Usage: /tele <character name|characterID>";
     public const string TrUsage = "Usage: /tr <me|characterID> <destination|pos=x,y,z|offset=x,y,z>";
+    public const string WarpToUsage = "Usage: /warpto <itemID>";
+
+    /// <summary>How far off an item <c>/warpto</c> puts the pilot, metres: the same place as <c>/tele</c> (the host's rule).</summary>
+    public const double WarpToOffsetMeters = 2_500d;
 
     /// <summary><c>/solar &lt;system&gt;</c>: the pilot goes to the anchor of the system.</summary>
     public async Task<string> SolarAsync(ClientSession session, string argument, CancellationToken cancellationToken)
@@ -142,6 +149,23 @@ public sealed class TeleportCommands(IGmRelocation relocation)
 
         var answer = await relocation.MoveAsync(target, destination, cancellationToken);
         return answer ?? $"Transported {targetLabel} to {Describe(destination)}.";
+    }
+
+    /// <summary>
+    /// <c>/warpto &lt;itemID&gt;</c>: the caller's ship is put <see cref="WarpToOffsetMeters"/> off the item, facing it. Only a pilot in space warps (the client's
+    /// warp-to rule); the item is a celestial or a pilot's ship of the caller's system.
+    /// </summary>
+    public async Task<string> WarpToAsync(ClientSession session, string argument, CancellationToken cancellationToken)
+    {
+        if (session.CharacterId is null) return "Select a character before using /warpto.";
+        var token = argument.Trim();
+        if (!long.TryParse(token, out var itemId)) return WarpToUsage;
+        if (await relocation.PlaceOfAsync(session, cancellationToken) is not { Position: not null })
+            return "Undock before using /warpto.";
+        if (await relocation.ItemPlaceAsync(session, itemId, cancellationToken) is not { Position: { } at } item)
+            return $"Item not found in your solar system: {itemId}.";
+        var destination = new GmDestination(item.SolarSystemId, item.SolarSystemName, [at[0] + WarpToOffsetMeters, at[1], at[2]], [-1d, 0d, 0d]);
+        return await relocation.MoveAsync(session, destination, cancellationToken) ?? $"Warped to item {itemId} in {item.SolarSystemName} ({item.SolarSystemId}).";
     }
 
     /// <summary>The place a destination token names: <c>me</c> (the caller's), a solar system (ID or name), or a connected character's place.</summary>

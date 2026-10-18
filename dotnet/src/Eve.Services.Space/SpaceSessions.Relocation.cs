@@ -150,6 +150,29 @@ public sealed partial class SpaceSessions
     }
 
     /// <summary>
+    /// Where an item of the pilot's solar system is (<c>/warpto</c>): the simulation's position of a celestial or of a pilot's ship. Null when the pilot is in no
+    /// system or the simulation does not know the item there.
+    /// </summary>
+    public async Task<(int SolarSystemId, IReadOnlyList<double> Position)?> ItemPlaceAsync(ClientSession caller, long itemId, CancellationToken cancellationToken)
+    {
+        if (SolarSystemOf(caller) is not { } system)
+        {
+            return null;
+        }
+        CommandReply reply;
+        try
+        {
+            reply = await _sim.CommandAsync((ulong)caller.SessionId, SimCommands.PositionOf, [itemId], cancellationToken);
+        }
+        catch (SimUnavailableException error)
+        {
+            _log?.Invoke($"item position query of session {caller.SessionId}: {error.Message}");
+            throw Notify("Space is not available right now. Try again in a moment.");
+        }
+        return reply.Accepted && reply.Position.Count >= 3 ? (system, new double[] { reply.Position[0], reply.Position[1], reply.Position[2] }) : null;
+    }
+
+    /// <summary>
     /// Where a game master goes to be with a connected pilot (<c>/tele</c>): <see cref="RelocationOffsetMeters"/> off the pilot's ship in space, facing it; a pilot
     /// that is docked is found at the anchor of its system. Null when the pilot is in no system.
     /// </summary>

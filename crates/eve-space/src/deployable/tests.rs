@@ -1295,7 +1295,7 @@ fn a_deadspace_pocket_is_in_the_scene_in_no_client_ball_and_stops_no_field() {
 }
 
 #[test]
-fn a_deployable_placed_out_of_a_pilot_s_view_is_told_to_the_pilot_when_it_comes_into_view_and_taken_out_when_it_leaves() {
+fn a_deployable_reaches_a_pilot_that_comes_into_its_view_and_leaves_with_it() {
     // the acceleration gates and the capture points of a battlefield are placed where the pilots are not yet: a pilot that flies into their box is told them
     let (mut scene, t) = crowd();
     let a = scene.pilots[&A].ship.position;
@@ -1315,12 +1315,21 @@ fn a_deployable_placed_out_of_a_pilot_s_view_is_told_to_the_pilot_when_it_comes_
     };
     let placed = scene.place_capture_point(point, t);
     assert!(!format!("{placed:?}").contains("AddBalls2"), "a pilot out of the point's box is not told it");
-    assert!(scene.reconcile_deployables(t + SECOND).is_empty(), "a pilot out of the box is still not told it");
+    assert!(
+        scene.reconcile_deployables(t + SECOND).is_empty(),
+        "a pilot out of the box is still not told it"
+    );
 
     place(&mut scene, A, far);
     let told = format!("{:?}", scene.reconcile_deployables(t + 2 * SECOND));
-    assert!(told.contains("AddBalls2") && told.contains("Caldari Control Zone A"), "the pilot that comes into view is told the point: {told}");
-    assert!(scene.reconcile_deployables(t + 3 * SECOND).is_empty(), "a point already in view is not told again");
+    assert!(
+        told.contains("AddBalls2") && told.contains("Caldari Control Zone A"),
+        "the pilot that comes into view is told the point: {told}"
+    );
+    assert!(
+        scene.reconcile_deployables(t + 3 * SECOND).is_empty(),
+        "a point already in view is not told again"
+    );
 
     place(&mut scene, A, a);
     let gone = format!("{:?}", scene.reconcile_deployables(t + 4 * SECOND));

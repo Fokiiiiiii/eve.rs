@@ -227,6 +227,8 @@ public sealed class AbyssalSpaceSessionsTests
         var lastStationId = persisted.StationId;
         var sourceSystemId = persisted.SolarSystemId;
         var reconnectLookups = 0;
+        var enteredSystems = new List<int>();
+        rig.Space.SystemEntered += enteredSystems.Add;
         rig.Space.FindAbyssalReconnectAsync = (_, _, _, _) =>
         {
             reconnectLookups++;
@@ -269,6 +271,7 @@ public sealed class AbyssalSpaceSessionsTests
         Assert.Equal((long?)scene.LocationId, reconnected.GetInt("solarsystemid2"));
         Assert.Equal((long?)scene.LocationId, reconnected.GetInt("locationid"));
         await rig.Space.OnCharacterEnteredAsync(reconnected, created.CharacterId, CancellationToken.None);
+        Assert.Empty(enteredSystems);
         Assert.True(reconnectLookups >= 2);
         Assert.Equal((long?)scene.LocationId, reconnected.GetInt("solarsystemid"));
         Assert.Equal((long?)scene.LocationId, reconnected.GetInt("solarsystemid2"));

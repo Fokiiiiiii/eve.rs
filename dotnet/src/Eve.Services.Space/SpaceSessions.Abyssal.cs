@@ -1172,7 +1172,8 @@ public sealed partial class SpaceSessions
         session.Closed += () => OnSessionClosed(session);
         if (_spaceItems is { } items) await items.RemoveAsync(snapshot.Ship.Id, cancellationToken).ConfigureAwait(false);
         await NotifyPilotEnteredAsync(session, characterId).ConfigureAwait(false);
-        SystemEntered?.Invoke(binding.Scene.LocationId);
+        if (pilot.SimulationScene.InstanceId == 0)
+            SystemEntered?.Invoke(binding.Scene.LocationId);
         return true;
     }
 

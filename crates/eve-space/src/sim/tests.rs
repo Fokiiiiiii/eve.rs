@@ -323,6 +323,29 @@ fn abyssal_enter(session: SessionId, scene: SceneKey, ship_id: i64, position: [f
     }))
 }
 
+fn abyssal_reward_cache(
+    ship_id: i64,
+    scene: SceneKey,
+    position: [f64; 3],
+) -> crate::link::AbyssalRewardCachePlacement {
+    let mut ship = spec();
+    ship.ship_id = ship_id;
+    ship.character_id = 0;
+    ship.owner_id = 140_000_001;
+    ship.type_id = 47_951;
+    ship.group_id = 2_009;
+    ship.category_id = 11;
+    ship.max_velocity = 0.0;
+    ship.modules.clear();
+    crate::link::AbyssalRewardCachePlacement {
+        content_id: "12345678-1234-1234-1234-123456789abc".to_string(),
+        scene,
+        ship,
+        position,
+        direction: [0.0, 0.0, 1.0],
+    }
+}
+
 fn abyssal_spawn(request_id: u64, scene: SceneKey, ship_id: i64, position: [f64; 3]) -> Message {
     abyssal_spawn_for("00000000-0000-0000-0000-000000000001", request_id, scene, ship_id, position)
 }
@@ -523,8 +546,46 @@ fn abyssal_room_transfer_preserves_the_ship_and_rebinds_a_new_session_before_ori
     let second = SceneKey { location_id: SYSTEM, instance_id: 201, room_index: 2 };
     ensure_abyssal(&mut sim, first, NOON, 10_000.0, 0.0);
     ensure_abyssal(&mut sim, second, NOON, 10_000.0, 0.0);
+    let scene_object = crate::link::AbyssalSceneObject {
+        scene: first,
+        item_id: 8_400_000_201,
+        type_id: 47_685,
+        group_id: 366,
+        category_id: 2,
+        owner_id: 90_001,
+        radius: 5_000.0,
+        graphic_id: 22_130,
+        name: "Transfer Conduit (Triglavian)".to_string(),
+        position: [100.0, 200.0, 300.0],
+        direction: [0.0, 0.0, 1.0],
+        is_open: false,
+    };
+    assert!(matches!(
+        sim.handle(Message::EnsureAbyssalSceneObject { request_id: 5, object: scene_object.clone() }, NOON)
+            .unwrap()
+            .last(),
+        Some(Message::EnsureAbyssalSceneObjectReply { outcome: Ok(()), .. })
+    ));
     let ship_id = 8_100_000_001;
+    let npc_id = 8_100_000_002;
     let origin = SceneKey::solar_system(SYSTEM);
+    assert!(matches!(
+        sim.handle(abyssal_spawn(6, first, npc_id, [250.0, 0.0, 0.0]), NOON).unwrap()[0],
+        Message::SpawnReply { outcome: Ok(_), .. }
+    ));
+    let first_cache_id = 8_400_000_203;
+    assert!(matches!(
+        sim.handle(
+            Message::EnsureAbyssalRewardCache {
+                request_id: 7,
+                cache: Box::new(abyssal_reward_cache(first_cache_id, first, [250.0, 0.0, 0.0])),
+            },
+            NOON
+        )
+        .unwrap()
+        .last(),
+        Some(Message::EnsureAbyssalRewardCacheReply { outcome: Ok(()), .. })
+    ));
     sim.handle(abyssal_enter(7, origin, ship_id, [100.0, 0.0, 0.0]), NOON).unwrap();
 
     let entered = sim
@@ -542,8 +603,32 @@ fn abyssal_room_transfer_preserves_the_ship_and_rebinds_a_new_session_before_ori
             NOON + SECOND,
         )
         .unwrap();
-    assert!(matches!(entered.last(), Some(Message::MoveAbyssalParticipantReply { outcome: Ok(()), .. })));
-
+    assert_eq!(
+        entered,
+        [Message::MoveAbyssalParticipantReply { request_id: 4, outcome: Ok(()) }],
+        "Move updates the destination view but must not push a proactive snapshot"
+    );
+    let prime = sim
+        .handle(
+            Message::Command {
+                session_id: 7,
+                command: crate::link::COMMAND_PRIME_LOGIN_BALLPARK_VISUALS,
+                args: vec![],
+            },
+            NOON + SECOND,
+        )
+        .unwrap();
+    assert!(!prime.iter().any(
+        |message| matches!(message, Message::Notify { session_id: 7, name, .. } if name == "DoDestinyUpdate")
+    ));
+    let entry_bind = sim.handle(Message::Bind { session_id: 7 }, NOON + SECOND).unwrap();
+    assert!(entry_bind.iter().any(
+        |message| matches!(message, Message::Notify { session_id: 7, name, .. } if name == "DoDestinyUpdate")
+    ));
+    let entry_state = sim.handle(Message::UpdateState { session_id: 7 }, NOON + SECOND).unwrap();
+    assert_eq!(names(&entry_state), ["DoDestinyUpdate"]);
+    assert!(sim.scenes[&first].ships_in_view(7).iter().any(|ship| ship.spec.ship_id == npc_id));
+    assert!(sim.scenes[&first].ships_in_view(7).iter().any(|ship| ship.spec.ship_id == first_cache_id));
     let wrong_location = sim
         .handle(
             Message::MoveAbyssalParticipant {
@@ -568,6 +653,42 @@ fn abyssal_room_transfer_preserves_the_ship_and_rebinds_a_new_session_before_ori
     );
     assert_eq!(sim.sessions.get(&7), Some(&first));
 
+    let second_npc_id = 8_100_000_003;
+    let second_cache_id = 8_400_000_204;
+    let second_position = [6_000.0, 5_000.0, 5_000.0];
+    assert!(matches!(
+        sim.handle(abyssal_spawn(8, second, second_npc_id, second_position), NOON + SECOND).unwrap()[0],
+        Message::SpawnReply { outcome: Ok(_), .. }
+    ));
+    assert!(matches!(
+        sim.handle(
+            Message::EnsureAbyssalRewardCache {
+                request_id: 9,
+                cache: Box::new(abyssal_reward_cache(second_cache_id, second, second_position)),
+            },
+            NOON + SECOND
+        )
+        .unwrap()
+        .last(),
+        Some(Message::EnsureAbyssalRewardCacheReply { outcome: Ok(()), .. })
+    ));
+    let second_object_id = 8_400_000_202;
+    let second_object = crate::link::AbyssalSceneObject {
+        scene: second,
+        item_id: second_object_id,
+        position: [400.0, 500.0, 300.0],
+        ..scene_object
+    };
+    assert!(matches!(
+        sim.handle(
+            Message::EnsureAbyssalSceneObject { request_id: 10, object: second_object },
+            NOON + SECOND
+        )
+        .unwrap()
+        .last(),
+        Some(Message::EnsureAbyssalSceneObjectReply { outcome: Ok(()), .. })
+    ));
+
     let moved = sim
         .handle(
             Message::MoveAbyssalParticipant {
@@ -577,19 +698,27 @@ fn abyssal_room_transfer_preserves_the_ship_and_rebinds_a_new_session_before_ori
                 destination: second,
                 preserve_source_pose: false,
                 session_handoff: false,
-                position: [400.0, 500.0, 600.0],
+                position: [6_000.0, 5_000.0, 5_000.0],
                 direction: [1.0, 0.0, 0.0],
             },
             NOON + SECOND,
         )
         .unwrap();
-    assert!(matches!(moved.last(), Some(Message::MoveAbyssalParticipantReply { outcome: Ok(()), .. })));
+    assert_eq!(
+        moved,
+        [Message::MoveAbyssalParticipantReply { request_id: 1, outcome: Ok(()) }],
+        "the room transfer does not proactively bind or send a full scene"
+    );
     assert_eq!(sim.sessions.get(&7), Some(&second));
     assert!(!sim.scenes[&first].pilots.contains_key(&7));
     let moved_ship = &sim.scenes[&second].pilots[&7].ship;
     assert_eq!(moved_ship.spec.ship_id, ship_id);
-    assert_eq!(moved_ship.position, Vec3::new(400.0, 500.0, 600.0));
-
+    assert_eq!(moved_ship.position, Vec3::new(6_000.0, 5_000.0, 5_000.0));
+    let room_update = sim.handle(Message::UpdateState { session_id: 7 }, NOON + SECOND).unwrap();
+    assert!(names(&room_update).iter().any(|name| name == "DoDestinyUpdate"));
+    assert!(sim.scenes[&second].ships_in_view(7).iter().any(|ship| ship.spec.ship_id == second_npc_id));
+    assert!(sim.scenes[&second].ships_in_view(7).iter().any(|ship| ship.spec.ship_id == second_cache_id));
+    assert!(sim.scenes[&second].system().body(second_object_id).is_some());
     assert_eq!(
         sim.handle(
             Message::RebindAbyssalSession { request_id: 2, session_id: 77, ship_id, scene: second },
@@ -603,7 +732,36 @@ fn abyssal_room_transfer_preserves_the_ship_and_rebinds_a_new_session_before_ori
     assert!(!sim.scenes[&second].pilots.contains_key(&7));
     assert_eq!(sim.scenes[&second].pilots[&77].ship.spec.ship_id, ship_id);
     assert!(!sim.scenes[&second].pilots[&77].bound);
-    sim.handle(Message::Bind { session_id: 77 }, NOON + 2 * SECOND).unwrap();
+    let primed = sim
+        .handle(
+            Message::Command {
+                session_id: 77,
+                command: crate::link::COMMAND_PRIME_LOGIN_BALLPARK_VISUALS,
+                args: vec![],
+            },
+            NOON + 2 * SECOND,
+        )
+        .unwrap();
+    assert!(primed.iter().any(
+        |message| matches!(message, Message::Notify { session_id: 77, name, .. } if name == "DoDestinyUpdate")
+    ));
+    let rebound = sim.handle(Message::Bind { session_id: 77 }, NOON + 2 * SECOND).unwrap();
+    let rebound_updates = rebound
+        .iter()
+        .filter(|message| {
+            matches!(
+                message, Message::Notify { session_id: 77, name, .. } if name == "DoDestinyUpdate"
+            )
+        })
+        .count();
+    assert!(
+        rebound_updates >= 3,
+        "rebind must backfill static scene objects, SetState and ship numbers after the visual prime: {rebound:?}"
+    );
+    let rebound_state = sim.handle(Message::UpdateState { session_id: 77 }, NOON + 2 * SECOND).unwrap();
+    assert!(names(&rebound_state).iter().any(|name| name == "DoDestinyUpdate"));
+    assert!(sim.scenes[&second].ships_in_view(77).iter().any(|ship| ship.spec.ship_id == second_npc_id));
+    assert!(sim.scenes[&second].ships_in_view(77).iter().any(|ship| ship.spec.ship_id == second_cache_id));
     assert!(sim.scenes[&second].pilots[&77].bound);
 
     let returned = sim

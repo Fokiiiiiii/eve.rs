@@ -227,6 +227,7 @@ impl Scene {
         pilot.entered = destination.next_entry();
         destination.pilots.insert(session, pilot);
         destination.boxes.clear();
+        destination.take_in_view(session);
         told.extend(destination.announce_arrival(session, now));
         told.extend(destination.abyssal_environment_fx(session, None, now, true));
         Ok(told)
@@ -249,6 +250,7 @@ impl Scene {
         self.settle_pilot(old_session, now);
         let mut pilot = self.pilots.remove(&old_session).expect("resident pilot checked above");
         pilot.bound = false;
+        pilot.login_visuals_sent = false;
         pilot.sees.clear();
         pilot.sees_wrecks.clear();
         pilot.sees_abyssal_traces.clear();

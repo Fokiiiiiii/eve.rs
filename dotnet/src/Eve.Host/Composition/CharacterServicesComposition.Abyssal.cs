@@ -362,7 +362,8 @@ internal sealed partial class CharacterServicesComposition
         ?? throw new InvalidDataException($"Abyssal character {notification.RecipientCharacterId} is missing.");
     if (character.SolarSystemId == binding.Participant.Origin.SolarSystemId)
     {
-        var center = await abyssalRoomSpawnReservation.ReadSystemCenterAsync(notification.SpaceLocationId, cancellationToken).ConfigureAwait(false);
+        var center = await abyssalRoomSpawnReservation.ResolvePrivateSceneOriginAsync(
+            binding.Run.Data, cancellationToken).ConfigureAwait(false);
         var moveError = await space.MoveAbyssalParticipantAsync(
             notification.ContentId,
             shipId,

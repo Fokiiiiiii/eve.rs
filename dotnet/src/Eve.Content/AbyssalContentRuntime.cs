@@ -139,7 +139,11 @@ public sealed class AbyssalContentRuntime
             rooms,
             Array.Empty<AbyssalGateTransition>(),
             AbyssalExitMode.None,
-            null);
+            null)
+        {
+            // Rust visibility::GRID_BOX is 7,864,320 m; use its midpoint for this free private-scene frame.
+            PrivateSceneOrigin = new AbyssalPosition(3_932_160, 3_932_160, 3_932_160),
+        };
 
         var remainingTraceMs = request.TraceExpiresAtMs - _scheduler.Now;
         var created = await _content.StartAsync(

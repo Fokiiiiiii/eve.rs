@@ -260,7 +260,11 @@ public sealed record AbyssalRunData(
     IReadOnlyList<AbyssalRoomState> Rooms,
     IReadOnlyList<AbyssalGateTransition> GateTransitions,
     AbyssalExitMode ExitMode,
-    long? ExitGateMarkerId);
+    long? ExitGateMarkerId)
+{
+    /// <summary>Saved private-scene origin; null retains the legacy SDE-centered coordinate frame.</summary>
+    public AbyssalPosition? PrivateSceneOrigin { get; init; }
+}
 
 public sealed record AbyssalRunState(long InstanceId, string ContentState, long? ExpiresAtMs, AbyssalRunData Data);
 

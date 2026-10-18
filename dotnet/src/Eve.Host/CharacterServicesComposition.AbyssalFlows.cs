@@ -116,22 +116,12 @@ internal sealed partial class CharacterServicesComposition
         var space = spaceSessions
             ?? throw new InvalidOperationException("Abyssal room materialization requires initialized SpaceSessions.");
         var scene = new SimSceneKey(request.SpaceLocationId, request.InstanceId, request.LocationId);
-        var systemRows = await sde.ReadAsync("mapSolarSystems", [request.SpaceLocationId], cancellationToken).ConfigureAwait(false);
-        var system = systemRows.SingleOrDefault()
-            ?? throw new InvalidDataException($"Abyssal hidden system {request.SpaceLocationId} is absent from the pinned SDE.");
-        var doc = system.Doc;
-        var systemPosition = doc.TryGetProperty("position", out var positionNode) ? positionNode : doc;
-        if (!systemPosition.TryGetProperty("x", out var x) || !x.TryGetDouble(out var centerX) ||
-            !systemPosition.TryGetProperty("y", out var y) || !y.TryGetDouble(out var centerY) ||
-            !systemPosition.TryGetProperty("z", out var z) || !z.TryGetDouble(out var centerZ) ||
-            !double.IsFinite(centerX) || !double.IsFinite(centerY) || !double.IsFinite(centerZ))
-        {
-            throw new InvalidDataException($"Abyssal hidden system {request.SpaceLocationId} has no finite SDE center.");
-        }
+        var center = await abyssalRoomSpawnReservation.ResolvePrivateSceneOriginAsync(
+            run.Data, cancellationToken).ConfigureAwait(false);
 
         RememberAbyssalWeather(run.Data);
         var boundary = new SimAbyssalBoundaryProfile(
-            [centerX, centerY, centerZ],
+            [center.X, center.Y, center.Z],
             75_000,
             1_000,
             [
@@ -158,7 +148,7 @@ internal sealed partial class CharacterServicesComposition
             // EveJS buildEnvironmentalObjectSpawnState publishes this direction, including scene-center objects.
             var direction = entity.Role == AbyssalEntityRole.Cloud
                 ? new[] { 0d, 1d, 0d }
-                : AbyssalRoomSpawnPlanner.DirectionToward(entity.Position, new AbyssalPosition(centerX, centerY, centerZ));
+                : AbyssalRoomSpawnPlanner.DirectionToward(entity.Position, center);
             switch (entity.Role)
             {
                 case AbyssalEntityRole.Gate:

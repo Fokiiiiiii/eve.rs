@@ -46,7 +46,7 @@ public sealed class AbyssalRoomSpawnReservation(
             if (run.ContentState != "active" || locationId != data.CurrentRoomIndex || data.Participants.Count == 0)
                 throw new InvalidDataException($"Abyssal room {locationId} cannot be prepared before an active participant enters it.");
 
-            var roomCenter = await ReadSystemCenterAsync(data.SpaceLocationId, cancellationToken).ConfigureAwait(false);
+            var roomCenter = await ResolvePrivateSceneOriginAsync(data, cancellationToken).ConfigureAwait(false);
             var anchorDirection = data.Participants[0].Origin.ShipDirection;
             var npcEntityIds = new List<long>();
             foreach (var spawn in roomPlan.NpcSpawns)
@@ -189,6 +189,20 @@ public sealed class AbyssalRoomSpawnReservation(
             throw new InvalidDataException($"Abyssal hidden system {solarSystemId} has no finite SDE spatial center.");
         }
         return new AbyssalPosition(px, py, pz);
+    }
+
+internal Task<AbyssalPosition> ResolvePrivateSceneOriginAsync(
+        AbyssalRunData data,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(data);
+        if (data.PrivateSceneOrigin is { } origin)
+        {
+            if (!double.IsFinite(origin.X) || !double.IsFinite(origin.Y) || !double.IsFinite(origin.Z))
+                throw new InvalidDataException("The saved Abyssal private-scene origin is not finite.");
+            return Task.FromResult(origin);
+        }
+        return ReadSystemCenterAsync(data.SpaceLocationId, cancellationToken);
     }
 
 

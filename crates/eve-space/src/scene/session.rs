@@ -317,20 +317,19 @@ impl Scene {
         let heading =
             |action_stamp: u32| payload::action(action_stamp, heading_name(ship), heading_args(ship));
 
-        let added = if login_visuals_sent {
-            (!trace_adds.is_empty()).then_some(trace_adds)
-        } else {
+        let mut added_actions = Vec::new();
+        if !login_visuals_sent {
             let Ok(ship_added) = payload::add_ships(first, &ships, now) else { return Vec::new() };
-            let Ok(abyssal_scene_objects) = payload::add_abyssal_scene_objects(first, &system) else {
-                return Vec::new();
-            };
-            // the structures and isolated-room conduits are balls placed while their scene was empty
-            let mut actions = vec![ship_added];
-            actions.extend(payload::add_structures(first, &system, now));
-            actions.extend(abyssal_scene_objects);
-            actions.extend(trace_adds);
-            Some(actions)
+            added_actions.push(ship_added);
+        }
+        let Ok(abyssal_scene_objects) = payload::add_abyssal_scene_objects(first, &system) else {
+            return Vec::new();
         };
+        // login visual priming adds ships only; structures and private scene objects still need their balls.
+        added_actions.extend(payload::add_structures(first, &system, now));
+        added_actions.extend(abyssal_scene_objects);
+        added_actions.extend(trace_adds);
+        let added = (!added_actions.is_empty()).then_some(added_actions);
         let wrecks = self.wrecks_in_view(session);
         let Ok(state) = payload::set_state_for_ego(
             second,

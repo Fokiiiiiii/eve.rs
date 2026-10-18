@@ -330,6 +330,7 @@ public sealed class AbyssalHostFlowTests
         var lastStationId = persistedCharacter.HomeStationId;
         await rig.Transaction((c, tx) => rig.Characters.SetStationAsync(c, tx, persistedCharacter.Id, lastStationId));
         rig.Simulator.Pose = [10, 20, 30];
+        rig.Simulator.ShipDirection = [-1, -1, 1];
         long filament = 0;
         await rig.Transaction(async (c, tx) => filament = await rig.Items.CreateAsync(c, tx,
             new NewItem(setup.Data.FilamentTypeId, setup.Data.CreatorCharacterId, setup.Data.CreatorShipId, ItemFlags.Cargo, 2)));
@@ -349,6 +350,48 @@ public sealed class AbyssalHostFlowTests
         await rig.Transaction(async (c, tx) => binding = await rig.Runtime.FindActiveForParticipantAsync(c, tx, setup.Data.CreatorCharacterId, setup.Data.CreatorShipId));
         Assert.NotNull(binding);
         var run = binding.Run;
+        var hiddenSdeCenter = await rig.Reservation.ReadSystemCenterAsync(run.Data.SpaceLocationId, CancellationToken.None);
+        Assert.Contains(new[] { hiddenSdeCenter.X, hiddenSdeCenter.Y, hiddenSdeCenter.Z }, value => Math.Abs(value) > 1e15);
+        var initialMove = Assert.Single(rig.Simulator.ParticipantMoves, move =>
+            move.Source.InstanceId == 0 && move.Destination.InstanceId == run.InstanceId && move.Destination.RoomIndex == 1);
+        Assert.All(initialMove.Position, value => Assert.InRange(Math.Abs(value), 0d, 1_000_000_000d));
+        var privateOrigin = run.Data.PrivateSceneOrigin ?? throw new InvalidOperationException("A newly started run must persist its private scene origin.");
+        Assert.Equal(new[] { privateOrigin.X, privateOrigin.Y, privateOrigin.Z }, initialMove.Position);
+        var initialRoomScene = new SimSceneKey(run.Data.SpaceLocationId, run.InstanceId, 1);
+        var ensuredRoomScenes = rig.Simulator.EnsuredSceneSpecs.Where(spec => spec.Scene == initialRoomScene).ToArray();
+        Assert.NotEmpty(ensuredRoomScenes);
+        Assert.All(ensuredRoomScenes, spec => Assert.Equal(
+            new[] { privateOrigin.X, privateOrigin.Y, privateOrigin.Z }, spec.Boundary.Center));
+        var legacyOrigin = await rig.Reservation.ResolvePrivateSceneOriginAsync(
+            run.Data with { PrivateSceneOrigin = null }, CancellationToken.None);
+        Assert.Equal(hiddenSdeCenter, legacyOrigin);
+        var roomEntities = run.Data.Rooms.Single(room => room.LocationId == 1).Entities;
+        Assert.NotEmpty(roomEntities);
+        var npcEntities = roomEntities.Where(entity => entity.Role == AbyssalEntityRole.Npc).ToArray();
+        Assert.Equal(run.Data.Plan.Rooms.Single(room => room.LocationId == 1).NpcSpawns.Sum(spawn => spawn.Count), npcEntities.Length);
+        Assert.NotEmpty(npcEntities);
+        const double gridBoxMeters = 7_864_320.0;
+        long GridIndex(double coordinate) => (long)Math.Floor(coordinate / gridBoxMeters);
+        var playerCell = (GridIndex(initialMove.Position[0]), GridIndex(initialMove.Position[1]), GridIndex(initialMove.Position[2]));
+        Assert.True(Math.BitIncrement(privateOrigin.X) - privateOrigin.X < 1e-6);
+        Assert.True(Math.BitIncrement(privateOrigin.Y) - privateOrigin.Y < 1e-6);
+        Assert.True(Math.BitIncrement(privateOrigin.Z) - privateOrigin.Z < 1e-6);
+        Assert.All(npcEntities, entity => Assert.Equal(playerCell,
+            (GridIndex(entity.Position.X), GridIndex(entity.Position.Y), GridIndex(entity.Position.Z))));
+        Assert.All(roomEntities, entity =>
+        {
+            var cell = (GridIndex(entity.Position.X), GridIndex(entity.Position.Y), GridIndex(entity.Position.Z));
+            Assert.Equal(playerCell, cell);
+            Assert.All(new[] { entity.Position.X, entity.Position.Y, entity.Position.Z },
+                value => Assert.InRange(Math.Abs(value), 0d, 1_000_000_000d));
+        });
+        Assert.All(npcEntities, entity =>
+        {
+            Assert.True(entity.Position.X - privateOrigin.X < 0);
+            Assert.True(entity.Position.Y - privateOrigin.Y < 0);
+            Assert.True(entity.Position.Z - privateOrigin.Z > 0);
+        });
+        Assert.Equal(new AbyssalPosition(10, 20, 30), run.Data.Participants.Single().Origin.ShipPosition);
         Assert.Equal(run.Data.SpaceLocationId, session.GetInt("solarsystemid"));
         Assert.Equal(1, (await rig.Items.GetAsync(filament))!.Quantity);
         var inspections = rig.Simulator.PublicPoseQueries;
@@ -386,7 +429,16 @@ public sealed class AbyssalHostFlowTests
         var request = new ServiceCall { Session = session, Method = "AbyssalGateActivation", Args = [new PyLong(gate.EntityId)] };
         await rig.Service.CallAsync(request);
         await rig.Drain();
-        Assert.Equal(2, (await rig.State(run.InstanceId)).CurrentRoomIndex);
+        var transitioned = await rig.State(run.InstanceId);
+        Assert.Equal(2, transitioned.CurrentRoomIndex);
+        Assert.Equal(new AbyssalPosition(3_932_160, 3_932_160, 3_932_160), transitioned.PrivateSceneOrigin);
+        Assert.All(transitioned.Rooms.Where(room => room.LocationId <= 2).SelectMany(room => room.Entities), entity => Assert.All(
+            new[] { entity.Position.X, entity.Position.Y, entity.Position.Z },
+            value => Assert.InRange(Math.Abs(value), 0d, 1_000_000_000d)));
+        var transfer = Assert.Single(rig.Simulator.ParticipantMoves);
+        Assert.True(transfer.PreserveSourcePose);
+        Assert.Equal((1, 2), (transfer.Source.RoomIndex, transfer.Destination.RoomIndex));
+        Assert.Empty(transfer.Position);
         Assert.Equal(1, rig.Simulator.Moves);
         await rig.Service.CallAsync(request);
         await rig.Drain();
@@ -562,6 +614,11 @@ public sealed class AbyssalHostFlowTests
     {
         await using var rig = await Rig.Create();
         var run = await rig.AdvanceToFinalRoom(await rig.CreateRun());
+        Assert.Equal(new AbyssalPosition(3_932_160, 3_932_160, 3_932_160), run.Data.PrivateSceneOrigin);
+        Assert.Equal(3, run.Data.Rooms.Count(room => room.SpawnPrepared));
+        Assert.All(run.Data.Rooms.SelectMany(room => room.Entities), entity => Assert.All(
+            new[] { entity.Position.X, entity.Position.Y, entity.Position.Z },
+            value => Assert.InRange(Math.Abs(value), 0d, 1_000_000_000d)));
         await rig.Drain();
         var session = await rig.Connect(run);
         var gate = run.Data.Rooms.Single(room => room.LocationId == 3).Entities.Single(entity => entity.Role == AbyssalEntityRole.Gate);
@@ -896,7 +953,7 @@ public sealed class AbyssalHostFlowTests
             Invoke("PrepareAndMaterializeAbyssalRoomAsync", c, tx, run, ordinal, CancellationToken.None));
         public async Task EnsureScene(AbyssalRunState run, int room)
         {
-            var center = await Reservation.ReadSystemCenterAsync(run.Data.SpaceLocationId, CancellationToken.None);
+            var center = await Reservation.ResolvePrivateSceneOriginAsync(run.Data, CancellationToken.None);
             Assert.Null(await Space.EnsureAbyssalSceneAsync(new SimAbyssalSceneSpec(
                 new SimSceneKey(run.Data.SpaceLocationId, run.InstanceId, room),
                 new SimAbyssalEnvironmentProfile([], []),
@@ -942,6 +999,7 @@ public sealed class AbyssalHostFlowTests
         public List<SimRemoveAbyssalParticipant> Removals { get; } = [];
         public List<SimSceneKey> RemovedScenes { get; } = [];
         public HashSet<SimSceneKey> LiveScenes { get; } = [];
+        public List<SimAbyssalSceneSpec> EnsuredSceneSpecs { get; } = [];
         public SimSceneKey? BlockedCleanupScene { get; set; }
         public TaskCompletionSource? SceneEnsureStarted { get; set; }
         public TaskCompletionSource? AllowSceneEnsure { get; set; }
@@ -953,7 +1011,9 @@ public sealed class AbyssalHostFlowTests
         public List<string> Order { get; set; } = [];
         public string? RemovalError { get; set; }
         public IReadOnlyList<double> Pose { get; set; } = [0, 0, 0];
+        public IReadOnlyList<double> ShipDirection { get; set; } = [0, 0, 1];
         public int Moves { get; private set; }
+        public List<SimMoveAbyssalParticipant> ParticipantMoves { get; } = [];
         public int PublicPoseQueries { get; private set; }
         protected override object? Invoke(MethodInfo? method, object?[]? args)
         {
@@ -971,13 +1031,14 @@ public sealed class AbyssalHostFlowTests
             {
                 var request = (SimGetAbyssalParticipantPose)args![0]!;
                 if (request.Scene.InstanceId == 0) PublicPoseQueries++;
-                return Task.FromResult(new SimGetAbyssalParticipantPoseReply(request.RequestId, request.Scene, request.ShipId, Pose, [0, 0, 1], null)
+                return Task.FromResult(new SimGetAbyssalParticipantPoseReply(request.RequestId, request.Scene, request.ShipId, Pose, ShipDirection, null)
                     { Deployment = request.Scene.InstanceId == 0 ? new SimAbyssalDeploymentSnapshot(false, false, false, false, false, []) : null });
             }
             if (method.Name is "MoveAbyssalParticipantAsync" or "MoveAbyssalParticipantInOrderAsync")
             {
                 Moves++;
                 var move = (SimMoveAbyssalParticipant)args![0]!;
+                ParticipantMoves.Add(move);
                 if (method.Name == "MoveAbyssalParticipantInOrderAsync")
                     ((Action<SimMoveAbyssalParticipantReply>)args[1]!)(new SimMoveAbyssalParticipantReply(move.RequestId, null));
                 Order.Add("SimArrival");
@@ -985,7 +1046,9 @@ public sealed class AbyssalHostFlowTests
             }
             if (method.Name == "EnsureAbyssalSceneAsync")
             {
-                LiveScenes.Add(((SimEnsureAbyssalScene)args![0]!).Spec.Scene);
+                var spec = ((SimEnsureAbyssalScene)args![0]!).Spec;
+                EnsuredSceneSpecs.Add(spec);
+                LiveScenes.Add(spec.Scene);
                 SceneEnsureStarted?.TrySetResult();
                 return AllowSceneEnsure is { } allowed ? AwaitSceneEnsureAsync(allowed.Task) : Task.FromResult<string?>(null);
             }

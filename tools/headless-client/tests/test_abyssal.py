@@ -461,12 +461,12 @@ def _prepare_combat_modules(client, ship_id, station_id):
     """Equip this disposable pilot before deployment using existing setup commands."""
     reply = m.plain(client.call("slash", "SlashCmd", "/giveskill me all 5"))
     assert "not found" not in str(reply).lower() and "Unknown command" not in str(reply), reply
-    # SDE339: four medium railguns, normal tank and capacitor support.
-    fitted_types = [12344] * 4 + [3530, 2048, 11269, 11269, 10190, 12058, 2032, 2032, 2032]
+    # SDE339: five medium railguns, normal tank and capacitor support.
+    fitted_types = [12344] * 5 + [3530, 2048, 11269, 11269, 10190, 12058, 2032, 17559, 17559]
     for type_id in fitted_types:
         reply = m.plain(client.call("slash", "SlashCmd", f"/fit me {type_id}"))
         assert "fitted" in str(reply).lower() and "offline" not in str(reply).lower(), reply
-    client.call("slash", "SlashCmd", "/giveitem Antimatter Charge M 4000")
+    client.call("slash", "SlashCmd", "/giveitem Lead Charge M 4000")
     wait_quietly(client, 1.0)
     dogma = client.call("dogmaIM", "MachoBindObject", (station_id, 15), None)[0]
     info = describe(client.call_bound(dogma, "GetAllInfo", True, True, None))
@@ -477,20 +477,22 @@ def _prepare_combat_modules(client, ship_id, station_id):
         if type_id in fitted_types and item_id is not None:
             modules.setdefault(type_id, set()).add(item_id)
     guns = sorted(modules.get(12344, ()))
-    assert len(guns) == 4, f"combat setup did not expose four railguns: {modules}"
+    assert len(guns) == 5, f"combat setup did not expose five railguns: {modules}"
+    webs = sorted(modules.get(17559, ()))
+    assert len(webs) == 2, f"combat setup did not expose two Federation Navy webs: {modules}"
     manager = client.call("invbroker", "MachoBindObject", (station_id, 15), None)[0]
     hangar = client.call_bound(manager, "GetInventory", 10004)
-    ammunition = _item_id(client.call_bound(hangar, "List"), 230)
+    ammunition = _item_id(client.call_bound(hangar, "List"), 226)
     client.call_bound(dogma, "LoadAmmo", ship_id, m.List(guns), m.List([ammunition]), station_id)
     cargo = _inventory_for(client, (station_id, 15), ship_id)
     client.call_bound(cargo, "Add", ammunition, station_id, flag=5)
     spare = [row.fields() for row in client.call_bound(cargo, "List", 5)
-             if int(row.fields()["typeID"]) == 230]
+             if int(row.fields()["typeID"]) == 226]
     assert len(spare) == 1 and int(spare[0]["quantity"]) >= 3000, spare
     assert len(modules.get(3530, ())) == len(modules.get(12058, ())) == 1, modules
     return {"guns": guns, "repair": next(iter(modules[3530])),
             "afterburner": next(iter(modules[12058])), "ship": ship_id,
-            "ammunition": int(spare[0]["itemID"])}
+            "ammunition": int(spare[0]["itemID"]), "webs": webs}
 
 
 def _room_snapshot(client, ballpark):
@@ -567,10 +569,10 @@ def _destroyed_on_wire(events, target):
     return {"TerminalPlayDestructionEffect", "RemoveBalls"} <= names
 
 
-def _shoot_entity(client, ballpark, dogma, modules, target, expiry_time):
+def _shoot_entity(client, ballpark, dogma, modules, target, expiry_time, follow_distance, web_ids=None):
     """Use ordinary movement, target locks and loaded guns; never alter NPC health."""
     client.call_bound(ballpark, "CmdSetSpeedFraction", 1.0)
-    client.call_bound(ballpark, "CmdFollowBall", target, 2500)
+    client.call_bound(ballpark, "CmdFollowBall", target, follow_distance)
     client.call_bound(
         dogma, "LoadAmmo", modules["ship"], m.List(modules["guns"]),
         m.List([modules["ammunition"]]), modules["ship"],
@@ -587,6 +589,8 @@ def _shoot_entity(client, ballpark, dogma, modules, target, expiry_time):
         pytest.fail(f"could not lock real Abyssal entity {target}")
     shot_events = []
     arming_events = []
+    pending_activation = set()
+    pending_webs = list(web_ids or ())
     for gun in modules["guns"]:
         client.call_bound(dogma, "Activate", gun, "targetAttack", target, 1000)
         armed = timed_events(client, 0.5)
@@ -598,12 +602,79 @@ def _shoot_entity(client, ballpark, dogma, modules, target, expiry_time):
     while time.monotonic() < deadline:
         entities, events = _room_snapshot(client, ballpark)
         shot_events.extend(event for event in events if event.get("name") == "OnDamageMessage")
+        arming_events.extend(events)
         if target not in entities:
             assert any(
                 fields.get("attackType") == "me" and _integer(fields.get("target")) == target
                 for event in shot_events for fields in _dicts(event.get("args"))
             ), f"entity {target} disappeared without this pilot firing a recorded shot"
             return
+        if _destroyed_on_wire(arming_events, target):
+            continue
+        events_to_check = list(events)
+        if pending_activation:
+            for gun in sorted(pending_activation):
+                activation = client.call_bound(dogma, "Activate", gun, "targetAttack", target, 1000)
+                assert activation == 1, f"reloaded railgun {gun} activation returned {activation!r}"
+                armed = timed_events(client, 0.5)
+                arming_events.extend(armed)
+                shot_events.extend(event for event in armed if event.get("name") == "OnDamageMessage")
+                events_to_check.extend(armed)
+                if _destroyed_on_wire(arming_events, target):
+                    break
+            pending_activation.clear()
+            if _destroyed_on_wire(arming_events, target):
+                continue
+        if pending_webs:
+            # SDE339 type17559 optimal range (attribute 54); falloff is zero (attribute 2044).
+            if ball_separation(events, modules["ship"], target)["surface_m"] <= 14_000:
+                for web in pending_webs:
+                    activation = client.call_bound(dogma, "Activate", web, "remoteWebifierFalloff", target, 1000)
+                    assert activation == 1, f"web activation for NPC {target} returned {activation!r}"
+                pending_webs.clear()
+        loaded_guns = set()
+        while events_to_check:
+            batch, events_to_check = events_to_check, []
+            empty_guns = set()
+            for event in batch:
+                if event.get("name") != "OnGodmaShipEffect":
+                    continue
+                effect = undock.args_of(event).get("$tuple", [])
+                if not isinstance(effect, (list, tuple)) or len(effect) < 10:
+                    continue
+                gun = undock.number(effect[0])
+                if gun not in modules["guns"] or effect[3] != 0 or effect[4] != 0:
+                    continue
+                error = effect[9].get("$tuple") if isinstance(effect[9], dict) else None
+                if not isinstance(error, (list, tuple)) or len(error) < 2 or error[0] != "NoCharges":
+                    continue
+                launcher = _fields_with_keys(error[1], {"launcher"})
+                assert launcher is not None, f"NoCharges omitted launcher for module {gun}: {effect[9]}"
+                launcher_tuple = launcher["launcher"].get("$tuple") if isinstance(launcher["launcher"], dict) else None
+                assert launcher_tuple and _integer(launcher_tuple[0]) == 4 and _integer(launcher_tuple[1]) == 12344, (
+                    f"NoCharges did not identify a medium railgun for module {gun}: {effect[9]}"
+                )
+                empty_guns.add(gun)
+            empty_guns.difference_update(loaded_guns)
+            if not empty_guns:
+                break
+            client.call_bound(
+                dogma, "LoadAmmo", modules["ship"], m.List(sorted(empty_guns)),
+                m.List([modules["ammunition"]]), modules["ship"],
+            )
+            loaded_guns.update(empty_guns)
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            reload_events = timed_events(client, min(6.0, remaining))
+            arming_events.extend(reload_events)
+            shot_events.extend(event for event in reload_events if event.get("name") == "OnDamageMessage")
+            if _destroyed_on_wire(arming_events, target):
+                break
+            events_to_check = reload_events
+        if loaded_guns:
+            pending_activation.update(loaded_guns)
+            continue
     pytest.fail(f"normal weapons did not destroy Abyssal entity {target} before the combat deadline")
 
 
@@ -678,7 +749,7 @@ def _complete_three_rooms(client, ship_id, system_id, ballpark, modules, content
         ]
         assert rats, f"room {room} exposed no actual combat NPCs"
         for rat in rats:
-            _shoot_entity(client, ballpark, dogma, modules, rat, expiry_time)
+            _shoot_entity(client, ballpark, dogma, modules, rat, expiry_time, follow_distance=10_000, web_ids=modules["webs"])
         entities, _ = _room_snapshot(client, ballpark)
         assert not [
             item_id for item_id, fields in entities.items()
@@ -686,7 +757,7 @@ def _complete_three_rooms(client, ship_id, system_id, ballpark, modules, content
         ], f"room {room} still has living combat NPCs"
         caches = [item_id for item_id, fields in entities.items() if _integer(fields["groupID"]) == 2009]
         assert len(caches) == 1, f"room {room} did not expose its damageable main cache"
-        _shoot_entity(client, ballpark, dogma, modules, caches[0], expiry_time)
+        _shoot_entity(client, ballpark, dogma, modules, caches[0], expiry_time, follow_distance=2500)
         entities, _ = _room_snapshot(client, ballpark)
         wrecks = [
             item_id for item_id, fields in entities.items()

@@ -304,6 +304,17 @@ public sealed class AbyssalContentTests
         Assert.Equal(1, first.State.Data.Rooms[0].LocationId);
         Assert.Equal(AbyssalGameMode.ThreeFrigates, first.State.Data.GameModeId);
         Assert.Equal(AbyssalContentType.FrigateFleet, first.State.Data.ContentType);
+        var canonicalOrigin = new AbyssalPosition(3_932_160, 3_932_160, 3_932_160);
+        Assert.Equal(canonicalOrigin, first.State.Data.PrivateSceneOrigin);
+        Assert.Equal(canonicalOrigin, retry.State.Data.PrivateSceneOrigin);
+        var jsonOptions = new JsonSerializerOptions(JsonSerializerDefaults.Web);
+        var savedJson = JsonSerializer.Serialize(first.State.Data, jsonOptions);
+        var roundTrip = JsonSerializer.Deserialize<AbyssalRunData>(savedJson, jsonOptions)!;
+        Assert.Equal(canonicalOrigin, roundTrip.PrivateSceneOrigin);
+        var legacyJson = System.Text.Json.Nodes.JsonNode.Parse(savedJson)!.AsObject();
+        legacyJson.Remove("privateSceneOrigin");
+        var legacy = JsonSerializer.Deserialize<AbyssalRunData>(legacyJson.ToJsonString(), jsonOptions)!;
+        Assert.Null(legacy.PrivateSceneOrigin);
         Assert.Equal("dark", retry.State.Data.Plan.WeatherType);
         Assert.Null(retry.State.Data.RunStartedAtMs);
         Assert.Null(retry.State.Data.RunExpiresAtMs);

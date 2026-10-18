@@ -43,7 +43,8 @@ Slash commands the screen and its helper service send (`eve/devtools/script/svc_
 | `giveskill` | yes |
 | `setstanding` | yes (owner-first form added in G12) |
 | `removeskill` | yes (G13) |
-| `online`, `givestarterskills`, `randomizeskills`, `skillscopy` | no |
+| `online` | yes (G16: the active ship, DEVIATIONS G16) |
+| `givestarterskills`, `randomizeskills`, `skillscopy` | no |
 | `tr` (teleport a pilot, to a system or to a position) | yes (G14; runtime entity and bookmark destinations not served, DEVIATIONS G14) |
 | `warpto`, `entity deploy`, `nuke`, `spawn`, `spawnn`, `unspawn`, `unload`, `load`, `skyhook` | no |
 | `createitem` | yes (G13): cargo of the ship in space, hangar when docked |

@@ -496,8 +496,8 @@ internal sealed partial class CharacterServicesComposition
             spaceSessions.ControlTowerUnanchor = spaceContainers.UnanchorControlTowerAsync;
             foundations.Scheduler.Register(Eve.Services.Space.SpaceContainers.AnchorJob, async (context, token) =>
                 await spaceContainers.AnchorAsync(context.Payload<Eve.Services.Space.SpaceContainers.DisruptorAnchorDue>()!.DeployableId, token));
-foundations.Scheduler.Register(Eve.Services.Space.SpaceContainers.ObservatoryPingJob, async (context, token) =>
-await spaceContainers.PingObservatoryAsync(context.Payload<Eve.Services.Space.SpaceContainers.ObservatoryPingDue>()!.DeployableId, token));
+            foundations.Scheduler.Register(Eve.Services.Space.SpaceContainers.ObservatoryPingJob, async (context, token) =>
+            await spaceContainers.PingObservatoryAsync(context.Payload<Eve.Services.Space.SpaceContainers.ObservatoryPingDue>()!.DeployableId, token));
             var containers = spaceContainers;
             var probes = new Eve.Services.Space.SpaceProbes(ships, dogma, new Eve.Ships.PgProbeStore(source, spaceSchema), spaceSessions, sim, now, message => Console.Error.WriteLine($"eve-host: probes: {message}"));
             spaceSessions.Probes = probes;
@@ -536,7 +536,19 @@ await spaceContainers.PingObservatoryAsync(context.Payload<Eve.Services.Space.Sp
                         return null;
                     }
                     await dogma.EnsureTypesAsync([typeId], token);
-                    return dogma.Type(typeId) is { } type ? new Eve.Services.Space.Gates.ShipClass(type.GroupId, type.RaceId) : null;
+                    if (dogma.Type(typeId) is not { } type)
+                        return null;
+                    var staticType = (await sde.ReadAsync("types", [typeId], cancellationToken: token)).SingleOrDefault();
+                    if (staticType is null)
+                        return null;
+                    int? metaGroupId = staticType.Doc.TryGetProperty("metaGroupID", out var metaGroup) && metaGroup.ValueKind == System.Text.Json.JsonValueKind.Number
+                        ? metaGroup.GetInt32()
+                        : null;
+                    long? factionId = staticType.Doc.TryGetProperty("factionID", out var faction) && faction.ValueKind == System.Text.Json.JsonValueKind.Number
+                        ? faction.GetInt64()
+                        : null;
+                    bool battlefieldAllowed = Eve.Services.Space.Gates.SpaceAccelerationGates.IsBattlefieldAllowed(type.CategoryId, metaGroupId, factionId);
+                    return new Eve.Services.Space.Gates.ShipClass(type.GroupId, type.RaceId) { BattlefieldAllowed = battlefieldAllowed };
                 },
                 (session, gateId, point, token) => spaceSessions.AccelerationGateTransitAsync(session, gateId, point, token),
                 WriteCurrentRoomAsync);

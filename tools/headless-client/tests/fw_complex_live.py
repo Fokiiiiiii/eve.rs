@@ -128,3 +128,89 @@ def site_state(instance: int) -> str:
     now_ms = psql("SELECT (extract(epoch from now()) * 1000)::bigint")
     return f"instance {state!r}, waves {waves.split() or 'none'}, complex {complex_row}, now {now_ms}"
 
+
+
+def open_battlefields() -> dict[int, tuple[int, int, int]]:
+    """Each open battlefield of the server: solar system id -> (battlefield id, occupier faction id, site instance id)."""
+    out = {}
+    for line in psql(f"SELECT solar_system_id, battlefield_id, occupier_id, instance_id FROM {fw('fw_battlefields')} WHERE closed_ms IS NULL").splitlines():
+        system, battlefield, occupier, instance = (int(value) for value in line.split("|"))
+        out[system] = (battlefield, occupier, instance)
+    return out
+
+
+def wait_for_open_battlefields(limit: float = 180.0) -> dict[int, tuple[int, int, int]]:
+    """The open battlefields, once the first tick after the start has spawned them (one per occupied system, at most two)."""
+    started = time.time()
+    while True:
+        battlefields = open_battlefields()
+        if battlefields or time.time() - started > limit:
+            return battlefields
+        time.sleep(5.0)
+
+
+def wait_for_battlefield_site(battlefield: int, limit: float = 90.0) -> int:
+    """The site instance of a battlefield, once its first pilot is in the system (the tick after the pilot comes in starts the site)."""
+    started = time.time()
+    while True:
+        instance = int(psql(f"SELECT instance_id FROM {fw('fw_battlefields')} WHERE battlefield_id = {battlefield}"))
+        if instance > 0:
+            return instance
+        if time.time() - started > limit:
+            raise AssertionError(f"battlefield {battlefield} has no site {int(limit)} s after a pilot came into its system")
+        time.sleep(2.0)
+
+
+BATTLEFIELD_ID_BASE = 4_300_000_000_000_000  # FwBattlefields.IdBase
+LP_EACH = 5_000  # FwBattlefields.LpEach (150,000 over the first 30 winners)
+
+
+def point_deployable(battlefield: int, index: int) -> int:
+    """The deployable id of a battlefield's capture point (FwBattlefields.PointId: the id base, four slots per battlefield, the point's index)."""
+    return BATTLEFIELD_ID_BASE + battlefield * 4 + index
+
+
+def scoreboard_deployable(battlefield: int) -> int:
+    """The deployable id of a battlefield's scoreboard (FwBattlefields.ScoreboardId: the fourth slot of the battlefield)."""
+    return BATTLEFIELD_ID_BASE + battlefield * 4 + 3
+
+
+def battlefield_winner_rows(battlefield: int) -> list[tuple[int, int]]:
+    """The pilots of a battlefield's winning side and their victory points on the daily rows (character id, victory points)."""
+    rows = psql(f"SELECT p.character_id, COALESCE(SUM(d.victory_points), 0) FROM {fw('fw_battlefield_pilots')} p "
+                f"LEFT JOIN {fw('fw_pilot_daily')} d ON d.character_id = p.character_id "
+                f"JOIN {fw('fw_battlefields')} b ON b.battlefield_id = p.battlefield_id AND p.faction_id = b.winner_id "
+                f"WHERE p.battlefield_id = {battlefield} GROUP BY p.character_id ORDER BY p.character_id")
+    return [tuple(int(value) for value in line.split("|")) for line in rows.splitlines()]
+
+
+def battlefield_lp(battlefield: int) -> list[tuple[int, int]]:
+    """The loyalty points a battlefield credited in the wallet's journal (holder id, delta), by its reference."""
+    rows = psql(f"SELECT holder_id, delta FROM {os.environ['EVE_WALLET_SCHEMA']}.lp_journal "
+                f"WHERE reason = 'factionwarfare_battlefield' AND reference LIKE 'factionwarfare:battlefield:{battlefield}:%' ORDER BY id")
+    return [tuple(int(value) for value in line.split("|")) for line in rows.splitlines()]
+
+
+def battlefield_points(battlefield: int) -> list[tuple[int, int, int]]:
+    """The three capture points of a battlefield: (point index, hold time in ms into the tick, holder faction id: 0 for none)."""
+    rows = psql(f"SELECT point_index, hold_ms, holder_id FROM {fw('fw_battlefield_points')} WHERE battlefield_id = {battlefield} ORDER BY point_index")
+    return [tuple(int(value) for value in line.split("|")) for line in rows.splitlines()]
+
+
+def battlefield_row(battlefield: int) -> tuple[int, int | None, int | None]:
+    """The battlefield's score and, once it is closed, its closing time and winner (None while open)."""
+    score, closed, winner = psql(f"SELECT score, COALESCE(closed_ms::text, ''), COALESCE(winner_id::text, '') FROM {fw('fw_battlefields')} "
+                                 f"WHERE battlefield_id = {battlefield}").split("|")
+    return int(score), (int(closed) if closed else None), (int(winner) if winner else None)
+
+
+SITE_OFFSET_METERS = 300_000  # FwBattlefields.SiteOffsetMeters: a battlefield's site point, along x from the complexes' point
+SITE_CLEARANCE_METERS = 1_000_000_000  # FwComplexSites.SiteClearanceMeters: the site point is this far outside the star's surface
+ROOM_ENTRY_OFFSET_METERS = 15_000  # DungeonRoomLayout.EntryOffsetMeters: a pilot arrives this far from the room's anchor (room 0: along +x)
+
+
+def battlefield_entry(system: int) -> list[float]:
+    """The point a pilot arrives at in a battlefield's room (its entry): the battlefield's origin moved 15 km along x (the SDE star of the system sets its height)."""
+    radius = float(psql(f"SELECT (doc::jsonb ->> 'radius')::double precision FROM sde.\"mapStars\" WHERE doc::jsonb ->> 'solarSystemID' = '{system}'"))
+    origin = [float(SITE_OFFSET_METERS), 0.0, radius + SITE_CLEARANCE_METERS]
+    return [origin[0] + ROOM_ENTRY_OFFSET_METERS, origin[1], origin[2]]

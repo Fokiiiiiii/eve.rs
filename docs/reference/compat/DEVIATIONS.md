@@ -4357,8 +4357,8 @@ donation sections it marks outdated. Design: `docs/project/FW_DESIGN.md`.
   Medium: the wiki's table has no Medium victory-point value; project rule 150 VP (between Small NVY and Large NVY), 900 s from the table.
   Hull limits (frigate 1, destroyer 2, cruiser 3, battleship 5) are stored; the entry gate that enforces them is not built.
   Respawn: 30 minutes after a complex of a size is captured in its system (wiki, "about 30 minutes"). Advanced, Frontline and Command Operations
-  names of the task brief are the wiki's ADV/ELT/BSC variants, not separate sizes; the SDE archetypes 67 (Factional Warfare Objectives) and 68
-  (Factional Warfare Battlefield) are not built (a battlefield has three capture points, 2000 VP and 150k LP, wiki "Battlefields").
+  names of the task brief are the wiki's ADV/ELT/BSC variants, not separate sizes; the SDE archetype 68 (Factional Warfare Battlefield) is the
+  battlefield's gated site (see "Battlefield: project rules" below); the archetype 67 (Factional Warfare Objectives) is not built.
 - **Complexes: capture timer and presence (project rule).** Each complex is a dungeon site of its size's SDE archetype (33 to 36; the first startable
   template by complex id), started at the system origin with lifetime 24 h (shortcut: the wiki gives no site lifetime). Its NPC defenders are its waves;
   the timer advances only once the site is completed (all defenders destroyed; the wiki: the defending NPC must be killed first). Presence is the pilots
@@ -4367,18 +4367,24 @@ donation sections it marks outdated. Design: `docs/project/FW_DESIGN.md`.
   The step is capped at one tick. The timers are additive and signed (wiki). Enemy NPCs outside the site do not pause the timer (not modelled).
   Entry: the complex's gate, when the template has rooms, is the acceleration gate of `DungeonRoomLayout`; a single-room site needs none (EVE:
   the wiki's acceleration gate of a complex is not reproduced by a room layout).
-- **Battlefield and objective: project rules (not built yet).** The SDE carries the archetypes 67 (objectives) and 68 (battlefield) with dungeon
-  names only, no room or objective data (`dungeons.jsonl`, 9 battlefield and 6 objective templates in the owner catalog with combat waves only).
-  The rules come from the wiki "Battlefields" section and the client's `fwCapturePoint.py` / `fwScoreboard.py`:
-  - Objective (capture point): held by the complex timer of its size (no new number); pilots of one side within 30 km, the defenders dead first,
-    enemy NPCs within 30 km pause it (wiki, and `FWCapturePoint.GetState`).
-  - Battlefield: three capture points (one central, two about 80 km either side, wiki); holding a point builds the holder's progress. Project rule: a
-    point completes in 900 s of uncontested holding (the wiki gives no hold time; the Medium complex timer is used as the scale).
-  - Battlefield completion: 2,000 victory points to the system (wiki) and LP to the winners: project rule of 150,000 LP split evenly over the first 30
-    participants (5,000 each, wiki "up to 150,000 LP for up to 30 participants"); pilots beyond 30 receive nothing (the wiki says "reduced"; the reduced
-    value is not given, so 0 is the project's choice).
-  - Spawn: frontline systems only, up to two battlefields at a time, a new one three hours after one completes (wiki).
-  - Gate: 10 to 20 km from the beacon, T1 and Navy ships only (wiki); non-enrolled capsuleers land 75 to 125 km from the points (wiki).
+- **Battlefield: project rules (built; the objective, archetype 67, is not built).** Live: `tests/test_fw_battlefield_walk.py` (eve_p4, MITM capture)
+  takes a battlefield by its gate and holds its centre point until the win (FW_DESIGN "Battlefields"). The battlefield's site is a gated room of the SDE archetype 68
+  (one of the nine battlefield templates of the owner catalog, chosen by the battlefield id); it starts with the first pilot in the system, as a complex's
+  does (a site started with no pilot has its waves refused and ends before its gate is placed). Its site point is the complexes' site point of the system
+  moved 300 km along x (`FwBattlefields.SiteOffsetMeters`): the complexes of a system share one point, and a battlefield's room and points would
+  otherwise count the complexes' pilots in their presence.
+  - Points: three capture points (the centre and two 80 km either side, wiki). The hold timer and the point value are the SDE's fwCapturePoint values
+    (numberOfSeconds 20, pointValue 1, range 30 km): a point's holder is the side whose pilots are within its range alone, and each full 20 s of
+    holding moves the score one point toward that side. Both sides present, or neither, pause the timer.
+  - Score: the SDE fwScoreboard thresholds (-150 and +150). The battlefield is won at a threshold: with three points held by one side, that is about
+    1,000 s. (The wiki gives no hold time; the SDE's values are used.)
+  - Completion: 2,000 victory points to the system (wiki), and LP to the winners: 150,000 split evenly over the first 30 winners by character id
+    (5,000 each, wiki "up to 150,000 LP for up to 30 participants"); the other winners get nothing (the wiki says "reduced"; its value is not given).
+    The winners' victory points (2,000 split evenly, rounded down) go to the daily statistics rows. The site ends with the battlefield.
+  - Spawn: occupied systems, up to two open at a time, one per system, three hours after a completion (wiki).
+  - Not built: the frontline choice (every occupied system is a candidate), the NPC blockers of a point, the objectives (archetype 67, and
+    `OnFwObjectiveCompletedInSolarSystem`), and the wiki's gate restrictions (T1 and Navy ships only; a non-enrolled capsuleer lands 75 to 125 km from
+    the points). The gate applies the room's rule: its allowed races, or, when it names none, the blacklist of capsules and capital hulls.
 - **Complexes: scan visibility.** An open complex is listed in the system's anomaly overlay (`map`, `scanMgr` and `taleMgr` GetAnomalies path) with the
   `CosmicAnomalyInfo` fields of EveJS `buildAnomalySiteInfo` (siteID and instanceID = the site's instance, dungeonID, archetypeID, difficulty, targetID =
   the first gate of its layout or empty, position at the origin). The position is not the complex's real place (no SDE coordinates).
@@ -4625,6 +4631,10 @@ as reference. The client's `bookmarkSvc.py` (`OnSharedBookmarksFolderUpdated`, `
   control zone type of its occupier's faction, point A, B or C (SDE 73443 to 73461, group 4494, radius 231; the types that carry the fwCapturePoint component).
   Protocol-level change: a slim item's whole-number field is sent as an int, or as a long when it does not fit 32 bits (the marshal rule of `wire::id`),
   so a FILETIME is a long. Tests: `a_capture_point_is_put_in_space_once...` (Rust), the golden frames (3 valid, 4 invalid), `SimCodecTests`.
+- **Deployable visibility (shared simulation, found by the battlefield walk).** A deployable (a gate, a capture point, a scoreboard, a pocket, a bomb)
+  was announced only to the pilots that could see it when it was placed, so a pilot that flew into its public-grid box later never had its ball and could
+  not warp to it. The tick now reconciles the deployables' views as it does the wrecks' and asteroids' (`reconcile_deployables`): a bound pilot that moves
+  into a deployable's view is sent its ball, and one that moves out is told it is gone. Test: `a_deployable_reaches_a_pilot_that_comes_into_its_view...` (Rust).
 - Tests: `simlink_fixtures` (8 tests; the golden frames add 6 valid and 8 invalid SetSlimField cases), `deployable::tests::a_dynamic_slim_field...`,
   `SimCodecTests` (replays the frames in C#), `Eve.Services.Space.Tests` (the beacon host tests, eve_p4).
 

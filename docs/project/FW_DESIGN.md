@@ -132,7 +132,7 @@ Refusals reach the client as `CustomInfo` notices (text keys of the client's loc
 - Capture walk: `tools/headless-client/tests/test_fw_capture_walk.py` passes (eve_p4, MITM capture): enter the gate, clear the defenders with the QA
   Smartbomb, the timer runs, `OnFacWarDungeonCompleted` is sent. The helpers are `tests/fw_complex_live.py`. Per-pilot victory points: the winning side's pilots inside split the victory points evenly (rounded down) on `fw_pilot_daily`
   (`FwComplexes.cs`, DEVIATIONS "Complexes: victory points"); the walk asserts the pilot's row and `GetStats_Character`.
-- Not built: the battlefield (archetype 68) and the objectives (67) (see the plan below).
+- Battlefields: built, see "Battlefields" below (archetype 68 is the battlefield's gated site; the objectives, archetype 67, are not built).
 - Tests: `FwComplexTests.cs` (5). Eve.FactionWarfare.Tests: 83 passed on eve_p4.
 
 ## Not built
@@ -153,26 +153,41 @@ Pilots enter a complex's rooms through acceleration gates. The API for the FW co
 `docs/project/ACCELERATION_GATES.md` (`DungeonRoomLayout`, `SpaceContainers.AccelerationGateDeployableId`,
 `SpaceAccelerationGates`). Single-room complexes need no gate.
 
-## Battlefields (built, C3a to C3b)
+## Battlefields (built, C3a to C3b; walked live)
 
 - Client contract: `spacecomponents/client/components/fwCapturePoint.py` (the point's slim fields `component_fwCapturePoint_factionInfo` (attacker,
   occupier) and `component_fwCapturePoint_nextPointTime`; the point is contested when both sides' pilots are within its range) and `fwScoreboard.py`
   (`component_fwScoreboard_score`, signed: negative for the occupier, positive for the attackers, between the thresholds of the SDE scoreboard).
 - SDE: the control zone types (`{Faction} Control Zone A/B/C`, group 4494) carry `fwCapturePoint` (numberOfSeconds 20, pointValue 1, range 30 km); the
-  scoreboards (types 73447 to 73450, group 227) carry `fwScoreboard` (thresholds -150 and 150).
-- Rules: `dotnet/src/Eve.FactionWarfare/FwBattlefields.cs` (`FwBattlefieldTicker`). Up to two open battlefields, one per occupied system, a new one
-  three hours after a completion. Three points at the centre and 80 km either side; one side present holds a point and its hold timer runs (a tick of
-  20 s gives the holder one point of score); both or neither pause it. A score of +/-150 wins the battle: 2,000 victory points move the system's attacker
-  points, and the first 30 winning pilots (by character id) get 5,000 LP each, issued by the winning militia (`IFwRewards`, the loyalty store with the
-  member's corporation tax).
-- State: migration 0005 (`fw_battlefields`, `fw_battlefield_points`, `fw_battlefield_pilots`), `FwStore.Battlefields.cs`. The director
-  (`FwComplexDirector`) ticks it in the complex tick's transaction and publishes `factionwarfare.battlefield_state` and `factionwarfare.battlefield_won`.
+  scoreboards (types 73447 to 73450, group 227) carry `fwScoreboard` (thresholds -150 and 150). The battlefield's site is a dungeon of archetype 68 (nine
+  templates in the owner catalog, each with one gate).
+- Rules: `dotnet/src/Eve.FactionWarfare/FwBattlefields.cs` (`FwBattlefieldTicker`). Up to two open battlefields, one per occupied system, a new one three
+  hours after a completion. Three points at the centre and 80 km either side of the battlefield's origin; the holder of a point is the side whose pilots are
+  within its range alone, its hold timer runs and each full 20 s of holding moves the score one point toward that side; both or neither pause it. A score of
+  +/-150 wins the battle: 2,000 victory points move the system's attacker points, the winners' victory points (split evenly) go to `fw_pilot_daily`, and the
+  first 30 winning pilots (by character id) get 5,000 LP each, issued by the winning militia (`IFwRewards`, the loyalty store with the member's corporation tax).
+- Site: the battlefield's origin is the complexes' site point of its system moved 300 km along x (`FwBattlefields.SiteOffsetMeters`). The site starts with the
+  first pilot in the system (`IFwComplexSites.StartBattlefieldAsync`, as a complex's does), ends when the battlefield is won, and its gate is the room's
+  (`AccelerationGateDeployableId`). A pilot's current site is the open complex or battlefield whose capture radius holds it (`FwComplexSites.InstanceOfAsync`).
+- State: migration 0005 (`fw_battlefields`, `fw_battlefield_points`, `fw_battlefield_pilots`), migration 0006 (`fw_battlefields.instance_id`), `FwStore.Battlefields.cs`.
+  The director (`FwComplexDirector`) ticks it in the complex tick's transaction and publishes `factionwarfare.battlefield_state` and `factionwarfare.battlefield_won`.
 - Host: `NotifyBattlefieldState` places the points (`PlaceCapturePoint`, protocol 77), the scoreboard (`PlaceBattlefieldScoreboard`, protocol 78), sets
   the next tick and the score (`SetSlimField`), and takes the balls out when the battle is over. `NotifyBattlefieldWon` sends `OnFwScoreboardWon` and
   `OnVictoryPointStateUpdated` to the system's pilots.
-- Tests: `FwBattlefieldRulesTests` (pure), `FwBattlefieldTickerTests` (eve_p4: a side's win with the awards, the occupier's win, the pause under contest),
-  `SimCodecTests` and the golden frames for protocols 77 and 78, `a_capture_point_...` and `a_battlefield_scoreboard_...` (Rust).
+- Simulation: a deployable reaches the pilots that come into its view after it is placed (`reconcile_deployables`, found by this walk: before, a pilot that
+  flew into a gate's or a point's box was never sent its ball). The deployable's view is kept the same way as the wrecks' and the asteroids'.
+- Tests: `FwBattlefieldRulesTests` (pure), `FwBattlefieldTickerTests` (eve_p4: a side's win with the awards, the occupier's win, the pause under contest, the
+  site started with the first pilot and ended with the win), `SimCodecTests` and the golden frames for protocols 77 and 78, the Rust test
+  `a_deployable_reaches_a_pilot_that_comes_into_its_view_and_leaves_with_it`, `a_capture_point_...` and `a_battlefield_scoreboard_...`.
+- Live walk: `tools/headless-client/tests/test_fw_battlefield_walk.py` (eve_p4, the live port 26103, MITM 26113, run with `EVE_FW_CAPTURE` set to the capture
+  file). A pilot enlists in the occupier's enemy, flies to the battlefield's system, warps to its gate and takes it into the room. The capture holds each point's
+  faction info and tick countdown and the scoreboard's score updates. The centre point is held by the enemy while the pilot is in its range (the room's
+  entry is 15 km from it), its score rises by one per 20 s, and the battlefield is won at +150: the test asserts the system's attacker points (+2,000), the
+  notices (`OnFwScoreboardWon` before `OnVictoryPointStateUpdated`), the winner's victory points on the daily row and in `GetStats_Character`, and the 5,000 LP
+  in the wallet journal. The walk takes about 50 minutes (the win needs 3,000 s with one point held). Passed on the run of 2026-10-18 (three
+  pilots on the three points were tried first: the side points were not reached; see the commit history of the walk).
 - Not built: the battlefield's NPC blockers (enemy NPCs do not pause a point), the defenders of a point, the frontline choice (every occupied
-  system is a candidate), the objectives (archetype 67) and their `OnFwObjectiveCompletedInSolarSystem`, and the gate of a battlefield.
-- Live walk: not run. No headless walk exists for a battlefield (the complex walk is `tests/test_fw_capture_walk.py`); the points' and scoreboard's
-  slim fields are covered by the codec and simulation tests, and the awards by the ticker tests on eve_p4.
+  system is a candidate), the objectives (archetype 67) and their `OnFwObjectiveCompletedInSolarSystem`, and the wiki's gate restrictions (T1 and
+  Navy ships only; a non-enrolled capsuleer lands 75 to 125 km from the points).
+- Not checked: the two side points' holding (no pilot held them in the walk), the contest (both sides present pausing a point) on the live server (covered by
+  `FwBattlefieldTickerTests`), and the second battlefield's win.

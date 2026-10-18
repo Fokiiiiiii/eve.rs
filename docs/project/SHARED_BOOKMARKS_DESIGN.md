@@ -1,7 +1,8 @@
 # Shared bookmark folders and owner groups: design and state
 
-Status: the store, rules and service for owner groups (access lists) and shared bookmark folders are built and tested on the PostgreSQL
-lane. The graphical-client walk and the revocation notifications are not built. The compatibility choices are in
+Status: the store, rules, service, revocation notifications and corporation membership headless walk for owner groups (access lists) and
+shared bookmark folders are built and tested on the PostgreSQL lane. The graphical-client walk and an alliance membership live walk remain
+open. The compatibility choices are in
 `docs/reference/compat/DEVIATIONS.md` ("Owner groups: ownerGroupManager" and "Bookmarks: shared (access group) folders, built").
 
 ## Sources (in priority order)
@@ -54,9 +55,11 @@ lane. The graphical-client walk and the revocation notifications are not built. 
   limits, losing a list, the user and manager edit rules, sub-folder refusal, copy, the 500 limit, deletion, restart) and
   `SharedFolderNotificationTests` (who hears a change, when a list stops giving a view, deletion).
 
+- Verification (2026-10-18): the corporation membership live walk passed (1 test); `SharedFolderNotificationTests` passed (5 tests);
+  `OwnerGroupManagerServiceTests` passed (6 tests). The graphical client and alliance membership changes were not checked.
+
 ## Open
 
-- The corporation and alliance changes are checked by the upkeep timer every minute from the character store; the live client walk of
-  them is not run yet.
-- The live walk `tools/headless-client/tests/test_walk_shared_bookmarks.py` (two pilots, owner groups, a shared folder, the member's
-  notices and the revocation) passes against the eve.rs live server through `tools/mitm` (capture kept outside the repository).
+- The upkeep timer checks corporation and alliance changes every minute from the character store. The headless live walk covers leaving and
+  rejoining a corporation; an alliance membership live walk remains open.
+- The live walks in `tools/headless-client/tests/test_walk_shared_bookmarks.py` cover list revocation and corporation membership loss and recovery. The list-revocation walk was run through `tools/mitm`; the corporation-membership walk uses the eve.rs live server. Captures are kept outside the repository.

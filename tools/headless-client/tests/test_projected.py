@@ -19,10 +19,11 @@ import uuid
 import pytest
 
 from evecli.describe import describe
+from tests import dbseed
 from tests import test_login_to_character as base
 from tests.test_death import DEATH
 from tests.test_health import own_damage_state
-from tests.test_others import watch
+from tests.test_others import hold_still, watch
 from tests.test_repair import armors_of, text_of
 from tests.test_target import plain_race
 from tests.test_undock import STATION, SYSTEM, arrive, number, outcome
@@ -163,7 +164,10 @@ def fight(name: str, skills: tuple, module_type: int):
     race = DEATH["races"][0]
     run = uuid.uuid4().hex[:10]
     with base.connect(f"walk-{name}-{run}") as who:
-        _, ship, _, _ = arrive(who, plain_race(race, "victim"), run)
+        character, ship, _, _ = arrive(who, plain_race(race, "victim"), run)
+        dbseed.set_hull(ship, dbseed.COCKROACH)
+        # the smartbomb lights only at the red safety (SafetyActivated otherwise): the pilot's safety is none, as the QA arsenal's is
+        dbseed.set_safety(character)
         only = {"who": who}
         slash = lambda command: text_of(who.call("slash", "SlashCmd", command))  # noqa: E731
         for skill in skills:
@@ -184,6 +188,7 @@ def fight(name: str, skills: tuple, module_type: int):
         who.call_bound(dogma[0], "GetAllInfo", True, True, None)
         watch(only, 1.0)
         watch(only, 45.0, until=lambda seen: any(e["name"] == "OnInvulnCancelled" for e in seen["who"]))
+        hold_still(who, beyonce[0])
         # a rat comes into space
         assert slash("/npc 1 Blood Visionary").startswith("Spawned 1 hull from Blood Visionary")
         spawn = watch(only, 8.0)["who"]
@@ -251,7 +256,14 @@ def test_a_smartbomb_hurts_the_rat_that_comes_into_its_field():
     """A smartbomb needs no lock: the pilot flies at a belt rat, and a cycle that begins with the rat in the field hurts it and tells the pilot (a damage message of its own)."""
     with fight("bomb", ("Energy Pulse Weapons",), SMALL_SMARTBOMB) as f:
         outcome(lambda: f.who.call_bound(f.beyonce[0], "CmdFollowBall", f.rat, 1000))
-        _, refused = outcome(lambda: f.who.call_bound(f.dogma[0], "Activate", f.module, "empWave", 0, 1000))
+        # a smartbomb does not start within 5 to 6 km of a station or a stargate (SMARTBOMB_NEAR_STATION): the pilot flies on to the rat until it starts
+        deadline = time.monotonic() + 120.0
+        while True:
+            _, refused = outcome(lambda: f.who.call_bound(f.dogma[0], "Activate", f.module, "empWave", 0, 1000))
+            if refused is None or time.monotonic() > deadline or "close to a station" not in base.brief(refused):
+                break
+            outcome(lambda: f.who.call_bound(f.beyonce[0], "CmdFollowBall", f.rat, 1000))
+            watch(f.only, 5.0)
         assert refused is None, base.brief(refused)
         deadline = time.monotonic() + 90.0
         hurt = []

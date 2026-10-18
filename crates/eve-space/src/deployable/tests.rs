@@ -1295,8 +1295,7 @@ fn a_deadspace_pocket_is_in_the_scene_in_no_client_ball_and_stops_no_field() {
 }
 
 #[test]
-fn a_deployable_placed_out_of_a_pilot_s_view_is_told_to_the_pilot_when_it_comes_into_view_and_taken_out_when_it_leaves()
- {
+fn a_deployable_reaches_a_pilot_that_comes_into_its_view_and_leaves_with_it() {
     // the acceleration gates and the capture points of a battlefield are placed where the pilots are not yet: a pilot that flies into their box is told them
     let (mut scene, t) = crowd();
     let a = scene.pilots[&A].ship.position;

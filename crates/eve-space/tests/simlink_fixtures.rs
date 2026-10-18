@@ -4,6 +4,7 @@
 use eve_space::death::Credit;
 use eve_space::drones::DroneEffect;
 use eve_space::health::{Condition, Layer, Resonances, Vitals};
+use eve_space::link::SlimValue;
 use eve_space::link::{
     AbyssalAttributeModifier, AbyssalBoundaryDamagePoint, AbyssalBoundaryProfile, AbyssalEnvironmentField,
     AbyssalEnvironmentProfile, AbyssalModifierOperation, AbyssalSceneObject, AbyssalSceneSpec, AbyssalTrace,
@@ -881,6 +882,21 @@ fn beacon_state(state: &Value) -> eve_space::link::AnalysisBeaconState {
     }
 }
 
+/// A dynamic slim-item field value of a case: `{"tag": ..., "value": ...}` or `{"tag": "tuple", "items": [...]}`.
+fn slim_value_of_case(value: &Value) -> SlimValue {
+    match value["tag"].as_str().unwrap() {
+        "none" => SlimValue::None,
+        "int" => SlimValue::Int(wide(value, "value")),
+        "real" => SlimValue::Real(value["value"].as_f64().unwrap()),
+        "bool" => SlimValue::Bool(value["value"].as_bool().unwrap()),
+        "text" => SlimValue::Text(text(value, "value")),
+        "tuple" => {
+            SlimValue::Tuple(value["items"].as_array().unwrap().iter().map(slim_value_of_case).collect())
+        }
+        other => panic!("slim value tag {other}"),
+    }
+}
+
 fn message_of(case: &Value) -> Message {
     let number = |field: &str| {
         case[field]
@@ -1082,8 +1098,13 @@ fn message_of(case: &Value) -> Message {
         },
         "Enter" => Message::Enter(Box::new(Enter {
             session_id: session_id(),
-            scene: scene_key_of(case),
-            how: if number("how") == 0 { How::Undock } else { How::InSpace },
+            scene: if case.get("scene").is_some() { scene_key_of(case) } else { SceneKey::solar_system(number("solarSystemId") as i32) },
+            how: match number("how") {
+                0 => How::Undock,
+                1 => How::InSpace,
+                2 => How::Anchor,
+                other => panic!("how {other} in {case}"),
+            },
             station_id: wide(case, "stationId"),
             ship: ship_of(&case["ship"]),
             position: case.get("position").map(|vector| {
@@ -1571,6 +1592,46 @@ fn message_of(case: &Value) -> Message {
                 ship_id: wide(case, "shipId"),
             }))
         }
+        "PlaceBattlefieldScoreboard" => {
+            Message::PlaceBattlefieldScoreboard(Box::new(eve_space::link::ScoreboardPlacement {
+                deployable_id: wide(case, "deployableId"),
+                solar_system_id: number("solarSystemId") as i32,
+                name: text(case, "typeName"),
+                type_id: number("typeId") as i32,
+                group_id: number("groupId") as i32,
+                position: vector_of(case, "position"),
+                radius: case["radius"].as_f64().unwrap(),
+            }))
+        }
+        "PlaceCapturePoint" => Message::PlaceCapturePoint(Box::new(eve_space::link::CapturePointPlacement {
+            deployable_id: wide(case, "deployableId"),
+            solar_system_id: number("solarSystemId") as i32,
+            name: text(case, "typeName"),
+            type_id: number("typeId") as i32,
+            group_id: number("groupId") as i32,
+            position: vector_of(case, "position"),
+            radius: case["radius"].as_f64().unwrap(),
+            attacker_faction: number("attackerFaction") as i32,
+            occupier_faction: number("occupierFaction") as i32,
+            next_point_time: wide(case, "nextPointTime"),
+        })),
+        "PlaceAccelerationGate" => {
+            Message::PlaceAccelerationGate(Box::new(eve_space::link::DisruptorPlacement {
+                deployable_id: wide(case, "deployableId"),
+                solar_system_id: number("solarSystemId") as i32,
+                name: text(case, "typeName"),
+                type_id: number("typeId") as i32,
+                group_id: number("groupId") as i32,
+                position: vector_of(case, "position"),
+                radius: case["radius"].as_f64().unwrap(),
+                range: case["range"].as_f64().unwrap(),
+                active: case["active"].as_bool().unwrap(),
+                owner_id: wide(case, "ownerId"),
+                corporation_id: number("corporationId") as i32,
+                alliance_id: number("allianceId") as i32,
+                ship_id: wide(case, "shipId"),
+            }))
+        }
         "PlaceControlTower" => Message::PlaceControlTower(Box::new(eve_space::link::DisruptorPlacement {
             deployable_id: wide(case, "deployableId"),
             solar_system_id: number("solarSystemId") as i32,
@@ -1606,6 +1667,11 @@ fn message_of(case: &Value) -> Message {
                 state: beacon_state(&case["state"]),
             }))
         }
+        "SetSlimField" => Message::SetSlimField {
+            item_id: wide(case, "itemId"),
+            name: text(case, "fieldName"),
+            value: slim_value_of_case(&case["value"]),
+        },
         "SetAnalysisBeaconState" => Message::SetAnalysisBeaconState {
             deployable_id: wide(case, "deployableId"),
             state: beacon_state(&case["state"]),

@@ -17,7 +17,10 @@ public static class ResearchRules
     public const long DatacoreResearchPoints = 100;
     public const long DatacoreIsk = 10_000;
 
-    /// <summary>RP per day of a project: the formula above.</summary>
+    /// <summary>
+    /// RP per day of a project: (1 + (20 + 5 x negotiation + standing) / 100) x (specialty level + agent level)^2, the EveJS
+    /// computePointsPerDay formula, which cites the EVE University "Research missions" page.
+    /// </summary>
     public static double PointsPerDay(int negotiationLevel, double effectiveStanding, int specialtyLevel, int agentLevel)
     {
         ArgumentOutOfRangeException.ThrowIfNegative(negotiationLevel);

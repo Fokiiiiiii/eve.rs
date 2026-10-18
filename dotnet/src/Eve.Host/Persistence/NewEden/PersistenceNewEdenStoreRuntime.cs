@@ -254,8 +254,8 @@ public sealed partial class PersistenceNewEdenStoreRuntime(
                         break;
                     case TrainingGrant training:
                         for (var unit = 0L; unit < training.Units; unit++)
-                            trainingSlots.Add(await accountDirectory.ExtendTrainingSlotAsync(
-                                connection, transaction, checked((uint)purchase.AccountId), null, TimeSpan.FromDays(training.Days), now, cancellationToken));
+                            trainingSlots.Add(await GrantTrainingSlotAsync(
+                                connection, transaction, purchase.AccountId, null, TimeSpan.FromDays(training.Days), now, cancellationToken));
                         break;
                 }
             }

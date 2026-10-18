@@ -33,10 +33,14 @@ public sealed class RedeemUserSvcCompatibilityTests
         Assert.Empty(Assert.IsType<PyDict>(await Call(service, session, "GetMultiCharactersTrainingSlots")).Entries);
         Assert.Empty(Assert.IsType<PyList>(await Call(service, session, "GetUpdatedMultiCharacterTraining")).Items);
         Assert.Empty(Assert.IsType<PyList>(await Call(service, session, "ActivateSoulboundMultiTraining")).Items);
-        await Assert.ThrowsAsync<NotSupportedException>(() => Call(service, session, "ActivateMultiTraining"));
+        await Assert.ThrowsAsync<MachoWrappedException>(() => Call(service, session, "ActivateMultiTraining"));
         Assert.Empty(Assert.IsType<PyDict>(await Call(service, session, "GetMultiCharactersTrainingSlots")).Entries);
 
-        Assert.Same(PyBool.False, await Call(service, session, "ReportBot", new PyInt(90000004)));
+        // GATE-C: the votes and reports answer true and keep nothing (EveJS userService.js 1104-1127)
+        Assert.Same(PyBool.True, await Call(service, session, "CastUpvote"));
+        Assert.Same(PyBool.True, await Call(service, session, "CastDownvote", new PyStr("feedback")));
+        Assert.Same(PyBool.True, await Call(service, session, "ReportBot", new PyInt(90000004)));
+        Assert.Same(PyBool.True, await Call(service, session, "ReportISKSpammer", new PyInt(90000004)));
         Assert.Same(PyBool.False, await Call(service, session, "CreateRedeemTokenQA"));
     }
 
@@ -85,7 +89,7 @@ public sealed class RedeemUserSvcCompatibilityTests
         AssertSlots(Assert.IsType<PyDict>(await Call(service, session, "GetMultiCharactersTrainingSlots")), (2, SlotEndsAt), (3, SlotEndsAt));
 
         // The item activation is refused: nothing is consumed and no queue is granted.
-        await Assert.ThrowsAsync<NotSupportedException>(() => Call(service, session, "ActivateMultiTraining", new PyLong(90000003), new PyInt(34)));
+        await Assert.ThrowsAsync<MachoWrappedException>(() => Call(service, session, "ActivateMultiTraining", new PyLong(90000003), new PyInt(34)));
         Assert.Equal(3, store.Activations.Count);
         AssertSlots(Assert.IsType<PyDict>(await Call(service, session, "GetMultiCharactersTrainingSlots")), (2, SlotEndsAt), (3, SlotEndsAt));
 
@@ -222,6 +226,11 @@ public sealed class RedeemUserSvcCompatibilityTests
             _slots.Add((slot, SlotEndsAt));
             return GetActiveSlotsAsync(authenticatedUserId, cancellationToken);
         }
+
+        // This store holds no certificate items, so every item activation is refused as the account store refuses it.
+        public ValueTask<IReadOnlyList<(int Slot, long EndsAt)>> ActivateItemAsync(
+            long authenticatedUserId, long itemId, int? trainingId, CancellationToken cancellationToken) =>
+            throw new InvalidOperationException("That item is not a Multiple Character Training certificate.");
     }
 
     private static Task<PyValue> Call(IService service, ClientSession session, string method, params PyValue[] args) =>

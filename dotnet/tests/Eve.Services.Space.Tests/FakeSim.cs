@@ -313,6 +313,8 @@ internal sealed class FakeSim : ISimulation
 
     public void PlaceAnalysisBeacon(SimPlaceAnalysisBeacon beacon) => Heard.Enqueue(beacon);
 
+    public void SetSlimField(long itemId, string fieldName, SimSlimValue value) => Heard.Enqueue(new SimSetSlimField(itemId, fieldName, value));
+
     public void SetAnalysisBeaconState(long deployableId, SimAnalysisBeaconState state) => Heard.Enqueue(new SimSetAnalysisBeaconState(deployableId, state));
 
     public void PlaceInhibitor(SimPlaceInhibitor inhibitor) => Heard.Enqueue(inhibitor);
@@ -323,6 +325,9 @@ internal sealed class FakeSim : ISimulation
     public void PlaceObservatory(SimPlaceObservatory observatory) => Heard.Enqueue(observatory);
     public void PlaceControlTower(SimPlaceControlTower tower) => Heard.Enqueue(tower);
     public void PlaceDeadspacePocket(SimPlaceDeadspacePocket pocket) => Heard.Enqueue(pocket);
+    public void PlaceAccelerationGate(SimPlaceAccelerationGate gate) => Heard.Enqueue(gate);
+    public void PlaceCapturePoint(SimPlaceCapturePoint point) => Heard.Enqueue(point);
+    public void PlaceBattlefieldScoreboard(SimPlaceBattlefieldScoreboard scoreboard) => Heard.Enqueue(scoreboard);
 
     public void RemoteDecloakPing(int solarSystemId, long observatoryId) => Heard.Enqueue(new SimRemoteDecloakPing(solarSystemId, observatoryId));
 

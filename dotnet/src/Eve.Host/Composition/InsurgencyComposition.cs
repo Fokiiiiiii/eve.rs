@@ -23,7 +23,8 @@ internal sealed partial class CharacterServicesComposition
         var schema = Env("EVE_INSURGENCY_SCHEMA", Ins.InsurgencyStore.DefaultSchema);
         await Ins.InsurgencyStore.MigrateAsync(source, schema);
         insurgencyStore = new Ins.InsurgencyStore(source, schema);
-        insurgencyCampaigns = new Ins.InsurgencyCampaigns(insurgencyStore, foundations.Scheduler, foundations.Events, loyaltyPoints, id => solarSystems.Get((int)id)?.FactionId ?? 0);
+        insurgencyCampaigns = new Ins.InsurgencyCampaigns(insurgencyStore, foundations.Scheduler, foundations.Events, loyaltyPoints, id => solarSystems.Get((int)id)?.FactionId ?? 0,
+            MemberLpTermsAsync);
         insurgencyCampaigns.Register();
         // the pirate sites, the start of the campaigns and their points need the space runtime (the dungeon waves and the stargates)
         if (dungeonWavesDirector is not null && stargateGraph is not null)

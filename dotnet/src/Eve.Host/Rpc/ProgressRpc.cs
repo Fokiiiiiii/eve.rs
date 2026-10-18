@@ -38,16 +38,49 @@ namespace Eve.Host;
 internal sealed partial class CharacterServicesComposition
 {
     /// <summary>Achievements, milestones, operations, missions, abyssal, void space and the new-player experience.</summary>
+    /// <summary>The achievement tracker record as the client's two maps (EveJS <c>legacyTracker</c>): completions by achievement id, counts by event name.</summary>
+    private static AchievementTrackerPersistedState ToPersisted(AchievementTrackerRecord record) => new(
+        new PyDict([.. record.EventCounts.Select(e => new KeyValuePair<PyValue, PyValue>(new PyStr(e.Name), new PyLong(e.Count)))]),
+        new PyDict([.. record.Completed.Select(c => new KeyValuePair<PyValue, PyValue>(new PyInt(c.AchievementId), new PyLong(c.CompletedFileTime)))]));
+
+    /// <summary>What the client sent, as stored: a positive achievement id with its filetime, and a trimmed event name with a count of zero or more.</summary>
+    private static (List<(int AchievementId, long CompletedFileTime)> Completed, List<(string Name, long Count)> EventCounts) FromClient(PyDict completed, PyDict eventCounts)
+    {
+        var done = new Dictionary<int, long>();
+        foreach (var entry in completed.Entries)
+        {
+            var id = entry.Key switch { PyInt i => i.Value, PyLong l => l.Value, _ => 0L };
+            var filetime = entry.Value switch { PyLong l => l.Value, PyInt i => i.Value, _ => -1L };
+            if (id is > 0 and <= int.MaxValue && filetime >= 0)
+                done[(int)id] = filetime;
+        }
+        var counts = new Dictionary<string, long>(StringComparer.Ordinal);
+        foreach (var entry in eventCounts.Entries)
+        {
+            var count = entry.Value switch { PyLong l => l.Value, PyInt i => i.Value, _ => -1L };
+            if (Eve.Macho.JsSemantics.StringValue(entry.Key) is { } name && name.Trim() is { Length: > 0 } key && count >= 0)
+                counts[key] = count;
+        }
+        return ([.. done.Select(pair => (pair.Key, pair.Value))], [.. counts.Select(pair => (pair.Key, pair.Value))]);
+    }
+
     private IReadOnlyList<IService> ProgressRpc() =>
     [
             new AchievementTrackerMgrService(
                 readState: async (characterId, ct) =>
-                    LoginInitializationGameStoreProjection.ReadAchievementState(
-                        await ReadCharacterGameStoreRowAsync(characterId, ct)),
+                    await AchievementTracker.ReadAsync(characterId, ct) is { } record
+                        ? ToPersisted(record)
+                        : LoginInitializationGameStoreProjection.ReadAchievementState(
+                            await ReadCharacterGameStoreRowAsync(characterId, ct)),
                 hasEverWarped: async (characterId, ct) =>
                     LoginInitializationGameStoreProjection.ReadHasEverWarped(
-                        await ReadCharacterGameStoreRowAsync(characterId, ct)) ?? true),
-            new MilestoneMgrService(),
+                        await ReadCharacterGameStoreRowAsync(characterId, ct)) ?? true,
+                writeState: (characterId, completed, eventCounts, ct) =>
+                {
+                    var (done, counts) = FromClient(completed, eventCounts);
+                    return new ValueTask(AchievementTracker.WriteAsync(characterId, done, counts, now(), ct));
+                }),
+            MilestoneManager,
             new OperationsManagerService(
                 readCharacterProgress: async (call, ct) =>
                     LoginInitializationGameStoreProjection.ReadOperationsProgress(

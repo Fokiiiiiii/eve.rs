@@ -29,7 +29,10 @@ public sealed record GameRpcCallbacks(
     ReadMiningScanResultsCallback? ReadMiningScanResultsAsync = null,
     AbyssalSpawnReportCallback? AbyssalSpawnReportAsync = null,
     ReadPeaceTreatiesCallback? ReadPeaceTreaties = null,
-    PublicQaToolsRpcCallbacks? PublicQaTools = null);
+    PublicQaToolsRpcCallbacks? PublicQaTools = null,
+    IJumpCloneStore? JumpClones = null,
+    Func<long, CancellationToken, ValueTask<ProjectDiscoveryPlayerState?>>? ReadProjectDiscoveryState = null,
+    JumpCloneSpaceLink? JumpCloneSpace = null);
 
 [Service("raffleMgr")]
 public sealed partial class RaffleMgrService(Func<int?, CancellationToken, ValueTask<int?>>? seedRafflesAsync = null)
@@ -66,14 +69,6 @@ public sealed partial class RaffleProxyService
 }
 
 
-[Service("expertSystemMgr")]
-public sealed partial class ExpertSystemMgrService
-{
-    // shortcut: expert-system ownership is not persisted; read per-character records when that store exists.
-    [Method("GetMyExpertSystems")]
-    public PyValue GetMyExpertSystems(ServiceCall _) => new PyDict([]);
-}
-
 [Service("contractProxy")]
 public sealed partial class ContractProxyService
 {
@@ -83,14 +78,6 @@ public sealed partial class ContractProxyService
         Eve.Services.Py.KeyVal(
             ("iskEscrow", Eve.Services.Py.Number(0d)),
             ("itemsEscrow", new PyInt(0)));
-}
-
-[Service("jumpCloneSvc")]
-public sealed partial class JumpCloneService
-{
-    [Method("MachoResolveObject")]
-    public PyValue MachoResolveObject(ServiceCall _) =>
-        new PyInt(Eve.Macho.MachoMessage.ProxyNodeId);
 }
 
 [Service("serviceGatewayMgr")]

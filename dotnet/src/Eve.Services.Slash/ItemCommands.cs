@@ -13,7 +13,7 @@ namespace Eve.Services.Slash;
 /// Their words are the reference's (<c>services/chat/commands/itemSeeding.js</c> and <c>fitModule.js</c>, ADR 0009). The reference also serves a pilot in space; here the
 /// pilot must be docked (<c>docs/reference/compat/DEVIATIONS.md</c>).
 /// </summary>
-public sealed class ItemCommands(ItemTypeNames names, CharacterShips ships, DogmaStatic statics, Func<long> nowUnixMs)
+public sealed class ItemCommands(ItemTypeNames names, CharacterShips ships, DogmaStatic statics, Func<long> nowUnixMs, ISpaceModules? modules = null)
 {
     /// <summary>The categories the command makes one item of for each in the amount: ships and blueprints.</summary>
     private static readonly HashSet<int> SingletonCategories = [6, 9];
@@ -37,12 +37,23 @@ public sealed class ItemCommands(ItemTypeNames names, CharacterShips ships, Dogm
         return (text, null);
     }
 
-    public async Task<string> GiveAsync(ClientSession session, string argument, CancellationToken cancellationToken)
+    public Task<string> GiveAsync(ClientSession session, string argument, CancellationToken cancellationToken) =>
+        GiveCoreAsync(session, argument, cancellationToken, create: false);
+
+    /// <summary>
+    /// <c>/createitem &lt;item name|typeID&gt; [amount]</c> (EveJS <c>handleCreateItemCommand</c>): the items go into the cargo hold of the pilot's ship when it is in space,
+    /// and into the station hangar when docked. shortcut: EveJS's per-operation amount limit and its cargo volume check are not applied.
+    /// </summary>
+    public Task<string> CreateAsync(ClientSession session, string argument, CancellationToken cancellationToken) =>
+        GiveCoreAsync(session, argument, cancellationToken, create: true);
+
+    private async Task<string> GiveCoreAsync(ClientSession session, string argument, CancellationToken cancellationToken, bool create)
     {
+        var command = create ? "/createitem" : "/giveitem";
         var text = argument.Trim();
         if (text.Length == 0)
         {
-            return "Usage: /giveitem <item name|typeID> [amount]";
+            return $"Usage: {command} <item name|typeID> [amount]";
         }
         var found = await names.FindAsync(text, cancellationToken);
         long amount = 1;
@@ -69,24 +80,80 @@ public sealed class ItemCommands(ItemTypeNames names, CharacterShips ships, Dogm
         }
         if (session.CharacterId is not { } character)
         {
-            return "Select a character before using /giveitem.";
-        }
-        if (session.GetInt("stationid") is null)
-        {
-            return "You must be docked before using /giveitem.";
+            return $"Select a character before using {command}.";
         }
         await statics.EnsureTypesAsync([type.TypeId], cancellationToken);
         var singleton = SingletonCategories.Contains(type.CategoryId);
-        if (await ships.GrantAsync(character, type.TypeId, amount, singleton, cancellationToken) is not { } changes)
+        if (create && session.GetInt("stationid") is null)
+        {
+            if (session.GetInt("shipid") is not { } shipId)
+            {
+                return $"You must be docked or in space before using {command}.";
+            }
+            var made = new List<ItemChanged>();
+            for (var done = 0L; done < (singleton ? amount : 1); done++)
+            {
+                if (await ships.CreateInShipCargoAsync(character, shipId, type.TypeId, singleton ? 1 : amount, cancellationToken) is not { } changes)
+                {
+                    return $"Your current ship could not be found for {command}.";
+                }
+                made.AddRange(changes);
+            }
+            foreach (var change in made)
+            {
+                ShipNotifications.SendItemChange(session, change, item => DogmaInfoRow(item));
+            }
+            return $"{Count(amount)}x {type.Name}{(type.Published ? "" : " [unpublished]")} was added to your ship's cargo hold.";
+        }
+        if (session.GetInt("stationid") is null && !create)
         {
             return "You must be docked before using /giveitem.";
         }
-        foreach (var change in changes)
+        if (await ships.GrantAsync(character, type.TypeId, amount, singleton, cancellationToken) is not { } hangar)
+        {
+            return create ? "You must be docked or in space before using /createitem." : "You must be docked before using /giveitem.";
+        }
+        foreach (var change in hangar)
         {
             ShipNotifications.SendItemChange(session, change, item => DogmaInfoRow(item));
         }
         var summary = !singleton ? $"{Count(amount)}x {type.Name}" : $"{type.Name} x{Count(amount)}";
         return $"{summary}{(type.Published ? "" : " [unpublished]")} was added to your station hangar.";
+    }
+
+    /// <summary><c>/ship &lt;ship name|typeID&gt;</c> (EveJS <c>handleShipSpawn</c>): one ship hull of the pilot's, made in the station hangar. Only ships are made.</summary>
+    public async Task<string> ShipAsync(ClientSession session, string argument, CancellationToken cancellationToken, string command = "ship")
+    {
+        var text = argument.Trim();
+        if (text.Length == 0)
+        {
+            return "Usage: /ship <ship name|typeID>";
+        }
+        var found = await names.FindAsync(text, cancellationToken);
+        if (found.Type is not { CategoryId: ShipCategory } type)
+        {
+            return found.Type is null
+                ? (found.Error == "ITEM_NOT_FOUND" ? $"Ship not found: {text}.{Suggestions(found.Suggestions)}" : $"Ship name is ambiguous: {text}.{Suggestions(found.Suggestions)}").Trim()
+                : $"Ship not found: {text}.";
+        }
+        if (session.CharacterId is not { } character)
+        {
+            return "Select a character before spawning ships.";
+        }
+        if (session.GetInt("stationid") is null)
+        {
+            return "You must be docked before spawning ships into your hangar.";
+        }
+        await statics.EnsureTypesAsync([type.TypeId], cancellationToken);
+        if (await ships.GrantAsync(character, type.TypeId, 1, singleton: true, cancellationToken) is not { } changes)
+        {
+            return "You must be docked before spawning ships into your hangar.";
+        }
+        foreach (var change in changes)
+        {
+            ShipNotifications.SendItemChange(session, change, item => DogmaInfoRow(item));
+        }
+        return $"{type.Name}{(type.Published ? "" : " [unpublished]")} was added to your ship hangar. /{command} only spawns the hull for now; board it manually from the hangar.";
     }
 
     private Eve.Services.ItemRow DogmaInfoRow(Item item)
@@ -175,6 +242,48 @@ public sealed class ItemCommands(ItemTypeNames names, CharacterShips ships, Dogm
     }
 
     /// <summary><c>/unfit me &lt;module name|typeID|itemID|all&gt;</c>.</summary>
+    /// <summary>
+    /// <c>/online &lt;me|shipID&gt;</c>: every fitted module of the ship that has the online effect is put online, as the client's own online-all does
+    /// (the loop of <c>cmd_online</c>). A module that is already online is left as it is; a module that cannot go online says why.
+    /// In space the simulation is told (<see cref="ISpaceModules.RefreshShipAsync"/>), as a module switch tells it.
+    /// </summary>
+    public async Task<string> OnlineAsync(ClientSession session, string argument, CancellationToken cancellationToken)
+    {
+        if (session.CharacterId is not { } character) return "Select a character before using /online.";
+        var target = argument.Trim();
+        if (target.Length == 0) return "Usage: /online <me|shipID>";
+        if (await ships.LoadAsync(character, cancellationToken) is not { } snapshot) return "Active ship not found for this character.";
+        if (!target.Equals("me", StringComparison.OrdinalIgnoreCase) && target != snapshot.Ship.Id.ToString(CultureInfo.InvariantCulture))
+            return $"Ship not found: {target}.";
+
+        var candidates = snapshot.Fitted.Where(module => statics.Type(module.TypeId)?.EffectIds.Contains(BuiltInEffects.Online) == true).ToList();
+        if (candidates.Count == 0) return "No fitted module of the ship has an online effect.";
+        var online = new List<string>();
+        var refused = new List<string>();
+        foreach (var module in candidates)
+        {
+            if (snapshot.World.Item(module.Id) is { State: >= ItemState.Online }) continue;
+            var name = statics.Type(module.TypeId)?.Name ?? module.TypeId.ToString(CultureInfo.InvariantCulture);
+            switch (await ships.SetOnlineAsync(character, snapshot.Ship.Id, module.Id, true, cancellationToken))
+            {
+                case ShipChanged changed:
+                    ShipNotifications.Send(session, character, changed, item => DogmaInfoRow(item), Py.FileTimeFromUnixMs(nowUnixMs()));
+                    online.Add(name);
+                    break;
+                case ShipRefused refusal:
+                    refused.Add($"{name}: {refusal.Reason.ToString().ToUpperInvariant()}");
+                    break;
+            }
+        }
+        if (online.Count > 0 && modules is not null)
+            await modules.RefreshShipAsync(session, cancellationToken);
+
+        var lines = new List<string>();
+        if (online.Count > 0) lines.Add($"Online: {string.Join(", ", online)}.");
+        if (refused.Count > 0) lines.Add($"Not online: {string.Join("; ", refused)}.");
+        return lines.Count == 0 ? "Every fitted module with an online effect is online already." : string.Join(" ", lines);
+    }
+
     public async Task<string> UnfitAsync(ClientSession session, string argument, CancellationToken cancellationToken)
     {
         var text = argument.Trim();

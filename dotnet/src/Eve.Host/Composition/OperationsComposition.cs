@@ -49,6 +49,7 @@ internal sealed partial class CharacterServicesComposition
             },
             ReadGameStoreTableAsync,
             now,
+            activeComplexes: (system, token) => ComplexAnomaliesAsync(system, token),
             activeIncursions: async token => incursionDirector is { } directorOfIncursions
                 ? await directorOfIncursions.ReadActiveAsync(token)
                 : Array.Empty<JsonObject>());
@@ -58,26 +59,73 @@ internal sealed partial class CharacterServicesComposition
             ReadGameStoreTableAsync,
             now);
         keeperRpcCallbacks = new Eve.Services.Core.KeeperRpcCallbacks(
-            ReadCurrentDungeonAsync: async (session, cancellationToken) =>
+            ReadCurrentDungeonAsync: CurrentDungeonPayloadAsync,
+            ActivateAccelerationGateAsync: async (session, gate, cancellationToken) =>
             {
-                if (spaceSessions is null || session.CharacterId is not { } characterId)
-                    return null;
-                var abyssalDungeon = await abyssalDungeonReadModel
-                    .ReadCurrentDungeonForCharacterAsync(session, cancellationToken).ConfigureAwait(false);
-                if (abyssalDungeon is not null)
-                    return abyssalDungeon;
-                var shipId = spaceSessions.ShipIdOf(session);
-                if (shipId is not > 0)
-                    return null;
-                var position = await spaceSessions.PositionOfAsync(session, shipId.Value, cancellationToken)
-                    .ConfigureAwait(false);
-                var currentSystemId = position?.SolarSystemId ??
-                    session.GetInt("solarsystemid2") ?? session.GetInt("solarsystemid") ?? 0;
-                return await dungeonReadModel.ReadCurrentDungeonAsync(
-                    characterId, shipId.Value, currentSystemId,
-                    position?.X, position?.Y, position?.Z,
-                    spaceSessions.IsWarping(session), cancellationToken).ConfigureAwait(false);
+                if (accelerationGates is null)
+                {
+                    throw Eve.Services.MachoErrors.ThrowUserError("DeniedShipChanged");
+                }
+                var gateId = gate switch
+                {
+                    PyInt asInt => asInt.Value,
+                    PyLong asLong => asLong.Value,
+                    _ => throw Eve.Services.MachoErrors.ThrowUserError("DeniedTargetAttemptFailed"),
+                };
+                return await accelerationGates.ActivateAsync(session, gateId, cancellationToken);
             });
         return Task.CompletedTask;
     }
+
+    /// <summary>The acceleration gates of the dungeon rooms: set once the space and the dungeons are composed (see the space composition).</summary>
+    private Eve.Services.Space.Gates.SpaceAccelerationGates? accelerationGates;
+
+    /// <summary>The client's current dungeon for the session (the keeper's answer), or null when it is in none.</summary>
+    private async ValueTask<PyValue?> CurrentDungeonPayloadAsync(ClientSession session, CancellationToken cancellationToken)
+    {
+        if (spaceSessions is null || session.CharacterId is not { } characterId)
+            return null;
+        var abyssalDungeon = await abyssalDungeonReadModel
+            .ReadCurrentDungeonForCharacterAsync(session, cancellationToken).ConfigureAwait(false);
+        if (abyssalDungeon is not null)
+            return abyssalDungeon;
+        var shipId = spaceSessions.ShipIdOf(session);
+        if (shipId is not > 0)
+            return null;
+        var position = await spaceSessions.PositionOfAsync(session, shipId.Value, cancellationToken)
+            .ConfigureAwait(false);
+        var currentSystemId = position?.SolarSystemId ??
+            session.GetInt("solarsystemid2") ?? session.GetInt("solarsystemid") ?? 0;
+        return await dungeonReadModel.ReadCurrentDungeonAsync(
+            characterId, shipId.Value, currentSystemId,
+            position?.X, position?.Y, position?.Z,
+            spaceSessions.IsWarping(session), cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Writes the room a dungeon instance's pilot is in to the game store's dungeon state (<c>currentRoomID</c>, the room's id, 0 for a room without one, and
+    /// <c>currentRoomKey</c>), which the keeper's current-dungeon answer and the presence queries read.
+    /// </summary>
+    private async Task WriteCurrentRoomAsync(long instanceId, string roomKey, long roomId, CancellationToken cancellationToken)
+    {
+        var path = $"instancesByID/{instanceId.ToString(System.Globalization.CultureInfo.InvariantCulture)}";
+        var id = mailCache.Write("dungeonRuntimeState", $"{path}/currentRoomID", System.Text.Json.Nodes.JsonValue.Create(roomId));
+        var key = mailCache.Write("dungeonRuntimeState", $"{path}/currentRoomKey", System.Text.Json.Nodes.JsonValue.Create(roomKey));
+        if (!id.Success || !key.Success)
+        {
+            throw new InvalidOperationException($"the dungeon state of instance {instanceId} was not written: {id.ErrorMsg ?? key.ErrorMsg}");
+        }
+        await mailCache.FlushTableAsync("dungeonRuntimeState", cancellationToken);
+    }
+
+    /// <summary>The instance of the dungeon the session is in, or null (the instance id is the third item of the keeper's answer).</summary>
+    private async Task<long?> CurrentDungeonInstanceAsync(ClientSession session, CancellationToken cancellationToken) =>
+        await CurrentDungeonPayloadAsync(session, cancellationToken).ConfigureAwait(false) is PyTuple { Items.Count: >= 3 } payload
+            ? payload.Items[2] switch
+            {
+                PyInt asInt => asInt.Value,
+                PyLong asLong => asLong.Value,
+                _ => null,
+            }
+            : null;
 }

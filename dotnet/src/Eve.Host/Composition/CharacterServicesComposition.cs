@@ -79,6 +79,7 @@ internal sealed partial class CharacterServicesComposition
         await TrainingSkillsAndCreation();
         await TradeAuthorityStore();
         await BookmarkStores();
+        await AccessGroupStores();
         NesIntroStoreSetup();
         await CorporationStores();
         await MarketSeed();
@@ -86,7 +87,9 @@ internal sealed partial class CharacterServicesComposition
         await Alliances();
         await NpcAgents();
         await Structures();
+        LinkJumpCloneSpace();
         await Insurgency();
+        await FactionWarfare();
         await Planets();
         await SovereigntyWriteOperations();
         await SkyhookJobs();
@@ -145,6 +148,10 @@ internal sealed partial class CharacterServicesComposition
     private Eve.Inventory.Mutation.ItemMutationService itemMutations = default!;
     private OmegaLicenses omega = default!;
     private CharacterTraining training = default!;
+    private ExpertSystems expertSystems = default!;
+    private Eve.Services.Skills.ExpertSystemMgrService expertSystemMgr = default!;
+    private PilotLearningBonus learningBonus = default!;
+    private PilotImplants pilotImplants = default!;
     private CharacterShips ships = default!;
     private int stranded;
     private CharacterDogmaSync dogmaSync = default!;
@@ -156,6 +163,7 @@ internal sealed partial class CharacterServicesComposition
     private Eve.Services.Crimewatch.CrimewatchRuntime crimewatchRuntime = default!;
     private Eve.Services.Crimewatch.RelationWars relationWars = default!;
     private TrainingAnnouncer announcer = default!;
+    private MultipleTrainingSlotExpiry multipleTrainingExpiry = default!;
     private SkillAugmentationReader readAugmentations = default!;
     private SkillHandlerService skillHandler = default!;
     private StartingWallet startingWallet = default!;

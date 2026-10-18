@@ -27,7 +27,16 @@ public sealed class SimLinkException(SimLinkError error, string message) : Excep
 /// </summary>
 public static partial class SimCodec
 {
-    public const ushort ProtocolVersion = 75;
+    public const ushort ProtocolVersion = 79;
+
+    /// <summary>The longest name of a dynamic slim-item field, in bytes (protocol 76).</summary>
+    public const int SlimFieldNameMax = 64;
+    /// <summary>The longest text of a dynamic slim-item field value, in bytes.</summary>
+    public const int SlimFieldTextMax = 256;
+    /// <summary>The most items of a tuple value of a dynamic slim-item field.</summary>
+    public const int SlimFieldTupleMax = 16;
+    /// <summary>How deep a tuple value of a dynamic slim-item field may nest.</summary>
+    public const int SlimFieldDepthMax = 4;
     /// <summary>The largest frame either side accepts (1 MiB).</summary>
     public const int MaxFrame = 1 << 20;
 
@@ -365,6 +374,7 @@ public static partial class SimCodec
                     {
                         0 => EnterHow.Undock,
                         1 => EnterHow.InSpace,
+                        2 => EnterHow.Anchor,
                         _ => throw new SimLinkException(SimLinkError.BadValue, "bad how"),
                     };
                     var station = r.I64();
@@ -1244,6 +1254,7 @@ public static partial class SimCodec
             case Kind.PlaceObservatory:
             case Kind.PlaceControlTower:
             case Kind.PlaceDeadspacePocket:
+            case Kind.PlaceAccelerationGate:
                 {
                     var deployable = r.I64();
                     var system = r.I32();
@@ -1269,8 +1280,44 @@ public static partial class SimCodec
                         Kind.PlaceObservatory => new SimPlaceObservatory(deployable, system, name, type, group, position, radius, active, owner, corporation, alliance, ship),
                         Kind.PlaceControlTower => new SimPlaceControlTower(deployable, system, name, type, group, position, radius, active, owner, corporation, alliance, ship),
                         Kind.PlaceDeadspacePocket => new SimPlaceDeadspacePocket(deployable, system, name, position, radius),
+                        Kind.PlaceAccelerationGate => new SimPlaceAccelerationGate(deployable, system, name, type, group, position, radius),
                         _ => new SimPlaceDisruptor(deployable, system, name, type, group, position, radius, range, active, owner, corporation, alliance, ship),
                     };
+                    break;
+                }
+            case Kind.PlaceBattlefieldScoreboard:
+                {
+                    var deployable = r.I64();
+                    var system = r.I32();
+                    var name = r.Text();
+                    var type = r.I32();
+                    var group = r.I32();
+                    var position = ReadVector(ref r);
+                    var radius = r.F64();
+                    if (!(double.IsFinite(radius) && radius >= 0))
+                    {
+                        throw new SimLinkException(SimLinkError.BadValue, "bad scoreboard");
+                    }
+                    message = new SimPlaceBattlefieldScoreboard(deployable, system, name, type, group, position, radius);
+                    break;
+                }
+            case Kind.PlaceCapturePoint:
+                {
+                    var deployable = r.I64();
+                    var system = r.I32();
+                    var name = r.Text();
+                    var type = r.I32();
+                    var group = r.I32();
+                    var position = ReadVector(ref r);
+                    var radius = r.F64();
+                    var attacker = r.I32();
+                    var occupier = r.I32();
+                    var nextPointTime = r.I64();
+                    if (!(double.IsFinite(radius) && radius >= 0) || attacker < 0 || occupier < 0 || nextPointTime < 0)
+                    {
+                        throw new SimLinkException(SimLinkError.BadValue, "bad capture point");
+                    }
+                    message = new SimPlaceCapturePoint(deployable, system, name, type, group, position, radius, attacker, occupier, nextPointTime);
                     break;
                 }
             case Kind.SetDisruptorActive:
@@ -1300,6 +1347,17 @@ public static partial class SimCodec
             case Kind.SetAnalysisBeaconState:
                 message = new SimSetAnalysisBeaconState(r.I64(), ReadAnalysisBeaconState(ref r));
                 break;
+            case Kind.SetSlimField:
+                {
+                    var itemId = r.I64();
+                    var name = r.Text();
+                    if (name.Length == 0 || Encoding.UTF8.GetByteCount(name) > SlimFieldNameMax)
+                    {
+                        throw new SimLinkException(SimLinkError.BadValue, "bad slim field name");
+                    }
+                    message = new SimSetSlimField(itemId, name, ReadSlimValue(ref r, 0));
+                    break;
+                }
             case Kind.Measured:
                 {
                     var session = r.U64();

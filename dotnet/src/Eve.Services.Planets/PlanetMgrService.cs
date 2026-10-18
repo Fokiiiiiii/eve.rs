@@ -21,7 +21,7 @@ namespace Eve.Services.Planets;
 /// </summary>
 [Service("planetMgr")]
 public sealed partial class PlanetMgrService(NpgsqlDataSource source, PlanetStore store, PlanetCatalog catalog, IResourceField field,
-    PgItemStore items, WalletTransactions wallets, PgSkillStore skills, Func<long> nowMs, Func<long, PyValue?, Task> notify, string inventorySchema,
+    PgItemStore items, WalletTransactions wallets, PgSkillStore skills, Func<long> nowMs, Func<long, PyValue?, Task> notify, Func<long, Task> notifyLaunches, string inventorySchema,
     ISimulation? simulation = null, PgSpaceItemStore? spaceItems = null, DogmaStatic? dogma = null)
     : Eve.Services.Inventory.ICustomsOffices
 {
@@ -190,6 +190,76 @@ public sealed partial class PlanetMgrService(NpgsqlDataSource source, PlanetStor
         return Py.KeyVal([.. snapshot.Snapshot]);
     }
 
+    /// <summary>
+    /// GMForceInstallProgram(pinID, typeID, cycleTime, lifetimeHours, qtyPerCycle, headRadius): the game master's program on an extractor
+    /// control unit of the caller's colony. Served to ROLE_GML only (the client shows the deposit designer to that role alone).
+    /// </summary>
+    [Method("GMForceInstallProgram")]
+    public async ValueTask<PyValue> GMForceInstallProgram(ServiceCall call)
+    {
+        RequireGameMaster(call);
+        var planetId = PlanetOf(call);
+        var owner = RequireOwner(call);
+        var pinId = Integral(call.Arg(0)) ?? 0;
+        var typeId = (int)(Integral(call.Arg(1)) ?? 0);
+        var cycleTime = Integral(call.Arg(2)) ?? 0;
+        var hours = Math.Min(Integral(call.Arg(3)) ?? 0, long.MaxValue / PlanetRules.Hour);
+        var qtyPerCycle = Integral(call.Arg(4)) ?? 0;
+        var headRadius = Number(call.Arg(5));
+        await ChangeAsync(owner, planetId, (_, _) => Task.FromResult<List<ColonyCommand>>(
+            [new GmForceInstallProgramCommand(pinId, typeId, cycleTime, hours * PlanetRules.Hour, qtyPerCycle, headRadius)]), call.Cancellation);
+        return PyNone.Instance;
+    }
+
+    /// <summary>GMAddCommodity(pinID, typeID, quantity): the game master's commodity on a pin of the caller's colony (ROLE_GML only).</summary>
+    [Method("GMAddCommodity")]
+    public async ValueTask<PyValue> GMAddCommodity(ServiceCall call)
+    {
+        RequireGameMaster(call);
+        var planetId = PlanetOf(call);
+        var owner = RequireOwner(call);
+        var pinId = Integral(call.Arg(0)) ?? 0;
+        var typeId = (int)(Integral(call.Arg(1)) ?? 0);
+        var quantity = Integral(call.Arg(2)) ?? 0;
+        await ChangeAsync(owner, planetId, (_, _) => Task.FromResult<List<ColonyCommand>>([new GmAddCommodityCommand(pinId, typeId, quantity)]), call.Cancellation);
+        return PyNone.Instance;
+    }
+
+    /// <summary>GMConvertCommandCenter(pinID): the command center takes the type of its planet (ROLE_GML only).</summary>
+    [Method("GMConvertCommandCenter")]
+    public async ValueTask<PyValue> GMConvertCommandCenter(ServiceCall call)
+    {
+        RequireGameMaster(call);
+        var planetId = PlanetOf(call);
+        var owner = RequireOwner(call);
+        var pinId = Integral(call.Arg(0)) ?? 0;
+        await ChangeAsync(owner, planetId, (_, _) => Task.FromResult<List<ColonyCommand>>([new GmConvertCommandCenterCommand(pinId)]), call.Cancellation);
+        return PyNone.Instance;
+    }
+
+    /// <summary>
+    /// GMGetSynchedServerState(ownerID): (duration, colony) for the client's simulation check (clientPlanet.GMVerifySimulation). The colony is
+    /// the stored one run to now, as GetFullNetworkForOwner reads it; the duration is the server's time to read it, in 100 ns ticks.
+    /// </summary>
+    [Method("GMGetSynchedServerState")]
+    public async ValueTask<PyValue> GMGetSynchedServerState(ServiceCall call)
+    {
+        RequireGameMaster(call);
+        var planetId = PlanetOf(call);
+        var owner = Integral(call.Arg(0)) ?? call.Session.CharacterId ?? 0;
+        var started = System.Diagnostics.Stopwatch.GetTimestamp();
+        var colony = owner == 0 ? null : await SnapshotAsync(owner, planetId, call.Cancellation);
+        var duration = System.Diagnostics.Stopwatch.GetElapsedTime(started).Ticks;
+        var fields = colony?.Fields ?? [("level", new PyInt(0)), ("currentSimTime", new PyLong(0)), ("pins", new PyList([]))];
+        return Py.Tuple(new PyLong(duration), Py.KeyVal([.. fields]));
+    }
+
+    private static void RequireGameMaster(ServiceCall call)
+    {
+        if (!GameMasterRoles.Has(call.Session, GameMasterRoles.Gml))
+            throw MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("ROLE_GML is required")));
+    }
+
     /// <summary>UserAbandonPlanet: the colony goes; its pins' items go with it.</summary>
     [Method("UserAbandonPlanet")]
     public async ValueTask<PyValue> UserAbandonPlanet(ServiceCall call)
@@ -229,6 +299,8 @@ public sealed partial class PlanetMgrService(NpgsqlDataSource source, PlanetStor
                 call.Cancellation);
         });
         await PlaceLaunchCanAsync(body, canId, owner, call.Cancellation);
+        // the owner's launches list reloads and the neocom blinks (planetUISvc.OnPILaunchesChange)
+        await notifyLaunches(owner);
         return new PyLong(launchTime);
     }
 
@@ -282,6 +354,16 @@ public sealed partial class PlanetMgrService(NpgsqlDataSource source, PlanetStor
     }
 
     private sealed record ChangeResult(long Owner, long PlanetId, IReadOnlyList<(string, PyValue)> Snapshot);
+
+    /// <summary>A game master's read of the owner's colonies (the <c>/pi</c> helpers): one colony document per planet.</summary>
+    public Task<IReadOnlyList<ColonyDocument>> GmColoniesAsync(long owner, CancellationToken cancellationToken) => store.ColoniesOfAsync(owner, cancellationToken);
+
+    /// <summary>
+    /// A game master's change of one of the owner's planets (the <c>/pi</c> helpers): the command is applied as the planet's game master call applies its own
+    /// (the same change path, saved and announced to the owner).
+    /// </summary>
+    public async Task GmChangeAsync(long owner, long planetId, ColonyCommand command, CancellationToken cancellationToken) =>
+        await ChangeAsync(owner, planetId, (_, _) => Task.FromResult<List<ColonyCommand>>([command]), cancellationToken);
 
     /// <summary>
     /// One change of a colony: locks it, runs the colony to now, lets <paramref name="build"/> make the commands (and the direct

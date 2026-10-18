@@ -65,10 +65,13 @@ internal static class HostConfiguration
     //   EVE_CRIMEWATCH_SCHEMA  the schema of crimewatch (ship safety levels)                          (default crimewatch)
     //   EVE_DEV_SKIP_PASSWORD  1 accepts any password (development only)                          (default 0)
     //   EVE_DEV_AUTO_CREATE    0 refuses unknown user names                                       (default 0)
+    //   EVE_GM_ACCOUNTS        user=ROLE+ROLE,... adds game-master role bits (GML, GMH, QA, PROGRAMMER, CONTENT, ADMIN,
+    //                          EXT_GM1..EXT_GM4) to existing accounts at start-up; a grant never takes a bit away (default none)
     //   EVE_STRICT_RPC         1 answers an unknown service or method, an unhandled exception or a call with no service
     //                          with a Macho error (naming a correlation id) and logs its stack trace to stderr; the default
     //                          answers None and logs one line (what the reference does)                  (default 0)
     //   EVE_TRACE_RPC          1 traces unhandled calls to stderr; full also logs every call's arguments and result type tree
+    //   EVE_PUBLIC_GATEWAY     host:port where the public protobuf gateway listens (cleartext HTTP/2, the client's EVE_PUBLIC_GATEWAY_ADDRESS); unset: none
     //                          (the dispatcher reads it, not this class)                               (default off)
     //   EVE_AUTO_RELOAD_ACCOUNTS  the account ids (comma-separated) of bots with no client UI: the host reloads their guns from the hold
     //                          when the rounds run out. Every other account reloads its own guns (default none)
@@ -82,6 +85,11 @@ internal static class HostConfiguration
     internal static string Env(string name, string fallback) => Environment.GetEnvironmentVariable(name) is { Length: > 0 } value ? value : fallback;
 
     internal static bool Flag(string name, bool fallback) => Env(name, fallback ? "1" : "0") is "1" or "true" or "TRUE" or "yes";
+
+    /// <summary>The address and port of the public protobuf gateway (EVE_PUBLIC_GATEWAY), or null when none is asked for.</summary>
+    internal static (System.Net.IPAddress Address, int Port)? PublicGatewayListen() => Env("EVE_PUBLIC_GATEWAY", "") is { Length: > 0 } value
+        ? (System.Net.IPAddress.Parse(value[..value.LastIndexOf(':')]), int.Parse(value[(value.LastIndexOf(':') + 1)..], System.Globalization.CultureInfo.InvariantCulture))
+        : null;
 
     /// <summary>The accounts EVE_AUTO_RELOAD_ACCOUNTS names. An entry that is not an account id stops the host: a typo must not switch a client's reload on or off unnoticed.</summary>
     internal static IReadOnlySet<long> AutoReloadUserIds(string value) =>

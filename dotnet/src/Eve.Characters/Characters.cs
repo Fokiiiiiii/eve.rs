@@ -20,6 +20,11 @@ public sealed record Character(
     /// <summary>A character queued for deletion cannot be played.</summary>
     public bool IsQueuedForDeletion => DeletePrepareAt is not null;
 
+    /// <summary>When the character was deleted (it is then hidden from its account); null while it exists.</summary>
+    public DateTimeOffset? DeletedAt { get; init; }
+
+    public bool IsDeleted => DeletedAt is not null;
+
     public string TutorialEntryMode { get; init; } = "disabled";
 
     public string TutorialFirstLoginHandoff { get; init; } = "none";
@@ -61,7 +66,7 @@ public sealed partial class PgCharacterStore
         "id, account_id, name, gender, race_id, bloodline_id, ancestry_id, school_id, type_id, corporation_id, faction_id, alliance_id, " +
         "station_id, home_station_id, solar_system_id, constellation_id, region_id, ship_id, created_at, last_logoff_at, delete_prepare_at, " +
         "tutorial_entry_mode, tutorial_first_login_handoff, air_npe_state, air_npe_reveal_on_first_login, direct_faction_id, direct_enlistment_cooldown_filetime, " +
-        "next_remote_home_station_change_filetime";
+        "next_remote_home_station_change_filetime, deleted_at";
 
     private readonly NpgsqlDataSource _source;
     private readonly string _schema;
@@ -96,12 +101,13 @@ public sealed partial class PgCharacterStore
         DirectFactionId = r.IsDBNull(25) ? null : r.GetInt64(25),
         DirectEnlistmentCooldownFileTime = r.GetInt64(26),
         NextRemoteHomeStationChangeFileTime = r.GetInt64(27),
+        DeletedAt = r.IsDBNull(28) ? null : r.GetFieldValue<DateTimeOffset>(28),
     };
 
     /// <summary>The account's characters, oldest first (the order the selection screen shows them).</summary>
     public async Task<IReadOnlyList<Character>> ForAccountAsync(int accountId, CancellationToken cancellationToken = default)
     {
-        await using var command = _source.CreateCommand($"SELECT {Columns} FROM {_schema}.characters WHERE account_id = $1 ORDER BY id");
+        await using var command = _source.CreateCommand($"SELECT {Columns} FROM {_schema}.characters WHERE account_id = $1 AND deleted_at IS NULL ORDER BY id");
         command.Parameters.Add(new NpgsqlParameter { Value = accountId });
         var list = new List<Character>();
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
@@ -190,6 +196,38 @@ public sealed partial class PgCharacterStore
         return await command.ExecuteNonQueryAsync(cancellationToken) > 0;
     }
 
+    /// <summary>Moves a character into a corporation (the deletion moves a deleted character into the graveyard corporation).</summary>
+    public async Task SetCorporationAsync(long characterId, long corporationId, CancellationToken cancellationToken = default)
+    {
+        await using var command = _source.CreateCommand($"UPDATE {_schema}.characters SET corporation_id = $2 WHERE id = $1");
+        command.Parameters.Add(new NpgsqlParameter { Value = characterId });
+        command.Parameters.Add(new NpgsqlParameter { Value = corporationId });
+        await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    /// <summary>Queues a character for deletion at <paramref name="readyAt"/>. False when it is already queued, deleted, or not the account's.</summary>
+    public async Task<bool> SetDeletePrepareAsync(long characterId, int accountId, DateTimeOffset readyAt, CancellationToken cancellationToken = default)
+    {
+        await using var command = _source.CreateCommand(
+            $"UPDATE {_schema}.characters SET delete_prepare_at = $3 WHERE id = $1 AND account_id = $2 AND delete_prepare_at IS NULL AND deleted_at IS NULL");
+        command.Parameters.Add(new NpgsqlParameter { Value = characterId });
+        command.Parameters.Add(new NpgsqlParameter { Value = accountId });
+        command.Parameters.Add(new NpgsqlParameter { Value = readyAt });
+        return await command.ExecuteNonQueryAsync(cancellationToken) > 0;
+    }
+
+    /// <summary>Marks a queued character deleted once its waiting time has passed. False when it is not queued, or the time has not come.</summary>
+    public async Task<bool> MarkDeletedAsync(long characterId, int accountId, DateTimeOffset at, CancellationToken cancellationToken = default)
+    {
+        await using var command = _source.CreateCommand(
+            $"UPDATE {_schema}.characters SET deleted_at = $3, delete_prepare_at = NULL WHERE id = $1 AND account_id = $2 " +
+            "AND delete_prepare_at IS NOT NULL AND delete_prepare_at <= $3 AND deleted_at IS NULL");
+        command.Parameters.Add(new NpgsqlParameter { Value = characterId });
+        command.Parameters.Add(new NpgsqlParameter { Value = accountId });
+        command.Parameters.Add(new NpgsqlParameter { Value = at });
+        return await command.ExecuteNonQueryAsync(cancellationToken) > 0;
+    }
+
     /// <summary>
     /// The shared persistence transition used by character selection and <c>air_npe.skip_air_npe</c>.
     /// Returns the new state only when this call changed it.
@@ -215,9 +253,33 @@ public sealed partial class PgCharacterStore
         return await command.ExecuteNonQueryAsync(cancellationToken) > 0;
     }
 
+    /// <summary>
+    /// The members of a war faction: a character whose direct factional warfare enlistment is the faction, or, with none, whose corporation is one of
+    /// <paramref name="enlistedCorporationIds"/> (the corporations enlisted in the faction). Factional warfare statistics (facWarMgr FactionInfo).
+    /// </summary>
+    public async Task<long> CountWarFactionMembersAsync(long factionId, IReadOnlyList<long> enlistedCorporationIds, CancellationToken cancellationToken = default)
+    {
+        await using var command = _source.CreateCommand($"SELECT count(*) FROM {_schema}.characters WHERE deleted_at IS NULL AND (direct_faction_id = $1 OR (direct_faction_id IS NULL AND corporation_id = ANY($2)))");
+        command.Parameters.Add(new NpgsqlParameter { Value = factionId });
+        command.Parameters.Add(new NpgsqlParameter { Value = enlistedCorporationIds.ToArray() });
+        return (long)(await command.ExecuteScalarAsync(cancellationToken))!;
+    }
+
+    /// <summary>The number of characters of each corporation of the list (a corporation with none is absent).</summary>
+    public async Task<IReadOnlyDictionary<long, long>> CountByCorporationAsync(IReadOnlyList<long> corporationIds, CancellationToken cancellationToken = default)
+    {
+        await using var command = _source.CreateCommand($"SELECT corporation_id, count(*) FROM {_schema}.characters WHERE deleted_at IS NULL AND corporation_id = ANY($1) GROUP BY corporation_id");
+        command.Parameters.Add(new NpgsqlParameter { Value = corporationIds.ToArray() });
+        var counts = new Dictionary<long, long>();
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+            counts[reader.GetInt64(0)] = reader.GetInt64(1);
+        return counts;
+    }
+
     public async Task<int> CountForAccountAsync(int accountId, CancellationToken cancellationToken = default)
     {
-        await using var command = _source.CreateCommand($"SELECT count(*) FROM {_schema}.characters WHERE account_id = $1");
+        await using var command = _source.CreateCommand($"SELECT count(*) FROM {_schema}.characters WHERE account_id = $1 AND deleted_at IS NULL");
         command.Parameters.Add(new NpgsqlParameter { Value = accountId });
         return (int)(long)(await command.ExecuteScalarAsync(cancellationToken))!;
     }
@@ -239,7 +301,7 @@ public sealed partial class PgCharacterStore
 
     public async Task<int> CountForAccountAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, int accountId, CancellationToken cancellationToken = default)
     {
-        await using var command = new NpgsqlCommand($"SELECT count(*) FROM {_schema}.characters WHERE account_id = $1", connection, transaction)
+        await using var command = new NpgsqlCommand($"SELECT count(*) FROM {_schema}.characters WHERE account_id = $1 AND deleted_at IS NULL", connection, transaction)
         {
             Parameters = { new() { Value = accountId } },
         };
@@ -453,13 +515,31 @@ public sealed partial class PgCharacterStore
         return result;
     }
 
+    /// <summary>The recustomization state of the character (1 or 3), or null when it has none.</summary>
+    public async Task<int?> PaperdollStateAsync(long id, CancellationToken cancellationToken = default)
+    {
+        await using var command = _source.CreateCommand($"SELECT paperdoll_state FROM {_schema}.characters WHERE id = $1");
+        command.Parameters.Add(new NpgsqlParameter { Value = id });
+        return await command.ExecuteScalarAsync(cancellationToken) is short state ? state : null;
+    }
+
+    /// <summary>Sets the recustomization state (1 or 3) in the caller's transaction.</summary>
+    public async Task SetPaperdollStateAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long id, short state, CancellationToken cancellationToken = default)
+    {
+        await using var command = new NpgsqlCommand($"UPDATE {_schema}.characters SET paperdoll_state = $2 WHERE id = $1", connection, transaction);
+        command.Parameters.Add(new NpgsqlParameter { Value = id });
+        command.Parameters.Add(new NpgsqlParameter { Value = state });
+        await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
     /// <summary>Updates only appearance fields the client supplied; a deleted doll clears both.</summary>
     public async Task<bool> SetAppearanceAsync(long id, byte[]? doll, bool updateDoll,
         byte[]? portrait, bool updatePortrait, CancellationToken cancellationToken = default)
     {
+        // a save ends the recustomization state (the reference clears it after UpdateExistingCharacterFull/Limited)
         await using var command = _source.CreateCommand(
             $"UPDATE {_schema}.characters SET doll_info = CASE WHEN $2 THEN $3 ELSE doll_info END, " +
-            "portrait_info = CASE WHEN $4 THEN $5 ELSE portrait_info END WHERE id = $1");
+            "portrait_info = CASE WHEN $4 THEN $5 ELSE portrait_info END, paperdoll_state = NULL WHERE id = $1");
         command.Parameters.Add(new NpgsqlParameter { Value = id });
         command.Parameters.Add(new NpgsqlParameter { Value = updateDoll });
         command.Parameters.Add(new NpgsqlParameter { Value = (object?)doll ?? DBNull.Value });

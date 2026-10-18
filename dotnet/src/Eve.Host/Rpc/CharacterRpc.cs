@@ -49,6 +49,8 @@ internal sealed partial class CharacterServicesComposition
         return [
             new SkillMgr2Service(),
             skillHandler,
+            expertSystemMgr,
+            new AlphaInjectorMgrService(skills, skillCatalog),
             new CharMgrService(
                 characters,
                 homeStations,
@@ -83,7 +85,8 @@ internal sealed partial class CharacterServicesComposition
                             character.AllianceId ?? corporation?.AllianceId ?? 0,
                             Math.Max(0, warFactionId));
                     });
-                }),
+                },
+                async (characterId, token) => await characters.PaperdollStateAsync(characterId, token)),
             new Eve.Services.CharacterInfo.HomeStationService(
                 homeStations,
                 characters.TryChangeHomeStationAsync,

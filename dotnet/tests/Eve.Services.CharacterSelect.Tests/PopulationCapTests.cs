@@ -210,6 +210,52 @@ public class PopulationCapTests
     }
 
     [PgFact]
+    public async Task Simultaneous_entries_into_the_last_room_admit_exactly_one()
+    {
+        await using var h = await Harness.CreateAsync(systems: Systems, populationCapacity: 2);
+        InGame(h, 91, Home);
+        var pilots = new List<(ClientSession Session, long Character)>();
+        for (var i = 0; i < 6; i++)
+        {
+            var (session, _) = await h.LoginAsync($"race-{i}");
+            pilots.Add((session, await CreateAsync(h, session, $"Race {i}")));
+        }
+
+        var admitted = await Task.WhenAll(pilots.Select(async pilot =>
+        {
+            try
+            {
+                await h.CallAsync(pilot.Session, "SelectCharacterID", new PyInt(pilot.Character)).AsTask();
+                return true;
+            }
+            catch (MachoWrappedException refused)
+            {
+                Assert.True(refused.Error.IsUserError);
+                return false;
+            }
+        }));
+
+        Assert.Equal(1, admitted.Count(entered => entered));
+        Assert.Equal(1, pilots.Count(pilot => h.Online.IsOnline(pilot.Character)));
+    }
+
+    [Fact]
+    public void A_seat_is_taken_in_the_same_step_as_the_room_check_and_is_given_back_when_disposed()
+    {
+        var population = new SystemPopulation(new CharacterSessions(), Systems, capacity: 2);
+        var first = population.TryReserve(Home, 1);
+        var second = population.TryReserve(Home, 2);
+        Assert.NotNull(first);
+        Assert.NotNull(second);
+        Assert.Null(population.TryReserve(Home, 3));
+        Assert.Equal(2, population.LoadOf(Home, 3));
+
+        first!.Dispose();
+        Assert.Equal(1, population.LoadOf(Home, 3));
+        Assert.NotNull(population.TryReserve(Home, 3));
+    }
+
+    [PgFact]
     public async Task The_bound_call_carries_the_moniker_answer_as_a_substruct_and_the_nested_result()
     {
         await using var h = await Harness.CreateAsync(systems: Systems, populationCapacity: 2);

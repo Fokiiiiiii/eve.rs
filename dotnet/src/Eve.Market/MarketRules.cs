@@ -53,14 +53,16 @@ public static class MarketRules
     public static double RoundIsk(double amount) => double.IsFinite(amount) ? Math.Floor(amount * 100 + 0.5) / 100 : 0;
 
     public static MarketContext Context(MarketSkillLevels skills, bool isStation, double factionStanding = 0,
-        double corpStanding = 0, int warFaction = 0, int solarSystem = 0)
+        double corpStanding = 0, int warFaction = 0, int solarSystem = 0, int factionWarfareUpgradeLevel = 0)
     {
         var broker = 3.0 / 100;
         if (isStation)
-        {
             broker -= Skill(skills.Broker) * 0.3 / 100;
+        // The factional warfare system upgrade cuts the commission 10 percent per level, before the standing discounts (the client's
+        // facwarCommon.GetAdjustedFeePercentage in marketutil/brokerFee.py).
+        broker *= 1 - 0.1 * factionWarfareUpgradeLevel;
+        if (isStation)
             broker -= factionStanding * 0.0003 + corpStanding * 0.0002;
-        }
         var tax = SalesTaxPercent / 100;
         tax *= 1 - Skill(skills.Accounting) * 0.11;
         tax *= 1 - (solarSystem == 30100000 && warFaction is 500018 or 500019 ? 0.5 : 0);

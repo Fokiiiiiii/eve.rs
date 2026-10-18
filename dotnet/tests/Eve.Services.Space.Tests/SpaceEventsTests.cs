@@ -112,7 +112,8 @@ public class SpaceEventsTests
         rig.Sim.Say(ShipDestroyed(session, c.ShipId, spawn.Ship.ShipId));
         await Rig.UntilAsync(() => lost.Count == 1);
 
-        Assert.Equal(new ShipLoss(c.CharacterId, c.ShipId, type, ShipLossCause.Npc, (int)session.GetInt("solarsystemid")!.Value, 0), Assert.Single(lost));
+        // the contents (what the ship held) are told too; this test is about the type, the cause and the place
+        Assert.Equal(new ShipLoss(c.CharacterId, c.ShipId, type, ShipLossCause.Npc, (int)session.GetInt("solarsystemid")!.Value, 0), Assert.Single(lost) with { Contents = null });
     }
 
     [PgFact]

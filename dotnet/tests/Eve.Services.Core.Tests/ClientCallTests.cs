@@ -35,6 +35,23 @@ public class ClientCallTests
     }
 
     [Fact]
+    public void The_call_arguments_are_a_tuple_as_the_engine_sends_them()
+    {
+        var sink = new Sink();
+        var session = new ClientSession(sink) { ClientId = 7, UserId = 9 };
+
+        Assert.True(session.SendClientCall("agents", "SingleChoiceBox", [new PyStr("title"), new PyInt(3009318)], _ => { }));
+
+        // the payload is (0, substream of (1, method, args, kwargs)): the body decodes to the call, its arguments in a tuple
+        var request = MachoPacket.Decode(Assert.Single(sink.Packets))!;
+        var entry = Assert.IsType<PyTuple>(Assert.Single(Assert.IsType<PyTuple>(request.Payload).Items));
+        var body = Assert.IsType<PyTuple>(Assert.IsType<PySubStream>(entry.Items[1]).Decoded);
+        Assert.Equal("SingleChoiceBox", Assert.IsType<PyStr>(body.Items[1]).Value);
+        var args = Assert.IsType<PyTuple>(body.Items[2]);
+        Assert.Equal(2, args.Items.Count);
+    }
+
+    [Fact]
     public void A_session_without_a_sink_makes_no_client_call()
     {
         var session = new ClientSession(null);

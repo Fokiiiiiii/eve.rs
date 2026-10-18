@@ -76,7 +76,12 @@ internal sealed partial class CharacterServicesComposition
                 sendWelcomeMailAsync: SendNewCharacterWelcomeMailAsync,
                 unreadMailCount: ReadUnreadMailCount,
                 securityStatusOf: securityStatusOf,
-                population: SystemPopulationModel),
+                population: SystemPopulationModel,
+                deletionPurge: new HostCharacterDeletionPurge(source, items, skills, fittingSchema,
+                    async (corporationId, cancellationToken) => await corporations.GetAsync(corporationId, cancellationToken) is { IsNpc: true },
+                    new CharacterPrivateStatePurge(mailCache, Environment.GetEnvironmentVariable("EVE_AGENTS_SCHEMA") ?? Eve.Agents.AgentMissionStore.DefaultSchema,
+                        Environment.GetEnvironmentVariable("EVE_BOOKMARKS_SCHEMA") ?? Eve.Bookmarks.BookmarkStore.DefaultSchema,
+                        Environment.GetEnvironmentVariable("EVE_SPACE_SCHEMA") ?? Eve.Ships.PgProbeStore.DefaultSchema))),
             new MultiLoginBlockerService(session => CloneGradeSource.CloneGradeOf(session.Get("userid"))),
             new PopulationCapService(characters, SystemPopulationModel),
             new Eve.Services.CharacterInfo.ConfigService(characters, corporations, stations, solarSystems,
@@ -101,7 +106,21 @@ internal sealed partial class CharacterServicesComposition
                     await corporations.SetFactionWarfareAllowedEnlistmentFactionsAsync(characterId, corporationId, factions, cancellationToken),
                 SaveCharacterStateAsync: async (characterId, factionId, cooldown, cancellationToken) =>
                     await characters.SetFactionWarfareStateAsync(characterId, factionId, cooldown, cancellationToken))),
-            new Eve.Services.Core.FwVictoryPointMgrService(),
+            new Eve.Services.Core.FwVictoryPointMgrService(new Eve.Services.Core.FwVictoryPointRpcCallbacks(VictoryPointStatesAsync)),
+            new Eve.Services.Core.FacWarMgrService(factionWarfare, new Eve.Services.Core.FacWarMgrCallbacks(
+                FactionMembersAsync: FactionMembersAsync,
+                AffiliationsAsync: AffiliationsAsync,
+                ReadCharacterAsync: async (characterId, cancellationToken) =>
+                {
+                    var character = await characters.GetAsync(characterId, cancellationToken);
+                    return character is null
+                        ? null
+                        : new Eve.Services.Core.FwCharacterWarfareState(character.DirectFactionId, character.DirectEnlistmentCooldownFileTime);
+                },
+                SaveCharacterAsync: async (characterId, factionId, cooldown, cancellationToken) =>
+                    await characters.SetFactionWarfareStateAsync(characterId, factionId, cooldown, cancellationToken),
+                ReadStandingAsync: async (subjectId, factionOrCorporationId, cancellationToken) =>
+                    await foundations.Relations.ValueAsync("standing", factionOrCorporationId, subjectId, 0, cancellationToken: cancellationToken))),
             new Eve.Services.Core.InsurgencySolarsystemService(new Eve.Services.Core.InsurgencySolarsystemRpcCallbacks(ReadInsurgencyCampaignsAsync)),
             new Eve.Services.Core.AlertService(),
             new Eve.Services.Core.FighterMgrService { Provider = FighterProvider() },

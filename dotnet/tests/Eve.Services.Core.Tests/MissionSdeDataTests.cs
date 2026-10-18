@@ -94,11 +94,11 @@ public sealed class MissionSdeDataTests
         Assert.Equal(73, byKind[("courier", 3)]);
         Assert.Equal(64, byKind[("courier", 4)]);
         Assert.Equal(1, byKind[("courier", 5)]);
-        Assert.Equal(275, byKind[("kill", 1)]);
-        Assert.Equal(207, byKind[("kill", 2)]);
-        Assert.Equal(264, byKind[("kill", 3)]);
-        Assert.Equal(234, byKind[("kill", 4)]);
-        Assert.Equal(134, byKind[("kill", 5)]);
+        Assert.Equal(409, byKind[("kill", 1)]);
+        Assert.Equal(234, byKind[("kill", 2)]);
+        Assert.Equal(328, byKind[("kill", 3)]);
+        Assert.Equal(356, byKind[("kill", 4)]);
+        Assert.Equal(150, byKind[("kill", 5)]);
         Assert.DoesNotContain(byKind.Keys, key => key.Kind == "other");
     }
 

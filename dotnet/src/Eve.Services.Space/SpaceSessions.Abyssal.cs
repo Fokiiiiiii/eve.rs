@@ -694,7 +694,7 @@ public sealed partial class SpaceSessions
                 ("shipid", new PyLong(capsuleDeath.Ship.Id)),
                 ("locationid", new PyInt(station.Id)));
             if (shipDeath is not null && destroyed is not null)
-                NotifyDeathAfterSessionChange(pilot, shipDeath, destroyed);
+                RaiseShipLost(pilot, shipDeath, destroyed);
             NotifyAbyssalCapsuleDeath(client, capsuleDeath);
             sessionUpdated = true;
         }

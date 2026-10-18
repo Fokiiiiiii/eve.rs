@@ -159,6 +159,9 @@ public enum EnterHow : byte
 
     /// <summary>It is already in space (a login in space, a jump arrival).</summary>
     InSpace = 1,
+
+    /// <summary>It is put in space at the anchor of its solar system, where a game master's relocation brings it (no position is sent).</summary>
+    Anchor = 2,
 }
 
 /// <summary>A fitted module, as the ship's slim item lists it.</summary>
@@ -268,6 +271,9 @@ public static class SimCommands
     public const byte BridgeJump = 31;
     /// <summary>A Black Ops conduit jump (protocol 57): the anchor and the ships of the passenger list jump to the field at once, within the conduit's range.</summary>
     public const byte ConduitJump = 32;
+
+    /// <summary>Walks the ship through an acceleration gate of a dungeon room to a point of the other room (protocol 75): args are the gate, then x, y, z.</summary>
+    public const byte AccelerationGateTransit = 34;
     public const byte ControlStructure = 33;
 
     /// <summary>The scan targets of the scene for a probe scan (protocol 52).</summary>
@@ -1269,6 +1275,27 @@ public sealed record SimPlaceAnalysisBeacon(
 /// <summary>The host sets a CRAB's state (protocol 61); one not in space is left alone.</summary>
 public sealed record SimSetAnalysisBeaconState(long DeployableId, SimAnalysisBeaconState State) : SimMessage;
 
+/// <summary>A value of a dynamic slim-item field (protocol 76): none, an int, a real, a bool, a text, or a tuple of those.</summary>
+public abstract record SimSlimValue;
+
+public sealed record SimSlimNone : SimSlimValue;
+
+public sealed record SimSlimInt(long Value) : SimSlimValue;
+
+public sealed record SimSlimReal(double Value) : SimSlimValue;
+
+public sealed record SimSlimBool(bool Value) : SimSlimValue;
+
+public sealed record SimSlimText(string Value) : SimSlimValue;
+
+public sealed record SimSlimTuple(IReadOnlyList<SimSlimValue> Items) : SimSlimValue;
+
+/// <summary>
+/// The host sets a dynamic field of a deployable's slim item (protocol 76). The client reads it on the slim item, so whoever has the deployable in view is
+/// told the whole slim item again; a value already set is not told again, and an item not in space is left alone.
+/// </summary>
+public sealed record SimSetSlimField(long ItemId, string FieldName, SimSlimValue Value) : SimMessage;
+
 /// <summary>A Mobile Cynosural Inhibitor the host keeps a record of, put in space where its pilot dropped it (protocol 50): the same placement as a disruptor's,
 /// with the inhibitor's range in metres (no cynosural field lights within it while it is anchored).</summary>
 public sealed record SimPlaceInhibitor(
@@ -1299,6 +1326,21 @@ public sealed record SimPlaceControlTower(
 /// <summary>A deadspace pocket of a dungeon (a mission pocket or an incursion site) the host keeps a record of, put in the scene at its origin with its radius (protocol 74).
 /// It is in no client ball; the wire carries it as a disruptor's placement with no type, group, range or owner.</summary>
 public sealed record SimPlaceDeadspacePocket(long DeployableId, int SolarSystemId, string Name, IReadOnlyList<double> Position, double Radius) : SimMessage;
+
+/// <summary>
+/// An acceleration gate of a dungeon room, put in its system's space at the point the host gives (protocol 75): a stargate-kind ball, interactive, that the
+/// pilots of the system see. The wire carries it as a disruptor's placement with no range, owner or ship.
+/// </summary>
+public sealed record SimPlaceAccelerationGate(long DeployableId, int SolarSystemId, string Name, int TypeId, int GroupId, IReadOnlyList<double> Position, double Radius) : SimMessage;
+
+/// <summary>A battlefield's scoreboard put in its system's space (protocol 78): a ball the pilots of the system see; its score is the dynamic slim field the host sets.</summary>
+public sealed record SimPlaceBattlefieldScoreboard(long DeployableId, int SolarSystemId, string Name, int TypeId, int GroupId, IReadOnlyList<double> Position, double Radius) : SimMessage;
+
+/// <summary>A battlefield's capture point put in its system's space (protocol 77): a ball the pilots of the system see. Its attacker and occupier factions
+/// (0 for none) and its next point time (a FILETIME, 0 for none) are the dynamic slim fields the client reads (<c>component_fwCapturePoint_factionInfo</c>,
+/// <c>component_fwCapturePoint_nextPointTime</c>).</summary>
+public sealed record SimPlaceCapturePoint(long DeployableId, int SolarSystemId, string Name, int TypeId, int GroupId, IReadOnlyList<double> Position, double Radius,
+    int AttackerFaction, int OccupierFaction, long NextPointTime) : SimMessage;
 
 /// <summary>A Mobile Observatory's decloaking ping in its solar system (protocol 72): the cloaked ships there whose cloak is not stabilized may be decloaked.</summary>
 public sealed record SimRemoteDecloakPing(int SolarSystemId, long ObservatoryId) : SimMessage;

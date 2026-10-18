@@ -469,6 +469,7 @@ impl Message {
                 out.push(match enter.how {
                     How::Undock => 0,
                     How::InSpace => 1,
+                    How::Anchor => 2,
                 });
                 out.extend_from_slice(&enter.station_id.to_le_bytes());
                 put_ship(&mut out, &enter.ship);
@@ -1166,7 +1167,8 @@ impl Message {
             | Self::PlaceCynoBeacon(disruptor)
             | Self::PlaceObservatory(disruptor)
             | Self::PlaceControlTower(disruptor)
-            | Self::PlaceDeadspacePocket(disruptor) => {
+            | Self::PlaceDeadspacePocket(disruptor)
+            | Self::PlaceAccelerationGate(disruptor) => {
                 out.extend_from_slice(&disruptor.deployable_id.to_le_bytes());
                 out.extend_from_slice(&disruptor.solar_system_id.to_le_bytes());
                 put_text(&mut out, &disruptor.name);
@@ -1202,6 +1204,32 @@ impl Message {
             Self::SetAnalysisBeaconState { deployable_id, state } => {
                 out.extend_from_slice(&deployable_id.to_le_bytes());
                 put_analysis_beacon_state(&mut out, state);
+            }
+            Self::SetSlimField { item_id, name, value } => {
+                out.extend_from_slice(&item_id.to_le_bytes());
+                put_text(&mut out, name);
+                put_slim_value(&mut out, value);
+            }
+            Self::PlaceCapturePoint(point) => {
+                out.extend_from_slice(&point.deployable_id.to_le_bytes());
+                out.extend_from_slice(&point.solar_system_id.to_le_bytes());
+                put_text(&mut out, &point.name);
+                out.extend_from_slice(&point.type_id.to_le_bytes());
+                out.extend_from_slice(&point.group_id.to_le_bytes());
+                put_vector(&mut out, &point.position);
+                out.extend_from_slice(&point.radius.to_le_bytes());
+                out.extend_from_slice(&point.attacker_faction.to_le_bytes());
+                out.extend_from_slice(&point.occupier_faction.to_le_bytes());
+                out.extend_from_slice(&point.next_point_time.to_le_bytes());
+            }
+            Self::PlaceBattlefieldScoreboard(scoreboard) => {
+                out.extend_from_slice(&scoreboard.deployable_id.to_le_bytes());
+                out.extend_from_slice(&scoreboard.solar_system_id.to_le_bytes());
+                put_text(&mut out, &scoreboard.name);
+                out.extend_from_slice(&scoreboard.type_id.to_le_bytes());
+                out.extend_from_slice(&scoreboard.group_id.to_le_bytes());
+                put_vector(&mut out, &scoreboard.position);
+                out.extend_from_slice(&scoreboard.radius.to_le_bytes());
             }
             Self::PlaceAsteroid(asteroid) => {
                 out.extend_from_slice(&asteroid.solar_system_id.to_le_bytes());
@@ -1502,6 +1530,38 @@ impl Message {
 }
 
 /// A CRAB's state as the host sends it (protocol 61): the activation flag, the two FILETIME times, the wait in seconds, the link state, the link's end and the ship.
+fn put_text(out: &mut Vec<u8>, text: &str) {
+    out.extend_from_slice(&(text.len() as u16).to_le_bytes());
+    out.extend_from_slice(text.as_bytes());
+}
+
+/// A dynamic slim-item field value: a tag (0 none, 1 int, 2 real, 3 bool, 4 text, 5 tuple), then its payload.
+fn put_slim_value(out: &mut Vec<u8>, value: &SlimValue) {
+    match value {
+        SlimValue::None => out.push(0),
+        SlimValue::Int(number) => {
+            out.push(1);
+            out.extend_from_slice(&number.to_le_bytes());
+        }
+        SlimValue::Real(number) => {
+            out.push(2);
+            out.extend_from_slice(&number.to_le_bytes());
+        }
+        SlimValue::Bool(flag) => out.extend_from_slice(&[3, u8::from(*flag)]),
+        SlimValue::Text(text) => {
+            out.push(4);
+            put_text(out, text);
+        }
+        SlimValue::Tuple(items) => {
+            out.push(5);
+            out.extend_from_slice(&(items.len() as u16).to_le_bytes());
+            for item in items {
+                put_slim_value(out, item);
+            }
+        }
+    }
+}
+
 fn put_analysis_beacon_state(out: &mut Vec<u8>, state: &AnalysisBeaconState) {
     out.push(u8::from(state.active));
     out.extend_from_slice(&state.activate_at.to_le_bytes());

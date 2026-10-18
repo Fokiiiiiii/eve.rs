@@ -26,12 +26,27 @@ public sealed partial class RedeemService
     }
 
     /// <summary>
-    /// Activates an item certificate of the account (<c>ActivateMultiTraining(itemID, trainingID)</c>). Consuming an inventory item is not
-    /// implemented yet: the call is refused, so no item is consumed and no queue is granted.
+    /// <c>ActivateMultiTraining(itemID, trainingID=...)</c>: uses a certificate item of the account. The item is consumed and the queue gets
+    /// 30 days. A refusal is the reference's CustomInfo text (EveJS and the wiki are the sources; EveJS itself only refreshes the slots).
     /// </summary>
     [Method("ActivateMultiTraining")]
-    public ValueTask<PyValue> ActivateMultiTraining(ServiceCall call) =>
-        throw new NotSupportedException("Activating a Multiple Character Training item is not implemented: the item is not consumed and no queue is granted.");
+    public async ValueTask<PyValue> ActivateMultiTraining(ServiceCall call)
+    {
+        call.Cancellation.ThrowIfCancellationRequested();
+        var requestedTraining = call.Args.Count > 1 ? call.Arg(1) : call.Kwarg("trainingID") ?? PyNone.Instance;
+        if (_multipleTraining is null)
+            throw MachoErrors.ThrowUserError("CustomInfo", ("info", new PyStr("Multiple Character Training is not available on this server.")));
+        var itemId = call.Arg(0) switch { PyInt i => i.Value, PyLong l => l.Value, _ => 0L };
+        try
+        {
+            var slots = await _multipleTraining.ActivateItemAsync(AuthenticatedUserId(call), itemId, TrainingSlotArgument(requestedTraining), call.Cancellation);
+            return new PyList([.. slots.Select(slot => (PyValue)Py.Tuple(new PyInt(slot.Slot), Py.FileTimeLong(slot.EndsAt)))]);
+        }
+        catch (InvalidOperationException error)
+        {
+            throw MachoErrors.ThrowUserError("CustomInfo", ("info", new PyStr(error.Message)));
+        }
+    }
 
     /// <summary>Activates the soulbound certificates in the tokens (<c>ActivateSoulboundMultiTraining(charID, tokens, trainingID)</c>).</summary>
     [Method("ActivateSoulboundMultiTraining")]
@@ -80,32 +95,38 @@ public sealed partial class RedeemService
     }
 
     /// <summary>
-    /// The re-sculpt token is not consumed and the recustomization state is not set: no token system and no paperdoll
-    /// state change exist yet (see DEVIATIONS, "Account and social requests"). The answer is False, not an accepted activation.
+    /// <c>ActivateCharacterReSculpt(itemID)</c>: a re-sculpt certificate of the account's characters is consumed and the character's recustomization
+    /// state is set (see <see cref="ActivateReSculpt"/>). Anything else (a missing or another item) answers False and changes nothing.
     /// </summary>
     [Method("ActivateCharacterReSculpt")]
-    public async ValueTask<PyValue> ActivateCharacterReSculpt(ServiceCall call) =>
-        await OverrideUserCallAsync(call, PyBool.False);
+    public async ValueTask<PyValue> ActivateCharacterReSculpt(ServiceCall call)
+    {
+        call.Cancellation.ThrowIfCancellationRequested();
+        var itemId = call.Arg(0) switch { PyInt i => i.Value, PyLong l => l.Value, _ => 0L };
+        var activated = ActivateReSculpt is not null && itemId > 0
+            && await ActivateReSculpt(AuthenticatedUserId(call), itemId, call.Cancellation);
+        return await OverrideUserCallAsync(call, activated ? PyBool.True : PyBool.False);
+    }
 
-    /// <summary>The vote is not recorded: there is no feedback store yet. The client does not read the answer.</summary>
+    /// <summary>GATE-C (owner decision): answers true and keeps nothing, as the reference does (EveJS <c>userService.js</c> 1104). The client does not read the answer.</summary>
     [Method("CastUpvote")]
     public async ValueTask<PyValue> CastUpvote(ServiceCall call) =>
-        await OverrideUserCallAsync(call, PyBool.False);
+        await OverrideUserCallAsync(call, PyBool.True);
 
-    /// <summary>The vote is not recorded: there is no feedback store yet. The client does not read the answer.</summary>
+    /// <summary>GATE-C (owner decision): answers true and keeps nothing, as the reference does (EveJS <c>userService.js</c> 1109). The client does not read the answer.</summary>
     [Method("CastDownvote")]
     public async ValueTask<PyValue> CastDownvote(ServiceCall call) =>
-        await OverrideUserCallAsync(call, PyBool.False);
+        await OverrideUserCallAsync(call, PyBool.True);
 
-    /// <summary>The report is not stored: there is no report review store yet. The client does not read the answer.</summary>
+    /// <summary>GATE-C (owner decision): answers true and keeps nothing, as the reference does (EveJS <c>userService.js</c> 1115). The client does not read the answer.</summary>
     [Method("ReportBot")]
     public async ValueTask<PyValue> ReportBot(ServiceCall call) =>
-        await OverrideUserCallAsync(call, PyBool.False);
+        await OverrideUserCallAsync(call, PyBool.True);
 
-    /// <summary>The report is not stored: there is no report review store yet. The client does not read the answer.</summary>
+    /// <summary>GATE-C (owner decision): answers true and keeps nothing, as the reference does (EveJS <c>userService.js</c> 1122). The client does not read the answer.</summary>
     [Method("ReportISKSpammer")]
     public async ValueTask<PyValue> ReportISKSpammer(ServiceCall call) =>
-        await OverrideUserCallAsync(call, PyBool.False);
+        await OverrideUserCallAsync(call, PyBool.True);
 
     /// <summary>
     /// The character logs off in the host (<c>CharacterLogoff</c>). Without that callback no session can be logged off, so the

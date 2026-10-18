@@ -293,6 +293,12 @@ public sealed partial class RedeemService(IRedeemCallbacks callbacks, Func<long,
     private readonly IRedeemCallbacks _callbacks = callbacks ?? throw new ArgumentNullException(nameof(callbacks));
     private readonly IMultipleTrainingCallbacks? _multipleTraining = multipleTraining;
 
+    /// <summary>
+    /// Uses a re-sculpt certificate of an account's character (<c>ActivateCharacterReSculpt</c>): the item is consumed and the character's recustomization
+    /// state is set. Answers false, and changes nothing, when the item is not such a certificate of one of the account's characters.
+    /// </summary>
+    public Func<long, long, CancellationToken, ValueTask<bool>>? ActivateReSculpt { get; init; }
+
     [Method("GetRedeemTokens")]
     public async ValueTask<PyValue> GetRedeemTokens(ServiceCall call)
     {
@@ -362,7 +368,8 @@ public sealed partial class VaultManagerService(IVaultManagerCallbacks callbacks
     [Method("get_account_balance")]
     public async ValueTask<PyValue> GetAccountBalance(ServiceCall call)
     {
-        if (call.Arg(0) is not PyStr { Value: "PLX" })
+        // the client sends the currency as a byte string (PyBytes), as its other text arguments (JsSemantics.StringValue)
+        if (Eve.Macho.JsSemantics.StringValue(call.Arg(0)) != "PLX")
             throw new NotSupportedException("Only PLX account balances are supported.");
 
         var authenticatedUserId = call.Session.UserId is { } userId && userId > 0

@@ -2,6 +2,7 @@ using Eve.Macho;
 using Eve.Marshal;
 using Eve.Characters;
 using Eve.Skills;
+using Eve.Ships;
 using Npgsql;
 
 namespace Eve.Services.Skills;
@@ -10,15 +11,17 @@ namespace Eve.Services.Skills;
 [Service("skillHandler", Aliases = ["skillMgr"])]
 public sealed partial class SkillHandlerService(
     PgSkillStore store, SkillCatalog catalog, CharacterTraining training, PgCharacterStore characters, Eve.Inventory.PgItemStore items, Eve.Dogma.DogmaStatic dogmaStatic, TrainingAnnouncer announcer, Func<long> nowUnixMs,
-    SkillAugmentationReader readAugmentations, Func<double>? nextBoosterRoll = null, Eve.Wallet.WalletTransactions? walletTransactions = null, Func<long, bool>? isAlphaClone = null)
+    SkillAugmentationReader readAugmentations, Func<double>? nextBoosterRoll = null, Eve.Wallet.WalletTransactions? walletTransactions = null, Func<long, bool>? isAlphaClone = null, ExpertSystems? expertSystems = null)
 {
+    /// <summary>The durable job that ends an activated booster at its expiry (set by the Host; null where no scheduler runs).</summary>
+    public SkillBoosterLapse? BoosterLapse { get; set; }
+
     /// <summary>The five attributes a character trains with (charisma, intelligence, memory, perception, willpower).</summary>
     private static readonly int[] AttributeIds = [164, 165, 166, 167, 168];
 
     private const int BoosterFlag = 88;
     private const int ImplantFlag = 89;
     private const int ImplantCategoryId = 20;
-    private const int ImplantSlotAttributeId = 331;
     private const int BoosterSlotAttributeId = 1087;
     private const int BoosterDurationAttributeId = 330;
     private const int SkillLevelAttributeId = 280;
@@ -114,7 +117,7 @@ public static SkillAugmentationReader CreateAugmentationReader(
             modifiers);
     }
 
-    private static async Task PruneExpiredBoosterRowsAsync(
+    internal static async Task PruneExpiredBoosterRowsAsync(
         PgSkillStore skillStore,
         Eve.Inventory.PgItemStore itemStore,
         Npgsql.NpgsqlConnection connection,
@@ -187,14 +190,15 @@ public static SkillAugmentationReader CreateAugmentationReader(
             .ToDictionary(booster => booster.ItemId);
     }
 
+    /// <summary>A cerebral accelerator is the booster of booster slot 10 (wiki: they share it, apart from all other boosters); it stays active through a clone jump or a pod death.</summary>
+    public const int CerebralAcceleratorSlot = 10;
+
+    public static bool IsCerebralAccelerator(Eve.Dogma.TypeDef? type) =>
+        type is not null && type.Attributes.TryGetValue(BoosterSlotAttributeId, out var slot) && slot == CerebralAcceleratorSlot;
+
     private static bool IsBoosterType(Eve.Dogma.TypeDef? type) =>
         type is { CategoryId: ImplantCategoryId } &&
         type.Attributes.TryGetValue(BoosterSlotAttributeId, out var slot) &&
-        double.IsFinite(slot) && slot > 0 && slot <= int.MaxValue && slot == Math.Truncate(slot);
-
-    private static bool IsImplantType(Eve.Dogma.TypeDef? type) =>
-        type is { CategoryId: ImplantCategoryId } &&
-        type.Attributes.TryGetValue(ImplantSlotAttributeId, out var slot) &&
         double.IsFinite(slot) && slot > 0 && slot <= int.MaxValue && slot == Math.Truncate(slot);
 
 /// <summary>The smuggling chance of a pilot (dogma attribute 445 after its implant and skill modifiers, EVE.js resolveCharacterSmugglingChance), from 0 to 1.</summary>
@@ -227,25 +231,12 @@ public static SkillAugmentationReader CreateAugmentationReader(
         dogmaItems[characterId] = character;
         foreach (var item in inventory)
         {
-            var type = dogma.Type(item.TypeId);
-            Eve.Dogma.DogmaItem? model = null;
-            if (item.Flag == ImplantFlag && IsImplantType(type))
+            if (Eve.Ships.PilotAugmentations.ModelOf(dogma, item, characterId, active) is not { } model)
             {
-                model = new Eve.Dogma.DogmaItem(item.Id, item.TypeId, characterId, characterId, item.Flag);
+                continue;
             }
-            else if (item.Flag == BoosterFlag && active.TryGetValue(item.Id, out var booster) &&
-                     type is not null && booster.BoosterTypeId == item.TypeId)
-            {
-                var effects = type.EffectIds.Where(effectId =>
-                    dogma.Effect(effectId) is { ChanceAttributeId: 0 } || booster.SideEffectIds.Contains(effectId)).ToHashSet();
-                model = new Eve.Dogma.DogmaItem(item.Id, item.TypeId, characterId, characterId, item.Flag,
-                    Eve.Dogma.ItemState.Active, effects);
-            }
-            if (model is not null)
-            {
-                world.Add(model);
-                dogmaItems[item.Id] = model;
-            }
+            world.Add(model);
+            dogmaItems[item.Id] = model;
         }
         var skillLevelAttributeId = dogma.AttributeId("skillLevel") ?? SkillLevelAttributeId;
         foreach (var skill in skills.Where(skill => skill.Level > 0))
@@ -328,11 +319,49 @@ public static SkillAugmentationReader CreateAugmentationReader(
         {
             return null;
         }
-        if (candidate.OwnerId != characterId)
-        {
-            throw MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("This booster is not in your inventory.")));
-        }
+        var use = await ConsumeAsync(characterId, candidate, candidateType, stationId, shipId, cancellationToken);
+        await announcer.AnnounceLearningChangedAsync(characterId, use.Training);
+        return true;
+    }
 
+    /// <summary>
+    /// <c>UseBooster(itemID, locationID)</c>, the client's Consume: the booster is used from a station hangar or the cargo of the active ship (EVE
+    /// University wiki, Boosters: "right click on it and select Consume"). Returns what changed in the inventory and the training it rebased, for the
+    /// client to be told (the caller announces them).
+    /// </summary>
+    public async Task<(IReadOnlyList<ItemChanged> Changes, TrainingUpdate? Training)> UseBoosterAsync(
+        long characterId,
+        long itemId,
+        long? locationId,
+        long? stationId,
+        long? shipId,
+        CancellationToken cancellationToken = default)
+    {
+        var candidate = await items.GetAsync(itemId, cancellationToken);
+        if (candidate is null || candidate.OwnerId != characterId || (locationId is { } location && location != candidate.LocationId))
+        {
+            throw MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("That booster is no longer available.")));
+        }
+        await dogmaStatic.EnsureTypesAsync([candidate.TypeId], cancellationToken);
+        if (dogmaStatic.Type(candidate.TypeId) is not { } candidateType || !IsBoosterType(candidateType))
+        {
+            throw MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("That item cannot be consumed as a booster.")));
+        }
+        return await ConsumeAsync(characterId, candidate, candidateType, stationId, shipId, cancellationToken);
+    }
+
+    /// <summary>
+    /// Takes a booster into its slot and returns what changed in the inventory. The running skill is rebased at the rate it has first, so the booster's
+    /// attributes apply from now on; the client is told that change. A booster for an occupied slot is refused (the wiki: a slot holds one active booster).
+    /// </summary>
+    private async Task<(IReadOnlyList<ItemChanged> Changes, TrainingUpdate? Training)> ConsumeAsync(
+        long characterId, Eve.Inventory.Item candidate, Eve.Dogma.TypeDef candidateType, long? stationId, long? shipId, CancellationToken cancellationToken)
+    {
+        TrainingUpdate? rebased = null;
+        if (await characters.GetAsync(characterId, cancellationToken) is { } owner)
+        {
+            rebased = await training.RebaseRunningAsync(characterId, owner.AccountId, cancellationToken);
+        }
         var activation = await store.InTransactionAsync(async (connection, transaction, ct) =>
         {
             await store.LockActiveSkillBoostersAsync(connection, transaction, characterId, ct);
@@ -342,14 +371,14 @@ public static SkillAugmentationReader CreateAugmentationReader(
             var state = await ReadLockedAugmentationStateAsync(
                 items, dogmaStatic, store, connection, transaction, characterId, nowMs, nowFileTime, nextBoosterRoll, ct);
 
-            var item = await items.LockAndGetAsync(connection, transaction, itemId, ct);
+            var item = await items.LockAndGetAsync(connection, transaction, candidate.Id, ct);
             if (item is null || item.OwnerId != characterId || item.TypeId != candidate.TypeId)
             {
                 throw MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("The booster item changed before activation.")));
             }
             if (item.LocationId == characterId && item.Flag == BoosterFlag && state.Active.ContainsKey(item.Id))
             {
-                return (Accepted: true, ExistingTypeName: (string?)null);
+                return (Accepted: true, ExistingTypeName: (string?)null, Changes: new List<ItemChanged>());
             }
             if (!((stationId == item.LocationId && item.Flag == HangarFlag) ||
                   (shipId == item.LocationId && item.Flag == CargoFlag)))
@@ -363,29 +392,36 @@ public static SkillAugmentationReader CreateAugmentationReader(
                 if (activeType?.Attributes.TryGetValue(BoosterSlotAttributeId, out var activeSlot) == true &&
                     candidateType.Attributes.TryGetValue(BoosterSlotAttributeId, out var requestedSlot) && activeSlot == requestedSlot)
                 {
-                    return (Accepted: false, ExistingTypeName: activeType.Name);
+                    return (Accepted: false, ExistingTypeName: activeType.Name, Changes: new List<ItemChanged>());
                 }
             }
 
             var outcome = RollBoosterEffects(
                 characterId, item.Id, candidateType, state.Inventory, state.Skills, state.Active, dogmaStatic, nextBoosterRoll);
             var expiryFileTime = Py.FileTimeFromUnixMs(checked(nowMs + (long)Math.Ceiling(outcome.DurationMs)));
+            var changes = new List<ItemChanged>();
             long activeItemId;
             if (item.Singleton || item.Quantity == 1)
             {
                 await items.MoveAsync(connection, transaction, item.Id, characterId, BoosterFlag, ct);
                 activeItemId = item.Id;
+                changes.Add(new ItemChanged(item with { LocationId = characterId, Flag = BoosterFlag }, item.LocationId, item.Flag, item.Quantity));
             }
             else
             {
-                activeItemId = (await items.MoveStackAsync(connection, transaction, item, 1, characterId, characterId, BoosterFlag, ct)).Id;
+                var moved = await items.MoveStackAsync(connection, transaction, item, 1, characterId, characterId, BoosterFlag, ct);
+                activeItemId = moved.Id;
+                changes.Add(new ItemChanged(item with { Quantity = item.Quantity - 1 }, item.LocationId, item.Flag, item.Quantity));
+                changes.Add(new ItemChanged(moved, item.LocationId, item.Flag, 0));
             }
             if (!await store.TryPersistActiveBoosterAsync(
                     connection, transaction, characterId, activeItemId, item.TypeId, expiryFileTime, outcome.SideEffectIds, ct))
             {
                 throw new InvalidOperationException("Booster activation state already exists for the consumed inventory item.");
             }
-            return (Accepted: true, ExistingTypeName: (string?)null);
+            if (BoosterLapse is not null)
+                await BoosterLapse.ScheduleAsync(connection, transaction, characterId, activeItemId, expiryFileTime, ct);
+            return (Accepted: true, ExistingTypeName: (string?)null, Changes: changes);
         }, cancellationToken);
 
         if (!activation.Accepted)
@@ -394,7 +430,7 @@ public static SkillAugmentationReader CreateAugmentationReader(
                 ("typeName", new PyStr(candidateType.Name)),
                 ("typeName2", new PyStr(activation.ExistingTypeName!)));
         }
-        return true;
+        return (activation.Changes, rebased);
     }
 
     private static long AccountOf(ServiceCall call) => call.Session.UserId ?? 0;
@@ -406,9 +442,33 @@ public static SkillAugmentationReader CreateAugmentationReader(
     private async ValueTask<IReadOnlyList<long>> AccountCharacters(ServiceCall call) =>
         call.Session.UserId is { } account ? [.. (await characters.ForAccountAsync((int)account, call.Cancellation)).Select(c => c.Id)] : [];
 
+    /// <summary>
+    /// <c>CheckAndSendNotifications()</c>: the reference answers an empty list and sends nothing (EveJS <c>skillMgrService.js</c> 594).
+    /// The client calls it only from a development provider (eve-logic <c>skillHistoryProvider.py</c>).
+    /// </summary>
+    [Method("CheckAndSendNotifications")]
+    public PyValue CheckAndSendNotifications(ServiceCall _) => new PyList([]);
+
+    /// <summary>
+    /// <c>GetSkillBundleInfo(skillBundleID)</c>: the client unpacks <c>name, icon</c> for the crate's loot line (eve-logic
+    /// <c>crate/lootItem.py</c> 87). No bundle name or icon exists in the SDE, EveJS or eve-logic, so the answer is the client's
+    /// empty shape: an empty label and no icon (the client then falls back to its default icon). Recorded in DEVIATIONS.
+    /// </summary>
+    [Method("GetSkillBundleInfo")]
+    public PyValue GetSkillBundleInfo(ServiceCall _) => Py.Tuple(new PyWString(string.Empty), PyNone.Instance);
+
     [Method("GetSkills")]
-    public async ValueTask<PyValue> GetSkills(ServiceCall call) =>
-        await ViewOf(call) is { } view ? SkillWire.EntryDictionary(CharacterOf(call)!.Value, catalog, view.Skills, view.InTraining) : None;
+    public async ValueTask<PyValue> GetSkills(ServiceCall call)
+    {
+        if (await ViewOf(call) is not { } view)
+        {
+            return None;
+        }
+        var characterId = CharacterOf(call)!.Value;
+        // the levels the installed expert systems grant show in the skills; the training itself runs from the trained levels
+        var grants = expertSystems is null ? new Dictionary<int, int>() : await expertSystems.GrantsAsync(characterId, call.Cancellation);
+        return SkillWire.EntryDictionary(characterId, catalog, ExpertSystemRules.Effective(view.Skills, grants), view.InTraining);
+    }
 
     /// <summary>The skills including lapsed ones (a character that let its subscription lapse): the same until subscriptions exist.</summary>
     [Method("GetAllSkills")]
@@ -530,7 +590,7 @@ public static SkillAugmentationReader CreateAugmentationReader(
 
             var type = dogmaStatic.Type(item.TypeId);
             if (type is null || type.CategoryId != ImplantCategoryId ||
-                !type.Attributes.TryGetValue(ImplantSlotAttributeId, out var slot) ||
+                !type.Attributes.TryGetValue(Eve.Ships.PilotAugmentations.ImplantSlotAttributeId, out var slot) ||
                 !double.IsFinite(slot) || slot <= 0 || slot > int.MaxValue || slot != Math.Truncate(slot))
             {
                 continue;

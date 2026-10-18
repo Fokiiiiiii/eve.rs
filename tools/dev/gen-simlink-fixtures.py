@@ -21,19 +21,35 @@ KINDS = {"Hello": 1, "HelloAck": 2, "Enter": 3, "Leave": 4, "Bind": 5, "UpdateSt
          "EcmBurst": 67, "PlaceDisruptor": 68, "SetDisruptorActive": 69, "PlaceInhibitor": 70, "ScanTargets": 71, "DirectionalTargets": 72,
          "PlaceCynoBeacon": 73, "PlaceStructure": 74, "RemoveStructure": 75, "SetStructureState": 76, "StructureDamaged": 77,
          "PlaceAnalysisBeacon": 78, "SetAnalysisBeaconState": 79, "TetherPolicy": 80, "TetherChanged": 81,
-         "PlaceObservatory": 90, "RemoteDecloakPing": 91, "PlaceControlTower": 92, "PlaceDeadspacePocket": 93, "PlaceWormhole": 82, "RemoveWormhole": 83, "ControlStructure": 84, "StructureDamageCandidatesRequest": 85, "StructureDamageCandidatesResult": 86, "RemoveCynoBeacon": 87, "DamageableEntityUpserted": 88, "DamageableEntityRemoved": 89,
-         "EnsureAbyssalScene": 94, "EnsureAbyssalSceneReply": 95, "MoveAbyssalParticipant": 96, "MoveAbyssalParticipantReply": 97,
-         "RebindAbyssalSession": 98, "RebindAbyssalSessionReply": 99,
-         "RemoveAbyssalScene": 100, "RemoveAbyssalSceneReply": 101,
-         "EnsureAbyssalTracePublished": 102, "EnsureAbyssalTracePublishedReply": 103,
-         "RemoveAbyssalTrace": 104, "RemoveAbyssalTraceReply": 105,
-         "RemoveAbyssalParticipant": 106, "RemoveAbyssalParticipantReply": 107,
-         "GetAbyssalParticipantPose": 108, "GetAbyssalParticipantPoseReply": 109,
-         "EnsureAbyssalSceneObject": 110, "EnsureAbyssalSceneObjectReply": 111,
-         "EnsureAbyssalRewardCache": 112, "EnsureAbyssalRewardCacheReply": 113,
-         "EnsureAbyssalLootContainer": 114, "EnsureAbyssalLootContainerReply": 115,
-         "EnsureAbyssalEnvironmentObject": 116, "EnsureAbyssalEnvironmentObjectReply": 117,
-         "AbyssalFieldMembership": 118, "RefreshAbyssalNpc": 119, "RefreshAbyssalNpcReply": 120}
+         "PlaceWormhole": 82, "RemoveWormhole": 83, "ControlStructure": 84, "StructureDamageCandidatesRequest": 85,
+         "StructureDamageCandidatesResult": 86, "RemoveCynoBeacon": 87, "DamageableEntityUpserted": 88, "DamageableEntityRemoved": 89,
+         "PlaceObservatory": 90, "RemoteDecloakPing": 91, "PlaceControlTower": 92, "PlaceDeadspacePocket": 93,
+         "PlaceAccelerationGate": 94, "SetSlimField": 95, "PlaceCapturePoint": 96, "PlaceBattlefieldScoreboard": 97,
+         "EnsureAbyssalScene": 98, "EnsureAbyssalSceneReply": 99, "MoveAbyssalParticipant": 100, "MoveAbyssalParticipantReply": 101,
+         "RebindAbyssalSession": 102, "RebindAbyssalSessionReply": 103, "RemoveAbyssalScene": 104, "RemoveAbyssalSceneReply": 105,
+         "EnsureAbyssalTracePublished": 106, "EnsureAbyssalTracePublishedReply": 107, "RemoveAbyssalTrace": 108, "RemoveAbyssalTraceReply": 109,
+         "RemoveAbyssalParticipant": 110, "RemoveAbyssalParticipantReply": 111, "GetAbyssalParticipantPose": 112, "GetAbyssalParticipantPoseReply": 113,
+         "EnsureAbyssalSceneObject": 114, "EnsureAbyssalSceneObjectReply": 115, "EnsureAbyssalRewardCache": 116, "EnsureAbyssalRewardCacheReply": 117,
+         "EnsureAbyssalLootContainer": 118, "EnsureAbyssalLootContainerReply": 119, "EnsureAbyssalEnvironmentObject": 120, "EnsureAbyssalEnvironmentObjectReply": 121,
+         "AbyssalFieldMembership": 122, "RefreshAbyssalNpc": 123, "RefreshAbyssalNpcReply": 124}
+
+def slim_value(v):  # a dynamic slim-item field value (protocol 76): a tag (0 none, 1 int, 2 real, 3 bool, 4 text, 5 tuple), then its payload
+    tag = v["tag"]
+    if tag == "none":
+        return bytes([0])
+    if tag == "int":
+        return bytes([1]) + i64(v["value"])
+    if tag == "real":
+        return bytes([2]) + struct.pack("<d", v["value"])
+    if tag == "bool":
+        return bytes([3, 1 if v["value"] else 0])
+    if tag == "text":
+        return bytes([4]) + s(v["value"])
+    if tag == "tuple":
+        return bytes([5]) + struct.pack("<H", len(v["items"])) + b"".join(slim_value(item) for item in v["items"])
+    raise ValueError(tag)
+
+
 def s(text):  # u16 length + UTF-8
     data = text.encode("utf-8")
     return struct.pack("<H", len(data)) + data
@@ -642,9 +658,18 @@ def build(m):
         return frame(k, u64(m["sessionId"]) + i64(m["previousStructureId"]) + i64(m["structureId"]) + bytes([1 if m["repairing"] else 0]))
     if k == "StructureDamaged":  # sent by the simulation: the layer a hit emptied (0 none, 1 shield, 2 armor, 3 hull) and whether a repair is paused
         return frame(k, i64(m["structureId"]) + bytes([m["depleted"]]) + bytes([1 if m["overThreshold"] else 0]))
+    if k == "PlaceCapturePoint":  # a battlefield's capture point (protocol 77): its ball, its attacker and occupier factions (0 none), its next point time (FILETIME, 0 none)
+        return frame(k, i64(m["deployableId"]) + struct.pack("<i", m["solarSystemId"]) + s(m["typeName"]) + struct.pack("<ii", m["typeId"], m["groupId"])
+                     + struct.pack("<3d", *m["position"]) + struct.pack("<d", m["radius"]) + struct.pack("<ii", m["attackerFaction"], m["occupierFaction"])
+                     + i64(m["nextPointTime"]))
+    if k == "PlaceBattlefieldScoreboard":  # a battlefield's scoreboard (protocol 78): its ball, no score (the host sets it with SetSlimField)
+        return frame(k, i64(m["deployableId"]) + struct.pack("<i", m["solarSystemId"]) + s(m["typeName"]) + struct.pack("<ii", m["typeId"], m["groupId"])
+                     + struct.pack("<3d", *m["position"]) + struct.pack("<d", m["radius"]))
+    if k == "SetSlimField":
+        return frame(k, i64(m["itemId"]) + s(m["fieldName"]) + slim_value(m["value"]))
     if k == "SetStructureState":
         return frame(k, struct.pack("<i", m["solarSystemId"]) + i64(m["structureId"]) + structure_status(m["status"]))
-    if k in ("PlaceDisruptor", "PlaceInhibitor", "PlaceCynoBeacon", "PlaceObservatory", "PlaceControlTower", "PlaceDeadspacePocket"):  # a beacon, an observatory, a tower and a pocket have no range: they go as 0
+    if k in ("PlaceDisruptor", "PlaceInhibitor", "PlaceCynoBeacon", "PlaceObservatory", "PlaceControlTower", "PlaceDeadspacePocket", "PlaceAccelerationGate"):  # a beacon, an observatory, a tower, a pocket and a gate have no range: they go as 0
         return frame(k, i64(m["deployableId"]) + struct.pack("<i", m["solarSystemId"]) + s(m["typeName"]) + struct.pack("<ii", m["typeId"], m["groupId"])
                      + struct.pack("<3d", *m["position"]) + struct.pack("<dd", m["radius"], m["range"]) + bytes([1 if m["active"] else 0])
                      + i64(m["ownerId"]) + struct.pack("<ii", m["corporationId"], m["allianceId"]) + i64(m["shipId"]))
@@ -823,10 +848,12 @@ valid = [
     {"name": "enter already in space, no modules, non-ASCII name", "kind": "Enter", "sessionId": "1",
      "solarSystemId": 30000142, "how": 1, "stationId": "0", "ship": dict(BARE, name="イビス"),
      "position": [100.0, 200.0, 300.0], "direction": [0.0, 0.0, 1.0]},
-    {"name": "enter static-free Abyssal room scene", "kind": "Enter", "sessionId": "2",
+{"name": "enter static-free Abyssal room scene", "kind": "Enter", "sessionId": "2",
      "scene": {"locationId": 30000142, "instanceId": "9000000000001", "roomIndex": 1}, "how": 1, "stationId": "0",
      "ship": dict(BARE, shipId="9988400001939", characterId="140000342"),
      "position": [100.0, 200.0, 300.0], "direction": [0.0, 0.0, 1.0]},
+{"name": "enter at the anchor of the system (a game master's relocation, no pose)", "kind": "Enter", "sessionId": "1",
+     "solarSystemId": 30000142, "how": 2, "stationId": "0", "ship": dict(BARE, name="イビス")},
     {"name": "enter accepted", "kind": "EnterReply", "sessionId": "1790646377000015", "ok": True},
     {"name": "enter refused", "kind": "EnterReply", "sessionId": "1790646377000015", "ok": False,
      "reason": "UNKNOWN_STATION 60015249"},
@@ -1355,6 +1382,16 @@ valid = [
      "shieldRechargeMs": 110000.0, "perSecond": [14400000.0, 5000.0, 5000.0], "repairPause": [500.0, 500.0, 500.0],
      "status": {"state": 110, "upkeepState": 3, "timer": [132000000000000000, 132000860000000000, None], "unanchoring": None, "repairing": None}},
     {"name": "customs office of a planet put in orbit by the host (protocol 67)", "kind": "PlaceStructure", "structureId": "1200000040486618", "solarSystemId": 30100032, "typeName": "Customs Office", "typeId": 2233, "groupId": 1025, "planetId": 40486618, "position": [311989835983.1308, -13069154020.916222, 156646308895.76187], "radius": 8000.0, "ownerId": "1000125", "corporationId": 0, "allianceId": 0, "vitals": {"shieldCapacity": 0.0, "armorHp": 0.0, "structureHp": 0.0, "resonances": {"shield": [1.0, 1.0, 1.0, 1.0], "armor": [1.0, 1.0, 1.0, 1.0], "structure": [1.0, 1.0, 1.0, 1.0]}}, "shieldRechargeMs": 0.0, "perSecond": [0.0, 0.0, 0.0], "repairPause": [0.0, 0.0, 0.0], "status": {"state": 110, "upkeepState": 3, "timer": None, "unanchoring": None, "repairing": None}},
+    {"name": "host sets a text slim field of a deployable (fwAttackMethod)", "kind": "SetSlimField", "itemId": "4250000000000016", "fieldName": "fwAttackMethod", "value": {"tag": "text", "value": "attackFwAllEnemies"}},
+    {"name": "host sets a capture point's faction tuple (attacker, occupier)", "kind": "SetSlimField", "itemId": "4250000000000016", "fieldName": "component_fwCapturePoint_factionInfo", "value": {"tag": "tuple", "items": [{"tag": "int", "value": "500003"}, {"tag": "int", "value": "500001"}]}},
+    {"name": "host sets a real threshold slim field", "kind": "SetSlimField", "itemId": "4250000000000016", "fieldName": "hostile_response_threshold", "value": {"tag": "real", "value": -5.0}},
+    {"name": "host sets a bool slim field", "kind": "SetSlimField", "itemId": "4250000000000016", "fieldName": "group_standings_disabled", "value": {"tag": "bool", "value": True}},
+    {"name": "host clears a slim field to none", "kind": "SetSlimField", "itemId": "4250000000000016", "fieldName": "fwAttackMethod", "value": {"tag": "none"}},
+    {"name": "host sets a tuple nested four deep (the limit)", "kind": "SetSlimField", "itemId": "4250000000000016", "fieldName": "nested", "value": {"tag": "tuple", "items": [{"tag": "tuple", "items": [{"tag": "tuple", "items": [{"tag": "tuple", "items": [{"tag": "none"}]}]}]}]}},
+    {"name": "capture point with an attacker and an occupier, and its next point time (protocol 77)", "kind": "PlaceCapturePoint", **json.loads('{"kind": "PlaceCapturePoint", "deployableId": "4250000000000020", "solarSystemId": 30100032, "typeName": "Caldari Control Zone A", "typeId": 73445, "groupId": 4494, "position": [1.0e9, 2.0e8, -3.0e8], "radius": 231.0, "attackerFaction": 500004, "occupierFaction": 500001, "nextPointTime": "133900000000000000"}')},
+    {"name": "capture point with no faction yet and no next point time", "kind": "PlaceCapturePoint", **dict(json.loads('{"kind": "PlaceCapturePoint", "deployableId": "4250000000000020", "solarSystemId": 30100032, "typeName": "Caldari Control Zone A", "typeId": 73445, "groupId": 4494, "position": [1.0e9, 2.0e8, -3.0e8], "radius": 231.0, "attackerFaction": 500004, "occupierFaction": 500001, "nextPointTime": "133900000000000000"}'), attackerFaction=0, occupierFaction=0, nextPointTime="0")},
+    {"name": "capture point with only an occupier", "kind": "PlaceCapturePoint", **dict(json.loads('{"kind": "PlaceCapturePoint", "deployableId": "4250000000000020", "solarSystemId": 30100032, "typeName": "Caldari Control Zone A", "typeId": 73445, "groupId": 4494, "position": [1.0e9, 2.0e8, -3.0e8], "radius": 231.0, "attackerFaction": 500004, "occupierFaction": 500001, "nextPointTime": "133900000000000000"}'), attackerFaction=0)},
+    {"name": "battlefield scoreboard placed in a system (protocol 78): its ball, no score yet", "kind": "PlaceBattlefieldScoreboard", "deployableId": "4300000000000008", "solarSystemId": 30100032, "typeName": "Caldari Scoreboard", "typeId": 73449, "groupId": 227, "position": [1.0e9, 2.0e8, -3.0e8], "radius": 0.0},
     {"name": "structure state set by the host: paused timer, unanchoring, repairing", "kind": "SetStructureState", "solarSystemId": 30100032,
      "structureId": "1040000000000001",
      "status": {"state": 111, "upkeepState": 3, "timer": [132000000000000000, 132000860000000000, 132000100000000000], "unanchoring": 132000900000000000, "repairing": True}},
@@ -1421,6 +1458,10 @@ valid = [
     {"name": "deadspace pocket of a mission placed (no client ball)", "kind": "PlaceDeadspacePocket", "deployableId": "4250000000000014",
      "solarSystemId": 30100032, "typeName": "Deadspace Pocket", "typeId": 0, "groupId": 0,
      "position": [311989835983.1308, -13069154020.916222, 156646308895.76187], "radius": 1000000000.0, "range": 0.0, "active": True,
+     "ownerId": "0", "corporationId": 0, "allianceId": 0, "shipId": "0"},
+    {"name": "acceleration gate of a room placed (a stargate ball)", "kind": "PlaceAccelerationGate", "deployableId": "4250000000000015",
+     "solarSystemId": 30100032, "typeName": "Acceleration Gate", "typeId": 17831, "groupId": 366,
+     "position": [311989835983.1308, -13069154020.916222, 156646308895.76187], "radius": 0.0, "range": 0.0, "active": True,
      "ownerId": "0", "corporationId": 0, "allianceId": 0, "shipId": "0"},
     {"name": "how far a can is", "kind": "Measured", "sessionId": "1790646377000015", "command": 20, "distance": 261.0},
     {"name": "how far a can that is not there is", "kind": "Measured", "sessionId": "1790646377000015", "command": 20, "distance": None},
@@ -1699,13 +1740,30 @@ damage_over_limit = dict(damage_request, candidateIds=[str(500000 + index) for i
 damage_bad_generation = dict(damage_request, controlLeaseGeneration="0")
 damage_result = named("Host authorization for the same pulse allows one candidate")
 damage_duplicate_grant = dict(damage_result, allowedTargetIds=["9988400001940", "9988400001940"])
+deep_tuple = {"tag": "none"}
+for _ in range(5):
+    deep_tuple = {"tag": "tuple", "items": [deep_tuple]}
 invalid = [
-    {"name": "environment presentation radius is negative", "reason": "bad-value", "hex": build(dict(ENV_CLOUD_CASE, object=dict(ENV_CLOUD_CASE["object"], body=dict(ENV_BODY, radius=-1.0)))).hex()},
+{"name": "environment presentation radius is negative", "reason": "bad-value", "hex": build(dict(ENV_CLOUD_CASE, object=dict(ENV_CLOUD_CASE["object"], body=dict(ENV_BODY, radius=-1.0)))).hex()},
     {"name": "environment effect radius is not finite", "reason": "bad-value", "hex": build(dict(ENV_CLOUD_CASE, object=dict(ENV_CLOUD_CASE["object"], effectRadiusMeters=float("nan")))).hex()},
     {"name": "point defense target IDs are duplicated", "reason": "bad-value", "hex": build(dict(ENV_PULSE_CASE, object=dict(ENV_PULSE_CASE["object"], pointDefense=dict(ENV_PULSE_CASE["object"]["pointDefense"], includedCategories=[18,18])))).hex()},
     {"name": "point defense has a negative raw channel", "reason": "bad-value", "hex": build(dict(ENV_PULSE_CASE, object=dict(ENV_PULSE_CASE["object"], pointDefense=dict(ENV_PULSE_CASE["object"]["pointDefense"], damage=[-1.0,2.0,3.0,4.0])))).hex()},
     {"name": "scene cleanup cannot overlap NPC and loot IDs", "reason": "bad-value", "hex": build({"kind": "RemoveAbyssalScene", "requestId": "59", "scene": CACHE_ROOM, "settledNpcIds": ["9988400001939"], "settledLootIds": ["9988400001939"]}).hex()},
     {"name": "scene cleanup cannot contain a zero entity ID", "reason": "bad-value", "hex": build({"kind": "RemoveAbyssalScene", "requestId": "59", "scene": CACHE_ROOM, "settledNpcIds": ["0"], "settledLootIds": []}).hex()},
+{"name": "battlefield scoreboard with a negative radius", "reason": "bad-value", "hex": build(dict(json.loads('{"kind": "PlaceBattlefieldScoreboard", "deployableId": "4300000000000008", "solarSystemId": 30100032, "typeName": "Caldari Scoreboard", "typeId": 73449, "groupId": 227, "position": [1.0e9, 2.0e8, -3.0e8], "radius": 0.0}'), radius=-1.0)).hex()},
+    {"name": "battlefield scoreboard cut short", "reason": "truncated", "hex": build(json.loads('{"kind": "PlaceBattlefieldScoreboard", "deployableId": "4300000000000008", "solarSystemId": 30100032, "typeName": "Caldari Scoreboard", "typeId": 73449, "groupId": 227, "position": [1.0e9, 2.0e8, -3.0e8], "radius": 0.0}')).hex()[:-20]},
+    {"name": "capture point with a negative attacker faction", "reason": "bad-value", "hex": build(dict(json.loads('{"kind": "PlaceCapturePoint", "deployableId": "4250000000000020", "solarSystemId": 30100032, "typeName": "Caldari Control Zone A", "typeId": 73445, "groupId": 4494, "position": [1.0e9, 2.0e8, -3.0e8], "radius": 231.0, "attackerFaction": 500004, "occupierFaction": 500001, "nextPointTime": "133900000000000000"}'), attackerFaction=-1)).hex()},
+    {"name": "capture point with a negative next point time", "reason": "bad-value", "hex": build(dict(json.loads('{"kind": "PlaceCapturePoint", "deployableId": "4250000000000020", "solarSystemId": 30100032, "typeName": "Caldari Control Zone A", "typeId": 73445, "groupId": 4494, "position": [1.0e9, 2.0e8, -3.0e8], "radius": 231.0, "attackerFaction": 500004, "occupierFaction": 500001, "nextPointTime": "133900000000000000"}'), nextPointTime="-1")).hex()},
+    {"name": "capture point with a negative radius", "reason": "bad-value", "hex": build(dict(json.loads('{"kind": "PlaceCapturePoint", "deployableId": "4250000000000020", "solarSystemId": 30100032, "typeName": "Caldari Control Zone A", "typeId": 73445, "groupId": 4494, "position": [1.0e9, 2.0e8, -3.0e8], "radius": 231.0, "attackerFaction": 500004, "occupierFaction": 500001, "nextPointTime": "133900000000000000"}'), radius=-1.0)).hex()},
+    {"name": "capture point cut short before its next point time", "reason": "truncated", "hex": build(json.loads('{"kind": "PlaceCapturePoint", "deployableId": "4250000000000020", "solarSystemId": 30100032, "typeName": "Caldari Control Zone A", "typeId": 73445, "groupId": 4494, "position": [1.0e9, 2.0e8, -3.0e8], "radius": 231.0, "attackerFaction": 500004, "occupierFaction": 500001, "nextPointTime": "133900000000000000"}')).hex()[:-16]},
+    {"name": "slim field with an empty name", "reason": "bad-value", "hex": frame("SetSlimField", i64("4250000000000016") + s("") + bytes([0])).hex()},
+    {"name": "slim field name of 65 bytes", "reason": "bad-value", "hex": frame("SetSlimField", i64("4250000000000016") + s("x" * 65) + bytes([0])).hex()},
+    {"name": "slim field real that is not finite", "reason": "bad-value", "hex": frame("SetSlimField", i64("4250000000000016") + s("hostile_response_threshold") + bytes([2]) + struct.pack("<d", float("nan"))).hex()},
+    {"name": "slim field value with an unknown tag", "reason": "bad-value", "hex": frame("SetSlimField", i64("4250000000000016") + s("fwAttackMethod") + bytes([9])).hex()},
+    {"name": "slim field tuple nested five deep (over the limit)", "reason": "bad-value", "hex": frame("SetSlimField", i64("4250000000000016") + s("nested") + slim_value(deep_tuple)).hex()},
+    {"name": "slim field tuple of 17 items (over the limit)", "reason": "bad-value", "hex": frame("SetSlimField", i64("4250000000000016") + s("nested") + bytes([5]) + struct.pack("<H", 17) + bytes([0]) * 17).hex()},
+    {"name": "slim field text of 257 bytes (over the limit)", "reason": "bad-value", "hex": frame("SetSlimField", i64("4250000000000016") + s("fwAttackMethod") + bytes([4]) + s("x" * 257)).hex()},
+    {"name": "slim field text cut short", "reason": "truncated", "hex": frame("SetSlimField", i64("4250000000000016") + s("fwAttackMethod") + bytes([4]) + struct.pack("<H", 5) + b"ab").hex()},
     {"name": "structure control active flag is not boolean", "reason": "bad-value", "hex": frame("ControlStructure", u64("77") + struct.pack("<i", 30000142) + i64("1040000000000001") + i64("90000001") + bytes([2]) + i64("19")).hex()},
     {"name": "structure control cannot bind a zero structure", "reason": "bad-value", "hex": frame("ControlStructure", u64("77") + struct.pack("<i", 30000142) + i64("0") + i64("90000001") + bytes([1]) + i64("19")).hex()},
     {"name": "structure control cannot use a negative character", "reason": "bad-value", "hex": frame("ControlStructure", u64("77") + struct.pack("<i", 30000142) + i64("1040000000000001") + i64("-1") + bytes([0]) + i64("19")).hex()},

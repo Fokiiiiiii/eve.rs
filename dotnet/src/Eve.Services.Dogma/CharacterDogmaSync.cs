@@ -108,6 +108,32 @@ public sealed class CharacterDogmaSync(DogmaStatic statics, CharacterShips ships
         }
     }
 
+    public async Task CharacterChangedAsync(ClientSession session, long characterId, CancellationToken cancellationToken = default)
+    {
+        if (await ships.LoadAsync(characterId, cancellationToken) is not { } snapshot)
+        {
+            return;
+        }
+        SendCharacter(session, snapshot, Py.FileTimeFromUnixMs(nowUnixMs()), NextBrainVersion(characterId));
+    }
+
+    public async Task ExpertGrantsChangedAsync(ClientSession session, long characterId, IReadOnlyList<CharacterSkill> trainedSkills, IReadOnlyDictionary<int, int> grantsBefore, CancellationToken cancellationToken = default)
+    {
+        if (await ships.LoadAsync(characterId, cancellationToken) is not { } snapshot)
+        {
+            return;
+        }
+        var fileTime = Py.FileTimeFromUnixMs(nowUnixMs());
+        var changes = await ships.SkillChangesAsync(characterId, trainedSkills, grantsBefore, cancellationToken);
+        if (changes.Count > 0)
+        {
+            session.SendNotification(
+                "OnModuleAttributeChanges", "clientID",
+                new PyList([.. changes.Select(c => ShipNotifications.AttributeChange(characterId, c.ItemId, c.AttributeId, fileTime, c.Old, c.New))]));
+        }
+        SendCharacter(session, snapshot, fileTime, NextBrainVersion(characterId));
+    }
+
     public async Task SkillsChangedAsync(ClientSession session, long characterId, IReadOnlyList<CharacterSkill> before, CancellationToken cancellationToken = default)
     {
         if (await ships.LoadAsync(characterId, cancellationToken) is not { } snapshot)
@@ -115,7 +141,7 @@ public sealed class CharacterDogmaSync(DogmaStatic statics, CharacterShips ships
             return;
         }
         var fileTime = Py.FileTimeFromUnixMs(nowUnixMs());
-        var changes = await ships.SkillChangesAsync(characterId, before, cancellationToken);
+        var changes = await ships.SkillChangesAsync(characterId, before, cancellationToken: cancellationToken);
         if (changes.Count > 0)
         {
             session.SendNotification(

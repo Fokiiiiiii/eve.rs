@@ -22,6 +22,9 @@ public sealed record AddExtractorHeadCommand(long PinId, int HeadId, double Lati
 public sealed record KillExtractorHeadCommand(long PinId, int HeadId) : ColonyCommand;
 public sealed record MoveExtractorHeadCommand(long PinId, int HeadId, double Latitude, double Longitude) : ColonyCommand;
 public sealed record InstallProgramCommand(long PinId, int? TypeId, double HeadRadius) : ColonyCommand;
+public sealed record GmAddCommodityCommand(long PinId, int TypeId, long Quantity) : ColonyCommand;
+public sealed record GmConvertCommandCenterCommand(long PinId) : ColonyCommand;
+public sealed record GmForceInstallProgramCommand(long PinId, int TypeId, long CycleTime, long LifetimeTicks, long QtyPerCycle, double HeadRadius) : ColonyCommand;
 
 /// <summary>The result of a batch: the ISK it costs (non-command pins, command center upgrades) and whether the command center went.</summary>
 public sealed record CommandOutcome(long IskCost, bool Abandoned);
@@ -80,6 +83,15 @@ public sealed partial class Colony
                     break;
                 case InstallProgramCommand c:
                     InstallProgram(c.PinId, c.TypeId, c.HeadRadius);
+                    break;
+                case GmAddCommodityCommand c:
+                    GmAddCommodity(c.PinId, c.TypeId, c.Quantity);
+                    break;
+                case GmConvertCommandCenterCommand c:
+                    GmConvertCommandCenter(c.PinId);
+                    break;
+                case GmForceInstallProgramCommand c:
+                    GmForceInstallProgram(c.PinId, c.TypeId, c.CycleTime, c.LifetimeTicks, c.QtyPerCycle, c.HeadRadius);
                     break;
                 default:
                     throw new PlanetRefusal("InvalidCommand");
@@ -395,6 +407,9 @@ public sealed partial class Colony
     public void InstallProgram(long pinId, int? typeId, double headRadius)
     {
         var ecu = EcuOf(pinId);
+        // a program is refused until its install cooldown ends, for a change and for a stop alike (ecuPin.CanInstallProgram)
+        if (ecu.ProgramType is not null && ecu.ExpiryTime > CurrentSimTime && ecu.InstallTime + PlanetRules.ProgramInstallCooldown > CurrentSimTime)
+            throw new PlanetRefusal("CantInstallProgramNeedsCooldown");
         if (ecu.Heads.Count < 1) typeId = null;
         if (headRadius < PlanetRules.RadiusMin || headRadius > PlanetRules.RadiusMax) throw new PlanetRefusal("InvalidProgramRadius");
 
@@ -489,6 +504,47 @@ public sealed partial class Colony
         ecu.InstallTime = null;
         ecu.CycleTime = 0;
         ecu.State = 0;
+    }
+
+    /// <summary>
+    /// GMAddCommodity (the client's processor container, shown to ROLE_GML only): the pin takes what its own rules accept
+    /// (<c>CanAccept</c>: the free volume of storage or the demand of a processor). Nothing taken is refused.
+    /// </summary>
+    public void GmAddCommodity(long pinId, int typeId, long quantity)
+    {
+        var pin = PinOf(pinId);
+        if (!Catalog.Exists(typeId) || quantity <= 0) throw new PlanetRefusal("InvalidCommand");
+        var added = CanAccept(pin, typeId, quantity);
+        if (added <= 0) throw new PlanetRefusal("CannotImportCapacityExceeded");
+        pin.Contents[typeId] = pin.Contents.GetValueOrDefault(typeId) + added;
+    }
+
+    /// <summary>
+    /// GMConvertCommandCenter (the client's pin menu, ROLE_GML only): the command center becomes the command center type of this
+    /// planet's type. The SDE gives each command center type its planet type (the planetRestriction attribute), the same rule the
+    /// placement check uses. A planet type with no such command center is refused.
+    /// </summary>
+    public void GmConvertCommandCenter(long pinId)
+    {
+        var pin = PinOf(pinId);
+        if (pin.Kind != PinKind.CommandCenter) throw new PlanetRefusal("InvalidPinType");
+        var target = Catalog.TypesInGroup(PlanetGroups.CommandCenter)
+            .FirstOrDefault(t => t.HasAttr(PlanetAttr.PlanetRestriction) && (int)t.Attr(PlanetAttr.PlanetRestriction) == PlanetTypeId)
+            ?? throw new PlanetRefusal("InvalidPinType");
+        pin.TypeId = target.TypeId;
+    }
+
+    /// <summary>
+    /// GMForceInstallProgram (the client's GM deposit designer, clientPlanet.GMInstallProgram): the program starts now with the given cycle,
+    /// output and lifetime. No head, install cooldown or resource check applies; routes of another commodity from this unit are removed.
+    /// </summary>
+    public void GmForceInstallProgram(long pinId, int typeId, long cycleTime, long lifetimeTicks, long qtyPerCycle, double headRadius)
+    {
+        var ecu = EcuOf(pinId);
+        if (cycleTime <= 0 || lifetimeTicks <= 0 || qtyPerCycle < 0 || headRadius <= 0) throw new PlanetRefusal("InvalidCommand");
+        foreach (var route in Routes.Values.Where(r => r.Source == pinId && r.TypeId != typeId).OrderBy(r => r.Id).ToList()) RemoveRoute(route.Id);
+        InstallProgramOn(ecu, typeId, headRadius, qtyPerCycle, cycleTime, 0);
+        ecu.ExpiryTime = CurrentSimTime + lifetimeTicks;
     }
 
     private void InstallProgramOn(Pin ecu, int type, double headRadius, long qtyPerCycle, long cycle, int numCycles)

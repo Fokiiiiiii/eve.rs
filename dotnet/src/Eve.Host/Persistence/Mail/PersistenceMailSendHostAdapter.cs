@@ -349,6 +349,19 @@ public sealed class PersistenceMailSendHostAdapter(
             Eve.Services.Crimewatch.KillRightNotificationTypes.MiscGroup,
             data, idempotencyKey, cancellationToken);
 
+    /// <summary>The bounty placement notification (EveJS <c>bountyNotifications.js</c>): the placer is the sender, the group is bounties (10).</summary>
+    public Task WriteBountyPlacedNotificationAsync(
+        long recipientId,
+        long placerId,
+        int typeId,
+        JsonObject data,
+        string idempotencyKey,
+        CancellationToken cancellationToken) =>
+        WriteNotificationAsync(recipientId, placerId, typeId, BountiesGroupId, data, idempotencyKey, cancellationToken);
+
+    /// <summary>The notification group of bounties (EveJS <c>NOTIFICATION_GROUP.BOUNTIES</c>).</summary>
+    private const int BountiesGroupId = 10;
+
     public Task WriteAllianceMaintenanceBillNotificationAsync(
         long recipientId, long allianceId, long billId, CancellationToken cancellationToken)
     {

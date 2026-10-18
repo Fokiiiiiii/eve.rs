@@ -9,7 +9,6 @@ public sealed class CompatibilityRpcServicesTests
     private static readonly (IService Service, string[] Methods)[] Services =
     [
         (new BannedWordsService(), ["check_search_words_allowed", "check_words_allowed", "fetch_regexes"]),
-        (new AlphaInjectorMgrService(), ["GetNextAvailableInjection"]),
         (new CacheService(), ["GetServerVersionAndBuild"]),
         (new CommunityTrackMgrService(), ["change_qa_mode", "get_instance_attributes_public"]),
         (new ContextualOfferMgrService(), ["TrackOfferBuyPress", "TrackOfferClosed", "TrackOfferDelivered", "TrackOfferPurchased", "TrackOfferPurchasedSeen", "TrackOfferSeen"]),
@@ -34,20 +33,19 @@ public sealed class CompatibilityRpcServicesTests
         Assert.IsType<PyNone>(await bannedWords.CallAsync(Call("check_words_allowed", new PyStr("name"))));
         Assert.IsType<PyNone>(await bannedWords.CallAsync(Call("check_search_words_allowed", new PyStr("query"))));
 
-        Assert.Equal(new PyLong(0), await ((IService)Services[1].Service).CallAsync(Call("GetNextAvailableInjection")));
         Assert.Equal(new PyTuple([new PyReal(ServerBuildInfo.BootVersion), new PyInt(ServerBuildInfo.BootBuild)]),
-            await ((IService)Services[2].Service).CallAsync(Call("GetServerVersionAndBuild")));
+            await ((IService)Services[1].Service).CallAsync(Call("GetServerVersionAndBuild")));
 
-        var community = (CommunityTrackMgrService)Services[3].Service;
+        var community = (CommunityTrackMgrService)Services[2].Service;
         var communityService = (IService)community;
         Assert.Equal(new PyTuple([PyNone.Instance, PyNone.Instance]), await communityService.CallAsync(Call("get_instance_attributes_public", new PyLong(1337))));
         Assert.IsType<PyNone>(await communityService.CallAsync(Call("change_qa_mode", PyBool.True)));
         Assert.True(community.QaMode);
 
-        foreach (var method in Services[4].Methods)
-            Assert.IsType<PyNone>(await ((IService)Services[4].Service).CallAsync(Call(method, new PyInt(91))));
+        foreach (var method in Services[3].Methods)
+            Assert.IsType<PyNone>(await ((IService)Services[3].Service).CallAsync(Call(method, new PyInt(91))));
 
-        var localization = (LocalizationServerService)Services[5].Service;
+        var localization = (LocalizationServerService)Services[4].Service;
         var localizationService = (IService)localization;
         var textChanges = Assert.IsType<PyTuple>(await localizationService.CallAsync(Call("GetAllTextChanges", new PyDict([]))));
         Assert.Equal(3, textChanges.Items.Count);
@@ -123,7 +121,6 @@ public sealed class CompatibilityRpcServicesTests
         (IService Service, string Method)[] services =
         {
             (new BannedWordsService { RpcHandler = Handler }, "check_words_allowed"),
-            (new AlphaInjectorMgrService { RpcHandler = Handler }, "GetNextAvailableInjection"),
             (new CommunityTrackMgrService { RpcHandler = Handler }, "get_instance_attributes_public"),
             (new ContextualOfferMgrService { RpcHandler = Handler }, "TrackOfferSeen"),
             (new LocalizationServerService { RpcHandler = Handler }, "GetAllTextChanges"),

@@ -138,6 +138,9 @@ public sealed partial class SpaceSessions
                     new PyList([InventoryWire.PackedRow(ShipRow(moved.Ship, type), new PyStr(inStructure ? "UndockingStructure:" : $"Undocking:{placeId}"))]),
                     ChangedFrom(moved), None);
                 ReleaseBoundObjects(session);
+                // the reference's undock announces neither stationid2 nor a change of it (EveJS applyTqDockingTransitionSessionChangeShape), yet its
+                // server value is cleared (characterState: session.stationid2 = null); a later docking announces it from nothing (a pod's death does)
+                session.Set("stationid2", None);
                 session.Change((placeKey, None), ("locationid", new PyInt(systemId)), ("solarsystemid", new PyInt(systemId)));
                 DockedLocationChanged?.Invoke(session, previousStationId, previousStructureId);
                 session.SendNotification("OnInvulunOnUndockingUpdated", "shipid", InventoryWire.Id(pilot!.ShipId),

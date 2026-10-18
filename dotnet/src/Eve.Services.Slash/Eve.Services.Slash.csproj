@@ -9,6 +9,8 @@
     <ProjectReference Include="../Eve.Npc/Eve.Npc.csproj" />
     <ProjectReference Include="../Eve.Skills/Eve.Skills.csproj" />
     <ProjectReference Include="../Eve.Services.Skills/Eve.Services.Skills.csproj" />
+    <ProjectReference Include="../Eve.Wallet/Eve.Wallet.csproj" />
+    <ProjectReference Include="../Eve.Relations/Eve.Relations.csproj" />
     <ProjectReference Include="../Eve.Services.Generator/Eve.Services.Generator.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
   </ItemGroup>
   <ItemGroup>

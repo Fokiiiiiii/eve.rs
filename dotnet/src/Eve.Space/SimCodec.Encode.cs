@@ -95,6 +95,55 @@ public static partial class SimCodec
         w.U8(status.Repairing is null ? (byte)0 : status.Repairing.Value ? (byte)2 : (byte)1);
     }
 
+    /// <summary>A dynamic slim-item field value (protocol 76); see <c>ReadSlimValue</c>. The same limits are checked on the way out.</summary>
+    private static void WriteSlimValue(Writer w, SimSlimValue value, int depth)
+    {
+        switch (value)
+        {
+            case SimSlimNone:
+                w.U8(0);
+                break;
+            case SimSlimInt m:
+                w.U8(1);
+                w.I64(m.Value);
+                break;
+            case SimSlimReal m:
+                if (!double.IsFinite(m.Value))
+                {
+                    throw new SimLinkException(SimLinkError.BadValue, "bad slim field real");
+                }
+                w.U8(2);
+                w.F64(m.Value);
+                break;
+            case SimSlimBool m:
+                w.U8(3);
+                w.U8(m.Value ? (byte)1 : (byte)0);
+                break;
+            case SimSlimText m:
+                if (Encoding.UTF8.GetByteCount(m.Value) > SlimFieldTextMax)
+                {
+                    throw new SimLinkException(SimLinkError.BadValue, "bad slim field text");
+                }
+                w.U8(4);
+                w.Text(m.Value);
+                break;
+            case SimSlimTuple m:
+                if (depth >= SlimFieldDepthMax || m.Items.Count > SlimFieldTupleMax)
+                {
+                    throw new SimLinkException(SimLinkError.BadValue, "bad slim field tuple");
+                }
+                w.U8(5);
+                w.U16((ushort)m.Items.Count);
+                foreach (var item in m.Items)
+                {
+                    WriteSlimValue(w, item, depth + 1);
+                }
+                break;
+            default:
+                throw new SimLinkException(SimLinkError.BadValue, "bad slim field value");
+        }
+    }
+
     /// <summary>A CRAB's state as the simulation reads it (protocol 61); see <c>ReadAnalysisBeaconState</c>.</summary>
     private static void WriteAnalysisBeaconState(Writer w, SimAnalysisBeaconState state)
     {
@@ -1482,6 +1531,46 @@ private static void WriteStructureDamageCorrelation(
                 w.I32(0);
                 w.I64(0);
                 break;
+            case SimPlaceAccelerationGate m:
+                // the disruptor layout with no range, owner or ship; the gate is in a client ball (protocol 75)
+                w.U8(Kind.PlaceAccelerationGate);
+                w.I64(m.DeployableId);
+                w.I32(m.SolarSystemId);
+                w.Text(m.Name);
+                w.I32(m.TypeId);
+                w.I32(m.GroupId);
+                WriteVector(w, m.Position);
+                w.F64(m.Radius);
+                w.F64(0);
+                w.U8(1);
+                w.I64(0);
+                w.I32(0);
+                w.I32(0);
+                w.I64(0);
+                break;
+            case SimPlaceBattlefieldScoreboard m:
+                w.U8(Kind.PlaceBattlefieldScoreboard);
+                w.I64(m.DeployableId);
+                w.I32(m.SolarSystemId);
+                w.Text(m.Name);
+                w.I32(m.TypeId);
+                w.I32(m.GroupId);
+                WriteVector(w, m.Position);
+                w.F64(m.Radius);
+                break;
+            case SimPlaceCapturePoint m:
+                w.U8(Kind.PlaceCapturePoint);
+                w.I64(m.DeployableId);
+                w.I32(m.SolarSystemId);
+                w.Text(m.Name);
+                w.I32(m.TypeId);
+                w.I32(m.GroupId);
+                WriteVector(w, m.Position);
+                w.F64(m.Radius);
+                w.I32(m.AttackerFaction);
+                w.I32(m.OccupierFaction);
+                w.I64(m.NextPointTime);
+                break;
             case SimPlaceControlTower m:
                 w.U8(Kind.PlaceControlTower);
                 w.I64(m.DeployableId);
@@ -1538,6 +1627,16 @@ private static void WriteStructureDamageCorrelation(
                 w.U8(Kind.SetAnalysisBeaconState);
                 w.I64(m.DeployableId);
                 WriteAnalysisBeaconState(w, m.State);
+                break;
+            case SimSetSlimField m:
+                if (m.FieldName.Length == 0 || Encoding.UTF8.GetByteCount(m.FieldName) > SlimFieldNameMax)
+                {
+                    throw new SimLinkException(SimLinkError.BadValue, "bad slim field name");
+                }
+                w.U8(Kind.SetSlimField);
+                w.I64(m.ItemId);
+                w.Text(m.FieldName);
+                WriteSlimValue(w, m.Value, 0);
                 break;
             case SimPlaceAsteroid m:
                 w.U8(Kind.PlaceAsteroid);

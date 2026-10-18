@@ -81,6 +81,7 @@ internal sealed partial class CharacterServicesComposition
                 probes: spaceSessions,
                 controlledStructureSnapshot: structureControlReadModel.DogmaAsync,
                 log: message => Console.Error.WriteLine($"eve-host: ammo: {message}"),
-                localTimers: foundations.LocalTimers).ListeningForDryGuns(),
+                localTimers: foundations.LocalTimers,
+                augmentations: new PilotAugmentationRpc(pilotImplants, skillHandler.UseBoosterAsync, announcer, dogma)).ListeningForDryGuns(),
     ];
 }

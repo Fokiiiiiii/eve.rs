@@ -131,6 +131,18 @@ public sealed class PgWalletStore
         return balances;
     }
 
+    /// <summary>The amount of the owner's latest ISK journal entry (the last ISK change the wallet shows), 0 when the owner has none.</summary>
+    public async Task<decimal> LastIskChangeAsync(long ownerId, CancellationToken cancellationToken = default)
+    {
+        await using var connection = await _source.OpenConnectionAsync(cancellationToken);
+        await using var command = new NpgsqlCommand($"SELECT amount FROM {_schema}.journal WHERE owner_id = $1 AND account_key = 1000 ORDER BY id DESC LIMIT 1", connection)
+        {
+            Parameters = { new() { Value = ownerId } },
+        };
+        return await command.ExecuteScalarAsync(cancellationToken) is decimal amount ? amount : 0m;
+    }
+
+
     public async Task<Balance?> GetAsync(long ownerId, CancellationToken cancellationToken = default) =>
         (await ForOwnersAsync([ownerId], cancellationToken)).GetValueOrDefault(ownerId);
 

@@ -18,9 +18,10 @@ import pytest
 
 from evecli import packet
 
+from tests import dbseed
 from tests import test_login_to_character as base
 from tests.test_death import DEATH, _names
-from tests.test_others import watch
+from tests.test_others import hold_still, watch
 from tests.test_target import plain_race
 from tests.test_weapon import shots_of, slims_in
 from tests.test_undock import STATION, SYSTEM, arrive
@@ -37,12 +38,14 @@ def test_a_spawned_rat_locks_the_pilot_and_shoots_it():
     run = uuid.uuid4().hex[:10]
     with base.connect(f"walk-npc-{run}") as who:
         _, ship_id, _, _ = arrive(who, race, run)
+        dbseed.set_hull(ship_id, dbseed.COCKROACH)
         service = who.call("ship", "MachoBindObject", (STATION, 15), None)
         who.call_bound(service[0], "Undock", ship_id, False)
-        who.call("beyonce", "MachoBindObject", SYSTEM, None)
+        ballpark = who.call("beyonce", "MachoBindObject", SYSTEM, None)
         watch({"events": who}, 3.0)
         who.call("dogmaIM", "MachoBindObject", (SYSTEM, 5), None)
         watch({"events": who}, 45.0, until=lambda seen: any(e["name"] == "OnInvulnCancelled" for e in seen["events"]))
+        hold_still(who, ballpark[0])
 
         reply = who.call("slash", "SlashCmd", "/npc 1 Blood Visionary")
         text = getattr(reply, "value", reply)
@@ -66,6 +69,7 @@ def test_a_pilot_who_shoots_a_rat_dead_is_told_of_its_bounty():
     run = uuid.uuid4().hex[:10]
     with base.connect(f"walk-npc-kill-{run}") as who:
         _, ship_id, modules, _ = arrive(who, race, run)
+        dbseed.set_hull(ship_id, dbseed.COCKROACH)
         gun = modules[1]
         service = who.call("ship", "MachoBindObject", (STATION, 15), None)
         who.call_bound(service[0], "Undock", ship_id, False)
@@ -73,6 +77,7 @@ def test_a_pilot_who_shoots_a_rat_dead_is_told_of_its_bounty():
         watch({"events": who}, 3.0)
         dogma = who.call("dogmaIM", "MachoBindObject", (SYSTEM, 5), None)
         watch({"events": who}, 45.0, until=lambda seen: any(e["name"] == "OnInvulnCancelled" for e in seen["events"]))
+        hold_still(who, ballpark[0])
 
         reply = who.call("slash", "SlashCmd", "/npc 1 Petty Thief")
         text = getattr(reply, "value", reply)
@@ -129,12 +134,14 @@ def test_a_rat_that_launches_missiles_shows_the_pilot_each_missile_and_the_missi
     run = uuid.uuid4().hex[:10]
     with base.connect(f"walk-npc-missile-{run}") as who:
         _, ship_id, _, _ = arrive(who, race, run)
+        dbseed.set_hull(ship_id, dbseed.COCKROACH)
         service = who.call("ship", "MachoBindObject", (STATION, 15), None)
         who.call_bound(service[0], "Undock", ship_id, False)
         ballpark = who.call("beyonce", "MachoBindObject", SYSTEM, None)
         watch({"events": who}, 3.0)
         who.call("dogmaIM", "MachoBindObject", (SYSTEM, 5), None)
         watch({"events": who}, 45.0, until=lambda seen: any(e["name"] == "OnInvulnCancelled" for e in seen["events"]))
+        hold_still(who, ballpark[0])
 
         reply = who.call("slash", "SlashCmd", "/npc 1 Guristas Invader")
         text = getattr(reply, "value", reply)

@@ -198,6 +198,18 @@ public sealed class AgentMissionStore
             return current with { State = AgentMissionState.Quit, QuitAt = now };
         });
 
+    /// <summary>
+    /// A game master's reset of the character's mission with an agent (<c>/agent reset</c>): whatever it holds (an offer, an accepted or a finished mission, a
+    /// decline or quit timer) returns to none, so the agent offers again with no cooldown. The journal keeps the reset. A character with no mission with the agent
+    /// is refused (nothing to reset).
+    /// </summary>
+    public Task<AgentMissionChange?> ResetAsync(long characterId, long agentId, DateTimeOffset now, string reference, CancellationToken cancellationToken = default) =>
+        ChangeAsync(characterId, agentId, reference, "reset", now, cancellationToken, current =>
+        {
+            if (current is null) throw Refused("not_held", "there is no mission with this agent to reset");
+            return current with { State = AgentMissionState.Allocated, OfferedAt = null, ExpiresAt = null, AcceptedAt = null, CompletedAt = null, DeclineUntil = null, QuitAt = null };
+        });
+
     /// <summary>The accepted mission fails (its dungeon failed, was abandoned or expired); the agent offers it again later and no reward is paid.</summary>
     public Task<AgentMissionChange?> FailAsync(
         long characterId, long agentId, DateTimeOffset now, string reference, CancellationToken cancellationToken = default) =>

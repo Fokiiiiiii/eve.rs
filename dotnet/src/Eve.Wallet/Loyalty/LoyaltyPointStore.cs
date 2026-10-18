@@ -154,6 +154,24 @@ public sealed class LoyaltyPointStore
     }
 
     /// <summary>One change in its own transaction; the announcement goes out after the commit, and only for an applied change.</summary>
+    /// <summary>
+    /// Credits loyalty points earned by a member (a mission, factional warfare or insurgency payout) inside the caller's transaction. The member's
+    /// corporation takes its loyalty point tax (<see cref="LoyaltyTax"/>) into its own balance with the same issuer, and the member keeps the rest.
+    /// </summary>
+    public async Task<LoyaltyMemberCredit> CreditMemberAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long characterId, long corporationId,
+        decimal corporationTaxRate, long issuerCorpId, long amount, string reason, string reference, CancellationToken cancellationToken = default)
+    {
+        if (amount <= 0) throw new ArgumentOutOfRangeException(nameof(amount), "a credit is positive");
+        var tax = LoyaltyTax.TaxOf(amount, corporationTaxRate, corporationId);
+        if (amount - tax > 0)
+            await ApplyAsync(connection, transaction, new LoyaltyHolder(LoyaltyHolderKind.Character, characterId), issuerCorpId, amount - tax, reason,
+                reference + ":member", cancellationToken);
+        if (tax > 0)
+            await ApplyAsync(connection, transaction, new LoyaltyHolder(LoyaltyHolderKind.Corporation, corporationId), issuerCorpId, tax, reason,
+                reference + ":corporation", cancellationToken);
+        return new LoyaltyMemberCredit(amount - tax, tax);
+    }
+
     public async Task<LoyaltyPointChange?> ApplyAndCommitAsync(
         LoyaltyHolder holder,
         long issuerCorpId,

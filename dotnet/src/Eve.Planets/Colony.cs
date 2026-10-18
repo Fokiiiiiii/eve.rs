@@ -4,7 +4,7 @@ namespace Eve.Planets;
 public sealed class Pin
 {
     public required long Id { get; init; }
-    public required int TypeId { get; init; }
+    public required int TypeId { get; set; }
     public required PinKind Kind { get; init; }
     public required long OwnerId { get; init; }
     public double Latitude { get; set; }

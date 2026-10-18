@@ -10,12 +10,16 @@
     <TieredPGO>true</TieredPGO>
   </PropertyGroup>
   <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+  <ItemGroup>
     <EmbeddedResource Include="Migrations/*.sql" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="../Eve.GameStore/Eve.GameStore.csproj" />
     <ProjectReference Include="../Eve.Trade/Eve.Trade.csproj" />
     <ProjectReference Include="../Eve.Bookmarks/Eve.Bookmarks.csproj" />
+    <ProjectReference Include="../Eve.AccessGroups/Eve.AccessGroups.csproj" />
     <ProjectReference Include="../Eve.Identity/Eve.Identity.csproj" />
     <ProjectReference Include="../Eve.Scheduler/Eve.Scheduler.csproj" />
     <ProjectReference Include="../Eve.Events/Eve.Events.csproj" />

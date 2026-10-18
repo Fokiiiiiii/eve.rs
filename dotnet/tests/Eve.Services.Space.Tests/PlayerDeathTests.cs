@@ -374,4 +374,28 @@ public class PlayerDeathTests
         Assert.Contains(rig.Sim.Heard.OfType<SimLeave>(), leave => leave.SessionId == (ulong)session.SessionId);
         Assert.Empty(rig.Sim.Heard.OfType<SimPlaceWreck>());
     }
+
+    [PgFact]
+    public async Task A_pod_shot_dead_by_another_pilot_is_raised_as_a_pod_loss_that_names_the_killer_and_is_not_a_ship_loss()
+    {
+        var (rig, c, session, capsule) = await InCapsuleAsync();
+        await using var _ = rig;
+        var killer = await rig.NewCharacterAsync("Pod Killer", 2, Ibis);
+        var killerSession = await rig.SessionAsync(killer, 2);
+        var oid = await rig.BindShipAsync(killerSession);
+        await rig.ShipCallAsync(killerSession, "Undock", oid, new PyLong(killerSession.GetInt("shipid")!.Value), PyBool.False);
+        await rig.BindBeyonceAsync(killerSession);
+        Events.Of(killerSession);
+        var pods = new List<PodLoss>();
+        var ships = new List<ShipLoss>();
+        rig.Space.PodLost += pods.Add;
+        rig.Space.ShipLost += ships.Add;
+
+        var system = (int)session.GetInt("solarsystemid")!.Value;
+        rig.Sim.Say(new SimDestroyed((ulong)session.SessionId, capsule, 0, Place, Facing, 47, killerSession.GetInt("shipid")!.Value, null));
+        await Rig.UntilAsync(() => pods.Count == 1);
+
+        Assert.Equal(new PodLoss(c.CharacterId, capsule, system, ShipLossCause.Player, killer.CharacterId), Assert.Single(pods));
+        Assert.Empty(ships);
+    }
 }

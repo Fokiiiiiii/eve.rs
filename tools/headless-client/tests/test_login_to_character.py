@@ -59,7 +59,17 @@ RECORDED_RUN = re.search(r"(\d{6,})$", next(s["call"][2][0] for s in WALK["steps
 
 def connect(name: str) -> Client:
     host, _, port = LIVE.partition(":")
-    client = Client(host or "127.0.0.1", int(port or 26000), timeout=30.0)
+    address = (host or "127.0.0.1", int(port or 26000))
+    if os.environ.get("EVE_IDENTITY_SCHEMA"):
+        # eve.rs with its database: the account is made by its first login and its role bits are read at a login, so the walk's account is a
+        # game master's (the slash commands need a staff role) by a fixture, and the walk logs in again after it
+        first = Client(*address, timeout=30.0)
+        first.login(name, "walk-password")
+        first.close()
+        from tests import dbseed  # noqa: PLC0415  (only the walks that run against the database need it)
+
+        dbseed.grant_roles(name)
+    client = Client(*address, timeout=30.0)
     client.login(name, "walk-password")
     return client
 

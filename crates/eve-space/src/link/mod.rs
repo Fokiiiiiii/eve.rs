@@ -39,7 +39,55 @@ use crate::weapons::{Aoe, Arc, Charge, Spool, Turret};
 use crate::world::StructureStatus;
 use crate::wreck::WreckKind;
 
-pub const PROTOCOL_VERSION: u16 = 75;
+pub const PROTOCOL_VERSION: u16 = 79;
+
+/// A battlefield's capture point the host puts in space (protocol 77): a ball the pilots of its system see. Its factions (the attacker and the
+/// occupier, 0 for none) and its next point time (a FILETIME, 0 for none) are the dynamic slim fields the client reads from it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CapturePointPlacement {
+    pub deployable_id: i64,
+    pub solar_system_id: i32,
+    pub name: String,
+    pub type_id: i32,
+    pub group_id: i32,
+    pub position: [f64; 3],
+    pub radius: f64,
+    pub attacker_faction: i32,
+    pub occupier_faction: i32,
+    pub next_point_time: i64,
+}
+
+/// A battlefield's scoreboard the host puts in space (protocol 78): a ball the pilots of its system see; its score is a dynamic slim field the host sets.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ScoreboardPlacement {
+    pub deployable_id: i64,
+    pub solar_system_id: i32,
+    pub name: String,
+    pub type_id: i32,
+    pub group_id: i32,
+    pub position: [f64; 3],
+    pub radius: f64,
+}
+
+/// The longest name of a dynamic slim-item field, in bytes (`SetSlimField`).
+pub const SLIM_FIELD_NAME_MAX: usize = 64;
+/// The longest text of a dynamic slim-item field value, in bytes.
+pub const SLIM_FIELD_TEXT_MAX: usize = 256;
+/// The most items of a tuple value of a dynamic slim-item field.
+pub const SLIM_FIELD_TUPLE_MAX: usize = 16;
+/// How deep a tuple value of a dynamic slim-item field may nest.
+pub const SLIM_FIELD_DEPTH_MAX: usize = 4;
+
+/// The value of a dynamic slim-item field: the Python values a slim item carries (`None`, an int, a real, a bool, a text, a tuple).
+#[derive(Debug, Clone, PartialEq)]
+pub enum SlimValue {
+    None,
+    Int(i64),
+    Real(f64),
+    Bool(bool),
+    Text(String),
+    Tuple(Vec<SlimValue>),
+}
 
 /// Maximum candidate or allowed target IDs in a structure-damage authorization step.
 pub const MAX_STRUCTURE_DAMAGE_CANDIDATES: usize = 4096;
@@ -85,6 +133,8 @@ pub enum How {
     Undock,
     /// It is already in space (a login in space, a jump arrival).
     InSpace,
+    /// It is put in space at the anchor of its system, the place a game master's relocation brings a pilot to (`Scene::enter_at_anchor`).
+    Anchor,
 }
 
 /// An NPC the host asks a scene to spawn: the ship, where it comes into space and how it is moving, what it does (`behavior`: a scripted tree, or
@@ -1157,6 +1207,13 @@ pub enum Message {
     PlaceControlTower(Box<DisruptorPlacement>),
     /// The host puts a deadspace pocket in space at its dungeon's origin (protocol 74); the range is 0 and the pocket is in no client ball.
     PlaceDeadspacePocket(Box<DisruptorPlacement>),
+    /// The host puts an acceleration gate of a dungeon room in space (protocol 75): a stargate-kind ball in the system's space, interactive, that the
+    /// pilots of the system see. The range is 0. Its transit is the scene's `AccelerationGateTransit` command.
+    PlaceAccelerationGate(Box<DisruptorPlacement>),
+    /// The host puts a battlefield's capture point in space (protocol 77); see `CapturePointPlacement`.
+    PlaceCapturePoint(Box<CapturePointPlacement>),
+    /// The host puts a battlefield's scoreboard in space (protocol 78); see `ScoreboardPlacement`.
+    PlaceBattlefieldScoreboard(Box<ScoreboardPlacement>),
     /// A Mobile Observatory's decloaking ping in its system (protocol 72): each cloaked ship whose cloak is stabilized is not reached, the others are
     /// decloaked with a chance of 40% (EVE.js `processRemoteDecloakPing`, the wiki's Mobile Observatory).
     RemoteDecloakPing {
@@ -1169,6 +1226,13 @@ pub enum Message {
     SetAnalysisBeaconState {
         deployable_id: i64,
         state: AnalysisBeaconState,
+    },
+    /// The host sets a dynamic field of a deployable's slim item (protocol 76). The client reads it on the slim item, so whoever has the deployable
+    /// in view is told the whole slim item again (`OnSlimItemChange`). A value already set is not told again; a deployable not in space is left alone.
+    SetSlimField {
+        item_id: i64,
+        name: String,
+        value: SlimValue,
     },
     /// The host says a mobile warp disruptor is anchored (`active`) or not (protocol 48); one not in space is left alone.
     SetDisruptorActive {
@@ -1507,6 +1571,10 @@ impl Message {
             Self::TetherPolicy { .. } => kind::TETHER_POLICY,
             Self::TetherChanged { .. } => kind::TETHER_CHANGED,
             Self::SetAnalysisBeaconState { .. } => kind::SET_ANALYSIS_BEACON_STATE,
+            Self::SetSlimField { .. } => kind::SET_SLIM_FIELD,
+            Self::PlaceAccelerationGate(_) => kind::PLACE_ACCELERATION_GATE,
+            Self::PlaceCapturePoint(_) => kind::PLACE_CAPTURE_POINT,
+            Self::PlaceBattlefieldScoreboard(_) => kind::PLACE_BATTLEFIELD_SCOREBOARD,
         }
     }
 }

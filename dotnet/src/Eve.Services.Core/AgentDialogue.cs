@@ -348,7 +348,7 @@ public sealed class AgentDialogueMachine(AgentDialogueSources sources)
         var science = await SkillAsync(characterId, ResearchRules.ScienceSkillTypeId, cancellationToken);
         if (science < ResearchRules.ScienceRequiredLevel) return Refusal(SkillsNotSufficientLabel);
         var fields = new List<AgentResearchField>();
-        foreach (var field in research.Fields)
+        foreach (var field in research.FieldsFor(agent.AgentId))
         {
             if (ResearchRules.Qualifies(science, await SkillAsync(characterId, (int)field.SkillTypeId, cancellationToken), (int)agent.Level))
                 fields.Add(field);
@@ -426,7 +426,7 @@ public sealed class AgentDialogueMachine(AgentDialogueSources sources)
     {
         var research = sources.Research!;
         var project = await research.Projects.ReadAsync(characterId, agent.AgentId, cancellationToken);
-        var field = project is null ? null : research.Fields.FirstOrDefault(candidate => candidate.SkillTypeId == project.SkillTypeId);
+        var field = project is null ? null : research.FieldsFor(agent.AgentId).FirstOrDefault(candidate => candidate.SkillTypeId == project.SkillTypeId && candidate.DatacoreTypeId > 0);
         if (project is null || field is null)
             return await AnswerAsync(characterId, agent, InvalidInputLabel, null, idle: true, cancellationToken);
         var affordable = (long)Math.Floor(ResearchProjectStore.AccruedPoints(project, now) / ResearchRules.DatacoreResearchPoints);

@@ -3,6 +3,7 @@
 //! radius but not its launcher.
 
 use super::*;
+use crate::link::SlimValue;
 use crate::modules::{Action, Effect};
 use crate::scene::tests::{NOON, STATION, spec, system};
 use crate::scene::{Command, Out, Scene};
@@ -1015,6 +1016,98 @@ fn crab_placement(scene: &Scene, state: AnalysisBeaconState) -> crate::link::Ana
         ship_id: 9_988_400_001_943,
         state,
     }
+}
+
+#[test]
+fn a_dynamic_slim_field_the_host_sets_is_told_with_the_slim_item_only_when_it_changes() {
+    let (mut scene, t) = crowd();
+    let idle = AnalysisBeaconState {
+        active: false,
+        activate_at: 133_900_000_000_000_000,
+        deployed_at: 133_899_999_000_000_000,
+        activation_seconds: 20,
+        link_state: 1,
+        link_complete_at: 0,
+        linked_ship_id: 0,
+    };
+    scene.place_analysis_beacon(crab_placement(&scene, idle), t);
+    let name = "component_fwCapturePoint_factionInfo".to_string();
+    let factions = SlimValue::Tuple(vec![SlimValue::Int(500_003), SlimValue::Int(500_001)]);
+
+    let told = scene.set_slim_field(CRAB, name.clone(), factions.clone(), t);
+    let text = format!("{told:?}");
+    assert!(
+        !told.is_empty() && text.contains("OnSlimItemChange"),
+        "those who see it are told its slim item again"
+    );
+    assert!(text.contains(&name), "the slim item carries the field");
+    assert!(
+        text.contains("Int(500003)") && text.contains("Int(500001)"),
+        "the tuple is told as the host set it"
+    );
+    assert!(
+        scene.set_slim_field(CRAB, name.clone(), factions, t).is_empty(),
+        "a value already set is not told again"
+    );
+    let told = scene.set_slim_field(CRAB, name.clone(), SlimValue::None, t);
+    assert!(!told.is_empty(), "a new value (none) is told");
+    assert!(
+        scene.set_slim_field(CRAB + 1, name, SlimValue::Bool(true), t).is_empty(),
+        "a deployable that is not in space is left alone"
+    );
+}
+
+#[test]
+fn a_capture_point_is_put_in_space_once_with_the_factions_and_next_point_time_the_host_gives() {
+    let (mut scene, t) = crowd();
+    let a = scene.pilots[&A].ship.position;
+    let point = crate::link::CapturePointPlacement {
+        deployable_id: CRAB + 10,
+        solar_system_id: 30_100_032,
+        name: "Caldari Control Zone A".to_string(),
+        type_id: 73_445,
+        group_id: 4_494,
+        position: [a.x + 1_000.0, a.y, a.z],
+        radius: 231.0,
+        attacker_faction: 500_004,
+        occupier_faction: 500_001,
+        next_point_time: 133_900_000_000_000_000,
+    };
+    let told = scene.place_capture_point(point.clone(), t);
+    let text = format!("{told:?}");
+    assert!(text.contains("AddBalls2"), "the capture point is put in a client ball");
+    assert!(
+        text.contains("component_fwCapturePoint_factionInfo")
+            && text.contains("Int(500004)")
+            && text.contains("Int(500001)")
+    );
+    assert!(
+        text.contains("component_fwCapturePoint_nextPointTime") && text.contains("Long(133900000000000000)")
+    );
+    assert_eq!(scene.deployables[&(CRAB + 10)].role, Role::CapturePoint);
+    assert!(scene.place_capture_point(point, t).is_empty(), "given once");
+}
+
+#[test]
+fn a_battlefield_scoreboard_is_put_in_space_once_with_no_score_until_the_host_sets_one() {
+    let (mut scene, t) = crowd();
+    let a = scene.pilots[&A].ship.position;
+    let board = crate::link::ScoreboardPlacement {
+        deployable_id: CRAB + 11,
+        solar_system_id: 30_100_032,
+        name: "Caldari Scoreboard".to_string(),
+        type_id: 73_449,
+        group_id: 227,
+        position: [a.x + 1_000.0, a.y, a.z],
+        radius: 0.0,
+    };
+    let told = format!("{:?}", scene.place_battlefield_scoreboard(board.clone(), t));
+    assert!(
+        told.contains("AddBalls2") && !told.contains("component_fwScoreboard_score"),
+        "the ball is told with no score field"
+    );
+    assert_eq!(scene.deployables[&(CRAB + 11)].role, Role::BattlefieldScoreboard);
+    assert!(scene.place_battlefield_scoreboard(board, t).is_empty(), "given once");
 }
 
 #[test]

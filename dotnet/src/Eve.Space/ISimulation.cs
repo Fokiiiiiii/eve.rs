@@ -219,6 +219,8 @@ public interface ISimulation
     void PlaceAnalysisBeacon(SimPlaceAnalysisBeacon beacon);
     /// <summary>The host sets a CRAB's state (protocol 61).</summary>
     void SetAnalysisBeaconState(long deployableId, SimAnalysisBeaconState state);
+    /// <summary>The host sets a dynamic field of a deployable's slim item (protocol 76).</summary>
+    void SetSlimField(long itemId, string fieldName, SimSlimValue value);
     /// <summary>Puts a Mobile Cynosural Inhibitor in space where its pilot dropped it, anchored or not (protocol 50).</summary>
     void PlaceInhibitor(SimPlaceInhibitor inhibitor);
     /// <summary>Puts a Mobile Cynosural Beacon in space where its pilot dropped it, anchored or not (protocol 58).</summary>
@@ -230,6 +232,15 @@ public interface ISimulation
 
     /// <summary>Puts a deadspace pocket of a dungeon in its system's scene at its origin (protocol 74).</summary>
     void PlaceDeadspacePocket(SimPlaceDeadspacePocket pocket);
+
+    /// <summary>Puts an acceleration gate of a dungeon room in its system's space (protocol 75).</summary>
+    void PlaceAccelerationGate(SimPlaceAccelerationGate gate);
+
+    /// <summary>Puts a battlefield's capture point in its system's space (protocol 77).</summary>
+    void PlaceCapturePoint(SimPlaceCapturePoint point);
+
+    /// <summary>Puts a battlefield's scoreboard in its system's space (protocol 78).</summary>
+    void PlaceBattlefieldScoreboard(SimPlaceBattlefieldScoreboard scoreboard);
 
     /// <summary>Removes the structure-owned cyno beacon from a specific solar-system scene.</summary>
     void RemoveCynoBeacon(int solarSystemId, long structureBeaconId);

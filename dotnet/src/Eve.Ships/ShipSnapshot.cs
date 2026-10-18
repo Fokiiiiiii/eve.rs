@@ -136,7 +136,8 @@ public sealed class ShipSnapshot
     /// </summary>
     internal static async Task<ShipSnapshot?> LoadAsync(
         DogmaStatic statics, PgCharacterStore characters, PgItemStore items, PgSkillStore skills, PgModuleStateStore modules, long characterId,
-        Func<int, double>? learningAttribute, IReadOnlyList<CharacterSkill>? skillsOverride, CancellationToken cancellationToken, long? shipIdOverride = null, long? shipOwnerIdOverride = null)
+        Func<int, double>? learningAttribute, IReadOnlyList<CharacterSkill>? skillsOverride, CancellationToken cancellationToken, long? shipIdOverride = null, long? shipOwnerIdOverride = null,
+        IReadOnlyDictionary<int, int>? expertGrants = null)
     {
         if (await characters.GetAsync(characterId, cancellationToken) is not { } character)
         {
@@ -153,11 +154,17 @@ public sealed class ShipSnapshot
         var states = await modules.StatesAsync(fitted.Select(i => i.Id), cancellationToken);
         var moduleConditions = await modules.ModuleConditionsAsync(fitted.Select(i => i.Id), cancellationToken);
         var condition = await modules.ShipConditionAsync(shipId, cancellationToken);
-        var trained = skillsOverride ?? await skills.ForCharacterAsync(characterId, cancellationToken);
+        var stored = skillsOverride ?? await skills.ForCharacterAsync(characterId, cancellationToken);
+        // the levels the character's expert systems grant show in its skills (the training itself runs from the trained levels)
+        var trained = expertGrants is { Count: > 0 } ? ExpertSystemRules.Effective(stored, expertGrants) : stored;
         var provenance = await items.Mutations.GetManyAsync([ship.Id, .. contents.Select(i => i.Id)], cancellationToken);
+        // what the pilot plugs in and what it has active: the implants and boosters act on the pilot whatever ship it flies
+        var augmentations = await items.InLocationAsync(characterId, characterId, cancellationToken);
+        var activeBoosters = (await skills.ActiveSkillBoostersAsync(characterId, DateTime.UtcNow.ToFileTimeUtc(), cancellationToken))
+            .ToDictionary(booster => booster.ItemId);
 
         await statics.EnsureTypesAsync(
-            [character.TypeId, ship.TypeId, .. contents.Select(i => i.TypeId), .. provenance.Values.Select(m => m.SourceTypeId), .. trained.Select(s => s.TypeId)],
+            [character.TypeId, ship.TypeId, .. contents.Select(i => i.TypeId), .. augmentations.Select(i => i.TypeId), .. provenance.Values.Select(m => m.SourceTypeId), .. trained.Select(s => s.TypeId)],
             cancellationToken);
 
         var world = new DogmaWorld(statics, characterId, shipId);
@@ -180,6 +187,13 @@ public sealed class ShipSnapshot
         {
             world.Add(ItemDogma.Of(charge, characterId, shipId, charge.Flag, mutation: provenance.GetValueOrDefault(charge.Id)));
             world.SetValue(charge.Id, QuantityCharge, charge.Quantity);
+        }
+        foreach (var augmentation in augmentations.OrderBy(i => i.Id))
+        {
+            if (PilotAugmentations.ModelOf(statics, augmentation, characterId, activeBoosters) is { } model)
+            {
+                world.Add(model);
+            }
         }
         foreach (var skill in trained)
         {

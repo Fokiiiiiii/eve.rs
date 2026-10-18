@@ -78,7 +78,7 @@ internal sealed class Rig : IAsyncDisposable
     private Rig(NpgsqlDataSource source, string suffix, SdeReader sde, DogmaStatic statics, CharacterCreation creation, PgModuleStateStore modules, SkillBoosterActivationHandler? activateBooster)
     {
         Source = source;
-        _schemas = [$"dc_{suffix}", $"di_{suffix}", $"ds_{suffix}", $"dw_{suffix}", $"df_{suffix}"];
+        _schemas = [$"dc_{suffix}", $"di_{suffix}", $"ds_{suffix}", $"dw_{suffix}", $"df_{suffix}", $"dk_{suffix}", $"de_{suffix}", $"dr_{suffix}"];
         Characters = new PgCharacterStore(source, _schemas[0]);
         Items = new PgItemStore(source, _schemas[1]);
         Skills = new PgSkillStore(source, _schemas[2]);
@@ -89,7 +89,15 @@ internal sealed class Rig : IAsyncDisposable
         Timers = new Eve.Scheduler.LocalTimers(delay: Delay.WaitAsync);
         var boosterActivation = activateBooster ?? ((long _, long _, string _, long? _, long? _, CancellationToken _) => ValueTask.FromResult<bool?>(null));
         Service = new DogmaIMService(statics, Ships, () => ClockMs, boosterActivation, null, Targeting, SpaceModules, Health, Rounds, Delay.WaitAsync, localTimers: Timers).ListeningForDryGuns();
-        Slash = new SlashService(new ShipHealthCommands(Ships, statics, () => ClockMs, Health));
+        Transactions = new WalletTransactions(source, _schemas[3]);
+        Wallets = new PgWalletStore(source, _schemas[3]);
+        Loyalty = new Eve.Wallet.LoyaltyPointStore(source, _schemas[3]);
+        Scheduler = new Eve.Scheduler.DurableScheduler(source, () => ClockMs, new Eve.Scheduler.SchedulerOptions { Concurrency = 1 }, _schemas[5]);
+        Bus = new Eve.Events.EventBus(source, Scheduler, null, _schemas[6]);
+        Relations = new Eve.Relations.RelationStore(source, Scheduler, Bus, _schemas[7]);
+        Slash = new SlashService(new ShipHealthCommands(Ships, statics, () => ClockMs, Health), items: new ItemCommands(new ItemTypeNames(sde), Ships, statics, () => ClockMs), isk: new IskCommands(Transactions, source, () => ClockMs, Wallets, Loyalty),
+            loyalty: new LoyaltyCommands(Loyalty, StandingDirectory, () => ClockMs),
+            standings: new StandingCommands(StandingDirectory, Relations, (character, owner, standing) => StandingNotices.Add((character, owner, standing))));
         Inventory = new InvBrokerService(Items, new ItemTypeCatalog(sde), new Eve.Universe.StationCatalog([]), Ships, statics, () => ClockMs);
     }
 
@@ -110,6 +118,25 @@ internal sealed class Rig : IAsyncDisposable
 
     /// <summary>The game master's commands.</summary>
     public SlashService Slash { get; }
+
+    /// <summary>The wallets, the same schema the character's ISK lives in.</summary>
+    public PgWalletStore Wallets { get; }
+
+    public WalletTransactions Transactions { get; }
+
+    /// <summary>The owners and pilots the standing commands name, as a test sets them.</summary>
+    public FakeStandingDirectory StandingDirectory { get; } = new();
+
+    /// <summary>The <c>OnStandingSet</c> notices the standing commands sent: the pilot, the owner and the new standing.</summary>
+    public List<(long Character, long Owner, double Standing)> StandingNotices { get; } = [];
+
+    public Eve.Wallet.LoyaltyPointStore Loyalty { get; }
+
+    public Eve.Scheduler.DurableScheduler Scheduler { get; }
+
+    public Eve.Events.EventBus Bus { get; }
+
+    public Eve.Relations.RelationStore Relations { get; }
 
     public NpgsqlDataSource Source { get; }
 
@@ -158,6 +185,9 @@ internal sealed class Rig : IAsyncDisposable
         await PgSkillStore.MigrateAsync(source, $"ds_{suffix}");
         await PgWalletStore.MigrateAsync(source, $"dw_{suffix}");
         await PgModuleStateStore.MigrateAsync(source, $"df_{suffix}");
+        await Eve.Scheduler.DurableScheduler.MigrateAsync(source, $"dk_{suffix}");
+        await Eve.Events.EventBus.MigrateAsync(source, $"de_{suffix}");
+        await Eve.Relations.RelationStore.MigrateAsync(source, $"dr_{suffix}");
         var creation = new CharacterCreation(
             source, characters, items, skills, await SkillCatalog.LoadAsync(sde), wallets, new StartingWallet(), CockroachCatalog(await CreationCatalog.LoadAsync(sde, Station)), modules);
         return new Rig(source, suffix, sde, await DogmaStatic.LoadAsync(sde), creation, modules, activateBooster);
@@ -200,6 +230,7 @@ internal sealed class Rig : IAsyncDisposable
     public static ClientSession Session(long? character, long id = 1, long? station = Station)
     {
         var session = new ClientSession(new Sink()) { SessionId = id, ClientId = id, UserId = 34, NodeId = 65450 };
+        session.Set("accountRole", new PyLong(GameMasterRoles.Gml)); // the slash commands are the game masters' tools
         if (station is { } s)
         {
             session.Set("stationid", new PyInt(s));

@@ -16,6 +16,19 @@ internal sealed partial class CharacterServicesComposition
     }
 
     /// <summary>
+    /// Every minute: removes the expired shared bookmarks and tells their viewers, and tells the characters whose corporation or alliance
+    /// changed what their shared folders now give them (the wiki: changes apply within five minutes). The timer re-arms itself.
+    /// </summary>
+    private void UpkeepSharedFolders(Eve.Services.Core.SharedFolderNotifier notifier)
+    {
+        foundations.LocalTimers.Set("bookmarks.upkeep", TimeSpan.FromMinutes(1), () =>
+        {
+            UpkeepSharedFolders(notifier);
+            return notifier.UpkeepAsync();
+        });
+    }
+
+    /// <summary>
     /// The place a static bookmark points at, from the static data: a station (its type and its solar system) or a solar system (its
     /// own location). Other ids are not places the store can bookmark here (structures, celestials), so they are refused.
     /// </summary>

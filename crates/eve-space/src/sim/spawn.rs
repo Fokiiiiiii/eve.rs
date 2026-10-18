@@ -698,6 +698,7 @@ impl Sim {
         };
         let entered = match how {
             How::Undock => scene.undock(session_id, ship, station_id, now),
+            How::Anchor => scene.enter_at_anchor(session_id, ship, now),
             How::InSpace => {
                 let (Some(position), Some(direction)) = (position, direction) else {
                     return reply(Err("SPACE_STATE_REQUIRED".to_string()));

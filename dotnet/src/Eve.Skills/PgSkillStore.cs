@@ -109,6 +109,51 @@ public sealed class PgSkillStore
                     next_timed_respec_filetime bigint CHECK (next_timed_respec_filetime > 0)
                 );
                 """),
+            new Migration("0008_character_expert_systems", """
+                CREATE TABLE IF NOT EXISTS character_expert_systems (
+                    character_id bigint NOT NULL CHECK (character_id > 0),
+                    type_id integer NOT NULL CHECK (type_id > 0),
+                    installed_at_ms bigint NOT NULL,
+                    expires_at_ms bigint NOT NULL,
+                    source_item_id bigint CHECK (source_item_id > 0),
+                    grant_reason text NOT NULL DEFAULT 'item',
+                    updated_at_ms bigint NOT NULL,
+                    PRIMARY KEY (character_id, type_id)
+                );
+                CREATE INDEX IF NOT EXISTS character_expert_systems_expiry ON character_expert_systems (expires_at_ms);
+                """),
+            new Migration("0009_skill_plans", """
+                CREATE TABLE IF NOT EXISTS skill_plans (
+                    plan_id uuid PRIMARY KEY,
+                    character_id bigint NOT NULL CHECK (character_id > 0),
+                    name text NOT NULL CHECK (char_length(name) BETWEEN 1 AND 50),
+                    description text NOT NULL DEFAULT '' CHECK (char_length(description) <= 1000),
+                    created_seq bigint GENERATED ALWAYS AS IDENTITY
+                );
+                CREATE INDEX IF NOT EXISTS skill_plans_character ON skill_plans (character_id, created_seq);
+                CREATE TABLE IF NOT EXISTS skill_plan_requirements (
+                    plan_id uuid NOT NULL REFERENCES skill_plans (plan_id) ON DELETE CASCADE,
+                    position integer NOT NULL CHECK (position >= 0),
+                    skill_type_id integer NOT NULL CHECK (skill_type_id > 0),
+                    level smallint NOT NULL CHECK (level BETWEEN 0 AND 5),
+                    PRIMARY KEY (plan_id, position)
+                );
+                CREATE TABLE IF NOT EXISTS skill_plan_milestones (
+                    milestone_id uuid PRIMARY KEY,
+                    plan_id uuid NOT NULL REFERENCES skill_plans (plan_id) ON DELETE CASCADE,
+                    description text NOT NULL DEFAULT '' CHECK (char_length(description) <= 1000),
+                    train_to_type_id integer CHECK (train_to_type_id > 0),
+                    skill_type_id integer CHECK (skill_type_id > 0),
+                    level smallint CHECK (level BETWEEN 0 AND 5),
+                    created_seq bigint GENERATED ALWAYS AS IDENTITY,
+                    CHECK ((train_to_type_id IS NOT NULL) <> (skill_type_id IS NOT NULL))
+                );
+                CREATE INDEX IF NOT EXISTS skill_plan_milestones_plan ON skill_plan_milestones (plan_id, created_seq);
+                CREATE TABLE IF NOT EXISTS skill_plan_active (
+                    character_id bigint PRIMARY KEY CHECK (character_id > 0),
+                    plan_id uuid REFERENCES skill_plans (plan_id) ON DELETE SET NULL
+                );
+                """),
         ];
 
     public static Task<IReadOnlyList<string>> MigrateAsync(NpgsqlDataSource source, string schema = DefaultSchema, CancellationToken cancellationToken = default) =>
@@ -274,6 +319,37 @@ public sealed class PgSkillStore
         return list;
     }
 
+    /// <summary>
+    /// Removes what the skills keep about a character (its skills, queue, history, point changes and boosters), inside the caller's
+    /// transaction. Used when the character is deleted.
+    /// </summary>
+    /// <summary>Deletes the character's rows of the given skills, or of all skills when <paramref name="typeIds"/> is null (the caller's transaction).</summary>
+    public async Task DeleteAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long characterId, IReadOnlyList<int>? typeIds, CancellationToken cancellationToken = default)
+    {
+        await using var command = new NpgsqlCommand($"DELETE FROM {_schema}.character_skills WHERE character_id = $1 AND ($2::int[] IS NULL OR type_id = ANY($2))", connection, transaction)
+        {
+            Parameters = { new() { Value = characterId }, new() { Value = typeIds is null ? DBNull.Value : (object)typeIds.ToArray() } },
+        };
+        await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    public async Task ClearCharacterAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long characterId, CancellationToken cancellationToken = default)
+    {
+        foreach (var table in new[]
+                 {
+                     "character_skills", "skill_queue", "skill_history", "recent_skill_point_changes", "active_skill_boosters",
+                     "training_state", "character_free_skill_points", "daily_alpha_skill_injector_uses", "skill_isis_fetch_budget", "character_neural_remaps",
+                 })
+        {
+            await using var command = new NpgsqlCommand($"DELETE FROM {_schema}.{table} WHERE character_id = $1", connection, transaction)
+            {
+                Parameters = { new() { Value = characterId } },
+            };
+            await command.ExecuteNonQueryAsync(cancellationToken);
+        }
+        _neuralRemaps.TryRemove(characterId, out _);
+    }
+
     /// <summary>Read eligibility inside the caller's transaction, without a second snapshot.</summary>
     public async Task<int> LevelAsync(NpgsqlConnection connection,NpgsqlTransaction transaction,long characterId,int typeId,CancellationToken cancellationToken = default)
     {
@@ -369,6 +445,10 @@ public sealed class PgSkillStore
     }
 
 
+    /// <summary>
+    /// Records a Daily Alpha Injector use unless the character already used one since the last downtime (one use per downtime).
+    /// A use before that downtime is spent, so the character may use again.
+    /// </summary>
     public async Task<bool> TryUseDailyAlphaSkillInjectorAsync(
         NpgsqlConnection connection,
         NpgsqlTransaction transaction,
@@ -383,7 +463,7 @@ public sealed class PgSkillStore
             VALUES ($1, $2, $3)
             ON CONFLICT (character_id, item_type_id) DO UPDATE
                 SET used_at_unix_ms = EXCLUDED.used_at_unix_ms
-                WHERE usage.used_at_unix_ms <= EXCLUDED.used_at_unix_ms - 86400000
+                WHERE usage.used_at_unix_ms < $4
             RETURNING 1
             """, connection, transaction)
         {
@@ -392,9 +472,20 @@ public sealed class PgSkillStore
                 new() { Value = characterId },
                 new() { Value = itemTypeId },
                 new() { Value = nowUnixMs },
+                new() { Value = SkillInjectorDowntime.PreviousAtOrBeforeMs(nowUnixMs) },
             },
         };
         return await command.ExecuteScalarAsync(cancellationToken) is not null;
+    }
+
+    /// <summary>When the character last used a Daily Alpha Injector (Unix milliseconds), or null when it never did.</summary>
+    public async Task<long?> DailyAlphaSkillInjectorUsedAtAsync(long characterId, int itemTypeId, CancellationToken cancellationToken = default)
+    {
+        await using var command = _source.CreateCommand(
+            $"SELECT used_at_unix_ms FROM {_schema}.daily_alpha_skill_injector_uses WHERE character_id = $1 AND item_type_id = $2");
+        command.Parameters.Add(new NpgsqlParameter { Value = characterId });
+        command.Parameters.Add(new NpgsqlParameter { Value = itemTypeId });
+        return await command.ExecuteScalarAsync(cancellationToken) is long usedAt ? usedAt : (long?)null;
     }
 
     /// <summary>Reads and locks the balance row, creating its zero row inside the caller's transaction if absent.</summary>
@@ -661,6 +752,18 @@ public sealed class PgSkillStore
             Parameters = { new() { Value = characterId }, new() { Value = nowFileTime } },
         };
         return await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    /// <summary>Deletes one booster row inside the caller's transaction (a booster that ends early, e.g. at a clone jump).</summary>
+    public async Task DeleteSkillBoosterAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long characterId, long itemId, CancellationToken cancellationToken = default)
+    {
+        await using var command = new NpgsqlCommand(
+            $"DELETE FROM {_schema}.active_skill_boosters WHERE character_id = $1 AND item_id = $2",
+            connection, transaction)
+        {
+            Parameters = { new() { Value = characterId }, new() { Value = itemId } },
+        };
+        await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
     private static async Task<IReadOnlyList<StoredSkillBooster>> ReadSkillBoostersAsync(

@@ -41,11 +41,9 @@ public sealed class LoginInitializationRpcServicesTests
 
         var achievementState = Assert.IsType<PyDict>(await achievement.CallAsync(Call(
             "GetCompletedAchievementsAndClientEventCount", new ClientSession())));
-        var eventCounts = Assert.IsType<PyDict>(Field(achievementState, "eventDict"));
-        Assert.Equal(new PyLong(1), Field(eventCounts, new PyStr("client_activateAutopilot")));
-        Assert.Equal(new PyInt(0), Field(eventCounts, new PyStr("client_activateSalvager")));
-        var completed = Assert.IsType<PyDict>(Field(achievementState, "completedDict"));
-        Assert.Equal(new PyLong(134273341290000000), Field(completed, new PyInt(9)));
+        // a character with no tracker record has empty maps (no fixture): the client starts from its own defaults
+        Assert.Empty(Assert.IsType<PyDict>(Field(achievementState, "eventDict")).Entries);
+        Assert.Empty(Assert.IsType<PyDict>(Field(achievementState, "completedDict")).Entries);
 
         var progress = Assert.IsType<PyDict>(await operations.CallAsync(Call("get_character_progress", new ClientSession())));
         var category = Assert.IsType<PyList>(Field(progress, new PyInt(32)));

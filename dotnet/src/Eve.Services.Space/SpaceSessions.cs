@@ -300,6 +300,12 @@ internal void StartStructureDamageModuleForTest(ulong session, long moduleId, st
     public event Action<ShipLoss>? ShipLost;
 
     /// <summary>
+    /// A pilot's capsule was destroyed in space (a loss of its own, not the ship's), raised once the database has the pod's replacement and before the client is
+    /// told, on a thread of the host, with the same rules as <see cref="ShipLost"/>.
+    /// </summary>
+    public event Action<PodLoss>? PodLost;
+
+    /// <summary>
     /// The domain events bus (set by the host that has one). What happens in space is announced on it as well (<c>npc.killed</c>, <c>ship.lost</c>, <c>bounty.paid</c>) so that
     /// missions, crimewatch and the rest subscribe instead of hooking this class; the C# events above stay for the code that needs a synchronous call.
     /// </summary>

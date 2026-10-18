@@ -67,6 +67,9 @@ internal sealed class Rig : IAsyncDisposable
     /// <summary>The schema the module states and conditions are kept in.</summary>
     public string FittingSchema => _schemas[4];
 
+    /// <summary>The schema the skills (and the expert systems) are kept in.</summary>
+    public string SkillsSchema => _schemas[2];
+
     public PgCharacterStore Characters { get; }
 
     public PgItemStore Items { get; }

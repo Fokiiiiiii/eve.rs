@@ -2255,6 +2255,7 @@ fn interdiction_at(scene: &mut Scene, at: Vec3, now: i64) {
         module_id: 0,
         module_type: 0,
         watchers: std::collections::BTreeSet::new(),
+        slim_fields: std::collections::BTreeMap::new(),
     };
     scene.deployables.insert(probe.id, probe);
 }
@@ -3494,4 +3495,28 @@ fn a_wormhole_end_out_of_reach_refuses_the_jump_and_a_removed_one_is_not_found()
     scene.remove_wormhole(WORMHOLE_END, NOON);
     assert!(scene.wormhole_index(WORMHOLE_END).is_none());
     assert_eq!(refusal(&scene.command(SESSION, jump(WORMHOLE_END, FAR_END), NOON)), "STARGATE_NOT_FOUND");
+}
+
+#[test]
+fn a_relocation_puts_the_ship_at_the_station_anchor_facing_it() {
+    let mut scene = Scene::new(system());
+    scene.enter_at_anchor(SESSION, spec(), NOON).unwrap();
+    assert!(scene.pilots[&SESSION].jumped_in);
+    // the station is 1 000 m across: the ship is put past its surface by its own radius and the 5 000 m clearance, on the x axis, facing the station
+    let at = scene.ship(SESSION, NOON).unwrap();
+    assert_eq!(at.position.x, 1_000_000.0 + 1_000.0 + spec().radius + 5_000.0);
+    assert_eq!((at.position.y, at.position.z), (0.0, 0.0));
+    assert_eq!(at.direction.x, -1.0);
+}
+
+#[test]
+fn a_relocation_anchors_at_the_first_stargate_of_the_system_before_its_station() {
+    let (here, _) = gated_systems();
+    let mut scene = Scene::new(Arc::new(here));
+    scene.enter_at_anchor(SESSION, spec(), NOON).unwrap();
+    // the near gate is 6 000 m in radius: the ship is past its surface by its own radius and the clearance
+    let gate = scene.system.body(NEAR_GATE).unwrap().position;
+    let at = scene.ship(SESSION, NOON).unwrap();
+    assert_eq!(at.position.x, gate.x + 6_000.0 + spec().radius + 5_000.0);
+    assert_eq!((at.position.y, at.position.z), (gate.y, gate.z));
 }

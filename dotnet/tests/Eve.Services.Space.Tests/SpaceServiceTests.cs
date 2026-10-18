@@ -701,7 +701,7 @@ public class SpaceServiceTests
             [("stationid", new PyInt(Rig.Station), PyNone.Instance), ("locationid", new PyInt(Rig.Station), new PyInt(system)), ("solarsystemid", PyNone.Instance, new PyInt(system))],
             Sequence.LastChange(session));
         Assert.Null(session.GetInt("stationid"));
-        Assert.Equal(Rig.Station, session.GetInt("stationid2"));
+        Assert.Null(session.GetInt("stationid2")); // the reference clears the server value on undock (characterState: session.stationid2 = null)
         Assert.Equal(system, session.GetInt("solarsystemid"));
         // the simulation
         var enter = AssertUndockSimulationMessages(rig);

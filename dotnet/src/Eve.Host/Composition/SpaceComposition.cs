@@ -77,9 +77,35 @@ internal sealed partial class CharacterServicesComposition
             nowMs: now, schema: contrabandSchema);
     }
 
+    /// <summary>The player bounty payouts: their job is registered with the shared scheduler whether or not the simulation runs (a process runs the kinds it has a handler for).</summary>
+    private Eve.Services.Crimewatch.PlayerBountyKills? playerBountyKills;
+
+    private void LoadPlayerBounties()
+    {
+        // a pilot's kill claims the bounties on the victim (pilot, corporation, alliance); the payout is credited by its own job, once
+        playerBountyKills = new Eve.Services.Crimewatch.PlayerBountyKills(
+            new Eve.Crimewatch.PlayerBountyStore(source, crimewatchSchema), crimewatchSchema, economyWallets,
+            async (typeIds, token) =>
+            {
+                var prices = new Dictionary<long, decimal>();
+                foreach (var row in await sde.ReadAsync("types", typeIds, token))
+                {
+                    if (row.Doc.ValueKind == System.Text.Json.JsonValueKind.Object && row.Doc.TryGetProperty("basePrice", out var price) && price.TryGetDecimal(out var value))
+                        prices[row.Key] = value;
+                }
+                return prices;
+            },
+            async (characterId, token) => await characters.GetAsync(characterId, token) is { } character
+                ? (character.CorporationId, character.AllianceId ?? 0)
+                : null);
+        foundations.Scheduler.Register(Eve.Services.Crimewatch.PlayerBountyKills.PayoutJobKind, (context, token) =>
+            playerBountyKills.SettlePayoutAsync(context.Connection, context.Transaction, context.Payload<Eve.Services.Crimewatch.PlayerBountyPayoutDue>()!.PayoutId, now(), token));
+    }
+
     private async Task SpaceSimulation()
     {
         await LoadCustomsPenaltyAsync();
+        LoadPlayerBounties();
         sim = null;
         spaceSessions = null;
         spaceContainers = null;
@@ -289,6 +315,7 @@ internal sealed partial class CharacterServicesComposition
                     boarded.BoardedAtFileTime, boarded.ActorCharacterId,
                     boarded.ActorCorporationId > 0 ? boarded.ActorCorporationId : null), token);
             };
+            // a pilot's kill claims the bounties on the victim (pilot, corporation, alliance); the payout is credited by its own job, once
             spaceSessions.ShipLost += loss =>
             {
                 if (loss.ShipTypeId == Eve.Ships.CharacterShips.CapsuleTypeId)
@@ -304,6 +331,77 @@ internal sealed partial class CharacterServicesComposition
                 catch (Exception error)
                 {
                     Console.Error.WriteLine($"eve-host: insurance loss {loss.ShipId} could not be settled: {error}");
+                }
+            };
+            spaceSessions.ShipLost += loss =>
+            {
+                if (loss.Cause != Eve.Services.Space.ShipLossCause.Player || loss.KillerCharacterId <= 0)
+                    return;
+                try
+                {
+                    // the fleet of the killer shares the bounty (EVE University wiki: "the entire fleet shares the bounty")
+                    var sharers = FleetSharersAsync(loss.KillerCharacterId).GetAwaiter().GetResult();
+                    playerBountyKills!.ClaimShipLossAsync(loss.CharacterId, loss.ShipId, loss.ShipTypeId,
+                        [.. (loss.Contents ?? []).Select(item => (item.TypeId, item.Quantity))], loss.KillerCharacterId, now(),
+                        async (connection, transaction, payoutId) => await foundations.Scheduler.ScheduleAsync(connection, transaction,
+                            new Eve.Scheduler.JobSpec(Eve.Services.Crimewatch.PlayerBountyKills.PayoutJobKind, now())
+                            {
+                                Key = $"player-bounty:{payoutId}",
+                                Payload = new Eve.Services.Crimewatch.PlayerBountyPayoutDue(payoutId),
+                            }),
+                        sharers, CancellationToken.None).GetAwaiter().GetResult();
+                }
+                catch (Exception error)
+                {
+                    Console.Error.WriteLine($"eve-host: player bounty of ship {loss.ShipId} could not be claimed: {error}");
+                }
+            };
+            // the capsule is a loss of its own: a pilot that shoots a pod dead claims the pod's value (the capsule's base price; the wiki's implant value is not tracked yet)
+            spaceSessions.PodLost += loss =>
+            {
+                if (loss.Cause != Eve.Services.Space.ShipLossCause.Player || loss.KillerCharacterId <= 0)
+                    return;
+                try
+                {
+                    var sharers = FleetSharersAsync(loss.KillerCharacterId).GetAwaiter().GetResult();
+                    playerBountyKills!.ClaimShipLossAsync(loss.CharacterId, loss.CapsuleId, Eve.Ships.CharacterShips.CapsuleTypeId, [], loss.KillerCharacterId, now(),
+                        async (connection, transaction, payoutId) => await foundations.Scheduler.ScheduleAsync(connection, transaction,
+                            new Eve.Scheduler.JobSpec(Eve.Services.Crimewatch.PlayerBountyKills.PayoutJobKind, now())
+                            {
+                                Key = $"player-bounty:{payoutId}",
+                                Payload = new Eve.Services.Crimewatch.PlayerBountyPayoutDue(payoutId),
+                            }),
+                        sharers, CancellationToken.None).GetAwaiter().GetResult();
+                }
+                catch (Exception error)
+                {
+                    Console.Error.WriteLine($"eve-host: player bounty of pod {loss.CapsuleId} could not be claimed: {error}");
+                }
+            };
+            // a pilot that destroys a faction's NPC loses standing with the faction (EveJS factionKillStandingRuntime; the debounce is in memory)
+            var npcFactionStanding = new Eve.Services.Space.NpcFactionStanding(foundations.Relations, now);
+            spaceSessions.NpcDestroyed += RecordFactionWarfareNpcKill;
+            spaceSessions.NpcDestroyed += kill =>
+            {
+                if (kill.FinalBlowCharacterId <= 0 || kill.Profile.FactionId <= 0)
+                    return;
+                try
+                {
+                    // the pilot is told the new standing as the reference tells it (EveJS notifyStandingSet: OnStandingSet(faction, pilot, standing))
+                    var standing = npcFactionStanding.ApplyAsync(kill.FinalBlowCharacterId, kill.Profile.FactionId, kill.SolarSystemId, CancellationToken.None).GetAwaiter().GetResult();
+                    if (standing is { } changed && characterSessions?.Of(kill.FinalBlowCharacterId) is { } pilot)
+                    {
+                        pilot.SendNotification("OnStandingSet", "clientID", new Eve.Marshal.PyList(
+                        [
+                            new Eve.Marshal.PyInt(kill.Profile.FactionId),
+                            new Eve.Marshal.PyLong(kill.FinalBlowCharacterId),
+                            new Eve.Marshal.PyReal(changed),
+                        ]));
+                    }
+                }
+                catch (Exception error)
+                {
+                    Console.Error.WriteLine($"eve-host: faction standing of the kill of ship {kill.ShipId} could not be applied: {error}");
                 }
             };
             crimewatchRuntime.ConcordResponseDue += async request =>
@@ -417,8 +515,31 @@ await spaceContainers.PingObservatoryAsync(context.Payload<Eve.Services.Space.Sp
             var dungeonWaves = new Eve.Services.Space.Waves.DungeonWaveDirector(source, foundations.Content, foundations.Scheduler, foundations.Events,
                 Eve.Dungeons.DungeonCatalog.LoadEmbedded(), Eve.Dungeons.WaveRules.LoadEmbedded(), new NpcSelector(npcAuthority),
                 new Eve.Services.Space.SpaceDungeonNpcs(spaceSessions), spaceSchema, message => Console.Error.WriteLine($"eve-host: space: {message}"));
+            // the gate types' radii come from the SDE (17831, and the large gate 35776 of the owner data)
+            dungeonWaves.GateRadii = (await sde.ReadAsync("types", [17831L, 35776L])).ToDictionary(row => row.Key, row => row.Doc.GetProperty("radius").GetDouble());
             await dungeonWaves.AttachAsync();
             dungeonWavesDirector = dungeonWaves;
+            // the acceleration gates of the dungeon rooms (keeper.ActivateAccelerationGate): a pilot walks the gate of its room into the room it leads to
+            accelerationGates = new Eve.Services.Space.Gates.SpaceAccelerationGates(dungeonWaves.ActivePocketsAsync,
+                async (session, token) =>
+                {
+                    // the mission dungeon the pilot is in, else the complex it is inside (the current-dungeon answer has no instance when it has none)
+                    if (await CurrentDungeonInstanceAsync(session, token) is > 0 and var mission)
+                        return mission;
+                    return complexInstanceOfPilot is { } complexOf ? await complexOf(session, token) : null;
+                },
+                dungeonWaves.ClearedRoomKeysAsync,
+                async (session, token) =>
+                {
+                    if (spaceSessions.ShipTypeIdOf(session) is not { } typeId)
+                    {
+                        return null;
+                    }
+                    await dogma.EnsureTypesAsync([typeId], token);
+                    return dogma.Type(typeId) is { } type ? new Eve.Services.Space.Gates.ShipClass(type.GroupId, type.RaceId) : null;
+                },
+                (session, gateId, point, token) => spaceSessions.AccelerationGateTransitAsync(session, gateId, point, token),
+                WriteCurrentRoomAsync);
             // the CONCORD Rogue Analysis Beacon (CRAB, D-L1 and D-S1): deployed from the hold, linked, scanned, expired by its own record kind
             await Eve.Services.Space.Beacons.AnalysisBeaconDirector.MigrateAsync(source, spaceSchema);
             var beacons = new Eve.Services.Space.Beacons.AnalysisBeaconDirector(
@@ -462,5 +583,14 @@ await spaceContainers.PingObservatoryAsync(context.Payload<Eve.Services.Space.Sp
             Console.Error.WriteLine($"eve-host: the space simulation is expected at {socket}");
         }
         await crimewatchRuntime.ResumeAsync();
+    }
+
+    /// <summary>The characters that share a kill's bounty: the killer's fleet (all its members), or the killer alone when it has no fleet.</summary>
+    private async Task<IReadOnlyList<long>> FleetSharersAsync(long killerCharacterId)
+    {
+        if (fleetStore is null || await fleetStore.FleetIdForCharacterAsync(killerCharacterId) is not { } fleet
+            || await fleetStore.SnapshotAsync(fleet) is not { } snapshot)
+            return [killerCharacterId];
+        return [.. snapshot.Members.Select(member => member.CharacterId).Where(id => id > 0)];
     }
 }

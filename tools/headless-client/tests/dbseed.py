@@ -81,6 +81,23 @@ def seed_qa_arsenal(ship: int, type_id: int = QA_SMARTBOMB) -> list:
     return [new_item(type_id, owner=owner, location=ship, flag=slot, singleton=True) for slot in slots if slot not in used]
 
 
+ROLE_GML = 1 << 54  # the client's game master role (serviceConst ROLE_GML): the slash commands are refused to an account without a staff role
+
+
+def grant_roles(user_name: str, roles: int = ROLE_GML) -> None:
+    """The role bits of an account (identity.accounts.role, the same grant EVE_GM_ACCOUNTS makes). The bits are read at a login."""
+    rows = sql(f"update {schema('IDENTITY')}.accounts set role = role | {int(roles)} where user_name = '{user_name}' returning id")
+    if not rows:
+        raise SeedError(f"no account {user_name!r} in {schema('IDENTITY')}: it is created by its first login")
+
+
+def set_hull(ship: int, type_id: int) -> None:
+    """A ship item's hull (inventory.items.type_id): the walks fly the Cockroach whatever hull the server gave the character."""
+    rows = sql(f"update {schema('INVENTORY')}.items set type_id = {int(type_id)} where id = {int(ship)} returning id")
+    if rows != str(int(ship)):
+        raise SeedError(f"the ship {ship} was not found in {schema('INVENTORY')}")
+
+
 def set_ship(character: int, ship: int) -> None:
     """The character's active ship (characters.ship_id)."""
     sql(f"update {schema('CHARACTERS')}.characters set ship_id = {int(ship)} where id = {int(character)}")
@@ -157,8 +174,8 @@ def owner_of(item: int) -> int:
 
 
 def isk_of(character: int) -> float:
-    """The ISK balance of a character (wallet.balances)."""
-    return float(sql(f"select isk from {schema('WALLET')}.balances where owner_id = {int(character)}") or 0)
+    """The ISK balance of a character's main wallet (wallet.balances, account 1000; the other divisions are separate rows)."""
+    return float(sql(f"select isk from {schema('WALLET')}.balances where owner_id = {int(character)} and account_key = 1000") or 0)
 
 
 def corporation_of(character: int) -> int:

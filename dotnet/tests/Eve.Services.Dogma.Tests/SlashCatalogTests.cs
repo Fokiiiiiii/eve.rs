@@ -17,12 +17,18 @@ public class SlashCatalogTests
             items ? new ItemCommands(null!, null!, null!, () => 0) : null,
             skills ? new SkillCommands(null!, null!, null!, null, () => 0) : null);
 
+    private static ClientSession Gm(ClientSession session)
+    {
+        session.Set("accountRole", new PyLong(GameMasterRoles.Gml));
+        return session;
+    }
+
     private static async Task<PyValue> CallAsync(SlashService service, string command, ClientSession? session = null) =>
         await ((IService)service).CallAsync(new ServiceCall
         {
             Method = "SlashCmd",
             Args = [new PyStr(command)],
-            Session = session ?? new ClientSession(),
+            Session = session ?? Gm(new ClientSession()),
             CallId = new PyInt(1),
         });
 
@@ -48,23 +54,23 @@ public class SlashCatalogTests
     [InlineData(" \t/ ")]
     public async Task Catalog_uses_the_clients_user_error_reason_and_bare_names(string command)
     {
-        Assert.Equal("Commands: ['dmg', 'heal']", await CatalogAsync(Service(), command));
+        Assert.Equal("Commands: ['dmg', 'heal', 'repair']", await CatalogAsync(Service(), command));
     }
 
     [Fact]
     public async Task Catalog_lists_only_commands_with_wired_handlers()
     {
         var service = Service(death: true, suicide: true, npcs: true, items: true, skills: true);
-        Assert.Equal("Commands: ['deathtest', 'dmg', 'fit', 'giveitem', 'giveskill', 'heal', 'npc', 'suicide', 'unfit']",
+        Assert.Equal("Commands: ['createitem', 'deathtest', 'dmg', 'fit', 'giveitem', 'giveme', 'giveskill', 'heal', 'npc', 'online', 'removeskill', 'repair', 'ship', 'suicide', 'unfit']",
             await CatalogAsync(service));
     }
 
     [Theory]
-    [InlineData(true, false, false, false, false, "Commands: ['deathtest', 'dmg', 'heal']")]
-    [InlineData(false, true, false, false, false, "Commands: ['dmg', 'heal', 'suicide']")]
-    [InlineData(false, false, true, false, false, "Commands: ['dmg', 'heal', 'npc']")]
-    [InlineData(false, false, false, true, false, "Commands: ['dmg', 'fit', 'giveitem', 'heal', 'unfit']")]
-    [InlineData(false, false, false, false, true, "Commands: ['dmg', 'giveskill', 'heal']")]
+    [InlineData(true, false, false, false, false, "Commands: ['deathtest', 'dmg', 'heal', 'repair']")]
+    [InlineData(false, true, false, false, false, "Commands: ['dmg', 'heal', 'repair', 'suicide']")]
+    [InlineData(false, false, true, false, false, "Commands: ['dmg', 'heal', 'npc', 'repair']")]
+    [InlineData(false, false, false, true, false, "Commands: ['createitem', 'dmg', 'fit', 'giveitem', 'giveme', 'heal', 'online', 'repair', 'ship', 'unfit']")]
+    [InlineData(false, false, false, false, true, "Commands: ['dmg', 'giveskill', 'heal', 'removeskill', 'repair']")]
     public async Task Catalog_follows_each_optional_registration(bool death, bool suicide, bool npcs, bool items, bool skills, string expected)
     {
         Assert.Equal(expected, await CatalogAsync(Service(death, suicide, npcs, items, skills)));
@@ -79,12 +85,29 @@ public class SlashCatalogTests
     [InlineData("/unfit")]
     [InlineData("/giveskill")]
     [InlineData("/help")]
-    [InlineData("/createitem")]
     [InlineData("")]
     public async Task Unwired_and_unimplemented_commands_still_answer_unknown(string command)
     {
         Assert.Equal($"Unknown command: {command}. Use /help.",
             Assert.IsType<PyStr>(await CallAsync(Service(), command)).Value);
+    }
+
+    [Theory]
+    [InlineData("/")]
+    [InlineData("/dmg heavy")]
+    [InlineData("/giveskill me all 5")]
+    public async Task A_session_without_a_game_master_role_is_refused(string command)
+    {
+        Assert.Equal(SlashService.NotGameMaster, Assert.IsType<PyStr>(await CallAsync(Service(skills: true), command, new ClientSession())).Value);
+    }
+
+    [Theory]
+    [InlineData("dmg Heavy")]
+    [InlineData("/DMG Heavy")]
+    [InlineData("  dmg   Heavy  ")]
+    public async Task Bare_and_slashed_names_dispatch_alike(string command)
+    {
+        Assert.Equal("Select a character before using /dmg.", Assert.IsType<PyStr>(await CallAsync(Service(), command)).Value);
     }
 
     [Fact]
@@ -93,7 +116,7 @@ public class SlashCatalogTests
         var service = Service(skills: true);
         Assert.Equal("Select a character before using /dmg.",
             Assert.IsType<PyStr>(await CallAsync(service, "/DMG Heavy")).Value);
-        var session = new ClientSession { CharacterId = 90000001 };
+        var session = Gm(new ClientSession { CharacterId = 90000001 });
         Assert.Equal("Character not found: 90000002. Use me, a character ID, or an exact character name.",
             Assert.IsType<PyStr>(await CallAsync(service, "/giveskill 90000002 3300 5", session)).Value);
     }

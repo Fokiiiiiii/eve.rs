@@ -7,12 +7,15 @@ use eve_behaviors::consts::{
     SHIP_NOT_WARPING,
 };
 use eve_behaviors::env::{Ball, Ballpark, ProximitySensor, SlimItem, WorldError, WorldResult};
+use eve_behaviors::value::Value as TaskValue;
 use eve_destiny::Vec3;
 
 use super::world::{SceneWorld, distance};
 use std::collections::BTreeSet;
 
 use super::{NotifyTarget, RangeNotification, Sensor};
+use crate::link::SlimValue;
+use crate::npc::is_npc_session;
 use crate::scene::Command;
 use crate::ship::Course;
 use crate::visibility::grid_of;
@@ -28,6 +31,22 @@ pub(crate) fn bubble_of(position: [f64; 3]) -> i64 {
 
 fn as_array(v: Vec3) -> [f64; 3] {
     [v.x, v.y, v.z]
+}
+
+/// A task's value as a dynamic slim-item field value: none, int, float, bool, text, and a list or tuple of those. A set or a dict has no slim form
+/// and is not sent.
+fn slim_value_of(value: &TaskValue) -> Option<SlimValue> {
+    Some(match value {
+        TaskValue::None => SlimValue::None,
+        TaskValue::Int(number) => SlimValue::Int(*number),
+        TaskValue::Float(number) => SlimValue::Real(*number),
+        TaskValue::Bool(flag) => SlimValue::Bool(*flag),
+        TaskValue::Str(text) => SlimValue::Text(text.clone()),
+        TaskValue::Tuple(items) | TaskValue::List(items) => {
+            SlimValue::Tuple(items.iter().map(slim_value_of).collect::<Option<Vec<_>>>()?)
+        }
+        TaskValue::Set(_) | TaskValue::Dict(_) => return None,
+    })
 }
 
 impl SceneWorld<'_> {
@@ -132,7 +151,28 @@ impl SceneWorld<'_> {
     }
 }
 
+impl SceneWorld<'_> {
+    /// `UpdateSlimItemField`: the field is set on the scene's deployable, and those who see it are told its slim item again.
+    /// shortcut: a ship or a body keeps no dynamic slim fields yet (the call is a no-op for it); the scene's ship and body entries have no store to read
+    /// them from. Upgrade when a behaviour sets one on a ship (fwAttackMethod on NPC ships, DEVIATIONS "Slim item fields").
+    fn set_slim_field(&mut self, item_id: i64, name: &str, value: &TaskValue) {
+        let Some(value) = slim_value_of(value) else { return };
+        let told = self.scene.set_slim_field(item_id, name.to_owned(), value, self.now);
+        self.out.extend(told.into_iter().filter(|out| !is_npc_session(out.session())));
+    }
+}
+
 impl Ballpark for SceneWorld<'_> {
+    fn update_slim_item_field(&mut self, item_id: i64, name: &str, value: TaskValue) {
+        self.set_slim_field(item_id, name, &value);
+    }
+
+    fn update_slim_item_field_multi(&mut self, item_id: i64, fields: &[(&str, TaskValue)]) {
+        for (name, value) in fields {
+            self.set_slim_field(item_id, name, value);
+        }
+    }
+
     fn has_ball(&self, ball_id: i64) -> bool {
         self.session_of(ball_id).is_some() || self.scene.system().body(ball_id).is_some()
     }

@@ -6,6 +6,7 @@ mod abyssal;
 mod abyssal_deployment;
 mod abyssal_environment;
 mod bridge;
+mod gate_transit;
 
 /// The most passengers one conduit jump takes (the Black Ops limit is 30; the array leaves room for the carriers).
 pub const MAX_CONDUIT_PASSENGERS: usize = 64;
@@ -195,6 +196,13 @@ pub enum Command {
         passenger_count: u8,
         passengers: [i64; MAX_CONDUIT_PASSENGERS],
     },
+    /// Walk through an acceleration gate of a dungeon room into another room of the same site (code 34, protocol 75): the ship must be within the gate's
+    /// interaction reach; it warps to `destination`, the entry point of the room, with its modules stopped and its locks cleared (EVE.js
+    /// `activateAccelerationGateForSession`).
+    AccelerationGateTransit {
+        gate_id: i64,
+        destination: Vec3,
+    },
 }
 
 impl Command {
@@ -214,6 +222,7 @@ impl Command {
             Self::OpenBridge { .. } => 30,
             Self::BridgeJump { .. } => 31,
             Self::ConduitJump { .. } => 32,
+            Self::AccelerationGateTransit { .. } => 34,
             Self::WarpToPoint { .. } => 21,
             Self::ResolveWarpTarget { .. } => 22,
             Self::PositionOf { .. } => 23,

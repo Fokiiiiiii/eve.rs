@@ -36,7 +36,20 @@ public enum ShipLossCause
 /// <param name="Cause">What destroyed it.</param>
 /// <param name="SolarSystemId">The solar system it was destroyed in.</param>
 /// <param name="KillerCharacterId">The character of the pilot who dealt the last blow (0 unless <see cref="Cause"/> is <see cref="ShipLossCause.Player"/>).</param>
-public sealed record ShipLoss(long CharacterId, long ShipId, int ShipTypeId, ShipLossCause Cause, int SolarSystemId, long KillerCharacterId);
+/// <summary>An item a lost ship held (a module, a cargo stack), as it was: its type and quantity.</summary>
+public sealed record ShipLossItem(int TypeId, long Quantity);
+
+/// <param name="Contents">What the ship held when it was destroyed (its modules and cargo, destroyed or in the wreck); the loss value of the ship is its base price and these.</param>
+public sealed record ShipLoss(long CharacterId, long ShipId, int ShipTypeId, ShipLossCause Cause, int SolarSystemId, long KillerCharacterId,
+    IReadOnlyList<ShipLossItem>? Contents = null);
+
+/// <summary>A pilot's capsule was destroyed in space: whose it was, where, and who dealt the last blow (the pod is a loss of its own, separate from the ship's).</summary>
+/// <param name="CharacterId">The pilot.</param>
+/// <param name="CapsuleId">The capsule's item id (the item is gone).</param>
+/// <param name="SolarSystemId">The solar system it was destroyed in.</param>
+/// <param name="Cause">What destroyed it (<see cref="ShipLossCause.Player"/> when another pilot dealt the last blow).</param>
+/// <param name="KillerCharacterId">The character of that pilot (0 unless <see cref="Cause"/> is <see cref="ShipLossCause.Player"/>).</param>
+public sealed record PodLoss(long CharacterId, long CapsuleId, int SolarSystemId, ShipLossCause Cause, long KillerCharacterId);
 
 /// <summary>
 /// The topics a module of a ship announces its start and stop on, and the siege mode (a siege module's start and stop). Nothing subscribes yet; the names are

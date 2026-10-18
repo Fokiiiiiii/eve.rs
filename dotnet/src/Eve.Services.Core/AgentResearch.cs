@@ -6,12 +6,16 @@ namespace Eve.Services.Core;
 public sealed record AgentResearchField(long SkillTypeId, long DatacoreTypeId, string DatacoreName);
 
 /// <summary>An SDE type as the research fields read it: its English name, and the skill its datacore requires (dogma attribute 182).</summary>
-public sealed record AgentResearchTypeRow(long TypeId, string EnglishName, long? RequiredSkill1);
+public sealed record AgentResearchTypeRow(long TypeId, string EnglishName, long GroupId, bool Published, long? RequiredSkill1);
+
+/// <summary>An SDE NPC character as the research fields read it: the agent, its agent type, and the skills it offers (npcCharacters.skills).</summary>
+public sealed record AgentResearchAgentRow(long AgentId, int AgentTypeId, IReadOnlyList<long> Skills);
 
 /// <summary>What the server holds for the R&amp;D agents: the fields from the SDE, and the project store and the datacore purchase.</summary>
 public interface IAgentResearchPort
 {
-    IReadOnlyList<AgentResearchField> Fields { get; }
+    /// <summary>The fields one R&amp;D agent offers (its own skills, ascending). Empty for an agent with none.</summary>
+    IReadOnlyList<AgentResearchField> FieldsFor(long agentId);
 
     ResearchProjectStore Projects { get; }
 
@@ -32,14 +36,36 @@ public enum AgentDatacoreRefusal
 
 public static class AgentResearchFields
 {
+    /// <summary>The datacore group (the reference's GROUP_DATACORES).</summary>
+    public const long DatacoreGroupId = 333;
+
     /// <summary>
-    /// The research fields: the skill each datacore names as its required skill (dogma attribute 182), other than Science, which
-    /// the civilian datacores name. No name is matched: the SDE link is the field.
+    /// The research fields of each R&amp;D agent: the agent's own skills (npcCharacters.skills on the research agent type), each with
+    /// the datacore that names it as its required skill (dogma attribute 182). A datacore is a published group 333 type. When two
+    /// datacores name one skill, the higher type id wins, the reference's last-wins order. A field with no datacore stays listed;
+    /// buying it is refused. Fields are in ascending skill order, as the reference lists them.
     /// </summary>
-    public static IReadOnlyList<AgentResearchField> FromSde(IEnumerable<AgentResearchTypeRow> types) => types
-        .Where(row => row.EnglishName.StartsWith("Datacore - ", StringComparison.Ordinal) &&
-            row.RequiredSkill1 is { } skill && skill != ResearchRules.ScienceSkillTypeId)
-        .Select(row => new AgentResearchField(row.RequiredSkill1!.Value, row.TypeId, row.EnglishName))
-        .OrderBy(field => field.SkillTypeId)
-        .ToArray();
+    public static IReadOnlyDictionary<long, IReadOnlyList<AgentResearchField>> FieldsByAgent(
+        IEnumerable<AgentResearchTypeRow> types, IEnumerable<AgentResearchAgentRow> agents)
+    {
+        var datacoreBySkill = new Dictionary<long, AgentResearchTypeRow>();
+        foreach (var row in types
+            .Where(row => row.GroupId == DatacoreGroupId && row.Published && row.RequiredSkill1 is not null)
+            .OrderBy(row => row.TypeId))
+        {
+            datacoreBySkill[row.RequiredSkill1!.Value] = row;
+        }
+
+        return agents
+            .Where(agent => agent.AgentTypeId == AgentAccessRule.ResearchAgentType && agent.Skills.Count > 0)
+            .ToDictionary(
+                agent => agent.AgentId,
+                agent => (IReadOnlyList<AgentResearchField>)agent.Skills
+                    .Distinct()
+                    .OrderBy(skill => skill)
+                    .Select(skill => datacoreBySkill.TryGetValue(skill, out var datacore)
+                        ? new AgentResearchField(skill, datacore.TypeId, datacore.EnglishName)
+                        : new AgentResearchField(skill, 0, string.Empty))
+                    .ToArray());
+    }
 }

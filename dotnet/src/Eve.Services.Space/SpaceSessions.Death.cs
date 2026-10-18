@@ -142,7 +142,8 @@ public sealed partial class SpaceSessions
                     death.Ship.TypeId,
                     cause,
                     abandoned.SolarSystemId,
-                    cause == ShipLossCause.Player ? killer!.CharacterId : 0);
+                    cause == ShipLossCause.Player ? killer!.CharacterId : 0,
+                    [.. death.Changes.Select(change => new ShipLossItem(change.Item.TypeId, change.Item.Quantity))]);
                 Raise(ShipLost, loss, nameof(ShipLost));
                 Announce(
                     "ship.lost",
@@ -232,7 +233,7 @@ public sealed partial class SpaceSessions
 
     }
 
-    private void NotifyDeathAfterSessionChange(Pilot pilot, ShipDeath lost, SimDestroyed destroyed)
+    private void NotifyDeathCosmetics(Pilot pilot, ShipDeath lost)
     {
         var session = pilot.Session;
         session.SendNotification(
@@ -241,6 +242,35 @@ public sealed partial class SpaceSessions
             "OnShipCosmeticsChanged", "clientID", InventoryWire.Id(lost.PilotShip.Id), new PyDict([]));
         session.SendNotification(
             "OnCurrentShipSkinChange", "clientID", InventoryWire.Id(lost.PilotShip.Id), new PyInt(0));
+    }
+
+    /// <summary>Takes the surviving ship (or the capsule) into the simulation. A refusal puts the pilot back in its station, as the recovery of a failed respawn does.</summary>
+    private async Task<bool> TakeSurvivorAsync(Pilot pilot, SimRespawn respawn, string description)
+    {
+        string? refusal;
+        try
+        {
+            refusal = await _sim.RespawnAsync(respawn, CancellationToken.None);
+        }
+        catch (Exception error)
+        {
+            refusal = error.Message;
+        }
+        if (refusal is null)
+            return true;
+        _log?.Invoke($"the simulation did not take {description} of character {pilot.CharacterId}: {refusal}");
+        _pilots.TryRemove((ulong)pilot.Session.SessionId, out _);
+        _sim.Leave((ulong)pilot.Session.SessionId, LeaveWhy.Docked);
+        await _ships.RecoverFromSpaceAsync(pilot.CharacterId, PlaceOfStation);
+        if (await _ships.LoadAsync(pilot.CharacterId) is { } recovered)
+            CharacterSessionRelocation.Docked(pilot.Session, recovered.Character.StationId, recovered.Character.SolarSystemId,
+                recovered.Character.ConstellationId, recovered.Character.RegionId, recovered.Ship.Id);
+        return false;
+    }
+
+    private void NotifyWreckItem(Pilot pilot, ShipDeath lost, SimDestroyed destroyed)
+    {
+        var session = pilot.Session;
         if (lost.Wreck is { } wreckItem && destroyed.WreckKind is not null)
         {
             session.SendNotification(
@@ -261,6 +291,10 @@ public sealed partial class SpaceSessions
         SelfDestruct? done = null;
         var handedOver = false;
         var simulationFailed = false;
+        // the survivor and the wreck enter the simulation after the client has the session change, the cosmetics and the skin (the reference's order)
+        SimRespawn? pendingRespawn = null;
+        SimPlaceWreck? pendingWreck = null;
+        string pendingDescription = "";
         try
         {
             var session = pilot.Session;
@@ -301,36 +335,18 @@ public sealed partial class SpaceSessions
                         return;
                     }
 
-                    try
-                    {
-                        var refusal = await _sim.RespawnAsync(new SimRespawn(
-                            id,
-                            SimShips.Of(flown, _statics, await SecurityStatusAsync(pilot.CharacterId, token)),
-                            destroyed.Position,
-                            destroyed.Direction), token);
-                        if (refusal is not null)
-                        {
-                            var survivorDescription = survivor.TypeId == CharacterShips.CapsuleTypeId
-                                ? $"the capsule {survivor.Id}"
-                                : $"surviving ship {survivor.Id}";
-                            _log?.Invoke($"the simulation did not take {survivorDescription} of character {pilot.CharacterId}: {refusal}");
-                            simulationFailed = true;
-                            _sim.Leave(id, LeaveWhy.Docked);
-                            await _ships.RecoverFromSpaceAsync(pilot.CharacterId, PlaceOfStation);
-                            return;
-                        }
-                    }
-                    catch (Exception error)
-                    {
-                        _log?.Invoke($"the simulation could not respawn surviving ship {survivor.Id} of character {pilot.CharacterId}: {error.Message}");
-                        simulationFailed = true;
-                        await _ships.RecoverFromSpaceAsync(pilot.CharacterId, PlaceOfStation);
-                        return;
-                    }
+                    pendingDescription = survivor.TypeId == CharacterShips.CapsuleTypeId
+                        ? $"the capsule {survivor.Id}"
+                        : $"surviving ship {survivor.Id}";
+                    pendingRespawn = new SimRespawn(
+                        id,
+                        SimShips.Of(flown, _statics, await SecurityStatusAsync(pilot.CharacterId, token)),
+                        destroyed.Position,
+                        destroyed.Direction);
 
                     if (lost.Wreck is { } wreckItem && destroyed.WreckKind is { } kind)
                     {
-                        PlaceWreck(new SimPlaceWreck(
+                        pendingWreck = new SimPlaceWreck(
                             SimSceneKey.SolarSystem(pilot.SolarSystemId),
                             wreckItem.Id,
                             WreckGroup,
@@ -344,7 +360,7 @@ public sealed partial class SpaceSessions
                                 lost.Character.CorporationId,
                                 lost.Character.AllianceId ?? 0,
                                 lost.Character.FactionId ?? 0),
-                            lost.Changes.All(change => change.Destroyed)));
+                            lost.Changes.All(change => change.Destroyed));
                     }
                 },
                 async (result, transitionToken) =>
@@ -362,16 +378,7 @@ public sealed partial class SpaceSessions
                         _pilots.TryRemove(id, out _);
                         NotifyDeathClient(pilot, lost, recovered.Ship);
                         var character = recovered.Character;
-                        var stationId = new PyInt(character.StationId);
-                        session.Change(
-                            ("stationid", stationId),
-                            ("stationid2", stationId),
-                            ("solarsystemid", None),
-                            ("solarsystemid2", new PyInt(character.SolarSystemId)),
-                            ("constellationid", new PyInt(character.ConstellationId)),
-                            ("regionid", new PyInt(character.RegionId)),
-                            ("shipid", new PyLong(recovered.Ship.Id)),
-                            ("locationid", stationId));
+                        CharacterSessionRelocation.Docked(session, character.StationId, character.SolarSystemId, character.ConstellationId, character.RegionId, recovered.Ship.Id);
                         handedOver = true;
                         return true;
                     }
@@ -392,12 +399,15 @@ public sealed partial class SpaceSessions
                     handedOver = true;
                     return true;
                 },
-                (result, _) =>
+                async (result, _) =>
                 {
                     var lost = result!;
                     RaiseShipLost(pilot, lost, destroyed);
-                    NotifyDeathAfterSessionChange(pilot, lost, destroyed);
-                    return Task.CompletedTask;
+                    NotifyDeathCosmetics(pilot, lost);
+                    var placed = pendingRespawn is not { } respawn || await TakeSurvivorAsync(pilot, respawn, pendingDescription);
+                    NotifyWreckItem(pilot, lost, destroyed);
+                    if (placed && pendingWreck is { } wreck)
+                        PlaceWreck(wreck);
                 },
                 CancellationToken.None,
                 id);
@@ -447,9 +457,20 @@ public sealed partial class SpaceSessions
             : killer is not null ? ShipLossCause.Player
             : destroyed.KillerShipId != 0 && _npcShips.ContainsKey(destroyed.KillerShipId) ? ShipLossCause.Npc
             : ShipLossCause.Unknown;
-        var loss = new ShipLoss(pilot.CharacterId, death.Ship.Id, death.Ship.TypeId, cause, pilot.SolarSystemId, cause == ShipLossCause.Player ? killer!.CharacterId : 0);
+        var loss = new ShipLoss(pilot.CharacterId, death.Ship.Id, death.Ship.TypeId, cause, pilot.SolarSystemId, cause == ShipLossCause.Player ? killer!.CharacterId : 0,
+            [.. death.Changes.Select(change => new ShipLossItem(change.Item.TypeId, change.Item.Quantity))]);
         Raise(ShipLost, loss, nameof(ShipLost));
         Announce("ship.lost", new { characterId = loss.CharacterId, shipId = loss.ShipId, shipTypeId = loss.ShipTypeId, cause = loss.Cause.ToString(), solarSystemId = loss.SolarSystemId, killerCharacterId = loss.KillerCharacterId }, $"char:{loss.CharacterId}");
+    }
+
+    /// <summary>The capsule was destroyed: another pilot's last blow makes it a player kill of its own (EveJS: the pod is a loss apart from the ship).</summary>
+    private void RaisePodLost(Pilot pilot, Item capsule, SimDestroyed destroyed)
+    {
+        var killer = destroyed.KillerShipId == 0 ? null : _pilots.Values.FirstOrDefault(other => other.ShipId == destroyed.KillerShipId);
+        var cause = killer is not null ? ShipLossCause.Player
+            : destroyed.KillerShipId != 0 && _npcShips.ContainsKey(destroyed.KillerShipId) ? ShipLossCause.Npc
+            : ShipLossCause.Unknown;
+        Raise(PodLost, new PodLoss(pilot.CharacterId, capsule.Id, pilot.SolarSystemId, cause, cause == ShipLossCause.Player ? killer!.CharacterId : 0), nameof(PodLost));
     }
 
     /// <summary>The corpse of a pilot whose capsule was destroyed: <c>resolveCorpseTypeID</c> of EVE.js (the client's <c>genderFemale = 0</c>; anything else leaves the male one).</summary>
@@ -509,6 +530,7 @@ public sealed partial class SpaceSessions
                 var death = result!;
                 _pilots.TryRemove(id, out _);
                 _sim.Leave(id, LeaveWhy.Docked);
+                RaisePodLost(pilot, death.Capsule, destroyed);
                 if (death.Corpse is { } corpse)
                 {
                     var type = _statics.Type(corpse.TypeId);
@@ -532,16 +554,7 @@ public sealed partial class SpaceSessions
             {
                 var death = result!;
                 ReleaseBoundObjects(session);
-                var system = new PyInt(station.SolarSystemId);
-                session.Change(
-                    ("stationid", new PyInt(station.Id)),
-                    ("stationid2", new PyInt(station.Id)),
-                    ("solarsystemid", None),
-                    ("solarsystemid2", system),
-                    ("constellationid", new PyInt(station.ConstellationId)),
-                    ("regionid", new PyInt(station.RegionId)),
-                    ("shipid", new PyLong(death.Ship.Id)),
-                    ("locationid", new PyInt(station.Id)));
+                CharacterSessionRelocation.Docked(session, station.Id, station.SolarSystemId, station.ConstellationId, station.RegionId, death.Ship.Id);
                 return Task.FromResult(true);
             },
             (result, _) =>

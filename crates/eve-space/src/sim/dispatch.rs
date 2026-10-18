@@ -85,6 +85,13 @@ pub(super) fn command_of(code: u8, args: &[f64]) -> Option<Command> {
         (9, [gate, leads_to]) if is_id(*gate) && is_id(*leads_to) => {
             Some(Command::Jump { gate_id: *gate as i64, destination_gate: *leads_to as i64 })
         }
+        // the transit through an acceleration gate of a dungeon room: the gate's id and the point the pilot warps to in the other room (protocol 75)
+        (34, [gate, x, y, z]) if is_id(*gate) && [*x, *y, *z].iter().all(|v| v.is_finite()) => {
+            Some(Command::AccelerationGateTransit {
+                gate_id: *gate as i64,
+                destination: Vec3::new(*x, *y, *z),
+            })
+        }
         // the host's queries (the warp to a point, the warp target, a position, a drop point): answered by the scene, as the host asks them
         (21, [x, y, z, range]) if [*x, *y, *z, *range].iter().all(|v| v.is_finite()) => {
             Some(Command::WarpToPoint { destination: Vec3::new(*x, *y, *z), range: *range })
@@ -469,11 +476,15 @@ impl Sim {
             | Message::PlaceObservatory(..)
             | Message::PlaceControlTower(..)
             | Message::PlaceDeadspacePocket(..)
+            | Message::PlaceAccelerationGate(..)
+            | Message::PlaceCapturePoint(..)
+            | Message::PlaceBattlefieldScoreboard(..)
             | Message::RemoteDecloakPing { .. }
             | Message::SetDisruptorActive { .. }
             | Message::TetherPolicy { .. }
             | Message::PlaceAnalysisBeacon(..)
-            | Message::SetAnalysisBeaconState { .. } => self.handle_world(message, now),
+            | Message::SetAnalysisBeaconState { .. }
+            | Message::SetSlimField { .. } => self.handle_world(message, now),
             other => Err(ProtocolError(format!(
                 "a message of kind {} is for the host, not the simulation",
                 other.kind()
@@ -1370,6 +1381,12 @@ impl Sim {
                 .find(|scene| scene.deployables.contains_key(&deployable_id))
                 .map(|scene| scene.set_analysis_beacon_state(deployable_id, state, now))
                 .unwrap_or_default(),
+            Message::SetSlimField { item_id, name, value } => self
+                .scenes
+                .values_mut()
+                .find(|scene| scene.deployables.contains_key(&item_id))
+                .map(|scene| scene.set_slim_field(item_id, name, value, now))
+                .unwrap_or_default(),
             Message::PlaceCynoBeacon(beacon) => {
                 let beacon = *beacon;
                 match self.scenes.get_mut(&SceneKey::solar_system(beacon.solar_system_id)) {
@@ -1395,6 +1412,27 @@ impl Sim {
                 let pocket = *pocket;
                 match self.scenes.get_mut(&SceneKey::solar_system(pocket.solar_system_id)) {
                     Some(scene) => scene.place_deadspace_pocket(pocket, now),
+                    None => Vec::new(),
+                }
+            }
+            Message::PlaceAccelerationGate(gate) => {
+                let gate = *gate;
+                match self.scenes.get_mut(&SceneKey::solar_system(gate.solar_system_id)) {
+                    Some(scene) => scene.place_acceleration_gate(gate, now),
+                    None => Vec::new(),
+                }
+            }
+            Message::PlaceCapturePoint(point) => {
+                let point = *point;
+                match self.scenes.get_mut(&SceneKey::solar_system(point.solar_system_id)) {
+                    Some(scene) => scene.place_capture_point(point, now),
+                    None => Vec::new(),
+                }
+            }
+            Message::PlaceBattlefieldScoreboard(scoreboard) => {
+                let scoreboard = *scoreboard;
+                match self.scenes.get_mut(&SceneKey::solar_system(scoreboard.solar_system_id)) {
+                    Some(scene) => scene.place_battlefield_scoreboard(scoreboard, now),
                     None => Vec::new(),
                 }
             }

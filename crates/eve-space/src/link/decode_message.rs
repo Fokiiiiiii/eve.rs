@@ -731,6 +731,7 @@ impl Message {
                 let how = match r.u8()? {
                     0 => How::Undock,
                     1 => How::InSpace,
+                    2 => How::Anchor,
                     _ => return Err(DecodeError::BadValue("how")),
                 };
                 let station_id = r.i64()?;
@@ -1196,7 +1197,8 @@ impl Message {
             | kind::PLACE_CYNO_BEACON
             | kind::PLACE_OBSERVATORY
             | kind::PLACE_CONTROL_TOWER
-            | kind::PLACE_DEADSPACE_POCKET => {
+            | kind::PLACE_DEADSPACE_POCKET
+            | kind::PLACE_ACCELERATION_GATE => {
                 let deployable_id = r.i64()?;
                 let solar_system_id = r.i32()?;
                 let name = r.text()?;
@@ -1238,6 +1240,8 @@ impl Message {
                     Message::PlaceControlTower(placement)
                 } else if kind == kind::PLACE_DEADSPACE_POCKET {
                     Message::PlaceDeadspacePocket(placement)
+                } else if kind == kind::PLACE_ACCELERATION_GATE {
+                    Message::PlaceAccelerationGate(placement)
                 } else {
                     Message::PlaceDisruptor(placement)
                 }
@@ -1282,6 +1286,67 @@ impl Message {
                 let deployable_id = r.i64()?;
                 let state = read_analysis_beacon_state(&mut r)?;
                 Message::SetAnalysisBeaconState { deployable_id, state }
+            }
+            kind::SET_SLIM_FIELD => {
+                let item_id = r.i64()?;
+                let name = r.text()?;
+                if name.is_empty() || name.len() > SLIM_FIELD_NAME_MAX {
+                    return Err(DecodeError::BadValue("slim field name"));
+                }
+                let value = read_slim_value(&mut r, 0)?;
+                Message::SetSlimField { item_id, name, value }
+            }
+            kind::PLACE_CAPTURE_POINT => {
+                let deployable_id = r.i64()?;
+                let solar_system_id = r.i32()?;
+                let name = r.text()?;
+                let type_id = r.i32()?;
+                let group_id = r.i32()?;
+                let position = read_vector(&mut r)?;
+                let radius = r.f64()?;
+                let attacker_faction = r.i32()?;
+                let occupier_faction = r.i32()?;
+                let next_point_time = r.i64()?;
+                if !(radius.is_finite() && radius >= 0.0)
+                    || attacker_faction < 0
+                    || occupier_faction < 0
+                    || next_point_time < 0
+                {
+                    return Err(DecodeError::BadValue("capture point"));
+                }
+                Message::PlaceCapturePoint(Box::new(CapturePointPlacement {
+                    deployable_id,
+                    solar_system_id,
+                    name,
+                    type_id,
+                    group_id,
+                    position,
+                    radius,
+                    attacker_faction,
+                    occupier_faction,
+                    next_point_time,
+                }))
+            }
+            kind::PLACE_BATTLEFIELD_SCOREBOARD => {
+                let deployable_id = r.i64()?;
+                let solar_system_id = r.i32()?;
+                let name = r.text()?;
+                let type_id = r.i32()?;
+                let group_id = r.i32()?;
+                let position = read_vector(&mut r)?;
+                let radius = r.f64()?;
+                if !(radius.is_finite() && radius >= 0.0) {
+                    return Err(DecodeError::BadValue("scoreboard"));
+                }
+                Message::PlaceBattlefieldScoreboard(Box::new(ScoreboardPlacement {
+                    deployable_id,
+                    solar_system_id,
+                    name,
+                    type_id,
+                    group_id,
+                    position,
+                    radius,
+                }))
             }
             kind::DRONE_WORK_RESULT => {
                 let session_id = r.u64()?;
@@ -2005,6 +2070,41 @@ impl Message {
 }
 
 /// A CRAB's state (see `put_analysis_beacon_state`): the link state must be one the client knows (1 to 4).
+/// A dynamic slim-item field value (see `put_slim_value`): finite reals, texts and tuples within their limits.
+fn read_slim_value(reader: &mut Reader, depth: usize) -> Result<SlimValue, DecodeError> {
+    Ok(match reader.u8()? {
+        0 => SlimValue::None,
+        1 => SlimValue::Int(reader.i64()?),
+        2 => {
+            let number = reader.f64()?;
+            if !number.is_finite() {
+                return Err(DecodeError::BadValue("slim field real"));
+            }
+            SlimValue::Real(number)
+        }
+        3 => SlimValue::Bool(read_flag(reader, "slim field bool")?),
+        4 => {
+            let text = reader.text()?;
+            if text.len() > SLIM_FIELD_TEXT_MAX {
+                return Err(DecodeError::BadValue("slim field text"));
+            }
+            SlimValue::Text(text)
+        }
+        5 => {
+            let count = reader.u16()? as usize;
+            if depth >= SLIM_FIELD_DEPTH_MAX || count > SLIM_FIELD_TUPLE_MAX {
+                return Err(DecodeError::BadValue("slim field tuple"));
+            }
+            let mut items = Vec::with_capacity(count);
+            for _ in 0..count {
+                items.push(read_slim_value(reader, depth + 1)?);
+            }
+            SlimValue::Tuple(items)
+        }
+        _ => return Err(DecodeError::BadValue("slim field value")),
+    })
+}
+
 fn read_analysis_beacon_state(reader: &mut Reader) -> Result<AnalysisBeaconState, DecodeError> {
     let active = read_flag(reader, "analysis beacon")?;
     let activate_at = reader.i64()?;

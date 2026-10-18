@@ -136,11 +136,9 @@ Slice 3:
   are client-side. Not built: corporation jobs, structure facilities beyond the existing structure lookup.
 
 Known differences, not closed:
-- The MITM capture against the real client and the EveJS reference run (`docs/project/MITM_COMPARE.md`) were not run in
-  slice 3; no client session was available to capture.
-- The MITM capture against the real client and the EveJS reference run (`docs/project/MITM_COMPARE.md`) were not run for the
-  industry walks; the shapes were compared by reading the code (InstallJob returns the job ID in both; cancel and
-  complete return nothing in both).
+- Open: no MITM capture against the real client for slice 3 (no client session was available to capture).
+- Open: no MITM capture of the industry walks against the real client or EveJS. The shapes were compared by reading the code
+  (InstallJob returns the job ID in both; cancel and complete return nothing in both).
 - Station Laboratory: the walk's station (60015249) has no Laboratory (service 15), so research there is refused by the SDE
   service list; the walks run research at the nearest Laboratory station, with the Scientific Networking level that reaches it.
 
@@ -184,3 +182,53 @@ Known differences, not closed:
 - **Tests.** Unit: `IndustryRulesTests` (18 pass, filter `IndustryRulesTests`, includes the 4 bonus tests). PostgreSQL on eve_p4 (under the lane lock): `dotnet test tests/Eve.Host.Tests --filter Industry`, 27 of 27 pass (includes 2 bonus install tests).
 - **Not done.** A player fitting a rig through the client is not walked. No live walk with a fitted rig or hull bonus (no client session). The corporation notification is not walked for the new role set. Stacking penalties are not applied (basis: the client's arithmetic, DEVIATIONS I4).
 
+## Slice 7: research audit against the client and EveJS (2026-10-17)
+
+Audit of the research side (copying, ME and TE research, invention, reaction, install and delivery, job slots, R&D agents)
+against eve-logic V24.01 (`industry/const.py`, `industry/job.py`), the pinned SDE and EveJS. Code changed: a comment only.
+
+Matches the client, no change needed:
+- Activity ids and constants (`const.py`: 1, 3, 4, 5, 8, 9; `IndustryRules` carries the same values, the ten `RESEARCH_TIMES`).
+- Base cost: rounded once, then the cost, tax, SCC and security parts as in `job.py:127-133`. The SCC surcharge is halved for
+  research only (`job.py:144-145`), as `IndustryRules.CostParts` does.
+- Reverse engineering is not an activity of the V24.01 client (`ACTIVITIES` holds manufacturing, ME and TE research, copying,
+  invention and reaction), so no job type exists to serve it. Not built.
+- The system cost index is no longer missing. The ESI loader (`Eve.Market` `IndustryCostIndexes`: `EsiIndustrySystems`, the
+  stored rows, the daily cache, `EVE_INDUSTRY_INDEX_SEED=skip` for offline runs) feeds `IIndustryCostIndexSource`; a system or
+  activity that ESI does not list uses the configured rule `EVE_INDUSTRY_COST_INDEX`. The earlier "ESI cost index loader: not
+  done" lines in this file are stale.
+
+R&D research agents: built, with two gaps (correction: the first text of this slice said the dialogue buttons were refused; that came from a stale code index and is wrong).
+- `AgentDialogueMachine` raises the Start Research `SingleChoiceBox`, Cancel Research `YesNo` and Buy Datacores `GetQuantity` prompts through `AgentMissionService` (the client round trip). `PersistenceAgentResearch` (Host) implements `IAgentResearchPort`: the projects in `ResearchProjectStore` and the datacore purchase (RP, ISK and datacores in one transaction).
+- Gap 1: the field list is every SDE datacore's required skill (name prefix "Datacore - ", Science excluded), the same for every agent. EveJS and the SDE give each R&D agent its own `npcCharacters.skills` (agentTypeID 4).
+- Gap 2: the datacore map matches the name prefix. EveJS maps published group 333 datacores by dogma attribute 182 (`build-research-field-authority.js`).
+- Gaps 1 and 2 are fixed in slice 7. The field list is each agent's `npcCharacters.skills` (agentTypeID 4, 244 agents in the pinned
+  SDE), ascending by skill. A datacore is a published group 333 type that names the skill through dogma attribute 182; when two
+  name one skill the higher type id wins (the reference's last-wins order). A skill with no datacore stays listed, and buying it
+  is refused as invalid input (the reference's `buildDatacoreQuantityPrompt` returns no prompt).
+- Tests: `AgentResearchFieldsTests` (6, pure), `AgentResearchSdeTests` (2, the pinned SDE: agent 3009318 offers 11448 and 11450,
+  datacores 20417 and 20410; 244 agents), `AgentResearchDialogueTests` and `AgentDialogueTests` (27 with PostgreSQL on eve_p4).
+  The live walk `test_research_start_cancel_and_datacores_over_the_dialogs` now also asserts that the choice list has one entry per
+  SDE skill of the agent. It passed through the live server on eve_p4 (2026-10-17, `tools/dev/run-eve-live.sh`, the SDE JSONL of
+  the pinned archive, sha256 checked against `sde/lock.json`). Not done: the EveJS wire comparison through `tools/mitm` for the
+  research dialogue.
+
+## Slice 8: research wrap-up, closed prompts, MITM walk (2026-10-17)
+
+- **Field tie-break and per-agent fields.** Recorded in DEVIATIONS "Agents slice AG-4, research fields per agent and closed prompts
+  (slice 7, 2026-10-17)": each agent's own fields, the higher datacore type id wins a tie.
+- **Closed prompts.** A closed field box, cancel question or quantity box answers nothing and changes no state, as the reference
+  does. Unit test `A_closed_prompt_gives_no_answer_and_changes_nothing` (PostgreSQL, eve_p4), in the 12 tests that
+  `dotnet test dotnet/tests/Eve.Services.Core.Tests --filter AgentResearch` passed.
+- **Client notification after Buy Datacores.** The client handles `OnDatacoreBought(characterID, agentID, balance)` (`agents.py`),
+  which refreshes the research view and the cash. The reference (EveJS) sends no such notification; eve.rs now sends it to the buyer
+  after the commit, with the ISK balance after the debit (`PersistenceAgentResearch.BuyDatacoresAsync`). The item grant is still
+  `OnItemChange` and the wallet `OnAccountChange`. Live check: the research walk asserts it.
+- **MITM walk (eve.rs side).** `tools/headless-client/tests/test_agents_live.py -k research` through `tools/mitm` (proxy 26213 to the
+  eve_p4 live port 26103, `tools/dev/run-eve-live.sh` under `/tmp/eve-heavy-eve_p4.lock`, capture `captures/eve-rs-research.jsonl`,
+  git-ignored): 1 passed. The walk covers the closed field box, start with the agent's own choice list, the closed cancel question,
+  the datacore purchase (10,000 ISK debited), `OnDatacoreBought`, and the cancel.
+- **EveJS diff: run.** The same walk runs on EVE.js through `tools/mitm` (`docs/project/MITM_COMPARE.md`; EVE.js ports 26100, 26110, 26210; eve.rs lane `eve_p2`, 26101, 26111, 26211). The EVE.js side is seeded through its game-master commands (`/setisk`, `/setstanding`, `/giveskill`) by `tests/dbseed_evejs.py`, and its research clock through `tools/dev/evejs-timeshift.js`. Both walks passed. The research segment matches in call names, argument contents, answers, labels and notification order; the differences were the client-call argument container (eve.rs sent a list, now a tuple as the engine sends it), `OnDatacoreBought` (eve.rs sends it, EVE.js does not; kept, the client handles it) and the `OnItemChange` change map of the bought datacores (kept, equivalent for the client). Recorded in DEVIATIONS "Research dialogue against EveJS: MITM diff (slice 8, 2026-10-17)".
+- **Remaining after slice 8.** A MITM capture of the research walk on the real graphical client; the locator, LP store and decline dialogues on EVE.js (their walks are eve.rs-only so far); the OnDatacoreBought and OnItemChange map decisions in DEVIATIONS stay open to a real-game capture.
+- **Test counts.** Core: `dotnet test dotnet/tests/Eve.Services.Core.Tests --filter AgentResearch`, 12 passed, 0 failed (eve_p4).
+  Host builds (`dotnet build dotnet/src/Eve.Host`, 0 warnings, 0 errors).

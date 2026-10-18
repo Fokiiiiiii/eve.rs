@@ -355,6 +355,16 @@ public sealed partial class PlanetMgrService(NpgsqlDataSource source, PlanetStor
 
     private sealed record ChangeResult(long Owner, long PlanetId, IReadOnlyList<(string, PyValue)> Snapshot);
 
+    /// <summary>A game master's read of the owner's colonies (the <c>/pi</c> helpers): one colony document per planet.</summary>
+    public Task<IReadOnlyList<ColonyDocument>> GmColoniesAsync(long owner, CancellationToken cancellationToken) => store.ColoniesOfAsync(owner, cancellationToken);
+
+    /// <summary>
+    /// A game master's change of one of the owner's planets (the <c>/pi</c> helpers): the command is applied as the planet's game master call applies its own
+    /// (the same change path, saved and announced to the owner).
+    /// </summary>
+    public async Task GmChangeAsync(long owner, long planetId, ColonyCommand command, CancellationToken cancellationToken) =>
+        await ChangeAsync(owner, planetId, (_, _) => Task.FromResult<List<ColonyCommand>>([command]), cancellationToken);
+
     /// <summary>
     /// One change of a colony: locks it, runs the colony to now, lets <paramref name="build"/> make the commands (and the direct
     /// changes such as a launch), applies the commands, saves the colony, charges the ISK, and commits. Notifies the owner.

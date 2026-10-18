@@ -217,4 +217,43 @@ public sealed class FwDatabaseTests
         await using var connection = await rig.Source.OpenConnectionAsync();
         return await rig.Service.DonationTaxAsync(connection, null, Amarr);
     }
+
+    [PgFact]
+    public async Task A_game_master_enlistment_is_in_the_faction_at_once_and_refuses_a_non_occupier_or_a_second_faction()
+    {
+        await using var rig = await FwRig.CreateAsync();
+
+        Assert.Equal(EnlistOutcome.Accepted, await rig.Service.GmEnlistAsync(FwStore.CorporationKind, Corporation, Amarr, rig.Now));
+        Assert.Equal(Amarr, await rig.Service.FactionOfAsync(FwStore.CorporationKind, Corporation, rig.Now));
+        Assert.Equal(new long[] { Corporation }, await rig.Service.CorporationsInFactionAsync(Amarr, rig.Now));
+        Assert.Equal(EnlistOutcome.Accepted, await rig.Service.GmEnlistAsync(FwStore.CorporationKind, Corporation, Amarr, rig.Now));
+        Assert.Equal(EnlistOutcome.AlreadyEnlisted, await rig.Service.GmEnlistAsync(FwStore.CorporationKind, Corporation, FwFactions.CaldariState, rig.Now));
+        Assert.Equal(EnlistOutcome.NotAnOccupier, await rig.Service.GmEnlistAsync(FwStore.CorporationKind, Alliance, FwFactions.GuristasPirates, rig.Now));
+        Assert.Equal(0, await rig.Service.FactionOfAsync(FwStore.AllianceKind, Alliance, rig.Now));
+    }
+
+    [PgFact]
+    public async Task A_game_master_leave_takes_the_corporation_out_of_its_faction_at_once()
+    {
+        await using var rig = await FwRig.CreateAsync();
+        await rig.Service.GmEnlistAsync(FwStore.CorporationKind, Corporation, Amarr, rig.Now);
+
+        Assert.Equal(EnlistOutcome.Accepted, await rig.Service.GmLeaveAsync(FwStore.CorporationKind, Corporation, rig.Now));
+
+        Assert.Equal(0, await rig.Service.FactionOfAsync(FwStore.CorporationKind, Corporation, rig.Now));
+        Assert.Empty(await rig.Service.CorporationsInFactionAsync(Amarr, rig.Now));
+        Assert.Equal(EnlistOutcome.NothingToWithdraw, await rig.Service.GmLeaveAsync(FwStore.CorporationKind, Corporation, rig.Now));
+    }
+
+    [PgFact]
+    public async Task A_victory_point_adds_to_an_occupied_system_and_an_unoccupied_system_takes_none()
+    {
+        await using var rig = await FwRig.CreateAsync();
+        await rig.OccupyWarzoneAsync(FwWarzones.AmarrMinmatar, Amarr, pool: 100);
+        var occupied = FwWarzones.SystemsOf(FwWarzones.AmarrMinmatar)[0];
+
+        Assert.Equal(25, await rig.Service.AddVictoryPointsAsync(occupied, 25, rig.Now));
+        Assert.Equal(40, await rig.Service.AddVictoryPointsAsync(occupied, 15, rig.Now));
+        Assert.Null(await rig.Service.AddVictoryPointsAsync(JitaSystem, 25, rig.Now));
+    }
 }

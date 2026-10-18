@@ -107,7 +107,8 @@ public sealed class EpicArcOffersTests
     public void The_committed_site_statuses_hold_back_the_generic_arc_29_site_and_the_missing_arc_132_sites()
     {
         Assert.Equal(MissionSiteStatus.Generic, MissionSiteStatus.Committed[14117]);
-        Assert.Equal(MissionSiteStatus.Missing, MissionSiteStatus.Committed[17183]);
+        foreach (var missionId in new long[] { 17183, 17184, 17185, 17186 })
+            Assert.Equal(MissionSiteStatus.Missing, MissionSiteStatus.Committed[missionId]);
         Assert.Equal(182, MissionSiteStatus.Committed.Count);
         Assert.Equal(0, MissionSiteStatus.Committed.Count(pair => pair.Value == MissionSiteStatus.Specific));
     }

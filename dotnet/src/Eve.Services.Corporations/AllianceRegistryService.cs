@@ -50,6 +50,8 @@ public AllianceRegistryService(CorporationStore store, PgCharacterStore characte
     {
         _ = legacyAffiliationChanged;
     }
+
+    public Func<CancellationToken, Task<Action?>>? PlanSharedFolderAffiliationChangesAsync { get; set; }
     private readonly ConcurrentDictionary<string,long> _alliancesByObject = new(StringComparer.Ordinal);
 
     private static readonly string[] AllianceHeader =
@@ -579,6 +581,9 @@ public AllianceRegistryService(CorporationStore store, PgCharacterStore characte
             .SingleOrDefault(member => member.CorporationId == corporationId);
         if (beforeMember is null) throw AllianceAccessDenied();
         var beforeAlliance = await AllianceNotificationFieldsAsync(allianceId, call.Cancellation);
+        var previousAffiliations = PlanSharedFolderAffiliationChangesAsync is { } planAffiliationChanges
+            ? await planAffiliationChanges(call.Cancellation)
+            : null;
         var result = await store.RemoveAllianceMemberAsync(allianceId, corporationId, actor, mode, now(),
             WriteAllianceAffiliationAsync, call.Cancellation);
         if (result.Duplicate) return PyNone.Instance;
@@ -590,6 +595,10 @@ public AllianceRegistryService(CorporationStore store, PgCharacterStore characte
         CorporationNotificationAdapter.CorporationChanged(
             characterSessions, call, corporationId, "allianceID",
             new PyInt(allianceId), PyNone.Instance);
+        if (previousAffiliations is not null) call.Session.AfterResponse(previousAffiliations);
+        if (PlanSharedFolderAffiliationChangesAsync is { } planResultingAffiliations
+            && await planResultingAffiliations(call.Cancellation) is { } affiliationChanges)
+            call.Session.AfterResponse(affiliationChanges);
         return PyNone.Instance;
     }
 

@@ -14,9 +14,8 @@ pub(super) fn npc_repair_cycle_is_delayed(session: SessionId, module_id: i64, at
     if chance >= 1.0 {
         return true;
     }
-    let mut bits = (session as u64)
-        ^ (module_id as u64).rotate_left(23)
-        ^ (at as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15);
+    let mut bits =
+        session ^ (module_id as u64).rotate_left(23) ^ (at as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15);
     bits = (bits ^ (bits >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
     bits = (bits ^ (bits >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
     bits ^= bits >> 31;

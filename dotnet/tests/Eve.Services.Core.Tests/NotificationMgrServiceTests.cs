@@ -239,6 +239,44 @@ public class NotificationMgrServiceTests
         await Assert.ThrowsAsync<IOException>(async () => await service.CallAsync(call));
     }
 
+[Fact]
+    public async Task Client_used_mutators_forward_the_operation_and_ids_to_the_host()
+    {
+        var seen = new List<(string Operation, long? GroupId, long[] Ids)>();
+        var service = new NotificationMgrService(
+            (_, _) => ValueTask.FromResult<JsonObject?>(null),
+            () => ClockUnixMs,
+            mutate: (characterId, operation, groupId, ids, _, _) =>
+            {
+                Assert.Equal(CharacterId, characterId);
+                seen.Add((operation, groupId, ids.ToArray()));
+                return ValueTask.CompletedTask;
+            });
+        var calls = new[]
+        {
+            Call("MarkAllAsProcessed"),
+            Call("MarkAsProcessed", null, new PyList([new PyInt(5), new PyInt(5), new PyInt(-1)])),
+            Call("DeleteNotifications", null, new PyList([new PyInt(6), new PyInt(7)])),
+            Call("MarkGroupAsProcessed", null, new PyInt(8)),
+            Call("DeleteGroupNotifications", null, new PyInt(9)),
+            Call("DeleteAllNotifications"),
+        };
+        foreach (var call in calls)
+        {
+            Assert.True(service.HasMethod(call.Method));
+            Assert.IsType<PyNone>(await service.CallAsync(call));
+        }
+        Assert.Equal(new[]
+        {
+            ("MarkAllAsProcessed", (long?)null, Array.Empty<long>()),
+            ("MarkAsProcessed", (long?)null, new long[] { 5 }),
+            ("DeleteNotifications", (long?)null, new long[] { 6, 7 }),
+            ("MarkGroupAsProcessed", (long?)8, Array.Empty<long>()),
+            ("DeleteGroupNotifications", (long?)9, Array.Empty<long>()),
+            ("DeleteAllNotifications", (long?)null, Array.Empty<long>()),
+        }, seen);
+    }
+
     [Fact]
     public async Task Unknown_mutators_are_not_exposed_and_interaction_log_is_a_noop()
     {

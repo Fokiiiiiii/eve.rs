@@ -102,6 +102,46 @@ public sealed class MissionSdeDataTests
         Assert.DoesNotContain(byKind.Keys, key => key.Kind == "other");
     }
 
+    [PgFact]
+    public async Task The_untagged_missions_have_no_static_level_or_dungeon_difficulty_basis()
+    {
+        await using var source = Source();
+        var reader = new SdeReader(source, MissionStaticCatalog.DefaultSchema);
+        var missionCatalog = await MissionStaticCatalog.LoadAsync(reader, MissionLevelTags.Committed);
+        Assert.True(missionCatalog.IsLoaded, missionCatalog.UnavailableReason);
+        var rows = await reader.ReadAsync("missions");
+        var taggedIds = MissionLevelTags.Committed.All.Select(tag => tag.MissionId).ToHashSet();
+        var untagged = missionCatalog.Missions.Where(mission => !taggedIds.Contains(mission.MissionId)).ToArray();
+        Assert.Equal(1100, untagged.Length);
+
+        var untaggedRows = rows.Where(row => !taggedIds.Contains(row.Key)).ToArray();
+        Assert.Equal(untagged.Length, untaggedRows.Length);
+        Assert.DoesNotContain(untaggedRows, row =>
+            new[] { "level", "missionLevel", "agentLevel" }
+                .Any(field => row.Doc.TryGetProperty(field, out _)));
+
+        var arcStepIds = missionCatalog.EpicArcs
+            .SelectMany(arc => arc.Steps)
+            .Select(step => step.MissionId)
+            .ToHashSet();
+        var dungeons = Eve.Dungeons.DungeonCatalog.LoadEmbedded();
+        Assert.DoesNotContain(untagged, mission =>
+            !arcStepIds.Contains(mission.MissionId) &&
+            mission.Kill is not null &&
+            dungeons.GetMission(mission.MissionId) is Eve.Dungeons.MissionFound
+            {
+                Dungeon: Eve.Dungeons.DungeonFound { Dungeon.Difficulty: not null },
+            });
+
+        foreach (var missionId in new long[] { 17183, 17184, 17185, 17186 })
+        {
+            Assert.Contains(missionId, arcStepIds);
+            Assert.Null(MissionLevelTags.Committed.Answer(missionId).Level);
+            var mission = Assert.IsType<Eve.Dungeons.MissionFound>(dungeons.GetMission(missionId));
+            Assert.IsType<Eve.Dungeons.DungeonNoTemplate>(mission.Dungeon);
+        }
+    }
+
     private static long Read(System.Text.Json.JsonElement agent, string name) =>
         agent.TryGetProperty(name, out var value) && value.TryGetInt64(out var number) ? number : 0;
 }

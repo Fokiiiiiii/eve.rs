@@ -1,8 +1,7 @@
 # Shared bookmark folders and owner groups: design and state
 
-Status: the store, rules, service, revocation notifications and corporation membership headless walk for owner groups (access lists) and
-shared bookmark folders are built and tested on the PostgreSQL lane. The graphical-client walk and an alliance membership live walk remain
-open. The compatibility choices are in
+Status: the store, rules, service, revocation notifications and corporation and alliance membership headless walks for owner groups (access lists) and
+shared bookmark folders are built and tested on the PostgreSQL lane. The graphical-client walk remains open. The compatibility choices are in
 `docs/reference/compat/DEVIATIONS.md` ("Owner groups: ownerGroupManager" and "Bookmarks: shared (access group) folders, built").
 
 ## Sources (in priority order)
@@ -60,11 +59,11 @@ open. The compatibility choices are in
   limits, losing a list, the user and manager edit rules, sub-folder refusal, copy, the 500 limit, deletion, restart) and
   `SharedFolderNotificationTests` (who hears a change, when a list stops giving a view, deletion).
 
-- Verification (2026-10-18): the corporation membership live walk passed (1 test); `SharedFolderNotificationTests` passed (5 tests);
-  `OwnerGroupManagerServiceTests` passed (6 tests). The graphical client and alliance membership changes were not checked.
+- Verification (2026-10-18): the corporation membership walk passed; the alliance departure walk `test_alliance_member_departure_revokes_an_alliance_shared_folder` passed against the eve.rs live server; `SharedFolderNotificationTests` passed (5 tests); `Eve.Corporations.Tests` passed (129 tests). The graphical client was not checked.
 
 ## Open
 
-- The upkeep timer checks corporation and alliance changes every minute from the character store. The headless live walk covers leaving and
-  rejoining a corporation; an alliance membership live walk remains open.
+- The upkeep timer checks corporation and alliance changes every minute from the character store. Alliance member removal also checks
+  affiliations around the committed change and schedules shared-folder access notices after the RPC response, so a freshly connected session
+  does not need to wait for the first upkeep pass.
 - The live walks in `tools/headless-client/tests/test_walk_shared_bookmarks.py` cover list revocation and corporation membership loss and recovery. The list-revocation walk was run through `tools/mitm`; the corporation-membership walk uses the eve.rs live server. Captures are kept outside the repository.

@@ -2,6 +2,17 @@ use super::*;
 
 use crate::link::valid_abyssal_content_id;
 
+pub(super) struct AbyssalParticipantMove {
+    pub(super) request_id: u64,
+    pub(super) ship_id: i64,
+    pub(super) source_key: SceneKey,
+    pub(super) destination_key: SceneKey,
+    pub(super) preserve_source_pose: bool,
+    pub(super) session_handoff: bool,
+    pub(super) position: [f64; 3],
+    pub(super) direction: [f64; 3],
+}
+
 impl Sim {
     pub(super) fn ensure_abyssal_environment_object(
         &mut self,
@@ -524,29 +535,29 @@ impl Sim {
         let mut outcome = Err("ABYSSAL_RESIDENT_SHIP_NOT_FOUND".to_string());
         if request_id == 0 || !scene_key.is_valid() || ship_id <= 0 {
             outcome = Err("BAD_RESIDENT_POSE_REQUEST".to_string());
-        } else if let Some(scene) = self.scenes.get_mut(&scene_key) {
-            if let Some(session_id) = scene.session_of(ship_id) {
-                if is_npc_session(session_id) || self.sessions.get(&session_id) != Some(&scene_key) {
-                    outcome = Err("ABYSSAL_RESIDENT_NOT_A_PARTICIPANT".to_string());
+        } else if let Some(scene) = self.scenes.get_mut(&scene_key)
+            && let Some(session_id) = scene.session_of(ship_id)
+        {
+            if is_npc_session(session_id) || self.sessions.get(&session_id) != Some(&scene_key) {
+                outcome = Err("ABYSSAL_RESIDENT_NOT_A_PARTICIPANT".to_string());
+            } else {
+                if scene_key.instance_id == 0 {
+                    deployment = scene.abyssal_deployment_snapshot(session_id, now);
                 } else {
-                    if scene_key.instance_id == 0 {
-                        deployment = scene.abyssal_deployment_snapshot(session_id, now);
+                    scene.ship(session_id, now);
+                }
+                if let Some(ship) = scene.pilots.get(&session_id).map(|pilot| &pilot.ship) {
+                    let position = [ship.position.x, ship.position.y, ship.position.z];
+                    let direction = [ship.direction.x, ship.direction.y, ship.direction.z];
+                    if position.iter().chain(&direction).all(|value| value.is_finite())
+                        && direction.iter().any(|value| *value != 0.0)
+                    {
+                        outcome = Ok((position, direction));
                     } else {
-                        scene.ship(session_id, now);
+                        outcome = Err("ABYSSAL_RESIDENT_POSE_INVALID".to_string());
                     }
-                    if let Some(ship) = scene.pilots.get(&session_id).map(|pilot| &pilot.ship) {
-                        let position = [ship.position.x, ship.position.y, ship.position.z];
-                        let direction = [ship.direction.x, ship.direction.y, ship.direction.z];
-                        if position.iter().chain(&direction).all(|value| value.is_finite())
-                            && direction.iter().any(|value| *value != 0.0)
-                        {
-                            outcome = Ok((position, direction));
-                        } else {
-                            outcome = Err("ABYSSAL_RESIDENT_POSE_INVALID".to_string());
-                        }
-                    } else {
-                        outcome = Err("ABYSSAL_RESIDENT_POSE_NOT_AVAILABLE".to_string());
-                    }
+                } else {
+                    outcome = Err("ABYSSAL_RESIDENT_POSE_NOT_AVAILABLE".to_string());
                 }
             }
         }
@@ -564,16 +575,19 @@ impl Sim {
 
     pub(super) fn move_abyssal_participant(
         &mut self,
-        request_id: u64,
-        ship_id: i64,
-        source_key: SceneKey,
-        destination_key: SceneKey,
-        preserve_source_pose: bool,
-        session_handoff: bool,
-        position: [f64; 3],
-        direction: [f64; 3],
+        movement: AbyssalParticipantMove,
         now: i64,
     ) -> Vec<Message> {
+        let AbyssalParticipantMove {
+            request_id,
+            ship_id,
+            source_key,
+            destination_key,
+            preserve_source_pose,
+            session_handoff,
+            position,
+            direction,
+        } = movement;
         let reply = |outcome| Message::MoveAbyssalParticipantReply { request_id, outcome };
         let room_transition = source_key.instance_id > 0
             && source_key.instance_id == destination_key.instance_id

@@ -19,8 +19,9 @@ import pytest
 
 from evecli import marshal as m
 from evecli.describe import describe, differences
+from tests import dbseed
 from tests import test_login_to_character as base
-from tests.test_others import watch
+from tests.test_others import hold_still, watch
 from tests.test_target import plain_race
 from tests.test_undock import STATION, SYSTEM, actions_of, arrive, args_of, ids, number, outcome
 from tests.test_weapon import slims_in
@@ -109,11 +110,12 @@ def in_space_with_a_drone(who, ship: int, only: dict) -> dict:
     service = who.call("ship", "MachoBindObject", (STATION, 15), None)
     who.call_bound(service[0], "Undock", ship, False)
     watch(only, 2.5)
-    who.call("beyonce", "MachoBindObject", SYSTEM, None)
+    ballpark = who.call("beyonce", "MachoBindObject", SYSTEM, None)
     watch(only, 3.0)
     space = who.call("dogmaIM", "MachoBindObject", (SYSTEM, 5), None)
     watch(only, 1.0)
     watch(only, 45.0, until=lambda seen: any(e["name"] == "OnInvulnCancelled" for e in seen["events"]))
+    hold_still(who, ballpark[0])
     text = who.call("slash", "SlashCmd", "/npc 1 Petty Thief")
     spawn = watch(only, 8.0)["events"]
     text = getattr(text, "value", text)
@@ -138,6 +140,7 @@ def test_a_pilot_flies_a_drone_as_in_the_reference():
     steps = {step["label"]: step for step in race["steps"]}
     with base.connect(f"walk-drones-{run}") as who:
         _, ship, _, mapping = arrive(who, plain_race({"pilot": race}, "pilot"), run)
+        dbseed.set_hull(ship, dbseed.COCKROACH)
         only = {"events": who}
         slash = lambda command: (lambda: who.call("slash", "SlashCmd", command))  # noqa: E731
 
@@ -236,6 +239,7 @@ def test_drones_sent_to_attack_with_nothing_locked_look_for_an_opponent_by_thems
     problems: list[str] = []
     with base.connect(f"walk-drones-search-{run}") as who:
         _, ship, _, _ = arrive(who, plain_race({"pilot": race}, "pilot"), run)
+        dbseed.set_hull(ship, dbseed.COCKROACH)
         only = {"events": who}
         flown = in_space_with_a_drone(who, ship, only)
         drone, rat, entity = flown["drone"], flown["rat"], flown["entity"]

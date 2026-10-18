@@ -471,6 +471,23 @@ public sealed class VaultManagerServiceTests
     }
 
     [Fact]
+    public async Task Get_account_balance_reads_the_currency_the_client_sends_as_a_byte_string()
+    {
+        var callbacks = new FakeVaultManagerCallbacks(4_294_967_321);
+        IService service = (IService)(object)new VaultManagerService(callbacks);
+
+        var result = await service.CallAsync(new ServiceCall
+        {
+            Method = "get_account_balance",
+            Args = [new PyBytes("PLX"u8.ToArray())],
+            Session = new ClientSession { UserId = 9001 },
+        });
+
+        Assert.Equal(new PyLong(4_294_967_321), result);
+        Assert.Equal(9001L, callbacks.AuthenticatedUserId);
+    }
+
+    [Fact]
     public async Task Get_account_balance_returns_the_authenticated_accounts_plex_balance()
     {
         var callbacks = new FakeVaultManagerCallbacks(4_294_967_321);

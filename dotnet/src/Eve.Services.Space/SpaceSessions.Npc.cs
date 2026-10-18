@@ -93,7 +93,7 @@ public sealed partial class SpaceSessions
             var spawn = new SimSpawn(
                 NextSpawnRequest(), pilot.SolarSystemId, SimShips.OfType(shipId, type), pilot.ShipId, place, [0, 0, 0], RandomDirection(), "",
                 SimNpcIdentity.Default with { Hull = true });
-            if (await SpawnAsync(spawn, "deathtest", cancellationToken))
+            if (await SpawnAsync(spawn, "deathtest", cancellationToken) is not null)
             {
                 spawned.Add(shipId);
             }
@@ -116,17 +116,17 @@ public sealed partial class SpaceSessions
     private ulong NextSpawnRequest() => Interlocked.Increment(ref _spawnRequests);
 
     /// <summary>Asks the simulation to make a ship that nobody flies; false when it refused (the reason is logged), a message for the client when it cannot be reached.</summary>
-    private async Task<bool> SpawnAsync(SimSpawn spawn, string what, CancellationToken cancellationToken)
+    private async Task<ulong?> SpawnAsync(SimSpawn spawn, string what, CancellationToken cancellationToken)
     {
         try
         {
             var reply = await _sim.SpawnAsync(spawn, cancellationToken);
             if (reply.Session is not null)
             {
-                return true;
+                return reply.Session;
             }
             _log?.Invoke($"{what}: the ship was refused: {reply.Error}");
-            return false;
+            return null;
         }
         catch (SimUnavailableException error)
         {
@@ -452,11 +452,12 @@ public sealed partial class SpaceSessions
             var direction = RandomUnitVector();
             double[] place = [anchor.Origin[0] + direction[0] * distance, anchor.Origin[1] + direction[1] * distance, anchor.Origin[2] + direction[2] * distance];
             var spawn = new SimSpawn(NextSpawnRequest(), anchor.SolarSystemId, ship, anchor.ShipId, place, [0, 0, 0], RandomUnitVector(), NpcBehavior, identity);
-            if (!await SpawnAsync(spawn, "npc", cancellationToken))
+            if (await SpawnAsync(spawn, "npc", cancellationToken) is not { } npcSession)
             {
                 break;
             }
             _npcShips[shipId] = new NpcShip(profile, type.TypeId, anchor.SolarSystemId, anchor.BeltId, anchor.Group, anchor.SiteId);
+            _spawned[shipId] = new SpawnedNpc(npcSession, anchor.SolarSystemId, type.TypeId);
             shipIds?.Add(shipId);
             unarmed += weapon is null ? 1 : 0;
             var name = profile.Name.Length > 0 ? profile.Name : profile.Id;
@@ -567,6 +568,13 @@ public sealed partial class SpaceSessions
             if (npc.SolarSystemId == solarSystemId)
             {
                 _npcShips.TryRemove(id, out _);
+            }
+        }
+        foreach (var (id, spawned) in _spawned)
+        {
+            if (spawned.SolarSystemId == solarSystemId)
+            {
+                _spawned.TryRemove(id, out _);
             }
         }
     }

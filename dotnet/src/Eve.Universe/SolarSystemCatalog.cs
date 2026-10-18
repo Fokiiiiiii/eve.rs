@@ -47,9 +47,8 @@ public sealed class SolarSystemCatalog
         var constellationFactions = await FactionsOfAsync(sde, "mapConstellations", cancellationToken);
         var regionFactions = await FactionsOfAsync(sde, "mapRegions", cancellationToken);
         var rows = await sde.ReadAsync("mapSolarSystems", cancellationToken: cancellationToken);
-        var gates = (await sde.ReadAsync("mapDenormalize", cancellationToken: cancellationToken))
-            .Where(row => row.Doc.TryGetProperty("groupID", out var group) && group.GetInt32() == 10 &&
-                row.Doc.TryGetProperty("solarSystemID", out var system) && system.ValueKind == JsonValueKind.Number)
+        var gates = (await sde.ReadAsync("mapStargates", cancellationToken: cancellationToken))
+            .Where(row => row.Doc.TryGetProperty("solarSystemID", out var system) && system.ValueKind == JsonValueKind.Number)
             .GroupBy(row => row.Doc.GetProperty("solarSystemID").GetInt32())
             .ToDictionary(group => group.Key, group => group.OrderBy(row => row.Key).First());
         var gateTypeIds = gates.Values.Select(row => row.Doc.GetProperty("typeID").GetInt64()).Distinct().ToArray();
@@ -67,11 +66,9 @@ public sealed class SolarSystemCatalog
             var gateRadius = 0d;
             if (gate is { } gateRow)
             {
-                var physicalRadius = gateRow.TryGetProperty("physicalRadius", out var explicitRadius) &&
-                    explicitRadius.ValueKind == JsonValueKind.Number ? explicitRadius.GetDouble() : 0;
                 var typeRadius = gateRow.TryGetProperty("typeID", out var typeId) && typeId.ValueKind == JsonValueKind.Number
                     ? typeRadii.GetValueOrDefault(typeId.GetInt64()) : 0;
-                gateRadius = physicalRadius > 0 ? physicalRadius : typeRadius > 0 ? typeRadius : Position(gateRow, "radius");
+                gateRadius = typeRadius > 0 ? typeRadius : Position(gateRow, "radius");
             }
             return new SolarSystemInfo(
                 (int)r.Key,
@@ -86,7 +83,7 @@ public sealed class SolarSystemCatalog
                 gate is null ? null : Position(gate.Value, "y"),
                 gate is null ? null : Position(gate.Value, "z"),
                 gateRadius,
-                gate is not null && gate.Value.TryGetProperty("itemName", out var gateName) ? gateName.GetString() : null);
+                null);
         }));
     }
 

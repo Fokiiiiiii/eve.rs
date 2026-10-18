@@ -11,9 +11,12 @@ public class NpcCommandTests
     {
         public List<(string Query, int Amount)> Asked { get; } = [];
 
-        public Task<NpcSpawnReport> SpawnNpcsAsync(ClientSession session, string query, int amount, CancellationToken cancellationToken)
+        public List<bool> Stationary { get; } = [];
+
+        public Task<NpcSpawnReport> SpawnNpcsAsync(ClientSession session, string query, int amount, CancellationToken cancellationToken, bool stationary = false)
         {
             Asked.Add((query, amount));
+            Stationary.Add(stationary);
             return Task.FromResult(answer);
         }
     }
@@ -86,6 +89,18 @@ public class NpcCommandTests
 
         Assert.Equal(
             "Spawned 1 hull: 1x Rat. These command-spawned NPCs are transient and are not written to disk.", await command.RunAsync(InSpace(), "1", CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task Still_holds_the_NPCs_in_place_and_is_told()
+    {
+        var npcs = new Npcs(Made(("Rat", 1)));
+
+        var message = await new NpcCommands(npcs).RunAsync(InSpace(), "1 still", CancellationToken.None);
+
+        Assert.Equal(("", 1), npcs.Asked.Single());
+        Assert.True(npcs.Stationary.Single());
+        Assert.Contains(" They hold still (a QA spawn: no top speed).", message);
     }
 
     [Fact]

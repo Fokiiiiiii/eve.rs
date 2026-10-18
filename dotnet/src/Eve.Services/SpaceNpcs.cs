@@ -20,5 +20,6 @@ public interface ISpaceNpcs
     /// Spawns <paramref name="amount"/> NPCs of what <paramref name="query"/> names (a profile or a pool of the authored NPCs; nothing named is the default pool)
     /// at random places around the session's ship, armed with what their hulls carry.
     /// </summary>
-    Task<NpcSpawnReport> SpawnNpcsAsync(ClientSession session, string query, int amount, CancellationToken cancellationToken);
+    /// <param name="stationary">QA: the NPCs are given no top speed, so they hold where they are (<c>/npc ... still</c>).</param>
+    Task<NpcSpawnReport> SpawnNpcsAsync(ClientSession session, string query, int amount, CancellationToken cancellationToken, bool stationary = false);
 }

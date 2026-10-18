@@ -512,12 +512,13 @@ public async Task Notification_manager_mutations_persist_and_notify_after_the_co
             const long character = 90000091;
             var box = new System.Text.Json.Nodes.JsonObject
             {
-                ["order"] = new System.Text.Json.Nodes.JsonArray(100, 101, 102),
+                ["order"] = new System.Text.Json.Nodes.JsonArray(100, 101, 102, 103),
                 ["byID"] = new System.Text.Json.Nodes.JsonObject
                 {
                     ["100"] = Notification(100, character),
                     ["101"] = Notification(101, character),
-                    ["102"] = Notification(102, character),
+                    ["102"] = Notification(102, character, 3),
+                    ["103"] = Notification(103, character, 3),
                 },
             };
             Assert.True(cache.Write("notifications", $"/boxes/{character}", box).Success);
@@ -554,21 +555,32 @@ public async Task Notification_manager_mutations_persist_and_notify_after_the_co
             Assert.True(manager.HasMethod("MarkAllAsProcessed"));
             Assert.True(manager.HasMethod("MarkAsProcessed"));
             Assert.True(manager.HasMethod("DeleteNotifications"));
+            Assert.True(manager.HasMethod("MarkGroupAsProcessed"));
+            Assert.True(manager.HasMethod("DeleteGroupNotifications"));
+            Assert.True(manager.HasMethod("DeleteAllNotifications"));
 
             await CallAsync(manager, "MarkAsProcessed", requestingSession, new PyList([new PyInt(100)]));
-            Assert.Equal(2, Assert.IsType<PyList>(
+            Assert.Equal(3, Assert.IsType<PyList>(
                 await CallAsync(manager, "GetUnprocessed", requestingSession)).Items.Count);
 
+            await CallAsync(manager, "MarkGroupAsProcessed", requestingSession, new PyInt(2));
+            Assert.Equal(2, Assert.IsType<PyList>(
+                await CallAsync(manager, "GetUnprocessed", requestingSession)).Items.Count);
             await CallAsync(manager, "MarkAllAsProcessed", requestingSession);
             await CallAsync(manager, "DeleteNotifications", requestingSession, new PyList([new PyInt(102)]));
+            await CallAsync(manager, "DeleteGroupNotifications", requestingSession, new PyInt(3));
 
             Assert.Equal(2, Assert.IsType<PyList>(
                 await CallAsync(manager, "GetAllNotifications", requestingSession)).Items.Count);
+            await CallAsync(manager, "DeleteAllNotifications", requestingSession);
+            Assert.Empty(Assert.IsType<PyList>(
+                await CallAsync(manager, "GetAllNotifications", requestingSession)).Items);
             Assert.Empty(Assert.IsType<PyList>(
                 await CallAsync(manager, "GetUnprocessed", requestingSession)).Items);
             Assert.True(notificationWasCommittedAtSend);
-            var deleted = Assert.Single(Notifications(sink), item => item.Name == "OnNotificationDeleted");
-            Assert.Single(deleted.Args);
+            var deleted = Notifications(sink).Where(item => item.Name == "OnNotificationDeleted").ToArray();
+            Assert.Equal(3, deleted.Length);
+            Assert.All(deleted, item => Assert.Single(item.Args));
             await cache.FlushTableAsync("notifications");
         }
 
@@ -589,8 +601,8 @@ public async Task Notification_manager_mutations_persist_and_notify_after_the_co
                 persistedCache, ReadTable, new Eve.Services.CharacterSessions());
             var manager = new Eve.Services.Core.NotificationMgrService(adapter.ReadAsync, () => 1_700_000_000_000);
             var requestingSession = new ClientSession { CharacterId = 90000091, UserId = 1 };
-            Assert.Equal(2, Assert.IsType<PyList>(
-                await CallAsync(manager, "GetAllNotifications", requestingSession)).Items.Count);
+            Assert.Empty(Assert.IsType<PyList>(
+                await CallAsync(manager, "GetAllNotifications", requestingSession)).Items);
             Assert.Empty(Assert.IsType<PyList>(
                 await CallAsync(manager, "GetUnprocessed", requestingSession)).Items);
         }
@@ -602,13 +614,13 @@ public async Task Notification_manager_mutations_persist_and_notify_after_the_co
         await command.ExecuteNonQueryAsync();
     }
 
-    static System.Text.Json.Nodes.JsonObject Notification(long id, long receiverId) => new()
+    static System.Text.Json.Nodes.JsonObject Notification(long id, long receiverId, long groupId = 2) => new()
     {
         ["notificationID"] = id,
         ["typeID"] = 1,
         ["senderID"] = 10,
         ["receiverID"] = receiverId,
-        ["groupID"] = 2,
+        ["groupID"] = groupId,
         ["processed"] = false,
         ["created"] = "133000000000000000",
         ["data"] = new System.Text.Json.Nodes.JsonObject(),

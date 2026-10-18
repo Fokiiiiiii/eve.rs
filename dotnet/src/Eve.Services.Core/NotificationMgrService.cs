@@ -29,7 +29,8 @@ public sealed class NotificationMgrService(
     public string Name => "notificationMgr";
 
     public bool HasMethod(string method) => method is "GetAllNotifications" or "GetByGroupID" or "GetUnprocessed" or "LogNotificationInteraction"
-        || mutate is not null && method is "MarkAllAsProcessed" or "MarkAsProcessed" or "DeleteNotifications";
+        || mutate is not null && method is "MarkAllAsProcessed" or "MarkAsProcessed" or "DeleteNotifications"
+            or "MarkGroupAsProcessed" or "DeleteGroupNotifications" or "DeleteAllNotifications";
 
     public ValueTask<PyValue> CallAsync(ServiceCall call) => call.Method switch
     {
@@ -37,7 +38,9 @@ public sealed class NotificationMgrService(
         "GetByGroupID" => ReadAsync(call, groupId: Argument(call, "groupID")),
         "GetUnprocessed" => ReadAsync(call, unprocessed: true),
         "LogNotificationInteraction" => LogInteractionAsync(call),
-        "MarkAllAsProcessed" or "MarkAsProcessed" or "DeleteNotifications" when mutate is not null => MutateAsync(call),
+        "MarkAllAsProcessed" or "MarkAsProcessed" or "DeleteNotifications"
+            or "MarkGroupAsProcessed" or "DeleteGroupNotifications" or "DeleteAllNotifications"
+            when mutate is not null => MutateAsync(call),
         _ => ValueTask.FromResult<PyValue>(PyNone.Instance),
     };
 
@@ -46,10 +49,13 @@ public sealed class NotificationMgrService(
         call.Cancellation.ThrowIfCancellationRequested();
         var character = Positive(call.Session.Get("charid"));
         if (character <= 0) return PyNone.Instance;
+        var groupId = call.Method is "MarkGroupAsProcessed" or "DeleteGroupNotifications"
+            ? Argument(call, "groupID")
+            : (long?)null;
         var ids = call.Method is "MarkAsProcessed" or "DeleteNotifications"
             ? Ids(call.Arg(0))
             : [];
-        await mutate!(character, call.Method, null, ids, call.Session, call.Cancellation);
+        await mutate!(character, call.Method, groupId, ids, call.Session, call.Cancellation);
         return PyNone.Instance;
     }
 

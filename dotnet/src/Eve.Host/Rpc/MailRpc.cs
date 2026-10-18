@@ -74,19 +74,24 @@ internal sealed class NotificationMgrHostAdapter(
                 continue;
             var selected = operation switch
             {
-                "MarkAllAsProcessed" => true,
+                "MarkAllAsProcessed" or "DeleteAllNotifications" => true,
                 "MarkAsProcessed" or "DeleteNotifications" => requested.Contains(id),
+                "MarkGroupAsProcessed" or "DeleteGroupNotifications" =>
+                    groupId is > 0
+                    && long.TryParse(record["groupID"]?.ToString(), System.Globalization.NumberStyles.Integer,
+                        System.Globalization.CultureInfo.InvariantCulture, out var storedGroupId)
+                    && storedGroupId == groupId.Value,
                 _ => false,
             };
             if (!selected)
                 continue;
-            if (operation is "MarkAllAsProcessed" or "MarkAsProcessed")
+            if (operation is "MarkAllAsProcessed" or "MarkAsProcessed" or "MarkGroupAsProcessed")
             {
                 if (record["processed"]?.GetValueKind() == System.Text.Json.JsonValueKind.True)
                     continue;
                 record["processed"] = true;
             }
-            else if (operation == "DeleteNotifications")
+            else if (operation is "DeleteNotifications" or "DeleteGroupNotifications" or "DeleteAllNotifications")
             {
                 records.Remove(key);
             }
@@ -99,7 +104,8 @@ internal sealed class NotificationMgrHostAdapter(
         if (changed.Count == 0)
             return;
 
-        if (operation == "DeleteNotifications" && box["order"] is System.Text.Json.Nodes.JsonArray order)
+        if (operation is "DeleteNotifications" or "DeleteGroupNotifications" or "DeleteAllNotifications"
+            && box["order"] is System.Text.Json.Nodes.JsonArray order)
         {
             var removed = changed.ToHashSet();
             for (var index = order.Count - 1; index >= 0; index--)
@@ -115,7 +121,7 @@ internal sealed class NotificationMgrHostAdapter(
         if (!write.Success)
             throw new InvalidOperationException($"Could not mutate notifications for {characterId}: {write.ErrorMsg}");
         await cache.FlushTableAsync("notifications", cancellationToken);
-        if (operation == "DeleteNotifications"
+        if (operation is "DeleteNotifications" or "DeleteGroupNotifications" or "DeleteAllNotifications"
             && characterSessions.Of(characterId) is { } otherSession
             && !ReferenceEquals(otherSession, requestingSession))
         {

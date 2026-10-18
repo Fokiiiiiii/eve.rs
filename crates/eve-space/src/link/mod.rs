@@ -130,6 +130,8 @@ pub enum How {
     Undock,
     /// It is already in space (a login in space, a jump arrival).
     InSpace,
+    /// It is put in space at the anchor of its system, the place a game master's relocation brings a pilot to (`Scene::enter_at_anchor`).
+    Anchor,
 }
 
 /// An NPC the host asks a scene to spawn: the ship, where it comes into space and how it is moving, what it does (`behavior`: a scripted tree, or

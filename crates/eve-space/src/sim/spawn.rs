@@ -14,6 +14,7 @@ impl Sim {
         let scene = self.scenes.entry(solar_system_id).or_insert_with(|| self.universe.scene_of(system));
         let entered = match how {
             How::Undock => scene.undock(session_id, ship, station_id, now),
+            How::Anchor => scene.enter_at_anchor(session_id, ship, now),
             How::InSpace => {
                 let (Some(position), Some(direction)) = (position, direction) else {
                     return reply(Err("SPACE_STATE_REQUIRED".to_string()));

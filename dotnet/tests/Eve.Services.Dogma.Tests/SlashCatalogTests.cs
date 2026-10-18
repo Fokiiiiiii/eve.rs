@@ -54,23 +54,23 @@ public class SlashCatalogTests
     [InlineData(" \t/ ")]
     public async Task Catalog_uses_the_clients_user_error_reason_and_bare_names(string command)
     {
-        Assert.Equal("Commands: ['dmg', 'heal']", await CatalogAsync(Service(), command));
+        Assert.Equal("Commands: ['dmg', 'heal', 'repair']", await CatalogAsync(Service(), command));
     }
 
     [Fact]
     public async Task Catalog_lists_only_commands_with_wired_handlers()
     {
         var service = Service(death: true, suicide: true, npcs: true, items: true, skills: true);
-        Assert.Equal("Commands: ['deathtest', 'dmg', 'fit', 'giveitem', 'giveskill', 'heal', 'npc', 'suicide', 'unfit']",
+        Assert.Equal("Commands: ['deathtest', 'dmg', 'fit', 'giveitem', 'giveme', 'giveskill', 'heal', 'npc', 'repair', 'ship', 'suicide', 'unfit']",
             await CatalogAsync(service));
     }
 
     [Theory]
-    [InlineData(true, false, false, false, false, "Commands: ['deathtest', 'dmg', 'heal']")]
-    [InlineData(false, true, false, false, false, "Commands: ['dmg', 'heal', 'suicide']")]
-    [InlineData(false, false, true, false, false, "Commands: ['dmg', 'heal', 'npc']")]
-    [InlineData(false, false, false, true, false, "Commands: ['dmg', 'fit', 'giveitem', 'heal', 'unfit']")]
-    [InlineData(false, false, false, false, true, "Commands: ['dmg', 'giveskill', 'heal']")]
+    [InlineData(true, false, false, false, false, "Commands: ['deathtest', 'dmg', 'heal', 'repair']")]
+    [InlineData(false, true, false, false, false, "Commands: ['dmg', 'heal', 'repair', 'suicide']")]
+    [InlineData(false, false, true, false, false, "Commands: ['dmg', 'heal', 'npc', 'repair']")]
+    [InlineData(false, false, false, true, false, "Commands: ['dmg', 'fit', 'giveitem', 'giveme', 'heal', 'repair', 'ship', 'unfit']")]
+    [InlineData(false, false, false, false, true, "Commands: ['dmg', 'giveskill', 'heal', 'repair']")]
     public async Task Catalog_follows_each_optional_registration(bool death, bool suicide, bool npcs, bool items, bool skills, string expected)
     {
         Assert.Equal(expected, await CatalogAsync(Service(death, suicide, npcs, items, skills)));

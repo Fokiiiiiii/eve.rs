@@ -110,6 +110,7 @@ public static partial class SimCodec
                     {
                         0 => EnterHow.Undock,
                         1 => EnterHow.InSpace,
+                        2 => EnterHow.Anchor,
                         _ => throw new SimLinkException(SimLinkError.BadValue, "bad how"),
                     };
                     var station = r.I64();

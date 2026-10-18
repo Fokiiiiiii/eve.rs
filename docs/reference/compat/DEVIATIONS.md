@@ -4759,3 +4759,9 @@ as reference. The client's `bookmarkSvc.py` (`OnSharedBookmarksFolderUpdated`, `
 - **`/nuke` (G18).** Every NPC ship the host made in the pilot's system goes out of space: the hulls above, belt rats, `/npc` ships and dungeon NPCs. shortcut: the mission runtime is not told; a mission waiting on a removed NPC keeps waiting.
 - **How a ship goes (G18).** The simulation's `Leave` with the docked reason, as an NPC leaves: the ships go with no wreck, no loot and no destroy. The client sees them removed from the ballpark. The simulation's own `remove_npc` is not exposed as a message, so a Rust change was not made.
 - **Registry (G18).** The NPC sessions are kept with their ship IDs and dropped when the system's scene is forgotten (`ForgetNpcsOf`).
+
+## GM tools, slice G19: `/load me`, `/unload me` (2026-10-18)
+
+- **Semantics (G19).** EVE.js has no server `/load` or `/unload` command (its ammo load is the client's `LoadAmmo`). The client's own sequence is `/create <type>` then `/load me <type>` (`infosvc.py`), so `/load me <item> [amount]` makes the item as `/createitem` does and, for a charge, loads it into the fitted modules that take it (`CharacterShips.LoadAmmoAsync`, the reference's rules). Other items are made as `/createitem` makes them. `/unload me <all|module itemID|charge itemID|charge name|typeID>` moves the rounds of the chosen modules to the station hangar (`UnloadAmmoAsync`).
+- **Docked only (G19).** Charges load and unload docked only; in space they answer that the reload in space is not served yet. shortcut: the simulation's reload timing and gun rounds are not used here.
+- **Notifications (G19).** shortcut: the pilot is sent the item changes of the stacks; the module charge notifications the dogma service sends are not repeated, so the charge shows on the next fitting refresh.

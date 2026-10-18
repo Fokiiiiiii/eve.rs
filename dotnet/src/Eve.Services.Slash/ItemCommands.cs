@@ -47,14 +47,9 @@ public sealed class ItemCommands(ItemTypeNames names, CharacterShips ships, Dogm
     public Task<string> CreateAsync(ClientSession session, string argument, CancellationToken cancellationToken) =>
         GiveCoreAsync(session, argument, cancellationToken, create: true);
 
-    private async Task<string> GiveCoreAsync(ClientSession session, string argument, CancellationToken cancellationToken, bool create)
+    /// <summary>An item a name (or a typeID) and an optional amount name: the type, the amount, or the words of why there is none.</summary>
+    private async Task<(ItemTypeEntry? Type, long Amount, string? Error)> ItemAmountAsync(string text, CancellationToken cancellationToken)
     {
-        var command = create ? "/createitem" : "/giveitem";
-        var text = argument.Trim();
-        if (text.Length == 0)
-        {
-            return $"Usage: {command} <item name|typeID> [amount]";
-        }
         var found = await names.FindAsync(text, cancellationToken);
         long amount = 1;
         if (found.Type is null)
@@ -65,14 +60,34 @@ public sealed class ItemCommands(ItemTypeNames names, CharacterShips ships, Dogm
                 found = split;
                 if (parsed != Math.Floor(parsed.Value) || parsed < 1)
                 {
-                    return "Item amount must be a positive whole number.";
+                    return (null, 0, "Item amount must be a positive whole number.");
                 }
                 amount = (long)Math.Min(parsed.Value, long.MaxValue);
             }
         }
         if (found.Type is not { } type)
         {
-            return (found.Error == "ITEM_NOT_FOUND" ? $"Item not found: {text}.{Suggestions(found.Suggestions)}" : $"Item name is ambiguous: {text}.{Suggestions(found.Suggestions)}").Trim();
+            return (null, 0, (found.Error == "ITEM_NOT_FOUND" ? $"Item not found: {text}.{Suggestions(found.Suggestions)}" : $"Item name is ambiguous: {text}.{Suggestions(found.Suggestions)}").Trim());
+        }
+        return (type, amount, null);
+    }
+
+    private async Task<string> GiveCoreAsync(ClientSession session, string argument, CancellationToken cancellationToken, bool create)
+    {
+        var command = create ? "/createitem" : "/giveitem";
+        var text = argument.Trim();
+        if (text.Length == 0)
+        {
+            return $"Usage: {command} <item name|typeID> [amount]";
+        }
+        var (type, amount, error) = await ItemAmountAsync(text, cancellationToken);
+        if (error is not null)
+        {
+            return error;
+        }
+        if (type is null)
+        {
+            return "Item not found.";
         }
         if (amount > 9_007_199_254_740_991)
         {
@@ -282,6 +297,98 @@ public sealed class ItemCommands(ItemTypeNames names, CharacterShips ships, Dogm
         if (online.Count > 0) lines.Add($"Online: {string.Join(", ", online)}.");
         if (refused.Count > 0) lines.Add($"Not online: {string.Join("; ", refused)}.");
         return lines.Count == 0 ? "Every fitted module with an online effect is online already." : string.Join(" ", lines);
+    }
+
+    private const int ChargeCategory = 8;
+
+    /// <summary>
+    /// <c>/load me &lt;item name|typeID&gt; [amount]</c>: a charge is made in the station hangar and loaded into the fitted modules that take it (the client's own
+    /// create-then-load); any other item is made as <c>/createitem</c> makes it. A charge is loaded docked only (the reload in space is the simulation's).
+    /// </summary>
+    public async Task<string> LoadAsync(ClientSession session, string argument, CancellationToken cancellationToken)
+    {
+        var parts = argument.Trim().Split((char[]?)null, 2, StringSplitOptions.RemoveEmptyEntries);
+        if (parts.Length < 2 || !parts[0].Equals("me", StringComparison.OrdinalIgnoreCase)) return "Usage: /load me <item name|typeID> [amount]";
+        var text = parts[1].Trim();
+        if (session.CharacterId is not { } character) return "Select a character before using /load.";
+        var (type, amount, error) = await ItemAmountAsync(text, cancellationToken);
+        if (error is not null || type is null) return error ?? "Item not found.";
+        if (type.CategoryId != ChargeCategory) return await GiveCoreAsync(session, text, cancellationToken, create: true);
+        if (session.GetInt("stationid") is null) return "Loading a charge in space is not served yet. Dock to load it.";
+        await statics.EnsureTypesAsync([type.TypeId], cancellationToken);
+        if (await ships.GrantAsync(character, type.TypeId, amount, singleton: false, cancellationToken) is not { } hangar)
+            return "You must be docked before using /load.";
+        foreach (var change in hangar)
+        {
+            ShipNotifications.SendItemChange(session, change, item => DogmaInfoRow(item));
+        }
+        if (await ships.LoadAsync(character, cancellationToken) is not { } snapshot) return "Active ship not found for this character.";
+        var charges = hangar.Where(change => change.After.TypeId == type.TypeId).Select(change => change.After.Id).ToList();
+        var modules = snapshot.Fitted.Select(module => module.Id).ToList();
+        switch (await ships.LoadAmmoAsync(character, snapshot.Ship.Id, modules, charges, snapshot.Ship.LocationId, cancellationToken))
+        {
+            case AmmoChanged ammo:
+                TellAmmo(session, ammo);
+                return $"Loaded {Count(amount)}x {type.Name} into your ship's modules.";
+            case ShipRefused refused:
+                return $"Not loaded: {refused.Reason.ToString().ToUpperInvariant()}. The {type.Name} stays in your station hangar.";
+            default:
+                return $"No fitted module takes {type.Name}. It stays in your station hangar.";
+        }
+    }
+
+    /// <summary>
+    /// <c>/unload me &lt;all|module itemID|charge itemID|charge name|typeID&gt;</c>: the rounds the chosen modules hold go to the station hangar. Docked only (the
+    /// unload in space is the simulation's).
+    /// </summary>
+    public async Task<string> UnloadAsync(ClientSession session, string argument, CancellationToken cancellationToken)
+    {
+        var parts = argument.Trim().Split((char[]?)null, 2, StringSplitOptions.RemoveEmptyEntries);
+        if (parts.Length < 2 || !parts[0].Equals("me", StringComparison.OrdinalIgnoreCase)) return "Usage: /unload me <all|item name|typeID|itemID>";
+        if (session.CharacterId is not { } character) return "Select a character before using /unload.";
+        if (session.GetInt("stationid") is null) return "Unloading a charge in space is not served yet. Dock to unload it.";
+        if (await ships.LoadAsync(character, cancellationToken) is not { } snapshot) return "Active ship not found for this character.";
+        var query = parts[1].Trim();
+        var loaded = snapshot.Charges.ToList();
+        IEnumerable<Item> chosen = loaded;
+        if (!query.Equals("all", StringComparison.OrdinalIgnoreCase))
+        {
+            if (long.TryParse(query, System.Globalization.NumberStyles.None, CultureInfo.InvariantCulture, out var itemId))
+            {
+                chosen = loaded.Where(charge => charge.Id == itemId || snapshot.Fitted.Any(module => module.Id == itemId && module.Flag == charge.Flag));
+            }
+            else
+            {
+                var (type, _, error) = await ItemAmountAsync(query, cancellationToken);
+                if (error is not null || type is null) return error ?? "Item not found.";
+                chosen = loaded.Where(charge => charge.TypeId == type.TypeId);
+            }
+        }
+        var chosenFlags = chosen.Select(charge => charge.Flag).ToHashSet();
+        var moduleIds = snapshot.Fitted.Where(module => chosenFlags.Contains(module.Flag)).Select(module => module.Id).ToList();
+        if (moduleIds.Count == 0) return "Nothing to unload.";
+        switch (await ships.UnloadAmmoAsync(character, snapshot.Ship.Id, moduleIds, snapshot.Ship.LocationId, ItemFlags.Hangar, null, cancellationToken))
+        {
+            case AmmoChanged ammo:
+                TellAmmo(session, ammo);
+                return $"Unloaded {moduleIds.Count} {(moduleIds.Count == 1 ? "module" : "modules")} to your station hangar.";
+            case ShipRefused refused:
+                return $"Not unloaded: {refused.Reason.ToString().ToUpperInvariant()}.";
+            default:
+                return "Nothing to unload.";
+        }
+    }
+
+    /// <summary>
+    /// What a change of ammunition tells a docked pilot: the item changes of the ship's stacks. shortcut: the module's charge notifications the dogma service
+    /// sends (<c>OnChargeBeingLoadedToModule</c>, quantity changes) are not repeated here; the pilot sees the charges on the next fitting refresh.
+    /// </summary>
+    private void TellAmmo(ClientSession session, AmmoChanged ammo)
+    {
+        foreach (var item in ammo.Events.OfType<ItemChanged>())
+        {
+            ShipNotifications.SendItemChange(session, item, row => DogmaInfoRow(row));
+        }
     }
 
     public async Task<string> UnfitAsync(ClientSession session, string argument, CancellationToken cancellationToken)

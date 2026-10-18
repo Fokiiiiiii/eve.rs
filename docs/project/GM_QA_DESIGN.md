@@ -49,7 +49,8 @@ Slash commands the screen and its helper service send (`eve/devtools/script/svc_
 | `tr` (teleport a pilot, to a system or to a position) | yes (G14; runtime entity and bookmark destinations not served, DEVIATIONS G14) |
 | `warpto` | yes (G17, celestials and pilot ships of the system; DEVIATIONS G17) |
 | `spawn`, `spawnn`, `unspawn`, `nuke` | yes (G18: ship hulls only, DEVIATIONS G18) |
-| `entity deploy`, `unload`, `load`, `skyhook` | no |
+| `load`, `unload` | yes (G19: charges docked; DEVIATIONS G19) |
+| `entity deploy`, `skyhook` | no |
 | `createitem` | yes (G13): cargo of the ship in space, hangar when docked |
 | `bp` | yes (G15: `help`, `list`, `jobs`, `lookup`; DEVIATIONS G15) |
 | `dogmaupdate`, `killright`, `asteroid rewards` | no |

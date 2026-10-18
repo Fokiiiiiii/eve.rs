@@ -368,7 +368,8 @@ public sealed partial class VaultManagerService(IVaultManagerCallbacks callbacks
     [Method("get_account_balance")]
     public async ValueTask<PyValue> GetAccountBalance(ServiceCall call)
     {
-        if (call.Arg(0) is not PyStr { Value: "PLX" })
+        // the client sends the currency as a byte string (PyBytes), as its other text arguments (JsSemantics.StringValue)
+        if (Eve.Macho.JsSemantics.StringValue(call.Arg(0)) != "PLX")
             throw new NotSupportedException("Only PLX account balances are supported.");
 
         var authenticatedUserId = call.Session.UserId is { } userId && userId > 0

@@ -37,6 +37,9 @@ internal sealed class HostStandingDirectory(DogmaStatic statics, Eve.Corporation
         return owners;
     }
 
+    public async Task<string?> CharacterNameAsync(long characterId, CancellationToken cancellationToken) =>
+        await characters.GetAsync(characterId, cancellationToken) is { } character ? character.Name : null;
+
     public async Task<long?> FindCharacterAsync(string token, CancellationToken cancellationToken)
     {
         if (long.TryParse(token, NumberStyles.None, CultureInfo.InvariantCulture, out var id) && id > 0)

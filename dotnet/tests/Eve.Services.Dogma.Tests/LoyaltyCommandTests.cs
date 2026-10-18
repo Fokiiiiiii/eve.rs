@@ -17,12 +17,12 @@ public class LoyaltyCommandTests
         var announced = new List<LoyaltyPointChange>();
         rig.Loyalty.BalanceCommitted += announced.Add;
 
-        Assert.Equal("LP: none.", await rig.SlashAsync(session, "/lp"));
-        Assert.Equal("Caldari Test Corp(1000035) LP changed by 500. Balance: 500.", await rig.SlashAsync(session, "/addlp 500 1000035"));
-        Assert.Equal("Caldari Test Corp(1000035) LP changed by -200. Balance: 300.", await rig.SlashAsync(session, "/addlp -200 1000035"));
-        Assert.Equal("Caldari Test Corp(1000035) LP set to 1000.", await rig.SlashAsync(session, "/setlp 1000 1000035"));
-        Assert.Equal("Caldari Test Corp(1000035) LP is already 1000.", await rig.SlashAsync(session, "/setlp 1000 1000035"));
-        Assert.Equal("LP: corporation 1000035: 1000.", await rig.SlashAsync(session, "/lp"));
+        Assert.Equal("No LP balances.", await rig.SlashAsync(session, "/lp"));
+        Assert.Equal("Adjusted Caldari Test Corp(1000035) LP by +500 LP. New balance: 500 LP.", await rig.SlashAsync(session, "/addlp 500 1000035"));
+        Assert.Equal("Adjusted Caldari Test Corp(1000035) LP by -200 LP. New balance: 300 LP.", await rig.SlashAsync(session, "/addlp -200 1000035"));
+        Assert.Equal("Caldari Test Corp(1000035) LP set to 1,000 LP.", await rig.SlashAsync(session, "/setlp 1000 1000035"));
+        Assert.Equal("Caldari Test Corp(1000035) LP set to 1,000 LP.", await rig.SlashAsync(session, "/setlp 1000 1000035"));
+        Assert.Equal("LP balances: Caldari Test Corp(1000035): 1,000 LP.", await rig.SlashAsync(session, "/lp"));
 
         var balance = Assert.Single(await rig.Loyalty.ReadAsync(holder));
         Assert.Equal((FakeStandingDirectory.CaldariCorp, 1000L), (balance.IssuerCorpId, balance.Amount));
@@ -40,10 +40,10 @@ public class LoyaltyCommandTests
 
         Assert.Equal(LoyaltyCommands.AddUsage, await rig.SlashAsync(session, "/addlp abc 1000035"));
         Assert.Equal(LoyaltyCommands.AddUsage, await rig.SlashAsync(session, "/addlp 0 1000035"));
-        Assert.Equal(LoyaltyCommands.SetUsage, await rig.SlashAsync(session, "/setlp -1 1000035"));
-        Assert.Equal("Could not resolve an NPC corporation from \"nobody\".", await rig.SlashAsync(session, "/addlp 5 nobody"));
-        Assert.Equal("Could not resolve an NPC corporation from \"500001\".", await rig.SlashAsync(session, "/addlp 5 500001"));
-        Assert.Equal("LP change failed: Caldari Test Corp(1000035) LP is 0, not enough to take 5.", await rig.SlashAsync(session, "/addlp -5 1000035"));
+        Assert.Equal("LP change failed.", await rig.SlashAsync(session, "/setlp -1 1000035"));
+        Assert.Equal("NPC corporation not found: nobody.", await rig.SlashAsync(session, "/addlp 5 nobody"));
+        Assert.Equal("NPC corporation not found: 500001.", await rig.SlashAsync(session, "/addlp 5 500001"));
+        Assert.Equal("LP change failed.", await rig.SlashAsync(session, "/addlp -5 1000035"));
         Assert.Empty(announced);
         Assert.Empty(await rig.Loyalty.ReadAsync(new LoyaltyHolder(LoyaltyHolderKind.Character, pilot.CharacterId)));
 

@@ -9,8 +9,6 @@ public class IskCommandTests
 {
     [Theory]
     [InlineData("1000000", 1000000)]
-    [InlineData("me 500", 500)]
-    [InlineData("ME -250.50", -250.50)]
     [InlineData("0.01", 0.01)]
     public void The_amount_is_a_whole_number_of_cents(string argument, double expected)
     {
@@ -38,12 +36,12 @@ public class IskCommandTests
         var announced = new List<WalletBalanceChange>();
         rig.Transactions.BalanceCommitted += announced.Add;
 
-        var gave = await rig.SlashAsync(Rig.Session(pilot.CharacterId), "/isk me 500");
-        Assert.Equal($"500.00 ISK for character {pilot.CharacterId}. Balance: {(start + 500m).ToString("N2", CultureInfo.InvariantCulture)} ISK.", gave);
+        var gave = await rig.SlashAsync(Rig.Session(pilot.CharacterId), "/addisk 500");
+        Assert.Equal($"Adjusted wallet by 500.00 ISK. New balance: {(start + 500m).ToString("N2", CultureInfo.InvariantCulture)} ISK.", gave);
         Assert.Equal(start + 500m, (await rig.Wallets.GetAsync(pilot.CharacterId))!.Isk);
         Assert.Equal(new WalletBalanceChange(pilot.CharacterId, 1000, start + 500m), Assert.Single(announced));
 
-        Assert.Contains("-250.50 ISK", await rig.SlashAsync(Rig.Session(pilot.CharacterId), "/isk -250.50"));
+        Assert.Contains("-250.50 ISK", await rig.SlashAsync(Rig.Session(pilot.CharacterId), "/addisk -250.50"));
         Assert.Equal(start + 249.50m, (await rig.Wallets.GetAsync(pilot.CharacterId))!.Isk);
 
         var journal = (await rig.Transactions.JournalAsync(pilot.CharacterId)).Where(e => e.Reason == "gm isk").OrderBy(e => e.Id).ToList();
@@ -62,9 +60,9 @@ public class IskCommandTests
 
         var plain = Rig.Session(pilot.CharacterId);
         plain.Set("accountRole", new PyLong(0));
-        Assert.Equal(SlashService.NotGameMaster, await rig.SlashAsync(plain, "/isk 100"));
-        Assert.Equal("Select a character before using /isk.", await rig.SlashAsync(Rig.Session(null), "/isk 100"));
-        Assert.Equal(IskCommands.Usage, await rig.SlashAsync(Rig.Session(pilot.CharacterId), "/isk 0"));
+        Assert.Equal(SlashService.NotGameMaster, await rig.SlashAsync(plain, "/addisk 100"));
+        Assert.Equal("Select a character before changing wallet balance.", await rig.SlashAsync(Rig.Session(null), "/addisk 100"));
+        Assert.Equal(IskCommands.AddUsage, await rig.SlashAsync(Rig.Session(pilot.CharacterId), "/addisk 0"));
 
         Assert.Equal(start, (await rig.Wallets.GetAsync(pilot.CharacterId))!.Isk);
         Assert.DoesNotContain((await rig.Transactions.JournalAsync(pilot.CharacterId)), e => e.Reason == "gm isk");
@@ -77,16 +75,16 @@ public class IskCommandTests
         var pilot = await rig.NewCharacterAsync("Wallet Pilot");
         var session = Rig.Session(pilot.CharacterId);
         var balance = (await rig.Wallets.GetAsync(pilot.CharacterId))!;
-        var shown = $"ISK: {balance.Isk.ToString("N2", CultureInfo.InvariantCulture)}. PLEX: {balance.Plex}.";
-        Assert.Equal(shown, await rig.SlashAsync(session, "/wallet"));
-        Assert.Equal(shown, await rig.SlashAsync(session, "/isk"));
+        var shown = $"Wallet balance: {balance.Isk.ToString("N2", CultureInfo.InvariantCulture)} ISK. PLEX: {balance.Plex:N0} PLEX. EverMarks: 0 EverMarks. Last ISK change:";
+        Assert.StartsWith(shown, await rig.SlashAsync(session, "/wallet"));
+        Assert.StartsWith($"Wallet balance: {balance.Isk.ToString("N2", CultureInfo.InvariantCulture)} ISK.", await rig.SlashAsync(session, "/isk"));
 
-        Assert.Equal($"ISK for character {pilot.CharacterId} set to 250,000.00. Balance: 250,000.00 ISK.", await rig.SlashAsync(session, "/setisk 250000"));
+        Assert.Equal("Wallet balance set to 250,000.00 ISK.", await rig.SlashAsync(session, "/setisk 250000"));
         Assert.Equal(250000m, (await rig.Wallets.GetAsync(pilot.CharacterId))!.Isk);
-        Assert.Equal($"ISK for character {pilot.CharacterId} is already 250,000.00.", await rig.SlashAsync(session, "/setisk 250000"));
-        Assert.Equal(IskCommands.SetUsage, await rig.SlashAsync(session, "/setisk -5"));
+        Assert.Equal("Wallet balance set to 250,000.00 ISK.", await rig.SlashAsync(session, "/setisk 250000"));
+        Assert.Equal("Wallet change failed: balance cannot be negative.", await rig.SlashAsync(session, "/setisk -5"));
         Assert.Equal(250000m, (await rig.Wallets.GetAsync(pilot.CharacterId))!.Isk);
-        var sets = (await rig.Transactions.JournalAsync(pilot.CharacterId)).Where(e => e.Reason == "gm isk").ToList();
+        var sets = (await rig.Transactions.JournalAsync(pilot.CharacterId)).Where(e => e.Reason == "gm setisk").ToList();
         Assert.Equal(250000m - balance.Isk, Assert.Single(sets).Amount);
     }
 }

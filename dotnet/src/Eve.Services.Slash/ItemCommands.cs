@@ -90,7 +90,7 @@ public sealed class ItemCommands(ItemTypeNames names, CharacterShips ships, Dogm
     }
 
     /// <summary><c>/ship &lt;ship name|typeID&gt;</c> (EveJS <c>handleShipSpawn</c>): one ship hull of the pilot's, made in the station hangar. Only ships are made.</summary>
-    public async Task<string> ShipAsync(ClientSession session, string argument, CancellationToken cancellationToken)
+    public async Task<string> ShipAsync(ClientSession session, string argument, CancellationToken cancellationToken, string command = "ship")
     {
         var text = argument.Trim();
         if (text.Length == 0)
@@ -121,7 +121,7 @@ public sealed class ItemCommands(ItemTypeNames names, CharacterShips ships, Dogm
         {
             ShipNotifications.SendItemChange(session, change, item => DogmaInfoRow(item));
         }
-        return $"{type.Name}{(type.Published ? "" : " [unpublished]")} was added to your station hangar.";
+        return $"{type.Name}{(type.Published ? "" : " [unpublished]")} was added to your ship hangar. /{command} only spawns the hull for now; board it manually from the hangar.";
     }
 
     private Eve.Services.ItemRow DogmaInfoRow(Item item)

@@ -27,6 +27,9 @@ public sealed class FakeStandingDirectory : IStandingDirectory
 
     public Task<long?> FindCharacterAsync(string token, CancellationToken cancellationToken) =>
         Task.FromResult(Characters.TryGetValue(token, out var id) ? (long?)id : null);
+
+    public Task<string?> CharacterNameAsync(long characterId, CancellationToken cancellationToken) =>
+        Task.FromResult<string?>($"Pilot {characterId}");
 }
 
 public class StandingCommandTests
@@ -39,7 +42,7 @@ public class StandingCommandTests
         rig.StandingDirectory.Characters["Standing Pilot"] = pilot.CharacterId;
         var session = Rig.Session(pilot.CharacterId);
 
-        Assert.Equal($"Set standing with Caldari Test Corp(1000035) to 5.00 for character({pilot.CharacterId}).",
+        Assert.Equal($"Set standing with Caldari Test Corp(1000035) to 5.00 for {"Pilot " + pilot.CharacterId}({pilot.CharacterId}).",
             await rig.SlashAsync(session, "/setstanding 5 1000035"));
         Assert.Equal(5.0, await rig.Relations.ValueAsync(RelationKinds.Standing.Name, FakeStandingDirectory.CaldariCorp, pilot.CharacterId));
         Assert.Equal((pilot.CharacterId, FakeStandingDirectory.CaldariCorp, 5.0), Assert.Single(rig.StandingNotices));
@@ -47,7 +50,7 @@ public class StandingCommandTests
         // a quoted owner and a trailing pilot name: the faction is set toward the named pilot, not the GM's own
         var other = await rig.NewCharacterAsync("Second Pilot");
         rig.StandingDirectory.Characters["Second Pilot"] = other.CharacterId;
-        Assert.Equal($"Set standing with Caldari State(500001) to -2.50 for character({other.CharacterId}).",
+        Assert.Equal($"Set standing with Caldari State(500001) to -2.50 for {"Pilot " + other.CharacterId}({other.CharacterId}).",
             await rig.SlashAsync(session, "/setstanding -2.5 \"Caldari State\" \"Second Pilot\""));
         Assert.Equal(-2.5, await rig.Relations.ValueAsync(RelationKinds.Standing.Name, FakeStandingDirectory.CaldariState, other.CharacterId));
         Assert.Equal(0.0, await rig.Relations.ValueAsync(RelationKinds.Standing.Name, FakeStandingDirectory.CaldariState, pilot.CharacterId));
@@ -63,7 +66,7 @@ public class StandingCommandTests
         await rig.SlashAsync(session, "/setstanding 3 1000035");
         Assert.Single(rig.StandingNotices);
 
-        Assert.Equal($"Set standing with Caldari Test Corp(1000035) to 3.00 for character({pilot.CharacterId}).", await rig.SlashAsync(session, "/setstanding 3 1000035"));
+        Assert.Equal($"Set standing with Caldari Test Corp(1000035) to 3.00 for {"Pilot " + pilot.CharacterId}({pilot.CharacterId}).", await rig.SlashAsync(session, "/setstanding 3 1000035"));
         Assert.Single(rig.StandingNotices);
         Assert.Equal(3.0, await rig.Relations.ValueAsync(RelationKinds.Standing.Name, FakeStandingDirectory.CaldariCorp, pilot.CharacterId));
     }
@@ -95,13 +98,13 @@ public class StandingCommandTests
         var pilot = await rig.NewCharacterAsync("Agent Pilot");
         var session = Rig.Session(pilot.CharacterId);
 
-        Assert.Equal($"Set 2 agent corporation standings and 1 agent faction standings to 10.00 for character({pilot.CharacterId}).",
+        Assert.Equal($"Set 2 agent corporation standings and 1 agent faction standings to 10.00 for {"Pilot " + pilot.CharacterId}({pilot.CharacterId}).",
             await rig.SlashAsync(session, "/fullstandings"));
         foreach (var owner in new long[] { FakeStandingDirectory.CaldariState, FakeStandingDirectory.CaldariCorp, FakeStandingDirectory.OtherAgency })
             Assert.Equal(10.0, await rig.Relations.ValueAsync(RelationKinds.Standing.Name, owner, pilot.CharacterId));
         Assert.Equal(3, rig.StandingNotices.Count);
 
-        Assert.Equal($"Set 2 agent corporation standings and 1 agent faction standings to 10.00 for character({pilot.CharacterId}).",
+        Assert.Equal($"Set 2 agent corporation standings and 1 agent faction standings to 10.00 for {"Pilot " + pilot.CharacterId}({pilot.CharacterId}).",
             await rig.SlashAsync(session, "/maxagentstandings"));
         Assert.Equal(3, rig.StandingNotices.Count);
         Assert.Equal("Character not found: nobody.", await rig.SlashAsync(session, "/maxagentstandings nobody"));

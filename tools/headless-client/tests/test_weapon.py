@@ -20,8 +20,9 @@ import uuid
 import pytest
 
 from evecli.describe import describe
+from tests import dbseed
 from tests import test_login_to_character as base
-from tests.test_others import watch
+from tests.test_others import hold_still, watch
 from tests.test_target import compare_answer, plain_race, timing
 from tests.test_undock import STATION, SYSTEM, arrive, args_of, compare_events, number, outcome
 
@@ -103,6 +104,8 @@ def test_a_pilot_fires_its_gun_as_it_did_in_the_reference():
     steps = {step["label"]: step for step in race["steps"]}
     with base.connect(f"walk-weapon-{run}") as who:
         _, ship, modules, mapping = arrive(who, plain_race({"pilot": race}, "pilot"), run)
+        # the walks fly the Cockroach (the owner's test ship, seeded through dbseed): the server gave the Ibis with its modules in their slots
+        dbseed.set_hull(ship, dbseed.COCKROACH)
         gun = modules[1]
         mapping[race["modules"]["gun"]] = gun
         only = {"events": who}
@@ -133,12 +136,13 @@ def test_a_pilot_fires_its_gun_as_it_did_in_the_reference():
         watch(only, 0.5)
         who.call_bound(service[0], "Undock", ship, False)
         watch(only, 2.5)
-        who.call("beyonce", "MachoBindObject", SYSTEM, None)
+        ballpark = who.call("beyonce", "MachoBindObject", SYSTEM, None)
         watch(only, 3.0)
         dogma = who.call("dogmaIM", "MachoBindObject", (SYSTEM, 5), None)
         who.call_bound(dogma[0], "GetAllInfo", True, True, None)
         watch(only, 1.0)
         watch(only, 45.0, until=lambda seen: any(e["name"] == "OnInvulnCancelled" for e in seen["events"]))
+        hold_still(who, ballpark[0])
 
         slash = lambda command: (lambda: who.call("slash", "SlashCmd", command))  # noqa: E731
         activate = lambda target: (lambda: who.call_bound(dogma[0], "Activate", gun, "targetAttack", target, 1000))  # noqa: E731

@@ -55,7 +55,7 @@ internal sealed class FwComplexSites(
         if (BattlefieldTemplates.Count == 0)
             throw new InvalidOperationException("the owner data has no battlefield site");
         long dungeon = BattlefieldTemplates[(int)(battlefieldId % BattlefieldTemplates.Count)];
-        var origin = await SiteOriginAsync(connection, transaction, solarSystemId, cancellationToken);
+        var origin = await OriginAsync(connection, transaction, solarSystemId, cancellationToken);
         var start = await sites.StartForSystemAsync((int)solarSystemId, origin, dungeon, $"factionwarfare:battlefield:{battlefieldId}",
             FwBattlefields.SiteLifetime, connection, transaction, cancellationToken);
         return start.InstanceId ?? throw new InvalidOperationException($"battlefield {battlefieldId} (dungeon {dungeon}): {start.Refusal}");
@@ -99,9 +99,15 @@ internal sealed class FwComplexSites(
         return await PilotsNearAsync(solarSystemId, await OriginOfAsync(instanceId, cancellationToken), CaptureRadiusMeters, cancellationToken);
     }
 
-    /// <summary>The origin of a battlefield in a system: the same point the complex sites sit at (outside the system's star).</summary>
-    public Task<double[]> OriginAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long solarSystemId, CancellationToken cancellationToken) =>
-        SiteOriginAsync(connection, transaction, solarSystemId, cancellationToken);
+    /// <summary>
+    /// The origin of a battlefield in a system: the complexes' site point moved <see cref="FwBattlefields.SiteOffsetMeters"/> along the x axis, so the
+    /// battlefield's room and its points are apart from the complexes' (a pilot in one site is not counted in the other's presence).
+    /// </summary>
+    public async Task<double[]> OriginAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long solarSystemId, CancellationToken cancellationToken)
+    {
+        var site = await SiteOriginAsync(connection, transaction, solarSystemId, cancellationToken);
+        return [site[0] + FwBattlefields.SiteOffsetMeters, site[1], site[2]];
+    }
 
     /// <summary>The pilots of a system within a radius of a point, with their war factions (the pilots with a ship in space and a position).</summary>
     public async Task<IReadOnlyList<FwComplexPilot>> PilotsNearAsync(long solarSystemId, double[] at, double radius, CancellationToken cancellationToken)

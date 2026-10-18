@@ -35,6 +35,11 @@ public static class FwBattlefields
     public const long LpPool = 150_000;
     public const int LpParticipants = 30;
     public const long LpEach = LpPool / LpParticipants;
+    /// <summary>
+    /// How far a battlefield's site point is from the complexes' site point of its system, along x (metres). shortcut: the complexes of a system share
+    /// one site point, so a battlefield is laid out this far apart; the site point of each complex needs its own offset when several sizes share a system.
+    /// </summary>
+    public const double SiteOffsetMeters = 300_000;
     /// <summary>The SDE dungeon archetype of a battlefield site: the gated room the pilots enter by the acceleration gate (the wiki's battlefield entrance).</summary>
     public const long SiteArchetypeId = 68;
     /// <summary>How long a battlefield's site lasts when no side wins it (the site ends at the win otherwise).</summary>
